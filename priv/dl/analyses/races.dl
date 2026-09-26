@@ -215,7 +215,7 @@ other_claimant(f, a) :-
   runs.entry_reaches(m, f),
   claims_name(a2, g, scope, k),
   a2 != a,
-  runs.runs_beside(m, f, g).
+  runs.runs_beside(m, f, g, g).
 
 // Two processes can claim the name in the window.
 .decl claimants(func: symbol, act: symbol)
@@ -689,24 +689,28 @@ writes_after_start(g) :- outside_entry(c), writer_walk.reaches(c, g).
 writes_after_start(g) :- request_entry(e, _), writer_walk.reaches(e, g).
 writes_after_start(g) :- runs.spawned(_, _, r), writer_walk.reaches(r, g).
 
-// `h` can run while the pair in `f` is between its read and its write:
-// in any process when f runs in more than one, else in a process other
-// than the one f runs in, once it is up (runs_beside_up,
-// clientlib/concurrency.dl).
-.decl concurrent(func: symbol, rival_func: symbol)
+// The write w2, made by calling `h`, can land while the pair in `f` is
+// between its read and its write: in any process when f runs in more
+// than one, else in a process other than the one f runs in, once it is
+// up (runs_beside_up, clientlib/concurrency.dl) and not handed off: the
+// write is made in its own function, wherever its key is named.
+.decl concurrent(func: symbol, rival_func: symbol, rival_write: symbol)
 
-concurrent(f, h) :-
+concurrent(f, h, w2) :-
   reads_then_writes(f, _, _, name, _),
   !runs.single_process(f),
-  rival_write(_, h, name, _, _),
+  rival_write(w2, h, name, _, _),
   writes_after_start(h).
 
-concurrent(f, h) :-
+concurrent(f, h, w2) :-
   reads_then_writes(f, _, _, name, _),
   runs.single_process(f),
   runs.entry_reaches(m, f),
-  rival_write(_, h, name, _, _),
-  runs.runs_beside_up(m, f, h).
+  rival_write(w2, h, name, _, _),
+  table_write(w2, g, _),
+  runs.runs_beside_up(m, f, h, g).
+
+runs.seed(g) :- table_write(_, g, _).
 
 // rival(f, r, w, w2, h): the write w2, made by calling h, can land on
 // the row of the pair (r, w) meeting in f, between the read and the
@@ -729,7 +733,7 @@ rival(f, r, w, w2, h) :-
   rival_write(w2, h, name, ks2, k2),
   w2 != w,
   !keys_apart(ks, k, ks2, k2),
-  concurrent(f, h).
+  concurrent(f, h, w2).
 
 // The pair's own write, made at another call: an accessor's insert
 // another function hands a key of its own. A function that runs the
@@ -746,7 +750,7 @@ rival(f, r, w, w, h) :-
   rival_write(w, h, name, ks2, k2),
   h != f,
   !keys_apart(ks, k, ks2, k2),
-  concurrent(f, h).
+  concurrent(f, h, w).
 
 rival(f, r, w, w, h) :-
   reads_then_writes(f, r, w, name, _),
@@ -756,7 +760,7 @@ rival(f, r, w, w, h) :-
   !writer_walk.reaches(f, h),
   !writer_walk.reaches(h, f),
   !keys_apart(ks, k, ks2, k2),
-  concurrent(f, h).
+  concurrent(f, h, w).
 
 writer_walk.seed(f, f) :- reads_then_writes(f, _, _, _, _).
 
@@ -1747,7 +1751,7 @@ can_read_in_the_gap(f, g) :-
   reads_in_the_gap(f, _, _, _, g),
   runs.single_process(f),
   runs.entry_reaches(m, f),
-  runs.runs_beside(m, f, g).
+  runs.runs_beside(m, f, g, g).
 
 // A table is spelled by its identity's kind and the identity: "named" and
 // the name, "new" and the :ets.new/2 site, or "field" and the module and
@@ -1958,7 +1962,7 @@ can_run_in_between(d, f) :-
   remover_in(d, h),
   runs.single_process(f),
   runs.entry_reaches(m, f),
-  runs.runs_beside(m, f, h).
+  runs.runs_beside(m, f, h, h).
 
 // The key of a pair `func` reports, and whether a remover's key can be it.
 .decl found_pair_key(func: symbol, table: EtsTable, key_kind: symbol, key: symbol)
@@ -2098,7 +2102,7 @@ another_process_writes_record(t, f) :-
   runs.single_process(f),
   runs.entry_reaches(m, f),
   mnesia_write_table(_, g, t),
-  runs.runs_beside(m, f, g),
+  runs.runs_beside(m, f, g, g),
   !serialized_by_lock(f, t).
 
 // ── A cluster lock every writer takes ──
@@ -2209,7 +2213,7 @@ record_rival(f, r, w, w2, g) :-
   runs.single_process(f),
   runs.entry_reaches(m, f),
   mnesia_write_table(w2, g, t),
-  runs.runs_beside_up(m, f, g),
+  runs.runs_beside_up(m, f, g, g),
   !records_apart(w, w2).
 
 writer_walk.seed(g, g) :- mnesia_write_table(_, g, _).
@@ -2598,7 +2602,7 @@ mnesia_race_frame(w, "other_writer", o, g) :-
   runs.single_process(f),
   runs.entry_reaches(m, f),
   mnesia_write_table(o, g, t),
-  runs.runs_beside(m, f, g).
+  runs.runs_beside(m, f, g, g).
 
 mnesia_race_frame(w, "read", r2, f2) :-
   mnesia_check_act(_, _, _, _, r, w, _, _),

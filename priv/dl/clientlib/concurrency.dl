@@ -25,7 +25,8 @@
 // (runs_beside, which the races ask of the other writer when the
 // check-then-act runs in one process): another entry's process reaches
 // it, whether or not the given entry's reaches it too, a request's, or
-// a caller outside the program does. A caller outside the program — a library's
+// a caller outside the program does, unless what that process runs is
+// ordered before (handed_off, below). A caller outside the program — a library's
 // user — can be any process. An exported function is such a caller's
 // way in when no other module of the program calls into its module (the
 // module is the program's face to its callers) and it is no callback the
@@ -54,9 +55,10 @@
   .init walk = SameProcessReach
   walk.seed(t, t) :- seed(t).
 
-  // A process a start in `starter` runs `runs` in.
+  // A process a start in `starter` runs `runs` in. A start that sits
+  // where no request enters (unrequested, below) starts nothing.
   .decl spawned(proc: symbol, starter: symbol, runs: symbol)
-  spawned(p, s, r) :- process_start(_, s, p, kind, r), kind != "server".
+  spawned(p, s, r) :- process_start(id, s, p, kind, r), kind != "server", !unrequested(id, s).
 
   // The starts whose process reaches a seed, walked back from too: what
   // runs them says how many there are.
@@ -79,7 +81,12 @@
   many_instances(p) :- spawned(p, s, _), call_edge(s, g), walk.reaches(g, s).
 
   .decl second_process(func: symbol)
-  second_process(t) :- entry_reaches(m1, t), entry_reaches(m2, t), m1 != m2.
+  second_process(t) :-
+    entry_reaches(m1, t),
+    entry_reaches(m2, t),
+    m1 != m2,
+    !handed_off(m1, m2, t),
+    !handed_off(m2, m1, t).
   second_process(t) :- entry_reaches(m, t), many_instances(m).
   second_process(t) :- request_entry(e, _), walk.reaches(e, t).
   // An entry's process and a caller outside the program both run it.
@@ -102,32 +109,408 @@
   .decl outside_caller(func: symbol)
   outside_caller(c) :- library_face(c), !process_entry(_, c), !process_start(_, _, _, _, c).
 
-  // A process other than entry m's can run g while m's process runs f:
-  // another entry's process reaches g, a request's, or a caller outside
-  // the program. That m's own process runs g too changes nothing: a
-  // function the owner's callbacks and a janitor both call runs in the
-  // janitor as well.
-  .decl runs_beside(entry: symbol, func: symbol, other: symbol) inline
-  runs_beside(m, f, g) :- entry_reaches(m, f), entry_reaches(m2, g), m2 != m.
-  runs_beside(m, f, g) :- entry_reaches(m, f), request_entry(e, _), walk.reaches(e, g).
-  runs_beside(m, f, g) :- entry_reaches(m, f), outside_reaches(g).
+  // runs_beside(m, f, g, x): a process other than entry m's can run g,
+  // on its way to an operation in x (g itself, or a function g reaches),
+  // while m's process runs f: another entry's process reaches g, a
+  // request's, or a caller outside the program. That m's own process
+  // runs g too changes nothing: a function the owner's callbacks and a
+  // janitor both call runs in the janitor as well. Another entry's
+  // process is not beside m's when all it runs happens before m's
+  // process runs f, or when all m's process runs of x happens after it
+  // (handed_off): a write named at a caller is made where the write is.
+  .decl runs_beside(entry: symbol, func: symbol, other: symbol, at: symbol) inline
+  runs_beside(m, f, g, x) :-
+    entry_reaches(m, f),
+    entry_reaches(m2, g),
+    m2 != m,
+    !handed_off(m2, m, f),
+    !handed_off(m, m2, x).
+  runs_beside(m, f, g, x) :- entry_reaches(m, f), seed(x), request_entry(e, _), walk.reaches(e, g).
+  runs_beside(m, f, g, x) :- entry_reaches(m, f), seed(x), outside_reaches(g).
 
   // The same, of what the other process runs once it has started: a
   // write only its init/1 (or an Application's start/2) makes runs while
   // it starts, which a supervisor's ordered start runs before the pair's
   // process (an assumption: a later sibling's init/1, or a restart of the
   // other process alone, running it while the pair runs, is not seen).
-  .decl runs_beside_up(entry: symbol, func: symbol, other: symbol) inline
-  runs_beside_up(m, f, g) :- entry_reaches(m, f), up_reaches(m2, g), m2 != m.
-  runs_beside_up(m, f, g) :- entry_reaches(m, f), request_entry(e, _), walk.reaches(e, g).
-  runs_beside_up(m, f, g) :- entry_reaches(m, f), outside_reaches(g).
+  .decl runs_beside_up(entry: symbol, func: symbol, other: symbol, at: symbol) inline
+  runs_beside_up(m, f, g, x) :-
+    entry_reaches(m, f),
+    up_reaches(m2, g),
+    m2 != m,
+    !handed_off(m2, m, f),
+    !handed_off(m, m2, x).
+  runs_beside_up(m, f, g, x) :- entry_reaches(m, f), seed(x), request_entry(e, _), walk.reaches(e, g).
+  runs_beside_up(m, f, g, x) :- entry_reaches(m, f), seed(x), outside_reaches(g).
 
   // What an entry's process runs once it is up: from a callback other
   // than the ones it starts in, and all a spawned process runs.
   .decl up_reaches(entry: symbol, func: symbol)
   up_reaches(m, t) :- process_entry(m, c), !startup_callback(c), walk.reaches(c, t).
   up_reaches(p, t) :- spawned(p, _, r), walk.reaches(r, t), seed(t).
+
+  // ── Handed off: a loader its starter waits for ─────────────────────
+  //
+  // handed_off(p, m, x): everything process p runs happens before entry
+  // m's process runs x. vernemq's trie servers are the shape: init/1
+  // spawns a loader that fills the tables and, as its last act, sends
+  // its starter `subscribers_loaded`; until that message is taken, every
+  // update the server is asked for is queued (its clauses match
+  // `status = init`), and the clause for it drains the queue and sets the
+  // status that lets the server serve. The loader's writes come before
+  // its message, the message before the server takes it, and the server
+  // runs the tables' updates only after it has. Each link is a witness:
+  //
+  // - p is a loader of m: a spawn m's init/1 makes on its own stack, once
+  //   per incarnation of a single m (no loop or handler starts it again);
+  // - p's last act sends m's process a message tagged t (last_send, the
+  //   send's only target m's server), and no other message the program
+  //   spells t goes to m's process, nor does a timer the program arms;
+  // - every call of m's callbacks that reaches x runs only once m has
+  //   taken t (serves_after).
+  //
+  // A loader that reports in the middle of its work, or goes on working
+  // after it reports, has no last_send; a starter that serves before the
+  // report has a call to x that runs early.
+  .decl handed_off(proc: symbol, entry: symbol, func: symbol)
+  handed_off(p, m, x) :-
+    sole_report(p, m, t),
+    seed(x),
+    entry_reaches(m, x),
+    !early_call(m, x, t).
+
+  .decl loader(proc: symbol, entry: symbol, runs: symbol)
+  loader(p, m, r) :-
+    spawned(p, s, r),
+    process_entry(m, c),
+    startup_callback(c),
+    walk.reaches(c, s),
+    !many_instances(p),
+    !many_instances(m).
+
+  // The loader's last act, a send to m's server alone, and the tag it
+  // spells.
+  .decl report_site(proc: symbol, entry: symbol, tag: symbol, site: symbol)
+  report_site(p, m, t, id) :-
+    loader(p, m, r),
+    last_send(id, r),
+    pid_send(id, r, msg, _, _),
+    message_tag(msg, t),
+    process_call(r, id, id, "info", proc),
+    server_process(proc, m),
+    !sent_elsewhere(id, r, m).
+
+  .decl sent_elsewhere(site: symbol, func: symbol, entry: symbol)
+  sent_elsewhere(id, r, m) :-
+    loader(_, m, r),
+    last_send(id, r),
+    process_call(r, id, id, "info", proc),
+    !server_process(proc, m).
+
+  // The report is the only message tagged t the program makes for m's
+  // process: every other send spelling t goes to a process that is not
+  // m's, as points-to resolves it, and no timer spells t.
+  .decl sole_report(proc: symbol, entry: symbol, tag: symbol)
+  sole_report(p, m, t) :- report_site(p, m, t, _), !other_report(p, m, t).
+
+  .decl other_report(proc: symbol, entry: symbol, tag: symbol)
+  other_report(p, m, t) :-
+    report_site(p, m, t, _),
+    pid_send(id, _, msg, _, _),
+    message_tag(msg, t),
+    !report_site(p, m, t, id),
+    may_reach_server(id, m).
+
+  other_report(p, m, t) :- report_site(p, m, t, _), timer_tag(_, t, _).
+
+  // A send may reach m's server: points-to says it may, or it says
+  // nothing of where the send goes.
+  .decl may_reach_server(site: symbol, entry: symbol)
+  may_reach_server(id, m) :-
+    report_site(_, m, _, _),
+    process_call(_, _, id, "info", proc),
+    server_process(proc, m).
+
+  may_reach_server(id, m) :-
+    report_site(_, m, _, _),
+    pid_send(id, _, _, _, _),
+    !process_call(_, _, id, "info", _).
+
+  // A call of one of m's callbacks, on the way to x, that may run before
+  // m has taken t: at a site not known to run after (serves_after), or
+  // with no site of its own (a closure made there, a fun handed on). A
+  // callback that is x itself holds x's own operations, and is not read
+  // here. The callbacks are the ones GenServer's loop calls (server_root):
+  // a helper that only shares a callback's name (vernemq's
+  // handle_event/2) runs where its callers do.
+  .decl early_call(entry: symbol, func: symbol, tag: symbol)
+  early_call(m, x, t) :-
+    sole_report(_, m, t),
+    seed(x),
+    server_root(m, c),
+    call_instr(c, g, s),
+    !runs_elsewhere(c, g),
+    (g = x ; walk.reaches(g, x)),
+    !serves_after(s, c, m, t).
+
+  early_call(m, x, t) :-
+    sole_report(_, m, t),
+    seed(x),
+    server_root(m, c),
+    fun_handed(s, c, g, _),
+    !runs_elsewhere(c, g),
+    (g = x ; walk.reaches(g, x)),
+    !serves_after(s, c, m, t).
+
+  early_call(m, x, t) :-
+    sole_report(_, m, t),
+    seed(x),
+    server_root(m, c),
+    call_edge(c, g),
+    !call_instr(c, g, _),
+    !fun_handed(_, c, g, _),
+    !runs_elsewhere(c, g),
+    (g = x ; walk.reaches(g, x)).
+
+  early_call(m, x, t) :- sole_report(_, m, t), seed(x), server_root(m, x).
+
+  // A site of m's callback c that runs only once m has taken t: in the
+  // clause of m's handle_info/2 for t, and in no other clause.
+  .decl serves_after(site: symbol, callback: symbol, entry: symbol, tag: symbol)
+  serves_after(s, c, m, t) :-
+    sole_report(_, m, t),
+    server_root(m, c),
+    function_def(c, m, "handle_info", 2, _),
+    clause_call(s, c, t),
+    !other_clause(s, c, t).
+
+  .decl other_clause(site: symbol, callback: symbol, tag: symbol)
+  other_clause(s, c, t) :- sole_report(_, m, t), server_root(m, c), clause_call(s, c, t), clause_call(s, c, t2), t2 != t.
+
+  // Behind a gate on m's state that only the clause for t opens: the
+  // site does not run while a field holds the value init/1 starts it at
+  // (state_excluded, Argus.Extractors.StateGate), and no return of m's
+  // handlers or code_change/3 but that clause's sets the field to
+  // anything else. Until m has taken t, the field keeps its start. The
+  // handler is the process's own: nothing in the program calls it with
+  // a state of its own making.
+  serves_after(s, c, m, t) :-
+    sole_report(_, m, t),
+    state_setter(m, c),
+    state_excluded(s, c, k, v),
+    starts_at(m, k, v),
+    !call_edge(_, c),
+    !opened_elsewhere(m, k, v, t).
+
+  // A return of m's other than its handle_info/2 clause for t that sets
+  // the field from its start to anything else.
+  .decl opened_elsewhere(mod: symbol, key: symbol, start: symbol, tag: symbol)
+  opened_elsewhere(m, k, v, t) :-
+    sole_report(_, m, t),
+    starts_at(m, k, v),
+    state_setter(m, c),
+    state_return(c, clause, k, v2),
+    v2 != v,
+    !report_clause(c, clause, m, t).
+
+  .decl report_clause(func: symbol, clause: symbol, mod: symbol, tag: symbol)
+  report_clause(c, t, m, t) :- sole_report(_, m, t), function_def(c, m, "handle_info", 2, _).
+
+  // A site that never runs at all runs after anything: one in clauses of
+  // handle_call/3 or handle_cast/2 no request the program makes enters.
+  serves_after(s, c, m, t) :- sole_report(_, m, t), unrequested(s, c), function_def(c, m, _, _, _).
+
+  // ── Requests: the clauses of a server the program asks for ───────────
+  //
+  // A clause of handle_call/3 runs when a call carrying its tag reaches
+  // the server, and one of handle_cast/2 when such a cast does. Where the
+  // program's calls and casts all say what they carry, a clause for a tag
+  // none of them carries is not a way into the server: vernemq's tries
+  // answer `{event, e}`, which only their tests send. A call or cast goes
+  // where points-to resolves it, or to any server where it resolves none;
+  // one whose message the program does not spell may be any request.
+  // Every call counts, whoever calls it: an exported function nothing in
+  // view calls (vmq_reg_trie's init_subscriptions/0, whose `init_subs`
+  // starts a second loader) may be applied by a computed name.
+  //
+  // Callers outside the program ask a server the way its module offers,
+  // as they call its exported functions (ways_in.dl): through the calls
+  // and casts its own functions make. A server whose module is its users'
+  // (no other module of the program calls it, library_face) and makes no
+  // request of its own offers no way but the raw one: its users may ask
+  // it anything. An assumption: a server is asked through the `GenServer`
+  // and `:gen_server` calls and casts, and a caller outside the program
+  // asks one that offers an API through it.
+  .decl request(site: symbol, func: symbol, kind: symbol)
+  request(id, f, kind) :-
+    remote_call(id, f, gs, kind, a),
+    (gs = "GenServer" ; gs = ":gen_server"),
+    ((kind = "call", (a = 2 ; a = 3)) ; (kind = "cast", a = 2)).
+
+  // A request, by the tag it carries, in the function that makes it or,
+  // where the message is the function's parameter, in each caller that
+  // fills it: `call(key, {:write, ...})` handed on by a wrapper.
+  .decl request_tag(func: symbol, site: symbol, kind: symbol, tag: symbol)
+  request_tag(f, id, kind, tag) :- request(id, f, kind), call_tag(id, f, kind, tag).
+
+  request_tag(f, id, kind, tag) :-
+    request(id, f, kind),
+    pid_message(id, f, kind, "obj", o),
+    pid_object(f, o, "tuple", tag, _),
+    tag != "".
+
+  request_tag(c, id, kind, tag) :-
+    request(id, f, kind),
+    pid_message(id, f, kind, "param", q),
+    call_arg_tuple(c, f, n, 0, "literal", tag),
+    q = to_string(n).
+
+  request_tag(c, id, kind, tag) :-
+    request(id, f, kind),
+    pid_message(id, f, kind, "param", q),
+    call_arg(c, f, n, tag),
+    match(":.*", tag),
+    q = to_string(n).
+
+  request_tag(f, id, kind, "*") :- request(id, f, kind), !told_request(id, f, kind).
+
+  request_tag(c, id, kind, "*") :-
+    request(id, f, kind),
+    pid_message(id, f, kind, "param", q),
+    untold_arg(c, f, q).
+
+  // A request whose message is spelled, or is a parameter every caller
+  // fills with a spelled message, or none (a function no call fills is
+  // any request, through its callers outside the program).
+  .decl told_request(site: symbol, func: symbol, kind: symbol)
+  told_request(id, f, kind) :- request(id, f, kind), call_tag(id, f, kind, _).
+
+  told_request(id, f, kind) :-
+    request(id, f, kind),
+    pid_message(id, f, kind, "obj", o),
+    pid_object(f, o, "tuple", tag, _),
+    tag != "",
+    !untold_object(id, f, kind).
+
+  told_request(id, f, kind) :-
+    request(id, f, kind),
+    pid_message(id, f, kind, "param", q),
+    !untold_param(f, q),
+    !untold_object(id, f, kind).
+
+  // The message may be something the facts do not spell: a term with no
+  // tag, or of a source other than a term or a parameter.
+  .decl untold_object(site: symbol, func: symbol, kind: symbol)
+  untold_object(id, f, kind) :-
+    request(id, f, kind),
+    pid_message(id, f, kind, "obj", o),
+    pid_object(f, o, _, "", _).
+
+  untold_object(id, f, kind) :-
+    request(id, f, kind),
+    pid_message(id, f, kind, sk, _),
+    sk != "obj",
+    sk != "param".
+
+  .decl untold_param(func: symbol, pos: symbol)
+  untold_param(f, q) :- untold_arg(_, f, q).
+  untold_param(f, q) :- request(id, f, kind), pid_message(id, f, kind, "param", q), outside_caller(f).
+
+  // A caller that fills the message parameter with what it does not
+  // spell, or hands on a parameter of its own.
+  .decl untold_arg(caller: symbol, func: symbol, pos: symbol)
+  untold_arg(c, f, q) :-
+    request(id, f, kind),
+    pid_message(id, f, kind, "param", q),
+    call_edge(c, f),
+    !spelled_arg(c, f, q).
+
+  .decl spelled_arg(caller: symbol, func: symbol, pos: symbol)
+  spelled_arg(c, f, to_string(n)) :- call_arg_tuple(c, f, n, 0, "literal", _).
+  spelled_arg(c, f, to_string(n)) :- call_arg(c, f, n, v), match(":.*", v), !call_arg(c, f, n, "dynamic").
+
+  // mod's server may be asked for a clause tagged `tag` ("*": any).
+  .decl requested(mod: symbol, kind: symbol, tag: symbol)
+  requested(m, kind, tag) :-
+    request_tag(_, id, kind, tag),
+    call_site_target(id, _, kind, proc),
+    server_process(proc, m).
+
+  requested(m, kind, tag) :-
+    request_tag(_, id, kind, tag),
+    !call_site_target(id, _, kind, _),
+    server_process(_, m).
+
+  requested(m, kind, "*") :-
+    server_process(_, m),
+    (kind = "call" ; kind = "cast"),
+    !called_by_other_module(m),
+    !offers_requests(m).
+
+  // Some function of the server's module makes a call or cast to it.
+  .decl offers_requests(mod: symbol)
+  offers_requests(m) :-
+    request(id, f, kind),
+    function_def(f, m, _, _, _),
+    call_site_target(id, _, kind, proc),
+    server_process(proc, m).
+
+  // A site of mod's handle_call/3 or handle_cast/2 every clause of which
+  // it is in takes a tag no request carries.
+  .decl unrequested(site: symbol, callback: symbol)
+  unrequested(s, c) :-
+    request_clause(c, m, kind),
+    clause_call(s, c, _),
+    !requested(m, kind, "*"),
+    !requested_at(s, c, m, kind).
+
+  .decl request_clause(callback: symbol, mod: symbol, kind: symbol)
+  request_clause(c, m, "call") :- process_entry(m, c), function_def(c, m, "handle_call", 3, _).
+  request_clause(c, m, "cast") :- process_entry(m, c), function_def(c, m, "handle_cast", 2, _).
+
+  .decl requested_at(site: symbol, callback: symbol, mod: symbol, kind: symbol)
+  requested_at(s, c, m, kind) :- request_clause(c, m, kind), clause_call(s, c, t), requested(m, kind, t).
 }
+
+// The tag a message spells, of those a clause tells apart: the atom, or
+// a tuple's first element (pid_send's `{:tag, …}`).
+.decl message_tag(message: symbol, tag: symbol)
+
+message_tag(msg, t) :-
+  clause_call(_, _, t),
+  pid_send(_, _, msg, _, _),
+  (msg = t ; msg = cat("{", t, ", …}")).
+
+// The value a field of a server's state starts at: every way its init/1
+// completes with a state holds it there (Argus.Extractors.StateGate's
+// state_return, read for the fields its handlers test).
+.decl starts_at(mod: symbol, key: symbol, value: symbol)
+
+starts_at(m, k, v) :-
+  function_def(i, m, "init", 1, _),
+  state_return(i, _, k, v),
+  !starts_elsewhere(m, k, v).
+
+.decl starts_elsewhere(mod: symbol, key: symbol, value: symbol)
+
+starts_elsewhere(m, k, v) :-
+  function_def(i, m, "init", 1, _),
+  state_return(i, _, k, v),
+  state_return(i, _, k, v2),
+  v2 != v.
+
+// The callbacks GenServer's loop calls in a server's process: init/1,
+// the handlers and code_change/3 (state_setter, callbacks.dl),
+// terminate/2 and format_status/1,2. A module under another behaviour
+// has none: the handoff is read of GenServers.
+.decl server_root(mod: symbol, func: symbol)
+
+server_root(m, f) :- state_setter(m, f).
+
+server_root(m, f) :-
+  behaves_as(m, "GenServer"),
+  function_def(f, m, n, a, _),
+  ((n = "init", a = 1) ; (n = "terminate", a = 2) ; (n = "format_status", (a = 1 ; a = 2))).
 
 // A callback a process runs while it starts: init/1, and an
 // Application's start/2.

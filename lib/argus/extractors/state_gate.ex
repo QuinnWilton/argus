@@ -44,13 +44,21 @@ defmodule Argus.Extractors.StateGate do
     callback's result), a return the reading cannot follow, or one that
     hands the state back unchanged, closes nothing. The handler of a
     `try` the site may be inside is a way to complete.
-  - `state_return(func, key, value)` — a way the callback completes
-    hands back a state whose `key` holds `value`: a literal (inspected),
-    `nonatom` (a value no atom is) or `dynamic` (anything, the state
-    included when the return cannot be read). Read for the keys some
-    state_gate row of the module names, in the four handlers and
-    code_change/3. A return that keeps the field, or ends the process, has
-    no row.
+  - `state_excluded(site, func, key, value)` — the call (or send) at
+    `site` does not run while the state holds the atom `value` under
+    `key`: the walk for that value misses it, and another walk reaches it.
+    `handle_info(ev, %{status: :init} = s)` queues the event and the
+    next clause serves it: the serving call is excluded while the status
+    is `:init`, whatever else admits it.
+  - `state_return(func, clause, key, value)` — a way the callback
+    completes, in the clause of its first argument's tag `clause` (`*`
+    where no tag is established on the way), hands back a state whose
+    `key` holds `value`: a literal (inspected), `nonatom` (a value no atom
+    is) or `dynamic` (anything, the state included when the return cannot
+    be read). Read for the keys some state_gate or state_excluded row of
+    the module names, in the four handlers, code_change/3, and init/1,
+    whose `{:ok, state, ...}` is the state each incarnation starts with.
+    A return that keeps the field, or ends the process, has no row.
   """
 
   @behaviour Argus.Extractor
@@ -73,8 +81,9 @@ defmodule Argus.Extractors.StateGate do
   }
 
   # The callbacks whose returns set the state: the handlers, and
-  # code_change/3's `{:ok, state}`.
-  @setting Map.put(@gated, {:code_change, 3}, 1)
+  # code_change/3's `{:ok, state}`; init/1's `{:ok, state}` starts it, and
+  # holds no state to keep (-1 names no parameter).
+  @setting @gated |> Map.put({:code_change, 3}, 1) |> Map.put({:init, 1}, -1)
 
   @eq_ops [:is_eq_exact, :is_ne_exact, :is_eq, :is_ne]
 
@@ -164,7 +173,7 @@ defmodule Argus.Extractors.StateGate do
   ]
 
   @impl true
-  def relations, do: [:state_gate, :gate_closed, :state_return]
+  def relations, do: [:state_gate, :gate_closed, :state_excluded, :state_return]
 
   @impl true
   @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()
@@ -176,24 +185,36 @@ defmodule Argus.Extractors.StateGate do
 
     ctx = %{mod: mod, bodies: bodies}
 
-    gates =
+    walked =
       for {fa, pos} <- Enum.sort(@gated),
           instrs = Map.get(bodies, fa),
           instrs != nil,
-          gate <- gates(instrs, pos),
-          do: Map.merge(gate, %{fa: fa, pos: pos, instrs: instrs})
+          walks <- field_walks(instrs, pos),
+          do: Map.merge(walks, %{fa: fa, pos: pos, instrs: instrs})
 
-    keys = gates |> Enum.map(& &1.key) |> Enum.uniq() |> Enum.sort()
+    gates = for walks <- walked, gate <- gates(walks), do: Map.merge(walks, gate)
+    exclusions = for walks <- walked, excluded <- exclusions(walks), do: {walks.fa, excluded}
+
+    keys =
+      (Enum.map(gates, & &1.key) ++ Enum.map(exclusions, &elem(&1, 1).key))
+      |> Enum.uniq()
+      |> Enum.sort()
 
     facts = Enum.reduce(gates, %{}, &emit_gate(ctx, &1, &2))
+    facts = Enum.reduce(exclusions, facts, &emit_excluded(ctx, &1, &2))
 
     for {{name, arity} = fa, pos} <- Enum.sort(@setting),
         Map.has_key?(bodies, fa),
         key <- keys,
-        value <- fa |> function_outs(ctx, pos, key) |> Enum.flat_map(&spell_out/1) |> Enum.uniq(),
+        {clause, value} <- clause_outs(fa, ctx, pos, key),
         reduce: facts do
       acc ->
-        add_fact(acc, :state_return, [Normalize.func_id(mod, name, arity), spell_key(key), value])
+        add_fact(acc, :state_return, [
+          Normalize.func_id(mod, name, arity),
+          clause,
+          spell_key(key),
+          value
+        ])
     end
   end
 
@@ -214,12 +235,22 @@ defmodule Argus.Extractors.StateGate do
       else: facts
   end
 
+  defp emit_excluded(ctx, {{name, arity}, %{site: site, key: key, excluded: atoms}}, facts) do
+    func_id = Normalize.func_id(ctx.mod, name, arity)
+    id = InstrId.mint(func_id, site)
+
+    Enum.reduce(atoms, facts, fn value, acc ->
+      add_fact(acc, :state_excluded, [id, func_id, spell_key(key), inspect(value)])
+    end)
+  end
+
   # ── Gates ────────────────────────────────────────────────────────────
   #
-  # The sites of a callback each field test of its state lets run only
-  # for some of the atoms the function compares the field with.
+  # Per field a callback tests of its state, the sites it reaches from its
+  # entry once for each atom the function compares the field with, and
+  # once for a value it compares with none.
 
-  defp gates(instrs, pos) do
+  defp field_walks(instrs, pos) do
     tuple = List.to_tuple(instrs)
     labels = Dispatch.labels(instrs)
     entry = Dispatch.entry_index(instrs)
@@ -234,8 +265,8 @@ defmodule Argus.Extractors.StateGate do
     tests
     |> Enum.group_by(&elem(&1, 0), fn {_key, idx, test} -> {idx, test} end)
     |> Enum.sort()
-    |> Enum.flat_map(fn {key, key_tests} ->
-      key_tests = Map.new(key_tests)
+    |> Enum.map(fn {key, key_tests} ->
+      key_tests = Map.merge(shape_tests(instrs, pos, key), Map.new(key_tests))
       atoms = key_tests |> Map.values() |> Enum.flat_map(&compared_atoms/1) |> Enum.uniq()
       other = reach(tuple, labels, [entry], &decide(key_tests, &1, &2, :other, labels))
 
@@ -245,13 +276,34 @@ defmodule Argus.Extractors.StateGate do
               {atom,
                reach(tuple, labels, [entry], &decide(key_tests, &1, &2, {:is, atom}, labels))}
 
-      for site <- sites,
-          not Map.has_key?(other, site),
-          admitted = for({atom, reached} <- by_value, Map.has_key?(reached, site), do: atom),
-          admitted != [],
-          do: %{site: site, key: key, admitted: Enum.sort(admitted)}
+      %{key: key, sites: sites, other: other, by_value: by_value}
     end)
   end
+
+  # The sites the field lets run only for some of the atoms the function
+  # compares it with: the walk for a value it compares with none misses
+  # them.
+  defp gates(%{key: key, sites: sites, other: other, by_value: by_value}) do
+    for site <- sites,
+        not Map.has_key?(other, site),
+        admitted = for({atom, reached} <- by_value, Map.has_key?(reached, site), do: atom),
+        admitted != [],
+        do: %{site: site, key: key, admitted: Enum.sort(admitted)}
+  end
+
+  # The sites some walk reaches that the walk for an atom misses: they do
+  # not run while the field holds it.
+  defp exclusions(%{key: key, sites: sites, other: other, by_value: by_value}) do
+    for site <- sites,
+        reached?(site, other, by_value),
+        excluded = for({atom, reached} <- by_value, not Map.has_key?(reached, site), do: atom),
+        excluded != [],
+        do: %{site: site, key: key, excluded: Enum.sort(excluded)}
+  end
+
+  defp reached?(site, other, by_value),
+    do:
+      Map.has_key?(other, site) or Enum.any?(by_value, fn {_atom, r} -> Map.has_key?(r, site) end)
 
   defp site?(:send), do: true
   defp site?(instr), do: Instr.call?(instr) or Instr.tail_call?(instr)
@@ -280,6 +332,40 @@ defmodule Argus.Extractors.StateGate do
 
   defp compared_atoms({:eq, literal}), do: atom_of(literal)
   defp compared_atoms({:select, atoms}), do: atoms
+  defp compared_atoms(:shape), do: []
+
+  # The tests of the state's shape a field is read under: a record's
+  # (`#state{}`: is_tagged_tuple, is_tuple, test_arity) and a map's
+  # (is_map, and a get_map_elements that reads the key). A walk that
+  # fixes the field at an atom has a state that holds the field: those
+  # tests pass. vernemq's tries serve `{update_subscriber, ...}` in a
+  # clause that takes any state, after one for `#state{status = init}`:
+  # the serving clause is reached past the record test only when the
+  # state is no such record, which it always is.
+  defp shape_tests(instrs, pos, key) do
+    for {instr, idx} <- Enum.with_index(instrs),
+        shape_test?(instrs, idx, instr, pos, key),
+        into: %{},
+        do: {idx, :shape}
+  end
+
+  defp shape_test?(instrs, idx, {:test, op, _fail, [operand | _]}, pos, {:record, _i})
+       when op in [:is_tagged_tuple, :is_tuple, :test_arity],
+       do: state?(instrs, idx, operand, pos)
+
+  defp shape_test?(instrs, idx, {:test, :is_map, _fail, [operand]}, pos, {:map, _key}),
+    do: state?(instrs, idx, operand, pos)
+
+  defp shape_test?(
+         instrs,
+         idx,
+         {:get_map_elements, _fail, src, {:list, pairs}},
+         pos,
+         {:map, key}
+       ),
+       do: {:atom, key} in Enum.take_every(pairs, 2) and state?(instrs, idx, src, pos)
+
+  defp shape_test?(_instrs, _idx, _instr, _pos, _key), do: false
 
   defp atom_of({:atom, atom}), do: [atom]
   defp atom_of({:literal, atom}) when is_atom(atom), do: [atom]
@@ -460,9 +546,15 @@ defmodule Argus.Extractors.StateGate do
     case Map.fetch(key_tests, idx) do
       {:ok, {:eq, literal}} -> decide_eq(instr, idx, equal(literal, value), labels)
       {:ok, {:select, _atoms}} -> decide_select(instr, value, labels)
+      {:ok, :shape} -> decide_shape(idx, value)
       :error -> nil
     end
   end
+
+  # A state that holds the field has the shape the field is read under;
+  # one of another value may hold no such field.
+  defp decide_shape(idx, {:is, _atom}), do: [idx + 1]
+  defp decide_shape(_idx, :other), do: nil
 
   defp decide_eq(_instr, _idx, :unknown, _labels), do: nil
 
@@ -547,10 +639,46 @@ defmodule Argus.Extractors.StateGate do
   defp outside?({:set, value}, admitted), do: not (is_atom(value) and value in admitted)
   defp outside?(_out, _admitted), do: false
 
+  # What each way the callback completes hands back under `key`, by the
+  # clause of its first argument's tag the completion is in ("*" where no
+  # tag is established on the way, Dispatch.argument_tags/2): spelled
+  # {clause, value} pairs, a way that keeps the field or ends the process
+  # left out.
+  defp clause_outs(fa, ctx, pos, key) do
+    instrs = Map.fetch!(ctx.bodies, fa)
+    tuple = List.to_tuple(instrs)
+    labels = Dispatch.labels(instrs)
+    reached = reach(tuple, labels, [Dispatch.entry_index(instrs)], &free/2)
+    tags = Dispatch.argument_tags(instrs, {:x, 0})
+
+    outs =
+      if Enum.any?(Map.keys(reached), &throws?(instrs, &1, elem(tuple, &1))) do
+        [{["*"], :dynamic}]
+      else
+        for idx <- Map.keys(reached),
+            completes?(elem(tuple, idx)),
+            out <-
+              completion_outs(ctx, instrs, idx, pos, key, :tuple, %{{fa, pos, :tuple} => true}),
+            do: {clauses(tags, idx), out}
+      end
+
+    for {clauses, out} <- outs, clause <- clauses, value <- spell_out(out), uniq: true do
+      {clause, value}
+    end
+  end
+
+  defp clauses(tags, idx) do
+    tags
+    |> Map.get(idx, MapSet.new([:any]))
+    |> Enum.map(fn
+      :any -> "*"
+      tag -> tag
+    end)
+  end
+
   # Every way the function completes, from its entry, read at `level`:
   # `:tuple` for a callback's result, `:value` for a helper that returns
   # the state itself.
-  defp function_outs(fa, ctx, pos, key), do: outs(ctx, fa, pos, key, :tuple, %{})
 
   defp outs(ctx, fa, pos, key, level, visiting) do
     instrs = Map.get(ctx.bodies, fa)

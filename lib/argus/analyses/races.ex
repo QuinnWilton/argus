@@ -131,6 +131,12 @@ defmodule Argus.Analyses.Races do
       # The processes a spawn, a task or an agent starts: entries of their
       # own for RunsConcurrently (clientlib/concurrency.dl).
       Argus.Extractors.PidFlow,
+      # A loader's handoff (clientlib/concurrency.dl, handed_off): the
+      # clause of a handler a site is in (clause_call), and the field of
+      # its state a site waits on and what the returns set it to
+      # (state_excluded, state_return).
+      Argus.Extractors.ClauseCall,
+      Argus.Extractors.StateGate,
       Argus.Extractors.Tooling
     ]
 

@@ -373,23 +373,62 @@ defmodule Argus.Schema.Callbacks do
         """
       },
       %{
+        name: :state_excluded,
+        layer: 2,
+        fields: [
+          {:site, :symbol, "a call or send"},
+          {:func, :symbol, "the handler holding it"},
+          {:key, :symbol, "the field, as state_gate spells it"},
+          {:value, :symbol, "an atom the field holds when the site does not run, inspected"}
+        ],
+        doc: """
+        The call (or send) at `site`, in a GenServer handler, does not run \
+        while the state the handler was handed holds `value` under `key`: \
+        the walk from the entry with the field fixed at that atom misses \
+        it, and another walk reaches it. `handle_info(ev, %{status: \
+        :init} = s)` queues what the next clause serves: the serving call \
+        is excluded while the status is `:init`. \
+        (`Argus.Extractors.StateGate`.)
+        """
+      },
+      %{
         name: :state_return,
         layer: 2,
         fields: [
-          {:func, :symbol, "a GenServer handler or code_change/3"},
-          {:key, :symbol, "a field some state_gate row of the module names"},
+          {:func, :symbol, "a GenServer handler, code_change/3 or init/1"},
+          {:clause, :symbol,
+           "the tag of func's first argument on the paths to the return, `*` for none"},
+          {:key, :symbol, "a field some state_gate or state_excluded row of the module names"},
           {:value, :symbol,
            "the literal it is set to, inspected; 'nonatom' for a value no atom is; " <>
              "'dynamic' for any value, or a state the return does not show"}
         ],
         doc: """
-        A way `func` completes hands back a state whose `key` holds \
-        `value`: the handlers' returns (`{:noreply, state, ...}`, \
-        `{:reply, reply, state, ...}`) and code_change/3's `{:ok, state}`, \
-        through the local helpers they return through or hand the state \
-        to. A return that keeps the field, or ends the process, has no \
-        row; a `throw` in the function is `dynamic`. Read only for the \
-        keys the module's gates test: what could set a gate's field back.
+        A way `func` completes, in its clause for `clause`, hands back a \
+        state whose `key` holds `value`: the handlers' returns \
+        (`{:noreply, state, ...}`, `{:reply, reply, state, ...}`), \
+        code_change/3's `{:ok, state}`, and init/1's `{:ok, state, ...}`, \
+        the state each incarnation starts with; through the local helpers \
+        they return through or hand the state to. A return that keeps the \
+        field, or ends the process, has no row; a `throw` in the function \
+        is `dynamic`. Read only for the keys the module's gates test: what \
+        could set a gate's field back, and what a field starts as.
+        """
+      },
+      %{
+        name: :last_send,
+        layer: 2,
+        fields: [
+          {:id, :symbol, "a send: `!`, erlang:send/2,3 or Process.send/3"},
+          {:func, :symbol, "the function holding it"}
+        ],
+        doc: """
+        The send at `id` is `func`'s last act: it is a tail call, or every \
+        path on from it returns with no call, send or receive between \
+        (`Argus.Extractors.OTP`). Everything else the function does it \
+        has done when the message goes: a loader spawned to fill its \
+        starter's tables that ends by reporting it is done. A function \
+        with a `try` or a `catch` has no rows.
         """
       }
     ])

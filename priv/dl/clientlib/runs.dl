@@ -603,24 +603,8 @@ again_tag_site(s, h) :- clause_fn(_, h, _), clause_call(s, h, t), !once_clause(h
 //   A call of a handler with a state of the caller's making runs the
 //   site whatever the process holds.
 //
-// A GenServer, or a wrapper that hands its users GenServer's callbacks
-// (behaves_as, behaviours.dl): a result of a shape GenServer does not
-// return (Connection's `{:connect, info, state}`, a replication
-// connection's `{:noreply, [data], state}`) reads as any state
-// (state_return's `dynamic`). A server under a behaviour the table does
-// not know is not read.
-.decl state_server(mod: symbol)
-
-state_server(m) :- behaves_as(m, "GenServer").
-
-// The callbacks whose returns set a GenServer's state.
-.decl state_setter(mod: symbol, func: symbol)
-
-state_setter(m, f) :-
-  state_server(m),
-  function_def(f, m, n, a, _),
-  ((n = "handle_call", a = 3) ; (n = "handle_cast", a = 2) ; (n = "handle_info", a = 2) ;
-   (n = "handle_continue", a = 2) ; (n = "code_change", a = 3)).
+// A GenServer's state_setter callbacks (callbacks.dl) set its state:
+// a result of a shape GenServer does not return reads as any state.
 
 // Some return of the module sets the gated field to what the gate at
 // site admits, or to a value it does not show: the gate may open again.
@@ -630,7 +614,7 @@ gate_reopened(s, f, k) :-
   state_gate(s, f, k, v),
   function_def(f, m, _, _, _),
   state_setter(m, c),
-  (state_return(c, k, v) ; state_return(c, k, "dynamic")).
+  (state_return(c, _, k, v) ; state_return(c, _, k, "dynamic")).
 
 .decl gated_once_site(site: symbol, func: symbol)
 

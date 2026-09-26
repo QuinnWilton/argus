@@ -10,7 +10,9 @@ defmodule Argus.Extractors.StateGateTest do
   use ExUnit.Case, async: true
 
   alias Argus.Extractors.StateGate
+  alias Argus.Pipeline.Normalize
   alias Argus.Test.Soundness.Gated, as: G
+  alias Argus.Test.Soundness.RacesOrder
 
   defp facts(mod) do
     {:ok, data} = BeamSpy.BeamFile.disassemble(to_string(:code.which(mod)))
@@ -21,7 +23,7 @@ defmodule Argus.Extractors.StateGateTest do
   defp monitor_sites(data) do
     for {:function, name, arity, _entry, instrs} <- data.functions,
         {{:call_ext, 2, {:extfunc, :erlang, :monitor, 2}}, idx} <- Enum.with_index(instrs),
-        do: "#{Argus.Pipeline.Normalize.func_id(data.module, name, arity)}##{idx}"
+        do: "#{Normalize.func_id(data.module, name, arity)}##{idx}"
   end
 
   # {admitted atoms, closed?} per key at the module's monitor.
@@ -43,9 +45,11 @@ defmodule Argus.Extractors.StateGateTest do
 
     facts
     |> Map.get(:state_return, [])
-    |> Enum.map(fn [func, key, value] ->
+    |> Enum.map(fn [func, _clause, key, value] ->
       {func |> String.split(":") |> List.last(), key, value}
     end)
+    |> Enum.reject(&match?({"init/1", _, _}, &1))
+    |> Enum.uniq()
     |> Enum.sort()
   end
 
@@ -108,6 +112,71 @@ defmodule Argus.Extractors.StateGateTest do
     test "a stop, and terminate/2, set nothing" do
       assert returns(G.ClosedByStop) == []
       assert returns(G.ResetInTerminate) == [{"handle_cast/2", ":attached", "true"}]
+    end
+  end
+
+  # The rows of a relation for one module, the module's name dropped from
+  # the function and site ids.
+  defp rows(mod, relation) do
+    {_data, facts} = facts(mod)
+
+    facts
+    |> Map.get(relation, [])
+    |> Enum.map(fn row -> Enum.map(row, &short/1) end)
+    |> Enum.sort()
+  end
+
+  defp short(id), do: id |> String.split(":") |> List.last()
+
+  describe "state_return: the clause, and the start" do
+    test "a return is the clause's its message's tag names, and init/1's is the start" do
+      rows = rows(RacesOrder.Trie, :state_return)
+
+      assert ["handle_info/2", "loaded", "status", "ready"] in rows
+      assert ["init/1", "*", "status", "init"] in rows
+      refute Enum.any?(rows, &match?(["handle_call/3" | _], &1))
+    end
+  end
+
+  describe "state_excluded" do
+    test "a clause after the one for the start's value does not run while the field holds it" do
+      trie = RacesOrder.Trie
+      {data, facts} = facts(trie)
+
+      bump_calls =
+        for {:function, :handle_call, 3, _entry, instrs} <- data.functions,
+            {{:call, 2, {^trie, :bump, 2}}, idx} <- Enum.with_index(instrs),
+            do: "#{Normalize.func_id(trie, :handle_call, 3)}##{idx}"
+
+      assert [site] = bump_calls
+
+      assert [^site, _func, ":status", ":init"] =
+               Enum.find(facts[:state_excluded], &match?([^site | _], &1))
+    end
+
+    test "a record's shape holds when its field holds a value" do
+      # vernemq's tries serve an update in a clause that takes any state,
+      # after one for `#state{status = init}`: past the record test, the
+      # serving clause is reached only by a state that is no such record,
+      # which it always is. The test hook, which takes any status, is not
+      # excluded.
+      {data, facts} = facts(:handoff_trie)
+
+      bumps =
+        for {:function, :handle_call, 3, _entry, instrs} <- data.functions,
+            {{:call, 2, {:handoff_trie, :bump, 2}}, idx} <- Enum.with_index(instrs),
+            do: "#{Normalize.func_id(:handoff_trie, :handle_call, 3)}##{idx}"
+
+      excluded = for [site, _func, "{1}", ":init"] <- facts[:state_excluded], do: site
+
+      assert length(bumps) == 2
+      assert Enum.count(bumps, &(&1 in excluded)) == 1
+    end
+
+    test "a gate's own site is not excluded for the value it admits" do
+      for [_site, _func, key, value] <- rows(G.Flag, :state_excluded) do
+        refute {key, value} == {":attached", "false"}
+      end
     end
   end
 end

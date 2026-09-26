@@ -24,6 +24,8 @@ defmodule Argus.Extractors.OTP do
   - `start_acked(id, func)` — the call or receive at `id` runs only after
     `func` has acknowledged its start: every path from the function's
     entry to it passes a `:proc_lib.init_ack/1,2`
+  - `last_send(id, func)` — the send at `id` is `func`'s last act: every
+    path on from it returns, with no call, send or receive between
 
   ## After the start is acknowledged
 
@@ -61,6 +63,7 @@ defmodule Argus.Extractors.OTP do
       :implements_behaviour,
       :init_continues_to,
       :process_link,
+      :last_send,
       :start_acked,
       :started_as,
       :timeout_return
@@ -80,6 +83,7 @@ defmodule Argus.Extractors.OTP do
     |> extract_continue_facts(mod, mod_str, functions)
     |> extract_loop_asks(mod, functions)
     |> extract_start_acked(module_data)
+    |> extract_last_sends(module_data)
   end
 
   # ── What a callback's return asks of its loop ───────────────────────
@@ -283,6 +287,74 @@ defmodule Argus.Extractors.OTP do
 
   defp waits?({:loop_rec, _fail, _dst}), do: true
   defp waits?(instr), do: Instr.call?(instr) or Instr.tail_call?(instr)
+
+  # ── A send that ends the function ───────────────────────────────────
+  #
+  # A process whose last act is to send its starter a message has done
+  # everything else it does before the message is sent: a loader that
+  # reports it is done (clientlib/handoff.dl). The send is the last act
+  # when it is a tail call, or when every path on from it returns without
+  # a call, a send or a receive. A function with a `try` or a `catch` is
+  # not read: an exception after the send goes on in its handler.
+
+  defp extract_last_sends(facts, %{module: mod, functions: functions} = module_data) do
+    Enum.reduce(functions, facts, fn {:function, name, arity, _entry, instrs}, acc ->
+      sends = for {instr, idx} <- Enum.with_index(instrs), send?(instr), do: idx
+
+      if sends == [] or Enum.any?(instrs, &handles?/1) do
+        acc
+      else
+        emit_last_sends(
+          acc,
+          InstrId.func_id(mod, name, arity),
+          instrs,
+          sends,
+          cfg(module_data, name, arity)
+        )
+      end
+    end)
+  end
+
+  defp emit_last_sends(facts, _func_id, _instrs, _sends, nil), do: facts
+
+  defp emit_last_sends(facts, func_id, instrs, sends, fun) do
+    for idx <- sends, last_act?(fun, instrs, idx), reduce: facts do
+      acc -> add_fact(acc, :last_send, [InstrId.mint(func_id, idx), func_id])
+    end
+  end
+
+  defp last_act?(fun, instrs, idx) do
+    if Instr.tail_call?(Enum.at(instrs, idx)) do
+      true
+    else
+      verdict =
+        Walk.explore(fun, instrs, [idx + 1],
+          on_instr: fn instr, _at -> if acts?(instr), do: {:halt, :acts}, else: :continue end
+        )
+
+      match?({:done, _}, verdict)
+    end
+  end
+
+  # `!`, and the calls that send: erlang:send/2,3 and Process.send/3.
+  defp send?(:send), do: true
+
+  defp send?(instr) do
+    case Helpers.match_remote_call(instr) do
+      {:ok, :erlang, :send, arity} -> arity in [2, 3]
+      {:ok, Process, :send, 3} -> true
+      _ -> false
+    end
+  end
+
+  defp acts?(:send), do: true
+  defp acts?({op, _fail, _dst}) when op in [:loop_rec], do: true
+  defp acts?({op, _label}) when op in [:wait], do: true
+  defp acts?({:wait_timeout, _label, _time}), do: true
+  defp acts?(instr), do: Instr.call?(instr) or Instr.tail_call?(instr)
+
+  defp handles?({op, _reg, _label}) when op in [:try, :catch], do: true
+  defp handles?(_instr), do: false
 
   # Two facts:
   #   - init_continues_to(mod, tag) when init/1 returns {:ok, _, {:continue, tag}}

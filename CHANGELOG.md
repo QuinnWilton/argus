@@ -6,7 +6,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## 0.20.0-dev — unreleased
 
-### Races: what is ordered before the pair
+### Races: what is ordered before the pair (schema 147)
 
 The races rewrite's concurrency fix counted every other process that
 writes a row as a rival, and added 18 false rows (docs/design/races.md,
@@ -51,6 +51,31 @@ between them. vernemq's `vmq_swc_sup` seeds the cluster state before its
 gossip server starts, and the gossip server's merge is quiet.
 `runs_apart_from` is `runs_beside`, and a request's process is another
 process to both.
+
+**Added.** Schema 147. A loader's writes happen before the server it
+hands off to (clientlib/concurrency.dl, `handed_off`): a process a
+server's `init/1` spawns once, whose last act sends the server a
+message tagged `t` (`last_send`, a new fact of the OTP extractor: every
+path on from the send returns with no call, send or receive between),
+no other send or timer of the program spelling `t` for that server, and
+every call of the server's GenServer callbacks on the way to the pair
+run in the clause for `t`, behind a gate on the state only that clause
+opens, or in a clause no request enters. The StateGate extractor adds
+`state_excluded(site, func, key, value)` (the site does not run while
+the field holds the value; a walk that fixes the field takes the state
+to have the shape the field is read under, so a clause that takes any
+state after one for `#state{status = init}` is excluded while the
+status is `init`), and `state_return` gains a `clause` column and
+init/1's rows, the state each incarnation starts with. `state_setter`
+moves to callbacks.dl. A clause of `handle_call/3` or `handle_cast/2` no
+request of the program carries runs nothing, and a process it starts
+never runs (`requested`, `unrequested`): requests are tagged where the
+program spells the message, through the wrappers that hand it on; a
+server whose module no other module calls is asked the way its module
+offers, or anything when it offers nothing. vernemq's
+`vmq_reg_ordered_trie` is quiet: its 13 rows go.
+`vmq_reg_trie` stays: its exported `init_subscriptions/0` asks for a
+second loader that reports to itself, not to the server.
 
 ### Monitors: "runs again from here" names only callbacks that do
 

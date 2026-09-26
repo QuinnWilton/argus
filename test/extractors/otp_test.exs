@@ -30,6 +30,30 @@ defmodule Argus.Extractors.OTPTest do
     end
   end
 
+  describe "extract/1 — last_send" do
+    alias Argus.Test.Soundness.RacesOrder, as: O
+
+    # The functions whose send is their last act.
+    defp last_sends(mod) do
+      {:ok, data} = BeamSpy.BeamFile.disassemble(to_string(:code.which(mod)))
+
+      for [_id, func] <- Map.get(OTP.extract(data), :last_send, []),
+          do: func |> String.split(":") |> List.last()
+    end
+
+    test "a loader that reports as its last act" do
+      for mod <- [O.Trie, :handoff_trie] do
+        assert Enum.any?(last_sends(mod), &String.starts_with?(&1, "-init/1-fun-")), inspect(mod)
+      end
+    end
+
+    test "a report before the work, in its middle, or before a loop is not the last act" do
+      for mod <- [O.TrieReportEarly, O.TrieReportMidway, O.TrieKeepsWorking] do
+        refute Enum.any?(last_sends(mod), &String.starts_with?(&1, "-init/1-fun-")), inspect(mod)
+      end
+    end
+  end
+
   describe "extract/1 — behaviour detection" do
     test "detects GenServer behaviour" do
       {:ok, data} =
