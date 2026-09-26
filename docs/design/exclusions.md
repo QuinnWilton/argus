@@ -465,7 +465,10 @@ analyzed, but the list is the largest single patch by atom count.
 whether or not the owner's process also runs the function, and a caller
 outside the program is any exported function of a library-face module
 that is no callback and no process body (`outside_caller`,
-clientlib/concurrency.dl). The ETS computed-name `owner_reaches` and
+clientlib/concurrency.dl). The handoff round made it `runs_beside`:
+what another process writes only while it starts is asked one process
+at a time, and a loader handed off to the server is ordered before it
+(`handed_off`, docs/design/races.md). The ETS computed-name `owner_reaches` and
 `process_root`'s `!own_start` are the ets analysis's, left to it.
 
 `concurrency.dl`'s two `runs_apart_from` atoms `!entry_reaches(m, g)`;

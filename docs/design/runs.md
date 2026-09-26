@@ -300,7 +300,16 @@ Each condition is a positive witness the extractor reads
   complete, for the fields the module's gates test. A value is
   `dynamic` when it comes from the message, a call the reading does not
   know, or a state the return does not show (a helper of another
-  module, a state from the message).
+  module, a state from the message). Each row names the clause its
+  return is in (the tag of the handler's first argument on the way, `*`
+  for none), and init/1's returns are read too: the state each
+  incarnation starts with. The races' handoff reads both
+  (docs/design/races.md, "Handed off"), with `state_excluded`: a site
+  the walk for an atom misses while another walk reaches it does not run
+  while the field holds that atom. A walk that fixes a field takes the
+  state to have the shape the field is read under (a record's tuple
+  tests, a map's `is_map` and the `get_map_elements` that reads the
+  key): a state that holds the field has it.
 - The fourth: honeydew's `JobMonitor` claims in `handle_call({:claim,
   job}, {worker, _}, %State{worker: nil})`; if another handler ran
   `handle_call({:claim, j}, from, %{state | worker: nil})`, the claim

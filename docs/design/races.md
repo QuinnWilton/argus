@@ -228,20 +228,98 @@ rule above asks:
 - `single_process(f)`: exactly one process runs `f` — one entry reaches
   it on its own stack, that entry has one instance, no request entry
   reaches it, and no caller outside the program does.
-- `runs_apart_from(m, g)`: a process other than entry `m`'s runs `g`:
-  another entry reaches it, whether or not `m` does too, or a caller
-  outside the program does. That `m` also runs `g` changes nothing: a
-  `reset/1` the owner's callbacks and a janitor both call runs in the
-  janitor as well. (It was `!entry_reaches(m, g)`, which took "the owner
-  runs it" for "only the owner runs it".)
+- `runs_beside(m, f, g, x)`: a process other than entry `m`'s can run
+  `g`, on its way to an operation in `x`, while `m`'s process runs `f`:
+  another entry reaches it, whether or not `m` does too, a request's
+  process does, or a caller outside the program does. That `m` also runs
+  `g` changes nothing: a `reset/1` the owner's callbacks and a janitor
+  both call runs in the janitor as well. (It was `runs_apart_from(m, g)`,
+  and before that `!entry_reaches(m, g)`, which took "the owner runs it"
+  for "only the owner runs it".) Another entry's process is not beside
+  `m`'s when everything it runs happens before `m`'s runs `f`, or all
+  `m`'s runs of `x` happen after it (`handed_off`, below).
+- `runs_beside_up(m, f, g, x)`: the same, of what the other process runs
+  once it is up (`up_reaches`): from a callback other than `init/1`, and
+  anything a spawned process runs. The races' rival writes ask it, one
+  entry at a time: vernemq's `vmq_swc_sup` seeds the cluster state in its
+  `init/1`, and the gossip server that merges into it once it is up is
+  its child. (It was two questions, "another process runs it" and "some
+  process runs it once up", which a supervisor's `init/1` and the
+  gossip server's own `handle_cast/2` answered between them.)
 - `outside_caller(c)`: an exported function of a module no other module
   of the program calls (`library_face`), that the runtime does not call
   in a process of its own — no callback, and no process body a start of
   the program runs. A library's `reset/1` its own server also calls is
   its users' too.
 
-The missing-row remover and the publish-order reader ask the same
-question (they asked `!entry_reaches(m, f)` of the pair's function).
+The missing-row remover, the publish-order reader and the registry's
+second claimant ask `runs_beside`, the Mnesia rivals `runs_beside_up`.
+
+### Handed off: a loader its starter waits for
+
+vernemq's trie servers fill their tables from a loader: `init/1` spawns
+a process that folds every stored subscription into the tables and, as
+its last act, sends its starter `subscribers_loaded`. The server's state
+starts `#state{status = init}`; while it holds `init`, every update the
+server is asked for is queued (a clause for `status = init` takes it),
+and the clause for `subscribers_loaded` drains the queue and sets the
+status to `ready`, after which a clause that takes any state serves.
+The loader's writes come before its message, the message before the
+server takes it, and the server runs the tables' updates only after it
+has: the two never interleave, though both write every table.
+
+`handed_off(p, m, x)` reads the chain, one witness per link:
+
+- **A loader.** `p` is a spawn `m`'s `init/1` makes on its own stack,
+  once per incarnation of a single `m`: no loop, closure or handler
+  starts it again (`many_instances`).
+- **Its last act reports.** `p`'s body ends with a send to `m`'s server,
+  and to nothing else (`last_send`, the OTP extractor: the send is a
+  tail call, or every path on from it returns with no call, send or
+  receive between; points-to names the target), tagged `t`.
+- **The only report.** No other send the program makes spelling `t` can
+  reach `m`'s server (points-to resolves each elsewhere), and no timer
+  spells `t`.
+- **The server serves after it.** Every call of `m`'s GenServer
+  callbacks on the way to `x` (`server_root`: `init/1`, the handlers,
+  `code_change/3`, `terminate/2`, `format_status`) runs only once `m`
+  has taken `t`: in `handle_info/2`'s clause for `t` and no other, or
+  behind a gate on its state that only that clause opens —
+  `state_excluded` (the StateGate extractor: the site does not run while
+  a field holds a value) at the value `init/1` starts the field at, with
+  no return of `m`'s handlers or `code_change/3` but the clause for `t`
+  setting the field to anything else, and no call of the handler in the
+  program — or in a clause no request enters (below). A call with no
+  site of its own (a closure made there) runs early, and so does a
+  callback that is `x` itself.
+
+A helper that shares a callback's name (vernemq's `handle_event/2`) is
+not a root of the server: GenServer calls only its contract callbacks.
+A rival write named at a caller is made in its own function: the handoff
+is asked of the function that holds the write (`concurrent(f, h, w2)`),
+not of the callback that names its key.
+
+### Requests: the clauses a server is asked for
+
+A clause of `handle_call/3` runs when a call carrying its tag reaches the
+server, one of `handle_cast/2` when a cast does (`requested(m, kind,
+tag)`). A request is a `GenServer`/`:gen_server` call or cast, tagged
+where the program spells its message (`call_tag`, or the tuple
+points-to names as the message, or the literal each caller hands a
+function whose parameter is the message); it goes where points-to
+resolves it, or to any server. One whose message the program does not
+spell is any request (`*`). Every request counts, whoever makes it: an
+exported function nothing in view calls may be applied by a computed
+name. A server whose module no other module of the program calls
+(`library_face`) is its users', and they ask it the way its module
+offers, through the calls its own functions make; a module that makes
+none leaves its users only the raw call: any request.
+
+A site of `handle_call/3` or `handle_cast/2` every clause of which takes a
+tag no request carries is `unrequested`: it runs after anything, and a
+process it starts is never started (`spawned`). vernemq's tries answer
+`{event, Event}`, a test hook that serves whatever the status and that
+only their tests send.
 
 ### What it assumes
 
@@ -258,15 +336,30 @@ question (they asked `!entry_reaches(m, f)` of the pair's function).
   reads state through a mechanism the model misses is taken as pure.
 - **The decision's effects.** "Does more" sees sends, peer calls and
   casts, the effect model's outside effects, and writes of other shared
-  state, on the pair's path and one call down for messages.
-  Erlang's `:supervisor` is not in the effect model (Elixir's
-  `Supervisor` is), so hackney's `stop_pool/1`, which terminates the old
-  pool and then deletes the name the new one may hold, is not seen.
-- **Startup.** A write only an `init/1` or an Application's `start/2`
-  makes runs while its own process starts, which an ordered supervisor
-  start runs before the pair's process (`writes_after_start`). A later
-  sibling's `init/1`, or a restart of the writer alone, re-running it
-  while the pair runs, is not seen.
+  state, on the pair's path and one call down for messages, and in a
+  helper the decision hands a value it carries to, however far down on
+  the helper's stack. A helper the decision only calls, handing it
+  nothing of the read, is not asked: a refill's fetch is how the copy is
+  made. The effect model classifies an Erlang module as its Elixir twin
+  (`:supervisor` as `Supervisor`, `:filename` as `Path`, ...).
+- **Startup.** A write another process makes only while it starts, in
+  its `init/1` or an Application's `start/2`, runs before the pair's
+  process, as an ordered supervisor start runs it (`runs_beside_up`,
+  asked of each other process). A later sibling's `init/1`, or a restart
+  of the writer alone, re-running it while the pair runs, is not seen.
+- **Incarnations.** A handoff is read within one incarnation of the
+  server: a loader of an incarnation a crash ended, still writing when
+  the next one serves, is not seen.
+- **Requests.** A server is asked through the `GenServer` and
+  `:gen_server` calls and casts; a caller outside the program asks one
+  whose module offers an API through it.
+- **A row's key.** The key matched out of a row a read found is the key
+  the read was asked for (`Identity.key_identity/4`: an ETS row's
+  element 0, a Mnesia record's element 1): a pinned match
+  (`[{^node, owner}]`) lets the compiler hand the write the element it
+  compared, as OTP's `global:delete_node_resources/2` does. An ETS row's
+  element 0 is taken for its key whatever the table's `keypos`, as the
+  element the extractor reads a found row's key from is.
 - **Rows only their holder writes** (`held_row`). A table whose every
   row-making write mints its key hands each row to one holder: the pair
   in many processes is many holders at their own rows, and is not its
@@ -279,11 +372,14 @@ question (they asked `!entry_reaches(m, f)` of the pair's function).
 
 ### What it deliberately does not claim
 
-- **Serialization the facts do not show.** A handoff (vernemq's loader,
-  whose owner queues updates until the loader reports back), a unique
-  index in another database (blockster's `locked_x_user_id`), a
-  protocol that orders two events (a connection's created and closed
-  handlers): the pair is reported as the processes allow.
+- **Serialization the facts do not show.** A unique index in another
+  database (blockster's `locked_x_user_id`), a protocol that orders two
+  events (a connection's created and closed handlers), keys one process
+  each owns (sequin's benchmark checksums, `{owner, partition}`): the
+  pair is reported as the processes allow. vernemq's `vmq_reg_trie`
+  stays reported: its exported `init_subscriptions/0` asks for
+  `init_subs`, whose clause starts a second loader that reports to
+  itself, not to the server, and writes the tables while it serves.
 - **Semantic sameness.** Two racers that write the same value because of
   what the program means (a protocol version read and written back, two
   retries of one share writing the same status) are reported when a
@@ -373,6 +469,35 @@ alone:
 - and three quiet controls: a counter only its own process writes, a
   default nothing else writes, a pure refill.
 
+`test/soundness/races_order_test.exs` (fixtures in
+`test/fixtures/soundness/races_order_fixture.ex`,
+`test/fixtures/erl/handoff_trie*.erl`) pins the orderings:
+
+- startup order: a supervisor's `init/1` seeds a row before its child
+  merges into it (quiet); another server merging once up, a worker that
+  seeds in `init/1` and again once up, a task the supervisor's `init/1`
+  starts (each reported);
+- the handoff, quiet in vernemq's own shape (a record state served by a
+  clause that takes any state, in Erlang) and in Elixir's (a map state),
+  and with a test hook nothing asks for;
+- the loader's last act: a report before the work, in the middle of it,
+  a loader that stays on as a worker, one that reports to itself, one
+  started again on every reload (each reported);
+- the only report: an API, a timer and the server itself sending the
+  report's message (each reported);
+- serving after it: a server that serves from the start, another
+  request that opens the gate, a server `init/1` starts open (each
+  reported);
+- requests: a second loader started where nothing asks (quiet), where an
+  API asks, a request helper handed messages the program does not spell,
+  a test hook an API asks for, a server whose module offers no API (each
+  reported).
+
+`races_test.exs` adds a pool stopped through `:supervisor` and through
+`Supervisor`, registrations handed to a helper that removes hooks
+elsewhere (with two quiet controls: a helper that only computes, one that
+writes the pair's own table), and OTP global's pinned delete.
+
 The fixture suites that pinned the retired patches moved with them:
 `CacheRefill`'s `setting/1` (a copy of a Mnesia record, invalidated) is
 now a stale fill, and `get/1` (a pure copy) stays quiet;
@@ -443,21 +568,73 @@ elvengard_ecs's insert-if-absent (quiet at its fix), blockster's
 `vmq_config` refill and webhook cache, and rabbit_ff_controller's
 start. The census's four counter-examples fire.
 
+## Ordered before the pair: the handoff round
+
+The concurrency fix above added 18 false rows. This round reads the
+orderings behind them, and three witnesses the rewrite lost.
+
+**Rows** (distinct, one per project, the same 39 sets and 140 checkouts;
+every changed row read):
+
+| | true | false | precision |
+|---|---|---|---|
+| before (main, b84f62d3) | 66 | 82 | 45% |
+| after | 69 | 68 | 50% |
+
+- **Gone, false (14):** vernemq's `vmq_reg_ordered_trie`, all 13 of its
+  rows (the 6 deletes the concurrency fix added, and the 7 adds it had
+  before, `add_complex_topic/4`, `add_remote_subscriber/3`,
+  `trie_add_path/2` and `insert_trie_subs/2`, pairs the loader and the
+  server both run, never at once): the handoff. `vmq_swc_peer_service_gossip`'s
+  merge (`handle_cast/2`): its supervisor's `init/1` seeds the state
+  before the gossip server starts, and no other process writes it once
+  up.
+- **Come, true (3):** ejabberd's `stop_module_keep_config/2` (the
+  registrations handed to `del_registrations/3`), hackney's
+  `stop_pool/1` (`:supervisor` in the effect model), and blockster's
+  `maybe_generate_weekly_movers/0`: the date check a dashboard's
+  `start_async` and the content queue both pass, both generating the
+  week's article. The round's sheet read it false, judging the cache
+  invalidation it writes; the decision does more, and doing it twice
+  duplicates the article (49.6% with it counted false, 50.4% true).
+- **Stayed (11 of the 18):** `vmq_reg_trie`'s 7: its exported
+  `init_subscriptions/0` asks for `init_subs`, whose clause spawns a
+  second loader that reports to itself and writes the tables while the
+  server serves (false only because nothing calls it); sequin's
+  benchmark checksums (2, keys one process each owns); blockster's
+  referral poller and promo engine (2, a regressed marker that only
+  rescans; a reset only another day can make).
+
+Nothing in the corpus moves. The pinned-key identity joins two pairs,
+OTP global's `delete_node_resources/2` and `delete_global_name2/2`,
+whose only writer is the global server: no row.
+
+**Negated atoms.** None deleted; 40 added (39 in `concurrency.dl`, 1 in
+`races.dl`), each the universal half of a positive witness: `!handed_off`
+where concurrency is "not ordered" (6); the handoff's own "every" (the
+only report, every call after it, no other opening, one start value, a
+single loader: 18); the requests' "every filler spelled" and "no request
+carries it" (14); a start where nothing enters (`spawned`, 1); a write
+of a store other than ETS (1). `up_reaches` carries the startup
+assumption's `!startup_callback` per entry.
+
 ## What's next
 
-- **Serialization the facts do not show.** Most false rows left are one
-  process at the row: a loader its owner waits for, a lock in another
-  store, a protocol. A handoff has a shape — a process `init/1` spawns
-  that ends by messaging its starter, and a starter whose callbacks
-  queue while a state field says so — that a happens-before relation
-  over messages could read.
+- **Requests from exports nothing calls.** `vmq_reg_trie`'s 13 rows stand
+  on `init_subscriptions/0`, an export of a module the program calls and
+  that nothing in view calls. Ways in elsewhere take such an export for
+  unused; a request counts wherever it is made, since a computed name
+  may apply it. Resolving `Mod:fun(...)` over the modules that export
+  `fun` (vernemq reaches both tries only as `RegView:fun(...)`, its
+  module read from config) would say which exports a program can apply,
+  and let the rest go unused.
 - **Per-holder keys.** `held_row` is table-level; following each minted
   value to the processes it reaches (process points-to over refs, as
-  over pids) would make it per row and see a key handed to several.
-- **Effects of the decision.** Erlang's `:supervisor` belongs in the
-  effect model beside Elixir's `Supervisor`; a decision's data handed to
-  a helper that writes other state (ejabberd's deregistration) is "does
-  more" two calls down.
-- **A pinned match's key.** `[{^id, v}]` makes the write's key the row's
-  element, not the parameter the pin compared, and the pair does not
-  meet: the key identity could carry the pin.
+  over pids) would make it per row and see a key handed to several, and
+  sequin's `{owner, partition}` checksums one writer each.
+- **Refill effects.** A helper the decision calls without handing it the
+  read (a refill's fetch) is not asked: counting it adds one true row
+  (supavisor's circuit breaker) and two false (blockster's market data,
+  hexpm's CDN list), each a fetch whose answer is the fill. A fill's own
+  source is not "more"; telling the two apart needs the fill's data
+  path.

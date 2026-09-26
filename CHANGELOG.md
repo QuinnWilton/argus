@@ -77,6 +77,12 @@ offers, or anything when it offers nothing. vernemq's
 `vmq_reg_trie` stays: its exported `init_subscriptions/0` asks for a
 second loader that reports to itself, not to the server.
 
+**Measured** over the 39 evaluation sets and the corpus, every changed
+row read: 66 true / 82 false rows before, 69 / 68 after (45% → 50%):
+14 false rows go (13 `vmq_reg_ordered_trie`, vernemq's gossip merge),
+3 true rows come (ejabberd's `gen_mod`, hackney's `stop_pool`,
+blockster's weekly movers). No corpus row moves.
+
 ### Monitors: "runs again from here" names only callbacks that do
 
 **Fixed.** A monitor-leak finding's "runs again from here" frames were

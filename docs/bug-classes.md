@@ -352,9 +352,9 @@ than more; it errs loud when the same uncertainty can add a finding.
 
 ### Runs concurrently
 
-- **Names.** `RunsConcurrently` (`entry_reaches`, `many_instances`, `single_process`, `runs_apart_from`) (concurrency.dl).
+- **Names.** `RunsConcurrently` (`entry_reaches`, `many_instances`, `single_process`, `runs_beside`, `runs_beside_up`, `up_reaches`, `handed_off`, `requested`, `unrequested`) (concurrency.dl).
 - **Meaning.** Seeded with the functions a rule asks about, the component walks back in one process to the entries that run each: a process module's entries, Application.start/2, and each spawn, task or agent start as an entry of its own. A seed runs in more than one process when two entries reach it, when a request entry does, or when its entry has many instances (a module with a request entry, a DynamicSupervisor child, a start reached from a request or a message handler, in a closure or in a recursive function); otherwise it is `single_process`. An outside caller is asked of `open_entry` (ways_in.dl).
-- **Direction.** A function no entry reaches is neither single nor concurrent; races then asks `runs_apart_from` whether another entry or an outside caller can run the other side.
+- **Direction.** A function no entry reaches is neither single nor concurrent; races then asks `runs_beside` (`runs_beside_up`: once the other process is up) whether another entry, a request or an outside caller can run the other side while the pair's process runs the pair. Another entry's process is not beside it when it is a loader handed off to the pair's server (`handed_off`: spawned once by the server's `init/1`, its last act the only report of its tag to the server, and every call of the server's callbacks on the way to the pair after the report, by clause, by a gate on the state, or in a clause no request enters); a process a start in such a clause would run is never started.
 - **Used by.** races.
 
 ### Ways in from outside the program
