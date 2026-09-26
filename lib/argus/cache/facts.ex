@@ -135,15 +135,17 @@ defmodule Argus.Cache.Facts do
           {{producer, keyed, found}, now}
         end)
 
-      hits = for {producer, _keyed, {:hit, entry}} <- looked, do: {producer, entry}
+      hits =
+        for {producer, _keyed, {:hit, entry, manifest}} <- looked,
+            do: {producer, {entry, manifest}}
+
       misses = for {producer, keyed, :miss} <- looked, do: {producer, keyed}
       facts = %__MODULE__{store: store, group: String.slice(beams, 0, 16), relations: %{}}
 
       bases = bases_keyed(beams, store)
 
       with {:ok, extracted, facts} <- extract_missing(facts, paths, misses, opts, bases) do
-        manifests = Map.new(hits, fn {p, entry} -> {p, {entry, read_manifest!(entry)}} end)
-        {:ok, %{facts | relations: join(producers, Map.merge(manifests, extracted))}}
+        {:ok, %{facts | relations: join(producers, Map.merge(Map.new(hits), extracted))}}
       end
     end
   end
@@ -218,15 +220,26 @@ defmodule Argus.Cache.Facts do
 
   # ── Keyed by what was read ──────────────────────────────────────────
 
-  # `{{:hit, entry} | :miss, now}`: the entry the reads the index names
-  # complete the key of, as they are now, if it is kept. `now` holds
-  # each read already asked in this lookup's run.
-  @spec lookup(keyed(), map()) :: {{:hit, Path.t()} | :miss, map()}
+  # `{{:hit, entry, manifest} | :miss, now}`: the entry the reads the
+  # index names complete the key of, as they are now, if it is kept, and
+  # its manifest. `now` holds each read already asked in this lookup's
+  # run. The manifest is read here, as part of the hit: an entry gone
+  # by then (a prune beside this run) is a miss, and one without a
+  # manifest is taken out of its name, so the extraction that misses
+  # installs it again.
+  @spec lookup(keyed(), map()) :: {{:hit, Path.t(), map()} | :miss, map()}
   defp lookup(keyed, now) do
     with {:ok, reads} <- read_index(keyed.index),
          {values, now} = values(reads, now),
          {:ok, entry} <- Cache.fetch(variant(keyed, values)) do
-      {{:hit, entry}, now}
+      case read_manifest(entry) do
+        {:ok, manifest} ->
+          {{:hit, entry, manifest}, now}
+
+        {:error, _} ->
+          Cache.evict(entry)
+          {:miss, now}
+      end
     else
       _ -> {:miss, now}
     end
@@ -320,11 +333,6 @@ defmodule Argus.Cache.Facts do
     end
   rescue
     ArgumentError -> {:error, :bad_manifest}
-  end
-
-  defp read_manifest!(entry) do
-    {:ok, manifest} = read_manifest(entry)
-    manifest
   end
 
   # The missing producers extracted in one run of the pipeline, each
@@ -896,16 +904,30 @@ defmodule Argus.Cache.Facts do
   @spec solve(t(), Path.t(), keyword()) :: {:ok, Souffle.result(), t()} | {:error, term()}
   def solve(%__MODULE__{} = facts, rules_path, opts) do
     with {:ok, entry, inputs} <- keyed(facts, rules_path, opts) do
-      case Cache.fetch(entry) do
-        {:ok, entry} ->
-          with {:ok, results} <- Souffle.read_outputs(entry),
-               {:ok, facts} <- put_outputs(facts, entry) do
-            {:ok, results, facts}
-          end
-
-        :miss ->
-          solve_and_keep(facts, entry, inputs, rules_path, opts)
+      case read_kept(facts, entry) do
+        {:ok, _results, _facts} = hit -> hit
+        :miss -> solve_and_keep(facts, entry, inputs, rules_path, opts)
       end
+    end
+  end
+
+  # A kept solve read back, or `:miss`. One gone by the time it is read
+  # (a prune beside this run) is a miss, and so is one that does not hold
+  # every output its manifest names (`Argus.Souffle.read_outputs/1`):
+  # taken out of its name, so the solve that misses installs it again
+  # rather than losing its install to it.
+  defp read_kept(facts, entry) do
+    with {:ok, entry} <- Cache.fetch(entry),
+         {:ok, results} <- Souffle.read_outputs(entry),
+         {:ok, facts} <- put_outputs(facts, entry) do
+      {:ok, results, facts}
+    else
+      :miss ->
+        :miss
+
+      {:error, _} ->
+        Cache.evict(entry)
+        :miss
     end
   end
 

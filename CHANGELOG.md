@@ -6,6 +6,25 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## 0.20.0-dev — unreleased
 
+### Stores: a kept entry that is gone, or short, when it is read
+
+**Fixed.** A kept solve was read back by listing its directory and
+reading every `.csv` there, so one with an output missing (a prune
+file by file, before the fix above) was read short: a relation absent
+from the results, which every consumer reads as no rows. One pruned
+between its lookup and its read failed the solve (`{:error, :enoent}`),
+and a shard pruned between its lookup and its manifest's read crashed
+the extraction. A kept solve is now read by its manifest
+(`Argus.Souffle.read_outputs/1`): a file the manifest names and the
+entry lacks is an error naming it. A kept solve or shard gone by the
+time it is read is a miss, solved or extracted again, and one still
+there but incomplete is taken out of its name (**added**
+`Argus.Cache.evict/1`) so the run that misses installs it again rather
+than losing its install to it. **Added** `Argus.MissingRelationError`,
+the error a reader returns (or raises) for a relation's file that is
+not there: every writer leaves one, empty when the relation has no
+rows, so an absent file is never read as no rows.
+
 ### Stores: a prune beside a reader
 
 **Fixed.** `Argus.Cache.prune/2` (and `Argus.Corpus.prune_facts/2`,

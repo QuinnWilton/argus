@@ -61,7 +61,9 @@ defmodule Argus.Cache do
   kept, and put back when the touch came between that look and the
   rename. No step reads an entry's state and then acts on its name
   assuming it still holds: a fetch is the touch itself (`fetch/1`), and
-  an install is the rename.
+  an install is the rename. A reader that finds a fetched entry gone, or
+  not holding what its manifest names, takes it for a miss, and one
+  still there out of its name (`evict/1`).
 
   ## Turning it off
 
@@ -281,6 +283,19 @@ defmodule Argus.Cache do
     else
       _ -> false
     end
+  end
+
+  @doc """
+  Takes an entry a reader found incomplete out of its name, whatever
+  its age, as `remove_stale/1` takes one: renamed aside, then removed.
+  The next lookup misses and writes it again, where an install would
+  lose to what is there. A no-op when the entry is already gone.
+  """
+  @spec evict(Path.t()) :: :ok
+  def evict(entry) do
+    aside = "#{entry}.#{:os.getpid()}.#{System.unique_integer([:positive])}"
+    with :ok <- File.rename(entry, aside), do: File.rm_rf(aside)
+    :ok
   end
 
   # Untouched for the hour an entry is presumed in use. Renaming a path

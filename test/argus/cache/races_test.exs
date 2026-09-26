@@ -163,6 +163,139 @@ defmodule Argus.Cache.RacesTest do
     end
   end
 
+  describe "a kept solve" do
+    # A program over `edge` with two outputs, and its facts: in a
+    # directory for `Argus.Souffle.run/3`, and by hand for
+    # `Argus.Cache.Facts.solve/3`.
+    defp program!(dir) do
+      unless Argus.Souffle.available?(), do: flunk("souffle not installed")
+      rules = Path.join(dir, "two.dl")
+
+      File.write!(rules, """
+      .decl edge(x: symbol, y: symbol)
+      .input edge
+      .decl out(x: symbol)
+      .output out
+      .decl also(y: symbol)
+      .output also
+      out(x) :- edge(x, _).
+      also(y) :- edge(_, y).
+      """)
+
+      facts_dir = Path.join(dir, "facts")
+      File.mkdir_p!(facts_dir)
+      File.write!(Path.join(facts_dir, "edge.facts"), "a\tb\n")
+      {rules, facts_dir}
+    end
+
+    defp store_facts(store, facts_dir) do
+      edge = Path.join(facts_dir, "edge.facts")
+      {:ok, digest} = Cache.file_digest(edge)
+
+      %Cache.Facts{
+        store: store,
+        group: "0123456789abcdef",
+        relations: %{"edge.facts" => {digest, [edge]}}
+      }
+    end
+
+    @solved %{"out" => [["a"]], "also" => [["b"]]}
+
+    test "one pruned as a run reads it is solved again", %{tmp_dir: tmp} do
+      {rules, facts_dir} = program!(tmp)
+      solves = Path.join(tmp, "solves")
+      opts = [solve_cache: solves]
+      assert {:ok, @solved} = Argus.Souffle.run(facts_dir, rules, opts)
+
+      {:ok, entry} =
+        Argus.Souffle.Cache.entry(rules, Argus.Souffle.executable(), facts_dir, opts)
+
+      # Found and touched, then gone before a file of it is read.
+      gate = prune_at(entry, [:write_file_info])
+
+      assert {{:ok, @solved}, %{prune: {:ok, _}}} =
+               gated(peer!(), [gate], {Argus.Souffle, :run, [facts_dir, rules, opts]})
+
+      assert File.dir?(entry)
+    end
+
+    test "one pruned as a store's run reads it is solved again", %{tmp_dir: tmp} do
+      {rules, facts_dir} = program!(tmp)
+      facts = store_facts(Path.join(tmp, "store"), facts_dir)
+      assert {:ok, @solved, _} = Cache.Facts.solve(facts, rules, [])
+      {:ok, entry} = Cache.Facts.entry(facts, rules, [])
+
+      gate = prune_at(entry, [:write_file_info])
+
+      assert {{:ok, @solved, _}, %{prune: {:ok, _}}} =
+               gated(peer!(), [gate], {Cache.Facts, :solve, [facts, rules, []]})
+
+      assert File.dir?(entry)
+    end
+
+    test "one missing an output its manifest names is solved again, never read short",
+         %{tmp_dir: tmp} do
+      {rules, facts_dir} = program!(tmp)
+      opts = [solve_cache: Path.join(tmp, "solves")]
+      facts = store_facts(Path.join(tmp, "store"), facts_dir)
+      assert {:ok, @solved} = Argus.Souffle.run(facts_dir, rules, opts)
+      assert {:ok, @solved, _} = Cache.Facts.solve(facts, rules, [])
+
+      {:ok, run_entry} =
+        Argus.Souffle.Cache.entry(rules, Argus.Souffle.executable(), facts_dir, opts)
+
+      {:ok, facts_entry} = Cache.Facts.entry(facts, rules, [])
+
+      # Damaged as a prune file by file used to leave an entry it was
+      # taken from under a reader.
+      for entry <- [run_entry, facts_entry], do: File.rm!(Path.join(entry, "also.csv"))
+
+      assert {:ok, @solved} = Argus.Souffle.run(facts_dir, rules, opts)
+      assert {:ok, @solved, _} = Cache.Facts.solve(facts, rules, [])
+
+      # Written again whole, for the next run.
+      for entry <- [run_entry, facts_entry] do
+        assert File.read!(Path.join(entry, "also.csv")) == "b\n"
+        assert {:ok, @solved} = Argus.Souffle.read_outputs(entry)
+      end
+    end
+
+    test "an output its manifest names and the entry lacks is an error naming it",
+         %{tmp_dir: tmp} do
+      entry = Path.join(tmp, "p-#{key("c")}")
+      {:ok, staging} = Cache.staging(entry)
+      File.write!(Path.join(staging, "out.csv"), "a\n")
+      File.write!(Path.join(staging, "also.csv"), "")
+      :ok = Argus.Souffle.Cache.install(staging, entry)
+      File.rm!(Path.join(entry, "also.csv"))
+
+      path = Path.join(entry, "also.csv")
+
+      assert {:error, %Argus.MissingRelationError{relation: "also", path: ^path, reason: :enoent}} =
+               Argus.Souffle.read_outputs(entry)
+    end
+  end
+
+  describe "a kept shard" do
+    test "one pruned as an extraction reads it is extracted again", %{tmp_dir: tmp} do
+      store = Path.join(tmp, "store")
+      assert {:ok, first} = Cache.Facts.extract([:lists], [], [], store)
+      [name] = store |> Cache.dir(:shards) |> File.ls!()
+      entry = Path.join(Cache.dir(store, :shards), name)
+
+      # Found and touched, then gone before its manifest is read.
+      gate = prune_at(entry, [:write_file_info])
+
+      assert {{:ok, again}, %{prune: {:ok, _}}} =
+               gated(peer!(), [gate], {Cache.Facts, :extract, [[:lists], [], [], store]})
+
+      assert Map.new(again.relations, fn {n, {digest, _}} -> {n, digest} end) ==
+               Map.new(first.relations, fn {n, {digest, _}} -> {n, digest} end)
+
+      assert File.dir?(entry)
+    end
+  end
+
   describe "a specs environment's kept ebin digests" do
     # An ebin of one beam, written long enough ago that a stamp vouches
     # for it: its digests are kept in `cache`.

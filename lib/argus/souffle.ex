@@ -72,12 +72,16 @@ defmodule Argus.Souffle do
   # staging directory and installed. Either way a caller's `:output_dir`
   # receives a copy of the outputs, as if the solver had written them.
   # A cache that cannot be written to is solved around, not failed on.
+  #
+  # A kept solve gone by the time it is read (a prune beside this run), or
+  # not holding every output its manifest names, is a miss; one still
+  # there is taken out of its name, so the solve installs it again.
   defp run_cached(entry, bin, facts_dir, rules_path, timeout, opts) do
-    case Cache.fetch(entry) do
-      {:ok, entry} ->
-        with :ok <- place(entry, opts), do: parse_output(entry)
-
-      :miss ->
+    with {:ok, results} <- read_kept(entry),
+         :ok <- place(entry, opts) do
+      {:ok, results}
+    else
+      _miss ->
         case Cache.staging(entry) do
           {:ok, staging} ->
             solve_and_keep(entry, staging, bin, facts_dir, rules_path, timeout, opts)
@@ -85,6 +89,20 @@ defmodule Argus.Souffle do
           {:error, _} ->
             run_uncached(bin, facts_dir, rules_path, timeout, opts)
         end
+    end
+  end
+
+  defp read_kept(entry) do
+    with {:ok, entry} <- Cache.fetch(entry),
+         {:ok, _results} = read <- read_outputs(entry) do
+      read
+    else
+      :miss ->
+        :miss
+
+      {:error, _} ->
+        Argus.Cache.evict(entry)
+        :miss
     end
   end
 
@@ -451,11 +469,54 @@ defmodule Argus.Souffle do
   end
 
   @doc false
-  # The relations a solve wrote into `output_dir` (its `.csv` files),
-  # as `run/3` returns them: what a caller keeping solves reads back.
+  # A kept solve's relations (`Argus.Souffle.Cache`), as `run/3` returns
+  # them: every output its manifest names, each `.csv` read and each
+  # other file (a stage's `.facts`) there. A file the manifest names and
+  # the entry does not hold is an `Argus.MissingRelationError`, never a
+  # relation without rows: the entry was taken from under its reader, or
+  # is damaged. An entry without a manifest is an error too.
   @spec read_outputs(Path.t()) :: {:ok, result()} | {:error, term()}
-  def read_outputs(output_dir), do: parse_output(output_dir)
+  def read_outputs(entry) do
+    with {:ok, digests} <- Cache.manifest(entry) do
+      digests
+      |> Map.keys()
+      |> Enum.sort()
+      |> Enum.reduce_while({:ok, %{}}, fn file, {:ok, acc} ->
+        case read_kept_output(Path.join(entry, file)) do
+          {:ok, nil} -> {:cont, {:ok, acc}}
+          {:ok, rows} -> {:cont, {:ok, Map.put(acc, Path.rootname(file), rows)}}
+          {:error, _} = error -> {:halt, error}
+        end
+      end)
+    end
+  end
 
+  defp read_kept_output(path) do
+    result =
+      if Path.extname(path) == ".csv" do
+        with {:ok, content} <- File.read(path), do: {:ok, Argus.Tsv.decode(content)}
+      else
+        with {:ok, _stat} <- File.lstat(path), do: {:ok, nil}
+      end
+
+    case result do
+      {:ok, _} = ok ->
+        ok
+
+      {:error, reason} ->
+        {:error,
+         %Argus.MissingRelationError{
+           relation: path |> Path.basename() |> Path.rootname(),
+           path: path,
+           reason: reason
+         }}
+    end
+  end
+
+  # The relations a solve wrote into a directory of its own: every
+  # `.csv` there. Souffle writes a file for each relation the program
+  # outputs, empty when it has no rows, and nothing else writes into the
+  # directory, so the listing is every output.
   defp parse_output(output_dir) do
     with {:ok, files} <- File.ls(output_dir) do
       csv_files = Enum.filter(files, &String.ends_with?(&1, ".csv"))
