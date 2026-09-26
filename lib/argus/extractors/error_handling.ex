@@ -993,7 +993,8 @@ defmodule Argus.Extractors.ErrorHandling do
     if empty?(a) or empty?(b), do: [Map.get(labels, fail)], else: [idx + 1]
   end
 
-  defp full_sides(labels, idx, {:test, op, {:f, fail}, [a, b]}) when op in [:is_ne_exact, :is_ne] do
+  defp full_sides(labels, idx, {:test, op, {:f, fail}, [a, b]})
+       when op in [:is_ne_exact, :is_ne] do
     if empty?(a) or empty?(b), do: [idx + 1], else: [Map.get(labels, fail)]
   end
 
@@ -1019,23 +1020,21 @@ defmodule Argus.Extractors.ErrorHandling do
 
   defp side_calls?([], _tuple, _labels, _seen), do: false
 
+  defp side_calls?([idx | rest], tuple, labels, seen)
+       when idx >= tuple_size(tuple) or is_map_key(seen, idx),
+       do: side_calls?(rest, tuple, labels, seen)
+
   defp side_calls?([idx | rest], tuple, labels, seen) do
-    cond do
-      idx >= tuple_size(tuple) or Map.has_key?(seen, idx) ->
-        side_calls?(rest, tuple, labels, seen)
+    instr = elem(tuple, idx)
 
-      true ->
-        instr = elem(tuple, idx)
+    if Instr.call?(instr) or (Instr.tail_call?(instr) and not raising_tail?(instr)) do
+      true
+    else
+      next =
+        if(Instr.falls_through?(instr), do: [idx + 1], else: []) ++
+          Enum.map(Instr.targets(instr), &Map.get(labels, &1))
 
-        if Instr.call?(instr) or (Instr.tail_call?(instr) and not raising_tail?(instr)) do
-          true
-        else
-          next =
-            if(Instr.falls_through?(instr), do: [idx + 1], else: []) ++
-              Enum.map(Instr.targets(instr), &Map.get(labels, &1))
-
-          side_calls?(Enum.reject(next, &is_nil/1) ++ rest, tuple, labels, Map.put(seen, idx, true))
-        end
+      side_calls?(Enum.reject(next, &is_nil/1) ++ rest, tuple, labels, Map.put(seen, idx, true))
     end
   end
 

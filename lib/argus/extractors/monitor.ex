@@ -612,11 +612,8 @@ defmodule Argus.Extractors.Monitor do
         holding == [] ->
           {:halt, false}
 
-        (Instr.call?(instr) or Instr.tail_call?(instr)) and discarding_call?(instr, holding) ->
-          {:halt, true}
-
-        Instr.call?(instr) and mapping_call?(instr, holding) ->
-          {:halt, {:mapped, instr}}
+        (verdict = handed_verdict(instr, holding)) != nil ->
+          {:halt, verdict}
 
         (Instr.call?(instr) or Instr.tail_call?(instr)) and
             Enum.any?(Instr.uses(instr), &(&1 in holding)) ->
@@ -632,6 +629,16 @@ defmodule Argus.Extractors.Monitor do
     |> case do
       {:mapped, instr} -> {:mapped, mapped_index(instrs, idx, instr)}
       other -> other == true
+    end
+  end
+
+  # A call the fun is handed to that discards what it returns (true), or
+  # maps it into a list ({:mapped, instr}); nil for any other instruction.
+  defp handed_verdict(instr, holding) do
+    cond do
+      (Instr.call?(instr) or Instr.tail_call?(instr)) and discarding_call?(instr, holding) -> true
+      Instr.call?(instr) and mapping_call?(instr, holding) -> {:mapped, instr}
+      true -> nil
     end
   end
 
@@ -1402,7 +1409,10 @@ defmodule Argus.Extractors.Monitor do
           into: %{},
           do: {key, true}
 
-    code = Map.new(functions, fn {:function, name, arity, _entry, instrs} -> {{name, arity}, instrs} end)
+    code =
+      Map.new(functions, fn {:function, name, arity, _entry, instrs} ->
+        {{name, arity}, instrs}
+      end)
 
     check = fn {name, arity} = key, set ->
       collects?(module_data, key, Map.fetch!(code, key), Map.fetch!(takes, key), %{
@@ -1556,8 +1566,11 @@ defmodule Argus.Extractors.Monitor do
       seen = Map.put(seen, state, true)
 
       case head(elem(tuple, state.idx), state, labels) do
-        {:matched, matched} -> take_heads(rest, tuple, labels, seen, [{matched.idx, matched} | acc])
-        next -> take_heads(next ++ rest, tuple, labels, seen, acc)
+        {:matched, matched} ->
+          take_heads(rest, tuple, labels, seen, [{matched.idx, matched} | acc])
+
+        next ->
+          take_heads(next ++ rest, tuple, labels, seen, acc)
       end
     end
   end

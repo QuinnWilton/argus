@@ -693,7 +693,8 @@ defmodule Argus.Extractors.Supervision do
       {at, {:put_tuple2, _dst, {:list, elements}}}, _follow ->
         spec_or_error(extract_child_from_tuple_elements(elements, instrs, at, functions))
 
-      {at, {op, _, _, _, _, {:list, pairs}}}, _follow when op in [:put_map_assoc, :put_map_exact] ->
+      {at, {op, _, _, _, _, {:list, pairs}}}, _follow
+      when op in [:put_map_assoc, :put_map_exact] ->
         spec_or_error(extract_child_from_map_pairs(pairs, instrs, at))
 
       {at, {:move, operand, _dst}}, _follow ->

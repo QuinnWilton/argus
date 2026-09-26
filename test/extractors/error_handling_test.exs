@@ -381,6 +381,17 @@ defmodule Argus.Extractors.ErrorHandlingTest do
       assert func =~ "receive_messages/1"
     end
 
+    test "a nil test whose not-empty side re-arms is no guard" do
+      {:ok, facts} =
+        Argus.Pipeline.extract(
+          [to_string(:code.which(Argus.Test.Soundness.Mailbox.NilGuardRunning))],
+          extractors: [Argus.Extractors.ErrorHandling]
+        )
+
+      # set_interval re-arms on the running side of `case tref`.
+      refute Map.has_key?(facts, :field_nil_test)
+    end
+
     test "a ref read with maps:get/3 is cancelled from that field" do
       {:ok, facts} =
         Argus.Pipeline.extract([:timer_loop_domain_db],
