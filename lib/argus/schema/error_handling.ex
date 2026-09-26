@@ -80,16 +80,37 @@ defmodule Argus.Schema.ErrorHandling do
            "an atom the clause compares as a tuple's first element; * for any tuple"}
         ],
         doc: """
-        The `catch_tag` rows whose atom heads a tuple the clause tests for: \
-        an `is_tagged_tuple`, or a comparison on a register holding a tuple's \
-        first element. `catch :exit, {:noproc, _}` has one; `catch :exit, \
-        :noproc`, which compares the reason itself, has only the `catch_tag` \
-        row. A `GenServer.call` to a dead process exits with \
+        The `catch_tag` rows whose atom heads the reason, a tuple the clause \
+        tests for: an `is_tagged_tuple` of the reason, or a comparison on a \
+        register holding the reason's first element. `catch :exit, \
+        {:noproc, _}` has one; `catch :exit, :noproc`, which compares the \
+        reason itself, has only the `catch_tag` row, and `catch :exit, \
+        {{:shutdown, _}, _}`, which heads a tuple inside it, a \
+        `catch_inner_tag` one. A `GenServer.call` to a dead process exits with \
         `{:noproc, {GenServer, :call, _}}` and a `GenServer.stop` with bare \
         `:noproc`, so the two forms catch different exits. A clause that \
         takes any tuple reason by its shape alone, never comparing its \
         elements (`catch exit:{Reason, _}`), is the tag `*`: it takes \
         `{:shutdown, _}` and `{:normal, _}` too.
+        """
+      },
+      %{
+        name: :catch_inner_tag,
+        layer: 2,
+        fields: [
+          {:id, :symbol, "the try instruction"},
+          {:func, :symbol, "the function"},
+          {:class, :symbol, "the class the clause catches: 'error' | 'exit' | 'throw' | '*'"},
+          {:tag, :symbol,
+           "an atom the clause compares as the first element of the reason's first element"}
+        ],
+        doc: """
+        The `catch_tag` rows whose atom heads the reason's first element, \
+        itself a tuple: `catch :exit, {{:shutdown, _}, _}` has `:shutdown`. \
+        A `GenServer.call` whose peer stops with `{:shutdown, reason}` \
+        while the call waits exits with `{{:shutdown, reason}, {GenServer, \
+        :call, _}}`, which a clause for `{:shutdown, _}` (a `catch_tuple_tag`, \
+        the peer's bare `:shutdown`) does not take.
         """
       },
       %{

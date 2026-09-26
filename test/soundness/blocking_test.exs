@@ -127,4 +127,26 @@ defmodule Argus.Soundness.BlockingTest do
              end)
     end
   end
+
+  # census: catch-shapes
+  # A catch for the peer's bare :shutdown was taken for its shutdown with a
+  # reason: the catch facts could not tell the two apart.
+  describe "census hole: a catch for the bare :shutdown" do
+    for mod <- [C.NoprocAndShutdown, C.NoprocAndBareShutdown, C.NoprocAndInnerNoproc] do
+      test "#{inspect(mod)}: a catch that takes no stop the peer makes itself is reported" do
+        {found, _rows} = census()
+
+        assert {:warning, "Peer call catches :noproc but not :shutdown",
+                {unquote(mod), :sync_with_parent, 1}} in found
+      end
+    end
+
+    test "a catch for {{:shutdown, _}, _} (b100e10's fix), or for {:normal, _}, is quiet" do
+      {found, _rows} = census()
+
+      for mod <- [C.NoprocAndInnerShutdown, C.EveryStopShape, C.NoprocAndNormal] do
+        refute Enum.any?(found, &(elem(&1, 2) == {mod, :sync_with_parent, 1})), inspect(mod)
+      end
+    end
+  end
 end

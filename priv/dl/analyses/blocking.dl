@@ -1304,12 +1304,20 @@ wait_found(func, lock, "global", op, retries, nodes) :-
 // ── A peer call that catches :noproc but not :shutdown ───────────────
 //
 // `catch :exit, {:noproc, _}` around a GenServer.call says the peer may
-// not exist. The peer stopping while the call is in flight is the same
-// condition, but it arrives as `{:shutdown, _}` (or `{:normal, _}`) —
-// and this catch lets it crash the caller. A child LiveView syncing with
-// its parent lost the parent's navigation that way
-// (phoenixframework/phoenix_live_view#4359). A clause for `{:shutdown,
-// _}`, or a bare `:exit, reason`, covers it.
+// not exist. The peer stopping itself while the call is in flight is the
+// same condition, but it arrives as its stop reason wrapped with the
+// call, and this catch lets it crash the caller. A peer stops itself
+// with :normal (`{:normal, _}`) or on purpose with a reason to tell,
+// `{:stop, {:shutdown, reason}, state}` (`{{:shutdown, reason}, _}`). A
+// catch that takes neither takes no stop of the peer's own: none at all,
+// or only the bare `{:shutdown, _}`, the reason of a peer its supervisor
+// terminates. A child LiveView syncing with its parent crashed that way
+// when the parent redirected, stopping with `{:shutdown, {:redirect, _}}`
+// (phoenixframework/phoenix_live_view#4359), whether its catch had the
+// bare `{:shutdown, _}` or not; the fix (b100e10) takes
+// `{{:shutdown, _}, _}`. catch_inner_tag tells that shape from the bare
+// one (catch_tuple_tag). A clause that takes every tuple reason, or a
+// bare `:exit, reason`, takes them all.
 .decl partial_noproc_catch(func: symbol, site: symbol, callee: symbol, call: symbol, guard_end: symbol)
 .output partial_noproc_catch
 
@@ -1317,10 +1325,16 @@ partial_noproc_catch(func, id, callee, call, guard_end) :-
   try_call(id, func, callee, call, guard_end),
   peer_call(callee),
   catch_tag(id, func, "exit", ":noproc"),
-  !catch_tag(id, func, "exit", ":shutdown"),
-  !catch_tag(id, func, "exit", ":normal"),
-  !catches_any_tuple_exit(id, func),
-  !site_catches_class(id, func, "exit").
+  !takes_peer_stop(id, func).
+
+// The handler of the try at `id` takes an exit of a call whose peer
+// stopped itself: `{:normal, _}` or `{{:shutdown, _}, _}`.
+.decl takes_peer_stop(id: symbol, func: symbol)
+
+takes_peer_stop(id, f) :- catch_tuple_tag(id, f, c, ":normal"), (c = "exit" ; c = "*").
+takes_peer_stop(id, f) :- catch_inner_tag(id, f, c, ":shutdown"), (c = "exit" ; c = "*").
+takes_peer_stop(id, f) :- catches_any_tuple_exit(id, f).
+takes_peer_stop(id, f) :- try_call(id, f, _, _, _), site_catches_class(id, f, "exit").
 
 // A clause that takes every tuple reason (`exit:{Reason, _}`, brod's
 // safe_gen_call): what a call to a peer that stops mid-call exits with,

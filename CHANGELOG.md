@@ -62,6 +62,19 @@ on later ones only, so no cycle is enumerated path by path), with every
 edge of it a related frame; the candidates are the dependencies on a
 cycle of modules (`sync_reach`). No row moves.
 
+**Fixed.** Schema 142. `catch_inner_tag(id, func, class, tag)` (the error
+handling extractor): an atom a clause compares as the head of the
+reason's first element, `{{:shutdown, _}, _}`. The catch walk keeps each
+register's place in the reason, so `catch_tuple_tag` is now the reason's
+own head only. "Peer call catches :noproc but not :shutdown" took a
+clause for the bare `{:shutdown, _}` as taking the peer's stop, and the
+facts could not tell it from `{{:shutdown, _}, _}`: phoenix_live_view
+#4359's child with a `{:shutdown, _}` clause was pinned quiet
+(`CatchShapes.NoprocAndShutdown`, now reported). The rule asks for a stop
+the peer makes itself: `{:normal, _}` or `{{:shutdown, _}, _}`. 1 row
+comes (OTP's `net_kernel:request/1`, whose peer stops only with crash
+reasons: false).
+
 ### Races by their harm
 
 **Changed.** A check-then-act pair is reported when a rival can land on

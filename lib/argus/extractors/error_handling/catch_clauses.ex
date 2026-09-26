@@ -30,14 +30,20 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
   over-approximation `callback_tag` makes: a rule asks whether a tag is
   NOT handled, so seeing too many suppresses rather than invents.
 
-  Some of those atoms head a tuple the clause tests for (`tuple_tags`):
-  an `is_tagged_tuple`, or a comparison on a register holding a tuple's
-  first element. `catch :exit, {:noproc, _}` yields `:noproc` in both;
-  `catch :exit, :noproc` compares the reason itself and yields it only as
-  a tag. The two catch different exits — a `GenServer.call` to a dead
-  process exits with `{:noproc, {GenServer, :call, _}}`, a
-  `GenServer.stop` with bare `:noproc` — so a rule that asks about one
-  reads the right set.
+  Some of those atoms head the reason, a tuple the clause tests for
+  (`tuple_tags`): an `is_tagged_tuple` of the reason, or a comparison on
+  a register holding the reason's first element. `catch :exit, {:noproc,
+  _}` yields `:noproc` in both; `catch :exit, :noproc` compares the
+  reason itself and yields it only as a tag. The two catch different
+  exits — a `GenServer.call` to a dead process exits with `{:noproc,
+  {GenServer, :call, _}}`, a `GenServer.stop` with bare `:noproc` — so a
+  rule that asks about one reads the right set. An atom that heads the
+  reason's first element, itself a tuple, is an `inner_tags` one:
+  `catch :exit, {{:shutdown, _}, _}` yields `:shutdown` there, and none
+  in `tuple_tags`. A call whose peer stops with `{:shutdown, reason}`
+  exits with that shape, and one whose peer stops with `:shutdown` with
+  `{:shutdown, _}`: the walk keeps, per register, where in the reason
+  its value sits, so the two are told apart.
 
   A clause that takes the reason by its shape alone, a tuple whose
   elements it never compares (`catch exit:{Reason, _}`), is
@@ -90,8 +96,10 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
   What one handler catches. `classes` and `totals` are among `:error`,
   `:exit`, `:throw` and `:*` (no class test on the path); `tags` are
   `{class, atom}` pairs, the atoms compared along a path that catches
-  that class, and `tuple_tags` those of them compared as a tuple's first
-  element; `falls_through` are the tags compared on
+  that class, and `tuple_tags` those of them compared as the reason's
+  first element (the reason a tuple), `inner_tags` those compared as the
+  first element of the reason's first element; `falls_through` are the
+  tags compared on
   a path that reaches a `case` with no clause for its value — the
   compiler emits such a `case` of its own for `e.field` access, so the
   tags say which `case` it was. `handled` are the classes established
@@ -105,6 +113,7 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
           totals: [atom()],
           tags: [{atom(), atom()}],
           tuple_tags: [{atom(), atom()}],
+          inner_tags: [{atom(), atom()}],
           open_tuples: [atom()],
           falls_through: [atom()],
           handled: [atom()],
@@ -125,6 +134,7 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
           totals: [],
           tags: [],
           tuple_tags: [],
+          inner_tags: [],
           open_tuples: [],
           falls_through: [],
           handled: [],
@@ -145,6 +155,7 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
           totals: acc.totals |> MapSet.to_list() |> Enum.sort(),
           tags: acc.tags |> MapSet.to_list() |> Enum.sort(),
           tuple_tags: acc.tuple_tags |> MapSet.to_list() |> Enum.sort(),
+          inner_tags: acc.inner_tags |> MapSet.to_list() |> Enum.sort(),
           open_tuples: open_tuples(acc),
           falls_through: acc.falls_through |> MapSet.to_list() |> Enum.sort(),
           handled: acc.handled |> MapSet.to_list() |> Enum.sort(),
@@ -169,8 +180,11 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
     seen |> Enum.map(&elem(&1, 0)) |> Enum.uniq() |> Enum.sort()
   end
 
-  # `heads` are the registers holding a tuple's first element, what a
-  # comparison against a tuple's tag reads.
+  # `paths` are the registers holding the reason (`[]`) or a projection
+  # of it, each with where in the reason it sits: the element positions
+  # `get_tuple_element` took, down from the reason (`[0]`, its first
+  # element). A register at `p ++ [0]` holds the first element of the
+  # tuple at `p`, what a comparison against that tuple's tag reads.
   # `valued` is whether the path compared the reason, or a part of it,
   # with a value; `tuple` whether it established the reason is a tuple.
   defp new_path do
@@ -180,9 +194,10 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
       valued: false,
       tuple: false,
       aliases: MapSet.new([@x1]),
-      heads: MapSet.new(),
+      paths: %{@x1 => []},
       tags: MapSet.new(),
       tuple_tags: MapSet.new(),
+      inner_tags: MapSet.new(),
       excluded: MapSet.new()
     }
   end
@@ -193,6 +208,7 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
       totals: MapSet.new(),
       tags: MapSet.new(),
       tuple_tags: MapSet.new(),
+      inner_tags: MapSet.new(),
       open_tuples: MapSet.new(),
       falls_through: MapSet.new(),
       handled: MapSet.new(),
@@ -260,6 +276,7 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
           | class: class_atom(b),
             tags: MapSet.new(),
             tuple_tags: MapSet.new(),
+            inner_tags: MapSet.new(),
             excluded: MapSet.new()
         }
 
@@ -343,6 +360,7 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
             | class: class_atom(val) || :*,
               tags: MapSet.new(),
               tuple_tags: MapSet.new(),
+              inner_tags: MapSet.new(),
               excluded: MapSet.new()
           }
 
@@ -409,13 +427,7 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
   # testing it goes, so these copy the alias where Argus.Instr would say
   # the destination holds a new value.
   defp step({:get_tuple_element, src, i, dst}, idx, path, instrs, labels, seen, acc) do
-    path = copy(path, src, dst)
-
-    heads =
-      if i == 0, do: MapSet.put(path.heads, reg(dst)), else: MapSet.delete(path.heads, reg(dst))
-
-    path = %{path | heads: heads}
-    next(idx, path, instrs, labels, seen, acc)
+    next(idx, copy(path, src, dst, i), instrs, labels, seen, acc)
   end
 
   defp step(
@@ -427,7 +439,7 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
          seen,
          acc
        ),
-       do: next(idx, copy(path, src, dst), instrs, labels, seen, acc)
+       do: next(idx, copy(path, src, dst, :__struct__), instrs, labels, seen, acc)
 
   defp step(
          {:get_map_elements, {:f, fail}, src, {:list, kvs}},
@@ -475,7 +487,7 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
         path = %{
           path
           | aliases: MapSet.new(Instr.carry(instr, path.aliases)),
-            heads: MapSet.new(Instr.carry(instr, path.heads))
+            paths: carry_paths(instr, path.paths)
         }
 
         {seen, acc} =
@@ -521,11 +533,13 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
     else
       pairs = for t <- path.tags, not MapSet.member?(path.excluded, t), do: {class, t}
       tuple_pairs = for t <- path.tuple_tags, not MapSet.member?(path.excluded, t), do: {class, t}
+      inner_pairs = for t <- path.inner_tags, not MapSet.member?(path.excluded, t), do: {class, t}
 
       acc = %{
         acc
         | tags: Enum.reduce(pairs, acc.tags, &MapSet.put(&2, &1)),
-          tuple_tags: Enum.reduce(tuple_pairs, acc.tuple_tags, &MapSet.put(&2, &1))
+          tuple_tags: Enum.reduce(tuple_pairs, acc.tuple_tags, &MapSet.put(&2, &1)),
+          inner_tags: Enum.reduce(inner_pairs, acc.inner_tags, &MapSet.put(&2, &1))
       }
 
       acc =
@@ -558,16 +572,48 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
   defp exclude(path, instr),
     do: %{path | excluded: Enum.reduce(compared_atoms(instr), path.excluded, &MapSet.put(&2, &1))}
 
-  defp copy(path, src, dst) do
-    if alias?(src, path),
-      do: %{path | aliases: MapSet.put(path.aliases, reg(dst))},
-      else: forget(path, dst)
+  # `dst` takes the projection `step` of `src`: an element position, or
+  # `:__struct__`.
+  defp copy(path, src, dst, step) do
+    case {Map.fetch(path.paths, reg(src)), alias?(src, path)} do
+      {{:ok, at}, true} ->
+        %{
+          path
+          | aliases: MapSet.put(path.aliases, reg(dst)),
+            paths: Map.put(path.paths, reg(dst), at ++ [step])
+        }
+
+      {:error, true} ->
+        %{
+          path
+          | aliases: MapSet.put(path.aliases, reg(dst)),
+            paths: Map.delete(path.paths, reg(dst))
+        }
+
+      {_, false} ->
+        forget(path, dst)
+    end
   end
 
   defp forget(path, dst) do
     case reg(dst) do
       nil -> path
-      r -> %{path | aliases: MapSet.delete(path.aliases, r), heads: MapSet.delete(path.heads, r)}
+      r -> %{path | aliases: MapSet.delete(path.aliases, r), paths: Map.delete(path.paths, r)}
+    end
+  end
+
+  # Where each register sits in the reason after `instr`: a register it
+  # writes keeps a place only when it copied one there (Instr.carry's
+  # reading), from the register it copied.
+  defp carry_paths(instr, paths) do
+    holding = Map.keys(paths)
+    after_instr = Instr.carry(instr, holding)
+
+    for r <- after_instr, into: %{} do
+      case Instr.copy_source(instr, r) do
+        src when is_map_key(paths, src) -> {r, Map.fetch!(paths, src)}
+        _ -> {r, Map.fetch!(paths, r)}
+      end
     end
   end
 
@@ -604,37 +650,77 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
   # in a catch.
   defp note(path, acc, instr) do
     atoms = compared_atoms(instr)
-    heads = compared_heads(instr, path)
+    {tuple, inner} = compared_heads(instr, path)
 
     {%{
        path
        | tags: Enum.reduce(atoms, path.tags, &MapSet.put(&2, &1)),
-         tuple_tags: Enum.reduce(heads, path.tuple_tags, &MapSet.put(&2, &1))
+         tuple_tags: Enum.reduce(tuple, path.tuple_tags, &MapSet.put(&2, &1)),
+         inner_tags: Enum.reduce(inner, path.inner_tags, &MapSet.put(&2, &1))
      }, acc}
   end
 
-  # The atoms an instruction compares as a tuple's first element: the tag
-  # of an `is_tagged_tuple`, or a comparison on a register `heads` holds.
-  defp compared_heads({:test, :is_tagged_tuple, _f, [_src, _arity, tag]}, _path), do: atoms([tag])
+  # The atoms an instruction compares as the first element of the reason
+  # and of the reason's first element: the tag of an `is_tagged_tuple` of
+  # either, or a comparison on a register holding its first element.
+  defp compared_heads({:test, :is_tagged_tuple, _f, [src, _arity, tag]}, path),
+    do: headed(place(src, path), atoms([tag]))
 
+  # A comparison with a literal tuple headed by an atom compares that
+  # atom as the head of the tuple at the operand's place (`{{:shutdown,
+  # :removed}, _}` compares the reason's first element with the literal
+  # whole): taken as the clause's, over-approximated as `catch_tag` is.
   defp compared_heads({:test, op, _f, [a, b]}, path) when op in [:is_eq_exact, :is_ne_exact] do
     cond do
-      head?(a, path) -> atoms([b])
-      head?(b, path) -> atoms([a])
-      true -> []
+      head_of(a, path) != nil ->
+        headed(head_of(a, path), atoms([b]))
+
+      head_of(b, path) != nil ->
+        headed(head_of(b, path), atoms([a]))
+
+      literal_head(b) != nil and place(a, path) != nil ->
+        headed(place(a, path), [literal_head(b)])
+
+      literal_head(a) != nil and place(b, path) != nil ->
+        headed(place(b, path), [literal_head(a)])
+
+      true ->
+        {[], []}
     end
   end
 
-  defp compared_heads({:select_val, src, _f, {:list, pairs}}, path) do
-    if head?(src, path), do: atoms(Enum.take_every(pairs, 2)), else: []
+  defp compared_heads({:select_val, src, _f, {:list, pairs}}, path),
+    do: headed(head_of(src, path), atoms(Enum.take_every(pairs, 2)))
+
+  defp compared_heads(_instr, _path), do: {[], []}
+
+  defp literal_head({:literal, tuple}) when is_tuple(tuple) and tuple_size(tuple) > 0 do
+    case elem(tuple, 0) do
+      atom when is_atom(atom) and atom not in @classes and atom not in [true, false, nil] -> atom
+      _ -> nil
+    end
   end
 
-  defp compared_heads(_instr, _path), do: []
+  defp literal_head(_operand), do: nil
 
-  defp head?(operand, path) do
+  defp headed([], atoms), do: {atoms, []}
+  defp headed([0], atoms), do: {[], atoms}
+  defp headed(_place, _atoms), do: {[], []}
+
+  # Where in the reason the operand's value sits, or nil.
+  defp place(operand, path) do
     case reg(operand) do
-      nil -> false
-      r -> MapSet.member?(path.heads, r)
+      nil -> nil
+      r -> Map.get(path.paths, r)
+    end
+  end
+
+  # The tuple whose first element the operand holds, by its place in the
+  # reason, or nil.
+  defp head_of(operand, path) do
+    case place(operand, path) do
+      [_ | _] = at -> if List.last(at) == 0, do: Enum.drop(at, -1)
+      _ -> nil
     end
   end
 

@@ -25,7 +25,12 @@ defmodule Argus.Analyses.SingletonShapesTest do
       |> Enum.uniq()
       |> Enum.sort()
 
-  test "a peer call catching only :noproc is reported; :shutdown or a bare reason is not" do
+  # NoprocAndShutdown is phoenix_live_view#4359's child with a clause for
+  # `{:shutdown, _}` beside `:noproc`: the parent stops with
+  # `{:shutdown, {:redirect, _}}`, and the call exits
+  # `{{:shutdown, _}, _}`, which neither clause takes. It was pinned quiet
+  # while the catch facts could not tell the two shapes apart.
+  test "a peer call catching :noproc, or :noproc and the bare :shutdown, is reported; a bare reason is not" do
     skip_without_souffle()
 
     {:ok, r} =
@@ -34,8 +39,10 @@ defmodule Argus.Analyses.SingletonShapesTest do
         :blocking
       )
 
-    assert rows(r, "partial_noproc_catch") ==
-             ["Argus.Test.Fixtures.CatchShapes.NoprocOnly:sync_with_parent/1"]
+    assert rows(r, "partial_noproc_catch") == [
+             "Argus.Test.Fixtures.CatchShapes.NoprocAndShutdown:sync_with_parent/1",
+             "Argus.Test.Fixtures.CatchShapes.NoprocOnly:sync_with_parent/1"
+           ]
   end
 
   test "a clause that takes every tuple reason covers a peer that stops mid-call" do

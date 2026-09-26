@@ -89,6 +89,10 @@ defmodule Argus.Test.Fixtures.CatchShapes do
 
   defmodule NoprocAndShutdown do
     @moduledoc false
+    # phoenix_live_view#4359's child with a clause for `{:shutdown, _}`:
+    # that takes the parent's bare :shutdown stop, but the parent stops
+    # with `{:shutdown, {:redirect, _}}`, and the call exits
+    # `{{:shutdown, _}, _}`. Reported.
     use GenServer
 
     def start_link(parent), do: GenServer.start_link(__MODULE__, parent)
