@@ -110,6 +110,25 @@ defmodule Argus.Schema.CallValues do
         """
       },
       %{
+        name: :mfa_arg,
+        layer: 2,
+        fields: [
+          {:id, :symbol, "instruction ID of the call"},
+          {:caller, :symbol, "calling function ID"},
+          {:callee, :symbol, "called function ID"},
+          {:pos, :number, "0-based position of the module argument"},
+          {:mod, :symbol, "the module, inspected as function_def spells it"},
+          {:target, :symbol, "the function the three name, `Mod:fun/arity`"}
+        ],
+        doc: """
+        A call into a function of the program is handed, at positions `pos`, \
+        `pos + 1` and `pos + 2`, a literal module, a literal function name \
+        and a list whose length is known on every path: an MFA, named as \
+        function_def names a function. What a wrapper around an rpc \
+        (rpc_mfa_param) runs, keyed on the site a finding points at.
+        """
+      },
+      %{
         name: :infinity_arg,
         layer: 2,
         fields: [

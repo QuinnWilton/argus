@@ -25,6 +25,10 @@ defmodule Argus.Extractors.CallArgs do
 
   - `infinity_arg(caller, callee, arg_pos)` when the argument is the
     literal `:infinity`, at any position: a timeout a wrapper hands on.
+  - `mfa_arg(id, caller, callee, pos, mod, target)` when a call into a
+    function of the program is handed a literal module, a literal
+    function name and a list of known length at three positions in a
+    row: the MFA a wrapper around an rpc runs, by site.
 
   Only the first 4 arguments (positions 0–3) are resolved per call
   site. Module/table/server references sit in the first few positions
@@ -44,6 +48,9 @@ defmodule Argus.Extractors.CallArgs do
   import Argus.Extractor.Identity, only: [key_identity: 3, tuple_element_identity: 5]
   import Argus.Extractor.Resolve, only: [resolve_register: 3, resolve_to_arg_or_atom: 3]
 
+  alias Argus.Extractor.Resolve
+  alias Argus.Extractor.Runtime
+  alias Argus.InstrId
   alias Argus.Pipeline.Normalize
 
   @max_args 4
@@ -57,7 +64,8 @@ defmodule Argus.Extractors.CallArgs do
       :call_arg_field,
       :call_arg_forward,
       :call_arg_tuple,
-      :infinity_arg
+      :infinity_arg,
+      :mfa_arg
     ]
 
   @impl true
@@ -65,8 +73,40 @@ defmodule Argus.Extractors.CallArgs do
   def extract(module_data) do
     each_call(module_data, %{}, fn facts, ctx, {callee_mod, callee_func, arity} ->
       callee_id = Normalize.func_id(callee_mod, callee_func, arity)
-      emit_call_args(facts, ctx, callee_id, arity)
+
+      facts
+      |> emit_call_args(ctx, callee_id, arity)
+      |> emit_mfa_args(ctx, callee_mod, callee_id, arity)
     end)
+  end
+
+  # A module, a function name and an argument list, literal and in a row,
+  # handed to a function of the program: `Rpc.call(node, M, :f, [a, b])`.
+  # Every position, not the first four alone: an rpc wrapper's node and
+  # options come first and last.
+  defp emit_mfa_args(facts, ctx, callee_mod, callee_id, arity) do
+    if arity < 3 or Runtime.module?(callee_mod) do
+      facts
+    else
+      Enum.reduce(0..(arity - 3)//1, facts, fn pos, acc ->
+        with {:ok, mod} when is_atom(mod) and mod not in [nil, :dynamic] <-
+               resolve_register(ctx.instrs, ctx.idx, {:x, pos}),
+             {:ok, fun} when is_atom(fun) and fun not in [nil, :dynamic] <-
+               resolve_register(ctx.instrs, ctx.idx, {:x, pos + 1}),
+             n when is_integer(n) <- Resolve.list_length(ctx.instrs, ctx.idx, {:x, pos + 2}) do
+          add_fact(acc, :mfa_arg, [
+            InstrId.mint(ctx.func_id, ctx.idx),
+            ctx.func_id,
+            callee_id,
+            to_string(pos),
+            inspect(mod),
+            Normalize.func_id(mod, fun, n)
+          ])
+        else
+          _ -> acc
+        end
+      end)
+    end
   end
 
   defp emit_call_args(facts, ctx, callee_id, arity) do

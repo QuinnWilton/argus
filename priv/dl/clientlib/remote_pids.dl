@@ -1,0 +1,101 @@
+// A pid that may be another node's, and the BIFs that raise on one.
+//
+// A cluster-wide registry answers with whichever node's process holds a
+// name, a process group with every node's members, and `:global` calls
+// a conflict resolver with the two pids that hold one name on two
+// nodes: Argus.Extractors.PidFlow names each such call a `remote`
+// source (pid_remote). A handful of BIFs act on a process of this node
+// only — is_process_alive/1 (Process.alive?/1), process_info/1,2
+// (Process.info/1,2), garbage_collect, suspend_process, resume_process —
+// and raise badarg when handed another node's pid (pid_probe, which
+// leaves out a probe a test of `node(pid)` guards).
+//
+// Followed the way process points-to follows a pid to its use
+// (processes.dl): within a function by PidFlow's values, into a
+// callee's result through what the callee returns, and from a helper's
+// parameter to each caller, where the pid is known — a probe of a
+// helper's parameter (or of a field of it) is the caller's, anchored at
+// its call into the helper, since the helper alone cannot say where its
+// pid came from. A pid kept in a term the function did not build (a
+// server's state, a message) and read back elsewhere is not followed,
+// nor is a list of such pids handed to a helper that walks it: both
+// err quiet.
+//
+// Prerequisites: include clientlib/imports.dl and behaviours.dl (otp.dl
+// includes it) before this file.
+
+// The call at `origin` answers with, or hands a fun of the program, a
+// pid that may be another node's; `api` spells it and `kind` says why:
+// `lookup` (a registry or a group answers with whichever node's pid) or
+// `resolver` (a conflict resolver is handed the two holders of a name,
+// on two nodes: one of them is always another node's).
+.decl remote_origin(origin: symbol, api: symbol, kind: symbol)
+
+remote_origin(s, api, "resolver") :-
+  pid_remote(s, _, api),
+  (api = ":global.register_name/3" ; api = ":global.re_register_name/3").
+
+remote_origin(s, api, "lookup") :-
+  pid_remote(s, _, api),
+  api != ":global.register_name/3",
+  api != ":global.re_register_name/3".
+
+// syn calls the event handler of a scope with the `{pid, meta, time}` of
+// each holder of a name registered on two nodes (syn 3's
+// resolve_registry_conflict/4); the origin is the callback itself.
+.decl syn_resolver(func: symbol)
+
+syn_resolver(f) :-
+  behaves_as(m, ":syn_event_handler"),
+  function_def(f, m, "resolve_registry_conflict", 4, _).
+
+remote_origin(f, "syn resolve_registry_conflict/4", "resolver") :- syn_resolver(f).
+
+// `func`'s value (src_kind, src) may be another node's pid, from `origin`.
+.decl remote_value(func: symbol, src_kind: symbol, src: symbol, origin: symbol)
+
+remote_value(f, "remote", s, s) :- pid_remote(s, f, _).
+
+// A parameter the runtime fills with one: a resolver's pids, the
+// element a fun is run on (pid_arg's `resolver` and `element` rows).
+remote_value(g, "param", k, o) :- pid_arg(_, _, g, k, via, "remote", o), via != "call".
+
+remote_value(f, "load", l, f) :- syn_resolver(f), pid_load(f, l, "{0}", "param", "2").
+remote_value(f, "load", l, f) :- syn_resolver(f), pid_load(f, l, "{0}", "param", "3").
+
+// A callee's result: what the callee returns.
+remote_value(f, "result", c, o) :- pid_result(c, f, g), returns_remote(g, o).
+
+.decl returns_remote(func: symbol, origin: symbol)
+
+returns_remote(g, o) :- pid_return(g, sk, s), remote_value(g, sk, s, o).
+
+// A probe of a function's parameter, or of a field of it, lifted to
+// every caller that forwards its own parameter there.
+.decl probes_param(func: symbol, pos: symbol, site: symbol)
+
+probes_param(g, k, id) :- pid_probe(id, g, _, "param", k).
+probes_param(f, j, id) :- pid_arg(_, f, g, k, "call", "param", j), probes_param(g, k, id).
+
+.decl probes_field(func: symbol, pos: symbol, sel: symbol, site: symbol)
+
+probes_field(g, k, sel, id) :- pid_probe(id, g, _, "load", l), pid_load(g, l, sel, "param", k).
+probes_field(f, j, sel, id) :- pid_arg(_, f, g, k, "call", "param", j), probes_field(g, k, sel, id).
+
+// `func` hands the probe at `site` a pid that may be another node's,
+// from `origin`: at the probe itself (`anchor` = `site`), or through its
+// call into a helper at `anchor`.
+.decl remote_probe(func: symbol, anchor: symbol, site: symbol, origin: symbol)
+
+remote_probe(f, id, id, o) :- pid_probe(id, f, _, sk, s), remote_value(f, sk, s, o).
+
+remote_probe(f, a, id, o) :-
+  pid_arg(a, f, g, k, "call", sk, s),
+  probes_param(g, k, id),
+  remote_value(f, sk, s, o).
+
+remote_probe(f, a, id, o) :-
+  pid_arg(a, f, g, k, "call", "obj", t),
+  probes_field(g, k, sel, id),
+  pid_field(f, t, sel, sk, s),
+  remote_value(f, sk, s, o).

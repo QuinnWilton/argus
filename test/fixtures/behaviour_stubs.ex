@@ -17,6 +17,14 @@ defmodule Phoenix.LiveView do
   @optional_callbacks mount: 3, handle_params: 3, handle_event: 3, handle_info: 2, render: 1
 end
 
+defmodule Phoenix.LiveComponent do
+  @moduledoc false
+  @callback mount(term()) :: term()
+  @callback update(term(), term()) :: term()
+  @callback render(term()) :: term()
+  @optional_callbacks mount: 1, update: 2, render: 1
+end
+
 defmodule Phoenix.Channel do
   @moduledoc false
   @callback join(term(), term(), term()) :: term()
@@ -65,4 +73,19 @@ defmodule WebSock do
   @callback init(term()) :: term()
   @callback handle_in(term(), term()) :: term()
   @optional_callbacks init: 1, handle_in: 2
+end
+
+# syn 3's event handler: syn calls a scope's resolve_registry_conflict/4
+# with each holder of a name registered on two nodes.
+defmodule :syn_event_handler do
+  @moduledoc false
+  @callback resolve_registry_conflict(term(), term(), term(), term()) :: term()
+  @optional_callbacks resolve_registry_conflict: 4
+end
+
+# A Broadway producer's own callbacks, beside GenStage's.
+defmodule Broadway.Producer do
+  @moduledoc false
+  @callback prepare_for_draining(term()) :: term()
+  @optional_callbacks prepare_for_draining: 1
 end

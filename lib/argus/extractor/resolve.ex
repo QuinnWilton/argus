@@ -401,6 +401,38 @@ defmodule Argus.Extractor.Resolve do
     end)
   end
 
+  @doc """
+  Every write that may have made the value in `register` at `idx`, copies
+  followed to what they copied: `{:param, k}` or the writer's index,
+  sorted. Unlike the other walks here a join keeps every arm, so two
+  operands with a writer in common may hold the same value, and two with
+  none cannot: how a test on `node(pid)` is known to be about the pid a
+  later call is handed (`Argus.Extractors.PidFlow`).
+  """
+  @spec writers([term()], non_neg_integer(), register()) :: [
+          {:param, non_neg_integer()} | non_neg_integer()
+        ]
+  def writers(instrs, idx, register) do
+    walk(fn -> instrs |> written(idx, Instr.register(register)) |> Enum.uniq() |> Enum.sort() end)
+  end
+
+  defp written(instrs, idx, reg) do
+    step({:writers, idx, reg}, [], fn ->
+      instrs
+      |> Reaching.sources(idx, reg)
+      |> Enum.flat_map(fn
+        {:param, _k} = param ->
+          [param]
+
+        at ->
+          case Instr.copy_source(Reaching.at(instrs, at), reg) do
+            {kind, _} = source when kind in [:x, :y] -> written(instrs, at, source)
+            _ -> [at]
+          end
+      end)
+    end)
+  end
+
   @typedoc """
   Where a value was read from: `{source, root, path}` — see `access_paths/4`.
   """

@@ -84,6 +84,44 @@ defmodule Argus.Schema.Distribution do
         """
       },
       %{
+        name: :rpc_callee,
+        layer: 2,
+        fields: [
+          {:id, :symbol, "the rpc_call instruction ID"},
+          {:func, :symbol, "containing function ID"},
+          {:mod, :symbol, "the remote module, inspected as function_def spells it"},
+          {:callee, :symbol, "the remote function's ID, `Mod:fun/arity`"}
+        ],
+        doc: """
+        The function an rpc_call runs on the other node, when its module and \
+        name are literal atoms and its argument list's length is known on \
+        every path (its cons cells counted, their values not needed): the \
+        MFA, joinable with function_def. rpc_target spells the same call \
+        for a reader; this names the function.
+        """
+      },
+      %{
+        name: :rpc_mfa_param,
+        layer: 2,
+        fields: [
+          {:id, :symbol, "the rpc_call instruction ID"},
+          {:func, :symbol,
+           "the function whose parameters the three are: the rpc's own, or the " <>
+             "one that built the closure the rpc is in"},
+          {:pos, :number,
+           "0-based position of the module parameter; the function's is pos + 1, the arguments' pos + 2"}
+        ],
+        doc: """
+        An rpc_call whose module, function and argument list are three \
+        parameters in a row of `func` on every path: a wrapper that runs \
+        whatever MFA its callers hand it (`Rpc.call(node, mod, fun, args, \
+        opts)`). In a closure, the three are variables captured from the \
+        function that built it, followed to that function's parameters \
+        (`:timer.tc(fn -> :erpc.call(node, mod, fun, args) end)`); a closure \
+        built in two places is not followed.
+        """
+      },
+      %{
         name: :global_register,
         layer: 2,
         fields: [

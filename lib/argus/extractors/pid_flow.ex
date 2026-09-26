@@ -252,6 +252,84 @@ defmodule Argus.Extractors.PidFlow do
     {:maps, :put, 3} => {2, 0, 1}
   }
 
+  # Calls whose answer may be a pid of another node, and how it holds
+  # them: the pid itself, a `{pid, meta}` pair, or a list of either. A
+  # cluster-wide registry answers with whichever node's process holds
+  # the name, and a process group with every node's members.
+  @remote_answers %{
+    {:global, :whereis_name, 1} => :pid,
+    {:syn, :whereis, 1} => :pid,
+    {:syn, :whereis_name, 1} => :pid,
+    {:syn, :lookup, 2} => :pair,
+    {:syn, :members, 2} => :pairs,
+    {:syn, :get_members, 1} => :list,
+    {:pg, :get_members, 1} => :list,
+    {:pg, :get_members, 2} => :list,
+    {:pg2, :get_members, 1} => :list,
+    {Horde.Registry, :whereis_name, 1} => :pid,
+    {Horde.Registry, :lookup, 2} => :pairs,
+    {Swarm, :whereis_name, 1} => :pid,
+    {Swarm, :members, 1} => :list
+  }
+
+  # The `{:via, registry, name}` registries that span nodes.
+  @remote_registries [:global, :syn, Horde.Registry, Swarm]
+
+  # BIFs that act on a process of this node only, and raise badarg when
+  # handed a pid of another: the pid is in x0.
+  @probes [
+    {:erlang, :is_process_alive, 1},
+    {Process, :alive?, 1},
+    {:erlang, :process_info, 1},
+    {:erlang, :process_info, 2},
+    {Process, :info, 1},
+    {Process, :info, 2},
+    {:erlang, :garbage_collect, 1},
+    {:erlang, :garbage_collect, 2},
+    {:erlang, :suspend_process, 1},
+    {:erlang, :suspend_process, 2},
+    {:erlang, :resume_process, 1},
+    {:erlang, :process_display, 2}
+  ]
+
+  # Library calls that run a fun on each element of a list: {list
+  # position, fun position}. The fun's first parameter is the element.
+  @element_calls %{
+    {Enum, :each, 2} => {0, 1},
+    {Enum, :map, 2} => {0, 1},
+    {Enum, :filter, 2} => {0, 1},
+    {Enum, :reject, 2} => {0, 1},
+    {Enum, :find, 2} => {0, 1},
+    {Enum, :any?, 2} => {0, 1},
+    {Enum, :all?, 2} => {0, 1},
+    {Enum, :count, 2} => {0, 1},
+    {Enum, :flat_map, 2} => {0, 1},
+    {Enum, :split_with, 2} => {0, 1},
+    {Enum, :group_by, 2} => {0, 1},
+    {Enum, :sort_by, 2} => {0, 1},
+    {Enum, :reduce, 3} => {0, 2},
+    {Enum, :map_reduce, 3} => {0, 2},
+    {Enum, :flat_map_reduce, 3} => {0, 2},
+    {:lists, :foreach, 2} => {1, 0},
+    {:lists, :map, 2} => {1, 0},
+    {:lists, :filter, 2} => {1, 0},
+    {:lists, :filtermap, 2} => {1, 0},
+    {:lists, :flatmap, 2} => {1, 0},
+    {:lists, :partition, 2} => {1, 0},
+    {:lists, :any, 2} => {1, 0},
+    {:lists, :all, 2} => {1, 0},
+    {:lists, :foldl, 3} => {2, 0},
+    {:lists, :foldr, 3} => {2, 0}
+  }
+
+  # Library calls that hand back their list argument's elements in
+  # another order.
+  @reorders [{Enum, :reverse, 1}, {:lists, :reverse, 1}, {Enum, :sort, 1}, {Enum, :uniq, 1}]
+
+  # The registrations that take a conflict resolver: `:global` calls it
+  # with the name and the two pids that hold it, on two nodes.
+  @resolver_registrations [{:global, :register_name, 3}, {:global, :re_register_name, 3}]
+
   @tail_ops [:call_only, :call_last, :call_ext_only, :call_ext_last]
 
   # A synchronous call returns what the server's handle_call/3 replies.
@@ -279,6 +357,8 @@ defmodule Argus.Extractors.PidFlow do
       :pid_base,
       :pid_sets,
       :pid_load,
+      :pid_remote,
+      :pid_probe,
       :table_alloc,
       :table_use
     ]
@@ -308,7 +388,9 @@ defmodule Argus.Extractors.PidFlow do
               instrs: instrs,
               reads: Map.get(reads, func_id, %{}),
               sites: Map.get(sites, func_id, %{}),
-              spawns: Map.get(spawns, func_id, %{})
+              spawns: Map.get(spawns, func_id, %{}),
+              # Read only where a probe asks what guards it.
+              cfg: fn -> Helpers.cfg(module_data, name, arity) end
             }
 
             function_facts(acc, fun)
@@ -736,7 +818,152 @@ defmodule Argus.Extractors.PidFlow do
 
   # ── Calls ────────────────────────────────────────────────────────────
 
+  # A call whose answer may be a pid of another node holds, beside what
+  # the call is otherwise known to answer, the `remote` source of its
+  # site: in the shape the answer takes.
   defp call(ctx, %{mfa: mfa, instrs: instrs} = site, r) do
+    r = plain_call(ctx, site, r)
+
+    cond do
+      shape = remote_answer(instrs, ctx.idx, mfa) ->
+        remote_result(ctx, shape, r)
+
+      mfa in @reorders ->
+        reordered(ctx, r)
+
+      true ->
+        r
+    end
+  end
+
+  # A list handed back in another order holds the same elements: of them,
+  # only a pid of another node is carried (`remote_elements/2`), so what
+  # points-to follows is unchanged.
+  defp reordered(ctx, r) do
+    case ctx |> val({:x, 0}) |> elements(ctx, %{}) |> Enum.filter(&match?({:remote, _}, &1)) do
+      [] ->
+        r
+
+      remote ->
+        {list, r} = remote_list(ctx, MapSet.new(remote), r)
+        %{r | writes: add_to_write(r.writes, "x0", list)}
+    end
+  end
+
+  defp remote_answer(instrs, idx, mfa) do
+    case Map.fetch(@remote_answers, mfa) do
+      {:ok, shape} -> shape
+      :error -> remote_answer_of(instrs, idx, mfa)
+    end
+  end
+
+  # GenServer.whereis/1 of a cluster-wide name, and the callers a Task or
+  # an erpc'd process carries, which may be on the node that started it.
+  defp remote_answer_of(instrs, idx, {GenServer, :whereis, 1}) do
+    case Resolve.resolve_register(instrs, idx, {:x, 0}) do
+      {:ok, {:global, _}} -> :pid
+      {:ok, {:via, registry, _}} when registry in @remote_registries -> :pid
+      _ -> nil
+    end
+  end
+
+  defp remote_answer_of(instrs, idx, {mod, :get, arity})
+       when (mod == Process and arity in [1, 2]) or (mod == :erlang and arity == 1) do
+    case Resolve.resolve_register(instrs, idx, {:x, 0}) do
+      {:ok, :"$callers"} -> :list
+      _ -> nil
+    end
+  end
+
+  # A process's links: `{:links, pids}`, any of them another node's.
+  defp remote_answer_of(instrs, idx, {mod, :info, 2}) when mod == Process,
+    do: links_answer(instrs, idx)
+
+  defp remote_answer_of(instrs, idx, {:erlang, :process_info, 2}),
+    do: links_answer(instrs, idx)
+
+  defp remote_answer_of(_instrs, _idx, _mfa), do: nil
+
+  defp links_answer(instrs, idx) do
+    case Resolve.resolve_register(instrs, idx, {:x, 1}) do
+      {:ok, :links} -> :tagged_list
+      _ -> nil
+    end
+  end
+
+  defp remote_result(ctx, shape, r) do
+    remote = MapSet.new([{:remote, ctx.idx}])
+
+    {value, r} =
+      case shape do
+        :pid -> {remote, r}
+        :pair -> remote_pair(ctx, remote, r)
+        :list -> remote_list(ctx, remote, r)
+        :pairs -> remote_pairs(ctx, remote, r)
+        :tagged_list -> remote_tagged_list(ctx, remote, r)
+      end
+
+    %{r | writes: add_to_write(r.writes, "x0", value)}
+  end
+
+  # Objects at a site are keyed `idx` and `{idx, n}`: 1 is a start's
+  # inner pair; these take 2 and 3.
+  defp remote_pair(ctx, remote, r) do
+    pair = %{
+      shape: "tuple",
+      fields: %{"{0}" => remote},
+      base: MapSet.new(),
+      keys: MapSet.new(),
+      tag: "",
+      arity: 2
+    }
+
+    {obj_token({ctx.idx, 3}), object(r, {ctx.idx, 3}, pair)}
+  end
+
+  defp remote_list(ctx, element, r) do
+    list = %{
+      shape: "list",
+      fields: %{"[]" => element},
+      base: MapSet.new(),
+      keys: MapSet.new(),
+      tag: "",
+      arity: 0,
+      nil_tail: true
+    }
+
+    {obj_token({ctx.idx, 2}), object(r, {ctx.idx, 2}, list)}
+  end
+
+  # `{:links, pids}`: the list in the second element.
+  defp remote_tagged_list(ctx, remote, r) do
+    {list, r} = remote_list(ctx, remote, r)
+
+    tagged = %{
+      shape: "tuple",
+      fields: %{"{1}" => list},
+      base: MapSet.new(),
+      keys: MapSet.new(),
+      tag: "",
+      arity: 2
+    }
+
+    {obj_token({ctx.idx, 3}), object(r, {ctx.idx, 3}, tagged)}
+  end
+
+  defp remote_pairs(ctx, remote, r) do
+    {pair, r} = remote_pair(ctx, remote, r)
+    remote_list(ctx, pair, r)
+  end
+
+  defp add_to_write(writes, reg, value) do
+    case List.keyfind(writes, reg, 0) do
+      nil -> [{reg, value} | writes]
+      {^reg, old} -> List.keyreplace(writes, reg, 0, {reg, MapSet.union(old, value)})
+    end
+  end
+
+  defp plain_call(ctx, %{mfa: mfa, instrs: instrs} = site, r) do
     idx = ctx.idx
 
     cond do
@@ -1169,8 +1396,231 @@ defmodule Argus.Extractors.PidFlow do
     |> emit_send(at, ictx, mfa)
     |> emit_signal(at, ictx, mfa)
     |> emit_table(at, ictx, mfa)
+    |> emit_remote(at, mfa)
+    |> emit_probe(at, ictx, mfa)
+    |> emit_resolver(at, mfa)
+    |> emit_elements(at, ictx, mfa)
     |> emit_tail(at, ictx, site)
   end
+
+  # ── Pids of other nodes ──────────────────────────────────────────────
+  #
+  # A pid a cluster-wide registry or a process group answers with may be
+  # another node's, and a few BIFs act on a local process only. The
+  # `remote` source of a site is what such a call answered; these rows
+  # say where those sources come from and where a local-only BIF is
+  # handed a pid, and `clientlib/remote_pids.dl` joins the two. No
+  # process is allocated: the points-to rules resolve no `remote`
+  # source, so the stage's rows are the same with them or without them.
+
+  defp emit_remote(facts, at, mfa) do
+    case remote_answer(at.fun.instrs, at.idx, mfa) do
+      nil -> facts
+      _shape -> add_fact(facts, :pid_remote, [site(at.fun, at.idx), at.fun.func_id, spell(mfa)])
+    end
+  end
+
+  # A local-only BIF, handed a value that may be a pid of another node:
+  # one it looked up, a parameter, a callee's result or a field it read.
+  # A probe on the arm where a test found `node(pid)` equal to this node
+  # is left out: the program asked where the pid lives first.
+  defp emit_probe(facts, at, ictx, mfa) do
+    if mfa in @probes do
+      value =
+        ictx
+        |> val({:x, 0})
+        |> MapSet.filter(&match?({kind, _} when kind in [:remote, :param, :result, :load], &1))
+
+      if MapSet.size(value) == 0 or node_tested?(at.fun, at.idx) do
+        facts
+      else
+        sources(facts, at, :pid_probe, [site(at.fun, at.idx), at.fun.func_id, spell(mfa)], value)
+      end
+    else
+      facts
+    end
+  end
+
+  # Whether a test finding `node(p)` equal to another node, for a `p` that
+  # may be the pid in x0, decides that `idx` runs: `if node(pid) ==
+  # node()`, in a head or a body, with the probe on the arm where the two
+  # are equal (the pass edge of an equality test, the fail edge of an
+  # inequality). A probe on the other arm runs exactly when the pid is
+  # elsewhere, and one after the arms join runs either way: neither is
+  # guarded.
+  defp node_tested?(fun, idx) do
+    pid = MapSet.new(Resolve.writers(fun.instrs, idx, {:x, 0}))
+
+    with true <- MapSet.size(pid) > 0,
+         %Argus.Cfg.Function{} = cfg <- fun.cfg.(),
+         %{id: probe} <- Argus.Cfg.Function.block_at(cfg, idx) do
+      Enum.any?(0..(tuple_size(fun.code) - 1)//1, fn t ->
+        case node_test(fun, t, pid) do
+          nil -> false
+          equal -> on_arm?(cfg, t, equal, probe)
+        end
+      end)
+    else
+      _ -> false
+    end
+  end
+
+  # The test at `t` ends its block; its `equal` edge leads to a block that
+  # only that edge enters, and that block dominates the probe's.
+  defp on_arm?(cfg, t, equal, probe) do
+    with %{id: test, range: {_, ^t}, succs: succs} <- Argus.Cfg.Function.block_at(cfg, t),
+         [arm] <- for({to, ^equal} <- succs, do: to),
+         %{preds: [{^test, ^equal}]} <- Map.get(cfg.blocks, arm) do
+      Argus.Cfg.Function.dominates?(cfg, arm, probe)
+    else
+      _ -> false
+    end
+  end
+
+  # The edge on which a node test found the two nodes equal, or nil.
+  @node_tests %{
+    is_eq_exact: :branch_pass,
+    is_eq: :branch_pass,
+    is_ne_exact: :branch_fail,
+    is_ne: :branch_fail
+  }
+
+  defp node_test(fun, t, pid) do
+    with {:test, op, _fail, [_, _] = operands} <- elem(fun.code, t),
+         {:ok, equal} <- Map.fetch(@node_tests, op),
+         true <- Enum.any?(operands, &node_of?(fun, t, &1, pid)) do
+      equal
+    else
+      _ -> nil
+    end
+  end
+
+  defp node_of?(fun, t, operand, pid) do
+    case register(operand) do
+      {kind, _} = reg when kind in [:x, :y] ->
+        fun.instrs
+        |> Resolve.writers(t, reg)
+        |> Enum.any?(fn
+          at when is_integer(at) ->
+            case elem(fun.code, at) do
+              {:bif, :node, _fail, [arg], _dst} ->
+                not MapSet.disjoint?(MapSet.new(Resolve.writers(fun.instrs, at, arg)), pid)
+
+              _ ->
+                false
+            end
+
+          {:param, _k} ->
+            false
+        end)
+
+      _literal ->
+        false
+    end
+  end
+
+  # A conflict resolver: `:global` calls it with the name and the two
+  # pids that hold it, one of them on another node. Its second and third
+  # parameters are filled with the registration's `remote` source.
+  defp emit_resolver(facts, at, mfa) do
+    with true <- mfa in @resolver_registrations,
+         resolver when resolver != nil <- resolver(at.fun.instrs, at.idx) do
+      id = site(at.fun, at.idx)
+
+      facts
+      |> add_fact(:pid_remote, [id, at.fun.func_id, spell(mfa)])
+      |> add_fact(:pid_arg, [id, at.fun.func_id, resolver, "1", "resolver", "remote", id])
+      |> add_fact(:pid_arg, [id, at.fun.func_id, resolver, "2", "resolver", "remote", id])
+    else
+      _ -> facts
+    end
+  end
+
+  defp resolver(instrs, idx) do
+    case Resolve.fun_origin(instrs, idx, {:x, 2}) do
+      {:closure, {mod, name, arity}} ->
+        Normalize.func_id(mod, name, arity)
+
+      {:external, {mod, name, arity}} ->
+        if Runtime.module?(mod), do: nil, else: Normalize.func_id(mod, name, arity)
+
+      _ ->
+        nil
+    end
+  end
+
+  # A fun run on each element of a list that holds pids of other nodes:
+  # a closure or a function of the program is handed each as its first
+  # parameter; a local-only BIF captured as the fun is itself the probe,
+  # at this call.
+  defp emit_elements(facts, at, ictx, mfa) do
+    with {:ok, {list, fun}} <- Map.fetch(@element_calls, mfa),
+         [_ | _] = remote <- remote_elements(ictx, val(ictx, {:x, list})) do
+      id = site(at.fun, at.idx)
+
+      case Resolve.fun_origin(at.fun.instrs, at.idx, {:x, fun}) do
+        {:closure, {mod, name, arity}} ->
+          element_args(facts, at, Normalize.func_id(mod, name, arity), remote)
+
+        {:external, {mod, name, arity} = called} ->
+          cond do
+            called in @probes ->
+              emit_rows(facts, :pid_probe, [id, at.fun.func_id, spell(called)], remote)
+
+            Runtime.module?(mod) ->
+              facts
+
+            true ->
+              element_args(facts, at, Normalize.func_id(mod, name, arity), remote)
+          end
+
+        _ ->
+          facts
+      end
+    else
+      _ -> facts
+    end
+  end
+
+  defp element_args(facts, at, callee, remote) do
+    id = site(at.fun, at.idx)
+
+    Enum.reduce(remote, facts, fn {"remote", src}, acc ->
+      add_fact(acc, :pid_arg, [id, at.fun.func_id, callee, "0", "element", "remote", src])
+    end)
+  end
+
+  # The `remote` sources among the elements of the lists this function
+  # built or was answered with, as rows.
+  defp remote_elements(ictx, value) do
+    value
+    |> elements(ictx, %{})
+    |> Enum.flat_map(fn
+      {:remote, idx} -> [{"remote", site(ictx.fun, idx)}]
+      _ -> []
+    end)
+    |> Enum.uniq()
+    |> Enum.sort()
+  end
+
+  defp elements(value, ictx, seen) do
+    Enum.flat_map(value, fn
+      {:obj, key} ->
+        case {Map.has_key?(seen, key), Map.get(ictx.state.objs, key)} do
+          {false, %{shape: "list", fields: fields, base: tail}} ->
+            seen = Map.put(seen, key, true)
+            MapSet.to_list(Map.get(fields, "[]", MapSet.new())) ++ elements(tail, ictx, seen)
+
+          _ ->
+            []
+        end
+
+      _ ->
+        []
+    end)
+  end
+
+  defp spell({mod, fun, arity}), do: Exception.format_mfa(mod, fun, arity)
 
   # An ETS table is an object too, allocated by the `:ets.new/2` that made
   # it: the reference an unnamed table is, or the name a named table is
@@ -1486,6 +1936,9 @@ defmodule Argus.Extractors.PidFlow do
       {:reply, idx} ->
         [{"reply", site(ctx.fun, idx)}]
 
+      {:remote, idx} ->
+        [{"remote", site(ctx.fun, idx)}]
+
       {:name, name} ->
         [{"name", name}]
 
@@ -1516,6 +1969,7 @@ defmodule Argus.Extractors.PidFlow do
   defp emit_row(facts, :pid_field, row), do: add_fact(facts, :pid_field, row)
   defp emit_row(facts, :pid_base, row), do: add_fact(facts, :pid_base, row)
   defp emit_row(facts, :pid_load, row), do: add_fact(facts, :pid_load, row)
+  defp emit_row(facts, :pid_probe, row), do: add_fact(facts, :pid_probe, row)
   defp emit_row(facts, :table_use, row), do: add_fact(facts, :table_use, row)
 
   # ── Names ────────────────────────────────────────────────────────────

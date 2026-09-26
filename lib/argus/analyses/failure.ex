@@ -23,6 +23,27 @@ defmodule Argus.Analyses.Failure do
     exit to a process known only as a value is `:info`), names the child
     as `target`, and its supervisor (`exit_target_owner`) is a related
     frame.
+  - `remote_pid_probe(func, anchor, site, bif, api, kind)` — a BIF that
+    acts on a local process only (`Process.alive?/1`, `Process.info/1,2`
+    and their Erlang forms, `garbage_collect/1,2`, `suspend_process`,
+    `resume_process`) handed a pid that may be another node's: one a
+    cluster-wide registry or process group answered (`kind` `lookup`,
+    `:warning`), or one `:global` or syn hands a conflict resolver, one
+    of two holders of a name on two nodes (`resolver`, `:error`). It
+    raises badarg there. A test of `node(pid)` that decides every path to
+    the BIF, or a try around it (or around the call into its helper) that
+    takes the ArgumentError, clears it (`clientlib/remote_pids.dl`).
+  - `rpc_undefined(func, anchor, site, callee, why)` — an rpc to a
+    function of one of the program's modules that the module does not
+    export (`why` `missing` or `private`): its literal module, name and
+    argument list, or those a caller hands a wrapper around the rpc
+    (`clientlib/rpc_targets.dl`). Every call raises undef on the remote
+    node (`:error`).
+  - `resource_dropped(func, site, api, drop)` — a file, socket or port
+    the call at `site` opens and some path that returns loses at `drop`,
+    having only read, written or sent on it: never closed, returned,
+    stored or handed to another function (`Argus.Extractors.Handles`).
+    The opening process keeps it until it exits (`:warning`).
   - `inconsistent_handling(func, site, callee, belief, agree, deviate, target, raises, cover, caught)` —
     a call site that breaks with the program's own convention for its
     callee: `belief` is `result_checked` (a clear majority of the sites
@@ -83,7 +104,9 @@ defmodule Argus.Analyses.Failure do
       # Which named table a process owns and which rows it seeds: an ETS
       # call its arguments say cannot fail takes no part in a belief.
       Argus.Extractors.ETS,
-      Argus.Extractors.Tooling
+      Argus.Extractors.Tooling,
+      # Files, sockets and ports a function opens and loses on a path.
+      Argus.Extractors.Handles
     ]
 
   @impl true
@@ -196,6 +219,50 @@ defmodule Argus.Analyses.Failure do
         doc:
           "A process nothing supervises: a bare spawn, a proc_lib start that outlives " <>
             "its ack, or an exit signal past the supervisor."
+      },
+      %{
+        name: :remote_pid_probe,
+        fields: [
+          {:func, :symbol, "the function holding the pid that may be another node's"},
+          {:anchor, :symbol, "the BIF's call, or func's call into the helper that makes it"},
+          {:site, :symbol, "the local-only BIF's call"},
+          {:bif, :symbol, "the BIF, as :erlang.is_process_alive/1 spells it"},
+          {:api, :symbol,
+           "where the pid came from: the lookup that answered it, or the registration " <>
+             "whose conflict resolver is handed it"},
+          {:kind, :symbol, "lookup | resolver"}
+        ],
+        key: [:func, :anchor],
+        doc:
+          "A BIF that acts on a local process only, handed a pid that may be another " <>
+            "node's: it raises badarg there."
+      },
+      %{
+        name: :rpc_undefined,
+        fields: [
+          {:func, :symbol, "the function naming the remote function"},
+          {:anchor, :symbol, "the rpc, or func's call into the wrapper that makes it"},
+          {:site, :symbol, "the rpc"},
+          {:callee, :symbol, "the remote function, Mod:fun/arity"},
+          {:why, :symbol, "missing (no such function at that arity) | private"}
+        ],
+        key: [:func, :anchor, :callee],
+        doc:
+          "An rpc to a function of the program's own module that the module does not " <>
+            "export: undef on every call."
+      },
+      %{
+        name: :resource_dropped,
+        fields: [
+          {:func, :symbol, "the function that opens the handle"},
+          {:site, :symbol, "the call that opens it"},
+          {:api, :symbol, "the opening call, as :file.open/2 spells it"},
+          {:drop, :symbol, "where some path that goes on to return loses it"}
+        ],
+        key: [:func, :site],
+        doc:
+          "A file, socket or port a function opens and loses on some path, " <>
+            "without closing it or handing it on."
       },
       %{
         name: :exit_target_owner,
@@ -405,6 +472,98 @@ defmodule Argus.Analyses.Failure do
     )
   end
 
+  def finding(:remote_pid_probe, [func, anchor, site, bif, api, kind]) do
+    # A resolver is handed the two holders of one name, on two nodes: the
+    # program runs the BIF on another node's pid whenever it resolves a
+    # conflict. A lookup's pid is another node's only when the name's
+    # holder (or a group's member) lives there, which the cluster decides.
+    {severity, whose} =
+      case kind do
+        "resolver" ->
+          {:error,
+           "a pid #{api} hands its conflict resolver: the two processes that hold one " <>
+             "name on two nodes, so one of them is always another node's"}
+
+        _ ->
+          {:warning, "a pid #{api} answered: #{remote_answer(api)}"}
+      end
+
+    how = if anchor == site, do: "hands", else: "hands, through the helper it calls here,"
+
+    Findings.new(
+      severity,
+      "Local-only BIF on a pid that may be on another node",
+      "#{Findings.call_name(func)} #{how} #{bif} #{whose}. #{bif} acts on a process " <>
+        "of this node only: handed another node's pid it raises ArgumentError " <>
+        "(badarg), and nothing here takes it.",
+      at: Findings.at_site_in_func(anchor, func),
+      at_label: "may be handed another node's pid",
+      related:
+        if(anchor == site,
+          do: [],
+          else: [Findings.related("the local-only call", Findings.at_instr(site))]
+        ),
+      help: [
+        "test `node(pid) == node()` first, and ask another node's process with " <>
+          "`:erpc.call(node(pid), Process, :alive?, [pid])` or a monitor",
+        "or rescue the ArgumentError where a pid of another node is expected"
+      ]
+    )
+  end
+
+  def finding(:rpc_undefined, [func, anchor, site, callee, why]) do
+    name = Findings.call_name(callee)
+
+    {what, fix} =
+      case why do
+        "private" ->
+          {"#{name} is defined but private", "export it, or call a public function"}
+
+        _ ->
+          {"#{name} does not exist: the module defines no function of that name at that arity",
+           "name a function the module exports, with as many arguments as the list holds"}
+      end
+
+    through = if anchor == site, do: "", else: " through the rpc wrapper it calls here"
+
+    Findings.new(
+      :error,
+      "RPC to a function the module does not export",
+      "#{Findings.call_name(func)} runs #{name} on another node#{through}, and #{what}. " <>
+        "An rpc names its function with runtime values the compiler never checks, " <>
+        "so every call raises undef on the remote node: `{:badrpc, {:EXIT, {:undef, _}}}` " <>
+        "from :rpc, an ErlangError from :erpc.",
+      at: Findings.at_site_in_func(anchor, func),
+      at_label: "names a function the module does not export",
+      related:
+        if(anchor == site,
+          do: [],
+          else: [Findings.related("the rpc the wrapper makes", Findings.at_instr(site))]
+        ),
+      help: [fix]
+    )
+  end
+
+  def finding(:resource_dropped, [func, site, api, drop]) do
+    Findings.new(
+      :warning,
+      "File, socket or port lost on a path that never closes it",
+      "#{Findings.call_name(func)} opens a handle with #{api}, and on some path " <>
+        "that returns it is only used — read, written, sent on — and then " <>
+        "dropped: never closed, returned, stored or handed to another " <>
+        "function. The process that opened it keeps it until it exits, so a " <>
+        "long-lived process that runs this again and again (per request, per " <>
+        "reconnect, per retry) holds one more open descriptor each time.",
+      at: Findings.at_site_in_func(site, func),
+      at_label: "opened here",
+      related: [Findings.related("lost here, still open", Findings.at_instr(drop))],
+      help: [
+        "close it on every path: `try ... after` around its use, or a close " <>
+          "in each error branch"
+      ]
+    )
+  end
+
   def finding(:unchecked_result, [func, id, "Process.whereis", name]) do
     Findings.new(
       :warning,
@@ -417,6 +576,21 @@ defmodule Argus.Analyses.Failure do
       help: ["send to the registered name directly, or match nil explicitly"]
     )
   end
+
+  # Why a pid a call answered may be another node's.
+  defp remote_answer("Process.info/2"), do: "one of a process's links, which may cross nodes"
+  defp remote_answer(":erlang.process_info/2"), do: remote_answer("Process.info/2")
+
+  defp remote_answer("Process.get/" <> _),
+    do:
+      "one of the callers a process was started for, which a remote start leaves on another node"
+
+  defp remote_answer(":erlang.get/1"), do: remote_answer("Process.get/1")
+
+  defp remote_answer(_registry_or_group),
+    do:
+      "whichever node's process holds the name, or, for a group, any node's " <>
+        "member, so the pid is another node's whenever that node's process is the one"
 
   # A site the belief finds unguarded, said as it is: outside any try
   # ("none"), inside one whose handler takes other classes or nothing

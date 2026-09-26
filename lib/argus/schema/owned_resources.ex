@@ -68,6 +68,26 @@ defmodule Argus.Schema.OwnedResources do
             "process in the supervision tree."
       },
       %{
+        name: :handle_dropped,
+        layer: 2,
+        fields: [
+          {:id, :symbol, "instruction ID of the call that opens the handle"},
+          {:func, :symbol, "containing function ID"},
+          {:api, :symbol, "the opening call, as `:file.open/2` spells it"},
+          {:drop, :symbol, "the first instruction at which some path drops the handle"}
+        ],
+        doc: """
+        The file, socket or port the call at `id` opens is dropped on some \
+        path from it: no register holds it any more, or the function \
+        returns or tail-calls without it, and on the way it was only read, \
+        written, sent on or tested (Argus.Extractors.Handles) — not closed, \
+        returned, stored, sent or handed to any other call. A path on which \
+        the `{:ok, handle}` answer was never taken apart (its `{:error, _}` \
+        arm) owns no handle, and a path that raises drops nothing. The \
+        process that opened it owns it until it exits.
+        """
+      },
+      %{
         name: :socket_active,
         layer: 2,
         fields: [

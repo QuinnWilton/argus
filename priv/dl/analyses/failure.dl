@@ -4,7 +4,10 @@
 // every exception, a remote call whose failure value nothing matches,
 // a start result discarded, a lookup used without its nil case, a
 // process spawned with nothing watching it, an exit signal sent from a
-// callback past the supervisor that owns the target.
+// callback past the supervisor that owns the target; and failures the
+// code makes certain: a local-only BIF handed another node's pid, an
+// rpc to a function its module does not export, a handle an error path
+// loses.
 
 .include "../clientlib/imports.dl"
 .include "../clientlib/otp.dl"
@@ -12,15 +15,18 @@
 .include "../clientlib/signals.dl"
 .include "../clientlib/specs.dl"
 .include "../clientlib/vocabulary.dl"
+.include "../clientlib/remote_pids.dl"
+.include "../clientlib/rpc_targets.dl"
 .include "../clientlib/tooling.dl"
 
 // A finding in code only developers' tools or tests run steps down a
 // level (clientlib/tooling.dl, Argus.Findings.Tooling).
 .output tooling
 
-// ══ The three outputs ═══════════════════════════════════════════════
+// ══ The outputs ═════════════════════════════════════════════════════
 //
-// A failure the code could have seen and did not, in three shapes:
+// A failure the code could have seen and did not, in these shapes (the
+// ones another node and a lost handle make follow them):
 //
 // `unhandled_failure(func, site, kind, shape)` — a failure value or
 //   exception that nothing takes. `kind` is "rescue" (a catch-all rescue
@@ -52,6 +58,66 @@
 
 .decl inconsistent_handling(func: symbol, site: symbol, callee: symbol, belief: symbol, agree: number, deviate: number, target: symbol, raises: symbol, cover: symbol, caught: symbol)
 .output inconsistent_handling
+
+// ══ Another node ════════════════════════════════════════════════
+//
+// Two defects a cluster shows and a single node never does: a BIF that
+// acts on a local process only, handed another node's pid, and an rpc
+// to a function the program's module does not export.
+
+// `remote_pid_probe(func, anchor, site, bif, api, kind)` — a BIF that
+//   acts on a local process only (`bif` at `site`), handed a pid that
+//   may be another node's: one `api` answered (`kind` = "lookup": a
+//   cluster-wide registry or a process group), or one a conflict
+//   resolver is handed (`kind` = "resolver"). `anchor` is the site the
+//   finding points at: the BIF's call, or `func`'s call into the helper
+//   that makes it.
+.decl remote_pid_probe(func: symbol, anchor: symbol, site: symbol, bif: symbol, api: symbol, kind: symbol)
+.output remote_pid_probe
+
+// A try around the BIF, or around the call into its helper, that takes
+// the ArgumentError it raises and goes on (site_takes_argument_error: a
+// rescue of ArgumentError or of every error that does not re-raise, or
+// Erlang's `catch`) handles the other node's pid.
+remote_pid_probe(f, a, id, bif, api, kind) :-
+  remote_probe(f, a, id, o),
+  pid_probe(id, g, bif, _, _),
+  remote_origin(o, api, kind),
+  !site_takes_argument_error(id, g),
+  !site_takes_argument_error(a, f).
+
+// `rpc_undefined(func, anchor, site, callee, why)` — the rpc at `site`
+//   runs `callee`, a function of one of the program's modules that the
+//   module does not export (`why` = "missing": no such function at that
+//   arity; "private": defined but not exported). `anchor` is the rpc, or
+//   `func`'s call into the wrapper that makes it.
+.decl rpc_undefined(func: symbol, anchor: symbol, site: symbol, callee: symbol, why: symbol)
+.output rpc_undefined
+
+// The module's beam is the program's, so what it exports is known: the
+// same release runs on the other node.
+rpc_undefined(f, a, id, g, "missing") :-
+  rpc_runs(f, a, id, m, g),
+  program_module(m),
+  !function_def(g, _, _, _, _).
+
+rpc_undefined(f, a, id, g, "private") :-
+  rpc_runs(f, a, id, m, g),
+  program_module(m),
+  function_def(g, m, _, _, 0).
+
+// ══ A handle lost on an error path ══════════════════════════════
+
+// `resource_dropped(func, site, api, drop)` — the file, socket or port
+//   the call at `site` (`api`) opens is lost at `drop` on some path that
+//   returns: only read, written, sent on or tested on the way, never
+//   closed, returned, stored or handed on (handle_dropped,
+//   Argus.Extractors.Handles). The process that opened it holds it
+//   until it exits.
+.decl resource_dropped(func: symbol, site: symbol, api: symbol, drop: symbol)
+.output resource_dropped
+
+resource_dropped(f, id, api, d) :- handle_dropped(id, f, api, d).
 
 // ── Swallowed errors ─────────────────────────────────────────────
 

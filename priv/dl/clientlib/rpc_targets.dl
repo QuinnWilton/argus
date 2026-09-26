@@ -1,0 +1,35 @@
+// What an rpc runs on the other node, by site.
+//
+// An rpc names its remote function with three runtime values — module,
+// function name, argument list — which the compiler never checks: a
+// misspelt name, a function since removed or made private, or one
+// argument too many is an `undef` on every call, raised on the remote
+// node and handed back as `{:badrpc, {:EXIT, {:undef, _}}}` or an
+// ErlangError. Where the three are literals the site names its function
+// (rpc_callee). A wrapper around an rpc — for telemetry, a timeout
+// default, a node choice — takes them as parameters (rpc_mfa_param,
+// through a closure it builds too) and runs whatever its callers hand
+// it (mfa_arg); a wrapper that forwards the three to another in the same
+// positions is one too.
+//
+// Prerequisites: include clientlib/imports.dl before this file.
+
+// `func`'s parameters pos, pos + 1 and pos + 2 are the module, function
+// and argument list the rpc at `site` runs.
+.decl rpc_holder(func: symbol, pos: number, site: symbol)
+
+rpc_holder(w, p, id) :- rpc_mfa_param(id, w, p).
+
+rpc_holder(w, j, id) :-
+  rpc_holder(v, p, id),
+  call_arg_forward(w, v, p, j),
+  call_arg_forward(w, v, p + 1, j + 1),
+  call_arg_forward(w, v, p + 2, j + 2).
+
+// `func` runs `callee`, a function of module `mod`, on another node
+// through the rpc at `site`: its own (`anchor` = `site`), or a
+// wrapper's it hands the three at `anchor`.
+.decl rpc_runs(func: symbol, anchor: symbol, site: symbol, mod: symbol, callee: symbol)
+
+rpc_runs(f, id, id, m, g) :- rpc_callee(id, f, m, g).
+rpc_runs(f, a, id, m, g) :- mfa_arg(a, f, w, p, m, g), rpc_holder(w, p, id).

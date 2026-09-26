@@ -27,16 +27,18 @@ defmodule Argus.Extractors.ApiCalls do
   - `unsafe_atom_creation`, `unsafe_deserialization`, `unsafe_decompression`,
     `code_execution`
   - `port_open`
-  - `rpc_call`, `rpc_target`, `rpc_timeout_param`, `rpc_arity`, `global_register`, `global_op`,
+  - `rpc_call`, `rpc_target`, `rpc_timeout_param`, `rpc_arity`, `rpc_callee`,
+    `rpc_mfa_param`, `global_register`, `global_op`,
     `node_operation`,
     `distributed_store_op`
   """
 
   @behaviour Argus.Extractor
 
+  alias Argus.Extractor.Resolve
   alias Argus.InstrId
 
-  import Argus.Extractor.Helpers, only: [each_remote_call: 3]
+  import Argus.Extractor.Helpers, only: [each_remote_call: 3, register: 1]
   import Argus.Extractor.Facts, only: [add_fact: 3, track_dynamic: 5, track_imprecision: 4]
 
   import Argus.Extractor.Resolve,
@@ -288,7 +290,8 @@ defmodule Argus.Extractors.ApiCalls do
                  {mfa, :rpc_call, [:id, :func, {:const, variant}, timeout]},
                  {mfa, :rpc_target, [:id, target]},
                  {mfa, :rpc_timeout_param, [:id, {:timeout_param, timeout}]},
-                 {mfa, :rpc_arity, [:id, {:arity_of, target}]}
+                 {mfa, :rpc_arity, [:id, {:arity_of, target}]},
+                 {mfa, :rpc_callee, [:id, :func, {:callee_mod, target}, {:callee, target}]}
                ],
                do: row
          )
@@ -391,6 +394,8 @@ defmodule Argus.Extractors.ApiCalls do
       :port_open,
       :rpc_arity,
       :rpc_call,
+      :rpc_callee,
+      :rpc_mfa_param,
       :rpc_target,
       :rpc_timeout_param,
       :sup_call,
@@ -405,6 +410,8 @@ defmodule Argus.Extractors.ApiCalls do
   @impl true
   @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()
   def extract(module_data) do
+    parents = closure_parents(module_data)
+
     each_remote_call(module_data, %{}, fn facts, ctx, {mod, fun, arity} = mfa ->
       @by_mod_fun
       |> Map.get({mod, fun}, [])
@@ -413,7 +420,98 @@ defmodule Argus.Extractors.ApiCalls do
       |> Enum.reduce(facts, fn {_mfa, relation, columns}, acc ->
         emit(acc, ctx, mfa, relation, columns)
       end)
+      |> rpc_mfa_param(ctx, mfa, parents)
     end)
+  end
+
+  # ── An rpc's module, function and arguments, handed in ─────────────────
+  #
+  # A wrapper around an rpc (`Rpc.call(node, mod, fun, args, opts)`) runs
+  # whatever its callers hand it: its rpc names no target, but the three
+  # are its parameters, and each caller's literals say what runs
+  # (`mfa_arg`, clientlib/rpc_targets.dl). In a closure the wrapper builds
+  # (`:timer.tc(fn -> :erpc.call(node, mod, fun, args) end)`), the three
+  # are captured variables: followed to the parameters of the function
+  # that built it, within the module.
+
+  # The rpc forms whose target is three registers in a row: M, F, A.
+  @rpc_mfa_regs %{
+    {:rpc, :call, 4} => 1,
+    {:rpc, :call, 5} => 1,
+    {:rpc, :block_call, 4} => 1,
+    {:rpc, :block_call, 5} => 1,
+    {:rpc, :multicall, 5} => 1,
+    {:erpc, :call, 4} => 1,
+    {:erpc, :call, 5} => 1,
+    {:erpc, :multicall, 4} => 1,
+    {:erpc, :multicall, 5} => 1
+  }
+
+  defp rpc_mfa_param(facts, ctx, mfa, parents) do
+    with {:ok, m} <- Map.fetch(@rpc_mfa_regs, mfa),
+         {:ok, {holder, k}} <- holder_param(ctx.func_id, ctx.instrs, ctx.idx, {:x, m}, parents),
+         {:ok, {^holder, k1}} <-
+           holder_param(ctx.func_id, ctx.instrs, ctx.idx, {:x, m + 1}, parents),
+         {:ok, {^holder, k2}} <-
+           holder_param(ctx.func_id, ctx.instrs, ctx.idx, {:x, m + 2}, parents),
+         true <- k1 == k + 1 and k2 == k + 2 do
+      add_fact(facts, :rpc_mfa_param, [
+        InstrId.mint(ctx.func_id, ctx.idx),
+        holder,
+        to_string(k)
+      ])
+    else
+      _ -> facts
+    end
+  end
+
+  # Which parameter of which function the value in `reg` at `idx` is, on
+  # every path: `func`'s own, or — `func` being a closure — the variable
+  # its parent captured there, followed to the parent's parameter.
+  defp holder_param(func, instrs, idx, reg, parents) do
+    with {:ok, k} <- Resolve.arg_position(instrs, idx, reg) do
+      case Map.fetch(parents, func) do
+        {:ok, {parent, parent_instrs, at, first, env}} when k >= first ->
+          case register(Enum.at(env, k - first)) do
+            {kind, _} = captured when kind in [:x, :y] ->
+              holder_param(parent, parent_instrs, at, captured, parents)
+
+            _literal ->
+              :no
+          end
+
+        _ ->
+          {:ok, {func, k}}
+      end
+    end
+  end
+
+  # Every closure the module builds with a concrete MFA, and where: its
+  # parent, the parent's instructions, the make_fun3's index, the first
+  # parameter the environment fills and the environment's operands. A
+  # closure built in two places has no one parent, and is left out.
+  defp closure_parents(%{module: mod, functions: functions}) do
+    functions
+    |> Enum.flat_map(fn {:function, name, arity, _entry, instrs} ->
+      parent = InstrId.func_id(mod, name, arity)
+
+      instrs
+      |> Enum.with_index()
+      |> Enum.flat_map(fn
+        {{:make_fun3, {cmod, cname, carity}, _index, _uniq, _dst, {:list, env}}, at} ->
+          closure = InstrId.func_id(cmod, cname, carity)
+          [{closure, {parent, instrs, at, carity - length(env), env}}]
+
+        _ ->
+          []
+      end)
+    end)
+    |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
+    |> Enum.flat_map(fn
+      {closure, [site]} -> [{closure, site}]
+      _built_twice -> []
+    end)
+    |> Map.new()
   end
 
   defp arity_matches?(:any, _arity), do: true
@@ -530,6 +628,29 @@ defmodule Argus.Extractors.ApiCalls do
   end
 
   defp read({:arity_of, {:const, _}}, _ctx, _mfa, facts, _rel), do: {:skip, facts}
+
+  # The function an rpc runs, as a function ID, when its module and name
+  # are literal atoms and its argument list's length is known on every
+  # path (cons cells counted, their values not needed); the row is
+  # skipped otherwise. The forms that take a fun, or whose function is
+  # chosen at runtime (multicall's two shapes), name none.
+  defp read({:callee_mod, {:target, m, f}}, ctx, _mfa, facts, _rel) do
+    case rpc_callee(ctx, m, f) do
+      nil -> {:skip, facts}
+      {mod, _callee} -> {mod, facts}
+    end
+  end
+
+  defp read({:callee_mod, _target}, _ctx, _mfa, facts, _rel), do: {:skip, facts}
+
+  defp read({:callee, {:target, m, f}}, ctx, _mfa, facts, _rel) do
+    case rpc_callee(ctx, m, f) do
+      nil -> {:skip, facts}
+      {_mod, callee} -> {callee, facts}
+    end
+  end
+
+  defp read({:callee, _target}, _ctx, _mfa, facts, _rel), do: {:skip, facts}
 
   # Which of the function's parameters a timeout argument is, when it is
   # one on every path (a wrapper's `timeout \\ :infinity`): the rules
@@ -669,6 +790,18 @@ defmodule Argus.Extractors.ApiCalls do
     do: if(List.ascii_printable?(name), do: List.to_string(name))
 
   defp program_name(_name), do: nil
+
+  defp rpc_callee(ctx, m, f) do
+    with {:ok, mod} when is_atom(mod) and mod not in [nil, :dynamic] <-
+           resolve_register(ctx.instrs, ctx.idx, {:x, m}),
+         {:ok, fun} when is_atom(fun) and fun not in [nil, :dynamic] <-
+           resolve_register(ctx.instrs, ctx.idx, {:x, f}),
+         n when is_integer(n) <- Resolve.list_length(ctx.instrs, ctx.idx, {:x, f + 1}) do
+      {inspect(mod), InstrId.func_id(mod, fun, n)}
+    else
+      _ -> nil
+    end
+  end
 
   defp arg_count(ctx, n) do
     case resolve_register(ctx.instrs, ctx.idx, {:x, n}) do
