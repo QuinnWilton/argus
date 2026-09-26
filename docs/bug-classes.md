@@ -4610,7 +4610,8 @@ under `priv/dl/` unless they say otherwise.
     `local_message` restate timer_flush.dl's `timer_message` and
     `flush_receive`; mailbox does not include timer_flush.dl.
     *Resolved.* `armed_literal` and `timer_message` in timer_flush.dl;
-    mailbox includes it.
+    mailbox includes it (its `carries_message`, once `local_message`,
+    reads `armed_literal`).
 22. **The closure a call runs.** effects pairs a transaction or pure
     call with `sole_closure` (the one closure a function builds), where
     `fun_handed`/`fun_handed_to` have named the call a fun is handed to
