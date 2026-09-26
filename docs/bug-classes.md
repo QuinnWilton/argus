@@ -2492,19 +2492,19 @@ Another process takes or deletes the row between the check and the act, and the 
 
 **Corpus.** None.
 
-**Precision.** 15 rows in the corpus tally of 2026-09-25 (after 1a571e2), counted per checkout, at six creation sites: `DBConnection.ConnectionPool.init/1`, `Postgrex.Protocol.queries_new/0`, `Redix.Connection.init/1`, `Supavisor.ClientAuthentication.RefreshLimiter.init/1`, `Supavisor.PeepStorage.new/1` and a closure in it. Three of the six are unnamed tables `ets_unnamed_in_process` also reports at the same site. Unjudged on the corpus. FP hunt round 3 sampled 5 rows on the seven new programs: 0 true (two permanent children under OTP tuple specs, a private table, an application's root supervisor, a permanent child whose module is a runtime value); with the fixes above the class went 80 → 54 over the 26 live programs. In encore, chaconne's `Chaconne.Orphan.init/1` is hand-verified (frozen 2026-08-12), and three heirless named tables are pinned quiet by the permanent-child excuse.
+**Precision.** 15 rows in the corpus tally of 2026-09-25 (after 1a571e2), counted per checkout, at six creation sites: `DBConnection.ConnectionPool.init/1`, `Postgrex.Protocol.queries_new/0`, `Redix.Connection.init/1`, `Supavisor.ClientAuthentication.RefreshLimiter.init/1`, `Supavisor.PeepStorage.new/1` and a closure in it. Three of the six are unnamed tables `ets_unnamed_in_process` also reports at the same site. Unjudged on the corpus. FP hunt round 3 sampled 5 rows on the seven new programs: 0 true (two permanent children under OTP tuple specs, a private table, an application's root supervisor, a permanent child whose module is a runtime value); with the fixes above the class went 80 → 54 over the 26 live programs. In encore, chaconne's `Chaconne.Orphan.init/1` is hand-verified (frozen 2026-08-12), and three heirless named tables are pinned quiet by the permanent-child excuse. ETS rows round (2026-09-25, 19 evaluation sets): 98 rows at 8097be4, 85 after round 2c (30 gone to round 3's excuses, 17 added). The 17 added were read in full: 3 true (blockster's `PromoQA` rate limiter made by the first `Task.start` that asks, vernemq's PSK and web-UI token tables made in whatever process starts a listener). A sample of 12 of the 65 older rows found none true: 8 are permanent children the supervision extractor does not see (tuple specs a helper returns, `supervisor:start_child/2` specs, map specs with no `restart` key, bare modules in a child list built with `++`), the rest a lazily made cache, a table only its owner uses, and an owner whose crash stops the application. Estimated precision 7%.
 
 ### Table read while its owner may be restarting
 
 `ets_read_outside_owner`
 · titles: "ETS table read while its owner may be restarting" (`:warning`)
 
-**Property.** Some table T is created by an `:ets.new/2` in a function a process's own callbacks reach (the owner's process), with no `heir` option, and some read of T that raises when the table is gone (every read but `:ets.info/1,2`; `take` included) sits in a function the owner's callbacks do not reach, such as the module's API, run in callers' processes. T is named at the read, or passed as a literal through the reader's table parameters, and no handler that takes ArgumentError (a rescue of ArgumentError or `:badarg`, a bare rescue or `catch :error`, or Erlang's `catch`) sits in the reader, or, for a read inside a closure, in the function that built the closure or in a function that builder calls (a rescuing wrapper the closure is handed to). A table under a name computed at runtime is tied only to reads of computed-name tables in its owner's own module. From the moment the owner crashes until its restart reaches `:ets.new/2` again, the read raises ArgumentError in the caller instead of returning a value; Redix.Cluster's callers saw exactly that during a `:one_for_all` restart (redix#338).
+**Property.** Some table T is created by an `:ets.new/2` a process runs on its own stack (the owner, `table_held` since round 2c: a server's callbacks and what its start function spawns on its own code, a spawned, Task or Agent process, an Application's start/2, a module under a non-process behaviour), with no `heir` option, and some read of T that raises when the table is gone (every read but `:ets.info/1,2`; `take` included) sits in a function the owner's process does not run, such as the module's API, run in callers' processes. T is named at the read, or passed as a literal through the reader's table parameters, and no handler that takes ArgumentError (a rescue of ArgumentError or `:badarg`, a bare rescue or `catch :error`, or Erlang's `catch`) sits in the reader, or, for a read inside a closure, in the function that built the closure or in a function that builder calls (a rescuing wrapper the closure is handed to). A table under a name computed at runtime is tied only to reads of computed-name tables in its owner's own module. From the moment the owner crashes until its restart reaches `:ets.new/2` again, the read raises ArgumentError in the caller instead of returning a value; Redix.Cluster's callers saw exactly that during a `:one_for_all` restart (redix#338).
 
 **Assumptions and limits.**
-- "The owner's callbacks reach" is call-graph reach from the process's callbacks, not reach within its process: a function both the owner's callbacks and callers' processes call is taken to run in the owner, and so is a closure the owner hands to another process, so those reads are missed.
+- "The owner's process runs" is call-graph reach on the stack of the owner's roots (`owner_reaches`, SameProcessReach): a function both the owner's process and callers' processes call is taken to run in the owner, so those reads are missed.
 - The rescue is asked of the reader's whole function, not of the read: a rescue around unrelated code in the reader silences it.
-- A reader that asks `:ets.whereis/1` of the table in the same function reads only while it is there (`asks_before_reading`; hackney's HTTP/3 connection table, Sentry's dedupe and its test registry: 4 rows over 18 projects). Asked of the function, as the rescue is, so a `whereis` whose answer the read ignores is taken for a guard; the window between the question and the read is left. A question asked in another function guards nothing (`WhereisElsewhereOwner`).
+- A read made only on the side of a test of the function's `:ets.whereis/1` of the table that found it there, on every path to the read (`ets_read_when_present`, round 2c), reads only while it is there (hackney's HTTP/3 connection table, Sentry's dedupe). A whereis in another clause or another function, one whose answer is logged and the table read anyway, and a read on the `:undefined` side guard nothing (`WhereisElsewhereOwner`; `Probe.R2.G5.WhereisClauses`, `WhereisNoted`, `S2c.Ets.WhereisInverted`, `WhereisOther`, `WhereisStored`). The window between the question and the read is left.
 - A read through a table reference held in state or a variable, rather than a literal name passed through parameters, is not tied to T.
 - A read is joined to a table by the atom both are keyed by, and then asked whether its operand can name that table (`read_misses`): an atom reaches only a named table, a reference only the table the `:ets.new/2` that returned it made. A read whose operand is only literals (or a caller's literal through the read's parameter) is not paired with an unnamed table of its atom, and one whose operand is only references other `:ets.new/2` calls returned is paired only with those tables or, both possibly named, the one table the name holds. A table is unnamed only when its options were read whole (`ets_options_known`) and give no `:named_table`; options built at run time may name it: mnesia_schema's `?ets_first(schema)` beside the unnamed scratch table `do_read_disc_schema/2` makes, qlc_pt's `no_shadows/2` reading its own unnamed table under qlc's atom (3 rows, ETS rows round). An operand with any other answer (a parameter's field, another call's result, one the operand walk cannot follow) keeps the pair.
 - Whether the owner restarts at all is not asked; an owner that never comes back makes the window permanent, which the finding still describes. The exception is an owner that lives as long as its application (`application_lifetime`): the process an Application's start/2 runs in, and the supervisor that start/2 starts and no other supervisor in view does (`application_root`, the owner "ETS table dies with its owner" excuses): when it dies the application stops, nothing restarts it, and no read meets its table gone while the application runs. Asked of the owner's process, so a keeper the root supervisor spawns and a table one of its children makes are still reported. 20 rows over emqx, hackney and vernemq (ETS rows round). A process that outlives the application (a kernel process whose exit halts the node) or a keeper that cannot crash on its own is a prior candidate, not a structural fact.
@@ -2514,7 +2514,7 @@ Another process takes or deletes the row between the check and the act, and the 
 
 **Corpus.** Fix pairs: `redix#338` (whatyouhide/redix, b77331e → b31bd23, Redix.Cluster.Manager). Present-only: none.
 
-**Precision.** 37 rows in the 2026-09-25 corpus tally, counted per checkout, at 21 reader functions in bb, commanded, db_connection, ecto, phoenix, phoenix_pubsub, postgrex, redix and ztlp; unjudged as a set. Corpus reading removed three false-positive shapes (6527007): `:ets.info` reads in ztlp's and nerves_hub_web's `count/0`, postgrex's `catch :error, :badarg` soft read, and computed-name tables joined to every read in the owner's module. Making `:ets.take/2` a read added bb's `BB.Command.ResultCache.fetch_and_delete/1`, judged real (dcdf78c).
+**Precision.** 37 rows in the 2026-09-25 corpus tally, counted per checkout, at 21 reader functions in bb, commanded, db_connection, ecto, phoenix, phoenix_pubsub, postgrex, redix and ztlp; unjudged as a set. Corpus reading removed three false-positive shapes (6527007): `:ets.info` reads in ztlp's and nerves_hub_web's `count/0`, postgrex's `catch :error, :badarg` soft read, and computed-name tables joined to every read in the owner's module. Making `:ets.take/2` a read added bb's `BB.Command.ResultCache.fetch_and_delete/1`, judged real (dcdf78c). ETS rows round (2026-09-25, 19 evaluation sets: the eight corpus programs, the Phoenix-stack deps, OTP kernel, stdlib and mnesia, emqx, rabbitmq, hackney, ra, ejabberd, vernemq, grpc): 132 rows at 8097be4, 205 after round 2c's one owner per table, 182 after the two fixes above. The 73 rows round 2c added were read in full (7 true: emqx's authz source registry, vernemq's `vmq_passwd`, `vmq_queue_sup` and webhook cache readers); a sample of 20 of the 120 older rows unjudged before found 4 true (Livebook's `SystemResources.memory/0`, `Phoenix.Tracker.pool_size/1`, vernemq's `vmq_swc_store` cache, ejabberd's `gen_mod` module table). Estimated precision 20% at 8097be4, 16% after round 2c, 18% after the fixes; what is left is in the round's backlog below.
 
 ### Table without read_concurrency
 
@@ -3632,6 +3632,122 @@ a second), and the `terminate/2` deregistration from an earlier sibling.
 Consistency leftovers: `mnesia_controller:max_loaders/0` (a
 `match_delete`'s pattern key), supervisor-owned tables in emqx, and
 Phoenix `UploadChannel.join/3`'s monitor rows are not revisited.
+
+### Prior candidates and structural gaps from the ETS rows round
+
+Soundness round 2c's one owner per table (5f48b83) brought 94 ETS rows
+back on the 19 evaluation sets between 8097be4 and 5187c9e: 73 "read
+while its owner may be restarting", 17 "dies with its owner", 3
+"Unnamed table held by a process" and 1 "Read-then-write race on an ETS
+key" (30 more "dies with its owner" rows went to round 3's excuses, and
+8 kept their site under another owner's name). Each was read against its
+source: 10 true, 84 false (11%). The two fixes above, each with
+adversarial fixtures, took 14 of the 84 and 9 older rows of the
+application-root shape (12% on what is left). These are the shapes left,
+with the rows each covers.
+
+True (10): emqx's authz source registry (2: `emqx_authz_sup` is
+`{one_for_all, 0}`, so any child's crash restarts it and the registry
+comes back empty), vernemq's `vmq_passwd` table made by
+`vmq_passwd_reloader` (1), `vmq_queue_sup`'s queue table, made after its
+`proc_lib:init_ack` (2), `vmq_webhooks_cache` (2), `vmq_ssl_psk` and
+`vmq_web_ui` tables made in whatever process starts a listener, the
+admin CLI's among them (2), and blockster's `PromoQA` rate limiter,
+made by the first `Task.start` that asks and gone when that task ends
+(1).
+
+Questions for a reader (re-tier only):
+
+- *Does this process's exit take the node or its application down?*
+  (vm-lifetime, 21 rows): OTP's `application_controller` (`ac_tab`: 15
+  reads, its creation) and `code_server` (its module table, `code_names`:
+  2 reads, 2 creations) are started by init at boot, and their exit
+  halts the node. The sample adds `global_name_server` under kernel_sup
+  `{one_for_all, 0, 1}`, mnesia_monitor's `mnesia_gvar` under
+  intensity-0 `one_for_all` supervisors, and `rabbit_registry` under
+  `rabbit_sup {one_for_all, 0, 1}`. The structural half, a chain of
+  intensity-0 `one_for_all` supervisors up to an application root, is
+  readable from the child specs, but boot processes (init's) are not in
+  the facts.
+- *Can this owner crash on its own?* (keeper, 16 rows): rabbit's
+  `rabbit_tracking_store` and `rabbit_networking_store` (15: every
+  callback a no-op, under `rabbit_sup {one_for_all, 0, 1}`) and ra's
+  `ra_metrics_ets` (1), the keeper tables round 2 left. The sample adds
+  keepers whose callbacks do only work that cannot raise (logflare's
+  `Sources.Counters` and `IngestEventQueue`, hexpm's `TmpDir`). A keeper
+  whose supervisor restarts it with a sibling (`one_for_all`,
+  `rest_for_one`) has the window after all, which is the tree's intent.
+- *Is this lazy creation guarded by design?* (lazy-ensure, 18 rows):
+  every reader of sequin's `Sequin.Benchmark.Stats` (16) and blockster's
+  `SystemConfig.get_cached_config/0` (2) first calls a helper that asks
+  `:ets.whereis/1` and makes the named table on `:undefined`, rescuing
+  the ArgumentError of a lost race, so a read meets the table gone only
+  in the window a whereis guard also leaves. The structural half would
+  carry `ets_read_when_present` through one call: the read dominated by
+  a call to a function whose every completing path passes the present
+  side of a whereis on the table or its named `:ets.new/2`, a rescue
+  path counting only when its try body holds nothing else that raises.
+  Whether a table any caller may own is guarded by design is the
+  question; the creation site's own "dies with its owner" row
+  (blockster's `SystemConfig.ensure_ets_table/0`, `PromoQA`, sequin's
+  `ensure_tables/0`) is the finding that matters there.
+- *Does this supervisor escalate?* A supervisor that makes a table in
+  init/1 restarts only when its children spend its intensity: realistic
+  for emqx's authz supervisor (intensity 0) and ejabberd's
+  `ejabberd_gen_mod_sup`, not for ejabberd's listener supervisor, whose
+  children are accept loops that log and go on (sample, 1 row).
+
+Structural gaps left:
+
+- A table only its owner's process can reach (state-table, 10 rows):
+  `inet_gethost_native`'s three request tables (reported by both "dies
+  with its owner" and "Unnamed table held by a process"), dets's
+  bulk-init and repair counters, the shell's record and function tables
+  (shared only with the evaluator it spawns and kills). An unnamed table
+  whose reference never leaves the process is as private as a
+  `:private` one, which is excused; but points-to answers where a
+  reference goes only for the operations that use one (`source_table`),
+  so "never leaves" would also need every operation of unknown table
+  outside the owner ruled out, and no program in the sets has none.
+- A table its function deletes on every way out (scratch-table, 2
+  rows): hexpm's `DownloadsWorker.do_run/2` (named, `:ets.delete` in its
+  `after`) and mnesia_schema's `do_read_disc_schema/2` (deleted when
+  `Keep` is false, the only branch that makes it). The first needs an
+  extractor fact, every completing path from the `:ets.new/2` passing a
+  delete of its table; the second a path condition on `Keep` as well.
+- Permanent children the supervision extractor misses (8 of the 12
+  sampled "dies with its owner" rows): tuple specs a local helper
+  returns (ejabberd_sup's `worker/1`, mnesia_kernel_sup's
+  `worker_spec/3`), specs handed to `supervisor:start_child/2`
+  (dets_server's `ensure_started`), map specs with no `restart` key
+  (permanent by default) built in a comprehension or a `child_spec/1`,
+  and bare modules in a child list built with `++`, `Enum.reject` or a
+  helper (hexpm, nerves_hub_web, supavisor).
+- Guards the read rule does not see (sample, 6 of 20 older rows): a
+  whereis on a table parameter (hexpm's `Cache.fetch/3`, realtime's
+  `MetricsCleaner`: `ets_read_when_present` is emitted for named tables
+  only), a private reader every call to which a handler covers
+  (emqx's `emqx_router_helper`), an exported one whose every caller in
+  view catches (`dets_server:get_pid/1`), an `ensure_started` that
+  waits for the owner's restart before the read (`disk_log_server`,
+  `dets_server:pid2name/1`), and a read through a caller's literal whose
+  own function rescues it (emqx's `emqx_connector_jwt:lookup_jwt/2`,
+  now gone with its application root): `read_guarded` asks such a read
+  only of the caller.
+- A keeper its spawner re-spawns on `:DOWN` (1 row): rex's nodes
+  observer (`rpc:start_nodes_observer/0`); the `:DOWN` clause calling
+  the spawn again is a restart the rule does not see.
+- A cache invalidation decided beside other effects (1 row): blockster's
+  `SystemConfig.invalidate_cache/0` deletes the cached row after `put/3`
+  writes the database, and surfaced because `SafetyGuards.check_safety/2`'s
+  decision also logs and pauses campaigns (round 2c's DecisionSends).
+  Deleting a row every write of which is a refill claims nothing, but a
+  work queue loaded from the database and taken by delete is the same
+  syntax, so "every row is a fill" cannot excuse a delete whose decision
+  sends.
+- Test-only code (1 row): hexpm's `Hexpm.Store.Memory.start/0`, started
+  from test_helper.exs in the test runner; the tooling prior's
+  (`prior_tooling`), not structural.
 
 ### Prior candidates, evaluated
 
