@@ -1120,6 +1120,18 @@ unconsumed_monitor(mod, f, site, "ref_discarded") :-
 
 owned_monitor(site, f) :- monitor_owns(site, f), process_start(_, f, _, _, _).
 
+// A start the program does not write (a library's `Ch.start_link`,
+// `:gun.open`) is taken at its word, as monitor_owns does: only a start
+// the program wraps itself can be a lookup it wrote.
+owned_monitor(site, f) :- monitor_owns(site, f), !calls_program_starter(f).
+
+.decl calls_program_starter(func: symbol)
+
+calls_program_starter(f) :-
+  call_instr(f, g, _),
+  function_def(g, _, name, _, _),
+  (match("start.*", name) ; match("spawn.*", name) ; name = "open").
+
 // ══ A message the module sends itself and cannot handle ═════════════
 //
 // The tag a call or cast sends is staged by stage 0 (`call_tag`).
