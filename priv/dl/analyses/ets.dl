@@ -555,6 +555,65 @@ ets_write_only_table(name, mod, site) :-
 // (application_lifetime). A reader no process in view runs is called
 // from outside them, and goes on. docs/design/restart-state.md is the
 // model: what one process holds that another's end discards.
+
+// A read of a table, from a process that goes on after the table's owner
+// ends: the table goes with its owner, and the read raises ArgumentError
+// until the owner's restart makes it again.
+.decl read_while_owner_restarts(reader: symbol, read: symbol, create: symbol, owner: symbol, owner_mod: symbol)
+
+read_while_owner_restarts(reader, read, create, owner, owner_mod) :-
+  reads_held_table(read, reader, create, owner, owner_mod),
+  !has_heir(create),
+  reader_outlives(reader, owner, owner_mod),
+  !handles_missing_table(read, reader).
+
+// `reader` reads, at `read`, the table made at `create`, which the process
+// `owner` (of `owner_mod`'s code) holds (table_held). The read names the
+// table by its name (named_read), and its operand can name that table
+// (read_misses); or the table's name is computed at run time, and the
+// read is one the owner's own module makes of a computed name
+// (computed_read).
+.decl reads_held_table(read: symbol, reader: symbol, create: symbol, owner: symbol, owner_mod: symbol)
+
+// The owner is table_held's: the process whose stack runs the
+// :ets.new/2, a helper module's named table included (the server whose
+// init/1 calls `Metrics.setup()` holds it, and `Metrics.lookup/1`, run
+// by callers, reads it from outside).
+reads_held_table(read, reader, create, owner, owner_mod) :-
+  table_held(name, owner, owner_mod, create),
+  named_read(name, reader, read),
+  !read_misses(read, create).
+
+// A table under a name computed at runtime: only the owner's own API can
+// be tied to it. It is judged as a named read is: a reader outlives the
+// owner (a shard's `get/2` its callers run, though the shard's own
+// handle_call also runs it), and the read is not rescued.
+reads_held_table(read, reader, create, owner, owner_mod) :-
+  computed_read(owner, owner_mod, reader, read, create).
+
+// The read meets a missing table without raising out of the reader: it
+// is rescued (read_rescued), a read through a caller's literal whose
+// caller rescues it as a whole, or it is made only while the table is
+// there (read_when_present; the extractor gives no read of a computed
+// name one).
+.decl handles_missing_table(read: symbol, reader: symbol)
+
+handles_missing_table(read, reader) :- read_rescued(read, reader).
+
+handles_missing_table(read, reader) :-
+  named_read(_, reader, read),
+  !ets_op(read, reader, _, _, _),
+  rescues_argument_error(reader).
+
+handles_missing_table(read, reader) :- read_when_present(read), named_read(_, reader, read).
+
+.decl ets_read_outside_owner(name: symbol, owner: symbol, reader: symbol, site: symbol, created: symbol)
+.output ets_read_outside_owner
+
+ets_read_outside_owner(name, owner_mod, reader, read, create) :-
+  read_while_owner_restarts(reader, read, create, _, owner_mod),
+  ets_new(create, _, name).
+
 // :ets.info/1,2 answers :undefined for a table that is gone; it is how a
 // reader asks, not a read that raises (ets_answers_missing_table,
 // clientlib/effect_model.dl).
@@ -589,10 +648,6 @@ read_rescued(site, g) :-
   fun_handed_to(b, a, t),
   rescues_argument_error(t).
 
-.decl caller_rescues(func: symbol)
-
-caller_rescues(f) :- rescues_argument_error(f).
-
 // A reader that asks `:ets.whereis/1` of the table before reading it
 // (hackney's HTTP/3 connection table, Sentry's dedupe), or makes it on
 // its way when it is missing (an ensure helper before each read:
@@ -607,9 +662,6 @@ caller_rescues(f) :- rescues_argument_error(f).
 .decl read_when_present(site: symbol)
 
 read_when_present(site) :- ets_read_when_present(site, _).
-
-.decl ets_read_outside_owner(name: symbol, owner: symbol, reader: symbol, site: symbol, created: symbol)
-.output ets_read_outside_owner
 
 // A read through a helper that takes the table as a parameter
 // (`defp fetch(table, key), do: :ets.lookup(table, key)`): the name is
@@ -638,22 +690,6 @@ named_read(name, caller, site) :-
   call_arg(caller, g, q, name),
   table_param(g, q, site).
 
-// The owner is table_held's: the process whose stack runs the
-// :ets.new/2, a helper module's named table included (the server whose
-// init/1 calls `Metrics.setup()` holds it, and `Metrics.lookup/1`, run
-// by callers, reads it from outside). The table goes with it (no heir),
-// a reader outlives it, the read can meet the table gone (not rescued,
-// not made only where it is there), and the read's operand can name it
-// (read_misses).
-ets_read_outside_owner(name, owner, reader, site, id) :-
-  table_held(name, p, owner, id),
-  !ets_option(id, "heir", "true"),
-  named_read(name, reader, site),
-  reader_outlives(p, owner, reader),
-  !read_guarded(reader, site),
-  !read_when_present(site),
-  !read_misses(site, id).
-
 // A process that runs `reader` goes on after the owner's process `p`
 // ends: not p itself, not one p's end takes (ends_with, for a
 // supervised owner's own process), and none at all when p's end is the
@@ -661,21 +697,21 @@ ets_read_outside_owner(name, owner, reader, site, id) :-
 // reaches (called_from_outside), whatever process in view also runs it:
 // a library's `get/2` its own handle_call also calls is its users' read
 // too. A reader no process in view runs is run by a caller outside them.
-.decl reader_outlives(proc: symbol, owner: symbol, reader: symbol)
+.decl reader_outlives(reader: symbol, proc: symbol, owner: symbol)
 
-reader_outlives(p, owner, reader) :-
+reader_outlives(reader, p, owner) :-
   read_owner(p, owner, reader),
   !application_lifetime(p),
   owner_reaches(q, qm, reader),
   q != p,
   !ended_with(p, owner, q, qm).
 
-reader_outlives(p, owner, reader) :-
+reader_outlives(reader, p, owner) :-
   read_owner(p, owner, reader),
   !application_lifetime(p),
   called_from_outside(reader).
 
-reader_outlives(p, owner, reader) :-
+reader_outlives(reader, p, owner) :-
   read_owner(p, owner, reader),
   !application_lifetime(p),
   !runs_somewhere(reader).
@@ -856,27 +892,6 @@ read_misses(s, id) :-
   read_pair(s, id),
   read_through_caller(s),
   !read_can_be(s, id).
-
-// The read at `site`, made by (or through a literal passed by) `reader`,
-// is rescued.
-.decl read_guarded(reader: symbol, site: symbol)
-
-read_guarded(reader, site) :- named_read(_, reader, site), read_rescued(site, reader).
-
-read_guarded(reader, site) :-
-  named_read(_, reader, site),
-  !ets_op(site, reader, _, _, _),
-  caller_rescues(reader).
-
-// A table under a name computed at runtime: only the owner's own API
-// can be tied to it, a read of a computed name in the owner's module
-// (computed_read). It is judged as a named read is: a reader outlives
-// the owner (a shard's `get/2` its callers run, though the shard's own
-// handle_call also runs it), and the read is not rescued.
-ets_read_outside_owner("dynamic", owner, reader, site, id) :-
-  computed_read(p, owner, reader, site, id),
-  reader_outlives(p, owner, reader),
-  !read_rescued(site, reader).
 
 .decl computed_read(proc: symbol, owner: symbol, reader: symbol, site: symbol, id: symbol)
 

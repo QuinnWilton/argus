@@ -3987,7 +3987,7 @@ Structural gaps left:
   waits for the owner's restart before the read (`disk_log_server`,
   `dets_server:pid2name/1`), and a read through a caller's literal whose
   own function rescues it (emqx's `emqx_connector_jwt:lookup_jwt/2`,
-  now gone with its application root): `read_guarded` asks such a read
+  now gone with its application root): `handles_missing_table` asks such a read
   only of the caller.
 - A keeper its spawner re-spawns on `:DOWN` (1 row): rex's nodes
   observer (`rpc:start_nodes_observer/0`); the `:DOWN` clause calling
