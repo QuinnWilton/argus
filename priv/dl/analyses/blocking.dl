@@ -1071,26 +1071,14 @@ recv_during_init(id) :-
 
 // ── RPC without timeout ──────────────────────────────────────────
 
-// RPC call using default infinity timeout — hangs while a connected
-// peer never answers. A peer that goes away is not forever: erpc (under
-// :rpc.call since OTP 23) monitors it, and once net_ticktime notices,
-// about a minute by default, :rpc.call returns {:badrpc, :nodedown}
-// and :erpc.call raises {:erpc, :noconnection}.
-// site is the rpc call instruction. One row per site — finding
-// builders dedupe on (func, variant).
-// An rpc or a :global op init/1 reaches is startup's finding
-// (blocks_on_peer, "remote" and "global"): the same site, with the
-// supervisor's start held on it, reported there once.
-// `detail` is "caller" when the timeout is a parameter a caller passes
-// as :infinity (rpc_infinity_caller names them), empty otherwise.
-wait_found(func, call, "rpc", variant, "", "") :-
-  rpc_without_timeout(func, call, variant),
-  rpc_call(call, _, _, -1).
-
-wait_found(func, call, "rpc", variant, "caller", "") :-
-  rpc_without_timeout(func, call, variant),
-  rpc_infinity_caller(func, call, _).
-
+// A remote call with no deadline, to a function that can wait: it hangs
+// for as long as a connected peer does not answer. A peer that goes away
+// is not forever: erpc (under :rpc.call since OTP 23) monitors it, and
+// once net_ticktime notices, about a minute by default, :rpc.call
+// returns {:badrpc, :nodedown} and :erpc.call raises
+// {:erpc, :noconnection}. An rpc init/1 reaches is startup's finding
+// (blocks_on_peer, "remote"): the same site, with the supervisor's start
+// held on it, reported there once.
 .decl rpc_without_timeout(func: symbol, call: symbol, variant: symbol)
 
 rpc_without_timeout(func, call, variant) :-
@@ -1099,6 +1087,18 @@ rpc_without_timeout(func, call, variant) :-
   !answers_at_once(call),
   !bounds_its_wait(call),
   !during_init(call).
+
+// `call` is the rpc call instruction; one row per site — finding
+// builders dedupe on (func, variant). `detail` is "caller" when the
+// timeout is a parameter a caller passes as :infinity
+// (rpc_infinity_caller names them), empty otherwise.
+wait_found(func, call, "rpc", variant, "", "") :-
+  rpc_without_timeout(func, call, variant),
+  rpc_call(call, _, _, -1).
+
+wait_found(func, call, "rpc", variant, "caller", "") :-
+  rpc_without_timeout(func, call, variant),
+  rpc_infinity_caller(func, call, _).
 
 // An :rpc call a function makes, and which of the rpc functions it is.
 .decl makes_rpc(func: symbol, call: symbol, variant: symbol) inline
@@ -1412,18 +1412,34 @@ erlang_waits("check_process_code").
 erlang_waits("system_flag").
 
 // A site init/1 runs — an rpc or a :global op, in init/1 or in anything
-// it calls on its own stack — holds the supervisor's start, and is
-// startup's finding (blocks_on_peer, which reads the same walks:
-// rpc_during_init, clientlib/init_phase.dl, and global_path,
-// clientlib/global_reach.dl). Reported there, once. A helper init/1
-// shares with handle_call/3 is then reported only as startup's: the
-// start is the worse wait.
+// it calls on its own stack, or in a task it awaits — holds the
+// supervisor's start, and is startup's finding (blocks_on_peer, which
+// reads the same walks: rpc_during_init, clientlib/init_phase.dl, and
+// global_path, clientlib/global_reach.dl; startup's lock_during_init
+// asks `is_init(init), waits_for(init, lock)`, this second clause's walk
+// under its own names). Reported there, once. A helper init/1 shares
+// with handle_call/3 is then reported only as startup's: the start is
+// the worse wait.
 .decl during_init(site: symbol)
 
 during_init(site) :- rpc_during_init(_, site).
 during_init(site) :- global_path(f, _, site), is_init(f).
 
 // ── RPC in GenServer callback ────────────────────────────────────
+
+// A server's message handler makes a remote call itself: its process
+// waits on another node, and every caller waits behind it.
+.decl rpc_in_callback(func: symbol, call: symbol, variant: symbol)
+
+rpc_in_callback(func, call, variant) :-
+  makes_rpc(func, call, variant),
+  handles_messages(func).
+
+// A handle_call, handle_cast, handle_info or handle_continue of a
+// server (handler_function, clientlib/callbacks.dl).
+.decl handles_messages(func: symbol) inline
+
+handles_messages(func) :- handler_function(_, func).
 
 // Only the RPC directly in the callback is reported. The transitive
 // form — `rpc_call(_, g, _, _), call_reachable(func, g)` — was removed:
@@ -1434,32 +1450,71 @@ during_init(site) :- global_path(f, _, site), is_init(f).
 // as making an RPC, even when the concrete action provably routes local.
 // All 13 of the analysis's transitive findings were false; the RPC sites
 // themselves are already surfaced by rpc_without_timeout.
-wait_found(func, id, "rpc_in_callback", variant, "", "") :-
-  rpc_call(id, func, variant, _),
-  handler_function(_, func).
+wait_found(func, call, "rpc_in_callback", variant, "", "") :-
+  rpc_in_callback(func, call, variant).
 
 // ── Blocking :global synchronization ─────────────────────────────
-
+//
 // The locks startup reports during init/1, and on the same terms
-// (clientlib/vocabulary.dl): a :global.set_lock or :global.trans that
-// retries until it is granted — retries :infinity, or a count the
-// bytecode does not show, assumed :infinity as the wrappers forward it
-// (lock_until_granted) — over any nodes; and one that gives up after a
-// positive count (bounded_lock) but asks other nodes each try, so a
-// partitioned node holds every try until it is declared down. A bounded
-// lock over `[node()]` alone is the fix, and quiet. A lock over the
-// cluster's nodes stalls on a netsplit; one over `[node()]` waits only on
-// a local holder. `nodes` says which, `detail` the retries ("infinity",
-// "dynamic" or the count). site is the :global call instruction. One row
-// per site — finding builders dedupe on (func, op, retries, nodes).
-wait_found(func, lock, "global", op, retries, nodes) :-
-  lock_until_granted(lock, func, op, retries, nodes),
+// (clientlib/vocabulary.dl): one that retries until it is granted, over
+// any nodes, and one that gives up after a positive count but asks other
+// nodes each try. A bounded lock over `[node()]` alone is the fix, and
+// quiet.
+
+// A function outside init/1 takes a :global lock that retries until it
+// is granted, so it waits as long as anyone else holds the lock.
+.decl unbounded_lock_wait(func: symbol, lock: symbol)
+
+unbounded_lock_wait(func, lock) :-
+  takes_global_lock(func, lock),
+  retries_until_locked(lock),
   !during_init(lock).
 
-wait_found(func, lock, "global", op, retries, nodes) :-
-  bounded_lock(lock, func, op, retries, nodes),
-  nodes != "local",
+// A function outside init/1 takes a :global lock that gives up only
+// after its retries, and each retry waits on other nodes: a partitioned
+// node holds every try until it is declared down.
+.decl bounded_lock_wait(func: symbol, lock: symbol)
+
+bounded_lock_wait(func, lock) :-
+  takes_global_lock(func, lock),
+  gives_up_after_retries(lock),
+  waits_on_other_nodes(lock),
   !during_init(lock).
+
+// A :global.set_lock or :global.trans call `func` makes.
+.decl takes_global_lock(func: symbol, lock: symbol) inline
+
+takes_global_lock(func, lock) :- global_op(lock, func, _, _, _).
+
+// A :global call that retries until it is granted: its retries are
+// :infinity, or not in the bytecode and assumed :infinity as the
+// wrappers forward it (lock_until_granted).
+.decl retries_until_locked(lock: symbol) inline
+
+retries_until_locked(lock) :- lock_until_granted(lock, _, _, _, _).
+
+// A :global call that retries a bounded number of times (bounded_lock).
+.decl gives_up_after_retries(lock: symbol) inline
+
+gives_up_after_retries(lock) :- bounded_lock(lock, _, _, _, _).
+
+// Its node list holds other nodes, or may (not "local").
+.decl waits_on_other_nodes(lock: symbol) inline
+
+waits_on_other_nodes(lock) :- global_op(lock, _, _, _, nodes), nodes != "local".
+
+// A lock over the cluster's nodes stalls on a netsplit; one over
+// `[node()]` waits only on a local holder. `nodes` says which, `detail`
+// the retries ("infinity", "dynamic" or the count). `lock` is the
+// :global call instruction. One row per site — finding builders dedupe
+// on (func, op, retries, nodes).
+wait_found(func, lock, "global", op, retries, nodes) :-
+  unbounded_lock_wait(func, lock),
+  global_op(lock, func, op, retries, nodes).
+
+wait_found(func, lock, "global", op, retries, nodes) :-
+  bounded_lock_wait(func, lock),
+  global_op(lock, func, op, retries, nodes).
 
 // ══ A peer call that catches :noproc but not :shutdown ══════════════
 
