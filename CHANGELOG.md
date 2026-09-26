@@ -6,6 +6,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## 0.20.0-dev — unreleased
 
+### Shutdown: a table the process owns goes with it
+
+**Fixed.** "Cleanup in terminate/2 of a process that never traps exits"
+counted `:ets.delete/1` of the process's own table as cleanup a
+supervisor's stop skips; the runtime deletes a table with no heir when
+its owner exits, so nothing is lost. The effect model could not name it
+by its API alone (the table may be another's, or have an heir), and the
+table's facts can: a write to a named table the module's `init/1` makes,
+with an options list read whole that gives no heir, and that nothing
+gives away, renames or sets options on, is released at exit
+(shutdown.dl, `own_table_released`; shutdown now reads the ETS
+extractor). Of the 3 such rows behaviour-less starts brought, pg_local's
+and emqx_lwm2m_xml_object_db's go; pg's scope table is named at run time
+and stays. A table with an heir, another process's table and one given
+away keep the finding (test/soundness/shutdown_test.exs).
+
 ### Behaviour-less starts: a start is a witness of the behaviour
 
 **Fixed.** A module's behaviour came only from its `-behaviour`

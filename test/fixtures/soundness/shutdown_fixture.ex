@@ -431,4 +431,104 @@ defmodule Argus.Test.Soundness.Shutdown do
       def terminate(reason, _state), do: Directory.depart(__MODULE__, reason)
     end
   end
+
+  # ── Cleanup a process's exit already does ────────────────────────────
+  # A table goes with the process that owns it unless it has an heir: a
+  # terminate/2 that deletes the named table its own init/1 made loses
+  # nothing when a supervisor's stop skips it. Each shape where the table
+  # outlives the process keeps the finding.
+
+  defmodule OwnTable do
+    @moduledoc "Quiet: terminate/2 deletes the table its init/1 made, with no heir."
+    use GenServer
+
+    @impl true
+    def init(state) do
+      :ets.new(:soundness_own_table, [:named_table, :set, :protected])
+      {:ok, state}
+    end
+
+    @impl true
+    def handle_call({:put, k, v}, _from, state) do
+      :ets.insert(:soundness_own_table, {k, v})
+      {:reply, :ok, state}
+    end
+
+    @impl true
+    def terminate(_reason, _state), do: :ets.delete(:soundness_own_table)
+  end
+
+  defmodule HeirTable do
+    @moduledoc "Fires: the table has an heir, so it outlives the process unless deleted."
+    use GenServer
+
+    @impl true
+    def init(heir) do
+      :ets.new(:soundness_heir_table, [:named_table, :set, :public, {:heir, heir, :handed}])
+      {:ok, heir}
+    end
+
+    @impl true
+    def terminate(_reason, _state), do: :ets.delete(:soundness_heir_table)
+  end
+
+  defmodule TableKeeper do
+    @moduledoc "Owns a table another module's process writes to."
+    use GenServer
+
+    @doc "Runs in the caller's process: removes the caller's row."
+    def forget(who), do: :ets.delete(:soundness_kept_table, who)
+
+    @impl true
+    def init(state) do
+      :ets.new(:soundness_kept_table, [:named_table, :set, :public])
+      {:ok, state}
+    end
+  end
+
+  defmodule ThroughKeeper do
+    @moduledoc """
+    Fires: terminate/2 removes its row through the keeper's function; the
+    table is the keeper's own, not this process's.
+    """
+    use GenServer
+
+    @impl true
+    def init(state), do: {:ok, state}
+
+    @impl true
+    def terminate(_reason, _state),
+      do: Argus.Test.Soundness.Shutdown.TableKeeper.forget(__MODULE__)
+  end
+
+  defmodule OthersTable do
+    @moduledoc "Fires: terminate/2 deletes rows of a table another process owns."
+    use GenServer
+
+    @impl true
+    def init(state), do: {:ok, state}
+
+    @impl true
+    def terminate(_reason, _state), do: :ets.delete(:soundness_kept_table, __MODULE__)
+  end
+
+  defmodule GivenTable do
+    @moduledoc "Fires: the table its init/1 made is given away, and outlives it."
+    use GenServer
+
+    @impl true
+    def init(state) do
+      :ets.new(:soundness_given_table, [:named_table, :set, :public])
+      {:ok, state}
+    end
+
+    @impl true
+    def handle_cast({:hand_to, pid}, state) do
+      :ets.give_away(:soundness_given_table, pid, :handed)
+      {:noreply, state}
+    end
+
+    @impl true
+    def terminate(_reason, _state), do: :ets.delete(:soundness_given_table)
+  end
 end

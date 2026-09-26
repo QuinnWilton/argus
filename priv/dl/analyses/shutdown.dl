@@ -121,7 +121,8 @@ cleanup_call(mod, behaviour, category, api, t, id) :-
   impure_call(id, t, api, category, "write"),
   runs_holding(t, 0, id),
   durable_effect(category),
-  !released_at_exit(api).
+  !released_at_exit(api),
+  !own_table_released(mod, id).
 
 cleanup_call(mod, behaviour, category, api, via, id) :-
   terminate_callback(t, mod, behaviour),
@@ -129,7 +130,60 @@ cleanup_call(mod, behaviour, category, api, via, id) :-
   via != t,
   impure_call(id, via, api, category, "write"),
   durable_effect(category),
-  !released_at_exit(api).
+  !released_at_exit(api),
+  !own_table_released(mod, id).
+
+// An ETS table goes with the process that owns it, unless it has an
+// heir: a write to one the process owns, its deletion included, is
+// released at its exit as a socket it owns is. released_at_exit cannot
+// name `:ets.delete/1` by its API alone (the table may be another
+// process's, or have an heir); the table's own facts can. The call at
+// `id`, run by `mod`'s terminate/2 or a function it reaches, works on a
+// named table mod's init/1 makes: the process running the terminate/2
+// made it (own_named_table). pg_local's and emqx_lwm2m_xml_object_db's
+// terminate/2 delete the tables their init/1 made. A table named at run
+// time, or made by another module's process (ejabberd_iq's, which
+// mod_muc_rtbl's terminate/2 writes through ejabberd_iq:route/4), may
+// outlive the process, and its write stays cleanup.
+.decl own_table_released(mod: symbol, id: symbol)
+
+own_table_released(mod, id) :-
+  cleanup_candidate(mod, id),
+  ets_op(id, _, t, _, _),
+  own_named_table(mod, t).
+
+// An ETS call terminate/2's cleanup rules ask about.
+.decl cleanup_candidate(mod: symbol, id: symbol)
+
+cleanup_candidate(mod, id) :-
+  terminate_callback(t, mod, _),
+  impure_call(id, t, _, "ets", "write").
+
+cleanup_candidate(mod, id) :-
+  terminate_callback(t, mod, _),
+  terminate_reach.reaches(t, via, _),
+  impure_call(id, via, _, "ets", "write").
+
+// A named table `mod`'s init/1 makes, with an options list read whole
+// that gives it no heir, that nothing gives away, renames or sets
+// options on: the process running mod owns it until it exits.
+.decl own_named_table(mod: symbol, table: symbol)
+
+own_named_table(m, t) :-
+  init_function(m, i),
+  ets_new(n, i, t),
+  t != "dynamic",
+  ets_options_known(n),
+  ets_option(n, "named_table", "true"),
+  !ets_option(n, "heir", "true"),
+  !passed_on(t).
+
+// Ownership or options the table's code can change after it is made.
+.decl passed_on(table: symbol)
+
+passed_on(t) :- ets_op(_, _, t, "give_away", _).
+passed_on(t) :- ets_op(_, _, t, "rename", _).
+passed_on(t) :- ets_op(_, _, t, "setopts", _).
 
 .decl cleanup_in_terminate(mod: symbol, behaviour: symbol, category: symbol, api: symbol, via: symbol)
 

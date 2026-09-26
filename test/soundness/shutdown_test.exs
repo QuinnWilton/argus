@@ -160,4 +160,29 @@ defmodule Argus.Soundness.ShutdownTest do
       refute Enum.any?(calls, &match?({"reason_controller", _, _}, &1))
     end
   end
+
+  describe "cleanup a process's exit already does" do
+    # An ETS table goes with its owner unless it has an heir
+    # (shutdown.dl, own_table_released).
+    @never_runs "Cleanup in terminate/2 of a process that never traps exits"
+
+    defp never_runs(mod) do
+      for {severity, @never_runs, {^mod, :terminate, 2}} <- fired([mod, S.TableKeeper], :shutdown),
+          do: severity
+    end
+
+    test "deleting the table its own init/1 made loses nothing" do
+      assert never_runs(S.OwnTable) == []
+    end
+
+    test "a table with an heir, another process's table and a table given away are cleanup" do
+      assert never_runs(S.HeirTable) == [:error]
+      assert never_runs(S.OthersTable) == [:error]
+      assert never_runs(S.GivenTable) == [:error]
+    end
+
+    test "another process's table written through its owner's own function is cleanup" do
+      assert never_runs(S.ThroughKeeper) == [:error]
+    end
+  end
 end

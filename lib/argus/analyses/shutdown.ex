@@ -70,6 +70,8 @@ defmodule Argus.Analyses.Shutdown do
       # started, and names.
       Argus.Extractors.PidFlow,
       Argus.Extractors.ProcessRegistry,
+      # The tables a process makes itself: a write to one goes with it.
+      Argus.Extractors.ETS,
       Argus.Extractors.Tooling
     ]
 
