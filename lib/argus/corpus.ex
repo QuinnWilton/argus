@@ -52,6 +52,10 @@ defmodule Argus.Corpus do
   without its QUIC, RocksDB and jq NIFs). `env:` overrides the clean
   environment's `MIX_ENV`; the beams are taken from whichever build
   holds the app.
+
+  A tree that vendors a dependency as a git submodule names
+  `submodules: true`: the checkout initializes them at the commits the
+  tree records before it compiles.
   """
 
   @type pair :: %{
@@ -64,6 +68,7 @@ defmodule Argus.Corpus do
           optional(:subdir) => String.t(),
           optional(:app) => String.t(),
           optional(:env) => %{optional(String.t()) => String.t()},
+          optional(:submodules) => boolean(),
           optional(:module) => String.t(),
           required(:finding) => {atom(), String.t()}
         }
@@ -394,18 +399,36 @@ defmodule Argus.Corpus do
   # ── Steps ─────────────────────────────────────────────────────────────
 
   defp clone(pair, %{dir: dir, sha: sha} = co) do
-    if File.dir?(dir) do
-      :ok
-    else
-      File.mkdir_p!(root())
-      url = "https://github.com/#{pair.repo}.git"
+    cloned =
+      if File.dir?(dir) do
+        :ok
+      else
+        File.mkdir_p!(root())
+        url = "https://github.com/#{pair.repo}.git"
 
-      with :ok <- run(["git", "clone", "-q", url, dir], root(), [], "clone #{pair.repo}"),
-           :ok <- run(["git", "checkout", "-q", sha], dir, [], "checkout #{sha}") do
-        relax_elixir_requirement(co.project)
+        with :ok <- run(["git", "clone", "-q", url, dir], root(), [], "clone #{pair.repo}"),
+             :ok <- run(["git", "checkout", "-q", sha], dir, [], "checkout #{sha}") do
+          relax_elixir_requirement(co.project)
+        end
       end
-    end
+
+    with :ok <- cloned, do: submodules(pair, co)
   end
+
+  # A tree that vendors a dependency as a git submodule (aprs.me's
+  # `vendor/aprs`, a path dependency) builds only with it checked out, at
+  # the commit the tree records. Idempotent: a checkout that has it
+  # updates nothing.
+  defp submodules(%{submodules: true} = pair, %{dir: dir}),
+    do:
+      run(
+        ["git", "submodule", "update", "--init", "--recursive", "-q"],
+        dir,
+        [],
+        "submodules of #{pair.repo}"
+      )
+
+  defp submodules(_pair, _co), do: :ok
 
   # The project's `elixir:` requirement says what it was tested on, not
   # what it needs; an old tree usually builds on the current toolchain.

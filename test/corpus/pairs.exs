@@ -831,5 +831,116 @@
     otp: "27.3.3",
     elixir: "1.18.3-otp-27",
     finding: {:effects, "A process operation inside a transaction"}
+  },
+  # ── failure: a local-only BIF on a pid that may be another node's ────
+  # aprs.me: the leader election's cleanup called Process.alive?/1 on the
+  # pid :global.whereis_name/1 answered, usually another node's, and the
+  # node check came after it; the fix asks node(pid) == node() first and
+  # rpcs a remote pid. The tree vendors its `aprs` dependency as a
+  # submodule, and its regexes in module attributes need OTP 27.
+  %{
+    repo: "aprsme/aprs.me",
+    issue: "aprs.me@37c9ac7",
+    module: "Aprsme.Cluster.LeaderElection",
+    pre: "9caab57dbe3dafcfe2e5c634c0c2c9343fc56cf4",
+    fix: "37c9ac79ed238f0295a4af7794d54f0c1ec246a9",
+    otp: "27.3.3",
+    elixir: "1.18.3-otp-27",
+    submodules: true,
+    finding: {:failure, "Local-only BIF on a pid that may be on another node"}
+  },
+  # aprs.me: the :global conflict resolver asked Process.info/2 of both
+  # holders of the name, one of them always on another node; the fix
+  # chooses by node name.
+  %{
+    repo: "aprsme/aprs.me",
+    issue: "aprs.me@9212088",
+    module: "Aprsme.Cluster.LeaderElection",
+    pre: "777acc2700304992bb31ee7a75ea61c9a0dec295",
+    fix: "9212088bebb0fb76bc56b7a4febd889d3c03fd9e",
+    otp: "27.3.3",
+    elixir: "1.18.3-otp-27",
+    submodules: true,
+    finding: {:failure, "Local-only BIF on a pid that may be on another node"}
+  },
+  # phoenix_live_dashboard: the application tree walked a process's
+  # links and asked each for its group leader, and a link may be another
+  # node's; the fix asks node(pid) == node() first.
+  %{
+    repo: "phoenixframework/phoenix_live_dashboard",
+    issue: "phoenix_live_dashboard#495",
+    module: "Phoenix.LiveDashboard.SystemInfo",
+    pre: "f12805a9f800d03631219f9f9d5108e49d1b2771",
+    fix: "57e8a1f834615cb2385e81eae7c6d1d15d47b4c9",
+    finding: {:failure, "Local-only BIF on a pid that may be on another node"}
+  },
+  # ── failure: an rpc to a function the module does not export ─────────
+  # realtime: transaction/3's remote clause erpc'd transaction/4 through
+  # Realtime.Rpc.enhanced_call/5, and the module defined transaction/2,3;
+  # the fix adds the fourth parameter. (realtime#818's run_db_request/2,
+  # the same shape, is a 2024 tree that builds on no installed toolchain.)
+  %{
+    repo: "supabase/realtime",
+    issue: "realtime#1229",
+    module: "Realtime.Database",
+    pre: "0147dbb737765df4aa3ff8daeaa68b423d31e593",
+    fix: "ac00218ec00a606463a836c4df9dce6d38f4d29a",
+    otp: "27.3.3",
+    elixir: "1.18.3-otp-27",
+    finding: {:failure, "RPC to a function the module does not export"}
+  },
+  # ── failure: a file, socket or port an error path loses ──────────────
+  # thousand_island: sendfile/4 opened a raw fd per call and never closed
+  # it, on both transports; the fix closes it in an `after`.
+  %{
+    repo: "mtrudel/thousand_island",
+    issue: "thousand_island#78",
+    module: "ThousandIsland.Transports.TCP",
+    pre: "db0db573754a3ee096353bcb2a97c402d48ac6a5",
+    fix: "45e7b511773863c0c97623b2ea0b81879b5d6560",
+    finding: {:failure, "File, socket or port lost on a path that never closes it"}
+  },
+  # ── mailbox: a subscription made again each time a callback runs ─────
+  # nerves_hub_web: the device list re-subscribed each listed device
+  # through socket.endpoint on every refresh, and never unsubscribed the
+  # old ones ("runaway duplicate PubSub subscriptions"); the fix
+  # unsubscribes them first.
+  %{
+    repo: "nerves-hub/nerves_hub_web",
+    issue: "nerves_hub_web#2588",
+    module: "NervesHubWeb.Live.Devices.Index",
+    pre: "29e5b56765ce53503e8004328b7d56711c3a17a9",
+    fix: "59dd4c6182cf173b602fa500361cbfce6cec833f",
+    finding: {:mailbox, "Subscription made again each time a callback runs"}
+  },
+  # ── shutdown: a Broadway producer that keeps fetching while it drains ─
+  # Broadway 1.1 stopped switching a draining producer to :accumulate,
+  # and three producers' prepare_for_draining/1 only cancelled the poll
+  # and cleared receive_timer, the field their fetch asks to be nil: the
+  # next demand fetched again. Each fix adds `draining: true` and a first
+  # clause that takes it.
+  %{
+    repo: "elixir-broadway/broadway_sqs",
+    issue: "broadway_sqs@5b8f18a",
+    module: "BroadwaySQS.Producer",
+    pre: "fb517d7656db36b803b2511f718d9b69c7e9d332",
+    fix: "5b8f18a78e4760b5fcc839ad576be8c63345add0",
+    finding: {:shutdown, "Broadway producer keeps fetching while it drains"}
+  },
+  %{
+    repo: "elixir-broadway/broadway_cloud_pub_sub",
+    issue: "broadway_cloud_pub_sub@fb44279",
+    module: "BroadwayCloudPubSub.Producer",
+    pre: "5c432c0f399a4c7fe83e3c7a826d55fd8e6443c3",
+    fix: "fb442793f264e4abd82f8bbb4870d9de028c3a50",
+    finding: {:shutdown, "Broadway producer keeps fetching while it drains"}
+  },
+  %{
+    repo: "akash-akya/off_broadway_redis_stream",
+    issue: "off_broadway_redis_stream#58",
+    module: "OffBroadwayRedisStream.Producer",
+    pre: "39ebe39cf1e727c362cfa8d442ca20ad2252c084",
+    fix: "60ec40f2a5b9bbf1fd10025190f3abf1b1f1701e",
+    finding: {:shutdown, "Broadway producer keeps fetching while it drains"}
   }
 ]
