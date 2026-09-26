@@ -348,7 +348,7 @@
   .decl reaches(func: symbol, target: symbol)
 
   reaches(f, t) :- seed(f, t).
-  reaches(f, t) :- reaches(h, t), call_instr(f, h, id), !guarded(id), !runs_elsewhere(f, h).
+  reaches(f, t) :- reaches(h, t), call_instr(f, h, id), !guarded(id).
   reaches(f, t) :- reaches(h, t), fun_handed(id, f, h, _), !guarded(id), !runs_elsewhere(f, h).
 
   reaches(f, t) :-

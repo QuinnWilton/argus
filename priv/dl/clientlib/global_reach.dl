@@ -32,9 +32,12 @@
 
 global_path(f, site, site) :- global_op(site, f, _, _, _), !start_acked(site, f).
 
+// A call f makes itself is on f's stack (runs_elsewhere holds only for
+// an edge f does not call); an edge with no call of f's (a closure) is
+// f's only when it does not lead off it.
+
 global_path(f, id, site) :-
   call_instr(f, g, id),
-  !runs_elsewhere(f, g),
   !side_call(f, g),
   !acked_edge(f, g),
   global_path(g, _, site),
@@ -42,7 +45,6 @@ global_path(f, id, site) :-
 
 global_path(f, id, site) :-
   call_instr(f, g, id),
-  !runs_elsewhere(f, g),
   !side_call(f, g),
   !acked_edge(f, g),
   literal_first(f, g, a),

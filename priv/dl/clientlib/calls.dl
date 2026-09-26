@@ -620,10 +620,11 @@ site_demand(g) :- site_demand(f), call_instr(f, g, _), literal_entry(f, g, _).
 
 site_request(f, id, m, tag) :- site_demand(f), sync_request_at(f, id, m, tag).
 
+// A call f makes itself is on f's stack (runs_elsewhere holds only for
+// an edge f does not call).
 site_request(f, id, m, tag) :-
   site_demand(f),
   call_instr(f, g, id),
-  !runs_elsewhere(f, g),
   !side_call(f, g),
   !literal_entry(f, g, _),
   reaches_sync_request(g, m, tag).
@@ -631,7 +632,6 @@ site_request(f, id, m, tag) :-
 site_request(f, id, m, tag) :-
   site_demand(f),
   call_instr(f, g, id),
-  !runs_elsewhere(f, g),
   !side_call(f, g),
   literal_entry(f, g, a),
   site_request(g, s, m, tag),

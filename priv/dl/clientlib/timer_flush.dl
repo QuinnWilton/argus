@@ -117,5 +117,4 @@ helper_cancels_field(g, s, cancel, key) :-
   timer_cancel(cancel, c, "field", key, _),
   call_instr(g, c, s),
   function_def(c, mod, _, _, _),
-  function_def(g, mod, _, _, _),
-  !runs_elsewhere(g, c).
+  function_def(g, mod, _, _, _).

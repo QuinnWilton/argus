@@ -44,6 +44,10 @@
 // caller's process: Enum.each, :telemetry.span, Repo.transaction). Told
 // without closure_def (by the compiler's name for a closure), which the
 // supervision family must not read (stage0_test).
+//
+// No clause holds for an edge func calls itself (call_instr): a rule
+// that has the call's instruction in hand is on func's stack already and
+// need not ask.
 .decl runs_elsewhere(func: symbol, callee: symbol)
 
 runs_elsewhere(f, g) :-
