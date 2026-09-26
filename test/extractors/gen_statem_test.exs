@@ -22,6 +22,13 @@ defmodule Argus.Extractors.GenStatemTest do
       assert mode == "state_functions"
     end
 
+    test "reads a gen_statem that declares no behaviour and starts itself as one" do
+      facts = GenStatem.extract(disassemble(:bless_statem))
+
+      assert facts[:statem_module] == [[":bless_statem", "state_functions"]]
+      assert facts[:statem_state] |> Enum.map(&Enum.at(&1, 1)) |> Enum.uniq() == ["idle"]
+    end
+
     test "detects states" do
       facts = GenStatem.extract(disassemble(Argus.Test.Fixtures.SimpleStatem))
 

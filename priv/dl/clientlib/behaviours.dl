@@ -20,6 +20,15 @@
 // So rules should ask `behaves_as(mod, "GenServer")` rather than matching
 // the declared string. The canonical name is the Elixir spelling, which is
 // what the rules already say.
+//
+// A declaration is one witness of a behaviour; a start is the other. The
+// behaviour's machinery runs a module's callbacks because a start named
+// it the callback module (`started_as`: `gen_server:start_link({local,
+// inet_db}, inet_db, [], [])`, `supervisor:start_link({local, ?MODULE},
+// ?MODULE, [])`), whether or not it says `-behaviour`: OTP's inet_db, pg
+// and group, and ejabberd's ejabberd_sql_sup and ejabberd_tmp_sup, say
+// nothing, and every process rule missed them. `behaves_as` is the one
+// relation that answers "what does this module run as", from either.
 
 .decl behaviour_alias(declared: symbol, canonical: symbol)
 
@@ -83,6 +92,14 @@ behaves_as(mod, canonical) :-
 behaves_as(mod, declared) :-
   implements_behaviour(mod, declared),
   !behaviour_alias(declared, _).
+
+behaves_as(mod, canonical) :-
+  started_as(mod, named),
+  behaviour_alias(named, canonical).
+
+behaves_as(mod, named) :-
+  started_as(mod, named),
+  !behaviour_alias(named, _).
 
 // What a behaviour is, by the properties rules ask about. One table, three
 // kinds: `loop` — the module runs a callback loop over its own mailbox, so

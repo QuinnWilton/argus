@@ -55,6 +55,16 @@ defmodule Argus.Extractors.SupervisionTest do
       end
     end
 
+    test "reads a supervisor that declares no behaviour and starts itself as one" do
+      {:ok, data} = BeamSpy.BeamFile.disassemble(to_string(:code.which(:bless_bare_sup)))
+      facts = Supervision.extract(data)
+
+      assert [":bless_bare_sup", "one_for_one"] in facts[:supervisor]
+
+      assert facts[:supervisor_child] |> Enum.map(&Enum.at(&1, 2)) |> Enum.sort() ==
+               [":bless_callee", ":bless_caller"]
+    end
+
     test "returns empty for non-supervisor module" do
       {:ok, data} =
         BeamSpy.BeamFile.disassemble(to_string(:code.which(Argus.Test.Fixtures.PlainModule)))

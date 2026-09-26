@@ -68,8 +68,9 @@ defmodule Argus.Priors.Questions.Reads do
 
   @impl true
   def relations_read,
-    do: ~w(function_def remote_call bif_call local_call closure_def literal_value tuple_literal
-           implements_behaviour unsafe_atom_creation unsafe_deserialization code_execution)a
+    do:
+      ~w(function_def remote_call bif_call local_call closure_def literal_value tuple_literal
+           implements_behaviour started_as unsafe_atom_creation unsafe_deserialization code_execution)a
 
   @impl true
   def subjects(facts) do
@@ -188,7 +189,8 @@ defmodule Argus.Priors.Questions.Reads do
     %{
       funcs: funcs,
       by_mod: group(Map.to_list(funcs), fn {_, m} -> m.mod end, fn {id, _} -> id end),
-      behaviours: group(rows.(:implements_behaviour), & &1.mod, & &1.behaviour),
+      behaviours:
+        group(rows.(:implements_behaviour) ++ rows.(:started_as), & &1.mod, & &1.behaviour),
       callees: group(edges, &elem(&1, 0), &elem(&1, 1)),
       closures: group(rows.(:closure_def), & &1.parent_func, & &1.closure_func),
       literals: group(literals, &elem(&1, 0), &elem(&1, 1))

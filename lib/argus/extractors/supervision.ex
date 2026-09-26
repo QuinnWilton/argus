@@ -47,6 +47,7 @@ defmodule Argus.Extractors.Supervision do
   @behaviour Argus.Extractor
 
   alias Argus.Extractor.CallSites
+  alias Argus.Extractor.GenStarts
   alias Argus.Extractor.Resolve
   alias Argus.Extractor.Terms
   alias Argus.Instr.Reaching
@@ -105,7 +106,10 @@ defmodule Argus.Extractors.Supervision do
     mod_str = inspect(mod)
     attrs = module_data.attributes
 
-    behaviours = get_behaviours(attrs)
+    # A module a start of its own names a supervisor's callback module
+    # is one, declared or not (ejabberd_sql_sup's
+    # `supervisor:start_link({local, ?MODULE}, ?MODULE, [])`).
+    behaviours = get_behaviours(attrs) ++ GenStarts.own_behaviours(module_data)
 
     base_facts =
       cond do

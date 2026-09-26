@@ -15,7 +15,7 @@ process_module(mod) :- process_behaviour_module(mod).
 // — code with a contract its caller relies on, not a library function.
 .decl behaviour_module(mod: symbol)
 
-behaviour_module(mod) :- implements_behaviour(mod, _).
+behaviour_module(mod) :- behaves_as(mod, _).
 
 // Defines handle_info at any arity.
 .decl has_handle_info(mod: symbol)

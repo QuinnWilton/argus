@@ -91,7 +91,7 @@ shares_supervisor(child, dep) :-
 likely_supervised(mod) :- child_subtree(_, _, mod).
 
 likely_supervised(mod) :-
-  implements_behaviour(mod, _),
+  behaves_as(mod, _),
   function_def(_, mod, "start_link", 1, _).
 
 // The callee starts earlier under the same supervisor, so it is running

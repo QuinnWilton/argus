@@ -121,6 +121,16 @@ defmodule Argus.Clientlib.BehavioursTest do
         """
       )
 
+      # A start is a witness as a declaration is: the same spellings.
+      File.write!(
+        Path.join(facts_dir, "started_as.facts"),
+        """
+        :g\t:gen_statem
+        :h\t:supervisor
+        Elixir.I\tDynamicSupervisor
+        """
+      )
+
       rules = """
       .include "#{Path.join(priv_dl(), "clientlib/imports.dl")}"
       .include "#{Path.join(priv_dl(), "clientlib/behaviours.dl")}"
@@ -145,6 +155,10 @@ defmodule Argus.Clientlib.BehavioursTest do
       assert ["Elixir.D", "Some.Unlisted.Behaviour"] in rows,
              "a behaviour nobody listed must pass through, or the " <>
                "indirection turns into a fresh source of under-reporting"
+
+      assert [":g", "GenStateMachine"] in rows, "a start's behaviour canonicalises"
+      assert [":h", "Supervisor"] in rows
+      assert ["Elixir.I", "DynamicSupervisor"] in rows, "and an unlisted one passes through"
     end
   end
 end

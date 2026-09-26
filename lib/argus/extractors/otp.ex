@@ -10,6 +10,9 @@ defmodule Argus.Extractors.OTP do
   ## Emitted facts
 
   - `implements_behaviour(mod, behaviour)` — module implements a behaviour
+  - `started_as(mod, behaviour)` — a start or an `enter_loop` in the
+    module's code names `mod` the callback module of `behaviour`
+    (`Argus.Extractor.GenStarts`), declared or not
   - `process_link(from_mod, to_mod)` — Process.link / :erlang.link call
   - `init_continues_to(mod, tag)` — module's init/1 returns `{:continue, tag}`
   - `handle_continue_clause(mod, tag, func_id)` — handle_continue/2 clause matching `tag`
@@ -38,6 +41,7 @@ defmodule Argus.Extractors.OTP do
 
   alias Argus.Cfg.Walk
   alias Argus.Extractor.Dispatch
+  alias Argus.Extractor.GenStarts
   alias Argus.Extractor.Helpers
   alias Argus.Extractor.Resolve
   alias Argus.Instr
@@ -58,6 +62,7 @@ defmodule Argus.Extractors.OTP do
       :init_continues_to,
       :process_link,
       :start_acked,
+      :started_as,
       :timeout_return
     ]
 
@@ -70,6 +75,7 @@ defmodule Argus.Extractors.OTP do
 
     %{}
     |> extract_behaviours(mod_str, module_data.attributes)
+    |> extract_started_as(module_data)
     |> extract_link_calls(mod_str, module_data)
     |> extract_continue_facts(mod, mod_str, functions)
     |> extract_loop_asks(mod, functions)
@@ -393,6 +399,14 @@ defmodule Argus.Extractors.OTP do
     |> get_behaviours()
     |> Enum.reduce(facts, fn behaviour, acc ->
       add_fact(acc, :implements_behaviour, [mod_str, inspect(behaviour)])
+    end)
+  end
+
+  defp extract_started_as(facts, module_data) do
+    module_data
+    |> GenStarts.callback_modules()
+    |> Enum.reduce(facts, fn {mod, behaviour}, acc ->
+      add_fact(acc, :started_as, [inspect(mod), inspect(behaviour)])
     end)
   end
 

@@ -70,4 +70,62 @@ defmodule Argus.Clientlib.OtpTest do
       assert deps != []
     end
   end
+
+  describe "a behaviour a start names" do
+    @tag :tmp_dir
+    test "a module a start names the callback module of runs as that behaviour", %{
+      tmp_dir: tmp_dir
+    } do
+      skip_without_souffle()
+
+      facts_dir = Path.join(tmp_dir, "facts")
+
+      # bless_server, bless_bare_sup and bless_statem start themselves
+      # without declaring a behaviour; bless_starter starts bless_worker;
+      # nothing starts bless_plain, which exports an init/1.
+      modules = [
+        :bless_server,
+        :bless_later,
+        :bless_bare_sup,
+        :bless_statem,
+        :bless_starter,
+        :bless_worker,
+        :bless_plain
+      ]
+
+      {:ok, _} = Pipeline.run(modules, facts_dir, extractors: [Argus.Extractors.OTP])
+      :ok = Argus.Analysis.derive_stage0(facts_dir)
+
+      rules = """
+      .include "#{Path.join(priv_dl(), "clientlib/imports.dl")}"
+      .include "#{Path.join(priv_dl(), "clientlib/otp.dl")}"
+
+      .output behaves_as
+      .output init_function
+      .output gen_server_like
+      """
+
+      rules_path = Path.join(tmp_dir, "started_as.dl")
+      File.write!(rules_path, rules)
+
+      assert {:ok, results} = Souffle.run(facts_dir, rules_path)
+
+      behaves = Map.get(results, "behaves_as", [])
+      assert [":bless_server", "GenServer"] in behaves
+      assert [":bless_bare_sup", "Supervisor"] in behaves
+      assert [":bless_statem", "GenStateMachine"] in behaves
+      assert [":bless_worker", "GenServer"] in behaves
+
+      inits = results |> Map.get("init_function", []) |> Enum.map(&hd/1)
+      assert ":bless_server" in inits
+      assert ":bless_bare_sup" in inits
+      assert ":bless_statem" in inits
+      assert ":bless_worker" in inits
+      refute ":bless_plain" in inits
+
+      servers = results |> Map.get("gen_server_like", []) |> Enum.map(&hd/1)
+      assert ":bless_server" in servers
+      refute ":bless_plain" in servers
+    end
+  end
 end

@@ -6,6 +6,59 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## 0.20.0-dev — unreleased
 
+### Behaviour-less starts: a start is a witness of the behaviour
+
+**Fixed.** A module's behaviour came only from its `-behaviour`
+attribute. OTP's `inet_db`, `pg` and `group`, and ejabberd's
+`ejabberd_sql_sup` and `ejabberd_tmp_sup`, declare none and start
+themselves (`gen_server:start_link({local, inet_db}, inet_db, [], [])`,
+`supervisor:start_link({local, ?MODULE}, ?MODULE, [])`), so no process
+rule saw them: no `init/1`, no callbacks, no tree. A start, or an
+`enter_loop`, that names a module the callback module of a behaviour is
+now a witness of it as the attribute is:
+- the OTP extractor emits `started_as(mod, behaviour)` for every start
+  whose module argument is a literal (`Argus.Extractor.GenStarts`:
+  gen_server, gen_statem, supervisor, supervisor_bridge, GenServer,
+  GenStateMachine, GenStage, Supervisor and DynamicSupervisor starts,
+  `gen:start/5,6`, and the enter_loops); a `proc_lib` start names a
+  function, and is none;
+- behaviours.dl's `behaves_as` reads both witnesses, and the rules that
+  read `implements_behaviour` directly (`unlisted_server`,
+  `process_behaviour_module`, `behaviour_module`, startup's
+  `likely_supervised`) ask `behaves_as`;
+- the Supervision and GenStatem extractors read a module that starts
+  itself as a supervisor or a gen_statem as one (its tree, its states);
+- the priors' module index lists a started behaviour beside a declared
+  one.
+
+Over the 44 evaluation sets (the 26 live projects of the FP hunts and
+emqx, 8 applications, the Phoenix stack, OTP kernel, stdlib and mnesia,
+encore's madrigal and the postgrex and supavisor pair trees), all
+analyses: 36 rows come and 7 go, every one read.
+- 11 of the 36 are true: ejabberd_sql_sup's coupling pair (lost in the
+  restart-state round), emqx's eviction channel waiting on another node
+  in `init/1` (2), emqx's namespace checker blocking a cast on
+  `emqx_alarm`, an lwm2m reader that outlives its table at gateway
+  unload, pg's scope tables read while kernel_safe_sup restarts it (2),
+  group's bounded tty receive, net_kernel's `init/1` waiting on inet_db
+  through `inet_config`, and timer's `handle_call/3` catch-all that
+  never replies.
+- 25 are false, of shapes their classes document: owner lifetime
+  (inet_db under kernel_sup's `{one_for_all, 0, 1}`, 5; keepers that
+  cannot crash, 4; an ensure in the reader's only caller, 2), fan-in
+  counted through one facade for lifecycle calls (4), a hop whose
+  target logs (2), a terminate/2 that deletes the table its own `init/1`
+  made (3), and 5 single shapes.
+- The 7 that go are false: pg's monitor rows read its `init/1` as code
+  that runs again (the stale `:DOWN` race the monitor round found in
+  `join_local/leave_local` is a missing `:flush`, which no class claims),
+  application_controller's table rows and terminate/2 wait (its death
+  halts the node; terminate/2 runs once), and an eviction channel's timer
+  armed in `init/1` and cancelled in terminate/2.
+
+**Changed.** Schema 146. `started_as(mod, behaviour)` is new;
+`implements_behaviour` keeps the declarations alone.
+
 ### Shutdown: the reason a supervisor's stop passes, followed into helpers
 
 **Fixed.** "terminate/2 calls a sibling that may already be down" read

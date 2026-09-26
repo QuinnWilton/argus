@@ -137,8 +137,10 @@ The reason `cached_pid` is the model's other half, unchanged. There, A's
     B's API
   - a registration through a library registry the program starts as a
     sibling (`Registry`, `:pg`, `Phoenix.PubSub`)
-  - the `init/1` of a module that declares no behaviour, which no analysis
-    sees as a process (ejabberd's `ejabberd_sql_sup`, `inet_db`)
+  - the `init/1` of a module that declares no behaviour and that no start
+    in the program names the callback module (a start that does is a
+    witness of the behaviour, `started_as`: ejabberd's `ejabberd_sql_sup`
+    is seen since 2026-09-26)
 
   These are false negatives, listed in the class entry.
 - **A request with no tag.** A request whose message carries no tag the
@@ -185,7 +187,8 @@ The reason `cached_pid` is the model's other half, unchanged. There, A's
   who put them there once, and whether the supervisor restarts that module
   with the owner. The ETS rule knows neither. The ejabberd_hooks loss is
   now 18 coupling rows. The 19th is `ejabberd_sql_sup`, a module that
-  declares no behaviour, which is a structural gap. `ejabberd_captcha`'s rows are captchas in flight,
+  declares no behaviour, which was a structural gap (closed by
+  `started_as`: the row is back). `ejabberd_captcha`'s rows are captchas in flight,
   made on each request: nothing is held across the restart.
 
 The extractor change it needs is that `returned_update` reads Erlang

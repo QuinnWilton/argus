@@ -212,8 +212,8 @@ than more; it errs loud when the same uncertainty can add a finding.
 
 ### A behaviour and its callbacks
 
-- **Names.** `behaves_as`, `process_behaviour`, `otp_callback`, `callback_name`, `behaviour_callback`, `message_callback`, `unlisted_server`, `gen_server_like`, `init_function` (`is_init`), `handle_call_function`, `handle_cast_function`, `handler_function`, `terminate_callback` (`is_terminate`), `process_behaviour_module`, `statem_process` (behaviours.dl, callbacks.dl, vocabulary.dl).
-- **Meaning.** `behaves_as(mod, b)` is the declared behaviour under one spelling for both languages (`:gen_server` is GenServer; Connection and Postgrex's connection wrappers are GenServer too), and an unlisted behaviour passes through unchanged. `process_behaviour` says whether a behaviour runs a callback loop over its own mailbox (`loop`), answers calls by GenServer's contract (`gen_server_like`) or calls terminate (`terminating`). `otp_callback` is a function with a loop callback's name (`callback_name`, every loop behaviour's `code_change` and `format_status` included) in a loop-behaviour module, a callback of one behaviour alone (`behaviour_callback`: a Channel's join/3 and handle_out/3, a LiveView's handle_async/3), or a callback of a server under a behaviour the tables do not list (`unlisted_server`: a module that declares one and handles calls, casts or messages, as rabbit's gen_server2 modules do). `message_callback` names the callbacks a process is started or sent its own data in. `gen_server_like(mod)` answers calls by GenServer's contract: GenServer, the wrappers aliased to it, GenStage, or an unlisted server with a handle_call/3; `handle_call_function`, `handle_cast_function` and `handler_function` (handle_call, handle_cast, handle_info, handle_continue) are its handlers, the one word every rule about who answers a call reads. `init_function` is init/1 of a process module.
+- **Names.** `behaves_as` (with `started_as`), `process_behaviour`, `otp_callback`, `callback_name`, `behaviour_callback`, `message_callback`, `unlisted_server`, `gen_server_like`, `init_function` (`is_init`), `handle_call_function`, `handle_cast_function`, `handler_function`, `terminate_callback` (`is_terminate`), `process_behaviour_module`, `statem_process` (behaviours.dl, callbacks.dl, vocabulary.dl).
+- **Meaning.** `behaves_as(mod, b)` is a behaviour the module runs as, under one spelling for both languages (`:gen_server` is GenServer; Connection and Postgrex's connection wrappers are GenServer too), and an unlisted behaviour passes through unchanged. It has two witnesses: the module declares it (`implements_behaviour`), or a start names the module its callback module (`started_as`: `gen_server:start_link({local, inet_db}, inet_db, [], [])`, `supervisor:start_link({local, ?MODULE}, ?MODULE, [])`, `gen:start/5,6`, an `enter_loop`), at a call whose module argument is a literal. OTP's inet_db, pg and group and ejabberd's ejabberd_sql_sup and ejabberd_tmp_sup declare none. A module's own start also reads it as a supervisor or a gen_statem to the extractors of those (their trees and states); a start in another module is seen by the rules only. `process_behaviour` says whether a behaviour runs a callback loop over its own mailbox (`loop`), answers calls by GenServer's contract (`gen_server_like`) or calls terminate (`terminating`). `otp_callback` is a function with a loop callback's name (`callback_name`, every loop behaviour's `code_change` and `format_status` included) in a loop-behaviour module, a callback of one behaviour alone (`behaviour_callback`: a Channel's join/3 and handle_out/3, a LiveView's handle_async/3), or a callback of a server under a behaviour the tables do not list (`unlisted_server`: a module that declares one and handles calls, casts or messages, as rabbit's gen_server2 modules do). `message_callback` names the callbacks a process is started or sent its own data in. `gen_server_like(mod)` answers calls by GenServer's contract: GenServer, the wrappers aliased to it, GenStage, or an unlisted server with a handle_call/3; `handle_call_function`, `handle_cast_function` and `handler_function` (handle_call, handle_cast, handle_info, handle_continue) are its handlers, the one word every rule about who answers a call reads. `init_function` is init/1 of a process module.
 - **Direction.** Callbacks are matched by name at any arity, so a helper that shares a callback's name counts (loud); an unlisted server's callbacks count only when it handles calls, casts or messages, and a behaviour neither table names nor that shape reveals is not a process (quiet).
 - **Used by.** blocking, coupling, coverage, effects, ets, failure, mailbox, races, shutdown, startup, structure and unsafe_input; calls.dl's tag attribution, replies.dl and resolved_calls.dl (`handle_call_function`, `gen_server_like`).
 
@@ -1356,10 +1356,10 @@ process left.
 **Assumptions and limits.**
 - The tree is what the supervision extractor reads (the vocabulary's
   "Supervision structure"). The strategy must be a literal.
-- Once code comes from `start_callback`. A module the program starts as
-  a server but that declares no behaviour has no `init/1` any analysis
-  sees, so its registrations are missed. ejabberd's `ejabberd_sql_sup`
-  registers its hooks and returns `ignore`: one of the 19 ejabberd pairs.
+- Once code comes from `start_callback`. A module that declares no
+  behaviour has an `init/1` once a start names it the callback module
+  (`started_as`): ejabberd's `ejabberd_sql_sup` registers its hooks and
+  returns `ignore`, one of the 19 ejabberd pairs, reported since.
   A registration made from a handler that runs again (on a reconnect or
   a config reload) is missed. So is one a keeper makes in its own handler
   on behalf of another's once request: MongooseIM's `gen_hook` sets up
@@ -1481,6 +1481,10 @@ sets and the 26 live projects:
 - **Supervision round.** Its 44 "Coupled" pairs were 19 true: 18 still
   reported, `ejabberd_sql_sup` lost. Its 25 false pairs and 72 "One-way"
   pairs are gone.
+- **Behaviour-less starts (2026-09-26).** `ejabberd_sql_sup`, started by
+  its own `supervisor:start_link/3` and declaring no behaviour, is a
+  supervisor with an `init/1` (`started_as`): its pair is back, true. No
+  other coupling row moved over the 44 evaluation sets.
 
 ### Permanent child depends on a sibling that may not come back
 
@@ -4120,10 +4124,10 @@ Structural gaps found:
 - **A module the program starts as a server but that declares no
   behaviour is no process module to any analysis.** Examples are
   ejabberd's `ejabberd_sql_sup` and `ejabberd_tmp_sup`, OTP's `inet_db`,
-  `pg` and `group`, and several emqx modules. The right fix is where
-  `process_behaviour_module` is decided: infer the behaviour from the
-  module's own start (`supervisor:start_link(_, ?MODULE, _)`). That moves
-  every analysis and needs its own measurement.
+  `pg` and `group`, and several emqx modules. Closed 2026-09-26: a start
+  that names a module the callback module is a witness of its behaviour
+  as the attribute is (`started_as`, read by `behaves_as`); the
+  measurement is in the CHANGELOG ("Behaviour-less starts").
 - **A registration a keeper makes on behalf of another's once request is
   not once code.** MongooseIM's `gen_hook` `add_handler` sets up each
   hook's instrumentation with `mongoose_instrument`, whose restart then

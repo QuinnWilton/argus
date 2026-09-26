@@ -36,7 +36,29 @@ defmodule Argus.Schema.Otp do
           {:mod, :symbol, "implementing module"},
           {:behaviour, :symbol, "behaviour module"}
         ],
-        doc: "Module implements a specific OTP behaviour."
+        doc: """
+        Module declares a behaviour (`-behaviour`, `@behaviour`), as \
+        `inspect/1` renders it (`":gen_server"`, `"GenServer"`). Rules ask \
+        behaviours.dl's `behaves_as`, which also reads `started_as`.
+        """
+      },
+      %{
+        name: :started_as,
+        layer: 2,
+        fields: [
+          {:mod, :symbol, "the callback module a start names"},
+          {:behaviour, :symbol, "the behaviour of the start, as implements_behaviour spells it"}
+        ],
+        doc: """
+        A start in the program (`gen_server:start_link(Name, Mod, Args, \
+        Opts)`, `Supervisor.start_link(Mod, arg)`, `gen:start/5,6`, ...) or \
+        an `enter_loop` names `mod` the callback module of `behaviour`, at \
+        a call whose module argument is a literal module \
+        (`Argus.Extractor.GenStarts`). The behaviour's machinery runs the \
+        module's callbacks whether or not it declares the behaviour: \
+        OTP's `inet_db` and `pg`, and ejabberd's `ejabberd_sql_sup`, \
+        declare none. A `proc_lib` start names a function, and is none.
+        """
       },
       %{
         name: :sync_call,

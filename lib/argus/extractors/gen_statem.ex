@@ -51,6 +51,7 @@ defmodule Argus.Extractors.GenStatem do
   @behaviour Argus.Extractor
 
   alias Argus.Extractor.Dispatch
+  alias Argus.Extractor.GenStarts
   alias Argus.Extractor.Resolve
   alias Argus.Extractors.CallbackTag.MessageClauses
   alias Argus.Extractors.GenStatem.{CallClauses, EventClauses}
@@ -103,7 +104,9 @@ defmodule Argus.Extractors.GenStatem do
   def extract(module_data) do
     mod = module_data.module
     attrs = module_data.attributes
-    behaviours = get_behaviours(attrs)
+    # A module a start of its own names a gen_statem's callback module is
+    # one, declared or not (OTP's group: `gen_statem:start(?MODULE, ...)`).
+    behaviours = get_behaviours(attrs) ++ GenStarts.own_behaviours(module_data)
 
     # The GenStateMachine library's `use` declares its own behaviour,
     # whose callbacks are gen_statem's.

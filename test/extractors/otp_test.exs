@@ -64,6 +64,40 @@ defmodule Argus.Extractors.OTPTest do
     end
   end
 
+  describe "extract/1 — started_as" do
+    defp started_as(mod) do
+      {:ok, data} = BeamSpy.BeamFile.disassemble(to_string(:code.which(mod)))
+      data |> OTP.extract() |> Map.get(:started_as, []) |> Enum.sort()
+    end
+
+    test "a start of its own names a module that declares no behaviour" do
+      assert started_as(:bless_server) == [[":bless_server", ":gen_server"]]
+      assert started_as(:bless_bare_sup) == [[":bless_bare_sup", ":supervisor"]]
+      assert started_as(:bless_statem) == [[":bless_statem", ":gen_statem"]]
+    end
+
+    test "a start in another module names the callback module it starts" do
+      assert started_as(:bless_starter) == [[":bless_worker", ":gen_server"]]
+      assert started_as(:bless_worker) == []
+    end
+
+    test "an init/1 nothing starts names nothing" do
+      assert started_as(:bless_plain) == []
+    end
+
+    test "Supervisor.start_link/2 names a module, not a child list" do
+      rows = started_as(Argus.Test.Fixtures.NamedStarts)
+      named = "Argus.Test.Fixtures.NamedGenServer"
+
+      assert [named, "GenServer"] in rows
+      assert [named, ":gen_server"] in rows
+      assert [named, "Supervisor"] in rows
+      # `Supervisor.start_link([], strategy: :one_for_one, ...)` starts
+      # Supervisor.Default around a child list: no callback module.
+      refute Enum.any?(rows, fn [mod, _] -> mod == "[]" end)
+    end
+  end
+
   describe "extract/1 — handle_continue tags" do
     test "a tag tested after another clause's body is still a tag; the body's atoms are not" do
       [{_mod, bin}] =

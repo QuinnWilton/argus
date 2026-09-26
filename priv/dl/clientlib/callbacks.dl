@@ -94,7 +94,7 @@ otp_callback(func, mod, name, behaviour) :-
 .decl unlisted_server(mod: symbol)
 
 unlisted_server(mod) :-
-  implements_behaviour(mod, _),
+  behaves_as(mod, _),
   function_def(_, mod, h, _, _),
   (h = "handle_call" ; h = "handle_cast" ; h = "handle_info"),
   !loop_module(mod).
@@ -114,7 +114,7 @@ loop_module(mod) :- behaves_as(mod, b), process_behaviour(b, "loop").
 process_behaviour_module(mod) :- behaves_as(mod, b), process_behaviour(b, _).
 
 process_behaviour_module(mod) :-
-  implements_behaviour(mod, _),
+  behaves_as(mod, _),
   function_def(_, mod, h, _, _),
   (h = "handle_call" ; h = "handle_cast" ; h = "handle_info").
 

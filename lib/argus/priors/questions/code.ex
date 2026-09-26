@@ -44,7 +44,7 @@ defmodule Argus.Priors.Questions.Code do
   @spec relations_read() :: [atom()]
   def relations_read,
     do: ~w(function_def remote_call bif_call local_call closure_def literal_value tuple_literal
-           implements_behaviour)a
+           implements_behaviour started_as)a
 
   @doc "The index of `facts`' functions."
   @spec index(Argus.Facts.t()) :: t()
@@ -68,7 +68,8 @@ defmodule Argus.Priors.Questions.Code do
     %{
       funcs: funcs,
       by_mod: group(Map.to_list(funcs), fn {_, m} -> m.mod end, fn {id, _} -> id end),
-      behaviours: group(rows.(:implements_behaviour), & &1.mod, & &1.behaviour),
+      behaviours:
+        group(rows.(:implements_behaviour) ++ rows.(:started_as), & &1.mod, & &1.behaviour),
       callees: group(edges, &elem(&1, 0), &elem(&1, 1)),
       callers: group(edges, &elem(&1, 1), &elem(&1, 0)),
       closures: group(rows.(:closure_def), & &1.parent_func, & &1.closure_func),

@@ -176,4 +176,30 @@ defmodule Argus.Soundness.StartupTest do
       refute Enum.any?(fired(@census, :startup), &match?({_, _, {C.EarlyConfigCache, _, _}}, &1))
     end
   end
+
+  describe "a process that declares no behaviour (started_as)" do
+    # A start that names a module the callback module of a behaviour is a
+    # witness of it as `-behaviour` is (behaviours.dl, behaves_as): OTP's
+    # inet_db and pg, and ejabberd's ejabberd_sql_sup, declare none.
+    @deadlock "Startup deadlock: init waits on a later sibling"
+
+    test "a gen_server that starts itself: its init/1 waits on a later sibling" do
+      assert {:error, @deadlock, {:bless_server, :init, 1}} in fired(
+               [:bless_sup, :bless_server, :bless_later],
+               :startup
+             )
+    end
+
+    test "a supervisor that starts itself: its tree orders the children" do
+      assert {:error, @deadlock, {:bless_caller, :init, 1}} in fired(
+               [:bless_bare_sup, :bless_caller, :bless_callee],
+               :startup
+             )
+    end
+
+    test "an init/1 nothing starts runs in its caller, and is quiet" do
+      fired = fired([:bless_sup, :bless_server, :bless_later, :bless_plain], :startup)
+      refute Enum.any?(fired, &match?({_, _, {:bless_plain, _, _}}, &1))
+    end
+  end
 end
