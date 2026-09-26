@@ -1,12 +1,13 @@
 defmodule Argus.Test.Fixtures.FacadeSupervisor do
   @moduledoc """
-  The shape the module-level dependency in calls.dl cannot judge: under
-  one_for_one, `FacadeCaller` reaches a *pure* function of `FacadeHelper`,
-  and `FacadeHelper` happens to call a server from another function. No
-  resolved call or cast connects the two; the third clause of
-  `stateful_module_dep` reports a coupling anyway. A prior that says
-  the helper's API does not message a process is what tells this apart
-  from a facade reached through delegation.
+  The shape the module-level dependency in calls.dl cannot judge:
+  `FacadeCaller`, a permanent child, reaches a *pure* function of
+  `FacadeHelper`, a temporary sibling, and `FacadeHelper` happens to call
+  a server from another function. No resolved call or cast connects the
+  two; the third clause of `stateful_module_dep` makes the caller depend
+  on a sibling that never comes back (coupling's `restart_policy`)
+  anyway. A prior that says the helper's API does not message a process
+  is what tells this apart from a facade reached through delegation.
   """
   use Supervisor
 
@@ -16,7 +17,7 @@ defmodule Argus.Test.Fixtures.FacadeSupervisor do
   def init(_opts) do
     children = [
       {Argus.Test.Fixtures.FacadeCaller, []},
-      {Argus.Test.Fixtures.FacadeHelper, []}
+      Supervisor.child_spec({Argus.Test.Fixtures.FacadeHelper, []}, restart: :temporary)
     ]
 
     Supervisor.init(children, strategy: :one_for_one)

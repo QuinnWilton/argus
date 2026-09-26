@@ -460,7 +460,7 @@ defmodule Argus.PriorsTest do
     end
   end
 
-  describe "coupling doubts a dependency inferred from reaching a sibling" do
+  describe "coupling doubts a restart_policy dependency inferred from reaching a sibling" do
     alias Argus.Test.Fixtures.{FacadeCaller, FacadeHelper, FacadeSupervisor}
 
     # Answers the noul with `p` for every module asked.
@@ -506,7 +506,7 @@ defmodule Argus.PriorsTest do
       assert {:ok, %Argus.Findings{degraded: []} = r} =
                Argus.Findings.run(@facade, through_store(opts, [:coupling]))
 
-      Enum.filter(r.findings, &(&1.title =~ "one_for_one"))
+      Enum.filter(r.findings, &(&1.title == "Permanent child depends on a temporary sibling"))
     end
 
     defp noul(dir, p),
@@ -515,18 +515,16 @@ defmodule Argus.PriorsTest do
         priors_opts: [oracle: NoulOracle, oracle_opts: [p: p], cache_dir: dir, model: "jev-test"]
       ]
 
-    # The caller reaches only a pure function of the helper, so no path
-    # waits on a reply: the coupling is graded one-way, an info already.
-    # The doubt then shows as provenance and label, not as a step down.
-    test "off: the inferred coupling is a structural one-way finding" do
+    # The caller reaches only a pure function of the helper: the
+    # dependency is inferred, and reported at the class's severity.
+    test "off: the inferred dependency is a structural warning" do
       skip_without_souffle()
       assert [finding] = couplings([])
-      assert finding.severity == :info
+      assert finding.severity == :warning
       assert finding.provenance == :structural
-      assert finding.title == "One-way coupling under one_for_one"
     end
 
-    test "on, and the helper's API does not talk to a process: the same finding, marked heuristic",
+    test "on, and the helper's API does not talk to a process: a step down, marked heuristic",
          %{
            tmp_dir: dir
          } do
@@ -542,14 +540,12 @@ defmodule Argus.PriorsTest do
                "#{inspect(FacadeHelper)}'s API does not talk to a process"
 
       assert List.last(finding.help) =~ "(p=0.90)"
-
-      assert finding.title == "One-way coupling under one_for_one"
     end
 
     test "on, and the model thinks it is a facade: nothing changes", %{tmp_dir: dir} do
       skip_without_souffle()
       assert [finding] = couplings(noul(dir, 0.85))
-      assert finding.severity == :info and finding.provenance == :structural
+      assert finding.severity == :warning and finding.provenance == :structural
     end
   end
 end

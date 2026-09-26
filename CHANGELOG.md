@@ -8,6 +8,43 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Restart-state round: what a restart loses
 
+"Coupled children under one_for_one" reported every call or cast between
+two branches of a `one_for_one` supervisor, and the supervision round's
+wider reading of the tree made it 93 "Coupled" and 148 "One-way" rows over
+the evaluation sets, about one in ten true. The true ones share one shape:
+a child's start registers something its sibling keeps (a hook, a
+subscription, a monitor, a gauge, a field of its state). The sibling's
+restart discards it, and the child, not restarted, never registers again.
+docs/design/restart-state.md is the model.
+
+**Changed.** coupling's `restart_isolation` reads `holds_in` (new
+clientlib `restart_state.dl`). A child's once code (`start_callback` and
+what it runs on its own stack) makes a request of its sibling's process,
+and the handler clause the request enters keeps something of it. `detail`
+is how the sibling keeps it: `table`, `monitor`, `state`, `dict`, or
+`handed` (code outside the program, `:info`, basis `inferred`). The
+finding's frames are the registration and what keeps it. A call made on
+each use is no coupling. A field a handler sets back to its `init/1` value
+keeps nothing (`initial_field`: ejabberd_access_permissions' `invalidate`).
+Over the 19 evaluation sets and the 26 live projects:
+- **Coupling rows.** 241 → 30, and 24 of the 28 at `:warning` are true:
+  - ejabberd's 18 hook registrations
+  - MongooseIM's `gen_hook` and `mongoose_instrument`
+  - vernemq's `vmq_swc_store` gauges and `group_initialized`
+  - `ejabberd_local`'s route monitor
+- **Lost, two true pairs.** `ejabberd_sql_sup` declares no behaviour, and
+  `gen_hook`'s registration is made in its own handler. The class entry
+  lists these limits.
+- **jackalope@8b7415f** keeps its pair at `:info` (`handed`).
+- **encore.** `_smoke`'s seeded coupling, a per-use call from `Relay` into
+  `Store`, is no longer one.
+
+**Removed.** The "One-way coupling under one_for_one" title, the call/cast
+grading (`stateful_module_dep_kind`, `stateful_module_dep_call`) and the
+`inferred`/`doubted` bases of `restart_isolation`. The bases remain for
+`restart_policy`, and so does the talks-to-process prior. The anchoring
+walk (`direct_coupling_site`, `sibling_entry_call`) is removed too.
+
 **Changed.** Schema 130. `returned_update(func, key, value, tag)` gains
 `tag`, the clause the return is in (`Dispatch.argument_tags/2`, `*` for a
 return every clause shares), and reads more states:
@@ -16,7 +53,8 @@ return every clause shares), and reads more states:
 - a whole state its fields do not spell (`maps:put/3`'s result), as key
   `*`
 
-Readers: shutdown's drain rules (by position, a column added).
+Readers: shutdown's drain rules (by position, a column added) and
+coupling.
 
 ### Supervision round: the child specs the extractor did not read
 

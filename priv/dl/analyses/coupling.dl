@@ -1,18 +1,21 @@
 // Two owners of one relationship across supervisor branches.
 //
-// A supervisor restarts what it owns; a sibling that holds a pid, a
-// monitor or a cached reply of the restarted child is not restarted
-// with it and keeps a stale reference. The strategy decides: under
-// one_for_one the caller survives the callee's restart, under
-// rest_for_one an earlier child survives a later one's, and a child a
-// process both starts under a supervisor and restarts from its own
-// :DOWN handler has two restart authorities.
+// A supervisor restarts what it owns: the restarted child starts from
+// what its init/1 makes, without what a sibling put into it (a hook, a
+// subscription, a monitor, a row: clientlib/restart_state.dl), and a
+// sibling that cached its pid keeps a dead one. The sibling is not
+// restarted with it. The strategy decides: under one_for_one the caller
+// survives the callee's restart, under rest_for_one an earlier child
+// survives a later one's, and a child a process both starts under a
+// supervisor and restarts from its own :DOWN handler has two restart
+// authorities.
 
 .include "../clientlib/imports.dl"
 .include "../clientlib/otp.dl"
 .include "../clientlib/signals.dl"
 .include "../clientlib/process_statem.dl"
 .include "../clientlib/tooling.dl"
+.include "../clientlib/restart_state.dl"
 
 // A finding in code only developers' tools or tests run steps down a
 // level (clientlib/tooling.dl, Argus.Findings.Tooling).
@@ -31,123 +34,135 @@ derived_process_link(a, b) :-
   function_def(f, a, _, _, _),
   server_process(p, b).
 
-// Two modules under a one_for_one supervisor where one depends on the
-// other through GenServer message passing, and they belong to different
-// child branches. Under one_for_one, if the callee's branch crashes,
-// the caller's branch keeps running in a degraded state.
+// Two children in different branches of a one_for_one supervisor, one
+// holding something in the other (holds_in, clientlib/restart_state.dl):
+// its once code — init/1 and what runs on its stack before it serves, a
+// handle_continue/2 — made a request the other keeps (an ETS row, a
+// monitor, a state field, its process dictionary, or code outside the
+// program it hands the request to). When the keeper restarts alone its
+// init/1 builds it afresh without what the other put there, and the
+// other, not restarted, never puts it back; when the other restarts
+// alone it registers again beside its old incarnation's registration.
+// docs/design/restart-state.md is the model.
 //
-// Linked pairs are excluded: an exit propagates through the link, both
-// processes restart together, and no stale state survives — the hazard
-// this analysis reports is already mitigated.
-//
-// sup_site anchors the finding at the instruction that defines the tree
-// (the strategy line); witness is a function in caller_mod through which
-// the coupling flows. One row per witness — finding builders dedupe on
-// (sup, caller_mod, callee_mod).
-.decl coupling(sup: symbol, caller_mod: symbol, callee_mod: symbol, sup_site: symbol, witness: symbol)
+// A call made on each use is not one: the next call reaches the new
+// process by name and nothing is lost that the caller holds. Linked
+// pairs are excluded — an exit propagates through the link and both
+// restart together — and so is a caller whose every resolved call to
+// the keeper's module goes to an instance it started for itself
+// (private_module_dep, calls.dl): a supervisor restarting its child does
+// not touch the one a sibling keeps.
+.decl coupling(sup: symbol, caller_mod: symbol, callee_mod: symbol, sup_site: symbol)
 
-// A caller whose every resolved call to the callee's module goes to an
-// instance it started for itself (private_module_dep, calls.dl) is not
-// coupled to the sibling the supervisor starts.
-coupling(sup, caller_mod, callee_mod, sup_site, witness) :-
+coupling(sup, caller_mod, callee_mod, sup_site) :-
   supervisor(sup, "one_for_one"),
   supervisor_site(sup, sup_site),
   child_subtree(sup, caller_branch, caller_mod),
   child_subtree(sup, callee_branch, callee_mod),
-  stateful_module_dep(caller_mod, callee_mod, witness),
+  caller_branch != callee_branch,
+  holds_in(caller_mod, callee_mod, _, _, _, _),
   !private_module_dep(caller_mod, callee_mod),
   !derived_process_link(caller_mod, callee_mod),
-  !derived_process_link(callee_mod, caller_mod),
-  caller_branch != callee_branch.
+  !derived_process_link(callee_mod, caller_mod).
 
-// The instruction inside the witness that makes the coupling call —
-// the call into the sibling module itself when the witness calls it
-// directly, otherwise the GenServer.call/cast the witness performs (both
-// come from the stage-0 `call_site` relation). A witness may have
-// several; the finding builder keeps one per pair.
-.decl coupling_site(witness: symbol, callee_mod: symbol, site: symbol)
+// Where the caller asks: the request itself when the caller's own code
+// makes it, else the caller's call into the keeper's module that leads
+// to it (ejabberd's acl:init/1 calling ejabberd_hooks:add/4, whose
+// gen_server call is the keeper's API's). The walk goes back from the
+// functions that make a kept request to the calls into the keeper's
+// module that the caller's once code makes.
+.init kept_request_reach = SameProcessReach
 
-.decl direct_coupling_site(witness: symbol, callee_mod: symbol, site: symbol)
+kept_request_reach.seed(g, g) :- holds_in(_, _, g, _, _, _).
 
-direct_coupling_site(w, callee_mod, id) :-
-  coupling(_, _, callee_mod, _, w),
-  call_site(id, w, callee_mod, _, _).
+.decl holds_site(caller: symbol, callee: symbol, site: symbol, how: symbol, store: symbol)
 
-// A call the dependency is resolved at (sync_site: the call itself, or
-// the witness's call into a helper that makes it), before any GenServer
-// call of the witness.
-direct_coupling_site(w, callee_mod, id) :-
-  coupling(_, _, callee_mod, _, w),
-  !call_site(_, w, callee_mod, _, _),
-  sync_site(w, callee_mod, id).
-
-direct_coupling_site(w, callee_mod, id) :-
-  coupling(_, _, callee_mod, _, w),
-  !call_site(_, w, callee_mod, _, _),
-  !sync_site(w, callee_mod, _),
-  call_site(id, w, m, _, _),
-  (m = "GenServer" ; m = ":gen_server" ; m = ":gen_statem" ; m = "GenStateMachine").
-
-coupling_site(w, callee_mod, id) :-
-  direct_coupling_site(w, callee_mod, id).
-
-// The witness is the function the dependency is proven through (often a
-// callback), and the call into the sibling may live several local calls
-// below it. Anchor at that call rather than at the witness's head.
-// Walked back from the functions that call a coupled sibling, which are
-// few, rather than forward from every witness over all it calls (8.8k
-// rows against 250 on blockster).
-//
-// The call INTO the sibling: one made from outside its module. The
-// sibling's own functions call each other (a default-argument head calls
-// the full arity, a client API its helper), and the walk reaches them
-// through the call that entered; anchored there, every caller's finding
-// showed the same line of the sibling's API (sentry-elixir's
-// ClientReport.Sender.record_discarded_events/2, for each of its callers).
-.init sibling_caller_reach = CallReach
-
-.decl sibling_entry_call(id: symbol, g: symbol, callee_mod: symbol)
-
-sibling_entry_call(id, g, callee_mod) :-
-  coupling(_, _, callee_mod, _, _),
-  call_site(id, g, callee_mod, _, _),
+holds_site(a, b, id, how, x) :-
+  coupling(_, a, b, _),
+  holds_in(a, b, g, tag, how, x),
   function_def(g, gm, _, _, _),
-  gm != callee_mod.
+  gm != b,
+  sync_request_at(g, id, b, tag),
+  id != "".
 
-sibling_caller_reach.seed(g, g) :- sibling_entry_call(_, g, _).
+holds_site(a, b, id, how, x) :-
+  coupling(_, a, b, _),
+  holds_in(a, b, g, _, how, x),
+  once_code(a, f),
+  function_def(f, fm, _, _, _),
+  fm != b,
+  call_instr(f, e, id),
+  function_def(e, b, _, _, _),
+  kept_request_reach.reaches(e, g).
 
-coupling_site(w, callee_mod, id) :-
-  coupling(_, _, callee_mod, _, w),
-  !direct_coupling_site(w, callee_mod, _),
-  sibling_caller_reach.reaches(w, g),
-  sibling_entry_call(id, g, callee_mod).
+// A fun of the keeper's module the once code hands to a call
+// (`lists:foreach(fun ejabberd_pkix:add_certfile/1, Files)`): the call it
+// is handed to is where it runs.
+holds_site(a, b, id, how, x) :-
+  coupling(_, a, b, _),
+  holds_in(a, b, g, _, how, x),
+  once_code(a, f),
+  function_def(f, fm, _, _, _),
+  fm != b,
+  fun_handed(id, f, e, _),
+  function_def(e, b, _, _, _),
+  kept_request_reach.reaches(e, g).
+
+// Neither: the function that makes the request.
+holds_site(a, b, g, how, x) :-
+  coupling(_, a, b, _),
+  holds_in(a, b, g, _, how, x),
+  !holds_call(a, b).
+
+.decl holds_call(caller: symbol, callee: symbol)
+
+holds_call(a, b) :-
+  coupling(_, a, b, _),
+  holds_in(a, b, g, tag, _, _),
+  function_def(g, gm, _, _, _),
+  gm != b,
+  sync_request_at(g, id, b, tag),
+  id != "".
+
+holds_call(a, b) :-
+  coupling(_, a, b, _),
+  holds_in(a, b, g, _, _, _),
+  once_code(a, f),
+  function_def(f, fm, _, _, _),
+  fm != b,
+  (call_instr(f, e, _) ; fun_handed(_, f, e, _)),
+  function_def(e, b, _, _, _),
+  kept_request_reach.reaches(e, g).
 
 // ══ The one output: a child depending on a sibling ═══════════════════
 //
 // One relationship, three reasons it goes stale. `reason` says which,
 // `detail` qualifies it:
 //   restart_isolation — two branches of a one_for_one supervisor, one
-//     depending on the other; detail is "call" when the caller waits on
-//     the sibling anywhere, "cast" when every path is one-way.
+//     holding something in the other; detail is how the other keeps it
+//     (table, monitor, state, dict, handed), witness what keeps it (an
+//     instruction or function of the keeper) and site the caller's
+//     request, or the call into the keeper's module that makes it.
 //   restart_policy — a permanent child depends on a sibling that may
 //     never come back; detail is the sibling's restart policy.
 //   cached_pid — init/1 looks the sibling up by name under one_for_one
 //     and the handlers call the cached pid; detail is empty.
-// `witness` is the function in the caller the dependency flows through
-// and `site` the instruction that makes the call when one is known, the
-// witness function ID otherwise. One row per witness; finding builders
+// For the last two, `witness` is the function in the caller the
+// dependency flows through and `site` the witness. Finding builders
 // dedupe on (sup, caller, callee, reason). `site` anchors with
 // `Findings.at_site/2` either way.
 //
-// `basis` says how the dependency was established: `resolved` through a
-// call or cast whose target is known, `inferred` through the module-level
-// clause of stateful_module_dep alone — the caller reaches some function
-// of the sibling and the sibling has a call somewhere — and `doubted`
-// when that inference is all there is and a prior (Argus.Priors, off by
-// default) puts the sibling's API at 0.3 or below for messaging a
-// process: a helper with a call in its start_link, not a facade. The
-// finding steps down a severity for a doubted row; `permille` is the
-// prior's probability that the module does talk to a process.
+// `basis` says how a restart_policy dependency was established: `resolved`
+// through a call or cast whose target is known, `inferred` through the
+// module-level clause of stateful_module_dep alone — the caller reaches
+// some function of the sibling and the sibling has a call somewhere — and
+// `doubted` when that inference is all there is and a prior
+// (Argus.Priors, off by default) puts the sibling's API at 0.3 or below
+// for messaging a process: a helper with a call in its start_link, not a
+// facade. The finding steps down a severity for a doubted row; `permille`
+// is the prior's probability that the module does talk to a process. A
+// restart_isolation row is always resolved: the request the keeper keeps
+// is known.
 .decl dep_resolved(from: symbol, to: symbol)
 
 dep_resolved(f, t) :- module_sync_dep(f, t, _).
@@ -178,17 +193,58 @@ dep_basis(f, t, "inferred", 0) :-
 .decl sibling_dependency(sup: symbol, caller: symbol, callee: symbol, reason: symbol, detail: symbol, sup_site: symbol, witness: symbol, site: symbol, basis: symbol, permille: number)
 .output sibling_dependency
 
-sibling_dependency(sup, caller_mod, callee_mod, "restart_isolation", kind, sup_site, witness, site, basis, p) :-
-  coupling(sup, caller_mod, callee_mod, sup_site, witness),
-  coupling_site(witness, callee_mod, site),
-  stateful_module_dep_kind(caller_mod, callee_mod, kind),
-  dep_basis(caller_mod, callee_mod, basis, p).
+// A site in the caller's own module is preferred to one in a helper
+// module its once code runs (ejabberd_sm's init/1 reaching
+// ejabberd_c2s:host_up/1). What the keeper does with code outside the
+// program is inferred, and the row says so; a keeping the program shows
+// is preferred to it.
+sibling_dependency(sup, a, b, "restart_isolation", how, sup_site, x, site, basis, 0) :-
+  coupling(sup, a, b, sup_site),
+  chosen_keeping(a, b, how),
+  holds_site(a, b, site, how, x),
+  own_site(a, b, site),
+  keeping_basis(how, basis).
 
-sibling_dependency(sup, caller_mod, callee_mod, "restart_isolation", kind, sup_site, witness, witness, basis, p) :-
-  coupling(sup, caller_mod, callee_mod, sup_site, witness),
-  !coupling_site(witness, callee_mod, _),
-  stateful_module_dep_kind(caller_mod, callee_mod, kind),
-  dep_basis(caller_mod, callee_mod, basis, p).
+sibling_dependency(sup, a, b, "restart_isolation", how, sup_site, x, site, basis, 0) :-
+  coupling(sup, a, b, sup_site),
+  chosen_keeping(a, b, how),
+  holds_site(a, b, site, how, x),
+  !has_own_site(a, b),
+  keeping_basis(how, basis).
+
+.decl chosen_keeping(caller: symbol, callee: symbol, how: symbol)
+
+chosen_keeping(a, b, how) :- holds_site(a, b, _, how, _), keeping_basis(how, "resolved").
+
+chosen_keeping(a, b, "handed") :-
+  holds_site(a, b, _, "handed", _),
+  !shown_keeping(a, b).
+
+.decl shown_keeping(caller: symbol, callee: symbol)
+
+shown_keeping(a, b) :- holds_site(a, b, _, how, _), keeping_basis(how, "resolved").
+
+.decl own_site(caller: symbol, callee: symbol, site: symbol)
+
+own_site(a, b, id) :- holds_site(a, b, id, _, _), site_in(id, a).
+
+.decl has_own_site(caller: symbol, callee: symbol)
+
+has_own_site(a, b) :- own_site(a, b, _).
+
+.decl site_in(site: symbol, mod: symbol)
+
+site_in(id, m) :- holds_site(_, _, id, _, _), call_instr(f, _, id), function_def(f, m, _, _, _).
+site_in(id, m) :- holds_site(_, _, id, _, _), sync_call_site(id, f, _, _), function_def(f, m, _, _, _).
+site_in(id, m) :- holds_site(_, _, id, _, _), fun_handed(id, f, _, _), function_def(f, m, _, _, _).
+
+.decl keeping_basis(how: symbol, basis: symbol)
+
+keeping_basis("table", "resolved").
+keeping_basis("monitor", "resolved").
+keeping_basis("state", "resolved").
+keeping_basis("dict", "resolved").
+keeping_basis("handed", "inferred").
 
 // ══ A permanent child depending on a sibling that may not come back ═
 //

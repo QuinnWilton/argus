@@ -90,11 +90,13 @@ defmodule Argus.FindingsTest do
     test "supervision findings anchor at the tree definition with witness evidence" do
       skip_without_souffle()
 
+      # CastJoiner's init/1 subscribes to its sibling CastKeeper, which
+      # keeps the subscriber in its state (test/fixtures/soundness/
+      # coupling_soundness.ex).
       modules = [
-        Fixtures.DeadlockOrderSupervisor,
-        Fixtures.SyncInitServer,
-        Fixtures.WorkerA,
-        Fixtures.WorkerB
+        Fixtures.Restart.CastSup,
+        Fixtures.Restart.CastKeeper,
+        Fixtures.Restart.CastJoiner
       ]
 
       assert {:ok, result} = Memo.run_analyses(modules, analyses: [:coupling])
@@ -111,17 +113,21 @@ defmodule Argus.FindingsTest do
         # The defect is the supervisor's composition, so the primary
         # anchor is the tree definition — instruction-precise, inside the
         # supervisor's init/1.
-        assert finding.module == Fixtures.DeadlockOrderSupervisor
+        assert finding.module == Fixtures.Restart.CastSup
         assert %InstrId{func: "init", arity: 1} = finding.instr
 
-        # The coupling call is labelled evidence in the depending child.
+        # The registration is labelled evidence in the registering child,
+        # and what keeps it in the sibling.
         labels = Enum.map(finding.related, & &1.label)
-        assert "coupling call" in labels
-        assert "called sibling" in labels
+        assert "registers with the sibling here" in labels
+        assert "kept here" in labels
 
-        witness = Enum.find(finding.related, &(&1.label == "coupling call"))
-        assert witness.module == Fixtures.SyncInitServer
-        assert {Fixtures.SyncInitServer, _func, _arity} = witness.mfa
+        witness = Enum.find(finding.related, &(&1.label == "registers with the sibling here"))
+        assert witness.module == Fixtures.Restart.CastJoiner
+        assert {Fixtures.Restart.CastJoiner, :init, 1} = witness.mfa
+
+        kept = Enum.find(finding.related, &(&1.label == "kept here"))
+        assert kept.module == Fixtures.Restart.CastKeeper
       end
     end
 

@@ -83,33 +83,38 @@ defmodule Argus.Analyses.CouplingSupervisionTest do
       assert dependency_rows(base_facts("permanent")) == []
     end
 
-    test "a dependency through a pid is anchored at the call that makes it" do
+    test "a registration through a pid is anchored at the call that makes it" do
       skip_without_souffle()
 
-      # P's handler makes two GenServer calls: #5 to a process nobody can
+      # P's init/1 makes two GenServer calls: #5 to a process nobody can
       # name, #9 to the S its supervisor starts, through the pid of the
-      # name the child spec gives it. The finding points at #9, not at
-      # whichever GenServer call of the witness came first. (An S that P
-      # started for itself would be P's own, not the sibling.)
+      # name the child spec gives it, and S's handler keeps it as an ETS
+      # row. The finding points at #9, not at whichever GenServer call of
+      # P's came first. (An S that P started for itself would be P's own,
+      # not the sibling.)
       facts =
         "transient"
         |> base_facts()
         |> Map.merge(%{
-          function_def: [["P:handle_call/3", "P", "handle_call", "3", "1", "1"]],
-          implements_behaviour: [["S", "GenServer"]],
-          supervisor_child_name: [["Sup", "1", "S"]],
-          sync_call: [["P:handle_call/3", "dynamic"]],
-          call_site: [
-            ["P:handle_call/3#5", "P:handle_call/3", "GenServer", "call", "2"],
-            ["P:handle_call/3#9", "P:handle_call/3", "GenServer", "call", "2"]
+          function_def: [
+            ["P:init/1", "P", "init", "1", "1"],
+            ["S:handle_call/3", "S", "handle_call", "3", "1"]
           ],
-          pid_call: [["P:handle_call/3#9", "P:handle_call/3", "call", "name", "S"]]
+          implements_behaviour: [["P", "GenServer"], ["S", "GenServer"]],
+          supervisor_child_name: [["Sup", "1", "S"]],
+          sync_call: [["P:init/1", "dynamic"]],
+          call_site: [
+            ["P:init/1#5", "P:init/1", "GenServer", "call", "2"],
+            ["P:init/1#9", "P:init/1", "GenServer", "call", "2"]
+          ],
+          pid_call: [["P:init/1#9", "P:init/1", "call", "name", "S"]],
+          ets_op: [["S:handle_call/3#4", "S:handle_call/3", "subs", "insert", "write"]]
         })
 
-      assert [["Sup", "P", "S", "restart_isolation", "call", _, "P:handle_call/3", site | _]] =
+      assert [["Sup", "P", "S", "restart_isolation", "table", _, "S:handle_call/3#4", site | _]] =
                dependency_rows(facts, "restart_isolation")
 
-      assert site == "P:handle_call/3#9"
+      assert site == "P:init/1#9"
     end
 
     defp dependency_rows(facts, reason \\ "restart_policy") do

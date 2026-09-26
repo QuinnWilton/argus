@@ -2,15 +2,17 @@ defmodule Argus.Analyses.Coupling do
   @moduledoc """
   Two owners of one relationship across supervisor branches.
 
-  A supervisor restarts what it owns; a sibling holding a pid, a monitor
-  or a cached reply of the restarted child is not restarted with it and
-  keeps a stale reference. The strategy decides who survives whom.
+  A supervisor restarts what it owns: the restarted child starts afresh,
+  without what a sibling registered with it, and a sibling that cached
+  its pid keeps a dead one. The sibling is not restarted with it. The
+  strategy decides who survives whom.
 
   - `sibling_dependency(sup, caller, callee, reason, detail, sup_site,
     witness, site, basis, permille)` — a child depends on a sibling that a restart leaves
     stale. `reason` is `restart_isolation` (two branches of a
-    `one_for_one` supervisor; `detail` is `call` when the caller waits on
-    the sibling anywhere, `cast` when every path is one-way),
+    `one_for_one` supervisor, the caller's once code registering
+    something the sibling keeps: `detail` says how it keeps it,
+    clientlib/restart_state.dl and docs/design/restart-state.md),
     `restart_policy` (a permanent child depends on a transient or
     temporary sibling that may never come back; `detail` is that policy)
     or `cached_pid` (`init/1` looks the sibling up by name under
@@ -61,6 +63,14 @@ defmodule Argus.Analyses.Coupling do
       # A gen_statem's state functions and data (clientlib/process_statem.dl,
       # and processes.dl in the points-to stage).
       Argus.Extractors.GenStatem,
+      # What a sibling's handler keeps of a request (clientlib/restart_state.dl):
+      # the clause it enters (clause_call), its ETS writes, the state it
+      # returns (returned_update, returns_call) and the calls the effect
+      # model knows or does not (impure_call, unknown_call).
+      Argus.Extractors.ClauseCall,
+      Argus.Extractors.ETS,
+      Argus.Extractors.ErrorHandling,
+      Argus.Extractors.Purity,
       Argus.Extractors.Tooling
     ]
 
@@ -76,12 +86,17 @@ defmodule Argus.Analyses.Coupling do
           {:reason, :symbol,
            "why the dependency goes stale: restart_isolation | restart_policy | cached_pid"},
           {:detail, :symbol,
-           "call | cast for restart_isolation, the sibling's restart policy for restart_policy, empty for cached_pid"},
+           "for restart_isolation how the sibling keeps what the child registers (table | monitor | state | dict | handed), " <>
+             "the sibling's restart policy for restart_policy, empty for cached_pid"},
           {:sup_site, :symbol, "instruction ID of the tree definition"},
-          {:witness, :symbol, "function in the caller carrying the dependency"},
-          {:site, :symbol, "instruction ID of the dependency call, or the witness function ID"},
+          {:witness, :symbol,
+           "restart_isolation: the sibling's instruction or function that keeps it; " <>
+             "otherwise the function in the caller carrying the dependency"},
+          {:site, :symbol,
+           "restart_isolation: the child's request, or its call into the sibling's module that makes it; " <>
+             "otherwise the witness function ID"},
           {:basis, :symbol,
-           "resolved | inferred | doubted — how the dependency was established, see coupling.dl"},
+           "resolved | inferred | doubted — how the dependency (restart_isolation: the keeping) was established, see coupling.dl"},
           {:permille, :number,
            "for a doubted row, the prior's probability that the sibling talks to a process"}
         ],
@@ -129,69 +144,38 @@ defmodule Argus.Analyses.Coupling do
         caller_mod,
         callee_mod,
         "restart_isolation",
-        "cast",
+        how,
         sup_site,
-        _w,
+        store,
         site,
         basis,
-        p
+        _p
       ]) do
     Findings.new(
-      :info,
-      "One-way coupling under one_for_one",
-      "#{caller_mod} sends casts to #{callee_mod}, and both are children of " <>
-        "the one_for_one supervisor #{sup}. Nothing is awaited, so a " <>
-        "#{callee_mod} restart is harmless unless #{caller_mod} caches its " <>
-        "pid or state by some other route; the shape is worth knowing about, " <>
-        "not fixing.",
-      at: Findings.at_site(sup_site, sup),
-      at_label: "supervision tree defined here",
-      help: [
-        "if `#{caller_mod}` ever holds a pid or monitor of `#{callee_mod}`, " <>
-          "move the pair under `rest_for_one` with `#{callee_mod}` first"
-      ],
-      related: [
-        Findings.related("coupling cast", Findings.at_site(site, caller_mod)),
-        Findings.related("called sibling", Findings.at_module(callee_mod))
-      ]
-    )
-    |> doubt(callee_mod, basis, p)
-  end
-
-  def finding(:sibling_dependency, [
-        sup,
-        caller_mod,
-        callee_mod,
-        "restart_isolation",
-        "call",
-        sup_site,
-        _w,
-        site,
-        basis,
-        p
-      ]) do
-    Findings.new(
-      :warning,
+      if(basis == "inferred", do: :info, else: :warning),
       "Coupled children under one_for_one",
-      "#{caller_mod} calls #{callee_mod}, but both are children of the " <>
-        "one_for_one supervisor #{sup}. When #{callee_mod} crashes and " <>
-        "restarts, #{caller_mod} is not restarted with it and may keep a " <>
-        "stale pid, monitor, or cached reply it holds.",
+      "#{caller_mod} registers with #{callee_mod} when it starts, and " <>
+        "#{kept(how, callee_mod)}. Both are children of the one_for_one " <>
+        "supervisor #{sup}, which restarts either alone. When #{callee_mod} " <>
+        "restarts, its init/1 starts it afresh without what #{caller_mod} " <>
+        "put there, and #{caller_mod}, which is not restarted with it, " <>
+        "never registers again. When #{caller_mod} restarts, it registers " <>
+        "a second time beside what its old process left.",
       at: Findings.at_site(sup_site, sup),
       at_label: "supervision tree defined here",
-      help: [
-        "restart-coupled siblings belong under `rest_for_one`, with " <>
-          "`#{callee_mod}` started before `#{caller_mod}` — a `#{callee_mod}` " <>
-          "restart then restarts `#{caller_mod}` too",
-        "alternatively, have `#{caller_mod}` monitor `#{callee_mod}` and " <>
-          "re-resolve it on every use instead of caching state across crashes"
-      ],
+      help:
+        [
+          "put the pair under `rest_for_one` with `#{callee_mod}` started " <>
+            "before `#{caller_mod}`, or under `one_for_all`: a `#{callee_mod}` " <>
+            "restart then restarts `#{caller_mod}`, which registers again",
+          "or have `#{caller_mod}` monitor `#{callee_mod}` and register again " <>
+            "when it goes down"
+        ] ++ inferred_keeping(callee_mod, basis),
       related: [
-        Findings.related("coupling call", Findings.at_site(site, caller_mod)),
-        Findings.related("called sibling", Findings.at_module(callee_mod))
+        Findings.related("registers with the sibling here", Findings.at_site(site, caller_mod)),
+        Findings.related(kept_label(how), Findings.at_site(store, callee_mod))
       ]
     )
-    |> doubt(callee_mod, basis, p)
   end
 
   def finding(:sibling_dependency, [
@@ -326,6 +310,31 @@ defmodule Argus.Analyses.Coupling do
       ]
     )
   end
+
+  # How the keeper keeps what a sibling registers (coupling.dl's
+  # restart_isolation `detail`, clientlib/restart_state.dl's `how`).
+  defp kept("table", callee), do: "#{callee} keeps it as an ETS row"
+  defp kept("monitor", callee), do: "#{callee} keeps a monitor or link for it"
+  defp kept("state", callee), do: "#{callee} keeps it in its state"
+  defp kept("dict", callee), do: "#{callee} keeps it in its process dictionary"
+
+  defp kept("handed", callee),
+    do: "#{callee} hands it to code outside the program, which may keep it"
+
+  defp kept(_how, callee), do: "#{callee} keeps it"
+
+  defp kept_label("handed"), do: "handed on here"
+  defp kept_label(_how), do: "kept here"
+
+  # What the keeper does with code outside the program is inferred: the
+  # finding steps down a level (the rubric's evidence rule) and says so.
+  defp inferred_keeping(callee, "inferred"),
+    do: [
+      "inferred: #{callee} hands the request to code outside the program; " <>
+        "whether that code keeps it past #{callee}'s restart is not shown"
+    ]
+
+  defp inferred_keeping(_callee, _basis), do: []
 
   # A dependency the module-level clause inferred and a prior doubts: the
   # caller reaches the sibling, but the sibling's API, the model says,

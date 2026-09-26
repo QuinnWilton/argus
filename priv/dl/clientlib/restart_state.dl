@@ -1,0 +1,193 @@
+// What a restart loses: state one process keeps for another.
+//
+// A supervisor restarts a child by running its start again, and the new
+// process begins from what its init/1 makes. Whatever another process
+// put into the old one — a hook it registered, a subscription, a monitor
+// the old process took of it, a row its handler wrote, a field its state
+// kept — is gone, and nothing puts it back unless the process that put it
+// there does so again. A process does so again when its own code that
+// made the request runs again; code that runs once per incarnation
+// (start_callback, callbacks.dl: init/1, handle_continue/2, a Channel's
+// join/3, a LiveView's mount/3) does not, until that process restarts
+// too. A request made from code that runs again (a handler, a client
+// function called per use) is made again on its next use, and a caller
+// that names its peer on every call re-resolves it: neither holds
+// anything across the peer's restart.
+//
+// `holds_in(a, b, site_func, tag, how, store)`: module a's once code
+// makes, in site_func (on a's own stack: the same process, no side
+// path), a request tagged `tag` of b's process, and b's handler for it
+// keeps something: `how` is
+//   "table"   — it writes an ETS row (ets_op of kind write);
+//   "monitor" — it monitors or links a process (pid_signal);
+//   "state"   — the state it returns sets a field to a value its init/1
+//               does not start that field at, or replaces the whole state
+//               with one its fields do not spell (returned_update);
+//   "dict"    — it writes its process dictionary;
+//   "handed"  — it hands the request to code outside the program the
+//               effect model does not know, which may keep it (a
+//               library's process b started, as jackalope's
+//               TortoiseClient hands a subscription to Tortoise).
+// `store` is the instruction or function that keeps it.
+//
+// The handler is the clause the request enters: handle_call/3 for a
+// call, handle_cast/2 for a cast, by the request's tag where the clause
+// head tells it apart (clause_call), every clause where it does not or
+// the tag is unknown ("any"). What the clause keeps is asked of its own
+// sites and of the helpers its calls enter in b's module, on b's stack.
+// A state update is asked of the clause the return is in
+// (returned_update's tag) and of the helpers a clause returns through.
+//
+// Direction. Loud where b's keeping cannot be seen: code outside the
+// program counts as keeping, and a handler whose clauses the extractor
+// cannot tell apart is taken whole. Quiet where the request cannot be
+// seen: a send (b's handle_info/2), a gen_statem's call or cast, a
+// request made in a process the once code spawns, and a registration a
+// once code writes into b's table directly rather than through b's API
+// are not asked; nor is b's own rebuilding of what it kept (an init/1
+// that reads it back from disk or Mnesia), nor a's re-registering on a
+// schedule of its own. Those are the priors' (docs/bug-classes.md).
+//
+// Requires otp.dl (callbacks.dl, calls.dl, supervision.dl) and
+// effect_model.dl (structural_call).
+
+// ── Once code ────────────────────────────────────────────────────────
+//
+// What a supervised module's once code runs on its own stack. Seeded at
+// the start callbacks of modules a supervisor starts: the question is
+// about children.
+.init once_reach = ForwardSameProcessReachCut
+
+once_reach.cut(f, g) :- side_call(f, g).
+once_reach.root(s, s) :- start_callback(m, s), child_subtree(_, _, m).
+
+.decl once_code(mod: symbol, func: symbol)
+
+once_code(m, g) :- start_callback(m, s), once_reach.reaches(s, g).
+
+// ── Requests the once code makes ─────────────────────────────────────
+//
+// `once_request(a, b, kind, tag, func)`: a's once code, in func, calls
+// ("call") or casts to ("cast") b's process with a request tagged `tag`
+// ("any" where it carries none the program sees). A request of a's own
+// process is not one a restart of another can lose.
+.decl once_request(a: symbol, b: symbol, kind: symbol, tag: symbol, func: symbol)
+
+once_request(a, b, "call", tag, g) :-
+  once_code(a, g),
+  sync_request_at(g, _, b, tag),
+  a != b.
+
+once_request(a, b, "cast", tag, g) :-
+  once_code(a, g),
+  async_dep(g, b),
+  cast_tag(g, tag),
+  a != b.
+
+// The tags g's casts carry, "any" for a cast whose message has none.
+.decl cast_tag(func: symbol, tag: symbol)
+
+cast_tag(g, tag) :- call_tag(_, g, "cast", tag).
+
+cast_tag(g, "any") :-
+  async_dep(g, _),
+  call_site(id, g, gs, "cast", _),
+  (gs = "GenServer" ; gs = ":gen_server"),
+  !call_tag(id, g, "cast", _).
+
+cast_tag(g, "any") :- process_call(g, _, _, "cast", _).
+
+// ── What b's handler keeps ───────────────────────────────────────────
+
+// A handler a request of `kind` enters.
+.decl request_handler(mod: symbol, kind: symbol, handler: symbol)
+
+request_handler(m, "call", h) :- handle_call_function(m, h), once_request(_, m, "call", _, _).
+request_handler(m, "cast", h) :- handle_cast_function(m, h), once_request(_, m, "cast", _, _).
+
+// An instruction of f that keeps something in f's process.
+.decl keeps_site(site: symbol, func: symbol, how: symbol)
+
+keeps_site(x, f, "table") :- ets_op(x, f, _, _, "write").
+keeps_site(x, f, "monitor") :- pid_signal(x, f, "monitor", _, _).
+keeps_site(x, f, "monitor") :- pid_signal(x, f, "link", _, _).
+keeps_site(x, f, "monitor") :- monitor_call(x, f, _).
+keeps_site(x, f, "dict") :- impure_call(x, f, _, "process_dict", "write").
+
+keeps_site(x, f, "handed") :-
+  unknown_call(x, f, api, c),
+  !function_def(c, _, _, _, _),
+  !structural_call(api).
+
+// What a handler's call enters: the helpers of the handler's module, on
+// its stack.
+.init handler_reach = ForwardIntraModuleSameProcessReach
+
+handler_reach.root(c, g) :- request_handler(_, _, h), call_instr(h, g, c).
+
+// `kept(b, h, tag, how, store)`: the clause of b's handler h for `tag`
+// ("*" for what every clause shares) keeps something.
+.decl kept(mod: symbol, handler: symbol, tag: symbol, how: symbol, store: symbol)
+
+kept(b, h, tag, how, x) :- request_handler(b, _, h), keeps_site(x, h, how), clause_call(x, h, tag).
+kept(b, h, "*", how, x) :- request_handler(b, _, h), keeps_site(x, h, how), !clause_call(x, h, _).
+
+kept(b, h, tag, how, x) :-
+  request_handler(b, _, h),
+  call_instr(h, _, c),
+  clause_call(c, h, tag),
+  handler_reach.reaches(c, g),
+  keeps_site(x, g, how).
+
+kept(b, h, "*", how, x) :-
+  request_handler(b, _, h),
+  call_instr(h, _, c),
+  !clause_call(c, h, _),
+  handler_reach.reaches(c, g),
+  keeps_site(x, g, how).
+
+// The state a handler returns, by the clause its return is in: of the
+// handler itself, or of a helper a clause returns through (the helper's
+// own rows are for every clause of the helper).
+kept(b, h, tag, "state", h) :-
+  request_handler(b, _, h),
+  returned_update(h, k, v, tag),
+  !initial_field(b, k, v).
+
+kept(b, h, tag, "state", g) :-
+  request_handler(b, _, h),
+  call_instr(h, g, c),
+  returns_call(h, g),
+  clause_call(c, h, tag),
+  function_def(g, b, _, _, _),
+  returned_update(g, k, v, _),
+  !initial_field(b, k, v).
+
+kept(b, h, "*", "state", g) :-
+  request_handler(b, _, h),
+  call_instr(h, g, c),
+  returns_call(h, g),
+  !clause_call(c, h, _),
+  function_def(g, b, _, _, _),
+  returned_update(g, k, v, _),
+  !initial_field(b, k, v).
+
+// The value init/1 starts a field of b's state at: a field the handler
+// sets back to it (ejabberd_access_permissions' `invalidate` puts its
+// cached definitions back to `none`) loses nothing when init/1 sets it so
+// again. `*` is a whole state of no fields (a counter's `0`).
+.decl initial_field(mod: symbol, key: symbol, value: symbol)
+
+initial_field(b, k, v) :-
+  init_function(b, i),
+  returned_update(i, k, v, _),
+  v != "dynamic".
+
+// ── A holds something in b ──────────────────────────────────────────
+.decl holds_in(a: symbol, b: symbol, func: symbol, tag: symbol, how: symbol, store: symbol)
+
+holds_in(a, b, g, tag, how, x) :-
+  once_request(a, b, kind, tag, g),
+  request_handler(b, kind, h),
+  kept(b, h, ctag, how, x),
+  (ctag = tag ; ctag = "*" ; tag = "any").
