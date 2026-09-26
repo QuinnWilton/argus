@@ -276,7 +276,9 @@ unredacted_secret_inferred(mod, field, kind, "unaware", via, p, anchor) :-
 // choice, which is deliberately generous: the alternative is arguing about
 // which branch is reachable, and a false "this is insecure" against code
 // that supports verification is the finding that gets an analysis switched
-// off.
+// off. The credit is for a setting built apart from the connect, which a
+// choice can replace: a client connect whose own literal options say
+// :verify_none has no choice, whatever else the module offers (below).
 
 .decl module_can_verify(mod: symbol)
 
@@ -299,6 +301,22 @@ disables_verification(func, id) :-
   function_def(func, mod, _, _, _),
   !module_can_verify(mod),
   !tls_server_side(id, func).
+
+// A client's connect whose own literal options turn verification off:
+// that connection verifies nothing, whatever other connections of the
+// module do (a mesh transport's listener demanding its peers'
+// certificates beside the dialer that checks none; a metrics push beside
+// a verified API connection). A choice is between settings one
+// connection can take, and this one is written into the call.
+disables_verification(func, id) :-
+  tls_connect(id, func, api, "literal"),
+  client_connect_api(api),
+  tls_verification(id, func, "none").
+
+.decl client_connect_api(api: symbol)
+
+client_connect_api(":ssl.connect/3").
+client_connect_api(":ssl.connect/4").
 
 // ── Verification left to the library's default ───────────────────
 //

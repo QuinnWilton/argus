@@ -29,4 +29,22 @@ defmodule Argus.Soundness.ExposureTest do
     for fun <- [:island, :bandit, :listener],
         do: assert(severity(sev, "Adv.Tls.Quiet", fun, "TLS") == nil, "#{fun}")
   end
+
+  # The exclusion census's exposure hole (docs/design/exclusions.md): a
+  # client connect whose own literal options turn verification off has no
+  # choice, whatever else the module offers.
+  test "a hard-coded :verify_none connect beside a :verify_peer is an error (census)" do
+    sev = severities(modules("exposure_census.ex"), [:exposure])
+
+    assert severity(sev, "Census.Exposure.MeshTransport", :dial, @off) == :error
+    assert severity(sev, "Census.Exposure.TelemetryPush", :connect_metrics, @off) == :error
+    assert severity(sev, "Census.Exposure.BoundOptions", :connect_backup, @off) == :error
+
+    for {mod, fun} <- [
+          {"Census.Exposure.MeshTransport", :listen},
+          {"Census.Exposure.TelemetryPush", :connect_api},
+          {"Census.Exposure.Configurable", :connect}
+        ],
+        do: assert(severity(sev, mod, fun, "TLS") == nil, "#{mod}.#{fun}")
+  end
 end

@@ -136,6 +136,11 @@ it. 1 row comes, true: Livebook's
 `NodeManager.start_runtime_server/2`, whose `if pid = :rpc.call(...)`
 monitors a gone node's `{:badrpc, _}`.
 
+**Fixed.** "TLS certificate verification turned off" credited a module
+naming `:verify_peer` anywhere with offering the choice, a listener's
+included. A client connect whose own literal options say `:verify_none`
+has no choice, and is reported. No row moves.
+
 ### Races by their harm
 
 **Changed.** A check-then-act pair is reported when a rival can land on
