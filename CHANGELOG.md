@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Every derivation and solve writes the facts it reads into a
+  directory of its own under the scratch root's `work/`, and removes it
+  as it returns. The directories were named by their content and
+  shared, and the root was bounded by keeping its newest two dozen, so
+  a prune from any process with the same temporary directory (a
+  compile beside an LSP session, a busy run's own prune) could remove
+  the directory a stage was deriving into: the stage failed, or its
+  outputs were gone when read back. A prune now takes only a `work/`
+  directory untouched for a day, which only a dead owner leaves, and
+  the relation store's oldest files. `analysis_facts_dir` writes
+  nothing now; its value is `%{key: key}`, the digest of what the
+  analysis reads, and `souffle_solve` materializes those relations
+  itself. The scratch root moved from `scry_souffle` to `scry_scratch`:
+  an older scry prunes every directory of the old root but the newest
+  two dozen, and would prune these from under their users.
 - A stage's output that is not there when scry reads it back is an
   error naming the relation and its file
   (`{:stage0, %Argus.MissingRelationError{}}`, and `{:points_to, ...}`),

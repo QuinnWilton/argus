@@ -29,10 +29,10 @@ defmodule Scry.Analysis do
         a third seam: most edits move no
         process and no resolved target)
            │
-      analysis_facts_dir(analysis)  ← content-addressed, projected to the
-           │                          relations THIS analysis reads
-      souffle_solve(analysis)       ← and rules_digest(analysis)
-           │
+      analysis_facts_dir(analysis)  ← the key of what THIS analysis
+           │                          reads: each relation and its digest
+      souffle_solve(analysis)       ← and rules_digest(analysis); solves
+           │                          in a directory of its own
       findings(analysis) → analysis_diagnostics(analysis)
 
   Planchette's LSP-only surface (`Planchette.SupTree`'s supervision tree,
@@ -86,10 +86,11 @@ defmodule Scry.Analysis do
   compares with `==`); Souffle has set semantics, so ordering cannot
   change results.
 
-  Purity deviation: `analysis_facts_dir`, `stage0_facts`,
-  `points_to_facts` and `souffle_solve` touch the filesystem and shell
-  out — content-addressed and idempotent, the same pragmatic loophole as
-  the frontend's code loading.
+  Purity deviation: `stage0_facts`, `points_to_facts` and
+  `souffle_solve` touch the filesystem and shell out, and the relation
+  digests store the text they digest — each in a directory of its own
+  that it removes, or content-addressed and idempotent, the same
+  pragmatic loophole as the frontend's code loading.
 
   ## Shared-layer contract
 
@@ -124,12 +125,6 @@ defmodule Scry.Analysis do
   # consumes; dropping it keeps any line-sensitivity it might have out
   # of the semantic cutoff.
   @vsn_attribute "vsn"
-
-  # Bumped whenever the on-disk fact encoding changes. Directories are
-  # addressed by content, so without this a stale directory written by an
-  # older encoder is indistinguishable from a fresh one and gets reused —
-  # which is how a malformed empty-relation file survived the fix for it.
-  @facts_format_version 2
 
   # The call graph stage 0 derives, which an analysis's projection takes
   # from `stage0_facts` instead of from extraction. Named by argus, as the
@@ -580,20 +575,21 @@ defmodule Scry.Analysis do
     _rules = rules_digest(db, :stage0)
     symbols = Symbols.for_db(db)
 
-    with {:ok, relations} <- reading_schema(db, &stage0_input_relations/0),
-         entries =
-           for(
-             relation <- relations,
-             do:
-               {relation, Runtime.query(db, :relation_digest, relation),
-                Runtime.query(db, :relation_rows, relation)}
-           ),
-         dir = materialize_facts(entries, "stage0", symbols),
-         :ok <- Argus.Analysis.derive_stage0(dir),
-         {:ok, outputs} <- read_outputs(@stage0_outputs, dir, :stage0) do
-      # Souffle wrote strings; interned like everything else this layer
-      # holds.
-      {:ok, reading_schema(db, fn -> Facts.intern(outputs, symbols) end)}
+    with {:ok, relations} <- reading_schema(db, &stage0_input_relations/0) do
+      entries =
+        for relation <- relations,
+            do:
+              {relation, Runtime.query(db, :relation_digest, relation),
+               Runtime.query(db, :relation_rows, relation)}
+
+      with_facts_dir(entries, "stage0", symbols, fn dir ->
+        with :ok <- Argus.Analysis.derive_stage0(dir),
+             {:ok, outputs} <- read_outputs(@stage0_outputs, dir, :stage0) do
+          # Souffle wrote strings; interned like everything else this
+          # layer holds.
+          {:ok, reading_schema(db, fn -> Facts.intern(outputs, symbols) end)}
+        end
+      end)
     end
   end
 
@@ -629,25 +625,29 @@ defmodule Scry.Analysis do
     symbols = Symbols.for_db(db)
 
     with {:ok, relations} <- reading_schema(db, &points_to_input_relations/0),
-         {:ok, stage0} <- stage0_if_read(db, relations),
-         entries = Enum.map(relations, &relation_entry(db, &1, stage0, %{})),
-         dir = materialize_facts(entries, "points_to", symbols),
-         :ok <- Argus.Analysis.derive_points_to(dir),
-         {:ok, outputs} <- read_outputs(@points_to_outputs, dir, :points_to) do
-      {:ok, reading_schema(db, fn -> Facts.intern(outputs, symbols) end)}
+         {:ok, stage0} <- stage0_if_read(db, relations) do
+      entries = Enum.map(relations, &relation_entry(db, &1, stage0, %{}))
+
+      with_facts_dir(entries, "points_to", symbols, fn dir ->
+        with :ok <- Argus.Analysis.derive_points_to(dir),
+             {:ok, outputs} <- read_outputs(@points_to_outputs, dir, :points_to) do
+          {:ok, reading_schema(db, fn -> Facts.intern(outputs, symbols) end)}
+        end
+      end)
     end
   end
 
-  # A fact directory holding exactly what one analysis reads. Content
-  # addressed, so an unchanged projection reuses the directory on disk and
-  # — the point — an unchanged projection means roux never re-executes the
-  # solve below it. An error when what it reads could not be resolved.
+  # The facts one analysis reads, named: each relation it reads and its
+  # digest, as one key. An unchanged projection means roux never
+  # re-executes the solve below it, which is the point. Nothing is
+  # written here: the solve writes the directory it reads, a directory
+  # of its own (`with_facts_dir/4`). An error when what the analysis
+  # reads could not be resolved.
   defquery :analysis_facts_dir,
     key: analysis,
-    returns: %{dir: String.t(), key: String.t()} | {:error, term()} do
+    returns: %{key: String.t()} | {:error, term()} do
     with {:ok, entries} <- analysis_facts_entries(db, analysis) do
-      dir = materialize_facts(entries, "analysis_#{analysis}", Symbols.for_db(db))
-      %{dir: dir, key: Path.basename(dir)}
+      %{key: facts_key(entries)}
     end
   end
 
@@ -703,33 +703,32 @@ defmodule Scry.Analysis do
     _rules = rules_digest(db, analysis)
 
     case Runtime.query(db, :analysis_facts_dir, analysis) do
-      %{dir: dir} ->
-        solve(db, analysis, dir)
+      %{key: _key} ->
+        # The key is this query's edge to what it reads: the entries it
+        # names are taken without edges of their own (`untracked`), as
+        # they are exactly the key's. A relation the analysis does not
+        # read moving the stage it comes from must not re-solve it.
+        case Runtime.untracked(fn -> analysis_facts_entries(db, analysis) end) do
+          {:ok, entries} ->
+            with_facts_dir(entries, "analysis_#{analysis}", Symbols.for_db(db), fn dir ->
+              solve(analysis, dir)
+            end)
+
+          {:error, reason} ->
+            {:error, {:souffle, analysis, reason}}
+        end
 
       {:error, reason} ->
         {:error, {:souffle, analysis, reason}}
     end
   end
 
-  defp solve(db, analysis, dir, attempts \\ 2) do
-    # The scratch window is shared across processes (an LSP session and a
-    # compiler run prune the same root), so a concurrent prune can remove
-    # a directory the memo above still names. Rebuild before solving:
-    # content addressing guarantees the same path, and `untracked` keeps
-    # the rebuild's demands out of this query's dependency edges — the
-    # graph must look identical whether or not the race happened.
-    unless File.dir?(dir) do
-      Runtime.untracked(fn ->
-        {:ok, entries} = analysis_facts_entries(db, analysis)
-        materialize_facts(entries, "analysis_#{analysis}", Symbols.for_db(db))
-      end)
-    end
-
-    # The directory holds exactly the relations this analysis reads, with
-    # the call graph and the points-to already supplied from
-    # `stage0_facts` and `points_to_facts` when they are among them.
-    # Argus must not try to derive either stage itself: the facts they
-    # would need are deliberately absent from a projected directory.
+  # The directory holds exactly the relations this analysis reads, with
+  # the call graph and the points-to already supplied from `stage0_facts`
+  # and `points_to_facts` when they are among them. Argus must not try
+  # to derive either stage itself: the facts they would need are
+  # deliberately absent from a projected directory.
+  defp solve(analysis, dir) do
     case Argus.Analysis.run_rules(dir, analysis, stage0: :provided) do
       {:ok, results} ->
         outputs =
@@ -739,31 +738,12 @@ defmodule Scry.Analysis do
 
         {:ok, outputs}
 
+      # Degradation stays a visible value (Souffle missing/timeout), never
+      # a crash — the argus contract. The driver keeps it out of the
+      # manifest, so the next run solves again.
       {:error, reason} ->
-        # The same race, lost during the solve: another process pruned
-        # the directory while Souffle was reading it. Rebuild and solve
-        # once more rather than report a failure of the scratch space.
-        if attempts > 1 and not intact?(db, analysis, dir) do
-          # A half-pruned directory would pass the File.dir? check.
-          File.rm_rf(dir)
-          solve(db, analysis, dir, attempts - 1)
-        else
-          # Degradation stays a visible value (Souffle missing/timeout),
-          # never a crash — the argus contract. The driver keeps it out
-          # of the manifest, so the next run solves again.
-          {:error, {:souffle, analysis, reason}}
-        end
+        {:error, {:souffle, analysis, reason}}
     end
-  end
-
-  # A fact directory still as materialized: every relation the analysis
-  # reads has its file there.
-  defp intact?(db, analysis, dir) do
-    {:ok, entries} = Runtime.untracked(fn -> analysis_facts_entries(db, analysis) end)
-
-    Enum.all?(entries, fn {relation, _digest, _rows} ->
-      File.regular?(Path.join(dir, "#{relation}.facts"))
-    end)
   end
 
   # Line-free by construction (anchors are module/mfa/instr IDs, not
@@ -1126,30 +1106,52 @@ defmodule Scry.Analysis do
   # frames), so incremental findings equal batch findings field for field.
   defp build_findings(module, outputs), do: Argus.Findings.build(module, outputs)
 
+  # Where scry writes what Souffle reads: `relations/`, each relation's
+  # text stored once by its digest, and `work/`, a directory per
+  # derivation or solve (`with_facts_dir/4`). Shared by every scry and
+  # planchette session with the same temporary directory. Not
+  # `scry_souffle`, the root before directories were per use: a scry of
+  # that time prunes every directory there but the newest two dozen, and
+  # would prune these from under their users.
   defp scratch_root do
-    Path.join(System.tmp_dir!(), "scry_souffle")
+    Path.join(System.tmp_dir!(), "scry_scratch")
   end
 
-  # How many fact directories to keep. Each edit that moves a relation
-  # mints a new content-addressed directory, and nothing else ever removes
-  # them — an editing session used to grow the scratch root without bound
-  # (measured at 506MB / 31 directories after a single afternoon). Keeping
-  # a window preserves the point of content addressing (re-visiting a
-  # previous state is still a hit) while bounding the cost.
-  @scratch_keep 24
+  # The name of a set of `{relation, digest, rows}` entries: each
+  # relation and its digest.
+  defp facts_key(entries) do
+    entries
+    |> Enum.map(fn {relation, digest, _rows} -> {relation, digest} end)
+    |> digest()
+  end
 
-  # Writes `{relation, digest, rows}` entries to a directory named for
-  # their digests, and returns it. Idempotent: identical facts map to the
-  # same directory, which is what makes revisiting a prior edit state free.
-  defp materialize_facts(entries, prefix, symbols) do
-    key =
-      {@facts_format_version,
-       Enum.map(entries, fn {relation, digest, _rows} -> {relation, digest} end)}
-      |> digest()
+  # `fun` given a directory holding exactly `entries`, made for this call
+  # alone and removed when it returns.
+  #
+  # One derivation or solve, one directory: nothing else writes into it,
+  # reads it, or removes it, so its owner never loses it mid-derivation.
+  # The directories used to be named by their content and shared, and
+  # the scratch root was bounded by keeping its newest two dozen: a
+  # prune from any process with the same temporary directory (a compile
+  # beside an LSP session, a busy run's own prune) took a directory a
+  # stage was deriving into, and the stage failed or, read back, its
+  # outputs were gone. A shared directory needs a lease to be removed
+  # safely; one of its own needs none, and costs a directory of links
+  # (`write_projected_facts!/3`) per use, not a relation written again.
+  # Only a directory whose owner died with it is left for the prune
+  # (`prune_scratch/0`).
+  defp with_facts_dir(entries, prefix, symbols, fun) do
+    name = "#{prefix}-#{:os.getpid()}-#{System.unique_integer([:positive])}"
+    dir = Path.join([scratch_root(), "work", name])
+    File.mkdir_p!(dir)
 
-    dir = Path.join(scratch_root(), "#{prefix}_#{key}")
-    unless File.dir?(dir), do: write_facts_dir!(entries, dir, symbols)
-    dir
+    try do
+      write_projected_facts!(entries, dir, symbols)
+      fun.(dir)
+    after
+      File.rm_rf(dir)
+      maybe_prune_scratch()
+    end
   end
 
   # One relation's rows as the lines Souffle reads, fields escaped as
@@ -1174,27 +1176,6 @@ defmodule Scry.Analysis do
     |> :erlang.term_to_binary([:deterministic])
     |> :erlang.md5()
     |> Base.encode16(case: :lower)
-  end
-
-  defp write_facts_dir!(entries, dir, symbols) do
-    # Build under a unique temporary name and rename into place, so a
-    # concurrent reader never observes a half-written directory and
-    # concludes the facts are simply missing (Souffle reads an absent
-    # relation as empty for pruned inputs, which would be a silent wrong
-    # answer rather than a loud failure).
-    staging = "#{dir}.#{System.unique_integer([:positive])}"
-    File.mkdir_p!(staging)
-    write_projected_facts!(entries, staging, symbols)
-
-    case File.rename(staging, dir) do
-      :ok -> :ok
-      # Lost the race to an identical directory: content-addressed, so
-      # the winner's contents are ours. Drop the duplicate.
-      {:error, _} -> File.rm_rf!(staging)
-    end
-
-    maybe_prune_scratch()
-    :ok
   end
 
   # Writes exactly the projected relations and nothing else.
@@ -1294,41 +1275,42 @@ defmodule Scry.Analysis do
     end
   end
 
+  # How long a directory of `work/` goes untouched before it is taken for
+  # one whose owner died with it (a VM killed mid-solve, a process killed
+  # by a signal its `after` never saw): every live one is removed by its
+  # owner as it returns (`with_facts_dir/4`), within the solver's timeout.
+  # A day, as argus leaves a crashed run's scratch directory
+  # (`Argus.Cache.stale/2`).
+  @abandoned_seconds 24 * 60 * 60
+
   @doc false
-  # Bounds the scratch root: the newest fact directories, and the newest
-  # files of the shared relation store. Public for tests.
+  # Bounds the scratch root: the directories of `work/` their owners
+  # left behind, once untouched for a day, and the relation store to its
+  # newest files. Never a directory in use: each is its owner's alone,
+  # and its owner removes it. Public for tests.
   @spec prune_scratch() :: :ok
   def prune_scratch do
     root = scratch_root()
-    relations = Path.join(root, "relations")
-    prune_relation_files(relations)
+    prune_relation_files(Path.join(root, "relations"))
+    prune_abandoned(Path.join(root, "work"))
+  end
 
-    case File.ls(root) do
-      {:ok, entries} ->
-        entries
-        |> Enum.map(&Path.join(root, &1))
-        # The relation store is not a fact directory: pruning it as one
-        # (when it was not among the newest) threw away every relation
-        # file, so each run stringified them all again.
-        |> Enum.filter(&(&1 != relations and File.dir?(&1)))
-        |> Enum.map(fn dir ->
-          mtime =
-            case File.stat(dir, time: :posix) do
-              {:ok, %{mtime: mtime}} -> mtime
-              _ -> 0
-            end
+  defp prune_abandoned(work) do
+    now = System.os_time(:second)
 
-          {mtime, dir}
-        end)
-        |> Enum.sort(:desc)
-        |> Enum.drop(@scratch_keep)
-        |> Enum.each(fn {_mtime, dir} -> File.rm_rf(dir) end)
+    case File.ls(work) do
+      {:ok, names} ->
+        for name <- names,
+            path = Path.join(work, name),
+            {:ok, %File.Stat{mtime: mtime}} <- [File.lstat(path, time: :posix)],
+            now - mtime > @abandoned_seconds,
+            do: File.rm_rf(path)
+
+        :ok
 
       {:error, _} ->
         :ok
     end
-
-    :ok
   end
 
   # A directory's hard links survive the shared file's removal, so this

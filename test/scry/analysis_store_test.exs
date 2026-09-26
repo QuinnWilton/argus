@@ -24,7 +24,7 @@ defmodule Scry.AnalysisStoreTest do
 
   test "a relation's digest names the file it stored", %{paths: paths, peer: peer} do
     Peer.run(peer, fn ->
-      store = Path.join(System.tmp_dir!(), "scry_souffle/relations")
+      store = Path.join(System.tmp_dir!(), "scry_scratch/relations")
 
       # Whatever an earlier run stored goes first (a directory that needs
       # one regenerates it), so only this digest can have written it.

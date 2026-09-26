@@ -17,7 +17,7 @@ re-runs zero Souffle solves.
 Scry also hosts the **shared analysis layer** (`Scry.Analysis`): the
 frontend-agnostic roux query pipeline per-module extraction → semantic
 facts (line_info split out — THE early-cutoff seam) → per-relation
-projections → per-analysis content-addressed Souffle fact dirs → solve →
+projections → per-analysis fact keys → solve (in a directory of its own) →
 line-free findings → late line resolution. Planchette consumes it for
 its LSP with an in-memory compile frontend; scry drives it with a
 disk-beam frontend.
@@ -170,9 +170,18 @@ Key invariants:
 - Souffle missing + `souffle: :warn`: never demand solves (no error
   memos poison the manifest); the souffle version lives in
   `env_fingerprint` so installing it heals everything.
-- Souffle scratch root `scry_souffle` is shared with planchette's LSP
-  sessions (content-addressed, staged+renamed); `souffle_solve` guards
-  with a `File.dir?/1` re-materialize check.
+- Souffle scratch root `scry_scratch` is shared with planchette's LSP
+  sessions: `relations/` (each relation's text once, by digest, hard-
+  linked into facts directories) and `work/`, one directory per
+  derivation or solve (`with_facts_dir/4`), made for it and removed by
+  it as it returns. A prune from any process takes only a `work/`
+  directory untouched for a day (an owner that died) and bounds
+  `relations/`; never a directory in use. Never share a facts
+  directory between derivations again: a shared one needs a lease to
+  be pruned safely (the old content-addressed `scry_souffle` dirs lost
+  stage directories mid-derivation to a busy root's prune). A stage
+  output that cannot be read back is an `Argus.MissingRelationError`,
+  never an empty relation.
 
 ## Test-harness gotchas (learned the hard way)
 
