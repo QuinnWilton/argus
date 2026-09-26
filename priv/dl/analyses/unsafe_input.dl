@@ -487,25 +487,49 @@ sink_func_reads(func, source, p) :-
 
 several_sinks(func) :- sink(a, func, _, _, _), sink(b, func, _, _, _), a != b.
 
-// The same sinks where no request path exists: atom creation and code
-// execution reachable from an exported function, and every unsafe
-// deserialization. Reported here only, so a sink is one finding.
+// ── A sink its callers' input reaches ───────────────────────────
+
+// No request reaches a sink whose input the program's callers choose:
+// what an exported function is handed reaches its argument, or the sink
+// deserializes without :safe, where the caller's input is the question.
+// Reported here only, so a sink is one finding.
+.decl exposed_sink(id: symbol, func: symbol, api: symbol, sink: symbol, safety: symbol)
+
+exposed_sink(id, func, api, s, safety) :-
+  sink(id, func, api, s, safety),
+  exposed_to_callers(id, func),
+  !request_reached_sink(id, _, _, _, _).
+
+// The program's callers reach the sink at `id` in `func`: code execution
+// an exported function reaches (in a library that is very nearly
+// everything, so this says the code is live), atom creation and
+// decompression an exported function reaches whose argument is made of
+// what a caller hands in (caller_input), and every deserialization.
+.decl exposed_to_callers(id: symbol, func: symbol)
+
+exposed_to_callers(id, func) :- sink_call(id, func, _, "code", _), called_from_api(func).
+exposed_to_callers(id, func) :- sink_call(id, func, _, _, _), called_from_api(func), caller_input(id).
+exposed_to_callers(id, func) :- sink_call(id, func, _, "deserialization", _).
+
+// An exported function reaches `func` on its calls.
+.decl called_from_api(func: symbol) inline
+
+called_from_api(func) :- export_reach.reaches(func).
+
 .init export_reach = ForwardCallReachSet
 
 export_reach.root(func) :- api_export(func).
 
-.decl unreached_sink(id: symbol, func: symbol, api: symbol, sink: symbol, safety: symbol)
+.decl sink_without_request_path(id: symbol, func: symbol, api: symbol, sink: symbol, source: symbol, permille: number, safety: symbol)
+.output sink_without_request_path
 
-unreached_sink(id, func, api, "code", "") :-
-  sink(id, func, api, "code", ""),
-  export_reach.reaches(func),
-  !request_reached_sink(id, _, _, _, _).
+sink_without_request_path(id, func, api, s, source, p, safety) :-
+  exposed_sink(id, func, api, s, safety),
+  sink_value(func, s, source, p).
 
-unreached_sink(id, func, api, "atom", "") :-
-  sink(id, func, api, "atom", ""),
-  export_reach.reaches(func),
-  caller_input(id),
-  !request_reached_sink(id, _, _, _, _).
+sink_without_request_path(id, func, api, s, "", 0, safety) :-
+  exposed_sink(id, func, api, s, safety),
+  !sink_value(func, s, _, _).
 
 // What the value such a sink converts is, when priors are on
 // (Argus.Priors; off by default): library API handed a pool's name, a
@@ -514,25 +538,13 @@ unreached_sink(id, func, api, "atom", "") :-
 // URL, a request's parameter or a connecting peer's name is the bug and
 // keeps its severity. 0.9 of the mass away from outside data is where
 // the calibration measured 98% precision (Questions.ValueSource).
-
 .decl sink_value(func: symbol, sink: symbol, source: symbol, permille: number)
 
 sink_value(func, s, source, p) :-
-  unreached_sink(_, func, _, s, _),
+  exposed_sink(_, func, _, s, _),
   prior_value_source(func, s, source, _, p),
   p >= 900,
   !several_sinks(func).
-
-.decl sink_without_request_path(id: symbol, func: symbol, api: symbol, sink: symbol, source: symbol, permille: number, safety: symbol)
-.output sink_without_request_path
-
-sink_without_request_path(id, func, api, s, source, p, safety) :-
-  unreached_sink(id, func, api, s, safety),
-  sink_value(func, s, source, p).
-
-sink_without_request_path(id, func, api, s, "", 0, safety) :-
-  unreached_sink(id, func, api, s, safety),
-  !sink_value(func, s, _, _).
 
 // ── Atoms made of what a caller hands in ─────────────────────────
 //
@@ -606,6 +618,8 @@ sync_api(":gen_server:call/3").
 cast_api("GenServer:cast/2").
 cast_api(":gen_server:cast/2").
 
+// The sink's argument is made of a parameter of the program's API
+// (outside_api): an atom's here, a decompression's compressed data below.
 .decl caller_input(id: symbol)
 
 caller_input(id) :- atom_input.reaches(f, _, id), outside_api(f).
@@ -704,19 +718,7 @@ inflate_input.seed(func, p, id) :-
   sink_data_arg(id, func, arg),
   sink_reads(id, func, arg, "param", p).
 
-.decl inflate_caller_input(id: symbol)
-
-inflate_caller_input(id) :- inflate_input.reaches(f, _, id), outside_api(f).
-
-unreached_sink(id, func, api, "decompression", "") :-
-  sink(id, func, api, "decompression", ""),
-  export_reach.reaches(func),
-  inflate_caller_input(id),
-  !request_reached_sink(id, _, _, _, _).
-
-unreached_sink(id, func, api, "deserialization", safety) :-
-  sink(id, func, api, "deserialization", safety),
-  !request_reached_sink(id, _, _, _, _).
+caller_input(id) :- inflate_input.reaches(f, _, id), outside_api(f).
 
 // The exported functions the sink is reachable from, walked back from
 // the sink a few calls: evidence for "the module's public surface
@@ -724,16 +726,20 @@ unreached_sink(id, func, api, "deserialization", safety) :-
 // anchor already.
 .init sink_callers = BackwardBoundedCallReach
 
-sink_callers.root(func, func) :- unreached_sink(_, func, _, _, _).
+sink_callers.root(func, func) :- exposed_sink(_, func, _, _, _).
 sink_callers.limit(6).
 
+// The exports listed with an exposed sink's finding, one per arity a
+// reader would look at.
 .decl sink_export(sink: symbol, export: symbol)
 .output sink_export
 
+// An export at least one call above the exposed sink's function, within
+// the walk's six calls.
 .decl sink_export_reach(sink: symbol, export: symbol)
 
 sink_export_reach(id, e) :-
-  unreached_sink(id, func, _, _, _),
+  exposed_sink(id, func, _, _, _),
   sink_callers.reaches(func, e, d),
   d > 0,
   api_export(e).
