@@ -444,19 +444,47 @@ call_waits(h) :-
 answers_straight_away(m) :- infinity_target(m), handle_call_function(m, h), !call_waits(h).
 
 // ══ Mutual synchronous dependency ═══════════════════════════════════
-// `phase` is "call" for two modules whose processes synchronously call
-// each other, "continue" when both do so from handle_continue/2: both
+// `phase` is "call" for processes that synchronously call each other
+// round a cycle, "continue" when two do so from handle_continue/2: both
 // return from init, the supervisor proceeds, and neither ever reads its
 // mailbox. "self" is a process calling itself (mod_a = mod_b).
+//
+// A cycle of waits deadlocks at any length: A's handle_call waits on B,
+// B's on C, C's on A, which is still waiting on B. A cycle is reported
+// once, from its least module `a` (mod_a) and the module `b` it calls
+// (mod_b): witness_a is a's wait on b, and witness_b the wait that
+// closes the cycle back into a — b's own for a cycle of two, the last
+// module's round a longer one (the related "return path"). Its every
+// edge is a frame of call_cycle_path.
 .decl call_cycle(mod_a: symbol, mod_b: symbol, witness_a: symbol, witness_b: symbol, phase: symbol, site_a: symbol, site_b: symbol)
 .output call_cycle
 
-call_cycle(a, b, wa, wb, "call", sa, sb) :-
+call_cycle(a, b, wa, wz, "call", sa, sz) :-
+  cycle_ring(a, b, z),
   cycle_edge(a, b, wa),
-  cycle_edge(b, a, wb),
-  a < b,
+  cycle_edge(z, a, wz),
   sync_site_or_empty(wa, b, sa),
-  sync_site_or_empty(wb, a, sb).
+  sync_site_or_empty(wz, a, sz).
+
+// A cycle through a's process whose least module is a: a waits on b, b
+// reaches z through modules after a (b itself for a cycle of two), and z
+// waits on a. Walked from each module's waits on later ones only, so a
+// cycle is found once, from its least module, and none is enumerated
+// path by path.
+.decl cycle_ring(a: symbol, b: symbol, z: symbol)
+
+cycle_ring(a, b, z) :- after_reach(a, b, z), cycle_edge(z, a, _).
+
+// b is a module after a that a waits on, and z one b reaches through
+// waits among modules after a.
+.decl after_reach(a: symbol, b: symbol, z: symbol)
+
+after_reach(a, b, b) :- cycle_edge(a, b, _), a < b.
+
+after_reach(a, b, z) :-
+  after_reach(a, b, y),
+  cycle_edge(y, z, _),
+  a < z.
 
 // ── Which process waits ──────────────────────────────────────────────
 //
@@ -470,11 +498,25 @@ call_cycle(a, b, wa, wb, "call", sa, sb) :-
 // process makes: a witness that runs on its stack, entered at one of
 // a's callbacks — or in a task it awaits, which holds it just the same.
 //
-// Asked only of the pairs that depend on each other both ways, backwards
-// from their witnesses.
+// Asked only of the dependencies on a cycle of modules, a pair that
+// depend on each other both ways or a longer ring, backwards from their
+// witnesses.
 .decl cycle_candidate(a: symbol, b: symbol)
 
-cycle_candidate(a, b) :- module_sync_dep(a, b, _), module_sync_dep(b, a, _).
+cycle_candidate(a, b) :- module_sync_dep(a, b, _), sync_reach(b, a).
+
+// A module's synchronous dependencies, closed: whose process a's code
+// waits on, directly or through the servers it waits on. Asked of the
+// modules that wait on some other and are waited on (the only ones a
+// cycle can pass through).
+.decl sync_link(a: symbol, b: symbol)
+
+sync_link(a, b) :- module_sync_dep(a, b, _), module_sync_dep(b, _, _), module_sync_dep(_, a, _).
+
+.decl sync_reach(a: symbol, b: symbol)
+
+sync_reach(a, b) :- sync_link(a, b).
+sync_reach(a, c) :- sync_reach(a, b), sync_link(b, c).
 
 // `holds.reaches(f, w)`: f runs the witness w while it runs, on its own
 // stack or in a task it waits for.
@@ -611,20 +653,38 @@ calls_into(f, m) :-
 .output call_cycle_path
 
 call_cycle_path(a, b, from_mod, to_mod, witness, "tag", site) :-
-  call_cycle(a, b, _, _, "call", _, _),
-  cycle_edge(from_mod, to_mod, witness),
-  (from_mod = a ; from_mod = b),
-  (to_mod = a ; to_mod = b),
+  ring_edge(a, b, from_mod, to_mod, witness),
   reaches_tag_dep(witness, to_mod),
   sync_site_or_empty(witness, to_mod, site).
 
 call_cycle_path(a, b, from_mod, to_mod, witness, "static", site) :-
-  call_cycle(a, b, _, _, "call", _, _),
-  cycle_edge(from_mod, to_mod, witness),
-  (from_mod = a ; from_mod = b),
-  (to_mod = a ; to_mod = b),
+  ring_edge(a, b, from_mod, to_mod, witness),
   !reaches_tag_dep(witness, to_mod),
   sync_site_or_empty(witness, to_mod, site).
+
+// The edges of the cycles a call_cycle names: its first, a → b, and each
+// wait on the way from b back to a among modules after a.
+.decl ring_edge(a: symbol, b: symbol, from_mod: symbol, to_mod: symbol, witness: symbol)
+
+ring_edge(a, b, a, b, w) :- call_cycle(a, b, _, _, "call", _, _), cycle_edge(a, b, w).
+
+ring_edge(a, b, x, y, w) :-
+  call_cycle(a, b, _, _, "call", _, _),
+  after_reach(a, b, x),
+  cycle_edge(x, y, w),
+  back_to(a, y).
+
+// y is a, or a module after a that reaches a through modules after a.
+.decl back_to(a: symbol, y: symbol)
+
+back_to(a, a) :- cycle_ring(a, _, _).
+back_to(a, z) :- cycle_ring(a, _, z).
+
+back_to(a, y) :-
+  back_to(a, z),
+  z != a,
+  cycle_edge(y, z, _),
+  a < y.
 
 // ══ Synchronous fan-in ══════════════════════════════════════════════
 .decl sync_caller_witness(caller_mod: symbol, target_mod: symbol, witness: symbol)

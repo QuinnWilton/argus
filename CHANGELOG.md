@@ -54,6 +54,14 @@ over: an `:ets.info` of an app-wide config table quieted the unguarded
 create of another. It asks for the same table's lookup, on the way to
 the make, and the same table's give-away. No row moves.
 
+**Fixed.** "Synchronous call cycle" knew only pairs, and the chain rule
+stops at a clause on a cycle: three servers each answering by calling
+the next were reported by nothing. A cycle of any length is one finding,
+from its least module (`cycle_ring`, `after_reach`: each module's waits
+on later ones only, so no cycle is enumerated path by path), with every
+edge of it a related frame; the candidates are the dependencies on a
+cycle of modules (`sync_reach`). No row moves.
+
 ### Races by their harm
 
 **Changed.** A check-then-act pair is reported when a rival can land on

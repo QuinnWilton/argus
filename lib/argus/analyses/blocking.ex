@@ -14,11 +14,13 @@ defmodule Argus.Analyses.Blocking do
     `budget` where the caller's timeout is shorter than the callee's own
     downstream budget.
   - `call_cycle(mod_a, mod_b, witness_a, witness_b, phase, site_a,
-    site_b)` — two modules
-    whose processes synchronously call each other (`call`: each witness
+    site_b)` — modules whose processes synchronously call each other
+    round a cycle of any length, reported once from its least module
+    `mod_a` and the module `mod_b` it calls, `witness_b` the wait that
+    closes the cycle back into `mod_a` (`call`: each witness
     runs on its module's own process, reached from a callback; a wait
     made only while an unnamed process starts counts only where the
-    peer's handler calls it back) or both from `handle_continue/2`
+    peer's handler calls it back) or two both from `handle_continue/2`
     (`continue`: a startup deadlock); the edges in
     `call_cycle_path` are its related frames, marked `tag` when the hop
     was attributed by message tag. `self` is the cycle of one: a
@@ -130,10 +132,12 @@ defmodule Argus.Analyses.Blocking do
       %{
         name: :call_cycle,
         fields: [
-          {:mod_a, :symbol, "first module in cycle"},
-          {:mod_b, :symbol, "second module in cycle"},
+          {:mod_a, :symbol, "the cycle's least module"},
+          {:mod_b, :symbol, "the module mod_a calls on the cycle"},
           {:witness_a, :symbol, "function mod_a's process runs that carries the a→b dependency"},
-          {:witness_b, :symbol, "function mod_b's process runs that carries the b→a return path"},
+          {:witness_b, :symbol,
+           "function that carries the wait closing the cycle back into mod_a: mod_b's for a " <>
+             "cycle of two, the last module's round a longer one"},
           {:phase, :symbol,
            "call (their processes, from their callbacks) | continue (both from handle_continue/2) | " <>
              "self (a process calling itself; mod_a = mod_b)"},
@@ -144,7 +148,8 @@ defmodule Argus.Analyses.Blocking do
         ],
         # A self-call is one finding per call site.
         key: {:phase, %{"self" => [:witness_a, :site_a], default: [:mod_a, :mod_b, :phase]}},
-        doc: "Pair of modules with mutual synchronous dependency, or a process calling itself."
+        doc:
+          "Modules whose processes wait on each other round a cycle, or a process calling itself."
       },
       %{
         name: :call_cycle_path,

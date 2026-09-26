@@ -7,6 +7,7 @@ defmodule Argus.Soundness.BlockingTest do
   use ExUnit.Case, async: true
 
   alias Argus.Test.Memo
+  alias Argus.Test.Soundness.Census.Blocking, as: C
 
   @modules [
     Probe.R2.G5.NoprocAndReexit,
@@ -44,5 +45,86 @@ defmodule Argus.Soundness.BlockingTest do
 
   test "the negatives beside them stay quiet", %{found: found} do
     for mfa <- @quiet, do: refute(Enum.any?(found, &(elem(&1, 2) == mfa)), inspect(mfa))
+  end
+
+  # The exclusion census's blocking holes (docs/design/exclusions.md), over
+  # one fixture set (test/fixtures/soundness/blocking_census.ex).
+  @census [
+    C.Ring3A,
+    C.Ring3B,
+    C.Ring3C,
+    C.Ring4Z,
+    C.Ring4Y,
+    C.Ring4M,
+    C.Ring4B,
+    C.TaskRingA,
+    C.TaskRingB,
+    C.TaskRingC,
+    C.LineA,
+    C.LineB,
+    C.LineC,
+    C.NavParent,
+    C.NoprocAndShutdown,
+    C.NoprocAndNormal,
+    C.NoprocAndBareShutdown,
+    C.EveryStopShape,
+    C.NoprocAndInnerNoproc,
+    C.NoprocAndInnerShutdown
+  ]
+
+  defp census do
+    {:ok, res} = Memo.run_analyses(@census, analyses: [:blocking])
+    {:ok, rows} = Memo.analyze(@census, :blocking)
+    {MapSet.new(res.findings, &{&1.severity, &1.title, &1.mfa}), rows}
+  end
+
+  # census: rings
+  # A cycle of waits longer than two: call_cycle knew only pairs, and the
+  # chain rule stops at a clause on a cycle.
+  describe "census hole: a cycle of three or more servers" do
+    test "a ring of three servers is one cycle, from its least module" do
+      {found, rows} = census()
+      assert {:error, "Synchronous call cycle", {C.Ring3A, :handle_call, 3}} in found
+
+      assert [[a, b | _]] =
+               for(r = [a | _] <- rows["call_cycle"], a == inspect(C.Ring3A), do: r)
+
+      assert {a, b} == {inspect(C.Ring3A), inspect(C.Ring3B)}
+
+      edges =
+        for [^a, ^b, from, to | _] <- rows["call_cycle_path"], uniq: true, do: {from, to}
+
+      assert Enum.sort(edges) ==
+               Enum.sort([
+                 {inspect(C.Ring3A), inspect(C.Ring3B)},
+                 {inspect(C.Ring3B), inspect(C.Ring3C)},
+                 {inspect(C.Ring3C), inspect(C.Ring3A)}
+               ])
+    end
+
+    test "a ring of four through a helper and a handle_info is reported once" do
+      {found, _rows} = census()
+
+      cycles =
+        for {_, "Synchronous call cycle", {m, _, _}} <- found,
+            m in [C.Ring4Z, C.Ring4Y, C.Ring4M, C.Ring4B],
+            do: m
+
+      assert cycles == [C.Ring4B]
+    end
+
+    test "a ring whose first wait is in a task the server awaits is reported" do
+      {found, _rows} = census()
+
+      assert {:error, "Synchronous call cycle", {C.TaskRingA, :"-handle_call/3-fun-0-", 0}} in found
+    end
+
+    test "a chain that does not close, or closes only through a client function, is no cycle" do
+      {found, _rows} = census()
+
+      refute Enum.any?(found, fn {_, t, {m, _, _}} ->
+               t == "Synchronous call cycle" and m in [C.LineA, C.LineB, C.LineC]
+             end)
+    end
   end
 end
