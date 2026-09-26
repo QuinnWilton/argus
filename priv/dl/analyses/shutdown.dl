@@ -829,7 +829,7 @@ kills_monitored_child(mod, site, kill_site) :-
 permanent_child_stops_normally(sup, child, reason, site, sup_site) :-
   supervisor(sup, _),
   supervisor_site(sup, sup_site),
-  supervisor_child(sup, _, child, "permanent", _),
+  child_restart(sup, _, child, "permanent"),
   function_def(func, child, name, _, _),
   name != "terminate",
   callback_stop_reason(site, func, reason),

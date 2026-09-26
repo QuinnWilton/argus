@@ -27,5 +27,26 @@ defmodule Argus.Analyses.ShutdownSupervisionTest do
       assert child == "Argus.Test.Fixtures.PermanentQuitter"
       assert site =~ "PermanentQuitter:handle_call/3#"
     end
+
+    test "a shorthand's restart is the one its child's own child_spec/1 states" do
+      skip_without_souffle()
+
+      alias Argus.Test.Fixtures.ChildSpecs, as: Specs
+
+      modules = [
+        Specs.RestartSup,
+        Specs.TransientOwner,
+        Specs.ProvisionerLike,
+        Specs.PermanentStopper
+      ]
+
+      assert {:ok, results} = Memo.analyze(modules, :shutdown)
+
+      # `use GenServer, restart: :transient` and a hand-written transient
+      # child_spec/1 a list calls are not restarted after a normal stop;
+      # the default is.
+      assert for([_sup, child | _] <- results["permanent_child_stops_normally"], do: child) ==
+               [inspect(Specs.PermanentStopper)]
+    end
   end
 end

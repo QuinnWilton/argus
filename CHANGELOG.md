@@ -6,6 +6,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## 0.20.0-dev — unreleased
 
+### Supervision round: the child specs the extractor did not read
+
+The ETS rows round found 8 of 12 sampled "ETS table dies with its owner"
+rows were permanent children the supervision extractor never read. This
+round reads them, names no child it cannot read, and gives each child
+the restart and type it runs under.
+
+**Fixed.** A shorthand child (`{Mod, args}`, a bare `Mod`) runs under
+its own `child_spec/1`'s restart when that states one, not the
+`:permanent` the extractor writes as the shorthand's default: the new
+clientlib relation `child_restart(sup, pos, child, restart)`
+(supervision.dl) reads `child_spec_restart` for a shorthand. ets's "ETS
+table dies with its owner" no longer excuses the owner a `use GenServer,
+restart: :transient` names, and shutdown's "Permanent child stops itself
+and is restarted" no longer reports it (realtime's `Tenants.Connect`,
+`restart: :temporary`).
+
 ### Owner lifetime stays :info
 
 **Changed.** ets's "ETS table read while its owner may be restarting"

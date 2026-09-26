@@ -218,12 +218,14 @@ ets_owner_process(name, mod, id) :-
   kind != "spawn".
 
 // Owner under a permanent supervisor child — the table will be
-// recreated on restart, so the missing heir is not a real risk.
+// recreated on restart, so the missing heir is not a real risk. A
+// shorthand's restart is its own child_spec/1's when that states one
+// (child_restart): `use GenServer, restart: :temporary` is no excuse.
 .decl ets_permanent_owner(name: symbol, mod: symbol)
 
 ets_permanent_owner(name, mod) :-
   ets_owner_process(name, mod, _),
-  supervisor_child(_, _, mod, "permanent", _).
+  child_restart(_, _, mod, "permanent").
 
 // Owner under a DynamicSupervisor.start_child — we don't know the
 // child spec's restart strategy without further analysis, but the

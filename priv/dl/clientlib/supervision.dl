@@ -8,6 +8,7 @@
 //   child_subtree(sup, branch, mod)
 //   starts_before(sup, earlier, later, earlier_pos, later_pos)
 //   boots_before(sup, earlier, later, earlier_pos, later_pos)
+//   child_restart(sup, pos, child, restart)
 
 // ── Child subtree ─────────────────────────────────────────────────────
 
@@ -31,6 +32,31 @@ child_subtree(sup, child, child) :- dynamic_child(sup, child, _).
 child_subtree(sup, branch, descendant) :-
   child_subtree(sup, branch, intermediate),
   dynamic_child(intermediate, descendant, _).
+
+// ── The restart a child runs under ────────────────────────────────────
+//
+// supervisor_child's restart is what the spec states. A shorthand
+// (`{Mod, args}`, a bare `Mod`, a `Mod.child_spec(args)` call) states
+// none, and the extractor writes :permanent, the supervisor's default,
+// where the child's own child_spec/1 may say otherwise (`use GenServer,
+// restart: :transient`, logflare's ClickHouse Provisioner's hand-written
+// map): for a shorthand the restart is child_spec_restart's when the
+// module states one.
+.decl child_restart(sup: symbol, pos: number, child: symbol, restart: symbol)
+
+child_restart(sup, pos, child, restart) :-
+  supervisor_child(sup, pos, child, restart, _),
+  supervisor_child_form(sup, pos, "explicit").
+
+child_restart(sup, pos, child, restart) :-
+  supervisor_child(sup, pos, child, _, _),
+  supervisor_child_form(sup, pos, "shorthand"),
+  child_spec_restart(child, restart).
+
+child_restart(sup, pos, child, restart) :-
+  supervisor_child(sup, pos, child, restart, _),
+  supervisor_child_form(sup, pos, "shorthand"),
+  !child_spec_restart(child, _).
 
 // ── Start order ───────────────────────────────────────────────────────
 //
