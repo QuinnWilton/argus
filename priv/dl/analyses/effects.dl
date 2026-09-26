@@ -345,82 +345,109 @@ transaction_on_another_repo(caller, repo) :-
   transaction_site(_, caller, other),
   other != repo.
 
-// ── Effects the database cannot undo ─────────────────────────────
+// ── Writes the database cannot undo ─────────────────────────────
+
+// A transaction's closure makes a write the database cannot undo, itself
+// or through what it runs, so a rollback leaves the write behind and a
+// retry makes it again. A process the closure starts and does not wait
+// for runs beside the transaction: its writes count, but not what it
+// does to the process table, which is the start's own (see
+// runs_from_transaction).
+.decl irreversible_write_in_transaction(opened: symbol, caller: symbol, repo: symbol, category: symbol, api: symbol, via: symbol, site: symbol)
+
+irreversible_write_in_transaction(opened, caller, repo, category, api, via, site) :-
+  transaction_body(opened, caller, repo, body),
+  runs_in_transaction(body, via),
+  irreversible_write(site, via, api, category).
+
+irreversible_write_in_transaction(opened, caller, repo, category, api, via, site) :-
+  transaction_body(opened, caller, repo, body),
+  runs_from_transaction(body, via),
+  irreversible_write(site, via, api, category),
+  !on_process_table(category).
+
+// The call at `site` in `func` writes what has left the process, so no
+// rollback can undo it.
 //
 // Deliberately NOT every effect. Logging is fine inside a transaction and
 // is the most common effect there by a wide margin; reading a clock or
 // drawing a random number needs no undoing. What matters is effects that
 // escape the database's control, and the shared effect model already
 // classifies those.
-
+//
 // Only WRITES. `Application.get_env/2` and `Process.get/1` are impure —
 // they break purity — but there is nothing for a rollback to undo, and
 // reporting them here would bury the calls that matter under every config
 // read in the codebase. The categories are the effect model's durable
-// ones (effects.dl): what has left the process cannot be rolled back.
+// ones (clientlib/effect_model.dl): what has left the process cannot be
+// rolled back.
+.decl irreversible_write(site: symbol, func: symbol, api: symbol, category: symbol) inline
 
-.decl escapes_transaction(opened: symbol, caller: symbol, repo: symbol, category: symbol, api: symbol, via: symbol, site: symbol)
+irreversible_write(site, func, api, category) :-
+  impure_call(site, func, api, category, "write"),
+  durable_effect(category).
 
-// Forward from the transaction bodies only. What the body's own process
-// runs is the transaction's work, every durable effect of it; so is what
-// a task it waits for runs (`Task.async(fn -> ... end) |> Task.await()`,
+// An effect of this category is on the process table: a message, a
+// start, a name.
+.decl on_process_table(category: symbol) inline
+
+on_process_table("process").
+
+// `via` is the closure `body` itself or what it runs as the
+// transaction's work: what the body's own process runs, and what a task
+// it waits for runs (`Task.async(fn -> ... end) |> Task.await()`,
 // awaits_task: the request leaves before the commit, and the
-// transaction holds its connection for the whole round trip). Past a
-// start the body does not wait for (runs_elsewhere, clientlib), the new
-// process runs beside the transaction: the start is the process
-// operation reported, and what the process then does to the process
-// table is not reported again (akkoma's `Streamer.stream/2` spawns a
-// pusher per topic from inside `ActivityPub.create/2`'s transaction, and
-// the pusher's Registry.dispatch/3 and sends were each a finding beside
-// the spawn's). What it does outside the process table is: a webhook a
-// supervised task posts is sent whether or not the transaction commits,
-// and sent again when it is retried. So is what a fun the body registers
-// or keeps does, which the walk follows as it always did: whether it runs
-// inside the transaction is not something the call graph says.
+// transaction holds its connection for the whole round trip).
+.decl runs_in_transaction(body: symbol, via: symbol) inline
+
+runs_in_transaction(body, via) :- body_reach.reaches(body, via).
+
+// Forward from the transaction bodies only, and not past a start the
+// body does not wait for (runs_elsewhere, clientlib).
 .init body_reach = ForwardCallReachCut
 
 body_reach.root(body, body) :- transaction_body(_, _, _, body).
-body_reach.cut(g, h) :- starts_on(g, h), !awaits_task(g, _, h).
+body_reach.cut(caller, fun) :- starts_on(caller, fun), !awaits_task(caller, _, fun).
 
 // `caller` starts a process on `fun`: a spawn, a task or an agent
 // running it, or a helper that starts one on the fun it is handed. A fun
 // the body only registers or keeps is walked as before.
 .decl starts_on(caller: symbol, fun: symbol)
 
-starts_on(f, g) :- runs_elsewhere(f, g), process_start(_, f, _, kind, g), kind != "server".
-starts_on(f, g) :- runs_elsewhere(f, g), fun_handed_to(f, g, h), fun_sink(h, "start").
+starts_on(caller, fun) :-
+  runs_elsewhere(caller, fun),
+  process_start(_, caller, _, kind, fun),
+  kind != "server".
+
+starts_on(caller, fun) :-
+  runs_elsewhere(caller, fun),
+  fun_handed_to(caller, fun, sink),
+  fun_sink(sink, "start").
+
+// `via` is anything `body` runs, past a start it does not wait for too
+// (on runs_in_transaction's functions it is the same). The new process
+// runs beside the transaction: the start is the process operation
+// reported, and what the process then does to the process table is not
+// reported again (akkoma's `Streamer.stream/2` spawns a pusher per topic
+// from inside `ActivityPub.create/2`'s transaction, and the pusher's
+// Registry.dispatch/3 and sends were each a finding beside the spawn's).
+// What it does outside the process table is: a webhook a supervised task
+// posts is sent whether or not the transaction commits, and sent again
+// when it is retried. So is what a fun the body registers or keeps does,
+// which the walk follows as it always did: whether it runs inside the
+// transaction is not something the call graph says.
+.decl runs_from_transaction(body: symbol, via: symbol) inline
+
+runs_from_transaction(body, via) :- started_reach.reaches(body, via).
 
 .init started_reach = ForwardCallReach
 
 started_reach.root(body, body) :- transaction_body(_, _, _, body).
 
+// ── Findings ─────────────────────────────────────────────────────
+
 // The repo is the one of the transaction the body belongs to: joining
 // the caller's transaction sites apart from its body paired a closure
 // with every repo the function touched.
-escapes_transaction(opened, caller, repo, category, api, via, site) :-
-  transaction_body(opened, caller, repo, body),
-  body_reach.reaches(body, via),
-  impure_call(site, via, api, category, "write"),
-  durable_effect(category).
-
-// Past a start the body does not wait for, or a fun it keeps
-// (started_reach walks through both; on body_reach's own functions it
-// gives the rule above's rows again). What the started process does to
-// the process table is the start's, reported where it starts (see above).
-escapes_transaction(opened, caller, repo, category, api, via, site) :-
-  transaction_body(opened, caller, repo, body),
-  started_reach.reaches(body, via),
-  impure_call(site, via, api, category, "write"),
-  durable_effect(category),
-  category != "process".
-
-// The effect is in the closure itself, not something it calls.
-escapes_transaction(opened, caller, repo, category, api, body, site) :-
-  transaction_body(opened, caller, repo, body),
-  impure_call(site, body, api, category, "write"),
-  durable_effect(category).
-
-// ── Findings ─────────────────────────────────────────────────────
-
 effect_in_context(caller, "transaction", repo, category, api, via, site, opened) :-
-  escapes_transaction(opened, caller, repo, category, api, via, site).
+  irreversible_write_in_transaction(opened, caller, repo, category, api, via, site).
