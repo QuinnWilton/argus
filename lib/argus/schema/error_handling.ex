@@ -289,6 +289,22 @@ defmodule Argus.Schema.ErrorHandling do
         """
       },
       %{
+        name: :start_timer_arm,
+        layer: 2,
+        fields: [
+          {:id, :symbol, "the :erlang.start_timer/3,4 site"},
+          {:func, :symbol, "the function arming it"},
+          {:target, :symbol, "'self' when it arms the calling process, else 'other'"}
+        ],
+        doc: """
+        An `:erlang.start_timer/3,4` at `id`, and whose mailbox its \
+        `{:timeout, ref, msg}` lands in: `self` when the destination is the \
+        result of `self()` on every path, as timer_arm reads a send_after's. \
+        The flush rules do not ask of it (its message carries the ref), so \
+        it is no timer_arm.
+        """
+      },
+      %{
         name: :timer_tag,
         layer: 2,
         fields: [

@@ -31,6 +31,27 @@ reasons between them take every reason together. A port's monitor
 which a clause comparing the type with `:process` does not take; a
 `:time_offset` monitor sends no `:DOWN` and is no source.
 
+**Added.** Three sources of `unhandled_info`, each a message the
+runtime is shown to write the server. Node monitoring the server's
+process turns on with a literal `true` (`:net_kernel.monitor_nodes/1,2`,
+`:erlang.monitor_node/2,3`, `Node.monitor/2,3`) sends `{:nodeup, …}` and
+`{:nodedown, …}` (source `node`); a port it opens (`Port.open/2`,
+`:erlang.open_port/2`) sends what the port's program writes as `{port,
+{:data, …}}`, unless the opening function reads it in a receive of its
+own or hands the port on with `Port.connect/2` (source `port`); and
+`:erlang.start_timer/3,4` armed for itself sends `{:timeout, ref, msg}`,
+which GenServer's idle `:timeout` clause, a clause for the bare message
+or a `{:timeout, ref}` clause does not take (source `timer`). Node
+events and port output are judged where no clause takes them at all
+("No handle_info/2 clause for a message the server is sent",
+`:warning`), not in a catch-all; a start timer is judged as every timer
+is (`:error`).
+
+**Added.** Schema 133. `start_timer_arm(id, func, target)`
+(ErrorHandling): an `:erlang.start_timer/3,4` at `id` arms its
+`{:timeout, ref, msg}` for the calling process (`self`) or another
+(`other`). Read by mailbox.
+
 **Added.** Schema 132. `callback_takes_down(func, callback, type)`
 (CallbackTag, `MessageClauses.takes_down/2`): some clause takes every
 `:DOWN` of a monitor of `type` (`process`, `port`, or `any` for a clause

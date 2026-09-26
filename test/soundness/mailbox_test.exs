@@ -160,6 +160,79 @@ defmodule Argus.Soundness.MailboxTest do
     end
   end
 
+  describe "what the runtime writes a server that asks (partial_handler retired)" do
+    alias Argus.Test.Soundness.Witness, as: W
+
+    @crash "No handle_info/2 clause for a message the server is sent"
+
+    test "every node's events, with a clause for :nodedown alone" do
+      assert {:warning, @crash, {W.NodesDownOnly, :init, 1}} in fired([W.NodesDownOnly], :mailbox)
+    end
+
+    test "one node's :nodedown, turned on by a helper on the server's stack" do
+      assert {:warning, @crash, {W.NodeWatch, :watch, 1}} in fired(
+               [W.NodeDownInHelper, W.NodeWatch],
+               :mailbox
+             )
+    end
+
+    test "node events with options, from handle_continue/2" do
+      assert {:warning, @crash, {W.NodesWithOptions, :handle_continue, 2}} in fired(
+               [W.NodesWithOptions],
+               :mailbox
+             )
+    end
+
+    test ":erlang.monitor_node/2 from handle_call/3" do
+      assert {:warning, @crash, {W.MonitorNodeCall, :handle_call, 3}} in fired(
+               [W.MonitorNodeCall],
+               :mailbox
+             )
+    end
+
+    test "a port's output under a clause for its exit status alone" do
+      assert {:warning, @crash, {W.PortExitStatusOnly, :init, 1}} in fired(
+               [W.PortExitStatusOnly],
+               :mailbox
+             )
+    end
+
+    test "a port a helper opens on the server's stack, its :EXIT taken and its output not" do
+      assert {:warning, @crash, {W.Spawner, :spawn_cat, 0}} in fired(
+               [W.PortInHelper, W.Spawner],
+               :mailbox
+             )
+    end
+
+    test "a port opened and written to from handle_call/3" do
+      assert {:warning, @crash, {W.PortFromCall, :handle_call, 3}} in fired(
+               [W.PortFromCall],
+               :mailbox
+             )
+    end
+
+    test "start_timer's message under a clause for the bare message" do
+      assert {:error, @crash, {W.StartTimerMessageClause, :init, 1}} in fired(
+               [W.StartTimerMessageClause],
+               :mailbox
+             )
+    end
+
+    test "start_timer armed by a helper on the server's stack" do
+      assert {:error, @crash, {W.Timers, :arm, 2}} in fired(
+               [W.StartTimerInHelper, W.Timers],
+               :mailbox
+             )
+    end
+
+    test "start_timer's 3-tuple under a {:timeout, ref} clause" do
+      assert {:error, @crash, {W.StartTimerTwoTuple, :init, 1}} in fired(
+               [W.StartTimerTwoTuple],
+               :mailbox
+             )
+    end
+  end
+
   test "lists:map/2 of monitors whose refs are dropped (item 26)" do
     assert Enum.any?(fired([M.ListsMapDropped], :mailbox), &match?({:info, @ref_dropped, _}, &1))
   end

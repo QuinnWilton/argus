@@ -104,9 +104,22 @@ defmodule Argus.Analyses.MailboxInfoTest do
       assert partial(results, "late_message") |> Enum.map(fn [mod, _f] -> mod end) |> Enum.sort() ==
                [
                  "Argus.Test.Fixtures.LateMessage.CallsInClosure",
-                 "Argus.Test.Fixtures.LateMessage.HandsMixed",
-                 "Argus.Test.Fixtures.LateMessage.StartTimerIdle"
+                 "Argus.Test.Fixtures.LateMessage.HandsMixed"
                ]
+
+      # The start_timer's `{:timeout, ref, :refresh}` is a message the
+      # module arms and cannot take: unhandled_info's.
+      assert [
+               [
+                 _,
+                 _,
+                 _,
+                 "{:timeout, …}",
+                 "timer",
+                 "Argus.Test.Fixtures.LateMessage.StartTimerIdle" | _
+               ]
+             ] =
+               results["unhandled_info"]
     end
 
     test "the logger's own machinery is no source, though it applies its handlers" do
@@ -163,20 +176,22 @@ defmodule Argus.Analyses.MailboxInfoTest do
 
       alias Argus.Test.Fixtures, as: F
 
-      probes = [F.MonitorsNodesTakingDowns, F.TrapsOpeningPort]
+      probes = [
+        F.MonitorsPortTakingProcessDowns,
+        F.MonitorsNodesTakingDowns,
+        F.TrapsOpeningPort,
+        F.MonitorsDownGuardedByReason
+      ]
 
-      # Node up/down, a port's output: each crashes a handler that takes
-      # every process :DOWN or every :EXIT and no more.
-      assert partial(analyze(probes), "runtime")
-             |> Enum.map(fn [mod, _f] -> mod end)
-             |> Enum.sort() ==
-               probes |> Enum.map(&inspect/1) |> Enum.sort()
-
-      # A port monitor's :DOWN and a guarded reason name the message:
-      # unhandled_info's crash, which this steps aside for.
-      results = analyze([F.MonitorsPortTakingProcessDowns, F.MonitorsDownGuardedByReason])
+      # A port monitor's :DOWN, node up/down, a port's output, a guarded
+      # reason: each crashes a handler that takes every process :DOWN or
+      # every :EXIT and no more, and unhandled_info names the message,
+      # which this steps aside for.
+      results = analyze(probes)
       assert partial(results, "runtime") == []
-      assert length(results["unhandled_info"]) == 2
+
+      assert results["unhandled_info"] |> Enum.map(&Enum.at(&1, 5)) |> Enum.uniq() |> Enum.sort() ==
+               probes |> Enum.map(&inspect/1) |> Enum.sort()
     end
 
     test "a monitor taken in a client function, in the caller's process, is not the server's" do

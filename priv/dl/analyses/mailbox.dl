@@ -1403,9 +1403,12 @@ info_message(m, f, id, msg, "send") :-
 .init info_reach = RunsInServer
 
 info_reach.seed(f) :- timer_arm(id, f, "self", _, _, _), timer_tag(id, _, _).
+info_reach.seed(f) :- start_timer_arm(_, f, "self").
 info_reach.seed(f) :- monitor_call(_, f, _).
 info_reach.seed(f) :- socket_activation(f, _, _).
 info_reach.seed(f) :- socket_opened(f, _).
+info_reach.seed(f) :- node_events(_, f, _).
+info_reach.seed(f) :- port_opened(_, f).
 
 .decl runs_in_server(mod: symbol, func: symbol)
 
@@ -1422,6 +1425,13 @@ info_message(m, f, id, lit, "timer") :-
 info_message(m, f, id, cat("{", tag, ", …}"), "timer") :-
   timer_arm(id, f, "self", "dynamic", _, _),
   timer_tag(id, tag, _),
+  runs_in_server(m, f).
+
+// :erlang.start_timer/3,4 armed for the server itself sends `{:timeout,
+// ref, msg}`: a 3-tuple tagged :timeout (timer_tag), which GenServer's
+// idle `handle_info(:timeout, s)` does not take.
+info_message(m, f, id, "{:timeout, …}", "timer") :-
+  start_timer_arm(id, f, "self"),
   runs_in_server(m, f).
 
 // A monitor its own function waits on, in a receive or behind a
@@ -1461,6 +1471,58 @@ sends_down("dynamic").
 down_taken(h, id) :- monitor_type(id, t), callback_takes_down(h, "handle_info", t).
 down_taken(h, id) :- monitor_type(id, _), callback_takes_down(h, "handle_info", "any").
 down_taken(h, id) :- monitor_type(id, "dynamic"), callback_takes_down(h, "handle_info", "process").
+
+// ── Node events and a port's output ─────────────────────────────────
+//
+// What the runtime writes a process that asks for it. `:net_kernel.
+// monitor_nodes/1,2` with `true` subscribes the calling process to every
+// node's `{:nodeup, node}` and `{:nodedown, node}` (a third element with
+// options); `:erlang.monitor_node/2,3` and `Node.monitor/2,3` with `true`
+// to one node's `{:nodedown, node}`. A flag the program computes shows
+// nothing, and `false` turns the events off. A port a server's process
+// opens (`Port.open/2`, which compiles to `:erlang.open_port/2`) is
+// connected to it: what the port's program writes arrives as `{port,
+// {:data, data}}`. A function that hands the port to another process
+// (`Port.connect/2`), or that waits in a receive of its own (the port's
+// output taken where it is read, as `System.cmd/3` does), is not judged.
+.decl node_events(id: symbol, func: symbol, message: symbol)
+
+node_events(id, f, "{:nodeup, …}") :-
+  remote_call(id, f, ":net_kernel", "monitor_nodes", _),
+  (call_arg(f, ":net_kernel:monitor_nodes/1", 0, "true") ;
+   call_arg(f, ":net_kernel:monitor_nodes/2", 0, "true")).
+
+node_events(id, f, "{:nodedown, …}") :-
+  remote_call(id, f, ":net_kernel", "monitor_nodes", _),
+  (call_arg(f, ":net_kernel:monitor_nodes/1", 0, "true") ;
+   call_arg(f, ":net_kernel:monitor_nodes/2", 0, "true")).
+
+node_events(id, f, "{:nodedown, …}") :-
+  remote_call(id, f, ":erlang", "monitor_node", _),
+  (call_arg(f, ":erlang:monitor_node/2", 1, "true") ;
+   call_arg(f, ":erlang:monitor_node/3", 1, "true")).
+
+node_events(id, f, "{:nodedown, …}") :-
+  remote_call(id, f, "Node", "monitor", _),
+  (call_arg(f, "Node:monitor/2", 1, "true") ; call_arg(f, "Node:monitor/3", 1, "true")).
+
+info_message(m, f, id, msg, "node") :- node_events(id, f, msg), runs_in_server(m, f).
+
+.decl port_opened(id: symbol, func: symbol)
+
+port_opened(id, f) :- remote_call(id, f, ":erlang", "open_port", 2).
+port_opened(id, f) :- remote_call(id, f, "Port", "open", 2).
+
+.decl hands_port_off(func: symbol)
+
+hands_port_off(f) :- remote_call(_, f, ":erlang", "port_connect", 2).
+hands_port_off(f) :- remote_call(_, f, "Port", "connect", 2).
+
+info_message(m, f, id, "{port, {:data, …}}", "port") :-
+  port_opened(id, f),
+  runs_in_server(m, f),
+  !hands_port_off(f),
+  !receive_reach.reaches(f).
 
 // ── The close of a socket the server holds ───────────────────────────
 //
@@ -1644,6 +1706,12 @@ info_taken(h, msg) :-
 
 info_taken(h, msg) :- info_fallback(_, msg, h, _), callback_open(h, "handle_info", "any").
 
+// A port's output is told apart by the `{:data, …}` inside it: a clause
+// that compares :data anywhere may take it (`{^port, {:data, line}}`).
+info_taken(h, "{port, {:data, …}}") :-
+  info_fallback(_, "{port, {:data, …}}", h, _),
+  callback_tag(h, "handle_info", ":data").
+
 info_taken(h, msg) :-
   info_fallback(_, msg, h, _),
   match("[{].*", msg),
@@ -1670,11 +1738,22 @@ taken_at(h, id, msg) :-
   source != "monitor",
   info_taken(h, msg).
 
+// Where a catch-all's dropping the message is judged: a message the
+// program sends or arms, a monitor's :DOWN, a socket's close. Every
+// source is judged where nothing takes it at all.
+.decl drop_judged(source: symbol)
+
+drop_judged("send").
+drop_judged("timer").
+drop_judged("monitor").
+drop_judged("socket").
+
 unhandled_info(mod, f, id, msg, source, m, h, fallback) :-
   info_message(m, f, id, msg, source),
   gen_server_like(m),
   !statem_process(m),
   info_fallback(m, msg, h, fallback),
+  (fallback = "crash" ; drop_judged(source)),
   !taken_at(h, id, msg),
   !server_receives(m, msg),
   function_def(f, mod, _, _, _).
@@ -1709,6 +1788,10 @@ statem_takes(m, msg) :-
   statem_info_tag(m, _, tag).
 
 statem_takes(m, msg) :- info_message(m, _, _, msg, _), statem_info_open(m, _, "any").
+
+statem_takes(m, "{port, {:data, …}}") :-
+  info_message(m, _, _, "{port, {:data, …}}", "port"),
+  statem_info_tag(m, _, ":data").
 
 statem_takes(m, msg) :-
   info_message(m, _, _, msg, _),

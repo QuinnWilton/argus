@@ -103,6 +103,24 @@ defmodule Argus.Extractors.ErrorHandlingTest do
     end
   end
 
+  describe "extract/1 — start_timer_arm" do
+    alias Argus.Test.Soundness.Witness, as: W
+
+    defp start_timers(mod) do
+      facts = ErrorHandling.extract(disassemble(mod))
+      name = &(&1 |> String.split(":") |> List.last())
+      for [_id, func, target] <- Map.get(facts, :start_timer_arm, []), do: {name.(func), target}
+    end
+
+    test "whose mailbox :erlang.start_timer's {:timeout, ref, msg} lands in" do
+      assert start_timers(W.StartTimerMessageClause) == [{"init/1", "self"}]
+      assert start_timers(W.Timers) == [{"arm/2", "self"}]
+      assert start_timers(W.StartTimerElsewhere) == [{"init/1", "other"}]
+      # A send_after is a timer_arm, not a start_timer.
+      assert start_timers(Argus.Test.Fixtures.UnhandledInfo.WarmUp) == []
+    end
+  end
+
   describe "extract/1 — apply_param and the apply writer" do
     alias Argus.Test.Fixtures.LateMessage
 

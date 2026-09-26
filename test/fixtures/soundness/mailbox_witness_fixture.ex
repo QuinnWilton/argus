@@ -159,3 +159,319 @@ defmodule Argus.Test.Soundness.Witness.PortDownAnyType do
   def handle_info({:DOWN, ref, _type, _port, _reason}, %{ref: ref} = state),
     do: {:stop, :normal, state}
 end
+
+# ── Node events: what :net_kernel.monitor_nodes and monitor_node send ───
+
+defmodule Argus.Test.Soundness.Witness.NodesDownOnly do
+  @moduledoc false
+  # Watches every node and takes only the :nodedown: the first node to
+  # join crashes it.
+  use GenServer
+
+  def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
+
+  @impl true
+  def init(_arg) do
+    :ok = :net_kernel.monitor_nodes(true)
+    {:ok, MapSet.new()}
+  end
+
+  @impl true
+  def handle_info({:nodedown, node}, nodes), do: {:noreply, MapSet.delete(nodes, node)}
+end
+
+defmodule Argus.Test.Soundness.Witness.NodeWatch do
+  @moduledoc false
+  def watch(node), do: Node.monitor(node, true)
+end
+
+defmodule Argus.Test.Soundness.Witness.NodeDownInHelper do
+  @moduledoc false
+  # A helper module turns on one node's monitor on the server's stack;
+  # handle_info/2 takes only its own tick.
+  use GenServer
+
+  def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
+
+  @impl true
+  def init(arg), do: {:ok, arg}
+
+  @impl true
+  def handle_cast({:follow, node}, state) do
+    Argus.Test.Soundness.Witness.NodeWatch.watch(node)
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_info(:tick, state), do: {:noreply, state}
+end
+
+defmodule Argus.Test.Soundness.Witness.NodesWithOptions do
+  @moduledoc false
+  # monitor_nodes/2 with options, from handle_continue/2: the events come
+  # as 3-tuples, and no clause names them.
+  use GenServer
+
+  def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
+
+  @impl true
+  def init(arg), do: {:ok, arg, {:continue, :watch}}
+
+  @impl true
+  def handle_continue(:watch, state) do
+    :ok = :net_kernel.monitor_nodes(true, node_type: :visible)
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_info({:peer, _}, state), do: {:noreply, state}
+end
+
+defmodule Argus.Test.Soundness.Witness.MonitorNodeCall do
+  @moduledoc false
+  # :erlang.monitor_node/2 from handle_call/3: {:nodedown, node} has no clause.
+  use GenServer
+
+  def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
+
+  @impl true
+  def init(arg), do: {:ok, arg}
+
+  @impl true
+  def handle_call({:follow, node}, _from, state) do
+    true = :erlang.monitor_node(node, true)
+    {:reply, :ok, state}
+  end
+
+  @impl true
+  def handle_info(:tick, state), do: {:noreply, state}
+end
+
+defmodule Argus.Test.Soundness.Witness.NodesTaken do
+  @moduledoc false
+  # Quiet: both events have a clause; a node monitor turned off sends nothing.
+  use GenServer
+
+  def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
+
+  @impl true
+  def init(_arg) do
+    :ok = :net_kernel.monitor_nodes(true)
+    {:ok, MapSet.new()}
+  end
+
+  @impl true
+  def terminate(_reason, _nodes), do: :net_kernel.monitor_nodes(false)
+
+  @impl true
+  def handle_info({:nodeup, node}, nodes), do: {:noreply, MapSet.put(nodes, node)}
+  def handle_info({:nodedown, node}, nodes), do: {:noreply, MapSet.delete(nodes, node)}
+end
+
+defmodule Argus.Test.Soundness.Witness.NodesOff do
+  @moduledoc false
+  # Quiet: `false` turns node events off.
+  use GenServer
+
+  def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
+
+  @impl true
+  def init(arg) do
+    :ok = :net_kernel.monitor_nodes(false)
+    {:ok, arg}
+  end
+
+  @impl true
+  def handle_info(:tick, state), do: {:noreply, state}
+end
+
+# ── A port's output ────────────────────────────────────────────────────
+
+defmodule Argus.Test.Soundness.Witness.PortExitStatusOnly do
+  @moduledoc false
+  # Takes the port's exit status and not what it writes before it.
+  use GenServer
+
+  def start_link(cmd), do: GenServer.start_link(__MODULE__, cmd)
+
+  @impl true
+  def init(cmd) do
+    port = Port.open({:spawn, cmd}, [:binary, :exit_status])
+    {:ok, %{port: port}}
+  end
+
+  @impl true
+  def handle_info({port, {:exit_status, status}}, %{port: port} = state),
+    do: {:stop, {:exited, status}, state}
+end
+
+defmodule Argus.Test.Soundness.Witness.Spawner do
+  @moduledoc false
+  def spawn_cat, do: :erlang.open_port({:spawn, ~c"cat"}, [:binary])
+end
+
+defmodule Argus.Test.Soundness.Witness.PortInHelper do
+  @moduledoc false
+  # A helper module opens the port on the server's stack; the server takes
+  # only the port's :EXIT, pinned to it.
+  use GenServer
+
+  def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
+
+  @impl true
+  def init(_arg) do
+    Process.flag(:trap_exit, true)
+    {:ok, %{port: nil}}
+  end
+
+  @impl true
+  def handle_cast(:start, state),
+    do: {:noreply, %{state | port: Argus.Test.Soundness.Witness.Spawner.spawn_cat()}}
+
+  @impl true
+  def handle_info({:EXIT, port, reason}, %{port: port} = state), do: {:stop, reason, state}
+end
+
+defmodule Argus.Test.Soundness.Witness.PortFromCall do
+  @moduledoc false
+  # Opens the port in handle_call/3 and writes to it; handle_info/2 has a
+  # clause for another protocol only.
+  use GenServer
+
+  def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
+
+  @impl true
+  def init(arg), do: {:ok, arg}
+
+  @impl true
+  def handle_call({:run, cmd, input}, _from, state) do
+    port = Port.open({:spawn, cmd}, [:binary])
+    Port.command(port, input)
+    {:reply, :ok, state}
+  end
+
+  @impl true
+  def handle_info({:result, _}, state), do: {:noreply, state}
+end
+
+defmodule Argus.Test.Soundness.Witness.PortReadThere do
+  @moduledoc false
+  # Quiet: the port's output is read where the port is opened.
+  use GenServer
+
+  def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
+
+  @impl true
+  def init(arg), do: {:ok, arg}
+
+  @impl true
+  def handle_call({:run, cmd}, _from, state) do
+    port = Port.open({:spawn, cmd}, [:binary, :exit_status])
+    {:reply, collect(port, ""), state}
+  end
+
+  @impl true
+  def handle_info(:tick, state), do: {:noreply, state}
+
+  defp collect(port, acc) do
+    receive do
+      {^port, {:data, data}} -> collect(port, acc <> data)
+      {^port, {:exit_status, _}} -> acc
+    end
+  end
+end
+
+defmodule Argus.Test.Soundness.Witness.PortDataTaken do
+  @moduledoc false
+  # Quiet: the data clause is pinned to the port the state keeps.
+  use GenServer
+
+  def start_link(cmd), do: GenServer.start_link(__MODULE__, cmd)
+
+  @impl true
+  def init(cmd), do: {:ok, %{port: Port.open({:spawn, cmd}, [:binary]), out: ""}}
+
+  @impl true
+  def handle_info({port, {:data, data}}, %{port: port} = state),
+    do: {:noreply, %{state | out: state.out <> data}}
+end
+
+# ── :erlang.start_timer: `{:timeout, ref, msg}` ──────────────────────────
+
+defmodule Argus.Test.Soundness.Witness.StartTimerMessageClause do
+  @moduledoc false
+  # Takes the timer's message as if it came bare: the 3-tuple the runtime
+  # sends is `{:timeout, ref, :refresh}`, which the `:refresh` clause does
+  # not take.
+  use GenServer
+
+  def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
+
+  @impl true
+  def init(arg) do
+    :erlang.start_timer(1_000, self(), :refresh)
+    {:ok, arg}
+  end
+
+  @impl true
+  def handle_info(:refresh, state), do: {:noreply, state}
+end
+
+defmodule Argus.Test.Soundness.Witness.Timers do
+  @moduledoc false
+  def arm(ms, message), do: :erlang.start_timer(ms, self(), message)
+end
+
+defmodule Argus.Test.Soundness.Witness.StartTimerInHelper do
+  @moduledoc false
+  # A helper module arms the timer on the server's stack.
+  use GenServer
+
+  def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
+
+  @impl true
+  def init(arg), do: {:ok, arg}
+
+  @impl true
+  def handle_cast(:later, state) do
+    Argus.Test.Soundness.Witness.Timers.arm(5_000, :flush)
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_info({:flush, _}, state), do: {:noreply, state}
+end
+
+defmodule Argus.Test.Soundness.Witness.StartTimerTwoTuple do
+  @moduledoc false
+  # A `{:timeout, ref}` clause: the timer's message has three elements.
+  use GenServer
+
+  def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
+
+  @impl true
+  def init(arg) do
+    ref = :erlang.start_timer(1_000, self(), :expire)
+    {:ok, Map.put(arg, :ref, ref)}
+  end
+
+  @impl true
+  def handle_info({:timeout, ref}, %{ref: ref} = state), do: {:stop, :normal, state}
+end
+
+defmodule Argus.Test.Soundness.Witness.StartTimerElsewhere do
+  @moduledoc false
+  # Quiet: the timer is armed for another process.
+  use GenServer
+
+  def start_link(peer), do: GenServer.start_link(__MODULE__, peer)
+
+  @impl true
+  def init(peer) do
+    :erlang.start_timer(1_000, peer, :wake)
+    {:ok, peer}
+  end
+
+  @impl true
+  def handle_info(:tick, state), do: {:noreply, state}
+end

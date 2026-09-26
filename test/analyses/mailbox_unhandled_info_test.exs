@@ -124,6 +124,23 @@ defmodule Argus.Analyses.MailboxUnhandledInfoTest do
     assert results["unhandled_info"] == []
   end
 
+  test "node events with a clause each, a port read where it opens, a timer armed elsewhere" do
+    alias Argus.Test.Fixtures.LateMessage
+    alias Argus.Test.Soundness.Witness, as: W
+
+    quiet = [
+      W.NodesTaken,
+      W.NodesOff,
+      W.PortReadThere,
+      W.PortDataTaken,
+      W.StartTimerElsewhere,
+      LateMessage.StartTimer
+    ]
+
+    {:ok, results} = Memo.analyze(quiet, :mailbox)
+    assert results["unhandled_info"] == []
+  end
+
   test "partial_handler steps aside for the module a crash names", %{results: results} do
     mods = for [mod | _] <- results["partial_handler"], do: mod
     refute Enum.any?(mods, &String.ends_with?(&1, ".Reconnect"))

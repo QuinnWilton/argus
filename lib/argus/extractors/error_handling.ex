@@ -75,6 +75,9 @@ defmodule Argus.Extractors.ErrorHandling do
     producer of gen_stage#238 ran user code that called hackney)
   - `apply_param(id, func, pos)` — the call through a fun, or the apply,
     at `id` runs what `func`'s parameter `pos` holds: its callers choose
+  - `start_timer_arm(id, func, target)` — an `:erlang.start_timer/3,4` at
+    `id` arms `{:timeout, ref, msg}` for the calling process (`self`) or
+    another (`other`)
   - `timer_tag(id, tag, arity)` — the atom the message of the timer armed
     at `id` is told apart by: the message itself (`arity` 0), or a
     tuple's first element (`arity` its size)
@@ -182,6 +185,7 @@ defmodule Argus.Extractors.ErrorHandling do
       :result_tested,
       :returns_call,
       :rpc_result,
+      :start_timer_arm,
       :timer_arm,
       :timer_cancel,
       :timer_ref,
@@ -522,6 +526,7 @@ defmodule Argus.Extractors.ErrorHandling do
         facts
         |> add_fact(:mailbox_writer, [id, ctx.func_id, kind])
         |> emit_timer_tag(id, start_timer_tag(mfa))
+        |> emit_start_timer(id, ctx, mfa)
 
       :error ->
         facts
@@ -573,6 +578,13 @@ defmodule Argus.Extractors.ErrorHandling do
   # `msg` is.
   defp start_timer_tag({:erlang, :start_timer, arity}) when arity in [3, 4], do: {":timeout", 3}
   defp start_timer_tag(_mfa), do: nil
+
+  # :erlang.start_timer(time, dest, msg): whose mailbox the
+  # `{:timeout, ref, msg}` lands in.
+  defp emit_start_timer(facts, id, ctx, {:erlang, :start_timer, arity}) when arity in [3, 4],
+    do: add_fact(facts, :start_timer_arm, [id, ctx.func_id, timer_target(ctx, 1)])
+
+  defp emit_start_timer(facts, _id, _ctx, _mfa), do: facts
 
   defp emit_timer_tag(facts, _id, nil), do: facts
 
