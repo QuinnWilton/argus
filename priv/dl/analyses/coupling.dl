@@ -491,9 +491,10 @@ rest_for_one_orphaned_children(sup, owner, holder, owner_pos, holder_pos, start,
 // module. The monitor must be OF the started child — the pid a
 // supervisor start returned — not of some other process the module
 // watches (Oban.Queues monitors its notifier and restarts queues from a
-// signal: two facts about two processes, not two restart authorities). The :DOWN handler is whichever function of the module matches
-// :DOWN (matches_down): handle_info/2 for a GenServer, a private helper
-// its state functions' catch-alls dispatch to for a gen_statem.
+// signal: two facts about two processes, not two restart authorities).
+// The :DOWN handler is whichever function of the module matches :DOWN
+// (matches_down): handle_info/2 for a GenServer, a private helper its
+// state functions' catch-alls dispatch to for a gen_statem.
 //
 // Walked back from the only targets these rules ask about — the functions
 // that start a dynamic child and the ones that monitor what they started
@@ -505,45 +506,65 @@ rest_for_one_orphaned_children(sup, owner, holder, owner_pos, holder_pos, start,
 module_reach.seed(s, s) :- dynamic_child(_, _, s).
 module_reach.seed(m, m) :- monitors_started_child(_, m).
 
+// A process starts a child under a DynamicSupervisor that will restart
+// it, monitors it, and starts it again from its :DOWN handler: two
+// restart authorities for one child.
+.decl two_restart_authorities(mod: symbol, sup: symbol, child: symbol, via: symbol, handler: symbol)
+
+two_restart_authorities(mod, sup, child, via, handler) :-
+  starts_and_monitors(mod, sup, child, via),
+  down_handler(mod, handler),
+  starts_supervised_again(handler, sup, child).
+
+// `via`, a function of mod, reaches a start of a named child under sup
+// and a monitor of a child a supervisor started. Task children and
+// children the extractor could not name are left out.
 .decl starts_and_monitors(mod: symbol, sup: symbol, child: symbol, via: symbol)
 
-starts_and_monitors(mod, sup, child, f) :-
-  function_def(f, mod, _, _, _),
-  module_reach.reaches(f, s),
-  dynamic_child(sup, child, s),
+starts_and_monitors(mod, sup, child, via) :-
+  function_def(via, mod, _, _, _),
+  module_reach.reaches(via, start),
+  dynamic_child(sup, child, start),
   child != "dynamic",
   child != "Task",
-  module_reach.reaches(f, m),
-  monitors_started_child(_, m).
+  module_reach.reaches(via, monitor),
+  monitors_started_child(_, monitor).
 
 // A monitor of a pid a supervisor's start_child returned: named so by
 // the extractor, or a pid it could not name that the points-to analysis
 // follows to a process a DynamicSupervisor.start_child started.
 .decl monitors_started_child(id: symbol, func: symbol)
 
-monitors_started_child(id, f) :- monitor_call(id, f, "started_child").
+monitors_started_child(id, func) :- monitor_call(id, func, "started_child").
 
-monitors_started_child(id, f) :-
-  monitor_call(id, f, "dynamic"),
-  signal_target(id, f, "monitor", p),
-  process_start(s, _, p, _, _),
-  call_site(s, _, "DynamicSupervisor", "start_child", _).
+monitors_started_child(id, func) :-
+  monitor_call(id, func, "dynamic"),
+  signal_target(id, func, "monitor", pid),
+  process_start(start, _, pid, _, _),
+  call_site(start, _, "DynamicSupervisor", "start_child", _).
 
+// A function of mod that handles a :DOWN message (matches_down).
 .decl down_handler(mod: symbol, handler: symbol)
 
-down_handler(mod, h) :-
-  function_def(h, mod, _, _, _),
-  matches_down(h).
+down_handler(mod, handler) :-
+  function_def(handler, mod, _, _, _),
+  matches_down(handler).
+
+// The handler reaches a start of `child` under sup whose spec gives it
+// a restart other than :temporary (dynamic_restart), so the supervisor
+// restarts it too.
+.decl starts_supervised_again(handler: symbol, sup: symbol, child: symbol)
+
+starts_supervised_again(handler, sup, child) :-
+  module_reach.reaches(handler, start),
+  dynamic_restart(sup, child, start, restart),
+  restart != "temporary".
 
 .decl dual_restart_authority(mod: symbol, sup: symbol, child: symbol, via: symbol, start_site: symbol, monitor_site: symbol, handler: symbol)
 .output dual_restart_authority
 
-dual_restart_authority(mod, sup, child, via, start_site, monitor_site, h) :-
-  starts_and_monitors(mod, sup, child, via),
-  down_handler(mod, h),
-  module_reach.reaches(h, s),
-  dynamic_restart(sup, child, s, restart),
-  restart != "temporary",
+dual_restart_authority(mod, sup, child, via, start_site, monitor_site, handler) :-
+  two_restart_authorities(mod, sup, child, via, handler),
   start_site_of(via, sup, child, start_site),
   monitor_site_of(via, monitor_site).
 
