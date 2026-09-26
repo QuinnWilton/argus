@@ -2656,6 +2656,39 @@ arms_when_empty(e, c, key) :-
 .decl static_render_registration(mod: symbol, entry: symbol, func: symbol, site: symbol, kind: symbol)
 .output static_render_registration
 
+// A callback that runs on the static render too reaches a registration
+// of its process for later messages without a connected?/1 test that
+// answered true: the HTTP connection's process is the one registered.
+.decl registered_on_static_render(entry: symbol, registration: symbol)
+
+registered_on_static_render(entry, registration) :-
+  runs_on_static_render(entry),
+  reaches_unconnected(entry, registration),
+  registers_process(registration).
+
+static_render_registration(m, e, f, id, kind) :-
+  registered_on_static_render(e, id),
+  static_render_callback(m, e),
+  process_registration(id, f, kind).
+
+// The callback runs on the static render as well as the connected one
+// (static_render_callback, clientlib/live_view.dl).
+.decl runs_on_static_render(entry: symbol) inline
+
+runs_on_static_render(e) :- static_render_callback(_, e).
+
+// The call at `registration` registers the process for later messages
+// (process_registration).
+.decl registers_process(registration: symbol) inline
+
+registers_process(id) :- process_registration(id, _, _).
+
+// `entry` reaches the registration in its own process along calls not on
+// a true arm of connected?/1 (render_reach).
+.decl reaches_unconnected(entry: symbol, registration: symbol) inline
+
+reaches_unconnected(e, id) :- render_reach.reaches(e, id).
+
 .decl process_registration(site: symbol, func: symbol, kind: symbol)
 
 process_registration(id, f, "subscribe") :- mailbox_writer(id, f, "pubsub").
@@ -2678,10 +2711,6 @@ render_reach.seed(f, id) :-
 
 render_reach.guarded(id) :- connected_guarded(id, _).
 
-static_render_registration(m, e, f, id, kind) :-
-  static_render_callback(m, e),
-  render_reach.reaches(e, id),
-  process_registration(id, f, kind).
 
 // ══ A subscription made again and again ═══════════════════════════
 //
@@ -2710,6 +2739,40 @@ static_render_registration(m, e, f, id, kind) :-
 .decl repeated_subscription(mod: symbol, entry: symbol, func: symbol, site: symbol)
 .output repeated_subscription
 
+// A callback that runs again and again subscribes its process on every
+// run, and unsubscribes nothing on its way: each run adds one more
+// subscription.
+.decl subscribes_again(entry: symbol, subscription: symbol)
+
+subscribes_again(entry, subscription) :-
+  callback_runs_again(entry),
+  reached_every_run(entry, subscription),
+  subscribes(subscription),
+  !entry_unsubscribes(entry).
+
+repeated_subscription(m, e, f, id) :-
+  subscribes_again(e, id),
+  function_def(e, m, _, _, _),
+  subscription_call(id, f, "subscribe").
+
+// A callback that runs again and again, whenever its request or message
+// comes (again_root, runs.dl).
+.decl callback_runs_again(entry: symbol) inline
+
+callback_runs_again(e) :- again_root(e, "callback").
+
+// The call at `subscription` subscribes (subscription_call).
+.decl subscribes(subscription: symbol) inline
+
+subscribes(id) :- subscription_call(id, _, "subscribe").
+
+// `entry` reaches the subscription, in its own process, on a way that
+// passes no site that runs once and no call its state decides
+// (repeat_reach).
+.decl reached_every_run(entry: symbol, subscription: symbol) inline
+
+reached_every_run(e, id) :- repeat_reach.reaches(e, id).
+
 .init subscription_reach = SameProcessReach
 
 subscription_reach.seed(f, id) :- subscription_call(id, f, _).
@@ -2722,7 +2785,9 @@ entry_unsubscribes(e) :-
 
 // Walked back from each subscription along the calls that do not run
 // only at a site that runs once (once_site, runs.dl)
-// (BackwardUnguardedSameProcess, in the callback's own process).
+// (BackwardUnguardedSameProcess, in the callback's own process). A
+// subscription inside an endpoint's own subscribe/1,2 is the caller's,
+// at its call of the endpoint.
 .init repeat_reach = BackwardUnguardedSameProcess
 
 repeat_reach.seed(f, id) :-
@@ -2750,11 +2815,3 @@ state_param(g, k) :- state_param(f, j), call_arg_forward(f, g, k, j).
 
 state_decided(s) :- param_decided(s, f, k), state_param(f, k).
 
-// A subscription inside an endpoint's own subscribe/1,2 is the
-// caller's, at its call of the endpoint.
-repeated_subscription(m, e, f, id) :-
-  again_root(e, "callback"),
-  function_def(e, m, _, _, _),
-  repeat_reach.reaches(e, id),
-  subscription_call(id, f, "subscribe"),
-  !entry_unsubscribes(e).
