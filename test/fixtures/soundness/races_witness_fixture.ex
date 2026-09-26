@@ -868,3 +868,60 @@ defmodule Argus.Test.Soundness.Races.PureFill do
 
   defp render(k), do: {:rendered, k}
 end
+
+# ── What a decision does besides the write ────────────────────────────
+
+defmodule Argus.Test.Soundness.Races.PoolStop do
+  # hackney's stop_pool/1: the lookup decides a stop the pool's supervisor
+  # makes, spelled with Erlang's :supervisor, and then the delete. Both
+  # racers stop the pool.
+  @tab :sound_pool_stop
+
+  def start, do: :ets.new(@tab, [:named_table, :public])
+  def register(name, pid), do: :ets.insert(@tab, {name, pid})
+
+  def stop(name) do
+    case find(name) do
+      nil ->
+        :ok
+
+      _pid ->
+        case :supervisor.terminate_child(:sound_pool_sup, name) do
+          :ok ->
+            _ = :supervisor.delete_child(:sound_pool_sup, name)
+            :ets.delete(@tab, name)
+            :ok
+
+          error ->
+            error
+        end
+    end
+  end
+
+  defp find(name) do
+    case :ets.lookup(@tab, name) do
+      [{^name, pid}] -> pid
+      [] -> nil
+    end
+  end
+end
+
+defmodule Argus.Test.Soundness.Races.PoolStopElixir do
+  # The same stop spelled with Elixir's Supervisor.
+  @tab :sound_pool_stop_ex
+
+  def start, do: :ets.new(@tab, [:named_table, :public])
+  def register(name, pid), do: :ets.insert(@tab, {name, pid})
+
+  def stop(name) do
+    case :ets.lookup(@tab, name) do
+      [] ->
+        :ok
+
+      [_] ->
+        :ok = Supervisor.terminate_child(:sound_pool_sup_ex, name)
+        :ets.delete(@tab, name)
+        :ok
+    end
+  end
+end

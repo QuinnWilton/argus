@@ -360,6 +360,31 @@ defmodule Argus.Analyses.EffectsPurityTest do
       assert Effects.classify("File", "rm_rf") == {:impure, :io, :write}
     end
 
+    test "an Erlang module is classified as its Elixir twin is" do
+      # A two-spelling API covered on one side reads the other spelling as
+      # no effect, or as an unknown one: hackney's stop_pool/1 terminated
+      # a pool through :supervisor, which the model did not know, while
+      # the same call through Supervisor was a process write.
+      for {elixir, erlang} <- [
+            {{"Supervisor", "terminate_child"}, {":supervisor", "terminate_child"}},
+            {{"DynamicSupervisor", "start_child"}, {":supervisor", "start_child"}},
+            {{"System", "stop"}, {":init", "stop"}},
+            {{"Path", "join"}, {":filename", "join"}},
+            {{"Path", "absname"}, {":filename", "absname"}},
+            {{"URI", "parse"}, {":uri_string", "parse"}},
+            {{"Base", "encode64"}, {":base64", "encode"}},
+            {{"Port", "connect"}, {":erlang", "port_connect"}},
+            {{"DateTime", "utc_now"}, {":calendar", "universal_time"}}
+          ] do
+        assert Effects.classify(elem(erlang, 0), elem(erlang, 1)) ==
+                 Effects.classify(elem(elixir, 0), elem(elixir, 1))
+      end
+
+      assert Effects.classify(":init", "get_plain_arguments") == {:impure, :port, :read}
+      assert Effects.classify(":filename", "basedir") == {:impure, :port, :read}
+      assert Effects.classify(":calendar", "date_to_gregorian_days") == :unknown
+    end
+
     test "every category used is declared in the type's domain" do
       known =
         ~w(io logging process process_dict ets port node time random network code_loading)a

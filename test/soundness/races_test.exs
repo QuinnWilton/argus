@@ -88,6 +88,16 @@ defmodule Argus.Soundness.RacesTest do
     end
   end
 
+  describe "what a decision does besides the write" do
+    test "a stop through Erlang's :supervisor, both racers stopping the pool" do
+      assert_fires([R.PoolStop], @ets, {R.PoolStop, :stop, 1})
+    end
+
+    test "the same stop through Elixir's Supervisor" do
+      assert_fires([R.PoolStopElixir], @ets, {R.PoolStopElixir, :stop, 1})
+    end
+  end
+
   describe "a write is judged at the key it names" do
     test "a library's bump/1 its users call with any key, over a literal default" do
       assert_fires([R.TotalsLib], @ets, {R.TotalsLib, :ensure_total, 0})

@@ -83,12 +83,18 @@ defmodule Argus.Purity.Effects do
     "Task.Supervisor" => :process,
     "Supervisor" => :process,
     "DynamicSupervisor" => :process,
+    # The Erlang spelling of both: hackney's stop_pool/1 terminates and
+    # deletes a child through it, and read as no effect at all.
+    ":supervisor" => :process,
     "Process" => :process,
     "Registry" => :process,
     ":gen_server" => :process,
     ":gen_statem" => :process,
     ":proc_lib" => :process,
     ":timer" => :process,
+    # System.stop/0 and System.argv/0 in Erlang: the node's boot and its
+    # arguments.
+    ":init" => :port,
     ":global" => :node,
     ":rpc" => :node,
     ":net_kernel" => :node,
@@ -185,6 +191,17 @@ defmodule Argus.Purity.Effects do
     {"NaiveDateTime", "utc_now"} => :time,
     {"Date", "utc_today"} => :time,
     {"Time", "utc_now"} => :time,
+    # The same clocks in :calendar, whose other functions are date
+    # arithmetic and stay unclassified (a local-time conversion reads the
+    # time zone).
+    {":calendar", "universal_time"} => :time,
+    {":calendar", "local_time"} => :time,
+
+    # :filename is Path's twin, string work but for the few that consult
+    # the current directory, the environment or the code path.
+    {":filename", "absname"} => :io,
+    {":filename", "basedir"} => :port,
+    {":filename", "find_src"} => :io,
 
     # HTTP requests, from the clients whose other functions build
     # requests and parse URLs.
@@ -234,10 +251,15 @@ defmodule Argus.Purity.Effects do
     {"Tesla", "delete"} => :network,
     {"Tesla", "delete!"} => :network,
 
-    # Ports and the outside world.
+    # Ports and the outside world: Port's functions, in their Erlang
+    # spelling.
     {":erlang", "open_port"} => :port,
     {":erlang", "port_command"} => :port,
     {":erlang", "port_close"} => :port,
+    {":erlang", "port_connect"} => :port,
+    {":erlang", "port_control"} => :port,
+    {":erlang", "port_call"} => :port,
+    {":erlang", "port_info"} => :port,
 
     # Node-visible state.
     {":erlang", "nodes"} => :node,
@@ -449,6 +471,15 @@ defmodule Argus.Purity.Effects do
                     {":file", "read_file_info"},
                     {":file", "list_dir"},
                     {":file", "get_cwd"},
+                    {":filename", "absname"},
+                    {":filename", "basedir"},
+                    {":filename", "find_src"},
+                    {":erlang", "port_info"},
+                    {":init", "get_argument"},
+                    {":init", "get_arguments"},
+                    {":init", "get_plain_arguments"},
+                    {":init", "get_status"},
+                    {":init", "script_id"},
 
                     # Table and file reads.
                     {":ets", "lookup"},
@@ -511,6 +542,7 @@ defmodule Argus.Purity.Effects do
     :lists :maps :sets :ordsets :orddict :dict :gb_trees :gb_sets
     :string :binary :unicode :re :array :queue :proplists :math
     :erl_anno :beam_lib :io_lib
+    :filename :uri_string :base64
   )
 
   # A function whose arities differ in kind: `node/0` reads the local

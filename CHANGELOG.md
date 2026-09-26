@@ -6,6 +6,25 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## 0.20.0-dev — unreleased
 
+### Races: what is ordered before the pair
+
+The races rewrite's concurrency fix counted every other process that
+writes a row as a rival, and added 18 false rows (docs/design/races.md,
+"Ordered before the pair"). This round reads the orderings that make
+some of them no rival, and three witnesses the rewrite lost.
+
+**Fixed.** The effect model classifies an Erlang module as its Elixir
+twin: `:supervisor` as `Supervisor` (a process write), `:init` as
+`System` (a port write; its argument reads read), `:filename` as `Path`
+(string work but for `absname`, `basedir` and `find_src`, which consult
+the directory, the environment and the code path), `:uri_string` as
+`URI` and `:base64` as `Base` (pure), `:calendar`'s `universal_time/0`
+and `local_time/0` as `DateTime.utc_now/0`, and `:erlang`'s
+`port_connect`, `port_control`, `port_call` and `port_info` as `Port`'s.
+hackney's `stop_pool/1`, which stops a pool through `:supervisor` on what
+its lookup found and then deletes the name, is a race whose decision
+does more again.
+
 ### Monitors: "runs again from here" names only callbacks that do
 
 **Fixed.** A monitor-leak finding's "runs again from here" frames were
