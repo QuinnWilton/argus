@@ -277,4 +277,30 @@ defmodule Argus.Soundness.EtsTest do
       assert quiet?(found, @read, {Census.Ets.ClientShard, :get, 2})
     end
   end
+
+  # census: start-lookup
+  # A lookup of any table in a start function quieted its unguarded
+  # create of another (!asks_first, !gives_table_away).
+  describe "census hole: a start function's lookup of another table" do
+    @start "Named ETS table created in start_link fails the server's restart"
+
+    for mfa <- [
+          {Census.Ets.InfoSame, :start_link, 1},
+          {Census.Ets.InfoInStart, :create_table, 0},
+          {Census.Ets.WhereisAfter, :start_link, 1},
+          {Census.Ets.WhereisFoundSide, :start_link, 1},
+          {Census.Ets.GivesOtherAway, :start_link, 1}
+        ] do
+      test "#{inspect(mfa)} makes the table where its name may be taken" do
+        assert {:warning, @start, unquote(Macro.escape(mfa))} in census()
+      end
+    end
+
+    test "a create only where the same table's lookup found none is quiet" do
+      found = census()
+      assert quiet?(found, @start, {Census.Ets.GuardedStart, :start_link, 1})
+      assert quiet?(found, @start, {Census.Ets.GuardedHelper, :create_table, 0})
+      assert quiet?(found, @start, {Census.Ets.GuardedHelper, :start_link, 1})
+    end
+  end
 end

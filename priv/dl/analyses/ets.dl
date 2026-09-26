@@ -834,13 +834,16 @@ computed_read(p, owner, reader, site, id) :-
 // start). The table is made on its own stack (SameProcessReach, so not in
 // what it spawns), and none of the module's own callbacks, init/1
 // included, make the same table: those run in the server. Not judged: a
-// start function that asks first (`:ets.whereis/1` or `:ets.info/1`, in
-// the function that creates the table or in the start function), one that
-// rescues the ArgumentError at the call, one that gives the table away
-// (`:ets.give_away/3`), an unnamed table (a second one does not collide),
-// and a module whose child spec says `restart: :temporary` (never
-// restarted). A start function the program's own supervisors never call
-// is still judged: a library's server is started by its users'.
+// table made only where the name is free (the function that creates it,
+// or the start function, makes it only past the `:undefined` side of its
+// own `:ets.whereis/1` or `:ets.info/1,2` of that table:
+// ets_made_when_absent; a lookup of another table guards nothing), one
+// rescued of the ArgumentError at the call, one given away
+// (`:ets.give_away/3` of the same table, or of an operand that may be
+// it), an unnamed table (a second one does not collide), and a module
+// whose child spec says `restart: :temporary` (never restarted). A start
+// function the program's own supervisors never call is still judged: a
+// library's server is started by its users'.
 .decl starts_server_api(mod: symbol, func: symbol)
 
 starts_server_api("GenServer", "start_link").
@@ -876,13 +879,13 @@ made_by_server(n, m) :-
   process_entry(m, c),
   start_side.reaches(c, f).
 
-.decl asks_first(func: symbol)
+.decl gives_table_away(func: symbol, name: symbol)
 
-asks_first(f) :- ets_op(_, f, _, op, _), (op = "whereis" ; op = "info").
+gives_table_away(f, name) :- ets_op(_, f, name, "give_away", _), name != "dynamic".
 
-.decl gives_table_away(func: symbol)
+.decl gives_some_table_away(func: symbol)
 
-gives_table_away(f) :- ets_op(_, f, _, "give_away", _).
+gives_some_table_away(f) :- ets_op(_, f, "dynamic", "give_away", _).
 
 .decl ets_created_in_start(name: symbol, mod: symbol, site: symbol, start: symbol)
 .output ets_created_in_start
@@ -893,8 +896,10 @@ ets_created_in_start(name, m, n, s) :-
   ets_new(n, f, name),
   ets_option(n, "named_table", "true"),
   !made_by_server(n, m),
-  !asks_first(f),
-  !asks_first(s),
-  !gives_table_away(f),
-  !gives_table_away(s),
+  !ets_made_when_absent(f, name, _),
+  !ets_made_when_absent(s, name, _),
+  !gives_table_away(f, name),
+  !gives_table_away(s, name),
+  !gives_some_table_away(f),
+  !gives_some_table_away(s),
   !site_rescues_argument_error(n, f).

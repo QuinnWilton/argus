@@ -48,6 +48,11 @@ defmodule Argus.Extractors.ETS do
     `:ets.whereis/1` of it that found the table there, or an instruction
     that makes it (its named `:ets.new/2`, a call to a function of the
     module that makes it); the witness is the first of them
+  - `ets_made_when_absent(func, name, witness)` — every path to each make
+    of the named table in the function (its named `:ets.new/2`, a call to
+    a function of the module that makes it) passes the `:undefined` side
+    of a test on the function's `:ets.whereis/1` or `:ets.info/1,2` of it;
+    the witness is the first such lookup
   """
 
   @behaviour Argus.Extractor
@@ -110,7 +115,8 @@ defmodule Argus.Extractors.ETS do
       :ets_value,
       :ets_effect_order,
       :ets_call_arg,
-      :ets_read_when_present
+      :ets_read_when_present,
+      :ets_made_when_absent
     ]
 
   @doc "Whether a remote call is an ETS operation, for `Argus.Extractors.Dependence`."
@@ -132,6 +138,7 @@ defmodule Argus.Extractors.ETS do
     |> emit_tid_args(module_data)
     |> emit_effect_order(module_data, index)
     |> emit_present_reads(module_data)
+    |> emit_absent_makes(module_data)
   end
 
   # ── Reads made where the table is there ──────────────────────────
@@ -228,6 +235,73 @@ defmodule Argus.Extractors.ETS do
     end
   end
 
+  # ── Tables made where the name is free ─────────────────────────
+
+  # A function that makes a named table only where its own lookup of the
+  # table found it absent: every path from the entry to each make of it
+  # there — its named `:ets.new/2`, or a call to a function of the module
+  # that makes it — passes the `:undefined` side of a test of the answer
+  # of an `:ets.whereis/1` or `:ets.info/1,2` of the same table, read as
+  # ets_read_when_present reads the found side. A make a path reaches
+  # past a lookup of another table, past the lookup's other side, or
+  # past none, leaves the function without a row: a start function run
+  # again while its table lives on raises on that make.
+  defp emit_absent_makes(facts, module_data) do
+    ops = Map.get(facts, :ets_op, [])
+    makers = table_makers(facts, module_data)
+
+    ops
+    |> Enum.flat_map(fn
+      [w, func, name, op, _kind] when op in ["whereis", "info"] and name != "dynamic" ->
+        [{{func, name}, w}]
+
+      _ ->
+        []
+    end)
+    |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
+    |> Enum.sort()
+    |> Enum.reduce(facts, fn {{func, name}, lookups}, acc ->
+      case absent_makes(module_data, func, name, lookups, makers) do
+        {:ok, witness} -> add_fact(acc, :ets_made_when_absent, [func, name, witness])
+        :none -> acc
+      end
+    end)
+  end
+
+  defp absent_makes(module_data, func, name, lookups, makers) do
+    {fname, arity} = Normalize.func_id_name_arity(func)
+    atom = String.to_existing_atom(fname)
+
+    with instrs when is_list(instrs) <- Helpers.find_function(module_data.functions, atom, arity),
+         %Cfg.Function{} = fun <- Helpers.cfg(module_data, atom, arity),
+         [_ | _] = makes <- make_sites(instrs, func, module_data.module, name, makers) do
+      table = List.to_tuple(instrs)
+
+      edges =
+        Enum.flat_map(lookups, fn w ->
+          case side_edges(fun, table, instr_idx(w) + 1, [{:x, 0}], :absent) do
+            {:ok, absent} -> absent
+            :error -> []
+          end
+        end)
+
+      {seen, _barrier} = reach_until(fun, edges, [])
+
+      if edges != [] and Enum.all?(makes, &(not reached?(fun, seen, &1))),
+        do: {:ok, lookups |> Enum.min_by(&instr_idx/1)},
+        else: :none
+    else
+      _ -> :none
+    end
+  end
+
+  defp reached?(fun, seen, idx) do
+    case Cfg.Function.block_at(fun, idx) do
+      nil -> true
+      block -> MapSet.member?(seen, block.id)
+    end
+  end
+
   # For each named table, the `:ets.new/2` sites that make it as a named
   # table (`{:site, func, idx}`) and the functions of the module that make
   # it (`{name, arity}`): with such a site in their own code, or calling
@@ -291,11 +365,14 @@ defmodule Argus.Extractors.ETS do
   defp local_callee(_instr, _mod), do: []
 
   # The edges out of the test that finds the answer held in `regs` is
-  # not `:undefined`: `{:ok, [{from, to}]}`, or `:error` when the answer
-  # is read some other way first, or lost.
-  defp present_edges(_fun, _table, _at, []), do: :error
+  # not `:undefined` (`want` `:present`), or that it is (`:absent`):
+  # `{:ok, [{from, to}]}`, or `:error` when the answer is read some other
+  # way first, or lost.
+  defp present_edges(fun, table, at, regs), do: side_edges(fun, table, at, regs, :present)
 
-  defp present_edges(fun, table, at, regs) when at < tuple_size(table) do
+  defp side_edges(_fun, _table, _at, [], _want), do: :error
+
+  defp side_edges(fun, table, at, regs, want) when at < tuple_size(table) do
     instr = elem(table, at)
 
     case undefined_test(instr, regs) do
@@ -303,18 +380,22 @@ defmodule Argus.Extractors.ETS do
         block = Cfg.Function.block_at(fun, at)
 
         {:ok,
-         for({to, kind} <- block.succs, present_side?(kind, to, side, fun), do: {block.id, to})}
+         for(
+           {to, kind} <- block.succs,
+           present_side?(kind, to, side, fun) == (want == :present),
+           do: {block.id, to}
+         )}
 
       :none ->
         cond do
           reads_value?(instr, regs) -> :error
           not Argus.Instr.falls_through?(instr) -> :error
-          true -> present_edges(fun, table, at + 1, carried(instr, regs))
+          true -> side_edges(fun, table, at + 1, carried(instr, regs), want)
         end
     end
   end
 
-  defp present_edges(_fun, _table, _at, _regs), do: :error
+  defp side_edges(_fun, _table, _at, _regs, _want), do: :error
 
   @undefined {:atom, :undefined}
 

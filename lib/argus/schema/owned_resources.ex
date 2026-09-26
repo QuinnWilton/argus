@@ -85,6 +85,26 @@ defmodule Argus.Schema.OwnedResources do
         """
       },
       %{
+        name: :ets_made_when_absent,
+        layer: 2,
+        fields: [
+          {:func, :symbol, "the function that makes the table"},
+          {:name, :symbol, "the named table's atom"},
+          {:witness, :symbol,
+           "the first :ets.whereis/1 or :ets.info/1,2 of the table in the function"}
+        ],
+        doc: """
+        Every path from the function's entry to each make of the named \
+        table there — its named `:ets.new/2`, or a call to a function of \
+        the module that makes it — passes the side of a test of a lookup \
+        of the same table (`:ets.whereis/1`, `:ets.info/1,2`) where the \
+        answer is `:undefined`: the function makes the table only where \
+        the name is free. The mirror of `ets_read_when_present`. A \
+        function with a make on a path that skips the test, or past its \
+        other side, or past a lookup of another table only, has no row.
+        """
+      },
+      %{
         name: :port_open,
         layer: 2,
         fields: [

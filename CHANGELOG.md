@@ -44,6 +44,16 @@ the class's already-reported kind: sentry's
 (the compiler's tracer calls), partisan's `add_timestamp/1` (the
 broadcast process's `claim/2`), vernemq's `vmq_reg_trie:fanout_entries/4`.
 
+**Fixed.** Schema 141. `ets_made_when_absent(func, name, witness)` (the
+ETS extractor): every path to each make of a named table in the function
+passes the `:undefined` side of the same table's `:ets.whereis/1` or
+`:ets.info/1,2`. "Named ETS table created in start_link fails the
+server's restart" took any lookup of any table in the start function or
+its helper as a guard, and any give-away of any table as handing it
+over: an `:ets.info` of an app-wide config table quieted the unguarded
+create of another. It asks for the same table's lookup, on the way to
+the make, and the same table's give-away. No row moves.
+
 ### Races by their harm
 
 **Changed.** A check-then-act pair is reported when a rival can land on
