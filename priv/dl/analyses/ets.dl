@@ -181,11 +181,13 @@ table_held(name, p, mod, id) :-
   function_def(func, mod, _, _, _),
   !handed_back(id, p).
 
+// A named table is held by whichever process runs its :ets.new/2, in
+// that process's module or in a helper's (`Metrics.setup()`): a named
+// table is never handed back (handed_back asks an unnamed one).
 table_held(name, p, mod, id) :-
   ets_new(id, func, name),
   name != "dynamic",
   owner_reaches(p, mod, func),
-  !function_def(func, mod, _, _, _),
   ets_option(id, "named_table", "true").
 
 // An unnamed table a behaviour module makes and returns — itself, or in
@@ -697,6 +699,9 @@ unnamed_site(n) :-
   ets_options_known(n),
   !ets_option(n, "named_table", "true").
 
+// A read named through a caller: the site is not in the caller's own
+// function, and the caller's literal names the table through the
+// callee's parameter.
 .decl read_through_caller(site: symbol)
 
 read_through_caller(s) :- named_read(_, caller, s), !ets_op(s, caller, _, _, _).
@@ -707,9 +712,11 @@ read_pair(site, id) :- table_held(name, _, _, id), named_read(name, _, site).
 
 .decl read_misses(site: symbol, id: symbol)
 
+// A read whose operand is known, and cannot be a name it does not
+// state; or one named through a caller (whatever its operand), whose
+// literal cannot name the table.
 read_misses(s, id) :-
   read_pair(s, id),
-  !read_through_caller(s),
   read_operand_known(s),
   !read_operand_open(s),
   !read_can_be(s, id).
