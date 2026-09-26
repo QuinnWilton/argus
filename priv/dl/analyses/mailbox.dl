@@ -2314,6 +2314,37 @@ statem_info_partial(m, h) :-
 .decl timer_loop_rearmed(mod: symbol, message: symbol, entry: symbol, site: symbol, arm_site: symbol, loop_site: symbol, keeps: symbol)
 .output timer_loop_rearmed
 
+// A second path arms a periodic loop's message while the loop's timer is
+// pending, and the loop throws its ref away: nothing can stop the
+// running loop, so each second arm starts one more beside it.
+//
+// `site` is where the callback `entry` arms, or calls what does; `arm`
+// is the arm itself, and `loop_arm` the loop's own re-arm.
+.decl unstoppable_loop_armed_again(mod: symbol, message: symbol, entry: symbol, site: symbol, arm: symbol, loop_arm: symbol)
+
+unstoppable_loop_armed_again(mod, message, entry, site, arm, loop_arm) :-
+  second_arm(mod, message, entry, site, _, arm),
+  loop_drops_ref(mod, message, loop_arm).
+
+// A second path arms a periodic loop's message while the loop's timer,
+// kept under a state key, is pending, and nothing cancels the kept timer
+// first: a second loop starts beside the first.
+.decl kept_loop_armed_again(mod: symbol, message: symbol, entry: symbol, site: symbol, arm: symbol, loop_arm: symbol, key: symbol)
+
+kept_loop_armed_again(mod, message, entry, site, arm, loop_arm, key) :-
+  second_arm(mod, message, entry, site, _, arm),
+  loop_keeps_ref_under(mod, message, loop_arm, key),
+  !loop_drops_ref(mod, message, _),
+  !idempotent_loop(mod, message, key),
+  !cancels_before(entry, site, key),
+  !arms_when_empty(entry, site, key).
+
+timer_loop_rearmed(mod, message, entry, site, arm, loop_arm, "") :-
+  unstoppable_loop_armed_again(mod, message, entry, site, arm, loop_arm).
+
+timer_loop_rearmed(mod, message, entry, site, arm, loop_arm, key) :-
+  kept_loop_armed_again(mod, message, entry, site, arm, loop_arm, key).
+
 // A server that handles its own messages in handle_info/2: the callback
 // of a loop behaviour (otp_callback, a GenServer, a GenStage, a Channel,
 // a LiveView, a gen_server2) but a gen_statem's, which takes its info
@@ -2479,13 +2510,17 @@ loop_drops_ref(mod, lit, a) :-
   timer_dropped(_, g, f),
   tick_path.reaches(via, g).
 
-.decl loop_key(mod: symbol, lit: symbol, site: symbol, key: symbol)
+// The loop's re-arm at `site` keeps its ref under `key`. A loop any arm
+// of which drops its ref (loop_drops_ref) cannot be stopped by any
+// cancel: unstoppable_loop_armed_again reports it, and
+// kept_loop_armed_again would repeat it under the key.
+.decl loop_keeps_ref_under(mod: symbol, lit: symbol, site: symbol, key: symbol)
 
-loop_key(mod, lit, a, key) :-
+loop_keeps_ref_under(mod, lit, a, key) :-
   loop_arm(mod, lit, a, f, _),
   timer_ref(a, f, "stored", key).
 
-loop_key(mod, lit, a, key) :-
+loop_keeps_ref_under(mod, lit, a, key) :-
   loop_arm(mod, lit, a, f, _),
   timer_ref(a, f, "returned", _),
   returns_to_key(f, key).
@@ -2547,13 +2582,13 @@ same_clause(f, s, t) :-
 .decl idempotent_loop(mod: symbol, lit: symbol, key: symbol)
 
 idempotent_loop(mod, lit, key) :-
-  loop_key(mod, lit, a, key),
+  loop_keeps_ref_under(mod, lit, a, key),
   loop_arm(mod, lit, a, f, _),
   cancel_call(f, _, key),
   !looping_server(mod, f).
 
 idempotent_loop(mod, lit, key) :-
-  loop_key(mod, lit, a, key),
+  loop_keeps_ref_under(mod, lit, a, key),
   loop_arm(mod, lit, a, _, via),
   looping_server(mod, h),
   cancel_call(h, s, key),
@@ -2586,10 +2621,6 @@ cancels_before(e, c, key) :-
   cancel_call(g, s, key),
   !conditional_call(s).
 
-timer_loop_rearmed(mod, lit, e, c, b, a, "") :-
-  second_arm(mod, lit, e, c, _, b),
-  loop_drops_ref(mod, lit, a).
-
 // The second path arms only while the key is empty: the arming function
 // or the callback tests the kept field against nil or undefined
 // (field_nil_test) — a Broadway producer's `handle_receive_messages(%{receive_timer:
@@ -2600,18 +2631,9 @@ timer_loop_rearmed(mod, lit, e, c, b, a, "") :-
 
 arms_when_empty(e, c, key) :-
   second_arm(_, _, e, c, g, _),
-  loop_key(_, _, _, key),
+  loop_keeps_ref_under(_, _, _, key),
   (field_nil_test(g, key) ; field_nil_test(e, key)).
 
-// A loop any arm of which drops its ref cannot be stopped by any cancel:
-// the rule above reports it, and this one would repeat it under the key.
-timer_loop_rearmed(mod, lit, e, c, b, a, key) :-
-  second_arm(mod, lit, e, c, _, b),
-  loop_key(mod, lit, a, key),
-  !loop_drops_ref(mod, lit, _),
-  !idempotent_loop(mod, lit, key),
-  !cancels_before(e, c, key),
-  !arms_when_empty(e, c, key).
 
 // ══ A registration made on the static render ══════════════════════
 //
