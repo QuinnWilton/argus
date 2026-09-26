@@ -1312,28 +1312,68 @@ permanent_child_stops_normally(sup, child, reason, site, sup_site) :-
 .decl drain_keeps_fetching(mod: symbol, drain: symbol, gate: symbol, key: symbol)
 .output drain_keeps_fetching
 
-.init drain_reach = ForwardIntraModuleSameProcessReach
+// A Broadway producer's drain clears the field its fetch waits on, and
+// the fetch takes no flag the drain sets: the next demand fetches again.
+.decl fetch_during_drain(mod: symbol, drain: symbol, gate: symbol, key: symbol)
 
-drain_reach.root(f, f) :-
+fetch_during_drain(mod, drain, gate, key) :-
+  prepares_for_draining(mod, drain),
+  clears_field(drain, key),
+  fetches_while_nil(mod, gate, key),
+  !fetch_takes_drain_flag(mod, drain).
+
+// `drain` is the Broadway producer's prepare_for_draining/1.
+.decl prepares_for_draining(mod: symbol, drain: symbol)
+
+prepares_for_draining(mod, drain) :-
+  behaves_as(mod, "Broadway.Producer"),
+  function_def(drain, mod, "prepare_for_draining", 1, _).
+
+// The drain returns a state with `key` set to nil.
+.decl clears_field(drain: symbol, key: symbol) inline
+
+clears_field(drain, key) :- returned_update(drain, key, "nil", _).
+
+// `gate`, which handle_demand/2 reaches in the module, tests `key`
+// against nil (field_nil_test): the fetch runs while the field is nil.
+.decl fetches_while_nil(mod: symbol, gate: symbol, key: symbol)
+
+fetches_while_nil(mod, gate, key) :-
+  demand_reaches(mod, gate),
+  field_nil_test(gate, key).
+
+// Another field the drain sets to a literal is one a function
+// handle_demand/2 reaches compares with a literal: a `draining: true`
+// the fetch takes first.
+.decl fetch_takes_drain_flag(mod: symbol, drain: symbol)
+
+fetch_takes_drain_flag(mod, drain) :-
+  prepares_for_draining(mod, drain),
+  sets_to_literal(drain, key),
+  demand_reaches(mod, g),
+  field_value_test(g, key, _).
+
+// The drain returns a state with `key` set to a literal other than nil.
+.decl sets_to_literal(drain: symbol, key: symbol) inline
+
+sets_to_literal(drain, key) :-
+  returned_update(drain, key, v, _),
+  v != "nil",
+  v != "dynamic".
+
+// handle_demand/2 of the producer `mod` reaches `func` in the module, in
+// its process.
+.decl demand_reaches(mod: symbol, func: symbol) inline
+
+demand_reaches(mod, func) :-
+  function_def(h, mod, "handle_demand", 2, _),
+  demand_reach.reaches(h, func).
+
+.init demand_reach = ForwardIntraModuleSameProcessReach
+
+demand_reach.root(f, f) :-
   behaves_as(m, "Broadway.Producer"),
   function_def(f, m, "handle_demand", 2, _).
 
-.decl drain_flag_read(mod: symbol, drain: symbol)
-
-drain_flag_read(m, d) :-
-  function_def(d, m, "prepare_for_draining", 1, _),
-  returned_update(d, k, v, _),
-  v != "nil",
-  v != "dynamic",
-  function_def(h, m, "handle_demand", 2, _),
-  drain_reach.reaches(h, g),
-  field_value_test(g, k, _).
-
-drain_keeps_fetching(m, d, g, key) :-
-  behaves_as(m, "Broadway.Producer"),
-  function_def(d, m, "prepare_for_draining", 1, _),
-  returned_update(d, key, "nil", _),
-  function_def(h, m, "handle_demand", 2, _),
-  drain_reach.reaches(h, g),
-  field_nil_test(g, key),
-  !drain_flag_read(m, d).
+drain_keeps_fetching(mod, drain, gate, key) :-
+  fetch_during_drain(mod, drain, gate, key).
