@@ -123,6 +123,11 @@ implementation. The implementation of a protocol the program defines is a
 way in when its protocol's function is: dispatch relays the users'
 value. No row moves.
 
+**Fixed.** unsafe_input's atom feedback left out every Erlang
+comprehension's function. Only the comprehension's own loop, its edge to
+itself, is left out: one whose body calls back into a function that
+reaches it feeds its atoms back. No row moves.
+
 ### Races by their harm
 
 **Changed.** A check-then-act pair is reported when a rival can land on

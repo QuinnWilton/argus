@@ -193,8 +193,19 @@ atoms_requested(f) :- request_entry(e, _), atoms_reach.reaches(e, f).
 atoms_fed_back(f) :-
   atoms_reach.reaches(g, f),
   call_edge(f, g),
+  !comprehension_loop(f, g).
+
+// The edge an Erlang comprehension's function makes to itself, walking
+// its list: the loop the comprehension compiles to, not a way back. A
+// comprehension whose body calls a function that reaches it again
+// (`[{N, names(N, Sub)} || ...]`, each level's atom the next level's
+// parent) is on a cycle through that function all the same.
+.decl comprehension_loop(func: symbol, callee: symbol)
+
+comprehension_loop(f, f) :-
+  call_edge(f, f),
   function_def(f, _, n, _, _),
-  !match("-.*-l[b]?c[$].*", n).
+  match("-.*-l[b]?c[$].*", n).
 
 atoms_fed_back(f) :- fold_closure(f), sink_arg_bounded(_, f, 0, "atoms").
 

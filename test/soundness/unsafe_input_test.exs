@@ -195,4 +195,18 @@ defmodule Argus.Soundness.UnsafeInputTest do
       assert census_quiet?(String.Chars.Argus.Test.Soundness.Census.UnsafeInput.Named)
     end
   end
+
+  # census: comprehension-feedback
+  # An Erlang comprehension's function was never on a cycle.
+  describe "census hole: a comprehension that feeds its atom back" do
+    for mod <- [:census_tree_names, :census_tree_levels] do
+      test "#{inspect(mod)}: each level's atom is the next level's parent" do
+        assert {:warning, @atom_export, {unquote(mod), :"-names/2-lc$^0/1-0-", 2}} in census()
+      end
+    end
+
+    test "a comprehension whose atoms do not come back is quiet" do
+      assert census_quiet?(:census_flat_names)
+    end
+  end
 end
