@@ -2163,6 +2163,34 @@ ets_missing_row(mod, func, table_kind, table, check, use, remove) :-
 // :via owner would report every locally registered owner on a
 // single-node deployment, the common case.
 
+// A dirty read decides or feeds a dirty write of the same record,
+// another process can write the table between the two, no cluster lock
+// every writer takes serializes them, and what the interleaving costs
+// has a witness. `func` is where the read's result reaches the write.
+.decl dirty_read_then_write_race(func: symbol, read: symbol, write: symbol, record: MnesiaRecord, harm: symbol)
+
+dirty_read_then_write_race(func, read, write, [table, key], harm) :-
+  decides_dirty_write(func, read, write, [table, key]),
+  written_by_another_process(table, func),
+  !serialized_by_lock(func, table),
+  harms_record(func, read, write, harm).
+
+// A record: a Mnesia table, by name, and a key of it.
+.type MnesiaRecord = [table: symbol, key: symbol]
+
+// In `func`, the dirty read's result decides whether the dirty write
+// runs, or feeds what it stores, on one record (reads_then_writes_record,
+// below).
+.decl decides_dirty_write(func: symbol, read: symbol, write: symbol, record: MnesiaRecord) inline
+
+decides_dirty_write(f, r, w, [t, k]) :- reads_then_writes_record(f, r, w, t, k).
+
+// What the interleaving costs, by a witness (record_race_kind, below):
+// asked only of the pairs another process can interleave.
+.decl harms_record(func: symbol, read: symbol, write: symbol, harm: symbol) inline
+
+harms_record(f, r, w, k) :- record_race_kind(f, r, w, k).
+
 .init records = CheckThenAct
 
 records.check(read, func, table_kind, table, key_kind, key) :-
@@ -2214,20 +2242,21 @@ table_at_record(f, p, t) :-
 runs.seed(f) :- reads_then_writes_record(f, _, _, _, _).
 runs.seed(f) :- mnesia_op(_, f, _, "write", _, _, _, _).
 
-.decl another_process_writes_record(table: symbol, func: symbol)
+// Another process can write the table while `func` is between the read
+// and the write: `func` runs in more than one process, or it runs in one
+// and a writer of the table runs beside it.
+.decl written_by_another_process(table: symbol, func: symbol)
 
-another_process_writes_record(t, f) :-
+written_by_another_process(t, f) :-
   reads_then_writes_record(f, _, _, t, _),
-  !runs.single_process(f),
-  !serialized_by_lock(f, t).
+  !runs.single_process(f).
 
-another_process_writes_record(t, f) :-
+written_by_another_process(t, f) :-
   reads_then_writes_record(f, _, _, t, _),
   runs.single_process(f),
   runs.entry_reaches(m, f),
   mnesia_write_table(_, g, t),
-  runs.runs_beside(m, f, g, g),
-  !serialized_by_lock(f, t).
+  runs.runs_beside(m, f, g, g).
 
 // ── A cluster lock every writer takes ──
 //
@@ -2298,12 +2327,14 @@ record_made.write(w, h) :- mnesia_write_table(w, h, _), mnesia_op(w, _, op, _, _
 
 table_param_needed(f, p) :- mnesia_op(_, f, _, "write", "param", p, _, _).
 
-// A pair another process can interleave.
+// A pair another process can interleave: the race but for its harm,
+// what the harms below are asked of.
 .decl racing_record_pair(func: symbol, read: symbol, write: symbol)
 
 racing_record_pair(f, r, w) :-
   reads_then_writes_record(f, r, w, t, _),
-  another_process_writes_record(t, f).
+  written_by_another_process(t, f),
+  !serialized_by_lock(f, t).
 
 // Which dirty operation a Mnesia call is.
 .decl dirty_op(site: symbol, op: symbol) inline
@@ -2669,8 +2700,8 @@ kind_rank("fill", 5).
 .decl read_rank(func: symbol, read: symbol, rank: number)
 
 read_rank(f, r, n) :-
-  record_race_kind(f, r, _, _),
-  n = min m : { record_race_kind(f, r, _, k), kind_rank(k, m) }.
+  dirty_read_then_write_race(f, r, _, _, _),
+  n = min m : { dirty_read_then_write_race(f, r, _, _, k), kind_rank(k, m) }.
 
 // A write its own function reads before, and decides on, is judged by
 // that read: a read further up is not the one the write acts on, unless
@@ -2682,13 +2713,13 @@ read_in_own_function(w) :- reads_then_writes_record(h, _, w, _, _), records.act(
 .decl ranked_race(func: symbol, read: symbol, write: symbol, kind: symbol, rank: number)
 
 ranked_race(f, r, w, k, n) :-
-  record_race_kind(f, r, w, k),
+  dirty_read_then_write_race(f, r, w, _, k),
   kind_rank(k, n),
   read_rank(f, r, n),
   records.act(w, f, _, _, _, _).
 
 ranked_race(f, r, w, k, n) :-
-  record_race_kind(f, r, w, k),
+  dirty_read_then_write_race(f, r, w, _, k),
   kind_rank(k, n),
   read_rank(f, r, n),
   records.act(w, h, _, _, _, _),
@@ -2705,11 +2736,11 @@ record_writes.write_in(w, h) :- ranked_race(_, _, w, _, _), records.act(w, h, _,
 .decl mnesia_check_act(mod: symbol, func: symbol, table: symbol, key: symbol, read: symbol, write: symbol, op: symbol, kind: symbol)
 .output mnesia_check_act
 
-mnesia_check_act(mod, f, t, key, r, w, op, k) :-
-  record_writes.reported(f, r, w, k),
-  reads_then_writes_record(f, r, w, t, key),
-  dirty_op(w, op),
-  in_module(f, mod).
+mnesia_check_act(mod, func, table, key, read, write, op, harm) :-
+  record_writes.reported(func, read, write, harm),
+  dirty_read_then_write_race(func, read, write, [table, key], harm),
+  dirty_op(write, op),
+  in_module(func, mod).
 
 // ── What else the finding points at ──
 //

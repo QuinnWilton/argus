@@ -149,7 +149,7 @@ defmodule Argus.Exclusions.RacesTest do
       assert ets_races(ctx, [R.OpenBump]) == [{"bump/1", "param 0", ":generation"}]
     end
 
-    # races.dl, another_process_writes_record: !serialized_by_lock(f, t).
+    # races.dl, racing_record_pair: !serialized_by_lock(f, t).
     test "a Mnesia read-modify-write whose every writer holds the same :global lock", ctx do
       assert record_races(ctx, @locked_quota) == []
 
