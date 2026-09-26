@@ -4605,7 +4605,8 @@ under `priv/dl/` unless they say otherwise.
     `task_factory` and runs_elsewhere.dl's `async_start`/`task_wait`/
     `awaits_task` disagree on `async_nolink` and `Task.shutdown`.
     *Resolved.* `task_start_api`, `task_wait`, `task_collect` in
-    runs_elsewhere.dl, read by mailbox and `awaits_task`.
+    runs_elsewhere.dl, read by mailbox (`starts_linked_task`,
+    `returns_task`) and `awaits_task`.
 21. **A timer's message and its flush.** mailbox's `armed_message` and
     `local_message` restate timer_flush.dl's `timer_message` and
     `flush_receive`; mailbox does not include timer_flush.dl.

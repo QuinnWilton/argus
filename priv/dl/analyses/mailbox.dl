@@ -543,75 +543,59 @@ hands_down_ref(cancel, g) :-
   ref_param(cancel, f, pos),
   (call_arg_field(g, f, pos, _) ; call_arg_forward(g, f, pos, _)).
 
-// ── Evidence: where a task is yielded ─────────────────────────────────
-.decl task_yield_site(func: symbol, kind: symbol, site: symbol)
-.output task_yield_site
-
-task_yield_site(owner, "yield_linked", id) :-
-  task_result_defect(owner, _, "yield_linked"),
-  (remote_call(id, g, "Task", "yield", _) ; remote_call(id, g, "Task", "yield_many", _)),
-  enclosing_function(g, owner).
-
 // ══ Tasks whose messages land unhandled ═════════════════════════════
 //
-// A task a function starts linked to itself (task_start_api "linked",
-// clientlib/runs_elsewhere.dl: Task.async, Task.Supervisor.async), which
-// must be awaited or yielded. Task.Supervisor.async_nolink is not one: it
-// is not linked to the caller, and its messages are unhandled_info's
-// source "task" below.
-.decl task_async_call(func: symbol, id: symbol)
+// A task a function starts linked to itself (Task.async,
+// Task.Supervisor.async) must be awaited or yielded: its reply,
+// `{ref, result}`, and its :DOWN land in the mailbox of the process that
+// started it. Task.Supervisor.async_nolink is not one: it is not linked
+// to the caller, and its messages are unhandled_info's source "task"
+// below.
 
-task_async_call(func, id) :-
+// ── A task never awaited ──
+
+// A function starts a task linked to it and nothing takes the task's
+// reply: its path never awaits, it does not hand the task to its caller,
+// and no mailbox callback of its server takes the reply. A handle_info/2
+// that takes other messages only crashes on the reply, and a catch-all —
+// the one `use GenServer` injects, or the program's own — drops it with
+// the result.
+.decl unawaited_task(func: symbol, start: symbol)
+
+unawaited_task(func, start) :-
+  starts_linked_task(func, start),
+  !collects_a_task(func),
+  !returns_task(func, start),
+  !reply_taken(func).
+
+task_result_defect(func, start, "never_awaited") :- unawaited_task(func, start).
+
+// The call at `start` in `func` starts a task linked to the calling
+// process (task_start_api "linked", clientlib/runs_elsewhere.dl).
+.decl starts_linked_task(func: symbol, start: symbol)
+
+starts_linked_task(func, id) :-
   remote_call(id, func, m, a, _),
   task_start_api(m, a, "linked").
 
-// ── Task.await/yield detection ─────────────────────────────────────────
-//
-// A call that takes a task's reply out of the mailbox (task_collect: an
-// await or yield, or Task.shutdown).
-.decl task_await_call(func: symbol, id: symbol)
+// `func`, or a function it calls, awaits, yields or shuts down a task
+// (task_collect): any task, not only the one it starts.
+.decl collects_a_task(func: symbol) inline
 
-task_await_call(func, id) :-
-  remote_call(id, func, "Task", w, _),
-  task_collect(w).
+collects_a_task(func) :- await_reach.reaches(func).
 
-// ── Function-level await reachability ──────────────────────────────────
-
-// Function has an await/yield (directly or through callees).
 .init await_reach = CallReachSet
 
-await_reach.seed(func) :- task_await_call(func, _).
+await_reach.seed(func) :- remote_call(_, func, "Task", w, _), task_collect(w).
 
-// ── Task factory suppression ─────────────────────────────────────────
+// The task started at `start` is the function's tail call: the function
+// returns the task struct to its caller, which is responsible for
+// awaiting it. The function is a factory, not a leak.
+.decl returns_task(func: symbol, start: symbol)
 
-// A function that creates an async task in tail position returns the
-// task struct to its caller. The caller is responsible for awaiting —
-// this function is a factory, not a leak.
-.decl task_factory(func: symbol, id: symbol)
-
-task_factory(func, id) :-
-  task_async_call(func, id),
-  tail_call(id).
-
-// ── Leaked async task ──────────────────────────────────────────────────
-
-// Function creates an async task but never awaits (directly or
-// transitively). The task reference is either discarded or returned
-// to a caller that may not await it.
-//
-// The task's reply, `{ref, result}`, and its :DOWN land in the mailbox of
-// the process that started it. The start is collected where the path
-// awaits, yields or shuts the task down (await_reach), where the function
-// hands the task to its caller (task_factory), and where the task starts
-// on a server's own stack whose mailbox callback takes the reply by its
-// shape (reply_taken). A handle_info/2 that takes other messages only
-// crashes on the reply, and a catch-all — the one `use GenServer`
-// injects, or the program's own — drops it with the result.
-task_result_defect(func, id, "never_awaited") :-
-  task_async_call(func, id),
-  !await_reach.reaches(func),
-  !task_factory(func, id),
-  !reply_taken(func).
+returns_task(func, start) :-
+  starts_linked_task(func, start),
+  tail_call(start).
 
 // A mailbox callback takes the reply of the task started at `func`:
 // - a handle_info/2 clause headed by a reference (`{ref, result} when
@@ -630,32 +614,32 @@ task_result_defect(func, id, "never_awaited") :-
 .decl reply_taken(func: symbol)
 
 reply_taken(f) :-
-  task_async_call(f, _),
+  starts_linked_task(f, _),
   function_def(f, m, _, _, _),
   function_def(h, m, "handle_info", 2, _),
   callback_ref_head(h, "handle_info").
 
 reply_taken(f) :-
-  task_async_call(f, _),
+  starts_linked_task(f, _),
   function_def(f, m, _, _, _),
   function_def(h, m, "handle_info", 2, _),
-  await_reach.reaches(h).
+  collects_a_task(h).
 
 reply_taken(f) :-
-  task_async_call(f, _),
+  starts_linked_task(f, _),
   task_runs_in(m, f),
   function_def(h, m, "handle_info", 2, _),
   takes_task_reply(h).
 
 reply_taken(f) :-
-  task_async_call(f, _),
+  starts_linked_task(f, _),
   task_runs_in(m, f),
   statem_info_open(m, _, "tuple").
 
 .decl task_runs_in(mod: symbol, func: symbol)
 
-task_runs_in(m, f) :- task_async_call(f, _), server_side(m, f).
-task_runs_in(m, f) :- task_async_call(f, _), runs_in_server(m, f).
+task_runs_in(m, f) :- starts_linked_task(f, _), server_side(m, f).
+task_runs_in(m, f) :- starts_linked_task(f, _), runs_in_server(m, f).
 
 .decl takes_task_reply(handler: symbol)
 
@@ -665,75 +649,108 @@ takes_task_reply(h) :- callback_open(h, "handle_info", "tuple", -1).
 
 // ── Yielding on a linked task ────────────────────────────────────────
 //
-// Task.async and Task.Supervisor.async link the task to the caller.
 // Task.yield/yield_many document an `{:exit, reason}` result for a task
 // that crashed — but the link delivers the crash to the caller first, so
 // unless the caller traps exits that branch never runs: the caller is
 // dead (whatyouhide/redix#317's cluster fan-out, whose partial-failure
 // path was unreachable). async_nolink is the tool for that shape.
-// A closure's calls belong to the function that defines it: the task is
-// usually started inside an Enum.map fn and collected outside it. The
-// trap is the owner's process's, not its module's (runs_trapping).
-task_result_defect(owner, id, "yield_linked") :-
-  task_async_call(f, id),
-  enclosing_function(f, owner),
-  !closure_def(_, owner),
-  (remote_call(_, g, "Task", "yield", _) ; remote_call(_, g, "Task", "yield_many", _)),
-  enclosing_function(g, owner),
+
+// A function yields on the tasks it starts linked to its process, and
+// the process does not trap exits: a crashing task kills the caller
+// before yield can report the crash.
+.decl yield_on_linked_task(owner: symbol, start: symbol)
+
+yield_on_linked_task(owner, start) :-
+  starts_linked_task_in(owner, start),
+  yields_on_task(owner, _),
   !runs_trapping(owner).
 
+task_result_defect(owner, start, "yield_linked") :- yield_on_linked_task(owner, start).
+
+// The linked task started at `start` belongs to `owner`: the named
+// function that starts it, or that defines the closure that does. A
+// closure's calls belong to the function that defines it: the task is
+// usually started inside an Enum.map fn and collected outside it.
+.decl starts_linked_task_in(owner: symbol, start: symbol)
+
+starts_linked_task_in(owner, start) :-
+  starts_linked_task(f, start),
+  enclosing_function(f, owner),
+  !closure_def(_, owner).
+
+// `owner`, or a closure it defines, calls Task.yield or Task.yield_many
+// at `site`.
+.decl yields_on_task(owner: symbol, site: symbol)
+
+yields_on_task(owner, id) :- remote_call(id, g, "Task", "yield", _), enclosing_function(g, owner).
+yields_on_task(owner, id) :- remote_call(id, g, "Task", "yield_many", _), enclosing_function(g, owner).
+
 // The function runs on the stack of a server that traps exits
-// (module_traps: the process whose entries reach the trap). A client
-// function of a trapping server's module runs in its callers, which the
-// module's trap says nothing of; a library function's callers are not
-// known, and trap or not.
+// (module_traps: the process whose entries reach the trap). The trap is
+// the owner's process's, not its module's: a client function of a
+// trapping server's module runs in its callers, which the module's trap
+// says nothing of; a library function's callers are not known, and trap
+// or not.
 .decl runs_trapping(func: symbol)
 
 runs_trapping(f) :- server_side(mod, f), module_traps(_, mod).
 
+// ── Evidence: where a task is yielded ─────────────────────────────────
+.decl task_yield_site(func: symbol, kind: symbol, site: symbol)
+.output task_yield_site
+
+task_yield_site(owner, "yield_linked", id) :-
+  task_result_defect(owner, _, "yield_linked"),
+  yields_on_task(owner, id).
+
 // ── A linked task inside library code ────────────────────────────────
 //
-// Task.async in a function that is not itself a process's callback links
-// the task to whoever called the function. In a caller that traps exits
-// the task's normal exit then arrives as an `{:EXIT, pid, :normal}`
-// message Task.await never consumes (elixir-ecto/ecto#2246: a GenServer
-// preloading in parallel), and a crashing task takes an unrelated
-// caller down with it. A behaviour module that runs no process of its
-// own (a plug, a type) owns its callers' expectations. A process
-// module's callbacks, and what they reach in the module, run in its own
-// process (server_side), but its client API runs in whoever calls it,
-// like a library function: elixir-nodejs#45's `NodeJS.Supervisor.call/3`,
-// a `use Supervisor` module's public call, linked every caller to the
-// pool worker's task (PoolCallSupervisor; ServerSideTaskAwait is quiet).
-// The owner is the named function a closure's task belongs to (the row
-// is its, not the closure's); one that returns the task
-// (task_factory) hands its caller the link with it, in plain sight.
-task_result_defect(owner, id, "linked_in_library") :-
-  task_async_call(f, id),
-  enclosing_function(f, owner),
-  !closure_def(_, owner),
-  function_def(owner, mod, _, _, _),
-  runs_in_callers(owner, mod),
-  !task_factory(owner, _),
-  await_reach.reaches(owner).
+// In a caller that traps exits the task's normal exit arrives as an
+// `{:EXIT, pid, :normal}` message Task.await never consumes
+// (elixir-ecto/ecto#2246: a GenServer preloading in parallel), and a
+// crashing task takes an unrelated caller down with it. A behaviour
+// module that runs no process of its own (a plug, a type) owns its
+// callers' expectations. A process module's callbacks, and what they
+// reach in the module, run in its own process (server_side), but its
+// client API runs in whoever calls it, like a library function:
+// elixir-nodejs#45's `NodeJS.Supervisor.call/3`, a `use Supervisor`
+// module's public call, linked every caller to the pool worker's task
+// (PoolCallSupervisor; ServerSideTaskAwait is quiet).
+
+// A function that runs in whoever calls it starts a task linked to that
+// caller and awaits it: the task's exit and crash become the caller's.
+// One that returns a task (returns_task) hands its caller the link with
+// it, in plain sight.
+.decl linked_task_in_library(owner: symbol, start: symbol)
+
+linked_task_in_library(owner, start) :-
+  starts_linked_task_in(owner, start),
+  runs_in_callers(owner),
+  collects_a_task(owner),
+  !returns_task(owner, _).
+
+task_result_defect(owner, start, "linked_in_library") :- linked_task_in_library(owner, start).
+
+// The function a task belongs to runs in its callers' process: its
+// module is no behaviour's (a library), or it is a process module's
+// function its own process does not run (its client API).
+.decl runs_in_callers(func: symbol)
+
+runs_in_callers(func) :-
+  task_owner(func, mod),
+  !behaviour_module(mod).
+
+runs_in_callers(func) :-
+  task_owner(func, mod),
+  process_behaviour_module(mod),
+  !server_side(mod, func).
 
 .decl task_owner(func: symbol, mod: symbol)
 
 task_owner(owner, mod) :-
-  task_async_call(f, _),
+  starts_linked_task(f, _),
   enclosing_function(f, owner),
   function_def(owner, mod, _, _, _).
-
-.decl runs_in_callers(func: symbol, mod: symbol)
-
-runs_in_callers(func, mod) :-
-  task_owner(func, mod),
-  !behaviour_module(mod).
-
-runs_in_callers(func, mod) :-
-  task_owner(func, mod),
-  process_behaviour_module(mod),
-  !server_side(mod, func).
 
 // ══ Monitors that pile up ═══════════════════════════════════════════
 //
@@ -1435,7 +1452,7 @@ info_reach.seed(f) :- socket_opened(f, _).
 info_reach.seed(f) :- node_events(_, f, _).
 info_reach.seed(f) :- port_opened(_, f).
 info_reach.seed(f) :- mailbox_writer(_, f, "task_nolink").
-info_reach.seed(f) :- task_async_call(f, _).
+info_reach.seed(f) :- starts_linked_task(f, _).
 info_reach.seed(f) :- late_wait(_, f, _).
 info_reach.seed(f) :- link_site(_, f).
 
