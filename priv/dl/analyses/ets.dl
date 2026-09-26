@@ -466,29 +466,42 @@ ets_unnamed_in_process(name, mod, site) :- unnamed_table_in_server(name, mod, si
 // reference in the owner's module is taken as possibly this table — the
 // direction that stays quiet.
 
-.decl ets_table_shrinks(name: symbol, owner: symbol)
+// A named table gains rows outside init/1, and nothing ever removes one.
+.decl table_only_grows(table: symbol, create: symbol)
 
-ets_table_shrinks(name, owner) :-
-  ets_new(_, func, name),
-  function_def(func, owner, _, _, _),
-  ets_op(_, _, name, op, _),
-  ets_removal_op(op).
+table_only_grows(table, create) :-
+  makes_table(create, table),
+  named_site(create),
+  grows_outside_init(table),
+  !loses_rows(create).
 
-ets_table_shrinks(name, owner) :-
-  ets_new(_, func, name),
-  function_def(func, owner, _, _, _),
-  ets_op(_, f, "dynamic", op, _),
-  ets_removal_op(op),
-  function_def(f, owner, _, _, _).
+// An insert outside init/1 adds a row to the table: one that does not
+// overwrite the row its key names (overwrites_row). A function named
+// init, of any arity, counts as init/1.
+.decl grows_outside_init(table: symbol)
 
-.decl ets_grows_outside_init(name: symbol)
-
-ets_grows_outside_init(name) :-
+grows_outside_init(name) :-
   ets_op(id, f, name, op, "write"),
   (op = "insert" ; op = "insert_new"),
   function_def(f, _, fname, _, _),
   fname != "init",
   !overwrites_row(id).
+
+// Code removes rows from the table made at `create`: any removal of the
+// table by its name, or any removal through a dynamic table reference in
+// the module that makes it, taken as possibly this table (quiet).
+.decl loses_rows(create: symbol)
+
+loses_rows(create) :-
+  makes_table(create, name),
+  ets_op(_, _, name, op, _),
+  ets_removal_op(op).
+
+loses_rows(create) :-
+  made_in(create, mod),
+  ets_op(_, f, "dynamic", op, _),
+  ets_removal_op(op),
+  function_def(f, mod, _, _, _).
 
 // An insert whose key is a literal (ets_key) into a set table keyed on
 // the first element overwrites the one row that key names: however often
@@ -518,13 +531,9 @@ bag_table(t) :- ets_option(t, "type", "duplicate_bag").
 .decl ets_write_only_table(name: symbol, mod: symbol, site: symbol)
 .output ets_write_only_table
 
-ets_write_only_table(name, mod, id) :-
-  ets_new(id, func, name),
-  name != "dynamic",
-  ets_option(id, "named_table", "true"),
-  function_def(func, mod, _, _, _),
-  ets_grows_outside_init(name),
-  !ets_table_shrinks(name, mod).
+ets_write_only_table(name, mod, site) :-
+  table_only_grows(name, site),
+  made_in(site, mod).
 
 // ── Reads from outside the owner ─────────────────────────────────────
 //
