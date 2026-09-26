@@ -863,73 +863,113 @@ callback_reaches(entry, callee, "helper") :-
 
 // ── Findings ─────────────────────────────────────────────────────
 
-// ── The cancel_timer flush idiom ─────────────────────────────────
-//
-// flush_receive (clientlib/timer_flush.dl): a blocking receive that
-// runs only where cancel_timer/1 said the timer had already fired, and
-// takes its message, is no hang. flush_poll: a receive with an `after`
-// that takes the message of a timer its function cancels.
+// A receive with no `after` runs on an OTP process's own stack, and
+// nothing is sure to end it: if its message never comes the process
+// hangs, and its supervisor can only brutal-kill it. A blocking receive
+// init/1 reaches is startup's finding (unbounded_effect_in_init,
+// "receive" or "down"): it holds the supervisor's start, and is reported
+// there once.
+.decl hanging_receive(receive: symbol, func: symbol, callback: symbol, proximity: symbol)
 
-// A receive with no `after`, running on an OTP process's own stack. This
-// is the one that hangs: no timeout means no way out if the expected
-// message never arrives, and the supervisor can only brutal-kill.
-// A blocking receive init/1 reaches is startup's finding
-// (unbounded_effect_in_init, "receive" or "down"): it holds the
-// supervisor's start, and is reported there once.
-receive_in_callback(id, func, callback, behaviour, proximity, "false") :-
-  recv_start(id, func, 1, _),
-  !down_bounded(id),
+hanging_receive(receive, func, callback, proximity) :-
+  waits_without_timeout(receive, func),
   callback_reaches(callback, func, proximity),
-  loop_entry(callback, m, behaviour),
-  !trapped_exit_ends(id, func, m),
-  !init_function(_, callback),
-  !flush_receive(id).
+  !is_init(callback),
+  !ends_when_peer_exits(receive, callback),
+  !takes_fired_timer_message(receive).
+
+receive_in_callback(receive, func, callback, behaviour, proximity, "false") :-
+  hanging_receive(receive, func, callback, proximity),
+  loop_entry(callback, _, behaviour).
+
+// A receive with no `after` on an OTP process's own stack that its
+// peer's exit ends: it cannot hang, but it holds the callback for as
+// long as that process lives. A terminate/2 that stops a process and
+// waits for it to go (Broadway's Topology and Terminator) is one.
+// Reported as a bounded receive, "down"; init/1's is startup's, as
+// above.
+.decl receive_until_peer_exits(receive: symbol, func: symbol, callback: symbol, proximity: symbol)
+
+receive_until_peer_exits(receive, func, callback, proximity) :-
+  waits_without_timeout(receive, func),
+  callback_reaches(callback, func, proximity),
+  !is_init(callback),
+  ends_when_peer_exits(receive, callback),
+  !takes_fired_timer_message(receive).
+
+receive_in_callback(receive, func, callback, behaviour, proximity, "down") :-
+  receive_until_peer_exits(receive, func, callback, proximity),
+  loop_entry(callback, _, behaviour).
+
+// A receive with an `after` on an OTP process's own stack: it cannot
+// hang, but it still takes from the behaviour's mailbox and re-scans
+// its queue.
+.decl timed_receive_in_callback(receive: symbol, func: symbol, callback: symbol, proximity: symbol)
+
+timed_receive_in_callback(receive, func, callback, proximity) :-
+  waits_with_timeout(receive, func),
+  callback_reaches(callback, func, proximity),
+  !polls_cancelled_timer(receive).
+
+receive_in_callback(receive, func, callback, behaviour, proximity, "true") :-
+  timed_receive_in_callback(receive, func, callback, proximity),
+  loop_entry(callback, _, behaviour).
+
+// The receive in `func` has no `after`: it waits until its message
+// comes.
+.decl waits_without_timeout(receive: symbol, func: symbol) inline
+
+waits_without_timeout(receive, func) :- recv_start(receive, func, 1, _).
+
+// The receive in `func` has an `after`: it can end without its message.
+.decl waits_with_timeout(receive: symbol, func: symbol) inline
+
+waits_with_timeout(receive, func) :- recv_start(receive, func, 0, _).
+
+// The receive ends no later than its peer, as `callback` runs it: it
+// takes the :DOWN of a monitor (down_bounded, clientlib/receive.dl),
+// which the runtime delivers once the monitored process exits, or at
+// once if it was already gone; or the :EXIT of a linked peer in a
+// server that traps exits (trapped_exit_ends). Its other clauses can
+// only end it sooner.
+.decl ends_when_peer_exits(receive: symbol, callback: symbol)
+
+ends_when_peer_exits(receive, callback) :-
+  down_bounded(receive),
+  recv_start(receive, func, 1, _),
+  callback_reaches(callback, func, _).
+
+ends_when_peer_exits(receive, callback) :-
+  trapped_exit_ends(receive, func, mod),
+  callback_reaches(callback, func, _),
+  loop_entry(callback, mod, _).
 
 // The receive takes the :EXIT of a process or port its function links to
 // (exit_pinned, clientlib/receive.dl), and `mod`'s server traps exits
-// (module_traps): the linked peer's exit ends the wait. A monitor's :DOWN
-// (down_bounded) ends it in any process.
+// (module_traps): the linked peer's exit ends the wait.
 .decl trapped_exit_ends(id: symbol, func: symbol, mod: symbol)
 
 trapped_exit_ends(id, f, m) :- exit_pinned(id, f), module_traps(_, m).
 
-// A receive with no `after` that ends no later than its peer (down_bounded, trapped_exit_ends):
-// the runtime delivers the :DOWN once the monitored process exits, or at
-// once if it was already gone, and a trapped linked peer's exit arrives
-// as an :EXIT. Its other clauses can only end it sooner. A terminate/2
-// that stops a process and waits for it to go (Broadway's Topology and
-// Terminator) cannot hang on it; what it holds is the callback, for as
-// long as that process lives. Reported as a bounded receive, "down";
-// init/1's is startup's, as above.
-receive_in_callback(id, func, callback, behaviour, proximity, "down") :-
-  recv_start(id, func, 1, _),
-  down_bounded(id),
-  callback_reaches(callback, func, proximity),
-  loop_entry(callback, _, behaviour),
-  !init_function(_, callback),
-  !flush_receive(id).
+// ── The cancel_timer flush idiom ─────────────────────────────────
 
-receive_in_callback(id, func, callback, behaviour, proximity, "down") :-
-  recv_start(id, func, 1, _),
-  callback_reaches(callback, func, proximity),
-  loop_entry(callback, m, behaviour),
-  trapped_exit_ends(id, func, m),
-  !init_function(_, callback),
-  !flush_receive(id).
+// A blocking receive that runs only where cancel_timer/1 said the timer
+// had already fired, and takes its message, is no hang (flush_receive,
+// clientlib/timer_flush.dl).
+.decl takes_fired_timer_message(receive: symbol) inline
 
-// A receive WITH a timeout. It cannot hang, but it still consumes from the
-// behaviour's mailbox and still re-scans the queue. The flush is the
-// exception here too: `receive :tick -> :ok after 0 -> :ok end` after a
-// cancel is the form the cancel_timer docs give for taking a timer's
-// message that was already delivered, and it takes exactly the message
-// the callback means to drop. The facts carry whether a receive can
-// block, not its timeout, so a bounded flush is exempt at any bound; a
-// bounded receive cannot hang, and this one takes the timer's message.
-receive_in_callback(id, func, callback, behaviour, proximity, "true") :-
-  recv_start(id, func, 0, _),
-  callback_reaches(callback, func, proximity),
-  loop_entry(callback, _, behaviour),
-  !flush_poll(id).
+takes_fired_timer_message(receive) :- flush_receive(receive).
+
+// A receive with an `after` that takes the message of a timer its
+// function cancels (flush_poll): `receive :tick -> :ok after 0 -> :ok
+// end` after a cancel is the form the cancel_timer docs give for taking
+// a timer's message that was already delivered, and it takes exactly the
+// message the callback means to drop. The facts carry whether a receive
+// can block, not its timeout, so a bounded flush is exempt at any bound;
+// a bounded receive cannot hang, and this one takes the timer's message.
+.decl polls_cancelled_timer(receive: symbol) inline
+
+polls_cancelled_timer(receive) :- flush_poll(receive).
 
 // ══ A socket call with no timeout on an OTP process's own stack ══════
 //
@@ -952,11 +992,29 @@ receive_in_callback(id, func, callback, behaviour, proximity, "true") :-
 // it can be retried, so a connect is judged here wherever it runs. A
 // process that is not an OTP behaviour's (a reader loop a spawn runs) is
 // made to wait, and is not judged.
-.decl socket_wait_infinity(site: symbol, func: symbol, api: symbol, holder: symbol)
 
-socket_wait_infinity(id, f, api, f) :- socket_wait(id, f, api, "infinity", _).
+// A socket call with no timeout runs on an OTP server's own stack, in a
+// callback other than init/1: a peer that stops answering holds the
+// server for as long as it likes.
+.decl socket_wait_in_callback(site: symbol, func: symbol, api: symbol, server: symbol)
 
-socket_wait_infinity(id, f, api, c) :-
+socket_wait_in_callback(site, func, api, server) :-
+  waits_on_socket_forever(site, func, api, holder),
+  runs_in_callback_of(holder, server),
+  !recv_during_init(site).
+
+wait_found(func, site, "socket", api, server, "") :-
+  socket_wait_in_callback(site, func, api, server).
+
+// The socket call at `site` in `func` waits with :infinity: its arity
+// leaves the timeout out, it is given :infinity, or its timeout is a
+// parameter `holder` (func itself, or a caller up the chain) fills with
+// :infinity.
+.decl waits_on_socket_forever(site: symbol, func: symbol, api: symbol, holder: symbol)
+
+waits_on_socket_forever(id, f, api, f) :- socket_wait(id, f, api, "infinity", _).
+
+waits_on_socket_forever(id, f, api, c) :-
   socket_wait(id, f, api, "param", p),
   socket_infinity_at(f, p, c).
 
@@ -980,13 +1038,14 @@ socket_infinity_at(g, p, c) :-
 
 socket_reach.cut(f, g) :- side_call(f, g).
 
-socket_reach.seed(h, h) :- socket_wait_infinity(_, _, _, h).
+socket_reach.seed(h, h) :- waits_on_socket_forever(_, _, _, h).
 
-// The server whose callback, other than init/1, runs the wait.
-.decl socket_wait_server(site: symbol, func: symbol, api: symbol, server: symbol)
+// `holder` runs on the stack of one of `server`'s OTP callbacks other
+// than init/1 (socket_reach: a fun that runs elsewhere is not the
+// callback's wait).
+.decl runs_in_callback_of(holder: symbol, server: symbol) inline
 
-socket_wait_server(id, f, api, m) :-
-  socket_wait_infinity(id, f, api, h),
+runs_in_callback_of(h, m) :-
   otp_callback(c, m, name, _),
   name != "init",
   socket_reach.reaches(c, h).
@@ -998,18 +1057,15 @@ socket_recv_api(":gen_tcp.recv/3").
 socket_recv_api(":ssl.recv/2").
 socket_recv_api(":ssl.recv/3").
 
-// A recv init/1 runs: startup's.
-.decl init_recv(site: symbol)
+// A recv init/1 runs: startup's finding (unbounded_effect_in_init,
+// "recv"), reported there once.
+.decl recv_during_init(site: symbol)
 
-init_recv(id) :-
-  socket_wait_infinity(id, _, api, h),
+recv_during_init(id) :-
+  waits_on_socket_forever(id, _, api, h),
   socket_recv_api(api),
   init_function(_, c),
   socket_reach.reaches(c, h).
-
-wait_found(f, id, "socket", api, m, "") :-
-  socket_wait_server(id, f, api, m),
-  !init_recv(id).
 
 // ══ Remote calls and cluster-wide locks ═════════════════════════════
 

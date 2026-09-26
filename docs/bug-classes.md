@@ -485,7 +485,7 @@ than more; it errs loud when the same uncertainty can add a finding.
 
 ### A socket a process holds
 
-- **Names.** `socket_active`, `socket_opts_arg`, `socket_wait` (facts, `Argus.Extractors.Sockets`); `socket_activation`, `server_holds` (local to mailbox.dl); `socket_wait_infinity` (local to blocking.dl).
+- **Names.** `socket_active`, `socket_opts_arg`, `socket_wait` (facts, `Argus.Extractors.Sockets`); `socket_activation`, `server_holds` (local to mailbox.dl); `waits_on_socket_forever` (local to blocking.dl).
 - **Meaning.** `socket_active(id, f, transport, mode, param)` is a connect or setopts call and the `:active` mode its literal options give: an active socket sends its data and its close to the process that controls it, the one that connected it unless it was handed on. `socket_opts_arg` is the literal list a caller hands a wrapper whose options are a parameter. `socket_wait(id, f, api, timeout, param)` is a blocking socket call and how long it may wait: `infinity` when its arity leaves the timeout out or `:infinity` is passed.
 - **Direction.** Only literal options are read: a mode built at runtime is `dynamic` and says nothing (quiet). `:inet.setopts/2` is a TCP socket's only where the process also connects one.
 - **Used by.** mailbox (the socket source of `unhandled_info`) and blocking (the `socket` kind of `unbounded_wait`).
