@@ -189,6 +189,14 @@ init_wait_site(mod, callee, id) :-
   !side_call(f, g),
   reaches_sync_dep(g, callee).
 
+// A task init/1 awaits (awaits_task): the wait is at its start.
+init_wait_site(mod, callee, id) :-
+  raw_sync_call_in_init(mod, callee),
+  init_function(mod, f),
+  awaits_task(f, id, g),
+  !start_acked(id, f),
+  reaches_sync_dep(g, callee).
+
 .decl init_waits_unconditionally_at(mod: symbol, callee: symbol)
 
 init_waits_unconditionally_at(mod, callee) :-

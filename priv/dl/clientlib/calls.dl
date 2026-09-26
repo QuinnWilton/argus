@@ -407,6 +407,8 @@ reaches_tag_dep(f, m) :-
   !side_call(f, g),
   reaches_tag_dep(g, m).
 
+reaches_tag_dep(f, m) :- awaits_task(f, _, g), reaches_tag_dep(g, m).
+
 sync_dep(f, m) :-
   tag_resolved_site(id, f, "call", m),
   sync_call_site(id, f, t, _),
@@ -423,7 +425,11 @@ async_dep(f, m) :-
 // over the edge into what a spawn, task or agent runs (runs_elsewhere,
 // runs_elsewhere.dl) — init/1 does not wait on what the task it starts
 // calls. The closure itself, a function of the same module, still
-// holds it, so module-level dependencies are unchanged.
+// holds it, so module-level dependencies are unchanged. A task the
+// function awaits is the exception (awaits_task: `Task.async(fn -> ...
+// end) |> Task.await()`): the function waits for it, and so for what it
+// waits on — an init/1 that awaits a task calling a later sibling holds
+// its start on that sibling all the same.
 //
 // Propagated backwards over call_edge from the functions that hold the
 // dependency, never through the full call closure: the result is bounded
@@ -437,6 +443,8 @@ reaches_sync_dep(f, m) :-
   !runs_elsewhere(f, g),
   !side_call(f, g),
   reaches_sync_dep(g, m).
+
+reaches_sync_dep(f, m) :- awaits_task(f, _, g), reaches_sync_dep(g, m).
 
 // ── Which request ──────────────────────────────────────────────────────
 //
@@ -548,6 +556,8 @@ reaches_sync_request(f, m, tag) :-
   !runs_elsewhere(f, g),
   !side_call(f, g),
   reaches_sync_request(g, m, tag).
+
+reaches_sync_request(f, m, tag) :- awaits_task(f, _, g), reaches_sync_request(g, m, tag).
 
 // ── Which request, per call site ──────────────────────────────────────
 //
@@ -687,6 +697,12 @@ site_request(f, "", m, tag) :-
   !fun_handed(_, f, g, _),
   !runs_elsewhere(f, g),
   !side_call(f, g),
+  reaches_sync_request(g, m, tag).
+
+// A task f awaits waits for f (awaits_task): its site is the start.
+site_request(f, id, m, tag) :-
+  site_demand(f),
+  awaits_task(f, id, g),
   reaches_sync_request(g, m, tag).
 
 site_request(f, "", m, tag) :-

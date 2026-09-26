@@ -95,6 +95,11 @@ leftover is taken by handle_info/2 once init/1 returns: it is reported
 when a clause takes the message (a handshake watchdog that stops a
 server whose handshake went through). No row moves.
 
+**Fixed.** `reaches_sync_dep`, `reaches_sync_request` and
+`reaches_tag_dep` step into a task the caller awaits (`awaits_task`): an
+init/1 that awaits a task calling a later sibling holds its start on it,
+and is the startup deadlock it was not. No row moves.
+
 ### Races by their harm
 
 **Changed.** A check-then-act pair is reported when a rival can land on

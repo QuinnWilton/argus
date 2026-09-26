@@ -10,6 +10,7 @@ defmodule Argus.Soundness.StartupTest do
 
   import Argus.Test.Soundness, only: [fired: 2]
 
+  alias Argus.Test.Soundness.Census.Startup, as: C
   alias Argus.Test.Soundness.Startup, as: S
 
   @before_dep "Child starts before its dependency"
@@ -121,6 +122,43 @@ defmodule Argus.Soundness.StartupTest do
 
     test "a closed list's last child is quiet" do
       assert fired([S.ContLast.Worker, S.ContLast.Earlier, S.ContLast.Sup], :startup) == []
+    end
+  end
+
+  # The exclusion census's startup holes (docs/design/exclusions.md), over
+  # one fixture set (test/fixtures/soundness/startup_census.ex).
+  @census [
+    C.Config,
+    C.Cache,
+    C.App,
+    C.SizedCache,
+    C.SizedApp,
+    C.EarlyConfigCache,
+    C.EarlyApp,
+    C.Settings,
+    C.TaskCache,
+    C.HelperTaskCache,
+    C.FireAndForgetCache,
+    C.TaskSup
+  ]
+
+  @deadlock "Startup deadlock: init waits on a later sibling"
+
+  defp census_deadlock?(mod), do: {:error, @deadlock, {mod, :init, 1}} in fired(@census, :startup)
+
+  # census: awaited-task
+  # A task init/1 awaits was not init/1's wait: reaches_sync_dep did not
+  # step into it.
+  describe "census hole: a later sibling a task init/1 awaits calls" do
+    for mod <- [C.TaskCache, C.HelperTaskCache] do
+      test "#{inspect(mod)}: init/1 waits on the later sibling through its task" do
+        assert census_deadlock?(unquote(mod))
+      end
+    end
+
+    test "a task init/1 does not await is the startup window's warning" do
+      refute census_deadlock?(C.FireAndForgetCache)
+      assert {:warning, @before_dep, {C.TaskSup, :init, 1}} in fired(@census, :startup)
     end
   end
 end
