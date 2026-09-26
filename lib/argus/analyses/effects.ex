@@ -53,6 +53,9 @@ defmodule Argus.Analyses.Effects do
       Argus.Extractors.ApiCalls,
       Argus.Extractors.ProcessRegistry,
       Argus.Extractors.OTP,
+      # Where a transaction's body starts a process (process_start):
+      # runs_elsewhere's edges, which the transaction walk treats apart.
+      Argus.Extractors.PidFlow,
       Argus.Extractors.Tooling
     ]
 

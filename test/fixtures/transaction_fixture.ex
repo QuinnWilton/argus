@@ -126,8 +126,9 @@ defmodule Argus.Test.Fixtures.Transaction do
 
   defmodule TaskBeforeCommit do
     @moduledoc """
-    A Task started in the transaction: the start is the effect, and the
-    webhook the task posts is its own.
+    A Task started in the transaction: the start is a process effect, and
+    the webhook the task posts leaves before the commit — network I/O the
+    rollback cannot undo, reported too.
     """
     def create(post) do
       FakeRepo.transaction(fn ->

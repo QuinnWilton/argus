@@ -50,7 +50,7 @@ defmodule Argus.Analyses.EffectsTransactionTest do
       assert via =~ "-create/1-fun-0-", "should name the closure, not the enclosing function"
     end
 
-    test "a start in the transaction is the effect, not what the new process does" do
+    test "a start in the transaction is a process effect; the new process's own are not repeated" do
       skip_without_souffle()
 
       rows = findings([T.FakeRepo, T.StreamsBeforeCommit, T.TaskBeforeCommit])
@@ -62,7 +62,11 @@ defmodule Argus.Analyses.EffectsTransactionTest do
       assert spawn =~ "spawn"
       assert stream =~ "stream/2"
 
-      assert [[_, _, "process", start, _via]] = for_module(rows, "TaskBeforeCommit")
+      # The task's webhook is sent whether or not the transaction commits,
+      # and again on a retry: reported beside the start, at its own tier.
+      assert [[_, _, "network", _, _], [_, _, "process", start, _via]] =
+               Enum.sort(for_module(rows, "TaskBeforeCommit"))
+
       assert start =~ "Task"
     end
 

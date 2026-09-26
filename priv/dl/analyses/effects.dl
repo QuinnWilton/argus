@@ -9,6 +9,7 @@
 
 .include "../clientlib/imports.dl"
 .include "../clientlib/behaviours.dl"
+.include "../clientlib/runs_elsewhere.dl"
 .include "../clientlib/tooling.dl"
 
 // A finding in code only developers' tools or tests run steps down a
@@ -337,42 +338,30 @@ transaction_on_another_repo(caller, repo) :-
 
 .decl escapes_transaction(opened: symbol, caller: symbol, repo: symbol, category: symbol, api: symbol, via: symbol, site: symbol)
 
-// Forward from the transaction bodies only, and not into a function a
-// start hands to a new process: the start is the effect the transaction
-// cannot undo (a process operation, reported where it is made), and what
-// the new process then does happens beside the transaction, not in its
-// process — akkoma's `Streamer.stream/2` spawns a pusher per topic from
-// inside `ActivityPub.create/2`'s transaction, and the pusher's
-// Registry.dispatch/3 and sends were each a finding of their own beside
-// the spawn's. A closure a call hands to anything else (Enum.each, the
-// transaction itself) is still followed.
+// Forward from the transaction bodies only. What the body's own process
+// runs is the transaction's work, every durable effect of it; so is what
+// a task it waits for runs (`Task.async(fn -> ... end) |> Task.await()`,
+// awaits_task: the request leaves before the commit, and the
+// transaction holds its connection for the whole round trip). Past a
+// start the body does not wait for (runs_elsewhere, clientlib), the new
+// process runs beside the transaction: the start is the process
+// operation reported, and what the process then does to the process
+// table is not reported again (akkoma's `Streamer.stream/2` spawns a
+// pusher per topic from inside `ActivityPub.create/2`'s transaction, and
+// the pusher's Registry.dispatch/3 and sends were each a finding beside
+// the spawn's). What it does outside the process table is: a webhook a
+// supervised task posts is sent whether or not the transaction commits,
+// and sent again when it is retried. So is what a fun the body registers
+// or keeps does, which the walk follows as it always did: whether it runs
+// inside the transaction is not something the call graph says.
 .init body_reach = ForwardCallReachCut
 
 body_reach.root(body, body) :- transaction_body(_, _, _, body).
-body_reach.cut(g, h) :- starts_elsewhere(g, h).
+body_reach.cut(g, h) :- runs_elsewhere(g, h), !awaits_task(g, _, h).
 
-// `caller` hands `fun` to a start: a spawn whose fun resolves to it
-// (spawn_call), or a Task started on it.
-.decl starts_elsewhere(caller: symbol, fun: symbol)
+.init started_reach = ForwardCallReach
 
-starts_elsewhere(f, g) :-
-  spawn_call(_, f, m, n, a, _, _, source, _, _),
-  (source = "closure" ; source = "fun"),
-  g = cat(m, cat(":", cat(n, cat("/", to_string(a))))).
-
-starts_elsewhere(f, g) :-
-  fun_handed(id, f, g, _),
-  remote_call(id, f, m, n, _),
-  task_start(m, n).
-
-.decl task_start(mod: symbol, func: symbol)
-
-task_start("Task", "start").
-task_start("Task", "start_link").
-task_start("Task", "async").
-task_start("Task.Supervisor", "start_child").
-task_start("Task.Supervisor", "async").
-task_start("Task.Supervisor", "async_nolink").
+started_reach.root(body, body) :- transaction_body(_, _, _, body).
 
 // The repo is the one of the transaction the body belongs to: joining
 // the caller's transaction sites apart from its body paired a closure
@@ -382,6 +371,15 @@ escapes_transaction(opened, caller, repo, category, api, via, site) :-
   body_reach.reaches(body, via),
   impure_call(site, via, api, category, "write"),
   durable_effect(category).
+
+// Past a start the body does not wait for, or a fun it keeps.
+escapes_transaction(opened, caller, repo, category, api, via, site) :-
+  transaction_body(opened, caller, repo, body),
+  started_reach.reaches(body, via),
+  !body_reach.reaches(body, via),
+  impure_call(site, via, api, category, "write"),
+  durable_effect(category),
+  category != "process".
 
 // The effect is in the closure itself, not something it calls.
 escapes_transaction(opened, caller, repo, category, api, body, site) :-
