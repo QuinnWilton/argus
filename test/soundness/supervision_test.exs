@@ -1,14 +1,15 @@
 defmodule Argus.Soundness.SupervisionTest do
   @moduledoc """
   The permanent-child excuse of "ETS table dies with its owner" rests on
-  the supervision extractor naming no child it cannot read, with the
-  restart the child runs under. The supervision round (the ETS rows round
-  found 8 of 12 sampled rows were permanent children the extractor
-  missed) reads more specs; each shape has an owner it now excuses, and
-  adversarial neighbours whose owner must stay reported: a restart the
-  spec says is not permanent, one it takes from a call, and a module it
-  takes from a call or from the function's parameter
-  (test/fixtures/supervision_specs_fixture.ex, test/fixtures/erl).
+  the supervision extractor naming no child it cannot read. The
+  supervision round (the ETS rows round found 8 of 12 sampled rows were
+  permanent children the extractor missed) reads child specs a helper
+  builds, a `start_child` adds, a `++` joins and a `Mod.child_spec/1`
+  call names; each shape has an owner it now excuses, and adversarial
+  neighbours whose owner must stay reported: a restart the spec says is
+  not permanent, one it takes from a call, and a module it takes from a
+  call or from the function's parameter (test/fixtures/
+  supervision_specs_fixture.ex, spec_helper_sup.erl, spec_start_child.erl).
   """
   use ExUnit.Case, async: true
 
@@ -16,15 +17,19 @@ defmodule Argus.Soundness.SupervisionTest do
 
   alias Argus.Test.Fixtures.ChildSpecs, as: Specs
 
-  @owners ~w(HelperOwner ModulesOwner HelperTempOwner EnvOwner AppendedOwner OptionalOwner
-             RejectedOwner OverriddenOwner RuntimeMapOwner RuntimeRestartOwner TransientOwner)a
+  @owners ~w(HelperOwner ModulesOwner HelperTempOwner EnvOwner AddedOwner AddedMapOwner
+             AddedTempOwner AddedParamOwner AddedDynOwner AppendedOwner OptionalOwner
+             RejectedOwner OverriddenOwner RuntimeMapOwner RuntimeRestartOwner StartedOwner
+             StartedTempOwner DynamicOwner TransientOwner)a
 
   @modules [
              :spec_helper_sup,
+             :spec_start_child,
              Specs.AppendedApp,
              Specs.RejectSup,
              Specs.OverrideSup,
              Specs.RestartSup,
+             Specs.Starter,
              Specs.MapOwner,
              Specs.Remote,
              Specs.ProvisionerLike,
@@ -41,16 +46,17 @@ defmodule Argus.Soundness.SupervisionTest do
   end
 
   # A restart the spec says is not permanent: handed to a helper, stated
-  # by a Supervisor.child_spec/2 override, or by the shorthand's own
-  # child_spec/1 (`use GenServer, restart: :transient`).
-  for owner <- ~w(HelperTempOwner OverriddenOwner TransientOwner)a do
+  # by a start_child's spec, by a Supervisor.child_spec/2 override, by a
+  # map, or by the shorthand's own child_spec/1 (`use GenServer, restart:
+  # :transient`).
+  for owner <- ~w(HelperTempOwner AddedTempOwner OverriddenOwner StartedTempOwner TransientOwner)a do
     test "#{owner}'s table still dies with it: its spec's restart is not permanent", %{dies: dies} do
       assert Module.concat(Specs, unquote(owner)) in dies
     end
   end
 
-  # A module or a restart the extractor cannot read names no child.
-  for owner <- ~w(EnvOwner RuntimeRestartOwner)a do
+  # A restart or a module the extractor cannot read names no child.
+  for owner <- ~w(EnvOwner AddedParamOwner AddedDynOwner RuntimeRestartOwner)a do
     test "#{owner}'s table still dies with it: its spec is one the extractor cannot read", %{
       dies: dies
     } do
@@ -59,13 +65,11 @@ defmodule Argus.Soundness.SupervisionTest do
   end
 
   test "each shape's permanent child is excused", %{dies: dies} do
-    # A helper's tuple spec, a modules list built with ++, a list joined
-    # with ++ (a conditional part's child included), a Mod.child_spec/1
-    # call, Enum.reject(&is_nil/1), a runtime map with the default restart.
     excused =
-      ~w(HelperOwner ModulesOwner AppendedOwner OptionalOwner RejectedOwner RuntimeMapOwner
-         MapOwner)a
+      ~w(HelperOwner ModulesOwner AddedOwner AddedMapOwner AppendedOwner OptionalOwner
+         RejectedOwner RuntimeMapOwner StartedOwner DynamicOwner)a
 
     for owner <- excused, do: refute(Module.concat(Specs, owner) in dies, inspect(owner))
+    refute Specs.MapOwner in dies
   end
 end

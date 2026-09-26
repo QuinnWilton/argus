@@ -111,6 +111,40 @@ defmodule Argus.Analyses.CouplingTest do
       assert results["sibling_dependency"] == []
     end
 
+    test "a temporary spec the start hands over leaves the supervisor out" do
+      skip_without_souffle()
+
+      # redix#334's fix: the Manager restarts its connections from :DOWN,
+      # and each start's spec says restart: :temporary through
+      # Supervisor.child_spec/2, so the supervisor never restarts one.
+      paths =
+        compile_beams("""
+        defmodule Argus.CouplingTest.TempChild do
+          use GenServer
+          def start_link(a), do: GenServer.start_link(__MODULE__, a)
+          def init(a), do: {:ok, a}
+        end
+
+        defmodule Argus.CouplingTest.TempOwner do
+          use GenServer
+          def init(_), do: {:ok, %{pid: nil}}
+
+          def handle_info(:start, state), do: {:noreply, start(state)}
+          def handle_info({:DOWN, _, :process, _, _}, state), do: {:noreply, start(state)}
+
+          defp start(state) do
+            spec = Supervisor.child_spec({Argus.CouplingTest.TempChild, []}, restart: :temporary)
+            {:ok, pid} = DynamicSupervisor.start_child(Argus.CouplingTest.DynSup, spec)
+            Process.monitor(pid)
+            %{state | pid: pid}
+          end
+        end
+        """)
+
+      assert {:ok, results} = Memo.analyze(paths, :coupling)
+      assert Map.get(results, "dual_restart_authority", []) == []
+    end
+
     test "a monitor of a started child the points-to analysis follows is a restart authority" do
       skip_without_souffle()
 

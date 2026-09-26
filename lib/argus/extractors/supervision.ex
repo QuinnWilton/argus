@@ -15,7 +15,7 @@ defmodule Argus.Extractors.Supervision do
   the writes that reach it, into the local functions that build it with
   their parameters bound; what it hides is marked open, and flat scans
   of the function's literals and instructions stand in where no list is
-  found.
+  found. A `start_child` call's spec is read the same way.
 
   ## Emitted facts
 
@@ -31,6 +31,13 @@ defmodule Argus.Extractors.Supervision do
   - `supervisor_children_open(sup)` — the child list has an element or a
     tail this extractor cannot read: its children and positions are
     partial
+  - `dynamic_child(sup, child_mod, caller_func)` — a child a
+    `DynamicSupervisor.start_child/2` (or a Task.Supervisor start) adds
+  - `dynamic_child_restart(sup, child_mod, caller_func, restart)` — the
+    restart that start's own spec states, when not `:permanent`
+  - `added_child(sup, child_mod, restart, type, caller_func)` — a child a
+    `Supervisor.start_child/2` or `supervisor:start_child/2` adds with a
+    spec it states
   - `named_process(mod, name)` — named process registration detected
   """
 
@@ -72,9 +79,11 @@ defmodule Argus.Extractors.Supervision do
   @impl true
   def relations,
     do: [
+      :added_child,
       :child_spec_restart,
       :post_start_call,
       :dynamic_child,
+      :dynamic_child_restart,
       :supervisor,
       :supervisor_child,
       :supervisor_children_open,
@@ -264,7 +273,7 @@ defmodule Argus.Extractors.Supervision do
 
   defp handle_dynamic_start(facts, ctx, {DynamicSupervisor, :start_child, 2}, self_sup, functions) do
     sup = resolve_start_child_sup(ctx.instrs, ctx.idx, self_sup, functions)
-    child = resolve_dynamic_child_module(ctx.instrs, ctx.idx)
+    {child, restart} = resolve_dynamic_child(ctx.instrs, ctx.idx, functions)
 
     if child == "dynamic" do
       # We can't extract a useful row, but we still want coverage to know
@@ -275,6 +284,7 @@ defmodule Argus.Extractors.Supervision do
       facts
       |> track_dynamic(sup, ctx, :dynamic_supervisor_parent, :dynamic_child)
       |> add_fact(:dynamic_child, [sup, child, ctx.func_id])
+      |> dynamic_child_restart(sup, child, ctx.func_id, restart)
     end
   end
 
@@ -298,7 +308,35 @@ defmodule Argus.Extractors.Supervision do
     ])
   end
 
+  # A child a `start_child` adds to a supervisor with the children of its
+  # own init/1 (`supervisor:start_child(kernel_safe_sup, {dets, {dets_server,
+  # start_link, []}, permanent, ...})`): the spec is read as a child list's
+  # element is, and its restart and type are the spec's. A list argument
+  # starts a simple_one_for_one template, whose child the supervisor's
+  # own init/1 names; a spec the reader cannot read names no child.
+  defp handle_dynamic_start(facts, ctx, {api, :start_child, 2}, self_sup, functions)
+       when api in [Supervisor, :supervisor] do
+    case fueled_value(fn -> element_operand(frame(ctx.instrs, functions), ctx.idx, {:x, 1}) end) do
+      {:ok, [{mod, restart, type, _name, _form}]} when mod not in [GenServer, Agent, Task] ->
+        sup = resolve_start_child_sup(ctx.instrs, ctx.idx, self_sup, functions)
+        add_fact(facts, :added_child, [sup, inspect(mod), word(restart), word(type), ctx.func_id])
+
+      _ ->
+        facts
+    end
+  end
+
   defp handle_dynamic_start(facts, _ctx, _mfa, _self_sup, _functions), do: facts
+
+  # The restart a start_child's own spec states, when it is not the
+  # default: a map's `:restart`, a `Supervisor.child_spec/2` override
+  # (redix e67e61a's `Supervisor.child_spec({Redix, opts}, restart:
+  # :temporary)`), or `dynamic` when the spec's restart could not be read.
+  # A shorthand's is its child_spec/1's (`child_spec_restart`).
+  defp dynamic_child_restart(facts, _sup, _child, _func, :permanent), do: facts
+
+  defp dynamic_child_restart(facts, sup, child, func, restart),
+    do: add_fact(facts, :dynamic_child_restart, [sup, child, func, word(restart)])
 
   # The supervisor argument to `start_child` is a registered name, a pid, or
   # a variable. A resolved atom (name or module) becomes the parent; a
@@ -321,20 +359,32 @@ defmodule Argus.Extractors.Supervision do
   #   - A bare module atom: `DynamicSupervisor.start_child(sup, MyWorker)`
   #   - A 2-tuple: `DynamicSupervisor.start_child(sup, {MyWorker, args})`
   #   - A child spec map: `%{id: _, start: {MyWorker, :start_link, [args]}}`
-  # We try each shape; failure is "dynamic".
-  defp resolve_dynamic_child_module(instrs, idx) do
+  # We try each shape; failure is "dynamic". A spec the literal shapes do
+  # not cover — one a helper builds from its parameters, a
+  # `Mod.child_spec/1` call, `Supervisor.child_spec/2` overrides, a map
+  # over a runtime value — is read as a child list's element is; one it
+  # cannot read is "dynamic". The restart is the spec's (a shorthand's
+  # default `:permanent`).
+  defp resolve_dynamic_child(instrs, idx, functions) do
     case resolve_register(instrs, idx, {:x, 1}) do
-      {:ok, mod} when is_atom(mod) ->
-        if module_atom?(mod), do: inspect(mod), else: "dynamic"
+      {:ok, mod} when is_atom(mod) and mod != :dynamic ->
+        {if(module_atom?(mod), do: inspect(mod), else: "dynamic"), :permanent}
 
-      {:ok, {mod, _args}} when is_atom(mod) ->
-        if module_atom?(mod), do: inspect(mod), else: "dynamic"
+      {:ok, {mod, _args}} when is_atom(mod) and mod != :dynamic ->
+        {if(module_atom?(mod), do: inspect(mod), else: "dynamic"), :permanent}
 
-      {:ok, %{start: {mod, _, _}}} when is_atom(mod) ->
-        inspect(mod)
+      {:ok, %{start: {mod, _, _}} = spec} when is_atom(mod) and mod != :dynamic ->
+        {inspect(mod), Map.get(spec, :restart, :permanent)}
 
       _ ->
-        "dynamic"
+        case fueled_value(fn -> element_operand(frame(instrs, functions), idx, {:x, 1}) end) do
+          {:ok, [{mod, restart, _type, _name, _form}]}
+          when mod not in [GenServer, Agent, Task] ->
+            {inspect(mod), restart}
+
+          _ ->
+            {"dynamic", :permanent}
+        end
     end
   end
 

@@ -235,6 +235,15 @@ ets_permanent_owner(name, mod) :-
   ets_owner_process(name, mod, _),
   dynamic_child(_, mod, _).
 
+// Owner a start_child adds to a supervisor with a permanent spec
+// (dets_server's ensure_started puts it under kernel_safe_sup): its
+// supervisor restarts it as it would a child of its own init/1. A
+// temporary or transient spec, or one whose restart the extractor could
+// not read, is no excuse.
+ets_permanent_owner(name, mod) :-
+  ets_owner_process(name, mod, _),
+  added_child(_, mod, "permanent", _, _).
+
 // Application modules live for the entire app — table loss is not practical.
 .decl ets_application_owner(name: symbol, mod: symbol)
 

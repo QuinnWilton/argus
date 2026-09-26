@@ -589,4 +589,102 @@ defmodule Argus.Extractors.SupervisionTest do
       refute Map.has_key?(facts, :supervisor_children_open)
     end
   end
+
+  describe "extract/1 — a child a start_child adds" do
+    alias Argus.Test.Fixtures.ChildSpecs, as: Specs
+
+    defp added(mod) do
+      {:ok, data} = BeamSpy.BeamFile.disassemble(to_string(:code.which(mod)))
+      facts = Supervision.extract(data)
+      {facts |> Map.get(:added_child, []) |> Enum.sort(), Map.get(facts, :dynamic_child, [])}
+    end
+
+    test "supervisor:start_child/2's spec is read with its restart and type" do
+      # dets_server's ensure_started/0 shape: a tuple spec, a map spec with
+      # no restart (permanent), a temporary one, one whose restart comes
+      # from a call. A spec whose module is the function's parameter and a
+      # simple_one_for_one template's argument list name no child.
+      {added, []} = added(:spec_start_child)
+
+      assert added == [
+               [
+                 ":kernel_safe_sup",
+                 inspect(Specs.AddedDynOwner),
+                 "dynamic",
+                 "worker",
+                 ":spec_start_child:ensure_restart/0"
+               ],
+               [
+                 ":kernel_safe_sup",
+                 inspect(Specs.AddedMapOwner),
+                 "permanent",
+                 "worker",
+                 ":spec_start_child:ensure_map/0"
+               ],
+               [
+                 ":kernel_safe_sup",
+                 inspect(Specs.AddedOwner),
+                 "permanent",
+                 "worker",
+                 ":spec_start_child:ensure/0"
+               ],
+               [
+                 ":kernel_safe_sup",
+                 inspect(Specs.AddedTempOwner),
+                 "temporary",
+                 "worker",
+                 ":spec_start_child:ensure_temp/0"
+               ]
+             ]
+    end
+
+    test "Supervisor.start_child/2 adds its spec's child; DynamicSupervisor's reads Mod.child_spec/1" do
+      {added, dynamic} = added(Specs.Starter)
+
+      assert added == [
+               [
+                 inspect(Specs.Supervisor),
+                 inspect(Specs.StartedOwner),
+                 "permanent",
+                 "worker",
+                 "#{inspect(Specs.Starter)}:start_permanent/0"
+               ],
+               [
+                 inspect(Specs.Supervisor),
+                 inspect(Specs.StartedTempOwner),
+                 "temporary",
+                 "worker",
+                 "#{inspect(Specs.Starter)}:start_temporary/1"
+               ]
+             ]
+
+      assert Enum.sort(dynamic) == [
+               [
+                 inspect(Specs.Pool),
+                 inspect(Specs.DynamicOwner),
+                 "#{inspect(Specs.Starter)}:start_dynamic/1"
+               ],
+               [
+                 inspect(Specs.Pool),
+                 inspect(Specs.DynamicOwner),
+                 "#{inspect(Specs.Starter)}:start_dynamic_temporary/1"
+               ]
+             ]
+    end
+
+    test "a DynamicSupervisor start's own spec states the restart it overrides" do
+      {:ok, data} = BeamSpy.BeamFile.disassemble(to_string(:code.which(Specs.Starter)))
+
+      # The Supervisor.child_spec/2 override's :temporary, and no row for
+      # the start whose spec is the child's own child_spec/1.
+      assert Supervision.extract(data)[:dynamic_child_restart] == [
+               [
+                 inspect(Specs.Pool),
+                 inspect(Specs.DynamicOwner),
+                 "#{inspect(Specs.Starter)}:start_dynamic_temporary/1",
+                 "temporary"
+               ]
+             ]
+    end
+  end
 end

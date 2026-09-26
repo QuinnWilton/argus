@@ -4,20 +4,28 @@
 # public table in init/1 with no heir, so "ETS table dies with its owner"
 # says whether its supervisor is known to restart it: quiet for an owner
 # a supervisor restarts, reported for one no spec the extractor can read
-# makes a permanent child. spec_helper_sup.erl (test/fixtures/erl) names
-# the owners its helpers' tuple specs start.
+# makes a permanent child. spec_helper_sup.erl and spec_start_child.erl
+# (test/fixtures/erl) name the owners the Erlang shapes start.
 
 for {owner, table} <- [
       HelperOwner: :specs_helper,
       ModulesOwner: :specs_modules,
       HelperTempOwner: :specs_helper_temp,
       EnvOwner: :specs_env,
+      AddedOwner: :specs_added,
+      AddedMapOwner: :specs_added_map,
+      AddedTempOwner: :specs_added_temp,
+      AddedParamOwner: :specs_added_param,
+      AddedDynOwner: :specs_added_dyn,
       AppendedOwner: :specs_appended,
       OptionalOwner: :specs_optional,
       RejectedOwner: :specs_rejected,
       OverriddenOwner: :specs_overridden,
       RuntimeMapOwner: :specs_runtime_map,
-      RuntimeRestartOwner: :specs_runtime_restart
+      RuntimeRestartOwner: :specs_runtime_restart,
+      StartedOwner: :specs_started,
+      StartedTempOwner: :specs_started_temp,
+      DynamicOwner: :specs_dynamic
     ] do
   defmodule Module.concat(Argus.Test.Fixtures.ChildSpecs, owner) do
     @moduledoc false
@@ -145,6 +153,32 @@ defmodule Argus.Test.Fixtures.ChildSpecs.OverrideSup do
   end
 
   defp restart, do: Application.get_env(:specs, :restart, :permanent)
+end
+
+defmodule Argus.Test.Fixtures.ChildSpecs.Starter do
+  @moduledoc false
+  # Children a start_child adds: to a Supervisor with its own spec, and to
+  # a DynamicSupervisor through the child's child_spec/1.
+  alias Argus.Test.Fixtures.ChildSpecs, as: Specs
+
+  def start_permanent, do: Supervisor.start_child(Specs.Supervisor, {Specs.StartedOwner, []})
+
+  def start_temporary(arg) do
+    Supervisor.start_child(Specs.Supervisor, %{
+      id: :temp,
+      start: {Specs.StartedTempOwner, :start_link, [arg]},
+      restart: :temporary
+    })
+  end
+
+  def start_dynamic(arg),
+    do: DynamicSupervisor.start_child(Specs.Pool, Specs.DynamicOwner.child_spec(arg))
+
+  # redix e67e61a's shape: the override is the restart this start states.
+  def start_dynamic_temporary(arg) do
+    spec = Supervisor.child_spec({Specs.DynamicOwner, arg}, restart: :temporary)
+    DynamicSupervisor.start_child(Specs.Pool, spec)
+  end
 end
 
 defmodule Argus.Test.Fixtures.ChildSpecs.NamedPoolsApp do

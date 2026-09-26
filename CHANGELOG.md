@@ -51,6 +51,30 @@ supavisor's `RefreshLimiter`, ...), and vernemq's "Startup deadlock" at
 `vmq_swc_store`, where the flat scan had misread `vmq_swc_store_sup`'s
 order.
 
+**Added.** Schema 128. `added_child(sup, child_mod, restart, type,
+caller_func)` (Supervision extractor): a child a `supervisor:start_child/2`
+or `Supervisor.start_child/2` adds to a supervisor with a spec, read as a
+child list's element is, with the restart and type it states. A list
+argument (a simple_one_for_one template's) and a spec the reader cannot
+read (a module from the function's parameter) name no child. It is not
+a `dynamic_child`: those are a DynamicSupervisor's, of which a program
+starts many (`many_instances`, unsafe_input's unbounded starts, shutdown's
+foreign trees read them so). The clientlib reads it as a member of the
+tree started on demand (`child_subtree`, `on_demand_child`), and no
+`application_root` is one; ets excuses the owner a permanent spec adds.
+A `DynamicSupervisor.start_child/2` whose spec a helper builds, a
+`Mod.child_spec/1` call or `Supervisor.child_spec/2` overrides give is
+read the same way, and its child is no longer "dynamic"; the restart
+that spec states when not `:permanent` is `dynamic_child_restart(sup,
+child_mod, caller_func, restart)`, and coupling's "Two restart
+authorities for the same child" no longer reports a start whose own spec
+says `:temporary` (the call-site limit its entry named; redix#334's fix,
+`Supervisor.child_spec({Redix, opts}, restart: :temporary)`, had been
+quiet only because the child went unread). Gone: dets_server's three
+tables (its `ensure_started/0` adds it to kernel_safe_sup),
+rabbit_vhost_sup_sup's, and vernemq's per-bucket message-store state
+table.
+
 ### Owner lifetime stays :info
 
 **Changed.** ets's "ETS table read while its owner may be restarting"

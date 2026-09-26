@@ -143,6 +143,52 @@ defmodule Argus.Schema.Supervision do
         """
       },
       %{
+        name: :dynamic_child_restart,
+        layer: 2,
+        fields: [
+          {:sup, :symbol, "supervisor module (or 'dynamic'), as dynamic_child's"},
+          {:child_mod, :symbol, "child module, as dynamic_child's"},
+          {:caller_func, :symbol, "function that calls start_child, as dynamic_child's"},
+          {:restart, :symbol,
+           "restart the start_child's own spec states (transient/temporary), " <>
+             "'dynamic' when the spec's restart could not be read"}
+        ],
+        doc: """
+        The restart a `DynamicSupervisor.start_child/2`'s own spec states \
+        for the child its `dynamic_child` row names, when that is not \
+        `:permanent`: a map's `:restart`, or `Supervisor.child_spec/2`'s \
+        overrides (redix e67e61a: `Supervisor.child_spec({Redix, opts}, \
+        restart: :temporary)`). No row for a shorthand, whose restart its \
+        own child_spec/1 gives (`child_spec_restart`), or for a permanent \
+        spec.
+        """
+      },
+      %{
+        name: :added_child,
+        layer: 2,
+        fields: [
+          {:sup, :symbol,
+           "supervisor the child is added to (or 'dynamic' if not statically resolvable)"},
+          {:child_mod, :symbol, "child module"},
+          {:restart, :symbol,
+           "restart the spec states or defaults to (permanent/transient/temporary), " <>
+             "'dynamic' when the reader cannot tell"},
+          {:type, :symbol, "child type the spec states or defaults to (worker/supervisor)"},
+          {:caller_func, :symbol, "function that calls start_child"}
+        ],
+        doc: """
+        A child a `Supervisor.start_child/2` or `supervisor:start_child/2` \
+        call adds to a supervisor, beside the children its init/1 lists: \
+        `supervisor:start_child(kernel_safe_sup, {dets, {dets_server, \
+        start_link, []}, permanent, ...})`. The spec is read as an element \
+        of a child list is, with its restart and type. Not a \
+        DynamicSupervisor's child (`dynamic_child`), of which a program \
+        starts many, and not a simple_one_for_one template's (the argument \
+        is a list of arguments, and the supervisor's init/1 names the \
+        child); a spec the extractor cannot read names no child.
+        """
+      },
+      %{
         name: :task_supervisor_start,
         layer: 2,
         fields: [

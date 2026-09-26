@@ -47,7 +47,8 @@ imprecision_event(c, f, r, why) :- imprecision(c, f, r, why).
 coverage_supervisor_no_children(sup) :-
   supervisor(sup, _),
   !supervisor_child(sup, _, _, _, _),
-  !dynamic_child(sup, _, _).
+  !dynamic_child(sup, _, _),
+  !added_child(sup, _, _, _, _).
 
 // A GenServer behaviour module that is never the target of a sync_call
 // or async_cast, nor of a call process points-to follows to it, AND is
@@ -64,7 +65,8 @@ coverage_genserver_isolated(mod) :-
   !async_cast(_, mod),
   !reached_by_pid(mod),
   !supervisor_child(_, _, mod, _, _),
-  !dynamic_child(_, mod, _).
+  !dynamic_child(_, mod, _),
+  !added_child(_, mod, _, _, _).
 
 // Traffic process points-to follows to a module's process, through the
 // pid a start returned or a lookup found: the extractor's target is
