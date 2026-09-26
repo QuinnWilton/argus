@@ -295,6 +295,12 @@ rewritten on their own branches.
 
 ### 1. Races: a pair is reported by its harm witness (12 atoms, score 18)
 
+**Done** (docs/design/races.md): the harm witnesses replace
+`harmless_race`, `harmless_record_race`, `unlifted` and the claim
+atoms; a rival is judged at the key it names; `may_share_table` became
+row distinctness. The census's four races holes below fire. Group 3's
+concurrency atoms went with it (`runs_apart_from`).
+
 `races.dl`: `harmless_race`'s `!stores_state(name)`, `ets_race`'s two
 `!harmless_race`, `racing_record_pair`'s `!harmless_record_race`;
 `unlifted` and the atoms defining it (`!op_key(op, "param", _)`,
@@ -362,6 +368,13 @@ sets), none in the corpus.
 analyzed, but the list is the largest single patch by atom count.
 
 ### 3. Which processes run a function (5 atoms, score 10)
+
+**Partly done** with item 1: `runs_apart_from` counts a second entry
+whether or not the owner's process also runs the function, and a caller
+outside the program is any exported function of a library-face module
+that is no callback and no process body (`outside_caller`,
+clientlib/concurrency.dl). The ETS computed-name `owner_reaches` and
+`process_root`'s `!own_start` are the ets analysis's, left to it.
 
 `concurrency.dl`'s two `runs_apart_from` atoms `!entry_reaches(m, g)`;
 `ets.dl`'s computed-name `!owner_reaches(p, owner, reader)` and

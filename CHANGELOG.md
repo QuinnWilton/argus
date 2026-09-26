@@ -6,6 +6,68 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## 0.20.0-dev — unreleased
 
+### Races by their harm
+
+**Changed.** A check-then-act pair is reported when a rival can land on
+its row between the read and the write and the two leave a harm no
+serial order would, not when it escapes a list of harmless shapes
+(docs/design/races.md). The rival is the pair itself in a second
+process, or another write of the row, seen where its key is named — a
+parameter key at each caller's key, so mnesia_lib's `set/2` is its
+callers' writes, each at its own row — in a process other than the
+pair's. The harms: a lost update (the write stores this pair's read, on
+the pair's own path), a clobber (a blind write over a row a rival counts
+in), a stale fill, a delete made on what the row holds over a row a
+rival made again, a claim (a verdict the caller acts on), a take, a
+decision that does more, a guard, a minted value. Every question about
+the decision is asked on the pair's own path, so an accessor's lookup
+ten functions share is ten pairs.
+- `ets_check_act` gains a `kind` column (the harm), and the ETS finding's
+  prose says what the interleaving costs. `ets_race_frame` gains the role
+  `rival`: the write that witnesses the harm.
+- New title "ETS row refilled on a stale read" (`:info`, kind
+  `stale_fill`): a copy of a source that can change (another store, or a
+  call the effect model does not know to be pure), refilled after a rival
+  removed or rewrote the row.
+- Mnesia kinds carry witnesses: `claim` is a verdict (an upsert or a
+  cache-aside that answers with data is none; a warmer that answers
+  `:hit`/`:miss` is one), `delete` is made on what the record holds over
+  a record a rival wrote or made again, or sends, or hands the record
+  out, and `fill` needs a rival that removes or rewrites the record.
+- `registry_race` needs a second claimant: another process claiming the
+  same literal name counts, as another writer does for ETS and Mnesia
+  (two servers that each start one cache on first use).
+- `ets_publish_order` compares rows, not tables: a map that goes both ways
+  in one table is reported when the reader takes the value from the
+  table.
+- `RunsConcurrently.runs_apart_from(m, g)` holds when an entry other than
+  `m` reaches `g`, whether or not `m` does too (a counter's `reset/1` its
+  own server and a janitor both call), or a caller outside the program
+  does; `outside_caller` is an exported function of a library-face module
+  that is no callback and no process body; a function one entry and
+  outside callers both reach runs in two processes. The missing-row
+  remover and the publish-order reader ask it.
+
+**Removed.** `harmless_race`, `harmless_record_race`, `unlifted`,
+`hands_literal`, `stores_state`, `writes_back`, `other_writer`,
+`written_apart`, `removal_loses_nothing`, `upsert`, `record_recomputed`,
+`answers_with_read`, `may_share_table` and the definitions they rested
+on: 16 of the census's 27 races patch atoms. `races.dl` holds 75 negated
+atoms, down from 95.
+
+**Added.** `clientlib/check_then_act.dl`'s `PairCarries` (made of this
+pair's read, on its path, for ETS and Mnesia); `DecisionSends` keyed by
+the meeting function. `test/soundness/races_test.exs`: the census's four
+counter-examples (an accessor chain, a janitor, two servers claiming a
+name, a Mnesia lease release) and 29 more programs, each harm and each
+narrowing, with three quiet controls.
+
+**Measured** over the 39 evaluation sets and the corpus, every row read:
+56 true / 60 false rows before, 66 / 82 after (the harm model alone 66 /
+64); 12 true rows new, 2 lost (effects through a helper or `:supervisor`
+the model does not see). The concurrency fix adds 18 false rows, 14 of
+them vernemq's trie loader, a handoff the facts do not show.
+
 ### Once and again: a clause runs once when once code alone makes what enters it (schema 139)
 
 **Changed.** clientlib runs.dl splits once code from code that runs
