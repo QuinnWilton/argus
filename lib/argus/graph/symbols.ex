@@ -1,4 +1,4 @@
-defmodule Scry.Symbols do
+defmodule Argus.Graph.Symbols do
   @moduledoc """
   The `Argus.Symbols` table scry interns fact rows against: an
   `Argus.Symbols.Store` over one of the database's `Roux.Intern` tables,

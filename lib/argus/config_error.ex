@@ -1,4 +1,4 @@
-defmodule Scry.ConfigError do
+defmodule Argus.ConfigError do
   @moduledoc """
   Raised when the `scry:` project configuration is invalid.
 

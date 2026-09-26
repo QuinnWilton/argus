@@ -1,4 +1,4 @@
-defmodule Scry.Priors do
+defmodule Argus.Graph.Priors do
   @moduledoc """
   The classifier's rows as roux inputs.
 
@@ -20,21 +20,21 @@ defmodule Scry.Priors do
   """
 
   alias Argus.Facts
+  alias Argus.Graph.Symbols
   alias Argus.Priors.Cache
   alias Roux.Input
-  alias Scry.Symbols
 
   require Logger
 
   @doc """
   Sets `:prior_rows` for every layer-3 relation from `config.priors`.
   """
-  @spec sync(Roux.Database.t(), Scry.Config.t()) :: :ok
-  def sync(db, %Scry.Config{priors: %{mode: :off}}) do
-    Enum.each(Scry.Analysis.prior_relations(), &(:ok = Input.set(db, :prior_rows, &1, [])))
+  @spec sync(Roux.Database.t(), Argus.Config.t()) :: :ok
+  def sync(db, %Argus.Config{priors: %{mode: :off}}) do
+    Enum.each(Argus.Graph.prior_relations(), &(:ok = Input.set(db, :prior_rows, &1, [])))
   end
 
-  def sync(db, %Scry.Config{priors: %{mode: mode, opts: opts}}) do
+  def sync(db, %Argus.Config{priors: %{mode: mode, opts: opts}}) do
     import_cassette(opts)
     facts = program_facts(db)
 
@@ -50,7 +50,7 @@ defmodule Scry.Priors do
 
     interned = Facts.intern(rows, Symbols.for_db(db))
 
-    Enum.each(Scry.Analysis.prior_relations(), fn relation ->
+    Enum.each(Argus.Graph.prior_relations(), fn relation ->
       :ok = Input.set(db, :prior_rows, relation, Map.get(interned, relation, []))
     end)
   end
@@ -59,7 +59,7 @@ defmodule Scry.Priors do
   # rows of each, decoded against the schema.
   defp program_facts(db) do
     Argus.Priors.relations_read()
-    |> Map.new(fn relation -> {relation, Scry.Analysis.relation_facts(db, relation)} end)
+    |> Map.new(fn relation -> {relation, Argus.Graph.relation_facts(db, relation)} end)
     |> Facts.decode()
   end
 

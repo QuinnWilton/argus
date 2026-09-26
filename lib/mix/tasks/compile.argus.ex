@@ -1,4 +1,4 @@
-defmodule Mix.Tasks.Compile.Scry do
+defmodule Mix.Tasks.Compile.Argus do
   @shortdoc "Analyzes compiled beams with argus's Datalog analyses"
 
   @moduledoc """
@@ -24,7 +24,7 @@ defmodule Mix.Tasks.Compile.Scry do
   including `:noop` runs, matching the Elixir compiler's
   `--all-warnings` behavior.
 
-  Configuration lives under the `scry:` project key — see `Scry.Config`.
+  Configuration lives under the `scry:` project key — see `Argus.Config`.
   Status: findings are warnings by default and never fail the build;
   `fail_on: :warning` promotes any finding to a build failure (CI), and
   `souffle: :require` makes a missing solver an error instead of a
@@ -47,21 +47,21 @@ defmodule Mix.Tasks.Compile.Scry do
     Mix.Project.get!()
     {:ok, _apps} = Application.ensure_all_started(:telemetry)
 
-    config = Scry.Config.load()
+    config = Argus.Config.load()
     cwd = File.cwd!()
 
     result =
-      Scry.Runner.run(config,
+      Argus.Driver.run(config,
         manifest: manifest_file(),
-        cache: Scry.Runner.cache_dir(),
+        cache: Argus.Driver.cache_dir(),
         force: Keyword.get(opts, :force, false)
       )
 
     rendered =
       infrastructure(result, config) ++
-        Scry.Diagnostics.build(result.findings_by_file, config, cwd)
+        Argus.Mix.Diagnostics.build(result.findings_by_file, config, cwd)
 
-    Scry.Diagnostics.print(rendered)
+    Argus.Mix.Diagnostics.print(rendered)
 
     diagnostics = Enum.map(rendered, & &1.diagnostic)
     write_sidecar(diagnostics)
@@ -76,7 +76,7 @@ defmodule Mix.Tasks.Compile.Scry do
   def clean do
     File.rm(manifest_file())
     File.rm(sidecar_file())
-    File.rm_rf(Scry.Runner.cache_dir())
+    File.rm_rf(Argus.Driver.cache_dir())
     :ok
   end
 
@@ -100,7 +100,7 @@ defmodule Mix.Tasks.Compile.Scry do
 
         {true, :warn} ->
           [
-            Scry.Diagnostics.infrastructure(
+            Argus.Mix.Diagnostics.infrastructure(
               :info,
               "souffle binary not found on PATH; Datalog analyses skipped. " <>
                 "Install souffle (https://souffle-lang.github.io), or set " <>
@@ -110,7 +110,7 @@ defmodule Mix.Tasks.Compile.Scry do
 
         {true, :require} ->
           [
-            Scry.Diagnostics.infrastructure(
+            Argus.Mix.Diagnostics.infrastructure(
               :error,
               "souffle binary not found on PATH and scry is configured with " <>
                 "souffle: :require. Install souffle " <>
@@ -121,7 +121,7 @@ defmodule Mix.Tasks.Compile.Scry do
 
     degraded =
       for %{analysis: analysis, reason: reason} <- result.degraded do
-        Scry.Diagnostics.infrastructure(
+        Argus.Mix.Diagnostics.infrastructure(
           :warning,
           "the #{analysis} analysis degraded and reported nothing: #{inspect(reason)}"
         )
@@ -129,9 +129,9 @@ defmodule Mix.Tasks.Compile.Scry do
 
     partial =
       for error <- result.extraction_errors do
-        Scry.Diagnostics.infrastructure(
+        Argus.Mix.Diagnostics.infrastructure(
           :warning,
-          Scry.Diagnostics.extraction_error_message(error)
+          Argus.Mix.Diagnostics.extraction_error_message(error)
         )
       end
 
@@ -139,9 +139,9 @@ defmodule Mix.Tasks.Compile.Scry do
   end
 
   defp duplicate(%{module: module, used: used, shadowed: shadowed}) do
-    Scry.Diagnostics.infrastructure(
+    Argus.Mix.Diagnostics.infrastructure(
       :warning,
-      Scry.Diagnostics.duplicate_message(module, used, shadowed)
+      Argus.Mix.Diagnostics.duplicate_message(module, used, shadowed)
     )
   end
 
@@ -175,6 +175,6 @@ defmodule Mix.Tasks.Compile.Scry do
     ArgumentError -> :error
   end
 
-  defp manifest_file, do: Scry.Runner.manifest_file()
+  defp manifest_file, do: Argus.Driver.manifest_file()
   defp sidecar_file, do: Path.join(Mix.Project.manifest_path(), @sidecar)
 end

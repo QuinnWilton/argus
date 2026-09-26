@@ -1,4 +1,4 @@
-defmodule Scry.Runner do
+defmodule Argus.Driver do
   @moduledoc """
   The shared driver core for `mix compile.scry` and `mix scry`: database
   lifecycle, manifest warm start, input sync, the souffle gate, and
@@ -14,7 +14,7 @@ defmodule Scry.Runner do
   When souffle is missing, no solve is demanded at all: a memoized
   `{:error, :souffle_not_found}` would only heal when an input above it
   changed, so the degraded path never lets one into the manifest. The
-  souffle version rides every `:rules_digest` (`Scry.Fingerprint`), so
+  souffle version rides every `:rules_digest` (`Argus.Graph.Environment`), so
   upgrading the solver re-solves without re-extracting.
   """
 
@@ -49,7 +49,7 @@ defmodule Scry.Runner do
             extraction_errors: [
               %{module: module() | nil, name: String.t(), step: String.t(), reason: String.t()}
             ],
-            duplicates: [Scry.Scanner.duplicate()],
+            duplicates: [Argus.Project.Scan.duplicate()],
             souffle_missing?: boolean(),
             changed?: boolean()
           }
@@ -66,10 +66,10 @@ defmodule Scry.Runner do
   The store beside the manifest (`Argus.Cache`'s layout) where argus
   keeps what outlives a VM for this project: each dependency ebin's
   beam hashes and argus's own (`ebins/`), which the fingerprints would
-  otherwise read every beam for (`Scry.Fingerprint.env/2`,
-  `Scry.Fingerprint.argus_code/1`), and the relations each Datalog
+  otherwise read every beam for (`Argus.Graph.Environment.env/2`,
+  `Argus.Graph.Environment.argus_code/1`), and the relations each Datalog
   program loads with the solver's version (`programs/`,
-  `Scry.Fingerprint.rules/2`), which a warm run would otherwise start
+  `Argus.Graph.Environment.rules/2`), which a warm run would otherwise start
   the solver for. Shared by `mix compile.scry` and `mix scry`, and
   removed with the manifest.
   """
@@ -90,8 +90,8 @@ defmodule Scry.Runner do
     nil (the default) for none: every run then hashes every dependency
     and argus beam again, and asks the solver.
   """
-  @spec run(Scry.Config.t(), keyword()) :: Result.t()
-  def run(%Scry.Config{} = config, opts) do
+  @spec run(Argus.Config.t(), keyword()) :: Result.t()
+  def run(%Argus.Config{} = config, opts) do
     manifest_path = Keyword.fetch!(opts, :manifest)
     force? = Keyword.get(opts, :force, false)
     cache = Keyword.get(opts, :cache)
@@ -100,10 +100,10 @@ defmodule Scry.Runner do
 
     try do
       %{modules: discovered, ignored: ignored, duplicates: duplicates, apps: apps} =
-        Scry.Scanner.scan(config)
+        Argus.Project.Scan.scan(config)
 
       %{sources: sources, changed: changed, removed: removed, ignored_moved?: ignored_moved?} =
-        Scry.Scanner.sync(db, discovered, prior_sources, ignored)
+        Argus.Project.Scan.sync(db, discovered, prior_sources, ignored)
 
       souffle? = Argus.Souffle.available?()
       env = sync_environment(db, config, souffle?, apps, cache: cache, refresh: force?)
@@ -173,8 +173,8 @@ defmodule Scry.Runner do
     db = Database.new()
 
     try do
-      :ok = Roux.Lang.register_module(db, Scry.Frontend)
-      :ok = Roux.Lang.register_module(db, Scry.Analysis)
+      :ok = Roux.Lang.register_module(db, Argus.Graph.Frontend)
+      :ok = Roux.Lang.register_module(db, Argus.Graph)
       warm_start(db, manifest_path, force?)
     rescue
       exception ->
@@ -202,7 +202,9 @@ defmodule Scry.Runner do
   # last run, means this run has something to write down.
   defp sync_environment(db, config, souffle?, apps, env_opts) do
     :ok = Input.set(db, :graph_layout, :all, @layout)
-    fingerprint_changed? = set(db, :env_fingerprint, :all, Scry.Fingerprint.env(apps, env_opts))
+
+    fingerprint_changed? =
+      set(db, :env_fingerprint, :all, Argus.Graph.Environment.env(apps, env_opts))
 
     # A rebuilt dependency leaves its old beams' hashes behind; they go
     # once nothing has read them for an hour, all but each application's
@@ -211,9 +213,11 @@ defmodule Scry.Runner do
     # than on every run.
     if fingerprint_changed?, do: prune(env_opts[:cache])
 
-    extraction_changed? = set(db, :extraction_code, :all, Scry.Fingerprint.extraction_code())
+    extraction_changed? =
+      set(db, :extraction_code, :all, Argus.Graph.Environment.extraction_code())
+
     store = Keyword.take(env_opts, [:cache])
-    argus_changed? = set(db, :argus_code, :all, Scry.Fingerprint.argus_code(store))
+    argus_changed? = set(db, :argus_code, :all, Argus.Graph.Environment.argus_code(store))
     :ok = Input.set(db, :project_root, :all, File.cwd!())
 
     # Only solves read the rules, and none is demanded without a solver.
@@ -261,11 +265,11 @@ defmodule Scry.Runner do
   # it moved: out of the database before the manifest sees it.
   defp analyze(db, config, discovered, to_extract) do
     :ok = prewarm(db, discovered, to_extract)
-    :ok = Scry.Priors.sync(db, config)
+    :ok = Argus.Graph.Priors.sync(db, config)
     {findings_by_file, degraded} = demand(db, config.analyses, prewarmed?: to_extract != [])
     if degraded != [], do: :ok = drop_degraded(db, config.analyses)
 
-    extraction_errors = Scry.Analysis.extraction_errors(db, :all)
+    extraction_errors = Argus.Graph.extraction_errors(db, :all)
 
     failed =
       for %{module: module} <- extraction_errors, module != nil, uniq: true, do: module
@@ -275,7 +279,7 @@ defmodule Scry.Runner do
   end
 
   # The modules whose last extraction read an entry of argus's schema
-  # that reads otherwise now (`Scry.Analysis`'s `schema_read`): the
+  # that reads otherwise now (`Argus.Graph`'s `schema_read`): the
   # graph would extract them again one at a time, as it validates them;
   # found here, they are extracted across the schedulers first. An entry
   # moves only with argus's code, so only then is this looked at, each
@@ -301,7 +305,7 @@ defmodule Scry.Runner do
   # Whether the digest an entry's memo holds is not what it reads now.
   defp entry_moved?(db, read) do
     case Memo.get(db, {:schema_read, read}) do
-      {:ok, %Memo.Entry{value: digest}} -> digest != Scry.Analysis.schema_digest(read)
+      {:ok, %Memo.Entry{value: digest}} -> digest != Argus.Graph.schema_digest(read)
       :miss -> true
     end
   end
@@ -383,7 +387,7 @@ defmodule Scry.Runner do
   # when any moved.
   defp set_rules(db, analyses, opts) do
     analyses
-    |> Scry.Fingerprint.rules(Keyword.take(opts, [:cache, :refresh]))
+    |> Argus.Graph.Environment.rules(Keyword.take(opts, [:cache, :refresh]))
     |> Enum.reduce(false, fn {key, digest}, changed? ->
       set(db, :rules_digest, key, digest) or changed?
     end)
@@ -397,7 +401,7 @@ defmodule Scry.Runner do
   defp prewarm(db, discovered, modules) do
     discovered
     |> Map.take(modules)
-    |> Scry.Analysis.prewarm_extractions(db)
+    |> Argus.Graph.prewarm_extractions(db)
   end
 
   defp warm_start(_db, _manifest_path, true), do: {:ok, %{}}
@@ -432,7 +436,7 @@ defmodule Scry.Runner do
           {%{optional(String.t()) => [map()]}, [%{analysis: atom(), reason: term()}]}
   def demand(db, analyses, opts \\ []) do
     if Keyword.get(opts, :prewarmed?, true),
-      do: _ = Scry.Analysis.program_relation_facts(db, :all)
+      do: _ = Argus.Graph.program_relation_facts(db, :all)
 
     results =
       analyses
@@ -460,7 +464,7 @@ defmodule Scry.Runner do
   # degrades like one whose solver failed, and the others still report.
   # Nothing is memoized for it, so the next run tries again.
   defp diagnostics(db, analysis) do
-    Scry.Analysis.analysis_diagnostics(db, analysis)
+    Argus.Graph.analysis_diagnostics(db, analysis)
   rescue
     exception -> {:error, {:crashed, Exception.format_banner(:error, exception, __STACKTRACE__)}}
   end

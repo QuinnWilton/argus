@@ -1,4 +1,4 @@
-defmodule Mix.Tasks.Scry do
+defmodule Mix.Tasks.Argus do
   @shortdoc "Runs argus analyses over the compiled project (one-shot)"
 
   @moduledoc """
@@ -62,7 +62,7 @@ defmodule Mix.Tasks.Scry do
   end
 
   defp list do
-    default = Scry.Analysis.default_analyses()
+    default = Argus.Graph.default_analyses()
 
     rows =
       Argus.Analysis.builtin_analysis_modules()
@@ -87,7 +87,7 @@ defmodule Mix.Tasks.Scry do
   # Without --no-prune-code-paths, a project that declares an explicit
   # `applications:` list has every dependency outside that list — scry
   # and its own deps included — pruned from the code path by the compile
-  # step, and the analysis below fails to load Scry.Config.
+  # step, and the analysis below fails to load Argus.Config.
   #
   # With --return-errors, an :error status comes back instead of exiting.
   # The compiler chain ends with scry's own compiler, whose status is
@@ -108,13 +108,13 @@ defmodule Mix.Tasks.Scry do
   end
 
   defp analyze(opts, positional) do
-    config = configure(Scry.Config.load(), opts, positional)
+    config = configure(Argus.Config.load(), opts, positional)
     cwd = File.cwd!()
 
     result =
-      Scry.Runner.run(config,
-        manifest: Scry.Runner.manifest_file(),
-        cache: Scry.Runner.cache_dir(),
+      Argus.Driver.run(config,
+        manifest: Argus.Driver.manifest_file(),
+        cache: Argus.Driver.cache_dir(),
         force: Keyword.get(opts, :force, false)
       )
 
@@ -128,19 +128,26 @@ defmodule Mix.Tasks.Scry do
     report_degraded(result.degraded)
 
     Enum.each(result.extraction_errors, fn error ->
-      Mix.shell().error("scry: " <> Scry.Diagnostics.extraction_error_message(error))
+      Mix.shell().error("scry: " <> Argus.Mix.Diagnostics.extraction_error_message(error))
     end)
 
     Enum.each(result.duplicates, fn %{module: module, used: used, shadowed: shadowed} ->
-      Mix.shell().error("scry: " <> Scry.Diagnostics.duplicate_message(module, used, shadowed))
+      Mix.shell().error(
+        "scry: " <> Argus.Mix.Diagnostics.duplicate_message(module, used, shadowed)
+      )
     end)
 
-    entries = Scry.Diagnostics.resolve(result.findings_by_file, config, cwd)
+    entries = Argus.Mix.Diagnostics.resolve(result.findings_by_file, config, cwd)
 
     case Keyword.get(opts, :format, "text") do
-      "text" -> Scry.Report.text(Scry.Diagnostics.build(result.findings_by_file, config, cwd))
-      "json" -> Scry.Report.json(entries, cwd)
-      other -> Mix.raise("scry: unknown --format #{inspect(other)}; expected text or json")
+      "text" ->
+        Argus.Report.text(Argus.Mix.Diagnostics.build(result.findings_by_file, config, cwd))
+
+      "json" ->
+        Argus.Report.json(entries, cwd)
+
+      other ->
+        Mix.raise("scry: unknown --format #{inspect(other)}; expected text or json")
     end
 
     check_fail_above(entries, Keyword.get(opts, :fail_above))
@@ -166,7 +173,7 @@ defmodule Mix.Tasks.Scry do
       positional != [] ->
         # Re-validated through Config so a typo aborts with the known list.
         names = Enum.map(positional, &String.to_atom/1)
-        %{config | analyses: Scry.Config.load(analyses: names).analyses}
+        %{config | analyses: Argus.Config.load(analyses: names).analyses}
 
       true ->
         config

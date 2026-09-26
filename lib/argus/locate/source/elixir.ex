@@ -1,4 +1,4 @@
-defmodule Scry.SourceAnchor do
+defmodule Argus.Locate.Source.Elixir do
   @moduledoc """
   The last step of an anchor, taken in the source.
 

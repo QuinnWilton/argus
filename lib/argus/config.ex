@@ -1,4 +1,4 @@
-defmodule Scry.Config do
+defmodule Argus.Config do
   @moduledoc """
   The `scry:` project configuration, validated loudly.
 
@@ -17,7 +17,7 @@ defmodule Scry.Config do
       end
 
   Every key is optional. `analyses` defaults to the shared layer's
-  curated quiet set (`Scry.Analysis.default_analyses/0`, argus's
+  curated quiet set (`Argus.Graph.default_analyses/0`, argus's
   `:default` set); analysis names are validated against the argus
   registry so a typo aborts the compile instead of silently analyzing
   nothing. A named set (`:all`, `:default`, `:otp`, `:security`,
@@ -26,7 +26,7 @@ defmodule Scry.Config do
 
   Severity overrides are keyed the same way: a concern or a set (each
   member takes the severity); later entries win. Every key, at every
-  level, is validated: an invalid entry raises `Scry.ConfigError` naming
+  level, is validated: an invalid entry raises `Argus.ConfigError` naming
   where it is, what was expected, and the valid name it most resembles.
   A finding's relation written where its analysis goes (`:registry_race`,
   or `:call_cycle`, one of the names argus retired in 0.17 and dropped in
@@ -58,7 +58,7 @@ defmodule Scry.Config do
   `priors:` — `:off` (default), `:cached_only` or `:live`, or a keyword
   with `mode:` and `Argus.Priors` options (`cassette:` a JSONL file
   imported into the cache first, `cache_dir:`, `model:`, `oracle:`,
-  `batch_size:`). See `Scry.Priors`.
+  `batch_size:`). See `Argus.Graph.Priors`.
   """
   @type priors :: %{mode: :off | :cached_only | :live, opts: keyword()}
 
@@ -87,7 +87,7 @@ defmodule Scry.Config do
 
   @doc """
   Validates a raw `scry:` keyword list into a config. Raises
-  `Scry.ConfigError` naming the offending entry, what was expected
+  `Argus.ConfigError` naming the offending entry, what was expected
   there, and the closest valid name when it looks like a typo.
   """
   @spec load(keyword()) :: t()
@@ -99,7 +99,7 @@ defmodule Scry.Config do
     unknown_keys!([:ignore], ignore, @ignore_keys)
 
     %__MODULE__{
-      analyses: analyses!(Keyword.get(raw, :analyses, Scry.Analysis.default_analyses())),
+      analyses: analyses!(Keyword.get(raw, :analyses, Argus.Graph.default_analyses())),
       severity: severity!(Keyword.get(raw, :severity, [])),
       ignore_modules: ignore_modules!(Keyword.get(ignore, :modules, [])),
       ignore_files: ignore_files!(Keyword.get(ignore, :files, [])),
@@ -217,7 +217,7 @@ defmodule Scry.Config do
   defp unknown_name!(key, name, expected, known) do
     candidates = selectable(known)
 
-    case {Scry.ConfigError.closest(name, candidates), relation_owner(name)} do
+    case {Argus.ConfigError.closest(name, candidates), relation_owner(name)} do
       {nil, {relation, owner}} ->
         fail(
           key,
@@ -243,7 +243,7 @@ defmodule Scry.Config do
     relation =
       if Map.has_key?(owners, name),
         do: name,
-        else: Scry.ConfigError.closest(name, Map.keys(owners))
+        else: Argus.ConfigError.closest(name, Map.keys(owners))
 
     if relation, do: {relation, Map.fetch!(owners, relation)}
   end
@@ -351,6 +351,6 @@ defmodule Scry.Config do
 
   @spec fail([atom()], term(), String.t(), [atom()]) :: no_return()
   defp fail(key, value, expected, candidates) do
-    raise Scry.ConfigError.new(key, value, expected, candidates)
+    raise Argus.ConfigError.new(key, value, expected, candidates)
   end
 end

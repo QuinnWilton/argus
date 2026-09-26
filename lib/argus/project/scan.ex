@@ -1,4 +1,4 @@
-defmodule Scry.Scanner do
+defmodule Argus.Project.Scan do
   @moduledoc """
   Beam discovery and change detection for the compiler driver.
 
@@ -7,7 +7,7 @@ defmodule Scry.Scanner do
   module-level ignores at discovery so ignored modules are never even
   extracted. Ignored modules are still watched: their beams are on the
   code path, where a caller's extraction reads their specs
-  (`Scry.Analysis` tracks those callers through the `:ignored_beam`
+  (`Argus.Graph` tracks those callers through the `:ignored_beam`
   input).
 
   `sync/3` diffs the scan against the previous run's source metadata and
@@ -71,8 +71,8 @@ defmodule Scry.Scanner do
   ignored modules, every module more than one ebin defines
   (`include_deps` only), and the applications whose ebins were read.
   """
-  @spec scan(Scry.Config.t()) :: project_scan()
-  def scan(%Scry.Config{} = config) do
+  @spec scan(Argus.Config.t()) :: project_scan()
+  def scan(%Argus.Config{} = config) do
     ebins =
       if config.include_deps do
         [Mix.Project.compile_path() | dep_ebins()]
@@ -218,7 +218,7 @@ defmodule Scry.Scanner do
   defp hash_and_set(db, input, module, path, mtime, size, raw) do
     # Hashed in canonical form: a dependent module Elixir rewrote only to
     # refresh its ExCk chunk must not read as a changed input.
-    hash = raw |> Scry.Beam.canonical() |> :erlang.md5()
+    hash = raw |> Argus.Graph.Beam.canonical() |> :erlang.md5()
     meta = %{mtime: mtime, size: size, hash: hash}
 
     # Equal hash means a touch or a byte-identical recompile: the input

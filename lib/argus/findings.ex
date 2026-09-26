@@ -96,7 +96,7 @@ defmodule Argus.Findings do
   Bytecode cannot tell a `rescue` from a `catch` — both are a `try`
   handler of class `:error` — so prose about a guard says `{guard}`
   where the keyword goes, and a consumer with the source puts the word
-  it finds there (`Scry.SourceAnchor.guard_keyword/2`); one without
+  it finds there (`Argus.Locate.Source.Elixir.guard_keyword/2`); one without
   reads it as `handler`.
   """
   @type block :: :guard | :receive | :clause | :function

@@ -1,4 +1,4 @@
-defmodule Scry.Analysis do
+defmodule Argus.Graph do
   @moduledoc """
   Incremental argus analysis as a roux query graph.
 
@@ -46,7 +46,7 @@ defmodule Scry.Analysis do
 
   The argus-edit story: a module's extraction is keyed by the code
   argus's fact producers run, as one digest (`:extraction_code`,
-  `Scry.Fingerprint.extraction_code/0`). An edit to an extractor or to
+  `Argus.Graph.Environment.extraction_code/0`). An edit to an extractor or to
   what they all run re-extracts every module, and where a module's rows
   come out equal its semantic digest backdates, so nothing above it
   runs. An edit outside that code — the findings' prose, the analyses
@@ -118,8 +118,8 @@ defmodule Scry.Analysis do
 
   alias Argus.Cache.Reads
   alias Argus.Facts
+  alias Argus.Graph.Symbols
   alias Roux.Runtime
-  alias Scry.Symbols
 
   # The vsn attribute value is a module checksum no Datalog rule
   # consumes; dropping it keeps any line-sensitivity it might have out
@@ -201,7 +201,7 @@ defmodule Scry.Analysis do
 
   @doc false
   # What `schema_read` holds for `read` now: the driver looks ahead with
-  # it (`Scry.Runner`) for the modules whose extraction read an entry
+  # it (`Argus.Driver`) for the modules whose extraction read an entry
   # that moved.
   @spec schema_digest(String.t()) :: String.t()
   def schema_digest(read), do: Reads.digest(read)
@@ -848,7 +848,7 @@ defmodule Scry.Analysis do
   # neutral one. Read only when the prose asks.
   defp guard_word(path, line, anchored) do
     if Map.get(anchored, :to_block) == :guard,
-      do: Scry.SourceAnchor.guard_keyword(path, line) || "handler",
+      do: Argus.Locate.Source.Elixir.guard_keyword(path, line) || "handler",
       else: "handler"
   end
 
@@ -860,7 +860,7 @@ defmodule Scry.Analysis do
   # one. Same untracked read, same tracked signal, as source_line/4.
   defp end_line(db, module, path, anchored) do
     span_end_line(db, module, anchored) ||
-      Scry.SourceAnchor.block_end(
+      Argus.Locate.Source.Elixir.block_end(
         path,
         source_line(db, module, path, anchored),
         Map.get(anchored, :to_block)
@@ -926,7 +926,7 @@ defmodule Scry.Analysis do
   # in the file — leaves a stale line until the next real change.
   defp source_line(db, module, path, finding) do
     line = anchor_line(db, module, finding)
-    Scry.SourceAnchor.refine(path, line, Map.get(finding, :at_source))
+    Argus.Locate.Source.Elixir.refine(path, line, Map.get(finding, :at_source))
   end
 
   defp instr_line(_table, nil), do: nil
@@ -1011,7 +1011,7 @@ defmodule Scry.Analysis do
       fn {module, path} ->
         case File.read(path) do
           {:ok, raw} ->
-            beam = Scry.Beam.canonical(raw)
+            beam = Argus.Graph.Beam.canonical(raw)
             {module, :erlang.md5(beam), extract(module, beam, symbols)}
 
           {:error, _} ->

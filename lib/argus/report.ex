@@ -1,4 +1,4 @@
-defmodule Scry.Report do
+defmodule Argus.Report do
   @moduledoc """
   Output formats for the standalone `mix scry` task.
 
@@ -37,9 +37,9 @@ defmodule Scry.Report do
   @doc """
   Prints resolved entries as pentiment frames with a trailing summary.
   """
-  @spec text([Scry.Diagnostics.rendered()]) :: :ok
+  @spec text([Argus.Mix.Diagnostics.rendered()]) :: :ok
   def text(rendered) do
-    Scry.Diagnostics.print(rendered)
+    Argus.Mix.Diagnostics.print(rendered)
     IO.puts(:stderr, summary(Enum.map(rendered, & &1.diagnostic)))
     :ok
   end
@@ -54,7 +54,7 @@ defmodule Scry.Report do
       %{
         analysis: entry.code,
         severity: entry.severity,
-        file: Scry.Diagnostics.relative(entry.file, cwd),
+        file: Argus.Mix.Diagnostics.relative(entry.file, cwd),
         line: entry.line,
         end_line: Map.get(entry, :end_line),
         title: entry.title,
@@ -67,7 +67,7 @@ defmodule Scry.Report do
           for related <- Map.get(entry, :related, []) do
             %{
               label: related.label,
-              file: Scry.Diagnostics.relative(related.file, cwd),
+              file: Argus.Mix.Diagnostics.relative(related.file, cwd),
               line: related.line,
               end_line: Map.get(related, :end_line)
             }

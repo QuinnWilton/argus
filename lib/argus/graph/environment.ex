@@ -1,4 +1,4 @@
-defmodule Scry.Fingerprint do
+defmodule Argus.Graph.Environment do
   @moduledoc """
   What the memoized graph is a function of beyond the beams, stamped by
   the driver into inputs.
@@ -11,14 +11,14 @@ defmodule Scry.Fingerprint do
     for every remote callee — by version, and by beams for a dependency
     outside OTP and Elixir, less argus's own and the applications the
     scan watches (a read of one of those is tracked where it happens,
-    by `Scry.Analysis`). Moving it re-extracts every module and re-runs
+    by `Argus.Graph`). Moving it re-extracts every module and re-runs
     every solve.
   - `:extraction_code` (`extraction_code/0`) — the code argus's fact
     producers run: the base (`Argus.Pipeline`'s emitter and the
     derivations every extraction makes) and each extractor scry runs,
     as `Argus.Cache.Code` walks it, joined into one digest — without
     argus's schema modules, which are data: a query depends on the
-    entries of the schema it read (`Scry.Analysis`'s `schema_read`), so
+    entries of the schema it read (`Argus.Graph`'s `schema_read`), so
     a schema edit re-extracts only the modules whose rows read what it
     changed. Argus ships extractor changes without moving its
     version or schema (and a path dependency never moves its version at
@@ -166,7 +166,7 @@ defmodule Scry.Fingerprint do
   The modules argus's fact producers run, sorted, each with the beam it
   runs from, or `:absent` (a module called on the way that is not on the
   code path): the union of `Argus.Cache.Code.closure/2` over the base
-  and every extractor scry runs (`Scry.Analysis.all_extractors/0`),
+  and every extractor scry runs (`Argus.Graph.all_extractors/0`),
   with `schema: :recorded` — `Argus.Schema` and its concern modules
   walked through but left out. They are data, every accessor of theirs
   records the entry it returns, and each query that reads them depends
@@ -187,7 +187,7 @@ defmodule Scry.Fingerprint do
     end
   end
 
-  defp producers, do: [:base | Scry.Analysis.all_extractors()]
+  defp producers, do: [:base | Argus.Graph.all_extractors()]
 
   @doc """
   A digest of every argus beam, debug info (where specs are read from)

@@ -1,6 +1,6 @@
-defmodule Scry.Frontend do
+defmodule Argus.Graph.Frontend do
   @moduledoc """
-  The disk-beam roux frontend: `Scry.Analysis`'s frontend contract,
+  The disk-beam roux frontend: `Argus.Graph`'s frontend contract,
   satisfied from the `.beam` files the stock compilers just produced.
 
   Registers the same query names as planchette's in-memory compile
@@ -8,7 +8,7 @@ defmodule Scry.Frontend do
   over either without change. What this frontend provides:
 
   - `:beam_meta` input — `module => %{path, hash}`. The driver
-    (`Scry.Scanner`) sets it from an mtime/size-prefiltered scan, hashing
+    (`Argus.Project.Scan`) sets it from an mtime/size-prefiltered scan, hashing
     content only for files that moved; a recompiled-but-identical beam
     produces an equal value and advances nothing.
   - `:module_set` input — `:all => sorted [module]`, the project's
@@ -19,19 +19,19 @@ defmodule Scry.Frontend do
     from that caller to this key is what re-extracts it when the
     ignored beam changes.
   - `:env_fingerprint` input — `:all =>` toolchain map
-    (`Scry.Fingerprint.env/2`); `:high` durability so an upgrade
+    (`Argus.Graph.Environment.env/2`); `:high` durability so an upgrade
     invalidates the whole graph.
   - `:extraction_code` input — `:all =>` a digest of the code argus's
-    fact producers run (`Scry.Fingerprint.extraction_code/0`): an
+    fact producers run (`Argus.Graph.Environment.extraction_code/0`): an
     extractor edit re-extracts every module, and an argus edit outside
     that code extracts nothing.
   - `:argus_code` input — `:all =>` a digest of every argus beam
-    (`Scry.Fingerprint.argus_code/1`): what the findings are built by,
+    (`Argus.Graph.Environment.argus_code/1`): what the findings are built by,
     and what a program calling argus reads specs from.
   - `:rules_digest` input — analysis (or shared stage program:
     `:stage0`, `:points_to`, `:points_to_bounded`) `=>` a digest of
     the Datalog it runs, as its solve loads it
-    (`Scry.Fingerprint.rules/2`); a rule edit re-solves the analyses
+    (`Argus.Graph.Environment.rules/2`); a rule edit re-solves the analyses
     whose programs it touched and re-extracts nothing.
   - `:module_beam` query — beam bytes, read from disk. The read itself is
     untracked; the tracked signal is the `:beam_meta` value, and roux's
@@ -68,7 +68,7 @@ defmodule Scry.Frontend do
   # build): the same path relative to this root is looked for instead.
   definput(:project_root, durability: :high)
 
-  # One key per layer-3 relation: the classifier's rows (`Scry.Priors`),
+  # One key per layer-3 relation: the classifier's rows (`Argus.Graph.Priors`),
   # interned, or `[]` when priors are off. An input rather than a query
   # because a derived value at `:low` durability is dropped from the
   # manifest and the network call it stands for is the one thing a warm
@@ -83,7 +83,7 @@ defmodule Scry.Frontend do
   definput(:extraction_attempt, durability: :medium)
 
   # `:all =>` the layout of the graph the manifest was written by
-  # (`Scry.Runner`): a manifest of another is dropped before anything
+  # (`Argus.Driver`): a manifest of another is dropped before anything
   # reads it. Driver bookkeeping no query reads, so `:low`.
   definput(:graph_layout, durability: :low)
 
@@ -101,7 +101,7 @@ defmodule Scry.Frontend do
 
       %{path: path} ->
         case File.read(path) do
-          {:ok, beam} -> {:ok, Scry.Beam.canonical(beam)}
+          {:ok, beam} -> {:ok, Argus.Graph.Beam.canonical(beam)}
           {:error, reason} -> {:error, {:beam_read, module, reason}}
         end
     end

@@ -1,10 +1,10 @@
-defmodule Scry.Diagnostics do
+defmodule Argus.Mix.Diagnostics do
   @moduledoc """
   Resolved findings → pentiment frames → `Mix.Task.Compiler.Diagnostic`.
 
   Driver-side presentation: nothing here is memoized, and the query
   graph never renders. Each resolved finding (file + line + prose +
-  labelled related anchors, from `Scry.Analysis.analysis_diagnostics`)
+  labelled related anchors, from `Argus.Graph.analysis_diagnostics`)
   becomes one pentiment report:
 
   - the primary anchor is an inline label under the code of its line,
@@ -37,13 +37,13 @@ defmodule Scry.Diagnostics do
   @doc """
   The filtered, severity-overridden, sorted finding entries — the shared
   substrate for both rendering (`build/3`) and machine formats
-  (`Scry.Report.json/2`).
+  (`Argus.Report.json/2`).
 
   `findings_by_file` merges every demanded analysis's resolved map.
   File-level ignores drop entries here; severity overrides apply here.
   """
-  @spec resolve(%{optional(String.t()) => [map()]}, Scry.Config.t(), String.t()) :: [map()]
-  def resolve(findings_by_file, %Scry.Config{} = config, cwd) do
+  @spec resolve(%{optional(String.t()) => [map()]}, Argus.Config.t(), String.t()) :: [map()]
+  def resolve(findings_by_file, %Argus.Config{} = config, cwd) do
     entries =
       for {file, entries} <- findings_by_file,
           not ignored_file?(file, config, cwd),
@@ -61,8 +61,8 @@ defmodule Scry.Diagnostics do
   Paths are relativized against `cwd` for display; the `Diagnostic`
   keeps the absolute path.
   """
-  @spec build(%{optional(String.t()) => [map()]}, Scry.Config.t(), String.t()) :: [rendered()]
-  def build(findings_by_file, %Scry.Config{} = config, cwd) do
+  @spec build(%{optional(String.t()) => [map()]}, Argus.Config.t(), String.t()) :: [rendered()]
+  def build(findings_by_file, %Argus.Config{} = config, cwd) do
     findings_by_file
     |> resolve(config, cwd)
     |> Enum.map(&render_entry(&1, cwd))

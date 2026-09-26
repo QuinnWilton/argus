@@ -1,4 +1,4 @@
-defmodule Scry.Beam do
+defmodule Argus.Graph.Beam do
   @moduledoc """
   The analysis-relevant view of a `.beam` file.
 
