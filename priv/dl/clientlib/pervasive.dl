@@ -252,6 +252,8 @@ coarse_named(n, cat("child ", cat(s, cat("#", to_string(pos))))) :-
   supervisor_child(s, pos, m, _, _),
   behaves_as(m, "GenServer").
 
+// The module-level guess only for a name no registration or child spec
+// resolves, as processes.dl's named_pid.
 coarse_named(n, p) :-
   stage_mode("bounded"),
   named_process(mod, n),
@@ -338,6 +340,8 @@ coarse_use(f, id, id, kind, p) :-
   coarse_top(r),
   process(p).
 
+// A load off a parameter is resolved at each caller, through its
+// summary (targets_field), not in place.
 coarse_use(f, id, id, kind, p) :-
   pid_use(id, f, kind, "load", l),
   !param_load(f, l),

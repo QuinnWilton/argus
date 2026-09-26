@@ -185,6 +185,12 @@ side_call(f, g) :-
 // or a call into m's client API. reaches_sync_dep adds every function f
 // can reach. Eleven analyses used to derive one of these two by hand,
 // with four or five clauses each and no two alike.
+//
+// A target spelled "dynamic" or as a via name ("via:Registry",
+// imports.dl) names no module: a via names the registry, not the server
+// behind it. Every clause here that reads a spelled target leaves both
+// out; such a call is unresolved (unresolved_target) and reaches a
+// module only by points-to or by its tag (tag_resolved_site).
 .decl sync_dep(func: symbol, mod: symbol)
 
 sync_dep(f, m) :-
@@ -210,7 +216,8 @@ sync_dep(f, m) :-
 
 // The instruction in `func` that makes it depend synchronously on
 // `mod`: the GenServer.call itself, or the call into mod's own
-// synchronous API.
+// synchronous API. A spelled target leaves out the dynamic and via
+// ones, as sync_dep's.
 .decl sync_site(func: symbol, mod: symbol, id: symbol)
 
 sync_site(f, m, id) :-
@@ -235,6 +242,8 @@ sync_site(f, m, id) :-
   m != ":dynamic",
   !match("via:.*", m).
 
+// f casts to m's process, as sync_dep calls it (the same spelled
+// targets, side paths and client APIs).
 .decl async_dep(func: symbol, mod: symbol)
 
 async_dep(f, m) :-
@@ -447,7 +456,8 @@ sent_tag(id, f, "any") :- sync_call_site(id, f, _, _), !call_tag(id, f, "call", 
 // `func` itself waits on `mod` with a request tagged `tag`, at `site`
 // ("" when the wait has no site of func's: a literal target handed to a
 // wrapper). One clause per sync_dep clause that has a site;
-// resolved_calls.dl adds the self-directed one.
+// resolved_calls.dl adds the self-directed one. A spelled target leaves
+// out the dynamic and via ones, as sync_dep's.
 .decl sync_request_at(func: symbol, site: symbol, mod: symbol, tag: symbol)
 
 sync_request_at(f, id, m, tag) :-
@@ -457,6 +467,9 @@ sync_request_at(f, id, m, tag) :-
   !match("via:.*", m),
   sent_tag(id, f, tag).
 
+// A call the facts place with no site of f's own, and no wrapper call
+// that names its literal target, is f's with an empty site; one they
+// place is the clause above's.
 sync_request_at(f, "", m, "any") :-
   sync_call(f, m),
   m != "dynamic",
@@ -471,6 +484,9 @@ sync_request_at(f, id, m, "any") :-
   m != ":dynamic",
   !match("via:.*", m).
 
+// A call points-to resolves: tagged as its site's message is, or "any"
+// (every clause) when the site is not one sync_call_site describes and
+// no tag of it is read.
 sync_request_at(f, anchor, m, tag) :-
   process_call(f, anchor, site, "call", p),
   server_process(p, m),
@@ -653,6 +669,8 @@ site_request(f, id, m, tag) :-
 // its Stats server inside `Redis.rescue_timeout(fn -> ... end)`, brod's
 // group subscriber inside `lists:foreach(fun(T) -> ... end, Ts)`. An edge
 // with neither (a fun built into a term and called later) has no site.
+// Either is f's wait only while it stays on f's stack: not what a spawn,
+// task or agent runs (runs_elsewhere).
 site_request(f, id, m, tag) :-
   site_demand(f),
   call_edge(f, g),
@@ -710,6 +728,7 @@ reaches_async_dep(f, m) :-
 // call's timeout against the server it reaches.
 .decl sync_dep_timeout(func: symbol, mod: symbol, timeout_ms: number)
 
+// A spelled target, as sync_dep's (a via or dynamic one names no module).
 sync_dep_timeout(f, m, ms) :-
   sync_call_timeout(f, m, ms),
   m != "dynamic",
@@ -743,6 +762,9 @@ sync_dep_timeout(f, m, ms) :-
 
 reaches_sync_dep_timeout(f, m, ms) :- sync_dep_timeout(f, m, ms).
 
+// A wait is the waiting process's: a timeout reached only in what a
+// spawn, task or agent runs is not f's (runs_elsewhere), as in
+// reaches_sync_dep.
 reaches_sync_dep_timeout(f, m, ms) :-
   call_edge(f, g),
   !runs_elsewhere(f, g),
@@ -821,7 +843,9 @@ module_reaches(from_mod, to_mod, caller) :-
   from_mod != to_mod.
 
 // `func` reaches (through at least one call) a function of `mod` that
-// makes a sync call.
+// makes a sync call. A function whose call points-to resolves to another
+// module's server (calls_other_server) is a proxy, not a sync caller of
+// its own module.
 .decl reaches_sync_caller_in(func: symbol, mod: symbol)
 
 reaches_sync_caller_in(f, m) :-

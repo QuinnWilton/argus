@@ -65,6 +65,9 @@ init_window_dep(mod, to, "cast", i) :-
   init_window.reaches(i, g),
   async_dep(g, to).
 
+// A peer init/1 already holds its start on (init_dep "call") is that
+// finding's: its other calls to the same peer make no second, weaker
+// warning (per peer, not per site).
 init_window_dep(mod, to, "window_call", i) :-
   init_function(mod, i),
   init_window.reaches(i, g),

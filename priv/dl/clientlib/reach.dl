@@ -55,7 +55,8 @@
 // SameProcessReach, less the edges the instance names `cut`: what the
 // process runs before some point on its way, where calls made after it
 // are another phase's (startup's init/1 up to the acknowledgement of its
-// start).
+// start), or edges outside the question (a side path, side_call in
+// calls.dl).
 .comp SameProcessReachCut : Backward {
   .decl cut(func: symbol, callee: symbol)
   reaches(f, t) :- call_edge(f, g), !runs_elsewhere(f, g), !cut(f, g), reaches(g, t).
@@ -127,7 +128,8 @@
   reaches(f) :- call_edge(f, g), !runs_elsewhere(f, g), reaches(g).
 }
 
-// The same, less the edges the instance names `cut`.
+// The same, less the edges the instance names `cut` (another phase's,
+// or a side path's, as SameProcessReachCut).
 .comp SameProcessReachSetCut : BackwardSet {
   .decl cut(func: symbol, callee: symbol)
   reaches(f) :- call_edge(f, g), !runs_elsewhere(f, g), !cut(f, g), reaches(g).

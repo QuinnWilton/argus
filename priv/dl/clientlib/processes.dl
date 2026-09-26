@@ -467,6 +467,7 @@ state_slot(":stop", "3", "{2}").
 state_slot(":stop", "4", "{3}").
 
 state_out(m, f) :- behaves_as(m, "GenServer"), function_def(f, m, "init", 1, _).
+// terminate/2's return goes nowhere: no callback is called with it.
 state_out(m, f) :- state_in(m, f, _), !function_def(f, m, "terminate", 2, _).
 
 state_in(m, f, "2") :- behaves_as(m, "GenServer"), function_def(f, m, "handle_call", 3, _).
