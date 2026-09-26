@@ -6,6 +6,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## 0.20.0-dev — unreleased
 
+### Readers: an absent relation file is not an empty relation
+
+**Changed.** `Argus.Findings.extraction_errors/1` read a facts
+directory without `extraction_error.facts` as one where nothing failed,
+and `Argus.Lines.from_facts_dir/1` read one without `line_info.facts`
+as one where no instruction has a line. Every extraction writes both,
+empty when there is nothing to say (`Argus.Pipeline.run/3` leaves a
+file for every schema relation), so an absent one is a directory that
+is not an extraction's or was changed under the read. Both now raise
+`Argus.MissingRelationError`, and `Argus.Findings.run/2` over a
+`facts_dir:` without the file answers `{:error,
+%Argus.MissingRelationError{}}` instead of findings that say no module
+failed to extract.
+
 ### Stores: a kept entry that is gone, or short, when it is read
 
 **Fixed.** A kept solve was read back by listing its directory and

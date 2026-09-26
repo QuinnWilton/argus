@@ -228,7 +228,9 @@ defmodule Argus.Findings do
   - `:facts_dir` — a directory `Argus.Analysis.extract_facts/3` already
     wrote for these modules, to evaluate without extracting again. The
     caller owns it; without this option the run extracts into a
-    temporary directory and removes it afterwards.
+    temporary directory and removes it afterwards. One without
+    `extraction_error.facts`, which every extraction writes, is
+    `{:error, %Argus.MissingRelationError{}}`.
   - `:solve_cache` — a directory of kept solves (`Argus.Souffle.Cache`):
     a solve whose program, solver and input files have not moved since
     it was kept is read back rather than run, the points-to stage
@@ -258,8 +260,9 @@ defmodule Argus.Findings do
   The extraction errors recorded in a facts directory
   (`Argus.Analysis.extract_facts/3` writes them as `extraction_error`):
   the base steps' first, then each extractor's in turn, each in module
-  order (`Argus.Pipeline`'s producers). A directory without the file
-  has none.
+  order (`Argus.Pipeline`'s producers). Every extraction writes the
+  file, empty when nothing failed: a directory without it raises
+  `Argus.MissingRelationError` (`Argus.Findings.Runner.extraction_errors/1`).
   """
   @spec extraction_errors(Path.t()) :: [extraction_error()]
   defdelegate extraction_errors(facts_dir), to: Runner

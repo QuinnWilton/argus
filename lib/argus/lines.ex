@@ -37,17 +37,21 @@ defmodule Argus.Lines do
 
   @doc """
   Builds line tables from a `.facts` directory (the `line_info.facts`
-  file written by `Argus.Pipeline.run/3`). A missing or unreadable file
-  yields empty tables — every lookup resolves to `nil`.
+  file written by `Argus.Pipeline.run/3`, empty for modules without a
+  Line chunk). A directory without the file is not an extraction's, or
+  was changed under this read: it raises `Argus.MissingRelationError`
+  rather than resolving every anchor to `nil`.
   """
   @spec from_facts_dir(Path.t()) :: t()
   def from_facts_dir(dir) do
-    case File.read(Path.join(dir, "line_info.facts")) do
+    path = Path.join(dir, "line_info.facts")
+
+    case File.read(path) do
       {:ok, contents} ->
         contents |> Argus.Tsv.decode() |> build()
 
-      {:error, _} ->
-        build([])
+      {:error, reason} ->
+        raise Argus.MissingRelationError, relation: "line_info", path: path, reason: reason
     end
   end
 

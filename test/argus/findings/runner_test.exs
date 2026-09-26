@@ -71,8 +71,25 @@ defmodule Argus.Findings.RunnerTest do
       assert Findings.extraction_errors(dir) == Runner.extraction_errors(dir)
     end
 
-    test "a directory without the file has none", %{tmp_dir: dir} do
-      assert Runner.extraction_errors(dir) == []
+    test "a directory without the file is not an extraction's, and raises naming it",
+         %{tmp_dir: dir} do
+      path = Path.join(dir, "extraction_error.facts")
+
+      assert_raise Argus.MissingRelationError, ~r/extraction_error relation's file/, fn ->
+        Runner.extraction_errors(dir)
+      end
+
+      error = catch_error(Findings.extraction_errors(dir))
+      assert %Argus.MissingRelationError{relation: "extraction_error", path: ^path} = error
+    end
+
+    test "a run over a handed-in directory without the file is an error, not no errors" do
+      {:ok, facts} = Argus.Analysis.extract_facts([:lists], [:effects])
+      on_exit(fn -> File.rm_rf!(Path.dirname(facts)) end)
+      File.rm!(Path.join(facts, "extraction_error.facts"))
+
+      assert {:error, %Argus.MissingRelationError{relation: "extraction_error"}} =
+               Runner.run([:lists], analyses: [:effects], facts_dir: facts)
     end
   end
 end

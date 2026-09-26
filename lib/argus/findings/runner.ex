@@ -38,14 +38,33 @@ defmodule Argus.Findings.Runner do
   The extraction errors recorded in a facts directory
   (`Argus.Analysis.extract_facts/3` writes them as `extraction_error`):
   the base steps' first, then each extractor's in turn, each in module
-  order (`Argus.Pipeline`'s producers). A directory without the file
-  has none.
+  order (`Argus.Pipeline`'s producers).
+
+  Every extraction writes `extraction_error.facts`, empty when nothing
+  failed (`Argus.Pipeline.run/3` leaves a file for every schema
+  relation). A directory without it is not an extraction's, or was
+  changed under this read, and raises `Argus.MissingRelationError`:
+  taken for none, it would drop the note that a module's findings are
+  missing because it could not be read.
   """
   @spec extraction_errors(Path.t()) :: [Findings.extraction_error()]
   def extraction_errors(facts_dir) do
-    case File.read(Path.join(facts_dir, "extraction_error.facts")) do
-      {:ok, content} -> parse_extraction_errors(content)
-      {:error, _} -> []
+    case read_extraction_errors(facts_dir) do
+      {:ok, errors} -> errors
+      {:error, error} -> raise error
+    end
+  end
+
+  defp read_extraction_errors(facts_dir) do
+    path = Path.join(facts_dir, "extraction_error.facts")
+
+    case File.read(path) do
+      {:ok, content} ->
+        {:ok, parse_extraction_errors(content)}
+
+      {:error, reason} ->
+        {:error,
+         %Argus.MissingRelationError{relation: "extraction_error", path: path, reason: reason}}
     end
   end
 
@@ -80,7 +99,9 @@ defmodule Argus.Findings.Runner do
             )
             |> Enum.flat_map(fn {:ok, outcomes} -> outcomes end)
 
-          {:ok, %{collect(outcomes) | extraction_errors: source_errors(source)}}
+          with {:ok, errors} <- source_errors(source) do
+            {:ok, %{collect(outcomes) | extraction_errors: errors}}
+          end
         after
           release(source)
         end
@@ -179,10 +200,10 @@ defmodule Argus.Findings.Runner do
     end
   end
 
-  defp source_errors({:dir, dir, _owned?}), do: extraction_errors(dir)
+  defp source_errors({:dir, dir, _owned?}), do: read_extraction_errors(dir)
 
   defp source_errors({:cached, facts}),
-    do: facts |> Facts.extraction_errors() |> parse_extraction_errors()
+    do: {:ok, facts |> Facts.extraction_errors() |> parse_extraction_errors()}
 
   defp release({:dir, dir, true}), do: File.rm_rf(Path.dirname(dir))
   defp release({:dir, _dir, false}), do: :ok
