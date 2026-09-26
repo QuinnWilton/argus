@@ -129,6 +129,8 @@ cleanup_defect(mod, behaviour, "never_runs", category, api, via) :-
 // look like an ordinary call to your own module.
 .decl unclassified_cleanup(mod: symbol, behaviour: symbol, api: symbol, via: symbol, site: symbol)
 
+// Work terminate/2 does only for reasons other than :shutdown
+// (skipped_on_shutdown) is not what a supervisor stop skips.
 unclassified_cleanup(mod, behaviour, api, t, id) :-
   terminate_callback(t, mod, behaviour),
   unknown_call(id, t, api, _callee),
@@ -146,6 +148,9 @@ unclassified_cleanup(mod, behaviour, api, via, id) :-
 // inside an exception constructor. A soundness choice made for one
 // contract should not become noise in another.
 
+// A module that traps exits runs its terminate/2 on a supervisor stop,
+// and one whose terminate/2 does known durable cleanup is reported
+// "never_runs" already: "unclear" would repeat it less surely.
 .decl unclear_cleanup(mod: symbol, behaviour: symbol, api: symbol, via: symbol, site: symbol)
 
 unclear_cleanup(mod, behaviour, api, via, id) :-
@@ -504,6 +509,8 @@ closure_in_terminate(t, via) :-
 unguarded_site_or_empty(f, m, id) :- wait_site(f, m, id), !spared(id).
 unguarded_site_or_empty(f, m, "") :- waits_unguarded(f, m), !wait_site(f, m, _).
 
+// A supervisor the facts place without the instruction that defines its
+// tree anchors with an empty site: every rule's `sup` has a row here.
 .decl supervisor_site_or_empty(sup: symbol, site: symbol)
 
 supervisor_site_or_empty(sup, site) :- supervisor_site(sup, site).
@@ -562,11 +569,11 @@ starter_process(mod, s) :- process_entry(mod, c), start_reach.reaches(c, s).
 // is that tree offering a shared service; the children are meant to
 // belong to it, whoever asks. A supervisor held as a pid ("dynamic") has
 // no tree to place: process points-to does not follow start_child's
-// supervisor argument, which is not a pid use.
+// supervisor argument, which is not a pid use. One named through a
+// registry (`Oban.Registry.via(Foreman)`) is no tree member either.
 foreign_dynamic_children(mod, sup, func, site, sup_site) :-
   dynamic_child(sup, _, func),
   sup != "dynamic",
-  !match("via:.*", sup),
   function_def(func, fmod, _, _, _),
   fmod != sup,
   starter_process(mod, func),
@@ -582,6 +589,8 @@ foreign_dynamic_children(mod, sup, func, site, sup_site) :-
 
 dynamic_start_site(f, id) :- call_site(id, f, "DynamicSupervisor", "start_child", _).
 
+// A start with no DynamicSupervisor.start_child instruction (a
+// Task.Supervisor start) anchors at its function, the site empty.
 .decl dynamic_start_site_or_empty(func: symbol, site: symbol)
 
 dynamic_start_site_or_empty(f, id) :- dynamic_start_site(f, id).
@@ -675,8 +684,7 @@ shared_stop(h, via, sib) :-
 unhandled_exit_signal(mod, "no_handler", func) :-
   module_traps(func, mod),
   gen_server_like(mod),
-  !has_handle_info(mod),
-  !statem_process(mod).
+  !has_handle_info(mod).
 
 // A process whose trapped exits gen_server hands to handle_info/2: a
 // GenServer (or a wrapper that runs one), a GenStage, or a server under
