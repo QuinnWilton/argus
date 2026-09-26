@@ -1132,6 +1132,7 @@ info_reach.seed(f) :- node_events(_, f, _).
 info_reach.seed(f) :- port_opened(_, f).
 info_reach.seed(f) :- mailbox_writer(_, f, "task_nolink").
 info_reach.seed(f) :- late_wait(_, f, _).
+info_reach.seed(f) :- link_site(_, f).
 
 .decl runs_in_server(mod: symbol, func: symbol)
 
@@ -1266,6 +1267,35 @@ late_wait(r, g, shape) :-
   subscribe_reach.reaches(g).
 
 info_message(m, g, r, msg, "late") :- late_wait(r, g, msg), runs_in_server(m, g).
+
+// ── A linked process's exit, in a server that traps exits ────────────
+//
+// A server that traps exits (module_traps) receives the end of every
+// process or port linked to it as `{:EXIT, from, reason}`, the reason
+// whatever the linked process ended with. A link its own stack makes is
+// the witness: a spawn_link, a link/1, a port it opens, a start_link of
+// anything (a worker started from a callback is linked to the server).
+// The exit is taken as a :DOWN is: by a clause for every reason of it
+// (callback_takes_exit), whatever it pins of `from` or asks of the state,
+// or by an open clause that can hold three elements. sequin's Redis
+// ConnectionCache start_links eredis connections and takes only
+// `{:EXIT, _pid, :normal}`; vernemq's vmq_tracer spawn_links its rate
+// tracer and takes only its :normal exit. A handler that names no :EXIT
+// at all is shutdown's finding (unhandled_exit_signal "no_exit_clause");
+// this judges one that takes some exits (it compares :EXIT) and not
+// others.
+.decl link_site(id: symbol, func: symbol)
+
+link_site(id, f) :- spawn_call(id, f, _, _, _, "spawn_link", _, _, _, _).
+link_site(id, f) :- remote_call(id, f, ":erlang", "link", 1).
+link_site(id, f) :- remote_call(id, f, "Process", "link", 1).
+link_site(id, f) :- port_opened(id, f).
+link_site(id, f) :- call_site(id, f, _, "start_link", _).
+
+info_message(m, f, id, "{:EXIT, …}", "exit") :-
+  link_site(id, f),
+  runs_in_server(m, f),
+  module_traps(_, m).
 
 // ── Node events and a port's output ─────────────────────────────────
 //
@@ -1523,6 +1553,7 @@ info_taken(h, "tuple") :-
 .decl taken_by(id: symbol, message: symbol, how: symbol)
 
 taken_by(id, msg, "reason") :- down_type_at(id, _), info_message(_, _, id, msg, _), msg = "{:DOWN, …}".
+taken_by(id, "{:EXIT, …}", "exit") :- info_message(_, _, id, "{:EXIT, …}", "exit").
 
 taken_by(id, msg, "tag") :-
   info_message(_, _, id, msg, source),
@@ -1560,6 +1591,17 @@ taken_at(h, id, msg) :-
   info_fallback(m, msg, h, _),
   info_taken(h, msg).
 
+// A trapped exit, by a clause for every reason of it, or an open clause
+// that can hold three elements.
+taken_at(h, id, msg) :-
+  taken_by(id, msg, "exit"),
+  info_message(m, _, id, msg, _),
+  info_fallback(m, msg, h, _),
+  (callback_takes_exit(h, "handle_info") ;
+   callback_open(h, "handle_info", "any", _) ;
+   callback_open(h, "handle_info", "tuple", -1) ;
+   callback_open(h, "handle_info", "tuple", 3)).
+
 taken_at(h, id, "{ref, …}") :-
   taken_by(id, "{ref, …}", "tag"),
   info_message(m, _, id, "{ref, …}", _),
@@ -1579,12 +1621,24 @@ drop_judged("socket").
 unhandled_info(mod, f, id, msg, source, m, h, fallback) :-
   info_message(m, f, id, msg, source),
   source != "late",
+  source != "exit",
   gen_server_like(m),
   !statem_process(m),
   info_fallback(m, msg, h, fallback),
   (fallback = "crash" ; drop_judged(source)),
   !taken_at(h, id, msg),
   !server_receives(m, msg),
+  function_def(f, mod, _, _, _).
+
+// A trapped exit: judged where the handler takes some exits (it compares
+// :EXIT) and none takes this one whatever its reason.
+unhandled_info(mod, f, id, msg, "exit", m, h, "crash") :-
+  info_message(m, f, id, msg, "exit"),
+  gen_server_like(m),
+  !statem_process(m),
+  partial_handle_info(m, h),
+  callback_tag(h, "handle_info", ":EXIT"),
+  !taken_at(h, id, msg),
   function_def(f, mod, _, _, _).
 
 // What a timed receive leaves behind is the one message the server's

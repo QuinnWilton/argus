@@ -71,6 +71,24 @@ defmodule Argus.Extractors.CallbackTagTest do
     end
   end
 
+  test "a trapped :EXIT is taken whatever its reason unless the clause tests the reason" do
+    alias Argus.Test.Fixtures, as: F
+    alias Argus.Test.Soundness.Witness, as: W
+
+    exit? = fn mod ->
+      {:ok, data} = BeamSpy.BeamFile.disassemble(to_string(:code.which(mod)))
+      Map.has_key?(CallbackTag.extract(data), :callback_takes_exit)
+    end
+
+    # `from` pinned to the state is the program's; the reason is not.
+    assert exit?.(W.ExitEveryReason)
+    assert exit?.(F.TrapsTakingEveryExit)
+    refute exit?.(W.ExitNormalOnly)
+    refute exit?.(W.ExitPinnedNormal)
+    refute exit?.(W.ExitShutdownOnly)
+    refute exit?.(F.TrapsTakingNormalExits)
+  end
+
   test "a catch-all that ignores or logs the message drops it; one that hands it on does not" do
     %{drops: drops} = facts([U.Listeners, U.Repair, U.Ticker, U.Delegates, U.Handled])
     assert "Listeners:handle_info/2" in drops

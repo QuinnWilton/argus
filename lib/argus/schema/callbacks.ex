@@ -64,6 +64,21 @@ defmodule Argus.Schema.Callbacks do
         """
       },
       %{
+        name: :callback_takes_exit,
+        layer: 2,
+        fields: [
+          {:func, :symbol, "the callback"},
+          {:callback, :symbol, "'handle_call' | 'handle_cast' | 'handle_info'"}
+        ],
+        doc: """
+        Some clause of the callback takes every trapped `{:EXIT, from, \
+        reason}`, whatever the reason the linked process ended with \
+        (`Argus.Extractors.CallbackTag.MessageClauses.takes_exit?/2`). A head \
+        that pins `from` or asks the state takes the exits of the processes \
+        the program keeps there; one for `:normal` alone is no row.
+        """
+      },
+      %{
         name: :callback_drops,
         layer: 2,
         fields: [

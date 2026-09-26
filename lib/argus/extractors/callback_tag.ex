@@ -33,6 +33,9 @@ defmodule Argus.Extractors.CallbackTag do
   - `callback_total(func, callback)` — some clause accepts every message,
     whatever it demands of the state (`handle_info(msg, {stack, cont})`
     is a catch-all for messages), so no tag can fail
+  - `callback_takes_exit(func, callback)` — some clause takes every
+    trapped `{:EXIT, from, reason}` whatever its reason
+    (`MessageClauses.takes_exit?/2`)
   - `callback_drops(func, callback)` — the catch-all only logs or ignores
     the message (`MessageClauses.catch_all_drops?/2`)
   - `callback_open(func, callback, shape, arity)` — a clause takes the
@@ -63,6 +66,7 @@ defmodule Argus.Extractors.CallbackTag do
       :callback_tag,
       :callback_tag_shape,
       :callback_takes_down,
+      :callback_takes_exit,
       :callback_total
     ]
 
@@ -102,6 +106,11 @@ defmodule Argus.Extractors.CallbackTag do
       for type <- MessageClauses.takes_down(instrs, {:x, 0}), reduce: facts do
         acc -> add_fact(acc, :callback_takes_down, [func_id, callback, to_string(type)])
       end
+
+    facts =
+      if MessageClauses.takes_exit?(instrs, {:x, 0}),
+        do: add_fact(facts, :callback_takes_exit, [func_id, callback]),
+        else: facts
 
     if MessageClauses.catch_all_drops?(instrs, {:x, 0}),
       do: add_fact(facts, :callback_drops, [func_id, callback]),

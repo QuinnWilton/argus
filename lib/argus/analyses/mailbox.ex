@@ -40,8 +40,9 @@ defmodule Argus.Analyses.Mailbox do
     monitoring it turns on, the output of a `port` it opens, the reply
     and the `:DOWN` of a `task` it starts with async_nolink and does not
     collect, what a `late` timed receive leaves behind: the reply of a
-    process it spawns, an event of a subscription it makes) that no
-    clause of its handle_info/2 takes:
+    process it spawns, an event of a subscription it makes, the `exit`
+    of a process it links while it traps exits) that no clause of its
+    handle_info/2 takes:
     `fallback` says what does instead — nothing (`crash`, a
     FunctionClauseError), a `catch_all` that only logs or ignores it, or
     GenServer's `default` handle_info/2, which logs it as an error; or,
@@ -214,14 +215,16 @@ defmodule Argus.Analyses.Mailbox do
           {:mod, :symbol, "the sending module"},
           {:func, :symbol,
            "the function that sends, arms the timer, monitors, makes the socket active, " <>
-             "turns on node monitoring, opens the port, starts the task or waits"},
+             "turns on node monitoring, opens the port, starts the task, waits or links"},
           {:site, :symbol,
            "the send, the timer, the monitor, the socket's activation, the node " <>
-             "monitoring, the port's open, the task's start or the timed receive"},
+             "monitoring, the port's open, the task's start, the timed receive or the link"},
           {:message, :symbol,
            "the literal atom, {:tag, …}, {:DOWN, …}, {:tcp_closed, …}, {:ssl_closed, …}, " <>
-             "{:nodeup, …}, {:nodedown, …}, {port, {:data, …}}, {ref, …}, map or tuple"},
-          {:source, :symbol, "send | timer | monitor | socket | node | port | task | late"},
+             "{:nodeup, …}, {:nodedown, …}, {port, {:data, …}}, {ref, …}, {:EXIT, …}, " <>
+             "map or tuple"},
+          {:source, :symbol,
+           "send | timer | monitor | socket | node | port | task | late | exit"},
           {:server, :symbol, "the GenServer module whose handle_info/2 it reaches"},
           {:handler, :symbol, "its handle_info/2, or the gen_statem state function"},
           {:fallback, :symbol, "crash | catch_all | default | state_crash"}
@@ -847,7 +850,9 @@ defmodule Argus.Analyses.Mailbox do
   # a call or cast with a tag the server cannot take is. What the runtime
   # writes when something else happens — a monitored process ends, a node
   # joins or leaves, a port's program writes — is :warning.
-  defp crash_severity(source) when source in ["monitor", "node", "port", "task"], do: :warning
+  defp crash_severity(source) when source in ["monitor", "node", "port", "task", "exit"],
+    do: :warning
+
   defp crash_severity(_sent_or_armed), do: :error
 
   defp late_message("{ref, …}"), do: "a reply that carries a ref it holds, {ref, …},"
@@ -886,6 +891,12 @@ defmodule Argus.Analyses.Mailbox do
         "server's callbacks and does not collect it there, so the task's {:DOWN, …}, sent " <>
         "when it ends (after its reply, or in its place when it crashes), goes to"
 
+  defp sent("exit", func, _message),
+    do:
+      "#{Findings.call_name(func)} links a server that traps exits to a process or a " <>
+        "port (a spawn_link, a start_link, a link, a port it opens), so its end arrives " <>
+        "as {:EXIT, …}, with whatever reason it ends with, at"
+
   defp sent("node", func, message),
     do:
       "#{Findings.call_name(func)} turns on node monitoring from a server's callbacks, so " <>
@@ -901,6 +912,7 @@ defmodule Argus.Analyses.Mailbox do
   defp sent_label("monitor"), do: "the :DOWN of this monitor"
   defp sent_label("timer"), do: "the timer is armed here"
   defp sent_label("task"), do: "the task is started here"
+  defp sent_label("exit"), do: "the link is made here"
   defp sent_label("node"), do: "node monitoring is turned on here"
   defp sent_label("port"), do: "the port is opened here"
   defp sent_label(_send), do: "the message is sent here"
@@ -910,6 +922,13 @@ defmodule Argus.Analyses.Mailbox do
       "add a `handle_info({:DOWN, ref, type, object, reason}, state)` clause that takes " <>
         "every reason and releases what the monitor was for",
       "or wait for the :DOWN where the monitor is taken, or demonitor it with `[:flush]`"
+    ]
+
+  defp unhandled_help("exit", _fallback, _message),
+    do: [
+      "add a `handle_info({:EXIT, pid, reason}, state)` clause that takes every reason: " <>
+        "a linked process that crashes sends its crash's",
+      "or start the process under a supervisor, or monitor it rather than link"
     ]
 
   defp unhandled_help("task", _fallback, _message),

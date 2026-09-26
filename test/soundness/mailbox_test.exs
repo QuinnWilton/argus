@@ -326,6 +326,40 @@ defmodule Argus.Soundness.MailboxTest do
     end
   end
 
+  describe "a linked process's exit, in a server that traps exits (partial_handler retired)" do
+    alias Argus.Test.Soundness.Witness, as: W
+
+    @crash "No handle_info/2 clause for a message the server is sent"
+
+    test "a worker start_link'd from a callback, only its :normal exit taken" do
+      assert {:warning, @crash, {W.ExitNormalOnly, :handle_call, 3}} in fired(
+               [W.ExitNormalOnly, W.Conn],
+               :mailbox
+             )
+    end
+
+    test "a helper spawn_link'd in init/1, its :normal exit pinned" do
+      assert {:warning, @crash, {W.ExitPinnedNormal, :init, 1}} in fired(
+               [W.ExitPinnedNormal],
+               :mailbox
+             )
+    end
+
+    test "a worker a helper module links on the server's stack, a {:shutdown, _} clause" do
+      assert {:warning, @crash, {W.Spawns, :worker, 1}} in fired(
+               [W.ExitShutdownOnly, W.Spawns],
+               :mailbox
+             )
+    end
+
+    test "a port the server opens, its :normal exit alone taken" do
+      assert {:warning, @crash, {W.ExitPortNormal, :init, 1}} in fired(
+               [W.ExitPortNormal],
+               :mailbox
+             )
+    end
+  end
+
   test "lists:map/2 of monitors whose refs are dropped (item 26)" do
     assert Enum.any?(fired([M.ListsMapDropped], :mailbox), &match?({:info, @ref_dropped, _}, &1))
   end

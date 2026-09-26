@@ -952,3 +952,160 @@ defmodule Argus.Test.Soundness.Witness.PmapServer do
   @impl true
   def handle_info(:tick, state), do: {:noreply, state}
 end
+
+# ── A linked process's exit, in a server that traps exits ──────────────
+
+defmodule Argus.Test.Soundness.Witness.Conn do
+  @moduledoc false
+  use GenServer
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+  @impl true
+  def init(opts), do: {:ok, opts}
+end
+
+defmodule Argus.Test.Soundness.Witness.ExitNormalOnly do
+  @moduledoc false
+  # sequin's Redis ConnectionCache: traps exits, start_links its
+  # connections from a callback, and takes only their :normal exit.
+  use GenServer
+
+  def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
+
+  @impl true
+  def init(_arg) do
+    Process.flag(:trap_exit, true)
+    {:ok, %{}}
+  end
+
+  @impl true
+  def handle_call({:connect, opts}, _from, state) do
+    {:ok, conn} = Argus.Test.Soundness.Witness.Conn.start_link(opts)
+    {:reply, {:ok, conn}, Map.put(state, opts, conn)}
+  end
+
+  @impl true
+  def handle_info({:EXIT, _pid, :normal}, state), do: {:noreply, state}
+end
+
+defmodule Argus.Test.Soundness.Witness.ExitPinnedNormal do
+  @moduledoc false
+  # vmq_tracer's shape: spawn_links a helper in init/1 and takes only that
+  # helper's :normal exit, pinned to it.
+  use GenServer
+
+  def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
+
+  @impl true
+  def init(max) do
+    Process.flag(:trap_exit, true)
+    tracer = spawn_link(fn -> rate(max) end)
+    {:ok, %{tracer: tracer}}
+  end
+
+  @impl true
+  def handle_info({:EXIT, tracer, :normal}, %{tracer: tracer} = state),
+    do: {:stop, :normal, state}
+
+  defp rate(max), do: if(max > 0, do: rate(max - 1), else: :ok)
+end
+
+defmodule Argus.Test.Soundness.Witness.Spawns do
+  @moduledoc false
+  def worker(fun), do: spawn_link(fun)
+end
+
+defmodule Argus.Test.Soundness.Witness.ExitShutdownOnly do
+  @moduledoc false
+  # A helper module links the worker on the server's stack; the server
+  # takes only a {:shutdown, _} exit.
+  use GenServer
+
+  def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
+
+  @impl true
+  def init(arg) do
+    Process.flag(:trap_exit, true)
+    {:ok, arg}
+  end
+
+  @impl true
+  def handle_cast({:run, fun}, state) do
+    Argus.Test.Soundness.Witness.Spawns.worker(fun)
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_info({:EXIT, _pid, {:shutdown, _}}, state), do: {:noreply, state}
+end
+
+defmodule Argus.Test.Soundness.Witness.ExitPortNormal do
+  @moduledoc false
+  # A port is linked to the process that opens it: its crash's exit falls
+  # through a clause for :normal.
+  use GenServer
+
+  def start_link(cmd), do: GenServer.start_link(__MODULE__, cmd)
+
+  @impl true
+  def init(cmd) do
+    Process.flag(:trap_exit, true)
+    {:ok, %{port: Port.open({:spawn, cmd}, [:binary])}}
+  end
+
+  @impl true
+  def handle_info({port, {:data, _}}, %{port: port} = state), do: {:noreply, state}
+  def handle_info({:EXIT, port, :normal}, %{port: port} = state), do: {:stop, :normal, state}
+end
+
+# Quiet: every exit taken whatever the reason; no link; no :EXIT clause at
+# all (shutdown's finding).
+
+defmodule Argus.Test.Soundness.Witness.ExitEveryReason do
+  @moduledoc false
+  use GenServer
+
+  def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
+
+  @impl true
+  def init(max) do
+    Process.flag(:trap_exit, true)
+    {:ok, %{tracer: spawn_link(fn -> max end)}}
+  end
+
+  @impl true
+  def handle_info({:EXIT, tracer, :normal}, %{tracer: tracer} = state), do: {:noreply, state}
+  def handle_info({:EXIT, tracer, reason}, %{tracer: tracer} = state), do: {:stop, reason, state}
+end
+
+defmodule Argus.Test.Soundness.Witness.ExitNoLink do
+  @moduledoc false
+  use GenServer
+
+  def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
+
+  @impl true
+  def init(arg) do
+    Process.flag(:trap_exit, true)
+    {:ok, arg}
+  end
+
+  @impl true
+  def handle_info({:EXIT, _pid, :normal}, state), do: {:noreply, state}
+end
+
+defmodule Argus.Test.Soundness.Witness.ExitNoClause do
+  @moduledoc false
+  use GenServer
+
+  def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
+
+  @impl true
+  def init(arg) do
+    Process.flag(:trap_exit, true)
+    spawn_link(fn -> arg end)
+    {:ok, arg}
+  end
+
+  @impl true
+  def handle_info(:tick, state), do: {:noreply, state}
+end

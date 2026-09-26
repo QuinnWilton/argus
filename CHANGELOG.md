@@ -17,6 +17,26 @@ which is what `unhandled_info` witnesses: a send, a timer, a monitor's
 it. This round gives `unhandled_info` the sources the retired rule's
 real bugs came from, and then retires the rule.
 
+**Added.** A linked process's exit, in a server that traps exits:
+`unhandled_info`'s source `exit` ("No handle_info/2 clause for a message
+the server is sent", `:warning`, anchored at the link). A server that
+traps exits receives the end of each process or port linked to it as
+`{:EXIT, from, reason}`; a link on its own stack (a `spawn_link`, a
+`link/1`, a port it opens, a `start_link` of anything) is the witness,
+and the reason is the linked process's. A clause for every reason takes
+it, whatever it pins of `from` or asks of the state; a clause for
+`:normal` alone, a guard or a pattern on the reason takes some exits
+and not a crash's. Judged where the handler names `:EXIT` at all (a
+handler with no `:EXIT` clause is shutdown's "trap_exit without an
+{:EXIT, ...} clause"). sequin's Redis `ConnectionCache` (start_links its
+eredis connections, takes `{:EXIT, _pid, :normal}` alone) and vernemq's
+`vmq_tracer` (spawn_links its rate tracer, takes its `:normal` exit
+alone) were the retired rule's rows for this bug.
+
+**Added.** Schema 137. `callback_takes_exit(func, callback)`
+(CallbackTag, `MessageClauses.takes_exit?/2`): some clause takes every
+trapped `{:EXIT, from, reason}` whatever its reason. Read by mailbox.
+
 **Removed.** `mailbox.partial_handler` and its titles "handle_info/2
 has no catch-all in a process the runtime writes to", "handle_info/2 has
 no catch-all" and "gen_statem state without the :info catch-all its
@@ -26,7 +46,8 @@ negated conditions; on live code about one row in twenty-six was a bug.
 Every bug it was credited with where the program shows the message is
 now `unhandled_info`'s (a guarded or port monitor's `:DOWN`, node
 events, a port's output, a start_timer's message, a GenStage's timer,
-an async_nolink task's messages, what a timed receive leaves behind),
+an async_nolink task's messages, what a timed receive leaves behind, a
+linked process's exit in a server that traps),
 and the statem timeout is `unhandled_timeout`'s. What it reported
 without a message — a server running a fun from its state, a caller's
 stream, a configured callback module; a ref pinned to the state; a

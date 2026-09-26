@@ -42,7 +42,8 @@ defmodule Argus.Extractors.CallbackTag.MessageClauses do
     clause, and one that compares the type with `:process` takes no
     port monitor's. Clauses that split the reasons between them take
     every reason together: the path into a later clause is the earlier
-    one's failed test, which touches nothing.
+    one's failed test, which touches nothing. `takes_exit?/2` asks the
+    same of a trapped `{:EXIT, from, reason}`.
   - What shapes does a receive wait for (`receive_shapes/2`)? The same
     walk from a receive's `loop_rec`, whose failure exits are the next
     message and the wait: an atom, a tagged tuple, a tuple whose first
@@ -167,6 +168,20 @@ defmodule Argus.Extractors.CallbackTag.MessageClauses do
     )
     |> Enum.uniq()
     |> Enum.sort()
+  end
+
+  @doc """
+  Whether some clause takes every `{:EXIT, from, reason}`, whatever the
+  reason: the linked process chose the reason, the program chose `from`
+  and the state. A clause for `:normal` alone, or one guarding the
+  reason, takes some exits and not a crash's.
+  """
+  @spec takes_exit?([tuple()], Instr.reg()) :: boolean()
+  def takes_exit?(instrs, register) do
+    Enum.any?(entries(instrs, register), fn
+      {_idx, %{shape_tag: :EXIT, arity: 3, touched: touched}} -> not MapSet.member?(touched, 2)
+      _entry -> false
+    end)
   end
 
   @doc """
@@ -378,7 +393,8 @@ defmodule Argus.Extractors.CallbackTag.MessageClauses do
   # The message elements a passed test asked something of. A `:DOWN`'s
   # third element compared with an atom names the monitor type the
   # clause takes (`down_type`) rather than a subset of one monitor's.
-  defp touch(pass, op, [a, b], path) when op in [:is_eq_exact, :is_eq] do
+  defp touch(pass, op, [a, b], %{shape_tag: :DOWN, arity: 5} = path)
+       when op in [:is_eq_exact, :is_eq] do
     case Enum.find([{a, b}, {b, a}], fn {part, _} -> element(path, part) == {:ok, 2} end) do
       {_part, {:atom, type}} -> %{pass | down_type: type}
       _ -> Enum.reduce([a, b], pass, &touch_part(&2, &1))
