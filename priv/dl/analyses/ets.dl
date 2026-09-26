@@ -87,12 +87,35 @@ ets_reach.seed(f, f) :- named_read(_, f, _).
 // A function that spawns a linked process: which process runs it says
 // what the spawn ends with (linked_by, below).
 ets_reach.seed(f, f) :- spawn_call(_, f, _, _, _, "spawn_link", _, _, _, _).
+// An export of a module that makes a table: which process runs it says
+// whether its callers are in view (called_from_outside, below).
+ets_reach.seed(e, e) :-
+  api_export(e),
+  function_def(e, m, _, _, _),
+  ets_new(_, c, _),
+  function_def(c, m, _, _, _).
 
 .decl process_root(root: symbol, proc: symbol, mod: symbol, kind: symbol)
 
 process_root(c, cat("server ", m), m, "server") :- process_entry(m, c).
 
 process_root(g, cat("server ", m), m, "server") :- own_start(g, m).
+
+// A special process's sys callbacks run in its own process: its loop
+// hands a system message to sys:handle_system_msg/6, which calls them
+// back there (vmq_queue_sup's system_continue/3 re-enters its loop).
+process_root(c, cat("server ", m), m, "server") :-
+  own_start(_, m),
+  function_def(c, m, n, a, _),
+  sys_callback(n, a).
+
+.decl sys_callback(name: symbol, arity: number)
+
+sys_callback("system_continue", 3).
+sys_callback("system_terminate", 4).
+sys_callback("system_code_change", 4).
+sys_callback("system_get_state", 1).
+sys_callback("system_replace_state", 2).
 
 process_root(g, cat("spawn ", g), m, "spawn") :-
   process_start(_, _, _, kind, g),
@@ -560,8 +583,10 @@ ets_read_outside_owner(name, owner, reader, site, id) :-
 // A process that runs `reader` goes on after the owner's process `p`
 // ends: not p itself, not one p's end takes (ends_with, for a
 // supervised owner's own process), and none at all when p's end is the
-// application's. A reader no process in view runs is run by a caller
-// outside them.
+// application's. A caller outside the program runs a reader a way in
+// reaches (called_from_outside), whatever process in view also runs it:
+// a library's `get/2` its own handle_call also calls is its users' read
+// too. A reader no process in view runs is run by a caller outside them.
 .decl reader_outlives(proc: symbol, owner: symbol, reader: symbol)
 
 reader_outlives(p, owner, reader) :-
@@ -574,15 +599,46 @@ reader_outlives(p, owner, reader) :-
 reader_outlives(p, owner, reader) :-
   read_owner(p, owner, reader),
   !application_lifetime(p),
+  called_from_outside(reader).
+
+reader_outlives(p, owner, reader) :-
+  read_owner(p, owner, reader),
+  !application_lifetime(p),
   !runs_somewhere(reader).
 
 .decl read_owner(proc: symbol, owner: symbol, reader: symbol)
 
 read_owner(p, owner, reader) :- table_held(name, p, owner, _), named_read(name, reader, _).
+read_owner(p, owner, reader) :- computed_read(p, owner, reader, _, _).
 
 .decl runs_somewhere(func: symbol)
 
-runs_somewhere(f) :- named_read(_, f, _), owner_reaches(_, _, f).
+runs_somewhere(f) :- read_owner(_, _, f), owner_reaches(_, _, f).
+
+// A way in from outside the program reaches `f` on its caller's stack:
+// an export of a module the program is the client of nowhere
+// (library_face, ways_in.dl) that roots no process in view — its
+// callers are the library's users, in processes of their own; or an
+// export of the owner's own module, its client API, that roots no
+// process and that no process in view runs: the code in view that calls
+// it runs in its callers' processes, which the program does not show
+// (Phoenix.Tracker's `list/2`, which Phoenix.Presence's functions call
+// for their users, reaching `pool_size/1`).
+.decl called_from_outside(func: symbol)
+
+called_from_outside(f) :-
+  read_owner(_, _, f),
+  library_face(e),
+  !process_root(e, _, _, _),
+  ets_reach.reaches(e, f).
+
+called_from_outside(f) :-
+  read_owner(_, owner, f),
+  api_export(e),
+  function_def(e, owner, _, _, _),
+  !process_root(e, _, _, _),
+  ets_reach.reaches(e, f),
+  !owner_reaches(_, _, e).
 
 // The reader's process q (of qm's code) ends when the owner's process p
 // ends: q is a supervised module's own process its supervisors end with
@@ -739,8 +795,18 @@ read_guarded(reader, site) :-
   caller_rescues(reader).
 
 // A table under a name computed at runtime: only the owner's own API
-// can be tied to it.
+// can be tied to it, a read of a computed name in the owner's module
+// (computed_read). It is judged as a named read is: a reader outlives
+// the owner (a shard's `get/2` its callers run, though the shard's own
+// handle_call also runs it), and the read is not rescued.
 ets_read_outside_owner("dynamic", owner, reader, site, id) :-
+  computed_read(p, owner, reader, site, id),
+  reader_outlives(p, owner, reader),
+  !read_rescued(site, reader).
+
+.decl computed_read(proc: symbol, owner: symbol, reader: symbol, site: symbol, id: symbol)
+
+computed_read(p, owner, reader, site, id) :-
   ets_new(id, creator, "dynamic"),
   function_def(creator, owner, _, _, _),
   process_root(_, p, owner, "server"),
@@ -748,9 +814,7 @@ ets_read_outside_owner("dynamic", owner, reader, site, id) :-
   !ets_option(id, "heir", "true"),
   ets_op(site, reader, "dynamic", _, "read"),
   raising_read(site),
-  function_def(reader, owner, _, _, _),
-  !owner_reaches(p, owner, reader),
-  !read_rescued(site, reader).
+  function_def(reader, owner, _, _, _).
 
 // ── A named table a start function creates ─────────────────────────
 //

@@ -2654,8 +2654,18 @@ under a non-process behaviour. T has no `heir` option. Some read of T
 that raises when the table is gone sits in a function F (every read but
 `:ets.info/1,2`, `take` included). A process that runs F outlives P
 (`reader_outlives`, docs/design/restart-state.md): it goes on after P
-ends, or no process in view runs F, so callers outside them do. A
-process does not outlive P when:
+ends; or a way in from outside the program reaches F on its caller's
+stack (`called_from_outside`: an export of a module the program is the
+client of nowhere, `library_face`, that roots no process in view; or an
+export of the owner's own module that roots no process and that no
+process in view runs, whose callers in view run in their callers'
+processes: Phoenix.Tracker's `list/2`, which Phoenix.Presence calls for
+its users, reaching `pool_size/1`; a compiler tracer's `trace/2`), so a
+library's users run it whatever process in view also does; or no
+process in view runs F, so callers outside them do. A special process's
+sys callbacks (`system_continue/3` and the rest) are its own process's
+roots: sys calls them from its loop. A process does not
+outlive P when:
 - it is P
 - P's end is the application's (`application_lifetime`)
 - P's supervisors end it with P (`ends_with`, supervision.dl): the
@@ -2671,14 +2681,18 @@ or Erlang's `catch`, in the reader, or, for a read inside a closure, in
 the function that built the closure or in a function that builder calls
 (a rescuing wrapper the closure is handed to). The read is not made only
 where T is there. A table under a name computed at runtime is tied only
-to reads of computed-name tables in its owner's own module. From the
+to reads of computed-name tables in its owner's own module, judged as a
+named read is (`computed_read`, the same `reader_outlives`): a shard's
+`get/2` its callers run beside its own `handle_call` is its callers'
+read too (census hole: it used to subtract any read the owner's own
+process also made). From the
 moment the owner crashes until its restart reaches `:ets.new/2` again,
 the read raises ArgumentError in the caller instead of returning a
 value. Redix.Cluster's callers saw exactly that during a `:one_for_all`
 restart (redix#338).
 
 **Assumptions and limits.**
-- Which processes run a reader is call-graph reach on the stack of each process root (`owner_reaches`, SameProcessReach). A function both the owner's process and a sibling's run has a reader that outlives: the sibling. Since the restart-state round it is reported (`Lifetime.SharedOwner.lookup/1`). Before, it was taken as the owner's own and missed. Two alternative modules of which configuration runs only one are both taken as running: partisan's peer service managers read each other's connection table (12 rows).
+- Which processes run a reader is call-graph reach on the stack of each process root (`owner_reaches`, SameProcessReach). A function both the owner's process and a sibling's run has a reader that outlives: the sibling. So does one the owner's process and callers outside the program run: a public read of a library-face module its own callbacks also call (`Census.Ets.NamedShared.lookup/1`). A public read of a module other modules of the program call is judged by the processes in view (`Census.Ets.ClientShard`, quiet), and a linked loader must be private to be the owner's alone (`Lifetime.LinkOwner`). Since the restart-state round it is reported (`Lifetime.SharedOwner.lookup/1`). Before, it was taken as the owner's own and missed. Two alternative modules of which configuration runs only one are both taken as running: partisan's peer service managers read each other's connection table (12 rows).
 - A restart intensity the crash exhausts is not followed. An owner deep in a branch is restarted by its own supervisor, and the branch goes on, so its `one_for_all` parent's other branches outlive it (`Lifetime.DeepReader`). mnesia's intensity-0 `one_for_all` chain, which stops the application, is not read. A linked reader that traps exits outlives its peer, and is taken as ended (quiet).
 - The rescue is asked of the reader's whole function, not of the read: a rescue around unrelated code in the reader silences it.
 - A read is made only where the table is there when every path to it passes one of these (`ets_read_when_present`, widened in the restart-state round):
@@ -2709,6 +2723,8 @@ The readers' lifetimes (test/fixtures/soundness/ets_lifetime_soundness.ex, asser
   - `SupChild`, `AllReader`, `RestLater`
   - `LinkOwner.load/0`
   - `EnsureReader.get/1` and `get_inline/1`
+
+The census holes (test/fixtures/soundness/ets_census.ex, asserted by test/soundness/ets_test.exs): reported `Census.Ets.Shard.get/2` (a computed-name shard read its own `handle_call` also runs), `NamedShared.lookup/1`, `PeerShard.get/2` (read by another server's `handle_info`); quiet `PrivateShard` (a private helper) and `ClientShard` (a module the program calls into, whose read only its own process runs).
 
 **Corpus.** Fix pairs: `redix#338` (whatyouhide/redix, b77331e → b31bd23, Redix.Cluster.Manager). Present-only: none.
 

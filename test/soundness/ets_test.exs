@@ -254,4 +254,27 @@ defmodule Argus.Soundness.EtsTest do
       assert quiet?(found, @dies, {Census.Ets.PermOwner, :init, 1})
     end
   end
+
+  # census: computed-read
+  # A computed-name read the owner's own process also ran was taken as the
+  # owner's alone (the computed-name clause's !owner_reaches).
+  describe "census hole: a computed-name read its callers run too" do
+    @read "ETS table read while its owner may be restarting"
+
+    for mfa <- [
+          {Census.Ets.Shard, :get, 2},
+          {Census.Ets.NamedShared, :lookup, 1},
+          {Census.Ets.PeerShard, :get, 2}
+        ] do
+      test "#{inspect(mfa)} is a reader that outlives the owner" do
+        assert {:info, @read, unquote(Macro.escape(mfa))} in census()
+      end
+    end
+
+    test "a read only the owner's own process runs is quiet" do
+      found = census()
+      assert quiet?(found, @read, {Census.Ets.PrivateShard, :get, 2})
+      assert quiet?(found, @read, {Census.Ets.ClientShard, :get, 2})
+    end
+  end
 end

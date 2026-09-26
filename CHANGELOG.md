@@ -30,6 +30,20 @@ permanent. 2 rows come (realtime's `WorkerSupervisor`, temporary, whose
 tables only its own children read: false by the class's harm, which
 needs a reader that outlives the owner).
 
+**Fixed.** "ETS table read while its owner may be restarting" judged a
+read of a table under a computed name only where the owner's own process
+never ran the reader: a shard's `get/2` its own `handle_call` also runs
+was the shard's alone. A computed-name read now goes through
+`reader_outlives` as a named read does, and a way in from outside the
+program is a reader that outlives the owner (`called_from_outside`: an
+export of a library-face module that roots no process, or an export of
+the owner's own module that no process in view runs). A special
+process's sys callbacks are its own process's roots. 5 rows come, all of
+the class's already-reported kind: sentry's
+`SpanStorage.remove_child_spans/2`, elixir-ls's `Tracer.delete_*_by_file/1`
+(the compiler's tracer calls), partisan's `add_timestamp/1` (the
+broadcast process's `claim/2`), vernemq's `vmq_reg_trie:fanout_entries/4`.
+
 ### Races by their harm
 
 **Changed.** A check-then-act pair is reported when a rival can land on

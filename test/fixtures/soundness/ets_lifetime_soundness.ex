@@ -216,7 +216,11 @@ defmodule Lifetime.DeepReader do
 end
 
 defmodule Lifetime.LinkOwner do
-  @moduledoc "Spawns a linked loader that reads its table: the link ends the loader with it."
+  @moduledoc """
+  Spawns a linked loader that reads its table: the link ends the loader
+  with it. The loader is private: a public one would be its users' read
+  too (a way in from outside the program), which outlives the owner.
+  """
   use GenServer
 
   def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
@@ -228,7 +232,7 @@ defmodule Lifetime.LinkOwner do
     {:ok, nil}
   end
 
-  def load, do: :ets.lookup(:lt_link_tab, :seed)
+  defp load, do: :ets.lookup(:lt_link_tab, :seed)
 end
 
 defmodule Lifetime.UnlinkOwner do
