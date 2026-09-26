@@ -136,15 +136,16 @@ defmodule Argus.Analyses.EtsTest do
                Argus.Test.Fixtures.EtsPrivateAndPublicOwner
              ]) == [":configured_cache", ":owner_shared", ":protected_cache"]
 
-      # A temporary or transient tuple child, and one a helper's spec names
-      # by a parameter, are not restarted by their supervisor every time.
+      # A temporary or transient tuple child is not restarted by its
+      # supervisor every time. (One a helper's spec names by a parameter is
+      # read with the call's argument bound: tuple_param_owner is a
+      # permanent child, and quiet.)
       assert tables.([
                :tuple_restart_sup,
                :tuple_temp_owner,
                :tuple_transient_owner,
                :tuple_param_owner
              ]) == [
-               ":tuple_param_owner_tab",
                ":tuple_temp_owner_tab",
                ":tuple_transient_owner_tab"
              ]

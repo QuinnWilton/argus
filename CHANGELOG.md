@@ -23,6 +23,34 @@ restart: :transient` names, and shutdown's "Permanent child stops itself
 and is restarted" no longer reports it (realtime's `Tenants.Connect`,
 `restart: :temporary`).
 
+**Fixed.** The supervision extractor reads a child list in order through
+the local functions that build it, with their parameters bound to the
+call's arguments (a frame), instead of giving up on the first element a
+call writes. A helper's tuple spec (ejabberd_sup's `worker/1`,
+`supervisor/1` through `supervisor/2`, mnesia_kernel_sup's
+`worker_spec/3` with its `[Name] ++ Modules` list) names its child and
+restart; a list joined with `++` or `lists:append/2` is its parts'
+children in order; `Enum.reject(&is_nil/1)` keeps a list's children and
+leaves it closed; `Mod.child_spec(arg)` is the `{Mod, arg}` shorthand
+spelled out; `Supervisor.child_spec/2`'s overrides give the restart and
+type they state; the writes that reach a list on different paths join
+as every child any of them shows, open; and every `{ok, {Flags,
+Children}}` an Erlang init returns is read, as one tree. A map spec is
+rebuilt over its base, and a restart the reader cannot tell is
+`dynamic`, no longer taken for `:permanent`. A tuple a helper handed its
+`name:` keeps that name (DBConnection.App's two named DynamicSupervisor
+children were one unnamed child). Nothing is guessed: an element the
+reader cannot follow (a module from a call, a filter's predicate, an
+`Enum.map`) leaves the list open, and the flat scans stand in for it as
+before, after every child the list shows. Every read spends from one
+budget, so a loop in a function's code ends in "unknown". Over the ETS
+rows round's 19 evaluation sets, 20 "ETS table dies with its owner" rows
+went (every one an owner a supervisor restarts: ejabberd_sup's nine,
+mnesia's five, hexpm's `TmpDir`, logflare's `CircuitBreaker`,
+supavisor's `RefreshLimiter`, ...), and vernemq's "Startup deadlock" at
+`vmq_swc_store`, where the flat scan had misread `vmq_swc_store_sup`'s
+order.
+
 ### Owner lifetime stays :info
 
 **Changed.** ets's "ETS table read while its owner may be restarting"

@@ -506,4 +506,87 @@ defmodule Argus.Extractors.SupervisionTest do
       assert {_, true} = children(S.ContMapped.Sup)
     end
   end
+
+  describe "extract/1 — specs beyond a literal list (the ETS rows round)" do
+    alias Argus.Test.Fixtures.ChildSpecs, as: Specs
+
+    defp facts_of(mod) do
+      {:ok, data} = BeamSpy.BeamFile.disassemble(to_string(:code.which(mod)))
+      Supervision.extract(data)
+    end
+
+    # `{children in position order as {child, restart, type}, open?}`.
+    defp tree(mod) do
+      facts = facts_of(mod)
+
+      rows =
+        for [_sup, pos, child, restart, type] <- Map.get(facts, :supervisor_child, []),
+            do: {String.to_integer(pos), {child, restart, type}}
+
+      {rows |> Enum.sort() |> Enum.map(&elem(&1, 1)),
+       Map.has_key?(facts, :supervisor_children_open)}
+    end
+
+    test "a helper's tuple spec is read with its parameters bound to the call's arguments" do
+      # worker/1, worker_spec/3 (modules `[Name] ++ Modules`), supervisor/1
+      # through supervisor/2, and restart_spec/2 handed `temporary`; the
+      # module configured_owner/0 returns from a call names no child, and
+      # the list is open.
+      assert tree(:spec_helper_sup) ==
+               {[
+                  {inspect(Specs.HelperOwner), "permanent", "worker"},
+                  {inspect(Specs.ModulesOwner), "permanent", "worker"},
+                  {":spec_helper_child_sup", "permanent", "supervisor"},
+                  {inspect(Specs.HelperTempOwner), "temporary", "worker"},
+                  {":spec_helper_last", "permanent", "worker"},
+                  {":spec_helper_restarted", "permanent", "worker"},
+                  {":spec_helper_other_sup", "permanent", "supervisor"}
+                ], true}
+    end
+
+    test "a list joined with ++ is its parts' children, in order, open where a part is unread" do
+      # A conditional helper's child is a child (on the path that starts
+      # it); Specs.Remote.children/0 is another module's list.
+      {children, open?} = tree(Specs.AppendedApp)
+
+      assert Enum.map(children, &elem(&1, 0)) ==
+               ["Registry", inspect(Specs.OptionalOwner), inspect(Specs.AppendedOwner)] ++
+                 [inspect(Specs.MapOwner)]
+
+      assert open?
+    end
+
+    test "Enum.reject(&is_nil/1) keeps a list closed; another predicate opens it" do
+      assert tree(Specs.RejectSup) ==
+               {[
+                  {inspect(Specs.RejectedOwner), "permanent", "worker"},
+                  {"Registry", "permanent", "worker"}
+                ], false}
+
+      assert {_children, true} = tree(Specs.PredicateSup)
+    end
+
+    test "an override's restart, a map's default and a restart from a call" do
+      assert tree(Specs.OverrideSup) ==
+               {[
+                  {inspect(Specs.OverriddenOwner), "temporary", "worker"},
+                  {inspect(Specs.RuntimeMapOwner), "permanent", "worker"},
+                  {inspect(Specs.RuntimeRestartOwner), "dynamic", "worker"}
+                ], false}
+    end
+
+    test "a helper handed a name keeps each child's registered name" do
+      facts = facts_of(Specs.NamedPoolsApp)
+
+      names =
+        for [_sup, pos, name] <- facts[:supervisor_child_name], do: {pos, name}
+
+      assert Enum.sort(names) == [
+               {"0", inspect(Specs.FirstPool)},
+               {"1", inspect(Specs.SecondPool)}
+             ]
+
+      refute Map.has_key?(facts, :supervisor_children_open)
+    end
+  end
 end

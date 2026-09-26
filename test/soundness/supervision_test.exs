@@ -16,7 +16,20 @@ defmodule Argus.Soundness.SupervisionTest do
 
   alias Argus.Test.Fixtures.ChildSpecs, as: Specs
 
-  @modules [Specs.RestartSup, Specs.TransientOwner, Specs.ProvisionerLike, Specs.PermanentStopper]
+  @owners ~w(HelperOwner ModulesOwner HelperTempOwner EnvOwner AppendedOwner OptionalOwner
+             RejectedOwner OverriddenOwner RuntimeMapOwner RuntimeRestartOwner TransientOwner)a
+
+  @modules [
+             :spec_helper_sup,
+             Specs.AppendedApp,
+             Specs.RejectSup,
+             Specs.OverrideSup,
+             Specs.RestartSup,
+             Specs.MapOwner,
+             Specs.Remote,
+             Specs.ProvisionerLike,
+             Specs.PermanentStopper
+           ] ++ Enum.map(@owners, &Module.concat(Specs, &1))
 
   setup_all do
     dies =
@@ -27,9 +40,32 @@ defmodule Argus.Soundness.SupervisionTest do
     %{dies: dies}
   end
 
-  # A shorthand runs under its own child_spec/1's restart: `use
-  # GenServer, restart: :transient` is not restarted after a normal stop.
-  test "a shorthand whose own child_spec/1 says :transient is no excuse", %{dies: dies} do
-    assert Specs.TransientOwner in dies
+  # A restart the spec says is not permanent: handed to a helper, stated
+  # by a Supervisor.child_spec/2 override, or by the shorthand's own
+  # child_spec/1 (`use GenServer, restart: :transient`).
+  for owner <- ~w(HelperTempOwner OverriddenOwner TransientOwner)a do
+    test "#{owner}'s table still dies with it: its spec's restart is not permanent", %{dies: dies} do
+      assert Module.concat(Specs, unquote(owner)) in dies
+    end
+  end
+
+  # A module or a restart the extractor cannot read names no child.
+  for owner <- ~w(EnvOwner RuntimeRestartOwner)a do
+    test "#{owner}'s table still dies with it: its spec is one the extractor cannot read", %{
+      dies: dies
+    } do
+      assert Module.concat(Specs, unquote(owner)) in dies
+    end
+  end
+
+  test "each shape's permanent child is excused", %{dies: dies} do
+    # A helper's tuple spec, a modules list built with ++, a list joined
+    # with ++ (a conditional part's child included), a Mod.child_spec/1
+    # call, Enum.reject(&is_nil/1), a runtime map with the default restart.
+    excused =
+      ~w(HelperOwner ModulesOwner AppendedOwner OptionalOwner RejectedOwner RuntimeMapOwner
+         MapOwner)a
+
+    for owner <- excused, do: refute(Module.concat(Specs, owner) in dies, inspect(owner))
   end
 end

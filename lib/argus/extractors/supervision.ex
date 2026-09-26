@@ -10,10 +10,12 @@ defmodule Argus.Extractors.Supervision do
 
   Reads the module's attributes to detect `@behaviour Supervisor` or
   `use Application`. For supervisors, inspects `init/1`; for application
-  modules, inspects `start/2`. Both paths scan the function's literal
-  table for child spec data. Since child specs are often built at compile
-  time and stored in the literal table, we can extract them without full
-  dataflow analysis.
+  modules, inspects `start/2`. The child list the function hands the
+  supervisor (or returns, for an Erlang init) is read in order through
+  the writes that reach it, into the local functions that build it with
+  their parameters bound; what it hides is marked open, and flat scans
+  of the function's literals and instructions stand in where no list is
+  found.
 
   ## Emitted facts
 
@@ -36,6 +38,8 @@ defmodule Argus.Extractors.Supervision do
 
   alias Argus.Extractor.CallSites
   alias Argus.Extractor.Resolve
+  alias Argus.Extractor.Terms
+  alias Argus.Instr.Reaching
   alias Argus.InstrId
   alias Argus.Pipeline.Normalize
 
@@ -519,11 +523,20 @@ defmodule Argus.Extractors.Supervision do
       |> add_fact(:supervisor, [mod_str, word(strategy)])
       |> add_fact(:supervisor_site, [mod_str, site])
 
+    # An open list's children are those it shows, in its order, and then
+    # what the flat scans find that it does not: where it hides an
+    # element, a scan may still name the child, as before the list was
+    # read in order. Their positions are after every child it shows.
     {children, open?} =
       case child_list(instrs, all_functions) do
-        {:closed, kids} -> {finish_children(kids), false}
-        :open -> {extract_children_with_helpers(instrs, all_functions), true}
-        :none -> {extract_children_with_helpers(instrs, all_functions), false}
+        {:closed, kids} ->
+          {finish_children(kids), false}
+
+        {:open, kids} ->
+          {finish_children(kids ++ extract_children_with_helpers(instrs, all_functions)), true}
+
+        :none ->
+          {extract_children_with_helpers(instrs, all_functions), false}
       end
 
     facts = if open?, do: add_fact(facts, :supervisor_children_open, [mod_str]), else: facts
@@ -571,45 +584,125 @@ defmodule Argus.Extractors.Supervision do
   # ── The child list, read in order ──────────────────────────────────
   #
   # The list the tree function hands Supervisor.init/2 or
-  # Supervisor.start_link/2 (or an Erlang init's `{ok, {Flags,
-  # Children}}` return builds), read element by element, the way the VM
-  # builds it: each cell's head, then what its tail held. `{:closed,
-  # children}` in source order when every element is a spec this
-  # extractor reads (a literal, a module, a `{Mod, args}` tuple, a map
-  # with a `:start`, a `Supervisor.child_spec/2` of one) and the list ends
-  # in a literal; `:open` when an element or the tail is computed: a list
-  # appended from config, an `Enum.map`, a parameter, a spec from a call
-  # it does not read. A local function returning the list is read through
-  # its returns, one level. `:none` when no such list is found; the flat
-  # scans below then read the children as before.
+  # Supervisor.start_link/2, or that an Erlang init's `{ok, {Flags,
+  # Children}}` returns, read element by element the way the VM builds
+  # it: each cell's head, then what its tail held. Every such list the
+  # function returns or hands over is read (init/1's clauses compile into
+  # one function), in order, as one tree.
   #
-  # An open list's children and positions are partial: a child the list
-  # does not show may start after any it lists (supervisor_children_open).
-  @list_depth 2
+  # `{:closed, children}` when every element is a spec this reader reads
+  # and every list ends in one it knows: a literal, a module, a `{Mod,
+  # args}` tuple, a map with a `:start`, OTP's tuple form, a
+  # `Supervisor.child_spec/2` of one, a `Mod.child_spec/1` call (the
+  # shorthand spelled out). `{:open, children}` when an element or a tail
+  # is computed where the reader cannot follow it: a list appended from
+  # config, an `Enum.map`, a spec another module's function builds. The
+  # children an open list does show are still its children, in the order
+  # it shows them; what it hides may sit anywhere among them
+  # (supervisor_children_open). No element is guessed: one the reader
+  # cannot read names no child.
+  #
+  # A local function is read through its returns with its parameters
+  # bound to the call's arguments (a frame), to a bounded depth: a helper
+  # that builds a spec from its parameter (`worker(Mod) -> {Mod, {Mod,
+  # start_link, []}, permanent, ...}`, ejabberd_sup's, mnesia_kernel_sup's
+  # `worker_spec/3`), a helper returning part of the list. A list joined
+  # with `++` (`erlang:'++'/2`, `lists:append/2`) is its operands' children
+  # in order, and one passed through `Enum.reject(&is_nil/1)` keeps every
+  # child it shows (a spec is never nil).
+  #
+  # `:none` when no such list is found; the flat scans below then read the
+  # children as before.
+  @frame_depth 3
+
+  # A value the reader cannot know, inside a term it rebuilds. Not an atom,
+  # so no clause below takes it for a module, a restart or a type.
+  @unknown {:unknown_value}
+
+  # What the reader reads a body with: the function's instructions, the
+  # module's functions, how deep it may still enter a callee, and, when
+  # it entered this body from a call, the caller's frame and the call's
+  # index, where the parameters' values are read.
+  defp frame(body, functions),
+    do: %{body: body, functions: functions, depth: @frame_depth, caller: nil}
+
+  defp enter(frame, body, call_idx),
+    do: %{frame | body: body, depth: frame.depth - 1, caller: {frame, call_idx}}
 
   defp child_list(instrs, functions) do
-    case children_operand(instrs) do
-      nil -> :none
-      {idx, reg} -> read_list(instrs, idx, reg, functions, @list_depth)
+    frame = frame(instrs, functions)
+
+    case children_roots(frame) do
+      [] ->
+        :none
+
+      roots ->
+        fueled(fn ->
+          Enum.reduce(roots, {:closed, []}, fn {idx, operand}, acc ->
+            append(acc, list_operand(frame, idx, operand))
+          end)
+        end)
     end
   end
 
-  defp children_operand(instrs) do
-    indexed = Enum.with_index(instrs)
+  # Every read below spends from one budget per question, so a loop in a
+  # function's code (a receive loop builds nothing, but nothing promises
+  # a list is not built around one) or a chain of helpers ends in
+  # "unknown" instead of running on. The budget is spent in the same order
+  # for the same code, so the answer is a function of the code.
+  @fuel_key :argus_supervision_fuel
+  @fuel 4096
 
-    Enum.find_value(indexed, fn {instr, idx} ->
-      case match_remote_call(instr) do
-        {:ok, Supervisor, f, 2} when f in [:init, :start_link] -> {idx, {:x, 0}}
-        _ -> nil
-      end
-    end) ||
-      Enum.find_value(indexed, fn
-        {{:put_tuple2, _dst, {:list, [{:atom, :ok}, inner]}}, idx} ->
-          erlang_children(instrs, idx, inner)
+  defp fueled(fun) do
+    outer = Process.get(@fuel_key)
+    Process.put(@fuel_key, @fuel)
 
-        _ ->
-          nil
-      end)
+    try do
+      fun.()
+    after
+      if outer, do: Process.put(@fuel_key, outer), else: Process.delete(@fuel_key)
+    end
+  end
+
+  defp spend? do
+    case Process.get(@fuel_key, 0) do
+      n when n > 0 ->
+        Process.put(@fuel_key, n - 1)
+        true
+
+      _ ->
+        false
+    end
+  end
+
+  # Where the child lists are: the first argument of every
+  # Supervisor.init/2 or Supervisor.start_link/2 call, else what an
+  # Erlang init returns as `{ok, {Flags, Children}}`.
+  defp children_roots(frame) do
+    indexed = Enum.with_index(frame.body)
+
+    elixir =
+      for {instr, idx} <- indexed,
+          match?(
+            {:ok, Supervisor, f, 2} when f in [:init, :start_link],
+            match_remote_call(instr)
+          ),
+          do: {idx, {:x, 0}}
+
+    if elixir != [], do: elixir, else: erlang_roots(frame, indexed)
+  end
+
+  defp erlang_roots(frame, indexed) do
+    Enum.flat_map(indexed, fn
+      {{:move, {:literal, {:ok, {_flags, children}}}, _dst}, idx} when is_list(children) ->
+        [{idx, {:literal, children}}]
+
+      {{:put_tuple2, _dst, {:list, [{:atom, :ok}, inner]}}, idx} ->
+        erlang_children(frame.body, idx, inner)
+
+      _ ->
+        []
+    end)
   end
 
   # `{ok, {Flags, Children}}`: the children are the second element of the
@@ -621,118 +714,426 @@ defmodule Argus.Extractors.Supervision do
              {at, {:put_tuple2, _dst, {:list, [_flags, children]}}}, _follow -> {at, children}
              _writer, _follow -> nil
            end) do
-      case element_register(children) do
-        nil -> nil
-        reg -> {at, reg}
-      end
+      [{at, children}]
+    else
+      _ -> []
     end
   end
 
-  defp read_list(_instrs, _idx, _reg, _functions, depth) when depth < 0, do: :open
+  # The children of the list an operand holds at `idx`.
+  defp list_operand(_frame, _idx, nil), do: {:closed, []}
+  defp list_operand(_frame, _idx, {:atom, nil}), do: {:closed, []}
+  defp list_operand(_frame, _idx, {:literal, list}), do: literal_list(list)
 
-  defp read_list(instrs, idx, reg, functions, depth) do
-    Resolve.trace(instrs, idx, reg, :open, fn
-      {at, {:put_list, head, tail, _dst}}, _follow ->
-        with {:ok, kids} <- read_head(instrs, at, head, functions),
-             {:closed, rest} <- read_tail(instrs, at, tail, functions, depth) do
-          {:closed, kids ++ rest}
-        else
-          _ -> :open
-        end
-
-      {at, {:move, operand, _dst}}, _follow ->
-        read_tail(instrs, at, operand, functions, depth)
-
-      {:param, _}, _follow ->
-        :open
-
-      {_at, instr}, _follow ->
-        case match_local_call(instr) do
-          {:ok, _mod, name, arity} -> read_returned_list(functions, name, arity, depth - 1)
-          :none -> :open
-        end
-    end)
-  end
-
-  defp read_tail(_instrs, _idx, nil, _functions, _depth), do: {:closed, []}
-  defp read_tail(_instrs, _idx, {:atom, nil}, _functions, _depth), do: {:closed, []}
-  defp read_tail(_instrs, _idx, {:literal, list}, _functions, _depth), do: read_literal_list(list)
-
-  defp read_tail(instrs, idx, operand, functions, depth) do
+  defp list_operand(frame, idx, operand) do
     case element_register(operand) do
-      nil -> :open
-      reg -> read_list(instrs, idx, reg, functions, depth)
+      nil -> {:open, []}
+      reg -> list_at(frame, idx, reg)
     end
   end
 
-  defp read_literal_list(list) when is_list(list) do
-    specs = Enum.map(list_elements(list), &extract_single_child_spec/1)
-    if Enum.any?(specs, &(&1 == [])), do: :open, else: {:closed, Enum.concat(specs)}
+  # Every write that may have made the list, each read on its own and
+  # joined: a child any of them shows is a child (the list of one
+  # configuration), and lists that disagree leave the list open.
+  defp list_at(frame, idx, reg) do
+    if frame.depth < 0 or not spend?() do
+      {:open, []}
+    else
+      frame.body
+      |> Resolve.writers(idx, reg)
+      |> Enum.map(fn
+        {:param, k} -> through_caller(frame, k, {:open, []}, &list_at/3)
+        at -> list_written(frame, at, Reaching.at(frame.body, at))
+      end)
+      |> join_lists()
+    end
   end
 
-  defp read_literal_list(_other), do: :open
+  defp list_written(frame, at, instr) do
+    case instr do
+      {:put_list, head, tail, _dst} ->
+        cons(element_operand(frame, at, head), list_operand(frame, at, tail))
 
-  defp read_head(instrs, idx, operand, functions) do
-    case operand do
-      {:literal, value} ->
-        spec_or_error(extract_single_child_spec(value))
-
-      {:atom, _} ->
-        spec_or_error(extract_child_from_cons_operand(operand))
+      {:move, operand, _dst} ->
+        list_operand(frame, at, operand)
 
       _ ->
-        case element_register(operand) do
-          nil -> :error
-          reg -> read_head_register(instrs, idx, reg, functions)
+        list_from_call(frame, at, instr)
+    end
+  end
+
+  defp list_from_call(frame, at, instr) do
+    case match_local_call(instr) do
+      {:ok, _mod, name, arity} ->
+        frame
+        |> returned(name, arity, at, &list_at/3, &list_written/3)
+        |> join_lists()
+
+      :none ->
+        case match_remote_call(instr) do
+          {:ok, :erlang, :++, 2} -> appended(frame, at)
+          {:ok, :lists, :append, 2} -> appended(frame, at)
+          {:ok, Enum, :reject, 2} -> without_nils(frame, at)
+          _ -> {:open, []}
         end
     end
   end
 
-  defp read_head_register(instrs, idx, reg, functions) do
-    Resolve.trace(instrs, idx, reg, :error, fn
-      {at, {:put_tuple2, _dst, {:list, elements}}}, _follow ->
-        spec_or_error(extract_child_from_tuple_elements(elements, instrs, at, functions))
+  defp appended(frame, at),
+    do: append(list_at(frame, at, {:x, 0}), list_at(frame, at, {:x, 1}))
 
-      {at, {op, _, _, _, _, {:list, pairs}}}, _follow
-      when op in [:put_map_assoc, :put_map_exact] ->
-        spec_or_error(extract_child_from_map_pairs(pairs, instrs, at))
+  # `Enum.reject(list, &is_nil/1)` drops only nils, and no spec is nil:
+  # every child the list shows survives, and a closed list loses nothing.
+  # Any other predicate may drop a child, which then names none.
+  defp without_nils(frame, at) do
+    if nil_test?(frame, at, {:x, 1}), do: list_at(frame, at, {:x, 0}), else: {:open, []}
+  end
 
-      {at, {:move, operand, _dst}}, _follow ->
-        read_head(instrs, at, operand, functions)
+  defp nil_test?(frame, at, reg) do
+    Resolve.trace(frame.body, at, reg, false, fn
+      {_at, {:make_fun3, {_mod, name, 1}, _index, _uniq, _dst, {:list, []}}}, _follow ->
+        case find_function(frame.functions, name, 1) do
+          nil -> false
+          body -> compares_to_nil?(body)
+        end
 
-      {:param, _}, _follow ->
-        :error
+      _writer, _follow ->
+        false
+    end)
+  end
 
-      {at, instr}, _follow ->
-        # Supervisor.child_spec/2 overrides a spec's fields; the module is
-        # its first argument's.
-        case match_remote_call(instr) do
-          {:ok, Supervisor, :child_spec, 2} -> read_head(instrs, at, {:x, 0}, functions)
+  # `&is_nil/1` compiles to a function of one argument that answers `x0
+  # =:= nil` and returns it.
+  defp compares_to_nil?(body) do
+    case Enum.reject(body, &(match?({:line, _}, &1) or match?({:label, _}, &1))) do
+      [{:func_info, _, _, 1}, {:bif, op, _fail, args, {:x, 0}}, :return]
+      when op in [:"=:=", :==] ->
+        Enum.sort(args) == Enum.sort([{:x, 0}, {:atom, nil}])
+
+      _ ->
+        false
+    end
+  end
+
+  defp cons({:ok, kids}, {closed, rest}), do: {closed, kids ++ rest}
+  defp cons(:error, {_closed, rest}), do: {:open, rest}
+
+  defp append({a, kids}, {b, more}),
+    do: {if(a == :closed and b == :closed, do: :closed, else: :open), kids ++ more}
+
+  # Lists that may each be the one (the writes that reach a register, a
+  # function's returns): the list when they agree; else every child any
+  # of them shows, in the order they show them, and open — which
+  # children start, and where, depends on the path.
+  defp join_lists([]), do: {:open, []}
+
+  defp join_lists(lists) do
+    case Enum.uniq(lists) do
+      [one] -> one
+      several -> {:open, several |> Enum.flat_map(&elem(&1, 1)) |> Enum.uniq()}
+    end
+  end
+
+  defp literal_list(list) do
+    if Terms.proper_list?(list) do
+      specs = Enum.map(list, &extract_single_child_spec/1)
+      closed = if Enum.any?(specs, &(&1 == [])), do: :open, else: :closed
+      {closed, Enum.concat(specs)}
+    else
+      {:open, []}
+    end
+  end
+
+  # ── One element: the spec a list cell holds ────────────────────────
+
+  defp element_operand(_frame, _idx, {:literal, value}),
+    do: spec_or_error(extract_single_child_spec(value))
+
+  defp element_operand(_frame, _idx, {:atom, _} = operand),
+    do: spec_or_error(extract_child_from_cons_operand(operand))
+
+  defp element_operand(frame, idx, operand) do
+    case element_register(operand) do
+      nil -> :error
+      reg -> element_at(frame, idx, reg)
+    end
+  end
+
+  defp element_at(frame, idx, reg) do
+    if frame.depth < 0 or not spend?() do
+      :error
+    else
+      Resolve.trace(frame.body, idx, reg, :error, fn
+        {:param, k}, _follow -> through_caller(frame, k, :error, &element_at/3)
+        {at, instr}, _follow -> element_written(frame, at, instr)
+      end)
+    end
+  end
+
+  defp element_written(frame, at, instr) do
+    case instr do
+      {:put_tuple2, _dst, {:list, elements}} ->
+        spec_or_error(tuple_spec(frame, at, elements))
+
+      {op, _fail, src, _dst, _live, {:list, pairs}} when op in [:put_map_assoc, :put_map_exact] ->
+        spec_or_error(extract_child_from_map_pairs(src, pairs, frame, at))
+
+      {:move, operand, _dst} ->
+        element_operand(frame, at, operand)
+
+      _ ->
+        element_from_call(frame, at, instr)
+    end
+  end
+
+  # A tuple built at run time, rebuilt with the frame's parameters bound
+  # (a helper's `{Mod, {Mod, start_link, []}, permanent, ...}`, the
+  # `name:` a helper passes `{DynamicSupervisor, name: name}`) and read as
+  # a literal is; a two-element tuple names an Elixir module only, as a
+  # runtime tuple always has: `{Mod, args}` is Elixir's shorthand. The
+  # shapes the flat scans read in the function itself stand in where it
+  # names no child (a module chosen by `Keyword.get/3` with a default), and
+  # give a registry via name the rebuilt tuple does not.
+  defp tuple_spec(frame, at, elements) do
+    scanned = extract_child_from_tuple_elements(elements, frame.body, at, frame.functions)
+
+    rebuilt =
+      case written_value(frame, at, {:put_tuple2, nil, {:list, elements}}) do
+        {mod, _args} = spec when is_atom(mod) ->
+          if module_atom?(mod), do: extract_single_child_spec(spec), else: []
+
+        spec ->
+          extract_single_child_spec(spec)
+      end
+
+    case {rebuilt, scanned} do
+      {[{mod, restart, type, nil, form}], [{mod, _, _, via, _}]} ->
+        [{mod, restart, type, via, form}]
+
+      {[_ | _], _} ->
+        rebuilt
+
+      {[], _} ->
+        scanned
+    end
+  end
+
+  defp element_from_call(frame, at, instr) do
+    case match_local_call(instr) do
+      {:ok, _mod, name, arity} ->
+        case frame
+             |> returned(name, arity, at, &element_at/3, &element_written/3)
+             |> Enum.uniq() do
+          [{:ok, _} = one] -> one
           _ -> :error
         end
-    end)
+
+      :none ->
+        case match_remote_call(instr) do
+          {:ok, Supervisor, :child_spec, 2} -> overridden(frame, at)
+          {:ok, mod, :child_spec, 1} -> own_child_spec(mod)
+          _ -> :error
+        end
+    end
+  end
+
+  # `Mod.child_spec(arg)` is what the `{Mod, arg}` shorthand calls: the
+  # same child, read the same way.
+  defp own_child_spec(mod) do
+    if module_atom?(mod),
+      do: {:ok, [{mod, :permanent, :worker, nil, :shorthand}]},
+      else: :error
+  end
+
+  # Supervisor.child_spec/2 overrides a spec's fields: the module is its
+  # first argument's, the restart and the type the overrides' when they
+  # state them. Overrides the reader cannot read may state any restart.
+  defp overridden(frame, at) do
+    with {:ok, specs} <- element_operand(frame, at, {:x, 0}) do
+      overrides = value(frame, at, {:x, 1})
+      {:ok, Enum.map(specs, &override(&1, overrides))}
+    end
+  end
+
+  defp override({mod, restart, type, name, form}, overrides) do
+    if is_list(overrides) and Terms.proper_list?(overrides) and
+         Enum.all?(overrides, &match?({key, _} when is_atom(key), &1)) do
+      restart = Keyword.get(overrides, :restart, restart)
+
+      {type, form} =
+        case Keyword.fetch(overrides, :type) do
+          {:ok, type} -> {type, :explicit}
+          :error -> {type, form}
+        end
+
+      {mod, restart, type, name, form}
+    else
+      {mod, @unknown, type, name, form}
+    end
   end
 
   defp spec_or_error([]), do: :error
   defp spec_or_error(specs), do: {:ok, specs}
 
-  # A local function that returns the child list: the list each of its
-  # returns hands back, when they agree.
-  defp read_returned_list(_functions, _name, _arity, depth) when depth < 0, do: :open
+  # ── Values, with a frame's parameters bound ────────────────────────
+  #
+  # What an operand holds at `idx` as a term, `@unknown` where the reader
+  # cannot tell: a literal is itself, a register what its writes build,
+  # through tuples, lists, maps, `++`, local calls and the caller's
+  # arguments. A writer none of those is read as `Resolve` reads the
+  # register, when that answer holds nothing unknown.
+  defp value(_frame, _idx, {:literal, value}), do: value
+  defp value(_frame, _idx, {:atom, atom}), do: atom
+  defp value(_frame, _idx, {:integer, n}), do: n
+  defp value(_frame, _idx, {:float, x}), do: x
+  defp value(_frame, _idx, nil), do: []
 
-  defp read_returned_list(functions, name, arity, depth) do
-    with body when body != nil <- find_function(functions, name, arity),
-         [_ | _] = returns <-
-           for({:return, at} <- Enum.with_index(body), do: at) do
-      lists = Enum.map(returns, &read_list(body, &1, {:x, 0}, functions, depth))
-
-      case Enum.uniq(lists) do
-        [{:closed, _} = one] -> one
-        _ -> :open
-      end
-    else
-      _ -> :open
+  defp value(frame, idx, operand) do
+    case element_register(operand) do
+      nil -> @unknown
+      reg -> value_at(frame, idx, reg)
     end
+  end
+
+  defp value_at(frame, idx, reg) do
+    if frame.depth < 0 or not spend?() do
+      @unknown
+    else
+      Resolve.trace(frame.body, idx, reg, @unknown, fn
+        {:param, k}, _follow ->
+          through_caller(frame, k, @unknown, &value_at/3)
+
+        {at, instr}, _follow ->
+          case written_value(frame, at, instr) do
+            :other -> resolved(frame, idx, reg)
+            term -> term
+          end
+      end)
+    end
+  end
+
+  defp written_value(frame, at, instr) do
+    case instr do
+      {:put_tuple2, _dst, {:list, elements}} ->
+        elements |> Enum.map(&value(frame, at, &1)) |> List.to_tuple()
+
+      {:put_list, head, tail, _dst} ->
+        case value(frame, at, tail) do
+          tail when is_list(tail) -> [value(frame, at, head) | tail]
+          _ -> @unknown
+        end
+
+      {op, _fail, src, _dst, _live, {:list, pairs}} when op in [:put_map_assoc, :put_map_exact] ->
+        map_value(frame, at, src, pairs)
+
+      {:move, operand, _dst} ->
+        value(frame, at, operand)
+
+      _ ->
+        called_value(frame, at, instr)
+    end
+  end
+
+  # A map's pairs over its base. A base the reader cannot know may hold
+  # any key, which the map then says with an `@unknown` key.
+  defp map_value(frame, at, src, pairs) do
+    base =
+      case value(frame, at, src) do
+        map when is_map(map) -> map
+        _ -> %{@unknown => @unknown}
+      end
+
+    pairs
+    |> Enum.chunk_every(2)
+    |> Enum.reduce(base, fn
+      [key, val], acc -> Map.put(acc, value(frame, at, key), value(frame, at, val))
+      _odd, acc -> Map.put(acc, @unknown, @unknown)
+    end)
+  end
+
+  defp called_value(frame, at, instr) do
+    case match_local_call(instr) do
+      {:ok, _mod, name, arity} ->
+        case frame |> returned(name, arity, at, &value_at/3, &returned_value/3) |> Enum.uniq() do
+          [one] -> one
+          _ -> @unknown
+        end
+
+      :none ->
+        case match_remote_call(instr) do
+          {:ok, :erlang, :++, 2} ->
+            with a when is_list(a) <- value(frame, at, {:x, 0}),
+                 true <- Terms.proper_list?(a),
+                 b when is_list(b) <- value(frame, at, {:x, 1}) do
+              a ++ b
+            else
+              _ -> @unknown
+            end
+
+          {:ok, _mod, _fun, _arity} ->
+            @unknown
+
+          :none ->
+            :other
+        end
+    end
+  end
+
+  defp returned_value(frame, at, instr) do
+    case written_value(frame, at, instr) do
+      :other -> @unknown
+      term -> term
+    end
+  end
+
+  # What `Resolve` makes of the register, when it knows all of it: it
+  # interprets the writers the reader leaves alone (a tuple element, a
+  # pure BIF). A `:dynamic` anywhere in its answer may be its placeholder.
+  defp resolved(frame, idx, reg) do
+    case resolve_register(frame.body, idx, reg) do
+      {:ok, term} -> if Terms.value_contains?(term, &(&1 == :dynamic)), do: @unknown, else: term
+      :dynamic -> @unknown
+    end
+  end
+
+  # ── Frames ─────────────────────────────────────────────────────────
+
+  # A parameter of a body entered from a call is the call's argument, read
+  # in the caller; a parameter of the body the reading started in is
+  # unknown.
+  defp through_caller(%{caller: nil}, _k, none, _read), do: none
+
+  defp through_caller(%{caller: {caller, call_idx}}, k, _none, read),
+    do: read.(caller, call_idx, {:x, k})
+
+  # What each return of the local function `name/arity` hands back,
+  # entered from the call at `call_idx`: `x0` at a `return`, or the call a
+  # return is (`call_last`, `call_ext_last`, `call_only`), read as the
+  # writer of its result.
+  defp returned(frame, name, arity, call_idx, read_at, read_written) do
+    case find_function(frame.functions, name, arity) do
+      nil ->
+        []
+
+      body ->
+        callee = enter(frame, body, call_idx)
+        if callee.depth < 0, do: [], else: returns(callee, read_at, read_written)
+    end
+  end
+
+  # What each return of the frame's own body hands back.
+  defp returns(frame, read_at, read_written) do
+    frame.body
+    |> Enum.with_index()
+    |> Enum.flat_map(fn
+      {:return, at} -> [read_at.(frame, at, {:x, 0})]
+      {instr, at} -> if tail_call?(instr), do: [read_written.(frame, at, instr)], else: []
+    end)
+  end
+
+  defp tail_call?(instr) do
+    match?({:call_last, _, _, _}, instr) or match?({:call_only, _, _}, instr) or
+      match?({:call_ext_last, _, _, _}, instr) or match?({:call_ext_only, _, _}, instr)
   end
 
   # What the flat scans' results go through: a spec naming only the
@@ -1004,9 +1405,9 @@ defmodule Argus.Extractors.Supervision do
       instrs
       |> Enum.with_index()
       |> Enum.flat_map(fn
-        {{op, _, _, _, _, {:list, pairs}}, idx}
+        {{op, _, src, _, _, {:list, pairs}}, idx}
         when op in [:put_map_assoc, :put_map_exact] ->
-          extract_child_from_map_pairs(pairs, instrs, idx)
+          extract_child_from_map_pairs(src, pairs, frame(instrs, functions), idx)
 
         _ ->
           []
@@ -1208,27 +1609,20 @@ defmodule Argus.Extractors.Supervision do
 
   defp extract_child_from_cons_tail(_), do: []
 
-  # Check if a put_map instruction's pairs represent a child spec (has :start key),
-  # resolve the start module, and extract :restart/:type metadata.
-  defp extract_child_from_map_pairs(pairs, instrs, idx) do
+  # A map built at run time is a child spec when it has a `:start` pair:
+  # the map rebuilt over its base, with the frame's parameters bound, and
+  # read as a literal map is.
+  defp extract_child_from_map_pairs(src, pairs, frame, idx) do
     case find_map_pair(pairs, :start) do
-      nil ->
-        []
-
-      start_val ->
-        case resolve_start_module(start_val, instrs, idx) do
-          nil ->
-            []
-
-          mod ->
-            restart = extract_map_atom(pairs, :restart, :permanent)
-            type = extract_map_atom(pairs, :type, :worker)
-            # A map spec's registered name lives inside its :start MFA args,
-            # too deep to read reliably here — leave it unrecorded.
-            form = if find_map_pair(pairs, :type), do: :explicit, else: :shorthand
-            [{mod, restart, type, nil, form}]
-        end
+      nil -> []
+      _start -> map_spec(fueled_value(fn -> map_value(frame, idx, src, pairs) end))
     end
+  end
+
+  # A read begun outside a child list's (a flat scan's map, a start_child's
+  # spec) has a budget of its own; one begun inside spends from the list's.
+  defp fueled_value(fun) do
+    if Process.get(@fuel_key), do: fun.(), else: fueled(fun)
   end
 
   # Find a value by atom key in a flat alternating [key, val, ...] pair list.
@@ -1241,36 +1635,51 @@ defmodule Argus.Extractors.Supervision do
     end)
   end
 
-  # Resolve the start module from a child spec map's :start value.
-  # The value may be a literal tuple, a bare atom, or a register.
-  # `{GenServer, :start_link, [Mod, args, opts]}` starts Mod, not GenServer;
-  # the same for Supervisor/Agent/Task when their first argument names a
-  # module. A Supervisor started on a children list stays "Supervisor" —
-  # an inline nested tree whose children are built elsewhere.
-  defp resolve_start_module({:literal, {behaviour, _, [mod | _]}}, _instrs, _idx)
-       when behaviour in [GenServer, Supervisor, Agent, Task, :gen_server, :gen_statem] and
-              is_atom(mod) and mod != nil,
-       do: mod
+  # A map spec states its restart and its type or takes the supervisor's
+  # defaults, `:permanent` and `:worker`; a key the reader cannot know may
+  # be either field, which is then unknown. The form is `:explicit` when
+  # the map states its type. A map spec's registered name lives inside its
+  # :start MFA args, too deep to read reliably here — left unrecorded.
+  defp map_spec(%{start: start} = map) do
+    case map_start_module(start) do
+      nil ->
+        []
 
-  defp resolve_start_module({:literal, {mod, _, _}}, _instrs, _idx) when is_atom(mod), do: mod
-  defp resolve_start_module({:literal, {mod, _}}, _instrs, _idx) when is_atom(mod), do: mod
-  defp resolve_start_module({:atom, mod}, _instrs, _idx) when is_atom(mod), do: mod
-
-  defp resolve_start_module({:tr, inner, _}, instrs, idx),
-    do: resolve_start_module_reg(inner, instrs, idx)
-
-  defp resolve_start_module({kind, _} = reg, instrs, idx) when kind in [:x, :y],
-    do: resolve_start_module_reg(reg, instrs, idx)
-
-  defp resolve_start_module(_, _, _), do: nil
-
-  defp resolve_start_module_reg(reg, instrs, idx) do
-    case resolve_register(instrs, idx, reg) do
-      {:ok, {mod, _, _}} when is_atom(mod) -> mod
-      {:ok, {mod, _}} when is_atom(mod) -> mod
-      _ -> nil
+      mod ->
+        form = if Map.has_key?(map, :type), do: :explicit, else: :shorthand
+        [{mod, map_field(map, :restart, :permanent), map_field(map, :type, :worker), nil, form}]
     end
   end
+
+  defp map_spec(_map), do: []
+
+  defp map_field(map, key, default) do
+    case Map.fetch(map, key) do
+      {:ok, value} -> value
+      :error -> if Map.has_key?(map, @unknown), do: @unknown, else: default
+    end
+  end
+
+  # The module a map spec's `:start` starts. `{GenServer, :start_link,
+  # [Mod, args, opts]}` starts Mod, not GenServer; the same for
+  # Supervisor/Agent/Task when their first argument names a module. A
+  # Supervisor started on a children list stays "Supervisor" — an inline
+  # nested tree whose children are built elsewhere. A first argument the
+  # reader cannot know names no child.
+  @map_starters [GenServer, Supervisor, Agent, Task, :gen_server, :gen_statem]
+
+  defp map_start_module({behaviour, _fun, [first | _]}) when behaviour in @map_starters do
+    cond do
+      first == @unknown -> nil
+      is_atom(first) and first != nil -> first
+      true -> behaviour
+    end
+  end
+
+  defp map_start_module({mod, _fun, _args}) when is_atom(mod), do: mod
+  defp map_start_module({mod, _args}) when is_atom(mod), do: mod
+  defp map_start_module(mod) when is_atom(mod) and mod != nil, do: mod
+  defp map_start_module(_start), do: nil
 
   # Extract an atom value from a flat pair list, with a default.
   defp extract_map_atom(pairs, key, default) do
@@ -1335,12 +1744,8 @@ defmodule Argus.Extractors.Supervision do
     if module_name?(mod), do: [{mod, :permanent, :worker, child_name(args), :shorthand}], else: []
   end
 
-  defp extract_single_child_spec(%{start: {mod, _, _}} = spec) when is_atom(mod) do
-    restart = Map.get(spec, :restart, :permanent)
-    type = Map.get(spec, :type, :worker)
-    form = if Map.has_key?(spec, :type), do: :explicit, else: :shorthand
-    [{mod, restart, type, nil, form}]
-  end
+  defp extract_single_child_spec(%{start: {mod, _, _}} = spec) when is_atom(mod),
+    do: map_spec(spec)
 
   defp extract_single_child_spec(mod) when is_atom(mod) do
     # A bare-atom child is Elixir shorthand for `{mod, []}`; Erlang code
@@ -1363,16 +1768,25 @@ defmodule Argus.Extractors.Supervision do
   defp spec_module(modules, mod, args) do
     cond do
       not is_list(modules) and modules != :dynamic -> nil
-      is_list(modules) and :dynamic in modules -> nil
+      is_list(modules) and not Terms.proper_list?(modules) -> nil
+      is_list(modules) and (:dynamic in modules or not Enum.all?(modules, &is_atom/1)) -> nil
       match?([m] when is_atom(m) and m not in [nil, true, false], modules) -> hd(modules)
       true -> start_module(mod, args)
     end
   end
 
   # The module a start function starts: its own, or for a behaviour's
-  # start function the first module among its arguments.
-  defp start_module(mod, args) when mod in @starting_behaviours and is_list(args) do
-    Enum.find(args, mod, &(is_atom(&1) and &1 not in [nil, true, false, :dynamic]))
+  # start function the first module among its arguments — none when an
+  # argument before it, or the argument list, is one the reader cannot
+  # know.
+  defp start_module(mod, args) when mod in @starting_behaviours do
+    if is_list(args) and Terms.proper_list?(args) do
+      args
+      |> Enum.take_while(&(&1 != @unknown))
+      |> Enum.find(if(@unknown in args, do: nil, else: mod), fn arg ->
+        is_atom(arg) and arg not in [nil, true, false, :dynamic]
+      end)
+    end
   end
 
   defp start_module(mod, _args), do: mod
