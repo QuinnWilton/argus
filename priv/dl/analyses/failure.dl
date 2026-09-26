@@ -197,38 +197,59 @@ loses_handle(open, drop) :- handle_dropped(open, _, _, drop).
 
 // ── Swallowed errors ─────────────────────────────────────────────
 
-// Catch-all rescue that silently discards exceptions: around the
-// program's own logic, where it turns a bug into silence. A try that
-// protects only sends, signals, calls into other processes and name
-// operations, or a log line (try_boundary), takes a dead peer, a
-// timeout, a taken name or a failed log handler, which is what it was
-// written to tolerate. A catch-all a library wrote (library_written,
-// clientlib/generated.dl: yecc's runtime in a generated parser, a
-// `use`'s expansion) is the library's, not the program's.
-unhandled_failure(func, id, "rescue", "", guard_end) :-
-  bare_rescue(id, func, guard_end),
-  !try_boundary(id, func),
-  !boundary_through_api(id, func),
+// A catch-all rescue discards every exception around the program's own
+// logic, where it turns a bug into silence.
+.decl swallowed_exception(func: symbol, try: symbol)
+
+swallowed_exception(func, try) :-
+  discards_every_exception(try, func),
+  !protects_only_boundaries(try, func),
   !library_written(func).
+
+unhandled_failure(func, try, "rescue", "", guard_end) :-
+  swallowed_exception(func, try),
+  bare_rescue(try, func, guard_end).
+
+// The try at `try` catches every exception without filtering or
+// re-raising (bare_rescue).
+.decl discards_every_exception(try: symbol, func: symbol) inline
+
+discards_every_exception(try, func) :- bare_rescue(try, func, _).
+
+// The try protects only sends, signals, calls into other processes and
+// name operations, or a log line (try_boundary), directly or through a
+// client API (boundary_through_api): it takes a dead peer, a timeout, a
+// taken name or a failed log handler, which is what it was written to
+// tolerate. A catch-all a library wrote (library_written,
+// clientlib/generated.dl: yecc's runtime in a generated parser, a `use`'s
+// expansion) is the library's, not the program's.
+.decl protects_only_boundaries(try: symbol, func: symbol) inline
+
+protects_only_boundaries(try, func) :- try_boundary(try, func).
+protects_only_boundaries(try, func) :- boundary_through_api(try, func).
 
 // The same boundary one hop away: every call the try protects that is
 // not a boundary operation itself is a call to a client API that is
 // (boundary_function: hackney's `hackney_conn:stop(Pid) ->
 // gen_statem:stop(Pid)`, vernemq's `vmq_queue:status/1`).
-.decl boundary_through_api(id: symbol, func: symbol)
+.decl boundary_through_api(try: symbol, func: symbol)
 
-boundary_through_api(id, f) :- try_wrapper_call(id, f, _), !wraps_other(id, f).
+boundary_through_api(try, func) :-
+  try_wrapper_call(try, func, _),
+  !protects_other_call(try, func).
 
 // A protected call that is no boundary function, or one the call graph
 // does not resolve (it names no known boundary), keeps the try reported.
-.decl wraps_other(id: symbol, func: symbol)
+.decl protects_other_call(try: symbol, func: symbol)
 
-wraps_other(id, f) :-
-  try_wrapper_call(id, f, site),
-  call_instr(f, g, site),
-  !boundary_function(g).
+protects_other_call(try, func) :-
+  try_wrapper_call(try, func, call),
+  call_instr(func, callee, call),
+  !boundary_function(callee).
 
-wraps_other(id, f) :- try_wrapper_call(id, f, site), !call_instr(f, _, site).
+protects_other_call(try, func) :-
+  try_wrapper_call(try, func, call),
+  !call_instr(func, _, call).
 
 // ── Exit in GenServer callback ───────────────────────────────────
 
