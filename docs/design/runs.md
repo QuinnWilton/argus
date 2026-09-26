@@ -223,9 +223,89 @@ of them runs again after the start phase.
   enters them. Every clause function is again code as a function; a site
   asks `once_clause_site`.
 - `once_clause_site(site, func)`: every clause the site is in is once.
+- `once_site(site, func)`: the site runs at most once per incarnation,
+  in a clause that runs once or behind a gate on the state that its own
+  run closes (`gated_once_site`, below). The consumers ask this word.
 - `once_clause(func, tag)`, for a reader judging a clause by its tag
   (mailbox's monitor record).
 - `again_root(func, "callback")` now names handle_continue/2 too.
+
+## Once by the state
+
+The producers are one reason a clause runs once. The state is another.
+A GenServer handler asks its state whether it has done a thing yet, does
+it, and records that it has:
+
+```elixir
+def handle_info(:registered, %{registered: false} = state) do
+  schedule_check()
+  {:noreply, %{state | registered: true}}
+end
+```
+
+Whatever sends `:registered` again, the clause finds the field set and
+does not arm the loop. A site runs at most once per incarnation this way
+(`gated_once_site(site, func)`) when all of these hold:
+
+1. **The gate.** Every path from the handler's entry to the site passes
+   a test of a field of the state that admits only some atoms
+   (`state_gate`): a clause head `%{registered: false}`, `if state.timer
+   == nil`, `case state.status do :idle -> ...`, `if state.owner` (nil
+   and false), an Erlang record's `#state{ref = undefined}`.
+2. **Closed.** Every way the handler completes after the site hands back
+   the field outside those atoms, or ends the process (`gate_closed`): a
+   literal outside them, a value no atom is (a fresh ref, the caller in
+   handle_call/3's `from`), a `{:stop, ...}`, a raise.
+3. **Nothing sets it back.** No return of the module's handlers or
+   code_change/3 sets the field to an atom the gate admits, or to a value
+   the return does not show (`state_return`). init/1 starts the field
+   there for each incarnation, and terminate/2's return is dropped.
+4. **Only the loop runs the handler.** Nothing in the program calls it
+   (`call_edge`): a call of a handler with a state of the caller's making
+   runs the site whatever the process holds.
+
+The module is a GenServer, or a wrapper that hands its users GenServer's
+callbacks (`behaves_as`). A result of a shape GenServer does not return
+(Connection's `{:connect, info, state}`, a replication connection's
+`{:noreply, [data], state}`) reads as any state. A server under a
+behaviour the alias table does not know is not read.
+
+Each condition is a positive witness the extractor reads
+(`Argus.Extractors.StateGate`), and each is needed:
+
+- The gate is read on the state the handler was handed: a map pattern,
+  `state.key` (the fast and the slow path), `:erlang.map_get/2` in a
+  guard, a record's field (`get_tuple_element`, `element/2`). A field of
+  a value made from the state (`state.conn.ready`, `Map.get/2`, a
+  helper's answer) is not. The site is walked to once for each atom the
+  function compares the field with, and once for a value it compares
+  with none (another atom, a value of another type, an absent field);
+  the site is gated when that last walk misses it, and admits the atoms
+  whose walks reach it. A struct's `__struct__` is its type, not a
+  status, and is not read.
+- Closing is read over every way the handler completes after the site:
+  its returns and tail calls, the handler of a `try` the site may be
+  inside. A return reads the result's state slot (`{:noreply, state,
+  ...}`, `{:reply, r, state, ...}`), through the local helpers it
+  returns through or hands the state to, and the helper's own returns.
+  A `throw` after the site closes nothing: gen_server takes a thrown
+  value as the handler's result.
+- `state_return` reads every way the handlers and code_change/3
+  complete, for the fields the module's gates test. A value is
+  `dynamic` when it comes from the message, a call the reading does not
+  know, or a state the return does not show (a helper of another
+  module, a state from the message).
+- The fourth: honeydew's `JobMonitor` claims in `handle_call({:claim,
+  job}, {worker, _}, %State{worker: nil})`; if another handler ran
+  `handle_call({:claim, j}, from, %{state | worker: nil})`, the claim
+  would run again.
+
+`gated_once_site` joins `once_clause_site` as `once_site`. The reach of
+code that runs again does not pass a call at a gated site (`gated_edge`
+cuts a handler's callee every call of which is gated; a clause
+function's gated call is no root). Coupling's once code gains the
+gated sites' reach, and a call a handler makes at a gated site is a
+once request.
 
 ## The gen_statem extractor
 
@@ -254,11 +334,11 @@ The extractor also reads `statem_insert` (inserted events).
 ## Consumers
 
 - **Monitors** (mailbox): a leak site is a monitor in again code at a
-  site no once clause holds (`!once_clause_site`). The dropped-ref walk
-  does not pass a call in a once clause. The monitoring clause of the
-  "ended" witness is a clause that runs again.
+  site that does not run once (`!once_site`). The dropped-ref walk
+  does not pass a call at a site that runs once. The monitoring clause of
+  the "ended" witness is a clause that runs again.
 - **Timer loops and subscriptions** (mailbox): a second arm, or a
-  subscription, at a once clause's site is no second path. Their entries
+  subscription, at a site that runs once is no second path. Their entries
   are `again_root`'s callbacks, so a handle_continue/2 clause a handler
   continues to is judged like any handler, and one only init/1 continues
   to is not. This replaces `once_message`, `once_cast`, `sent_again`,
@@ -268,7 +348,8 @@ The extractor also reads `statem_insert` (inserted events).
   clause of the once phase makes directly is a once request.
   handle_continue/2 is once code only for the start's continue chain:
   `start_callback` no longer names it, and a clause only handlers continue
-  to (Livebook's NotebookManager `:dump_state`) is not.
+  to (Livebook's NotebookManager `:dump_state`) is not. A gated site's
+  reach is once code, and a call at one is a once request.
 
 ## What it assumes
 
@@ -284,15 +365,51 @@ The extractor also reads `statem_insert` (inserted events).
   judged.
 - A `start_async` in a clause function counts for every clause of it,
   since the facts do not carry its site.
+- A GenServer's state changes only by its callbacks' results. A
+  `:sys.replace_state/2` from outside, and a result thrown from deeper
+  than the handler itself (gen_server takes it as the result), are not
+  read.
+- The atoms a gate compares its field with are the values that field
+  holds when the gate admits the site: a value of another type never
+  equals one.
 
 ## What it deliberately does not claim
 
 - **Once by protocol.** A message another process sends exactly once, to
   a process it has just started: a Phoenix channel's join, rabbit's
   `{init, Recover}`. The starter is outside the process, and a fresh pid
-  from a starter fun is not known to be fresh.
-- **Once by state.** A clause a status field lets run once. That is the
-  state's to decide (`state_decided`), not the producers'.
+  from a starter fun is not known to be fresh. A witness in the manner
+  of `monitor_started` (a send to the pid a start in the same function
+  answered, of the receiver's own module, the only such send per start)
+  would clear none of the three rows: Phoenix starts the channel through
+  a starter fun it was handed, and rabbit through
+  `rabbit_amqqueue_sup_sup:start_queue_process/2`, a program function
+  that may hand back a process others hold. (Blockster's `:registered`,
+  sent to what `GlobalSingleton.start_link/2` answers, is the same; the
+  state gate clears its two servers.) It is left to the priors: a
+  library's handshake (Phoenix.Channel.Server's join message, a
+  gen_server2 queue's init call) as a fact of the library.
+- **Once by state, where the reading stops.** A gate on a field of a
+  map the state holds (FLAME's `Runner`, `state.runner.status`), in a
+  helper the handler hands its state to (vernemq's connection parsers,
+  whose state is an argument of a receive loop's helpers), a field set
+  to a value the message carries (Livebook's `RuntimeServer` sets
+  `owner` to the one `:attach` names, which may be nil), a membership
+  test (`MapSet.member?(state.monitored, pid)`) that keys the site's
+  once-ness by what it registers. The subscription and dropped-ref walks
+  keep their older reading of any test of the state as deciding
+  (`state_decided`) beside the gate. Over the evaluation sets it
+  suppresses 43 rows (27 monitors, 16 subscriptions). The gate reads one
+  of them itself (blockster's SortedPostsCache subscribes in its
+  `:registered` clause, the BuxBoosterBetSettler shape). The rest test
+  the state in ways the gate does not read: a stored pid compared with
+  the current one (firezone's re-join after its scope restarts), a
+  membership test (exq's mock), a nested field or one the message sets
+  (FLAME, rabbit's mirrored_supervisor), a gate a handler opens again
+  (zotonic's z_db_pgsql). Removing `state_decided` needs the keyed
+  witness the exclusion census names: a state test tracks a
+  registration when the field it reads is one the registering path
+  writes.
 - **A start's message a handler sends again.** For coupling, a clause a
   message enters is once code only when it runs once. A registration made
   in the clause for a message init/1 sends, which a reconnect sends again,
@@ -372,6 +489,48 @@ sent":
 Quiet controls sit beside each group: the once-only shape of each
 producer, ra's re-dispatched named state, and ra's delegating catch-all.
 
+`test/soundness/gated_once_test.exs` asserts the state gate's. Each
+module takes a monitor behind a test of its state whose other arm
+raises, so no other reading of the state decides it, and must keep
+"Monitor taken again with its ref thrown away":
+
+- the gate:
+  - the monitor before the test;
+  - a test of a field of a map the state holds;
+  - a test of `Map.get/2`'s answer;
+  - a head that tests the message, not the state;
+- closed:
+  - the return sets another field;
+  - one way out hands the state back as it came;
+  - a throw after the site;
+  - a catch that raises again what it took, in its own class;
+  - a rescue that hands the state back as it came;
+  - the field set to what the message carries;
+- nothing sets it back:
+  - a handler sets it back to the atom;
+  - a call sets it to what it is handed;
+  - a handler hands the state to a helper that clears it;
+  - a handler returns what a clearing helper returns;
+  - code_change/3 starts it over;
+  - a call replaces the whole state;
+  - an Erlang record's field a call sets back;
+- only the loop runs the handler:
+  - another handler runs it with the field set back;
+  - a client function runs it in its caller's process;
+  - a handler hands it a state of its own making;
+  - a server under a behaviour the alias table does not know.
+
+Quiet beside them: a boolean flag in the head, a nil check, a status
+atom a case takes, an Erlang record's field, closed through a helper, by
+a stop, by the caller in `from`, cleared only in terminate/2, another
+field cleared elsewhere. The timer loop rule keeps "Periodic timer loop
+armed again while it runs" for a loop a gated clause starts when a
+handler sets the field back, and is quiet for blockster's shape, where
+nothing does. Each quiet control fires without the gate
+(`gated_once_site` removed), so each is quiet by it.
+`test/extractors/state_gate_test.exs` pins what the extractor reads at
+each monitor.
+
 ## Measured
 
 Over the 44 evaluation sets (the 26 live projects, the ETS and supervision
@@ -425,3 +584,58 @@ What is left false in these classes is outside the producer question:
 - an unreachable clause;
 - a test helper;
 - a Registry-guarded subscribe.
+
+## Measured: once by the state
+
+Over the same 44 sets, against d2a1d3ad. Every changed row was read
+against its source.
+
+| class | rows before → after | true before → after |
+|---|---|---|
+| Periodic timer loop armed again while it runs | 17 → 16 | 8 → 8 |
+| Monitor taken again with its ref thrown away | 44 → 43 | 4 → 4 |
+| Monitor left live each time a wait returns | 32 → 32 | 8 → 8 |
+| Entry dropped while its process stays monitored | 23 → 23 | 6 → 6 |
+| Subscription made again each time a callback runs | 9 → 9 | 5 → 5 |
+| Coupling (every title) | 36 → 36 | |
+
+- **Gone, 2 rows, both false.**
+  - blockster's `BuxBoosterBetSettler` arms its `:check_unsettled_bets`
+    loop in `handle_info(:registered, %{registered: false})`, which
+    returns `registered: true`; init/1 starts the field false and no
+    return sets it back.
+  - honeydew's `JobMonitor` monitors its worker in `handle_call({:claim,
+    job}, {worker, _}, %State{worker: nil})`, which sets `worker` to the
+    caller's pid; every other return keeps the field or stops the
+    process.
+- **No other row** of any analysis moves, and no encore benchmark row.
+
+Over the sets, 765 sites in 129 handlers are gated, 166 of them closed,
+and 44 (in 9 handlers) run once. Most of the rest are opened again by a
+return of the module (553), or not closed by the clause's own return (a
+value the reading cannot tell from the gate's atom, a return that keeps
+the field). The rows of these classes at a gated site that stay are
+right to:
+- Livebook's `RuntimeServer` `:attach` (the `wait` and the dropped
+  row): `if state.owner` raises, and the clause sets the owner to the one
+  the message names, which may be nil;
+- zotonic's `z_db_pgsql` (three `wait` rows): its idle disconnect sets
+  the connection back to `undefined`;
+- rabbit's `mirrored_supervisor` `reconcile` loop: the head's
+  `overall = undefined` is closed by the supervisor the message names;
+- partisan's plumtree broadcast: its "gate" is a `case` on the engine
+  mode, which every run passes and no run changes.
+
+Exclusions: none deleted, 8 negated atoms added, all in runs.dl's
+definition of the witness:
+- `gated_once_site`'s `!call_edge(_, f)` and `!gate_reopened(s, f, k)`:
+  its soundness conditions, the fourth and third above;
+- `gated_edge`'s complement (`open_edge`: 2 `!open_edge`, 2
+  `!gated_once_site`, `!call_instr`, `!fun_handed`): "every call of the
+  callee is gated", a universal.
+
+The consumers read `once_site` where they read `once_clause_site`
+(mailbox 5 atoms, renamed). The reach of code that runs again asks
+`!once_site(c, h)` in place of `(again_tag_site(c, h) ; !clause_call(c, h,
+_))`, the same set for a clause function, and coupling's once code reads
+`once_phase_site` in place of `start_clause_site`: neither adds an atom.
