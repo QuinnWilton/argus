@@ -357,7 +357,15 @@ transaction_on_another_repo(caller, repo) :-
 .init body_reach = ForwardCallReachCut
 
 body_reach.root(body, body) :- transaction_body(_, _, _, body).
-body_reach.cut(g, h) :- runs_elsewhere(g, h), !awaits_task(g, _, h).
+body_reach.cut(g, h) :- starts_on(g, h), !awaits_task(g, _, h).
+
+// `caller` starts a process on `fun`: a spawn, a task or an agent
+// running it, or a helper that starts one on the fun it is handed. A fun
+// the body only registers or keeps is walked as before.
+.decl starts_on(caller: symbol, fun: symbol)
+
+starts_on(f, g) :- runs_elsewhere(f, g), process_start(_, f, _, kind, g), kind != "server".
+starts_on(f, g) :- runs_elsewhere(f, g), fun_handed_to(f, g, h), fun_sink(h, "start").
 
 .init started_reach = ForwardCallReach
 

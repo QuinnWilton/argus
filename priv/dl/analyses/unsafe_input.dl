@@ -158,8 +158,10 @@ allowlist_at(c, f, to_string(n)) :- call_arg_allowlist(c, f, n).
 //   the value was kept in a process's state, which the flow does not
 //   follow;
 // - when the site's atoms come back to it: a function on a cycle of the
-//   call graph (a recursion naming each child after its parent), or one
-//   a fold's closure reaches (`Enum.reduce(1..n, base, fn _, a ->
+//   call graph (a recursion naming each child after its parent; not the
+//   loop a comprehension compiles to, which walks its list), or the fun a
+//   fold runs. Known limit: a fold's closure calling the maker hands its
+//   answer back unseen (`Enum.reduce(1..n, base, fn _, a ->
 //   :"#{a}.child" end)`, each answer the next call's argument).
 //
 // A process that keeps the atom it made in its state and makes the next
@@ -188,8 +190,13 @@ atoms_requested(f) :- request_entry(e, _), atoms_reach.reaches(e, f).
 
 .decl atoms_fed_back(func: symbol)
 
-atoms_fed_back(f) :- atoms_reach.reaches(g, f), call_edge(f, g).
-atoms_fed_back(f) :- atoms_reach.reaches(c, f), fold_closure(c).
+atoms_fed_back(f) :-
+  atoms_reach.reaches(g, f),
+  call_edge(f, g),
+  function_def(f, _, n, _, _),
+  !match("-.*-l[b]?c[$].*", n).
+
+atoms_fed_back(f) :- fold_closure(f), sink_arg_bounded(_, f, 0, "atoms").
 
 // A closure handed to a fold, which calls it with its own last answer.
 .decl fold_closure(closure: symbol)

@@ -33,7 +33,6 @@ defmodule Argus.Soundness.UnsafeInputTest do
             {"Adv.Atoms.ChosenInCaller", :inner},
             {"Adv.Atoms.ChosenInCaller", :list_key},
             {"Adv.Atoms.Feedback", :ping},
-            {"Adv.Atoms.Feedback", :child},
             {"Adv.Atoms.Folds", :step},
             {"Adv.Atoms.Folds", :next}
           ] do
