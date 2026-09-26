@@ -125,6 +125,8 @@ hidden_from_inspect(mod, field) :- derive_hides(mod, field).
 // Where the fix goes: the field's `redact: true`, or — when the schema
 // derives Inspect itself — that derive's field list. Ecto's own derive
 // hides exactly the redacted fields; any other derive is the schema's.
+// Ecto derives Inspect only for a schema with a redacted field, so a
+// derive in a schema with none is the schema's own.
 .decl hides_unredacted(mod: symbol)
 
 hides_unredacted(mod) :- derive_hides(mod, field), !redacted_field(mod, field).
@@ -148,6 +150,8 @@ hides_via(mod, "redact") :- schema_field(mod, _, _), !own_derive(mod).
 // it differently here. That is a stronger finding than one that never
 // considered it, and the finding text says so — one sequin schema redacts a
 // field while twenty-four of its siblings do not.
+// A schema that hides nothing hides none of its fields either: its
+// "unaware" rows below need not ask about the field.
 .decl schema_redacts_something(mod: symbol)
 
 schema_redacts_something(mod) :- hidden_from_inspect(mod, _).
@@ -188,7 +192,6 @@ unredacted_secret(mod, field, kind, "aware", via, anchor) :-
 
 unredacted_secret(mod, field, kind, "unaware", via, anchor) :-
   sensitive_field(mod, field, kind),
-  !hidden_from_inspect(mod, field),
   !schema_redacts_something(mod),
   hides_via(mod, via),
   schema_anchor(mod, anchor).
@@ -230,7 +233,6 @@ unredacted_secret_inferred(mod, field, kind, "aware", via, p, anchor) :-
 
 unredacted_secret_inferred(mod, field, kind, "unaware", via, p, anchor) :-
   model_named_secret(mod, field, kind, p),
-  !hidden_from_inspect(mod, field),
   !schema_redacts_something(mod),
   hides_via(mod, via),
   schema_anchor(mod, anchor).
