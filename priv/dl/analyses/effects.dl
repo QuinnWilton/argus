@@ -94,6 +94,8 @@ performs_effect(func, "process", "register", id) :-
 
 .decl opaque(func: symbol, reason: symbol, detail: symbol, site: symbol)
 
+// An apply whose module and function resolve (resolved_apply) is
+// followed as the call it is; only an unresolved one is opaque.
 opaque(func, "dynamic_call", kind, id) :-
   dynamic_call(id, func, kind),
   !resolved_apply(id, _, _).
@@ -380,11 +382,13 @@ escapes_transaction(opened, caller, repo, category, api, via, site) :-
   impure_call(site, via, api, category, "write"),
   durable_effect(category).
 
-// Past a start the body does not wait for, or a fun it keeps.
+// Past a start the body does not wait for, or a fun it keeps
+// (started_reach walks through both; on body_reach's own functions it
+// gives the rule above's rows again). What the started process does to
+// the process table is the start's, reported where it starts (see above).
 escapes_transaction(opened, caller, repo, category, api, via, site) :-
   transaction_body(opened, caller, repo, body),
   started_reach.reaches(body, via),
-  !body_reach.reaches(body, via),
   impure_call(site, via, api, category, "write"),
   durable_effect(category),
   category != "process".
