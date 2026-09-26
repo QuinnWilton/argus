@@ -1205,6 +1205,49 @@ monitor_leak_frame(m, s, "dropped", "runs", r) :-
 // ══ A message the module sends itself and cannot handle ═════════════
 //
 // The tag a call or cast sends is staged by stage 0 (`call_tag`).
+
+// The module sends its own server a call or cast whose tag no clause of
+// the server's handler takes, and the handler has no catch-all: the
+// request crashes the server.
+.decl unhandled_own_request(request: symbol, kind: symbol, tag: symbol)
+
+unhandled_own_request(request, kind, tag) :-
+  sends_own_server(request, kind, tag),
+  request_enters(request, kind, handler),
+  !has_clause_for(handler, kind, tag),
+  !takes_any(handler, kind).
+
+reply_defect(mod, sender, "", cat("unhandled_", kind), tag) :-
+  unhandled_own_request(request, kind, tag),
+  call_tag(request, sender, kind, tag),
+  function_def(sender, mod, _, _, _).
+
+// The call or cast at `request` sends `tag` to its module's own server
+// (to_own_server, below).
+.decl sends_own_server(request: symbol, kind: symbol, tag: symbol) inline
+
+sends_own_server(request, kind, tag) :- call_tag(request, _, kind, tag), to_own_server(_, request).
+
+// A request of `kind` from `request` enters `handler`: the sender's
+// module's handle_call/3 for a call, its handle_cast/2 for a cast.
+.decl request_enters(request: symbol, kind: symbol, handler: symbol) inline
+
+request_enters(request, kind, h) :-
+  call_tag(request, sender, kind, _),
+  function_def(sender, mod, _, _, _),
+  kind_callback(kind, callback),
+  handler(mod, callback, h).
+
+// Some clause of the handler compares the tag (callback_tag).
+.decl has_clause_for(handler: symbol, kind: symbol, tag: symbol)
+
+has_clause_for(h, kind, tag) :- kind_callback(kind, callback), callback_tag(h, callback, tag).
+
+// The handler has a catch-all (callback_total).
+.decl takes_any(handler: symbol, kind: symbol)
+
+takes_any(h, kind) :- kind_callback(kind, callback), callback_total(h, callback).
+
 .decl kind_callback(kind: symbol, callback: symbol)
 
 kind_callback("call", "handle_call").
@@ -1271,17 +1314,6 @@ tag_elsewhere(id) :-
   function_def(f, mod, _, _, _),
   other != mod.
 
-// A handler with a clause for the tag, or a catch-all (callback_total),
-// takes it: the bug is a tag no clause can take.
-reply_defect(mod, sender, "", cat("unhandled_", kind), tag) :-
-  call_tag(id, sender, kind, tag),
-  function_def(sender, mod, _, _, _),
-  kind_callback(kind, callback),
-  handler(mod, callback, h),
-  to_own_server(mod, id),
-  !callback_tag(h, callback, tag),
-  !callback_total(h, callback).
-
 // ══ A reply that can never be sent ══════════════════════════════════
 //
 // A handle_call/3 that defers its reply (`defers_reply`,
@@ -1293,9 +1325,18 @@ reply_defect(mod, sender, "", cat("unhandled_", kind), tag) :-
 // {:noreply, _} having never read `from`. That execution cannot reply, no
 // matter what the rest of the program does.
 
-reply_defect(mod, func, id, "dropped_from", "") :-
-  defers_reply(mod, func, id),
-  callback_drops_from(id, func).
+// A handle_call/3 defers its reply at a return some execution reaches
+// without ever reading `from`: nothing can send that reply, and the
+// caller waits.
+.decl unsendable_reply(func: symbol, return: symbol)
+
+unsendable_reply(func, return) :-
+  defers_reply(_, func, return),
+  callback_drops_from(return, func).
+
+reply_defect(mod, func, return, "dropped_from", "") :-
+  unsendable_reply(func, return),
+  defers_reply(mod, func, return).
 
 // ── Not attempted: the reply that is stored and never sent ───────
 //
