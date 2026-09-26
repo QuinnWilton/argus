@@ -303,6 +303,29 @@ defmodule Argus.Soundness.MailboxTest do
     end
   end
 
+  describe "a GenStage the program starts (partial_handler retired)" do
+    alias Argus.Test.Fixtures.PartialInfoStage
+    alias Argus.Test.Soundness.Witness, as: W
+
+    @crash "No handle_info/2 clause for a message the server is sent"
+
+    test "a timer a producer arms for itself (the gen_stage#238 fixture's stage)" do
+      assert {:error, @crash, {PartialInfoStage, :init, 1}} in fired([PartialInfoStage], :mailbox)
+      assert {:error, @crash, {W.StageTimer, :init, 1}} in fired([W.StageTimer], :mailbox)
+    end
+
+    test "a monitor whose :DOWN a producer takes for :normal alone" do
+      assert {:warning, @crash, {W.StageMonitor, :handle_call, 3}} in fired(
+               [W.StageMonitor],
+               :mailbox
+             )
+    end
+
+    test "a message its client API sends a named consumer" do
+      assert {:error, @crash, {W.StageNamed, :flush, 0}} in fired([W.StageNamed], :mailbox)
+    end
+  end
+
   test "lists:map/2 of monitors whose refs are dropped (item 26)" do
     assert Enum.any?(fired([M.ListsMapDropped], :mailbox), &match?({:info, @ref_dropped, _}, &1))
   end

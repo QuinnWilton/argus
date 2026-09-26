@@ -60,6 +60,12 @@ monitor (`{ref, result} when is_reference(ref)`) takes no `:DOWN`, so a
 task that crashes is still reported; a `:DOWN` clause for `:normal`
 alone now is too. The start may be in any module on the server's stack.
 
+**Fixed.** `GenStage.start_link/2,3` and `GenStage.start/2,3` are
+server starts (PidFlow): a GenStage the program starts is a server
+process as one a child spec names already was, and `unhandled_info`
+judges what it is sent (a timer a producer arms for itself with no
+clause for it, a monitor's `:DOWN`, a send to its registered name).
+
 **Added.** A message a timed receive leaves behind: `unhandled_info`'s
 source `late` ("No handle_info/2 clause for a message a timed receive
 leaves behind", `:warning`, anchored at the receive). A function on a

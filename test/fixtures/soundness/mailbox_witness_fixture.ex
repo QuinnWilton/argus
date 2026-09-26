@@ -839,3 +839,67 @@ defmodule Argus.Test.Soundness.Witness.SpawnPoll do
   @impl true
   def handle_info(:tick, work), do: {:noreply, work}
 end
+
+# ── A GenStage the program starts is a server like any other ────────────
+
+defmodule Argus.Test.Soundness.Witness.StageTimer do
+  @moduledoc false
+  # A producer arms a poll for itself and takes only acks.
+  use GenStage
+
+  def start_link(arg), do: GenStage.start_link(__MODULE__, arg)
+
+  @impl true
+  def init(arg) do
+    Process.send_after(self(), :poll, 100)
+    {:producer, arg}
+  end
+
+  @impl true
+  def handle_demand(_demand, state), do: {:noreply, [], state}
+
+  @impl true
+  def handle_info({:ack, _}, state), do: {:noreply, [], state}
+end
+
+defmodule Argus.Test.Soundness.Witness.StageMonitor do
+  @moduledoc false
+  # A producer that monitors its sources and takes a :normal :DOWN alone.
+  use GenStage
+
+  def start_link(arg), do: GenStage.start_link(__MODULE__, arg, name: __MODULE__)
+
+  @impl true
+  def init(arg), do: {:producer, arg}
+
+  @impl true
+  def handle_call({:source, pid}, _from, state) do
+    Process.monitor(pid)
+    {:reply, :ok, [], state}
+  end
+
+  @impl true
+  def handle_demand(_demand, state), do: {:noreply, [], state}
+
+  @impl true
+  def handle_info({:DOWN, _ref, :process, _pid, :normal}, state), do: {:noreply, [], state}
+end
+
+defmodule Argus.Test.Soundness.Witness.StageNamed do
+  @moduledoc false
+  # A named consumer its client API sends :flush to, with no clause for it.
+  use GenStage
+
+  def start_link(arg), do: GenStage.start_link(__MODULE__, arg, name: __MODULE__)
+
+  def flush, do: send(__MODULE__, :flush)
+
+  @impl true
+  def init(arg), do: {:consumer, arg}
+
+  @impl true
+  def handle_events(_events, _from, state), do: {:noreply, [], state}
+
+  @impl true
+  def handle_info(:tick, state), do: {:noreply, [], state}
+end

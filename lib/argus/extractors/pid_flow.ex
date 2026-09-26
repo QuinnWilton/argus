@@ -158,6 +158,10 @@ defmodule Argus.Extractors.PidFlow do
     {GenStateMachine, :start, 3} => {0, {:opts, 2}},
     {GenStateMachine, :start_link, 2} => {0, nil},
     {GenStateMachine, :start_link, 3} => {0, {:opts, 2}},
+    {GenStage, :start, 2} => {0, nil},
+    {GenStage, :start, 3} => {0, {:opts, 2}},
+    {GenStage, :start_link, 2} => {0, nil},
+    {GenStage, :start_link, 3} => {0, {:opts, 2}},
     {Supervisor, :start_link, 3} => {0, {:opts, 2}},
     {:supervisor, :start_link, 2} => {0, nil},
     {:supervisor, :start_link, 3} => {1, {:tuple, 0}}

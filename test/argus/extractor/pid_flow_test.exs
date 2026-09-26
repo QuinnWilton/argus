@@ -113,6 +113,20 @@ defmodule Argus.Extractors.PidFlowTest do
              ] in unsited(f.process_start)
     end
 
+    test "a GenStage start is a server start of its module" do
+      alias Argus.Test.Fixtures.PartialInfoStage
+
+      rows = facts([PartialInfoStage])[:process_start]
+
+      assert Enum.any?(
+               rows,
+               &match?(
+                 [_site, _func, _proc, "server", "Argus.Test.Fixtures.PartialInfoStage"],
+                 &1
+               )
+             )
+    end
+
     test "the site column is the start instruction" do
       f = facts([F.Loops])
 

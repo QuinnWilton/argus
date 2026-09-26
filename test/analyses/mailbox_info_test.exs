@@ -46,9 +46,12 @@ defmodule Argus.Analyses.MailboxInfoTest do
                "Argus.Test.Fixtures.AppliesPartialInfoServer",
                "Argus.Test.Fixtures.InlineOrTaskPartialInfoServer",
                "Argus.Test.Fixtures.PartialInfoServer",
-               "Argus.Test.Fixtures.PartialInfoStage",
                "Argus.Test.Fixtures.SelfSendPartialInfoServer"
              ]
+
+      # The stage's :tick has no clause: unhandled_info names it.
+      assert [[_, _, _, ":tick", "timer", "Argus.Test.Fixtures.PartialInfoStage" | _]] =
+               results["unhandled_info"]
 
       # The monitoring module keeps its warning-grade finding, not this one.
       assert Enum.map(partial(results, "runtime"), fn [mod, _f] -> mod end) ==
