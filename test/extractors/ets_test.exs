@@ -46,6 +46,23 @@ defmodule Argus.Extractors.ETSTest do
       assert {{"done/0", "delete"}, {"self", ""}} in keys
     end
 
+    test "the key matched out of a row a lookup found is the key it asked for" do
+      # The compiler hands the delete the row's element the pinned match
+      # compared with the parameter, not the parameter.
+      keys = keys(:races_pinned_delete)
+
+      assert {{"delete_node/1", "lookup"}, {"param", "0"}} in keys
+      assert {{"delete_node/1", "delete"}, {"param", "0"}} in keys
+    end
+
+    test "the key of a row another lookup found is that lookup's" do
+      keys = keys(:races_pinned_other)
+
+      assert {{"move/2", "lookup"}, {"param", "0"}} in keys
+      assert {{"move/2", "lookup"}, {"param", "1"}} in keys
+      assert {{"move/2", "delete"}, {"param", "1"}} in keys
+    end
+
     test "a tuple spelled out at each site is named by its elements" do
       keys = keys(Argus.Test.Fixtures.MissingRow.InlineTupleKey)
       key = {"tuple", "{param 0, param 1}"}

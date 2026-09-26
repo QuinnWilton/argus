@@ -114,6 +114,7 @@ defmodule Argus.Extractors.Dependence do
   alias Argus.Cfg.Function, as: CfgFunction
   alias Argus.Extractor.CallSites
   alias Argus.Extractor.Helpers
+  alias Argus.Extractor.Resolve
   alias Argus.Extractor.Runtime
   alias Argus.Extractor.ValueFlow
   alias Argus.Extractors.ApiCalls
@@ -280,6 +281,55 @@ defmodule Argus.Extractors.Dependence do
           acc
       end
     end)
+    |> Map.put(:row_keys, row_keys(instrs))
+  end
+
+  # The projections of a row's key out of a row a read found:
+  # %{idx => {read_idx, key_register}}. The key of an ETS row
+  # `:ets.lookup(t, k)` returned (element 0) and of a Mnesia record
+  # `:mnesia.dirty_read(t, k)` returned (element 1) is the key the read
+  # was asked for, and carries what the key carries, not what the table
+  # held: `[{^k, _}] -> :ets.delete(t, k)`, whose compiler may hand the
+  # delete the row's element, deletes the row it was asked for
+  # (Argus.Extractor.Identity reads the key the same way).
+  defp row_keys(instrs) do
+    for {instr, idx} <- Enum.with_index(instrs),
+        {src, n} <- projection(instr),
+        {:ok, read} <- [row_read(instrs, idx, src, n)],
+        into: %{},
+        do: {idx, read}
+  end
+
+  defp projection({:get_tuple_element, src, n, _dst}) when is_integer(n), do: [{src, n}]
+
+  defp projection({:bif, :element, _fail, [{:integer, n}, src], _dst}) when n >= 1,
+    do: [{src, n - 1}]
+
+  defp projection({:gc_bif, :element, _fail, _live, [{:integer, n}, src], _dst}) when n >= 1,
+    do: [{src, n - 1}]
+
+  defp projection(_instr), do: []
+
+  defp row_read(instrs, idx, src, n) do
+    Resolve.trace(instrs, idx, src, :no, fn
+      {at, {:get_list, list, _hd, _tl}}, _follow -> read_of(instrs, at, list, n)
+      {at, {:get_hd, list, _dst}}, _follow -> read_of(instrs, at, list, n)
+      _writer, _follow -> :no
+    end)
+  end
+
+  defp read_of(instrs, at, list, n) do
+    Resolve.trace(instrs, at, list, :no, fn
+      {call_at, instr}, _follow ->
+        case {Helpers.match_remote_call(instr), n} do
+          {{:ok, :ets, :lookup, 2}, 0} -> {:ok, {call_at, "x1"}}
+          {{:ok, :mnesia, :dirty_read, 2}, 1} -> {:ok, {call_at, "x1"}}
+          _ -> :no
+        end
+
+      _writer, _follow ->
+        :no
+    end)
   end
 
   # ── One function ────────────────────────────────────────────────────
@@ -337,7 +387,7 @@ defmodule Argus.Extractors.Dependence do
 
         writes =
           for reg <- Map.get(ctx.index.writes, idx, []),
-              do: {reg, result(idx, reg, inputs, here, ctx)}
+              do: {reg, result(idx, reg, inputs, here, ctx, outs)}
 
         case Map.fetch(ctx.decider_of, idx) do
           {:ok, decider} ->
@@ -387,12 +437,23 @@ defmodule Argus.Extractors.Dependence do
 
   # What the value written at `idx` depends on, given its inputs and the
   # decisions its block runs under.
-  defp result(idx, reg, inputs, here, ctx) do
+  defp result(idx, reg, inputs, here, ctx, outs \\ %{}) do
     base =
       case {Map.fetch(ctx.index.calls, idx), Map.fetch(ctx.index.copies, idx)} do
-        {{:ok, call}, _copy} -> call_result(idx, call, inputs, ctx)
-        {:error, {:ok, copy}} -> copied(copy, reg, inputs)
-        {:error, :error} -> union(inputs) |> element_of(Map.get(ctx.shapes.elements, idx))
+        {{:ok, call}, _copy} ->
+          call_result(idx, call, inputs, ctx)
+
+        {:error, {:ok, copy}} ->
+          copied(copy, reg, inputs)
+
+        {:error, :error} ->
+          case Map.fetch(ctx.shapes.row_keys, idx) do
+            {:ok, {read, key}} ->
+              read |> inputs_of(ctx, outs) |> Map.get(key, MapSet.new())
+
+            :error ->
+              union(inputs) |> element_of(Map.get(ctx.shapes.elements, idx))
+          end
       end
 
     MapSet.union(base, here)
@@ -580,7 +641,13 @@ defmodule Argus.Extractors.Dependence do
     cond do
       Map.has_key?(ctx.index.tails, idx) ->
         inputs = inputs_of(idx, ctx, outs)
-        rows(facts, :returns_reads, [ctx.func_id], result(idx, "x0", inputs, MapSet.new(), ctx))
+
+        rows(
+          facts,
+          :returns_reads,
+          [ctx.func_id],
+          result(idx, "x0", inputs, MapSet.new(), ctx, outs)
+        )
 
       Map.get(ctx.index.ops, idx) == "return" ->
         inputs = inputs_of(idx, ctx, outs)

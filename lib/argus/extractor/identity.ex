@@ -20,7 +20,9 @@ defmodule Argus.Extractor.Identity do
   sites can be joined on: `{"literal", inspected}` for an atom, binary or
   integer; `{"param", "N"}` when it is still the function's parameter N;
   `{"field", key}` when it was read from a map under a literal key;
-  `{"element N", "P"}` when it is element N (from 0) of parameter P; else
+  `{"element N", "P"}` when it is element N (from 0) of parameter P; the
+  key of a row a read found, matched out of it, as the key the read was
+  asked for (an ETS row's element 0, a Mnesia record's element 1); else
   `{"dynamic", ""}`. A lookup and a create that agree on source and key
   name the same thing — the identity-through-a-name idea the timer rules
   use, spelled once.
@@ -59,9 +61,11 @@ defmodule Argus.Extractor.Identity do
                 {"field", key}
 
               :dynamic ->
-                case param_element(instrs, idx, register) do
+                with :no <- param_element(instrs, idx, register),
+                     :no <- row_key(instrs, idx, register, origins) do
+                  local_identity(instrs, idx, register, origins)
+                else
                   {:ok, identity} -> identity
-                  :no -> local_identity(instrs, idx, register, origins)
                 end
             end
         end
@@ -96,6 +100,49 @@ defmodule Argus.Extractor.Identity do
     case Resolve.arg_position(instrs, at, src) do
       {:ok, pos} -> {:ok, {"element #{n}", to_string(pos)}}
       :no -> :no
+    end
+  end
+
+  # The key matched out of a row a read found is the key the read was
+  # asked for: element 0 of an ETS row `:ets.lookup(t, k)` returned (on a
+  # table keyed at its first element), element 1 of a record
+  # `:mnesia.dirty_read(t, k)` returned (row_element/5). A pinned match,
+  # `[{^node, resources}] = lookup(t, node)`, leaves the compiler free to
+  # hand the write the element it compared rather than the variable:
+  # OTP's global:delete_node_resources/2 deletes by the row's element.
+  defp row_key(instrs, idx, register, origins) do
+    Resolve.trace(instrs, idx, register, :no, fn
+      {at, {:get_tuple_element, src, n, _dst}}, _follow ->
+        row_key_element(instrs, at, src, n, origins)
+
+      {at, {:bif, :element, _fail, [{:integer, n}, src], _dst}}, _follow when n >= 1 ->
+        row_key_element(instrs, at, src, n - 1, origins)
+
+      {at, {:gc_bif, :element, _fail, _live, [{:integer, n}, src], _dst}}, _follow when n >= 1 ->
+        row_key_element(instrs, at, src, n - 1, origins)
+
+      _writer, _follow ->
+        :no
+    end)
+  end
+
+  defp row_key_element(instrs, at, src, n, origins) do
+    Resolve.trace(instrs, at, src, :no, fn
+      {list_at, {:get_list, list, _hd, _tl}}, _follow ->
+        found_row(instrs, list_at, list, n, origins)
+
+      {list_at, {:get_hd, list, _dst}}, _follow ->
+        found_row(instrs, list_at, list, n, origins)
+
+      _writer, _follow ->
+        :no
+    end)
+  end
+
+  defp found_row(instrs, at, list, n, origins) do
+    case row_element(instrs, at, list, n, origins) do
+      {"dynamic", _} -> :no
+      identity -> {:ok, identity}
     end
   end
 

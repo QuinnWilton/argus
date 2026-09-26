@@ -25,6 +25,14 @@ hackney's `stop_pool/1`, which stops a pool through `:supervisor` on what
 its lookup found and then deletes the name, is a race whose decision
 does more again.
 
+**Fixed.** The key matched out of a row a read found is the key the read
+was asked for (`Argus.Extractor.Identity.key_identity/4`: an ETS row's
+element 0, a Mnesia record's element 1). A pinned match lets the
+compiler hand the write the element it compared rather than the
+variable, and the pair did not meet: OTP global's
+`delete_node_resources/2` and `delete_global_name2/2` delete by the
+row's element. They meet now, with the global server their only writer.
+
 ### Monitors: "runs again from here" names only callbacks that do
 
 **Fixed.** A monitor-leak finding's "runs again from here" frames were

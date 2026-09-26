@@ -98,6 +98,12 @@ defmodule Argus.Soundness.RacesTest do
     end
   end
 
+  describe "a pinned match's key" do
+    test "the delete keyed by the row's element the match compared" do
+      assert_fires([:races_pinned_delete], @ets, {:races_pinned_delete, :delete_node, 1})
+    end
+  end
+
   describe "a write is judged at the key it names" do
     test "a library's bump/1 its users call with any key, over a literal default" do
       assert_fires([R.TotalsLib], @ets, {R.TotalsLib, :ensure_total, 0})

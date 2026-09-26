@@ -184,6 +184,43 @@ defmodule Argus.Extractors.DependenceTest do
     end
   end
 
+  describe "a row's key" do
+    setup do
+      {:ok, facts} =
+        Argus.Pipeline.extract([:races_pinned_delete, C.CacheRefill], extractors: [Dependence])
+
+      %{keyed: facts}
+    end
+
+    test "is the key the lookup was asked for, not what the table held", %{keyed: facts} do
+      # delete_node/1's delete takes the row's element 0, which the
+      # compiler hands it for the pinned Node: made of the parameter.
+      [delete] = sites_in(facts, "delete_node/1", {:ets, :delete, 2})
+      reads = for [^delete, _f, kind, src] <- facts.site_reads, do: {kind, src}
+
+      assert {"param", "0"} in reads
+      refute Enum.any?(reads, &match?({"site", _}, &1))
+    end
+
+    test "a function answering a delete of it answers nothing the row held", %{keyed: facts} do
+      [lookup] = sites_in(facts, "invalidate/1", {:ets, :lookup, 2})
+      returns = for [f, "site", src] <- facts.returns_reads, f =~ "invalidate/1", do: src
+      refute lookup in returns
+    end
+  end
+
+  defp sites_in(facts, fragment, mfa) do
+    for [site | _] <- facts.site_reads,
+        String.contains?(site, fragment),
+        {:ok, %InstrId{} = id} = InstrId.parse(site),
+        {:ok, data} =
+          Disassemble.disassemble_path(to_string(:code.which(Findings.module_atom(id.module)))),
+        s <- CallSites.index(data.module, data.functions),
+        s.mfa == mfa and InstrId.mint(s.func_id, s.idx) == site,
+        uniq: true,
+        do: site
+  end
+
   describe "sink_reads" do
     setup do
       {:ok, facts} =

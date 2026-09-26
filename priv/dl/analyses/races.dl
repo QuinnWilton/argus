@@ -776,7 +776,9 @@ writer_walk.seed(f, f) :- reads_then_writes(f, _, _, _, _).
 //   rival changes the row: the write puts back the value it read plus its
 //   own change, and the rival's is lost (two callers each add one to the
 //   count they read). A rival that removes the row loses to a write that
-//   makes it again, but not to an update_element, which finds no row;
+//   makes it again, but not to an update_element, which finds no row. A
+//   delete stores nothing: a key it takes from the row it found (a pinned
+//   match's element) is the row's, not a value made of it;
 // - clobber: a write of a value of its own lands on a row a rival counts
 //   in (update_counter, a write-back, an `:atomics` array the row holds):
 //   Hammer's first insert over the bucket another hit already counted;
@@ -1177,6 +1179,7 @@ state_reader(g) :- remote_call(_, g, m, n, a), h = cat(m, ":", n, "/", to_string
 
 ets_harm_by(f, r, w, "lost_update", w2, h) :-
   ets_carried.carries(f, r, w),
+  value_write(w),
   rival(f, r, w, w2, h),
   changes_row(w2),
   !removes_row(w2).
