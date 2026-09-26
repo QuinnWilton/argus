@@ -228,15 +228,17 @@ handles_that_message(cancel, msg) :- cancel_clause(cancel, _, msg).
 // local the send_after returned (`ref = send_after(...); work();
 // cancel_timer(ref)`). No state key pairs them; the arming site does.
 // The function runs again on the next request, so a message the timer
-// delivered before the cancel is handled as the next run's.
+// delivered before the cancel is handled as the next run's. The clause
+// that takes the same message is no excuse here (handles_that_message is
+// the kept key's): this timer was armed after the message being handled
+// arrived, so what it delivers is always one left behind.
 timer_cancel_without_flush(mod, cancel, cancel, "", message, cancel_site, arm_site) :-
   cancels_local(cancel_site, cancel, arm_site),
   local_message(arm_site, message),
   in_module(cancel, mod),
   !init_function(mod, cancel),
   !runs_only_on_the_way_out(cancel),
-  !flushes_after_cancel(cancel_site, message),
-  !handles_that_message(cancel_site, message).
+  !flushes_after_cancel(cancel_site, message).
 
 // A cancel of a timer the same function armed and kept in a local.
 .decl cancels_local(cancel_site: symbol, cancel: symbol, arm_site: symbol) inline
@@ -2121,13 +2123,14 @@ second_arm(mod, lit, e, c, g, b) :-
 
 // A callback that runs the loop's clause itself, handing handle_info/2
 // the loop's own message (`def handle_cast(:now, s), do: handle_info(:tick, s)`).
+// The loop's own clause is no exception: it arms on every path, so its
+// call back into itself arms a second timer beside its own re-arm.
 second_arm(mod, lit, e, c, f, a) :-
   loop_arm(mod, lit, a, f, _),
   looping_server(mod, h),
   rearm_entry(mod, e),
   call_instr(e, h, c),
   call_arg(e, h, 0, lit),
-  !tick_clause(c, e, lit),
   !once_clause(c, e).
 
 // How the loop keeps its ref: dropped where it is armed, or under a
