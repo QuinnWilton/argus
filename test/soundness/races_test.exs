@@ -23,6 +23,7 @@ defmodule Argus.Soundness.RacesTest do
   @ets {:warning, "Read-then-write race on an ETS key"}
   @stale {:info, "ETS row refilled on a stale read"}
   @record {:warning, "Read-then-write race on a Mnesia record"}
+  @registry {:warning, "Lookup-then-start race on a process name"}
 
   defp assert_fires(modules, {severity, title}, mfa) do
     found = fired(modules, :races)
@@ -43,6 +44,12 @@ defmodule Argus.Soundness.RacesTest do
 
     test "a counter's reset/1 shared with a janitor in another process" do
       assert_fires([R.JanitorCounter, R.Janitor], @ets, {R.JanitorCounter, :handle_call, 3})
+    end
+
+    test "two servers each looking a name up and registering it" do
+      found = fired([R.RegCache, R.RegWeb, R.RegJobs], :races)
+      assert {:warning, elem(@registry, 1), {R.RegWeb, :handle_call, 3}} in found
+      assert {:warning, elem(@registry, 1), {R.RegJobs, :handle_cast, 2}} in found
     end
 
     test "a Mnesia lease released on its owner while a transaction takes it over" do
@@ -142,6 +149,16 @@ defmodule Argus.Soundness.RacesTest do
 
     test "a fill from Mnesia and an update that writes the cache itself" do
       assert_fires([R.FillOverUpdate], @stale, {R.FillOverUpdate, :get, 1})
+    end
+  end
+
+  describe "a second claimant of a name" do
+    test "a server's first use and its library's ensure/0" do
+      assert_fires([R.RegCache, R.RegServer], @registry, {R.RegServer, :handle_call, 3})
+    end
+
+    test "a server and a task it starts per message" do
+      assert_fires([R.RegCache, R.RegTaskClaim], @registry, {R.RegTaskClaim, :handle_cast, 2})
     end
   end
 

@@ -10,7 +10,9 @@ defmodule Argus.Analyses.Races do
   - `registry_race(mod, func, lookup_api, create_api, key_source, key,
     check, act)` — a lookup of a process name decides a start,
     registration or unregistration of the same name, the losing outcome
-    is taken nowhere, and more than one process can run `func`: the
+    is taken nowhere, and a second claimant can act in the window: more
+    than one process runs `func`, or another process claims the same
+    name (two servers that each start one cache on first use): the
     lookup-then-start race, and its release twin,
     lookup-then-unregister. `key_source` says how `func` names the key
     (`literal`, `param`, `field`, `local`, `dynamic` or `any`).

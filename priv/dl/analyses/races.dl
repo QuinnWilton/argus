@@ -176,6 +176,53 @@ returned_and_used(a) :- act_returned_by(a, g), result_used(g).
 
 runs.seed(f) :- names.meets(f, _, _, _, _, _, _).
 
+// ── Who else can claim the name ──
+//
+// The race needs a second claimant in the window: the function where the
+// pair meets runs in more than one process, so two of its callers can
+// both see the name free; or it runs in one, and another process claims
+// the same name — two servers that each start the same cache on first
+// use, each with its own copy of the check. A claim of the same name is
+// a start, registration or unregistration naming it as a literal, in the
+// same registry, where it is made or where a caller hands a claiming
+// helper the literal.
+.decl claims_name(act: symbol, func: symbol, scope: symbol, key: symbol)
+
+claims_name(a, g, scope, k) :- creating_op(a, g, api, scope, "literal", k), api != "start_child".
+claims_name(a, g, "", k) :- name_release(a, g, _, "literal", k).
+
+claims_name(a, g, scope, k) :-
+  creating_op(a, h, api, scope, "param", q),
+  api != "start_child",
+  call_arg(g, h, n, k),
+  k != "dynamic",
+  q = to_string(n).
+
+runs.seed(g) :- claims_name(_, g, _, _).
+
+.decl pair_scope(func: symbol, act: symbol, scope: symbol)
+
+pair_scope(f, a, scope) :- names.meets(f, _, a, "literal", scope, _, _).
+
+// Another process claims the pair's name while the pair's own process is
+// between its lookup and its act.
+.decl other_claimant(func: symbol, act: symbol)
+
+other_claimant(f, a) :-
+  names.meets(f, _, a, _, _, "literal", k),
+  pair_scope(f, a, scope),
+  runs.single_process(f),
+  runs.entry_reaches(m, f),
+  claims_name(a2, g, scope, k),
+  a2 != a,
+  runs.runs_apart_from(m, g).
+
+// Two processes can claim the name in the window.
+.decl claimants(func: symbol, act: symbol)
+
+claimants(f, a) :- names.meets(f, _, a, _, _, _, _), !runs.single_process(f).
+claimants(f, a) :- other_claimant(f, a).
+
 .decl registry_race(mod: symbol, func: symbol, lookup_api: symbol, create_api: symbol, key_source: symbol, key: symbol, check: symbol, act: symbol)
 .output registry_race
 
@@ -187,7 +234,7 @@ registry_race(mod, f, lookup_api, create_api, key_source, key, check, act) :-
   function_def(f, mod, _, _, _),
   !loser_taken(f, act),
   !loser_dropped(f, act),
-  !runs.single_process(f).
+  claimants(f, act).
 
 // ── Read, then write ─────────────────────────────────────────────
 //

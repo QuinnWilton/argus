@@ -83,6 +83,54 @@ defmodule Argus.Test.Soundness.Races.Janitor do
   end
 end
 
+defmodule Argus.Test.Soundness.Races.RegCache do
+  # A bare cache process two servers start lazily under one name, each
+  # with its own copy of the check.
+  def loop(m) do
+    receive do
+      {:put, k, v} -> loop(Map.put(m, k, v))
+    end
+  end
+end
+
+defmodule Argus.Test.Soundness.Races.RegWeb do
+  use GenServer
+
+  def start_link(o), do: GenServer.start_link(__MODULE__, o, name: __MODULE__)
+
+  @impl true
+  def init(o), do: {:ok, o}
+
+  @impl true
+  def handle_call({:remember, k, v}, _from, s) do
+    if Process.whereis(:sound_reg_cache) == nil do
+      Process.register(spawn(Argus.Test.Soundness.Races.RegCache, :loop, [%{}]), :sound_reg_cache)
+    end
+
+    send(:sound_reg_cache, {:put, k, v})
+    {:reply, :ok, s}
+  end
+end
+
+defmodule Argus.Test.Soundness.Races.RegJobs do
+  use GenServer
+
+  def start_link(o), do: GenServer.start_link(__MODULE__, o, name: __MODULE__)
+
+  @impl true
+  def init(o), do: {:ok, o}
+
+  @impl true
+  def handle_cast({:remember, k, v}, s) do
+    if Process.whereis(:sound_reg_cache) == nil do
+      Process.register(spawn(Argus.Test.Soundness.Races.RegCache, :loop, [%{}]), :sound_reg_cache)
+    end
+
+    send(:sound_reg_cache, {:put, k, v})
+    {:noreply, s}
+  end
+end
+
 defmodule Argus.Test.Soundness.Races.LeaseRelease do
   # A lease lock in Mnesia: acquire runs in a transaction and takes over
   # an expired lease; release checks the owner with a dirty read and
@@ -514,6 +562,61 @@ defmodule Argus.Test.Soundness.Races.LibraryReset do
   def handle_info({:reset, k}, s) do
     reset(k)
     {:noreply, s}
+  end
+end
+
+# ── Registry: another process claims the name ─────────────────────────
+
+defmodule Argus.Test.Soundness.Races.RegServer do
+  # A server that starts a named sink on first use, and a public ensure/0
+  # its library's users call from their own processes.
+  use GenServer
+
+  def start_link(o), do: GenServer.start_link(__MODULE__, o, name: __MODULE__)
+
+  @impl true
+  def init(o), do: {:ok, o}
+
+  @impl true
+  def handle_call(:log, _from, s) do
+    if Process.whereis(:sound_reg_sink) == nil do
+      Process.register(spawn(Argus.Test.Soundness.Races.RegCache, :loop, [%{}]), :sound_reg_sink)
+    end
+
+    {:reply, :ok, s}
+  end
+
+  def ensure do
+    if Process.whereis(:sound_reg_sink) == nil do
+      Process.register(spawn(Argus.Test.Soundness.Races.RegCache, :loop, [%{}]), :sound_reg_sink)
+    end
+
+    :ok
+  end
+end
+
+defmodule Argus.Test.Soundness.Races.RegTaskClaim do
+  # A server whose handle_cast claims a name, and a task it starts per
+  # message that claims the same name in a process of its own.
+  use GenServer
+
+  def start_link(o), do: GenServer.start_link(__MODULE__, o, name: __MODULE__)
+
+  @impl true
+  def init(o), do: {:ok, o}
+
+  @impl true
+  def handle_cast(:go, s) do
+    if Process.whereis(:sound_reg_task) == nil do
+      Process.register(spawn(Argus.Test.Soundness.Races.RegCache, :loop, [%{}]), :sound_reg_task)
+    end
+
+    Task.start(fn -> claim() end)
+    {:noreply, s}
+  end
+
+  defp claim do
+    Process.register(self(), :sound_reg_task)
   end
 end
 
