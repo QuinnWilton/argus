@@ -114,6 +114,42 @@ classes of one risk get one severity.
 | [`exposure`](#exposure) | 4 | secrets that `inspect/1` prints, and TLS that does not verify the peer |
 | [`coverage`](#coverage) | 5 | extractor coverage and imprecision (meta-analysis, opt-in) |
 
+## Soundness assumptions of the suppressions (review 2)
+
+Each suppression below holds only under its stated assumption; the
+fixtures named break it one way each and must stay reported
+(test/soundness/*_test.exs).
+
+- Atoms of atoms (unsafe_input): the atoms that exist are not the
+  caller's choice and not the site's own. Broken by: a lookup in the
+  caller or two calls up, Erlang's list lookup, a request's path, mutual
+  recursion, a fold, Stream.iterate. Known limit: an atom kept in process
+  state and remade by a runtime callback is not reported either way.
+- Bound counts (unsafe_input): counts multiply; same-description joins
+  are one set. Broken by: two ranges, a range beside two values,
+  branches of 600 joined, four literals × 512.
+- Signed cookies (unsafe_input): the read is of a listed key, off the
+  returned conn's `cookies`. Broken by: `req_cookies`, a stale conn,
+  options the request chose, `Map.get` and a match of an unlisted key.
+- Template dispatch (unsafe_input): crossed only for a literal name.
+  Broken by: a literal render, a name a helper hands down, a direct call.
+- Task streams (unsafe_input): enumerated by the request's own process.
+  Broken by: spawn, a start helper, a supervised start, a stream run in
+  a task. Known limit: a stream returned to a caller that runs it in a
+  task.
+- Found programs (unsafe_input): the program is not a wrapper or an
+  interpreter (a denylist). Broken by: sudo, xargs, timeout, lua, awk,
+  a literal env, a caller's search path.
+- Transaction starts (effects): past a start not awaited only
+  process-table effects are left out. Broken by: a raw spawn, a fun
+  reference, a start helper, a yielded async_nolink.
+- Server TLS (exposure): `verify` a TLS option of the server's, no
+  client CA. Broken by: a variable under `plug:`, a CA under
+  transport_options, a verify_fun, a Keyword.merge with cacerts.
+- Tooling (every analysis): nothing of the product calls the module.
+  Broken by: a release task, a `lib/**/test/` context a controller
+  calls. Known limit: a module reached only by a dynamic call.
+
 ## Vocabulary
 
 The rules of every concern are written in a shared vocabulary, defined once in

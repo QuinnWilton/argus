@@ -16,16 +16,71 @@
 // a module the prior is unsure of stays the product: the word errs
 // quiet, toward the structural severity.
 //
+// A module the product calls into is not tooling, whatever its name or
+// path: the deployed system runs it. akkoma's `pleroma_ctl` runs Mix
+// tasks inside the live node (Pleroma.ReleaseTasks.run/1 calls
+// Mix.Tasks.Pleroma.*.run/1), and an exam platform's `lib/exam/test/`
+// is its Test context, which its controllers call. "Calls" is the call
+// graph from a module that is not itself named tooling, and on through
+// the named modules it reaches. Known limit: a call the graph does not
+// resolve (akkoma finds the task module by name and applies it) leaves
+// the module tooling.
+//
 // An analysis includes this file and declares `.output tooling`; its
 // rows re-tier the analysis's findings and are no findings themselves.
+// Requires imports.dl.
 
 .decl tooling(mod: symbol, basis: symbol, permille: number)
 
-tooling(m, basis, 1000) :- tooling_module(m, basis).
+tooling(m, basis, p) :- tooling_named(m, basis, p), !product_reached(m).
 
-// 0.9 is where the calibration measured 8 of 9 re-tiers right over the
-// modules holding a finding in the evaluation programs.
-tooling(m, "prior", p) :-
+// What the structure or the prior names. 0.9 is where the calibration
+// measured 8 of 9 re-tiers right over the modules holding a finding in
+// the evaluation programs.
+.decl tooling_named(mod: symbol, basis: symbol, permille: number)
+
+tooling_named(m, basis, 1000) :- tooling_module(m, basis).
+
+// A test helper outside a test directory: a module that sets tests up
+// or asserts in them (ExUnit.Callbacks, ExUnit.Assertions, ExUnit.Case).
+// Not every ExUnit caller: Livebook's Doctests runs ExUnit's runner and
+// doctests inside the product.
+tooling_named(m, "test_support", 1000) :- exunit_helper(m).
+
+tooling_named(m, "prior", p) :-
   prior_tooling(m, _, _, p),
   p >= 900,
+  !tooling_module(m, _),
+  !exunit_helper(m).
+
+.decl exunit_helper(mod: symbol)
+
+exunit_helper(m) :-
+  function_def(f, m, _, _, _),
+  remote_call(_, f, callee, _, _),
+  (callee = "ExUnit.Callbacks" ; callee = "ExUnit.Assertions" ; callee = "ExUnit.Case"),
   !tooling_module(m, _).
+
+.decl named_tooling(mod: symbol)
+
+named_tooling(m) :- tooling_named(m, _, _).
+
+// A named module a module of the product calls, or one such a module
+// calls in turn.
+.decl product_reached(mod: symbol)
+
+product_reached(m) :-
+  named_tooling(m),
+  function_def(g, m, _, _, _),
+  call_edge(c, g),
+  function_def(c, cm, _, _, _),
+  cm != m,
+  !named_tooling(cm).
+
+product_reached(m) :-
+  product_reached(from),
+  function_def(c, from, _, _, _),
+  call_edge(c, g),
+  function_def(g, m, _, _, _),
+  m != from,
+  named_tooling(m).

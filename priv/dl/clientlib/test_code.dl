@@ -3,9 +3,14 @@
 // A dev or test build compiles test support with the program
 // (Plausible's TestUtils, a DataCase, a ConnCase), and some functions
 // of the program proper are called from nowhere else: a buffer's
-// `flush/0` that only the test helpers call. A module that calls into
-// ExUnit is test code; a function of the program that test code
-// reaches, and nothing outside it, runs only under test.
+// `flush/0` that only the test helpers call. Test support is what
+// tooling.dl's structure names it (`tooling` basis "test_support":
+// compiled from a test/support directory, or from a test directory
+// within a lib/, and called by no product module) — one definition of
+// the word. A module that calls into ExUnit is not by that test code:
+// Livebook's Doctests runs a notebook's doctests in the product. A
+// function of the program that test code reaches, and nothing outside
+// it, runs only under test.
 //
 // For choosing among sites, not for judging them: a rule that has
 // several places to point at points at the one the program itself
@@ -13,14 +18,11 @@
 // helpers call reads as run only under test too, which is why no rule
 // quiets a finding on it.
 //
-// Requires imports.dl.
+// Requires imports.dl and tooling.dl.
 
 .decl test_module(mod: symbol)
 
-test_module(m) :-
-  function_def(f, m, _, _, _),
-  remote_call(_, f, callee, _, _),
-  match("ExUnit([.].*)?", callee).
+test_module(m) :- tooling(m, "test_support", _).
 
 .decl test_code(func: symbol)
 

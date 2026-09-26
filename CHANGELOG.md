@@ -129,6 +129,56 @@ initializes its git submodules (aprs.me vendors its `aprs` dependency).
 **Corpus.** Ten fix pairs: aprs.me@37c9ac7, aprs.me@9212088, phoenix_live_dashboard#495, realtime#1229, thousand_island#78, nerves_hub_web#2588, broadway_sqs@5b8f18a, broadway_cloud_pub_sub@fb44279, off_broadway_redis_stream#58.
 
 **Precision.** Over the eighteen live projects: remote pids 0 rows; rpc 1 (true); lost handles 5 (4 true); static render 2 (true); repeated subscription 1 (false, a tuple once-message); drain 0.
+### Soundness, round 2: unsafe_input, effects, exposure, tooling
+
+Real bugs the precision rounds' suppressions had silenced, each back at
+its earlier severity with the shape the suppression was for kept quiet
+where that is sound. Every probe of the review and three or more
+neighbours of each are permanent fixtures in `test/soundness/`.
+
+- **Fixed** (unsafe_input) an atom made of atoms is no bound where the
+  atoms are the caller's choice: made of an existing-atom lookup
+  (`String.to_existing_atom/1`, here or in a caller — new relations
+  `sink_arg_chosen`, `call_arg_chosen`), reached by a request, or fed
+  back to the site (a recursion, a fold's closure). `sink_arg_bounded`
+  marks such a bound `list_param` "atoms". Schema 120.
+- **Fixed** (unsafe_input) a bound counts its values: pieces multiply
+  (`"tile_#{x}_#{y}"` over two ranges of 1,024 is the whole table),
+  joined literals are a set, and the limit of 1,024 is on the total.
+  A path made of atoms met by one bounded by a caller's list is no bound
+  (it was the list's).
+- **Fixed** (unsafe_input) `fetch_cookies/2` carries the request again;
+  only a read of a cookie its `signed:`/`encrypted:` options name, off the
+  conn it returned, is the server's (ParamFlow.Cookies).
+- **Fixed** (unsafe_input) the flow crosses a view's name dispatch to a
+  render naming the template literally (and any non-dispatching caller);
+  the request's own params rendered into a sink are `flow` again.
+- **Fixed** (unsafe_input) a task stream is bounded only when the
+  request's own process enumerates it: reached through a start, or built
+  where a start runs it, it is unbounded. Task.Supervisor's ops are
+  clientlib's `task_supervisor_op`.
+- **Fixed** (unsafe_input) exec wrappers, remote shells, container execs
+  and more interpreters (env, sudo, xargs, timeout, ssh, docker, mix,
+  php, lua, awk, ...) run their arguments; `:os.find_executable/2` names
+  its program only for a literal search path.
+- **Fixed** (unsafe_input) a process that makes a socket active takes a
+  peer's bytes in handle_info/2: no runtime callback.
+- **Fixed** (unsafe_input) a prior answers per function: of a function
+  holding two sinks it re-tiers neither.
+- **Fixed** (ways_in) only `__name__` reflection of no arguments (and a
+  named few lookups) is no export; one taking data is a way in.
+- **Fixed** (effects) the transaction walk steps into awaited tasks, and
+  past a start it does not wait for reports what the new process does
+  outside the process table (a supervised task's webhook is network I/O
+  before the commit, `:error`); Task.Supervisor is a process effect.
+- **Fixed** (exposure) a server's `verify_none` is its own only as a TLS
+  option (top level or under transport/socket option keys) and only when
+  its options name no client CA, `verify_fun` or `fail_if_no_peer_cert`.
+- **Fixed** (tooling) a module product code calls is not tooling; a sink
+  a request reaches keeps its severity; code execution is floored at
+  `:warning` past a value prior too. Test code (clientlib/test_code.dl)
+  is tooling's test support, including helpers calling ExUnit.Callbacks,
+  ExUnit.Assertions or ExUnit.Case — one definition.
 
 ### Priors, round 3: tooling, and programs found on PATH
 

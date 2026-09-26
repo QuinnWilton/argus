@@ -14,9 +14,10 @@ defmodule Argus.Findings.Tooling do
   anchored in such a module down one level (`retier/2`) and says why.
   An `:info` finding stays `:info`; nothing is removed. A builder that
   puts `floor: severity` in its attributes bounds the step, and Build
-  drops the key: unsafe_input's code execution a request reaches is
-  never below `:warning`, whatever a prior says (the rubric's Sinks
-  paragraph).
+  drops the key: unsafe_input's code execution is never below
+  `:warning`, whatever a prior says (the rubric's Sinks paragraph), and
+  a sink a request reaches keeps its severity — the deployed system
+  answers requests, whatever the module's name says.
 
   How the module is known is the row's `basis`:
 
@@ -119,8 +120,19 @@ defmodule Argus.Findings.Tooling do
     }
   end
 
-  defp step_down(%{severity: :info}), do: :info
-  defp step_down(%{severity: :error}), do: :warning
-  defp step_down(%{floor: :warning}), do: :warning
-  defp step_down(%{severity: :warning}), do: :info
+  # One level down, and no lower than the builder's floor (which never
+  # lifts a finding above where it was).
+  defp step_down(%{severity: severity} = finding) do
+    floor = Map.get(finding, :floor, :info)
+    highest(lower(severity), if(rank(floor) <= rank(severity), do: floor, else: severity))
+  end
+
+  defp lower(:error), do: :warning
+  defp lower(_warning_or_info), do: :info
+
+  defp highest(a, b), do: if(rank(a) >= rank(b), do: a, else: b)
+
+  defp rank(:error), do: 2
+  defp rank(:warning), do: 1
+  defp rank(:info), do: 0
 end
