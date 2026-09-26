@@ -521,17 +521,32 @@ named_read(name, caller, site) :-
 // The owner is table_held's: the process whose stack runs the
 // :ets.new/2, a helper module's named table included (the server whose
 // init/1 calls `Metrics.setup()` holds it, and `Metrics.lookup/1`, run
-// by callers, reads it from outside). Not a table the read's operand
-// cannot name (read_misses).
+// by callers, reads it from outside). Not an owner that lives as long as
+// its application (application_lifetime), and not a table the read's
+// operand cannot name (read_misses).
 ets_read_outside_owner(name, owner, reader, site, id) :-
   table_held(name, p, owner, id),
-  !process_root(_, p, _, "app"),
+  !application_lifetime(p),
   !ets_option(id, "heir", "true"),
   named_read(name, reader, site),
   !owner_reaches(p, owner, reader),
   !read_guarded(reader, site),
   !read_when_present(site),
   !read_misses(site, id).
+
+// A process whose exit is its application's: the process an
+// Application's start/2 runs in, and the supervisor that start/2 starts
+// and no other supervisor in view does (application_root,
+// supervision.dl), whose death stops the application. Nothing restarts
+// either, so no read meets the table gone while the application runs:
+// the lifetime ets_application_owner excuses from dying with its owner,
+// asked of the process here. A worker start/2 starts, a supervisor
+// another tree also starts, a keeper a root supervisor spawns and a
+// table one of its children makes each have a restart of their own.
+.decl application_lifetime(proc: symbol)
+
+application_lifetime(p) :- process_root(_, p, _, "app").
+application_lifetime(p) :- process_root(_, p, m, "server"), application_root(m).
 
 // ── What a read's operand can name ──
 //

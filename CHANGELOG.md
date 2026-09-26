@@ -34,6 +34,19 @@ atom named on one branch and unnamed on the other, a table whose options
 come from its start arguments, a caller's literal through a helper, and
 a parameter's field.
 
+**Fixed.** The same rule excused an Application's start/2 process as an
+owner that lives as long as its application, but not the supervisor
+that start/2 starts, which "ETS table dies with its owner" already
+excuses (`application_root`, FP hunt round 3): when it dies the
+application stops and nothing restarts it, so no read meets its table
+gone while the application runs. `application_lifetime` is both, asked
+of the owner's process. Gone: 20 rows at tables emqx's exhook,
+multi-tenancy, S3, JWT and rule-engine root supervisors, hackney_sup,
+and vernemq's swc and generic message store roots keep. Still reported:
+a root supervisor another tree also starts, one a start/2 that is no
+Application's starts, a supervisor nothing starts, a worker start/2
+starts, a keeper the root spawns and a child it supervises.
+
 ### Soundness round 2c (schema 122)
 
 Review 2 found suppressions that silenced real bugs next to the false

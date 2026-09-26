@@ -3,9 +3,10 @@ defmodule Argus.Soundness.EtsTest do
   Review 2's probes and their adversarial neighbours for the ets analysis:
   real bugs a suppression once silenced, each pinned at the severity the
   rule gives it without the suppression (round sound2c). The ETS rows
-  round (etsrows) adds the neighbours of its quieting of "read while its
-  owner may be restarting": a read cannot reach a table its operand
-  cannot name.
+  round (etsrows) adds the neighbours of its two quietings of "read while
+  its owner may be restarting": a read cannot reach a table its operand
+  cannot name, and an application's root supervisor restarts only with
+  its application.
   """
   use ExUnit.Case, async: true
 
@@ -57,7 +58,22 @@ defmodule Argus.Soundness.EtsTest do
     Rows.Ets.UnnamedOwner,
     Rows.Ets.OwnScratchReader,
     Rows.Ets.ScratchAtomServer,
-    Rows.Ets.ConfiguredOptions
+    Rows.Ets.ConfiguredOptions,
+    :rows_snapshot_reader,
+    :root_app,
+    :root_app_sup,
+    :dual_app,
+    :dual_sup,
+    :outer_sup,
+    :fake_app,
+    :fake_root_sup,
+    :branch_sup,
+    :worker_app,
+    :worker_owner,
+    :rows_root_app,
+    :rows_root_sup,
+    :rows_root_child,
+    :rows_root_tabs
   ]
 
   setup_all do
@@ -126,7 +142,21 @@ defmodule Argus.Soundness.EtsTest do
     {:warning, "ETS table read while its owner may be restarting",
      {Rows.Ets.StateTableReader, :peek, 2}},
     {:warning, "ETS table read while its owner may be restarting",
-     {Rows.Ets.ConfiguredOptions, :read, 1}}
+     {Rows.Ets.ConfiguredOptions, :read, 1}},
+    # An owner with a restart of its own, beside an application's root:
+    # a supervisor another tree also starts, one a start/2 that is no
+    # Application's starts, one nothing starts, a worker start/2 starts,
+    # a keeper the root spawns, and the root's child.
+    {:warning, "ETS table read while its owner may be restarting",
+     {:rows_snapshot_reader, :dual, 1}},
+    {:warning, "ETS table read while its owner may be restarting",
+     {:rows_snapshot_reader, :fake, 1}},
+    {:warning, "ETS table read while its owner may be restarting",
+     {:rows_snapshot_reader, :branch, 1}},
+    {:warning, "ETS table read while its owner may be restarting",
+     {:rows_snapshot_reader, :worker, 1}},
+    {:warning, "ETS table read while its owner may be restarting", {:rows_root_tabs, :keeper, 1}},
+    {:warning, "ETS table read while its owner may be restarting", {:rows_root_tabs, :child, 1}}
   ]
 
   @quiet [
@@ -136,7 +166,9 @@ defmodule Argus.Soundness.EtsTest do
     {S2c.Ets.Gauges, :get, 1},
     {S2c.Own.AgentStart, :"-start_link/1-fun-0-", 0},
     {Rows.Ets.UnnamedOwner, :first, 0},
-    {Rows.Ets.OwnScratchReader, :count, 1}
+    {Rows.Ets.OwnScratchReader, :count, 1},
+    {:rows_snapshot_reader, :root, 1},
+    {:rows_root_tabs, :lookup, 1}
   ]
 
   for {severity, title, mfa} <- @fires do
