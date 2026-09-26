@@ -94,17 +94,47 @@ remote_pid_probe(f, a, id, bif, api, kind) :-
 .decl rpc_undefined(func: symbol, anchor: symbol, site: symbol, callee: symbol, why: symbol)
 .output rpc_undefined
 
-// The module's beam is the program's, so what it exports is known: the
-// same release runs on the other node.
-rpc_undefined(f, a, id, g, "missing") :-
-  rpc_runs(f, a, id, m, g),
-  program_module(m),
-  !function_def(g, _, _, _, _).
+// An rpc runs a function of one of our modules, and the module does not
+// define it.
+.decl rpc_to_missing_function(func: symbol, anchor: symbol, rpc: symbol, callee: symbol)
 
-rpc_undefined(f, a, id, g, "private") :-
-  rpc_runs(f, a, id, m, g),
-  program_module(m),
-  function_def(g, m, _, _, 0).
+rpc_to_missing_function(func, anchor, rpc, callee) :-
+  rpc_runs(rpc, callee, module, func, anchor),
+  our_module(module),
+  !defines(module, callee).
+
+// An rpc runs a function of one of our modules, and the module defines it
+// but does not export it.
+.decl rpc_to_private_function(func: symbol, anchor: symbol, rpc: symbol, callee: symbol)
+
+rpc_to_private_function(func, anchor, rpc, callee) :-
+  rpc_runs(rpc, callee, module, func, anchor),
+  our_module(module),
+  defines(module, callee),
+  !exports(module, callee).
+
+rpc_undefined(func, anchor, rpc, callee, "missing") :-
+  rpc_to_missing_function(func, anchor, rpc, callee).
+
+rpc_undefined(func, anchor, rpc, callee, "private") :-
+  rpc_to_private_function(func, anchor, rpc, callee).
+
+// A module of the analyzed program: its beam is the one the other node
+// runs (the same release runs on every node), so what it defines and
+// exports is known. An rpc into a dependency or OTP says nothing.
+.decl our_module(module: symbol) inline
+
+our_module(module) :- program_module(module).
+
+// The module defines the function, exported or not.
+.decl defines(module: symbol, func: symbol) inline
+
+defines(module, func) :- function_def(func, module, _, _, _).
+
+// The module exports the function.
+.decl exports(module: symbol, func: symbol) inline
+
+exports(module, func) :- function_def(func, module, _, _, 1).
 
 // ══ A handle lost on an error path ══════════════════════════════
 

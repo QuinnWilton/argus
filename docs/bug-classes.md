@@ -499,8 +499,8 @@ than more; it errs loud when the same uncertainty can add a finding.
 
 ### What an rpc runs
 
-- **Names.** `rpc_holder`, `rpc_runs` (rpc_targets.dl), over `rpc_callee`, `rpc_mfa_param` and `mfa_arg`.
-- **Meaning.** `rpc_runs(f, anchor, site, mod, callee)` says the rpc at `site` runs `callee` of `mod` on another node, named by f's literals: at the rpc itself, or at f's call (`anchor`) into a wrapper whose parameters in a row are the rpc's module, function and argument list (`rpc_holder`, through a closure the wrapper builds and through wrappers that forward the three in the same positions).
+- **Names.** `forwards_to_rpc`, `rpc_runs` (rpc_targets.dl), over `rpc_callee`, `rpc_mfa_param` and `mfa_arg`.
+- **Meaning.** `rpc_runs(rpc, callee, module, f, anchor)` says `rpc` runs `callee` of `module` on another node, named by f's literals: at the rpc itself, or at f's call (`anchor`) into a wrapper whose parameters in a row are the rpc's module, function and argument list (`forwards_to_rpc`, through a closure the wrapper builds and through wrappers that forward the three in the same positions).
 - **Direction.** Errs quiet: a wrapper that builds its argument list, or takes the three out of order, runs nothing known.
 - **Used by.** failure.
 

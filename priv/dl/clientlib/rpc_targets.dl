@@ -14,22 +14,27 @@
 //
 // Prerequisites: include clientlib/imports.dl before this file.
 
-// `func`'s parameters pos, pos + 1 and pos + 2 are the module, function
-// and argument list the rpc at `site` runs.
-.decl rpc_holder(func: symbol, pos: number, site: symbol)
+// The wrapper's parameters pos, pos + 1 and pos + 2 are the module,
+// function and argument list the rpc runs: it makes the rpc with them
+// (rpc_mfa_param), or hands them in the same positions to a wrapper that
+// does.
+.decl forwards_to_rpc(wrapper: symbol, pos: number, rpc: symbol)
 
-rpc_holder(w, p, id) :- rpc_mfa_param(id, w, p).
+forwards_to_rpc(wrapper, pos, rpc) :- rpc_mfa_param(rpc, wrapper, pos).
 
-rpc_holder(w, j, id) :-
-  rpc_holder(v, p, id),
-  call_arg_forward(w, v, p, j),
-  call_arg_forward(w, v, p + 1, j + 1),
-  call_arg_forward(w, v, p + 2, j + 2).
+forwards_to_rpc(wrapper, pos, rpc) :-
+  forwards_to_rpc(inner, inner_pos, rpc),
+  call_arg_forward(wrapper, inner, inner_pos, pos),
+  call_arg_forward(wrapper, inner, inner_pos + 1, pos + 1),
+  call_arg_forward(wrapper, inner, inner_pos + 2, pos + 2).
 
-// `func` runs `callee`, a function of module `mod`, on another node
-// through the rpc at `site`: its own (`anchor` = `site`), or a
-// wrapper's it hands the three at `anchor`.
-.decl rpc_runs(func: symbol, anchor: symbol, site: symbol, mod: symbol, callee: symbol)
+// The rpc runs `callee`, a function of `module`, on another node, named
+// by literals in `func`: at the rpc itself (`anchor` is the rpc), or at
+// `func`'s call (`anchor`) into a wrapper that forwards them to the rpc.
+.decl rpc_runs(rpc: symbol, callee: symbol, module: symbol, func: symbol, anchor: symbol)
 
-rpc_runs(f, id, id, m, g) :- rpc_callee(id, f, m, g).
-rpc_runs(f, a, id, m, g) :- mfa_arg(a, f, w, p, m, g), rpc_holder(w, p, id).
+rpc_runs(rpc, callee, module, func, rpc) :- rpc_callee(rpc, func, module, callee).
+
+rpc_runs(rpc, callee, module, func, anchor) :-
+  mfa_arg(anchor, func, wrapper, pos, module, callee),
+  forwards_to_rpc(wrapper, pos, rpc).
