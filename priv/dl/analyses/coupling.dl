@@ -246,66 +246,128 @@ keeping_basis("handed", "inferred").
 
 // ══ A permanent child depending on a sibling that may not come back ═
 //
-// Permanent child that depends (transitively) on a sibling whose
-// restart policy can leave it dead: a transient child that stops
-// normally is never restarted, and a temporary child is never restarted
-// at all — strictly worse. Either way the permanent child keeps running
-// against a process that no longer exists.
-//
-// sup_site anchors at the tree definition; witness is a function in the
-// permanent child through which the dependency flows. One row per
-// witness — finding builders dedupe on (sup, permanent, sibling). A child
-// that reaches the sibling's module only through instances it started
-// for itself (private_module_dep) never meets the supervised sibling's
-// absence.
-sibling_dependency(sup, perm, sibling, "restart_policy", restart, sup_site, witness, witness, basis, p) :-
+// A transient child that stops normally is never restarted, and a
+// temporary child is never restarted at all — strictly worse. One row
+// per witness — finding builders dedupe on (sup, permanent, sibling).
+
+// A permanent child depends on a sibling whose restart policy can leave
+// it down, and keeps running against a process that no longer exists.
+.decl dependency_on_unrestarted_sibling(sup: symbol, child: symbol, sibling: symbol, restart: symbol, witness: symbol)
+
+dependency_on_unrestarted_sibling(sup, child, sibling, restart, witness) :-
+  permanent_child(sup, child),
+  may_stay_down(sup, sibling, restart),
+  depends_on(child, sibling, witness),
+  !only_own_instances(child, sibling).
+
+// `child` is a child of sup whose spec says :permanent, as the extractor
+// reads it: a shorthand spec reads as :permanent whatever the module's
+// child_spec/1 says (child_restart, supervision.dl, would say otherwise).
+.decl permanent_child(sup: symbol, child: symbol)
+
+permanent_child(sup, child) :-
   supervisor(sup, _),
-  supervisor_site(sup, sup_site),
-  supervisor_child(sup, _, perm, "permanent", _),
+  supervisor_child(sup, _, child, "permanent", _).
+
+// `sibling` is a child of sup under a restart policy that can leave it
+// dead (`restart`).
+.decl may_stay_down(sup: symbol, sibling: symbol, restart: symbol)
+
+may_stay_down(sup, sibling, restart) :-
   supervisor_child(sup, _, sibling, restart, _),
-  (restart = "transient" ; restart = "temporary"),
-  stateful_module_dep(perm, sibling, witness),
-  !private_module_dep(perm, sibling),
-  dep_basis(perm, sibling, basis, p).
+  leaves_down(restart).
+
+// A restart policy under which a child can exit and stay gone.
+.decl leaves_down(restart: symbol)
+
+leaves_down("transient").
+leaves_down("temporary").
+
+// A function of `from` (`witness`) depends on `to`'s process, through a
+// call, a cast, or a reach to `to`'s module that makes a call somewhere
+// (stateful_module_dep, calls.dl; how is `basis`).
+.decl depends_on(from: symbol, to: symbol, witness: symbol) inline
+
+depends_on(from, to, witness) :- stateful_module_dep(from, to, witness).
+
+// A supervisor with no site of its own is not reported.
+sibling_dependency(sup, child, sibling, "restart_policy", restart, sup_site, witness, witness, basis, permille) :-
+  dependency_on_unrestarted_sibling(sup, child, sibling, restart, witness),
+  supervisor_site(sup, sup_site),
+  dep_basis(child, sibling, basis, permille).
 
 // ── A sibling's pid cached in init/1 under one_for_one ───────────────
 //
-// init/1 looks a sibling up by name and keeps the pid; under
-// :one_for_one the sibling restarts alone and the cached pid is a
-// dead process from then on — every call :noproc, every send lost
-// (k8s 99c05d6 replaced such pids with :via names; oban#1413 and
-// #1499 are the inverse, registrations made with a sibling that its
-// restart forgets). :rest_for_one and :one_for_all restart the holder
-// too; a :temporary target is never restarted. A handler must use the
-// pid: process points-to follows a handler's call, cast or send to the
-// process registered under the name, through anything but the name
-// itself (a call by name each time is the fix). Where the name resolves
-// to no process points-to knows, a handler's call to some pid it cannot
-// follow stands in, as it did before points-to.
-sibling_dependency(sup, mod, name, "cached_pid", "", sup_site, f, f, "resolved", 0) :-
-  init_function(mod, f),
-  name_lookup(_, f, "whereis", _, "literal", name, _),
+// k8s 99c05d6 replaced such pids with :via names; oban#1413 and #1499
+// are the inverse, registrations made with a sibling that its restart
+// forgets. :rest_for_one and :one_for_all restart the holder too.
+
+// init/1 looks a sibling up by name and keeps the pid, and a handler
+// calls it: under one_for_one the sibling restarts alone and the cached
+// pid is a dead process from then on — every call :noproc, every send
+// lost.
+.decl cached_sibling_pid(sup: symbol, mod: symbol, name: symbol, init: symbol)
+
+cached_sibling_pid(sup, mod, name, init) :-
+  caches_pid(mod, init, name),
+  sibling_restarts_alone(sup, mod, name),
+  handler_calls_cached_pid(mod, name).
+
+// mod's init/1 looks up the process registered under a literal `name`
+// (whereis).
+.decl caches_pid(mod: symbol, init: symbol, name: symbol)
+
+caches_pid(mod, init, name) :-
+  init_function(mod, init),
+  name_lookup(_, init, "whereis", _, "literal", name, _).
+
+// mod is a child of a one_for_one supervisor, and so is the process
+// `name` names (a child module or a child's registered name): the
+// supervisor restarts that sibling without restarting mod.
+.decl sibling_restarts_alone(sup: symbol, mod: symbol, name: symbol)
+
+sibling_restarts_alone(sup, mod, name) :-
   supervisor_child(sup, _, mod, _, _),
   supervisor(sup, "one_for_one"),
-  supervisor_site(sup, sup_site),
-  (supervisor_child(sup, _, name, _, _) ; supervisor_child_name(sup, _, name)),
-  handler_function(mod, h),
-  uses_cached_pid(h, name).
+  child_named(sup, name).
 
-.decl uses_cached_pid(handler: symbol, name: symbol)
+// `name` is a child of sup's module or registered name.
+.decl child_named(sup: symbol, name: symbol)
 
-uses_cached_pid(h, name) :-
-  process_call(h, _, site, _, p),
-  named_pid(name, p),
-  pid_use(site, _, _, sk, _),
-  sk != "name".
+child_named(sup, name) :- supervisor_child(sup, _, name, _, _).
+child_named(sup, name) :- supervisor_child_name(sup, _, name).
 
-uses_cached_pid(h, name) :-
-  name_lookup(_, f, "whereis", _, "literal", name, _),
-  init_function(mod, f),
-  handler_function(mod, h),
+// A handler of mod uses the pid rather than the name: process points-to
+// follows a handler's call, cast or send to the process registered under
+// the name, through anything but the name itself (a call by name each
+// time is the fix). Where the name resolves to no process points-to
+// knows, a handler's call to some pid it cannot follow stands in, as it
+// did before points-to.
+.decl handler_calls_cached_pid(mod: symbol, name: symbol)
+
+handler_calls_cached_pid(mod, name) :-
+  handler_function(mod, handler),
+  process_call(handler, _, site, _, pid),
+  named_pid(name, pid),
+  pid_use(site, _, _, target_kind, _),
+  target_kind != "name".
+
+handler_calls_cached_pid(mod, name) :-
+  caches_pid(mod, _, name),
+  handler_function(mod, handler),
   !named_pid(name, _),
-  (sync_call(h, "dynamic") ; async_cast(h, "dynamic")).
+  calls_unknown_pid(handler).
+
+// func calls or casts to a pid the extractor could not name.
+.decl calls_unknown_pid(func: symbol)
+
+calls_unknown_pid(func) :- sync_call(func, "dynamic").
+calls_unknown_pid(func) :- async_cast(func, "dynamic").
+
+// A supervisor with no site of its own is not reported.
+sibling_dependency(sup, mod, name, "cached_pid", "", sup_site, init, init, "resolved", 0) :-
+  cached_sibling_pid(sup, mod, name, init),
+  supervisor_site(sup, sup_site).
 
 // ── rest_for_one: a later child owns processes inside an earlier one ──
 //
