@@ -51,6 +51,41 @@ defmodule Argus.Extractors.CallbackTagTest do
     assert every.(F.TrapsTakingNormalExits) == [{":DOWN", "5"}]
   end
 
+  test "a :DOWN clause takes every reason unless it tests the reason" do
+    alias Argus.Test.Fixtures, as: F
+    alias Argus.Test.Soundness.Witness, as: W
+
+    down = fn mod ->
+      {:ok, data} = BeamSpy.BeamFile.disassemble(to_string(:code.which(mod)))
+
+      for [_f, "handle_info", type] <-
+            Map.get(CallbackTag.extract(data), :callback_takes_down, []),
+          do: type
+    end
+
+    # The ref pinned to the state and a state field compared are the
+    # program's: the clause takes its monitors' :DOWN, whatever the reason.
+    assert down.(F.MonitorsTakingEveryDown) == ["process"]
+    assert down.(F.MonitorsWithoutCatchall) == ["process"]
+    assert down.(F.MonitorsDownWhenActive) == ["process"]
+    # A :normal clause and a catch-all reason clause take every reason
+    # between them; so does a clause that decides on the reason in its body.
+    assert down.(W.DownSplitReasons) == ["process"]
+    assert down.(W.DownReasonInBody) == ["process"]
+    # The type left alone takes a port's :DOWN too.
+    assert down.(W.PortDownAnyType) == ["any"]
+    # A reason literal, a guard on it or a pattern leaves the runtime's other
+    # reasons to no clause.
+    for mod <- [
+          W.DownOnlyNormal,
+          W.DownGuardIn,
+          W.DownShutdownOnly,
+          F.MonitorsDownGuardedByReason
+        ] do
+      assert down.(mod) == [], inspect(mod)
+    end
+  end
+
   test "a catch-all that ignores or logs the message drops it; one that hands it on does not" do
     %{drops: drops} = facts([U.Listeners, U.Repair, U.Ticker, U.Delegates, U.Handled])
     assert "Listeners:handle_info/2" in drops

@@ -1434,9 +1434,33 @@ receive_reach.seed(f) :- recv_pattern(_, f, _).
 
 info_message(m, f, id, "{:DOWN, …}", "monitor") :-
   monitor_call(id, f, _),
+  monitor_type(id, t),
+  sends_down(t),
   runs_in_server(m, f),
   !receive_reach.reaches(f),
   !flush.reaches(f).
+
+// A process's or a port's monitor sends a `{:DOWN, ref, type, object,
+// reason}`; one whose type is not a literal is taken for one of them. A
+// :time_offset monitor sends a clock service's {:CHANGE, …} instead.
+.decl sends_down(type: symbol)
+
+sends_down("process").
+sends_down("port").
+sends_down("dynamic").
+
+// A clause of `h` takes every :DOWN the monitor at `id` sends, whatever
+// reason the runtime gives it (callback_takes_down): one for its type,
+// or for any type. The ref, the object and the state are the program's
+// (a clause pinning the ref takes the monitor whose ref the state keeps);
+// the reason is the runtime's, and a clause guarding it
+// (`when reason != :normal`) leaves the others to no clause. A monitor
+// whose type is not a literal is read as a process's.
+.decl down_taken(handler: symbol, id: symbol)
+
+down_taken(h, id) :- monitor_type(id, t), callback_takes_down(h, "handle_info", t).
+down_taken(h, id) :- monitor_type(id, _), callback_takes_down(h, "handle_info", "any").
+down_taken(h, id) :- monitor_type(id, "dynamic"), callback_takes_down(h, "handle_info", "process").
 
 // ── The close of a socket the server holds ───────────────────────────
 //
@@ -1625,12 +1649,33 @@ info_taken(h, msg) :-
   match("[{].*", msg),
   callback_open(h, "handle_info", "tuple").
 
+// A message some clause of `h` takes as the source at `id` sends it. A
+// monitor's :DOWN is taken by a clause for every reason of it
+// (down_taken), or by one that takes any tuple; a message the program
+// writes, by its tag or its shape (info_taken).
+.decl taken_at(handler: symbol, id: symbol, message: symbol)
+
+taken_at(h, id, msg) :-
+  info_message(_, _, id, msg, "monitor"),
+  info_fallback(_, msg, h, _),
+  down_taken(h, id).
+
+taken_at(h, id, msg) :-
+  info_message(_, _, id, msg, "monitor"),
+  info_fallback(_, msg, h, _),
+  (callback_open(h, "handle_info", "any") ; callback_open(h, "handle_info", "tuple")).
+
+taken_at(h, id, msg) :-
+  info_message(_, _, id, msg, source),
+  source != "monitor",
+  info_taken(h, msg).
+
 unhandled_info(mod, f, id, msg, source, m, h, fallback) :-
   info_message(m, f, id, msg, source),
   gen_server_like(m),
   !statem_process(m),
   info_fallback(m, msg, h, fallback),
-  !info_taken(h, msg),
+  !taken_at(h, id, msg),
   !server_receives(m, msg),
   function_def(f, mod, _, _, _).
 

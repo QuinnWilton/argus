@@ -190,6 +190,22 @@ defmodule Argus.Extractors.MonitorTest do
     end
   end
 
+  describe "monitor_type" do
+    alias Argus.Test.Soundness.Witness, as: W
+
+    test "Process.monitor/1 watches a process; :erlang.monitor/2 its literal type" do
+      types = fn mod ->
+        facts = extract(mod)
+        sites = for [id, _func, _target] <- facts[:monitor_call], do: id
+        for [id, type] <- facts[:monitor_type], id in sites, do: type
+      end
+
+      assert types.(W.DownOnlyNormal) == ["process"]
+      assert types.(W.PortDownPinned) == ["port"]
+      assert types.(Argus.Test.Fixtures.MonitorsPortTakingProcessDowns) == ["port"]
+    end
+  end
+
   describe "read through Argus.Instr" do
     alias Argus.Test.Fixtures.Instr, as: Fixture
 

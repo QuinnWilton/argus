@@ -906,7 +906,8 @@ defmodule Argus.Analyses.Mailbox do
 
   defp sent("monitor", func, _message),
     do:
-      "#{Findings.call_name(func)} monitors a process from a server's callbacks, so its {:DOWN, …} goes to"
+      "#{Findings.call_name(func)} takes a monitor from a server's callbacks, so its " <>
+        "{:DOWN, …}, with whatever reason the monitored process or port ends with, goes to"
 
   defp sent("timer", func, message),
     do: "#{Findings.call_name(func)} arms a timer that sends #{message} to"
@@ -919,8 +920,8 @@ defmodule Argus.Analyses.Mailbox do
 
   defp unhandled_help("monitor", _fallback, _message),
     do: [
-      "add a `handle_info({:DOWN, ref, :process, pid, reason}, state)` clause that " <>
-        "releases what the monitor was for",
+      "add a `handle_info({:DOWN, ref, type, object, reason}, state)` clause that takes " <>
+        "every reason and releases what the monitor was for",
       "or wait for the :DOWN where the monitor is taken, or demonitor it with `[:flush]`"
     ]
 

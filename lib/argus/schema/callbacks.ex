@@ -67,6 +67,24 @@ defmodule Argus.Schema.Callbacks do
         """
       },
       %{
+        name: :callback_takes_down,
+        layer: 2,
+        fields: [
+          {:func, :symbol, "the callback"},
+          {:callback, :symbol, "'handle_call' | 'handle_cast' | 'handle_info'"},
+          {:type, :symbol, "'process' | 'port' | 'any': the monitor type the clause takes"}
+        ],
+        doc: """
+        Some clause of the callback takes every `{:DOWN, ref, type, object, \
+        reason}` of a monitor of `type`, whatever reason the runtime gives it \
+        (`Argus.Extractors.CallbackTag.MessageClauses.takes_down/2`): `any` \
+        when the head leaves the type alone, `process` when it compares it \
+        with `:process`. A head that pins the ref or the object, or asks the \
+        state, takes the `:DOWN` of the monitors the program keeps there; one \
+        that tests the reason (`when reason != :normal`) is no row.
+        """
+      },
+      %{
         name: :callback_drops,
         layer: 2,
         fields: [

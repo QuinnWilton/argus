@@ -104,6 +104,26 @@ defmodule Argus.Analyses.MailboxUnhandledInfoTest do
     refute Enum.any?(rows, fn {_, _, _, server, _} -> server in quiet end)
   end
 
+  test "a monitor's :DOWN is taken by a clause for every reason, whatever it asks of the ref" do
+    alias Argus.Test.Fixtures, as: F
+    alias Argus.Test.Soundness.Witness, as: W
+
+    # Clauses that split the reasons, a reason decided in the body, a port
+    # clause that leaves the type alone; a pinned ref and a compared state
+    # field are the program's choice of which monitors it keeps.
+    quiet = [
+      W.DownSplitReasons,
+      W.DownReasonInBody,
+      W.PortDownAnyType,
+      F.MonitorsTakingEveryDown,
+      F.MonitorsWithoutCatchall,
+      F.MonitorsDownWhenActive
+    ]
+
+    {:ok, results} = Memo.analyze(quiet, :mailbox)
+    assert results["unhandled_info"] == []
+  end
+
   test "partial_handler steps aside for the module a crash names", %{results: results} do
     mods = for [mod | _] <- results["partial_handler"], do: mod
     refute Enum.any?(mods, &String.ends_with?(&1, ".Reconnect"))

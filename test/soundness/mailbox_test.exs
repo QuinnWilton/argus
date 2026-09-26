@@ -126,6 +126,40 @@ defmodule Argus.Soundness.MailboxTest do
     end
   end
 
+  describe "a monitor's :DOWN, whatever reason the runtime gives it (partial_handler retired)" do
+    alias Argus.Test.Soundness.Witness, as: W
+
+    @crash "No handle_info/2 clause for a message the server is sent"
+
+    test "a clause for the :normal reason alone" do
+      assert {:warning, @crash, {W.DownOnlyNormal, :handle_call, 3}} in fired(
+               [W.DownOnlyNormal],
+               :mailbox
+             )
+    end
+
+    test "a guard on the reason" do
+      assert {:warning, @crash, {W.DownGuardIn, :handle_cast, 2}} in fired(
+               [W.DownGuardIn],
+               :mailbox
+             )
+    end
+
+    test "a pattern on the reason, the monitor taken in a helper on the server's stack" do
+      assert {:warning, @crash, {W.Watch, :watch, 1}} in fired(
+               [W.DownShutdownOnly, W.Watch],
+               :mailbox
+             )
+    end
+
+    test "a port's :DOWN under a clause pinned to its ref and the :process type" do
+      assert {:warning, @crash, {W.PortDownPinned, :init, 1}} in fired(
+               [W.PortDownPinned],
+               :mailbox
+             )
+    end
+  end
+
   test "lists:map/2 of monitors whose refs are dropped (item 26)" do
     assert Enum.any?(fired([M.ListsMapDropped], :mailbox), &match?({:info, @ref_dropped, _}, &1))
   end

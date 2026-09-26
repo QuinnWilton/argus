@@ -27,6 +27,21 @@ defmodule Argus.Schema.Monitors do
         """
       },
       %{
+        name: :monitor_type,
+        layer: 2,
+        fields: [
+          {:id, :symbol, "the monitor_call site"},
+          {:type, :symbol, "'process' | 'port' | 'time_offset', or 'dynamic'"}
+        ],
+        doc: """
+        What the monitor at `id` watches, and so what it sends: a process's \
+        or a port's `{:DOWN, ref, type, object, reason}` (`Process.monitor/1` \
+        is a process's), or, for `:time_offset`, a clock service's \
+        `{:CHANGE, …}`. `dynamic` when `:erlang.monitor/2`'s type is not a \
+        literal.
+        """
+      },
+      %{
         name: :monitor_ref_dropped,
         layer: 2,
         fields: [

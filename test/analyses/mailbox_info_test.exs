@@ -163,20 +163,20 @@ defmodule Argus.Analyses.MailboxInfoTest do
 
       alias Argus.Test.Fixtures, as: F
 
-      probes = [
-        F.MonitorsPortTakingProcessDowns,
-        F.MonitorsNodesTakingDowns,
-        F.TrapsOpeningPort,
-        F.MonitorsDownGuardedByReason
-      ]
+      probes = [F.MonitorsNodesTakingDowns, F.TrapsOpeningPort]
 
-      # A port monitor's :DOWN, node up/down, a port's output, a guarded
-      # reason: each crashes a handler that takes every process :DOWN or
-      # every :EXIT and no more.
+      # Node up/down, a port's output: each crashes a handler that takes
+      # every process :DOWN or every :EXIT and no more.
       assert partial(analyze(probes), "runtime")
              |> Enum.map(fn [mod, _f] -> mod end)
              |> Enum.sort() ==
                probes |> Enum.map(&inspect/1) |> Enum.sort()
+
+      # A port monitor's :DOWN and a guarded reason name the message:
+      # unhandled_info's crash, which this steps aside for.
+      results = analyze([F.MonitorsPortTakingProcessDowns, F.MonitorsDownGuardedByReason])
+      assert partial(results, "runtime") == []
+      assert length(results["unhandled_info"]) == 2
     end
 
     test "a monitor taken in a client function, in the caller's process, is not the server's" do

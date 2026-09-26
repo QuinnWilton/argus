@@ -28,6 +28,9 @@ defmodule Argus.Extractors.Monitor do
     is the monitored name when literal, `"started_child"` when the pid is
     the result of a supervisor start (directly or through a local
     wrapper), else `"dynamic"`
+  - `monitor_type(id, type)` — the kind of monitor taken at `id`:
+    `process`, `port` or `time_offset` when literal (Process.monitor/1
+    is `process`), else `dynamic`
   - `monitor_ref_dropped(id, func)` — the reference that monitor returned
     is discarded at the call site, so nothing can ever demonitor it
   - `monitor_owns(id, func)` — the monitored pid is one the function just
@@ -161,6 +164,7 @@ defmodule Argus.Extractors.Monitor do
       :monitor_call,
       :monitor_owns,
       :monitor_ref_dropped,
+      :monitor_type,
       :recv_down,
       :recv_flush,
       :recv_signal,
@@ -360,10 +364,20 @@ defmodule Argus.Extractors.Monitor do
 
   defp tracked?(operand, tracked), do: MapSet.member?(tracked, register(operand))
 
-  # Process.monitor/1 takes the pid in x0; :erlang.monitor/2 takes the
-  # type in x0 and the pid in x1.
-  defp handle(facts, ctx, {Process, :monitor, 1}, data), do: monitor(facts, ctx, {:x, 0}, data)
-  defp handle(facts, ctx, {:erlang, :monitor, 2}, data), do: monitor(facts, ctx, {:x, 1}, data)
+  # Process.monitor/1 takes the pid in x0 and monitors a process;
+  # :erlang.monitor/2 takes the type in x0 and the pid in x1.
+  defp handle(facts, ctx, {Process, :monitor, 1}, data),
+    do: monitor(facts, ctx, {:x, 0}, data) |> emit_monitor_type(ctx, "process")
+
+  defp handle(facts, ctx, {:erlang, :monitor, 2}, data) do
+    type =
+      case resolve_atom(ctx.instrs, ctx.idx, {:x, 0}) do
+        ":" <> atom -> atom
+        _dynamic -> "dynamic"
+      end
+
+    facts |> monitor(ctx, {:x, 1}, data) |> emit_monitor_type(ctx, type)
+  end
 
   defp handle(facts, ctx, {Process, :demonitor, arity}, _data) when arity in [1, 2],
     do: demonitor(facts, ctx, arity)
@@ -372,6 +386,11 @@ defmodule Argus.Extractors.Monitor do
     do: demonitor(facts, ctx, arity)
 
   defp handle(facts, _ctx, _mfa, _data), do: facts
+
+  # What the monitor watches, and so what it sends: a process's or a
+  # port's `:DOWN`, a clock service's `{:CHANGE, …}`.
+  defp emit_monitor_type(facts, ctx, type),
+    do: add_fact(facts, :monitor_type, [InstrId.mint(ctx.func_id, ctx.idx), type])
 
   # The target column: the monitored name when it is a literal, `"started_child"`
   # when the pid came back from a supervisor start (directly, or through a

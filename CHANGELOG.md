@@ -6,6 +6,38 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## 0.20.0-dev — unreleased
 
+### "handle_info/2 has no catch-all" retired: a message the program is shown to send
+
+`mailbox.partial_handler` started from every server whose handle_info/2
+lacks a catch-all and took correct code away with about eighteen negated
+conditions; on live code about one row in twenty-six was a bug. A
+missing catch-all matters only when a real message falls through it,
+which is what `unhandled_info` witnesses: a send, a timer, a monitor's
+`:DOWN`, a socket's close, each with the clause that is not there for
+it. This round gives `unhandled_info` the sources the retired rule's
+real bugs came from, and then retires the rule.
+
+**Changed.** A monitor's `:DOWN` is taken only by a clause that takes
+it whatever reason the runtime gives it. The ref, the object and the
+state are the program's: a clause pinning the ref to the state takes
+the `:DOWN` of the monitor the state keeps, as before. The reason is
+the runtime's: a clause for `:normal` alone, a guard on the reason
+(`when reason in [:normal, :shutdown]`) or a pattern on it
+(`{:shutdown, _}`) leaves every other reason to no clause, and
+`unhandled_info` now reports the monitor ("No handle_info/2 clause for
+a message the server is sent", `:warning`). Clauses that split the
+reasons between them take every reason together. A port's monitor
+(`:erlang.monitor(:port, port)`) sends a `:DOWN` whose type is `:port`,
+which a clause comparing the type with `:process` does not take; a
+`:time_offset` monitor sends no `:DOWN` and is no source.
+
+**Added.** Schema 132. `callback_takes_down(func, callback, type)`
+(CallbackTag, `MessageClauses.takes_down/2`): some clause takes every
+`:DOWN` of a monitor of `type` (`process`, `port`, or `any` for a clause
+that leaves the type alone) whatever its reason. `monitor_type(id,
+type)` (Monitor): the monitor at `id` watches a `process`, a `port` or
+a `time_offset`, or `dynamic`. Read by mailbox.
+
 ### Restart-state round, part 2: a reader that outlives a table's owner
 
 **Changed.** ets's "ETS table read while its owner may be restarting"
