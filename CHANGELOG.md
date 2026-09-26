@@ -60,6 +60,14 @@ monitor (`{ref, result} when is_reference(ref)`) takes no `:DOWN`, so a
 task that crashes is still reported; a `:DOWN` clause for `:normal`
 alone now is too. The start may be in any module on the server's stack.
 
+**Changed.** A gen_statem timeout no clause takes is its own relation,
+`mailbox.unhandled_timeout(mod, state, kind)` (kind `event_timeout`,
+`generic_timeout`, `state_timeout`), in place of `partial_handler`'s
+`statem_timeout` source. It was already defined from its witness, the
+armed timeout, and it is no `:info` message. The title ("Timeout armed
+but never handled", `:error`), the anchor and the key (one finding per
+module and kind) are unchanged.
+
 **Changed.** Schema 134. `callback_open(func, callback, shape, arity)`
 gains `arity`: a tuple's size where the open clause's head tests it,
 else -1 (`MessageClauses.open_clauses/2`). Read by mailbox.

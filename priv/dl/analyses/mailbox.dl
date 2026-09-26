@@ -31,9 +31,8 @@
 //   with no clause for it. `source` says who writes it: "runtime" (the
 //   process monitors or traps exits), "late_message" (its callbacks reach
 //   a task, timer, subscription or a fun they did not build),
-//   "statem_timeout" (`handler` is the state arming a timeout of
-//   kind `missing`), "statem_info" (the state function `handler`, for
-//   state `detail`, lacks the :info catch-all its siblings have).
+//   "statem_info" (the state function `handler`, for state `detail`,
+//   lacks the :info catch-all its siblings have).
 // `unconsumed_monitor(mod, func, site, kind)` — a monitor left live:
 //   "timed_wait" (past a receive with an after clause, never flushed),
 //   "never_released" (a server that removes entries but never
@@ -1209,12 +1208,21 @@ partial_handler(mod, func, "statem_info", "catch_all", state) :-
 
 // ── A timeout armed that no clause handles ──────────────────────────
 //
+// `unhandled_timeout(mod, state, kind)` — the witness is the timeout: a
+// state (or handle_event/4) returns an action that arms it, and the
+// runtime delivers it as an event of its own type, which no clause of
+// the machine takes. Not an :info message: its own relation, not
+// unhandled_info's.
+//
 // {:timeout, ms, content} arms an event of type :timeout; {:state_timeout,
 // ms, content} one of type :state_timeout. Postgrex's SimpleConnection
 // armed the former and matched `handle_event(:info, :timeout, ...)` —
 // the idle ping never ran and the event fell through to the generic
 // :info clause. The module-level question is enough: some callback has
 // a clause for the type, or accepts any type.
+.decl unhandled_timeout(mod: symbol, state: symbol, kind: symbol)
+.output unhandled_timeout
+
 .decl statem_handles_event(mod: symbol, event_type: symbol)
 
 statem_handles_event(mod, type) :- statem_event_clause(mod, _, type).
@@ -1222,17 +1230,17 @@ statem_handles_event(mod, "timeout") :- statem_event_catchall(mod, _).
 statem_handles_event(mod, "state_timeout") :- statem_event_catchall(mod, _).
 statem_handles_event(mod, "{timeout}") :- statem_event_catchall(mod, _).
 
-partial_handler(mod, state, "statem_timeout", "event_timeout", "") :-
+unhandled_timeout(mod, state, "event_timeout") :-
   statem_timeout(mod, state, "event_timeout", _),
   !statem_handles_event(mod, "timeout").
 
 // A generic timeout {{:timeout, name}, ms, content} arrives as the
 // event type {:timeout, name}: a tagged tuple, not the :timeout atom.
-partial_handler(mod, state, "statem_timeout", "generic_timeout", "") :-
+unhandled_timeout(mod, state, "generic_timeout") :-
   statem_timeout(mod, state, "generic", _),
   !statem_handles_event(mod, "{timeout}").
 
-partial_handler(mod, state, "statem_timeout", "state_timeout", "") :-
+unhandled_timeout(mod, state, "state_timeout") :-
   statem_timeout(mod, state, "state_timeout", _),
   !statem_handles_event(mod, "state_timeout").
 

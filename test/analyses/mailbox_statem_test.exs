@@ -40,12 +40,7 @@ defmodule Argus.Analyses.MailboxStatemTest do
         drop: [:source, :missing]
       )
 
-  defp statem_timeouts(results),
-    do:
-      Rows.where(results, :mailbox, "partial_handler",
-        source: "statem_timeout",
-        drop: [:source, :detail]
-      )
+  defp statem_timeouts(results), do: Map.get(results, "unhandled_timeout", [])
 
   describe "partial_handler: statem_info" do
     test "the state without an :info catch-all is reported when its siblings have one", ctx do
@@ -67,7 +62,7 @@ defmodule Argus.Analyses.MailboxStatemTest do
     end
   end
 
-  describe "partial_handler: statem_timeout" do
+  describe "unhandled_timeout" do
     test "a {:timeout, ...} action matched as :info is reported", ctx do
       skip_without_souffle()
 

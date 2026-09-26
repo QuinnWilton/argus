@@ -50,7 +50,7 @@ defmodule Argus.Analyses.QuietShapesTest do
     ],
     mailbox: [
       {"reply_defect", kind: "statem_unreplied"},
-      {"partial_handler", source: "statem_timeout"},
+      "unhandled_timeout",
       {"task_result_defect", kind: "linked_in_library"},
       {"task_result_defect", kind: "yield_linked"},
       {"partial_handler", source: "late_message"},

@@ -10,9 +10,12 @@ defmodule Argus.Analyses.Mailbox do
     with no clause for it. `source` says who writes it: `runtime`
     (monitors, trapped exits), `late_message` (a task, a timer, a
     subscription, a fun the callbacks run that they did not build),
-    `statem_timeout` (a timeout of kind `missing` no clause handles),
     `statem_info` (a state without the `:info` catch-all its siblings
     have).
+  - `unhandled_timeout(mod, state, kind)` — a gen_statem timeout armed in
+    `state` (a state function's name, or `handle_event`) whose event type
+    (`event_timeout`, `generic_timeout`, `state_timeout`) no clause of the
+    machine takes.
   - `task_result_defect(func, site, kind)` — a `Task.async`
     `never_awaited`, `yield_linked` (collected with `Task.yield` in a
     process that does not trap exits) or `linked_in_library` (started in
@@ -115,21 +118,25 @@ defmodule Argus.Analyses.Mailbox do
         name: :partial_handler,
         fields: [
           {:mod, :symbol, "the process module"},
-          {:handler, :symbol,
-           "the handle_info/2 function, or the statem state (name or handle_event)"},
-          {:source, :symbol, "runtime | late_message | statem_timeout | statem_info"},
-          {:missing, :symbol, "catch_all, or the timeout kind for statem_timeout"},
+          {:handler, :symbol, "the handle_info/2 function, or the statem state function"},
+          {:source, :symbol, "runtime | late_message | statem_info"},
+          {:missing, :symbol, "catch_all"},
           {:detail, :symbol, "the state name for statem_info"}
         ],
-        # A nolink task is one finding per start; a statem timeout one per
-        # kind; the rest one per handler.
-        key:
-          {:source,
-           %{
-             "statem_timeout" => [:mod, :missing],
-             default: [:mod, :handler, :missing, :detail]
-           }},
+        # One finding per handler.
+        key: [:mod, :handler, :missing, :detail],
         doc: "A message arrives and no clause takes it."
+      },
+      %{
+        name: :unhandled_timeout,
+        fields: [
+          {:mod, :symbol, "the gen_statem module"},
+          {:state, :symbol, "the state function arming the timeout, or 'handle_event'"},
+          {:kind, :symbol, "event_timeout | generic_timeout | state_timeout"}
+        ],
+        # One finding per module and timeout kind.
+        key: [:mod, :kind],
+        doc: "A gen_statem timeout armed whose event type no clause takes."
       },
       %{
         name: :timer_cancel_without_flush,
@@ -777,7 +784,7 @@ defmodule Argus.Analyses.Mailbox do
     )
   end
 
-  def finding(:partial_handler, [mod, state, "statem_timeout", kind, _]) do
+  def finding(:unhandled_timeout, [mod, state, kind]) do
     {action, type} =
       case kind do
         "state_timeout" -> {"{:state_timeout, ms, content}", ":state_timeout"}
