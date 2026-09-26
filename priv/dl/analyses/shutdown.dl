@@ -1169,30 +1169,31 @@ unhandled_exit_signal(mod, "no_receive_clause", trap) :-
 .decl kills_monitored_child(mod: symbol, site: symbol, kill_site: symbol)
 .output kills_monitored_child
 
-//
-// The monitor is the server's when it is taken on the server's own stack
-// (server_side): one a Task or a spawn the server starts takes is that
-// process's, and so is its :DOWN. The kill is the server's doing wherever
-// its callbacks make it happen, a process they start included (`spawn(fn
-// -> GenServer.stop(conn) end)`): the :DOWN still comes to the server
-// that monitors (server_caused, clientlib/process_kind.dl).
-//
-// The kill must be of the monitored process (kills_what_it_monitors):
-// both resolve to one process (signal_target, the points-to stage: the
-// monitor's and the stop's), or either does not resolve, and may be it.
-// A kill of one process and a monitor of another (a watcher's) are no
-// pair. And the kill's own way does not release the monitor
-// (released_with_kill: a demonitor in the killing function, in one that
-// calls it, or in one it calls): a demonitor of some other monitor, in
-// another callback, releases nothing the kill's :DOWN would bring.
+// A server stops a process it monitors, and nothing on the kill's way
+// releases the monitor: the :DOWN for a death it caused lands in the
+// clause written for crashes.
+.decl kill_of_monitored_child(mod: symbol, monitor: symbol, kill: symbol)
 
-kills_monitored_child(mod, site, kill_site) :-
-  server_side(mod, f),
-  monitor_call(site, f, _),
-  server_caused(mod, g),
-  kill_call(kill_site, g),
-  kills_what_it_monitors(site, f, kill_site, g),
-  !released_with_kill(g).
+kill_of_monitored_child(mod, monitor, kill) :-
+  server_monitors(mod, monitor),
+  server_kills(mod, kill),
+  kills_what_it_monitors(monitor, kill),
+  !released_with_kill(kill).
+
+// The server takes the monitor at `monitor` on its own stack
+// (server_side): one a Task or a spawn the server starts takes is that
+// process's, and so is its :DOWN.
+.decl server_monitors(mod: symbol, monitor: symbol)
+
+server_monitors(mod, monitor) :- server_side(mod, f), monitor_call(monitor, f, _).
+
+// The server's callbacks make the kill at `kill` happen, a process they
+// start included (`spawn(fn -> GenServer.stop(conn) end)`): the :DOWN
+// still comes to the server that monitors (server_caused,
+// clientlib/process_kind.dl).
+.decl server_kills(mod: symbol, kill: symbol)
+
+server_kills(mod, kill) :- server_caused(mod, g), kill_call(kill, g).
 
 // A stop of a process: a supervisor's terminate_child, GenServer.stop.
 .decl kill_call(site: symbol, func: symbol)
@@ -1200,29 +1201,38 @@ kills_monitored_child(mod, site, kill_site) :-
 kill_call(x, g) :- sup_call(x, g, _, "terminate_child", _).
 kill_call(x, g) :- remote_call(x, g, "GenServer", "stop", _).
 
-.decl kills_what_it_monitors(monitor: symbol, mfunc: symbol, kill: symbol, kfunc: symbol)
+// The kill may be of the monitored process: both resolve to one process
+// (signal_target, the points-to stage: the monitor's and the stop's), or
+// either does not resolve, and may be it. A kill of one process and a
+// monitor of another (a watcher's) are no pair.
+.decl kills_what_it_monitors(monitor: symbol, kill: symbol)
 
-kills_what_it_monitors(m, f, k, g) :-
-  signal_target(m, f, "monitor", p),
-  signal_target(k, g, "stop", p).
+kills_what_it_monitors(m, k) :-
+  signal_target(m, _, "monitor", p),
+  signal_target(k, _, "stop", p).
 
-kills_what_it_monitors(m, f, k, g) :-
+kills_what_it_monitors(m, k) :-
   monitor_call(m, f, _),
-  kill_call(k, g),
+  kill_call(k, _),
   !signal_target(m, f, "monitor", _).
 
-kills_what_it_monitors(m, f, k, g) :-
-  monitor_call(m, f, _),
+kills_what_it_monitors(m, k) :-
+  monitor_call(m, _, _),
   kill_call(k, g),
   !signal_target(k, g, "stop", _).
 
 // The kill's own way releases a monitor: a demonitor in the function that
-// kills, in a function that calls it, or in one it calls.
-.decl released_with_kill(func: symbol)
+// kills, in a function that calls it, or in one it calls. A demonitor of
+// some other monitor, in another callback, releases nothing the kill's
+// :DOWN would bring.
+.decl released_with_kill(kill: symbol)
 
-released_with_kill(g) :- kill_call(_, g), demonitor_call(_, g, _).
-released_with_kill(g) :- kill_call(_, g), call_edge(c, g), demonitor_call(_, c, _).
-released_with_kill(g) :- kill_call(_, g), call_edge(g, h), demonitor_call(_, h, _).
+released_with_kill(k) :- kill_call(k, g), demonitor_call(_, g, _).
+released_with_kill(k) :- kill_call(k, g), call_edge(c, g), demonitor_call(_, c, _).
+released_with_kill(k) :- kill_call(k, g), call_edge(g, h), demonitor_call(_, h, _).
+
+kills_monitored_child(mod, site, kill_site) :-
+  kill_of_monitored_child(mod, site, kill_site).
 
 // ══ A permanent child that stops itself ═════════════════════════════
 
