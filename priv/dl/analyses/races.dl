@@ -73,6 +73,36 @@
 
 .init names = CheckThenAct
 
+// A lookup finds a name free and decides a claim of it, another process
+// can claim the name in between, and nothing takes the loser's outcome.
+// `func` is where the lookup's answer meets the claim.
+.decl lookup_then_claim_race(func: symbol, lookup: symbol, claim: symbol, name: ProcessName)
+
+lookup_then_claim_race(func, lookup, claim, name) :-
+  decides_claim(func, lookup, claim, name),
+  claimed_by_another_process(claim, func),
+  !loser_taken(func, claim),
+  !loser_dropped(func, claim).
+
+// A name as the lookup and the claim agree on it: its key, and where the
+// key comes from (a literal, the caller's argument, ...).
+.type ProcessName = [key_source: symbol, key: symbol]
+
+// In `func`, whether the lookup finds the name free decides the claim of
+// it (CheckThenAct's meets, followed across calls). A start_child hides
+// its name in the child spec, so for it only a lookup whose answer is
+// tested against nil counts.
+.decl decides_claim(func: symbol, lookup: symbol, claim: symbol, name: ProcessName)
+
+decides_claim(f, c, a, [ks, k]) :-
+  names.meets(f, c, a, _, _, ks, k),
+  name_act(a, _, api),
+  api != "start_child".
+
+decides_claim(f, c, a, [ks, k]) :-
+  names.meets(f, c, a, _, _, ks, k),
+  name_lookup(c, _, _, _, _, _, "checked").
+
 // The resource is the registry: the local one (empty) or a Registry.
 names.check(c, f, "literal", scope, ks, k) :-
   name_lookup(c, f, _, scope, ks, k, _),
@@ -158,6 +188,8 @@ result_used(g) :- act_returned_by(_, g), site_depends(_, _, "call", g).
 result_used(g) :- act_returned_by(_, g), call_decided(_, _, "call", g).
 result_used(g) :- act_returned_by(_, g), call_arg_depends(_, _, _, "call", g).
 
+// A named start's loser answer is dropped on its way back to the
+// meeting function, and the program goes on by the name (above).
 .decl loser_dropped(meet: symbol, act: symbol)
 
 loser_dropped(f, a) :-
@@ -217,24 +249,23 @@ other_claimant(f, a) :-
   a2 != a,
   runs.runs_beside(m, f, g, g).
 
-// Two processes can claim the name in the window.
-.decl claimants(func: symbol, act: symbol)
+// Another process can claim the name while `func` is between the lookup
+// and the claim: `func` runs in more than one process, so two of its
+// callers can both see the name free, or another process claims the
+// same literal name (other_claimant).
+.decl claimed_by_another_process(claim: symbol, func: symbol)
 
-claimants(f, a) :- names.meets(f, _, a, _, _, _, _), !runs.single_process(f).
-claimants(f, a) :- other_claimant(f, a).
+claimed_by_another_process(a, f) :- names.meets(f, _, a, _, _, _, _), !runs.single_process(f).
+claimed_by_another_process(a, f) :- other_claimant(f, a).
 
 .decl registry_race(mod: symbol, func: symbol, lookup_api: symbol, create_api: symbol, key_source: symbol, key: symbol, check: symbol, act: symbol)
 .output registry_race
 
-registry_race(mod, f, lookup_api, create_api, key_source, key, check, act) :-
-  names.meets(f, check, act, _, _, key_source, key),
-  name_lookup(check, _, lookup_api, _, _, _, checked),
-  name_act(act, _, create_api),
-  (create_api != "start_child" ; checked = "checked"),
-  function_def(f, mod, _, _, _),
-  !loser_taken(f, act),
-  !loser_dropped(f, act),
-  claimants(f, act).
+registry_race(mod, func, lookup_api, create_api, key_source, key, lookup, claim) :-
+  lookup_then_claim_race(func, lookup, claim, [key_source, key]),
+  name_lookup(lookup, _, lookup_api, _, _, _, _),
+  name_act(claim, _, create_api),
+  function_def(func, mod, _, _, _).
 
 // ── Read, then write ─────────────────────────────────────────────
 //
