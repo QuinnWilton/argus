@@ -1371,26 +1371,35 @@ reply_defect(mod, func, return, "dropped_from", "") :-
 .decl unhandled_timeout(mod: symbol, state: symbol, kind: symbol)
 .output unhandled_timeout
 
+// A state arms a timeout whose event no clause of the machine takes.
+.decl timeout_without_clause(mod: symbol, state: symbol, kind: symbol)
+
+timeout_without_clause(mod, state, kind) :-
+  arms_timeout(mod, state, kind, event_type),
+  !statem_handles_event(mod, event_type).
+
+unhandled_timeout(mod, state, kind) :- timeout_without_clause(mod, state, kind).
+
+// `state` (or handle_event/4) returns an action arming a timeout of
+// `kind`, which the runtime delivers as an event of `event_type`:
+// {:timeout, ms, content} one of type :timeout, {:state_timeout, ms,
+// content} one of type :state_timeout, and a generic timeout
+// {{:timeout, name}, ms, content} one of type {:timeout, name}, a tagged
+// tuple, not the :timeout atom.
+.decl arms_timeout(mod: symbol, state: symbol, kind: symbol, event_type: symbol)
+
+arms_timeout(mod, state, "event_timeout", "timeout") :- statem_timeout(mod, state, "event_timeout", _).
+arms_timeout(mod, state, "generic_timeout", "{timeout}") :- statem_timeout(mod, state, "generic", _).
+arms_timeout(mod, state, "state_timeout", "state_timeout") :- statem_timeout(mod, state, "state_timeout", _).
+
+// Some callback of the machine has a clause for the event type, or
+// accepts any type.
 .decl statem_handles_event(mod: symbol, event_type: symbol)
 
 statem_handles_event(mod, type) :- statem_event_clause(mod, _, type).
 statem_handles_event(mod, "timeout") :- statem_event_catchall(mod, _).
 statem_handles_event(mod, "state_timeout") :- statem_event_catchall(mod, _).
 statem_handles_event(mod, "{timeout}") :- statem_event_catchall(mod, _).
-
-unhandled_timeout(mod, state, "event_timeout") :-
-  statem_timeout(mod, state, "event_timeout", _),
-  !statem_handles_event(mod, "timeout").
-
-// A generic timeout {{:timeout, name}, ms, content} arrives as the
-// event type {:timeout, name}: a tagged tuple, not the :timeout atom.
-unhandled_timeout(mod, state, "generic_timeout") :-
-  statem_timeout(mod, state, "generic", _),
-  !statem_handles_event(mod, "{timeout}").
-
-unhandled_timeout(mod, state, "state_timeout") :-
-  statem_timeout(mod, state, "state_timeout", _),
-  !statem_handles_event(mod, "state_timeout").
 
 // ── A call that is never answered ────────────────────────────────────
 //
