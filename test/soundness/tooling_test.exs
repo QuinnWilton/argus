@@ -20,7 +20,9 @@ defmodule Argus.Soundness.ToolingTest do
     sev = severities(modules("tooling_fixture.ex"), [:races, :ets])
     task = "Mix.Tasks.Soundness.G9.Quota"
     assert severity(sev, task, :run, "Read-then-write race") == :warning
-    assert severity(sev, task, :run, "read while its owner may be restarting") == :warning
+    # :info is the class's own severity, which the step cannot lower: the
+    # race above is the row that tells a stepped finding from its parent.
+    assert severity(sev, task, :run, "read while its owner may be restarting") == :info
   end
 
   test "a lib/**/test/ module a controller calls is the product" do

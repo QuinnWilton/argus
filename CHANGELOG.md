@@ -6,6 +6,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## 0.20.0-dev — unreleased
 
+### Owner lifetime stays :info
+
+**Changed.** ets's "ETS table read while its owner may be restarting"
+is `:info` again (it was raised to `:warning` in the consistency
+round). The ETS rows round measured it at about 18% true over its 19
+evaluation sets, and what is left false turns on how long the owner
+lives: an owner whose exit halts the node or stops its application, a
+keeper that cannot crash on its own, a table made lazily behind a guard.
+The facts do not say; the severity rubric's new owner-lifetime clause
+keeps such a class at `:info` until a prior can tell its rows apart, and
+the questions are the prior candidates docs/bug-classes.md lists for the
+ETS rows round. "ETS table dies with its owner" keeps `:warning`: its
+false rows are mostly permanent children the supervision extractor did
+not read.
+
 ### ETS rows returned by soundness round 2c, judged
 
 Round 2c's one owner per table brought 94 ETS rows back on the

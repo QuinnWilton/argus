@@ -58,8 +58,8 @@ classes of one risk get one severity.
   thing a running system supplies: a peer that stays silent (a receive
   with no `after`, a call with no bound), a timing window (a
   check-then-act race), a crash elsewhere that the tree is built to
-  survive (a table gone with its owner, a read while the owner
-  restarts, a stale sibling pid), a restart (a permanent child that
+  survive (a table gone with its owner, a stale sibling pid), a restart
+  (a permanent child that
   stops itself), a message only a peer's exit sends (a monitor's
   `:DOWN`). Robustness under failure is what argus is for, so the
   consequence of a crash counts as ordinary operation.
@@ -68,6 +68,24 @@ classes of one risk get one severity.
   concurrency option, an idle timeout), or the wait is bounded (a
   receive with an `after`, one its peer's exit ends), or the finding is a
   verification (a verified `@pure`).
+- **Owner lifetime.** A class whose truth turns on how long a process
+  lives, and whose rows mostly measure false for that reason, stays
+  `:info` until a prior can tell its rows apart: whether the owner
+  restarts at all, outlives the application (a kernel process whose
+  exit halts the node, an intensity-0 `one_for_all` chain up to the
+  application's root), cannot crash on its own (a keeper whose
+  callbacks do nothing that raises), or is made lazily behind a guard
+  by design. The facts do not say, and a reader does. "ETS table read
+  while its owner may be restarting" is the class: raised to `:warning`
+  in the consistency round beside the races on ETS rows, it measured
+  about 18% true over the ETS rows round's 19 evaluation sets and went
+  back to `:info`. Its questions are the prior candidates of the ETS
+  rows round ("Prior candidates and structural gaps from the ETS rows
+  round", below); a row a prior answers can then step up. A structural
+  gap is no reason to lower a class: "ETS table dies with its owner"
+  keeps `:warning`: its false rows were mostly permanent children the
+  supervision extractor did not read, a gap for the extractor to close
+  rather than a judgement.
 - **Evidence.** A finding whose evidence is inferred rather than
   resolved (a holder the rule infers, a dependency by message tag or
   module, a model's prior) steps down one level from its resolved form,
@@ -2497,7 +2515,7 @@ Another process takes or deletes the row between the check and the act, and the 
 ### Table read while its owner may be restarting
 
 `ets_read_outside_owner`
-· titles: "ETS table read while its owner may be restarting" (`:warning`)
+· titles: "ETS table read while its owner may be restarting" (`:info`)
 
 **Property.** Some table T is created by an `:ets.new/2` a process runs on its own stack (the owner, `table_held` since round 2c: a server's callbacks and what its start function spawns on its own code, a spawned, Task or Agent process, an Application's start/2, a module under a non-process behaviour), with no `heir` option, and some read of T that raises when the table is gone (every read but `:ets.info/1,2`; `take` included) sits in a function the owner's process does not run, such as the module's API, run in callers' processes. T is named at the read, or passed as a literal through the reader's table parameters, and no handler that takes ArgumentError (a rescue of ArgumentError or `:badarg`, a bare rescue or `catch :error`, or Erlang's `catch`) sits in the reader, or, for a read inside a closure, in the function that built the closure or in a function that builder calls (a rescuing wrapper the closure is handed to). A table under a name computed at runtime is tied only to reads of computed-name tables in its owner's own module. From the moment the owner crashes until its restart reaches `:ets.new/2` again, the read raises ArgumentError in the caller instead of returning a value; Redix.Cluster's callers saw exactly that during a `:one_for_all` restart (redix#338).
 
@@ -2514,7 +2532,7 @@ Another process takes or deletes the row between the check and the act, and the 
 
 **Corpus.** Fix pairs: `redix#338` (whatyouhide/redix, b77331e → b31bd23, Redix.Cluster.Manager). Present-only: none.
 
-**Precision.** 37 rows in the 2026-09-25 corpus tally, counted per checkout, at 21 reader functions in bb, commanded, db_connection, ecto, phoenix, phoenix_pubsub, postgrex, redix and ztlp; unjudged as a set. Corpus reading removed three false-positive shapes (6527007): `:ets.info` reads in ztlp's and nerves_hub_web's `count/0`, postgrex's `catch :error, :badarg` soft read, and computed-name tables joined to every read in the owner's module. Making `:ets.take/2` a read added bb's `BB.Command.ResultCache.fetch_and_delete/1`, judged real (dcdf78c). ETS rows round (2026-09-25, 19 evaluation sets: the eight corpus programs, the Phoenix-stack deps, OTP kernel, stdlib and mnesia, emqx, rabbitmq, hackney, ra, ejabberd, vernemq, grpc): 132 rows at 8097be4, 205 after round 2c's one owner per table, 182 after the two fixes above. The 73 rows round 2c added were read in full (7 true: emqx's authz source registry, vernemq's `vmq_passwd`, `vmq_queue_sup` and webhook cache readers); a sample of 20 of the 120 older rows unjudged before found 4 true (Livebook's `SystemResources.memory/0`, `Phoenix.Tracker.pool_size/1`, vernemq's `vmq_swc_store` cache, ejabberd's `gen_mod` module table). Estimated precision 20% at 8097be4, 16% after round 2c, 18% after the fixes; what is left is in the round's backlog below.
+**Precision.** 37 rows in the 2026-09-25 corpus tally, counted per checkout, at 21 reader functions in bb, commanded, db_connection, ecto, phoenix, phoenix_pubsub, postgrex, redix and ztlp; unjudged as a set. Corpus reading removed three false-positive shapes (6527007): `:ets.info` reads in ztlp's and nerves_hub_web's `count/0`, postgrex's `catch :error, :badarg` soft read, and computed-name tables joined to every read in the owner's module. Making `:ets.take/2` a read added bb's `BB.Command.ResultCache.fetch_and_delete/1`, judged real (dcdf78c). ETS rows round (2026-09-25, 19 evaluation sets: the eight corpus programs, the Phoenix-stack deps, OTP kernel, stdlib and mnesia, emqx, rabbitmq, hackney, ra, ejabberd, vernemq, grpc): 132 rows at 8097be4, 205 after round 2c's one owner per table, 182 after the two fixes above. The 73 rows round 2c added were read in full (7 true: emqx's authz source registry, vernemq's `vmq_passwd`, `vmq_queue_sup` and webhook cache readers); a sample of 20 of the 120 older rows unjudged before found 4 true (Livebook's `SystemResources.memory/0`, `Phoenix.Tracker.pool_size/1`, vernemq's `vmq_swc_store` cache, ejabberd's `gen_mod` module table). Estimated precision 20% at 8097be4, 16% after round 2c, 18% after the fixes; what is left is in the round's backlog below. The class was `:warning` from the consistency round (781189c) to here, and is `:info` again: what is left turns on how long the owner lives, which the rubric's owner-lifetime clause keeps at `:info` until a prior answers it.
 
 ### Table without read_concurrency
 
@@ -4304,7 +4322,11 @@ Each is taken against the severity rubric at the top of this catalog.
   catch-alls say needs one: the second has the program's own evidence.
 - A read that raises in a caller because what it reads may be gone:
   ets_read_outside_owner `:info` (the concern's only fix pair) against
-  ets_missing_row and ets_publish_order `:warning`. *Resolved:* `:warning`.
+  ets_missing_row and ets_publish_order `:warning`. *Resolved:*
+  `:warning`, then *justified* back to `:info` after the ETS rows round
+  measured it at about 18%: the races' rows are true or false on the
+  facts, while this one's turn on how long the owner lives (the
+  rubric's owner-lifetime clause).
 - A permanent child that exits by design: structure's
   consumer_supervisor_permanent_child `:warning` against shutdown's
   permanent_child_stops_normally `:info`. *Resolved:* `:warning`.

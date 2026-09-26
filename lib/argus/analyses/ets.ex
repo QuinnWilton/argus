@@ -156,8 +156,13 @@ defmodule Argus.Analyses.Ets do
   def finding(:ets_read_outside_owner, [name, owner, reader, site, created]) do
     table = if name == "dynamic", do: "a table", else: name
 
+    # :info, not the :warning the rubric gives a read while its owner
+    # restarts: whether the owner restarts at all, lives as long as the
+    # node or its application, or cannot crash on its own is a judgement
+    # the facts do not make, and about 18% of the rows were true (ETS
+    # rows round). It stays :info until priors can tell them apart.
     Findings.new(
-      :warning,
+      :info,
       "ETS table read while its owner may be restarting",
       "#{owner} creates #{table} in its own process with no heir, and #{reader} " <>
         "reads it from whatever process calls it. While #{owner} is down — the " <>
