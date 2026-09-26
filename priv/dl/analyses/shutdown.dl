@@ -112,26 +112,65 @@ runs_on_shutdown(t, g) :-
 terminate_reach.root(t, g) :- runs_on_shutdown(t, g).
 terminate_reach.limit(2).
 
-// Each cleanup call, where it is: `site` in `via`, terminate/2 itself or a
-// function it reaches.
-.decl cleanup_call(mod: symbol, behaviour: symbol, category: symbol, api: symbol, via: symbol, site: symbol)
+// ── Cleanup a supervisor shutdown skips ──────────────────────────
 
-cleanup_call(mod, behaviour, category, api, t, id) :-
-  terminate_callback(t, mod, behaviour),
-  impure_call(id, t, api, category, "write"),
-  runs_holding(t, 0, id),
-  durable_effect(category),
-  !released_at_exit(api),
-  !own_table_released(mod, id).
+// A terminate/2 callback does cleanup, and its process doesn't trap
+// exits: a supervisor's shutdown kills the process without running it.
+.decl skipped_cleanup(mod: symbol, terminate: symbol, cleanup: symbol)
 
-cleanup_call(mod, behaviour, category, api, via, id) :-
-  terminate_callback(t, mod, behaviour),
+skipped_cleanup(mod, terminate, cleanup) :-
+  terminate_callback(terminate, mod, _),
+  does_cleanup(terminate, cleanup),
+  !traps_exits(mod).
+
+// terminate/2 does cleanup at `write`: a write on the path a supervisor
+// stop takes whose effect outlasts the process, not one the runtime
+// releases when the process exits anyway.
+.decl does_cleanup(terminate: symbol, write: symbol)
+
+does_cleanup(terminate, write) :-
+  writes_on_shutdown(terminate, write),
+  outlasts_process(write),
+  !released_by_exit(write, terminate).
+
+// A write terminate/2 makes when a supervisor stops the process: one in
+// terminate/2 that runs for :shutdown (runs_holding), or one in a function
+// it reaches (terminate_reach).
+.decl writes_on_shutdown(terminate: symbol, write: symbol)
+
+writes_on_shutdown(t, id) :-
+  terminate_callback(t, _, _),
+  impure_call(id, t, _, _, "write"),
+  runs_holding(t, 0, id).
+
+writes_on_shutdown(t, id) :-
+  terminate_callback(t, _, _),
   terminate_reach.reaches(t, via, _),
   via != t,
-  impure_call(id, via, api, category, "write"),
-  durable_effect(category),
-  !released_at_exit(api),
-  !own_table_released(mod, id).
+  impure_call(id, via, _, _, "write").
+
+// The call's effect leaves the process and stays done when it exits
+// (durable_effect, effect_model.dl).
+.decl outlasts_process(call: symbol) inline
+
+outlasts_process(id) :- impure_call(id, _, _, category, _), durable_effect(category).
+
+// The process's exit releases what the call releases, or takes what it
+// writes with it: an API released_at_exit names (a monitor, a link, a
+// timer, its own socket, port or file), or a write to an ETS table the
+// process owns (own_table_released). The effect model gives a call one
+// API, so asking it of the call is asking it of that API.
+.decl released_by_exit(call: symbol, terminate: symbol)
+
+released_by_exit(id, t) :-
+  writes_on_shutdown(t, id),
+  impure_call(id, _, api, _, _),
+  released_at_exit(api).
+
+released_by_exit(id, t) :-
+  writes_on_shutdown(t, id),
+  terminate_callback(t, mod, _),
+  own_table_released(mod, id).
 
 // An ETS table goes with the process that owns it, unless it has an
 // heir: a write to one the process owns, its deletion included, is
@@ -185,11 +224,6 @@ passed_on(t) :- ets_op(_, _, t, "give_away", _).
 passed_on(t) :- ets_op(_, _, t, "rename", _).
 passed_on(t) :- ets_op(_, _, t, "setopts", _).
 
-.decl cleanup_in_terminate(mod: symbol, behaviour: symbol, category: symbol, api: symbol, via: symbol)
-
-cleanup_in_terminate(mod, behaviour, category, api, via) :-
-  cleanup_call(mod, behaviour, category, api, via, _).
-
 // ── Findings ─────────────────────────────────────────────────────
 //
 // One relation for terminate/2's cleanup, `kind` saying what goes wrong
@@ -204,8 +238,9 @@ cleanup_in_terminate(mod, behaviour, category, api, via) :-
 
 // The headline: cleanup that a supervisor shutdown will skip entirely.
 cleanup_defect(mod, behaviour, "never_runs", category, api, via) :-
-  cleanup_in_terminate(mod, behaviour, category, api, via),
-  !traps_exits(mod).
+  skipped_cleanup(mod, terminate, cleanup),
+  terminate_callback(terminate, mod, behaviour),
+  impure_call(cleanup, via, api, category, _).
 
 // Cleanup the effect model cannot classify — terminate/2 calling into the
 // application's own code, which is where most real cleanup lives.
@@ -236,6 +271,11 @@ unclassified_cleanup(mod, behaviour, api, via, id) :-
 // inside an exception constructor. A soundness choice made for one
 // contract should not become noise in another.
 
+// terminate/2 in `mod` does cleanup the effect model knows.
+.decl terminate_does_cleanup(mod: symbol)
+
+terminate_does_cleanup(mod) :- terminate_callback(t, mod, _), does_cleanup(t, _).
+
 // A module that traps exits runs its terminate/2 on a supervisor stop,
 // and one whose terminate/2 does known durable cleanup is reported
 // "never_runs" already: "unclear" would repeat it less surely.
@@ -244,19 +284,35 @@ unclassified_cleanup(mod, behaviour, api, via, id) :-
 unclear_cleanup(mod, behaviour, api, via, id) :-
   unclassified_cleanup(mod, behaviour, api, via, id),
   !traps_exits(mod),
-  !cleanup_in_terminate(mod, _, _, _, _).
+  !terminate_does_cleanup(mod).
 
 cleanup_defect(mod, behaviour, "unclear", "", api, via) :-
   unclear_cleanup(mod, behaviour, api, via, _).
 
 // Slow work inside terminate, for a module that DOES trap exits — so the
-// callback is reached, but may not finish. Network and port calls are the
-// ones with no bound of their own (slow_effect, in effect_model.dl).
+// callback is reached, but may not finish.
+
+// A terminate/2 callback does cleanup with no bound of its own, and its
+// process traps exits: terminate/2 runs, and may not finish inside the
+// shutdown timeout.
+.decl truncated_cleanup(mod: symbol, terminate: symbol, cleanup: symbol)
+
+truncated_cleanup(mod, terminate, cleanup) :-
+  terminate_callback(terminate, mod, _),
+  does_cleanup(terminate, cleanup),
+  traps_exits(mod),
+  unbounded(cleanup).
+
+// The call has no bound of its own inside the shutdown timeout: network
+// and port calls (slow_effect, effect_model.dl).
+.decl unbounded(call: symbol) inline
+
+unbounded(id) :- impure_call(id, _, _, category, _), slow_effect(category).
 
 cleanup_defect(mod, behaviour, "truncated", category, api, via) :-
-  cleanup_in_terminate(mod, behaviour, category, api, via),
-  traps_exits(mod),
-  slow_effect(category).
+  truncated_cleanup(mod, terminate, cleanup),
+  terminate_callback(terminate, mod, behaviour),
+  impure_call(cleanup, via, api, category, _).
 
 // Every call a cleanup_defect finding is about, where it is: the frames
 // of the module's finding of that kind.
@@ -264,16 +320,15 @@ cleanup_defect(mod, behaviour, "truncated", category, api, via) :-
 .output cleanup_site
 
 cleanup_site(mod, "never_runs", api, via, id) :-
-  cleanup_call(mod, _, _, api, via, id),
-  !traps_exits(mod).
+  skipped_cleanup(mod, _, id),
+  impure_call(id, via, api, _, _).
 
 cleanup_site(mod, "unclear", api, via, id) :-
   unclear_cleanup(mod, _, api, via, id).
 
 cleanup_site(mod, "truncated", api, via, id) :-
-  cleanup_call(mod, _, category, api, via, id),
-  traps_exits(mod),
-  slow_effect(category).
+  truncated_cleanup(mod, _, id),
+  impure_call(id, via, api, _, _).
 
 // ── A synchronous call to a sibling from terminate/2 ─────────────────
 //
