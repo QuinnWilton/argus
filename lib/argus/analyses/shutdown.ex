@@ -62,8 +62,9 @@ defmodule Argus.Analyses.Shutdown do
       Argus.Extractors.GenStatem,
       Argus.Extractors.Monitor,
       Argus.Extractors.Reply,
-      # The calls in terminate/2 that a supervisor's :shutdown never runs.
-      Argus.Extractors.ClauseCall,
+      # What a function runs, and hands on, when a parameter holds the
+      # :shutdown a supervisor's stop passes terminate/2.
+      Argus.Extractors.ShutdownReason,
       # A call whose target is a pid resolves through process points-to
       # (clientlib/processes.dl, in the points-to stage): where the pid was
       # started, and names.

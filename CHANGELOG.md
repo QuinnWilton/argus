@@ -6,6 +6,46 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## 0.20.0-dev — unreleased
 
+### Shutdown: the reason a supervisor's stop passes, followed into helpers
+
+**Fixed.** "terminate/2 calls a sibling that may already be down" read
+only terminate/2's own tests on its reason, and took a helper or client
+API that chooses by the reason it is handed to run every clause. Once
+the supervision extractor read mnesia_kernel_sup's `{one_for_all, 0,
+timer:hours(24)}`, mnesia_controller, mnesia_recover and mnesia_subscr
+were reported at `:warning` for calling
+`mnesia_monitor:terminate_proc(who, reason, state)`, which waits on
+mnesia_monitor only in its clause for `R /= shutdown, R /= killed`.
+
+A supervisor stops a child with `exit(pid, :shutdown)`, the bare atom,
+and the rule now follows that value (shutdown.dl, `stop_path`):
+- terminate/2 (terminate/3) holds it in its first parameter;
+- a function that chooses its clause by the parameter holding it runs
+  only the calls `:shutdown` reaches, and one that does not choose by it
+  runs every call;
+- a call that hands it on unchanged enters its callee holding it;
+- a call that hands it to the sibling's client API waits when the API's
+  clauses for `:shutdown` do (`api_waits_holding`).
+
+A clause for `{:shutdown, _}` does not run on the stop: that is a reason
+a process stops itself with, or a parent that is no supervisor passes.
+Over the 44 evaluation sets the class goes from 5 rows to 2: the three
+mnesia rows go, vernemq's `vmq_reg_sync_action` (true) and eventstore's
+`Subscription` stay, and nothing else in shutdown moves. The cleanup
+rules read terminate/2's own calls through the same facts, with the same
+rows.
+
+**Changed.** Schema 145.
+- `skipped_on_shutdown(id, func)` is removed, and ClauseCall no longer
+  emits it.
+- `Argus.Extractors.ShutdownReason` emits, for every function and
+  parameter, `shutdown_chooses(func, pos)` (the function chooses what it
+  runs by the parameter, and `:shutdown` there leaves a call out),
+  `shutdown_runs(id, func, pos)` (the calls that run then) and
+  `shutdown_handed(id, func, pos, arg)` (a call that hands the value on,
+  on every path, as the callee's argument `arg`).
+- `Argus.Extractor.Dispatch.reached_holding/3`: `reached_with/3` with the
+  registers that hold the value at each instruction on every path.
 ### Once by the state: a handler's site its own run closes the gate on (schema 144)
 
 **Changed.** clientlib runs.dl reads a second reason a site runs once per

@@ -187,20 +187,56 @@ defmodule Argus.Schema.Callbacks do
         """
       },
       %{
-        name: :skipped_on_shutdown,
+        name: :shutdown_chooses,
+        layer: 2,
+        fields: [
+          {:func, :symbol, "a function"},
+          {:pos, :number, "0-based position of the parameter it chooses by"}
+        ],
+        doc: """
+        `func` chooses what it runs by its parameter `pos`, and when that \
+        parameter holds `:shutdown` — the reason a supervisor stopping a \
+        process passes its terminate/2 — some call does not run: it sits in \
+        a clause for other reasons (`terminate(:normal, s)`, \
+        `terminate_proc(_, r, _) when r != :shutdown`), after a clause that \
+        took `:shutdown`, or on a branch of a test the atom does not take. \
+        Every path is walked with the parameter fixed \
+        (`Argus.Extractor.Dispatch.reached_holding/3`), so a test the walk \
+        does not read keeps the calls after it. A function with no row for \
+        a parameter runs every call whatever it holds.
+        """
+      },
+      %{
+        name: :shutdown_runs,
+        layer: 2,
+        fields: [
+          {:id, :symbol, "a call, or Erlang's `!`"},
+          {:func, :symbol, "the function holding it"},
+          {:pos, :number, "0-based position of a parameter `func` chooses by"}
+        ],
+        doc: """
+        For a function that chooses by its parameter `pos` \
+        (`shutdown_chooses`), the call at `id` runs when that parameter \
+        holds `:shutdown`. One row per call that runs; the calls with no \
+        row are the ones the atom never reaches.
+        """
+      },
+      %{
+        name: :shutdown_handed,
         layer: 2,
         fields: [
           {:id, :symbol, "a call"},
-          {:func, :symbol, "the terminate/2 or terminate/3 holding it"}
+          {:func, :symbol, "the function holding it"},
+          {:pos, :number, "0-based position of `func`'s parameter holding `:shutdown`"},
+          {:arg, :number, "0-based position of the callee's argument it lands in"}
         ],
         doc: """
-        The call at `id` does not run when `func`, a `terminate/2` or \
-        `terminate/3` that chooses its clause by the reason, is called with \
-        `:shutdown` — the reason a supervisor stopping the process passes. \
-        It sits in a clause for other reasons (`terminate(:normal, s)`), or \
-        after one that took `:shutdown`. Every path is walked with the \
-        reason fixed (`Argus.Extractor.Dispatch.reached_with/3`), so a test \
-        this does not read keeps the call.
+        The call at `id`, which runs when `func`'s parameter `pos` holds \
+        `:shutdown`, hands that value on unchanged as the callee's argument \
+        `arg`, on every path that reaches the call with it: \
+        `terminate(reason, s)` calling `cleanup(reason, s)` enters \
+        `cleanup/2` holding the reason in its first parameter. A call into \
+        the runtime (`Argus.Extractor.Runtime`) has no row.
         """
       },
       %{

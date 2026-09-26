@@ -26,6 +26,42 @@
 
 traps_exits(mod) :- module_traps(_, mod).
 
+// ── What runs when a supervisor stops the process ────────────────
+//
+// A supervisor stops a child with exit(pid, :shutdown) (supervisor.erl's
+// shutdown/1, DynamicSupervisor's terminate_children/2), so a process
+// that traps exits runs terminate/2 with the reason :shutdown, the bare
+// atom. {:shutdown, _} is a reason a process stops itself with, or a
+// parent that is no supervisor passes: neither is the stop these rules
+// are about. terminate/2 may choose its work by the reason, and it may
+// hand the reason to a function that does: mnesia's servers call
+// mnesia_monitor:terminate_proc(who, reason, state), whose clause for
+// `R /= shutdown` reports a fatal error and whose other clause only logs.
+// What runs on the stop is what that value reaches (ShutdownReason):
+// - terminate/2 (gen_statem's terminate/3) holds it in its first
+//   parameter;
+// - a function that chooses its clause by the parameter holding it runs
+//   the calls :shutdown reaches (shutdown_runs), and one that does not
+//   choose by it runs every call;
+// - a call that runs, and hands the value on unchanged, enters its
+//   callee holding it where it lands (shutdown_handed).
+// `pos` is -1 in a function that holds it in no parameter: every call
+// runs there. An edge with no call instruction (a closure built there, a
+// function reference) has no site the reason test places, and runs.
+
+// The call at `id` in `func` runs when func holds the reason in `pos`.
+.decl runs_holding(func: symbol, pos: number, id: symbol) inline
+
+runs_holding(f, pos, id) :- shutdown_runs(id, f, pos).
+runs_holding(f, pos, id) :- !shutdown_chooses(f, pos).
+
+// Where the call at `id` hands on the reason `func` holds in `pos`: the
+// callee's argument `arg`, or -1 when it hands it on in none.
+.decl hands_holding(func: symbol, pos: number, id: symbol, arg: number) inline
+
+hands_holding(f, pos, id, arg) :- shutdown_handed(id, f, pos, arg).
+hands_holding(f, pos, id, -1) :- !shutdown_handed(id, f, pos, _).
+
 // ── Cleanup worth running ────────────────────────────────────────
 //
 // WRITES only, and not logging. A terminate/2 that logs "shutting down"
@@ -38,22 +74,19 @@ traps_exits(mod) :- module_traps(_, mod).
 // file (released_at_exit) — is not among them: the runtime releases each
 // when the process exits, however it exits.
 //
-// Only what terminate/2 does when a supervisor stops the process counts.
-// terminate/2 may choose its work by the reason, and the stop passes
-// :shutdown: work in a clause for other reasons (`terminate(:normal,
-// s)`), or on a branch :shutdown does not take (the crash report
-// elixir-ls's servers write for every reason but :normal and :shutdown),
-// was never meant for that stop, and skipping terminate/2 there loses
-// nothing (skipped_on_shutdown). A call made in terminate/2 counts when
-// it runs for :shutdown; a helper, when some call that does leads to it.
-// An edge with no call instruction (a closure built there, a function
-// reference) has no site the reason test places, and runs.
+// Only what terminate/2 does when a supervisor stops the process counts:
+// work in a clause for other reasons (`terminate(:normal, s)`), or on a
+// branch :shutdown does not take (the crash report elixir-ls's servers
+// write for every reason but :normal and :shutdown), was never meant for
+// that stop, and skipping terminate/2 there loses nothing. A call made in
+// terminate/2 counts when it runs for :shutdown (runs_holding); a helper,
+// when some call that does leads to it.
 .decl runs_on_shutdown(terminate: symbol, callee: symbol)
 
 runs_on_shutdown(t, g) :-
   terminate_callback(t, _, _),
   call_instr(t, g, id),
-  !skipped_on_shutdown(id, t).
+  runs_holding(t, 0, id).
 
 runs_on_shutdown(t, g) :-
   terminate_callback(t, _, _),
@@ -86,7 +119,7 @@ terminate_reach.limit(2).
 cleanup_call(mod, behaviour, category, api, t, id) :-
   terminate_callback(t, mod, behaviour),
   impure_call(id, t, api, category, "write"),
-  !skipped_on_shutdown(id, t),
+  runs_holding(t, 0, id),
   durable_effect(category),
   !released_at_exit(api).
 
@@ -130,12 +163,12 @@ cleanup_defect(mod, behaviour, "never_runs", category, api, via) :-
 // look like an ordinary call to your own module.
 .decl unclassified_cleanup(mod: symbol, behaviour: symbol, api: symbol, via: symbol, site: symbol)
 
-// Work terminate/2 does only for reasons other than :shutdown
-// (skipped_on_shutdown) is not what a supervisor stop skips.
+// Work terminate/2 does only for reasons other than :shutdown is not
+// what a supervisor stop skips (runs_holding).
 unclassified_cleanup(mod, behaviour, api, t, id) :-
   terminate_callback(t, mod, behaviour),
   unknown_call(id, t, api, _callee),
-  !skipped_on_shutdown(id, t).
+  runs_holding(t, 0, id).
 
 unclassified_cleanup(mod, behaviour, api, via, id) :-
   terminate_callback(t, mod, behaviour),
@@ -219,16 +252,6 @@ exit_guarded(call) :-
   try_covers(t, f, call, "try"),
   catch_tuple_tag(t, f, "exit", ":noproc").
 
-// A call spared on the way out: a try takes its exit (exit_guarded), or
-// it never runs when a supervisor stops the process, which passes
-// terminate/2 the reason :shutdown (skipped_on_shutdown: the call sits in
-// a clause for other reasons, `terminate(:normal, s)`, or after one that
-// took :shutdown).
-.decl spared(call: symbol)
-
-spared(call) :- exit_guarded(call).
-spared(call) :- skipped_on_shutdown(call, _).
-
 // Some try in the function takes the exit. What is left to ask of a
 // dependency with no call site to hold against a try, and of an edge
 // into a fun that no call is handed (a fun stored, then called through a
@@ -274,46 +297,186 @@ wait_site(f, m, id) :-
   sync_call_site(id, f, t, _),
   unresolved_target(t).
 
-// `func` waits on `mod` at a call no exit-catching try covers, or
-// through a dependency with no site in it and no exit-catching try.
-.decl waits_unguarded(func: symbol, mod: symbol)
+// ── The stop's path, and the waits on it ─────────────────────────
+//
+// On terminate/2's stop, `func` runs on its stack holding the reason in
+// `pos` (-1: in none), `depth` calls from terminate/2 along calls that
+// run there and that no exit-catching try covers, within three calls;
+// `first` is the path's call in terminate/2 ("" through an edge with no
+// call instruction). A try around any call on the path guards what lies
+// beyond it: the call in terminate/2 into the helper, a call between
+// helpers, the helper's own call to the sibling's API. An edge with no
+// call instruction (a closure, a function reference) is held against the
+// call that runs it (fun_site): Horde's `Enum.each(signal_to, fn ... end)`
+// is open because no try covers the Enum.each, whatever another try in
+// terminate/2 catches. Only a fun no call is handed falls back to the
+// function-wide reading (catches_exit). A fun handed to a spawn or a
+// task's start runs in another process: its :noproc ends that process,
+// not terminate/2, so the path stops there (started_elsewhere,
+// runs_elsewhere). A fun enters its body holding no reason.
+.decl stop_path(terminate: symbol, func: symbol, pos: number, depth: number, first: symbol)
 
-waits_unguarded(f, m) :-
+stop_path(t, t, 0, 0, "") :- is_terminate(t, _).
+
+stop_path(t, g, arg, 1, call) :-
+  stop_path(t, t, 0, 0, _),
+  stop_call_edge(t, 0, g, arg, call).
+
+stop_path(t, g, -1, 1, "") :-
+  stop_path(t, t, 0, 0, _),
+  stop_fun_edge(t, 0, g).
+
+stop_path(t, h, arg, d + 1, first) :-
+  stop_path(t, g, pos, d, first),
+  d > 0,
+  d < 3,
+  stop_call_edge(g, pos, h, arg, _).
+
+stop_path(t, h, -1, d + 1, first) :-
+  stop_path(t, g, pos, d, first),
+  d > 0,
+  d < 3,
+  stop_fun_edge(g, pos, h).
+
+// A call of `func`'s that runs on the stop, where func holds the reason
+// in `pos`, and that no exit-catching try covers, entering `callee`
+// holding it in `arg`.
+.decl stop_call_edge(func: symbol, pos: number, callee: symbol, arg: number, call: symbol)
+
+stop_call_edge(f, pos, g, arg, call) :-
+  stop_path(_, f, pos, _, _),
+  call_instr(f, g, call),
+  runs_holding(f, pos, call),
+  !exit_guarded(call),
+  hands_holding(f, pos, call, arg).
+
+// An edge with no call instruction the stop takes: the call a fun is
+// handed to runs, no exit-catching try covers it, and it starts no other
+// process; or no call is handed the fun and no try in `func` takes an
+// exit.
+.decl stop_fun_edge(func: symbol, pos: number, callee: symbol)
+
+stop_fun_edge(f, pos, g) :-
+  stop_path(_, f, pos, _, _),
+  fun_site(f, g, call),
+  !call_instr(f, g, _),
+  runs_holding(f, pos, call),
+  !exit_guarded(call),
+  !started_elsewhere(call),
+  !runs_elsewhere(f, g).
+
+stop_fun_edge(f, pos, g) :-
+  stop_path(_, f, pos, _, _),
+  call_edge(f, g),
+  !call_instr(f, g, _),
+  !fun_site(f, g, _),
+  !catches_exit(f),
+  !runs_elsewhere(f, g).
+
+// The call starts a process that runs what it is handed.
+.decl started_elsewhere(call: symbol)
+
+started_elsewhere(call) :- process_start(call, _, _, kind, _), kind != "server".
+
+// On terminate/2's stop, `func` waits on `mod` at `site`: a wait site
+// that runs there with no exit-catching try around it, or, for a
+// dependency with no site in it, in a function where no try takes an
+// exit (`site` empty). A call that hands the reason to a client API of
+// mod's waits when the API's clauses for :shutdown do (api_waits_holding):
+// mnesia_monitor:terminate_proc/3 waits on mnesia_monitor only in its
+// clause for other reasons.
+.decl stop_wait(terminate: symbol, func: symbol, mod: symbol, site: symbol)
+
+stop_wait(t, f, m, id) :-
+  stop_path(t, f, pos, _, _),
   waits_on(f, m),
   wait_site(f, m, id),
-  !spared(id).
+  runs_holding(f, pos, id),
+  !exit_guarded(id),
+  !api_handed(f, pos, id, m, _, _).
 
-waits_unguarded(f, m) :-
+stop_wait(t, f, m, id) :-
+  stop_path(t, f, pos, _, _),
+  waits_on(f, m),
+  wait_site(f, m, id),
+  runs_holding(f, pos, id),
+  !exit_guarded(id),
+  api_handed(f, pos, id, m, g, arg),
+  api_waits_holding(g, arg, m).
+
+stop_wait(t, f, m, "") :-
+  stop_path(t, f, _, _, _),
   waits_on(f, m),
   !wait_site(f, m, _),
   !catches_exit(f).
 
-// terminate/2 reaches `via` along a path of calls no exit-catching try
-// covers, within terminate_reach's bound (three calls); `first` is the
-// path's call in terminate/2. A try around any call on the path guards
-// what lies beyond it: the call in terminate/2 into the helper, a call
-// between helpers, the helper's own call to the sibling's API. An edge
-// with no call instruction (a closure, a function reference) is held
-// against the call that runs it (fun_site): Horde's
-// `Enum.each(signal_to, fn ... end)` is open because no try covers the
-// Enum.each, whatever another try in terminate/2 catches. Only a fun no
-// call is handed falls back to the function-wide reading (catches_exit).
-// A fun handed to a spawn or a task's start runs in another process: its
-// :noproc ends that process, not terminate/2, so the path stops there
-// (`elsewhere`, and runs_elsewhere inside the component). `first` is
-// empty for such an edge.
-.init open_path = ForwardGuardedCallReach
+// The call at `id`, where `func` holds the reason in `pos`, hands it to
+// mod's client API `api` (genserver_sync_api) as argument `arg`.
+.decl api_handed(func: symbol, pos: number, id: symbol, mod: symbol, api: symbol, arg: number)
 
-open_path.root(t) :- is_terminate(t, _).
-open_path.limit(3).
-open_path.guarded(call) :- spared(call).
-open_path.handed(f, g, call) :- fun_site(f, g, call).
-open_path.sealed(f) :- catches_exit(f).
-open_path.elsewhere(call) :- process_start(call, _, _, kind, _), kind != "server".
+api_handed(f, pos, id, m, g, arg) :-
+  stop_path(_, f, pos, _, _),
+  shutdown_handed(id, f, pos, arg),
+  call_instr(f, g, id),
+  genserver_sync_api(g, m).
 
-.decl reaches_unguarded(handler: symbol, via: symbol)
+// `func`, entered holding :shutdown in parameter `pos`, reaches a
+// synchronous call as mod's client API does (genserver_sync_api): its
+// own, or one in a function of mod's that a call of its leads to, along
+// calls that run for :shutdown. A call that hands the reason on is
+// followed with it; one that does not enters its callee holding nothing,
+// where every call runs (sync_caller_in).
+.decl api_waits_holding(func: symbol, pos: number, mod: symbol)
 
-reaches_unguarded(t, via) :- open_path.reaches(t, via, _, _), via != t.
+// What api_waits_holding is asked of: the APIs a stop's call hands the
+// reason to, and what they hand it on to.
+.decl holding_asked(func: symbol, pos: number, mod: symbol)
+
+holding_asked(g, arg, m) :- api_handed(_, _, _, m, g, arg).
+
+holding_asked(h, arg, m) :-
+  holding_asked(g, pos, m),
+  call_instr(g, h, id),
+  runs_holding(g, pos, id),
+  shutdown_handed(id, g, pos, arg).
+
+api_waits_holding(g, pos, m) :-
+  holding_asked(g, pos, m),
+  function_def(g, m, _, _, _),
+  sync_call_site(id, g, _, _),
+  runs_holding(g, pos, id),
+  !calls_other_server(g, m).
+
+api_waits_holding(g, pos, m) :-
+  holding_asked(g, pos, m),
+  call_instr(g, h, id),
+  runs_holding(g, pos, id),
+  hands_holding(g, pos, id, -1),
+  sync_caller_in(h, m).
+
+api_waits_holding(g, pos, m) :-
+  holding_asked(g, pos, m),
+  call_instr(g, h, id),
+  runs_holding(g, pos, id),
+  shutdown_handed(id, g, pos, arg),
+  api_waits_holding(h, arg, m).
+
+api_waits_holding(g, pos, m) :-
+  holding_asked(g, pos, m),
+  call_edge(g, h),
+  !call_instr(g, h, _),
+  sync_caller_in(h, m).
+
+// `func` is a function of mod's that makes a synchronous call, or reaches
+// one (reaches_sync_caller_in, calls.dl), whatever it holds.
+.decl sync_caller_in(func: symbol, mod: symbol)
+
+sync_caller_in(h, m) :-
+  function_def(h, m, _, _, _),
+  sync_call(h, _),
+  !calls_other_server(h, m).
+
+sync_caller_in(h, m) :- reaches_sync_caller_in(h, m).
 
 // Teardown that touches a sibling the supervisor owns, in one relation:
 // `phase` is "terminate" (terminate/2 waits on a sibling that may already
@@ -325,19 +488,14 @@ reaches_unguarded(t, via) :- open_path.reaches(t, via, _, _), via != t.
 .decl teardown_touches_sibling(mod: symbol, sibling: symbol, phase: symbol, kind: symbol, via: symbol, sup: symbol, handler: symbol, site: symbol, sup_site: symbol)
 .output teardown_touches_sibling
 
-// mod's terminate/2 waits on `sibling` at a call no exit-catching try
-// covers: in terminate/2 itself (`via` is terminate), or in a helper it
-// reaches along a path no such try covers (`via` is the helper).
+// mod's terminate/2 waits on `sibling` on the stop: in terminate/2 itself
+// (`via` is terminate), or in a helper it reaches along the stop's path
+// (`via` is the helper).
 .decl terminate_waits_unguarded(mod: symbol, terminate: symbol, via: symbol, sibling: symbol)
 
-terminate_waits_unguarded(mod, terminate, terminate, sibling) :-
-  is_terminate(terminate, mod),
-  waits_unguarded(terminate, sibling).
-
-terminate_waits_unguarded(mod, terminate, helper, sibling) :-
-  is_terminate(terminate, mod),
-  reaches_unguarded(terminate, helper),
-  waits_unguarded(helper, sibling).
+terminate_waits_unguarded(mod, t, via, sibling) :-
+  is_terminate(t, mod),
+  stop_wait(t, via, sibling, _).
 
 // The call is the bug when the supervisor itself has stopped the sibling
 // before it terminates mod — two of its own sequences do:
@@ -379,9 +537,12 @@ terminate_waits_unguarded(mod, terminate, helper, sibling) :-
 // - A restart that escalates — a sibling nested in an earlier branch
 //   crashing past its own supervisor's intensity — is not followed; the
 //   restart kind needs the sibling to be sup's own child. (Quiet.)
-// - skipped_on_shutdown reads the tests terminate/2 itself makes on the
-//   reason; a helper that dispatches on the reason it is handed, and a
-//   call through an apply, are taken to run. (Reports.)
+// - The reason is followed as the value it is (stop_path): a test on
+//   something computed from it (an element of a tuple built around it,
+//   its inspected string) takes both edges, a fun or an apply enters its
+//   callee holding nothing, and a call into the runtime hands it to
+//   nothing (shutdown_handed); each runs every call it can reach.
+//   (Reports.)
 //
 // When the listing or the strategy does not settle which applies — the
 // same module started on both sides of mod, or a strategy argus did not
@@ -403,19 +564,19 @@ calls_sibling_stopped_by_restart(mod, terminate, via, sibling, sup) :-
 
 teardown_touches_sibling(mod, sibling, "terminate", "call", via, sup, func, site, sup_site) :-
   calls_sibling_stopped_by_shutdown(mod, func, via, sibling, sup),
-  unguarded_site_or_empty(via, sibling, site),
+  stop_wait(func, via, sibling, site),
   supervisor_site_or_empty(sup, sup_site).
 
 teardown_touches_sibling(mod, sibling, "terminate", "call_restart", via, sup, func, site, sup_site) :-
   calls_sibling_stopped_by_restart(mod, func, via, sibling, sup),
-  unguarded_site_or_empty(via, sibling, site),
+  stop_wait(func, via, sibling, site),
   supervisor_site_or_empty(sup, sup_site).
 
 teardown_touches_sibling(mod, sibling, "terminate", "call_unordered", via, sup, func, site, sup_site) :-
   terminate_waits_unguarded(mod, func, via, sibling),
   traps_exits(mod),
   order_unsettled(sup, sibling, mod),
-  unguarded_site_or_empty(via, sibling, site),
+  stop_wait(func, via, sibling, site),
   supervisor_site_or_empty(sup, sup_site).
 
 // `later` sits in a branch of sup listed after one that holds
@@ -466,7 +627,7 @@ order_unsettled(sup, sibling, mod) :-
   !strategy_known(sup).
 
 // Where terminate/2's path to a helper that calls the sibling begins:
-// the first call of a path no exit-catching try covers (open_path). A path
+// the first call of the stop's path (stop_path). A path
 // through something with no call instruction (a closure it hands to a
 // call) points at terminate/2 itself, `call` empty — unless the helper
 // is an anonymous function written inside terminate/2 (Horde's
@@ -479,7 +640,7 @@ order_unsettled(sup, sibling, mod) :-
 
 terminate_step(t, via, call) :-
   teardown_touches_sibling(_, _, "terminate", _, via, _, t, _, _),
-  open_path.reaches(t, via, _, call),
+  stop_path(t, via, _, _, call),
   call != "".
 
 .decl terminate_stepped(handler: symbol, via: symbol)
@@ -502,13 +663,6 @@ closure_in_terminate(t, via) :-
   teardown_touches_sibling(_, _, "terminate", _, via, _, t, _, _),
   function_def(t, m, n, a, _),
   contains(cat(m, ":-", n, "/", to_string(a), "-fun-"), via).
-
-// The call in `func` that waits on `mod` with no exit-catching try
-// around it, else empty.
-.decl unguarded_site_or_empty(func: symbol, mod: symbol, site: symbol)
-
-unguarded_site_or_empty(f, m, id) :- wait_site(f, m, id), !spared(id).
-unguarded_site_or_empty(f, m, "") :- waits_unguarded(f, m), !wait_site(f, m, _).
 
 // A supervisor the facts place without the instruction that defines its
 // tree anchors with an empty site: every rule's `sup` has a row here.

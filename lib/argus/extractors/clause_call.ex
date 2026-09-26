@@ -27,13 +27,9 @@ defmodule Argus.Extractors.ClauseCall do
     clause that re-arms its own timer this way runs a periodic loop; one
     that re-arms on one branch (a failed connect) retries until it is
     done.
-  - `skipped_on_shutdown(id, func)` — the call at `id`, in a
-    `terminate/2` or `terminate/3` that chooses its clause by the reason,
-    does not run when the reason is `:shutdown`, the one a supervisor
-    stopping the process passes (`Argus.Extractor.Dispatch.reached_with/3`):
-    it sits in a clause for other reasons (`terminate(:normal, s)`), or
-    after one that took `:shutdown` (`terminate(:shutdown, s)` and then
-    `terminate(reason, s)`).
+
+  What a `terminate/2` runs for the reason a supervisor's stop passes is
+  `Argus.Extractors.ShutdownReason`'s.
   """
 
   @behaviour Argus.Extractor
@@ -49,7 +45,7 @@ defmodule Argus.Extractors.ClauseCall do
   import Argus.Extractor.Facts, only: [add_fact: 3]
 
   @impl true
-  def relations, do: [:clause_call, :info_clause_always, :skipped_on_shutdown]
+  def relations, do: [:clause_call, :info_clause_always]
 
   @impl true
   @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()
@@ -124,12 +120,9 @@ defmodule Argus.Extractors.ClauseCall do
         acc -> add_fact(acc, :clause_call, [InstrId.mint(func_id, site.idx), func_id, tag])
       end
 
-    facts =
-      if String.ends_with?(func_id, ":handle_info/2"),
-        do: emit_always(facts, func_id, instrs, sites, tags, ending),
-        else: facts
-
-    if terminate?(func_id), do: emit_skipped(facts, func_id, instrs, sites), else: facts
+    if String.ends_with?(func_id, ":handle_info/2"),
+      do: emit_always(facts, func_id, instrs, sites, tags, ending),
+      else: facts
   end
 
   # For each atom tag a site's clause names: the returns and tail calls
@@ -283,19 +276,6 @@ defmodule Argus.Extractors.ClauseCall do
   end
 
   defp tag_atom(_tag), do: nil
-
-  defp emit_skipped(facts, func_id, instrs, sites) do
-    reached = Dispatch.reached_with(instrs, {:x, 0}, :shutdown)
-
-    for site <- sites, not MapSet.member?(reached, site.idx), reduce: facts do
-      acc -> add_fact(acc, :skipped_on_shutdown, [InstrId.mint(func_id, site.idx), func_id])
-    end
-  end
-
-  # terminate/2 (GenServer) and terminate/3 (gen_statem) take the reason
-  # first.
-  defp terminate?(func_id),
-    do: String.ends_with?(func_id, ":terminate/2") or String.ends_with?(func_id, ":terminate/3")
 
   # The walk is paid only by a function that compares its first argument,
   # or the first element of it, with an atom somewhere: the rest have no

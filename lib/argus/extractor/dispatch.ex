@@ -558,6 +558,28 @@ defmodule Argus.Extractor.Dispatch do
     |> MapSet.new()
   end
 
+  @doc """
+  `reached_with/3`, with where the value is at each instruction reached:
+  the registers that hold it (the argument in `register`, or a copy) on
+  every path the walk takes there with it, before the instruction runs.
+  At a call, an argument register in the list hands the value on to the
+  callee in that position whichever way the call was reached; one that
+  holds it on some paths only is left out.
+  """
+  @spec reached_holding([tuple()], {:x, non_neg_integer()}, atom()) :: %{
+          non_neg_integer() => [{:x | :y, non_neg_integer()}]
+        }
+  def reached_holding(instrs, register, value) when is_atom(value) do
+    walk_fixed(
+      [{entry_index(instrs), [register]}],
+      List.to_tuple(instrs),
+      labels(instrs),
+      value,
+      %{},
+      %{}
+    )
+  end
+
   defp walk_fixed([], _tuple, _labels, _value, _seen, reached), do: reached
 
   defp walk_fixed([{idx, held} = state | rest], tuple, labels, value, seen, reached) do
@@ -572,7 +594,7 @@ defmodule Argus.Extractor.Dispatch do
         labels,
         value,
         Map.put(seen, state, true),
-        Map.put(reached, idx, true)
+        Map.update(reached, idx, held, fn before -> Enum.filter(before, &(&1 in held)) end)
       )
     end
   end

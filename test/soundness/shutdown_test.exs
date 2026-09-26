@@ -9,6 +9,8 @@ defmodule Argus.Soundness.ShutdownTest do
 
   import Argus.Test.Soundness, only: [fired: 2]
 
+  alias Argus.Test.Memo
+  alias Argus.Test.Rows
   alias Argus.Test.Soundness.Shutdown, as: S
 
   @no_handler "trap_exit without an :EXIT handler"
@@ -79,6 +81,83 @@ defmodule Argus.Soundness.ShutdownTest do
       for mod <- [C.ReleasingRunner, C.UnwatchedKiller] do
         refute Enum.any?(found, &match?({_, @kills, {^mod, _, _}}, &1)), inspect(mod)
       end
+    end
+  end
+
+  describe "what runs when a supervisor stops the process" do
+    # A supervisor's stop passes terminate/2 the bare :shutdown; the
+    # reason is followed through the helpers and client APIs it is handed
+    # to (shutdown.dl, stop_path and api_waits_holding). The rows name
+    # the caller, the kind and the function that waits.
+    alias Argus.Test.Soundness.Shutdown.Reason, as: R
+
+    @reason_set [
+      R.Sup,
+      R.Directory,
+      R.ShutdownClause,
+      R.NotShutdown,
+      R.NotShutdownExact,
+      R.ShutdownTuple,
+      R.NormalThenAny,
+      R.HelperChooses,
+      R.HelperShutdownClause,
+      R.HelperOtherValue,
+      R.Relay,
+      R.RelayShutdownClause,
+      R.ApiChooses,
+      R.ApiShutdownClause
+    ]
+
+    @mnesia_set [:reason_kernel_sup, :reason_monitor, :reason_controller, :reason_reporter]
+
+    # {caller, kind, the function that waits} of each terminate/2 row.
+    defp sibling_calls(modules) do
+      {:ok, results} = Memo.analyze(modules, :shutdown)
+
+      for [mod, kind, via] <-
+            Rows.where(results, :shutdown, "teardown_touches_sibling",
+              phase: "terminate",
+              drop: [:sibling, :phase, :sup, :handler, :site, :sup_site]
+            ),
+          uniq: true,
+          do: {short(mod), kind, via |> String.split(":") |> Enum.at(-1)}
+    end
+
+    defp short(":" <> mod), do: mod
+    defp short(mod), do: mod |> String.split(".") |> List.last()
+
+    test "a clause that takes :shutdown, and a catch-all after :normal's, fire" do
+      calls = sibling_calls(@reason_set)
+
+      assert {"ShutdownClause", "call", "terminate/2"} in calls
+      assert {"NormalThenAny", "call", "terminate/2"} in calls
+    end
+
+    test "a helper's clause for :shutdown fires, directly and through a relay" do
+      calls = sibling_calls(@reason_set)
+
+      assert {"HelperShutdownClause", "call", "leave/1"} in calls
+      assert {"RelayShutdownClause", "call", "leave/1"} in calls
+    end
+
+    test "a client API whose clause for :shutdown waits fires" do
+      assert {"ApiShutdownClause", "call", "terminate/2"} in sibling_calls(@reason_set)
+    end
+
+    test "a helper handed another value on the stop runs its other clauses" do
+      assert {"HelperOtherValue", "call", "leave/1"} in sibling_calls(@reason_set)
+    end
+
+    test "a clause guarded against :shutdown, or for {:shutdown, _}, and a helper's or API's clause for other reasons are quiet" do
+      quiet = ~w(NotShutdown NotShutdownExact ShutdownTuple HelperChooses Relay ApiChooses)
+      assert for({mod, _, _} <- sibling_calls(@reason_set), mod in quiet, do: mod) == []
+    end
+
+    test "mnesia's shape: an API that waits only for a crash, under a one_for_all restart" do
+      calls = sibling_calls(@mnesia_set)
+
+      assert {"reason_reporter", "call_restart", "terminate/2"} in calls
+      refute Enum.any?(calls, &match?({"reason_controller", _, _}, &1))
     end
   end
 end

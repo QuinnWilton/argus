@@ -57,7 +57,7 @@ defmodule Argus.Exclusions.ShutdownTest do
   end
 
   describe "a sibling called from terminate/2" do
-    # shutdown.dl, waits_unguarded: !catches_exit(f).
+    # shutdown.dl, stop_wait: !catches_exit(f).
     test "a call to a later sibling under a try that takes its :noproc exit", ctx do
       assert farewells(ctx, @guarded_farewell) == []
       assert farewells(ctx, @bare_farewell) == [["terminate", "call"]]
