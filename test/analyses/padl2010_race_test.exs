@@ -80,11 +80,15 @@ defmodule Argus.Analyses.Padl2010RaceTest do
 
       # Both inserts, one race: the first is the finding, the second its
       # frame.
-      assert [[_, f, ":some_tab_name", ":some_key", _, write]] = rows
+      assert [[_, f, ":some_tab_name", ":some_key", _, write, "lost_update"]] = rows
       assert fa(f) == "ets_inc/2"
 
       assert [[^write, "also_writes", _, _]] =
-               rows(ctx, [:padl2010_ets_inc], "ets_race_frame")
+               for(
+                 [_, "also_writes" | _] = frame <-
+                   rows(ctx, [:padl2010_ets_inc], "ets_race_frame"),
+                 do: frame
+               )
     end
   end
 
@@ -153,7 +157,7 @@ defmodule Argus.Analyses.Padl2010RaceTest do
 
       rows = rows(ctx, [:padl2010_loop], "ets_check_act")
 
-      assert [[_, f, ":loop_hits", ":hits", read, write]] = rows
+      assert [[_, f, ":loop_hits", ":hits", read, write, "lost_update"]] = rows
       assert fa(f) == "tick/2"
 
       # Both inserts sit before the lookup in the loop body; the second is
@@ -161,7 +165,10 @@ defmodule Argus.Analyses.Padl2010RaceTest do
       assert index(write) < index(read)
 
       assert [[^write, "also_writes", other, _]] =
-               rows(ctx, [:padl2010_loop], "ets_race_frame")
+               for(
+                 [_, "also_writes" | _] = frame <- rows(ctx, [:padl2010_loop], "ets_race_frame"),
+                 do: frame
+               )
 
       assert index(other) < index(read)
     end

@@ -840,7 +840,11 @@ defmodule Argus.Test.Fixtures.CheckThenAct do
   end
 
   defmodule CachedTwice do
-    @moduledoc "A cache that meets its own read and fill, and a caller that decides the fill again on it."
+    @moduledoc """
+    A marker that meets its own read and fill, and a caller that decides
+    the fill again on it: cached/1 claims the key and answers :missing or
+    :cached, a verdict warm/1 acts on. Both racers are told :missing.
+    """
     use GenServer
 
     def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
@@ -858,7 +862,7 @@ defmodule Argus.Test.Fixtures.CheckThenAct do
     defp cached(key) do
       case :ets.lookup(:cached_twice, key) do
         [] -> fill(key)
-        [{_key, value}] -> value
+        [{_key, _value}] -> :cached
       end
     end
 
@@ -911,8 +915,11 @@ defmodule Argus.Test.Fixtures.CheckThenAct do
     @moduledoc """
     Cache-aside: a miss loads the value (from a function, or from Mnesia
     through a helper) and inserts it, an invalidation looks the row up and
-    deletes it. Both racers load the same value, and
-    deleting twice is deleting once.
+    deletes it. get/1's load is a function of the key: both racers load
+    the same value, whenever they run, and deleting twice is deleting
+    once. setting/1 copies a Mnesia record: a copy read before the record
+    changes and invalidate/1 runs can land after the invalidation, and the
+    stale copy stays.
     """
     use GenServer
 
@@ -1579,7 +1586,9 @@ defmodule Argus.Test.Fixtures.CheckThenAct do
   defmodule MnesiaExpire do
     @moduledoc """
     blockster's OAuth state: read it, and delete it when expired. The
-    table is otherwise only written fresh; deleting twice is deleting once.
+    table is otherwise only written fresh, under a state store/1 mints:
+    no write can make the expired record's key again, and deleting twice
+    is deleting once.
     """
     def fetch(state, now) do
       case :mnesia.dirty_read({:oauth_states, state}) do
@@ -1595,7 +1604,11 @@ defmodule Argus.Test.Fixtures.CheckThenAct do
       end
     end
 
-    def store(state, expires), do: :mnesia.dirty_write({:oauth_states, state, expires})
+    def store(expires) do
+      state = :crypto.strong_rand_bytes(16)
+      :mnesia.dirty_write({:oauth_states, state, expires})
+      state
+    end
   end
 
   defmodule MnesiaExpireCounted do
@@ -2157,14 +2170,16 @@ defmodule Argus.Test.Fixtures.CheckThenAct do
     @moduledoc """
     mnesia_lib's global variables: a public table read and written through
     one-line accessors, val/1 and set/2. add/2 reads a variable and writes
-    it back through them, over the key it holds: a race, reported at its
-    set/2 call. maybe_work/0 decides on running?/0, which reads `:status`
-    through val/1, and a helper far down another path sets `:status`: one
-    literal, no flow between them. level/0 (mnesia_loader's
-    compression_level/0) fills a default for a literal it reads itself,
-    handing set/2 the literal: the pair is level/0's own, as it would be
-    written inline, and add/2 writes back to a row its callers name, which
-    may be `:level`: a race.
+    it back through them, over the key it holds: a lost update, reported
+    at its set/2 call. Its callers (GvarUsers) name the variable by a
+    tuple they build, as mnesia's name `{Tab, where_to_write}`: no such
+    key is an atom row. maybe_work/0 decides on running?/0, which reads
+    `:status` through val/1, and a helper far down another path sets
+    `:status` to a constant; the decision stays inside (maybe_work/0
+    answers :ok), and no other writer of `:status` is in view: both racers
+    write the same constant, and nothing is lost. level/0 (mnesia_loader's
+    compression_level/0) fills a default for a literal it reads itself and
+    answers with the row: both racers write the same default.
     """
     use GenServer
 
@@ -2184,7 +2199,8 @@ defmodule Argus.Test.Fixtures.CheckThenAct do
     def running?, do: val(:status) == :running
 
     def maybe_work do
-      if running?(), do: work(), else: :idle
+      if running?(), do: work()
+      :ok
     end
 
     defp work, do: finish(:done)
@@ -2204,6 +2220,12 @@ defmodule Argus.Test.Fixtures.CheckThenAct do
           level
       end
     end
+  end
+
+  defmodule GvarUsers do
+    @moduledoc "The callers of GvarAccessors.add/2, each naming a variable by a tuple it builds."
+    def add_copy(tab, node), do: GvarAccessors.add({tab, :where_to_write}, node)
+    def add_reader(tab, node), do: GvarAccessors.add({tab, :where_to_read}, node)
   end
 
   defmodule CounterAccessors do

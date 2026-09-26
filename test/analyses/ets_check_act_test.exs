@@ -48,6 +48,7 @@ defmodule Argus.Analyses.EtsCheckActTest do
     C.FetchedTable,
     C.WindowCounters,
     C.GvarAccessors,
+    C.GvarUsers,
     C.SerialAccessors,
     C.CounterAccessors,
     C.CounterAccessorChain,
@@ -64,6 +65,14 @@ defmodule Argus.Analyses.EtsCheckActTest do
   defp solve(:alone, modules), do: Memo.analyze(modules, :races)
   defp solve(%{batch: batch}, modules), do: Batch.analyze(batch, modules)
 
+  # {function, kind} of each ETS check-then-act.
+  defp kinds(source, modules) do
+    {:ok, results} = solve(source, modules)
+
+    for [_mod, func, _name, _key, _read, _write, kind] <- results["ets_check_act"],
+        do: {func |> String.split(":") |> List.last(), kind}
+  end
+
   defp skip_without_souffle do
     unless Souffle.available?(), do: flunk("souffle not installed")
   end
@@ -71,7 +80,7 @@ defmodule Argus.Analyses.EtsCheckActTest do
   defp races(source, modules) do
     {:ok, results} = solve(source, modules)
 
-    for [_mod, func, name, key, _read, _write] <- results["ets_check_act"],
+    for [_mod, func, name, key, _read, _write, _kind] <- results["ets_check_act"],
         do: {func |> String.split(":") |> List.last(), name, key}
   end
 
@@ -189,9 +198,14 @@ defmodule Argus.Analyses.EtsCheckActTest do
   end
 
   describe "races both racers win" do
-    test "a cache refill made by a call, and an invalidating delete, are not reported", ctx do
+    test "a refill that is a function of the key, and an invalidating delete, are not reported",
+         ctx do
       skip_without_souffle()
-      assert races(ctx, [C.CacheRefill]) == []
+
+      # get/1's copy is the same whenever it is made; setting/1's copy of
+      # a Mnesia record, read before the record changes, can land after
+      # invalidate/1 and stay: a stale fill, its rival the invalidation.
+      assert kinds(ctx, [C.CacheRefill]) == [{"setting/1", "stale_fill"}]
     end
 
     test "a refill that mints the value it hands out is reported: each racer returns its own",
@@ -317,9 +331,9 @@ defmodule Argus.Analyses.EtsCheckActTest do
     test "a shared key through one-line accessors meets at the calls, in the caller", ctx do
       skip_without_souffle()
 
-      {:ok, results} = Batch.analyze(ctx.batch, [C.GvarAccessors])
+      {:ok, results} = Batch.analyze(ctx.batch, [C.GvarAccessors, C.GvarUsers])
 
-      assert [[_mod, func, ":gvar", "0", read, write]] =
+      assert [[_mod, func, ":gvar", "0", read, write, "lost_update"]] =
                for([_, _, _, "0" | _] = row <- results["ets_check_act"], do: row)
 
       assert short(func) == "add/2"
@@ -329,34 +343,34 @@ defmodule Argus.Analyses.EtsCheckActTest do
       assert short(write) == "add/2"
     end
 
-    test "a literal an accessor is handed down another chain is no shared key", ctx do
+    test "a constant written on a decision that stays inside is no race", ctx do
       skip_without_souffle()
 
-      {:ok, results} = Batch.analyze(ctx.batch, [C.GvarAccessors])
+      {:ok, results} = Batch.analyze(ctx.batch, [C.GvarAccessors, C.GvarUsers])
       funcs = for [_, func | _] <- results["ets_check_act"], do: short(func)
 
+      # maybe_work/0's set(:status, :stopping) and level/0's default: both
+      # racers write the same constant, no caller hears who did, and
+      # add/2's rows are the tuples GvarUsers builds, never an atom's.
       refute "maybe_work/0" in funcs
       refute "running?/0" in funcs
+      refute "level/0" in funcs
     end
 
     test "a literal the meeting function hands the accessor itself is its own pair", ctx do
       skip_without_souffle()
 
-      {:ok, results} = Batch.analyze(ctx.batch, [C.GvarAccessors])
+      {:ok, results} = Batch.analyze(ctx.batch, [C.CounterAccessors])
 
-      # level/0 reads `:level` and hands set/2 the same literal: the pair
-      # is level/0's, reported at its set/2 call as the inline pair would
-      # be. add/2 writes back to whichever row its callers name.
-      assert [[_, func, ":gvar", ":level", read, write]] =
-               for([_, _, _, ":level" | _] = row <- results["ets_check_act"], do: row)
+      # incr/0 reads `:count` through get/1 and hands put/2 the same
+      # literal and the read plus one: the pair is incr/0's, reported at
+      # its calls as the inline pair would be.
+      assert [[_, func, ":counter_accessors", ":count", read, write, "lost_update"]] =
+               results["ets_check_act"]
 
-      assert short(func) == "level/0"
-      assert short(read) == "level/0"
-      assert short(write) == "level/0"
-
-      # The counter's getter and setter, both handed `:count` in incr/0.
-      assert [{"incr/0", ":counter_accessors", ":count"}] =
-               races(ctx, [C.CounterAccessors])
+      assert short(func) == "incr/0"
+      assert short(read) == "incr/0"
+      assert short(write) == "incr/0"
     end
 
     test "an accessor the meeting function reaches through another call is its own site", ctx do
@@ -366,14 +380,16 @@ defmodule Argus.Analyses.EtsCheckActTest do
 
       # incr/0 calls set_count/1 but reaches count/0 through next/0: the
       # write is the call, the read the lookup inside count/0.
-      assert [[_, func, ":counter_chain", ":count", read, write]] = results["ets_check_act"]
+      assert [[_, func, ":counter_chain", ":count", read, write, _kind]] =
+               results["ets_check_act"]
+
       assert short(func) == "incr/0"
       assert short(read) == "count/0"
       assert short(write) == "incr/0"
 
       {:ok, results} = Batch.analyze(ctx.batch, [C.AccessorThroughHelper])
 
-      assert [[_, func, ":accessor_helper", "0", read, write]] = results["ets_check_act"]
+      assert [[_, func, ":accessor_helper", "0", read, write, _kind]] = results["ets_check_act"]
       assert short(func) == "incr/1"
       assert short(read) == "incr/1"
       assert short(write) == "put/2"
@@ -394,7 +410,7 @@ defmodule Argus.Analyses.EtsCheckActTest do
       {:ok, results} = Batch.analyze(ctx.batch, [C.HelperCache])
 
       sites =
-        for [_mod, func, ":helper_cache", "0", read, write] <- results["ets_check_act"],
+        for [_mod, func, ":helper_cache", "0", read, write, _kind] <- results["ets_check_act"],
             do: {short(func), short(read), short(write)}
 
       # fetch/1 is an accessor, one lookup: the read is its call in bump/1.
@@ -433,7 +449,8 @@ defmodule Argus.Analyses.EtsCheckActTest do
         ":cache",
         "0",
         "M:put_if_absent/2#4",
-        "M:put_if_absent/2#9"
+        "M:put_if_absent/2#9",
+        "claim"
       ]
 
       f = Races.finding(:ets_check_act, row)
@@ -445,7 +462,7 @@ defmodule Argus.Analyses.EtsCheckActTest do
     end
 
     test "names a table the callers hand in by its argument, and says why it is shared" do
-      row = ["M", "M:hit/3", "param 0", "1", "M:hit/3#4", "M:hit/3#9"]
+      row = ["M", "M:hit/3", "param 0", "1", "M:hit/3#4", "M:hit/3#9", "lost_update"]
       f = Races.finding(:ets_check_act, row)
 
       assert f.detail =~ "reads a key of the table in its first argument"
@@ -455,7 +472,7 @@ defmodule Argus.Analyses.EtsCheckActTest do
     end
 
     test "names the helpers when the read and the write sit outside the meeting function" do
-      row = ["M", "M:bump/1", ":cache", "0", "M:fetch/1#6", "M:store/2#15"]
+      row = ["M", "M:bump/1", ":cache", "0", "M:fetch/1#6", "M:store/2#15", "lost_update"]
       f = Races.finding(:ets_check_act, row)
 
       assert f.detail =~ "in M.fetch/1"

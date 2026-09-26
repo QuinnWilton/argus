@@ -475,7 +475,7 @@ module_identity("module field").
 // request the receiver acts on. A kill or a stop is not one: a second is
 // the first one's echo (sequin's Havoc.stop/1, hackney's stop_pool/1).
 // The ETS and the Mnesia read-then-write rules each instantiate it, with
-// their pairs' reads and the values that carry them.
+// the values that carry their pairs' reads on each pair's path.
 //
 // Requires otp.dl (calls.dl) as well.
 .decl delivers_message(func: symbol)
@@ -488,17 +488,16 @@ delivers_message(f) :-
   (peer_call(c) ; peer_cast(c)).
 
 .comp DecisionSends {
-  // The pairs' reads, and a value in `func` that carries `read`.
-  .decl read(read: symbol)
-  .decl carried(func: symbol, kind: symbol, src: symbol, read: symbol)
+  // A value in `func`, on the path of the pair meeting in `meet`, that
+  // carries `read`.
+  .decl carried(meet: symbol, func: symbol, kind: symbol, src: symbol, read: symbol)
 
-  .decl sends(read: symbol)
+  .decl sends(meet: symbol, read: symbol)
 
-  sends(r) :- read(r), carried(f, kind, src, r), effect_decided(f, kind, src), delivers_message(f).
+  sends(m, r) :- carried(m, f, kind, src, r), effect_decided(f, kind, src), delivers_message(f).
 
-  sends(r) :-
-    read(r),
-    carried(f, kind, src, r),
+  sends(m, r) :-
+    carried(m, f, kind, src, r),
     call_decided(f, g, kind, src),
     delivers_message(g).
 }
@@ -616,4 +615,161 @@ delivers_message(f) :-
   .decl stores(write: symbol)
 
   stores(w) :- write(w, h), site_reads(w, h, k, s), made(h, k, s).
+}
+
+// ── Made of this pair's read ─────────────────────────────────────────
+//
+// MadeOfRead asks whether a write stores what some read returned, by any
+// caller's path. A pair asks something narrower: whether its write stores
+// what ITS read returned, on the way from the function where the two
+// meet down to the write. An accessor's insert that one caller hands a
+// counter plus one and another a constant is a lost update for the first
+// caller's pair and a constant for the second's; a write in a helper is
+// judged by what the meeting function hands it. In the meeting function
+// f, a value is made of the read r when it is r's own result, a helper's
+// result that returns r (or a value made of it) however many helpers
+// down, or a helper's result handed such a value that the helper returns
+// or maps (`next(stage)` matching `:queued -> :running`: a function of
+// the read, though no byte of it reaches the result). The write carries
+// the read when its value is such a value in f, or a parameter f's calls
+// fill with one down to the write's function, or a helper's result made
+// of such a parameter. Data dependence alone: a value computed under a
+// test on the read, but not from it, is not made of it. The ETS and the
+// Mnesia read-then-write rules each instantiate it with their pairs.
+.comp PairCarries {
+  // In `func`, `read` decides or feeds `write` (a pair meets there).
+  .decl pair(func: symbol, read: symbol, write: symbol)
+  // The function each read and each write sits in.
+  .decl read_in(read: symbol, func: symbol)
+  .decl write_in(write: symbol, func: symbol)
+
+  // A helper returns what the read found, or a value made of it.
+  .decl returns_read(func: symbol, read: symbol)
+
+  returns_read(g, r) :- pair(_, r, _), read_in(r, g), returns_reads(g, "site", r).
+  returns_read(g, r) :- returns_read(k, r), returns_reads(g, "call", k).
+
+  // In the meeting function, the value (kind, src) is made of the read.
+  .decl value(func: symbol, kind: symbol, src: symbol, read: symbol)
+
+  value(f, "site", r, r) :- pair(f, r, _), read_in(r, f).
+  value(f, "call", g, r) :- pair(f, r, _), call_edge(f, g), returns_read(g, r).
+
+  value(f, "call", g, r) :-
+    value(f, kind, src, r),
+    call_arg_reads(f, g, n, kind, src),
+    returns_reads(g, "param", to_string(n)).
+
+  value(f, "call", g, r) :-
+    value(f, kind, src, r),
+    call_arg_reads(f, g, n, kind, src),
+    maps_param(g, to_string(n)).
+
+  // What a helper returns is a function of its parameter: made of it or
+  // decided by it, in the helper or a helper it hands it to.
+  .decl map_needed(func: symbol)
+
+  map_needed(g) :- value(f, kind, src, _), call_arg_reads(f, g, _, kind, src).
+  map_needed(g) :- pair(_, _, w), write_in(w, h), site_reads(w, h, "call", g).
+  map_needed(g2) :- map_needed(g), returns_depends(g, "call", g2).
+
+  .decl maps_param(func: symbol, pos: symbol)
+
+  maps_param(g, q) :- map_needed(g), returns_depends(g, "param", q).
+
+  maps_param(g, q) :-
+    map_needed(g),
+    returns_depends(g, "call", g2),
+    call_arg_depends(g, g2, n, "param", q),
+    maps_param(g2, to_string(n)).
+
+  // On the way from the meeting function down to the write: a parameter
+  // of `func` the meeting function fills with a value made of the read,
+  // directly or forwarded through the calls between.
+  .decl path_param(meet: symbol, read: symbol, func: symbol, pos: symbol)
+
+  path_param(f, r, g, to_string(n)) :- value(f, kind, src, r), call_arg_reads(f, g, n, kind, src).
+
+  path_param(f, r, h, to_string(n)) :-
+    path_param(f, r, g, p),
+    call_arg_reads(g, h, n, "param", p).
+
+  // The write stores what the read returned, or a value made of it, where
+  // the pair meets in `func`: an accessor's insert one caller hands a
+  // count plus one carries that caller's read, not another's.
+  .decl carries(func: symbol, read: symbol, write: symbol)
+
+  carries(f, r, w) :-
+    pair(f, r, w),
+    write_in(w, f),
+    site_reads(w, f, kind, src),
+    value(f, kind, src, r).
+
+  // A parameter the meeting function fills with a value made of the read,
+  // down to the write: a helper's, or the function's own through a loop
+  // that hands the read to its next iteration.
+  carries(f, r, w) :-
+    pair(f, r, w),
+    write_in(w, h),
+    site_reads(w, h, "param", p),
+    path_param(f, r, h, p).
+
+  carries(f, r, w) :-
+    pair(f, r, w),
+    write_in(w, h),
+    site_reads(w, h, "call", g),
+    call_arg_reads(h, g, n, "param", p),
+    path_param(f, r, h, p),
+    returns_reads(g, "param", to_string(n)).
+
+  carries(f, r, w) :-
+    pair(f, r, w),
+    write_in(w, h),
+    site_reads(w, h, "call", g),
+    call_arg_reads(h, g, n, "param", p),
+    path_param(f, r, h, p),
+    maps_param(g, to_string(n)).
+
+  // Where the pairs meet, a value made of their read.
+  .decl answers(func: symbol, read: symbol)
+
+  answers(f, r) :- pair(f, r, _), value(f, kind, src, r), returns_reads(f, kind, src).
+
+  // The write stores a value a call made, or a read of another store
+  // (`fresh`, the instance's fill sources), on the pair's path: the
+  // cache-aside's `v = load(k)`, made where the pair meets, in a helper
+  // below it, or handed down to the write.
+  .decl fresh(kind: symbol, src: symbol)
+
+  .decl fresh_param(meet: symbol, func: symbol, pos: symbol, kind: symbol, src: symbol)
+
+  fresh_param(f, g, to_string(n), kind, src) :-
+    pair(f, _, _),
+    call_arg_reads(f, g, n, kind, src),
+    fresh(kind, src).
+
+  fresh_param(f, h, to_string(n), kind, src) :-
+    fresh_param(f, g, p, kind, src),
+    call_arg_reads(g, h, n, "param", p).
+
+  // fresh_used(f, r, w, kind, src): the fresh value (kind, src) is what
+  // the write stores, on the path of the pair meeting in `func`.
+  .decl fresh_used(func: symbol, read: symbol, write: symbol, kind: symbol, src: symbol)
+
+  fresh_used(f, r, w, kind, src) :-
+    pair(f, r, w),
+    write_in(w, h),
+    site_reads(w, h, kind, src),
+    fresh(kind, src).
+
+  fresh_used(f, r, w, kind, src) :-
+    pair(f, r, w),
+    write_in(w, h),
+    h != f,
+    site_reads(w, h, "param", p),
+    fresh_param(f, h, p, kind, src).
+
+  .decl fills(func: symbol, read: symbol, write: symbol)
+
+  fills(f, r, w) :- fresh_used(f, r, w, _, _).
 }

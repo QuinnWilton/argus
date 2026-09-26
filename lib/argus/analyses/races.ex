@@ -14,43 +14,48 @@ defmodule Argus.Analyses.Races do
     lookup-then-start race, and its release twin,
     lookup-then-unregister. `key_source` says how `func` names the key
     (`literal`, `param`, `field`, `local`, `dynamic` or `any`).
-  - `ets_check_act(mod, func, name, key, read, write)` — an ETS read
-    decides or feeds a plain write of the same key on a public table
-    another process can write. One row per write. An operation that is
-    the whole body of an accessor (`mnesia_lib:set/2`) is its callers':
-    `read` or `write` is the meeting function's call to the accessor, or
-    the operation itself when the function reaches the accessor only
-    through another call. A literal key a parameter accessor is handed
-    somewhere other than where the pair meets names a row two chains
-    agree on, not a flow, and is not a pair. A delete, a fill every
-    racer computes alike, and a write whose decision never leaves the
-    function are not lost updates, unless the program also writes the
-    table back from a read or counts in it (update_counter, or an
-    `:atomics` or `:counters` array the row holds). Nor is an update or a
-    delete of a row only its holder writes: every row the table gets is
-    made at a key minted there (a reference, a monitor, a unique integer)
-    and handed to one process, and the others' writes that reach it only
-    remove it. A table the
-    program's users hand in, which nothing in view names, is `name`d by
-    the parameter it arrives in (`param 0`, counted from 0): a function
-    more than one process runs writes it from each caller's process,
-    which only a public table allows.
+  - `ets_check_act(mod, func, name, key, read, write, kind)` — an ETS read
+    decides or feeds a plain write of the same key on a public table, a
+    rival write can land on the row between the two (the pair itself in a
+    second process, or another write of the row in a process other than
+    the pair's), and what the rival and the write do together has a
+    witness (`kind`): `lost_update` (the write stores what this read
+    returned), `claim` (a first insert whose verdict the caller is told),
+    `take` (a delete that hands out the row it removes), `guarded` (a
+    guard on the row compared with the value written), `clobber` (a
+    write over a row a rival counts in), `state_delete` (a delete made on
+    what the row holds, over a row a rival made again), `minted` (a
+    minted value handed out), `decides_more` (the decision also sends or
+    writes elsewhere) or `stale_fill` (a refill landing after a rival
+    removed or rewrote the row). No witness, no row: two racers writing
+    the same default, a refill nothing makes stale, a delete made twice.
+    A write is seen where its key is named, so an accessor's operation
+    (`mnesia_lib:set/2`) is its callers', at the key each hands it: `read`
+    or `write` is the meeting function's call to the accessor, or the
+    operation itself when the function reaches the accessor only through
+    another call. One row per write. A table the program's users hand
+    in, which nothing in view names, is `name`d by the parameter it
+    arrives in (`param 0`, counted from 0).
   - `mnesia_check_act(mod, func, table, key, read, write, op, kind)` — a
     dirty read decides or feeds a dirty write (`op`: `dirty_write`,
     `dirty_delete` or `dirty_delete_object`) of the same record, and
     another process can write the table. One row per write: `kind` says
-    what the interleaving costs — `unique` (a search by index or pattern
-    found nothing and a new record is inserted: both racers insert),
-    `lost_update` (the write stores what the read returned), `guarded`
-    (the decision compares the record with the value written), `claim`
-    (an insert-if-absent whose answer the caller gets), `delete`, or
-    `fill` (a record computed afresh, over a write that may have landed
-    since: the weakest, an `:info`). A table only one process writes is
-    not reported; that process is one per node, so a table replicated to
-    nodes that each run its owner is taken as having one writer.
+    what the interleaving costs, each with its witness — `unique` (a
+    search by index or pattern found nothing and a new record is
+    inserted: both racers insert), `lost_update` (the write stores what
+    this pair's read returned), `guarded` (the decision compares the
+    record with the value written), `claim` (an insert-if-absent whose
+    verdict the caller gets), `decides_more`, `delete` (made on what the
+    record holds, over a record a rival wrote or made again, or one whose
+    decision sends or hands the record out), or `fill` (a record computed
+    afresh, over a rival's removal or write: the weakest, an `:info`). A
+    table only one process writes is not reported; that process is one
+    per node, so a table replicated to nodes that each run its owner is
+    taken as having one writer.
   - `ets_race_frame(write, role, site, func)` — evidence for an ETS
-    finding: the same race's other writes (`also_writes`) and the other
-    reads deciding the write (`read`).
+    finding: the same race's other writes (`also_writes`), the other
+    reads deciding the write (`read`), and the rival writes that witness
+    its harm (`rival`).
   - `mnesia_race_frame(write, role, site, func)` — evidence for a
     Mnesia finding: the same race's other writes (`also_writes`), the
     other reads deciding the write (`read`), and, for a pair one process
@@ -77,7 +82,8 @@ defmodule Argus.Analyses.Races do
   known, `field` and the module and map path it is read under.
 
   Every check-then-act finding is a `:warning` anchored at the act, with
-  the check as a related frame, but a Mnesia fill, an `:info`; a
+  the check as a related frame, but a Mnesia fill and an ETS stale fill,
+  each an `:info`; a
   publish-order finding is a `:warning`
   anchored at the early write, with the completing write and the reader
   as related frames; a missing-row finding is a `:warning` anchored at the
@@ -157,24 +163,29 @@ defmodule Argus.Analyses.Races do
            "the table: its name, or `param N` for one func's callers outside the program hand in"},
           {:key, :symbol, "the key, as func identifies it"},
           {:read, :symbol, "instruction ID of the read"},
-          {:write, :symbol, "instruction ID of the write it decides or feeds"}
+          {:write, :symbol, "instruction ID of the write it decides or feeds"},
+          {:kind, :symbol,
+           "lost_update | claim | take | guarded | clobber | state_delete | minted | " <>
+             "decides_more | stale_fill"}
         ],
         key: [:write],
-        doc: "A read decides a write of the same key on a public table another process can write."
+        doc:
+          "A read decides a write of the same key on a public table, a rival write can land " <>
+            "between the two, and the interleaving has a witnessed harm."
       },
       %{
         name: :ets_race_frame,
         fields: [
           {:write, :symbol, "the finding's write"},
-          {:role, :symbol, "also_writes | read"},
-          {:site, :symbol, "instruction ID of the other write or the other read"},
+          {:role, :symbol, "also_writes | read | rival"},
+          {:site, :symbol, "instruction ID of the other write, the other read or the rival"},
           {:func, :symbol, "the function the site is reported from"}
         ],
         key: [:write, :role, :site],
         evidence: %{of: :ets_check_act, on: [:write], limit: 4},
         doc:
-          "The same race's other writes and the other reads deciding the write, attached to " <>
-            "its finding."
+          "The same race's other writes, the other reads deciding the write, and the rival " <>
+            "writes witnessing its harm, attached to its finding."
       },
       %{
         name: :mnesia_check_act,
@@ -290,23 +301,43 @@ defmodule Argus.Analyses.Races do
     )
   end
 
-  def finding(:ets_check_act, [mod, func, name, _key, read, write]) do
+  def finding(:ets_check_act, [mod, func, name, _key, read, write, "stale_fill"]) do
+    {table, _shared} = ets_table_prose(name)
+
+    Findings.new(
+      :info,
+      "ETS row refilled on a stale read",
+      "#{func} reads a key of #{table}#{Findings.elsewhere(read, func)} and, on what it " <>
+        "found, writes a value a call or another store computed#{Findings.elsewhere(write, func)}. " <>
+        "Another process can remove the row or write a value of its own between the two, and " <>
+        "the fill, computed before that write, lands after it: the stale value stays until " <>
+        "something clears it again.",
+      at: Findings.at_site(write, mod),
+      at_label: "this fill may land over a newer write",
+      related: [Findings.related("the read it depends on", Findings.at_site(read, mod))],
+      help: [
+        "fill only what is still absent: `:ets.insert_new/2`, so a newer row wins",
+        "or invalidate after the source is written and have fills check a version the " <>
+          "invalidation bumps"
+      ]
+    )
+  end
+
+  def finding(:ets_check_act, [mod, func, name, _key, read, write, kind]) do
     {table, shared} = ets_table_prose(name)
 
     Findings.new(
       :warning,
       "Read-then-write race on an ETS key",
-      "#{func} reads a key of #{table}#{Findings.elsewhere(read, func)} and writes it" <>
-        "#{Findings.elsewhere(write, func)} as the read says to. #{shared} " <>
-        "another process can write it between the two, so the write acts on a row that " <>
-        "may have changed — the read-decide-write race that the ETS built-ins are " <>
-        "documented not to protect against.",
+      "#{func} reads a key of #{table}#{Findings.elsewhere(read, func)} and " <>
+        "#{ets_act(kind)}#{Findings.elsewhere(write, func)}. #{shared} another process can " <>
+        "write the row between the two, and #{ets_loss(kind)}.",
       at: Findings.at_site(write, mod),
       at_label: "this write was decided by a read that may be stale",
       related: [Findings.related("the read it depends on", Findings.at_site(read, mod))],
       help: [
         "make the check and the write one operation: `:ets.insert_new/2`, " <>
-          "`:ets.update_counter/4` with a default, or `:ets.select_replace/2`",
+          "`:ets.update_counter/4` with a default, `:ets.take/2`, or `:ets.select_replace/2`",
         "or route writes to #{table} through its owner process and make the table `:protected`"
       ]
     )
@@ -460,6 +491,13 @@ defmodule Argus.Analyses.Races do
     )
   end
 
+  def evidence(:ets_race_frame, [_write, "rival", site, func]) do
+    Findings.related(
+      "another process can write the row here, from " <> Findings.call_name(func),
+      Findings.at_site_in_func(site, func)
+    )
+  end
+
   def evidence(:ets_race_frame, [_write, "read", site, func]) do
     Findings.related(
       "also decided by this read, where it meets the write in " <> Findings.call_name(func),
@@ -474,6 +512,43 @@ defmodule Argus.Analyses.Races do
       Findings.at_site_in_func(site, func)
     )
   end
+
+  # What an ETS check-then-act does with the row, and what the
+  # interleaving costs, by the harm its rival witnesses.
+  defp ets_act("lost_update"), do: "writes back a value made of what it read"
+  defp ets_act("claim"), do: "makes the row when it found none, and tells its caller so"
+  defp ets_act("take"), do: "deletes the row it found and hands out what it held"
+  defp ets_act("guarded"), do: "compares the row with the value it then writes, and writes it"
+  defp ets_act("clobber"), do: "writes a value of its own over the row"
+  defp ets_act("state_delete"), do: "deletes the row, on what the row held"
+  defp ets_act("minted"), do: "stores a value it minted, and hands that value out"
+
+  defp ets_act(_decides_more),
+    do: "writes the row, on a decision that also sends or writes elsewhere"
+
+  defp ets_loss("lost_update"), do: "one of the two updates is lost"
+
+  defp ets_loss("claim"),
+    do: "two callers can both find none, both write, and both be told they won"
+
+  defp ets_loss("take"), do: "two callers can both take the one row"
+
+  defp ets_loss("guarded"),
+    do: "two updates can both pass the check, and the older can land last"
+
+  defp ets_loss("clobber"),
+    do: "the counts another process added to the row since the read are lost"
+
+  defp ets_loss("state_delete"),
+    do:
+      "the delete can take the row another process made since the read, which the decision " <>
+        "never saw"
+
+  defp ets_loss("minted"),
+    do: "each caller hands out its own value, and only one of them is stored"
+
+  defp ets_loss(_decides_more),
+    do: "both callers can take the decision, and both make the rest of it"
 
   # What a Mnesia check-then-act does with the record, and what the
   # interleaving loses, by kind.
@@ -509,7 +584,9 @@ defmodule Argus.Analyses.Races do
         "idempotency marker both set, and both charge"
 
   defp record_loss(_delete),
-    do: "the delete can remove a record another process wrote back in between"
+    do:
+      "the delete can remove a record another process wrote back or made again in between, " <>
+        "or two callers can both take the one record"
 
   # The table an ETS check-then-act touches, and why another process can
   # write it: a public table by its name, or one its callers outside the

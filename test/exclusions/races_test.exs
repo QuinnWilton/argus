@@ -60,7 +60,9 @@ defmodule Argus.Exclusions.RacesTest do
   # {function, table, key} of each ETS check-then-act.
   defp ets_races(ctx, set) do
     for [func, name, key] <-
-          Rows.where(results(ctx, set), :races, "ets_check_act", drop: [:mod, :read, :write]),
+          Rows.where(results(ctx, set), :races, "ets_check_act",
+            drop: [:mod, :read, :write, :kind]
+          ),
         do: {short(func), name, key}
   end
 
@@ -206,9 +208,12 @@ defmodule Argus.Exclusions.RacesTest do
              ]
     end
 
-    # races.dl, record_race_kind: !record_recomputed(r, w).
-    test "a warmer that stores a render on a miss and answers :hit or :miss fills", ctx do
-      assert record_races(ctx, [R.Prerender]) == [{"warm/1", ":excl_races_pages", "fill"}]
+    # A claim is a verdict the caller acts on (races.dl, record_race_kind
+    # "claim"): warm_all/1 counts the :miss answers, and two racers that
+    # both miss both answer :miss. (The retired !record_recomputed(r, w)
+    # labelled it a fill.)
+    test "a warmer that stores a render on a miss and answers :hit or :miss claims", ctx do
+      assert record_races(ctx, [R.Prerender]) == [{"warm/1", ":excl_races_pages", "claim"}]
     end
   end
 end
