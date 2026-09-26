@@ -24,7 +24,11 @@ defmodule Argus.Extractors.Tooling do
     `lib`, `src`, `apps`, `deps` or `_build` directory below it. A
     checkout under a directory named `test` (`/ci/test/app/lib/x.ex`)
     has `lib` below it and is not; nor is a project's `test/fixtures`,
-    whose modules stand for the product in its own tests.
+    whose modules stand for the product in its own tests. Or, wherever it
+    was compiled from, a test helper: a module that calls
+    `ExUnit.Callbacks`, `ExUnit.Assertions` or `ExUnit.Case` (not every
+    ExUnit caller: Livebook's Doctests runs ExUnit's runner inside the
+    product).
 
   The path is the one `compile_info` records; a beam built without it
   (`+deterministic`) says nothing about its path.
@@ -47,6 +51,7 @@ defmodule Argus.Extractors.Tooling do
     cond do
       String.starts_with?(mod, "Mix.") -> add_fact(%{}, :tooling_module, [mod, "mix"])
       test_support?(source(module_data)) -> add_fact(%{}, :tooling_module, [mod, "test_support"])
+      test_helper?(module_data) -> add_fact(%{}, :tooling_module, [mod, "test_support"])
       true -> %{}
     end
   end
@@ -74,6 +79,23 @@ defmodule Argus.Extractors.Tooling do
         false
     end)
   end
+
+  @test_helpers [ExUnit.Callbacks, ExUnit.Assertions, ExUnit.Case]
+
+  # A call into the ExUnit modules a test helper sets tests up or asserts
+  # with.
+  defp test_helper?(%{functions: functions}) do
+    Enum.any?(functions, fn {:function, _name, _arity, _entry, instrs} ->
+      Enum.any?(instrs, fn instr ->
+        case Argus.Extractor.Helpers.match_remote_call(instr) do
+          {:ok, mod, _f, _a} -> mod in @test_helpers
+          :none -> false
+        end
+      end)
+    end)
+  end
+
+  defp test_helper?(_module_data), do: false
 
   # The source path compile_info records, read from the beam the
   # pipeline disassembled.

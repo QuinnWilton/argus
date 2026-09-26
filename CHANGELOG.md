@@ -141,7 +141,7 @@ neighbours of each are permanent fixtures in `test/soundness/`.
   (`String.to_existing_atom/1`, here or in a caller — new relations
   `sink_arg_chosen`, `call_arg_chosen`), reached by a request, or fed
   back to the site (a recursion, a fold's closure). `sink_arg_bounded`
-  marks such a bound `list_param` "atoms". Schema 120.
+  marks such a bound `list_param` "atoms". Schema 122.
 - **Fixed** (unsafe_input) a bound counts its values: pieces multiply
   (`"tile_#{x}_#{y}"` over two ranges of 1,024 is the whole table),
   joined literals are a set, and the limit of 1,024 is on the total.

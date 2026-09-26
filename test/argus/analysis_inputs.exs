@@ -9,11 +9,11 @@
   coverage:
     ~w(async_cast call_arg call_arg_forward dynamic_child ets_new ets_op function_def implements_behaviour imprecision named_pid named_process process_call server_process supervisor supervisor_child sync_call),
   effects:
-    ~w(call_edge call_site closure_def dynamic_call ets_new ets_op fun_handed implements_behaviour impure_call port_open prior_tooling process_register protocol_dispatch pure_contract recv_start remote_call resolved_apply send_msg spawn_call tooling_module unknown_call),
+    ~w(call_edge call_site closure_def dynamic_call ets_new ets_op fun_handed fun_handed_to fun_ref function_def implements_behaviour impure_call port_open prior_tooling process_register process_start protocol_dispatch pure_contract recv_start remote_call resolved_apply send_msg spawn_call tooling_module unknown_call),
   ets:
     ~w(call_arg call_arg_forward call_edge call_site catch_tag catch_total child_spec_restart closure_def dynamic_call dynamic_child ets_key ets_new ets_op ets_op_param ets_option ets_read_when_present fun_handed fun_handed_to fun_ref function_def implements_behaviour pid_field pid_return prior_tooling process_start remote_call statem_event_clause supervisor supervisor_child table_alloc tooling_module try_covers try_start),
   exposure:
-    ~w(function_def inspect_derived inspect_shows lineless_schema prior_sensitive prior_tooling redacted_field schema_field tls_connect tls_server_side tls_verification tooling_module),
+    ~w(call_edge function_def inspect_derived inspect_shows lineless_schema prior_sensitive prior_tooling redacted_field schema_field tls_connect tls_server_side tls_verification tooling_module),
   failure:
     ~w(bare_rescue boundary_function call_arg_forward call_edge call_followed_by_branch call_result call_site catch_class catch_falls_through catch_tag catch_total closure_def conditional_call dynamic_call ets_key ets_new ets_op exit_call fun_handed_to fun_ref function_def handle_dropped ignored_error_result implements_behaviour instance local_call macro_generated macro_written mfa_arg name_lookup nil_use pid_arg pid_call pid_field pid_load pid_probe pid_remote pid_result pid_return pid_signal prior_tooling private_process process_signal process_start remote_call result_tested rpc_call rpc_callee rpc_mfa_param rpc_result spawn_call spec_return start_acked statem_event_clause supervised_process supervisor_child supervisor_site tail_call tooling_module try_boundary try_call try_covers try_covers_closure try_wrapper_call unconditional_call_edge),
   mailbox:
@@ -25,9 +25,9 @@
   startup:
     ~w(async_cast call_arg call_arg_forward call_edge call_site call_site_target call_tag callback_tag callback_timeout clause_call conditional_call distributed_store_op dynamic_call dynamic_child fun_handed fun_handed_to fun_ref function_def global_op global_register handle_continue_clause ignored_error_result implements_behaviour impure_call init_continues_to mailbox_writer node_operation post_start_call prior_answers prior_tooling process_call process_start recv_down recv_flush recv_pattern recv_signal recv_start remote_call rpc_call server_process spawn_call start_acked statem_timeout sup_call supervisor supervisor_child supervisor_site sync_call sync_call_site timer_arm tooling_module trap_exit try_start unconditional_call_edge),
   state_machine:
-    ~w(function_def prior_tooling statem_helper_transition statem_initial statem_module statem_returns_call statem_state statem_transition tooling_module),
+    ~w(call_edge function_def prior_tooling statem_helper_transition statem_initial statem_module statem_returns_call statem_state statem_transition tooling_module),
   structure:
-    ~w(function_def global_register implements_behaviour prior_tooling process_register supervisor_child supervisor_child_form supervisor_site tooling_module),
+    ~w(call_edge function_def global_register implements_behaviour prior_tooling process_register supervisor_child supervisor_child_form supervisor_site tooling_module),
   unsafe_input:
     ~w(async_cast awaits_child_exit call_arg call_arg_allowlist call_arg_chosen call_arg_derived call_arg_forward call_arg_reads call_edge call_site code_execution dynamic_call dynamic_child fun_handed fun_handed_to fun_ref function_def http_route implements_behaviour prior_reads prior_tooling prior_value_source process_start remote_call returns_reads sink_arg_bounded sink_arg_chosen sink_arg_derived sink_copy sink_reads socket_active socket_transport supervisor_max_children sync_call_site task_supervisor_start tooling_module unsafe_atom_creation unsafe_decompression unsafe_deserialization)
 ]

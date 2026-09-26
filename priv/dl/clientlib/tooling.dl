@@ -41,24 +41,9 @@ tooling(m, basis, p) :- tooling_named(m, basis, p), !product_reached(m).
 
 tooling_named(m, basis, 1000) :- tooling_module(m, basis).
 
-// A test helper outside a test directory: a module that sets tests up
-// or asserts in them (ExUnit.Callbacks, ExUnit.Assertions, ExUnit.Case).
-// Not every ExUnit caller: Livebook's Doctests runs ExUnit's runner and
-// doctests inside the product.
-tooling_named(m, "test_support", 1000) :- exunit_helper(m).
-
 tooling_named(m, "prior", p) :-
   prior_tooling(m, _, _, p),
   p >= 900,
-  !tooling_module(m, _),
-  !exunit_helper(m).
-
-.decl exunit_helper(mod: symbol)
-
-exunit_helper(m) :-
-  function_def(f, m, _, _, _),
-  remote_call(_, f, callee, _, _),
-  (callee = "ExUnit.Callbacks" ; callee = "ExUnit.Assertions" ; callee = "ExUnit.Case"),
   !tooling_module(m, _).
 
 .decl named_tooling(mod: symbol)
