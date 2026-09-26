@@ -1,0 +1,607 @@
+defmodule Argus.Test.Fixtures.Restart do
+  @moduledoc """
+  Registrations a sibling's restart loses (clientlib/restart_state.dl,
+  docs/design/restart-state.md), asserted by test/soundness/coupling_test.exs.
+
+  Each supervisor starts a keeper and a child that registers something
+  with it when it starts, under `:one_for_one`. The keepers keep it in a
+  different place: the state they return (a map, a flag a literal sets
+  to what init/1 does not), a monitor, an ETS row, the process dictionary,
+  or a library outside the program. The registrations are made from
+  init/1, from handle_continue/2, from a helper init/1 calls and from a
+  fun init/1 hands to `Enum.each/2`. The quiet ones call on each use, reset
+  a field to its initial value, or only read.
+  """
+end
+
+defmodule Argus.Test.Fixtures.Restart.ExternalBroker do
+  @moduledoc """
+  A library's broker, left out of the analyzed program: what a keeper
+  hands to it may be kept, and the program cannot see it.
+  """
+  def subscribe(_topic, _pid), do: :ok
+end
+
+# ── Kept in a map state, registered by a cast from init/1 ─────────────
+
+defmodule Argus.Test.Fixtures.Restart.CastSup do
+  @moduledoc false
+  use Supervisor
+  alias Argus.Test.Fixtures.Restart
+
+  def start_link(arg), do: Supervisor.start_link(__MODULE__, arg, name: __MODULE__)
+
+  @impl true
+  def init(_arg),
+    do: Supervisor.init([Restart.CastKeeper, Restart.CastJoiner], strategy: :one_for_one)
+end
+
+defmodule Argus.Test.Fixtures.Restart.CastKeeper do
+  @moduledoc false
+  use GenServer
+
+  def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
+  def subscribe(pid), do: GenServer.cast(__MODULE__, {:subscribe, pid})
+
+  @impl true
+  def init(_), do: {:ok, %{subs: []}}
+
+  @impl true
+  def handle_cast({:subscribe, pid}, s), do: {:noreply, %{s | subs: [pid | s.subs]}}
+end
+
+defmodule Argus.Test.Fixtures.Restart.CastJoiner do
+  @moduledoc false
+  use GenServer
+
+  def start_link(_), do: GenServer.start_link(__MODULE__, nil)
+
+  @impl true
+  def init(_) do
+    Argus.Test.Fixtures.Restart.CastKeeper.subscribe(self())
+    {:ok, nil}
+  end
+end
+
+# ── Kept as a monitor, registered from handle_continue/2 ──────────────
+
+defmodule Argus.Test.Fixtures.Restart.ContinueSup do
+  @moduledoc false
+  use Supervisor
+  alias Argus.Test.Fixtures.Restart
+
+  def start_link(arg), do: Supervisor.start_link(__MODULE__, arg, name: __MODULE__)
+
+  @impl true
+  def init(_arg),
+    do: Supervisor.init([Restart.ContinueKeeper, Restart.ContinueJoiner], strategy: :one_for_one)
+end
+
+defmodule Argus.Test.Fixtures.Restart.ContinueKeeper do
+  @moduledoc false
+  use GenServer
+
+  def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
+  def join(pid), do: GenServer.call(__MODULE__, {:join, pid})
+
+  @impl true
+  def init(_), do: {:ok, nil}
+
+  @impl true
+  def handle_call({:join, pid}, _from, s) do
+    Process.monitor(pid)
+    {:reply, :ok, s}
+  end
+
+  @impl true
+  def handle_info({:DOWN, _, :process, _, _}, s), do: {:noreply, s}
+end
+
+defmodule Argus.Test.Fixtures.Restart.ContinueJoiner do
+  @moduledoc false
+  use GenServer
+
+  def start_link(_), do: GenServer.start_link(__MODULE__, nil)
+
+  @impl true
+  def init(_), do: {:ok, nil, {:continue, :join}}
+
+  @impl true
+  def handle_continue(:join, s) do
+    :ok = Argus.Test.Fixtures.Restart.ContinueKeeper.join(self())
+    {:noreply, s}
+  end
+end
+
+# ── Kept as an ETS row, registered by a helper init/1 calls ───────────
+
+defmodule Argus.Test.Fixtures.Restart.HookSup do
+  @moduledoc false
+  use Supervisor
+  alias Argus.Test.Fixtures.Restart
+
+  def start_link(arg), do: Supervisor.start_link(__MODULE__, arg, name: __MODULE__)
+
+  @impl true
+  def init(_arg),
+    do: Supervisor.init([Restart.HookKeeper, Restart.HookUser], strategy: :one_for_one)
+end
+
+defmodule Argus.Test.Fixtures.Restart.HookKeeper do
+  @moduledoc false
+  use GenServer
+
+  def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
+  def add(hook), do: GenServer.call(__MODULE__, {:add, hook})
+  def run(hook), do: :ets.lookup(:restart_fixture_hooks, hook)
+
+  @impl true
+  def init(_) do
+    :ets.new(:restart_fixture_hooks, [:named_table, :public])
+    {:ok, nil}
+  end
+
+  @impl true
+  def handle_call({:add, hook}, _from, s) do
+    :ets.insert(:restart_fixture_hooks, {hook, :registered})
+    {:reply, :ok, s}
+  end
+end
+
+defmodule Argus.Test.Fixtures.Restart.HookUser do
+  @moduledoc false
+  use GenServer
+
+  def start_link(_), do: GenServer.start_link(__MODULE__, nil)
+
+  @impl true
+  def init(_) do
+    register_hooks()
+    {:ok, nil}
+  end
+
+  defp register_hooks, do: Argus.Test.Fixtures.Restart.HookKeeper.add(:user_hook)
+end
+
+# ── Kept as an ETS row, registered by a fun init/1 hands on ───────────
+
+defmodule Argus.Test.Fixtures.Restart.EachSup do
+  @moduledoc false
+  use Supervisor
+  alias Argus.Test.Fixtures.Restart
+
+  def start_link(arg), do: Supervisor.start_link(__MODULE__, arg, name: __MODULE__)
+
+  @impl true
+  def init(_arg),
+    do: Supervisor.init([Restart.EachKeeper, Restart.EachUser], strategy: :one_for_one)
+end
+
+defmodule Argus.Test.Fixtures.Restart.EachKeeper do
+  @moduledoc false
+  use GenServer
+
+  def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
+  def add(hook), do: GenServer.call(__MODULE__, {:add, hook})
+
+  @impl true
+  def init(_) do
+    :ets.new(:restart_fixture_each, [:named_table, :public])
+    {:ok, nil}
+  end
+
+  @impl true
+  def handle_call({:add, hook}, _from, s) do
+    :ets.insert(:restart_fixture_each, {hook, :registered})
+    {:reply, :ok, s}
+  end
+end
+
+defmodule Argus.Test.Fixtures.Restart.EachUser do
+  @moduledoc false
+  use GenServer
+
+  def start_link(_), do: GenServer.start_link(__MODULE__, nil)
+
+  @impl true
+  def init(hooks) do
+    Enum.each(List.wrap(hooks), &Argus.Test.Fixtures.Restart.EachKeeper.add/1)
+    {:ok, nil}
+  end
+end
+
+# ── Kept by a library the keeper hands it to ──────────────────────────
+
+defmodule Argus.Test.Fixtures.Restart.HandedSup do
+  @moduledoc false
+  use Supervisor
+  alias Argus.Test.Fixtures.Restart
+
+  def start_link(arg), do: Supervisor.start_link(__MODULE__, arg, name: __MODULE__)
+
+  @impl true
+  def init(_arg),
+    do: Supervisor.init([Restart.BrokerClient, Restart.Subscriber], strategy: :one_for_one)
+end
+
+defmodule Argus.Test.Fixtures.Restart.BrokerClient do
+  @moduledoc false
+  use GenServer
+
+  def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
+  def subscribe(topic), do: GenServer.call(__MODULE__, {:subscribe, topic})
+
+  @impl true
+  def init(_), do: {:ok, nil}
+
+  @impl true
+  def handle_call({:subscribe, topic}, {pid, _}, s) do
+    {:reply, Argus.Test.Fixtures.Restart.ExternalBroker.subscribe(topic, pid), s}
+  end
+end
+
+defmodule Argus.Test.Fixtures.Restart.Subscriber do
+  @moduledoc false
+  use GenServer
+
+  def start_link(_), do: GenServer.start_link(__MODULE__, nil)
+
+  @impl true
+  def init(_) do
+    :ok = Argus.Test.Fixtures.Restart.BrokerClient.subscribe("events")
+    {:ok, nil}
+  end
+end
+
+# ── Kept in the process dictionary ────────────────────────────────────
+
+defmodule Argus.Test.Fixtures.Restart.DictSup do
+  @moduledoc false
+  use Supervisor
+  alias Argus.Test.Fixtures.Restart
+
+  def start_link(arg), do: Supervisor.start_link(__MODULE__, arg, name: __MODULE__)
+
+  @impl true
+  def init(_arg),
+    do: Supervisor.init([Restart.DictKeeper, Restart.DictUser], strategy: :one_for_one)
+end
+
+defmodule Argus.Test.Fixtures.Restart.DictKeeper do
+  @moduledoc false
+  use GenServer
+
+  def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
+  def register(name), do: GenServer.call(__MODULE__, {:register, name})
+
+  @impl true
+  def init(_), do: {:ok, nil}
+
+  @impl true
+  def handle_call({:register, name}, {pid, _}, s) do
+    Process.put({:registered, name}, pid)
+    {:reply, :ok, s}
+  end
+end
+
+defmodule Argus.Test.Fixtures.Restart.DictUser do
+  @moduledoc false
+  use GenServer
+
+  def start_link(_), do: GenServer.start_link(__MODULE__, nil)
+
+  @impl true
+  def init(_) do
+    Argus.Test.Fixtures.Restart.DictKeeper.register(:dict_user)
+    {:ok, nil}
+  end
+end
+
+# ── A flag a bare cast sets to what init/1 does not ───────────────────
+
+defmodule Argus.Test.Fixtures.Restart.FlagSup do
+  @moduledoc false
+  use Supervisor
+  alias Argus.Test.Fixtures.Restart
+
+  def start_link(arg), do: Supervisor.start_link(__MODULE__, arg, name: __MODULE__)
+
+  @impl true
+  def init(_arg),
+    do: Supervisor.init([Restart.FlagKeeper, Restart.FlagUser], strategy: :one_for_one)
+end
+
+defmodule Argus.Test.Fixtures.Restart.FlagKeeper do
+  @moduledoc false
+  use GenServer
+
+  def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
+  def ready, do: GenServer.cast(__MODULE__, :ready)
+
+  @impl true
+  def init(_), do: {:ok, %{ready: false}}
+
+  @impl true
+  def handle_cast(:ready, s), do: {:noreply, %{s | ready: true}}
+end
+
+defmodule Argus.Test.Fixtures.Restart.FlagUser do
+  @moduledoc false
+  use GenServer
+
+  def start_link(_), do: GenServer.start_link(__MODULE__, nil)
+
+  @impl true
+  def init(_) do
+    Argus.Test.Fixtures.Restart.FlagKeeper.ready()
+    {:ok, nil}
+  end
+end
+
+# ── A keeper that also resets: the registering clause still counts ────
+
+defmodule Argus.Test.Fixtures.Restart.MixedSup do
+  @moduledoc false
+  use Supervisor
+  alias Argus.Test.Fixtures.Restart
+
+  def start_link(arg), do: Supervisor.start_link(__MODULE__, arg, name: __MODULE__)
+
+  @impl true
+  def init(_arg),
+    do: Supervisor.init([Restart.MixedKeeper, Restart.MixedUser], strategy: :one_for_one)
+end
+
+defmodule Argus.Test.Fixtures.Restart.MixedKeeper do
+  @moduledoc false
+  use GenServer
+
+  def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
+  def invalidate, do: GenServer.cast(__MODULE__, :invalidate)
+  def add(item), do: GenServer.cast(__MODULE__, {:add, item})
+
+  @impl true
+  def init(_), do: {:ok, %{defs: nil, items: []}}
+
+  @impl true
+  def handle_cast(:invalidate, s), do: {:noreply, %{s | defs: nil}}
+  def handle_cast({:add, item}, s), do: {:noreply, %{s | items: [item | s.items]}}
+end
+
+defmodule Argus.Test.Fixtures.Restart.MixedUser do
+  @moduledoc false
+  use GenServer
+
+  def start_link(_), do: GenServer.start_link(__MODULE__, nil)
+
+  @impl true
+  def init(_) do
+    Argus.Test.Fixtures.Restart.MixedKeeper.add(self())
+    {:ok, nil}
+  end
+end
+
+# ── Quiet: a call on each use, by name ────────────────────────────────
+
+defmodule Argus.Test.Fixtures.Restart.PerUseSup do
+  @moduledoc false
+  use Supervisor
+  alias Argus.Test.Fixtures.Restart
+
+  def start_link(arg), do: Supervisor.start_link(__MODULE__, arg, name: __MODULE__)
+
+  @impl true
+  def init(_arg),
+    do: Supervisor.init([Restart.Store, Restart.Relay], strategy: :one_for_one)
+end
+
+defmodule Argus.Test.Fixtures.Restart.Store do
+  @moduledoc false
+  use GenServer
+
+  def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
+  def put(k, v), do: GenServer.call(__MODULE__, {:put, k, v})
+
+  @impl true
+  def init(_), do: {:ok, %{entries: %{}}}
+
+  @impl true
+  def handle_call({:put, k, v}, _from, s),
+    do: {:reply, :ok, %{s | entries: Map.put(s.entries, k, v)}}
+end
+
+defmodule Argus.Test.Fixtures.Restart.Relay do
+  @moduledoc false
+  use GenServer
+
+  def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
+  def route(k, v), do: GenServer.call(__MODULE__, {:route, k, v})
+
+  @impl true
+  def init(_), do: {:ok, 0}
+
+  @impl true
+  def handle_call({:route, k, v}, _from, n) do
+    :ok = Argus.Test.Fixtures.Restart.Store.put(k, v)
+    {:reply, :ok, n + 1}
+  end
+end
+
+# ── Quiet: a reset to the value init/1 gives the field ────────────────
+
+defmodule Argus.Test.Fixtures.Restart.ResetSup do
+  @moduledoc false
+  use Supervisor
+  alias Argus.Test.Fixtures.Restart
+
+  def start_link(arg), do: Supervisor.start_link(__MODULE__, arg, name: __MODULE__)
+
+  @impl true
+  def init(_arg),
+    do: Supervisor.init([Restart.CacheKeeper, Restart.CacheUser], strategy: :one_for_one)
+end
+
+defmodule Argus.Test.Fixtures.Restart.CacheKeeper do
+  @moduledoc false
+  use GenServer
+
+  def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
+  def invalidate, do: GenServer.cast(__MODULE__, :invalidate)
+
+  @impl true
+  def init(_), do: {:ok, %{defs: nil}}
+
+  @impl true
+  def handle_cast(:invalidate, s), do: {:noreply, %{s | defs: nil}}
+end
+
+defmodule Argus.Test.Fixtures.Restart.CacheUser do
+  @moduledoc false
+  use GenServer
+
+  def start_link(_), do: GenServer.start_link(__MODULE__, nil)
+
+  @impl true
+  def init(_) do
+    Argus.Test.Fixtures.Restart.CacheKeeper.invalidate()
+    {:ok, nil}
+  end
+end
+
+# ── Quiet: a read at init/1 ───────────────────────────────────────────
+
+defmodule Argus.Test.Fixtures.Restart.ReadSup do
+  @moduledoc false
+  use Supervisor
+  alias Argus.Test.Fixtures.Restart
+
+  def start_link(arg), do: Supervisor.start_link(__MODULE__, arg, name: __MODULE__)
+
+  @impl true
+  def init(_arg),
+    do: Supervisor.init([Restart.ConfigKeeper, Restart.ConfigUser], strategy: :one_for_one)
+end
+
+defmodule Argus.Test.Fixtures.Restart.ConfigKeeper do
+  @moduledoc false
+  use GenServer
+
+  def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
+  def get, do: GenServer.call(__MODULE__, :get)
+
+  @impl true
+  def init(_), do: {:ok, %{limit: 10}}
+
+  @impl true
+  def handle_call(:get, _from, s), do: {:reply, s.limit, s}
+end
+
+defmodule Argus.Test.Fixtures.Restart.ConfigUser do
+  @moduledoc false
+  use GenServer
+
+  def start_link(_), do: GenServer.start_link(__MODULE__, nil)
+
+  @impl true
+  def init(_), do: {:ok, Argus.Test.Fixtures.Restart.ConfigKeeper.get()}
+end
+
+# ── A keeper with a read clause and a registering one ─────────────────
+
+defmodule Argus.Test.Fixtures.Restart.ClauseSup do
+  @moduledoc false
+  use Supervisor
+  alias Argus.Test.Fixtures.Restart
+
+  def start_link(arg), do: Supervisor.start_link(__MODULE__, arg, name: __MODULE__)
+
+  @impl true
+  def init(_arg),
+    do:
+      Supervisor.init([Restart.ClauseKeeper, Restart.ClauseReader, Restart.ClauseWriter],
+        strategy: :one_for_one
+      )
+end
+
+defmodule Argus.Test.Fixtures.Restart.ClauseKeeper do
+  @moduledoc false
+  use GenServer
+
+  def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
+  def get, do: GenServer.call(__MODULE__, :get)
+  def put(pid), do: GenServer.call(__MODULE__, {:put, pid})
+
+  @impl true
+  def init(_), do: {:ok, %{pids: []}}
+
+  @impl true
+  def handle_call(:get, _from, s), do: {:reply, s.pids, s}
+  def handle_call({:put, pid}, _from, s), do: {:reply, :ok, %{s | pids: [pid | s.pids]}}
+end
+
+defmodule Argus.Test.Fixtures.Restart.ClauseReader do
+  @moduledoc "Only reads, from init/1: the clause it enters keeps nothing."
+  use GenServer
+
+  def start_link(_), do: GenServer.start_link(__MODULE__, nil)
+
+  @impl true
+  def init(_), do: {:ok, Argus.Test.Fixtures.Restart.ClauseKeeper.get()}
+end
+
+defmodule Argus.Test.Fixtures.Restart.ClauseWriter do
+  @moduledoc "Registers from init/1, in the clause that keeps it."
+  use GenServer
+
+  def start_link(_), do: GenServer.start_link(__MODULE__, nil)
+
+  @impl true
+  def init(_) do
+    :ok = Argus.Test.Fixtures.Restart.ClauseKeeper.put(self())
+    {:ok, nil}
+  end
+end
+
+# ── Kept in a state a library call computes (gen_hook's maps:put) ─────
+
+defmodule Argus.Test.Fixtures.Restart.ComputedSup do
+  @moduledoc false
+  use Supervisor
+  alias Argus.Test.Fixtures.Restart
+
+  def start_link(arg), do: Supervisor.start_link(__MODULE__, arg, name: __MODULE__)
+
+  @impl true
+  def init(_arg),
+    do: Supervisor.init([Restart.ComputedKeeper, Restart.ComputedUser], strategy: :one_for_one)
+end
+
+defmodule Argus.Test.Fixtures.Restart.ComputedKeeper do
+  @moduledoc false
+  use GenServer
+
+  def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
+  def add_handler(key, fun), do: GenServer.call(__MODULE__, {:add_handler, key, fun})
+
+  @impl true
+  def init(_), do: {:ok, %{}}
+
+  @impl true
+  def handle_call({:add_handler, key, fun}, _from, s),
+    do: {:reply, :ok, Map.update(s, key, [fun], &[fun | &1])}
+end
+
+defmodule Argus.Test.Fixtures.Restart.ComputedUser do
+  @moduledoc false
+  use GenServer
+
+  def start_link(_), do: GenServer.start_link(__MODULE__, nil)
+
+  @impl true
+  def init(_) do
+    Argus.Test.Fixtures.Restart.ComputedKeeper.add_handler(:event, &handle_event/1)
+    {:ok, nil}
+  end
+
+  def handle_event(_), do: :ok
+end

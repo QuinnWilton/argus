@@ -26,6 +26,51 @@ defmodule Argus.Extractors.ErrorHandlingTest do
     end
   end
 
+  describe "extract/1 — returned_update" do
+    alias Argus.Test.Fixtures.Restart
+
+    defp updates(mod) do
+      mod
+      |> disassemble()
+      |> ErrorHandling.extract()
+      |> Map.get(:returned_update, [])
+      |> Enum.map(fn [func, key, value, tag] ->
+        {func |> String.split(":") |> List.last(), key, value, tag}
+      end)
+      |> Enum.sort()
+    end
+
+    test "an Erlang record's fields, by position: an update in its clause, and the state init/1 builds" do
+      assert updates(:restart_record_keeper) == [
+               {"handle_call/3", "{1}", "dynamic", ":register"},
+               {"init/1", "{1}", "[]", "*"},
+               {"init/1", "{2}", "0", "*"}
+             ]
+    end
+
+    test "a record the compiler builds afresh for a one-field update is read in the state slot" do
+      assert {"handle_cast/2", "{1}", ":none", ":invalidate"} in updates(:restart_reset_keeper)
+    end
+
+    test "a state its fields do not spell is the whole state, and a read clause sets nothing" do
+      assert updates(Restart.ComputedKeeper) == [
+               {"handle_call/3", "*", "dynamic", ":add_handler"}
+             ]
+
+      assert updates(Restart.ClauseKeeper) == [
+               {"handle_call/3", ":pids", "dynamic", ":put"},
+               {"init/1", ":pids", "[]", "*"}
+             ]
+    end
+
+    test "a literal is spelled as the column spells it" do
+      assert updates(Restart.FlagKeeper) == [
+               {"handle_cast/2", ":ready", "true", ":ready"},
+               {"init/1", ":ready", "false", "*"}
+             ]
+    end
+  end
+
   describe "extract/1 — timer_tag" do
     alias Argus.Test.Fixtures.UnhandledInfo
 

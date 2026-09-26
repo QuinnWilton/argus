@@ -871,7 +871,7 @@ drain_reach.root(f, f) :-
 
 drain_flag_read(m, d) :-
   function_def(d, m, "prepare_for_draining", 1, _),
-  returned_update(d, k, v),
+  returned_update(d, k, v, _),
   v != "nil",
   v != "dynamic",
   function_def(h, m, "handle_demand", 2, _),
@@ -881,7 +881,7 @@ drain_flag_read(m, d) :-
 drain_keeps_fetching(m, d, g, key) :-
   behaves_as(m, "Broadway.Producer"),
   function_def(d, m, "prepare_for_draining", 1, _),
-  returned_update(d, key, "nil"),
+  returned_update(d, key, "nil", _),
   function_def(h, m, "handle_demand", 2, _),
   drain_reach.reaches(h, g),
   field_nil_test(g, key),

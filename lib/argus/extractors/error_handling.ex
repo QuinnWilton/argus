@@ -876,23 +876,50 @@ defmodule Argus.Extractors.ErrorHandling do
     |> Enum.reduce(facts, fn key, acc -> add_fact(acc, :field_nil_test, [func_id, key]) end)
   end
 
-  # The map fields a function sets to a literal in what it returns: the
-  # map itself, or one an element of the returned tuple holds — a
-  # callback's `{:noreply, [], %{state | receive_timer: nil}}`. What a
+  # The fields a function sets in what it returns: of the map itself, or
+  # of one an element of the returned tuple holds — a callback's
+  # `{:noreply, [], %{state | receive_timer: nil}}` — and of an Erlang
+  # record the same way (`State#state{subs = Subs}`, a field spelled as
+  # its 0-based tuple position, `{2}`, as PidFlow spells one). What a
   # state a callback hands back says, where a clause head's test says
-  # what it needs (field_nil_test).
+  # what it needs (field_nil_test), and what a restart takes back
+  # (clientlib/restart_state.dl). A state an init/1 builds whole — the
+  # record or map after `ok` in `{ok, State}`, a literal or built there —
+  # sets every field it has, so what a process starts at is known too. A
+  # state a callback returns that is neither the one it was given nor one
+  # these fields spell (a `maps:put/3`'s result, a helper's) sets the
+  # whole state, key `*`.
+  #
+  # Each row carries the clause its return belongs to, by the tag its
+  # first argument was established to be (Dispatch.argument_tags/2, as
+  # clause_call reads a call's), `*` for a return every clause shares:
+  # `handle_call({:add, h}, ...)` sets what `handle_call(:get, ...)` does
+  # not.
   defp emit_returned_updates(facts, func_id, instrs) do
-    instrs
-    |> Enum.with_index()
-    |> Enum.flat_map(fn
-      {:return, idx} -> returned_updates(instrs, idx)
-      _ -> []
+    returns =
+      for {:return, idx} <- Enum.with_index(instrs),
+          updates = returned_updates(instrs, idx),
+          updates != [],
+          do: {idx, updates}
+
+    tags = if returns == [], do: %{}, else: Dispatch.argument_tags(instrs, {:x, 0})
+
+    returns
+    |> Enum.flat_map(fn {idx, updates} ->
+      clauses = return_clauses(Map.get(tags, idx))
+      for {key, value} <- updates, tag <- clauses, do: {key, value, tag}
     end)
     |> Enum.uniq()
     |> Enum.sort()
-    |> Enum.reduce(facts, fn {key, value}, acc ->
-      add_fact(acc, :returned_update, [func_id, key, value])
+    |> Enum.reduce(facts, fn {key, value, tag}, acc ->
+      add_fact(acc, :returned_update, [func_id, key, value, tag])
     end)
+  end
+
+  defp return_clauses(nil), do: ["*"]
+
+  defp return_clauses(set) do
+    if MapSet.member?(set, :any), do: ["*"], else: Enum.sort(set)
   end
 
   defp returned_updates(instrs, idx) do
@@ -904,20 +931,75 @@ defmodule Argus.Extractors.ErrorHandling do
 
       at ->
         case Reaching.at(instrs, at) do
-          {:put_tuple2, _dst, {:list, elements}} ->
-            for {:x, _} = reg <- Enum.map(elements, &Instr.register/1),
-                w <- Resolve.writers(instrs, at, reg),
-                is_integer(w),
-                pair <- map_updates(Reaching.at(instrs, w)),
-                do: pair
+          {:put_tuple2, _dst, {:list, [head | _] = elements}} ->
+            size = length(elements)
+
+            elements
+            |> Enum.with_index()
+            |> Enum.flat_map(fn {element, i} ->
+              element_updates(instrs, at, element, state_slot?(head, size, i))
+            end)
+
+          {:move, {:literal, term}, _dst} when is_tuple(term) and tuple_size(term) > 0 ->
+            head = {:atom, elem(term, 0)}
+
+            term
+            |> Tuple.to_list()
+            |> Enum.with_index()
+            |> Enum.flat_map(fn {element, i} ->
+              literal_state(element, state_slot?(head, tuple_size(term), i))
+            end)
+
+          {:move, {:literal, term}, _dst} ->
+            literal_state(term, false)
 
           instr ->
-            map_updates(instr)
+            state_updates(instr, false)
         end
     end)
   end
 
-  defp map_updates({op, _fail, _src, _dst, _live, {:list, pairs}})
+  # What an element of a returned tuple sets. In the state slot (`whole`)
+  # a value that is the parameter the callback was given sets nothing, and
+  # one whose fields cannot be read sets the whole state.
+  defp element_updates(instrs, at, element, whole) do
+    case Instr.register(element) do
+      {kind, _} = reg when kind in [:x, :y] ->
+        Enum.flat_map(Resolve.writers(instrs, at, reg), fn
+          {:param, _k} -> []
+          w -> written_state(Reaching.at(instrs, w), whole)
+        end)
+
+      {:literal, term} ->
+        literal_state(term, whole)
+
+      _ ->
+        []
+    end
+  end
+
+  defp written_state({:move, {:literal, term}, _dst}, whole), do: literal_state(term, whole)
+
+  defp written_state(instr, whole) do
+    case state_updates(instr, whole) do
+      [] when whole -> [{"*", "dynamic"}]
+      pairs -> pairs
+    end
+  end
+
+  # Where a callback's return holds the state it hands back, built whole
+  # there (a record the compiler makes afresh, `{noreply, {state, none}}`
+  # when the record has one field), so a record in that slot is read field
+  # by field: after `ok` or `noreply`, after the reply in `{reply, R, S}`,
+  # the last of a `stop`, and a gen_statem's data. Elsewhere a tuple with
+  # an atom first is as likely a `{continue, x}` as a record, and is not
+  # read.
+  defp state_slot?({:atom, tag}, _size, 1) when tag in [:ok, :noreply, :keep_state], do: true
+  defp state_slot?({:atom, tag}, _size, 2) when tag in [:reply, :next_state], do: true
+  defp state_slot?({:atom, :stop}, size, i) when size in [3, 4] and i == size - 1, do: true
+  defp state_slot?(_head, _size, _i), do: false
+
+  defp state_updates({op, _fail, _src, _dst, _live, {:list, pairs}}, _whole)
        when op in [:put_map_assoc, :put_map_exact] do
     pairs
     |> Enum.chunk_every(2)
@@ -927,7 +1009,48 @@ defmodule Argus.Extractors.ErrorHandling do
     end)
   end
 
-  defp map_updates(_instr), do: []
+  # Positions are 1-based in the instruction, 0-based in the key.
+  defp state_updates({:update_record, _hint, _size, _src, _dst, {:list, updates}}, _whole) do
+    updates
+    |> Enum.chunk_every(2)
+    |> Enum.flat_map(fn
+      [{:integer, pos}, value] -> [{"{#{pos - 1}}", literal_value(value)}]
+      [pos, value] when is_integer(pos) -> [{"{#{pos - 1}}", literal_value(value)}]
+      _ -> []
+    end)
+  end
+
+  defp state_updates({:put_tuple2, _dst, {:list, [{:atom, _tag} | fields]}}, true) do
+    fields
+    |> Enum.with_index(1)
+    |> Enum.map(fn {value, pos} -> {"{#{pos}}", literal_value(value)} end)
+  end
+
+  defp state_updates(_instr, _whole), do: []
+
+  defp literal_state(map, _whole) when is_map(map) do
+    map
+    |> Map.to_list()
+    |> Enum.filter(fn {key, _value} -> is_atom(key) end)
+    |> Enum.map(fn {key, value} -> {inspect(key), spell(value)} end)
+  end
+
+  defp literal_state(tuple, true) when is_tuple(tuple) and tuple_size(tuple) > 0 do
+    if is_atom(elem(tuple, 0)) do
+      tuple
+      |> Tuple.to_list()
+      |> tl()
+      |> Enum.with_index(1)
+      |> Enum.map(fn {value, pos} -> {"{#{pos}}", spell(value)} end)
+    else
+      [{"*", spell(tuple)}]
+    end
+  end
+
+  # A whole state that is a literal of no fields (a counter's `0`, a
+  # `nil`): the state it sets.
+  defp literal_state(term, true), do: [{"*", spell(term)}]
+  defp literal_state(_term, _whole), do: []
 
   defp literal_value(nil), do: "[]"
   defp literal_value({:atom, atom}), do: inspect(atom)

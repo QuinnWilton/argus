@@ -6,6 +6,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## 0.20.0-dev — unreleased
 
+### Restart-state round: what a restart loses
+
+**Changed.** Schema 130. `returned_update(func, key, value, tag)` gains
+`tag`, the clause the return is in (`Dispatch.argument_tags/2`, `*` for a
+return every clause shares), and reads more states:
+- an Erlang record's fields (`update_record`, and a record a callback
+  returns whole), as their 0-based tuple position `{N}`
+- a whole state its fields do not spell (`maps:put/3`'s result), as key
+  `*`
+
+Readers: shutdown's drain rules (by position, a column added).
+
 ### Supervision round: the child specs the extractor did not read
 
 The ETS rows round found 8 of 12 sampled "ETS table dies with its owner"

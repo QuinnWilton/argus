@@ -412,15 +412,26 @@ defmodule Argus.Schema.ErrorHandling do
         layer: 2,
         fields: [
           {:func, :symbol, "the function"},
-          {:key, :symbol, "the inspected map key"},
-          {:value, :symbol, "the literal it is set to, inspected, or 'dynamic'"}
+          {:key, :symbol,
+           "the inspected map key, an Erlang record's field as its 0-based tuple position ({2}), " <>
+             "or * for a whole state the fields do not spell"},
+          {:value, :symbol, "the literal it is set to, inspected, or 'dynamic'"},
+          {:tag, :symbol,
+           "the tag of the clause the return is in, as clause_call spells it, or * for a return every clause shares"}
         ],
         doc: """
-        What `func` returns sets the map field under `key`: the returned \
-        map, or a map an element of the returned tuple holds — a callback's \
-        `{:noreply, [], %{state | receive_timer: nil}}`. The state a \
+        What `func` returns sets the field under `key`: of the returned \
+        map or record, or of one an element of the returned tuple holds — \
+        a callback's `{:noreply, [], %{state | receive_timer: nil}}`, an \
+        Erlang `{noreply, State#state{subs = Subs}}`. The state an init/1 \
+        builds whole (the element after `ok` in `{ok, State}`) sets every \
+        field it has; a callback's state that is neither the one it was \
+        given nor one these fields spell (`maps:put/3`'s result) sets the \
+        whole state, key `*`. One row per clause the return is in, by the \
+        tag of the first argument (Dispatch.argument_tags/2). The state a \
         callback hands back, where field_nil_test is what a clause head \
-        needs of it.
+        needs of it and clientlib/restart_state.dl what a restart takes \
+        back.
         """
       },
       %{
