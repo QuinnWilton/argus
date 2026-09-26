@@ -235,24 +235,52 @@ returns_table(f, t) :- returned_term(f, o), pid_field(f, o, _, "table", t).
 returned_term(f, o) :- pid_return(f, "obj", o).
 returned_term(f, o) :- returned_term(f, p), pid_field(f, p, _, "obj", o).
 
-// A table a server, an application or a behaviour module holds: the
-// owner the excuses below may speak for (an application's start/2
-// process lives as long as the application does).
-.decl ets_owner_process(name: symbol, mod: symbol, site: symbol)
+// ── A table that dies with its owner ──
 
-ets_owner_process(name, mod, id) :-
-  table_held(name, p, mod, id),
-  process_root(_, p, mod, kind),
-  kind != "spawn".
+// A table other processes can read goes with the process that owns it,
+// and nothing keeps it or makes it again: no heir takes it over, no
+// supervisor restarts the owner, and the owner does not live as long as
+// the application. `create` is the :ets.new/2 instruction, the creation
+// line.
+.decl table_dies_with_owner(table: symbol, owner: symbol, owner_mod: symbol, create: symbol)
 
-// Owner under a permanent supervisor child — the table will be
-// recreated on restart, so the missing heir is not a real risk. A
-// shorthand's restart is its own child_spec/1's when that states one
-// (child_restart): `use GenServer, restart: :temporary` is no excuse.
-.decl ets_permanent_owner(name: symbol, mod: symbol)
+table_dies_with_owner(table, owner, owner_mod, create) :-
+  table_held(table, owner, owner_mod, create),
+  !has_heir(create),
+  !private_table(create),
+  !restarted_by_supervisor(owner),
+  !lives_with_application(owner).
 
-ets_permanent_owner(name, mod) :-
-  ets_owner_process(name, mod, _),
+// The table made at `create` names a heir, which takes it over when its
+// owner exits.
+.decl has_heir(create: symbol) inline
+
+has_heir(create) :- ets_option(create, "heir", "true").
+
+// The table made at `create` is :private: no other process can read it,
+// so no reader meets it gone, and its rows are the owner's state, lost
+// with the process as its heap is (zotonic's mod_logging dedup table).
+.decl private_table(create: symbol) inline
+
+private_table(create) :- ets_option(create, "access", "private").
+
+// `owner` is a module's own process (a server's, an application's, a
+// behaviour's), not one spawned beside it: a keeper an init/1 spawns is
+// not the child its supervisor restarts, and a table it holds dies with
+// it however the spawning module is supervised. (What a module's start
+// function spawns on its own code is the child, and a "server" root.)
+.decl module_process(owner: symbol, mod: symbol)
+
+module_process(p, mod) :- process_root(_, p, mod, kind), kind != "spawn".
+
+// A supervisor restarts the owner's module permanently, and the restart
+// makes the table again. A shorthand's restart is its own child_spec/1's
+// when that states one (child_restart): `use GenServer, restart:
+// :temporary` is no excuse.
+.decl restarted_by_supervisor(owner: symbol)
+
+restarted_by_supervisor(p) :-
+  module_process(p, mod),
   child_restart(_, _, mod, "permanent").
 
 // Owner a DynamicSupervisor.start_child starts with a permanent restart
@@ -260,8 +288,8 @@ ets_permanent_owner(name, mod) :-
 // supervisor restarts it as a child of its own. A `use GenServer,
 // restart: :temporary` owner started by its shorthand is never
 // restarted, and its table is gone for good once it crashes.
-ets_permanent_owner(name, mod) :-
-  ets_owner_process(name, mod, _),
+restarted_by_supervisor(p) :-
+  module_process(p, mod),
   dynamic_restart(_, mod, _, "permanent").
 
 // Owner a start_child adds to a supervisor with a permanent spec
@@ -269,52 +297,24 @@ ets_permanent_owner(name, mod) :-
 // supervisor restarts it as it would a child of its own init/1. A
 // temporary or transient spec, or one whose restart the extractor could
 // not read, is no excuse.
-ets_permanent_owner(name, mod) :-
-  ets_owner_process(name, mod, _),
+restarted_by_supervisor(p) :-
+  module_process(p, mod),
   added_child(_, mod, "permanent", _, _).
 
-// Application modules live for the entire app — table loss is not practical.
-.decl ets_application_owner(name: symbol, mod: symbol)
+// The owner lives as long as the application, so its table is never lost
+// while the application runs: an Application module's, or the supervisor
+// the Application starts (application_root, supervision.dl: partisan_sup
+// keeps its membership snapshot in a table it creates in init/1 so the
+// table outlives the managers it restarts).
+.decl lives_with_application(owner: symbol)
 
-ets_application_owner(name, mod) :-
-  ets_owner_process(name, mod, _),
-  behaves_as(mod, "Application").
+lives_with_application(p) :- module_process(p, mod), behaves_as(mod, "Application").
+lives_with_application(p) :- module_process(p, mod), application_root(mod).
 
-// The supervisor the Application starts is the application's lifetime
-// too (application_root, supervision.dl): partisan_sup keeps its
-// membership snapshot in a table it creates in init/1 so the table
-// outlives the managers it restarts.
-ets_application_owner(name, mod) :-
-  ets_owner_process(name, mod, _),
-  application_root(mod).
-
-// Table without heir protection in a behaviour process.
-// If the owner crashes, the table vanishes.
-// Suppressed for permanent supervisor children (table recreated on restart),
-// Application modules and the supervisor one starts (live for the entire
-// app lifetime), and private tables: no other process can read one, so
-// no reader meets it gone, and its rows are the owner's state, lost with
-// the process as its heap is (zotonic's mod_logging dedup table).
-// site is the :ets.new/2 instruction — the creation line.
 .decl ets_unprotected_owner(name: symbol, mod: symbol, site: symbol)
 .output ets_unprotected_owner
 
-ets_unprotected_owner(name, mod, id) :-
-  ets_owner_process(name, mod, id),
-  !ets_option(id, "heir", "true"),
-  !ets_option(id, "access", "private"),
-  !ets_permanent_owner(name, mod),
-  !ets_application_owner(name, mod).
-
-// A table a spawned process holds dies with that process, however the
-// module that spawned it is supervised: a keeper an init/1 spawns is not
-// the child its supervisor restarts. (What a module's start function
-// spawns on its own code is the child, and a "server" root.)
-ets_unprotected_owner(name, mod, id) :-
-  table_held(name, p, mod, id),
-  process_root(_, p, mod, "spawn"),
-  !ets_option(id, "heir", "true"),
-  !ets_option(id, "access", "private").
+ets_unprotected_owner(name, mod, site) :- table_dies_with_owner(name, _, mod, site).
 
 // ── Concurrent access patterns ─────────────────────────────────────
 
@@ -686,7 +686,7 @@ ends_by(p, owner, r) :-
 // and no other supervisor in view does (application_root,
 // supervision.dl), whose death stops the application. Nothing restarts
 // either, so no read meets the table gone while the application runs:
-// the lifetime ets_application_owner excuses from dying with its owner,
+// the lifetime lives_with_application excuses from dying with its owner,
 // asked of the process here. A worker start/2 starts, a supervisor
 // another tree also starts, a keeper a root supervisor spawns and a
 // table one of its children makes each have a restart of their own.
