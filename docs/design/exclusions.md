@@ -273,6 +273,90 @@ census's; the bugs are in the plan below.
 | failure, boolean rpc | a `?` function returning a wrapper's `:rpc.call` answer; also any Elixir `if :rpc.call(...)` | the extractor records no `result_tested` for a `?` callee, and reads a `select_val` on false/nil as "matched", never "boolean" |
 | exposure, TLS | one module listens with `:verify_peer` and dials with `:verify_none` | `!module_can_verify(mod)` |
 
+### Fixed in the census-holes round
+
+Every hole above but the races' is fixed where its root cause was (the
+races rows are that analysis's own rewrite). Each census program is a
+positive fixture in `test/soundness/<concern>_test.exs` with at least two
+adversarial neighbours and a quiet control, one `describe` per hole
+(fixtures in `test/fixtures/soundness/<concern>_census.ex`).
+
+| hole | root cause | fix |
+|---|---|---|
+| ets, temporary dynamic owner | coarse fact: `dynamic_child_restart` had no row for a permanent map spec, and the excuse ignored the restart | the fact states every explicit spec's restart; `dynamic_restart` (supervision.dl) reads it or the shorthand's `child_spec/1`; the excuse asks for `permanent` |
+| coupling, map spec | the same fact, read through the module's own `child_spec/1` | `dynamic_restart(..., r), r != "temporary"` replaces both negations |
+| ets, computed-name read | exclusion (`!owner_reaches`) | computed reads go through `reader_outlives`; an outside caller is a reader that outlives (`called_from_outside`: a library-face export, or an owner-module export no process in view runs) |
+| ets, unrelated `:ets.info` | exclusion over any table (`!asks_first`, `!gives_table_away`) | new fact `ets_made_when_absent` (the make only past the `:undefined` side of the same table's lookup); give-away of the same table |
+| blocking, cycles > 2 | missing construct | `cycle_ring`/`after_reach`: cycles of any length, found once from their least module, no path enumeration |
+| blocking, `{:shutdown, _}` catch | coarse fact | `catch_inner_tag`: each register's place in the reason; the rule asks for a self-stop shape (`{:normal, _}` or `{{:shutdown, _}, _}`); `CatchShapes.NoprocAndShutdown` flipped |
+| mailbox, task never awaited | exclusion (`!mailbox_handler`) | `reply_taken`: a clause headed by a reference, a handle_info/2 that collects a task, or, on the starting server's stack, an open 2-tuple clause |
+| mailbox, self-sent tag | exclusion per function (`!proxies`) | `to_own_server`, per call site: the site resolves to the module's server, or to nothing and names no other |
+| mailbox, `init/1` watchdog | exclusion (`!init_function`) | a second rule: init/1's leftover counts when a handle_info/2 clause takes it |
+| startup, disjoint trees | missing witness | `after_tree_dep`: the start function starts D after the tree holding C (`post_start_call`) |
+| startup, awaited task | missing construct | `reaches_sync_dep`/`reaches_sync_request`/`reaches_tag_dep` step into a task the caller awaits (`awaits_task`) |
+| shutdown, unrelated demonitor | exclusion (`!module_demonitors`) and a missing tie | PidFlow's `stop` signal; the kill must be of the monitored process (points-to), and only a demonitor on the kill's way releases it |
+| unsafe_input, protocol | exclusion (`__impl__`) | the program's own protocol relays its users' data into each implementation (`implements_protocol`) |
+| unsafe_input, comprehension | exclusion (the `-lc$` name) | only the comprehension's self-edge is its loop (`comprehension_loop`) |
+| failure, `if :rpc.call` | coarse fact, missing rule | a select over `false`/`nil` is a truthiness test; a predicate returning a wrapper's answer is a boolean use |
+| exposure, TLS | exclusion (`!module_can_verify`) | a client connect's own literal `:verify_none` has no choice |
+
+Measured over the 26 live projects and 13 evaluation sets (39 programs,
+all analyses but coverage, against main at d2a1d3ad): 11 rows added,
+none removed, and none in effects, state_machine or races. Six are true
+or of their class's already-reported kind: sentry's `SpanStorage.remove_child_spans/2`, elixir-ls's
+`Tracer.delete_*_by_file/1` (read by the compiler's tracer calls),
+partisan's `add_timestamp/1` (read by the broadcast process's `claim/2`),
+vernemq's `vmq_reg_trie:fanout_entries/4` (read while the owner may be
+restarting); Livebook's `NodeManager.start_runtime_server/2` (`if pid =
+:rpc.call(...)`: a gone node's `{:badrpc, _}` is monitored and raises).
+Five are false:
+- realtime's `WorkerSupervisor` tables (2): a temporary owner whose only
+  readers are its children, who end with it. "Dies with its owner" needs
+  its reader (plan item 6).
+- Livebook's `RuntimeServer` kills (2): the kill's way drops the record
+  the `:DOWN` clause looks up, so the `:DOWN` finds nothing. The class
+  needs its harm witness: the `:DOWN` clause for that monitor acts as for
+  a crash, and the kill's way does not clear what it pins.
+- OTP's `net_kernel:request/1` (1): the peer's only self-stops are crash
+  reasons. The catch rule's peer is not resolved; reading the peer's
+  `{:stop, reason, _}` returns would decide it.
+
+encore's canon and fugue each gain one: the workload, a module nothing
+else calls, reads a table the owner's own `handle_call/3` or its later
+siblings also read (canon's `Ledger.balance/1`, fugue's `Config.get/1`),
+and runs in a process no restart of the owner ends. True by the class;
+re-pinned in encore with a dated note.
+
+Three definitions need the constructive treatment to go further:
+- **Peer call catches :noproc** — which stops the peer makes. Resolve the
+  peer (a literal name, points-to, tag attribution) and read its `{:stop,
+  reason, _}` returns, with `callback_stop_reason` spelling `{:shutdown,
+  …}` apart from `:shutdown` and a computed reason as `dynamic` (it now
+  records both as `:shutdown`, and a computed one not at all); a catch is
+  then reported when a stop its peer makes is not taken, and the
+  unresolved peer keeps today's reading.
+- **Server terminates a process it still monitors** — the harm. The
+  `:DOWN` clause that takes this monitor's `:DOWN` (by the ref it pins, or
+  the collection it looks the pid up in) acts as for a crash (restarts,
+  reconnects, reports), and the kill's way does not clear that ref or
+  entry first (mailbox's `monitor_record`/`record_drop` are the
+  vocabulary, and would move to a clientlib).
+- **init/1 blocks on a peer of unknown place** — the start order across
+  trees. `init_safe_cross_supervisor` still takes two trees as running for
+  each other when nothing orders them. The witnesses are: a shared tree's
+  `boots_before`; the start function's own order (`post_start_call` reads
+  only a `Supervisor.start_link/2` in the start function, not a module
+  supervisor's `start_link` beside another start); and the applications'
+  dependencies (the `.app` files, which no extractor reads).
+
+Found and fixed during the measurement: six catch rows that take the
+peer's normal stop (the first restatement demanded the nested shape of
+every catch), the vmq_queue_sup loop read through its sys callbacks
+(now its own process's roots), Phoenix.Presence's task reply collected
+by a handle_info/2 that shuts the task down, and Phoenix.Tracker's
+`pool_size/1`, a true row the unified computed-name rule first lost (its
+callers are Phoenix.Presence's functions, run by the library's users).
+
 Two suspicions were only partly borne out: two sinks of one kind on one
 line are lost only when they sit on exclusive branches or neither reads a
 parameter (`repeated_site`), and a shared ETS lookup helper is missed by
@@ -280,6 +364,14 @@ the consistency rule because `reached_by_other` counts only other
 modules' process entries (a missing clause, not the atom).
 
 ## The plan
+
+The census-holes round ("Fixed in the census-holes round", above) did
+parts of it: group 5's `!mailbox_handler` (the factory and
+`!behaviour_module` atoms are left), group 6's permanent-owner restart
+(the reader is left), group 8 whole, group 9's `init/1` watchdog, and
+from the table below the cycle finding, the kill-and-monitor tie (its
+harm witness is left), the TLS choice per connect, protocol dispatch,
+atom feedback through a comprehension and the reply per call site.
 
 Each group gathers the P atoms one constructive definition would subsume.
 It is ranked by `atoms × potential / effort`, potential 3/2/1 for
