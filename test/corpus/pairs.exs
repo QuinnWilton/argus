@@ -152,7 +152,7 @@
     module: "Postgrex.Parameters",
     pre: "313d6c90dea21f320035501e5d7d6a1e34a74cd4",
     fix: "85c7cf430d0c4519cc7cadf6599bcb173276de0f",
-    finding: {:mailbox, "Server monitors but never demonitors"}
+    finding: {:mailbox, "Entry dropped while its process stays monitored"}
   },
   # Present-only shapes found on the trees themselves, not from an issue.
   %{
@@ -599,14 +599,16 @@
     finding: {:blocking, "Blocking receive inside an OTP callback"}
   },
   # supavisor: the client handler threw away the ref of its manager
-  # monitor, so any :DOWN read as "the manager went down".
+  # monitor, so any :DOWN read as "the manager went down". It subscribes
+  # again after the manager's :DOWN, and each subscribe takes a monitor
+  # nothing can release; the fix keeps the ref and pins it.
   %{
     repo: "supabase/supavisor",
     issue: "supavisor@e80c9a2",
     module: "Supavisor.ClientHandler",
     pre: "0fe14108d26bfeb13e403a24885179cd0abe6f4a",
     fix: "e80c9a2cf7c56bb3fdfebb850992d913311a46c1",
-    finding: {:mailbox, "Server drops the ref of a monitor it establishes"}
+    finding: {:mailbox, "Monitor taken again with its ref thrown away"}
   },
   # oban#532, the bug coupling's rest_for_one rule was written from: the
   # queue producer starts jobs under the Task.Supervisor started before

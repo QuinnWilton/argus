@@ -55,9 +55,9 @@ receives_message(mod, message) :-
 //   comes), and trapping is the process's, not the function's: the
 //   reader asks it (startup: init/1's own stack; blocking: the server's).
 //
-// mailbox asks another question of a monitor: whether its :DOWN is
-// consumed on every way out of the function (waited_out, below), not
-// whether a wait ends.
+// mailbox asks another question of a monitor: whether it is released on
+// every way out of the function (monitor_released, below), not whether a
+// wait ends.
 .decl down_bounded(recv: symbol)
 
 down_bounded(id) :- recv_down(id, _, _).
@@ -78,18 +78,18 @@ links_in(f) :- remote_call(_, f, ":erlang", "open_port", 2).
 links_in(f) :- remote_call(_, f, "Port", "open", 2).
 links_in(f) :- call_site(_, f, _, "start_link", _).
 
-// ── A monitor whose :DOWN is taken ───────────────────────────────────
+// ── A monitor released before its function returns ──────────────────
 //
-// waited_out(monitor): every path from the monitor call to its
-// function's return takes a :DOWN (awaits_down_after of the monitor call
-// itself, Argus.Extractors.Monitor): a receive clause that takes it (any
-// monitor's, or the one this call's ref pins), a demonitor with :flush
-// of the ref, or a call to a function of the module that waits so on
-// every path. The clause, not the receive: the other clauses of `receive
-// do {:reply, x} -> ...; {:DOWN, ...} -> ... end` leave it with the
-// monitor live, and so does a timed receive's `after`. Unlike
-// down_bounded, which asks whether a wait ENDS no later than its peer,
-// this asks whether the :DOWN is CONSUMED on every way out.
-.decl waited_out(monitor: symbol)
+// monitor_released(monitor): every path from the monitor call to its
+// function's return releases it (monitor_released_after of the monitor
+// call itself, Argus.Extractors.Monitor): a receive clause that takes its
+// :DOWN (any monitor's, or the one this call's ref pins), a demonitor of
+// the ref, with or without :flush, or a call to a function of the module
+// that waits so on every path. The clause, not the receive: the other
+// clauses of `receive do {:reply, x} -> ...; {:DOWN, ...} -> ... end`
+// leave it with the monitor live, and so does a timed receive's `after`.
+// Unlike down_bounded, which asks whether a wait ENDS no later than its
+// peer, this asks whether the monitor is RELEASED on every way out.
+.decl monitor_released(monitor: symbol)
 
-waited_out(m) :- monitor_call(m, f, _), awaits_down_after(f, m).
+monitor_released(m) :- monitor_call(m, f, _), monitor_released_after(f, m).

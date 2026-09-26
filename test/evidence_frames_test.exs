@@ -25,16 +25,15 @@ defmodule Argus.EvidenceFramesTest do
     findings
   end
 
-  test "monitored_entry_removal: where a server that never demonitors drops an entry" do
+  test "monitor_leak_frame: where a server drops the record of a process it still monitors" do
     assert [finding] =
              [Fixtures.MonitorLeak.NeverReleases]
              |> findings(:mailbox)
-             |> Enum.filter(&(&1.title =~ "monitors but never demonitors"))
+             |> Enum.filter(&(&1.title =~ "Entry dropped while its process stays monitored"))
 
     assert [frame] = finding.related
-    assert frame.label == "an entry is removed here, its monitor left live"
-    assert frame.module == Fixtures.MonitorLeak.NeverReleases
-    assert %InstrId{func: "handle_cast", arity: 2} = frame.instr
+    assert frame.label == "the entry is dropped here, the monitor stays"
+    assert frame.mfa == {Fixtures.MonitorLeak.NeverReleases, :handle_cast, 2}
   end
 
   test "task_yield_site: where a linked task is collected with Task.yield" do

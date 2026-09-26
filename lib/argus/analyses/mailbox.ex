@@ -14,9 +14,11 @@ defmodule Argus.Analyses.Mailbox do
     `never_awaited`, `yield_linked` (collected with `Task.yield` in a
     process that does not trap exits) or `linked_in_library` (started in
     library code that links it to an unknown caller).
-  - `unconsumed_monitor(mod, func, site, kind)` — a monitor left live
-    after a `timed_wait`, `never_released` by anything but the monitored
-    process dying, or whose ref was `ref_discarded`.
+  - `monitor_leak(mod, func, site, how)` — a monitor that code which runs
+    again takes again before the one before it is released: a `wait`
+    that returns with it live, a record the server drops while it keeps
+    the monitor (`ended`), a ref thrown away by a run that does not ask
+    its state first (`dropped`). See `docs/design/monitor-leaks.md`.
   - `timer_cancel_without_flush(mod, cancel, arm, key, message,
     cancel_site, arm_site)` — a
     cancelled timer's message may already be queued and is not told
@@ -101,6 +103,9 @@ defmodule Argus.Analyses.Mailbox do
       Argus.Extractors.ClauseCall,
       # Where a LiveView asks connected?/1 (connected_guarded).
       Argus.Extractors.LiveView,
+      # The rows a server writes and deletes (ets_op): a monitored process's
+      # record in a table, dropped while its monitor stays (monitor_leak).
+      Argus.Extractors.ETS,
       Argus.Extractors.Tooling
     ]
 
@@ -236,16 +241,19 @@ defmodule Argus.Analyses.Mailbox do
         doc: "A message a GenServer is sent that no clause of its handle_info/2 takes."
       },
       %{
-        name: :monitored_entry_removal,
+        name: :monitor_leak_frame,
         fields: [
           {:mod, :symbol, "the module"},
-          {:kind, :symbol, "never_released"},
-          {:site, :symbol, "a call that removes an entry"},
-          {:func, :symbol, "the function it is in"}
+          {:site, :symbol, "the monitor call site"},
+          {:how, :symbol, "wait | ended | dropped"},
+          {:role, :symbol,
+           "drop (where the record is dropped) | runs (a root that runs the monitoring function again)"},
+          {:func, :symbol, "the function the frame points at"}
         ],
-        key: [:mod, :site],
-        evidence: %{of: :unconsumed_monitor, on: [:mod, :kind], limit: 3},
-        doc: "Where a server that never demonitors removes its entries, attached to its finding."
+        key: [:mod, :site, :how, :role, :func],
+        evidence: %{of: :monitor_leak, on: [:mod, :site, :how], limit: 3},
+        doc:
+          "Where a server drops the record of a process it still monitors, and what runs the monitor again."
       },
       %{
         name: :task_yield_site,
@@ -269,19 +277,16 @@ defmodule Argus.Analyses.Mailbox do
         doc: "A Task.async whose result nothing awaits, or whose link the caller cannot afford."
       },
       %{
-        name: :unconsumed_monitor,
+        name: :monitor_leak,
         fields: [
           {:mod, :symbol, "the module"},
-          {:func, :symbol, "the function establishing the monitor"},
+          {:func, :symbol, "the function that takes the monitor"},
           {:site, :symbol, "the monitor call site"},
-          {:kind, :symbol, "timed_wait | never_released | ref_discarded"}
+          {:how, :symbol, "wait | ended | dropped"}
         ],
-        # A timed wait leaks once per function, a server that never
-        # demonitors is one finding, a discarded ref one per site.
-        key:
-          {:kind,
-           %{"timed_wait" => [:func], "never_released" => [:mod], default: [:mod, :func, :site]}},
-        doc: "A monitor left live past the wait, the entry, or the ref that could release it."
+        key: [:mod, :func, :site, :how],
+        doc:
+          "A monitor that code which runs again takes again before the one before it is released."
       },
       %{
         name: :reply_defect,
@@ -648,69 +653,59 @@ defmodule Argus.Analyses.Mailbox do
     )
   end
 
-  def finding(:unconsumed_monitor, [_mod, func, id, "timed_wait"]) do
+  def finding(:monitor_leak, [_mod, func, site, "wait"]) do
     Findings.new(
-      :error,
-      "Monitor left live after a wait times out",
-      "#{func} calls Process.monitor/1 and then waits in a receive with an " <>
-        "after clause, without Process.demonitor(ref, [:flush]). " <>
-        "On the timeout branch the monitor is still live, so the " <>
-        "{:DOWN, ref, :process, object, reason} arrives later — after the " <>
-        "function returned, into whatever callback is running then. " <>
-        "Two things usually follow. If no clause matches that message the " <>
-        "process dies with a bad-event or FunctionClauseError, and it dies on " <>
-        "an error path, which is when its state is most worth keeping. If a " <>
-        "clause does match, it runs with a reason describing something the " <>
-        "code stopped caring about. " <>
-        "Note that plain Process.demonitor(ref) is not enough: a {:DOWN, ...} " <>
-        "already in the mailbox stays there, and only the [:flush] option " <>
-        "removes it. " <>
-        "A receive with no after clause does not have this problem, since it " <>
-        "consumes either the reply or the {:DOWN, ...}.",
-      at: Findings.at_instr(id),
-      at_label: "the monitor is still live on the timeout branch",
+      :warning,
+      "Monitor left live each time a wait returns",
+      "#{Findings.call_name(func)} runs again and again, and each run monitors a " <>
+        "process and waits for its :DOWN. Some way out of the wait returns with the " <>
+        "monitor still live: the `after` clause gave up, or the answer came first, " <>
+        "and nothing demonitors the ref. The next run monitors the same process " <>
+        "again, so the monitors pile up on it, one per run, until it exits; then " <>
+        "every one of them sends a :DOWN into whatever the process runs by then.",
+      at: Findings.at_site_in_func(site, func),
+      at_label: "left live on some way out of the wait",
       help: [
-        "call `Process.demonitor(ref, [:flush])` on the timeout branch, " <>
-          "before the function returns"
+        "demonitor the ref on every way out: `Process.demonitor(ref, [:flush])` " <>
+          "after the answer and on the timeout"
       ]
     )
   end
 
-  def finding(:unconsumed_monitor, [mod, _func, site, "never_released"]) do
+  def finding(:monitor_leak, [mod, func, site, "ended"]) do
     Findings.new(
-      :info,
-      "Server monitors but never demonitors",
-      "#{mod} establishes monitors from its callbacks and removes entries " <>
-        "from its bookkeeping elsewhere, but calls Process.demonitor nowhere. " <>
-        "If an entry can leave by a path other than the monitored process " <>
-        "dying — an explicit delete, unsubscribe or disconnect — its monitor " <>
-        "stays live: one per cycle, for the life of the server, each one a " <>
-        "future {:DOWN, ...} that arrives after the entry is gone.",
-      at: Findings.at_site(site, mod),
-      at_label: "monitors established here are only ever released by :DOWN",
+      :warning,
+      "Entry dropped while its process stays monitored",
+      "#{Findings.call_name(func)} runs again and again: each run monitors a process " <>
+        "and records it in #{mod}. Another of #{mod}'s callbacks drops that record " <>
+        "while the process may still be alive (a delete, an unsubscribe, a reset) " <>
+        "and does not demonitor it. The monitor outlives the entry it stood for: " <>
+        "when the same process registers again it is monitored again, and the old " <>
+        "monitors pile up until it exits.",
+      at: Findings.at_site_in_func(site, func),
+      at_label: "monitored here; the entry is dropped elsewhere",
       help: [
-        "on every path that removes the entry, call " <>
-          "`Process.demonitor(ref, [:flush])` with the ref stored alongside it"
+        "keep the ref with the entry, and `Process.demonitor(ref, [:flush])` where " <>
+          "the entry is dropped"
       ]
     )
   end
 
-  def finding(:unconsumed_monitor, [mod, _func, site, "ref_discarded"]) do
+  def finding(:monitor_leak, [_mod, func, site, "dropped"]) do
     Findings.new(
       :info,
-      "Server drops the ref of a monitor it establishes",
-      "#{mod} calls Process.monitor/1 in a callback and discards the " <>
-        "result. The ref is the only handle a demonitor needs, so this " <>
-        "monitor ends when the monitored process dies and not before. If " <>
-        "the relationship it stands for can end another way — an " <>
-        "unsubscribe, a checkin, a disconnect — the monitor outlives it, " <>
-        "one per cycle, and the {:DOWN, ...} arrives for a process the " <>
-        "server stopped caring about.",
-      at: Findings.at_site(site, mod),
-      at_label: "the monitor ref is dropped here",
+      "Monitor taken again with its ref thrown away",
+      "#{Findings.call_name(func)} runs again and again, monitors a process and " <>
+        "throws the ref away, without asking its state whether it already monitors " <>
+        "that process. Only the process's exit can end the monitor: each time the " <>
+        "same process is named again, one more piles up, and each is a :DOWN that " <>
+        "comes later, for a relationship that may have ended. Whether the same " <>
+        "process is named again is the protocol's, which the code does not show.",
+      at: Findings.at_site_in_func(site, func),
+      at_label: "the ref is thrown away here",
       help: [
-        "keep the ref with the entry it protects and " <>
-          "`Process.demonitor(ref, [:flush])` when the entry is removed"
+        "keep the ref with what the monitor stands for, and demonitor it when that " <>
+          "ends; or monitor a process only when the state holds no monitor of it"
       ]
     )
   end
@@ -821,11 +816,12 @@ defmodule Argus.Analyses.Mailbox do
   defp consequence(_other), do: ""
 
   @impl true
-  def evidence(:monitored_entry_removal, [mod, _kind, site, _func]) do
-    Findings.related(
-      "an entry is removed here, its monitor left live",
-      Findings.at_site(site, mod)
-    )
+  def evidence(:monitor_leak_frame, [_mod, _site, _how, "drop", func]) do
+    Findings.related("the entry is dropped here, the monitor stays", Findings.at_func(func))
+  end
+
+  def evidence(:monitor_leak_frame, [_mod, _site, _how, "runs", root]) do
+    Findings.related("runs again from here", Findings.at_func(root))
   end
 
   def evidence(:task_yield_site, [func, _kind, site]) do

@@ -11,8 +11,13 @@ defmodule Argus.Soundness.MailboxTest do
 
   alias Argus.Test.Soundness.Mailbox, as: M
 
-  @ref_dropped "Server drops the ref of a monitor it establishes"
-  @timed_wait "Monitor left live after a wait times out"
+  # The monitor-leak model (docs/design/monitor-leaks.md) reports these
+  # review-2 shapes as a wait that returns with its monitor live and, with
+  # the ref thrown away, as a monitor taken again with nothing to release
+  # it: test/soundness/monitors_test.exs holds each narrowing's
+  # neighbours.
+  @ref_dropped "Monitor taken again with its ref thrown away"
+  @wait "Monitor left live each time a wait returns"
 
   describe "a :DOWN wait is the clause that takes it, not the receive (review 2, item 5)" do
     test "a reply-or-:DOWN wait leaves the dropped ref live on the reply path" do
@@ -39,7 +44,7 @@ defmodule Argus.Soundness.MailboxTest do
     test "a timed receive's :DOWN clause does not cover its `after`" do
       found = fired([M.TimedGivesUp], :mailbox)
       assert {:info, @ref_dropped, {M.TimedGivesUp, :handle_call, 3}} in found
-      assert {:error, @timed_wait, {M.TimedGivesUp, :handle_call, 3}} in found
+      assert {:warning, @wait, {M.TimedGivesUp, :handle_call, 3}} in found
     end
 
     test "a helper that waits on one branch, and does not loop, is no collector" do
@@ -383,8 +388,8 @@ defmodule Argus.Soundness.MailboxTest do
            )
   end
 
-  test "a timed :DOWN wait whose after raises keeps the timed-wait finding" do
-    assert {:error, @timed_wait, {M.RaisingAfter, :await_downfall, 1}} in fired(
+  test "a timed :DOWN wait whose after raises keeps the wait finding" do
+    assert {:warning, @wait, {M.RaisingAfter, :await_downfall, 1}} in fired(
              [M.RaisingAfter],
              :mailbox
            )

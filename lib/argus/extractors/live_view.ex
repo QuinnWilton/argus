@@ -22,7 +22,7 @@ defmodule Argus.Extractors.LiveView do
     an endpoint when it is one), or an apply of either name to a module
     held in a value (`apply`: `socket.endpoint.subscribe(topic)`).
   - `param_decided(id, func, pos)` — the call at `id` (into the program,
-    or a subscription) runs only on some arms of a test of what `func`'s
+    a subscription or a monitor) runs only on some arms of a test of what `func`'s
     parameter `pos` holds: the parameter, a field of it, a call's answer
     on it. A test whose other arms only raise decides nothing.
   - `connected_guarded(id, func)` — the call at `id` runs only on the
@@ -53,6 +53,15 @@ defmodule Argus.Extractors.LiveView do
   ]
 
   @decides [:is_eq_exact, :is_ne_exact, :is_eq, :is_ne]
+
+  # A monitor, like a subscription, is a registration a process asks for
+  # again each time the code runs, unless its state says it holds one.
+  @monitors [
+    {Process, :monitor, 1},
+    {Process, :monitor, 2},
+    {:erlang, :monitor, 2},
+    {:erlang, :monitor, 3}
+  ]
 
   # Subscriptions and their undoing, by the call's spelling: through
   # Phoenix.PubSub, or through an endpoint's own subscribe/1,2 and
@@ -100,8 +109,8 @@ defmodule Argus.Extractors.LiveView do
   # compared with the current scope's pid). A test whose other arms only
   # raise (a match that fails with a badmatch, a clause head that fails
   # with a function_clause) decides nothing. Recorded for the calls into
-  # the program and the subscriptions: what a rule asks of a process's
-  # state, when the callback hands the state down.
+  # the program, the subscriptions and the monitors: what a rule asks of
+  # a process's state, when the callback hands the state down.
 
   defp param_decided(facts, module_data, sites) do
     sites
@@ -131,12 +140,13 @@ defmodule Argus.Extractors.LiveView do
     end)
   end
 
-  # A call into the program, or a subscription.
+  # A call into the program, a subscription, or a monitor.
   defp decidable?(%{remote?: false}), do: true
 
   defp decidable?(%{mfa: {m, f, a} = mfa}),
     do:
-      Map.has_key?(@pubsub, mfa) or Map.has_key?(@endpoint_ops, {f, a}) or not Runtime.module?(m)
+      Map.has_key?(@pubsub, mfa) or Map.has_key?(@endpoint_ops, {f, a}) or mfa in @monitors or
+        not Runtime.module?(m)
 
   # The blocks ending in a test that decides something (two of its
   # successors can go on to return), each with the parameters its

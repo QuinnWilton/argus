@@ -6,6 +6,74 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## 0.20.0-dev — unreleased
 
+### Monitor-leak round: a monitor taken again before the last one is released
+
+**Changed.** mailbox's three monitor rules are one class,
+`monitor_leak(mod, func, site, how)`, built on a model instead of on
+suppressions (docs/design/monitor-leaks.md). The harm is a second live
+monitor on one process. A monitor is reported when all of these hold:
+- code that runs again takes it (`again_code`);
+- the monitored process is not one the run itself started;
+- some way out of the run keeps it live;
+- one witness shows the monitor before is still live: a `wait` that
+  returns with it, a record the server drops without it (`ended`), or a
+  ref thrown away by a run that does not ask its state first
+  (`dropped`).
+
+The titles change:
+- "Monitor left live after a wait times out" (`:error`) is "Monitor left
+  live each time a wait returns" (`:warning`). The answer's path counts
+  as well as the timeout's.
+- "Server monitors but never demonitors" (`:info`) is "Entry dropped
+  while its process stays monitored" (`:warning`). It asks for the drop
+  of the record the monitoring clause wrote, not a removal anywhere in
+  the module.
+- "Server drops the ref of a monitor it establishes" stays `:info` as
+  "Monitor taken again with its ref thrown away".
+
+`unconsumed_monitor` and `monitored_entry_removal` are gone. The frames
+are `monitor_leak_frame`: where the record is dropped, and the callback
+that runs the site again.
+
+Over the 39 evaluation sets, rows go from 102 to 97, and true rows from
+7 to 17: precision 7% to 18%.
+- All 7 true rows stay.
+- 50 sites go, all false: code that runs once, terminate drains,
+  processes the server started, waits a plain demonitor or a helper
+  releases, and registrations that end only at their `:DOWN`.
+- 44 sites come, 10 true: Livebook's `Evaluator.call/2`, Phoenix's
+  `CodeReloader.Server.sync/0`, elixir-ls's `Stacktrace.get/1`, emqx's
+  durable-storage `subscribe/3`, OTP's `global_group` sync, and others.
+
+Fixture verdicts that change by the model:
+- `MonitorLeak.Blocks` and `ClientSideMonitor` fire: their answer path
+  keeps the monitor.
+- `MonitorsHandedWorker` is quiet: its worker is new on every run.
+
+The corpus pairs postgrex#781 and supavisor@e80c9a2 keep their findings
+under the new titles.
+
+**Added.** clientlib runs.dl: `once_code`, moved from restart_state.dl,
+and its complement, `again_code`. That is code reached on a process's
+own stack from a root that runs again:
+- a callback per message or request;
+- a gen_statem state function;
+- a receive loop;
+- an export only callers outside the program call.
+
+**Changed.** Schema 138.
+- `monitor_owns` is removed. `monitor_started(id, func, start)` replaces
+  it: the start whose `{:ok, pid}` the monitored pid is, on every path.
+  An already-started answer is not one.
+- `awaits_down_after` is `monitor_released_after`, and receive.dl's
+  `waited_out` is `monitor_released`. A demonitor without `:flush`
+  releases the monitor, and so does a helper of the module that is
+  handed the ref and releases it on every way out.
+- `recv_takes_down(id, func)` is new: a receive with a `:DOWN` clause.
+- `param_decided` covers monitor sites.
+- `monitor_ref_dropped` follows a ref every return answers into the
+  callers, as it did a tail call's.
+- mailbox reads the ETS extractor's `ets_op`.
 ### "handle_info/2 has no catch-all" retired: a message the program is shown to send
 
 `mailbox.partial_handler` started from every server whose handle_info/2

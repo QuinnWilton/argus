@@ -33,8 +33,9 @@ defmodule Argus.Extractors.Monitor do
     is `process`), else `dynamic`
   - `monitor_ref_dropped(id, func)` — the reference that monitor returned
     is discarded at the call site, so nothing can ever demonitor it
-  - `monitor_owns(id, func)` — the monitored pid is one the function just
-    started and hands to no call and no send after the start (below)
+  - `monitor_started(id, func, start)` — the monitored pid is, on every
+    path, the one the start call at `start` (to another module) answered:
+    a process the function itself started (below)
   - `awaits_child_exit(func)` — every start `func` makes is followed, on
     every path to its return, by a wait for the `:DOWN` of a monitor
     taken after the start (Livebook's `UniqueTask.run/2`): what it starts
@@ -48,13 +49,16 @@ defmodule Argus.Extractors.Monitor do
     :DOWN handler; unlike `callback_tag` this is emitted for every
     function, because a gen_statem funnels its :info events into private
     helpers that no callback name identifies
-  - `awaits_down_after(func, call)` — every path in `func` from the call
-    at `call` to its return waits for a `:DOWN` (below)
+  - `monitor_released_after(func, call)` — every path in `func` from the
+    call at `call` to its return takes a `:DOWN` or demonitors the ref the
+    call returned (below)
   - `recv_signal(id, func, signal)` — a receive with a clause that takes
     the exit signal of the process a pinned register names, whatever its
     reason: a `:DOWN` (`"down"`) or an `:EXIT` (`"exit"`)
     (`Argus.Extractors.Monitor.ExitSignal`); a `:DOWN` only where no path
     from the function's entry to the receive demonitors
+  - `recv_takes_down(id, func)` — a receive with a clause whose head fixes
+    the tag to `:DOWN`: the function waits for a monitor's end
   - `recv_takes_exit(id, func)` — a receive with a clause that can take a
     trapped `{:EXIT, pid, reason}`: its head fixes the tag to `:EXIT`, or
     fixes none
@@ -71,36 +75,25 @@ defmodule Argus.Extractors.Monitor do
   the scan does not understand count as kept, which is the direction
   that keeps the fact honest.
 
-  ## A monitor on a process the function keeps
+  ## A monitor released before the function returns
 
-  A server that starts a worker (`{:ok, pid} = Task.start_link(...)`, a
-  connection's `start_link`, `:gun.open`) and monitors it without keeping
-  the ref drops nothing it needs: the relationship is the worker's life,
-  and its `:DOWN` is the end of it. That holds while the server is the
-  worker's only owner, so `monitor_owns` asks, of the pid the monitor
-  takes, that on every path it came from a start in this function (a call
-  named `start*`, `spawn*` or `open`, or the pid of its `{:ok, pid}`), and
-  that after the start no path hands it, or a term built from it, to a
-  call or a send as data: a pid registered in a table, cast to another
-  server or passed to a helper may have another owner. A call's first
-  argument and a send's destination address the process (`:gun.await_up(
-  pid, t)`) and hand it nothing. Returning it or keeping it in the state
-  keeps it in this process. A handoff through the state, in another
-  callback, is not seen.
+  A monitor is released when its `:DOWN` is taken or its ref is
+  demonitored: `monitor_released_after(func, call)` names the calls
+  after which every path to `func`'s return does one or the other. A
+  demonitor releases the monitor with or without `[:flush]`; without it,
+  a `:DOWN` the runtime had already sent stays queued, and is the
+  mailbox's to take (the late message, not a monitor left live).
 
-  ## A monitor the caller collects
-
-  A function may take a monitor and return with it live on purpose: its
-  caller goes on to wait for the `:DOWN`. OTP's old supervisor shutdown,
-  copied into GenStage's ConsumerSupervisor and Horde's
+  A function may also take a monitor and return with it live on purpose:
+  its caller goes on to wait for the `:DOWN`. OTP's old supervisor
+  shutdown, copied into GenStage's ConsumerSupervisor and Horde's
   ProcessesSupervisor, monitors each child in `monitor_child/1`, looks
   once (`after 0`) for an `{:EXIT, ...}` already in the mailbox, and
   returns; its caller then blocks in `wait_children` until every child's
-  `{:DOWN, ...}` has come. `awaits_down_after(func, call)` names the
-  calls such a wait follows on every path to `func`'s return: a receive's
-  `{:DOWN, ...}` clause that takes any monitor's (the ref is not
-  compared), or the one whose ref the call returned; a
-  `Process.demonitor(ref, [:flush])` of that ref; or a call to a function
+  `{:DOWN, ...}` has come. The calls such a release follows on every
+  path are: a receive's `{:DOWN, ...}` clause that takes any monitor's
+  (the ref is not compared), or the one whose ref the call returned; a
+  `Process.demonitor/1,2` of that ref; or a call to a function
   of this module that takes one on every path to its return, or is a
   receive loop taking one on every path from its receive (a path that
   never enters the receive is the loop's end, taken on trust). The wait
@@ -158,16 +151,17 @@ defmodule Argus.Extractors.Monitor do
   def relations,
     do: [
       :awaits_child_exit,
-      :awaits_down_after,
       :demonitor_call,
       :matches_down,
       :monitor_call,
-      :monitor_owns,
       :monitor_ref_dropped,
+      :monitor_released_after,
+      :monitor_started,
       :monitor_type,
       :recv_down,
       :recv_flush,
       :recv_signal,
+      :recv_takes_down,
       :recv_takes_exit
     ]
 
@@ -176,10 +170,11 @@ defmodule Argus.Extractors.Monitor do
     module_data
     |> each_remote_call(%{}, &handle(&1, &2, &3, module_data))
     |> emit_matches_down(mod, functions)
-    |> emit_awaits_down_after(module_data)
+    |> emit_released_after(module_data)
     |> emit_recv_down(module_data)
     |> emit_recv_signal(module_data)
     |> emit_recv_takes_exit(mod, functions)
+    |> emit_recv_takes_down(mod, functions)
     |> emit_recv_flush(module_data)
   end
 
@@ -406,38 +401,66 @@ defmodule Argus.Extractors.Monitor do
     facts = add_fact(facts, :monitor_call, [id, ctx.func_id, target])
 
     facts =
-      if owns?(module_data, ctx, pid_reg),
-        do: add_fact(facts, :monitor_owns, [id, ctx.func_id]),
-        else: facts
+      case started_by(ctx.instrs, ctx.idx, pid_reg) do
+        nil ->
+          facts
+
+        start ->
+          add_fact(facts, :monitor_started, [id, ctx.func_id, InstrId.mint(ctx.func_id, start)])
+      end
 
     if ref_lost?(module_data, ctx),
       do: add_fact(facts, :monitor_ref_dropped, [id, ctx.func_id]),
       else: facts
   end
 
-  # ── A process the function keeps ──────────────────────────────────
+  # ── A process the monitoring function starts ─────────────────────
+  #
+  # The start whose answer the monitored pid is, on every path: the pid a
+  # call to another module named like a start answered (`spawn*`), or
+  # the element after `:ok` of the `{:ok, pid}` it answered, read straight
+  # from the answer. A start's `{:error, {:already_started, pid}}` names a
+  # process others hold: its pid is an element of an element, and on that
+  # path the start is not the origin. A local function named like a start
+  # is not one either: a lookup-or-start wrapper answers a running process
+  # (review 2, item 25). Which calls to other modules count is the rules'
+  # (a start the process facts know, or one outside the program).
+  defp started_by(instrs, idx, reg) do
+    Resolve.trace(instrs, idx, register(reg), nil, fn
+      {:param, _position}, _follow ->
+        nil
 
-  # The start the monitored pid comes from, on every path: the call's
-  # index, when the call is named like a start.
-  defp owns?(module_data, ctx, pid_reg) do
-    with start when is_integer(start) <- start_origin(ctx.instrs, ctx.idx, pid_reg),
-         %Argus.Cfg.Function{} = fun <- cfg(module_data, ctx) do
-      kept_after?(fun, ctx.instrs, start)
-    else
-      _ -> false
-    end
-  end
+      {writer, {:get_tuple_element, src, 1, _dst}}, _follow ->
+        start_answered(instrs, writer, src)
 
-  defp start_origin(instrs, idx, reg) do
-    Resolve.trace(instrs, idx, reg, nil, fn
-      {at, {:get_tuple_element, src, _index, _dst}}, follow ->
-        follow.(at, src)
-
-      {at, instr}, _follow ->
-        if starts?(instr), do: at
+      {writer, instr}, _follow ->
+        if remote_start?(instr), do: writer
     end)
   end
 
+  defp start_answered(instrs, at, src) do
+    Resolve.trace(instrs, at, register(src), nil, fn
+      {:param, _position}, _follow -> nil
+      {writer, instr}, _follow -> if remote_start?(instr), do: writer
+    end)
+  end
+
+  defp remote_start?(instr) do
+    case match_remote_call(instr) do
+      {:ok, _mod, name, _arity} -> start_name?(name)
+      :none -> false
+    end
+  end
+
+  defp start_name?(name) do
+    case Atom.to_string(name) do
+      "open" -> true
+      text -> String.starts_with?(text, "start") or String.starts_with?(text, "spawn")
+    end
+  end
+
+  # A call named like a start: `start*`, `spawn*`, or `open` (a client
+  # library's connection, `:gun.open`).
   defp starts?(instr) do
     name =
       case {match_remote_call(instr), match_local_call(instr)} do
@@ -453,94 +476,24 @@ defmodule Argus.Extractors.Monitor do
     end
   end
 
-  # Calls that take the pid without making it anyone else's.
-  @pid_bookkeeping [
-    {:erlang, :monitor, 2},
-    {Process, :monitor, 1},
-    {:erlang, :link, 1},
-    {Process, :link, 1},
-    {:erlang, :unlink, 1},
-    {Process, :unlink, 1}
-  ]
-
-  # No path after the start hands the result, or anything built from it,
-  # to a call other than the bookkeeping above, or sends it. Walked per
-  # path, carrying the registers that hold it: x0 after the start, what
-  # a move copies it to, and what an instruction builds or projects
-  # from it (`{:ok, pid}`'s pid, a state map it is put in).
-  defp kept_after?(fun, instrs, start) do
-    tuple = List.to_tuple(instrs)
-    not handed_off?([{start + 1, [{:x, 0}]}], fun, tuple, %{})
-  end
-
-  # `holding` is a sorted list and `seen` a plain map: dialyzer rejects
-  # an opaque MapSet threaded through recursion.
-  defp handed_off?([], _fun, _tuple, _seen), do: false
-
-  defp handed_off?([{idx, holding} = state | rest], fun, tuple, seen) do
-    if idx >= tuple_size(tuple) or holding == [] or Map.has_key?(seen, state) do
-      handed_off?(rest, fun, tuple, seen)
-    else
-      step_handoff(state, rest, fun, tuple, seen)
-    end
-  end
-
-  defp step_handoff({idx, holding} = state, rest, fun, tuple, seen) do
-    instr = elem(tuple, idx)
-    used = instr |> Instr.uses() |> Enum.filter(&(&1 in holding))
-    used? = used != []
-
-    # The first argument of a call, and a send's destination, address
-    # the process (`:gun.await_up(pid, t)`, `GenServer.call(pid, m)`,
-    # `send(pid, m)`); anywhere else the pid is data another holder
-    # may keep.
-    as_data? = Enum.any?(used, &(&1 != {:x, 0}))
-
-    cond do
-      as_data? and (instr == :send or match?({:send}, instr)) ->
-        true
-
-      as_data? and (Instr.call?(instr) or Instr.tail_call?(instr)) and
-          not bookkeeping?(instr) ->
-        true
-
-      true ->
-        built = if used?, do: Instr.defs(instr), else: []
-        holding = (Instr.carry(instr, holding) ++ built) |> Enum.uniq() |> Enum.sort()
-        next = for at <- successors(fun, tuple, idx), do: {at, holding}
-        handed_off?(next ++ rest, fun, tuple, Map.put(seen, state, true))
-    end
-  end
-
-  defp successors(fun, tuple, idx) do
-    case Argus.Cfg.Function.block_at(fun, idx) do
-      %Argus.Cfg.Block{range: {_first, last}} = block when last == idx ->
-        for {to, _kind} <- block.succs,
-            %Argus.Cfg.Block{range: {first, _}} = Map.fetch!(fun.blocks, to),
-            do: first
-
-      _ ->
-        if idx + 1 < tuple_size(tuple), do: [idx + 1], else: []
-    end
-  end
-
-  defp bookkeeping?(instr) do
-    case match_remote_call(instr) do
-      {:ok, m, f, a} -> {m, f, a} in @pid_bookkeeping
-      :none -> false
-    end
-  end
-
-  # A monitor made as a tail call hands its ref to whoever called the
-  # function: `Enum.map(pids, &Process.monitor(&1))` compiles to a closure
+  # A monitor made as a tail call, or whose ref every return answers,
+  # hands its ref to whoever called the function: `Enum.map(pids, &Process.monitor(&1))` compiles to a closure
   # whose last instruction is the monitor, and the list Enum.map returns
   # holds every ref (exq's WorkerDrainer awaits them all). Nothing
   # follows the call in its own function, so the walk below would find
   # the ref read nowhere; the question is the callers' instead.
   defp ref_lost?(module_data, ctx) do
-    if Instr.tail_call?(Enum.at(ctx.instrs, ctx.idx)),
+    if Instr.tail_call?(Enum.at(ctx.instrs, ctx.idx)) or returns_ref?(ctx.instrs, ctx.idx),
       do: returned_ref_lost?(module_data, ctx.func_id, []),
       else: ref_dropped?(cfg(module_data, ctx), ctx.instrs, ctx.idx + 1)
+  end
+
+  # Every return of the function answers the ref the monitor at `idx`
+  # took, as a tail call to it would: `ref = Process.monitor(pid); send(pid,
+  # :stop); ...; ref`. Whether it is lost is the callers' question.
+  defp returns_ref?(instrs, idx) do
+    returns = for {:return, at} <- Enum.with_index(instrs), do: at
+    returns != [] and Enum.all?(returns, &(origin_call(instrs, &1, {:x, 0}) == idx))
   end
 
   # Whether every use the module shows of the function `func_id`, which
@@ -1099,16 +1052,17 @@ defmodule Argus.Extractors.Monitor do
 
   # A function that waits for any :DOWN (a receive clause taking any
   # monitor's, a call to a collector) is walked from every call it makes;
-  # one whose only waits are for a particular ref (a pinned clause, a
-  # flushing demonitor) from the calls that ref comes from; the rest
-  # (nearly all) cost one scan for their receives.
-  defp emit_awaits_down_after(facts, %{module: mod, functions: functions} = module_data) do
+  # one whose only releases are of a particular ref (a pinned clause, a
+  # demonitor) from the calls that ref comes from; the rest (nearly all)
+  # cost one scan for their receives.
+  defp emit_released_after(facts, %{module: mod, functions: functions} = module_data) do
     takes =
       Map.new(functions, fn {:function, name, arity, _entry, instrs} ->
         {{name, arity}, down_takes(instrs)}
       end)
 
     collectors = collectors(module_data, takes)
+    releasers = releasers(module_data, takes)
     tuple_collected = tuple_collected(module_data, takes, collectors)
     facts = emit_awaits_child_exit(facts, module_data, takes)
 
@@ -1121,6 +1075,7 @@ defmodule Argus.Extractors.Monitor do
         takes: takes_at(entries),
         blocking_takes: takes_at(Enum.filter(entries, & &1.blocking)),
         collectors: collectors,
+        releasers: releasers,
         tuple_collected: tuple_collected
       }
 
@@ -1129,7 +1084,7 @@ defmodule Argus.Extractors.Monitor do
         func_id = InstrId.func_id(mod, name, arity)
 
         for call <- calls, collected_after?(fun, ctx, call), reduce: acc do
-          acc -> add_fact(acc, :awaits_down_after, [func_id, InstrId.mint(func_id, call)])
+          acc -> add_fact(acc, :monitor_released_after, [func_id, InstrId.mint(func_id, call)])
         end
       else
         _ -> acc
@@ -1157,13 +1112,17 @@ defmodule Argus.Extractors.Monitor do
         for {_at, {:pinned, at, reg}} <- ctx.blocking_takes,
             do: origin_call(ctx.instrs, at, reg)
 
-      flushed =
+      cancelled =
         for {instr, idx} <- indexed,
-            demonitor?(instr),
-            flush_option(ctx.instrs, idx) == "flush",
+            cancels_monitor?(instr),
             do: origin_call(ctx.instrs, idx, {:x, 0})
 
-      (pinned ++ flushed) |> Enum.reject(&is_nil/1) |> Enum.uniq() |> Enum.sort()
+      handed =
+        for {instr, idx} <- indexed,
+            pos <- released_positions(instr, ctx),
+            do: origin_call(ctx.instrs, idx, {:x, pos})
+
+      (pinned ++ cancelled ++ handed) |> Enum.reject(&is_nil/1) |> Enum.uniq() |> Enum.sort()
     end
   end
 
@@ -1367,8 +1326,8 @@ defmodule Argus.Extractors.Monitor do
   # A wait for the :DOWN of the monitor one of `calls` took. It is the
   # clause of a receive that took a :DOWN (any monitor's, or the one
   # whose ref the call returned), not the receive: a clause for the
-  # peer's answer leaves it with the monitor live. So is a flushing
-  # demonitor of that ref, and a call to a collector.
+  # peer's answer leaves it with the monitor live. So is a demonitor of
+  # that ref, flushed or not, and a call to a collector.
   defp waits_for_down?(:remove_message, idx, calls, ctx) do
     case Map.fetch(ctx.takes, idx) do
       {:ok, :any} -> true
@@ -1379,21 +1338,140 @@ defmodule Argus.Extractors.Monitor do
 
   defp waits_for_down?(instr, idx, calls, ctx) do
     collector_call?(instr, ctx) or
-      (demonitor?(instr) and flush_option(ctx.instrs, idx) == "flush" and
-         origin_call(ctx.instrs, idx, {:x, 0}) in calls)
+      (cancels_monitor?(instr) and origin_call(ctx.instrs, idx, {:x, 0}) in calls) or
+      Enum.any?(
+        released_positions(instr, ctx),
+        &(origin_call(ctx.instrs, idx, {:x, &1}) in calls)
+      )
+  end
+
+  # The argument positions at which a local call hands a releaser the
+  # ref it releases; [] for anything else.
+  defp released_positions(instr, ctx) do
+    case match_local_call(instr) do
+      {:ok, mod, name, arity} when mod == ctx.mod ->
+        Map.get(Map.get(ctx, :releasers, %{}), {name, arity}, [])
+
+      _ ->
+        []
+    end
+  end
+
+  # ── A function that releases the monitor it is handed ───────────────
+  #
+  # `%{{name, arity} => [position]}`: every path from the function's
+  # entry to its return releases the monitor whose ref its parameter at
+  # `position` holds: a receive clause takes that ref's :DOWN, a
+  # demonitor cancels it, or a call hands it, at a position released
+  # so, to a function of the module (the function itself included: a
+  # wait loop that goes round again, taken on trust). A path that raises
+  # is not asked. Finch's HTTP/2 pool waits for a response in a loop
+  # that demonitors on every way out; a wait for the ref's :DOWN that
+  # flushes it on the timeout releases it on both.
+  defp releasers(%{functions: functions} = module_data, takes) do
+    code =
+      Map.new(functions, fn {:function, name, arity, _entry, instrs} ->
+        {{name, arity}, instrs}
+      end)
+
+    candidates =
+      for {:function, name, arity, _entry, instrs} <- functions,
+          pos <- ref_params(instrs, Map.fetch!(takes, {name, arity})),
+          into: MapSet.new(),
+          do: {{name, arity}, pos}
+
+    check = fn {key, pos}, set ->
+      releases?(module_data, key, pos, Map.fetch!(code, key), Map.fetch!(takes, key), set)
+    end
+
+    candidates
+    |> shrink_releasers(check)
+    |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
+  end
+
+  defp shrink_releasers(set, check) do
+    kept = MapSet.filter(set, &check.(&1, set))
+    if MapSet.size(kept) == MapSet.size(set), do: set, else: shrink_releasers(kept, check)
+  end
+
+  # The parameters a function takes a pinned :DOWN of, or demonitors.
+  defp ref_params(instrs, entries) do
+    pinned =
+      for %{ref: {:pinned, at, reg}} <- entries,
+          pos = param_origin(instrs, at, reg),
+          pos != nil,
+          do: pos
+
+    cancelled =
+      for {instr, idx} <- Enum.with_index(instrs),
+          cancels_monitor?(instr),
+          pos = param_origin(instrs, idx, {:x, 0}),
+          pos != nil,
+          do: pos
+
+    Enum.uniq(pinned ++ cancelled)
+  end
+
+  defp releases?(module_data, {name, arity}, pos, instrs, entries, set) do
+    takes = takes_at(entries)
+    mod = module_data.module
+
+    on_instr = fn instr, idx ->
+      cond do
+        releases_param?(instr, idx, instrs, takes, pos) -> :prune
+        hands_param?(instr, idx, instrs, pos, set, mod) -> :prune
+        Instr.exits?(instr) and not raises?(instr) -> {:halt, :returns}
+        true -> :continue
+      end
+    end
+
+    case cfg(module_data, name, arity) do
+      %Argus.Cfg.Function{} = fun ->
+        match?(
+          {:done, _},
+          Walk.explore(fun, instrs, [Dispatch.entry_index(instrs)], on_instr: on_instr)
+        )
+
+      _ ->
+        false
+    end
+  end
+
+  defp releases_param?(:remove_message, idx, instrs, takes, pos) do
+    case Map.get(takes, idx) do
+      {:pinned, at, reg} -> param_origin(instrs, at, reg) == pos
+      _ -> false
+    end
+  end
+
+  defp releases_param?(instr, idx, instrs, _takes, pos),
+    do: cancels_monitor?(instr) and param_origin(instrs, idx, {:x, 0}) == pos
+
+  defp hands_param?(instr, idx, instrs, pos, set, mod) do
+    case match_local_call(instr) do
+      {:ok, ^mod, name, arity} ->
+        Enum.any?(0..(arity - 1)//1, fn q ->
+          MapSet.member?(set, {{name, arity}, q}) and param_origin(instrs, idx, {:x, q}) == pos
+        end)
+
+      _ ->
+        false
+    end
+  end
+
+  # The parameter `reg` holds at `at`, on every path; nil when anything
+  # else.
+  defp param_origin(instrs, at, reg) do
+    Resolve.trace(instrs, at, register(reg), nil, fn
+      {:param, position}, _follow -> position
+      _writer, _follow -> nil
+    end)
   end
 
   defp collector_call?(instr, ctx) do
     case match_local_call(instr) do
       {:ok, mod, name, arity} -> mod == ctx.mod and Map.has_key?(ctx.collectors, {name, arity})
       :none -> false
-    end
-  end
-
-  defp demonitor?(instr) do
-    case match_remote_call(instr) do
-      {:ok, mod, :demonitor, 2} -> mod in [:erlang, Process]
-      _ -> false
     end
   end
 
@@ -1513,6 +1591,38 @@ defmodule Argus.Extractors.Monitor do
         func_id = InstrId.func_id(mod, name, arity)
         add_fact(acc, :recv_takes_exit, [InstrId.mint(func_id, loop), func_id])
     end
+  end
+
+  # ── A receive that waits for a :DOWN ────────────────────────────────
+  #
+  # A receive with a clause whose head fixes the message's tag to :DOWN,
+  # whatever it asks of the ref, the object or the reason: a function
+  # with one waits for a monitor's end, in its own call. Unlike
+  # recv_down and recv_signal, which ask whether the wait ends with the
+  # monitored process, this asks only whether the monitor was taken for
+  # a wait: Phoenix's LiveViewTest render_chunk/3 takes only a redirect's
+  # :DOWN, on its error path, and returns on the others with the monitor
+  # live.
+  defp emit_recv_takes_down(facts, mod, functions) do
+    for {:function, name, arity, _entry, instrs} <- functions,
+        loop <- down_takers(instrs),
+        reduce: facts do
+      acc ->
+        func_id = InstrId.func_id(mod, name, arity)
+        add_fact(acc, :recv_takes_down, [InstrId.mint(func_id, loop), func_id])
+    end
+  end
+
+  defp down_takers(instrs) do
+    tuple = List.to_tuple(instrs)
+    labels = for {{:label, l}, idx} <- Enum.with_index(instrs), into: %{}, do: {l, idx}
+
+    for {{:loop_rec, _fail, _dst}, loop} <- Enum.with_index(instrs),
+        start = %{idx: loop + 1, msg: [{:x, 0}], tags: [], refs: [], tag: nil, ref: :any},
+        [start]
+        |> take_heads(tuple, labels, %{}, [])
+        |> Enum.any?(fn {_at, state} -> state.tag == :DOWN end),
+        do: loop
   end
 
   defp exit_takers(instrs) do

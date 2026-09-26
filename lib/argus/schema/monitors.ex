@@ -56,6 +56,25 @@ defmodule Argus.Schema.Monitors do
         """
       },
       %{
+        name: :monitor_started,
+        layer: 2,
+        fields: [
+          {:id, :symbol, "the monitor call site"},
+          {:func, :symbol, "the monitoring function"},
+          {:start, :symbol, "the start call whose answer the pid is"}
+        ],
+        doc: """
+        The pid monitored at this site is, on every path, what the call at \
+        `start` answered: a call to another module named like a start \
+        (`start*`, `spawn*`, `open`), whose answer is the pid or an \
+        `{:ok, pid}` the pid is read straight out of. A start's \
+        `{:error, {:already_started, pid}}` names a process others hold, \
+        and a local function named like a start may look one up: on such \
+        a path the start is not the pid's origin, and there is no row \
+        (`Argus.Extractors.Monitor`).
+        """
+      },
+      %{
         name: :awaits_child_exit,
         layer: 2,
         fields: [{:func, :symbol, "the function"}],
@@ -68,23 +87,6 @@ defmodule Argus.Schema.Monitors do
         the child's answer, or a timed receive's `after`, leaves the child \
         alive on its path. A path that raises is not asked \
         (`Argus.Extractors.Monitor`).
-        """
-      },
-      %{
-        name: :monitor_owns,
-        layer: 2,
-        fields: [
-          {:id, :symbol, "the monitor call site"},
-          {:func, :symbol, "the monitoring function"}
-        ],
-        doc: """
-        The pid monitored at this site is, on every path, one the monitoring \
-        function just started — the result of a call named `start*` or \
-        `spawn*`, or `open` (a client library's connection: `:gun.open`), \
-        or the pid of its `{:ok, pid}` — and the function hands it to no \
-        call and sends it nowhere after the start: it keeps the process for \
-        itself, in its state or its return. The relationship the monitor \
-        stands for is that process's life (`Argus.Extractors.Monitor`).
         """
       },
       %{
@@ -190,26 +192,43 @@ defmodule Argus.Schema.Monitors do
         """
       },
       %{
-        name: :awaits_down_after,
+        name: :monitor_released_after,
         layer: 2,
         fields: [
           {:func, :symbol, "the calling function"},
           {:call, :symbol, "a call in it that returns"}
         ],
         doc: """
-        Every path in `func` from the call at `call` to its return takes \
-        a :DOWN: a receive's `{:DOWN, ...}` clause that takes any monitor's, \
-        or the one whose ref the call returned (the clause, not the receive: \
-        another clause, or a timed receive's `after`, leaves with the \
-        monitor live); a `Process.demonitor(ref, [:flush])` of that ref; or \
-        a call to a function of the module that takes one on every path to \
-        its return (a receive loop's end, a path that never enters its \
-        receive, taken on trust). A \
-        monitor the callee left live is the caller's to collect: OTP's old \
-        supervisor shutdown monitors each child, looks once (`after 0`) for \
-        an exit already queued, and returns, and its caller then waits for \
-        every child's :DOWN. A path that raises is not asked; a wait in a \
+        Every path in `func` from the call at `call` to its return releases \
+        the monitor that call took: a receive's `{:DOWN, ...}` clause that \
+        takes any monitor's, or the one whose ref the call returned (the \
+        clause, not the receive: another clause, or a timed receive's \
+        `after`, leaves with the monitor live); a `Process.demonitor/1,2` \
+        of that ref, with `[:flush]` or without (without it a `:DOWN` \
+        already sent stays queued, which is the mailbox's to take, not a \
+        monitor left live); or a call to a function of the module that \
+        takes one on every path to its return (a receive loop's end, a \
+        path that never enters its receive, taken on trust). A monitor the \
+        callee left live is the caller's to collect: OTP's old supervisor \
+        shutdown monitors each child, looks once (`after 0`) for an exit \
+        already queued, and returns, and its caller then waits for every \
+        child's :DOWN. A path that raises is not asked; a wait in a \
         closure or another module is not seen.
+        """
+      },
+      %{
+        name: :recv_takes_down,
+        layer: 2,
+        fields: [
+          {:id, :symbol, "the receive's loop_rec"},
+          {:func, :symbol, "the function"}
+        ],
+        doc: """
+        A receive with a clause whose head fixes the message's tag to \
+        `:DOWN`, whatever it asks of the ref, the object or the reason: the \
+        function waits for a monitor's end within its own call \
+        (`Argus.Extractors.Monitor`). A clause that fixes no tag (a \
+        catch-all) is not one.
         """
       }
     ])

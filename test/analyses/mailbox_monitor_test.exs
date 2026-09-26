@@ -1,4 +1,11 @@
 defmodule Argus.Analyses.MailboxMonitorTest do
+  @moduledoc """
+  `monitor_leak`: a monitor that code which runs again takes again before
+  the one before it is released (docs/design/monitor-leaks.md). Each
+  describe block is one part of the model: the run repeats, the process
+  is one it can meet again, the run does not release it, and one of the
+  three witnesses shows the monitor before is still live.
+  """
   use ExUnit.Case, async: true
 
   alias Argus.Souffle
@@ -47,193 +54,230 @@ defmodule Argus.Analyses.MailboxMonitorTest do
     M.MonitorsHandedWorker
   ]
 
-  # Every test reads the same solve of @all: solved once, read-only.
+  # Every test reads one of two solves: solved once each, read-only.
   setup_all do
-    %{solved: Memo.analyze(@all, :mailbox)}
+    %{all: Memo.analyze(@all, :mailbox), servers: Memo.analyze(@servers, :mailbox)}
   end
 
   defp skip_without_souffle do
     unless Souffle.available?(), do: flunk("souffle not installed")
   end
 
-  defp funcs(%{solved: solved}) do
+  # The monitoring functions reported with `how`, sorted.
+  defp funcs(solved, how) do
     assert {:ok, r} = solved
 
     r
-    |> Rows.where(:mailbox, "unconsumed_monitor", kind: "timed_wait")
+    |> Rows.where(:mailbox, "monitor_leak", how: how)
     |> Enum.map(&Enum.at(&1, 1))
     |> Enum.sort()
   end
 
+  defp reported(solved) do
+    Enum.flat_map(~w(wait ended dropped), &funcs(solved, &1))
+  end
+
   defp named?(list, f), do: Enum.any?(list, &String.contains?(&1, f))
 
-  test "a monitor before a timed wait is reported", ctx do
-    skip_without_souffle()
-    assert named?(funcs(ctx), "MonitorLeak.Leaks")
+  describe "wait: the run waits on the process, and a way out keeps the monitor" do
+    test "a timed wait with no demonitor, in a function callers call again", ctx do
+      skip_without_souffle()
+      assert named?(funcs(ctx.all, "wait"), "MonitorLeak.Leaks:wait/1")
+    end
+
+    test "the answer path of a wait with no `after` keeps it too", ctx do
+      skip_without_souffle()
+
+      # Blocks takes the :DOWN or the reply; on the reply the monitor stays
+      # live, and the next call monitors the same process again.
+      assert named?(funcs(ctx.all, "wait"), "MonitorLeak.Blocks:wait/1")
+    end
+
+    test "a demonitor with :flush on every way out releases it", ctx do
+      skip_without_souffle()
+      refute named?(reported(ctx.all), "MonitorLeak.Flushes")
+    end
+
+    test "a timed wait with no monitor has nothing to leak", ctx do
+      skip_without_souffle()
+      refute named?(reported(ctx.all), "MonitorLeak.NoMonitor")
+    end
+
+    test "a wait one call below the monitor", ctx do
+      skip_without_souffle()
+
+      # Finch's HTTP/2 pool shape: monitor in request/1, the `after` in a
+      # private loop. The function reported is the one that monitors.
+      assert named?(funcs(ctx.all, "wait"), "MonitorLeak.LeaksThroughHelper:request/1")
+    end
+
+    test "a helper handed the ref that releases it on every way out releases it", ctx do
+      skip_without_souffle()
+      refute named?(reported(ctx.all), "MonitorLeak.FlushesInHelper")
+    end
+
+    test "a wait in a closure the caller runs", ctx do
+      skip_without_souffle()
+      assert named?(funcs(ctx.all, "wait"), "MonitorLeak.InEach:-wait_all/1-fun-0-")
+    end
+
+    test "a kill after the grace period, then a wait for the :DOWN, releases it", ctx do
+      skip_without_souffle()
+      refute named?(reported(ctx.all), "MonitorLeak.GraceThenKill")
+    end
+
+    test "a look with after 0, then a wait for the :DOWN on every path, releases it", ctx do
+      skip_without_souffle()
+      refute named?(reported(ctx.all), "MonitorLeak.StopsCursor")
+    end
+
+    test "a wait in the logger's machinery is not the monitoring function's" do
+      skip_without_souffle()
+
+      # With OTP's logger and gen in the program, :logger.error/1 reaches
+      # gen's receive through a handler's removal: a side path
+      # (side_call), whose waits are on the logger's own monitors.
+      assert {:ok, r} =
+               Memo.analyze(
+                 [
+                   M.LogsAfterMonitor,
+                   M.LogsAndLeaks,
+                   :logger,
+                   :logger_backend,
+                   :logger_server,
+                   :gen_server,
+                   :gen
+                 ],
+                 :mailbox
+               )
+
+      leaks = r |> Rows.where(:mailbox, "monitor_leak", []) |> Enum.map(&Enum.at(&1, 1))
+
+      assert "Argus.Test.Fixtures.MonitorLeak.LogsAndLeaks:watch/1" in leaks
+      refute "Argus.Test.Fixtures.MonitorLeak.LogsAfterMonitor:watch/1" in leaks
+    end
+
+    test "a monitor the caller of a client API takes on the server", ctx do
+      skip_without_souffle()
+
+      # ClientSideMonitor.request/2 runs in its caller: the reply path
+      # leaves the caller holding one more monitor on the server per call.
+      assert named?(funcs(ctx.servers, "wait"), "ClientSideMonitor:request/2")
+    end
   end
 
-  test "demonitor with :flush discharges it", ctx do
-    skip_without_souffle()
+  describe "the run repeats" do
+    test "a monitor a task takes on its way out ends with the task", ctx do
+      skip_without_souffle()
+      refute named?(reported(ctx.all), "MonitorLeak.TaskGivesUp")
 
-    # Plain demonitor/1 would not: a {:DOWN, ...} already sent stays in the
-    # mailbox, and only [:flush] removes it.
-    refute named?(funcs(ctx), "MonitorLeak.Flushes")
+      # The spawned closure is the watcher's only run: its builder hands it
+      # off. InEach's closure, run in the caller, still leaks.
+      refute named?(reported(ctx.all), "MonitorLeak.SpawnsWatcher")
+    end
+
+    test "a task that monitors in its receive loop takes it again each round", ctx do
+      skip_without_souffle()
+      assert named?(funcs(ctx.all, "dropped"), "MonitorLeak.TaskPolls:poll/1")
+    end
+
+    test "what only terminate runs ends with the process", ctx do
+      skip_without_souffle()
+
+      # Positive: the same drain, reached from handle_call/3 as well.
+      assert named?(reported(ctx.servers), "DrainsOnCall")
+      refute named?(reported(ctx.servers), "DrainsOnTerminate")
+    end
   end
 
-  test "a receive with no after clause cannot leak", ctx do
-    skip_without_souffle()
+  describe "the process is one the run can meet again" do
+    test "a worker the run itself started is new each time", ctx do
+      skip_without_souffle()
 
-    # It consumes either the reply or the {:DOWN, ...}. This is the whole
-    # discriminator — every monitor-plus-receive in Livebook is this shape,
-    # and dropping them is what makes the one real finding worth reading.
-    refute named?(funcs(ctx), "MonitorLeak.Blocks")
+      # Whoever else the pid is handed to, this monitor is the only one
+      # this server holds on that worker, and its :DOWN ends both.
+      refute named?(reported(ctx.servers), "MonitorsOwnWorker")
+      refute named?(reported(ctx.servers), "MonitorsHandedWorker")
+    end
   end
 
-  test "a timed wait with no monitor has nothing to leak", ctx do
-    skip_without_souffle()
-    refute named?(funcs(ctx), "MonitorLeak.NoMonitor")
-  end
-
-  test "a timed wait one call below the monitor leaks the same way", ctx do
-    skip_without_souffle()
-
-    # Finch's HTTP/2 pool: monitor in request/…, the `after` in a private
-    # loop. The function reported is the one that established the monitor.
-    assert named?(funcs(ctx), "MonitorLeak.LeaksThroughHelper:request/1")
-  end
-
-  test "a wait in a closure the caller runs leaks in the caller", ctx do
-    skip_without_souffle()
-    assert named?(funcs(ctx), "MonitorLeak.InEach:-wait_all/1-fun-0-")
-  end
-
-  test "a monitor a task leaves on its way out ends with the task", ctx do
-    skip_without_souffle()
-    refute named?(funcs(ctx), "MonitorLeak.TaskGivesUp")
-    # The spawned closure itself is the watcher's last act (its builder
-    # only hands it off); InEach's closure, run in the caller, still leaks.
-    refute named?(funcs(ctx), "MonitorLeak.SpawnsWatcher")
-    assert named?(funcs(ctx), "MonitorLeak.InEach:-wait_all/1-fun-0-")
-    # One that waits again carries the stale :DOWN into its next wait.
-    assert named?(funcs(ctx), "MonitorLeak.TaskPolls:poll/1")
-  end
-
-  test "a kill after the grace period, then a wait for the :DOWN, waits it out", ctx do
-    skip_without_souffle()
-    refute named?(funcs(ctx), "MonitorLeak.GraceThenKill")
-  end
-
-  test "a look with after 0, then a wait for the :DOWN on every path, waits it out", ctx do
-    skip_without_souffle()
-    refute named?(funcs(ctx), "MonitorLeak.StopsCursor")
-  end
-
-  test "a flush in the helper discharges it", ctx do
-    skip_without_souffle()
-    refute named?(funcs(ctx), "MonitorLeak.FlushesInHelper")
-  end
-
-  test "a timed wait in the logger's machinery is not the monitoring function's" do
-    skip_without_souffle()
-
-    # With OTP's logger and gen in the program, :logger.error/1 reaches
-    # gen's timed receive through a handler's removal: a side path
-    # (side_call), whose waits are on the logger's own monitors.
-    assert {:ok, r} =
-             Memo.analyze(
-               [
-                 M.LogsAfterMonitor,
-                 M.LogsAndLeaks,
-                 :logger,
-                 :logger_backend,
-                 :logger_server,
-                 :gen_server,
-                 :gen
-               ],
-               :mailbox
-             )
-
-    leaks =
-      r
-      |> Rows.where(:mailbox, "unconsumed_monitor", kind: "timed_wait")
-      |> Enum.map(&Enum.at(&1, 1))
-
-    assert "Argus.Test.Fixtures.MonitorLeak.LogsAndLeaks:watch/1" in leaks
-    refute "Argus.Test.Fixtures.MonitorLeak.LogsAfterMonitor:watch/1" in leaks
-  end
-
-  describe "a monitor the caller goes on to collect" do
+  describe "released by the caller" do
     test "the supervisor shutdown shape is not reported", ctx do
       skip_without_souffle()
 
       # GenStage's ConsumerSupervisor and Horde's ProcessesSupervisor:
       # monitor_child/1 looks once with `after 0` and returns with the
       # monitor live, and terminate_children then waits for every :DOWN.
-      refute named?(funcs(ctx), "MonitorLeak.CollectedByCaller")
+      refute named?(reported(ctx.all), "MonitorLeak.CollectedByCaller")
     end
 
     test "the same monitor_child/1 is reported when its caller never waits", ctx do
       skip_without_souffle()
-      assert named?(funcs(ctx), "MonitorLeak.ReturnsLive:monitor_child/1")
+      assert named?(funcs(ctx.all, "wait"), "MonitorLeak.ReturnsLive:monitor_child/1")
     end
 
-    test "a wait on only some paths after the call does not collect it", ctx do
+    test "a wait on only some paths after the call does not release it", ctx do
       skip_without_souffle()
-      assert named?(funcs(ctx), "MonitorLeak.WaitsOnOnePath:monitor_child/1")
+      assert named?(reported(ctx.all), "MonitorLeak.WaitsOnOnePath:monitor_child/1")
     end
 
     test "one caller that waits does not cover another that does not", ctx do
       skip_without_souffle()
-      assert named?(funcs(ctx), "MonitorLeak.CollectedOnOneCaller:monitor_child/1")
+      assert named?(reported(ctx.all), "MonitorLeak.CollectedOnOneCaller:monitor_child/1")
     end
 
-    test "a caller waiting on the ref it was handed collects it", ctx do
+    test "a caller waiting on the ref it was handed releases it", ctx do
       skip_without_souffle()
-      refute named?(funcs(ctx), "MonitorLeak.CollectedByRef")
+      refute named?(reported(ctx.all), "MonitorLeak.CollectedByRef")
     end
 
-    test "a caller demonitoring the ref it was handed with :flush collects it", ctx do
+    test "a caller demonitoring the ref it was handed releases it", ctx do
       skip_without_souffle()
-      refute named?(funcs(ctx), "MonitorLeak.FlushedByCaller")
+      refute named?(reported(ctx.all), "MonitorLeak.FlushedByCaller")
     end
 
-    test "a caller waiting on another monitor's :DOWN does not", ctx do
+    test "a caller that drops the ref it was handed loses it", ctx do
       skip_without_souffle()
-      assert named?(funcs(ctx), "MonitorLeak.WaitsForAnotherRef:monitor_and_signal/1")
+
+      # monitor_and_signal/1 answers its ref; stop/2 throws it away and
+      # waits for another monitor's :DOWN.
+      assert named?(
+               funcs(ctx.all, "dropped"),
+               "MonitorLeak.WaitsForAnotherRef:monitor_and_signal/1"
+             )
+    end
+
+    test "a supervisor fork's monitor_child is released where its caller waits", ctx do
+      skip_without_souffle()
+
+      assert named?(reported(ctx.servers), "ForkShutdownForgets")
+      refute Enum.any?(reported(ctx.servers), &String.contains?(&1, "MonitorLeak.ForkShutdown:"))
     end
   end
 
-  describe "over a server's lifetime" do
-    defp servers do
-      assert {:ok, r} = Memo.analyze(@servers, :mailbox)
-      r
-    end
-
-    defp mods(r, kind),
-      do:
-        r
-        |> Rows.where(:mailbox, "unconsumed_monitor", kind: kind)
-        |> Enum.map(&hd/1)
-        |> Enum.uniq()
-
-    test "monitoring on insert and deleting without demonitor is reported" do
+  describe "ended: the server drops its record and keeps the monitor" do
+    test "monitoring on insert and deleting without demonitor is reported", ctx do
       skip_without_souffle()
 
-      # DrainsOnCall is this rule's too (its drain also runs from a call).
-      assert mods(servers(), "never_released") -- ["Argus.Test.Fixtures.MonitorLeak.DrainsOnCall"] ==
-               ["Argus.Test.Fixtures.MonitorLeak.NeverReleases"]
+      assert funcs(ctx.servers, "ended") == [
+               "Argus.Test.Fixtures.MonitorLeak.NeverReleases:handle_call/3"
+             ]
     end
 
-    test "a monitor whose ref is thrown away is reported on its own" do
+    test "a delete that demonitors, and a pop no removal names, are not", ctx do
+      skip_without_souffle()
+      refute named?(reported(ctx.servers), "ReleasesOnDelete")
+      refute named?(reported(ctx.servers), "KillsMonitored")
+    end
+  end
+
+  describe "dropped: nothing can release it, and nothing asks first" do
+    test "a monitor whose ref is thrown away is reported at its site", ctx do
       skip_without_souffle()
 
-      r = servers()
+      assert {:ok, r} = ctx.servers
 
-      rows =
-        Rows.where(r, :mailbox, "unconsumed_monitor",
-          kind: "ref_discarded",
-          drop: [:func, :kind]
-        )
+      rows = Rows.where(r, :mailbox, "monitor_leak", how: "dropped", drop: [:func, :how])
 
       assert [site] =
                for(
@@ -243,66 +287,22 @@ defmodule Argus.Analyses.MailboxMonitorTest do
                )
 
       assert site =~ "DropsRef:handle_call/3#"
-
-      # The servers that keep their refs are not reported here, whatever
-      # else they do with them.
-      refute named?(mods(r, "ref_discarded"), "NeverReleases")
     end
 
-    test "a ref a tail call returns is judged by what the caller does with it" do
+    test "a ref a tail call returns is judged by what the caller does with it", ctx do
       skip_without_souffle()
 
-      discarded = mods(servers(), "ref_discarded")
+      dropped = funcs(ctx.servers, "dropped")
 
       # Positive: a closure handed to Enum.each, and a helper whose caller
       # throws the ref away, lose it as surely as a bare monitor does.
-      assert named?(discarded, "EachDropsRefs")
-      assert named?(discarded, "ForeachDropsRefs")
-      assert named?(discarded, "HelperDropsRef")
+      assert named?(dropped, "EachDropsRefs")
+      assert named?(dropped, "ForeachDropsRefs")
+      assert named?(dropped, "HelperDropsRef")
 
       # Quiet: the refs are mapped into a set, or kept in the state.
-      refute named?(discarded, "MapsRefs")
-      refute named?(discarded, "HelperKeepsRef")
-    end
-
-    test "what only terminate runs ends with the process" do
-      skip_without_souffle()
-
-      r = servers()
-      reported = Enum.flat_map(~w(never_released ref_discarded timed_wait), &mods(r, &1))
-
-      # Positive: the same drain, reached from handle_call/3 as well.
-      assert named?(reported, "DrainsOnCall")
-      refute named?(reported, "DrainsOnTerminate")
-    end
-
-    test "a supervisor fork's monitor_child is collected where its caller waits" do
-      skip_without_souffle()
-
-      r = servers()
-
-      # Positive: the caller's :ok side forgets the :DOWN.
-      assert named?(mods(r, "ref_discarded"), "ForkShutdownForgets")
-      assert named?(mods(r, "timed_wait"), "ForkShutdownForgets")
-
-      refute Enum.any?(mods(r, "ref_discarded"), &(&1 == inspect(M.ForkShutdown)))
-      refute Enum.any?(mods(r, "timed_wait"), &(&1 == inspect(M.ForkShutdown)))
-    end
-
-    test "a monitor on a worker the server started and keeps needs no ref" do
-      skip_without_souffle()
-
-      discarded = mods(servers(), "ref_discarded")
-
-      # Positive: the pid is cast to another server as data.
-      assert named?(discarded, "MonitorsHandedWorker")
-      refute named?(discarded, "MonitorsOwnWorker")
-    end
-
-    test "a monitor in a client API function is the caller's, not the server's" do
-      skip_without_souffle()
-
-      refute named?(mods(servers(), "never_released"), "ClientSideMonitor")
+      refute named?(reported(ctx.servers), "MapsRefs")
+      refute named?(reported(ctx.servers), "HelperKeepsRef")
     end
   end
 end

@@ -135,7 +135,7 @@ defmodule Argus.Schema.Callbacks do
           {:pos, :number, "0-based position of the parameter the deciding test reads"}
         ],
         doc: """
-        The call at `id` — into the program, or a subscription — runs only \
+        The call at `id` — into the program, a subscription or a monitor — runs only \
         on some arms of a test of what `func`'s parameter `pos` holds: the \
         parameter, a field of it, or a call's answer on it \
         (`MapSet.member?(state.subscribed, id)`, a stored pid compared with \

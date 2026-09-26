@@ -33,11 +33,15 @@ defmodule Argus.Extractors.MonitorTest do
       end
     end
 
-    test "a monitor on a pid the function started and hands to no one is owned" do
-      assert [[_, func]] = extract(M.MonitorsOwnWorker)[:monitor_owns]
-      assert func =~ "handle_cast/2"
-      refute Map.has_key?(extract(M.MonitorsHandedWorker), :monitor_owns)
-      refute Map.has_key?(extract(M.DropsRef), :monitor_owns)
+    test "a ref every return of the function answers is lost where a caller loses it" do
+      # monitor_and_signal/1 returns its ref; stop/2 throws it away.
+      assert [[_, func]] = extract(M.WaitsForAnotherRef)[:monitor_ref_dropped]
+      assert func =~ "monitor_and_signal/1"
+
+      # The same helper whose caller waits on the ref, or demonitors it.
+      for mod <- [M.CollectedByRef, M.FlushedByCaller] do
+        refute Map.has_key?(extract(mod), :monitor_ref_dropped), "#{inspect(mod)} keeps its ref"
+      end
     end
 
     test "a ref that is stored, returned or waited on is not" do
@@ -48,7 +52,7 @@ defmodule Argus.Extractors.MonitorTest do
     end
   end
 
-  describe "awaits_down_after" do
+  describe "monitor_released_after" do
     # The functions each row's call calls, by name, for the rows in `func`.
     defp awaited_calls(mod, func) do
       {:ok, data} = BeamSpy.BeamFile.disassemble(to_string(:code.which(mod)))
@@ -59,7 +63,7 @@ defmodule Argus.Extractors.MonitorTest do
           _ -> nil
         end)
 
-      for [_func, id] <- Map.get(Monitor.extract(data), :awaits_down_after, []),
+      for [_func, id] <- Map.get(Monitor.extract(data), :monitor_released_after, []),
           {:ok, %Argus.InstrId{func: name, idx: idx}} = Argus.InstrId.parse(id),
           name == Atom.to_string(func) do
         case Enum.at(instrs, idx) do
@@ -89,6 +93,58 @@ defmodule Argus.Extractors.MonitorTest do
 
     test "a wait pinned to another ref does not" do
       refute :monitor_and_signal in awaited_calls(M.WaitsForAnotherRef, :stop)
+    end
+
+    test "a monitor its own function releases on every way out follows itself" do
+      # A demonitor with :flush after the wait, whatever the wait did.
+      assert awaited_calls(M.Flushes, :wait) == [:monitor]
+      # A timed wait with no demonitor leaves it live on the timeout.
+      assert awaited_calls(M.Leaks, :wait) == []
+    end
+
+    test "a demonitor without :flush releases the monitor too" do
+      assert awaited_calls(Argus.Test.Soundness.Monitors.PlainDemonitor, :ask) == [:monitor]
+    end
+
+    test "a helper handed the ref releases it when it does on every way out" do
+      # wait_loop/1 takes the ref's :DOWN, or flushes it on the timeout.
+      assert awaited_calls(M.FlushesInHelper, :request) == [:monitor]
+      # wait_loop/1 of LeaksThroughHelper returns on the timeout with it live.
+      assert awaited_calls(M.LeaksThroughHelper, :request) == []
+    end
+  end
+
+  describe "monitor_started" do
+    test "a pid a start of another module answered, in its {:ok, pid}" do
+      assert [[_, func, start]] = extract(M.MonitorsOwnWorker)[:monitor_started]
+      assert func =~ "handle_cast/2"
+      assert start =~ "MonitorsOwnWorker:handle_cast/2#"
+    end
+
+    test "the pid of an already-started answer is none" do
+      # Either branch's pid is the answer's: the {:ok, pid} one's is fresh,
+      # the {:error, {:already_started, pid}} one's is not, so the paths
+      # disagree.
+      refute Map.has_key?(extract(Argus.Test.Soundness.Monitors.StartOrFind), :monitor_started)
+      refute Map.has_key?(extract(M.DropsRef), :monitor_started)
+    end
+
+    test "a start of another module is named, and the rules decide whose it is" do
+      # Sessions.start_session/1 is the program's own: the rules do not take
+      # it as a start (it may look the session up), only the call site.
+      assert [[_, _, start]] = extract(Argus.Test.Soundness.Mailbox.Tracker)[:monitor_started]
+      assert start =~ "Tracker:handle_call/3#"
+    end
+  end
+
+  describe "recv_takes_down" do
+    test "a receive with a clause whose head fixes the tag to :DOWN" do
+      assert [[_, func]] = extract(M.Leaks)[:recv_takes_down]
+      assert func =~ "Leaks:wait/1"
+
+      # A receive whose clauses take other messages only is none.
+      refute Map.has_key?(extract(M.NoMonitor), :recv_takes_down)
+      refute Map.has_key?(extract(M.TaskPolls), :recv_takes_down)
     end
   end
 

@@ -178,6 +178,20 @@ fixtures named break it one way each and must stay reported
   (test/soundness/supervision_test.exs).
   Known limit: where the in-order reader cannot follow an element, the
   flat scans stand in and may name a child that is not one.
+- Monitor leaks (mailbox's `monitor_leak`, the monitor-leak round, which
+  replaced review 2's monitor suppressions by a model): a monitor is
+  quiet when it is taken in code that runs once, on a process its run
+  started, released on every way out, or with a witness missing. Each
+  narrowing assumes what docs/design/monitor-leaks.md states. Broken by
+  (test/soundness/monitors_test.exs): a helper init/1 and a handler
+  share, a gen_statem's event handler, a spawned loop; a start beside a
+  monitor of the caller, a named start that answers the running
+  process, a worker another callback started; a demonitor on one path,
+  of the other monitor, a helper that releases on one way out; a test of
+  the request, an unasking clause beside an asking one, a test after the
+  monitor; a drop in a helper, a reset in another monitor's `:DOWN`
+  clause, a row a cast deletes. Review 2's shapes still fire
+  (test/soundness/mailbox_test.exs).
 
 ## Vocabulary
 
@@ -308,9 +322,16 @@ than more; it errs loud when the same uncertainty can add a finding.
 - **Direction.** Supervision is module-level: two instances of one child module are one module here, and the lists of every clause of one init/1 are one tree, in the order the bytecode lists them (kernel's `kernel_sup` and `kernel_safe_sup` are one `:kernel`). A child is read only from a spec the extractor reads; a module or a restart it cannot tell names no child (quiet for what a child excuses, loud for what it would excuse), but where it stands in, a flat scan can name a child that is not one (a keyword pair naming a loaded Erlang module).
 - **Used by.** coupling, ets (`ends_with`: a reader that outlives a table's owner), shutdown and startup; calls.dl limits module-level reach to supervised modules through it.
 
+### Code that runs once, and code that runs again
+
+- **Names.** `once_code`, `again_code`, `again_root`, `child_start` (runs.dl).
+- **Meaning.** A process runs some of its code once per incarnation and some again and again. `once_code(mod, f)`: f runs in mod's process from a start callback (`start_callback`: init/1, handle_continue/2, a Channel's join/3, a LiveView's mount/3) on its own stack, seeded at the modules a supervisor starts. `again_code(f)`: f is reached on the process's own stack (no side path) from a root that runs again (`again_root`): a callback that runs whenever its message or request comes (`runs_again_callback`, a GenEvent handler's handle_event/2 and handle_call/2), a gen_statem's state function or handle_event/4, a receive loop (a function that receives and reaches itself again), or an export only callers outside the program call: no function of the program calls it, it is no process's callback, no start of the program runs it (`process_start`), no supervisor starts it (`child_start`: the start_link of a module a child spec names), and no library's macro wrote it (`library_written`). A helper init/1 and a handler share is both.
+- **Direction.** Loud where the caller is not in view: an export nothing in the program calls is taken as called again, and a handler clause for a message that comes once runs again as far as the code shows. Quiet on a start callback a handler asks for again (a `{:continue, x}` return runs handle_continue/2 again: taken as once).
+- **Used by.** coupling (`once_code`, through restart_state.dl), mailbox (`again_code`: monitors taken again, docs/design/monitor-leaks.md).
+
 ### What a restart loses
 
-- **Names.** `holds_in`, `once_code`, `once_request`, `kept`, `initial_field` (restart_state.dl), over `returned_update`, `clause_call`, `ets_op`, `pid_signal`, `monitor_call`, `impure_call` and `unknown_call`.
+- **Names.** `holds_in`, `once_request`, `kept`, `initial_field` (restart_state.dl, over runs.dl's `once_code`), over `returned_update`, `clause_call`, `ets_op`, `pid_signal`, `monitor_call`, `impure_call` and `unknown_call`.
 - **Meaning.** A restarted process starts from what its init/1 makes, so what another process put into it is gone and comes back only if that process puts it there again. `once_code(mod, f)`: f runs once per incarnation of mod's process, from a start callback (`start_callback`) on its own stack, a peer's client API included. `once_request(a, b, kind, tag, f)`: a's once code, in f, calls or casts to b's process with a request tagged `tag`. `kept(b, h, tag, how, store)`: the clause of b's handler h for `tag` keeps something of it in b's process. `how` is one of:
   - `table`: an ETS write.
   - `monitor`: a monitor or link.
@@ -380,8 +401,8 @@ than more; it errs loud when the same uncertainty can add a finding.
 
 ### Receives and mailbox handlers
 
-- **Names.** `receives`, `timed_receive`, `blocking_receive`, `receives_message`, `down_bounded`, `exit_pinned`, `links_in`, `mailbox_handler`, `partial_handle_info`, `trap_exit_without_exit_clause`, `module_demonitors` (receive.dl, process_kind.dl).
-- **Meaning.** receive.dl names the receive questions so the encoding of `recv_start` stays in one place: any receive in a function, one with an `after`, one without. A wait its peer ends is one word: `down_bounded(recv)` is a receive with no `after` that pins a monitor's `:DOWN` (of a monitor its own function took, or of a ref from anywhere, unless some path from the function's entry reaches it past a demonitor), and `exit_pinned(recv, f)` one that pins an `:EXIT`, bounded when f's process traps exits and f links to the process (`links_in`): the wait cannot outlast the process it waits on. `mailbox_handler(mod)` takes arbitrary messages (a handle_info/2, or a gen_statem's handle_event/4); `partial_handle_info(mod, h)` is a handle_info/2 with no catch-all, where a message no clause matches is a FunctionClauseError; `trap_exit_without_exit_clause` traps exits and has a partial handle_info/2 with no `{:EXIT, …}` clause.
+- **Names.** `receives`, `timed_receive`, `blocking_receive`, `receives_message`, `down_bounded`, `exit_pinned`, `links_in`, `monitor_released`, `mailbox_handler`, `partial_handle_info`, `trap_exit_without_exit_clause`, `module_demonitors` (receive.dl, process_kind.dl).
+- **Meaning.** receive.dl names the receive questions so the encoding of `recv_start` stays in one place: any receive in a function, one with an `after`, one without. A wait its peer ends is one word: `down_bounded(recv)` is a receive with no `after` that pins a monitor's `:DOWN` (of a monitor its own function took, or of a ref from anywhere, unless some path from the function's entry reaches it past a demonitor), and `exit_pinned(recv, f)` one that pins an `:EXIT`, bounded when f's process traps exits and f links to the process (`links_in`): the wait cannot outlast the process it waits on. `monitor_released(monitor)` asks another question of a monitor: whether every path from it to its function's return releases it (`monitor_released_after`: a `:DOWN` clause that takes it, a demonitor of its ref with or without `:flush`, a helper handed the ref that releases it on every way out, a collector of the module). `mailbox_handler(mod)` takes arbitrary messages (a handle_info/2, or a gen_statem's handle_event/4); `partial_handle_info(mod, h)` is a handle_info/2 with no catch-all, where a message no clause matches is a FunctionClauseError; `trap_exit_without_exit_clause` traps exits and has a partial handle_info/2 with no `{:EXIT, …}` clause.
 - **Direction.** Receive shapes are per function, not per receive; rules that anchor at one receive read `recv_start` directly.
 - **Used by.** effects and mailbox (receive.dl), blocking and startup (`down_bounded`, `exit_pinned`), mailbox and shutdown (process_kind.dl).
 
@@ -486,7 +507,7 @@ than more; it errs loud when the same uncertainty can add a finding.
 ### A LiveView's lifecycle and a process's subscriptions
 
 - **Names.** `static_render_callback`, `endpoint_module`, `in_endpoint`, `subscription_call` (live_view.dl), over the `connected_guarded`, `pubsub_call` and `param_decided` facts (`Argus.Extractors.LiveView`).
-- **Meaning.** `static_render_callback(mod, f)` is a callback that runs twice, once for the static render in the HTTP connection's process and again connected: a LiveView's mount/3 and handle_params/3, a LiveComponent's mount/1 and update/2, an `on_mount/4` hook. `connected_guarded(site, f)` is a call on the arm where `connected?/1` answered true (`get_connect_params/1`, not nil). `subscription_call(site, f, op)` subscribes the process or undoes it: Phoenix.PubSub and `:pg`, an endpoint's own subscribe/1,2 and unsubscribe/1 (`endpoint_module`: the module `use Phoenix.Endpoint` compiles `__sockets__/0` into), and `socket.endpoint.subscribe/1`, an apply. `param_decided(site, f, pos)` is a call into the program, or a subscription, that runs only on some arms of a test of what f's parameter pos holds, a test whose other arms only raise deciding nothing.
+- **Meaning.** `static_render_callback(mod, f)` is a callback that runs twice, once for the static render in the HTTP connection's process and again connected: a LiveView's mount/3 and handle_params/3, a LiveComponent's mount/1 and update/2, an `on_mount/4` hook. `connected_guarded(site, f)` is a call on the arm where `connected?/1` answered true (`get_connect_params/1`, not nil). `subscription_call(site, f, op)` subscribes the process or undoes it: Phoenix.PubSub and `:pg`, an endpoint's own subscribe/1,2 and unsubscribe/1 (`endpoint_module`: the module `use Phoenix.Endpoint` compiles `__sockets__/0` into), and `socket.endpoint.subscribe/1`, an apply. `param_decided(site, f, pos)` is a call into the program, a subscription or a monitor that runs only on some arms of a test of what f's parameter pos holds, a test whose other arms only raise deciding nothing.
 - **Direction.** Errs quiet on a subscription through a module held in a value the apply cannot name, and loud on a static render a hook the program registers another way (`attach_hook`).
 - **Used by.** mailbox.
 
@@ -1788,75 +1809,36 @@ At run time every run of that callback adds one more loop beside the ones alread
 
 **Precision.** Round 3 of the mining (2026-09-25), over the nineteen live projects: 3 rows, 2 real (vernemq's `vmq_acl_reloader` and `vmq_passwd_reloader`, the motivating bug) and rabbit's `mirrored_supervisor` start handshake (above). The first draft reported 60 over seven projects; every row but vernemq's two was one of the shapes the limits above now leave out: retry loops (ejabberd_redis 3, MongooseIM's LDAP worker, grpc 11, nerves_hub_link's downloader 3, pinchflat's file follower, firezone's registration and presence retries), clauses a join's `:after_join` runs once (firezone 5), recursive dispatch into handle_info/2 (vernemq's vmq_swc_store, firezone's `handle_info(:disconnect, socket)` calls) an Erlang `!` re-sending the tick from the loop's own clause (MongooseIM's system metrics), and MongooseIM's `service_domain_db`, whose loop cancels through a helper and whose second arm is a cast from init/1.
 
-### A monitor left live past a timed wait
+### A monitor taken again before the last one is released
 
-`unconsumed_monitor` · kind=`timed_wait`
-· titles: "Monitor left live after a wait times out" (`:error`)
+`monitor_leak` · how=`wait` | `ended` | `dropped`
+· titles: "Monitor left live each time a wait returns" (`:warning`, `wait`); "Entry dropped while its process stays monitored" (`:warning`, `ended`); "Monitor taken again with its ref thrown away" (`:info`, `dropped`)
 
-**Property.** A function takes a monitor and waits, in its own process, in a receive with an `after` clause. The wait may be in the function itself, in what it calls, or in a closure it runs. All of the following also hold:
-- No path of the function demonitors with `[:flush]`.
-- None of its blocking receives pins that monitor's `:DOWN`.
-- Its return does not end its process. A function whose return does is a spawned function's last act, called from nowhere else and not recursing (the edge by which its builder hands a spawned closure off is no call: ra's terminate/3 watcher and ejabberd's hook-trace timer, `SpawnsWatcher`), or one only `terminate/2,3` reaches (`on_the_way_out`: no other callback or state function does), after which the process exits.
-- The monitor is not collected by the function's callers. It is collected when every way the program has into the function passes a call after which the caller waits for a `:DOWN` (or flushes it) on every path, and none of those ways comes from an exported function, an uncalled one or what a spawn runs.
+**Property.** A monitor site s, in function f, can leave its holder P with two live monitors on one process T (docs/design/monitor-leaks.md). All of the following hold:
+- f runs again (`again_code`, clientlib/runs.dl): it is reached on P's own stack from a callback that runs whenever its message or request comes, a gen_statem's state function, a receive loop, or an export only callers outside the program call.
+- T is not a process f itself started (`monitor_started`: on every path the pid a start of the process facts, or of a library, answered in its `{:ok, pid}`; never an `{:error, {:already_started, pid}}`, never a start through a function of the program).
+- Some way out of f keeps the monitor live: no path-complete release by a `:DOWN` clause, a demonitor of the ref (with or without `:flush`), a helper handed the ref that releases it on every way out, or callers that all release it after the call (`monitor_released`, `collected_by_callers`).
 
-On the timeout branch the monitor is still live. The `{:DOWN, ...}` arrives after the function has returned, into whatever runs then. If no clause matches, it is a FunctionClauseError; otherwise a clause runs with a reason the code stopped caring about.
+And one witness shows the monitor before is still live when the site runs again:
+- `wait`: f, or a caller its ref goes back to, waits in a receive with a `:DOWN` clause (`recv_takes_down`), and a way out (the `after`, the answer's clause, a path around the receive) keeps the monitor. The next run asks the same process again.
+- `ended`: the clause the monitor is taken in records T in P, in a field of the state it returns or a row of a table it writes. A clause of a callback that runs again drops that record without releasing the monitor or stopping a process: a clause other than a `:DOWN` one removes an entry and returns the field (or deletes rows of the table), or any clause empties the field. T's next registration monitors it again. The drop is a related frame.
+- `dropped`: the ref is thrown away (`monitor_ref_dropped`, through callers when every return answers it), so only T's death releases the monitor, and some way from a root that runs again reaches s with no call the state decides (`state_decided`). Each time T is named again, one more.
 
-**Assumptions and limits.**
-- The timed receive is any receive in the function's same-process reach, before or after the monitor. It need not be one that waits on that monitor. Likewise, a demonitor with `:flush` of any ref discharges the monitor. A server callback that monitors, keeps the ref and calls a helper with an unrelated `receive ... after` is therefore reported, at error severity.
-- A plain `Process.demonitor(ref)` does not discharge the monitor, because a `:DOWN` that is already delivered stays in the mailbox (`MonitorLeak.Flushes` shows the `:flush` form).
-- The monitor is waited out (`waited_out`, clientlib/receive.dl) when every path from its call to the function's return takes a `:DOWN`: a receive's `:DOWN` clause (any monitor's, or this one's by ref), a demonitor with `:flush` of the ref, or a call to a collector (below). The wait is the clause, never the receive (`awaits_down_after` prunes a path at the `:DOWN` clause's `remove_message`, in a blocking receive and a timed one alike): Phoenix's Channel.Server.close/2 and `GraceThenKill` wait a grace period, then kill and wait again, and rabbit's `rabbit_msg_store:stop_gc/2` does the same, all quiet. Soundness assumption: a path that leaves the receive by another clause (the peer's answer), or by a timed receive's `after`, still has the monitor; and only a receive with no `after` (or a collector) starts a walk, so a timed wait whose `after` raises keeps the finding (encore's madrigal seed, `Soundness.Mailbox.RaisingAfter`). Adversarial positives in `test/soundness/mailbox_test.exs`: `Soundness.Mailbox.TimedGivesUp` (a `:DOWN` clause, then `after` returns) and `SameBody` (a clause whose body the compiler may share with the `:DOWN` clause's: a `remove_message` another clause's path reaches is no take).
-- A callee that collects on one of its returns (OTP's old supervisor's `monitor_child/1`, copied as rabbit's supervisor2 and brod's brod_supervisor3: `{error, Reason}` after waiting for the `:DOWN`, `ok` with it live) is followed through its caller's test on the result: when every return the callee makes with the monitor live is an atom, the pass edge of a tuple test on the call's result (or the fail edge of a comparison with that one atom) is collected (`ForkShutdown`, quiet; `ForkShutdownForgets`, whose caller never waits, still fires).
-- The function need not belong to a process module; library code counts. There is one finding per function.
-
-**Fixtures.** Positive: `MonitorLeak.Leaks`, `MonitorLeak.LeaksThroughHelper`, `InEach`, `TaskPolls`, `ReturnsLive`, `WaitsOnOnePath`, `CollectedOnOneCaller`, `WaitsForAnotherRef` (`test/fixtures/monitor_fixture.ex`). Quiet: `MonitorLeak.Flushes`, `Blocks`, `NoMonitor`, `FlushesInHelper`, `TaskGivesUp`, `GraceThenKill`, `CollectedByCaller`, `CollectedByRef`, `FlushedByCaller` (same file). Asserted in `test/analyses/mailbox_monitor_test.exs`.
-
-**Corpus.** Fix pairs: None. Present-only: None.
-
-**Precision.** The rule's first version (42566d6) made one finding across teslamate, livebook, oban, sequin and keila. It was `TeslaMate.Vehicles.Vehicle:handle_event/4`, a true positive read against source. livebook's seven monitor-plus-receive functions all wait without `after`, and stay quiet. Later changes:
-- 84ff4ac began following closures, kept hexpm's streaming task quiet (its wait is the task's last act), and dropped OTP's `mnesia_loader:finish_copy/6`.
-- 3c34fa3 removed GenStage's and Horde's `monitor_child/1` (gen_stage ×2, horde ×3 checkouts), the only titles that moved.
-- 1eabfbf removed Phoenix's Channel.Server.close/2.
-
-### A server that monitors and never demonitors
-
-`unconsumed_monitor` · kind=`never_released`
-· titles: "Server monitors but never demonitors" (`:info`)
-
-**Property.** A server takes monitors on its own stack (`server_side`) and keeps their refs. Some function of the module removes an entry from a map (`removal_api`), and no function of the module calls `Process.demonitor`. Suppose an entry can leave by a path other than the monitored process dying: an explicit delete, an unsubscribe, a checkin. Then its monitor stays live, one per cycle for the life of the server, and each is a future `:DOWN` for an entry that is gone.
+Each leaked monitor costs both processes until T exits, and then arrives as a `:DOWN` for a relationship that may have ended. The callback that runs the site again is a related frame.
 
 **Assumptions and limits.**
-- This is a module-wide heuristic, reported as info. Any map removal anywhere in the module counts, including the removal in the `:DOWN` handler, the one path where the monitor is already gone. e00304c kept that removal out of the evidence frames, but not out of the rule. So a server whose only removal is in its `:DOWN` clause is still reported, with no frame (FP hunt round 3: eventstore's Config.Store, syn's scopes). Excluding the `:DOWN` clause's removals was tried and withdrawn: a `:DOWN` clause of one monitor can clear the entries of others (eventstore's AdvisoryLocks drops every lock when its database connection's monitor fires, and the owners' monitors stay live), and an entry a second monitor's insert overwrites leaves the first monitor live (exq's `Worker.Metadata`, whose `:DOWN` then fails its pinned match): both true positives would go. Conversely, any demonitor anywhere in the module, of any ref, silences the rule.
-- Removal from a set, a keyword list or an ETS table is not seen, because `removal_api` lists map functions only.
-- A monitor whose ref is discarded is the next class, not this one. A monitor in a client function runs in the caller (`MonitorLeak.ClientSideMonitor`).
-- A monitor only `terminate/2,3` takes (`on_the_way_out`) ends with the process a moment later: exq's WorkerDrainer monitors every worker from terminate/2 and waits out a grace period (`MonitorLeak.DrainsOnTerminate`, quiet). The same drain also reached from a call is reported (`DrainsOnCall`). The ref-discarded class reads the same word.
-- There is one finding per module, anchored at a monitor site. Up to three removal sites are related frames (`monitored_entry_removal`).
+- A raise ends the run: the release walk does not follow a path that raises, and a timed wait whose `after` raises starts no walk (encore's madrigal seed, `Soundness.Mailbox.RaisingAfter`): a caller that catches keeps the monitor.
+- An export nothing in the program calls is taken as called again (loud): a callback of a behaviour the module does not declare (a logger handler's `terminate/3`), a module whose gen_server callbacks carry no `-behaviour` (`application_controller`).
+- A handler clause for a message that comes once (a channel's join, a gen_statem's internal event `init/1` queues) runs again as far as the code shows (loud); a `handle_continue/2` a handler triggers is once code (quiet).
+- The record is read by where it is kept, not by its key: a drop of a field entry ties to every monitor whose clause writes that field. A drop through a whole-state update (`*`) ties only within the callback's own clause.
+- `dropped` does not ask the protocol: a registration each process makes once (from its `init/1`) is reported. Its severity says so.
+- A `:DOWN` that arrives after the wait gave up, into a clause that takes it for something else or into none, is not this class's: unhandled_info and the handler's own clauses own it.
 
-**Fixtures.** Positive: `MonitorLeak.NeverReleases`, `DrainsOnCall` (`test/fixtures/monitor_fixture.ex`). Quiet: `MonitorLeak.ReleasesOnDelete`, `KillsMonitored`, `ClientSideMonitor`, `DropsRef`, `DrainsOnTerminate` (same file). Asserted in `test/analyses/mailbox_monitor_test.exs`. The frames are asserted in `test/evidence_frames_test.exs`.
+**Fixtures.** Positive: `MonitorLeak.Leaks`, `Blocks`, `LeaksThroughHelper`, `InEach`, `ReturnsLive`, `LogsAndLeaks`, `ClientSideMonitor`, `DrainsOnCall` (wait); `NeverReleases` (ended); `DropsRef`, `EachDropsRefs`, `ForeachDropsRefs`, `HelperDropsRef`, `TaskPolls`, `WaitsOnOnePath`, `CollectedOnOneCaller`, `WaitsForAnotherRef`, `ForkShutdownForgets` (dropped) (`test/fixtures/monitor_fixture.ex`). Quiet: `MonitorLeak.Flushes`, `FlushesInHelper`, `NoMonitor`, `TaskGivesUp`, `SpawnsWatcher`, `GraceThenKill`, `StopsCursor`, `CollectedByCaller`, `CollectedByRef`, `FlushedByCaller`, `LogsAfterMonitor`, `ReleasesOnDelete`, `KillsMonitored`, `MapsRefs`, `HelperKeepsRef`, `DrainsOnTerminate`, `ForkShutdown`, `MonitorsOwnWorker`, `MonitorsHandedWorker` (same file). Asserted in `test/analyses/mailbox_monitor_test.exs`, the frame in `test/evidence_frames_test.exs`, the facts in `test/extractors/monitor_test.exs`. The narrowings' adversarial neighbours are in `test/soundness/monitors_test.exs` (`Soundness.Monitors.*`), and review 2's shapes in `test/soundness/mailbox_test.exs`.
 
-**Corpus.** Fix pairs: `postgrex#781` (elixir-ecto/postgrex, 313d6c9 → 85c7cf4, Postgrex.Parameters). Present-only: None.
+**Corpus.** Fix pairs: `postgrex#781` (elixir-ecto/postgrex, 313d6c9 → 85c7cf4, `Postgrex.Parameters`, ended: the delete cast now demonitors) and `supavisor@e80c9a2` (supabase/supavisor, 0fe1410 → e80c9a2, `Supavisor.ClientHandler`, dropped: the fix keeps the ref, and its `:DOWN` clause pins it; the handler holds no other monitor, so the pre-fix clause misread nothing at run time). Present-only: None.
 
-**Precision.** FP hunt round 3 sampled 5 rows: 2 true (zotonic_notifier_worker's detach_all, eventstore's AdvisoryLocks), 3 false (a removal only in the `:DOWN` clause; removals from unrelated containers: the rule does not tie the monitor's result to the container it removes from). 326e156 introduced the rule as a heuristic at info.
-
-### A monitor whose ref is discarded
-
-`unconsumed_monitor` · kind=`ref_discarded`
-· titles: "Server drops the ref of a monitor it establishes" (`:info`)
-
-**Property.** A function on a server's own stack (`server_side`) calls `Process.monitor/1` or `:erlang.monitor/2`, and on every path next overwrites the result without reading it. Nothing can ever demonitor that monitor, so it ends only with the monitored process. If the relationship it stands for can end another way (an unsubscribe, a checkin, a disconnect), the monitor outlives it, one per cycle. A `:DOWN` then arrives for a process the server stopped caring about.
-
-**Assumptions and limits.**
-- Soundness assumptions (review 2, items 25 and 26): `monitor_owns` names a start by its function's name, so the monitoring function must also hold a start the process facts see (`process_start`): a lookup-or-start wrapper hands back a shared process (`Soundness.Mailbox.Tracker`; fc82ad59 decided by the name). A helper's returned ref is lost when any use loses it, not only when all do (`MixedCallers`; 206ec0cd asked every use), and a monitor fun handed to `Enum.map`/`:lists.map` whose list is dropped loses it (`MapDropped2`, `ListsMapDropped`). Known limit: a lookup-or-start wrapper that also starts elsewhere in the same function still reads as owned.
-- The rule reads the bytecode after the call. A read anywhere, a return, or an instruction the scan does not understand keeps the ref, in the quiet direction.
-- A dropped ref whose `:DOWN` is waited for all the same is collected, not lost: by the monitoring function itself (`waited_out`: every path from the monitor to the return takes a `:DOWN`), or by every caller (`collected_by_callers`, as for the timed-wait class): the supervisor forks' `monitor_child/1` (`ForkShutdown`, quiet; `ForkShutdownForgets`, positive). A collector a caller's call counts as a wait is a function of the module that takes a `:DOWN` on every path to its return, or a receive loop (it calls itself, and holds a receive with no `after` taking any `:DOWN`) that takes one on every path from its receive: a path that never enters the receive is the loop's end (`wait_children`'s count reaching 0), taken on trust. Soundness assumption: the receive is no wait, only its `:DOWN` clause; review 2 (item 5) found fe291340 stopping every walk at the `loop_rec`, so "monitor, ask, wait for the reply or the `:DOWN`" read as collected. Positives in `test/soundness/mailbox_test.exs`: `Soundness.Mailbox.ReplyOrDown`, `ReplyOrDownCaller` (the monitor in a helper), `HelperReplyOrDown` (the wait in a helper), `MaybeWaits` (a helper that waits on one branch and does not loop), `SameBody`, `TimedGivesUp`.
-- A monitor made as a tail call hands its ref to whoever called the function (`Enum.map(pids, &Process.monitor(&1))` compiles to a closure whose last instruction is the monitor). Its ref is lost only when every use the module shows of that function loses it: a call that drops the result (or a tail call whose own caller does, up to four hops), or a closure or local capture of it handed to a call that discards what the fun returns (`lists:foreach/2`, `maps:foreach/2`, `Enum.each/2`). An exported function, one the module never uses, and a fun kept or handed to any other call keep the ref (quiet). exq's WorkerDrainer maps the refs into a MapSet and awaits them; ra's `swap_monitor/2` returns the ref its caller stores. ejabberd's router inits monitor every route owner in a `lists:foreach` fun and still fire.
-- It does not ask whether the relationship can end another way, with one exception: a monitor on a process the function just started and keeps for itself (`monitor_owns`) stands for that process's life, which its `:DOWN` ends. The pid must come, on every path, from a call named `start*`, `spawn*` or `open` in the same function (or its `{:ok, pid}`), and no path after the start may hand it, or a term built from it, to a call or a send as data; a call's first argument and a send's destination address the process and hand nothing (exq's worker and its job's Task, grpc's gun connection, firezone's Postgrex connections, ejabberd's MQTT-over-WebSocket session, ra's worker). A handoff through the state in another callback is not seen, and the name test is the OTP convention, not a proof. ejabberd's `mod_muc` registers the room pid in its table and still reports. Otherwise a server whose subscriptions end only when the subscriber dies is reported too.
-- There is one finding per site.
-
-**Fixtures.** Positive: `MonitorLeak.DropsRef`, `MonitorsHandedWorker` (the started pid cast to a registry), `EachDropsRefs` (a closure handed to `Enum.each/2`), `ForeachDropsRefs` (to `:lists.foreach/2`, the fun built before the list is read), `HelperDropsRef` (a helper returning the ref to a caller that drops it) (`test/fixtures/monitor_fixture.ex`). Quiet: `MonitorLeak.NeverReleases`, `ReleasesOnDelete`, `KillsMonitored`, `ClientSideMonitor`, `MapsRefs` (a closure handed to `Enum.map/2`), `HelperKeepsRef`, `MonitorsOwnWorker` (same file). Asserted in `test/analyses/mailbox_monitor_test.exs` and, for the fact, `test/extractors/monitor_test.exs`.
-
-**Corpus.** Fix pairs: `supavisor@e80c9a2` (supabase/supavisor, 0fe1410 → e80c9a2, `Supavisor.ClientHandler`: the manager monitor's ref was discarded, so any `:DOWN` read as the manager going down). Present-only: None. a3ef85b draws the shape from Phoenix PubSub's Local.
-
-**Precision.** FP hunt round 2 (2026-09-25): 23 rows over 19 live projects; the tail-call shape (exq's WorkerDrainer, ra's `swap_monitor/2`), the supervisor forks' `monitor_child/1` and six monitors on a process the function started (`monitor_owns`) were false and are gone: 23 → 12. Sampled before: 0 of 5 true.
+**Precision.** The monitor-leak round (2026-09-26) read every row of the three rules this class replaced over the 39 evaluation sets: 102 rows, 7 true (7%). The class makes 97, 17 true (18%): 8 of 31 `wait`, 5 of 23 `ended`, 4 of 43 `dropped`. It keeps the 7 and adds 10, among them Livebook's `Evaluator.call/2`, elixir-ls's `Stacktrace.get/1`, emqx's durable-storage `subscribe/3` and OTP `global_group`'s sync. What is left false is one monitor per live relationship (29: the protocol), once at run time (20), a process a program function started (9), a short-lived monitoring process (7), a release the walk does not see (6), and an unseen terminate (5). docs/design/monitor-leaks.md has the rows.
 
 ### A Task.async nothing awaits
 
@@ -3301,13 +3283,13 @@ directly the bytecode shows them, each with what stands in its way:
    raise in a caller's fun leaves behind (Finch, Mint, Ranch, ejabberd,
    Bitcask, ExUnit). *Needs path-sensitive resource facts*: which
    acquisition reaches which exit path unreleased, per function; the
-   release-on-every-path walk (`awaits_down_after`'s) is the model.
+   release-on-every-path walk (`monitor_released_after`'s) is the model.
 4. **Leftovers in a caller's mailbox after a timed wait.** A function
    running in its caller sends a tagged request or links helpers, waits
    with `after`, and on the timeout path neither flushes the late reply
    nor drains the helpers' exits (mnesia, EMQX, brod). *Needs the
    request's tag tied to the receive that waits for it*, the way
-   `awaits_down_after` ties a monitor's ref to its `:DOWN`.
+   `monitor_released_after` ties a monitor's ref to its `:DOWN`.
 5. **A periodic timer loop multiplied.** *Covered in round 3* (see "A
    periodic timer loop armed again while it runs" above), with vernemq's
    reloaders as the motivating instance. What round 2 said stood in the
@@ -3793,7 +3775,12 @@ Structural gaps left:
   can clear the entries of others (eventstore's AdvisoryLocks), and an
   insert that overwrites an entry leaves its first monitor live (exq's
   `Worker.Metadata`). Needed: the removal tied to the entry the firing
-  monitor's ref keys.
+  monitor's ref keys. *Resolved by the monitor-leak round's model*
+  (`monitor_leak`, docs/design/monitor-leaks.md): a removal in a `:DOWN`
+  clause is its monitor's own end, a reset that empties the records in
+  any clause drops every one (AdvisoryLocks), and a registration that
+  ends only at its `:DOWN` is no leak unless the site is taken again
+  unasked with its ref thrown away (`dropped`, at `:info`).
 - Receives on the server's own stack that take the message a rule counts
   as unhandled (`receive-in-server-stack`, 3): a helper's selective
   receive in `z_video_convert`'s process.
@@ -4371,9 +4358,9 @@ under `priv/dl/` unless they say otherwise.
    *Resolved.* `down_bounded`, `exit_pinned` and `links_in` in
    receive.dl, read by startup's init waits and blocking's receives in
    callbacks; `recv_signal`'s "down" rows leave out a `:DOWN` some path
-   reaches past a demonitor. *Justified:* mailbox's `waited_out` still
-   asks `recv_down` alone: whether a wait consumes that very monitor, a
-   narrower question.
+   reaches past a demonitor. *Justified:* mailbox's `waited_out` (now
+   `monitor_released`) still asks its own question: whether every way
+   out releases that very monitor, a narrower one.
 3. **The end of the init/1 phase (L12).** The cut at
    `:proc_lib.init_ack` (`start_acked`) applies only to startup's receive
    walk; `global_path`, startup's `rpc_reach` and connect and recv walks,

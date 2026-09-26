@@ -8,11 +8,11 @@
 // message a server is sent and cannot take (a send, a timer, a monitor's
 // :DOWN, a socket's close, node events, a port's output, an async_nolink
 // task's reply and :DOWN, what a timed receive leaves behind), a monitor
-// left live past its wait, a cancelled timer's stale message, a tag the
-// module sends itself and cannot handle, a handle_call that defers a
-// reply it cannot send, a statem timeout no clause matches. A
-// handle_info/2 with no catch-all is no finding by itself: only a
-// message that falls through it is.
+// taken again before the last one is released, a cancelled timer's stale
+// message, a tag the module sends itself and cannot handle, a
+// handle_call that defers a reply it cannot send, a statem timeout no
+// clause matches. A handle_info/2 with no catch-all is no finding by
+// itself: only a message that falls through it is.
 
 .include "../clientlib/imports.dl"
 .include "../clientlib/otp.dl"
@@ -23,6 +23,7 @@
 .include "../clientlib/vocabulary.dl"
 .include "../clientlib/timer_flush.dl"
 .include "../clientlib/live_view.dl"
+.include "../clientlib/runs.dl"
 .include "../clientlib/tooling.dl"
 
 // A finding in code only developers' tools or tests run steps down a
@@ -31,10 +32,11 @@
 
 // ══ The outputs ═════════════════════════════════════════════════════
 //
-// `unconsumed_monitor(mod, func, site, kind)` — a monitor left live:
-//   "timed_wait" (past a receive with an after clause, never flushed),
-//   "never_released" (a server that removes entries but never
-//   demonitors), "ref_discarded" (the ref thrown away).
+// `monitor_leak(mod, func, site, how)` — a monitor taken again before the
+//   one before it is released, in code that runs again: "wait" (a way
+//   out of the wait keeps it), "ended" (the server drops its record of
+//   the process and keeps the monitor), "dropped" (the ref thrown away,
+//   taken without asking the state). See "Monitors that pile up".
 // `task_result_defect(func, site, kind)` — a Task.async whose result
 //   goes wrong: "never_awaited", "yield_linked" (collected with
 //   Task.yield in a process that does not trap exits),
@@ -46,8 +48,6 @@
 //   clientlib's `self_call`, a call provably to the calling process), "dropped_from" (a
 //   handle_call defers a reply without keeping `from`; `site` is the
 //   return), "statem_unreplied" (a {:call, from} clause answers nothing).
-.decl unconsumed_monitor(mod: symbol, func: symbol, site: symbol, kind: symbol)
-.output unconsumed_monitor
 
 .decl task_result_defect(func: symbol, site: symbol, kind: symbol)
 .output task_result_defect
@@ -479,19 +479,7 @@ hands_down_ref(cancel, g) :-
   ref_param(cancel, f, pos),
   (call_arg_field(g, f, pos, _) ; call_arg_forward(g, f, pos, _)).
 
-// ── Evidence: where a monitored entry is removed, where a task is yielded ─
-.decl monitored_entry_removal(mod: symbol, kind: symbol, site: symbol, func: symbol)
-.output monitored_entry_removal
-
-// The :DOWN handler's own removal is the one path where the monitor is
-// already gone; every other removal leaves it live.
-monitored_entry_removal(mod, "never_released", id, f) :-
-  unconsumed_monitor(mod, _, _, "never_released"),
-  function_def(f, mod, _, _, _),
-  !matches_down(f),
-  remote_call(id, f, m, op, _),
-  removal_api(m, op).
-
+// ── Evidence: where a task is yielded ─────────────────────────────────
 .decl task_yield_site(func: symbol, kind: symbol, site: symbol)
 .output task_yield_site
 
@@ -627,71 +615,114 @@ runs_in_callers(func, mod) :-
   process_behaviour_module(mod),
   !server_side(mod, func).
 
-// ══ Monitors nobody waits for ═══════════════════════════════════════
+// ══ Monitors that pile up ═══════════════════════════════════════════
+//
+// A monitor costs its holder until it is released: its :DOWN taken, its
+// ref demonitored, or the holder gone. One taken once, or one per
+// process the holder keeps a relationship with and forgets when that
+// process's :DOWN comes, is bounded by what the holder keeps. It leaks
+// when the holder can hold two live monitors on one process: the site
+// runs again (again_code, clientlib/runs.dl), meets a process it
+// already monitors, and the monitor it took before is still live. Each
+// such run leaves one more, and each is a :DOWN that comes later
+// (docs/design/monitor-leaks.md).
+//
+// `monitor_leak(mod, func, site, how)`: the monitor at `site`, in `func`,
+// piles up. `how` is what shows the one before is still live:
+//   "wait"    — the run waits for the process's :DOWN (a receive with a
+//               :DOWN clause) and some way out of it keeps the monitor:
+//               the wait gave up, or the answer came first. The next run
+//               asks the same process again (Livebook's Evaluator.call/2,
+//               LiveViewTest's render_chunk/3).
+//   "ended"   — the run records the process in the server (a field of
+//               its state, a row of a table) and another run drops that
+//               record while the process may live, without releasing the
+//               monitor: its next registration monitors it again
+//               (postgrex#781's Parameters, eventstore's AdvisoryLocks).
+//   "dropped" — the ref is thrown away, so nothing but the process's
+//               death releases the monitor, and the run takes it without
+//               asking its state whether it holds one: each time the same
+//               process is named again, one more (ejabberd's route
+//               owners, rabbit_alarm's alertees).
+.decl monitor_leak(mod: symbol, func: symbol, site: symbol, how: symbol)
+.output monitor_leak
+
 // What the function runs in its own process, apart from the logging and
-// telemetry APIs (side_call, calls.dl): a timed receive or a demonitor
-// in that machinery is on its own monitor, not the function's.
-.init timed_wait = SameProcessReachSetCut
-
-timed_wait.cut(f, g) :- side_call(f, g).
-timed_wait.seed(func) :- timed_receive(func).
-
+// telemetry APIs (side_call, calls.dl): a demonitor with :flush there,
+// on any path, flushes a monitor's :DOWN (unhandled_info's question).
 .init flush = SameProcessReachSetCut
 
 flush.cut(f, g) :- side_call(f, g).
 
 flush.seed(func) :- demonitor_call(_, func, "flush").
 
-unconsumed_monitor(mod, func, id, "timed_wait") :-
-  monitor_call(id, func, _),
-  function_def(func, mod, _, _, _),
-  outlives_its_wait(func),
-  !waited_out(id),
-  !collected_by_callers(func).
+// ── A monitor that can be taken again ───────────────────────────────
+//
+// The program's own code (a library's macro wrote nothing of it:
+// library_written) that runs again, a monitor whose process is not one
+// the run itself starts, and that the run does not release.
+.decl leak_site(mod: symbol, func: symbol, site: symbol)
 
-// A monitor whose :DOWN every path from it to the function's return
-// takes is waited out there (waited_out, clientlib/receive.dl): Phoenix's
-// Channel.Server.close/2 gives the channel a grace period, then kills it
-// and waits for the :DOWN; qlc's stop_cursor/1 looks for an :EXIT with
-// `after 0`, and on both branches then waits for the cursor's :DOWN.
+leak_site(m, f, s) :-
+  monitor_call(s, f, _),
+  function_def(f, m, _, _, _),
+  again_code(f),
+  !library_written(f),
+  !starts_its_target(s),
+  !released_by_run(s, f).
 
-// A function that monitors and waits with an `after`, and neither
-// flushes nor ends its process: the monitor is live when the wait gives
-// up, and the function returns with it.
-.decl outlives_its_wait(func: symbol)
+// A process the monitoring function starts itself is new on every run,
+// and this monitor is the only one on it: its :DOWN ends both. The pid
+// is, on every path, what a start in the function answered
+// (monitor_started: the pid, or the one in its `{:ok, pid}`, never the
+// `{:error, {:already_started, pid}}` of a process others hold), and the
+// start is one the process facts know (process_start: exq's worker and
+// the Task it starts for the job) or a library's (`:gun.open`). A pid a
+// function of the program answers is not taken as new: a lookup-or-start
+// wrapper hands back a process others hold (review 2, item 25).
+.decl starts_its_target(site: symbol)
 
-outlives_its_wait(func) :-
-  monitor_call(_, func, _),
-  timed_wait.reaches(func),
-  !flush.reaches(func),
-  !ends_its_process(func).
+starts_its_target(s) :- monitor_started(s, f, c), process_start(c, f, _, _, _).
 
-// ── A monitor its callers collect ────────────────────────────────────
+starts_its_target(s) :-
+  monitor_started(s, f, c),
+  remote_call(c, f, m, _, _),
+  !program_module(m).
+
+// Released by the run: every path from the monitor to its function's
+// return takes the :DOWN or demonitors the ref (monitor_released,
+// clientlib/receive.dl), or every way into the function passes a caller
+// that does so after the call (collected_by_callers, below).
+.decl released_by_run(site: symbol, func: symbol)
+
+released_by_run(s, f) :- monitor_call(s, f, _), monitor_released(s).
+released_by_run(s, f) :- monitor_call(s, f, _), collected_by_callers(f).
+
+// ── A monitor its callers release ───────────────────────────────────
 //
 // Returning with a monitor live is the protocol, not a leak, when the
-// caller goes on to wait for the :DOWN. OTP's old supervisor shutdown,
+// caller goes on to take the :DOWN. OTP's old supervisor shutdown,
 // which GenStage's ConsumerSupervisor and Horde's ProcessesSupervisor
 // copy, monitors each child in monitor_child/1, looks once with `after
 // 0` for an {:EXIT, ...} already queued, and returns :ok; its caller
 // then blocks in wait_children until every child's {:DOWN, ...} has
-// come. awaits_down_after names the calls such a wait follows on every
-// path (a receive with no `after` taking any :DOWN, or the one for the
-// ref the call returned, or a demonitor with :flush of that ref).
+// come. monitor_released_after names the calls such a release follows
+// on every path (a receive with no `after` taking any :DOWN, or the one
+// for the ref the call returned, or a demonitor of that ref).
 //
-// The monitor is collected when every way the program has into the
+// The monitor is released when every way the program has into the
 // monitoring function passes such a call. Walked backward from each
-// function the rule would report, over the ways in no wait follows
+// monitoring function, over the ways in no release follows
 // (BackwardUnguarded, in reach.dl). A walk that reaches an exported
 // function (its callers are outside the program), one nothing calls,
 // or what a spawn runs (its process is not the caller's, and its wait
-// collects nothing of this one) leaves the monitor exposed. A
+// releases nothing of this one) leaves the monitor exposed. A
 // monitoring function nothing reaches but through one uncovered cycle
-// is not collected either: some way in must be a covered call.
+// is not released either: some way in must be a covered call.
 .init uncollected = BackwardUnguarded
 
-uncollected.seed(g, g) :- outlives_its_wait(g).
-uncollected.seed(g, g) :- monitor_ref_dropped(_, g).
-uncollected.guarded(id) :- awaits_down_after(_, id).
+uncollected.seed(g, g) :- monitor_call(_, g, _).
+uncollected.guarded(id) :- monitor_released_after(_, id).
 
 .decl collection_exposed(func: symbol)
 
@@ -704,158 +735,259 @@ collection_exposed(g) :- uncollected.reaches(h, g), runs_elsewhere(_, h).
 collected_by_callers(g) :-
   uncollected.reaches(h, g),
   call_instr(f, h, id),
-  awaits_down_after(f, id),
+  monitor_released_after(f, id),
   !collection_exposed(g).
 
 collected_by_callers(g) :-
   uncollected.reaches(h, g),
   fun_handed(id, f, h, _),
-  awaits_down_after(f, id),
+  monitor_released_after(f, id),
   !collection_exposed(g).
 
-// A function whose return ends the process that runs it: what a spawn
-// or a task runs, or what that runs as its last call, when nothing else
-// calls it and it does not call itself again. The monitor it leaves live
-// ends with the process (hexpm's streaming task gives up on a slow
-// consumer and returns).
-.decl process_tail(func: symbol)
-
-process_tail(r) :-
-  process_start(_, _, _, "spawn", r),
-  monitor_call(_, m, _),
-  (r = m ; call_edge(r, m)).
-
-process_tail(g) :-
-  process_tail(f),
-  call_instr(f, g, id),
-  tail_call(id),
-  monitor_call(_, g, _).
-
-.decl called_otherwise(func: symbol)
-
-called_otherwise(g) :-
-  process_tail(g),
-  call_edge(f, g),
-  !process_tail(f),
-  !runs_elsewhere(f, g).
-
-called_otherwise(g) :-
-  process_tail(g),
-  call_instr(_, g, id),
-  !tail_call(id).
-
-.init monitor_loop = SameProcessReach
-
-monitor_loop.seed(g, g) :- process_tail(g).
-
-.decl ends_its_process(func: symbol)
-
-ends_its_process(g) :-
-  process_tail(g),
-  !called_otherwise(g),
-  !recurses(g).
-
-ends_its_process(g) :- on_the_way_out(_, g).
-
-// ── What only terminate runs ──────────────────────────────────────────
+// ── "wait": the run waits on the process, and a way out keeps it ────
 //
-// terminate/2,3 is the last callback: the process exits when it
-// returns, and a monitor it takes, drops the ref of or leaves live
-// after a timed wait ends with it. exq's WorkerDrainer monitors every
-// worker from terminate/2 and waits out a grace period for their :DOWNs;
-// what the grace period leaves is gone a moment later. A function any
-// other callback (or state function) also reaches is not on the way
-// out: the same monitor taken in handle_call/3 is judged as ever.
-.init live_reach = ForwardIntraModuleSameProcessReach
+// A receive with a :DOWN clause (recv_takes_down) in the monitoring
+// function's own reach: the monitor was taken for a wait inside the
+// run. When the monitor is the function's tail call, its ref goes back
+// to the caller, and the wait may be the caller's (exq's WorkerDrainer
+// maps its workers' refs into a set and awaits them). The monitor is not
+// released on some way out (leak_site): a timed receive's `after`, the
+// clause for the answer, a path that never enters the receive.
+.init down_wait = SameProcessReachSetCut
 
-live_reach.root(mod, func) :-
-  otp_callback(func, mod, _, _),
-  !function_def(func, mod, "terminate", _, _).
+down_wait.cut(f, g) :- side_call(f, g).
+down_wait.seed(f) :- recv_takes_down(_, f).
 
-live_reach.root(mod, func) :-
-  statem_process(mod),
-  statem_state(mod, _, func),
-  function_def(func, mod, _, _, _).
+.decl waits_on(site: symbol)
 
-.decl on_the_way_out(mod: symbol, func: symbol)
+waits_on(s) :- monitor_call(s, f, _), down_wait.reaches(f).
 
-on_the_way_out(mod, f) :- server_side(mod, f), !live_reach.reaches(mod, f).
+waits_on(s) :-
+  monitor_call(s, f, _),
+  tail_call(s),
+  call_edge(g, f),
+  !runs_elsewhere(g, f),
+  down_wait.reaches(g).
 
-.decl recurses(func: symbol)
+monitor_leak(m, f, s, "wait") :- leak_site(m, f, s), waits_on(s).
 
-recurses(g) :- process_tail(g), call_edge(g, h), monitor_loop.reaches(h, g).
-
-// Removing an entry from a map, set, keyword or ETS table (removal_api,
-// in effect_model.dl) — the bookkeeping paths a monitor's release belongs
-// on. Anywhere in the module: Phoenix PubSub's Local removed
-// subscriptions from a public table in its client API, and the monitor
-// taken in handle_call stayed live all the same.
-
-.decl removes_entries(mod: symbol)
-
-removes_entries(mod) :-
-  function_def(f, mod, _, _, _),
-  remote_call(_, f, m, op, _),
-  removal_api(m, op).
-
-unconsumed_monitor(mod, f, site, "never_released") :-
-  server_side(mod, f),
-  !on_the_way_out(mod, f),
-  monitor_call(site, f, _),
-  !monitor_ref_dropped(site, f),
-  removes_entries(mod),
-  !module_demonitors(mod).
-
-// ── A monitor whose ref is thrown away ───────────────────────────────
+// ── "dropped": nothing can release it, and nothing asks first ───────
 //
-// `Process.monitor(pid)` with the result discarded, in a server's
-// callbacks: the monitor can only ever end with the monitored process,
-// since nothing holds what a demonitor would need. Phoenix PubSub's
-// Local did this for every subscriber and removed subscriptions from a
-// table in another module; every unsubscribe left a monitor behind.
-// Reported separately from monitor_never_released because it needs no
-// removal path in evidence — the ref being gone is the whole story.
+// A ref thrown away (monitor_ref_dropped) leaves the monitor to the
+// process's death. Taken without a look at the process's own state, it
+// is taken again each time the same process is named: some way from a
+// root that runs again reaches the site with no call on it the state
+// decides (state_decided, the guard a repeated subscription's walk asks
+// of the same callbacks: a `MapSet.member?(state.monitored, pid)`, a
+// pid compared with the one stored). Whether the same process is ever
+// named again is the protocol's, not the code's: loud, at info.
+.init unasked = BackwardUnguardedSameProcess
+
+unasked.seed(f, s) :- monitor_ref_dropped(s, f), !state_decided(s).
+unasked.guarded(c) :- state_decided(c).
+
+.decl takes_unasked(site: symbol)
+
+takes_unasked(s) :- unasked.reaches(r, s), again_root(r, _).
+
+monitor_leak(m, f, s, "dropped") :-
+  leak_site(m, f, s),
+  monitor_ref_dropped(s, f),
+  takes_unasked(s).
+
+// ── "ended": the server drops its record, and keeps the monitor ─────
 //
-// A dropped ref whose :DOWN is waited for all the same is collected, not
-// lost: by the function itself (waited_out), or by every caller
-// (collected_by_callers). OTP's old supervisor, as rabbit's supervisor2
-// and brod's brod_supervisor3 copy it, monitors in monitor_child/1
-// without keeping the ref, and shutdown/2 waits for the child's :DOWN by
-// its pid.
-//
-// A monitor on a process the function just started and keeps for itself
-// (monitor_owns: hands its pid to no call and no send as data) stands
-// for that process's life, which its :DOWN ends: exq's worker monitors
-// the Task it starts for the job, grpc's connection its gun process.
-unconsumed_monitor(mod, f, site, "ref_discarded") :-
-  server_side(mod, f),
-  !on_the_way_out(mod, f),
-  monitor_call(site, f, _),
-  monitor_ref_dropped(site, f),
-  !waited_out(site),
-  !collected_by_callers(f),
-  !owned_monitor(site, f).
+// The clause of a callback that runs again in which the monitor is
+// taken: the callback's own clause for its own sites, or the clause
+// whose call leads, on the callback's stack, to the monitoring function.
+.init toward_monitor = SameProcessReach
 
-// monitor_owns reads the start by its name (start*, spawn*, open); the
-// function must also hold a start the process facts see (process_start):
-// a lookup-or-start wrapper (`{:error, {:already_started, pid}} -> {:ok,
-// pid}`) hands back a process others hold, and a monitor on it per call
-// piles up (review 2, item 25: fc82ad59 decided by the name alone).
-.decl owned_monitor(site: symbol, func: symbol)
+toward_monitor.seed(f, f) :- monitor_call(_, f, _).
 
-owned_monitor(site, f) :- monitor_owns(site, f), process_start(_, f, _, _, _).
+.decl monitor_clause(site: symbol, callback: symbol, tag: symbol)
 
-// A start the program does not write (a library's `Ch.start_link`,
-// `:gun.open`) is taken at its word, as monitor_owns does: only a start
-// the program wraps itself can be a lookup it wrote.
-owned_monitor(site, f) :- monitor_owns(site, f), !calls_program_starter(f).
+monitor_clause(s, f, tag) :- monitor_call(s, f, _), again_root(f, _), clause_call(s, f, tag).
 
-.decl calls_program_starter(func: symbol)
+monitor_clause(s, f, "*") :-
+  monitor_call(s, f, _),
+  again_root(f, _),
+  !clause_call(s, f, _).
 
-calls_program_starter(f) :-
-  call_instr(f, g, _),
-  function_def(g, _, name, _, _),
-  (match("start.*", name) ; match("spawn.*", name) ; name = "open").
+monitor_clause(s, h, tag) :-
+  monitor_call(s, f, _),
+  again_root(h, _),
+  call_instr(h, g, c),
+  clause_call(c, h, tag),
+  !runs_elsewhere(h, g),
+  toward_monitor.reaches(g, f).
+
+monitor_clause(s, h, tag) :-
+  monitor_call(s, f, _),
+  again_root(h, _),
+  fun_handed(c, h, g, _),
+  clause_call(c, h, tag),
+  !runs_elsewhere(h, g),
+  toward_monitor.reaches(g, f).
+
+// What the run records of the monitored process: a field of the state
+// the clause returns (returned_update, by the clause's tag; the whole
+// state, `*`, where a map is the state), a field a helper that monitors
+// returns, a table the clause or that helper writes. The record is read
+// by where it is kept, not by its key: a field or a table, of the
+// monitoring module.
+.decl monitor_record(site: symbol, mod: symbol, record: symbol)
+
+monitor_record(s, m, k) :-
+  monitor_clause(s, h, tag),
+  function_def(h, m, _, _, _),
+  returned_update(h, k, _, tag).
+
+monitor_record(s, m, k) :-
+  monitor_call(s, f, _),
+  !again_root(f, _),
+  function_def(f, m, _, _, _),
+  returned_update(f, k, _, _),
+  k != "*".
+
+monitor_record(s, m, cat("table ", t)) :-
+  monitor_clause(s, h, tag),
+  function_def(h, m, _, _, _),
+  ets_op(x, h, t, _, "write"),
+  clause_call(x, h, tag).
+
+monitor_record(s, m, cat("table ", t)) :-
+  monitor_call(s, f, _),
+  !again_root(f, _),
+  function_def(f, m, _, _, _),
+  ets_op(_, f, t, _, "write").
+
+// Where a clause of a callback that runs again drops records of `record`
+// (`func`, the callback or the helper its clause calls), while the
+// process they name may live: a clause other than a :DOWN one removes an
+// entry (removal_api, effect_model.dl) and returns the field it removed
+// from, or deletes rows of the table; or any clause empties the field,
+// :DOWN clauses included (eventstore's AdvisoryLocks resets every lock
+// when its connection's :DOWN comes, and the owners' monitors stay). The
+// removal a :DOWN clause makes is that monitor's own end: its process is
+// gone.
+.decl record_drop(mod: symbol, record: symbol, func: symbol, callback: symbol, tag: symbol)
+
+record_drop(m, k, h, h, tag) :-
+  monitor_record(_, m, k),
+  again_root(h, _),
+  function_def(h, m, _, _, _),
+  remote_call(x, h, rm, op, _),
+  removal_api(rm, op),
+  clause_call(x, h, tag),
+  tag != ":DOWN",
+  returned_update(h, k, _, tag).
+
+record_drop(m, k, g, h, tag) :-
+  monitor_record(_, m, k),
+  k != "*",
+  again_root(h, _),
+  function_def(h, m, _, _, _),
+  call_instr(h, g, c),
+  clause_call(c, h, tag),
+  tag != ":DOWN",
+  function_def(g, m, _, _, _),
+  remote_call(_, g, rm, op, _),
+  removal_api(rm, op),
+  returned_update(g, k, _, _).
+
+record_drop(m, k, h, h, tag) :-
+  monitor_record(_, m, k),
+  again_root(h, _),
+  function_def(h, m, _, _, _),
+  returned_update(h, k, v, tag),
+  emptied(v).
+
+record_drop(m, cat("table ", t), h, h, tag) :-
+  monitor_record(_, m, cat("table ", t)),
+  again_root(h, _),
+  function_def(h, m, _, _, _),
+  ets_op(x, h, t, op, _),
+  ets_removal_op(op),
+  clause_call(x, h, tag),
+  tag != ":DOWN".
+
+record_drop(m, cat("table ", t), g, h, tag) :-
+  monitor_record(_, m, cat("table ", t)),
+  again_root(h, _),
+  function_def(h, m, _, _, _),
+  call_instr(h, g, c),
+  clause_call(c, h, tag),
+  tag != ":DOWN",
+  function_def(g, m, _, _, _),
+  ets_op(_, g, t, op, _),
+  ets_removal_op(op).
+
+// A field set to an empty collection: every record in it goes.
+.decl emptied(value: symbol)
+
+emptied("%{}").
+emptied("[]").
+emptied("#{}").
+
+// The drop releases the monitor, or ends its process, when the clause
+// (or the helper) demonitors, or stops a process: a supervisor's
+// terminate_child, a gen behaviour's stop, an exit signal. The process's
+// :DOWN then comes, or none does.
+.init release_reach = SameProcessReachSetCut
+
+release_reach.cut(f, g) :- side_call(f, g).
+release_reach.seed(g) :- demonitor_call(_, g, _).
+release_reach.seed(g) :- stop_site(_, g).
+
+.decl stop_site(site: symbol, func: symbol)
+
+stop_site(x, g) :- sup_call(x, g, _, "terminate_child", _).
+stop_site(x, g) :- pid_signal(x, g, "exit", _, _).
+
+stop_site(x, g) :-
+  remote_call(x, g, gm, "stop", _),
+  (gm = "GenServer" ; gm = ":gen_server" ; gm = ":gen_statem" ; gm = ":proc_lib" ;
+   gm = "Supervisor" ; gm = ":supervisor" ; gm = "DynamicSupervisor" ; gm = "Agent").
+
+.decl clause_releases(callback: symbol, tag: symbol)
+
+clause_releases(h, tag) :- demonitor_call(x, h, _), clause_call(x, h, tag).
+clause_releases(h, tag) :- stop_site(x, h), clause_call(x, h, tag).
+
+clause_releases(h, tag) :-
+  call_instr(h, g, c),
+  clause_call(c, h, tag),
+  release_reach.reaches(g).
+
+.decl dropped_record(site: symbol, func: symbol)
+
+dropped_record(s, g) :-
+  monitor_record(s, m, k),
+  record_drop(m, k, g, h, tag),
+  !clause_releases(h, tag),
+  !release_reach.reaches(g),
+  g != h.
+
+dropped_record(s, h) :-
+  monitor_record(s, m, k),
+  record_drop(m, k, h, h, tag),
+  !clause_releases(h, tag).
+
+monitor_leak(m, f, s, "ended") :- leak_site(m, f, s), dropped_record(s, _).
+
+// What the finding relates (role): where the record is dropped
+// ("drop"), and the callbacks that run the monitoring function again
+// ("runs"), when it is not one itself.
+.decl monitor_leak_frame(mod: symbol, site: symbol, how: symbol, role: symbol, func: symbol)
+.output monitor_leak_frame
+
+monitor_leak_frame(m, s, "ended", "drop", g) :- monitor_leak(m, _, s, "ended"), dropped_record(s, g).
+
+monitor_leak_frame(m, s, how, "runs", r) :-
+  monitor_leak(m, f, s, how),
+  toward_monitor.reaches(r, f),
+  r != f,
+  again_root(r, _).
 
 // ══ A message the module sends itself and cannot handle ═════════════
 //
