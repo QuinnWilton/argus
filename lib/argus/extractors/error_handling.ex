@@ -854,10 +854,23 @@ defmodule Argus.Extractors.ErrorHandling do
   # `#{tref := undefined}`. A function that arms a timer only when the
   # field that keeps its ref is empty arms none beside a pending one (a
   # Broadway producer's `handle_receive_messages/1`).
+  #
+  # Only a test whose not-empty side calls nothing counts: the function
+  # does its work, the arm among it, on the empty side alone. A test
+  # whose not-empty side re-arms (`nil -> ...; _running -> schedule(s)`)
+  # arms while the loop runs (review 2, item 21: e8c21ca9 read any nil
+  # test as the guard).
   defp emit_nil_tests(facts, func_id, instrs) do
+    tuple = List.to_tuple(instrs)
+    labels = for {{:label, l}, i} <- Enum.with_index(instrs), into: %{}, do: {l, i}
+
     instrs
     |> Enum.with_index()
-    |> Enum.flat_map(fn {instr, idx} -> nil_tested(instrs, idx, instr) end)
+    |> Enum.flat_map(fn {instr, idx} ->
+      if full_side_calls?(tuple, labels, idx, instr),
+        do: [],
+        else: nil_tested(instrs, idx, instr)
+    end)
     |> Enum.uniq()
     |> Enum.sort()
     |> Enum.reduce(facts, fn key, acc -> add_fact(acc, :field_nil_test, [func_id, key]) end)
@@ -973,6 +986,65 @@ defmodule Argus.Extractors.ErrorHandling do
   end
 
   defp value_tested(_instrs, _idx, _instr), do: []
+
+  # The instruction indices the not-empty side of a nil test starts at.
+  defp full_sides(labels, idx, {:test, op, {:f, fail}, [a, b]})
+       when op in [:is_eq_exact, :is_eq] do
+    if empty?(a) or empty?(b), do: [Map.get(labels, fail)], else: [idx + 1]
+  end
+
+  defp full_sides(labels, idx, {:test, op, {:f, fail}, [a, b]}) when op in [:is_ne_exact, :is_ne] do
+    if empty?(a) or empty?(b), do: [idx + 1], else: [Map.get(labels, fail)]
+  end
+
+  defp full_sides(labels, _idx, {:select_val, _src, {:f, fail}, {:list, pairs}}) do
+    others =
+      pairs
+      |> Enum.chunk_every(2)
+      |> Enum.flat_map(fn
+        [value, {:f, l}] -> if empty?(value), do: [], else: [Map.get(labels, l)]
+        _ -> []
+      end)
+
+    [Map.get(labels, fail) | others]
+  end
+
+  defp full_sides(_labels, _idx, _instr), do: []
+
+  defp full_side_calls?(tuple, labels, idx, instr) do
+    full_sides(labels, idx, instr)
+    |> Enum.reject(&is_nil/1)
+    |> side_calls?(tuple, labels, %{})
+  end
+
+  defp side_calls?([], _tuple, _labels, _seen), do: false
+
+  defp side_calls?([idx | rest], tuple, labels, seen) do
+    cond do
+      idx >= tuple_size(tuple) or Map.has_key?(seen, idx) ->
+        side_calls?(rest, tuple, labels, seen)
+
+      true ->
+        instr = elem(tuple, idx)
+
+        if Instr.call?(instr) or (Instr.tail_call?(instr) and not raising_tail?(instr)) do
+          true
+        else
+          next =
+            if(Instr.falls_through?(instr), do: [idx + 1], else: []) ++
+              Enum.map(Instr.targets(instr), &Map.get(labels, &1))
+
+          side_calls?(Enum.reject(next, &is_nil/1) ++ rest, tuple, labels, Map.put(seen, idx, true))
+        end
+    end
+  end
+
+  defp raising_tail?(instr) do
+    case match_remote_call(instr) do
+      {:ok, :erlang, f, _} -> f in [:error, :exit, :throw, :raise, :nif_error]
+      _ -> false
+    end
+  end
 
   defp empty?({:atom, atom}), do: atom in [nil, :undefined]
   defp empty?(_operand), do: false

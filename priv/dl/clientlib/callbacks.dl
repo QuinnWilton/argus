@@ -186,3 +186,32 @@ terminate_callback(func, mod, behaviour) :-
   behaves_as(mod, behaviour),
   process_behaviour(behaviour, "terminating"),
   function_def(func, mod, "terminate", _, _).
+
+// ── Callbacks that run once, and callbacks that run again ────────────
+//
+// runs_again_callback(name, arity): a callback that runs whenever its
+// request or message comes (not init/1, handle_continue/2 or mount/3).
+// start_callback(mod, func): where a process starts, and runs once:
+// init/1 (init_function), a Channel's join/3, a LiveView's mount/3,
+// handle_continue/2. One table each, read by mailbox's timer loop.
+.decl runs_again_callback(name: symbol, arity: number)
+
+runs_again_callback("handle_info", 2).
+runs_again_callback("handle_cast", 2).
+runs_again_callback("handle_call", 3).
+runs_again_callback("handle_in", 3).
+runs_again_callback("handle_event", 3).
+runs_again_callback("handle_params", 3).
+runs_again_callback("handle_async", 3).
+runs_again_callback("handle_demand", 2).
+
+.decl start_callback(mod: symbol, func: symbol)
+
+start_callback(mod, f) :- init_function(mod, f).
+start_callback(mod, f) :- otp_callback(f, mod, "join", _), function_def(f, mod, "join", 3, _).
+start_callback(mod, f) :- otp_callback(f, mod, "mount", _), function_def(f, mod, "mount", 3, _).
+
+start_callback(mod, f) :-
+  otp_callback(f, mod, "handle_continue", _),
+  function_def(f, mod, "handle_continue", 2, _).
+

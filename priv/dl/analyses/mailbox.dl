@@ -653,34 +653,56 @@ cancelled_on_the_way_out(cancel) :- cancel_site(c, _, cancel), runs_only_on_the_
 // out of the analyses' inputs.
 .decl flushes_after_cancel(cancel: symbol, message: symbol)
 
+// The cancel's own function, or what it runs, flushes: every caller's
+// path passes it.
 flushes_after_cancel(cancel, msg) :-
-  cancel_scope.reaches(cancel, f),
-  recv_pattern(_, f, msg).
+  timer_cancel(cancel, c, _, _, _),
+  flushes_in(c, msg).
 
+// The cancel is made on its callers' behalf (helper_cancel): flushed
+// only when every caller that is not on the way out flushes where it
+// calls. One caller's flush is not another's: a :pause that flushes
+// does not cover a :reset that re-arms without flushing (review 2,
+// item 19).
 flushes_after_cancel(cancel, msg) :-
-  cancel_scope.reaches(cancel, f),
-  recv_pattern(_, f, "any"),
+  helper_cancel(cancel, g),
+  flushes_in(g, msg),
+  !unflushed_caller(cancel, msg).
+
+.decl unflushed_caller(cancel: symbol, message: symbol)
+
+unflushed_caller(cancel, msg) :-
+  helper_cancel(cancel, g),
+  !runs_only_on_the_way_out(g),
+  armed_message(_, msg),
+  !flushes_in(g, msg).
+
+// `f`, or what it runs in its own process, has a receive that takes the
+// message: by name, or with a clause that matches anything.
+.decl flushes_in(func: symbol, message: symbol)
+
+flushes_in(f, msg) :- flush_scope.reaches(f, g), recv_pattern(_, g, msg).
+
+flushes_in(f, msg) :-
+  flush_scope.reaches(f, g),
+  recv_pattern(_, g, "any"),
   armed_message(_, msg).
 
-// The functions the cancel_timer `cancel` belongs to, and what they run
-// in their own process.
-.init cancel_scope = ForwardSameProcessReachCut
+.init flush_scope = ForwardSameProcessReachCut
 
-cancel_scope.cut(f, g) :- side_call(f, g).
+flush_scope.cut(f, g) :- side_call(f, g).
+flush_scope.root(c, c) :- timer_cancel(_, c, _, _, _).
+flush_scope.root(g, g) :- helper_cancel(_, g).
 
-cancel_scope.root(cancel, c) :- timer_cancel(cancel, c, _, _, _).
-cancel_scope.root(cancel, g) :- hands_down_ref(cancel, g).
+// A function that makes the cancel_timer `cancel` through a helper: it
+// hands the ref down (hands_down_ref), or it calls, in its process, a
+// function of its module that reads the field and cancels it
+// (helper_cancels_field, clientlib/timer_flush.dl: MongooseIM's
+// maybe_cancel_timer/2).
+.decl helper_cancel(cancel: symbol, func: symbol)
 
-// A helper of the module that reads the field and cancels it
-// (MongooseIM's `maybe_cancel_timer(IsInitial, State)`, a `maps:get/3`
-// of the state its caller hands it) is where its caller cancels: the
-// caller's flush, beside the call, is the cancel's.
-cancel_scope.root(cancel, g) :-
-  timer_cancel(cancel, c, "field", _, _),
-  call_edge(g, c),
-  function_def(c, mod, _, _, _),
-  function_def(g, mod, _, _, _),
-  !runs_elsewhere(g, c).
+helper_cancel(cancel, g) :- hands_down_ref(cancel, g).
+helper_cancel(cancel, g) :- helper_cancels_field(g, _, cancel, _).
 
 // `func` passes the ref the cancel_timer `cancel` takes as a parameter,
 // read from its state or its own parameter (param_field's path).
@@ -1766,18 +1788,8 @@ rearm_entry(mod, e) :-
   looping_server(mod, _),
   otp_callback(e, mod, n, _),
   function_def(e, mod, n, a, _),
-  rearm_callback(n, a).
+  runs_again_callback(n, a).
 
-.decl rearm_callback(name: symbol, arity: number)
-
-rearm_callback("handle_info", 2).
-rearm_callback("handle_cast", 2).
-rearm_callback("handle_call", 3).
-rearm_callback("handle_in", 3).
-rearm_callback("handle_event", 3).
-rearm_callback("handle_params", 3).
-rearm_callback("handle_async", 3).
-rearm_callback("handle_demand", 2).
 
 // A message the process sends itself only from where it starts: init/1,
 // a Channel's join/3, a LiveView's mount/3, handle_continue/2. Its
@@ -1786,16 +1798,6 @@ rearm_callback("handle_demand", 2).
 // any site in the program that sends or arms it to another process (it
 // may be this one). A self-send in another module is to that module's
 // process.
-.decl starts_with(mod: symbol, func: symbol)
-
-starts_with(mod, f) :- init_function(mod, f).
-starts_with(mod, f) :- otp_callback(f, mod, "join", _), function_def(f, mod, "join", 3, _).
-starts_with(mod, f) :- otp_callback(f, mod, "mount", _), function_def(f, mod, "mount", 3, _).
-
-starts_with(mod, f) :-
-  otp_callback(f, mod, "handle_continue", _),
-  function_def(f, mod, "handle_continue", 2, _).
-
 .decl sends_literal(func: symbol, lit: symbol)
 
 sends_literal(f, lit) :- pid_send(_, f, lit, _, _).
@@ -1812,7 +1814,7 @@ sends_literal_out(lit) :- armed_literal(_, _, "other", lit).
 once_message(mod, lit) :-
   looping_server(mod, _),
   pid_send(_, f, lit, "self", _),
-  starts_with(mod, f),
+  start_callback(mod, f),
   !sent_again(mod, lit).
 
 .decl sent_again(mod: symbol, lit: symbol)
@@ -1821,7 +1823,7 @@ sent_again(mod, lit) :-
   looping_server(mod, _),
   sends_literal(f, lit),
   function_def(f, mod, _, _, _),
-  !starts_with(mod, f).
+  !start_callback(mod, f).
 
 sent_again(mod, lit) :-
   looping_server(mod, _),
@@ -1833,7 +1835,7 @@ sent_again(mod, lit) :-
 once_candidate(mod, lit) :-
   looping_server(mod, _),
   pid_send(_, f, lit, "self", _),
-  starts_with(mod, f).
+  start_callback(mod, f).
 
 // A cast the process makes to itself only from where it starts
 // (`gen_server:cast(self(), initial_loading)` in init/1): no other site
@@ -1843,7 +1845,7 @@ once_candidate(mod, lit) :-
 once_cast(mod, tag) :-
   looping_server(mod, _),
   call_tag(_, f, "cast", tag),
-  starts_with(mod, f),
+  start_callback(mod, f),
   !cast_again(mod, tag).
 
 .decl cast_again(mod: symbol, tag: symbol)
@@ -1851,7 +1853,7 @@ once_cast(mod, tag) :-
 cast_again(mod, tag) :-
   looping_server(mod, _),
   call_tag(_, f, "cast", tag),
-  !starts_with(mod, f).
+  !start_callback(mod, f).
 
 .decl once_clause(site: symbol, entry: symbol)
 
@@ -1979,12 +1981,12 @@ cancel_call(f, s, key) :-
   call_instr(f, g, s).
 
 // A call to a function of the module that reads the field and cancels
-// it itself (MongooseIM's `maybe_cancel_timer(IsInitial, State)`).
-cancel_call(f, s, key) :-
-  call_instr(f, g, s),
-  function_def(f, mod, _, _, _),
-  function_def(g, mod, _, _, _),
-  cancel_call(g, _, key).
+// it itself (helper_cancels_field, clientlib/timer_flush.dl: MongooseIM's
+// `maybe_cancel_timer(IsInitial, State)`). One level, and only a helper
+// whose own code is the cancel: a function that cancels in one clause
+// (through another helper) and arms in another is no cancel of the path
+// that arms (review 2, item 21: 041f72e6 took any cancel anywhere below).
+cancel_call(f, s, key) :- helper_cancels_field(f, s, _, key).
 
 // Two call sites of `func` run in the same clause: one the tag of its
 // first argument names for both, or two that no tag names. A clause
@@ -2031,19 +2033,31 @@ idempotent_loop(mod, lit, key) :-
 .decl cancels_before(entry: symbol, site: symbol, key: symbol)
 
 cancels_before(e, c, key) :-
-  second_arm(_, _, e, c, _, _),
+  second_arm(_, _, e, c, g, _),
   cancel_call(e, s, key),
-  same_clause(e, s, c).
+  same_clause(e, s, c),
+  !cancels_in_arming(e, s, g).
 
+// The call at `site` cancels in `arm`, the very function that arms: its
+// cancel and its arm may be on two branches (two clauses of a
+// `configure/2`), so the call is asked as the arming function is, below.
+.decl cancels_in_arming(func: symbol, site: symbol, arm: symbol)
+
+cancels_in_arming(e, s, g) :-
+  helper_cancels_field(e, s, cancel, _),
+  timer_cancel(cancel, g, _, _, _).
+
+// The function holding the arm cancels on every path through it: a
+// cancel on another branch than the arm is none of the arm's.
 cancels_before(e, c, key) :-
   second_arm(_, _, e, c, g, _),
   g != e,
-  cancel_call(g, _, key).
+  cancel_call(g, s, key),
+  !conditional_call(s).
 
 timer_loop_rearmed(mod, lit, e, c, b, a, "") :-
   second_arm(mod, lit, e, c, _, b),
-  loop_drops_ref(mod, lit, a),
-  !runs_under_test(e).
+  loop_drops_ref(mod, lit, a).
 
 // The second path arms only while the key is empty: the arming function
 // or the callback tests the kept field against nil or undefined
@@ -2064,8 +2078,7 @@ timer_loop_rearmed(mod, lit, e, c, b, a, key) :-
   !loop_drops_ref(mod, lit, _),
   !idempotent_loop(mod, lit, key),
   !cancels_before(e, c, key),
-  !arms_when_empty(e, c, key),
-  !runs_under_test(e).
+  !arms_when_empty(e, c, key).
 
 // ══ A registration made on the static render ══════════════════════
 //
@@ -2120,7 +2133,7 @@ static_render_registration(m, e, f, id, kind) :-
 // Subscribing a process to a topic it is already subscribed to adds a
 // second subscription: Phoenix.PubSub delivers each broadcast once per
 // subscription, and a :pg join is a second membership. A callback that
-// runs again and again (rearm_callback: a handle_info, handle_cast or
+// runs again and again (runs_again_callback: a handle_info, handle_cast or
 // handle_call, a LiveView's handle_params or handle_event, a channel's
 // handle_in) and subscribes each time multiplies every later message
 // (oban's Sonar re-listened every 5 s; nerves_hub_web's device list
@@ -2177,7 +2190,7 @@ repeat_reach.guarded(s) :- state_decided(s).
 state_param(e, a - 1) :-
   otp_callback(e, m, n, _),
   function_def(e, m, n, a, _),
-  rearm_callback(n, a).
+  runs_again_callback(n, a).
 
 state_param(g, k) :- state_param(f, j), call_arg_forward(f, g, k, j).
 
@@ -2190,7 +2203,7 @@ state_decided(s) :- param_decided(s, f, k), state_param(f, k).
 repeated_subscription(m, e, f, id) :-
   otp_callback(e, m, n, _),
   function_def(e, m, n, a, _),
-  rearm_callback(n, a),
+  runs_again_callback(n, a),
   repeat_reach.reaches(e, id),
   subscription_call(id, f, "subscribe"),
   !entry_unsubscribes(e).

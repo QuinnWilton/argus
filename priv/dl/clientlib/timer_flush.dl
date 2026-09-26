@@ -104,3 +104,18 @@ flush_poll(id) :-
 
 // Prerequisites: include clientlib/imports.dl and otp.dl (for
 // resolved_arg) before this file.
+
+// ── A helper cancels the field ───────────────────────────────────────
+//
+// helper_cancels_field(caller, site, cancel, key): `caller`'s call at
+// `site`, in its own process, is to a function of its module that reads
+// the field under `key` and cancels it at `cancel` itself. The one
+// spelling mailbox's flush scope and its timer loop's cancel both read.
+.decl helper_cancels_field(caller: symbol, site: symbol, cancel: symbol, key: symbol)
+
+helper_cancels_field(g, s, cancel, key) :-
+  timer_cancel(cancel, c, "field", key, _),
+  call_instr(g, c, s),
+  function_def(c, mod, _, _, _),
+  function_def(g, mod, _, _, _),
+  !runs_elsewhere(g, c).

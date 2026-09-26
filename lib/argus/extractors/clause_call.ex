@@ -137,6 +137,7 @@ defmodule Argus.Extractors.ClauseCall do
   # reached only through the site.
   defp emit_always(facts, func_id, instrs, sites, tags, {mod, ending}) do
     ends = going_on(instrs, mod, ending)
+    handed = handed_on(instrs, mod, ending)
 
     tagged =
       for site <- sites,
@@ -161,7 +162,11 @@ defmodule Argus.Extractors.ClauseCall do
 
     for {{tag, _act}, [{_site, _tag, atom} | _] = group} <- Enum.sort(groups),
         ends_here = Enum.filter(ends, &MapSet.member?(reached[atom], &1)),
-        ends_here != [],
+        # A path the clause hands to handle_continue/2 goes on too, and
+        # asks nothing of the arm (the continue decides what comes next);
+        # a clause that arms and then only continues is a loop all the
+        # same (review 2, item 21: 567e3256 read it as no path on).
+        ends_here != [] or Enum.any?(handed, &MapSet.member?(reached[atom], &1)),
         without =
           Dispatch.reached_with(
             instrs,
@@ -210,6 +215,23 @@ defmodule Argus.Extractors.ClauseCall do
         not stops?(instrs, idx, instr),
         not ends_in?(instr, mod, ending),
         do: idx
+  end
+
+  # The returns that hand the process to handle_continue/2, and the tail
+  # calls into a function of the module every completion of which stops
+  # or continues: paths that go on without asking the loop's arm.
+  defp handed_on(instrs, mod, ending) do
+    for {instr, idx} <- Enum.with_index(instrs),
+        (instr == :return and continue_return?(instrs, idx)) or
+          (Instr.tail_call?(instr) and not raises?(instr) and ends_in?(instr, mod, ending)),
+        do: idx
+  end
+
+  defp continue_return?(instrs, idx) do
+    case Resolve.resolve_register(instrs, idx, {:x, 0}) do
+      {:ok, value} when is_tuple(value) and tuple_size(value) > 0 -> continues?(value)
+      _ -> false
+    end
   end
 
   defp ends_in?(instr, mod, ending) do

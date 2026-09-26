@@ -53,4 +53,38 @@ defmodule Argus.Soundness.MailboxTest do
       assert {:info, @ref_dropped, {M.SameBody, :handle_call, 3}} in fired([M.SameBody], :mailbox)
     end
   end
+
+  @unflushed "Timer cancelled without flushing its message"
+  @loop "Periodic timer loop armed again while it runs"
+
+  describe "a flush is its own caller's (review 2, item 19)" do
+    test "a helper's cancel two callers make, one of which flushes" do
+      assert {:warning, @unflushed, {M.FlushTwoCallers, :cancel_check, 1}} in fired(
+               [M.FlushTwoCallers],
+               :mailbox
+             )
+    end
+
+    test "a ref handed down to a cancel helper by two callers, one of which flushes" do
+      assert {:warning, @unflushed, {M.HandsDown, :stop, 1}} in fired([M.HandsDown], :mailbox)
+    end
+  end
+
+  describe "a periodic timer loop armed again while it runs (review 2, item 21)" do
+    for {mod, entry} <- [
+          {ContinueLoop, {:handle_cast, 2}},
+          {ContinueHelper, {:handle_cast, 2}},
+          {NilGuardRunning, {:handle_call, 3}},
+          {TruthyGuard, {:handle_call, 3}},
+          {HelperCancelsElsewhere, {:handle_cast, 2}},
+          {BranchCancel, {:handle_cast, 2}}
+        ] do
+      @mod Module.concat(M, mod)
+      @entry entry
+      test "#{inspect(mod)}" do
+        {f, a} = @entry
+        assert {:warning, @loop, {@mod, f, a}} in fired([@mod], :mailbox)
+      end
+    end
+  end
 end

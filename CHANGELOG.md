@@ -255,6 +255,18 @@ after any of them. startup's `has_later_sibling` reads it: only a closed
 list's last child is quiet. The start-order deadlock on a later sibling
 written with `Supervisor.child_spec/2` is reported now too.
 
+**Fixed.** Timer flushes and loops, review 2 items 19 and 21. A cancel a
+helper makes for several callers is flushed only when every caller not
+on the way out flushes (one caller's flush covered all). A timer loop's
+clause that arms and then continues is a loop; a nil test guards a
+second arm only when its not-empty side calls nothing
+(`field_nil_test`); a helper's cancel counts one level down and not in
+the arming function itself, whose own cancel must run on every path.
+"A helper cancels the field" is one word, `helper_cancels_field`
+(clientlib/timer_flush.dl); `runs_again_callback` and `start_callback`
+moved to clientlib/callbacks.dl; `timer_loop_rearmed` no longer drops
+rows under test (test_code.dl ranks them).
+
 ### Priors, round 3: tooling, and programs found on PATH
 
 **Added.** Schema 118. `tooling_module(mod, basis)` from a new
