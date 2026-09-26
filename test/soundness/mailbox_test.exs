@@ -141,4 +141,11 @@ defmodule Argus.Soundness.MailboxTest do
              :mailbox
            )
   end
+
+  test "a timed :DOWN wait whose after raises keeps the timed-wait finding" do
+    assert {:error, @timed_wait, {M.RaisingAfter, :await_downfall, 1}} in fired(
+             [M.RaisingAfter],
+             :mailbox
+           )
+  end
 end

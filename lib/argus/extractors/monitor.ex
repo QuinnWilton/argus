@@ -1094,10 +1094,13 @@ defmodule Argus.Extractors.Monitor do
     facts = emit_awaits_child_exit(facts, module_data, takes)
 
     Enum.reduce(functions, facts, fn {:function, name, arity, _entry, instrs}, acc ->
+      entries = Map.fetch!(takes, {name, arity})
+
       ctx = %{
         mod: mod,
         instrs: instrs,
-        takes: takes_at(Map.fetch!(takes, {name, arity})),
+        takes: takes_at(entries),
+        blocking_takes: takes_at(Enum.filter(entries, & &1.blocking)),
         collectors: collectors,
         tuple_collected: tuple_collected
       }
@@ -1119,15 +1122,21 @@ defmodule Argus.Extractors.Monitor do
   defp calls_to_walk(ctx) do
     indexed = Enum.with_index(ctx.instrs)
 
+    # The walks start from a wait with no `after` (or a collector): a
+    # timed receive's :DOWN clause collects on its own path once a walk
+    # runs, but starts none. A timed wait whose `after` raises (a
+    # liveness bound) is the timed-wait class's own shape (encore's
+    # madrigal seed), not a collection.
     waits_for_any? =
-      Enum.any?(ctx.takes, fn {_at, ref} -> ref == :any end) or
+      Enum.any?(ctx.blocking_takes, fn {_at, ref} -> ref == :any end) or
         Enum.any?(ctx.instrs, &collector_call?(&1, ctx))
 
     if waits_for_any? do
       for {instr, idx} <- indexed, Instr.call?(instr), do: idx
     else
       pinned =
-        for {_at, {:pinned, at, reg}} <- ctx.takes, do: origin_call(ctx.instrs, at, reg)
+        for {_at, {:pinned, at, reg}} <- ctx.blocking_takes,
+            do: origin_call(ctx.instrs, at, reg)
 
       flushed =
         for {instr, idx} <- indexed,

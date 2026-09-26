@@ -282,3 +282,27 @@ defmodule Argus.Test.Soundness.Mailbox.DotHelperLoop do
 
   defp schedule(s), do: Process.send_after(self(), :tick, s.interval)
 end
+
+defmodule Argus.Test.Soundness.Mailbox.RaisingAfter do
+  @moduledoc """
+  encore's madrigal seed: a timed wait for the :DOWN whose `after`
+  raises, and no demonitor. The :DOWN clause's take starts no walk of
+  its own, so the timed-wait class keeps it.
+  """
+  use GenServer
+  @impl true
+  def init(_), do: {:ok, %{}}
+  @impl true
+  def handle_call({:stop, pid}, _from, state), do: {:reply, await_downfall(pid), state}
+
+  defp await_downfall(pid) do
+    ref = Process.monitor(pid)
+    send(pid, :desist)
+
+    receive do
+      {:DOWN, ^ref, :process, _pid, reason} -> reason
+    after
+      60_000 -> raise "downfall never arrived"
+    end
+  end
+end
