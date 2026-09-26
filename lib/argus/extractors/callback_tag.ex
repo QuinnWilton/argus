@@ -38,8 +38,9 @@ defmodule Argus.Extractors.CallbackTag do
     is a catch-all for messages), so no tag can fail
   - `callback_drops(func, callback)` — the catch-all only logs or ignores
     the message (`MessageClauses.catch_all_drops?/2`)
-  - `callback_open(func, callback, shape)` — a clause takes the message
-    by its shape alone (`MessageClauses.open_shapes/2`)
+  - `callback_open(func, callback, shape, arity)` — a clause takes the
+    message by its shape alone, a tuple's arity where the head tests it
+    (`MessageClauses.open_clauses/2`)
   """
 
   @behaviour Argus.Extractor
@@ -90,9 +91,10 @@ defmodule Argus.Extractors.CallbackTag do
 
   defp emit_clauses(facts, func_id, callback, instrs) do
     facts =
-      instrs
-      |> MessageClauses.open_shapes({:x, 0})
-      |> Enum.reduce(facts, &add_fact(&2, :callback_open, [func_id, callback, to_string(&1)]))
+      for {shape, arity} <- MessageClauses.open_clauses(instrs, {:x, 0}), reduce: facts do
+        acc ->
+          add_fact(acc, :callback_open, [func_id, callback, to_string(shape), to_string(arity)])
+      end
 
     facts =
       for {tag, arity} <- MessageClauses.tag_shapes(instrs, {:x, 0}), reduce: facts do

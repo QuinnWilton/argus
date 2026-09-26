@@ -90,7 +90,7 @@ defmodule Argus.Soundness.MailboxTest do
 
   describe "review 2, items 23, 25, 26, 33 and 34" do
     test "the program's own async_nolink under a library's handle_info/2 (item 23)" do
-      assert {:warning, "async_nolink task's messages have no handle_info clause",
+      assert {:warning, "No handle_info/2 clause for a message the server is sent",
               {M.NolinkWarmer, :execute, 1}} in fired([M.NolinkWarmer], :mailbox)
     end
 
@@ -230,6 +230,38 @@ defmodule Argus.Soundness.MailboxTest do
                [W.StartTimerTwoTuple],
                :mailbox
              )
+    end
+  end
+
+  describe "an async_nolink task's reply and :DOWN (partial_handler's task_nolink folded)" do
+    alias Argus.Test.Fixtures.Hypothesized, as: H
+    alias Argus.Test.Soundness.Witness, as: W
+
+    @crash "No handle_info/2 clause for a message the server is sent"
+
+    test "neither message has a clause" do
+      assert {:warning, @crash, {H.NolinkPartialInfo, :handle_cast, 2}} in fired(
+               [H.NolinkPartialInfo],
+               :mailbox
+             )
+    end
+
+    test "the reply is taken and flushes the monitor, a crashing task's :DOWN is not" do
+      assert {:warning, @crash, {W.NolinkReplyOnly, :handle_call, 3}} in fired(
+               [W.NolinkReplyOnly],
+               :mailbox
+             )
+    end
+
+    test "a :DOWN clause for the :normal reason alone" do
+      assert {:warning, @crash, {W.NolinkDownNormalOnly, :handle_cast, 2}} in fired(
+               [W.NolinkDownNormalOnly],
+               :mailbox
+             )
+    end
+
+    test "the task started by a helper module on the server's stack" do
+      assert {:warning, @crash, {W.Jobs, :run, 2}} in fired([W.NolinkInHelper, W.Jobs], :mailbox)
     end
   end
 

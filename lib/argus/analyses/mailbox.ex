@@ -10,10 +10,9 @@ defmodule Argus.Analyses.Mailbox do
     with no clause for it. `source` says who writes it: `runtime`
     (monitors, trapped exits), `late_message` (a task, a timer, a
     subscription, a fun the callbacks run that they did not build),
-    `task_nolink` (an
-    `async_nolink` task's `reply` or `down`), `statem_timeout` (a timeout
-    of kind `missing` no clause handles), `statem_info` (a state without
-    the `:info` catch-all its siblings have).
+    `statem_timeout` (a timeout of kind `missing` no clause handles),
+    `statem_info` (a state without the `:info` catch-all its siblings
+    have).
   - `task_result_defect(func, site, kind)` — a `Task.async`
     `never_awaited`, `yield_linked` (collected with `Task.yield` in a
     process that does not trap exits) or `linked_in_library` (started in
@@ -41,8 +40,9 @@ defmodule Argus.Analyses.Mailbox do
     follows to it, a `timer` it arms for itself, the `:DOWN` of a
     `monitor` it takes, the close of a `socket` it makes active —
     `{:tcp_closed, …}` or `{:ssl_closed, …}` — the events of the `node`
-    monitoring it turns on, the output of a `port` it opens) that no
-    clause of its handle_info/2 takes:
+    monitoring it turns on, the output of a `port` it opens, the reply
+    and the `:DOWN` of a `task` it starts with async_nolink and does not
+    collect) that no clause of its handle_info/2 takes:
     `fallback` says what does instead — nothing (`crash`, a
     FunctionClauseError), a `catch_all` that only logs or ignores it, or
     GenServer's `default` handle_info/2, which logs it as an error; or,
@@ -117,18 +117,15 @@ defmodule Argus.Analyses.Mailbox do
           {:mod, :symbol, "the process module"},
           {:handler, :symbol,
            "the handle_info/2 function, or the statem state (name or handle_event)"},
-          {:source, :symbol,
-           "runtime | late_message | task_nolink | statem_timeout | statem_info"},
-          {:missing, :symbol,
-           "catch_all, reply | down for task_nolink, the timeout kind for statem_timeout"},
-          {:detail, :symbol, "the function starting the task, or the state name for statem_info"}
+          {:source, :symbol, "runtime | late_message | statem_timeout | statem_info"},
+          {:missing, :symbol, "catch_all, or the timeout kind for statem_timeout"},
+          {:detail, :symbol, "the state name for statem_info"}
         ],
         # A nolink task is one finding per start; a statem timeout one per
         # kind; the rest one per handler.
         key:
           {:source,
            %{
-             "task_nolink" => [:mod, :detail],
              "statem_timeout" => [:mod, :missing],
              default: [:mod, :handler, :missing, :detail]
            }},
@@ -231,14 +228,14 @@ defmodule Argus.Analyses.Mailbox do
           {:mod, :symbol, "the sending module"},
           {:func, :symbol,
            "the function that sends, arms the timer, monitors, makes the socket active, " <>
-             "turns on node monitoring or opens the port"},
+             "turns on node monitoring, opens the port or starts the task"},
           {:site, :symbol,
            "the send, the timer, the monitor, the socket's activation, the node " <>
-             "monitoring or the port's open"},
+             "monitoring, the port's open or the task's start"},
           {:message, :symbol,
            "the literal atom, {:tag, …}, {:DOWN, …}, {:tcp_closed, …}, {:ssl_closed, …}, " <>
-             "{:nodeup, …}, {:nodedown, …} or {port, {:data, …}}"},
-          {:source, :symbol, "send | timer | monitor | socket | node | port"},
+             "{:nodeup, …}, {:nodedown, …}, {port, {:data, …}} or {ref, …}"},
+          {:source, :symbol, "send | timer | monitor | socket | node | port | task"},
           {:server, :symbol, "the GenServer module whose handle_info/2 it reaches"},
           {:handler, :symbol, "its handle_info/2, or the gen_statem state function"},
           {:fallback, :symbol, "crash | catch_all | default | state_crash"}
@@ -605,30 +602,6 @@ defmodule Argus.Analyses.Mailbox do
     )
   end
 
-  def finding(:partial_handler, [mod, handler, "task_nolink", missing, start]) do
-    what =
-      case missing do
-        "reply" -> "the task's reply, `{ref, result}`"
-        _ -> "the task's exit, `{:DOWN, ref, :process, pid, reason}`"
-      end
-
-    Findings.new(
-      :warning,
-      "async_nolink task's messages have no handle_info clause",
-      "#{start} starts a task with Task.Supervisor.async_nolink from #{mod}'s " <>
-        "callbacks and does not collect it there, so #{what} lands in " <>
-        "#{handler} — which matches other messages and has no clause for it. " <>
-        "The first task to finish is a FunctionClauseError.",
-      at: Findings.at_func(start),
-      at_label: "async_nolink started here",
-      help: [
-        "add `handle_info({ref, result}, state) when is_reference(ref)` and " <>
-          "`handle_info({:DOWN, ref, :process, _pid, reason}, state)` clauses",
-        "or collect the task where it is started with Task.yield/2 and Task.shutdown/1"
-      ]
-    )
-  end
-
   def finding(:task_result_defect, [func, id, "never_awaited"]) do
     Findings.new(
       :warning,
@@ -901,7 +874,7 @@ defmodule Argus.Analyses.Mailbox do
   # a call or cast with a tag the server cannot take is. What the runtime
   # writes when something else happens — a monitored process ends, a node
   # joins or leaves, a port's program writes — is :warning.
-  defp crash_severity(source) when source in ["monitor", "node", "port"], do: :warning
+  defp crash_severity(source) when source in ["monitor", "node", "port", "task"], do: :warning
   defp crash_severity(_sent_or_armed), do: :error
 
   defp socket_kind("{:ssl_closed, …}"), do: "a TLS"
@@ -918,6 +891,18 @@ defmodule Argus.Analyses.Mailbox do
   defp sent("timer", func, message),
     do: "#{Findings.call_name(func)} arms a timer that sends #{message} to"
 
+  defp sent("task", func, "{ref, …}"),
+    do:
+      "#{Findings.call_name(func)} starts a task with Task.Supervisor.async_nolink from a " <>
+        "server's callbacks and does not collect it there, so the task's reply, " <>
+        "{ref, result}, goes to"
+
+  defp sent("task", func, _down),
+    do:
+      "#{Findings.call_name(func)} starts a task with Task.Supervisor.async_nolink from a " <>
+        "server's callbacks and does not collect it there, so the task's {:DOWN, …}, sent " <>
+        "when it ends (after its reply, or in its place when it crashes), goes to"
+
   defp sent("node", func, message),
     do:
       "#{Findings.call_name(func)} turns on node monitoring from a server's callbacks, so " <>
@@ -932,6 +917,7 @@ defmodule Argus.Analyses.Mailbox do
 
   defp sent_label("monitor"), do: "the :DOWN of this monitor"
   defp sent_label("timer"), do: "the timer is armed here"
+  defp sent_label("task"), do: "the task is started here"
   defp sent_label("node"), do: "node monitoring is turned on here"
   defp sent_label("port"), do: "the port is opened here"
   defp sent_label(_send), do: "the message is sent here"
@@ -941,6 +927,13 @@ defmodule Argus.Analyses.Mailbox do
       "add a `handle_info({:DOWN, ref, type, object, reason}, state)` clause that takes " <>
         "every reason and releases what the monitor was for",
       "or wait for the :DOWN where the monitor is taken, or demonitor it with `[:flush]`"
+    ]
+
+  defp unhandled_help("task", _fallback, _message),
+    do: [
+      "add `handle_info({ref, result}, state) when is_reference(ref)` and " <>
+        "`handle_info({:DOWN, ref, :process, _pid, reason}, state)` clauses",
+      "or collect the task where it is started with Task.yield/2 and Task.shutdown/1"
     ]
 
   defp unhandled_help("node", _fallback, message),

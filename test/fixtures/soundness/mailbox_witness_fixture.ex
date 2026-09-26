@@ -475,3 +475,106 @@ defmodule Argus.Test.Soundness.Witness.StartTimerElsewhere do
   @impl true
   def handle_info(:tick, state), do: {:noreply, state}
 end
+
+# ── An async_nolink task's reply and :DOWN ──────────────────────────────
+
+defmodule Argus.Test.Soundness.Witness.NolinkReplyOnly do
+  @moduledoc false
+  # Takes the task's reply, flushing its monitor there; a task that
+  # crashes sends a :DOWN in its place, and nothing takes it.
+  use GenServer
+
+  def start_link(sup), do: GenServer.start_link(__MODULE__, sup)
+
+  @impl true
+  def init(sup), do: {:ok, %{sup: sup, waiting: %{}}}
+
+  @impl true
+  def handle_call({:run, work}, from, state) do
+    task = Task.Supervisor.async_nolink(state.sup, work)
+    {:noreply, put_in(state.waiting[task.ref], from)}
+  end
+
+  @impl true
+  def handle_info({ref, result}, state) when is_reference(ref) do
+    Process.demonitor(ref, [:flush])
+    {from, waiting} = Map.pop(state.waiting, ref)
+    GenServer.reply(from, result)
+    {:noreply, %{state | waiting: waiting}}
+  end
+end
+
+defmodule Argus.Test.Soundness.Witness.NolinkDownNormalOnly do
+  @moduledoc false
+  # A :DOWN clause for the task that ends :normal: a crash's reason
+  # falls through.
+  use GenServer
+
+  def start_link(sup), do: GenServer.start_link(__MODULE__, sup)
+
+  @impl true
+  def init(sup), do: {:ok, %{sup: sup}}
+
+  @impl true
+  def handle_cast({:run, work}, state) do
+    Task.Supervisor.async_nolink(state.sup, work)
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_info({ref, _result}, state) when is_reference(ref), do: {:noreply, state}
+  def handle_info({:DOWN, _ref, :process, _pid, :normal}, state), do: {:noreply, state}
+end
+
+defmodule Argus.Test.Soundness.Witness.Jobs do
+  @moduledoc false
+  def run(sup, work), do: Task.Supervisor.async_nolink(sup, work)
+end
+
+defmodule Argus.Test.Soundness.Witness.NolinkInHelper do
+  @moduledoc false
+  # A helper module starts the task on the server's stack.
+  use GenServer
+
+  def start_link(sup), do: GenServer.start_link(__MODULE__, sup)
+
+  @impl true
+  def init(sup), do: {:ok, %{sup: sup}}
+
+  @impl true
+  def handle_cast({:run, work}, state) do
+    Argus.Test.Soundness.Witness.Jobs.run(state.sup, work)
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_info(:tick, state), do: {:noreply, state}
+end
+
+defmodule Argus.Test.Soundness.Witness.NolinkTupleClause do
+  @moduledoc false
+  # Quiet: an unguarded 2-tuple clause takes the task's reply (the
+  # nerves_hub_link SupportScriptsManager shape), and a :DOWN clause for
+  # every reason its end.
+  use GenServer
+
+  def start_link(sup), do: GenServer.start_link(__MODULE__, sup)
+
+  @impl true
+  def init(sup), do: {:ok, %{sup: sup}}
+
+  @impl true
+  def handle_cast({:run, work}, state) do
+    Task.Supervisor.async_nolink(state.sup, work)
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_info({ref, {result, output}}, state) do
+    Process.demonitor(ref, [:flush])
+    {:noreply, Map.put(state, :last, {result, output})}
+  end
+
+  def handle_info({:DOWN, _ref, :process, _pid, reason}, state),
+    do: {:noreply, Map.put(state, :failed, reason)}
+end

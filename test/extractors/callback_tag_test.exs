@@ -10,7 +10,16 @@ defmodule Argus.Extractors.CallbackTagTest do
 
     %{
       drops: for([f, "handle_info"] <- Map.get(facts, :callback_drops, []), do: short.(f)),
-      open: for([f, "handle_info", s] <- Map.get(facts, :callback_open, []), do: {short.(f), s}),
+      open:
+        for(
+          [f, "handle_info", s, _arity] <- Map.get(facts, :callback_open, []),
+          do: {short.(f), s}
+        ),
+      arities:
+        for(
+          [f, "handle_info", s, arity] <- Map.get(facts, :callback_open, []),
+          do: {short.(f), s, arity}
+        ),
       shapes:
         for(
           [f, "handle_info", tag, arity] <- Map.get(facts, :callback_tag_shape, []),
@@ -105,5 +114,14 @@ defmodule Argus.Extractors.CallbackTagTest do
     # that is open.
     refute Enum.any?(open, &match?({"Handled:handle_info/2", _}, &1))
     refute Enum.any?(open, &match?({"Listeners:handle_info/2", _}, &1))
+  end
+
+  test "an open tuple clause carries the arity its head tests" do
+    alias Argus.Test.Soundness.Witness, as: W
+
+    {:ok, facts} = Argus.Pipeline.extract([W.NolinkReplyOnly], extractors: [CallbackTag])
+
+    # `{ref, result} when is_reference(ref)` takes 2-tuples: no :DOWN.
+    assert for([_f, "handle_info", s, a] <- facts[:callback_open], do: {s, a}) == [{"tuple", "2"}]
   end
 end

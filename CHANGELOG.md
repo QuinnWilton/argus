@@ -47,6 +47,23 @@ events and port output are judged where no clause takes them at all
 `:warning`), not in a catch-all; a start timer is judged as every timer
 is (`:error`).
 
+**Changed.** An async_nolink task's messages are `unhandled_info`'s
+source `task` ("No handle_info/2 clause for a message the server is
+sent", `:warning`, anchored at the `Task.Supervisor.async_nolink` call);
+`partial_handler`'s `task_nolink` source and its title "async_nolink
+task's messages have no handle_info clause" are gone. The task sends the
+server that starts it and does not collect it there its reply, `{ref,
+…}`, taken by a clause headed by a reference or any tuple, and a
+`:DOWN`, taken as a monitor's is: by a clause for every reason, or an
+open clause that can hold five elements. A reply clause that flushes the
+monitor (`{ref, result} when is_reference(ref)`) takes no `:DOWN`, so a
+task that crashes is still reported; a `:DOWN` clause for `:normal`
+alone now is too. The start may be in any module on the server's stack.
+
+**Changed.** Schema 134. `callback_open(func, callback, shape, arity)`
+gains `arity`: a tuple's size where the open clause's head tests it,
+else -1 (`MessageClauses.open_clauses/2`). Read by mailbox.
+
 **Added.** Schema 133. `start_timer_arm(id, func, target)`
 (ErrorHandling): an `:erlang.start_timer/3,4` at `id` arms its
 `{:timeout, ref, msg}` for the calling process (`self`) or another

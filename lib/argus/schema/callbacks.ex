@@ -105,15 +105,17 @@ defmodule Argus.Schema.Callbacks do
         fields: [
           {:func, :symbol, "the callback"},
           {:callback, :symbol, "'handle_call' | 'handle_cast' | 'handle_info'"},
-          {:shape, :symbol, "'any' | 'tuple'"}
+          {:shape, :symbol, "'any' | 'tuple'"},
+          {:arity, :number, "a tuple's arity where the head tests it, else -1"}
         ],
         doc: """
         Some clause other than a catch-all takes the message by its shape \
         alone, never comparing it or its tag to a value: `msg when \
         is_atom(msg)` (`any`), `{ref, result} when is_reference(ref)` \
-        (`tuple`, a tuple of any tag). `callback_tag` names nothing such a \
-        clause takes, so a rule asking whether a message is taken asks \
-        this too.
+        (`tuple`, a tuple of any tag, of `arity` 2). `callback_tag` names \
+        nothing such a clause takes, so a rule asking whether a message is \
+        taken asks this too; one asking of a tuple of known size (a \
+        monitor's 5-element `:DOWN`) asks the arity as well.
         """
       },
       %{

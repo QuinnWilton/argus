@@ -96,13 +96,30 @@ defmodule Argus.Extractors.CallbackTag.MessageClauses do
   """
   @spec open_shapes([tuple()], Instr.reg()) :: [:any | :tuple]
   def open_shapes(instrs, register) do
+    instrs
+    |> open_clauses(register)
+    |> Enum.map(&elem(&1, 0))
+    |> Enum.uniq()
+    |> Enum.sort()
+  end
+
+  @doc """
+  `open_shapes/2` with the tuple's arity where the path through the
+  heads tested it: `{:tuple, 2}` for `{ref, result} when
+  is_reference(ref)`, `{:tuple, -1}` for `msg when is_tuple(msg)`, and
+  `{:any, -1}`.
+  """
+  @spec open_clauses([tuple()], Instr.reg()) :: [{:any | :tuple, integer()}]
+  def open_clauses(instrs, register) do
     entries = entries(instrs, register)
     catch_all = for {idx, %{tested: false}} <- entries, into: MapSet.new(), do: idx
 
     entries
     |> Enum.flat_map(fn
-      {idx, %{tested: true, valued: false, tuple: tuple?}} ->
-        if MapSet.member?(catch_all, idx), do: [], else: [if(tuple?, do: :tuple, else: :any)]
+      {idx, %{tested: true, valued: false, tuple: tuple?, arity: arity}} ->
+        if MapSet.member?(catch_all, idx),
+          do: [],
+          else: [{if(tuple?, do: :tuple, else: :any), if(tuple?, do: arity || -1, else: -1)}]
 
       _entry ->
         []

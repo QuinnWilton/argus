@@ -83,17 +83,23 @@ defmodule Argus.Analyses.MailboxInfoTest do
       skip_without_souffle()
 
       # The macros are left out: they are a library's.
+      task = fn results ->
+        for [_, _, _, message, "task", server | _] <- results["unhandled_info"],
+            do: {server, message}
+      end
+
       results = analyze([L.MonitorsInMacro, L.NolinkInMacro])
       assert partial(results, "runtime") == []
-      assert partial(results, "task_nolink") == []
+      assert task.(results) == []
 
       results = analyze([L.MonitorsInMacro, L.MonitorMacro, L.NolinkInMacro, L.NolinkMacro])
 
       assert Enum.map(partial(results, "runtime"), fn [mod, _f] -> mod end) ==
                ["Argus.Test.Fixtures.LateMessage.MonitorsInMacro"]
 
-      assert partial(results, "task_nolink") |> Enum.map(&hd/1) |> Enum.uniq() ==
-               ["Argus.Test.Fixtures.LateMessage.NolinkInMacro"]
+      # The macro's `{ref, :done} when is_reference(ref)` takes the reply;
+      # nothing takes the task's :DOWN.
+      assert task.(results) == [{"Argus.Test.Fixtures.LateMessage.NolinkInMacro", "{:DOWN, …}"}]
     end
 
     test "a start_timer's 3-tuple is not the idle :timeout; a captured or mixed fun is unseen" do

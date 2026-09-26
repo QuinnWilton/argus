@@ -30,9 +30,8 @@
 // `partial_handler(mod, handler, source, missing, detail)` — a message
 //   with no clause for it. `source` says who writes it: "runtime" (the
 //   process monitors or traps exits), "late_message" (its callbacks reach
-//   a task, timer, subscription or a fun they did not build), "task_nolink" (an
-//   async_nolink task started in `detail`; `missing` is "reply" or
-//   "down"), "statem_timeout" (`handler` is the state arming a timeout of
+//   a task, timer, subscription or a fun they did not build),
+//   "statem_timeout" (`handler` is the state arming a timeout of
 //   kind `missing`), "statem_info" (the state function `handler`, for
 //   state `detail`, lacks the :info catch-all its siblings have).
 // `unconsumed_monitor(mod, func, site, kind)` — a monitor left live:
@@ -271,7 +270,7 @@ timer_refused(h, id) :-
   callback_tag_shape(h, "handle_info", tag, _),
   !callback_tag_shape(h, "handle_info", tag, ar),
   !callback_tag_shape(h, "handle_info", tag, -1),
-  !callback_open(h, "handle_info", _).
+  !callback_open(h, "handle_info", _, _).
 
 .decl late_message_source(mod: symbol)
 
@@ -745,8 +744,8 @@ task_yield_site(owner, "yield_linked", id) :-
 // A task a function starts linked to itself (task_start_api "linked",
 // clientlib/runs_elsewhere.dl: Task.async, Task.Supervisor.async), which
 // must be awaited or yielded. Task.Supervisor.async_nolink is not one: it
-// is not linked to the caller, and its messages are the task_nolink
-// rules' below.
+// is not linked to the caller, and its messages are unhandled_info's
+// source "task" below.
 .decl task_async_call(func: symbol, id: symbol)
 
 task_async_call(func, id) :-
@@ -866,41 +865,6 @@ runs_in_callers(func, mod) :-
   task_owner(func, mod),
   process_behaviour_module(mod),
   !server_side(mod, func).
-
-// ── async_nolink whose messages nothing handles ───────────────────────
-//
-// Task.Supervisor.async_nolink sends the caller two messages it did not
-// ask for by name: `{ref, result}` and `{:DOWN, ref, :process, pid,
-// reason}`. A GenServer that starts one from a callback and does not
-// collect it there must handle both in handle_info/2; a partial
-// handle_info is a FunctionClauseError on the first task that finishes
-// (archethic-node#1306, sentry-elixir#172, Engram#1552). GenServer's
-// default handle_info logs and ignores, so only a module with its own
-// partial handle_info/2 is at risk. An async_nolink inside a task the
-// server starts sends its messages to the task.
-// A library-written handle_info/2 (a `use` a library's macro wrote)
-// steps aside only when the message's source is library-written too:
-// the program's own async_nolink under a library's handle_info/2 lands
-// there all the same (review 2, item 23: 535216a4 asked of the handler).
-.init nolink_reach = SameProcessReachCut
-
-nolink_reach.cut(f, g) :- side_call(f, g).
-
-nolink_reach.seed(f, f) :- mailbox_writer(_, f, "task_nolink").
-
-partial_handler(mod, h, "task_nolink", "reply", s) :-
-  process_entry(mod, c),
-  nolink_reach.reaches(c, s),
-  partial_handle_info(mod, h),
-  !library_written(s),
-  !callback_ref_head(h, "handle_info").
-
-partial_handler(mod, h, "task_nolink", "down", s) :-
-  process_entry(mod, c),
-  nolink_reach.reaches(c, s),
-  partial_handle_info(mod, h),
-  !library_written(s),
-  !callback_tag(h, "handle_info", ":DOWN").
 
 // ══ Monitors nobody waits for ═══════════════════════════════════════
 // What the function runs in its own process, apart from the logging and
@@ -1409,6 +1373,7 @@ info_reach.seed(f) :- socket_activation(f, _, _).
 info_reach.seed(f) :- socket_opened(f, _).
 info_reach.seed(f) :- node_events(_, f, _).
 info_reach.seed(f) :- port_opened(_, f).
+info_reach.seed(f) :- mailbox_writer(_, f, "task_nolink").
 
 .decl runs_in_server(mod: symbol, func: symbol)
 
@@ -1459,6 +1424,13 @@ sends_down("process").
 sends_down("port").
 sends_down("dynamic").
 
+// The :DOWN the runtime sends for the monitor at `id`, and the monitor's
+// type: a monitor's own, or, for an async_nolink task, a process's.
+.decl down_type_at(id: symbol, type: symbol)
+
+down_type_at(id, t) :- info_message(_, _, id, "{:DOWN, …}", "monitor"), monitor_type(id, t).
+down_type_at(id, "process") :- info_message(_, _, id, "{:DOWN, …}", "task").
+
 // A clause of `h` takes every :DOWN the monitor at `id` sends, whatever
 // reason the runtime gives it (callback_takes_down): one for its type,
 // or for any type. The ref, the object and the state are the program's
@@ -1468,9 +1440,31 @@ sends_down("dynamic").
 // whose type is not a literal is read as a process's.
 .decl down_taken(handler: symbol, id: symbol)
 
-down_taken(h, id) :- monitor_type(id, t), callback_takes_down(h, "handle_info", t).
-down_taken(h, id) :- monitor_type(id, _), callback_takes_down(h, "handle_info", "any").
-down_taken(h, id) :- monitor_type(id, "dynamic"), callback_takes_down(h, "handle_info", "process").
+down_taken(h, id) :- down_type_at(id, t), callback_takes_down(h, "handle_info", t).
+down_taken(h, id) :- down_type_at(id, _), callback_takes_down(h, "handle_info", "any").
+down_taken(h, id) :- down_type_at(id, "dynamic"), callback_takes_down(h, "handle_info", "process").
+
+// ── An async_nolink task's reply and its :DOWN ───────────────────────
+//
+// Task.Supervisor.async_nolink sends the process that starts it two
+// messages it did not ask for by name: the task's reply, `{ref, result}`,
+// and, the task being monitored, `{:DOWN, ref, :process, pid, reason}`
+// when it ends — after the reply, or in its place when it crashes
+// (archethic-node#1306, sentry-elixir#172, Engram#1552). A start the
+// function collects where it starts (an await, a yield, a shutdown:
+// mailbox_writer "task") leaves neither behind. A start a library's macro
+// wrote (library_written) is that library's protocol with its own
+// handle_info/2; the program's own start under a library's handle_info/2
+// lands there all the same (review 2, item 23).
+info_message(m, f, id, "{ref, …}", "task") :-
+  mailbox_writer(id, f, "task_nolink"),
+  runs_in_server(m, f),
+  !library_written(f).
+
+info_message(m, f, id, "{:DOWN, …}", "task") :-
+  mailbox_writer(id, f, "task_nolink"),
+  runs_in_server(m, f),
+  !library_written(f).
 
 // ── Node events and a port's output ─────────────────────────────────
 //
@@ -1704,7 +1698,7 @@ info_taken(h, msg) :-
   timer_tag(id, tag, ar),
   callback_tag_shape(h, "handle_info", tag, ar).
 
-info_taken(h, msg) :- info_fallback(_, msg, h, _), callback_open(h, "handle_info", "any").
+info_taken(h, msg) :- info_fallback(_, msg, h, _), callback_open(h, "handle_info", "any", _).
 
 // A port's output is told apart by the `{:data, …}` inside it: a clause
 // that compares :data anywhere may take it (`{^port, {:data, line}}`).
@@ -1715,28 +1709,55 @@ info_taken(h, "{port, {:data, …}}") :-
 info_taken(h, msg) :-
   info_fallback(_, msg, h, _),
   match("[{].*", msg),
-  callback_open(h, "handle_info", "tuple").
+  callback_open(h, "handle_info", "tuple", _).
 
-// A message some clause of `h` takes as the source at `id` sends it. A
-// monitor's :DOWN is taken by a clause for every reason of it
-// (down_taken), or by one that takes any tuple; a message the program
-// writes, by its tag or its shape (info_taken).
+// How the message at `id` is told taken: a :DOWN the runtime sends for a
+// monitor (a monitor's, a task's) by a clause for every reason of it
+// ("reason"), anything else by its tag or its shape ("tag").
+.decl taken_by(id: symbol, message: symbol, how: symbol)
+
+taken_by(id, msg, "reason") :- down_type_at(id, _), info_message(_, _, id, msg, _), msg = "{:DOWN, …}".
+
+taken_by(id, msg, "tag") :-
+  info_message(_, _, id, msg, source),
+  (source = "send" ; source = "timer" ; source = "socket" ; source = "node" ; source = "port").
+
+taken_by(id, "{ref, …}", "tag") :- info_message(_, _, id, "{ref, …}", "task").
+
+// A message some clause of `h` takes as the source at `id` sends it: a
+// runtime :DOWN by a clause for every reason of it (down_taken), or by
+// one that takes any tuple; a message the program writes by its tag or
+// its shape (info_taken); a task's reply by a clause headed by a
+// reference as well.
 .decl taken_at(handler: symbol, id: symbol, message: symbol)
 
 taken_at(h, id, msg) :-
-  info_message(_, _, id, msg, "monitor"),
-  info_fallback(_, msg, h, _),
+  taken_by(id, msg, "reason"),
+  info_message(m, _, id, msg, _),
+  info_fallback(m, msg, h, _),
   down_taken(h, id).
 
+// An open clause takes a :DOWN only if it can hold five elements: a
+// task's `{ref, result} when is_reference(ref)` takes no :DOWN.
 taken_at(h, id, msg) :-
-  info_message(_, _, id, msg, "monitor"),
-  info_fallback(_, msg, h, _),
-  (callback_open(h, "handle_info", "any") ; callback_open(h, "handle_info", "tuple")).
+  taken_by(id, msg, "reason"),
+  info_message(m, _, id, msg, _),
+  info_fallback(m, msg, h, _),
+  (callback_open(h, "handle_info", "any", _) ;
+   callback_open(h, "handle_info", "tuple", -1) ;
+   callback_open(h, "handle_info", "tuple", 5)).
 
 taken_at(h, id, msg) :-
-  info_message(_, _, id, msg, source),
-  source != "monitor",
+  taken_by(id, msg, "tag"),
+  info_message(m, _, id, msg, _),
+  info_fallback(m, msg, h, _),
   info_taken(h, msg).
+
+taken_at(h, id, "{ref, …}") :-
+  taken_by(id, "{ref, …}", "tag"),
+  info_message(m, _, id, "{ref, …}", _),
+  info_fallback(m, "{ref, …}", h, _),
+  callback_ref_head(h, "handle_info").
 
 // Where a catch-all's dropping the message is judged: a message the
 // program sends or arms, a monitor's :DOWN, a socket's close. Every
