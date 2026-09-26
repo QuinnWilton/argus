@@ -9,6 +9,7 @@ defmodule Argus.Soundness.MailboxTest do
 
   import Argus.Test.Soundness, only: [fired: 2]
 
+  alias Argus.Test.Soundness.Census.Mailbox, as: C
   alias Argus.Test.Soundness.Mailbox, as: M
 
   # The monitor-leak model (docs/design/monitor-leaks.md) reports these
@@ -393,5 +394,44 @@ defmodule Argus.Soundness.MailboxTest do
              [M.RaisingAfter],
              :mailbox
            )
+  end
+
+  # The exclusion census's mailbox holes (docs/design/exclusions.md), over
+  # one fixture set (test/fixtures/soundness/mailbox_census.ex).
+  @census [
+    C.TickRefresher,
+    C.DefaultRefresher,
+    C.CatchAllRefresher,
+    C.RefConsumer,
+    C.TupleConsumer,
+    C.Audit,
+    C.AuditedCounter,
+    C.AuditedCaster,
+    C.SelfCaster,
+    C.HandshakeConn,
+    C.RetryConn,
+    C.DroppedWatchdog,
+    C.FlushedWatchdog
+  ]
+
+  defp census_quiet?(title, mod),
+    do: not Enum.any?(fired(@census, :mailbox), &match?({_, ^title, {^mod, _, _}}, &1))
+
+  # census: task-reply
+  # "Async task never awaited" was excused by any handle_info/2, and `use
+  # GenServer` injects one.
+  describe "census hole: a task nobody collects in a GenServer" do
+    @never "Async task never awaited"
+
+    for mod <- [C.TickRefresher, C.DefaultRefresher, C.CatchAllRefresher] do
+      test "#{inspect(mod)}: no callback takes the task's reply" do
+        assert {:warning, @never, {unquote(mod), :handle_cast, 2}} in fired(@census, :mailbox)
+      end
+    end
+
+    test "a reply taken by its reference, or by a tuple of any tag, is quiet" do
+      assert census_quiet?(@never, C.RefConsumer)
+      assert census_quiet?(@never, C.TupleConsumer)
+    end
   end
 end

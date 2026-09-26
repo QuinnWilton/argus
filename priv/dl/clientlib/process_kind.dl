@@ -22,18 +22,6 @@ behaviour_module(mod) :- implements_behaviour(mod, _).
 
 has_handle_info(mod) :- function_def(_, mod, "handle_info", _, _).
 
-// A callback that takes arbitrary messages from the mailbox: a
-// handle_info/2, whatever behaviour hosts it (GenServer, LiveView,
-// Phoenix.Tracker, a hand-rolled loop delegating to it), or a
-// gen_statem's handle_event/4.
-.decl mailbox_handler(mod: symbol)
-
-mailbox_handler(mod) :- function_def(_, mod, "handle_info", 2, _).
-
-mailbox_handler(mod) :-
-  statem_process(mod),
-  function_def(_, mod, "handle_event", 4, _).
-
 // A handle_info/2 with no catch-all: a message no clause matches is a
 // FunctionClauseError, not the default log-and-continue.
 .decl partial_handle_info(mod: symbol, func: symbol)

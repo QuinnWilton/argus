@@ -152,14 +152,19 @@ defmodule Argus.Test.Fixtures.PlainTaskConsumer do
   @moduledoc false
   # Declares no behaviour argus knows: its handle_info/2 is invoked by a
   # hosting process (a Phoenix.Tracker shard, a hand-rolled loop) that
-  # delegates messages to it. The task reply has somewhere to land.
+  # delegates messages to it. A clause headed by a reference takes the
+  # task's reply. (It keeps the result: a clause that returned the state
+  # unchanged, as the catch-all does, would compile into the catch-all,
+  # which drops the reply.)
 
   def start_work(sup, work) do
     Task.Supervisor.async(sup, fn -> work.() end)
     :ok
   end
 
-  def handle_info({ref, _result}, state) when is_reference(ref), do: {:noreply, state}
+  def handle_info({ref, result}, state) when is_reference(ref),
+    do: {:noreply, Map.put(state, :result, result)}
+
   def handle_info(_msg, state), do: {:noreply, state}
 end
 

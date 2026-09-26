@@ -75,6 +75,14 @@ the peer makes itself: `{:normal, _}` or `{{:shutdown, _}, _}`. 1 row
 comes (OTP's `net_kernel:request/1`, whose peer stops only with crash
 reasons: false).
 
+**Fixed.** "Async task never awaited" was excused by any handle_info/2 in
+the module, and `use GenServer` injects one: the class could never fire
+for an Elixir GenServer. The reply counts as collected when a clause
+takes it (`reply_taken`): one headed by a reference in the starting
+module, a handle_info/2 of that module that collects a task, or, on the
+starting server's stack, a clause open to a tuple of any tag. The
+clientlib's `mailbox_handler` goes. No row moves.
+
 ### Races by their harm
 
 **Changed.** A check-then-act pair is reported when a rival can land on

@@ -537,16 +537,69 @@ task_factory(func, id) :-
 // transitively). The task reference is either discarded or returned
 // to a caller that may not await it.
 //
-// Suppressed for a module with a callback that can consume task results
-// from its mailbox (mailbox_handler: any handle_info/2, or a gen_statem's
-// handle_event/4), which collects them there rather than by an explicit
-// await, and for task factories that return the task to the caller.
+// The task's reply, `{ref, result}`, and its :DOWN land in the mailbox of
+// the process that started it. The start is collected where the path
+// awaits, yields or shuts the task down (await_reach), where the function
+// hands the task to its caller (task_factory), and where the task starts
+// on a server's own stack whose mailbox callback takes the reply by its
+// shape (reply_taken). A handle_info/2 that takes other messages only
+// crashes on the reply, and a catch-all — the one `use GenServer`
+// injects, or the program's own — drops it with the result.
 task_result_defect(func, id, "never_awaited") :-
   task_async_call(func, id),
   !await_reach.reaches(func),
-  function_def(func, mod, _, _, _),
-  !mailbox_handler(mod),
-  !task_factory(func, id).
+  !task_factory(func, id),
+  !reply_taken(func).
+
+// A mailbox callback takes the reply of the task started at `func`:
+// - a handle_info/2 clause headed by a reference (`{ref, result} when
+//   is_reference(ref)`) in the starting function's own module — a clause
+//   written for task replies, whichever process of the module's runs it
+//   (a LiveView's helper, a module whose host delegates its messages) —
+//   or a handle_info/2 of that module that collects a task where it takes
+//   the reply (an await, a yield or a shutdown on its stack: Phoenix.
+//   Presence's `{task_ref, {:phoenix, ref, diffs}}` clause shuts the task
+//   down);
+// - or, on the stack of a server that starts the task (task_runs_in:
+//   its callbacks' own module code, or any module's code a started
+//   server runs), that server's handle_info/2 clause headed by a
+//   reference or open to a tuple of any tag (`{_ref, result}`), or its
+//   gen_statem :info clause open to a tuple of any tag.
+.decl reply_taken(func: symbol)
+
+reply_taken(f) :-
+  task_async_call(f, _),
+  function_def(f, m, _, _, _),
+  function_def(h, m, "handle_info", 2, _),
+  callback_ref_head(h, "handle_info").
+
+reply_taken(f) :-
+  task_async_call(f, _),
+  function_def(f, m, _, _, _),
+  function_def(h, m, "handle_info", 2, _),
+  await_reach.reaches(h).
+
+reply_taken(f) :-
+  task_async_call(f, _),
+  task_runs_in(m, f),
+  function_def(h, m, "handle_info", 2, _),
+  takes_task_reply(h).
+
+reply_taken(f) :-
+  task_async_call(f, _),
+  task_runs_in(m, f),
+  statem_info_open(m, _, "tuple").
+
+.decl task_runs_in(mod: symbol, func: symbol)
+
+task_runs_in(m, f) :- task_async_call(f, _), server_side(m, f).
+task_runs_in(m, f) :- task_async_call(f, _), runs_in_server(m, f).
+
+.decl takes_task_reply(handler: symbol)
+
+takes_task_reply(h) :- callback_ref_head(h, "handle_info").
+takes_task_reply(h) :- callback_open(h, "handle_info", "tuple", 2).
+takes_task_reply(h) :- callback_open(h, "handle_info", "tuple", -1).
 
 // ── Yielding on a linked task ────────────────────────────────────────
 //
@@ -1283,6 +1336,7 @@ info_reach.seed(f) :- socket_opened(f, _).
 info_reach.seed(f) :- node_events(_, f, _).
 info_reach.seed(f) :- port_opened(_, f).
 info_reach.seed(f) :- mailbox_writer(_, f, "task_nolink").
+info_reach.seed(f) :- task_async_call(f, _).
 info_reach.seed(f) :- late_wait(_, f, _).
 info_reach.seed(f) :- link_site(_, f).
 

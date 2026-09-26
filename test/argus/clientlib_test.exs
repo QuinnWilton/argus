@@ -26,7 +26,6 @@ defmodule Argus.ClientlibTest do
   out("site", id, c) :- site_catches_class(id, _, c).
   out("process", m, "") :- process_module(m).
   out("statem", m, "") :- statem_process(m).
-  out("mailbox", m, "") :- mailbox_handler(m).
   out("partial", m, f) :- partial_handle_info(m, f).
   out("sibling", a, b) :- sibling(_, a, b).
   out("sup_op", f, op) :- sup_management_call(_, f, _, op, _).
@@ -146,11 +145,9 @@ defmodule Argus.ClientlibTest do
     assert out["site"] == [{"t1", "exit"}, {"t2", "error"}, {"t2", "exit"}, {"t2", "throw"}]
   end
 
-  test "process: behaviour modules, statems, mailbox handlers, partial handle_info", %{out: out} do
+  test "process: behaviour modules, statems, partial handle_info", %{out: out} do
     assert out["process"] == [{"M", ""}, {"S", ""}, {"T", ""}, {"W", ""}]
     assert out["statem"] == [{"S", ""}]
-    # M and T define handle_info/2; S is a statem with handle_event/4.
-    assert out["mailbox"] == [{"M", ""}, {"S", ""}, {"T", ""}]
     # T's handle_info has a catch-all; M's does not.
     assert out["partial"] == [{"M", "M:handle_info/2"}]
   end
