@@ -94,22 +94,20 @@ remote_pid_probe(f, a, id, bif, api, kind) :-
 .decl rpc_undefined(func: symbol, anchor: symbol, site: symbol, callee: symbol, why: symbol)
 .output rpc_undefined
 
-// An rpc runs a function of one of our modules, and the module does not
-// define it.
+// An rpc runs a function of a module whose code Argus has, and the module
+// does not define it.
 .decl rpc_to_missing_function(func: symbol, anchor: symbol, rpc: symbol, callee: symbol)
 
 rpc_to_missing_function(func, anchor, rpc, callee) :-
   rpc_runs(rpc, callee, module, func, anchor),
-  our_module(module),
+  code_is_known(module),
   !defines(module, callee).
 
-// An rpc runs a function of one of our modules, and the module defines it
-// but does not export it.
+// An rpc runs a function the module defines but does not export.
 .decl rpc_to_private_function(func: symbol, anchor: symbol, rpc: symbol, callee: symbol)
 
 rpc_to_private_function(func, anchor, rpc, callee) :-
   rpc_runs(rpc, callee, module, func, anchor),
-  our_module(module),
   defines(module, callee),
   !exports(module, callee).
 
@@ -119,12 +117,14 @@ rpc_undefined(func, anchor, rpc, callee, "missing") :-
 rpc_undefined(func, anchor, rpc, callee, "private") :-
   rpc_to_private_function(func, anchor, rpc, callee).
 
-// A module of the analyzed program: its beam is the one the other node
-// runs (the same release runs on every node), so what it defines and
-// exports is known. An rpc into a dependency or OTP says nothing.
-.decl our_module(module: symbol) inline
+// Argus has the module's code: it is one of the analyzed beams, so what it
+// defines and exports is known (the same release runs on every node). A
+// module it never saw, OTP or a dependency, defines nothing as far as the
+// facts go, so without this every rpc into one would look "missing".
+// `defines` implies it, so the private rule needs no such line.
+.decl code_is_known(module: symbol) inline
 
-our_module(module) :- program_module(module).
+code_is_known(module) :- program_module(module).
 
 // The module defines the function, exported or not.
 .decl defines(module: symbol, func: symbol) inline
