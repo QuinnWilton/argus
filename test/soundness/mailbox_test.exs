@@ -87,4 +87,51 @@ defmodule Argus.Soundness.MailboxTest do
       end
     end
   end
+
+  describe "review 2, items 23, 25, 26, 33 and 34" do
+    test "the program's own async_nolink under a library's handle_info/2 (item 23)" do
+      assert {:warning, "async_nolink task's messages have no handle_info clause",
+              {M.NolinkWarmer, :execute, 1}} in fired([M.NolinkWarmer], :mailbox)
+    end
+
+    test "a monitor on what a lookup-or-start wrapper returns is no owned worker (item 25)" do
+      assert {:info, @ref_dropped, {M.Tracker, :handle_call, 3}} in fired(
+               [M.Session, M.Sessions, M.Tracker],
+               :mailbox
+             )
+    end
+
+    test "one caller of a ref-returning helper drops the ref (item 26)" do
+      assert {:info, @ref_dropped, {M.MixedCallers, :watch, 1}} in fired(
+               [M.MixedCallers],
+               :mailbox
+             )
+    end
+
+    test "Enum.map of monitors whose refs are dropped (item 26)" do
+      assert {:info, @ref_dropped, {M.MapDropped2, :"-handle_call/3-fun-0-", 1}} in fired(
+               [M.MapDropped2],
+               :mailbox
+             )
+    end
+
+    test "a {:system, x} 2-tuple is a message, not :sys's envelope (item 33)" do
+      assert {:error, "No handle_info/2 clause for a message the server is sent",
+              {M.EnvelopeSystem2, :reload, 1}} in fired([M.EnvelopeSystem2], :mailbox)
+    end
+
+    test "one state's :info clause is no catch-all for the machine (item 34)" do
+      assert {:error, "No clause for a message a gen_statem is sent",
+              {M.TwoStateInfo, :handle_event, 4}} in fired([M.TwoStateInfo], :mailbox)
+    end
+  end
+
+  test "lists:map/2 of monitors whose refs are dropped (item 26)" do
+    assert Enum.any?(fired([M.ListsMapDropped], :mailbox), &match?({:info, @ref_dropped, _}, &1))
+  end
+
+  test "a 3-tuple tagged :\"$gen_cast\" is a message (item 33)" do
+    assert {:error, "No handle_info/2 clause for a message the server is sent",
+            {M.EnvelopeCast3, :run, 0}} in fired([M.EnvelopeCast3], :mailbox)
+  end
 end

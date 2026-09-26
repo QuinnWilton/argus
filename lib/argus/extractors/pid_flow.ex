@@ -76,6 +76,9 @@ defmodule Argus.Extractors.PidFlow do
   - `pid_register(id, func, name, src_kind, src)` — the call at `id`
     registers the source under `name`; a start with a literal name
     registers the process it starts.
+  - `send_envelope(id)` — the send at `id` sends a gen behaviour's own
+    envelope, by tag and size: `{:"$gen_call", from, req}`,
+    `{:"$gen_cast", req}`, `{:system, from, req}`
   - `pid_send(id, func, message, src_kind, src)` — the send at `id` goes to
     the source; `message` is the literal atom sent, `{:tag, …}` for a
     tuple with a literal atom first, or `dynamic`.
@@ -352,6 +355,7 @@ defmodule Argus.Extractors.PidFlow do
       :pid_message,
       :pid_register,
       :pid_send,
+      :send_envelope,
       :pid_signal,
       :pid_object,
       :pid_field,
@@ -1855,6 +1859,9 @@ defmodule Argus.Extractors.PidFlow do
     id = site(at.fun, at.idx)
     message = message(at.fun.instrs, at.idx)
 
+    facts =
+      if envelope?(at.fun.instrs, at.idx), do: add_fact(facts, :send_envelope, [id]), else: facts
+
     facts
     |> sources(at, :pid_send, [id, at.fun.func_id, message], destination(at, ictx))
     |> call_rows(at, ictx, "info")
@@ -1875,6 +1882,21 @@ defmodule Argus.Extractors.PidFlow do
 
       _ ->
         "dynamic"
+    end
+  end
+
+  # The gen behaviours' envelopes, by tag and size: pid_send's message
+  # spells a tuple by its tag alone, and `{:system, :reload}` is a
+  # message, not :sys's `{:system, from, request}` (review 2, item 33).
+  @envelopes %{:"$gen_call" => 3, :"$gen_cast" => 2, :system => 3}
+
+  defp envelope?(instrs, idx) do
+    case Resolve.resolve_register(instrs, idx, {:x, 1}) do
+      {:ok, tuple} when is_tuple(tuple) and tuple_size(tuple) > 0 ->
+        Map.get(@envelopes, elem(tuple, 0)) == tuple_size(tuple)
+
+      _ ->
+        false
     end
   end
 

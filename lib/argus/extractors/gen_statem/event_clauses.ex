@@ -95,7 +95,11 @@ defmodule Argus.Extractors.GenStatem.EventClauses do
   defp context_registers(instrs) do
     case Enum.find(instrs, &match?({:func_info, _, _, _}, &1)) do
       {:func_info, _mod, _name, 3} -> [{:x, 2}]
-      {:func_info, _mod, _name, 4} -> [{:x, 2}, {:x, 3}]
+      # handle_event/4's data, not its state: a clause for one state is
+      # that state's catch-all, not the machine's, and a message arriving
+      # in another state has no clause (review 2, item 34: 391ecc6d read
+      # it as the machine's).
+      {:func_info, _mod, _name, 4} -> [{:x, 3}]
       _ -> []
     end
   end

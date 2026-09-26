@@ -143,9 +143,17 @@ defmodule Argus.Analyses.MailboxSocketTest do
       assert closes(ctx, [F.StatemHandsOn]) == []
     end
 
-    test "so is handle_event/4's for the one state the machine has (Postgrex's shape)", ctx do
+    # Review 2, item 34: a handle_event/4 clause naming a state is that
+    # state's catch-all, not the machine's; that the machine has no other
+    # state is not read, so Postgrex's one-state shape is reported (a
+    # known false positive, a prior candidate), where a two-state
+    # machine's message in its other state is a real crash.
+    test "handle_event/4's clause for one state is no catch-all for the machine", ctx do
       skip_without_souffle()
-      assert closes(ctx, [F.OneStateHandsOn]) == []
+
+      assert closes(ctx, [F.OneStateHandsOn]) == [
+               {"OneStateHandsOn", "{:tcp_closed, …}", "state_crash"}
+             ]
     end
   end
 

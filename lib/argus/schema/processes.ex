@@ -169,6 +169,17 @@ defmodule Argus.Schema.Processes do
         """
       },
       %{
+        name: :send_envelope,
+        layer: 2,
+        fields: [{:id, :instr_id, "instruction ID of the send"}],
+        doc: """
+        The send at `id` sends a gen behaviour's own envelope, read by tag \
+        and size: `{:"$gen_call", from, request}`, `{:"$gen_cast", request}` \
+        or `{:system, from, request}`. `pid_send`'s message spells a tuple \
+        by its tag alone (`Argus.Extractors.PidFlow`).
+        """
+      },
+      %{
         name: :pid_object,
         layer: 2,
         fields: [

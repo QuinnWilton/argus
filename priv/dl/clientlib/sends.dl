@@ -19,8 +19,5 @@ send_target(id, f, m, p) :- pid_send(id, f, m, _, _), call_site_target(id, f, "i
 // sends one by hand — rabbit's gen_server2:cast/2 is `Dest ! {'$gen_cast',
 // Request}` — makes a call or a cast. Spelled as pid_send spells a tuple
 // by its tag.
-.decl gen_envelope(message: symbol)
-
-gen_envelope("{:\"$gen_call\", …}").
-gen_envelope("{:\"$gen_cast\", …}").
-gen_envelope("{:system, …}").
+// Read by tag and size, per send (send_envelope, PidFlow): the message
+// spells a tuple by its tag alone, and `{:system, :reload}` is a message.

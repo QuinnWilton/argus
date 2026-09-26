@@ -267,6 +267,22 @@ the arming function itself, whose own cancel must run on every path.
 moved to clientlib/callbacks.dl; `timer_loop_rearmed` no longer drops
 rows under test (test_code.dl ranks them).
 
+**Fixed.** state_machine, review 2 item 27: a dead state re-entered only
+through its own helper is unreachable again, and a terminal state that
+hands every event to a handler in another module of the program is
+terminal again (6aff4d81 read both as ways in or out).
+
+**Fixed.** Schema 126. mailbox, review 2 items 23, 25, 26, 33 and 34:
+the program's own async_nolink under a library-written handle_info/2
+is reported (the step-aside asks the source); a monitor on what a
+lookup-or-start wrapper returns needs a `process_start` in the function
+to be owned; a helper's returned ref is lost when any use loses it, and
+`Enum.map`/`:lists.map` of monitors whose list is dropped loses it;
+`send_envelope(id)`, new from PidFlow, reads a gen envelope by tag and
+size, so `{:system, x}` is a message; a handle_event/4 clause naming a
+state is no `:info` catch-all for the machine (a one-state machine is
+now reported: a prior candidate).
+
 ### Priors, round 3: tooling, and programs found on PATH
 
 **Added.** Schema 118. `tooling_module(mod, basis)` from a new

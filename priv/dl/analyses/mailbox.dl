@@ -878,6 +878,10 @@ runs_in_callers(func, mod) :-
 // default handle_info logs and ignores, so only a module with its own
 // partial handle_info/2 is at risk. An async_nolink inside a task the
 // server starts sends its messages to the task.
+// A library-written handle_info/2 (a `use` a library's macro wrote)
+// steps aside only when the message's source is library-written too:
+// the program's own async_nolink under a library's handle_info/2 lands
+// there all the same (review 2, item 23: 535216a4 asked of the handler).
 .init nolink_reach = SameProcessReachCut
 
 nolink_reach.cut(f, g) :- side_call(f, g).
@@ -888,14 +892,14 @@ partial_handler(mod, h, "task_nolink", "reply", s) :-
   process_entry(mod, c),
   nolink_reach.reaches(c, s),
   partial_handle_info(mod, h),
-  !library_written(h),
+  !library_written(s),
   !callback_ref_head(h, "handle_info").
 
 partial_handler(mod, h, "task_nolink", "down", s) :-
   process_entry(mod, c),
   nolink_reach.reaches(c, s),
   partial_handle_info(mod, h),
-  !library_written(h),
+  !library_written(s),
   !callback_tag(h, "handle_info", ":DOWN").
 
 // ══ Monitors nobody waits for ═══════════════════════════════════════
@@ -1105,7 +1109,16 @@ unconsumed_monitor(mod, f, site, "ref_discarded") :-
   monitor_ref_dropped(site, f),
   !waited_out(site),
   !collected_by_callers(f),
-  !monitor_owns(site, f).
+  !owned_monitor(site, f).
+
+// monitor_owns reads the start by its name (start*, spawn*, open); the
+// function must also hold a start the process facts see (process_start):
+// a lookup-or-start wrapper (`{:error, {:already_started, pid}} -> {:ok,
+// pid}`) hands back a process others hold, and a monitor on it per call
+// piles up (review 2, item 25: fc82ad59 decided by the name alone).
+.decl owned_monitor(site: symbol, func: symbol)
+
+owned_monitor(site, f) :- monitor_owns(site, f), process_start(_, f, _, _, _).
 
 // ══ A message the module sends itself and cannot handle ═════════════
 //
@@ -1368,7 +1381,7 @@ unreceived_message(mod, func, site, m, runs, starter, spawn, recv) :-
 info_message(m, f, id, msg, "send") :-
   send_target(id, f, msg, p),
   msg != "dynamic",
-  !gen_envelope(msg),
+  !send_envelope(id),
   server_process(p, m).
 
 // A timer or a monitor in a function a server's callbacks run: the

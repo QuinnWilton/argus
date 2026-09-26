@@ -540,7 +540,10 @@ defmodule Argus.Extractors.Monitor do
          false <- {String.to_atom(name), arity} in module_data.exports,
          [_ | _] = uses <- uses_of(module_data, String.to_atom(name), arity) do
       seen = [func_id | seen]
-      Enum.all?(uses, &use_loses_ref?(module_data, &1, seen))
+      # One use that loses it is one monitor per call nothing can
+      # release, whatever the others keep (review 2, item 26: 206ec0cd
+      # asked every use).
+      Enum.any?(uses, &use_loses_ref?(module_data, &1, seen))
     else
       _ -> false
     end
@@ -572,8 +575,18 @@ defmodule Argus.Extractors.Monitor do
       else: ref_dropped?(cfg(module_data, caller, arity), ctx.instrs, ctx.idx + 1)
   end
 
-  defp use_loses_ref?(_module_data, {:fun, ctx, _caller}, _seen),
-    do: handed_to_discarding_call?(ctx.instrs, ctx.idx)
+  defp use_loses_ref?(module_data, {:fun, ctx, {caller, arity}}, _seen) do
+    case handed_to_discarding_call?(ctx.instrs, ctx.idx) do
+      true -> true
+      # `Enum.map(pids, &Process.monitor/1)` whose list of refs is dropped.
+      {:mapped, at} -> ref_dropped?(cfg(module_data, caller, arity), ctx.instrs, at + 1)
+      false -> false
+    end
+  end
+
+  # Calls that run a fun and return what it returns, collected: the refs
+  # are lost when the list is.
+  @mapping_calls %{{:lists, :map, 2} => 0, {Enum, :map, 2} => 1}
 
   # Calls that run a fun for its effects and throw away what it returns,
   # with the argument position the fun is handed in.
@@ -602,6 +615,9 @@ defmodule Argus.Extractors.Monitor do
         (Instr.call?(instr) or Instr.tail_call?(instr)) and discarding_call?(instr, holding) ->
           {:halt, true}
 
+        Instr.call?(instr) and mapping_call?(instr, holding) ->
+          {:halt, {:mapped, instr}}
+
         (Instr.call?(instr) or Instr.tail_call?(instr)) and
             Enum.any?(Instr.uses(instr), &(&1 in holding)) ->
           {:halt, false}
@@ -613,7 +629,26 @@ defmodule Argus.Extractors.Monitor do
           {:cont, Instr.carry(instr, holding)}
       end
     end)
-    |> Kernel.==(true)
+    |> case do
+      {:mapped, instr} -> {:mapped, mapped_index(instrs, idx, instr)}
+      other -> other == true
+    end
+  end
+
+  defp mapped_index(instrs, idx, instr) do
+    instrs
+    |> Enum.with_index()
+    |> Enum.drop(idx + 1)
+    |> Enum.find_value(fn {i, at} -> if i == instr, do: at end)
+  end
+
+  defp mapping_call?(instr, holding) do
+    with {:ok, mod, name, arity} <- match_remote_call(instr),
+         {:ok, pos} <- Map.fetch(@mapping_calls, {mod, name, arity}) do
+      {:x, pos} in holding
+    else
+      _ -> false
+    end
   end
 
   defp discarding_call?(instr, holding) do
