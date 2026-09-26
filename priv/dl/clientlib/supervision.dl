@@ -9,6 +9,7 @@
 //   starts_before(sup, earlier, later, earlier_pos, later_pos)
 //   boots_before(sup, earlier, later, earlier_pos, later_pos)
 //   child_restart(sup, pos, child, restart)
+//   dynamic_restart(sup, child, caller, restart)
 //   ends_with(dying, other)
 
 // ── Child subtree ─────────────────────────────────────────────────────
@@ -65,6 +66,25 @@ child_restart(sup, pos, child, restart) :-
 child_restart(sup, pos, child, restart) :-
   supervisor_child(sup, pos, child, restart, _),
   supervisor_child_form(sup, pos, "shorthand"),
+  !child_spec_restart(child, _).
+
+// A DynamicSupervisor.start_child gives its child the restart of the spec
+// it hands over: a map's (`:permanent` when it states none, whatever the
+// module's child_spec/1 says), an override's, or for a shorthand (`Mod`,
+// `{Mod, arg}`, which states none: dynamic_child_restart has no row) the
+// module's own child_spec/1's, `:permanent` when that states none either.
+.decl dynamic_restart(sup: symbol, child: symbol, caller: symbol, restart: symbol)
+
+dynamic_restart(sup, child, f, restart) :- dynamic_child_restart(sup, child, f, restart).
+
+dynamic_restart(sup, child, f, restart) :-
+  dynamic_child(sup, child, f),
+  !dynamic_child_restart(sup, child, f, _),
+  child_spec_restart(child, restart).
+
+dynamic_restart(sup, child, f, "permanent") :-
+  dynamic_child(sup, child, f),
+  !dynamic_child_restart(sup, child, f, _),
   !child_spec_restart(child, _).
 
 // ── Start order ───────────────────────────────────────────────────────

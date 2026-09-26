@@ -6,6 +6,30 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## 0.20.0-dev — unreleased
 
+### Census holes: the definitions made right
+
+The exclusion census confirmed soundness holes behind exclusions and
+coarse facts (docs/design/exclusions.md, "Soundness surprises"). Each is
+fixed where its root cause was, and each census program is a positive
+fixture in `test/soundness/<concern>_test.exs` beside at least two
+adversarial neighbours and a quiet control. The rows each fix adds are
+measured over the 26 live projects and 13 evaluation sets.
+
+**Fixed.** Schema 140. `dynamic_child_restart` has a row for every
+DynamicSupervisor start whose spec states its restart: a map's
+`:restart`, `:permanent` for a map with none (the map does not call the
+module's `child_spec/1`), or an override's; a shorthand has none. The
+clientlib's `dynamic_restart` reads it, or a shorthand's own
+`child_spec/1` restart. "ETS table dies with its owner" excused every
+owner a DynamicSupervisor starts, whatever restart the start gave it:
+it now excuses one the start makes permanent, so a `use GenServer,
+restart: :temporary` owner started by its shorthand is reported. "Two
+restart authorities for the same child" read the module's own restart,
+not the spec's, and exempted a temporary module a map spec starts
+permanent. 2 rows come (realtime's `WorkerSupervisor`, temporary, whose
+tables only its own children read: false by the class's harm, which
+needs a reader that outlives the owner).
+
 ### Races by their harm
 
 **Changed.** A check-then-act pair is reported when a rival can land on

@@ -169,17 +169,19 @@ defmodule Argus.Schema.Supervision do
           {:child_mod, :symbol, "child module, as dynamic_child's"},
           {:caller_func, :symbol, "function that calls start_child, as dynamic_child's"},
           {:restart, :symbol,
-           "restart the start_child's own spec states (transient/temporary), " <>
+           "restart the start_child's own spec states (permanent/transient/temporary), " <>
              "'dynamic' when the spec's restart could not be read"}
         ],
         doc: """
         The restart a `DynamicSupervisor.start_child/2`'s own spec states \
-        for the child its `dynamic_child` row names, when that is not \
-        `:permanent`: a map's `:restart`, or `Supervisor.child_spec/2`'s \
-        overrides (redix e67e61a: `Supervisor.child_spec({Redix, opts}, \
-        restart: :temporary)`). No row for a shorthand, whose restart its \
-        own child_spec/1 gives (`child_spec_restart`), or for a permanent \
-        spec.
+        for the child its `dynamic_child` row names: a map's `:restart`, \
+        `:permanent` for a map with none (the map does not call the \
+        module's child_spec/1, so `use GenServer, restart: :temporary` does \
+        not apply), or `Supervisor.child_spec/2`'s overrides (redix \
+        e67e61a: `Supervisor.child_spec({Redix, opts}, restart: \
+        :temporary)`). No row for a shorthand, whose restart its own \
+        child_spec/1 gives (`child_spec_restart`); \
+        `clientlib/supervision.dl`'s `dynamic_restart` reads both.
         """
       },
       %{

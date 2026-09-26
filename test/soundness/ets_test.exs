@@ -11,6 +11,7 @@ defmodule Argus.Soundness.EtsTest do
   use ExUnit.Case, async: true
 
   alias Argus.Test.Memo
+  alias Argus.Test.Soundness.Census
 
   @modules [
     S2c.Ets.Job,
@@ -193,5 +194,64 @@ defmodule Argus.Soundness.EtsTest do
              for([_, _, "Rows.Ets.OptionNamed:read/1", _, c] <- reads, do: c)
 
     assert created =~ "Rows.Ets.OptionNamed:init/1#"
+  end
+
+  # The exclusion census's ETS holes (docs/design/exclusions.md), over one
+  # fixture set (test/fixtures/soundness/ets_census.ex).
+  @census [
+    Census.Ets.TempOwner,
+    Census.Ets.TempTupleOwner,
+    Census.Ets.MapTempOwner,
+    Census.Ets.OverrideTempOwner,
+    Census.Ets.MapPermOwner,
+    Census.Ets.PermOwner,
+    Census.Ets.Features,
+    Census.Ets.Shard,
+    Census.Ets.ShardSup,
+    Census.Ets.NamedShared,
+    Census.Ets.PeerShard,
+    Census.Ets.PeerReader,
+    Census.Ets.PeerSup,
+    Census.Ets.PrivateShard,
+    Census.Ets.ClientShard,
+    Census.Ets.ShardClient,
+    Census.Ets.InfoSame,
+    Census.Ets.InfoInStart,
+    Census.Ets.WhereisAfter,
+    Census.Ets.WhereisFoundSide,
+    Census.Ets.GivesOtherAway,
+    Census.Ets.GuardedStart,
+    Census.Ets.GuardedHelper
+  ]
+
+  defp census do
+    {:ok, res} = Memo.run_analyses(@census, analyses: [:ets])
+    MapSet.new(res.findings, &{&1.severity, &1.title, &1.mfa})
+  end
+
+  defp quiet?(found, title, mfa), do: not Enum.any?(found, &match?({_, ^title, ^mfa}, &1))
+
+  # census: dynamic-restart
+  # An owner a DynamicSupervisor starts was excused as permanent whatever
+  # restart the start gives it (dynamic_restart, supervision.dl).
+  describe "census hole: an owner its dynamic start makes temporary" do
+    @dies "ETS table dies with its owner"
+
+    for mod <- [
+          Census.Ets.TempOwner,
+          Census.Ets.TempTupleOwner,
+          Census.Ets.MapTempOwner,
+          Census.Ets.OverrideTempOwner
+        ] do
+      test "#{inspect(mod)}: its table dies with it, for good" do
+        assert {:warning, @dies, {unquote(mod), :init, 1}} in census()
+      end
+    end
+
+    test "an owner the start makes permanent is quiet" do
+      found = census()
+      assert quiet?(found, @dies, {Census.Ets.MapPermOwner, :init, 1})
+      assert quiet?(found, @dies, {Census.Ets.PermOwner, :init, 1})
+    end
   end
 end

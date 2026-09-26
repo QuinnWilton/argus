@@ -172,4 +172,37 @@ defmodule Argus.Soundness.CouplingTest do
 
     assert callers == [inspect(Restart.ServerArgListener)]
   end
+
+  # The exclusion census's coupling hole (docs/design/exclusions.md): the
+  # restart a DynamicSupervisor start gives its child is the spec's it
+  # hands over (clientlib/supervision.dl's dynamic_restart), not the
+  # module's own child_spec/1's, which a map spec never calls.
+  describe "census hole: the restart the start gives" do
+    alias Argus.Test.Soundness.Census.Coupling, as: C
+
+    @census [
+      C.Conn,
+      C.MapManager,
+      C.HelperSpecManager,
+      C.PermanentMapManager,
+      C.ShorthandManager,
+      C.TemporaryMapManager
+    ]
+
+    @dual "Two restart authorities for the same child"
+
+    for mod <- [C.MapManager, C.HelperSpecManager, C.PermanentMapManager] do
+      test "#{inspect(mod)}: a permanent spec over a temporary module has two authorities" do
+        assert {:warning, @dual, {unquote(mod), :start_conn, 1}} in fired(@census, :coupling)
+      end
+    end
+
+    test "a shorthand of the temporary module and a temporary map are quiet" do
+      found = fired(@census, :coupling)
+
+      for mod <- [C.ShorthandManager, C.TemporaryMapManager] do
+        refute Enum.any?(found, &match?({_, @dual, {^mod, _, _}}, &1)), inspect(mod)
+      end
+    end
+  end
 end

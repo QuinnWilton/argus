@@ -384,10 +384,12 @@ rest_for_one_orphaned_children(sup, owner, holder, opos, hpos, site, "inferred")
 // and starts it again from its :DOWN handler has taken over restarting —
 // while the supervisor, for a :permanent child, does the same. A child
 // that fails on a semantic error crash-loops under both, blows the
-// supervisor's intensity and takes the tree with it (redix#334). A
-// :temporary child_spec, or a :temporary spec the start hands over
-// (dynamic_child_restart: redix's own fix, Supervisor.child_spec({Redix,
-// opts}, restart: :temporary)), leaves the supervisor out of it.
+// supervisor's intensity and takes the tree with it (redix#334). The
+// supervisor restarts the child when the start gives it a restart other
+// than :temporary (dynamic_restart: the spec the start hands over, so
+// redix's own fix, Supervisor.child_spec({Redix, opts}, restart:
+// :temporary), is quiet, and a map spec with no :restart is permanent
+// whatever the module's child_spec/1 says).
 //
 // The start, the monitor and the :DOWN handling are usually spread over
 // private helpers (redix: start_connection/7, start_and_monitor_connection/5,
@@ -446,9 +448,8 @@ dual_restart_authority(mod, sup, child, via, start_site, monitor_site, h) :-
   starts_and_monitors(mod, sup, child, via),
   down_handler(mod, h),
   module_reach.reaches(h, s),
-  dynamic_child(sup, child, s),
-  !child_spec_restart(child, "temporary"),
-  !dynamic_child_restart(sup, child, s, "temporary"),
+  dynamic_restart(sup, child, s, restart),
+  restart != "temporary",
   start_site_of(via, sup, child, start_site),
   monitor_site_of(via, monitor_site).
 

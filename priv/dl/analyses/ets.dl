@@ -232,13 +232,14 @@ ets_permanent_owner(name, mod) :-
   ets_owner_process(name, mod, _),
   child_restart(_, _, mod, "permanent").
 
-// Owner under a DynamicSupervisor.start_child — we don't know the
-// child spec's restart strategy without further analysis, but the
-// module is at least supervised, which is a strong enough signal
-// that we shouldn't false-positive on missing-heir for it.
+// Owner a DynamicSupervisor.start_child starts with a permanent restart
+// (dynamic_restart: the spec's, or a shorthand's child_spec/1's): its
+// supervisor restarts it as a child of its own. A `use GenServer,
+// restart: :temporary` owner started by its shorthand is never
+// restarted, and its table is gone for good once it crashes.
 ets_permanent_owner(name, mod) :-
   ets_owner_process(name, mod, _),
-  dynamic_child(_, mod, _).
+  dynamic_restart(_, mod, _, "permanent").
 
 // Owner a start_child adds to a supervisor with a permanent spec
 // (dets_server's ensure_started puts it under kernel_safe_sup): its

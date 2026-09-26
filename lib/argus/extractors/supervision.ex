@@ -36,7 +36,8 @@ defmodule Argus.Extractors.Supervision do
   - `dynamic_child(sup, child_mod, caller_func)` — a child a
     `DynamicSupervisor.start_child/2` (or a Task.Supervisor start) adds
   - `dynamic_child_restart(sup, child_mod, caller_func, restart)` — the
-    restart that start's own spec states, when not `:permanent`
+    restart that start's own spec states (a map's, `:permanent` when it
+    has none, or an override's); none for a shorthand
   - `added_child(sup, child_mod, restart, type, caller_func)` — a child a
     `Supervisor.start_child/2` or `supervisor:start_child/2` adds with a
     spec it states
@@ -359,12 +360,15 @@ defmodule Argus.Extractors.Supervision do
 
   defp handle_dynamic_start(facts, _ctx, _mfa, _self_sup, _functions), do: facts
 
-  # The restart a start_child's own spec states, when it is not the
-  # default: a map's `:restart`, a `Supervisor.child_spec/2` override
-  # (redix e67e61a's `Supervisor.child_spec({Redix, opts}, restart:
-  # :temporary)`), or `dynamic` when the spec's restart could not be read.
-  # A shorthand's is its child_spec/1's (`child_spec_restart`).
-  defp dynamic_child_restart(facts, _sup, _child, _func, :permanent), do: facts
+  # The restart a start_child's own spec states: a map's `:restart`, or
+  # `:permanent` for a map with none (the supervisor's default, whatever
+  # the module's child_spec/1 says: the map does not call it), a
+  # `Supervisor.child_spec/2` override (redix e67e61a's
+  # `Supervisor.child_spec({Redix, opts}, restart: :temporary)`), or
+  # `dynamic` when the spec's restart could not be read. A shorthand
+  # states none (`:own`): its child_spec/1's is the child's
+  # (`child_spec_restart`), which the rules read.
+  defp dynamic_child_restart(facts, _sup, _child, _func, :own), do: facts
 
   defp dynamic_child_restart(facts, sup, child, func, restart),
     do: add_fact(facts, :dynamic_child_restart, [sup, child, func, word(restart)])
@@ -394,27 +398,33 @@ defmodule Argus.Extractors.Supervision do
   # not cover — one a helper builds from its parameters, a
   # `Mod.child_spec/1` call, `Supervisor.child_spec/2` overrides, a map
   # over a runtime value — is read as a child list's element is; one it
-  # cannot read is "dynamic". The restart is the spec's (a shorthand's
-  # default `:permanent`).
+  # cannot read is "dynamic". The restart is the spec's; a shorthand's is
+  # `:own`, its module's child_spec/1's (the reader writes a shorthand's
+  # restart as the default `:permanent`, and one another value is an
+  # override's, `Supervisor.child_spec({Mod, arg}, restart: :temporary)`).
   defp resolve_dynamic_child(instrs, idx, functions) do
     case resolve_register(instrs, idx, {:x, 1}) do
       {:ok, mod} when is_atom(mod) and mod != :dynamic ->
-        {if(module_atom?(mod), do: inspect(mod), else: "dynamic"), :permanent}
+        {if(module_atom?(mod), do: inspect(mod), else: "dynamic"), :own}
 
       {:ok, {mod, _args}} when is_atom(mod) and mod != :dynamic ->
-        {if(module_atom?(mod), do: inspect(mod), else: "dynamic"), :permanent}
+        {if(module_atom?(mod), do: inspect(mod), else: "dynamic"), :own}
 
       {:ok, %{start: {mod, _, _}} = spec} when is_atom(mod) and mod != :dynamic ->
         {inspect(mod), Map.get(spec, :restart, :permanent)}
 
       _ ->
         case fueled_value(fn -> element_operand(frame(instrs, functions), idx, {:x, 1}) end) do
+          {:ok, [{mod, :permanent, _type, _name, :shorthand}]}
+          when mod not in [GenServer, Agent, Task] ->
+            {inspect(mod), :own}
+
           {:ok, [{mod, restart, _type, _name, _form}]}
           when mod not in [GenServer, Agent, Task] ->
             {inspect(mod), restart}
 
           _ ->
-            {"dynamic", :permanent}
+            {"dynamic", :own}
         end
     end
   end
