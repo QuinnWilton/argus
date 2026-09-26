@@ -6,6 +6,45 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## 0.20.0-dev — unreleased
 
+### Exclusion census: what each negated atom does
+
+**Removed.** Fifty negated atoms that do not change a rule's output, each
+argued from the rules around it (two from what the extractors emit) and
+checked by solving every analysis and the points-to stage over the
+closed-issue corpus, 39 evaluation programs and every fixture set the
+suite solves: no output row moves. They are:
+- `!runs_elsewhere(f, g)` beside `call_instr(f, g, _)` (13, in blocking,
+  startup, races and clientlib `calls.dl`, `global_reach.dl`, `reach.dl`,
+  `timer_flush.dl`): no clause of `runs_elsewhere` holds for an edge `f`
+  calls, as `runs_elsewhere.dl` now says;
+- atoms whose rows a sibling rule derives (11: blocking, startup,
+  effects, ets, failure, `calls.dl`, `processes.dl`, `runs_elsewhere.dl`,
+  whose `started_handed` goes with it), or that the same rule implies
+  (exposure's two "unaware" rules);
+- shutdown's `!match("via:.*", sup)` (no `dynamic_child` is spelled so)
+  and `!statem_process` beside `gen_server_like` (which leaves a statem
+  out unless it also declares GenServer's behaviour);
+- the 21 that made races' Mnesia race kinds a partition: `read_rank`
+  reports each read at its strongest kind, so each kind is now its own
+  evidence, and "fill" is one rule;
+- `reach.dl`'s `ForwardSameProcessReach`, which nothing instantiates.
+
+**Fixed.** Two mailbox exclusions that could only hide real bugs, which no
+evaluation program or fixture exercised: "Timer cancelled without
+flushing its message" excused a local timer armed in the clause that
+handles its own message (the excuse is the kept key's: a timer armed
+after the handled message arrived always leaves its message behind), and
+"Periodic timer loop armed again while it runs" excused the loop's own
+clause calling itself (it arms a second timer beside its re-arm).
+
+**Added.** `docs/design/exclusions.md`: the census of all 822 negated
+atoms (623 definitional, 131 patches, 68 redundant), what removing each
+one does over those datasets, twenty-one confirmed soundness holes behind
+exclusions, and a ranked plan for replacing the patches with witness
+definitions. Definitional atoms without a stated reason got one.
+`test/exclusions/`: 77 tests pinning 78 exclusions no evaluation program
+exercises (each fails when its atom is removed) and the two mailbox
+positives.
 ### Monitor-leak round: a monitor taken again before the last one is released
 
 **Changed.** mailbox's three monitor rules are one class,
@@ -242,6 +281,7 @@ else -1 (`MessageClauses.open_clauses/2`). Read by mailbox.
 that leaves the type alone) whatever its reason. `monitor_type(id,
 type)` (Monitor): the monitor at `id` watches a `process`, a `port` or
 a `time_offset`, or `dynamic`. Read by mailbox.
+||||||| parent of 11a3a45c ([docs] the exclusion census and a ranked plan to replace the patches)
 
 ### Restart-state round, part 2: a reader that outlives a table's owner
 
