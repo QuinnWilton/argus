@@ -184,6 +184,41 @@ defmodule Argus.DlDeclarationsTest do
       end
     end
 
+    # A solve writes a file for each relation its program outputs, empty
+    # when it has no rows, and nothing for one it does not: a relation an
+    # analysis declares and its program never outputs is absent from
+    # every solve's results, read as no rows by the finding builders. So
+    # each declared output is one the program writes, as the transformed
+    # RAM says (what actually executes, includes and all).
+    @tag :souffle
+    test "every output relation an analysis declares is one its program writes" do
+      unwritten =
+        Analysis.builtin_analysis_modules()
+        |> Task.async_stream(
+          fn mod ->
+            {:ok, rules} = Analysis.Catalog.rules_path(mod.name())
+            {ram, 0} = System.cmd(Souffle.executable(), ["--show=transformed-ram", rules])
+
+            written =
+              for [_io, name, attrs] <-
+                    Regex.scan(~r/IO\s+([a-zA-Z_][a-zA-Z0-9_]*)\s+\(([^)]*)\)/, ram),
+                  attrs =~ ~s(operation="output"),
+                  into: MapSet.new(),
+                  do: name
+
+            declared = Enum.map(mod.output_relations(), &Atom.to_string(&1.name))
+            {mod.name(), Enum.reject(declared, &MapSet.member?(written, &1))}
+          end,
+          max_concurrency: 4,
+          timeout: :infinity
+        )
+        |> Enum.flat_map(fn {:ok, {name, missing}} ->
+          if missing == [], do: [], else: [{name, missing}]
+        end)
+
+      assert unwritten == []
+    end
+
     @tag :souffle
     test "the pin covers every built-in analysis" do
       names = Enum.map(Analysis.builtin_analysis_modules(), & &1.name())
