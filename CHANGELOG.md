@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- A stage's output that is not there when scry reads it back is an
+  error naming the relation and its file
+  (`{:stage0, %Argus.MissingRelationError{}}`, and `{:points_to, ...}`),
+  and the analyses that read the stage degrade with it. It was read as
+  an empty relation: a call graph gone from its directory came back
+  empty, and every analysis reading it reported nothing, without a
+  word. A stage writes a file for every relation it outputs, empty when
+  it has none, so an absent one is never an empty relation.
 - A finding or frame that names a module alone — "Supervisor registered
   as a worker", a later sibling, a chain's innermost callee — lands on
   that module's `defmodule` (or `-module`) line, read from the beam's

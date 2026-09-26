@@ -589,20 +589,23 @@ defmodule Scry.Analysis do
                 Runtime.query(db, :relation_rows, relation)}
            ),
          dir = materialize_facts(entries, "stage0", symbols),
-         :ok <- Argus.Analysis.derive_stage0(dir) do
+         :ok <- Argus.Analysis.derive_stage0(dir),
+         {:ok, outputs} <- read_outputs(@stage0_outputs, dir, :stage0) do
       # Souffle wrote strings; interned like everything else this layer
       # holds.
-      {:ok, reading_schema(db, fn -> intern_outputs(@stage0_outputs, dir, symbols) end)}
+      {:ok, reading_schema(db, fn -> Facts.intern(outputs, symbols) end)}
     end
   end
 
-  # A stage's outputs from the directory Souffle wrote them to, interned
-  # by their columns.
-  defp intern_outputs(outputs, dir, symbols) do
-    Facts.intern(
-      Map.new(outputs, &{&1, read_facts_file(Path.join(dir, "#{&1}.facts"))}),
-      symbols
-    )
+  # A stage's outputs from the directory it published them into: every
+  # one of them, or the stage's error naming the first that is not there.
+  defp read_outputs(outputs, dir, stage) do
+    Enum.reduce_while(outputs, {:ok, %{}}, fn relation, {:ok, acc} ->
+      case read_facts_file(relation, dir) do
+        {:ok, rows} -> {:cont, {:ok, Map.put(acc, relation, rows)}}
+        {:error, error} -> {:halt, {:error, {stage, error}}}
+      end
+    end)
   end
 
   # The points-to stage: which process a pid can be, derived once for
@@ -629,8 +632,9 @@ defmodule Scry.Analysis do
          {:ok, stage0} <- stage0_if_read(db, relations),
          entries = Enum.map(relations, &relation_entry(db, &1, stage0, %{})),
          dir = materialize_facts(entries, "points_to", symbols),
-         :ok <- Argus.Analysis.derive_points_to(dir) do
-      {:ok, reading_schema(db, fn -> intern_outputs(@points_to_outputs, dir, symbols) end)}
+         :ok <- Argus.Analysis.derive_points_to(dir),
+         {:ok, outputs} <- read_outputs(@points_to_outputs, dir, :points_to) do
+      {:ok, reading_schema(db, fn -> Facts.intern(outputs, symbols) end)}
     end
   end
 
@@ -1391,17 +1395,27 @@ defmodule Scry.Analysis do
     end
   end
 
-  # Souffle fact files are tab separated, one tuple per line, fields
-  # escaped (`Argus.Tsv`).
-  defp read_facts_file(path) do
+  # A relation's rows from its file in `dir`: tab separated, one tuple
+  # per line, fields escaped (`Argus.Tsv`). A stage writes a file for
+  # every relation it outputs, empty when it has no rows, and argus
+  # publishes them only once it has written every one
+  # (`Argus.Analysis.derive_stage0/2`): a file absent here is never an
+  # empty relation. Read as one, stage 0's call graph came back empty
+  # and every analysis reading it lost its findings without a word.
+  defp read_facts_file(relation, dir) do
+    path = Path.join(dir, "#{relation}.facts")
+
     case File.read(path) do
       {:ok, contents} ->
-        contents
-        |> Argus.Tsv.decode()
-        |> Enum.sort()
+        {:ok, contents |> Argus.Tsv.decode() |> Enum.sort()}
 
-      {:error, _} ->
-        []
+      {:error, reason} ->
+        {:error,
+         %Argus.MissingRelationError{
+           relation: Atom.to_string(relation),
+           path: path,
+           reason: reason
+         }}
     end
   end
 end
