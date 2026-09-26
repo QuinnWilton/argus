@@ -373,23 +373,78 @@ sibling_dependency(sup, mod, name, "cached_pid", "", sup_site, init, init, "reso
 //
 // rest_for_one restarts the crashed child and everything after it; the
 // children before it keep running. That is the right shape when earlier
-// children are dependencies of later ones. It is exactly wrong when a
-// later child starts processes inside an earlier one — Oban's producer
-// (position 1) running jobs under the Task.Supervisor at position 0.
-// When the producer crashes, the supervisor restarts it, the jobs the
-// old producer started keep running under the surviving supervisor, and
-// the new producer starts them again: duplicate long-running jobs and
-// `attempt > max_attempts`. Oban's fix was :one_for_all.
-//
-// The owner is the child that calls start_child / async / async_nolink
-// (any module in its branch); the holder is an earlier direct child.
-// Two ways to connect them, `basis` in sibling_dependency's words.
-// `resolved`: the call names the holder's registered name. `inferred`:
-// the target is a runtime value and the
-// holder is the only earlier sibling whose module is the API called —
+// children are dependencies of later ones, and exactly wrong when a later
+// child starts processes inside an earlier one: Oban's producer (position
+// 1) running jobs under the Task.Supervisor at position 0 left the old
+// producer's jobs running beside the new producer's, duplicate
+// long-running jobs and `attempt > max_attempts`. Oban's fix was
+// :one_for_all.
+
+// Under rest_for_one a later child starts processes under an earlier
+// one: when the later child restarts, what it started keeps running
+// under the earlier one, which is not restarted, and is started again.
+.decl orphaned_children(sup: symbol, owner: symbol, owner_pos: number, holder: symbol, holder_pos: number, start: symbol, basis: symbol)
+
+orphaned_children(sup, owner, owner_pos, holder, holder_pos, start, basis) :-
+  restarts_later_children(sup),
+  runs_in_child(sup, owner_pos, owner),
+  starts_child(owner, start),
+  starts_under_earlier_child(start, sup, owner_pos, holder_pos, basis),
+  child_at(sup, holder_pos, holder).
+
+// sup's strategy is rest_for_one: a child's restart restarts the
+// children after it, not the ones before.
+.decl restarts_later_children(sup: symbol)
+
+restarts_later_children(sup) :- supervisor(sup, "rest_for_one").
+
+// `mod` runs in the branch of sup's child at `pos`: the child or any
+// module below it.
+.decl runs_in_child(sup: symbol, pos: number, mod: symbol) inline
+
+runs_in_child(sup, pos, mod) :-
+  supervisor_child(sup, pos, branch, _, _),
+  child_subtree(sup, branch, mod).
+
+// A function of `owner` starts a process under a supervisor at `start`:
+// a start_child, a Task.Supervisor async or async_nolink.
+.decl starts_child(owner: symbol, start: symbol)
+
+starts_child(owner, start) :-
+  function_def(func, owner, _, _, _),
+  sup_management_call(start, func, _, op, _),
+  child_creating_op(op).
+
+// The start puts its process under sup's child at `holder_pos`, earlier
+// than `owner_pos`, and `basis` says how that is known, in
+// sibling_dependency's words. `resolved`: the call names the earlier
+// child's registered name.
+.decl starts_under_earlier_child(start: symbol, sup: symbol, owner_pos: number, holder_pos: number, basis: symbol)
+
+starts_under_earlier_child(start, sup, owner_pos, holder_pos, "resolved") :-
+  sup_management_call(start, _, _, _, name),
+  supervisor_child_name(sup, holder_pos, name),
+  supervisor_child(sup, owner_pos, _, _, _),
+  holder_pos < owner_pos.
+
+// `inferred`: the call's supervisor is a pid ("dynamic"), and the earlier
+// child is the only one before the owner whose module is the API called —
 // a Task.Supervisor.async_nolink into an unresolvable pid, with exactly
-// one Task.Supervisor started earlier under the same rest_for_one, is
-// not much of an inference.
+// one Task.Supervisor started earlier under the same rest_for_one, is not
+// much of an inference. Process points-to does not follow the pid: a
+// supervisor management call is not a pid use (pid_call covers calls,
+// casts and sends; sup_call's target is its own extractor's).
+starts_under_earlier_child(start, sup, owner_pos, holder_pos, "inferred") :-
+  sup_management_call(start, _, api, _, "dynamic"),
+  sole_earlier_sibling_of_kind(sup, holder_pos, api, owner_pos).
+
+// sup's child at `pos` is `mod`.
+.decl child_at(sup: symbol, pos: number, mod: symbol) inline
+
+child_at(sup, pos, mod) :- supervisor_child(sup, pos, mod, _, _).
+
+// sup's child at `pos` runs `api`'s module and comes before the child at
+// `owner_pos`.
 .decl earlier_sibling_of_kind(sup: symbol, pos: number, api: symbol, owner_pos: number)
 
 earlier_sibling_of_kind(sup, pos, api, owner_pos) :-
@@ -397,6 +452,7 @@ earlier_sibling_of_kind(sup, pos, api, owner_pos) :-
   supervisor_child(sup, owner_pos, _, _, _),
   pos < owner_pos.
 
+// ... and is the only such child before `owner_pos`.
 .decl sole_earlier_sibling_of_kind(sup: symbol, pos: number, api: symbol, owner_pos: number)
 
 sole_earlier_sibling_of_kind(sup, pos, api, owner_pos) :-
@@ -413,30 +469,8 @@ other_earlier_sibling_of_kind(sup, pos, api, owner_pos) :-
 .decl rest_for_one_orphaned_children(sup: symbol, owner: symbol, holder: symbol, owner_pos: number, holder_pos: number, site: symbol, basis: symbol)
 .output rest_for_one_orphaned_children
 
-rest_for_one_orphaned_children(sup, owner, holder, opos, hpos, site, "resolved") :-
-  supervisor(sup, "rest_for_one"),
-  supervisor_child(sup, opos, owner_branch, _, _),
-  child_subtree(sup, owner_branch, owner),
-  supervisor_child(sup, hpos, holder, _, _),
-  hpos < opos,
-  supervisor_child_name(sup, hpos, name),
-  function_def(f, owner, _, _, _),
-  sup_management_call(site, f, _, op, name),
-  child_creating_op(op).
-
-// The call's supervisor is a pid here ("dynamic"). Process points-to
-// does not follow it: a supervisor management call is not a pid use
-// (pid_call covers calls, casts and sends; sup_call's target is its own
-// extractor's), so the one earlier sibling of the API's kind stands in.
-rest_for_one_orphaned_children(sup, owner, holder, opos, hpos, site, "inferred") :-
-  supervisor(sup, "rest_for_one"),
-  supervisor_child(sup, opos, owner_branch, _, _),
-  child_subtree(sup, owner_branch, owner),
-  function_def(f, owner, _, _, _),
-  sup_management_call(site, f, api, op, "dynamic"),
-  child_creating_op(op),
-  sole_earlier_sibling_of_kind(sup, hpos, api, opos),
-  supervisor_child(sup, hpos, holder, _, _).
+rest_for_one_orphaned_children(sup, owner, holder, owner_pos, holder_pos, start, basis) :-
+  orphaned_children(sup, owner, owner_pos, holder, holder_pos, start, basis).
 
 // ── Two restart authorities ──────────────────────────────────────────
 //
