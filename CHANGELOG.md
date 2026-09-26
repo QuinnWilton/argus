@@ -6,6 +6,28 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## 0.20.0-dev — unreleased
 
+### Coupling: a registration through a client API that takes the server
+
+**Fixed.** coupling's restart isolation missed a registration made
+through the keeper's own client API when the server is an argument or a
+name the extractor cannot read (`def listen(server, channel), do:
+GenServer.call(server, {:listen, channel, self()})`): eusapia's
+Notifier, whose listener names the server it was configured with.
+Coupling's program does not include the self-directed call of
+clientlib/resolved_calls.dl that the chains read, and no program
+resolves a cast of that shape, so `once_request` saw no request and
+eusapia's Sonar, listening from `handle_continue/2`, read 0.
+`once_request` now takes such a call or cast as the keeper's when the
+keeper's own handler takes its tag. A proxy's client function, whose tag
+its own handler does not take, resolves to nothing. Fixtures:
+`Restart.ServerArgListener` and `ServerArgCastJoiner` fire;
+`ServerArgPublisher` (a per-use notify through the same API) and
+`ProxyUser` stay quiet. No schema change. Over the corpus it adds one
+row, in two livebook checkouts, and it is false: `Apps.Manager`'s deploy
+cast to `Apps.Deployer` resolves now, and the Deployer's handler reaches
+a helper that monitors a session and releases it before returning, which
+`kept` counts as keeping (docs/bug-classes.md, the class's limits).
+
 ### Exclusion census: what each negated atom does
 
 **Removed.** Fifty negated atoms that do not change a rule's output, each
@@ -45,6 +67,7 @@ definitions. Definitional atoms without a stated reason got one.
 `test/exclusions/`: 77 tests pinning 78 exclusions no evaluation program
 exercises (each fails when its atom is removed) and the two mailbox
 positives.
+
 ### Monitor-leak round: a monitor taken again before the last one is released
 
 **Changed.** mailbox's three monitor rules are one class,

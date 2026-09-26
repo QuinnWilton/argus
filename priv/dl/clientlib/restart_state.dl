@@ -72,6 +72,34 @@ once_request(a, b, "cast", tag, g) :-
   cast_tag(g, tag),
   a != b.
 
+// A request through b's own client API when the server is an argument
+// or a name the extractor cannot read: `def listen(server, channel), do:
+// GenServer.call(server, {:listen, channel, self()})`, eusapia's
+// Notifier, whose listener names the server it was configured with. The request is b's by its tag: b's own handler takes it (the
+// self-directed call of resolved_calls.dl, which the chains read; this
+// program does not include it, and a cast has no such row anywhere). A
+// proxy's client function sends another server's tag, which its own
+// handler does not take, and resolves to nothing.
+once_request(a, b, "call", tag, g) :-
+  once_code(a, g),
+  sync_call_site(id, g, t, _),
+  unresolved_target(t),
+  call_tag(id, g, "call", tag),
+  function_def(g, b, _, _, _),
+  handle_call_function(b, h),
+  callback_tag(h, "handle_call", tag),
+  a != b.
+
+once_request(a, b, "cast", tag, g) :-
+  once_code(a, g),
+  async_cast(g, t),
+  unresolved_target(t),
+  call_tag(_, g, "cast", tag),
+  function_def(g, b, _, _, _),
+  handle_cast_function(b, h),
+  callback_tag(h, "handle_cast", tag),
+  a != b.
+
 // The tags g's casts carry, "any" for a cast whose message has none.
 .decl cast_tag(func: symbol, tag: symbol)
 

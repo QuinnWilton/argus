@@ -605,3 +605,181 @@ defmodule Argus.Test.Fixtures.Restart.ComputedUser do
 
   def handle_event(_), do: :ok
 end
+
+# ── Registered through a client API that takes the server ─────────────
+#
+# eusapia's Notifier: `listen(server, channel)` calls the
+# server its caller names, and the listener names the one it was
+# configured with. The request resolves to the keeper by its tag, which
+# the keeper's own handler takes. The publisher beside it notifies on
+# each use and holds nothing.
+
+defmodule Argus.Test.Fixtures.Restart.ServerArgSup do
+  @moduledoc false
+  use Supervisor
+  alias Argus.Test.Fixtures.Restart
+
+  def start_link(arg), do: Supervisor.start_link(__MODULE__, arg, name: __MODULE__)
+
+  @impl true
+  def init(_arg),
+    do:
+      Supervisor.init(
+        [Restart.ServerArgKeeper, Restart.ServerArgListener, Restart.ServerArgPublisher],
+        strategy: :one_for_one
+      )
+end
+
+defmodule Argus.Test.Fixtures.Restart.ServerArgKeeper do
+  @moduledoc false
+  use GenServer
+
+  def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
+  def listen(server, channel), do: GenServer.call(server, {:listen, channel, self()})
+  def notify(server, channel, event), do: GenServer.call(server, {:notify, channel, event})
+
+  @impl true
+  def init(_), do: {:ok, %{listeners: %{}}}
+
+  @impl true
+  def handle_call({:listen, channel, pid}, _from, s),
+    do: {:reply, :ok, %{s | listeners: Map.put(s.listeners, channel, pid)}}
+
+  def handle_call({:notify, channel, event}, _from, s) do
+    with {:ok, pid} <- Map.fetch(s.listeners, channel), do: send(pid, {:event, channel, event})
+    {:reply, :ok, s}
+  end
+end
+
+defmodule Argus.Test.Fixtures.Restart.ServerArgListener do
+  @moduledoc "Listens once, from handle_continue/2, on the keeper it was handed."
+  use GenServer
+
+  alias Argus.Test.Fixtures.Restart.ServerArgKeeper
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(opts),
+    do: {:ok, %{keeper: Keyword.get(opts, :keeper, ServerArgKeeper)}, {:continue, :listen}}
+
+  @impl true
+  def handle_continue(:listen, s) do
+    :ok = ServerArgKeeper.listen(s.keeper, :health)
+    {:noreply, s}
+  end
+
+  @impl true
+  def handle_info({:event, :health, _}, s), do: {:noreply, s}
+end
+
+defmodule Argus.Test.Fixtures.Restart.ServerArgPublisher do
+  @moduledoc "Notifies the keeper it was handed on each use: nothing held."
+  use GenServer
+
+  alias Argus.Test.Fixtures.Restart.ServerArgKeeper
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+  def ping(pid), do: GenServer.call(pid, :ping)
+
+  @impl true
+  def init(opts), do: {:ok, %{keeper: Keyword.get(opts, :keeper, ServerArgKeeper)}}
+
+  @impl true
+  def handle_call(:ping, _from, s) do
+    :ok = ServerArgKeeper.notify(s.keeper, :health, :ping)
+    {:reply, :ok, s}
+  end
+end
+
+# ── The same, by a cast from init/1 ────────────────────────────────────
+
+defmodule Argus.Test.Fixtures.Restart.ServerArgCastSup do
+  @moduledoc false
+  use Supervisor
+  alias Argus.Test.Fixtures.Restart
+
+  def start_link(arg), do: Supervisor.start_link(__MODULE__, arg, name: __MODULE__)
+
+  @impl true
+  def init(_arg),
+    do:
+      Supervisor.init([Restart.ServerArgCastKeeper, Restart.ServerArgCastJoiner],
+        strategy: :one_for_one
+      )
+end
+
+defmodule Argus.Test.Fixtures.Restart.ServerArgCastKeeper do
+  @moduledoc false
+  use GenServer
+
+  def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
+  def subscribe(server, pid), do: GenServer.cast(server, {:subscribe, pid})
+
+  @impl true
+  def init(_), do: {:ok, %{subs: []}}
+
+  @impl true
+  def handle_cast({:subscribe, pid}, s), do: {:noreply, %{s | subs: [pid | s.subs]}}
+end
+
+defmodule Argus.Test.Fixtures.Restart.ServerArgCastJoiner do
+  @moduledoc false
+  use GenServer
+
+  alias Argus.Test.Fixtures.Restart.ServerArgCastKeeper
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(opts) do
+    ServerArgCastKeeper.subscribe(Keyword.get(opts, :keeper, ServerArgCastKeeper), self())
+    {:ok, nil}
+  end
+end
+
+# ── A proxy: a client function that sends another server's tag ───────
+#
+# `forward/2` takes the server too, but its message is `{:store, _}`,
+# which its own module's handler does not take: the request is not the
+# proxy's, and resolves to nothing.
+
+defmodule Argus.Test.Fixtures.Restart.ProxySup do
+  @moduledoc false
+  use Supervisor
+  alias Argus.Test.Fixtures.Restart
+
+  def start_link(arg), do: Supervisor.start_link(__MODULE__, arg, name: __MODULE__)
+
+  @impl true
+  def init(_arg),
+    do: Supervisor.init([Restart.Proxy, Restart.ProxyUser], strategy: :one_for_one)
+end
+
+defmodule Argus.Test.Fixtures.Restart.Proxy do
+  @moduledoc false
+  use GenServer
+
+  def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
+  def forward(server, item), do: GenServer.call(server, {:store, item})
+  def count, do: GenServer.call(__MODULE__, :count)
+
+  @impl true
+  def init(_), do: {:ok, %{count: 0}}
+
+  @impl true
+  def handle_call(:count, _from, s), do: {:reply, s.count, %{s | count: s.count + 1}}
+end
+
+defmodule Argus.Test.Fixtures.Restart.ProxyUser do
+  @moduledoc false
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(opts) do
+    Argus.Test.Fixtures.Restart.Proxy.forward(Keyword.fetch!(opts, :store), :hello)
+    {:ok, nil}
+  end
+end

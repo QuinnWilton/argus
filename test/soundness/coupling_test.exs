@@ -12,7 +12,12 @@ defmodule Argus.Soundness.CouplingTest do
     (`CastJoiner`, `DictUser`, `restart_record_user`), from
     handle_continue/2 (`ContinueJoiner`), from a helper init/1 calls
     (`HookUser`) or from a fun init/1 hands to `Enum.each/2` (`EachUser`)
-    still fires. A call made on each use (`Relay`) does not.
+    still fires, and so does one made through a client API that takes
+    the server as an argument (`ServerArgListener`, `ServerArgCastJoiner`:
+    the request is the keeper's by the tag its own handler takes). A call
+    made on each use (`Relay`, `ServerArgPublisher`) does not, and neither
+    does a client function whose tag its own module does not take
+    (`ProxyUser`).
   - **Only what the sibling keeps counts.** A map state (`CastKeeper`),
     a record state with no monitor (`restart_record_keeper`), a monitor
     (`ContinueKeeper`), an ETS row (`HookKeeper`), the process dictionary
@@ -32,6 +37,7 @@ defmodule Argus.Soundness.CouplingTest do
   import Argus.Test.Soundness, only: [fired: 2]
 
   alias Argus.Test.Fixtures.Restart
+  alias Argus.Test.Memo
 
   @title "Coupled children under one_for_one"
 
@@ -81,7 +87,17 @@ defmodule Argus.Soundness.CouplingTest do
     :restart_record_user,
     :restart_reset_sup,
     :restart_reset_keeper,
-    :restart_reset_user
+    :restart_reset_user,
+    Restart.ServerArgSup,
+    Restart.ServerArgKeeper,
+    Restart.ServerArgListener,
+    Restart.ServerArgPublisher,
+    Restart.ServerArgCastSup,
+    Restart.ServerArgCastKeeper,
+    Restart.ServerArgCastJoiner,
+    Restart.ProxySup,
+    Restart.Proxy,
+    Restart.ProxyUser
   ]
 
   setup_all do
@@ -99,7 +115,9 @@ defmodule Argus.Soundness.CouplingTest do
         Restart.FlagSup,
         Restart.MixedSup,
         Restart.ComputedSup,
-        :restart_record_sup
+        :restart_record_sup,
+        Restart.ServerArgSup,
+        Restart.ServerArgCastSup
       ] do
     test "#{inspect(sup)}: a registration its sibling keeps is reported", %{fired: fired} do
       assert coupled(fired, unquote(sup)) == [:warning]
@@ -110,7 +128,13 @@ defmodule Argus.Soundness.CouplingTest do
     assert coupled(fired, Restart.HandedSup) == [:info]
   end
 
-  for sup <- [Restart.PerUseSup, Restart.ResetSup, Restart.ReadSup, :restart_reset_sup] do
+  for sup <- [
+        Restart.PerUseSup,
+        Restart.ResetSup,
+        Restart.ReadSup,
+        :restart_reset_sup,
+        Restart.ProxySup
+      ] do
     test "#{inspect(sup)}: nothing its sibling keeps, no coupling", %{fired: fired} do
       assert coupled(fired, unquote(sup)) == []
     end
@@ -121,7 +145,7 @@ defmodule Argus.Soundness.CouplingTest do
   test "the clause a request enters decides, not the handler's other clauses", %{fired: fired} do
     assert coupled(fired, Restart.ClauseSup) == [:warning]
 
-    assert {:ok, results} = Argus.Test.Memo.analyze(@fixtures, :coupling)
+    assert {:ok, results} = Memo.analyze(@fixtures, :coupling)
 
     callers =
       for [sup, caller, _callee, "restart_isolation" | _] <- results["sibling_dependency"],
@@ -130,5 +154,22 @@ defmodule Argus.Soundness.CouplingTest do
           do: caller
 
     assert callers == [inspect(Restart.ClauseWriter)]
+  end
+
+  # A client API that takes the server (eusapia's and Oban's Notifier):
+  # the listener's registration from handle_continue/2 is held, the
+  # publisher's per-use notify through the same API is not.
+  test "a request through the keeper's own API resolves by its tag", %{fired: fired} do
+    assert coupled(fired, Restart.ServerArgSup) == [:warning]
+
+    assert {:ok, results} = Memo.analyze(@fixtures, :coupling)
+
+    callers =
+      for [sup, caller, _callee, "restart_isolation" | _] <- results["sibling_dependency"],
+          sup == inspect(Restart.ServerArgSup),
+          uniq: true,
+          do: caller
+
+    assert callers == [inspect(Restart.ServerArgListener)]
   end
 end

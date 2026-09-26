@@ -1364,8 +1364,12 @@ process left.
   on behalf of another's once request: MongooseIM's `gen_hook` sets up
   each hook's instrumentation with `mongoose_instrument` in its
   `add_handler` clause.
-- A request is a call or cast `sync_request_at` and `async_dep` resolve.
-  These are missed:
+- A request is a call or cast `sync_request_at` and `async_dep` resolve,
+  or one through B's own client API whose server is an argument or a
+  name the extractor cannot read (eusapia's
+  `Notifier.listen(server, channel)`), which is B's by the tag B's own
+  handler takes. A client function whose tag its own module's handler
+  does not take (a proxy's) resolves to nothing. These are missed:
   - a send to B's `handle_info/2`
   - a gen_statem's call or cast
   - a request made in a process the once code spawns
@@ -1374,6 +1378,16 @@ process left.
     sibling (`Registry`, `:pg`, `Phoenix.PubSub`)
 - What B keeps is read from its handler clause. A request whose tag the
   program cannot see enters every clause.
+- A monitor counts as kept wherever the clause, or a helper it enters,
+  takes it, even one released on every path before the handler returns.
+  Livebook's `Apps.Deployer` warms an app through
+  `Livebook.Apps.run_app_setup_sync/2`, which monitors the session it
+  starts and demonitors it, so `Apps.Manager`'s deploy request from
+  `handle_continue/2` reads as kept: a false positive (2 corpus
+  checkouts), found once a request through a client API that takes the
+  server resolved. The constructive refinement is a witness that some
+  way out of the clause leaves the monitor live; `monitor_released`
+  (clientlib/receive.dl) says only when none does.
 - A field set back to the value `init/1` gives it keeps nothing
   (`initial_field`). ejabberd_access_permissions' `invalidate` cast resets
   its cached definitions.
@@ -1409,6 +1423,10 @@ test/soundness/coupling_test.exs:
 - `ComputedUser` → `ComputedKeeper`: a state `Map.update/4` computes.
 - `:restart_record_user` → `:restart_record_keeper`: an Erlang record
   state, no monitor.
+- `ServerArgListener` → `ServerArgKeeper`: from `handle_continue/2`,
+  through a client API that takes the server (eusapia's Sonar and
+  Notifier).
+- `ServerArgCastJoiner` → `ServerArgCastKeeper`: the same by a cast.
 - `Subscriber` → `BrokerClient`: handed to a library, `:info`.
 
 Hand-authored fact sets in test/analyses/coupling_test.exs cover:
@@ -1423,7 +1441,12 @@ a pid. `PrivateConn.Reporter` subscribing to `PrivateConn.Cache`
 test/analyses/private_instance_test.exs.
 
 Quiet:
-- `Restart.Relay` → `Store`: a call on each use, encore `_smoke`'s shape.
+- `Restart.Relay` → `Store`: a call on each use, encore `_smoke`'s old
+  shape.
+- `ServerArgPublisher` → `ServerArgKeeper`: a notify on each use through
+  the client API the listener registers with.
+- `ProxyUser` → `Proxy`: a client function that sends another server's
+  tag.
 - `CacheUser` → `CacheKeeper` and `:restart_reset_user`: a reset to the
   initial value.
 - `ConfigUser` → `ConfigKeeper` and `ClauseReader`: a read.

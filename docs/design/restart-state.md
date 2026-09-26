@@ -102,7 +102,10 @@ The reason `cached_pid` is the model's other half, unchanged. There, A's
 - The tree is what the supervision extractor reads (its entry in the
   vocabulary).
 - A request is what `sync_request_at` and `async_dep` resolve: a target by
-  name, by client API, by points-to, or by message tag.
+  name, by client API, by points-to, or by message tag. A client API of
+  B's whose server is an argument or a name the extractor cannot read
+  (eusapia's `Notifier.listen(server, channel)`) is B's by the tag B's
+  own handler takes, for a call and for a cast.
 - A handler clause is told apart by its first argument's tag
   (`clause_call`), as the chains of blocking are.
 
@@ -204,6 +207,8 @@ The nearest real-bug shapes are fixtures in `test/soundness/coupling_test.exs`:
 - one kept in the process dictionary
 - one kept in a whole state that `Map.update/4` computes
 - a keeper's writing clause beside a read clause that keeps nothing
+- one made through a client API that takes the server as an argument,
+  by a call from `handle_continue/2` and by a cast from `init/1`
 
 Beside them are the quiet shapes:
 - the per-use call
@@ -211,6 +216,8 @@ Beside them are the quiet shapes:
 - the read-only request, in a keeper with no other clause and in one
   whose other clause writes
 - the linked pair
+- a per-use notify through the client API a listener registers with
+- a proxy's client function, whose tag its own handler does not take
 
 ## A table read while its owner is gone
 
