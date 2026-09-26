@@ -521,7 +521,8 @@ named_read(name, caller, site) :-
 // The owner is table_held's: the process whose stack runs the
 // :ets.new/2, a helper module's named table included (the server whose
 // init/1 calls `Metrics.setup()` holds it, and `Metrics.lookup/1`, run
-// by callers, reads it from outside).
+// by callers, reads it from outside). Not a table the read's operand
+// cannot name (read_misses).
 ets_read_outside_owner(name, owner, reader, site, id) :-
   table_held(name, p, owner, id),
   !process_root(_, p, _, "app"),
@@ -529,7 +530,91 @@ ets_read_outside_owner(name, owner, reader, site, id) :-
   named_read(name, reader, site),
   !owner_reaches(p, owner, reader),
   !read_guarded(reader, site),
-  !read_when_present(site).
+  !read_when_present(site),
+  !read_misses(site, id).
+
+// ── What a read's operand can name ──
+//
+// Both ets_op and ets_new key a table by the atom given to :ets.new/2,
+// named or not, and a reference read back from the :ets.new/2 in the
+// same function takes that atom too. The runtime does not: an atom
+// reaches only the named table registered under it, and a reference
+// only the table the :ets.new/2 that returned it made. So a read whose
+// operand is only a literal (itself, or a caller's through the read's
+// parameter) cannot touch an unnamed table, and one whose operand is
+// only the references other :ets.new/2 calls returned cannot touch the
+// table made at `id` unless both are the one named table. An operand
+// with any other answer (a parameter's field, another call's result, a
+// value the operand walk cannot follow) may be any table, and keeps
+// the pair. A table is unnamed only when its options were read whole
+// and give no :named_table (ets_options_known): options built at run
+// time may name it.
+.decl read_operand_known(site: symbol)
+
+read_operand_known(s) :- ets_table_path(s, "literal", _, "").
+read_operand_known(s) :- ets_table_path(s, "local", n, ""), ets_new(n, _, _).
+
+.decl read_operand_open(site: symbol)
+
+read_operand_open(s) :- ets_table_path(s, "param", _, _).
+read_operand_open(s) :- ets_table_path(s, "local", l, _), !ets_new(l, _, _).
+read_operand_open(s) :- ets_table_path(s, "local", _, path), path != "".
+read_operand_open(s) :- ets_table_path(s, "literal", _, path), path != "".
+
+// The answers that can be the table made at `id`: a literal names only a
+// table that may be named, a reference only its own site's table or,
+// both possibly named, the one table the name holds.
+.decl read_can_be(site: symbol, id: symbol)
+
+read_can_be(s, id) :-
+  read_pair(s, id),
+  ets_table_path(s, "literal", _, ""),
+  !unnamed_site(id).
+
+read_can_be(s, id) :- read_pair(s, id), ets_table_path(s, "local", id, "").
+
+read_can_be(s, id) :-
+  read_pair(s, id),
+  ets_table_path(s, "local", n, ""),
+  ets_new(n, _, _),
+  !unnamed_site(n),
+  !unnamed_site(id).
+
+// A read through a caller's literal (named_read's second clause) names
+// its table by that atom alone: the pair exists only through the name.
+read_can_be(s, id) :-
+  read_pair(s, id),
+  read_through_caller(s),
+  !unnamed_site(id).
+
+.decl unnamed_site(site: symbol)
+
+unnamed_site(n) :-
+  ets_new(n, _, _),
+  ets_options_known(n),
+  !ets_option(n, "named_table", "true").
+
+.decl read_through_caller(site: symbol)
+
+read_through_caller(s) :- named_read(_, caller, s), !ets_op(s, caller, _, _, _).
+
+.decl read_pair(site: symbol, id: symbol)
+
+read_pair(site, id) :- table_held(name, _, _, id), named_read(name, _, site).
+
+.decl read_misses(site: symbol, id: symbol)
+
+read_misses(s, id) :-
+  read_pair(s, id),
+  !read_through_caller(s),
+  read_operand_known(s),
+  !read_operand_open(s),
+  !read_can_be(s, id).
+
+read_misses(s, id) :-
+  read_pair(s, id),
+  read_through_caller(s),
+  !read_can_be(s, id).
 
 // The read at `site`, made by (or through a literal passed by) `reader`,
 // is rescued.

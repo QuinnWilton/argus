@@ -2506,10 +2506,11 @@ Another process takes or deletes the row between the check and the act, and the 
 - The rescue is asked of the reader's whole function, not of the read: a rescue around unrelated code in the reader silences it.
 - A reader that asks `:ets.whereis/1` of the table in the same function reads only while it is there (`asks_before_reading`; hackney's HTTP/3 connection table, Sentry's dedupe and its test registry: 4 rows over 18 projects). Asked of the function, as the rescue is, so a `whereis` whose answer the read ignores is taken for a guard; the window between the question and the read is left. A question asked in another function guards nothing (`WhereisElsewhereOwner`).
 - A read through a table reference held in state or a variable, rather than a literal name passed through parameters, is not tied to T.
+- A read is joined to a table by the atom both are keyed by, and then asked whether its operand can name that table (`read_misses`): an atom reaches only a named table, a reference only the table the `:ets.new/2` that returned it made. A read whose operand is only literals (or a caller's literal through the read's parameter) is not paired with an unnamed table of its atom, and one whose operand is only references other `:ets.new/2` calls returned is paired only with those tables or, both possibly named, the one table the name holds. A table is unnamed only when its options were read whole (`ets_options_known`) and give no `:named_table`; options built at run time may name it: mnesia_schema's `?ets_first(schema)` beside the unnamed scratch table `do_read_disc_schema/2` makes, qlc_pt's `no_shadows/2` reading its own unnamed table under qlc's atom (3 rows, ETS rows round). An operand with any other answer (a parameter's field, another call's result, one the operand walk cannot follow) keeps the pair.
 - Whether the owner restarts at all is not asked; an owner that never comes back makes the window permanent, which the finding still describes.
 - One finding per owner module and reader function, anchored at the read, with the `:ets.new/2` as a related frame.
 
-**Fixtures.** Positive: `EtsOwners.Owner`, `EtsOwners.HelperOwner` with `EtsOwners.Helper` (test/fixtures/ets_reader_fixture.ex); `:ets_catch_reader` `peek/1` (test/fixtures/erl/ets_catch_reader.erl). Positive also: `EtsOwners.WhereisElsewhereOwner`. Quiet: `EtsOwners.GuardedOwner`, `WhereisOwner`, `ClosureGuardedOwner`, `HeirOwner`, `InsideOwner`, `InfoOwner`, `BadargOwner`, `DynamicOwnerNamedRead`; `:ets_catch_reader` `lookup/1`; `Quiet.RescueAllReader` (test/fixtures/quiet_shapes_fixture.ex). Asserted by test/analyses/singleton_shapes_test.exs and test/analyses/quiet_shapes_test.exs.
+**Fixtures.** Positive: `EtsOwners.Owner`, `EtsOwners.HelperOwner` with `EtsOwners.Helper` (test/fixtures/ets_reader_fixture.ex); `:ets_catch_reader` `peek/1` (test/fixtures/erl/ets_catch_reader.erl). Positive also: `EtsOwners.WhereisElsewhereOwner`. Quiet: `EtsOwners.GuardedOwner`, `WhereisOwner`, `ClosureGuardedOwner`, `HeirOwner`, `InsideOwner`, `InfoOwner`, `BadargOwner`, `DynamicOwnerNamedRead`; `:ets_catch_reader` `lookup/1`; `Quiet.RescueAllReader` (test/fixtures/quiet_shapes_fixture.ex). Asserted by test/analyses/singleton_shapes_test.exs and test/analyses/quiet_shapes_test.exs. The operand's names (test/fixtures/soundness/ets_rows_soundness.ex, asserted by test/soundness/ets_test.exs): positive `Rows.Ets.NamedServer` beside `ScratchSameAtom`, `OptionNamed`, `ConfiguredOptions`, `HelperNamed` beside `HelperScratch`, `StateTableReader`; quiet `Rows.Ets.UnnamedOwner`, `OwnScratchReader` beside `ScratchAtomServer`.
 
 **Corpus.** Fix pairs: `redix#338` (whatyouhide/redix, b77331e → b31bd23, Redix.Cluster.Manager). Present-only: none.
 
@@ -4341,3 +4342,23 @@ real bugs as still reported.
 - **Peer call catching :noproc** (`CatchClauses`). Adversarial: re-exit
   by `exit/1` and `:erlang.raise/3`, `{:shutdown, _}` re-exited, guard
   excluding :shutdown; `OpenKept` stays quiet.
+
+## ETS rows round: assumptions behind the quietings
+
+Soundness round 2c brought 94 ETS rows back (8097be4 to 5187c9e); the
+ETS rows round read each against its source and fixed the false shapes
+a structural fact decides. Each quieting keeps its adversarial neighbours as positive
+fixtures in test/soundness/ets_test.exs.
+
+- **A read's operand names its table** (ets.dl `read_misses`). Assumes
+  the runtime's identities: an atom reaches only the named table
+  registered under it, a reference only the table its `:ets.new/2`
+  made; an operand with an answer other than a literal or such a
+  reference may be any table, and a table whose options were not read
+  whole may be named. Adversarial: a literal read beside an unnamed
+  table of its atom (`NamedServer`/`ScratchSameAtom`), one atom named on
+  one branch and unnamed on the other (`OptionNamed`), options from the
+  server's start arguments (`ConfiguredOptions`), a
+  caller's literal through a helper beside an unnamed table of its atom
+  (`HelperNamed`/`HelperScratch`), a parameter's field
+  (`StateTableReader`).

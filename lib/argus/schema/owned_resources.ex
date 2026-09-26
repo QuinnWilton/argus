@@ -32,6 +32,20 @@ defmodule Argus.Schema.OwnedResources do
         doc: "Parsed option from :ets.new/2."
       },
       %{
+        name: :ets_options_known,
+        layer: 2,
+        fields: [
+          {:id, :symbol, "instruction ID (same as ets_new)"}
+        ],
+        doc: """
+        The :ets.new/2 at `id` was given an options list the extractor read \
+        whole (a literal list, through moves): every option it gives has an \
+        `ets_option` row, so one with none, `named_table` among them, is not \
+        given. No row when the list is built at run time (a parameter, the \
+        configuration), where any option may be.
+        """
+      },
+      %{
         name: :ets_op_param,
         layer: 2,
         fields: [

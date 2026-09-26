@@ -6,6 +6,34 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## 0.20.0-dev — unreleased
 
+### ETS rows returned by soundness round 2c, judged
+
+Round 2c's one owner per table brought 94 ETS rows back on the
+evaluation sets (8097be4 to 5187c9e). Each was read against its source:
+10 true, 84 false. The false shapes a structural fact decides are fixed
+below, each with adversarial fixtures in `test/soundness/ets_test.exs`;
+the others need a reader's judgement and are prior candidates in
+docs/bug-classes.md.
+
+**Fixed.** Schema 127. "ETS table read while its owner may be
+restarting" paired a read with a table by the atom both are keyed by,
+though the runtime reaches a named table by its atom and an unnamed one
+only by the reference its `:ets.new/2` returned. A read whose operand is
+only literals, or a caller's literal through the read's parameter, is
+no longer paired with an unnamed table, and one whose operand is only
+references other `:ets.new/2` calls returned is paired only with those
+tables or, both possibly named, the one table the name holds
+(`read_misses`). A table is unnamed only when its options were read
+whole: the ETS extractor's new relation `ets_options_known(id)` says so,
+and a table whose options are built at run time may be named. Gone:
+mnesia_schema's `?ets_first(schema)` and `?ets_next(schema, _)` beside
+the unnamed scratch table `do_read_disc_schema/2` makes, and qlc_pt's
+`no_shadows/2` reading its own unnamed table under qlc's atom (3 rows).
+Still reported: a literal read beside an unnamed table of its atom, one
+atom named on one branch and unnamed on the other, a table whose options
+come from its start arguments, a caller's literal through a helper, and
+a parameter's field.
+
 ### Soundness round 2c (schema 122)
 
 Review 2 found suppressions that silenced real bugs next to the false

@@ -12,6 +12,9 @@ defmodule Argus.Extractors.ETS do
   - `ets_option(id, key, value)` — parsed option from `:ets.new/2`: `type`,
     `access`, `named_table`, `heir`, `read_concurrency`, `write_concurrency`
     and `keypos` (the key's element in an object, from 1)
+  - `ets_options_known(id)` — the options list was read whole, so an option
+    `ets_option` does not list (`named_table`, `heir`) is not given; no row
+    when the list is built at run time
   - `ets_op(id, func, table_ref, op, kind)` — ETS read/write/delete operation
   - `ets_op_param(id, pos)` — the table operand of that operation is the
     function's own parameter `pos`, so a caller's literal names the table
@@ -99,6 +102,7 @@ defmodule Argus.Extractors.ETS do
       :ets_op,
       :ets_op_param,
       :ets_option,
+      :ets_options_known,
       :ets_table_path,
       :ets_tid_arg,
       :ets_value,
@@ -452,12 +456,11 @@ defmodule Argus.Extractors.ETS do
   defp handle_call(facts, ctx, {:ets, :new, 2}, _fields) do
     id = InstrId.mint(ctx.func_id, ctx.idx)
     table_name = resolve_atom(ctx.instrs, ctx.idx, {:x, 0})
-    {options, facts} = resolve_options(facts, ctx)
 
     facts
     |> track_dynamic(table_name, ctx, :ets_table_name_new, :ets_new)
     |> add_fact(:ets_new, [id, ctx.func_id, table_name])
-    |> emit_options(id, options)
+    |> options(id, ctx)
     |> table_path(id, ctx)
   end
 
@@ -623,16 +626,19 @@ defmodule Argus.Extractors.ETS do
     end
   end
 
-  # Resolve the options list passed as the second argument to :ets.new/2.
-  # Track imprecision when x1 doesn't resolve to a list — we lose the
-  # ability to record per-option facts (heir, concurrency, named_table).
-  defp resolve_options(facts, ctx) do
+  # The options list passed as the second argument to :ets.new/2: each
+  # option it gives, and that the list was read whole, so a rule may take
+  # an option it does not give as absent. A list built at run time gives
+  # no rows at all, and any option may be in it (imprecision is tracked).
+  defp options(facts, id, ctx) do
     case resolve_register(ctx.instrs, ctx.idx, {:x, 1}) do
       {:ok, opts} when is_list(opts) ->
-        {opts, facts}
+        facts
+        |> add_fact(:ets_options_known, [id])
+        |> emit_options(id, opts)
 
       _ ->
-        {[], track_imprecision(facts, ctx, :ets_options_unresolved, :ets_option, :unresolvable)}
+        track_imprecision(facts, ctx, :ets_options_unresolved, :ets_option, :unresolvable)
     end
   end
 

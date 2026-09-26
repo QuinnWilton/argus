@@ -2,7 +2,10 @@ defmodule Argus.Soundness.EtsTest do
   @moduledoc """
   Review 2's probes and their adversarial neighbours for the ets analysis:
   real bugs a suppression once silenced, each pinned at the severity the
-  rule gives it without the suppression (round sound2c).
+  rule gives it without the suppression (round sound2c). The ETS rows
+  round (etsrows) adds the neighbours of its quieting of "read while its
+  owner may be restarting": a read cannot reach a table its operand
+  cannot name.
   """
   use ExUnit.Case, async: true
 
@@ -44,12 +47,27 @@ defmodule Argus.Soundness.EtsTest do
     S2c.Own.KeeperBeside,
     S2c.Own.Sup,
     S2c.Own2.AgentStart,
-    :probe_r2_g5_bridge
+    :probe_r2_g5_bridge,
+    Rows.Ets.NamedServer,
+    Rows.Ets.ScratchSameAtom,
+    Rows.Ets.StateTableReader,
+    Rows.Ets.OptionNamed,
+    Rows.Ets.HelperNamed,
+    Rows.Ets.HelperScratch,
+    Rows.Ets.UnnamedOwner,
+    Rows.Ets.OwnScratchReader,
+    Rows.Ets.ScratchAtomServer,
+    Rows.Ets.ConfiguredOptions
   ]
 
   setup_all do
     {:ok, res} = Memo.run_analyses(@modules, analyses: [:ets])
-    %{found: MapSet.new(res.findings, &{&1.severity, &1.title, &1.mfa})}
+    {:ok, rows} = Memo.analyze(@modules, :ets)
+
+    %{
+      found: MapSet.new(res.findings, &{&1.severity, &1.title, &1.mfa}),
+      reads: rows["ets_read_outside_owner"]
+    }
   end
 
   @fires [
@@ -92,7 +110,23 @@ defmodule Argus.Soundness.EtsTest do
     {:warning, "ETS table read while its owner may be restarting", {S2c.Ets.Counters, :get, 1}},
     {:warning, "ETS table dies with its owner",
      {S2c.Own.KeeperBeside, :"-start_link/1-fun-0-", 0}},
-    {:warning, "ETS table dies with its owner", {S2c.Own2.AgentStart, :"-start_link/1-fun-0-", 0}}
+    {:warning, "ETS table dies with its owner",
+     {S2c.Own2.AgentStart, :"-start_link/1-fun-0-", 0}},
+    # A read reaches only a table its operand can name: a literal the
+    # named table (an unnamed one shares its atom, one creation branch
+    # makes it unnamed, options built at run time may name it), a
+    # caller's literal through a helper, and a parameter's field whatever
+    # the reference is.
+    {:warning, "ETS table read while its owner may be restarting",
+     {Rows.Ets.NamedServer, :lookup, 1}},
+    {:warning, "ETS table read while its owner may be restarting",
+     {Rows.Ets.OptionNamed, :read, 1}},
+    {:warning, "ETS table read while its owner may be restarting",
+     {Rows.Ets.HelperNamed, :fetch, 2}},
+    {:warning, "ETS table read while its owner may be restarting",
+     {Rows.Ets.StateTableReader, :peek, 2}},
+    {:warning, "ETS table read while its owner may be restarting",
+     {Rows.Ets.ConfiguredOptions, :read, 1}}
   ]
 
   @quiet [
@@ -100,7 +134,9 @@ defmodule Argus.Soundness.EtsTest do
     {S2c.Ets.WhereisGuarded, :fetch, 1},
     {S2c.Ets.WhereisGuarded, :fetch_if, 1},
     {S2c.Ets.Gauges, :get, 1},
-    {S2c.Own.AgentStart, :"-start_link/1-fun-0-", 0}
+    {S2c.Own.AgentStart, :"-start_link/1-fun-0-", 0},
+    {Rows.Ets.UnnamedOwner, :first, 0},
+    {Rows.Ets.OwnScratchReader, :count, 1}
   ]
 
   for {severity, title, mfa} <- @fires do
@@ -111,5 +147,22 @@ defmodule Argus.Soundness.EtsTest do
 
   test "the negatives beside them stay quiet", %{found: found} do
     for mfa <- @quiet, do: refute(Enum.any?(found, &(elem(&1, 2) == mfa)), inspect(mfa))
+  end
+
+  test "a literal read is paired with the named table, never the unnamed one of its atom",
+       %{reads: reads} do
+    owners = fn reader ->
+      for [_name, owner, ^reader, _site, _created] <- reads, uniq: true, do: owner
+    end
+
+    assert owners.("Rows.Ets.NamedServer:lookup/1") == ["Rows.Ets.NamedServer"]
+    assert owners.("Rows.Ets.HelperNamed:get/1") == ["Rows.Ets.HelperNamed"]
+
+    # OptionNamed's two sites share one owner and reader: one row, the
+    # named site's, where the unnamed one's used to stand beside it.
+    assert [created] =
+             for([_, _, "Rows.Ets.OptionNamed:read/1", _, c] <- reads, do: c)
+
+    assert created =~ "Rows.Ets.OptionNamed:init/1#"
   end
 end
