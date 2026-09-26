@@ -10,6 +10,7 @@ defmodule Mix.Tasks.Compile.ArgusPriorsTest do
   @moduletag :project
   use Argus.Test.Peer
 
+  alias Argus.Driver.Result
   alias Argus.Test.{Fixture, Peer}
 
   @moduletag timeout: 300_000
@@ -37,7 +38,8 @@ defmodule Mix.Tasks.Compile.ArgusPriorsTest do
     Argus.Driver.run(Argus.Config.load(@quick ++ scry_config), manifest: manifest, force: false)
   end
 
-  defp entries(result), do: result.findings_by_file |> Map.values() |> List.flatten()
+  defp entries(result),
+    do: result |> Result.findings_by_file() |> Map.values() |> List.flatten()
 
   defp keys(result),
     do: result |> entries() |> Enum.map(&{&1.code, &1.title, &1.file, &1.line}) |> Enum.sort()
@@ -69,14 +71,14 @@ defmodule Mix.Tasks.Compile.ArgusPriorsTest do
 
       # Off: every entry structural, nothing asked.
       off = run([], manifest)
-      assert off.degraded == []
+      assert off |> Result.degraded() == []
       assert entries(off) != []
       assert Enum.all?(entries(off), &(&1.provenance == :structural and is_nil(&1.confidence)))
       refute File.exists?(log)
 
       # On: the oracle is asked, and every structural finding is still there.
       live = run(on, Path.join(scratch, "manifest_on"))
-      assert live.degraded == []
+      assert live |> Result.degraded() == []
       asked = log |> File.read!() |> String.split("\n", trim: true)
       assert asked != []
       assert MapSet.subset?(MapSet.new(keys(off)), MapSet.new(keys(live)))
@@ -101,7 +103,7 @@ defmodule Mix.Tasks.Compile.ArgusPriorsTest do
           Path.join(scratch, "manifest_cached")
         )
 
-      assert cached.degraded == []
+      assert cached |> Result.degraded() == []
       assert keys(cached) == keys(live)
       assert File.read!(log) |> String.split("\n", trim: true) == asked
     end)
@@ -180,7 +182,7 @@ defmodule Mix.Tasks.Compile.ArgusPriorsTest do
       wait = fn scry_config, manifest ->
         config = Argus.Config.load(blocking ++ scry_config)
         result = Argus.Driver.run(config, manifest: Path.join(scratch, manifest), force: false)
-        assert result.degraded == []
+        assert result |> Result.degraded() == []
 
         entry =
           result
@@ -208,7 +210,8 @@ defmodule Mix.Tasks.Compile.ArgusPriorsTest do
       cwd = File.cwd!()
 
       [rendered] =
-        result.findings_by_file
+        result
+        |> Result.findings_by_file()
         |> Argus.Mix.Diagnostics.build(config, cwd)
         |> Enum.filter(&(&1.diagnostic.message =~ ":infinity timeout inside a call chain"))
 
@@ -217,7 +220,8 @@ defmodule Mix.Tasks.Compile.ArgusPriorsTest do
 
       json =
         ExUnit.CaptureIO.capture_io(fn ->
-          result.findings_by_file
+          result
+          |> Result.findings_by_file()
           |> Argus.Mix.Diagnostics.resolve(config, cwd)
           |> Argus.Report.json(cwd)
         end)

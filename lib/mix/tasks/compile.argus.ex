@@ -33,6 +33,8 @@ defmodule Mix.Tasks.Compile.Argus do
 
   use Mix.Task.Compiler
 
+  alias Argus.Driver.Result
+
   # Mix runs a non-recursive compiler once at an umbrella's root, where
   # there is no app and no ebin to read. Recursive, it runs inside each
   # child that lists it, against that child's own beams.
@@ -59,7 +61,7 @@ defmodule Mix.Tasks.Compile.Argus do
 
     rendered =
       infrastructure(result, config) ++
-        Argus.Mix.Diagnostics.build(result.findings_by_file, config, cwd)
+        Argus.Mix.Diagnostics.build(Result.findings_by_file(result), config, cwd)
 
     Argus.Mix.Diagnostics.print(rendered)
 
@@ -94,7 +96,7 @@ defmodule Mix.Tasks.Compile.Argus do
 
   defp infrastructure(result, config) do
     souffle =
-      case {result.souffle_missing?, config.souffle} do
+      case {Result.souffle_missing?(result), config.souffle} do
         {false, _} ->
           []
 
@@ -120,7 +122,7 @@ defmodule Mix.Tasks.Compile.Argus do
       end
 
     degraded =
-      for %{analysis: analysis, reason: reason} <- result.degraded do
+      for %{analysis: analysis, reason: reason} <- Result.degraded(result) do
         Argus.Mix.Diagnostics.infrastructure(
           :warning,
           "the #{analysis} analysis degraded and reported nothing: #{inspect(reason)}"
@@ -128,14 +130,14 @@ defmodule Mix.Tasks.Compile.Argus do
       end
 
     partial =
-      for error <- result.extraction_errors do
+      for error <- Result.extraction_errors(result) do
         Argus.Mix.Diagnostics.infrastructure(
           :warning,
           Argus.Mix.Diagnostics.extraction_error_message(error)
         )
       end
 
-    souffle ++ degraded ++ partial ++ Enum.map(result.duplicates, &duplicate/1)
+    souffle ++ degraded ++ partial ++ Enum.map(Result.duplicates(result), &duplicate/1)
   end
 
   defp duplicate(%{module: module, used: used, shadowed: shadowed}) do

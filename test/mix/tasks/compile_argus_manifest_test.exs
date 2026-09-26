@@ -333,7 +333,7 @@ defmodule Mix.Tasks.Compile.ArgusManifestTest do
       compile!()
       assert QueryLog.hits(log, :program_relation_facts) == []
       assert QueryLog.executions(log, :program_relation_facts) == []
-      assert QueryLog.hits(log, :analysis_diagnostics) == [:coupling, :mailbox]
+      assert QueryLog.hits(log, :located) == [:coupling, :mailbox]
 
       # An edit prewarms its module, and the runner takes the relations
       # first, where the extraction waits.

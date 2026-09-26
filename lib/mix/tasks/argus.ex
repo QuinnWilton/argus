@@ -32,6 +32,8 @@ defmodule Mix.Tasks.Argus do
 
   use Mix.Task
 
+  alias Argus.Driver.Result
+
   @recursive true
 
   @switches [
@@ -118,30 +120,31 @@ defmodule Mix.Tasks.Argus do
         force: Keyword.get(opts, :force, false)
       )
 
-    if result.souffle_missing? do
+    if Result.souffle_missing?(result) do
       Mix.raise(
         "scry: souffle binary not found on PATH — install souffle " <>
           "(https://souffle-lang.github.io) to run the analyses"
       )
     end
 
-    report_degraded(result.degraded)
+    report_degraded(Result.degraded(result))
 
-    Enum.each(result.extraction_errors, fn error ->
+    Enum.each(Result.extraction_errors(result), fn error ->
       Mix.shell().error("scry: " <> Argus.Mix.Diagnostics.extraction_error_message(error))
     end)
 
-    Enum.each(result.duplicates, fn %{module: module, used: used, shadowed: shadowed} ->
+    Enum.each(Result.duplicates(result), fn %{module: module, used: used, shadowed: shadowed} ->
       Mix.shell().error(
         "scry: " <> Argus.Mix.Diagnostics.duplicate_message(module, used, shadowed)
       )
     end)
 
-    entries = Argus.Mix.Diagnostics.resolve(result.findings_by_file, config, cwd)
+    findings_by_file = Result.findings_by_file(result)
+    entries = Argus.Mix.Diagnostics.resolve(findings_by_file, config, cwd)
 
     case Keyword.get(opts, :format, "text") do
       "text" ->
-        Argus.Report.text(Argus.Mix.Diagnostics.build(result.findings_by_file, config, cwd))
+        Argus.Report.text(Argus.Mix.Diagnostics.build(findings_by_file, config, cwd))
 
       "json" ->
         Argus.Report.json(entries, cwd)

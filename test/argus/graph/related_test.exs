@@ -1,7 +1,8 @@
 defmodule Argus.Graph.RelatedTest do
   @moduledoc """
-  Related frames resolve like findings: the bytecode anchor, then the
-  frame's own source fragment (`at_source`) the last step.
+  Related frames resolve like findings: the bytecode anchor
+  (`Argus.Graph`'s `located`), then the frame's own source fragment
+  (`at_source`) the last step.
   """
 
   use ExUnit.Case, async: true
@@ -15,7 +16,7 @@ defmodule Argus.Graph.RelatedTest do
     paths = Graph.parity!()
     db = Graph.new_db(paths)
 
-    {:ok, by_file} = Argus.Graph.analysis_diagnostics(db, :mailbox)
+    by_file = placed(db, :mailbox)
 
     [{file, entries}] =
       Enum.filter(by_file, fn {file, _} ->
@@ -42,7 +43,7 @@ defmodule Argus.Graph.RelatedTest do
     paths = Graph.parity!()
     db = Graph.new_db(paths)
 
-    {:ok, by_file} = Argus.Graph.analysis_diagnostics(db, :structure)
+    by_file = placed(db, :structure)
 
     [{file, entries}] =
       Enum.filter(by_file, fn {file, _} -> String.ends_with?(file, "supervision_fixture.ex") end)
@@ -58,5 +59,17 @@ defmodule Argus.Graph.RelatedTest do
 
     assert [frame] = Enum.filter(finding.related, &(&1.label == "parent supervisor"))
     assert Enum.at(source, frame.line - 1) =~ "defmodule Argus.Test.Fixtures.SupAsWorker do"
+  end
+
+  # The analysis's findings placed and refined from the source, as a
+  # frontend renders them.
+  defp placed(db, analysis) do
+    assert {:ok, _} = located = Argus.Graph.located(db, analysis)
+
+    Argus.Driver.Result.findings_by_file(%Argus.Driver.Result{
+      located: %{analysis => located},
+      notices: [],
+      changed?: false
+    })
   end
 end

@@ -23,37 +23,7 @@ defmodule Argus.Driver do
   alias Roux.Lang.Manifest
   alias Roux.Memo
 
-  defmodule Result do
-    @moduledoc "The outcome of one driver run."
-
-    @enforce_keys [
-      :findings_by_file,
-      :degraded,
-      :extraction_errors,
-      :duplicates,
-      :souffle_missing?,
-      :changed?
-    ]
-    defstruct [
-      :findings_by_file,
-      :degraded,
-      :extraction_errors,
-      :duplicates,
-      :souffle_missing?,
-      :changed?
-    ]
-
-    @type t :: %__MODULE__{
-            findings_by_file: %{optional(String.t()) => [map()]},
-            degraded: [%{analysis: atom(), reason: term()}],
-            extraction_errors: [
-              %{module: module() | nil, name: String.t(), step: String.t(), reason: String.t()}
-            ],
-            duplicates: [Argus.Project.Scan.duplicate()],
-            souffle_missing?: boolean(),
-            changed?: boolean()
-          }
-  end
+  alias Argus.Driver.Result
 
   @doc """
   The manifest path shared by `mix compile.scry` and `mix scry` — one
@@ -112,7 +82,7 @@ defmodule Argus.Driver do
       # timeout under load is not a fact about the beam.
       retried = retry_failed_extractions(db, discovered)
 
-      {findings_by_file, degraded, extraction_errors} =
+      {located, extraction_errors} =
         if souffle? do
           # What every extraction reads moved: every module is extracted
           # again, across the schedulers.
@@ -128,7 +98,7 @@ defmodule Argus.Driver do
 
           analyze(db, config, discovered, to_extract)
         else
-          {%{}, [], []}
+          {%{}, []}
         end
 
       changed? =
@@ -141,14 +111,12 @@ defmodule Argus.Driver do
       # rewriting it was most of a warm run.
       if changed?, do: :ok = Manifest.write(db, sources, manifest_path)
 
-      %Result{
-        findings_by_file: findings_by_file,
-        degraded: degraded,
-        extraction_errors: extraction_errors,
-        duplicates: duplicates,
-        souffle_missing?: not souffle?,
-        changed?: changed?
-      }
+      notices =
+        if(souffle?, do: [], else: [:souffle_missing]) ++
+          Enum.map(extraction_errors, &{:extraction_error, &1}) ++
+          Enum.map(duplicates, &{:duplicate, &1})
+
+      %Result{located: located, notices: notices, changed?: changed?}
     after
       close(db)
     end
@@ -266,8 +234,10 @@ defmodule Argus.Driver do
   defp analyze(db, config, discovered, to_extract) do
     :ok = prewarm(db, discovered, to_extract)
     :ok = Argus.Graph.Priors.sync(db, config)
-    {findings_by_file, degraded} = demand(db, config.analyses, prewarmed?: to_extract != [])
-    if degraded != [], do: :ok = drop_degraded(db, config.analyses)
+    located = demand(db, config.analyses, prewarmed?: to_extract != [])
+
+    if Enum.any?(located, &match?({_analysis, {:error, _}}, &1)),
+      do: :ok = drop_degraded(db, config.analyses)
 
     extraction_errors = Argus.Graph.extraction_errors(db, :all)
 
@@ -275,7 +245,7 @@ defmodule Argus.Driver do
       for %{module: module} <- extraction_errors, module != nil, uniq: true, do: module
 
     :ok = Input.set(db, :failed_extractions, :all, Enum.sort(failed))
-    {findings_by_file, degraded, extraction_errors}
+    {located, extraction_errors}
   end
 
   # The modules whose last extraction read an entry of argus's schema
@@ -341,7 +311,7 @@ defmodule Argus.Driver do
   end
 
   defp unsolved?(db, analysis) do
-    Memo.changed_at(db, {:analysis_diagnostics, analysis}) == :miss
+    Memo.changed_at(db, {:located, analysis}) == :miss
   end
 
   # The queries whose error values are failures of the run rather than
@@ -433,38 +403,27 @@ defmodule Argus.Driver do
   # project).
   @doc false
   @spec demand(Database.t(), [atom()], keyword()) ::
-          {%{optional(String.t()) => [map()]}, [%{analysis: atom(), reason: term()}]}
+          %{optional(atom()) => {:ok, [Argus.Located.t()]} | {:error, term()}}
   def demand(db, analyses, opts \\ []) do
     if Keyword.get(opts, :prewarmed?, true),
       do: _ = Argus.Graph.program_relation_facts(db, :all)
 
-    results =
-      analyses
-      |> Task.async_stream(
-        &{&1, diagnostics(db, &1)},
-        max_concurrency: System.schedulers_online(),
-        ordered: true,
-        # Each solve is bounded by argus's own Souffle timeout.
-        timeout: :infinity
-      )
-      |> Enum.map(fn {:ok, result} -> result end)
-
-    findings =
-      for {_analysis, {:ok, by_file}} <- results, reduce: %{} do
-        acc -> Map.merge(acc, by_file, fn _file, a, b -> a ++ b end)
-      end
-
-    degraded =
-      for {analysis, {:error, reason}} <- results, do: %{analysis: analysis, reason: reason}
-
-    {findings, degraded}
+    analyses
+    |> Task.async_stream(
+      &{&1, located(db, &1)},
+      max_concurrency: System.schedulers_online(),
+      ordered: true,
+      # Each solve is bounded by argus's own Souffle timeout.
+      timeout: :infinity
+    )
+    |> Map.new(fn {:ok, result} -> result end)
   end
 
   # An analysis that raises — argus rules and code out of step, a bug —
   # degrades like one whose solver failed, and the others still report.
   # Nothing is memoized for it, so the next run tries again.
-  defp diagnostics(db, analysis) do
-    Argus.Graph.analysis_diagnostics(db, analysis)
+  defp located(db, analysis) do
+    Argus.Graph.located(db, analysis)
   rescue
     exception -> {:error, {:crashed, Exception.format_banner(:error, exception, __STACKTRACE__)}}
   end

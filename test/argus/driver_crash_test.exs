@@ -24,10 +24,10 @@ defmodule Argus.DriverCrashTest do
     bogus = {:ok, :not_outputs}
     :ok = Memo.put(db, key, %{entry | value: bogus, hash: :erlang.phash2(bogus)})
 
-    {findings, degraded} = Argus.Driver.demand(db, [:coupling, :mailbox])
+    located = Argus.Driver.demand(db, [:coupling, :mailbox])
 
-    assert [%{analysis: :mailbox, reason: {:crashed, banner}}] = degraded
+    assert %{mailbox: {:error, {:crashed, banner}}, coupling: {:ok, coupling}} = located
     assert is_binary(banner)
-    assert findings |> Map.values() |> List.flatten() |> Enum.any?(&(&1.code == "coupling"))
+    assert Enum.any?(coupling, &(&1.finding.analysis == :coupling))
   end
 end

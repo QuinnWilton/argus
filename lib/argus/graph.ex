@@ -33,7 +33,7 @@ defmodule Argus.Graph do
            │                          reads: each relation and its digest
       souffle_solve(analysis)       ← and rules_digest(analysis); solves
            │                          in a directory of its own
-      findings(analysis) → analysis_diagnostics(analysis)
+      findings(analysis) → located(analysis)
 
   Planchette's LSP-only surface (`Planchette.SupTree`'s supervision tree,
   `Planchette.Focus`'s flowistry slices) hangs off `module_extraction`
@@ -768,103 +768,48 @@ defmodule Argus.Graph do
     end
   end
 
-  # Findings with anchors resolved to file + line — the LATE positional
-  # step: findings themselves are line-free, so this is the only query
-  # that re-runs when a line-shifting edit touches an anchored module.
-  # Grouped by file, ready for LSP publication.
-  defquery :analysis_diagnostics,
-    key: analysis,
-    returns: {:ok, %{optional(String.t()) => [map()]}} | {:error, term()} do
-    # Scry's own resolution: its code moving must re-resolve even when
-    # the findings backdate.
+  # Findings placed in the source — the LATE positional step: findings
+  # themselves are line-free, so this is the only query that re-runs when
+  # a line-shifting edit touches an anchored module. What the bytecode
+  # says (`Argus.Located`): what only the source says (a fragment's
+  # token, a block's end, the guard's keyword) is the renderer's.
+  defquery :located, key: analysis, returns: {:ok, [Argus.Located.t()]} | {:error, term()} do
+    # The graph's own code: it moving must place again even when the
+    # findings backdate.
     _fingerprint = Runtime.input!(db, :env_fingerprint, :all)
 
     case Runtime.query(db, :findings, analysis) do
-      {:ok, findings} ->
-        resolved =
-          for finding <- findings,
-              entry = resolve_finding(db, finding),
-              entry != nil,
-              do: entry
-
-        {:ok, Enum.group_by(resolved, & &1.file)}
-
-      {:error, _} = error ->
-        error
+      {:ok, findings} -> {:ok, Enum.map(findings, &locate(db, &1))}
+      {:error, _} = error -> error
     end
   end
 
-  defp resolve_finding(db, finding) do
-    module = anchor_module(finding)
+  defp locate(db, finding) do
+    %{file: file, line: line, end_line: end_line} = place(db, finding)
 
-    with true <- module != nil,
+    %Argus.Located{
+      finding: finding,
+      file: file,
+      line: line,
+      end_line: end_line,
+      related: Enum.map(Map.get(finding, :related, []), &place(db, &1))
+    }
+  end
+
+  # The file of the anchor's module, the anchor's line and, when it
+  # closes a span, the line the span ends on; nowhere for an anchor
+  # outside the program.
+  defp place(db, anchored) do
+    with module when module != nil <- anchor_module(anchored),
          path when path != :external <- Runtime.query(db, :file_of, module) do
-      line = source_line(db, module, path, finding)
-      guard = guard_word(path, line, finding)
-
       %{
         file: path,
-        line: line,
-        end_line: end_line(db, module, path, finding),
-        severity: finding.severity,
-        code: Atom.to_string(finding.analysis),
-        title: fill_guard(finding.title, guard),
-        detail: fill_guard(finding.detail, guard),
-        # Map.get, not dot access: findings memoized before the shape
-        # gained these fields (a warm manifest) must still resolve.
-        at_label: fill_guard(Map.get(finding, :at_label), guard),
-        help: Enum.map(Map.get(finding, :help, []), &fill_guard(&1, guard)),
-        related: resolve_related(db, Map.get(finding, :related, [])),
-        provenance: Map.get(finding, :provenance, :structural),
-        confidence: Map.get(finding, :confidence)
+        line: anchor_line(db, module, anchored),
+        end_line: span_end_line(db, module, anchored)
       }
     else
-      _ -> nil
+      _ -> Argus.Located.nowhere()
     end
-  end
-
-  defp resolve_related(db, related) do
-    for entry <- related,
-        module = anchor_module(entry),
-        module != nil,
-        path = Runtime.query(db, :file_of, module),
-        path != :external do
-      # The frame's own source fragment takes its line the last step, as
-      # a finding's does: a receive's loop_rec has no line, so the
-      # bytecode alone puts the frame on the function head.
-      line = source_line(db, module, path, entry)
-
-      %{
-        label: fill_guard(Map.get(entry, :label, ""), guard_word(path, line, entry)),
-        file: path,
-        line: line,
-        end_line: end_line(db, module, path, entry)
-      }
-    end
-  end
-
-  # The word for `{guard}` in a finding's prose: the keyword the source
-  # shows at the anchor when the finding sits in a guard, else the
-  # neutral one. Read only when the prose asks.
-  defp guard_word(path, line, anchored) do
-    if Map.get(anchored, :to_block) == :guard,
-      do: Argus.Locate.Source.Elixir.guard_keyword(path, line) || "handler",
-      else: "handler"
-  end
-
-  defp fill_guard(nil, _word), do: nil
-  defp fill_guard(text, word), do: String.replace(text, "{guard}", word)
-
-  # The bytecode's end of the span when it placed one; else the end of
-  # the source block the finding says its anchor sits in, if it names
-  # one. Same untracked read, same tracked signal, as source_line/4.
-  defp end_line(db, module, path, anchored) do
-    span_end_line(db, module, anchored) ||
-      Argus.Locate.Source.Elixir.block_end(
-        path,
-        source_line(db, module, path, anchored),
-        Map.get(anchored, :to_block)
-      )
   end
 
   # A finding or frame that closes a span names a second instruction;
@@ -916,17 +861,6 @@ defmodule Argus.Graph do
       end
 
     line || Runtime.query(db, :module_declaration_line, module) || 1
-  end
-
-  # The bytecode anchor, then the source's last step for a finding that
-  # names a fragment. The file read is untracked on purpose: the tracked
-  # signal is the module's line table, and an edit that moves a
-  # declaration moves the functions after it too. The one shape that
-  # slips by — an edit inside a schema block with no function below it
-  # in the file — leaves a stale line until the next real change.
-  defp source_line(db, module, path, finding) do
-    line = anchor_line(db, module, finding)
-    Argus.Locate.Source.Elixir.refine(path, line, Map.get(finding, :at_source))
   end
 
   defp instr_line(_table, nil), do: nil
