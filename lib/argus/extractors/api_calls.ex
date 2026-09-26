@@ -23,7 +23,8 @@ defmodule Argus.Extractors.ApiCalls do
 
   - `sync_call`, `sync_call_timeout`, `async_cast`, `sup_call` — process
     calls (GenServer, gen_statem, GenStage, Agent, gen_event, supervisors);
-    `sync_call_site` — each synchronous call's target and timeout, by site
+    `sync_call_site` — each synchronous call's target and timeout, by site;
+    `async_cast_site` — each cast's target, by site
   - `unsafe_atom_creation`, `unsafe_deserialization`, `unsafe_decompression`,
     `code_execution`
   - `port_open`
@@ -188,8 +189,9 @@ defmodule Argus.Extractors.ApiCalls do
 
   # A synchronous call's site row repeats what sync_call and
   # sync_call_timeout say about the function, for the rules that must pair
-  # a call's target with its own timeout; its readers record no
-  # imprecision a second time.
+  # a call's target with its own timeout, and a cast's repeats async_cast
+  # for the rules that must pair a cast's target with its own tag; their
+  # readers record no imprecision a second time.
   @table ((for {mfa, target, timeout} <- @sync_calls do
              column =
                case timeout do
@@ -207,7 +209,13 @@ defmodule Argus.Extractors.ApiCalls do
                 [:id, :func, {:untracked, {:module_target, target}}, site_column]}
              ]
            end) ++
-            for(mfa <- @async, do: [{mfa, :async_cast, [:func, {:module_target, 0}]}]))
+            for(
+              mfa <- @async,
+              do: [
+                {mfa, :async_cast, [:func, {:module_target, 0}]},
+                {mfa, :async_cast_site, [:id, :func, {:untracked, {:module_target, 0}}]}
+              ]
+            ))
          |> List.flatten()
          |> Kernel.++([
            {{:gen_event, :sync_notify, 2}, :sync_call, [:func, {:atom, 0, :genserver_callee}]},
@@ -386,6 +394,7 @@ defmodule Argus.Extractors.ApiCalls do
   def relations,
     do: [
       :async_cast,
+      :async_cast_site,
       :code_execution,
       :distributed_store_op,
       :global_op,

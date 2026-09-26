@@ -332,7 +332,7 @@ than more; it errs loud when the same uncertainty can add a finding.
 ### What a restart loses
 
 - **Names.** `holds_in`, `once_request`, `kept`, `initial_field` (restart_state.dl, over runs.dl's `once_code`), over `returned_update`, `clause_call`, `ets_op`, `pid_signal`, `monitor_call`, `impure_call` and `unknown_call`.
-- **Meaning.** A restarted process starts from what its init/1 makes, so what another process put into it is gone and comes back only if that process puts it there again. `once_code(mod, f)`: f may run in mod's once phase, from a start callback (`start_callback`), a clause that runs once (runs.dl's `once_clause`: a cast init/1 alone makes to itself) or the start's continue chain (a handle_continue/2 clause init/1's continue enters, whatever else continues to it later: jackalope's Hare) on its own stack, a peer's client API included; a call such a clause makes directly is a once request too. A handle_continue/2 only handlers continue to is not (Livebook's NotebookManager). `once_request(a, b, kind, tag, f)`: a's once code, in f, calls or casts to b's process with a request tagged `tag`. `kept(b, h, tag, how, store)`: the clause of b's handler h for `tag` keeps something of it in b's process. `how` is one of:
+- **Meaning.** A restarted process starts from what its init/1 makes, so what another process put into it is gone and comes back only if that process puts it there again. `once_code(mod, f)`: f may run in mod's once phase, from a start callback (`start_callback`), a clause that runs once (runs.dl's `once_clause`: a cast init/1 alone makes to itself) or the start's continue chain (a handle_continue/2 clause init/1's continue enters, whatever else continues to it later: jackalope's Hare) on its own stack, a peer's client API included; a call or a cast such a clause makes directly is a once request too, asked of its site (`sync_request_at`, `async_request_at`). A handle_continue/2 only handlers continue to is not (Livebook's NotebookManager). `once_request(a, b, kind, tag, f)`: a's once code, in f, calls or casts to b's process with a request tagged `tag`. `kept(b, h, tag, how, store)`: the clause of b's handler h for `tag` keeps something of it in b's process. `how` is one of:
   - `table`: an ETS write.
   - `monitor`: a monitor or link.
   - `dict`: a process-dictionary write.
@@ -1328,9 +1328,13 @@ and modules A and B lie in different child branches of S
 (`child_subtree`). A *holds something in* B (`holds_in`,
 `clientlib/restart_state.dl`; the model is docs/design/restart-state.md):
 - A's once code makes a call or a cast to B's process. Once code is what
-  runs once per incarnation of A: its start callbacks (`init/1`,
-  `handle_continue/2`, a Channel's `join/3`, a LiveView's `mount/3`) and
-  what they run on A's own stack, including B's client API.
+  runs once per incarnation of A: its start callbacks (`init/1`, a
+  Channel's `join/3`, a LiveView's `mount/3`), the clauses of its once
+  phase (a `handle_continue/2` clause `init/1` continues to, a
+  `handle_info/2` clause for a message only its start sends, a site
+  behind a gate on its state) and what they run on A's own stack,
+  including B's client API. A request made directly at a site of the
+  phase is asked of that site.
 - B's handler clause for that request keeps something of it in B's
   process. The clause is found by the request's tag (`clause_call`).
   `detail` says what B keeps:

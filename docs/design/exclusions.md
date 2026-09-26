@@ -186,14 +186,16 @@ Both are pinned by positive fixtures in `test/exclusions/mailbox_test.exs`.
 
 ## Redundant atoms kept on purpose
 
-Eighteen R atoms stay. Each is redundant only because of what an
+Twenty R atoms stay. Each is redundant only because of what an
 extractor or a library emits, not because of the rules, and deleting it
 would make the rule depend silently on that. They are candidates for
 deletion together with a test of the property they rest on:
 
 - `calls.dl`: `sync_site`'s `!match("via:.*", m)` on a wrapper's literal
   target (it comes from `call_arg`, which spells a via tuple "dynamic"),
-  and two on `sync_request_at` (a via target always has a site).
+  two on `sync_request_at` (a via target always has a site), and the
+  same two on its cast twin `async_request_at` (added 2026-09-26, kept
+  alike so the two read as one vocabulary).
 - `global_reach.dl`: the site-less `global_path` rule's `!acked_edge(f, g)`,
   which only a stdlib `enter_loop` reaches.
 - `ets`: `read_can_be`'s `!unnamed_site(id)` and `read_misses`'s

@@ -844,3 +844,215 @@ defmodule Argus.Test.Fixtures.Restart.ProxyUser do
     {:ok, nil}
   end
 end
+
+# ── A cast made directly in handle_continue/2 ────────────────────────
+#
+# The joiner's init/1 continues to `:register`, whose clause casts the
+# keeper a `{:join, pid}` the keeper keeps in its state: the cast is the
+# start's own request, at a site of its once phase, as a call there is.
+
+defmodule Argus.Test.Fixtures.Restart.ContinueCastSup do
+  @moduledoc false
+  use Supervisor
+  alias Argus.Test.Fixtures.Restart
+
+  def start_link(arg), do: Supervisor.start_link(__MODULE__, arg, name: __MODULE__)
+
+  @impl true
+  def init(_arg),
+    do:
+      Supervisor.init([Restart.ContinueCastKeeper, Restart.ContinueCastJoiner],
+        strategy: :one_for_one
+      )
+end
+
+defmodule Argus.Test.Fixtures.Restart.ContinueCastKeeper do
+  @moduledoc false
+  use GenServer
+
+  def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
+
+  @impl true
+  def init(_), do: {:ok, %{members: []}}
+
+  @impl true
+  def handle_cast({:join, pid}, s), do: {:noreply, %{s | members: [pid | s.members]}}
+end
+
+defmodule Argus.Test.Fixtures.Restart.ContinueCastJoiner do
+  @moduledoc false
+  use GenServer
+
+  alias Argus.Test.Fixtures.Restart.ContinueCastKeeper
+
+  def start_link(_), do: GenServer.start_link(__MODULE__, nil)
+
+  @impl true
+  def init(_), do: {:ok, nil, {:continue, :register}}
+
+  @impl true
+  def handle_continue(:register, s) do
+    GenServer.cast(ContinueCastKeeper, {:join, self()})
+    {:noreply, s}
+  end
+end
+
+# ── The same cast from a continue only a periodic tick reaches ────────
+#
+# init/1 arms a tick; the tick re-arms itself and continues to
+# `:register`. The clause runs on every tick, so the registration is
+# made again after the keeper restarts: not once code.
+
+defmodule Argus.Test.Fixtures.Restart.TickCastSup do
+  @moduledoc false
+  use Supervisor
+  alias Argus.Test.Fixtures.Restart
+
+  def start_link(arg), do: Supervisor.start_link(__MODULE__, arg, name: __MODULE__)
+
+  @impl true
+  def init(_arg),
+    do: Supervisor.init([Restart.TickCastKeeper, Restart.TickCastJoiner], strategy: :one_for_one)
+end
+
+defmodule Argus.Test.Fixtures.Restart.TickCastKeeper do
+  @moduledoc false
+  use GenServer
+
+  def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
+
+  @impl true
+  def init(_), do: {:ok, %{members: []}}
+
+  @impl true
+  def handle_cast({:join, pid}, s), do: {:noreply, %{s | members: [pid | s.members]}}
+end
+
+defmodule Argus.Test.Fixtures.Restart.TickCastJoiner do
+  @moduledoc false
+  use GenServer
+
+  alias Argus.Test.Fixtures.Restart.TickCastKeeper
+
+  def start_link(_), do: GenServer.start_link(__MODULE__, nil)
+
+  @impl true
+  def init(_) do
+    Process.send_after(self(), :tick, 1_000)
+    {:ok, nil}
+  end
+
+  @impl true
+  def handle_info(:tick, s) do
+    Process.send_after(self(), :tick, 1_000)
+    {:noreply, s, {:continue, :register}}
+  end
+
+  @impl true
+  def handle_continue(:register, s) do
+    GenServer.cast(TickCastKeeper, {:join, self()})
+    {:noreply, s}
+  end
+end
+
+# ── A cast made on each use ──────────────────────────────────────────
+#
+# The forwarder casts each item it is handed on to the keeper, from its
+# handler: the next item reaches the new keeper, and nothing the
+# forwarder made once is lost.
+
+defmodule Argus.Test.Fixtures.Restart.PerUseCastSup do
+  @moduledoc false
+  use Supervisor
+  alias Argus.Test.Fixtures.Restart
+
+  def start_link(arg), do: Supervisor.start_link(__MODULE__, arg, name: __MODULE__)
+
+  @impl true
+  def init(_arg),
+    do: Supervisor.init([Restart.PerUseCastKeeper, Restart.PerUseCaster], strategy: :one_for_one)
+end
+
+defmodule Argus.Test.Fixtures.Restart.PerUseCastKeeper do
+  @moduledoc false
+  use GenServer
+
+  def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
+
+  @impl true
+  def init(_), do: {:ok, %{items: []}}
+
+  @impl true
+  def handle_cast({:add, item}, s), do: {:noreply, %{s | items: [item | s.items]}}
+end
+
+defmodule Argus.Test.Fixtures.Restart.PerUseCaster do
+  @moduledoc false
+  use GenServer
+
+  alias Argus.Test.Fixtures.Restart.PerUseCastKeeper
+
+  def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
+  def forward(item), do: GenServer.cast(__MODULE__, {:forward, item})
+
+  @impl true
+  def init(_), do: {:ok, nil}
+
+  @impl true
+  def handle_cast({:forward, item}, s) do
+    GenServer.cast(PerUseCastKeeper, {:add, item})
+    {:noreply, s}
+  end
+end
+
+# ── A cast to a proxy whose handler does not take its tag ────────────
+#
+# The joiner's handle_continue/2, which init/1 continues to, casts a
+# `{:store, _}` to the proxy by name and through the proxy's client
+# function that takes the server. The proxy's handler takes only
+# `{:bump, _}`: neither request is the proxy's to keep.
+
+defmodule Argus.Test.Fixtures.Restart.CastProxySup do
+  @moduledoc false
+  use Supervisor
+  alias Argus.Test.Fixtures.Restart
+
+  def start_link(arg), do: Supervisor.start_link(__MODULE__, arg, name: __MODULE__)
+
+  @impl true
+  def init(_arg),
+    do: Supervisor.init([Restart.CastProxy, Restart.CastProxyUser], strategy: :one_for_one)
+end
+
+defmodule Argus.Test.Fixtures.Restart.CastProxy do
+  @moduledoc false
+  use GenServer
+
+  def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
+  def forward(server, item), do: GenServer.cast(server, {:store, item})
+
+  @impl true
+  def init(_), do: {:ok, %{count: 0}}
+
+  @impl true
+  def handle_cast({:bump, n}, s), do: {:noreply, %{s | count: s.count + n}}
+end
+
+defmodule Argus.Test.Fixtures.Restart.CastProxyUser do
+  @moduledoc false
+  use GenServer
+
+  alias Argus.Test.Fixtures.Restart.CastProxy
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(opts), do: {:ok, %{store: Keyword.get(opts, :store, CastProxy)}, {:continue, :forward}}
+
+  @impl true
+  def handle_continue(:forward, s) do
+    GenServer.cast(CastProxy, {:store, :direct})
+    CastProxy.forward(s.store, :hello)
+    {:noreply, s}
+  end
+end

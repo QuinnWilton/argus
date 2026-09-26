@@ -319,8 +319,8 @@ Each condition is a positive witness the extractor reads
 code that runs again does not pass a call at a gated site (`gated_edge`
 cuts a handler's callee every call of which is gated; a clause
 function's gated call is no root). Coupling's once code gains the
-gated sites' reach, and a call a handler makes at a gated site is a
-once request.
+gated sites' reach, and a call or a cast a handler makes at a gated site
+is a once request.
 
 ## The gen_statem extractor
 
@@ -359,15 +359,17 @@ The extractor also reads `statem_insert` (inserted events).
   to is not. This replaces `once_message`, `once_cast`, `sent_again`,
   `cast_again`, `once_candidate`, `sends_literal`, `sends_literal_out` and
   mailbox's `once_clause`, which are deleted.
-- **Coupling**: once code grows by the once clauses' reach, and a call a
-  clause of the once phase makes directly is a once request.
+- **Coupling**: once code grows by the once clauses' reach, and a call or
+  a cast a clause of the once phase makes directly is a once request.
   handle_continue/2 is once code only for the start's continue chain:
   `start_callback` no longer names it, and a clause only handlers continue
   to (Livebook's NotebookManager `:dump_state`) is not. A gated site's
-  reach is once code, and a call at one is a once request. The finding's
-  registration frame is the `once_step` that makes the request or leads
-  to it, asked of sites: a handle_continue/2 clause is no once code as a
-  function.
+  reach is once code, and a call or a cast at one is a once request. The
+  request is asked of the site (`sync_request_at`, `async_request_at`,
+  calls.dl) and so is the finding's registration frame, the `once_step`
+  that makes the request or leads to it: a handle_continue/2 clause is no
+  once code as a function. Until 2026-09-26 only a call at a site of the
+  phase was asked, and a cast made there directly went unseen.
 
 ## What it assumes
 

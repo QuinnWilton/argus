@@ -15,10 +15,16 @@ defmodule Argus.Soundness.CouplingTest do
     still fires, and so does one made through a client API that takes
     the server as an argument (`ServerArgListener`, `ServerArgCastJoiner`:
     the request is the keeper's by the tag its own handler takes), also
-    from a helper of the caller's own (`HelperListener`). A call
-    made on each use (`Relay`, `ServerArgPublisher`) does not, and neither
-    does a client function whose tag its own module does not take
-    (`ProxyUser`).
+    from a helper of the caller's own (`HelperListener`). A cast made
+    directly at a site of the once phase is a registration as a call there
+    is: in the handle_continue/2 clause init/1 continues to
+    (`ContinueCastJoiner`, `restart_cast_cont_user`) and in the
+    handle_info/2 clause for a message only init/1 sends
+    (`restart_cast_info_user`). A call made on each use (`Relay`,
+    `ServerArgPublisher`) does not fire, nor a cast made on each use
+    (`PerUseCaster`) or from a continue only a periodic tick reaches
+    (`TickCastJoiner`), and neither does a request whose tag the target's
+    handler does not take (`ProxyUser`, `CastProxyUser`).
   - **Only what the sibling keeps counts.** A map state (`CastKeeper`),
     a record state with no monitor (`restart_record_keeper`), a monitor
     (`ContinueKeeper`), an ETS row (`HookKeeper`), the process dictionary
@@ -42,6 +48,8 @@ defmodule Argus.Soundness.CouplingTest do
 
   @title "Coupled children under one_for_one"
   @source Path.expand("../fixtures/soundness/coupling_soundness.ex", __DIR__)
+  @erl_cont Path.expand("../fixtures/erl/restart_cast_cont_user.erl", __DIR__)
+  @erl_info Path.expand("../fixtures/erl/restart_cast_info_user.erl", __DIR__)
 
   @fixtures [
     Restart.CastSup,
@@ -102,7 +110,24 @@ defmodule Argus.Soundness.CouplingTest do
     Restart.ProxyUser,
     Restart.HelperListenSup,
     Restart.HelperListenKeeper,
-    Restart.HelperListener
+    Restart.HelperListener,
+    Restart.ContinueCastSup,
+    Restart.ContinueCastKeeper,
+    Restart.ContinueCastJoiner,
+    :restart_cast_keeper,
+    :restart_cast_cont_sup,
+    :restart_cast_cont_user,
+    :restart_cast_info_sup,
+    :restart_cast_info_user,
+    Restart.TickCastSup,
+    Restart.TickCastKeeper,
+    Restart.TickCastJoiner,
+    Restart.PerUseCastSup,
+    Restart.PerUseCastKeeper,
+    Restart.PerUseCaster,
+    Restart.CastProxySup,
+    Restart.CastProxy,
+    Restart.CastProxyUser
   ]
 
   setup_all do
@@ -123,7 +148,10 @@ defmodule Argus.Soundness.CouplingTest do
         :restart_record_sup,
         Restart.ServerArgSup,
         Restart.ServerArgCastSup,
-        Restart.HelperListenSup
+        Restart.HelperListenSup,
+        Restart.ContinueCastSup,
+        :restart_cast_cont_sup,
+        :restart_cast_info_sup
       ] do
     test "#{inspect(sup)}: a registration its sibling keeps is reported", %{fired: fired} do
       assert coupled(fired, unquote(sup)) == [:warning]
@@ -139,7 +167,10 @@ defmodule Argus.Soundness.CouplingTest do
         Restart.ResetSup,
         Restart.ReadSup,
         :restart_reset_sup,
-        Restart.ProxySup
+        Restart.ProxySup,
+        Restart.TickCastSup,
+        Restart.PerUseCastSup,
+        Restart.CastProxySup
       ] do
     test "#{inspect(sup)}: nothing its sibling keeps, no coupling", %{fired: fired} do
       assert coupled(fired, unquote(sup)) == []
@@ -185,13 +216,20 @@ defmodule Argus.Soundness.CouplingTest do
   # eusapia's Sonar, calling `Notifier.listen(server, channel)` from
   # handle_continue/2), and not a helper of the caller's below the step.
   describe "the registration's frame" do
-    for {sup, caller, text} <- [
-          {Restart.ServerArgSup, Restart.ServerArgListener,
+    for {sup, caller, source, text} <- [
+          {Restart.ServerArgSup, Restart.ServerArgListener, @source,
            ":ok = ServerArgKeeper.listen(s.keeper, :health)"},
-          {Restart.ContinueSup, Restart.ContinueJoiner,
+          {Restart.ContinueSup, Restart.ContinueJoiner, @source,
            ":ok = Argus.Test.Fixtures.Restart.ContinueKeeper.join(self())"},
-          {Restart.HelperListenSup, Restart.HelperListener, ":ok = listen_on(s.keeper)"},
-          {Restart.HookSup, Restart.HookUser, "    register_hooks()"}
+          {Restart.HelperListenSup, Restart.HelperListener, @source, ":ok = listen_on(s.keeper)"},
+          {Restart.HookSup, Restart.HookUser, @source, "    register_hooks()"},
+          # A cast the phase makes itself is its own step: the cast.
+          {Restart.ContinueCastSup, Restart.ContinueCastJoiner, @source,
+           "GenServer.cast(ContinueCastKeeper, {:join, self()})"},
+          {:restart_cast_cont_sup, :restart_cast_cont_user, @erl_cont,
+           "gen_server:cast(restart_cast_keeper, {join, self()})"},
+          {:restart_cast_info_sup, :restart_cast_info_user, @erl_info,
+           "gen_server:cast(restart_cast_keeper, {join, self()})"}
         ] do
       test "#{inspect(caller)}: at the caller's own step" do
         sup = unquote(sup)
@@ -209,7 +247,7 @@ defmodule Argus.Soundness.CouplingTest do
 
         assert frame.module == caller
         assert frame.instr != nil, "the frame is a function's head, not the step's call"
-        assert frame_line(frame) == fixture_line(unquote(text))
+        assert frame_line(frame) == fixture_line(unquote(source), unquote(text))
       end
     end
   end
@@ -221,8 +259,8 @@ defmodule Argus.Soundness.CouplingTest do
 
   # The fixture's line holding `text`, found by the text so the fixture
   # can move freely.
-  defp fixture_line(text) do
-    @source
+  defp fixture_line(source, text) do
+    source
     |> File.read!()
     |> String.split("\n")
     |> Enum.find_index(&String.contains?(&1, text))

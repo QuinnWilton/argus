@@ -101,13 +101,23 @@ once_request(a, b, "cast", tag, g) :-
   callback_tag(h, "handle_cast", tag),
   a != b.
 
-// A call a handler of a's makes at a site of its once phase
-// (once_phase_site, runs.dl): in a handle_info/2 clause for a message a's
-// start sends, or behind a gate on the state its run closes.
+// A call or a cast a handler of a's makes at a site of its once phase
+// (once_phase_site, runs.dl): in a handle_continue/2 clause init/1
+// continues to, a handle_info/2 clause for a message a's start sends, or
+// behind a gate on the state its run closes. The handler is no once code
+// as a function, so the request is asked of the site: a cast there is as
+// much the start's own request as a call (`GenServer.cast(Keeper, {:join,
+// self()})` in the handle_continue/2 init/1 continues to).
 once_request(a, b, "call", tag, h) :-
   once_phase_site(a, h, id),
   child_subtree(_, _, a),
   sync_request_at(h, id, b, tag),
+  a != b.
+
+once_request(a, b, "cast", tag, h) :-
+  once_phase_site(a, h, id),
+  child_subtree(_, _, a),
+  async_request_at(h, id, b, tag),
   a != b.
 
 // The casts g makes, at their sites, by the tag each carries: "any" for

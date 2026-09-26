@@ -104,6 +104,21 @@ defmodule Argus.Schema.Otp do
         """
       },
       %{
+        name: :async_cast_site,
+        layer: 2,
+        fields: [
+          {:id, :instr_id, "instruction ID of the cast"},
+          {:caller_func, :symbol, "casting function ID"},
+          {:callee_mod, :symbol, "target GenServer module, or dynamic"}
+        ],
+        doc: """
+        A cast's target at its site, as async_cast spells it: what pairs \
+        the process a cast goes to with the message tag of the same cast \
+        (call_tag), where async_cast says only that the function makes \
+        such a cast.
+        """
+      },
+      %{
         name: :sup_call,
         layer: 2,
         fields: [

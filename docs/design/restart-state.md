@@ -215,6 +215,10 @@ The nearest real-bug shapes are fixtures in `test/soundness/coupling_test.exs`:
 - a registration kept in an Erlang record's state, with no monitor
 - one kept by a cast
 - one made from `handle_continue/2`
+- one made by a cast directly in the `handle_continue/2` clause `init/1`
+  continues to, in Elixir and in Erlang, and in the Erlang
+  `handle_info/2` clause for a message only `init/1` sends itself; the
+  registration frame is the cast
 - one made by a helper `init/1` calls
 - one a peer hands to a library
 - one monitored
@@ -232,6 +236,11 @@ Beside them are the quiet shapes:
 - the linked pair
 - a per-use notify through the client API a listener registers with
 - a proxy's client function, whose tag its own handler does not take
+- a cast from a `handle_continue/2` clause only a periodic tick continues
+  to, which makes it again after the keeper's restart
+- a cast made on each use, from a handler
+- a cast to a proxy, by name and through its client function, whose
+  handler does not take the tag
 
 ## A table read while its owner is gone
 

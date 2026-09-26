@@ -3,7 +3,7 @@
 // Requires imports.dl, behaviours.dl, callbacks.dl, staged_processes.dl
 // and runs_elsewhere.dl (otp.dl includes all of them).
 // Reads the extracted sync_call / sync_call_site / async_cast /
-// sync_call_timeout / call_arg / call_arg_forward facts and answers one question in a few shapes: does this function, or
+// async_cast_site / sync_call_timeout / call_arg / call_arg_forward facts and answers one question in a few shapes: does this function, or
 // this module, synchronously depend on that module's process.
 //
 // Provides:
@@ -13,6 +13,7 @@
 //   reaches_sync_dep(func, mod) / reaches_async_dep(func, mod) — transitive
 //   sync_request_at(func, site, mod, tag) / reaches_sync_request(func, mod, tag)
 //     — the same waits, with the request's tag
+//   async_request_at(func, site, mod, tag) — the casts, with theirs
 //   site_request(func, site, mod, tag) — per call site of a function a
 //     consumer names in site_demand, entering callees by their literal
 //     first argument
@@ -510,6 +511,62 @@ sync_request_at(f, id, m, tag) :-
   sync_call_site(id, f, t, _),
   unresolved_target(t),
   call_tag(id, f, "call", tag).
+
+// The tag of the cast at `id`, "any" when its message has none.
+.decl cast_sent_tag(id: symbol, func: symbol, tag: symbol)
+
+cast_sent_tag(id, f, tag) :- async_cast_site(id, f, _), call_tag(id, f, "cast", tag).
+cast_sent_tag(id, f, "any") :- async_cast_site(id, f, _), !call_tag(id, f, "cast", _).
+
+// `func` itself casts to `mod`'s process with a message tagged `tag`, at
+// `site`: sync_request_at's twin, one clause per async_dep clause that
+// has a site ("" when the cast has no site of func's), each pairing a
+// cast's target with its own tag. A cast through mod's client API is the
+// API function's own. A spelled target leaves out the dynamic and via
+// ones, as async_dep's.
+.decl async_request_at(func: symbol, site: symbol, mod: symbol, tag: symbol)
+
+async_request_at(f, id, m, tag) :-
+  async_cast_site(id, f, m),
+  m != "dynamic",
+  m != ":dynamic",
+  !match("via:.*", m),
+  cast_sent_tag(id, f, tag).
+
+// A cast the facts place with no site of f's own (gen_event's notify),
+// and no wrapper call that names its literal target, is f's with an
+// empty site.
+async_request_at(f, "", m, "any") :-
+  async_cast(f, m),
+  m != "dynamic",
+  m != ":dynamic",
+  !match("via:.*", m),
+  !async_cast_site(_, f, m),
+  !named_target_site(f, _, "cast", m).
+
+// A literal target handed to a wrapper: at the call into it.
+async_request_at(f, id, m, "any") :-
+  named_target_site(f, id, "cast", m),
+  m != ":dynamic",
+  !match("via:.*", m).
+
+// A cast points-to resolves: tagged as its site's message is, or "any"
+// when the site is not one async_cast_site describes.
+async_request_at(f, anchor, m, tag) :-
+  process_call(f, anchor, site, "cast", p),
+  server_process(p, m),
+  cast_sent_tag(site, _, tag).
+
+async_request_at(f, anchor, m, "any") :-
+  process_call(f, anchor, site, "cast", p),
+  server_process(p, m),
+  !async_cast_site(site, _, _).
+
+async_request_at(f, id, m, tag) :-
+  tag_resolved_site(id, f, "cast", m),
+  async_cast_site(id, f, t),
+  unresolved_target(t),
+  call_tag(id, f, "cast", tag).
 
 // The requests a server's client API function makes: the tags it sends,
 // "any" for a call of its with none or when the call is a callee's.

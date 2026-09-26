@@ -6,6 +6,49 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## 0.20.0-dev — unreleased
 
+### Coupling: a cast made at a site of the once phase is a registration (schema 148)
+
+**Fixed.** "Coupled children under one_for_one" missed a registration a
+child makes by a cast directly in the handle_continue/2 clause its
+init/1 continues to (`GenServer.cast(Keeper, {:join, self()})`), in the
+handle_info/2 clause for a message only its start sends, or behind a
+gate on its state that its own run closes. The once-and-again round
+made such a clause once code only at its sites (`once_phase_site`,
+runs.dl), and restart_state.dl asked a site of the phase only for a
+call (`sync_request_at`): a cast had no word at its site. A cast at a
+site of the once phase is a once request now (`once_request`'s "cast"
+clause over `async_request_at`), and the finding's "registers with the
+sibling here" frame is the cast itself, the registrant's own step.
+
+**Added.** Schema 148. `async_cast_site(id, caller_func, callee_mod)`,
+from the ApiCalls table `async_cast` comes from: a cast's target at its
+site, as `sync_call_site` is a call's. calls.dl's
+`async_request_at(func, site, mod, tag)` is `sync_request_at`'s twin,
+one clause per `async_dep` clause that has a site (a spelled target, a
+literal target handed to a wrapper, a cast points-to resolves, a cast
+attributed by its tag, and "" for a cast with no site of its own), each
+pairing the target with the tag of its own site (`cast_sent_tag`). Only
+coupling's input set moves (`async_cast_site`). Its 7 negated atoms are
+each the twin of one of `sync_request_at`'s; the two via tests are
+redundant as the call side's are and are listed with them in
+docs/design/exclusions.md.
+
+Rows and frames are unchanged on the 44 evaluation sets. No
+handle_continue/2 there casts directly, and the three casts points-to
+resolves at a site of a once phase go to the caster's own server (emqx's
+`emqx_bridge_gcp_pubsub_consumer_worker`, twice) or are made by a module
+no tree starts (honeydew's `JobMonitor`). The one row the once-and-again
+round lost (Livebook's `NotebookManager` with `Storage`) stays gone: its
+clause is one only handlers continue to. test/soundness/coupling_test.exs
+pins the shape. It fires for a cast from handle_continue/2 in Elixir
+(`ContinueCastJoiner`) and in Erlang (`restart_cast_cont_user`), and
+from the Erlang handle_info/2 clause for init/1's own message
+(`restart_cast_info_user`), each with its frame at the cast's line. It
+is quiet for a cast from a continue only a periodic tick reaches, a
+per-use cast from a handler, and a cast to a proxy, by name and through
+its client function, whose handler does not take the tag. Each quiet
+shape fires once its distinguishing feature is removed.
+
 ### Races: what is ordered before the pair (schema 147)
 
 The races rewrite's concurrency fix counted every other process that
