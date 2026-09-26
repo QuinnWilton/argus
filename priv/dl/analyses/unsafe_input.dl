@@ -569,6 +569,33 @@ outside_api(f) :-
   !runtime_callback(m, n, a),
   !function_def(_, m, "__impl__", 1, _).
 
+// A protocol's implementation is called with what the protocol's own
+// function is handed: dispatch relays it. The implementation of a
+// protocol the program defines is a way in when that function is
+// (a library's `MyLib.Key.to_key/1`, whose BitString implementation
+// makes an atom of the users' string). An implementation of a protocol
+// the program does not define is the runtime's or a library's to call,
+// with the program's own values (`Inspect`, `String.Chars`,
+// `Phoenix.Param`), and is not one.
+outside_api(f) :-
+  function_def(f, m, n, a, _),
+  implements_protocol(m, p),
+  function_def(pf, p, n, a, _),
+  outside_api(pf).
+
+// `m` implements the protocol `p` the program defines: `defimpl`'s
+// module, named `p` then the implementation's type, which compiles
+// `__impl__/1`; `p` compiles `__protocol__/1`. The name is `p` and a dot
+// first (the pattern, whose dots take any character, from the start;
+// the literal prefix somewhere: substr is a partial functor).
+.decl implements_protocol(impl: symbol, protocol: symbol)
+
+implements_protocol(m, p) :-
+  function_def(_, m, "__impl__", 1, _),
+  function_def(_, p, "__protocol__", 1, _),
+  match(cat(p, "[.].*"), m),
+  contains(cat(p, "."), m).
+
 // What the runtime calls a process module with: its own start arguments,
 // its own messages, its own name. A process's callbacks that take them
 // (otp_callback and message_callback, clientlib/callbacks.dl; not a

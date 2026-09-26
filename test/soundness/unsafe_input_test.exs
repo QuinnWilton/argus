@@ -9,6 +9,8 @@ defmodule Argus.Soundness.UnsafeInputTest do
 
   import Argus.Test.Soundness.Case
 
+  alias Argus.Test.Soundness.Census
+
   setup_all do
     unless Argus.Souffle.available?(), do: raise("souffle not installed")
     mods = modules("unsafe_input_fixture.ex")
@@ -152,5 +154,45 @@ defmodule Argus.Soundness.UnsafeInputTest do
 
   test "a socket's bytes in a server's handle_info are an outside party's", %{sev: sev} do
     assert severity(sev, "G6.RanchAtom", :handle_info, @atom_export) == :warning
+  end
+
+  # The exclusion census's unsafe_input holes (docs/design/exclusions.md),
+  # over one fixture set (test/fixtures/soundness/unsafe_input_census.ex
+  # and the census_* modules of test/fixtures/erl).
+  @census [
+    Census.UnsafeInput.Key,
+    Census.UnsafeInput.Key.BitString,
+    Census.UnsafeInput.Key.Atom,
+    Census.UnsafeInput.Named,
+    Census.UnsafeInput.Label,
+    Census.UnsafeInput.Label.Argus.Test.Soundness.Census.UnsafeInput.Named,
+    String.Chars.Argus.Test.Soundness.Census.UnsafeInput.Named,
+    :census_tree_names,
+    :census_tree_levels,
+    :census_flat_names
+  ]
+
+  defp census do
+    {:ok, res} = Argus.Test.Memo.run_analyses(@census, analyses: [:unsafe_input])
+    MapSet.new(res.findings, &{&1.severity, &1.title, &1.mfa})
+  end
+
+  defp census_quiet?(mod), do: not Enum.any?(census(), &match?({_, _, {^mod, _, _}}, &1))
+
+  # census: protocol-relay
+  # A protocol's implementation was never a way in.
+  describe "census hole: the implementation of the program's own protocol" do
+    for mfa <- [
+          {Census.UnsafeInput.Key.BitString, :to_key, 1},
+          {Census.UnsafeInput.Label.Argus.Test.Soundness.Census.UnsafeInput.Named, :label, 2}
+        ] do
+      test "#{inspect(mfa)} makes an atom of what its protocol's caller hands it" do
+        assert {:warning, @atom_export, unquote(Macro.escape(mfa))} in census()
+      end
+    end
+
+    test "an implementation of a protocol the program does not define is quiet" do
+      assert census_quiet?(String.Chars.Argus.Test.Soundness.Census.UnsafeInput.Named)
+    end
   end
 end

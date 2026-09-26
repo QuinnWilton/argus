@@ -118,6 +118,11 @@ clientlib's `module_demonitors` goes. 2 rows come (Livebook's
 `RuntimeServer`, whose kills drop the record the `:DOWN` clause looks
 up: false; the class needs its harm witness).
 
+**Fixed.** unsafe_input's outside API left out every protocol
+implementation. The implementation of a protocol the program defines is a
+way in when its protocol's function is: dispatch relays the users'
+value. No row moves.
+
 ### Races by their harm
 
 **Changed.** A check-then-act pair is reported when a rival can land on
