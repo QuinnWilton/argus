@@ -110,6 +110,19 @@ defmodule Argus.Extractors.CallbackTagTest do
     refute Enum.any?(open, &match?({"Listeners:handle_info/2", _}, &1))
   end
 
+  test "a guard's element/2 of the message compares its tag: the clause is not open" do
+    alias Argus.Test.Soundness.Witness, as: W
+
+    {:ok, facts} = Argus.Pipeline.extract([W.ExitBesideGuardedTag], extractors: [CallbackTag])
+
+    refute Map.has_key?(facts, :callback_open)
+
+    assert ["_", "handle_info", ":trace_ts", "-1"] in Enum.map(
+             facts[:callback_tag_shape],
+             &["_" | tl(&1)]
+           )
+  end
+
   test "an open tuple clause carries the arity its head tests" do
     alias Argus.Test.Soundness.Witness, as: W
 

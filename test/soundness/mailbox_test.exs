@@ -352,6 +352,13 @@ defmodule Argus.Soundness.MailboxTest do
              )
     end
 
+    test "beside a clause that takes trace tuples by a guard on their tag (vmq_tracer)" do
+      assert {:warning, @crash, {W.ExitBesideGuardedTag, :init, 1}} in fired(
+               [W.ExitBesideGuardedTag],
+               :mailbox
+             )
+    end
+
     test "a port the server opens, its :normal exit alone taken" do
       assert {:warning, @crash, {W.ExitPortNormal, :init, 1}} in fired(
                [W.ExitPortNormal],

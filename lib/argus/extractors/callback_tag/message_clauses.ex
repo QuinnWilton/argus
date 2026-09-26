@@ -365,6 +365,25 @@ defmodule Argus.Extractors.CallbackTag.MessageClauses do
     walk(idx + 1, path, tuple, labels, st)
   end
 
+  # A guard's element/2 of the message reads a part of it, as
+  # get_tuple_element does: `element(1, msg) =:= :trace_ts` compares its
+  # tag (vmq_tracer's trace clause). Another BIF is where the head ends.
+  defp step({:bif, :element, {:f, _}, [{:integer, i}, src], dst}, idx, path, tuple, labels, st)
+       when is_integer(i) and i >= 1 do
+    if Map.get(path.tracked, reg(src)) == :msg and reg(dst) != nil do
+      path = %{
+        path
+        | tracked: Map.put(path.tracked, reg(dst), if(i == 1, do: :tag, else: :part)),
+          parts: Map.put(path.parts, reg(dst), i - 1)
+      }
+
+      walk(idx + 1, path, tuple, labels, st)
+    else
+      {acc, seen} = st
+      {[{idx, path} | acc], seen}
+    end
+  end
+
   defp step({op, src, dst}, idx, path, tuple, labels, st) when op in [:get_hd, :get_tl],
     do: walk(idx + 1, %{path | tracked: track(path.tracked, src, dst, :part)}, tuple, labels, st)
 

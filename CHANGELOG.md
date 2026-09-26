@@ -33,6 +33,13 @@ eredis connections, takes `{:EXIT, _pid, :normal}` alone) and vernemq's
 `vmq_tracer` (spawn_links its rate tracer, takes its `:normal` exit
 alone) were the retired rule's rows for this bug.
 
+**Fixed.** The clause reader (CallbackTag, GenStatem) reads a guard's
+`element(i, msg)` as the message's part, as it reads a head's pattern:
+`msg when is_tuple(msg) and elem(msg, 0) == :trace_ts` compares the
+tag, and is no clause open to every tuple. vernemq's `vmq_tracer` took
+every message by such a clause, which hid the rate tracer's crash exit
+from the `exit` source.
+
 **Added.** Schema 137. `callback_takes_exit(func, callback)`
 (CallbackTag, `MessageClauses.takes_exit?/2`): some clause takes every
 trapped `{:EXIT, from, reason}` whatever its reason. Read by mailbox.

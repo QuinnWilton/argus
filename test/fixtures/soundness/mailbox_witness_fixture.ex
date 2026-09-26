@@ -1109,3 +1109,25 @@ defmodule Argus.Test.Soundness.Witness.ExitNoClause do
   @impl true
   def handle_info(:tick, state), do: {:noreply, state}
 end
+
+defmodule Argus.Test.Soundness.Witness.ExitBesideGuardedTag do
+  @moduledoc false
+  # vmq_tracer's shape: a clause taking trace tuples by a guard on their
+  # tag, and one for the rate tracer's :normal exit alone.
+  use GenServer
+
+  def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
+
+  @impl true
+  def init(max) do
+    Process.flag(:trap_exit, true)
+    {:ok, %{tracer: spawn_link(fn -> max end), seen: 0}}
+  end
+
+  @impl true
+  def handle_info(trace, state) when is_tuple(trace) and elem(trace, 0) == :trace_ts,
+    do: {:noreply, %{state | seen: state.seen + 1}}
+
+  def handle_info({:EXIT, tracer, :normal}, %{tracer: tracer} = state),
+    do: {:stop, :normal, state}
+end
