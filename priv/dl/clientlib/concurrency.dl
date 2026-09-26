@@ -22,10 +22,10 @@
 // and is one process otherwise (a worker init/1 spawns).
 //
 // Whether a process other than a given entry's can run a function
-// (runs_apart_from, which the races ask of the other writer when the
+// (runs_beside, which the races ask of the other writer when the
 // check-then-act runs in one process): another entry's process reaches
-// it, whether or not the given entry's reaches it too, or a caller
-// outside the program does. A caller outside the program — a library's
+// it, whether or not the given entry's reaches it too, a request's, or
+// a caller outside the program does. A caller outside the program — a library's
 // user — can be any process. An exported function is such a caller's
 // way in when no other module of the program calls into its module (the
 // module is the program's face to its callers) and it is no callback the
@@ -102,11 +102,36 @@
   .decl outside_caller(func: symbol)
   outside_caller(c) :- library_face(c), !process_entry(_, c), !process_start(_, _, _, _, c).
 
-  // A process other than entry m's can run g: another entry reaches it,
-  // or a caller outside the program can. That m's own process runs g too
-  // changes nothing: a function the owner's callbacks and a janitor both
-  // call runs in the janitor as well.
-  .decl runs_apart_from(entry: symbol, func: symbol) inline
-  runs_apart_from(m, g) :- entry_reaches(m, _), entry_reaches(m2, g), m2 != m.
-  runs_apart_from(m, g) :- entry_reaches(m, _), outside_reaches(g).
+  // A process other than entry m's can run g while m's process runs f:
+  // another entry's process reaches g, a request's, or a caller outside
+  // the program. That m's own process runs g too changes nothing: a
+  // function the owner's callbacks and a janitor both call runs in the
+  // janitor as well.
+  .decl runs_beside(entry: symbol, func: symbol, other: symbol) inline
+  runs_beside(m, f, g) :- entry_reaches(m, f), entry_reaches(m2, g), m2 != m.
+  runs_beside(m, f, g) :- entry_reaches(m, f), request_entry(e, _), walk.reaches(e, g).
+  runs_beside(m, f, g) :- entry_reaches(m, f), outside_reaches(g).
+
+  // The same, of what the other process runs once it has started: a
+  // write only its init/1 (or an Application's start/2) makes runs while
+  // it starts, which a supervisor's ordered start runs before the pair's
+  // process (an assumption: a later sibling's init/1, or a restart of the
+  // other process alone, running it while the pair runs, is not seen).
+  .decl runs_beside_up(entry: symbol, func: symbol, other: symbol) inline
+  runs_beside_up(m, f, g) :- entry_reaches(m, f), up_reaches(m2, g), m2 != m.
+  runs_beside_up(m, f, g) :- entry_reaches(m, f), request_entry(e, _), walk.reaches(e, g).
+  runs_beside_up(m, f, g) :- entry_reaches(m, f), outside_reaches(g).
+
+  // What an entry's process runs once it is up: from a callback other
+  // than the ones it starts in, and all a spawned process runs.
+  .decl up_reaches(entry: symbol, func: symbol)
+  up_reaches(m, t) :- process_entry(m, c), !startup_callback(c), walk.reaches(c, t).
+  up_reaches(p, t) :- spawned(p, _, r), walk.reaches(r, t), seed(t).
 }
+
+// A callback a process runs while it starts: init/1, and an
+// Application's start/2.
+.decl startup_callback(func: symbol)
+
+startup_callback(c) :- process_entry(_, c), function_def(c, _, "init", 1, _).
+startup_callback(c) :- behaves_as(m, "Application"), function_def(c, m, "start", 2, _).

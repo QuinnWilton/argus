@@ -42,6 +42,16 @@ weekly movers, found not generated today, hand the article's parameters
 to the generator. A helper the decision only calls, handing it nothing,
 is not asked: a refill's fetch is how the copy is made.
 
+**Changed.** A write another process makes only while it starts is
+ordered before the pair one process at a time (`runs_beside_up`,
+`up_reaches`): `writes_after_start` asked whether some process runs the
+write once up, and `runs_apart_from` whether another process runs it at
+all, and a supervisor's `init/1` and the pair's own server answered them
+between them. vernemq's `vmq_swc_sup` seeds the cluster state before its
+gossip server starts, and the gossip server's merge is quiet.
+`runs_apart_from` is `runs_beside`, and a request's process is another
+process to both.
+
 ### Monitors: "runs again from here" names only callbacks that do
 
 **Fixed.** A monitor-leak finding's "runs again from here" frames were
