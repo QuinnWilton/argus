@@ -85,10 +85,22 @@ state_has_incoming(mod, state) :-
   state != "stop",
   state != "dynamic".
 
+// A helper's transition is a way in unless the state's own function is
+// the helper's only caller: a catch-all that re-enters its state through
+// a helper (to restart a state timeout) is a self-loop spelled as a
+// call (review 2, item 27: 6aff4d81 read it as a way in).
 state_has_incoming(mod, state) :-
-  statem_helper_transition(mod, _, state),
+  statem_helper_transition(mod, h, state),
   state != "stop",
-  state != "dynamic".
+  state != "dynamic",
+  call_edge(c, h),
+  !state_function(mod, state, c).
+
+state_has_incoming(mod, state) :-
+  statem_helper_transition(mod, h, state),
+  state != "stop",
+  state != "dynamic",
+  !call_edge(_, h).
 
 // Initial state. Authoritative when init/1's return was resolvable
 // (statem_initial); otherwise a topological fallback — a state that is a
@@ -141,8 +153,24 @@ unreachable_state(mod, state, site) :-
 may_return_transition(mod, func, to) :-
   statem_helper_transition(mod, func, to).
 
+// A remote call the state returns may transition anywhere, unless its
+// callee is a function of the program in a module that is no machine
+// (a shared handler of another module, whose returns name no state of
+// this one): what it returns is read as keeping the state (review 2,
+// item 27). A callee outside the program stays "dynamic".
 may_return_transition(mod, func, "dynamic") :-
-  statem_returns_call(mod, func, "dynamic").
+  statem_returns_call(mod, func, "dynamic"),
+  !returns_program_handler(mod, func).
+
+.decl returns_program_handler(mod: symbol, func: symbol)
+
+returns_program_handler(mod, func) :-
+  statem_returns_call(mod, func, "dynamic"),
+  call_instr(func, g, id),
+  tail_call(id),
+  function_def(g, m2, _, _, _),
+  m2 != mod,
+  !statem_module(m2, _).
 
 may_return_transition(mod, func, to) :-
   statem_returns_call(mod, func, callee),
