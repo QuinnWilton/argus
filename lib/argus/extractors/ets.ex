@@ -40,6 +40,9 @@ defmodule Argus.Extractors.ETS do
     argument `pos` of the call at `id` that `ets_effect_order` orders, in
     `ets_key`'s vocabulary: how a callee's key or value reads in its
     caller
+  - `ets_read_when_present(read, whereis)` — every path to the read of a
+    named table passes the side of a test on the function's
+    `:ets.whereis/1` of it that found the table there
   """
 
   @behaviour Argus.Extractor
@@ -100,7 +103,8 @@ defmodule Argus.Extractors.ETS do
       :ets_tid_arg,
       :ets_value,
       :ets_effect_order,
-      :ets_call_arg
+      :ets_call_arg,
+      :ets_read_when_present
     ]
 
   @doc "Whether a remote call is an ETS operation, for `Argus.Extractors.Dependence`."
@@ -121,6 +125,158 @@ defmodule Argus.Extractors.ETS do
     end)
     |> emit_tid_args(module_data)
     |> emit_effect_order(module_data, index)
+    |> emit_present_reads(module_data)
+  end
+
+  # ── Reads made where the table was found ─────────────────────────
+
+  # `:ets.whereis/1` answers `:undefined` for a table that is gone. A
+  # read of the same named table made only where a test of that answer
+  # found it there — on every path from the function's entry, past the
+  # side of a comparison with `:undefined` (or of a `case` on it) that
+  # holds anything else — reads a table that was there a moment before;
+  # the window between the two stays open. The test is the first
+  # instruction that reads the answer on the straight line after the
+  # call, the answer followed through the registers it is copied to. An
+  # answer read any other way first (handed to a call, compared in a
+  # value) guards nothing, and a read reached on a path that skips the
+  # test's present side, or on its `:undefined` side, is not one.
+  defp emit_present_reads(facts, module_data) do
+    ops = Map.get(facts, :ets_op, [])
+
+    reads =
+      for [id, func, name, _op, "read"] <- ops,
+          name != "dynamic",
+          do: {func, name, id}
+
+    for [w, func, name, "whereis", _kind] <- ops,
+        name != "dynamic",
+        guarded = for({^func, ^name, r} <- reads, do: r),
+        guarded != [],
+        read <- present_reads(module_data, func, w, guarded),
+        reduce: facts do
+      acc -> add_fact(acc, :ets_read_when_present, [read, w])
+    end
+  end
+
+  defp present_reads(module_data, func, whereis, reads) do
+    {name, arity} = Normalize.func_id_name_arity(func)
+    atom = String.to_existing_atom(name)
+
+    with instrs when is_list(instrs) <- Helpers.find_function(module_data.functions, atom, arity),
+         %Cfg.Function{} = fun <- Helpers.cfg(module_data, atom, arity),
+         table = List.to_tuple(instrs),
+         at = instr_idx(whereis),
+         {:ok, edges} <- present_edges(fun, table, at + 1, [{:x, 0}]) do
+      reached = reach_avoiding(fun, edges)
+
+      Enum.reject(reads, fn read ->
+        case Cfg.Function.block_at(fun, instr_idx(read)) do
+          nil -> true
+          block -> MapSet.member?(reached, block.id)
+        end
+      end)
+    else
+      _ -> []
+    end
+  end
+
+  # The edges out of the test that finds the answer held in `regs` is
+  # not `:undefined`: `{:ok, [{from, to}]}`, or `:error` when the answer
+  # is read some other way first, or lost.
+  defp present_edges(_fun, _table, _at, []), do: :error
+
+  defp present_edges(fun, table, at, regs) when at < tuple_size(table) do
+    instr = elem(table, at)
+
+    case undefined_test(instr, regs) do
+      {:present_on, side} ->
+        block = Cfg.Function.block_at(fun, at)
+
+        {:ok,
+         for({to, kind} <- block.succs, present_side?(kind, to, side, fun), do: {block.id, to})}
+
+      :none ->
+        cond do
+          reads_value?(instr, regs) -> :error
+          not Argus.Instr.falls_through?(instr) -> :error
+          true -> present_edges(fun, table, at + 1, carried(instr, regs))
+        end
+    end
+  end
+
+  defp present_edges(_fun, _table, _at, _regs), do: :error
+
+  @undefined {:atom, :undefined}
+
+  # Which side of `instr` finds the answer is not `:undefined`: the
+  # fail edge of an equality test with it, the pass edge of an
+  # inequality, every way out of a select but to the `:undefined` arm's
+  # code.
+  defp undefined_test({:test, op, _fail, args}, regs) when op in [:is_eq_exact, :is_eq] do
+    if compares_undefined?(args, regs), do: {:present_on, :branch_fail}, else: :none
+  end
+
+  defp undefined_test({:test, op, _fail, args}, regs) when op in [:is_ne_exact, :is_ne] do
+    if compares_undefined?(args, regs), do: {:present_on, :branch_pass}, else: :none
+  end
+
+  defp undefined_test({:select_val, reg, _fail, {:list, cases}}, regs) do
+    labels = for [@undefined, {:f, label}] <- Enum.chunk_every(cases, 2), do: label
+
+    if register(reg) in regs and labels != [],
+      do: {:present_on, {:not_to, labels}},
+      else: :none
+  end
+
+  defp undefined_test(_instr, _regs), do: :none
+
+  defp compares_undefined?(args, regs) do
+    args = Enum.map(args, &register/1)
+    @undefined in args and Enum.any?(args, &(&1 in regs))
+  end
+
+  defp present_side?(kind, _to, side, _fun) when is_atom(side), do: kind == side
+
+  defp present_side?(_kind, to, {:not_to, labels}, fun),
+    do: not Enum.any?(labels, &(Map.get(fun.labels, &1) == to))
+
+  # The instruction reads a register holding the answer other than to
+  # copy it.
+  defp reads_value?(instr, regs) do
+    uses = Argus.Instr.uses(instr)
+    defs = Argus.Instr.defs(instr)
+
+    Enum.any?(uses, &(&1 in regs)) and
+      not Enum.all?(defs, fn dst -> Argus.Instr.copy_source(instr, dst) in regs end)
+  end
+
+  defp carried(instr, regs) do
+    copies =
+      for dst <- Argus.Instr.defs(instr),
+          Argus.Instr.copy_source(instr, dst) in regs,
+          do: dst
+
+    Enum.uniq(Argus.Instr.carry(instr, regs) ++ copies)
+  end
+
+  # The blocks reached from the entry without taking any of `edges`.
+  defp reach_avoiding(fun, edges) do
+    avoid = MapSet.new(edges)
+    walk_avoiding([fun.entry], fun, avoid, MapSet.new([fun.entry]))
+  end
+
+  defp walk_avoiding([], _fun, _avoid, seen), do: seen
+
+  defp walk_avoiding([id | rest], fun, avoid, seen) do
+    next =
+      for {to, _kind} <- Map.fetch!(fun.blocks, id).succs,
+          not MapSet.member?(avoid, {id, to}),
+          not MapSet.member?(seen, to),
+          uniq: true,
+          do: to
+
+    walk_avoiding(next ++ rest, fun, avoid, Enum.reduce(next, seen, &MapSet.put(&2, &1)))
   end
 
   # ── Effects in order ─────────────────────────────────────────────

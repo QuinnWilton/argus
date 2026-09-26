@@ -25,6 +25,10 @@ defmodule Argus.Extractors.ProcessRegistry do
     identify the name in the vocabulary of `Argus.Extractor.Identity.key_identity/4`;
     `checked` says whether the result is tested against nil (or `[]`)
     before use
+  - `nil_use(id, func, use, fails)` — for an unchecked whereis, how its
+    first use fails on nil: `error` (a send, a BIF), `exit` (a call),
+    `none` (a cast) or `any`; `use` is that call, or the lookup when the
+    use is no call
   - `creating_op(id, func, api, scope, source, key)` — a call that claims
     a name or starts a process: `register`, `start_link`/`start` with a
     `name:`, `start_via` (`{:via, Registry, {scope, key}}`),
@@ -62,6 +66,7 @@ defmodule Argus.Extractors.ProcessRegistry do
       :creating_op,
       :name_lookup,
       :name_release,
+      :nil_use,
       :named_process,
       :process_register,
       :start_error_compared
@@ -317,6 +322,111 @@ defmodule Argus.Extractors.ProcessRegistry do
       :name_lookup
     )
     |> add_fact(:name_lookup, [id, ctx.func_id, "whereis", "", source, key, checked])
+    |> maybe_nil_use(checked, id, ctx)
+  end
+
+  defp maybe_nil_use(facts, "checked", _id, _ctx), do: facts
+
+  defp maybe_nil_use(facts, "unchecked", id, ctx) do
+    {use, fails} =
+      case first_use(ctx.instrs, ctx.idx + 1, [{:x, 0}]) do
+        {at, instr} ->
+          {if(Instr.call?(instr) or Instr.tail_call?(instr),
+             do: InstrId.mint(ctx.func_id, at),
+             else: id
+           ), nil_fails(instr)}
+
+        nil ->
+          {id, "any"}
+      end
+
+    add_fact(facts, :nil_use, [id, ctx.func_id, use, fails])
+  end
+
+  # The first instruction that reads the result other than to copy it,
+  # along the straight line after the lookup: `{index, instr}`, or nil
+  # when the line ends or the value is lost first.
+  defp first_use(instrs, at, regs) do
+    case Enum.at(instrs, at) do
+      nil ->
+        nil
+
+      _instr when regs == [] ->
+        nil
+
+      instr ->
+        cond do
+          reads?(instr, regs) -> {at, instr}
+          not Instr.falls_through?(instr) -> nil
+          true -> first_use(instrs, at + 1, Instr.carry(instr, regs))
+        end
+    end
+  end
+
+  # How a use fails on a nil (an unregistered name): a send to it, or a
+  # BIF given it, raises badarg (and Elixir's Process functions guard on
+  # a pid: FunctionClauseError), a call to it exits with :noproc, a cast
+  # drops the message (GenServer.cast and :gen_server.cast catch the
+  # send's failure). A monitor of it answers with a :DOWN, and does not
+  # fail either.
+  @error_bifs [
+    :send,
+    :process_info,
+    :link,
+    :unlink,
+    :exit,
+    :is_process_alive,
+    :group_leader,
+    :suspend_process,
+    :resume_process,
+    :register,
+    :garbage_collect
+  ]
+  @elixir_process [:send, :info, :link, :unlink, :exit, :alive?, :group_leader, :register]
+  @calls [
+    {GenServer, :call},
+    {GenServer, :stop},
+    {:gen_server, :call},
+    {:gen_server, :stop},
+    {:gen_statem, :call},
+    {:gen_statem, :stop},
+    {GenStateMachine, :call},
+    {:gen, :call},
+    {:proc_lib, :stop},
+    {:sys, :get_state},
+    {:sys, :get_status},
+    {Agent, :get},
+    {Agent, :update},
+    {Agent, :get_and_update}
+  ]
+  @casts [
+    {GenServer, :cast},
+    {:gen_server, :cast},
+    {:gen_statem, :cast},
+    {GenStateMachine, :cast},
+    {Agent, :cast},
+    {:erlang, :monitor},
+    {Process, :monitor}
+  ]
+
+  defp nil_fails(:send), do: "error"
+  defp nil_fails({:send}), do: "error"
+
+  defp nil_fails(instr) do
+    case Argus.Extractor.Helpers.match_remote_call(instr) do
+      {:ok, :erlang, f, _a} -> if f in @error_bifs, do: "error", else: others(:erlang, f)
+      {:ok, Process, f, _a} -> if f in @elixir_process, do: "error", else: others(Process, f)
+      {:ok, m, f, _a} -> others(m, f)
+      :none -> "any"
+    end
+  end
+
+  defp others(m, f) do
+    cond do
+      {m, f} in @calls -> "exit"
+      {m, f} in @casts -> "none"
+      true -> "any"
+    end
   end
 
   # The result lands in x0. Along the straight-line code after the call,
@@ -326,7 +436,8 @@ defmodule Argus.Extractors.ProcessRegistry do
   # type test on it, or a select over it that lists nil means the caller
   # handles the missing case. A comparison in a guard is a test; one
   # whose boolean is a value (`whereis(m) =/= :undefined` returned,
-  # `is_pid(Process.whereis(n))`) is a bif, and decides the same way.
+  # `is_pid(Process.whereis(n))`) is a bif, and decides only where the
+  # boolean is branched on before the pid is used (decided_by?/3).
   # Any other use of the value first, or reaching the end of the
   # straight line, means it does not.
   #
@@ -379,18 +490,19 @@ defmodule Argus.Extractors.ProcessRegistry do
     Instr.register(reg) in regs and Enum.any?(cases, &(&1 in @nil_atoms))
   end
 
-  defp checked_walk([{:bif, op, _fail, args, _dst} = instr | rest], regs, selfs, _fun)
+  defp checked_walk([{:bif, op, _fail, args, dst} = instr | rest], regs, selfs, _fun)
        when op in @equality_bifs do
     case compared(args, regs, selfs) do
-      nil -> true
+      nil -> decided_by?(rest, Instr.carry(instr, regs), [Instr.register(dst)])
       :never_nil -> unread?(rest, Instr.carry(instr, regs))
       :other -> false
     end
   end
 
-  defp checked_walk([{:bif, op, _fail, [reg], _dst} | _rest], regs, _selfs, _fun)
+  defp checked_walk([{:bif, op, _fail, [reg], dst} = instr | rest], regs, _selfs, _fun)
        when op in @type_bifs do
-    Instr.register(reg) in regs
+    Instr.register(reg) in regs and
+      decided_by?(rest, Instr.carry(instr, regs), [Instr.register(dst)])
   end
 
   defp checked_walk([{:bif, :self, _fail, [], dst} = instr | rest], regs, selfs, fun) do
@@ -402,6 +514,37 @@ defmodule Argus.Extractors.ProcessRegistry do
       not Instr.falls_through?(instr) -> false
       reads?(instr, regs) -> false
       true -> checked_walk(rest, Instr.carry(instr, regs), Instr.carry(instr, selfs), fun)
+    end
+  end
+
+  # A comparison whose boolean is a value checks the lookup only where the
+  # boolean decides something before the pid is read again: a branch on
+  # it (`pid != nil && send(pid, m)`, a `case` on `is_pid(pid)`), or no
+  # use of the pid at all (`whereis(m) =/= :undefined` returned as a
+  # status). A boolean recorded, sent or stored while the pid is used
+  # anyway (`record(pid != nil); send(pid, event)`) checks nothing: the
+  # send still takes the nil. `bools` are the registers holding the
+  # boolean; a return, when it does not read the pid, ends the function
+  # with the pid unused.
+  defp decided_by?(_instrs, [], _bools), do: true
+  defp decided_by?([], _regs, _bools), do: false
+
+  defp decided_by?([instr | rest], regs, bools) do
+    cond do
+      reads?(instr, regs) ->
+        false
+
+      branches?(instr) and Enum.any?(Instr.uses(instr), &(&1 in bools)) ->
+        true
+
+      instr == :return ->
+        true
+
+      not Instr.falls_through?(instr) ->
+        false
+
+      true ->
+        decided_by?(rest, Instr.carry(instr, regs), Instr.carry(instr, bools))
     end
   end
 

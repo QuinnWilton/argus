@@ -53,6 +53,21 @@ defmodule Argus.Schema.OwnedResources do
         doc: "ETS read/write/delete operation."
       },
       %{
+        name: :ets_read_when_present,
+        layer: 2,
+        fields: [
+          {:read, :symbol, "the read (an ets_op of kind read)"},
+          {:whereis, :symbol, "the :ets.whereis/1 of the same named table, in the same function"}
+        ],
+        doc: """
+        Every path from the function's entry to the read passes a test of \
+        the whereis result that found the table there: the side of a \
+        comparison with `:undefined` (or a `case` arm) where it is not \
+        `:undefined`. A read the function makes on a path that skips the \
+        test, or on the `:undefined` side, has no row.
+        """
+      },
+      %{
         name: :port_open,
         layer: 2,
         fields: [

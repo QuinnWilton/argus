@@ -43,6 +43,12 @@ behaviour_alias("Application", "Application").
 behaviour_alias(":application", "Application").
 behaviour_alias("application", "Application").
 
+// Erlang-only: a supervisor_bridge runs its init/1 and terminate/2 in a
+// process of its own, which a supervisor starts and stops as it does a
+// supervisor, around a subsystem started some other way.
+behaviour_alias(":supervisor_bridge", ":supervisor_bridge").
+behaviour_alias("supervisor_bridge", ":supervisor_bridge").
+
 // Elixir-only behaviours. Listed so that `behaves_as` is total — a rule
 // asking about one of these should not have to know whether it has an
 // Erlang spelling.
@@ -84,7 +90,10 @@ behaves_as(mod, declared) :-
 // `gen_server_like` — handle_call/3 answers with GenServer's return
 // contract, so `{:noreply, _}` is a deferred reply; `terminating` — the
 // behaviour calls terminate/2,3 on the way down. Five analyses each kept
-// their own list of the first kind and no two agreed.
+// their own list of the first kind and no two agreed. A behaviour of any
+// kind here runs as a process (callbacks.dl's process_behaviour_module):
+// its init/1 in the process it starts, whose own table dies with it
+// (supervisor_bridge's only kind is `terminating`).
 .decl process_behaviour(canonical: symbol, kind: symbol)
 
 process_behaviour("GenServer", "loop").
@@ -100,12 +109,21 @@ process_behaviour("Phoenix.Channel", "loop").
 process_behaviour("GenServer", "gen_server_like").
 process_behaviour("GenStage", "gen_server_like").
 
+process_behaviour(":supervisor_bridge", "terminating").
+
 process_behaviour("GenServer", "terminating").
 process_behaviour("GenStage", "terminating").
 process_behaviour("GenStateMachine", "terminating").
 process_behaviour("GenEvent", "terminating").
 process_behaviour("Broadway", "terminating").
 process_behaviour("Phoenix.LiveView", "terminating").
+
+// A behaviour whose machinery sets trap_exit in the process before it
+// calls the module's init/1: supervisor_bridge does, as a supervisor
+// does, so that its supervisor's shutdown reaches terminate/2.
+.decl behaviour_traps_exits(canonical: symbol)
+
+behaviour_traps_exits(":supervisor_bridge").
 
 // A gen_statem: its state functions and its data are the process
 // points-to's and the mailbox rules' (process_statem.dl, process_kind.dl).

@@ -69,6 +69,14 @@ module_traps(func, mod) :-
   !traps_elsewhere(func),
   !trap_on_process_stack(func).
 
+// A behaviour whose own machinery traps exits before it calls the
+// module's init/1 (behaviour_traps_exits, behaviours.dl: a
+// supervisor_bridge): the module's process traps, init/1 the witness.
+module_traps(func, mod) :-
+  behaves_as(mod, b),
+  behaviour_traps_exits(b),
+  function_def(func, mod, "init", 1, _).
+
 .init process_trap_reach = SameProcessReach
 
 process_trap_reach.seed(func, func) :- trap_exit(func, _), !traps_elsewhere(func).

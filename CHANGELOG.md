@@ -6,6 +6,44 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## 0.20.0-dev — unreleased
 
+### Soundness round 2c (schema 122)
+
+Review 2 found suppressions that silenced real bugs next to the false
+positives they targeted. Each is fixed; the probes and at least three
+adversarial neighbours per fix are permanent fixtures in
+`test/soundness/{ets,races,failure,blocking}_test.exs`, pinned at the
+severity the rule gives them.
+
+- ets: a table's owner is the process that runs its `:ets.new/2`, from
+  one set of roots (`process_root`): a server's callbacks and what its
+  start spawns on its own code, a spawned or Task process, an
+  Application's start/2, and every function of a module under a
+  non-process behaviour (an Oban `perform/1`, a plug). Only an unnamed
+  table such a module hands back in what it returns is exempt.
+  supervisor_bridge is a process behaviour that traps exits. A keeper
+  process's table and a helper module's table read by callers are
+  reported again; "read outside the owner" uses the same owner.
+- ets: a whereis guards a read only when every path to the read passes
+  the non-`:undefined` side of a test on it (new relation
+  `ets_read_when_present(read, whereis)`).
+- races: MadeOfRead counts a helper whose result its parameter decides
+  (`next(stage)`), through helper chains, for ETS and Mnesia;
+  `decision_sends` and `record_decision_sends` share `DecisionSends`
+  (check_then_act.dl), which also counts a call or cast to a peer.
+- failure: a try around a log line qualifies only when every producer
+  feeding the log call's arguments is pure, and an apply of `log`
+  only in the logger's `log(Level, ...)` shape; the logging modules
+  come from the effect model. A client API whose clause heads can fail
+  into `func_info` is no boundary function. `:erpc.call/4,5` and
+  Elixir's `Supervisor.start_child/2` left the boundary list.
+- failure: a whereis compared in a value checks only where that boolean
+  is branched on before the pid is used; `nil_use_caught` needs a
+  handler of the class the first use fails with (new relation
+  `nil_use(id, func, use, fails)`).
+- blocking: a catch clause that re-raises an exit takes no tag and no
+  tuple, and an open clause excluding a tag (`when r != :shutdown`)
+  counts only when another path takes that tag.
+
 What 0.20.0 will ship; the release dates this heading and drops the
 `-dev` from `mix.exs`. Grouped by concern. Each entry opens with what it
 does: **Added**, **Changed**, **Fixed** or **Removed**.

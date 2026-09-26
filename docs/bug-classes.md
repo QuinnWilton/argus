@@ -4264,3 +4264,32 @@ item; 5 to 8 are still open.
 - The README's analysis count, the fragment count in three places, and
   the moduledoc signatures of nine relations in blocking, startup,
   coupling, shutdown and mailbox.
+
+## Soundness round 2c: assumptions behind the kept suppressions
+
+Each quieting below is kept with its soundness assumption and the
+adversarial fixtures (test/soundness/*_test.exs) that pin the nearest
+real bugs as still reported.
+
+- **ETS ownership** (ets.dl `process_root`, `handed_back`). Assumes an
+  unnamed table a non-process behaviour module returns is held only by
+  its caller. Adversarial: `StrategyNamed` (named), `StrategyKept`
+  (kept in persistent_term), `PlugOwner`, `HelperJob`, keeper spawns by
+  closure, MFA, Task.async and a handed fun, `KeeperBeside`, `Own2`.
+- **ETS whereis guard** (`ets_read_when_present`). Assumes the window
+  between the whereis and the read is left. Adversarial: other clause,
+  logged-and-read, `:undefined` side, another table, boolean sent on.
+- **ETS read-then-write fill** (MadeOfRead). A helper decided by the
+  read now carries it. Adversarial: inline transition, two-deep and
+  remote helpers, bound-then-written value.
+- **Catch-all around a log line** (`Boundary.log_region?`). Assumes pure
+  producers and the logger `log(Level, ...)` shape. Adversarial: work in
+  the arguments, the one-line do-and-log macro, `wal.log(e)`, `mod.log(e, :sync)`.
+- **Boundary function / list**. Clause-head failures and erpc/Elixir
+  start_child excluded. Adversarial: guarded API, dispatching API,
+  erpc/5, start_child with a map spec.
+- **whereis checks** (`decided_by?`, `nil_use`). Adversarial: boolean
+  recorded, rescue around a call/stop, exit catch around a send.
+- **Peer call catching :noproc** (`CatchClauses`). Adversarial: re-exit
+  by `exit/1` and `:erlang.raise/3`, `{:shutdown, _}` re-exited, guard
+  excluding :shutdown; `OpenKept` stays quiet.

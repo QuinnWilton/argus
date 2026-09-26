@@ -368,6 +368,26 @@ defmodule Argus.Schema.CallValues do
         """
       },
       %{
+        name: :nil_use,
+        layer: 2,
+        fields: [
+          {:id, :instr_id, "an unchecked whereis (name_lookup)"},
+          {:func, :func_id, "function containing it"},
+          {:use, :instr_id,
+           "the call that first uses the result, or the lookup itself when that use is no call"},
+          {:fails, :symbol,
+           "error | exit | none | any: how that use fails when the result is nil"}
+        ],
+        doc: """
+        How the first use of an unchecked whereis result fails when the \
+        name is not registered: a send or a BIF on the pid raises an error \
+        (badarg), a call to it exits (`:noproc`), a cast drops the message \
+        without failing (none), and anything else — handing it to a \
+        function — is not known (any). A handler that takes the nil case \
+        must take that class.
+        """
+      },
+      %{
         name: :spec_return,
         layer: 2,
         fields: [
