@@ -255,3 +255,30 @@ defmodule Argus.Test.Soundness.Mailbox.BranchCancel do
 
   defp configure(s, ms), do: %{s | tref: Process.send_after(self(), :refresh, ms)}
 end
+
+defmodule Argus.Test.Soundness.Mailbox.DotHelperLoop do
+  @moduledoc """
+  The loop re-arms through a helper that reads `s.interval`: the dot
+  access's atom-module side raises, so the arm runs on every completing
+  path (review 2, suspected: a dot access made every call after it
+  conditional).
+  """
+  use GenServer
+  @impl true
+  def init(_), do: {:ok, %{interval: 1000}}
+  @impl true
+  def handle_cast(:now, s) do
+    schedule(s)
+    {:noreply, s}
+  end
+
+  @impl true
+  def handle_info(:tick, s) do
+    schedule(s)
+    {:noreply, s}
+  end
+
+  def handle_info(_, s), do: {:noreply, s}
+
+  defp schedule(s), do: Process.send_after(self(), :tick, s.interval)
+end

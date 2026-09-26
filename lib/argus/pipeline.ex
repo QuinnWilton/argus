@@ -965,7 +965,12 @@ defmodule Argus.Pipeline do
           [id | _] <- Map.get(base_facts, relation, []),
           do: id
 
-    conditional_blocks = Map.new(cfgs, fn {key, fun} -> {key, conditional_blocks(fun)} end)
+    raising = raising_tail_blocks(base_facts, cfgs)
+
+    conditional_blocks =
+      Map.new(cfgs, fn {key, fun} ->
+        {key, conditional_blocks(fun, Map.get(raising, key, MapSet.new()))}
+      end)
 
     rows =
       for id <- call_ids,
@@ -983,8 +988,29 @@ defmodule Argus.Pipeline do
     end
   end
 
-  defp conditional_blocks(fun) do
-    case Cfg.Function.completing_blocks(fun) do
+  # The blocks ending in a tail call that raises (`erlang:error/1`,
+  # `exit/1`, `throw/1`, `raise/3`): the compiler's badmap and a dot
+  # access's error side end so, and a path there completes nothing
+  # (review 2: a `s.interval` before a send_after made it conditional).
+  @raising_bifs ~w(error exit throw raise nif_error)
+
+  defp raising_tail_blocks(base_facts, cfgs) do
+    for [id, _func, ":erlang", name, _arity] <- Map.get(base_facts, :remote_call, []),
+        name in @raising_bifs,
+        {:ok, %InstrId{func: fname, arity: arity, idx: idx}} <- [InstrId.parse(id)],
+        fun = Map.get(cfgs, {fname, arity}),
+        fun != nil,
+        block = Cfg.Function.block_at(fun, idx),
+        block != nil,
+        block.terminator == :tail_call,
+        elem(block.range, 1) == idx,
+        reduce: %{} do
+      acc -> Map.update(acc, {fname, arity}, MapSet.new([block.id]), &MapSet.put(&1, block.id))
+    end
+  end
+
+  defp conditional_blocks(fun, raising) do
+    case Cfg.Function.completing_blocks(fun, raising) do
       nil ->
         fun |> Cfg.Function.control_deps() |> Map.keys() |> MapSet.new()
 

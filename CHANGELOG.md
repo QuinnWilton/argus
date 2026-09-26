@@ -283,6 +283,14 @@ size, so `{:system, x}` is a message; a handle_event/4 clause naming a
 state is no `:info` catch-all for the machine (a one-state machine is
 now reported: a prior candidate).
 
+**Fixed.** `conditional_call` counted a tail call to `erlang:error/1`
+(and exit, throw, raise) as a completion, so a dot access (`s.interval`,
+whose atom-module side the compiler ends in `error/1`) made every call
+after it conditional: a helper reading `state.x` before arming a timer
+armed on no path every time. `Cfg.Function.completing_blocks/2` takes the
+blocks whose tail call raises, which the pipeline reads from
+`remote_call`. Every shard and base re-extracts.
+
 ### Priors, round 3: tooling, and programs found on PATH
 
 **Added.** Schema 118. `tooling_module(mod, basis)` from a new

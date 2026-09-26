@@ -179,10 +179,13 @@ defmodule Argus.Cfg.Function do
 
   They are the dominators of a virtual exit every completion leads to, in
   the graph of the blocks that can complete: the exit's dominator chain.
+  `raising` names blocks whose tail call raises (`erlang:error/1` as the
+  last call, the compiler's badmap and a `raise`): the graph knows
+  instructions, not callees, so the caller who read them says.
   """
-  @spec completing_blocks(t()) :: MapSet.t(Block.id()) | nil
-  def completing_blocks(%__MODULE__{blocks: blocks, entry: entry}) do
-    completes = completing(blocks)
+  @spec completing_blocks(t(), MapSet.t(Block.id())) :: MapSet.t(Block.id()) | nil
+  def completing_blocks(%__MODULE__{blocks: blocks, entry: entry}, raising \\ MapSet.new()) do
+    completes = completing(blocks, raising)
 
     if MapSet.member?(completes, entry) do
       succs =
@@ -190,7 +193,7 @@ defmodule Argus.Cfg.Function do
           block = Map.fetch!(blocks, id)
 
           edges =
-            if block.terminator in [:return, :tail_call],
+            if block.terminator in [:return, :tail_call] and not MapSet.member?(raising, id),
               do: [{:exit, :virtual}],
               else:
                 for(
@@ -223,9 +226,12 @@ defmodule Argus.Cfg.Function do
   # The blocks with a path to a return or a tail call. The walk keeps a
   # plain map, not a MapSet: dialyzer rejects an opaque term threaded
   # through recursion.
-  defp completing(blocks) do
+  defp completing(blocks, raising) do
     exits =
-      for {id, %Block{terminator: t}} <- blocks, t in [:return, :tail_call], do: id
+      for {id, %Block{terminator: t}} <- blocks,
+          t in [:return, :tail_call],
+          not MapSet.member?(raising, id),
+          do: id
 
     exits |> grow(Map.new(exits, &{&1, true}), blocks) |> Map.keys() |> MapSet.new()
   end

@@ -134,4 +134,11 @@ defmodule Argus.Soundness.MailboxTest do
     assert {:error, "No handle_info/2 clause for a message the server is sent",
             {M.EnvelopeCast3, :run, 0}} in fired([M.EnvelopeCast3], :mailbox)
   end
+
+  test "a helper that reads state.interval re-arms on every path (suspected, confirmed)" do
+    assert {:warning, @loop, {M.DotHelperLoop, :handle_cast, 2}} in fired(
+             [M.DotHelperLoop],
+             :mailbox
+           )
+  end
 end
