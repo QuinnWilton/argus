@@ -232,6 +232,49 @@ defmodule Argus.Schema.Callbacks do
         """
       },
       %{
+        name: :continue_return,
+        layer: 2,
+        fields: [
+          {:id, :symbol, "the return"},
+          {:func, :symbol, "the function holding it"},
+          {:clause, :symbol,
+           "the tag of func's first argument on the paths to the return, `*` for none"},
+          {:tag, :symbol, "the continue term's atom or tuple tag, `*` when not spelled"}
+        ],
+        doc: """
+        The return at `id` hands the process to `handle_continue/2`: \
+        `{:ok, state, {:continue, t}}`, `{:noreply, state, {:continue, t}}` \
+        or `{:reply, reply, state, {:continue, t}}`, in init/1, a handler \
+        or a helper whose result a callback returns. `tag` is what the \
+        clause of handle_continue/2 the term enters tells it by: the atom, \
+        or a tuple's first element. One row per clause of `func` the return \
+        is in, by the tag its first argument was established to be \
+        (`Argus.Extractor.Dispatch.argument_tags/2`, as `returned_update` \
+        reads one). What sends a clause of handle_continue/2 its term, for \
+        `clientlib/runs.dl`'s once clauses.
+        """
+      },
+      %{
+        name: :timeout_return,
+        layer: 2,
+        fields: [
+          {:id, :symbol, "the return"},
+          {:func, :symbol, "the function holding it"},
+          {:clause, :symbol,
+           "the tag of func's first argument on the paths to the return, `*` for none"}
+        ],
+        doc: """
+        The return at `id` arms its loop's idle timeout: `{:ok, state, ms}`, \
+        `{:noreply, state, ms}` or `{:reply, reply, state, ms}`, whose \
+        `:timeout` message comes when no other does first. A value the \
+        return does not spell counts: only `:infinity`, `:hibernate` and a \
+        continue are known not to be a timeout. Read in every function, as \
+        `continue_return` is, one row per clause the return is in. Unlike \
+        `callback_timeout` (a callback's literal integer), what makes a \
+        `:timeout` message, for `clientlib/runs.dl`'s once clauses.
+        """
+      },
+      %{
         name: :start_acked,
         layer: 2,
         fields: [

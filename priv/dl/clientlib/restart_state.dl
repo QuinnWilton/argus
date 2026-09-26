@@ -7,9 +7,10 @@
 // kept — is gone, and nothing puts it back unless the process that put it
 // there does so again. A process does so again when its own code that
 // made the request runs again; code that runs once per incarnation
-// (start_callback, callbacks.dl: init/1, handle_continue/2, a Channel's
-// join/3, a LiveView's mount/3) does not, until that process restarts
-// too. A request made from code that runs again (a handler, a client
+// (once_code, runs.dl: init/1, a Channel's join/3, a LiveView's mount/3,
+// and a clause their messages enter — a handle_continue/2 init/1
+// continues to, a cast init/1 makes to itself) may not, until that
+// process restarts too. A request made from code that runs again (a handler, a client
 // function called per use) is made again on its next use, and a caller
 // that names its peer on every call re-resolves it: neither holds
 // anything across the peer's restart.
@@ -98,6 +99,16 @@ once_request(a, b, "cast", tag, g) :-
   function_def(g, b, _, _, _),
   handle_cast_function(b, h),
   callback_tag(h, "handle_cast", tag),
+  a != b.
+
+// A call made in a clause of a's own the once phase enters
+// (start_clause_site, runs.dl): a handle_info/2 clause for a message a's
+// start sends.
+once_request(a, b, "call", tag, h) :-
+  clause_fn(a, h, _),
+  child_subtree(_, _, a),
+  sync_request_at(h, id, b, tag),
+  start_clause_site(id, h),
   a != b.
 
 // The tags g's casts carry, "any" for a cast whose message has none.

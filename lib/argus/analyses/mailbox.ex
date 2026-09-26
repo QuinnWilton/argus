@@ -106,6 +106,10 @@ defmodule Argus.Analyses.Mailbox do
       # The rows a server writes and deletes (ets_op): a monitored process's
       # record in a table, dropped while its monitor stays (monitor_leak).
       Argus.Extractors.ETS,
+      # A protocol's dispatch (protocol_dispatch): a call the call graph
+      # does not follow, through which code no known root reaches can run
+      # on a process's stack (clientlib/runs.dl, opaque_stack).
+      Argus.Extractors.Purity,
       Argus.Extractors.Tooling
     ]
 

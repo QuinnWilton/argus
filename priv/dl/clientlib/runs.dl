@@ -3,67 +3,628 @@
 // A process runs some of its code once per incarnation and some of it
 // again and again. What its once code asks for — a registration made
 // from init/1, a monitor its start takes — it asks for once; what code
-// that runs again asks for, it asks for again each time. Two questions
-// turn on which:
+// that runs again asks for, it asks for again each time. Three questions
+// turn on which (docs/design/runs.md):
 //
 // - coupling (clientlib/restart_state.dl): a request a process's once
 //   code makes of a sibling is lost when the sibling restarts, since
-//   nothing makes it again.
-// - mailbox (docs/design/monitor-leaks.md): a monitor that code which
-//   runs again takes is taken again, and piles up unless each one is
-//   released.
+//   nothing makes it again;
+// - mailbox's monitors (docs/design/monitor-leaks.md): a monitor that
+//   code which runs again takes is taken again;
+// - mailbox's timer loops and subscriptions: a second arm, or a second
+//   subscription, from code that runs again.
 //
-// once_code(mod, func): func runs in mod's process from a start callback
-//   (start_callback, callbacks.dl: init/1, handle_continue/2, a
-//   Channel's join/3, a LiveView's mount/3), on its own stack: the same
-//   process, and no side path (side_call, calls.dl). Seeded at the
-//   modules a supervisor starts: coupling's question is about children.
-// again_code(func): func runs again and again in the process that runs
-//   it. It is reached on that process's own stack from a root that runs
-//   again (again_root):
-//   - "callback": a callback that runs whenever its request or message
-//     comes (runs_again_callback, callbacks.dl), or a GenEvent handler's
-//     handle_event/2 or handle_call/2;
-//   - "state": a gen_statem's state function or handle_event/4
-//     (statem_event_clause);
-//   - "loop": a receive loop, a function that receives and reaches
-//     itself again on its own stack;
-//   - "api": a function only callers outside the program call
-//     (api_export, ways_in.dl), which may call it on every use: no
-//     function of the program calls it, it is no process's callback, no
-//     start of the program runs it (process_start: a process's body, run
-//     once per process), no supervisor starts it (the start_link of a
-//     module a child spec names), and no library's macro wrote it
-//     (library_written,
-//     generated.dl: such a function is the library's to call, as
-//     HTTPoison calls the transformer its `use` writes, once per spawned
-//     process).
+// The split is per clause where a callback tells its messages apart. A
+// clause runs once per incarnation when every message that can enter it
+// is made by its process's once code: a start callback (start_callback,
+// callbacks.dl: init/1, a Channel's join/3, a LiveView's mount/3), or a
+// clause that runs once in turn. That is a positive definition built
+// from the message's producers (below); a producer that is unknown,
+// repeats, belongs to another process or to code that runs again makes
+// the clause code that runs again, the loud direction. "Once" is caused
+// by the start alone, bounded per incarnation: an init/1 that sends
+// itself one message per item makes that many, and a :DOWN clause for
+// the monitors init/1 takes runs once per monitor.
+//
+// Provides:
+//   once_code(mod, func): func may run in mod's once phase: from a start
+//     callback, a clause that runs once, or the start's continue chain
+//     (start_clause: a handle_continue/2 clause init/1's continue enters,
+//     whatever else continues to it), on its own stack: the same process,
+//     and no side path (side_call, calls.dl). Seeded at the modules a
+//     supervisor starts: coupling's question is about children.
+//   again_code(func): func runs again and again in the process that runs
+//     it: reached, on that process's stack, from a root that runs again
+//     as a whole (again_root) or from a call in a clause that runs again.
+//     A clause function (below) is again code as a function; a site of
+//     one asks once_clause_site.
+//   once_clause(func, tag): the clause of the clause function func for
+//     tag runs once per incarnation.
+//   once_clause_site(site, func): every clause of func the site is in
+//     runs once.
+//   again_root(func, how): where code that runs again as a whole starts:
+//     "callback" (runs_again_callback, callbacks.dl, handle_continue/2,
+//     a GenEvent handler's handle_event/2 and handle_call/2), "state" (a
+//     gen_statem's state function or handle_event/4), "loop" (a receive
+//     loop) or "api" (an export only callers outside the program call).
 //   A function both kinds reach is both: a helper init/1 and a handler
 //   share runs again.
 //
-// Direction. Loud where the caller is not in view: an exported function
-// nothing in the program calls is taken as called again, though its
-// callers outside may call it once (a callback of a behaviour the program
-// does not declare, a start function a child spec names other than
-// start_link); and a
-// handler clause for a message that comes once (a channel's join
-// message, an internal event a gen_statem's start queues) runs again as
-// far as the code shows. Quiet in one place: a start callback a handler
-// asks for again (`{:noreply, s, {:continue, x}}` runs handle_continue/2
-// again) is taken as once code.
+// Direction. Loud where the caller is not in view: an export nothing in
+// the program calls is taken as called again, though its callers
+// outside may call it once. Quiet where the program does not show a
+// clause runs once: a message another process sends once, to a process
+// it has just started (a channel's join), and a clause a status field
+// lets run once, run again as far as this reads.
 //
 // Requires imports.dl (reach.dl, ways_in.dl, generated.dl, receive.dl)
-// and otp.dl (callbacks.dl, calls.dl, supervision.dl).
+// and otp.dl (callbacks.dl, calls.dl, supervision.dl, runs_elsewhere.dl).
+
+// ── Clause functions ─────────────────────────────────────────────────
+//
+// clause_callback(mod, func, kind): a callback whose clauses a message
+// enters by the tag its first argument's head tells apart (clause_call):
+// handle_info/2 ("info") and handle_cast/2 ("cast") by the message,
+// handle_continue/2 ("continue") by the continue term, a LiveView's
+// handle_async/3 ("async") by the task's name, and a gen_statem's state
+// function or handle_event/4 ("internal") by the event type, of which
+// only :internal is asked: its other clauses take events from outside.
+.decl clause_callback(mod: symbol, func: symbol, kind: symbol)
+
+clause_callback(m, h, "info") :-
+  otp_callback(h, m, "handle_info", _),
+  function_def(h, m, "handle_info", 2, _).
+
+clause_callback(m, h, "cast") :-
+  otp_callback(h, m, "handle_cast", _),
+  function_def(h, m, "handle_cast", 2, _).
+
+clause_callback(m, h, "continue") :-
+  otp_callback(h, m, "handle_continue", _),
+  function_def(h, m, "handle_continue", 2, _).
+
+clause_callback(m, h, "async") :-
+  otp_callback(h, m, "handle_async", _),
+  function_def(h, m, "handle_async", 3, _).
+
+clause_callback(m, h, "internal") :- statem_event_clause(m, h, _).
+
+// clause_fn(mod, func, kind): func takes, by its clauses, a message mod's
+// process is sent: a clause callback of mod, or a function one hands its
+// message to whole (hands_on), which takes it where the callback would.
+.decl clause_fn(mod: symbol, func: symbol, kind: symbol)
+
+clause_fn(m, h, k) :- clause_callback(m, h, k).
+clause_fn(m, g, k) :- hands_on(m, _, g, _, k).
+
+// hands_on(mod, func, callee, site, kind): the call at site hands the
+// message func took to callee, whole, as its first argument, and callee
+// is the same callback by name and arity (firezone's channels'
+// `defdelegate handle_info(msg, s), to: Shared`).
+.decl hands_on(mod: symbol, func: symbol, callee: symbol, site: symbol, kind: symbol)
+
+hands_on(m, h, g, c, k) :-
+  clause_fn(m, h, k),
+  call_instr(h, g, c),
+  !runs_elsewhere(h, g),
+  call_arg_forward(h, g, 0, 0),
+  function_def(h, _, n, a, _),
+  function_def(g, _, n, a, _).
+
+// A clause of a clause function, by its tag, in mod's process: one some
+// call, return or inserted event of the function is told to be in.
+.decl clause_node(mod: symbol, func: symbol, kind: symbol, tag: symbol)
+
+clause_node(m, h, k, t) :- clause_fn(m, h, k), k != "internal", message_site_clause(_, h, t).
+
+clause_node(m, h, "internal", ":internal") :-
+  clause_fn(m, h, "internal"),
+  message_site_clause(_, h, ":internal").
+
+.decl node_tag(kind: symbol, tag: symbol)
+
+node_tag(k, t) :- clause_node(_, _, k, t).
+
+// The clause an instruction of a clause function is in: a call's
+// (clause_call), a return's (continue_return, timeout_return), an
+// inserted event's (statem_insert).
+.decl message_site_clause(site: symbol, func: symbol, tag: symbol)
+
+message_site_clause(s, h, t) :- clause_call(s, h, t).
+message_site_clause(s, h, t) :- continue_return(s, h, t, _), t != "*".
+message_site_clause(s, h, t) :- timeout_return(s, h, t), t != "*".
+message_site_clause(s, h, t) :- statem_insert(s, h, t, _), t != "*".
+
+// ── What makes a process a message of its own ────────────────────────
+//
+// self_message(site, func, kind, tag): the instruction at site, in func,
+// makes the process running func a message of kind tagged tag ("*": any
+// tag). The producer is where it runs: the rules below attribute it to
+// the start callbacks, clauses and roots that reach func on the
+// process's stack.
+.decl self_message(site: symbol, func: symbol, kind: symbol, tag: symbol)
+
+// A send to self(): the atom, or the tuple tagged by it.
+self_message(id, f, "info", t) :-
+  pid_send(id, f, msg, "self", _),
+  node_tag("info", t),
+  (msg = t ; msg = cat("{", cat(t, ", …}"))).
+
+self_message(id, f, "info", "*") :- pid_send(id, f, "dynamic", "self", _).
+
+// A one-shot timer armed for the process (an interval is below).
+self_message(id, f, "info", t) :-
+  timer_arm(id, f, "self", _, _, _),
+  !interval_arm(id),
+  timer_tag(id, t, _).
+
+self_message(id, f, "info", "*") :-
+  timer_arm(id, f, "self", m, _, _),
+  !interval_arm(id),
+  m != "param",
+  !timer_tag(id, _, _).
+
+self_message(id, f, "info", ":timeout") :- start_timer_arm(id, f, "self").
+
+// A timer armed with a parameter: its message is what the callers hand
+// the arming function (a literal atom, a tuple they build with a literal
+// tag), at their call. A caller that forwards its own parameter arms it
+// in turn.
+.decl self_arms_param(func: symbol, pos: number)
+
+self_arms_param(f, k) :- timer_arm(_, f, "self", "param", k, _).
+self_arms_param(f, j) :- self_arms_param(g, k), call_arg_forward(f, g, k, j).
+
+self_message(c, f, "info", t) :-
+  self_arms_param(g, k),
+  call_instr(f, g, c),
+  call_arg(f, g, k, t),
+  t != "dynamic".
+
+self_message(c, f, "info", t) :-
+  self_arms_param(g, k),
+  call_instr(f, g, c),
+  call_arg_tuple(f, g, k, 0, "literal", t).
+
+self_message(c, f, "info", "*") :-
+  self_arms_param(g, k),
+  call_instr(f, g, c),
+  call_arg(f, g, k, "dynamic"),
+  !call_arg_tuple(f, g, k, 0, "literal", _).
+
+self_message(c, f, "info", "*") :-
+  self_arms_param(g, k),
+  call_instr(f, g, c),
+  !call_arg(f, g, k, _),
+  !call_arg_forward(f, g, k, _).
+
+// A monitor's :DOWN, and that of a task the process starts and does not
+// await (Task.async unawaited, Task.Supervisor.async_nolink).
+self_message(id, f, "info", ":DOWN") :- monitor_call(id, f, _).
+self_message(id, f, "info", ":DOWN") :- mailbox_writer(id, f, "task").
+self_message(id, f, "info", ":DOWN") :- mailbox_writer(id, f, "task_nolink").
+
+// The idle timeout a callback's return arms (`{:noreply, state, ms}`):
+// in the callback, or in a function whose result it returns. A helper's
+// own `{:ok, a, b}` is no callback's return.
+self_message(id, f, "info", ":timeout") :- timeout_return(id, f, _), callback_result(f).
+
+.decl callback_result(func: symbol)
+
+callback_result(f) :- otp_callback(f, _, _, _).
+callback_result(g) :- callback_result(f), returns_call(f, g).
+
+// A cast to self().
+self_message(id, f, "cast", t) :-
+  pid_call(id, f, "cast", "self", _),
+  call_tag(id, f, "cast", t).
+
+self_message(id, f, "cast", "*") :-
+  pid_call(id, f, "cast", "self", _),
+  !call_tag(id, f, "cast", _).
+
+// A return that continues to handle_continue/2.
+self_message(id, f, "continue", t) :- continue_return(id, f, _, t).
+
+// An event a gen_statem inserts: :internal, or any type where the
+// function does not spell it (ra's `{next_event, EvtType, Evt}`).
+self_message(id, f, "internal", ":internal") :-
+  statem_insert(id, f, _, t),
+  (t = ":internal" ; t = "*").
+
+// A LiveView's start_async/3,4 (Phoenix.LiveView.Async's, under the
+// macro): its result enters handle_async/3's clause for the name, in the
+// LiveView's process. The call's site is not in the facts, so a start in
+// a clause function counts for its every clause (the function stands
+// for the site).
+self_message(f, f, "async", t) :-
+  call_arg(f, g, 1, t),
+  t != "dynamic",
+  match("Phoenix.(LiveView|LiveComponent)(.Async)?:start_async/[34]", g).
+
+self_message(f, f, "async", "*") :-
+  call_arg(f, g, 1, "dynamic"),
+  match("Phoenix.(LiveView|LiveComponent)(.Async)?:start_async/[34]", g).
+
+// A call of a clause function of the caller's own module, other than a
+// hand-on: its first argument is the message, and the clause it enters
+// runs in the caller's process.
+self_message(c, f, k, t) :-
+  clause_fn(_, h, k),
+  call_instr(f, h, c),
+  !hands_on(_, f, h, c, _),
+  function_def(f, fm, _, _, _),
+  function_def(h, fm, _, _, _),
+  (call_arg(f, h, 0, t) ; call_arg_tuple(f, h, 0, 0, "literal", t)),
+  t != "dynamic".
+
+self_message(c, f, k, "*") :-
+  clause_fn(_, h, k),
+  call_instr(f, h, c),
+  !hands_on(_, f, h, c, _),
+  function_def(f, fm, _, _, _),
+  function_def(h, fm, _, _, _),
+  !call_arg_tuple(f, h, 0, 0, "literal", _),
+  (call_arg(f, h, 0, "dynamic") ; !call_arg(f, h, 0, _)).
+
+// ── What another process may make ────────────────────────────────────
+//
+// outside_message(kind, tag): a message some process other than the
+// receiver's own code may make: a send or a one-shot timer to a process
+// other than the sender's, a cast that is not to self(), an interval to
+// another process, and what Phoenix.PubSub delivers.
+.decl outside_message(kind: symbol, tag: symbol)
+
+outside_message("info", t) :-
+  pid_send(_, _, msg, src, _),
+  src != "self",
+  node_tag("info", t),
+  (msg = t ; msg = cat("{", cat(t, ", …}"))).
+
+outside_message("info", t) :- timer_arm(id, _, "other", _, _, _), timer_tag(id, t, _).
+
+outside_message("cast", t) :-
+  call_tag(id, f, "cast", t),
+  !pid_call(id, f, "cast", "self", _).
+
+// An interval timer (`:timer.send_interval/2,3`) sends its message again
+// and again, wherever it is armed: one armed for another process is that
+// process's again and again, and one a process arms for itself is code
+// that runs again in it (repeated_message).
+.decl interval_arm(site: symbol)
+
+interval_arm(id) :- timer_arm(id, f, _, _, _, _), arms_interval(f).
+
+// A function that calls :timer.send_interval/2,3: its timer arms are
+// all taken as the interval's (a one-shot beside it repeats as far as
+// this reads, the loud direction).
+.decl arms_interval(func: symbol)
+
+arms_interval(f) :- call_arg(f, g, _, _), match(":timer:send_interval/[23]", g).
+
+outside_message("info", t) :-
+  interval_arm(id),
+  timer_arm(id, _, "other", _, _, _),
+  timer_tag(id, t, _),
+  node_tag("info", t).
+
+.decl repeated_message(site: symbol, func: symbol, tag: symbol)
+
+repeated_message(id, f, t) :-
+  interval_arm(id),
+  timer_arm(id, f, "self", _, _, _),
+  timer_tag(id, t, _).
+
+repeated_message(id, f, "*") :-
+  interval_arm(id),
+  timer_arm(id, f, "self", _, _, _),
+  !timer_tag(id, _, _).
+
+// What Phoenix.PubSub delivers: a message the program hands its
+// broadcast (`Phoenix.PubSub.broadcast(ps, topic, {:refresh, x})`),
+// itself or through a function of its own that hands a parameter on to
+// one. The library sends it from its own code, which the program's
+// facts do not show, to every subscriber.
+.decl publishes_param(func: symbol, pos: number)
+
+publishes_param(f, k) :-
+  call_arg_forward(f, g, _, k),
+  match("Phoenix.PubSub:(local_|direct_)?broadcast(_from)?!?/[3-5]", g).
+
+publishes_param(f, k) :- publishes_param(g, gk), call_arg_forward(f, g, gk, k).
+
+.decl published(tag: symbol)
+
+published(t) :-
+  (call_arg(_, g, _, t) ; call_arg_tuple(_, g, _, 0, "literal", t)),
+  match("Phoenix.PubSub:(local_|direct_)?broadcast(_from)?!?/[3-5]", g).
+
+published(t) :-
+  publishes_param(f, k),
+  (call_arg(_, f, k, t) ; call_arg_tuple(_, f, k, 0, "literal", t)).
+
+outside_message("info", t) :- published(t), node_tag("info", t).
+
+// A call of a clause function from another module, other than a
+// hand-on: its clauses run in whatever process that caller runs in.
+.decl called_from_outside(func: symbol)
+
+called_from_outside(h) :-
+  clause_fn(_, h, _),
+  call_instr(f, h, c),
+  !hands_on(_, f, h, c, _),
+  function_def(f, fm, _, _, _),
+  function_def(h, hm, _, _, _),
+  fm != hm.
+
+// ── Where each producer runs ─────────────────────────────────────────
+//
+// The functions that reach a producer on their own stack.
+.init message_reach = SameProcessReach
+
+message_reach.seed(p, p) :- self_message(_, p, _, _).
+message_reach.seed(p, p) :- repeated_message(_, p, _).
+
+// produced(from, part, mod, kind, tag): what runs at `from` makes mod's
+// process a message of kind tagged tag. `from` is a clause function of
+// mod with `part` its clause ("*" for sites no clause tag names: every
+// clause reaches them, a catch-all among them), "start" (mod's start
+// callbacks), or "again" (a root that runs again as a whole, of mod, or
+// "*" where the process is not known).
+.decl produced(from: symbol, part: symbol, mod: symbol, kind: symbol, tag: symbol)
+
+produced(h, t, m, k, tag) :-
+  clause_fn(m, h, _),
+  self_message(s, h, k, tag),
+  message_site_clause(s, h, t).
+
+produced(h, "*", m, k, tag) :-
+  clause_fn(m, h, _),
+  self_message(s, h, k, tag),
+  !message_site_clause(s, h, _).
+
+produced(h, t, m, k, tag) :-
+  clause_fn(m, h, _),
+  call_instr(h, g, c),
+  !runs_elsewhere(h, g),
+  !hands_on(m, h, g, c, _),
+  clause_call(c, h, t),
+  message_reach.reaches(g, p),
+  self_message(_, p, k, tag).
+
+produced(h, "*", m, k, tag) :-
+  clause_fn(m, h, _),
+  call_instr(h, g, c),
+  !runs_elsewhere(h, g),
+  !hands_on(m, h, g, c, _),
+  !clause_call(c, h, _),
+  message_reach.reaches(g, p),
+  self_message(_, p, k, tag).
+
+produced(h, t, m, k, tag) :-
+  clause_fn(m, h, _),
+  fun_handed(c, h, g, _),
+  !runs_elsewhere(h, g),
+  clause_call(c, h, t),
+  message_reach.reaches(g, p),
+  self_message(_, p, k, tag).
+
+produced(h, "*", m, k, tag) :-
+  clause_fn(m, h, _),
+  call_edge(h, g),
+  !runs_elsewhere(h, g),
+  !call_instr(h, g, _),
+  message_reach.reaches(g, p),
+  self_message(_, p, k, tag).
+
+produced("start", m, m, k, tag) :-
+  start_callback(m, s),
+  message_reach.reaches(s, p),
+  self_message(_, p, k, tag).
+
+produced("again", m, m, k, tag) :-
+  again_whole(r, m),
+  message_reach.reaches(r, p),
+  self_message(_, p, k, tag).
+
+// An interval timer's message, in the process whose code arms it.
+produced("again", m, m, "info", tag) :- runs_in(m, p), repeated_message(_, p, tag).
+
+.decl runs_in(mod: symbol, func: symbol)
+
+runs_in(m, p) :- start_callback(m, s), message_reach.reaches(s, p).
+runs_in(m, p) :- clause_fn(m, h, _), message_reach.reaches(h, p).
+runs_in(m, p) :- again_whole(r, m), message_reach.reaches(r, p).
+
+// A producer no root the program knows reaches (a fun made to run
+// elsewhere or later): its process is not known.
+.decl rooted(func: symbol)
+
+rooted(p) :- start_callback(_, s), message_reach.reaches(s, p).
+rooted(p) :- clause_fn(_, h, _), message_reach.reaches(h, p).
+rooted(p) :- again_whole(r, _), message_reach.reaches(r, p).
+
+produced("again", "*", "*", k, tag) :- self_message(_, p, k, tag), !rooted(p).
+
+// The roots of code that runs again as a whole: a callback no clause of
+// which is told apart (handle_call/3, a channel's handle_in/3), a
+// receive loop and an export only callers outside call. `mod` is the
+// process's module, "*" where the process is not known.
+.decl again_whole(func: symbol, mod: symbol)
+
+again_whole(e, m) :-
+  (again_root(e, "callback") ; again_root(e, "state")),
+  function_def(e, m, _, _, _),
+  !clause_fn(_, e, _).
+
+again_whole(e, "*") :- again_root(e, "loop").
+again_whole(e, "*") :- again_root(e, "api").
+
+// An export only callers outside call may be a callback of a behaviour
+// the module declares that no table here lists (a LiveComponent's
+// update/2): its library runs it where it runs the module's other
+// callbacks. Its own module's clauses count it, whatever the stack.
+again_whole(e, m) :- again_root(e, "api"), function_def(e, m, _, _, _).
+
+// Code no process of the program runs on its own stack — an export only
+// callers outside call, a receive loop, a fun made to run elsewhere —
+// runs on a process's stack only through a call the call graph does not
+// follow: an apply of a module or function it does not know, a fun
+// value's call, a protocol's dispatch. A process whose code makes none
+// runs only what the graph shows.
+.decl opaque_call(func: symbol)
+
+opaque_call(f) :- dynamic_call(id, f, _), !resolved_apply(id, f, _).
+opaque_call(f) :- protocol_dispatch(_, f, _).
+
+.init opaque_reach = SameProcessReachSet
+
+opaque_reach.seed(f) :- opaque_call(f).
+
+.decl opaque_stack(mod: symbol)
+
+opaque_stack(m) :- start_callback(m, s), opaque_reach.reaches(s).
+opaque_stack(m) :- clause_fn(m, h, _), opaque_reach.reaches(h).
+opaque_stack(m) :- again_whole(r, m), opaque_reach.reaches(r).
+
+// ── Once clauses ─────────────────────────────────────────────────────
+//
+// enters(from, part, mod, func, tag): what runs at (from, part) makes a
+// message clause (func, tag) takes in mod's process.
+.decl enters(from: symbol, part: symbol, mod: symbol, func: symbol, tag: symbol)
+
+enters(a, b, m, h, t) :- clause_node(m, h, k, t), produced(a, b, m, k, t).
+enters(a, b, m, h, t) :- clause_node(m, h, k, t), produced(a, b, m, k, "*").
+
+enters("again", "*", m, h, t) :-
+  clause_node(m, h, k, t),
+  (produced("again", "*", "*", k, t) ; produced("again", "*", "*", k, "*")),
+  opaque_stack(m).
+
+// Some producer spells the clause's tag. A message only a producer of
+// any tag may carry may come from the runtime or a library under that
+// tag, which the program's facts do not show.
+.decl entered(mod: symbol, func: symbol, tag: symbol)
+
+entered(m, h, t) :- clause_node(m, h, k, t), produced(_, _, m, k, t).
+
+// A clause that runs again in mod's process: another process may make
+// what it takes, or code that runs again, a part of a clause function
+// that does (again_part), or the clause itself round a cycle of
+// producers — init/1 arms `:tick`, and the `:tick` clause arms it again.
+// A least fixpoint of positive rules: a clause is not assumed to run
+// once to show it runs once.
+.decl runs_again(mod: symbol, func: symbol, tag: symbol)
+
+runs_again(m, h, t) :- clause_node(m, h, k, t), outside_message(k, t).
+runs_again(m, h, t) :- clause_node(m, h, _, t), called_from_outside(h).
+runs_again(m, h, t) :- enters("again", _, m, h, t).
+runs_again(m, h, t) :- enters(a, b, m, h, t), again_part(m, a, b).
+runs_again(m, h, t) :- enters_path(h, t, m, h, t).
+
+// A part of a clause function that runs again: its untold sites, a
+// clause whose producers are not asked (a gen_statem's clause for an
+// event from outside), one no producer spells the tag of, one that runs
+// again.
+.decl again_part(mod: symbol, func: symbol, tag: symbol)
+
+again_part(m, h, "*") :- clause_fn(m, h, _).
+
+again_part(m, h, t) :-
+  produced(h, t, m, _, _),
+  clause_fn(m, h, _),
+  !clause_node(m, h, _, t).
+
+again_part(m, h, t) :- clause_node(m, h, _, t), !entered(m, h, t).
+again_part(m, h, t) :- runs_again(m, h, t).
+
+// The clauses a clause's producers lead to, through the clauses between.
+.decl enters_path(from: symbol, part: symbol, mod: symbol, func: symbol, tag: symbol)
+
+enters_path(a, b, m, h, t) :- enters(a, b, m, h, t), clause_fn(m, a, _).
+enters_path(a, b, m, h, t) :- enters_path(a, b, m, g, u), enters(g, u, m, h, t).
+
+.decl runs_again_somewhere(func: symbol, tag: symbol)
+
+runs_again_somewhere(h, t) :- runs_again(_, h, t).
+
+// once_clause(func, tag): some producer spells what the clause takes, and
+// in every process that runs func nothing makes it run again.
+.decl once_clause(func: symbol, tag: symbol)
+
+once_clause(h, t) :-
+  entered(m, h, t),
+  clause_node(m, h, _, t),
+  !runs_again_somewhere(h, t).
+
+// A site of a clause function every clause of which it is in runs once.
+.decl once_clause_site(site: symbol, func: symbol)
+
+once_clause_site(s, h) :-
+  once_clause(h, t),
+  clause_call(s, h, t),
+  !again_tag_site(s, h).
+
+.decl again_tag_site(site: symbol, func: symbol)
+
+again_tag_site(s, h) :- clause_fn(_, h, _), clause_call(s, h, t), !once_clause(h, t).
 
 // ── Once code ────────────────────────────────────────────────────────
+//
+// once_code is what may run in a process's once phase: its start
+// callbacks, the clauses that run once (once_clause), and the start's
+// continue chain — a handle_continue/2 clause init/1's continue enters,
+// or one a clause of the chain continues to (start_clause). gen_server
+// runs init/1's continue before any message, as part of the start,
+// whatever else continues to the same clause later: coupling asks what a
+// start may ask for once, and a request the start makes there may not be
+// made again after its peer's restart (jackalope's Hare, whose
+// handle_continue/2 init/1 and every reconnect continue to). A clause a
+// message enters is not part of the start unless it runs once: a
+// periodic loop init/1 arms asks again on every tick. once_clause is the
+// stricter word, for the readers asking what cannot run again.
+.decl start_clause(mod: symbol, func: symbol, tag: symbol)
+
+start_clause(m, h, t) :- once_clause(h, t), clause_node(m, h, _, t).
+
+start_clause(m, h, t) :-
+  clause_node(m, h, "continue", t),
+  enters("start", m, m, h, t).
+
+start_clause(m, h, t) :-
+  clause_node(m, h, "continue", t),
+  enters(a, b, m, h, t),
+  start_clause(m, a, b).
+
+// A site of a clause function some clause of which, in the once phase,
+// holds it.
+.decl start_clause_site(site: symbol, func: symbol)
+
+start_clause_site(s, h) :- start_clause(_, h, t), clause_call(s, h, t).
+
 .init once_reach = ForwardSameProcessReachCut
 
 once_reach.cut(f, g) :- side_call(f, g).
-once_reach.root(s, s) :- start_callback(m, s), child_subtree(_, _, m).
+once_reach.root(m, s) :- start_callback(m, s), child_subtree(_, _, m).
+
+once_reach.root(m, g) :-
+  child_subtree(_, _, m),
+  start_clause(m, h, t),
+  call_instr(h, g, c),
+  clause_call(c, h, t),
+  !runs_elsewhere(h, g),
+  !side_call(h, g).
+
+once_reach.root(m, g) :-
+  child_subtree(_, _, m),
+  start_clause(m, h, t),
+  fun_handed(c, h, g, _),
+  clause_call(c, h, t),
+  !runs_elsewhere(h, g).
 
 .decl once_code(mod: symbol, func: symbol)
 
-once_code(m, g) :- start_callback(m, s), once_reach.reaches(s, g).
+once_code(m, g) :- once_reach.reaches(m, g).
 
 // ── Code that runs again ─────────────────────────────────────────────
 .decl again_root(func: symbol, how: symbol)
@@ -72,6 +633,11 @@ again_root(e, "callback") :-
   otp_callback(e, m, n, _),
   function_def(e, m, n, a, _),
   runs_again_callback(n, a).
+
+// handle_continue/2 runs whenever a return continues to it: once from
+// init/1, again from a handler. Its clauses are told apart by what
+// continues to them (once_clause).
+again_root(e, "callback") :- clause_callback(_, e, "continue").
 
 again_root(e, "callback") :-
   otp_callback(e, m, n, "GenEvent"),
@@ -86,6 +652,14 @@ again_root(f, "loop") :-
   !runs_elsewhere(f, g),
   loop_back.reaches(g, f).
 
+// A function only callers outside the program call (api_export,
+// ways_in.dl), which may call it on every use: no function of the
+// program calls it, it is no process's callback, no start of the program
+// runs it (process_start: a process's body, run once per process), no
+// supervisor starts it (the start_link of a module a child spec names),
+// and no library's macro wrote it (library_written, generated.dl: such a
+// function is the library's to call, as HTTPoison calls the transformer
+// its `use` writes, once per spawned process).
 again_root(f, "api") :-
   api_export(f),
   !call_edge(_, f),
@@ -106,11 +680,39 @@ child_start(f) :- child_subtree(_, _, m), function_def(f, m, "start_link", _, _)
 
 loop_back.seed(f, f) :- receives(f).
 
+// Reached from a root that runs again as a whole, or from a call in a
+// clause that runs again (a clause not once, a site no clause tag names).
+// The reach does not enter a clause function by a call: entering one is
+// a message, and its clauses are judged by what enters them.
 .init again_reach = ForwardSameProcessReachSetCut
 
 again_reach.cut(f, g) :- side_call(f, g).
-again_reach.root(f) :- again_root(f, _).
+again_reach.cut(f, g) :- call_edge(f, g), clause_fn(_, g, _).
+again_reach.root(f) :- again_root(f, _), !clause_fn(_, f, _).
+
+again_reach.root(g) :-
+  clause_fn(_, h, _),
+  call_instr(h, g, c),
+  !runs_elsewhere(h, g),
+  !side_call(h, g),
+  !hands_on(_, h, g, c, _),
+  (again_tag_site(c, h) ; !clause_call(c, h, _)).
+
+again_reach.root(g) :-
+  clause_fn(_, h, _),
+  fun_handed(c, h, g, _),
+  !runs_elsewhere(h, g),
+  (again_tag_site(c, h) ; !clause_call(c, h, _)).
+
+again_reach.root(g) :-
+  clause_fn(_, h, _),
+  call_edge(h, g),
+  !runs_elsewhere(h, g),
+  !side_call(h, g),
+  !call_instr(h, g, _),
+  !fun_handed(_, h, g, _).
 
 .decl again_code(func: symbol)
 
 again_code(f) :- again_reach.reaches(f).
+again_code(h) :- clause_fn(_, h, _).

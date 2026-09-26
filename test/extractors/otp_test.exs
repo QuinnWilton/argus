@@ -305,6 +305,54 @@ defmodule Argus.Extractors.OTPTest do
     end
   end
 
+  describe "extract/1 — what a callback's return asks of its loop" do
+    alias Argus.Test.Soundness.Runs
+
+    defp asks(mod, rel) do
+      {:ok, data} = BeamSpy.BeamFile.disassemble(to_string(:code.which(mod)))
+
+      for row <- Map.get(OTP.extract(data), rel, []) do
+        [_id, func | rest] = row
+        [func |> String.split(":") |> List.last() | rest]
+      end
+      |> Enum.uniq()
+      |> Enum.sort()
+    end
+
+    test "a continue from init/1 and from a handler's clause, by their tags" do
+      assert asks(Runs.ContinueAgain, :continue_return) == [
+               ["handle_info/2", ":reset", ":setup"],
+               ["init/1", "*", ":setup"]
+             ]
+    end
+
+    test "a continue a helper returns, and one whose term the return does not spell" do
+      assert ["reload/1", "*", ":setup"] in asks(Runs.ContinueFromHelper, :continue_return)
+      assert ["handle_info/2", ":next", "*"] in asks(Runs.ContinueAny, :continue_return)
+    end
+
+    test "a continue's tuple term is told by its first element" do
+      assert asks(Runs.LoopReturns, :continue_return) == [["init/1", "*", ":load"]]
+    end
+
+    test "a timeout, spelled or not; :infinity, :hibernate and a continue are none" do
+      assert asks(Runs.LoopReturns, :timeout_return) == [
+               ["handle_call/3", ":soon"],
+               ["handle_cast/2", ":wait"]
+             ]
+
+      assert asks(Runs.TimeoutAgain, :timeout_return) == [
+               ["handle_cast/2", ":poke"],
+               ["init/1", "*"]
+             ]
+
+      assert asks(Runs.TimeoutFromHelper, :timeout_return) == [
+               ["init/1", "*"],
+               ["rearm/1", "*"]
+             ]
+    end
+  end
+
   describe "integration with extract pipeline" do
     test "extractor is usable via Pipeline.extract/2" do
       assert {:ok, facts} =

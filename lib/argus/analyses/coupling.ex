@@ -71,6 +71,10 @@ defmodule Argus.Analyses.Coupling do
       Argus.Extractors.ETS,
       Argus.Extractors.ErrorHandling,
       Argus.Extractors.Purity,
+      # Which code a library's macro wrote (library_written): an export no
+      # program code calls is code that runs again unless a library wrote
+      # it (clientlib/runs.dl, what once code's clauses are told against).
+      Argus.Extractors.Generated,
       Argus.Extractors.Tooling
     ]
 

@@ -32,6 +32,28 @@ defmodule Argus.Schema.GenStatem do
         doc: "State in a gen_statem state machine."
       },
       %{
+        name: :statem_insert,
+        layer: 2,
+        fields: [
+          {:id, :symbol, "where the action tuple is built or held"},
+          {:func, :symbol, "the function holding it"},
+          {:clause, :symbol, "the tag of func's first argument on the paths to it, `*` for none"},
+          {:type, :symbol, "the inserted event's type as a clause head tells it, `*` unspelled"}
+        ],
+        doc: """
+        A `{:next_event, type, content}` action in a function of a \
+        gen_statem's module: an event the machine runs before anything in \
+        its mailbox, and the only way an event of type `:internal` is made. \
+        Read where the tuple is built or where a literal holds it \
+        (`[{:next_event, :internal, :go}]`), whether or not it is returned. \
+        `{:call, from}` is spelled by its tag, `:call`; a type the function \
+        does not spell (a parameter) is `*`. One row per clause of `func`, \
+        by its first argument's tag (`Argus.Extractor.Dispatch.argument_tags/2`). \
+        What enters a gen_statem's `:internal` clauses, for \
+        `clientlib/runs.dl`'s once clauses.
+        """
+      },
+      %{
         name: :statem_initial,
         layer: 2,
         fields: [

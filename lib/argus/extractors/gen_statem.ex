@@ -43,6 +43,9 @@ defmodule Argus.Extractors.GenStatem do
     what a call returns (a tail call, a call's result, a throw): the local
     callee, or `dynamic`
   - `statem_timeout(mod, state, type, value)` — timeout set per state
+  - `statem_insert(id, func, clause, type)` — a `{:next_event, type, content}`
+    action built at `id`: an event the machine inserts ahead of its
+    mailbox, which only such an action can make of type `:internal`
   """
 
   @behaviour Argus.Extractor
@@ -52,6 +55,7 @@ defmodule Argus.Extractors.GenStatem do
   alias Argus.Extractors.CallbackTag.MessageClauses
   alias Argus.Extractors.GenStatem.{CallClauses, EventClauses}
   alias Argus.Instr
+  alias Argus.Instr.Reaching
   alias Argus.InstrId
 
   import Argus.Extractor.Helpers,
@@ -86,6 +90,7 @@ defmodule Argus.Extractors.GenStatem do
       :statem_info_open,
       :statem_info_tag,
       :statem_initial,
+      :statem_insert,
       :statem_module,
       :statem_returns_call,
       :statem_state,
@@ -122,7 +127,10 @@ defmodule Argus.Extractors.GenStatem do
       |> maybe_track_unknown_callback_mode(mod_str, callback_mode)
       |> add_fact(:statem_module, [mod_str, to_string(callback_mode)])
 
-    facts = extract_initial_states(facts, mod_str, functions)
+    facts =
+      facts
+      |> extract_initial_states(mod_str, functions)
+      |> extract_inserts(mod, functions)
 
     case callback_mode do
       :state_functions ->
@@ -181,6 +189,111 @@ defmodule Argus.Extractors.GenStatem do
 
   defp add_initial(facts, mod_str, state) do
     add_fact(facts, :statem_initial, [mod_str, to_string(state)])
+  end
+
+  # ── Inserted events ─────────────────────────────────────────────────
+  #
+  # A `{:next_event, type, content}` action, built in any function of the
+  # machine's module (a state function, init/1, handle_event/4, a helper
+  # whose result one returns): gen_statem runs the event it inserts before
+  # anything in the mailbox. An `:internal` event is made by no one else.
+  # The tuple is read where it is built (`put_tuple2`) or where a literal
+  # holds it (`[{:next_event, :internal, :go}]`); whether it is returned
+  # is not asked, so one built for another use counts too. `type` is the
+  # event type as a clause head tells it, `{:call, from}` by its tag
+  # (`:call`), and `*` when the function does not spell it (a parameter:
+  # ra's `{next_event, EvtType, Evt}`). The clause is the tag the
+  # function's first argument was established to be on the paths to the
+  # tuple (`Dispatch.argument_tags/2`), `*` where none was.
+  defp extract_inserts(facts, mod, functions) do
+    Enum.reduce(functions, facts, fn {:function, name, arity, _entry, instrs}, acc ->
+      inserts =
+        instrs
+        |> Enum.with_index()
+        |> Enum.flat_map(fn {instr, idx} ->
+          for type <- inserted_types(instrs, idx, instr), do: {idx, type}
+        end)
+
+      emit_inserts(acc, Normalize.func_id(mod, name, arity), instrs, inserts)
+    end)
+  end
+
+  defp emit_inserts(facts, _func_id, _instrs, []), do: facts
+
+  defp emit_inserts(facts, func_id, instrs, inserts) do
+    tags = Dispatch.argument_tags(instrs, {:x, 0})
+
+    inserts
+    |> Enum.flat_map(fn {idx, type} ->
+      for clause <- insert_clauses(Map.get(tags, idx)), do: {idx, clause, type}
+    end)
+    |> Enum.uniq()
+    |> Enum.sort()
+    |> Enum.reduce(facts, fn {idx, clause, type}, acc ->
+      add_fact(acc, :statem_insert, [InstrId.mint(func_id, idx), func_id, clause, type])
+    end)
+  end
+
+  defp insert_clauses(nil), do: ["*"]
+
+  defp insert_clauses(set) do
+    if MapSet.member?(set, :any), do: ["*"], else: Enum.sort(set)
+  end
+
+  defp inserted_types(
+         instrs,
+         idx,
+         {:put_tuple2, _dst, {:list, [{:atom, :next_event}, type, _content]}}
+       ),
+       do: [event_type(instrs, idx, type)]
+
+  defp inserted_types(_instrs, _idx, instr) when is_tuple(instr) do
+    instr |> Tuple.to_list() |> Enum.flat_map(&operand_inserts/1)
+  end
+
+  defp inserted_types(_instrs, _idx, _instr), do: []
+
+  # The literals an operand holds: itself, or the elements of a list
+  # operand (`put_tuple2`'s and `put_list`'s).
+  defp operand_inserts({:literal, term}), do: literal_inserts(term)
+  defp operand_inserts({:list, elements}), do: Enum.flat_map(elements, &operand_inserts/1)
+  defp operand_inserts(_operand), do: []
+
+  defp literal_inserts({:next_event, type, _content}), do: [literal_event_type(type)]
+
+  defp literal_inserts(list) when is_list(list) do
+    list |> list_elements() |> Enum.flat_map(&literal_inserts/1)
+  end
+
+  defp literal_inserts(tuple) when is_tuple(tuple) do
+    tuple |> Tuple.to_list() |> Enum.flat_map(&literal_inserts/1)
+  end
+
+  defp literal_inserts(_term), do: []
+
+  defp literal_event_type(type) when is_atom(type), do: inspect(type)
+
+  defp literal_event_type(type)
+       when is_tuple(type) and tuple_size(type) > 0 and is_atom(elem(type, 0)),
+       do: inspect(elem(type, 0))
+
+  defp literal_event_type(_type), do: "*"
+
+  defp event_type(_instrs, _idx, {:atom, type}), do: inspect(type)
+  defp event_type(_instrs, _idx, {:literal, type}), do: literal_event_type(type)
+
+  defp event_type(instrs, idx, element) do
+    with {kind, _} = reg when kind in [:x, :y] <- Instr.register(element),
+         [w] when is_integer(w) <- Resolve.writers(instrs, idx, reg) do
+      case Reaching.at(instrs, w) do
+        {:put_tuple2, _dst, {:list, [{:atom, head} | _]}} -> inspect(head)
+        {:move, {:atom, type}, _dst} -> inspect(type)
+        {:move, {:literal, type}, _dst} -> literal_event_type(type)
+        _ -> "*"
+      end
+    else
+      _ -> "*"
+    end
   end
 
   # Surface gen_statem modules whose callback_mode/0 couldn't be resolved

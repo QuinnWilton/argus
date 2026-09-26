@@ -6,6 +6,115 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## 0.20.0-dev — unreleased
 
+### Once and again: a clause runs once when once code alone makes what enters it (schema 139)
+
+**Changed.** clientlib runs.dl splits once code from code that runs
+again per clause, by where a clause's messages come from
+(docs/design/runs.md). A clause of handle_info/2, handle_cast/2,
+handle_continue/2, a LiveView's handle_async/3 or a gen_statem's
+`:internal` clause runs once per incarnation when some producer spells
+its tag and every producer, in every process that runs the clause, is the
+process's start or a clause that runs once in turn:
+- a producer is a send to `self()`, a one-shot timer armed for the
+  process (its literal, or the one its callers hand an arming helper), a
+  monitor's or an unawaited task's `:DOWN`, the idle timeout a callback's
+  return arms, a cast to `self()`, a return that continues, a
+  `start_async/3,4`, an event a gen_statem inserts, or a call of the
+  clause function with its message;
+- a producer runs again when another process may make the message (a
+  send or timer to another process, a cast not to `self()`, an interval
+  timer, a Phoenix.PubSub broadcast of it, a call of the clause from
+  another module), when code that runs again makes it, and when it
+  reaches back to the clause itself (a periodic loop);
+- a message only a producer of any tag may carry is not known to come
+  once: the runtime or a library may make it.
+A function a callback hands its message to whole (`defdelegate
+handle_info(msg, s), to: Shared`) takes it by its clauses in the
+callback's process. `again_code` stops at a clause function and resumes
+from its clauses that run again; `once_clause(func, tag)` and
+`once_clause_site(site, func)` are the new words. handle_continue/2 is no
+longer a start callback: `once_code` is the start callbacks, the clauses
+that run once, and the start's continue chain (`start_clause`: a
+handle_continue/2 clause init/1's continue enters, or one a clause of the
+chain continues to, whatever else continues to it later: gen_server runs
+it as part of the start). A handle_continue/2 only handlers continue to
+is no longer once code (Livebook's NotebookManager `:dump_state`), and a
+clause a message enters is once code only when it runs once: a periodic
+loop init/1 arms asks again on every tick.
+
+Consumers:
+- mailbox's monitors: a monitor at a site of a once clause is taken
+  once; the dropped-ref walk does not pass a once clause's call; the
+  "ended" witness's monitoring clause is one that runs again.
+- mailbox's timer loops and repeated subscriptions read
+  `once_clause_site`, and take their entries from `again_root`, so a
+  handle_continue/2 clause a handler continues to is judged like any
+  handler. `once_message`, `once_cast`, `sent_again`, `cast_again`,
+  `once_candidate`, `sends_literal`, `sends_literal_out` and mailbox's own
+  `once_clause` are deleted: mailbox keeps 112 negated atoms, the 8 of the
+  carve-out (4 inside it, 4 reading it) replaced by 4 reads of the shared
+  `once_clause_site` and 4 the monitors add.
+- coupling: a call a clause of the once phase makes is a once request.
+
+Over the 44 evaluation sets (the 26 live projects, the ETS and
+supervision rounds' sets, madrigal and the postgrex and supavisor pairs),
+against 3d3cd39c:
+- "Periodic timer loop armed again while it runs" 20 → 17 rows. 4 go,
+  all false: a loop's first arm from a clause only init/1's message
+  enters (nerves_hub's OrchestratorRegistration, sequin's ConsumerProducer
+  twice and SlotMessageStore). 1 comes, true: firezone's
+  `Cluster.PostgresStrategy` sends itself `:heartbeat` from
+  `handle_continue(:connect)`, which every reconnect after a connection's
+  `:DOWN` continues to again, and the heartbeat loop keeps no ref: one
+  more loop per reconnect. Precision 7/20 → 8/17.
+- "Subscription made again each time a callback runs" 11 → 9, the 2
+  gone false (firezone's Relay.Channel `{:after_join, …}`, sent from a
+  closure join/3 runs; Lightning's RunLive, in `handle_async(:run, …)`
+  only mount/3 starts). Precision 5/11 → 5/9.
+- "Entry dropped while its process stays monitored" 24 → 23, the one
+  gone false (sequin's TableReaderServer, in the `:internal` event init/1
+  inserts once). Precision 6/24 → 6/23.
+- "Coupled children under one_for_one" 31 → 32: 1 false pair goes
+  (Livebook's NotebookManager → Storage, which only a change continues
+  to), and 2 true ones come. MongooseIM's `service_domain_db`
+  loads every domain into its sibling `mongoose_domain_core` from the
+  `initial_loading` clause init/1 casts; a restart of the core loses them
+  until the loader's next check crashes on the vanished loader state and
+  its own restart reloads them. vernemq's `vmq_reg_sync_action` reports
+  `done` to `vmq_reg_sync` from its once-only `:timeout` and `:DOWN`
+  clauses; a restart of `vmq_reg_sync` alone loses its running actions,
+  and a second action for a key runs beside the orphan (round 3's
+  verdict). Judged precision of the warning rows 24/28 → 26/29 (main's
+new Livebook Apps.Manager → Deployer pair is not judged here).
+- No other row of any analysis moves.
+
+**Added.** Three relations, for what makes a clause's messages:
+- `continue_return(id, func, clause, tag)` (OTP extractor): the return at
+  `id` hands the process to handle_continue/2 (`{:ok, state, {:continue,
+  t}}`, `{:noreply, state, {:continue, t}}`, `{:reply, reply, state,
+  {:continue, t}}`), in init/1, a handler or a helper whose result a
+  callback returns. `tag` is the term's atom or tuple tag, `*` when the
+  return does not spell it; `clause` the tag of `func`'s first argument on
+  the paths to the return (`Dispatch.argument_tags/2`), `*` for none.
+  `init_continues_to` read init/1 alone.
+- `timeout_return(id, func, clause)` (OTP extractor): the return at `id`
+  arms its loop's idle timeout, `{:ok, state, ms}` and its kin. A value
+  the return does not spell counts: only `:infinity`, `:hibernate` and a
+  continue are known not to be a timeout. `callback_timeout` stays a
+  callback's literal integer, for startup.
+- `statem_insert(id, func, clause, type)` (GenStatem extractor): a
+  `{:next_event, type, content}` action built or held in a function of a
+  gen_statem's module, the only way an `:internal` event is made. `type`
+  is `*` where the function does not spell it (ra's `{next_event,
+  EvtType, Evt}`), `:call` for `{:call, from}`.
+
+coupling runs the Generated extractor (an uncalled export a library's
+macro wrote is not code that runs again) and mailbox the Purity one (a
+protocol's dispatch is a call the call graph does not follow).
+
+Schema version 138 → 139: three relations added, no column of an
+existing one moved.
+
 ### gen_statem: a state an event is re-dispatched to, and a catch-all that hands its event on
 
 **Fixed.** The gen_statem extractor missed states, and "No clause for a

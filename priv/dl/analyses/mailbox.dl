@@ -664,14 +664,16 @@ flush.seed(func) :- demonitor_call(_, func, "flush").
 // ── A monitor that can be taken again ───────────────────────────────
 //
 // The program's own code (a library's macro wrote nothing of it:
-// library_written) that runs again, a monitor whose process is not one
-// the run itself starts, and that the run does not release.
+// library_written) that runs again — a site of a clause that runs once
+// is not (once_clause_site, runs.dl) — a monitor whose process is not
+// one the run itself starts, and that the run does not release.
 .decl leak_site(mod: symbol, func: symbol, site: symbol)
 
 leak_site(m, f, s) :-
   monitor_call(s, f, _),
   function_def(f, m, _, _, _),
   again_code(f),
+  !once_clause_site(s, f),
   !library_written(f),
   !starts_its_target(s),
   !released_by_run(s, f).
@@ -791,6 +793,10 @@ monitor_leak(m, f, s, "wait") :- leak_site(m, f, s), waits_on(s).
 unasked.seed(f, s) :- monitor_ref_dropped(s, f), !state_decided(s).
 unasked.guarded(c) :- state_decided(c).
 
+// A call in a clause that runs once is no way from code that runs again
+// (once_clause_site, runs.dl).
+unasked.guarded(c) :- once_clause_site(c, _).
+
 .decl takes_unasked(site: symbol)
 
 takes_unasked(s) :- unasked.reaches(r, s), again_root(r, _).
@@ -805,13 +811,18 @@ monitor_leak(m, f, s, "dropped") :-
 // The clause of a callback that runs again in which the monitor is
 // taken: the callback's own clause for its own sites, or the clause
 // whose call leads, on the callback's stack, to the monitoring function.
+// A clause that runs once (once_clause, runs.dl) is not one.
 .init toward_monitor = SameProcessReach
 
 toward_monitor.seed(f, f) :- monitor_call(_, f, _).
 
 .decl monitor_clause(site: symbol, callback: symbol, tag: symbol)
 
-monitor_clause(s, f, tag) :- monitor_call(s, f, _), again_root(f, _), clause_call(s, f, tag).
+monitor_clause(s, f, tag) :-
+  monitor_call(s, f, _),
+  again_root(f, _),
+  clause_call(s, f, tag),
+  !once_clause(f, tag).
 
 monitor_clause(s, f, "*") :-
   monitor_call(s, f, _),
@@ -823,6 +834,7 @@ monitor_clause(s, h, tag) :-
   again_root(h, _),
   call_instr(h, g, c),
   clause_call(c, h, tag),
+  !once_clause(h, tag),
   !runs_elsewhere(h, g),
   toward_monitor.reaches(g, f).
 
@@ -831,6 +843,7 @@ monitor_clause(s, h, tag) :-
   again_root(h, _),
   fun_handed(c, h, g, _),
   clause_call(c, h, tag),
+  !once_clause(h, tag),
   !runs_elsewhere(h, g),
   toward_monitor.reaches(g, f).
 
@@ -1906,11 +1919,12 @@ unhandled_info(mod, g, r, msg, "late", m, h, "state_crash") :-
 // MongooseIM's LDAP reconnects). Only a literal message is asked
 // (armed_literal): one carrying a ref or a counter (`{:tick, ref}`,
 // start_timer's `{:timeout, ref, msg}`) is told apart by the loop's
-// clause (RefTagged). init/1, handle_continue/2 (most often run once,
-// from init/1), mount/3, and a handle_info/2 or handle_cast/2 clause for
-// a message only those send the process (a Channel's `:after_join`,
-// MongooseIM's `initial_loading` cast) arm the loop the ticks then carry,
-// and are no second path (InitOnly, ContinueArm, AfterJoin, CastFromInit).
+// clause (RefTagged). Code that runs once per incarnation (runs.dl's
+// once clauses: init/1, mount/3, and a clause only their messages enter —
+// a handle_continue/2 init/1 continues to, a Channel's `:after_join`,
+// MongooseIM's `initial_loading` cast, sequin's `:init` clause that arms
+// the loop) arms the loop the ticks then carry, and is no second path
+// (InitOnly, ContinueArm, AfterJoin, CastFromInit).
 
 .decl timer_loop_rearmed(mod: symbol, message: symbol, entry: symbol, site: symbol, arm_site: symbol, loop_site: symbol, keeps: symbol)
 .output timer_loop_rearmed
@@ -1988,92 +2002,16 @@ tick_clause(id, h, lit) :-
   clause_call(id, h, tag).
 
 // A callback that runs again and again, whenever its request or message
-// comes: not init/1, handle_continue/2 or mount/3.
+// comes (again_root, runs.dl): not init/1 or mount/3. handle_continue/2
+// is one, and its clauses that run once are no second path
+// (once_clause_site, below).
 .decl rearm_entry(mod: symbol, entry: symbol)
 
 rearm_entry(mod, e) :-
   looping_server(mod, _),
-  otp_callback(e, mod, n, _),
-  function_def(e, mod, n, a, _),
-  runs_again_callback(n, a).
+  again_root(e, "callback"),
+  function_def(e, mod, _, _, _).
 
-
-// A message the process sends itself only from where it starts: init/1,
-// a Channel's join/3, a LiveView's mount/3, handle_continue/2. Its
-// clause runs once, as they do. Another site of the module that sends
-// or arms the literal makes it a message that can come again, as does
-// any site in the program that sends or arms it to another process (it
-// may be this one). A self-send in another module is to that module's
-// process.
-.decl sends_literal(func: symbol, lit: symbol)
-
-sends_literal(f, lit) :- pid_send(_, f, lit, _, _).
-sends_literal(f, lit) :- armed_literal(_, f, _, lit).
-
-// Sent or armed to a process other than the sender's own.
-.decl sends_literal_out(lit: symbol)
-
-sends_literal_out(lit) :- pid_send(_, _, lit, kind, _), kind != "self".
-sends_literal_out(lit) :- armed_literal(_, _, "other", lit).
-
-.decl once_message(mod: symbol, lit: symbol)
-
-once_message(mod, lit) :-
-  looping_server(mod, _),
-  pid_send(_, f, lit, "self", _),
-  start_callback(mod, f),
-  !sent_again(mod, lit).
-
-.decl sent_again(mod: symbol, lit: symbol)
-
-sent_again(mod, lit) :-
-  looping_server(mod, _),
-  sends_literal(f, lit),
-  function_def(f, mod, _, _, _),
-  !start_callback(mod, f).
-
-sent_again(mod, lit) :-
-  looping_server(mod, _),
-  once_candidate(mod, lit),
-  sends_literal_out(lit).
-
-.decl once_candidate(mod: symbol, lit: symbol)
-
-once_candidate(mod, lit) :-
-  looping_server(mod, _),
-  pid_send(_, f, lit, "self", _),
-  start_callback(mod, f).
-
-// A cast the process makes to itself only from where it starts
-// (`gen_server:cast(self(), initial_loading)` in init/1): no other site
-// of the program casts that tag.
-.decl once_cast(mod: symbol, tag: symbol)
-
-once_cast(mod, tag) :-
-  looping_server(mod, _),
-  call_tag(_, f, "cast", tag),
-  start_callback(mod, f),
-  !cast_again(mod, tag).
-
-.decl cast_again(mod: symbol, tag: symbol)
-
-cast_again(mod, tag) :-
-  looping_server(mod, _),
-  call_tag(_, f, "cast", tag),
-  !start_callback(mod, f).
-
-.decl once_clause(site: symbol, entry: symbol)
-
-once_clause(s, h) :-
-  looping_server(mod, h),
-  clause_call(s, h, tag),
-  once_message(mod, tag).
-
-once_clause(s, e) :-
-  rearm_entry(mod, e),
-  function_def(e, mod, "handle_cast", 2, _),
-  clause_call(s, e, tag),
-  once_cast(mod, tag).
 
 // `site` arms the literal message `lit` for the process itself: a timer,
 // or a send to self() (pid_send spells an atom as the timer's literal
@@ -2102,7 +2040,7 @@ arm_path.cut(g, h) :- looping_server(_, h), call_edge(g, h).
 // A second arm of `lit`'s loop: `site` is where the callback `entry`
 // arms it (the arm itself) or makes the call that does (`arm_site` in
 // `func`), outside the clause of handle_info/2 the loop runs in and
-// outside a clause that runs once.
+// outside a clause that runs once (once_clause_site, runs.dl).
 .decl second_arm(mod: symbol, lit: symbol, entry: symbol, site: symbol, func: symbol, arm_site: symbol)
 
 second_arm(mod, lit, e, b, e, b) :-
@@ -2110,7 +2048,7 @@ second_arm(mod, lit, e, b, e, b) :-
   rearm_entry(mod, e),
   self_arm(b, e, lit),
   !tick_clause(b, e, lit),
-  !once_clause(b, e).
+  !once_clause_site(b, e).
 
 second_arm(mod, lit, e, c, g, b) :-
   loop_arm(mod, lit, _, _, _),
@@ -2119,7 +2057,7 @@ second_arm(mod, lit, e, c, g, b) :-
   arm_path.reaches(c, g),
   self_arm(b, g, lit),
   !tick_clause(c, e, lit),
-  !once_clause(c, e).
+  !once_clause_site(c, e).
 
 // A callback that runs the loop's clause itself, handing handle_info/2
 // the loop's own message (`def handle_cast(:now, s), do: handle_info(:tick, s)`).
@@ -2131,7 +2069,7 @@ second_arm(mod, lit, e, c, f, a) :-
   rearm_entry(mod, e),
   call_instr(e, h, c),
   call_arg(e, h, 0, lit),
-  !once_clause(c, e).
+  !once_clause_site(c, e).
 
 // How the loop keeps its ref: dropped where it is armed, or under a
 // state key (timer_key: stored there, or returned to a caller that
@@ -2343,9 +2281,10 @@ static_render_registration(m, e, f, id, kind) :-
 // Subscribing a process to a topic it is already subscribed to adds a
 // second subscription: Phoenix.PubSub delivers each broadcast once per
 // subscription, and a :pg join is a second membership. A callback that
-// runs again and again (runs_again_callback: a handle_info, handle_cast or
-// handle_call, a LiveView's handle_params or handle_event, a channel's
-// handle_in) and subscribes each time multiplies every later message
+// runs again and again (again_root, runs.dl: a handle_info, handle_cast,
+// handle_call or handle_continue, a LiveView's handle_params or
+// handle_event, a channel's handle_in) and subscribes each time
+// multiplies every later message
 // (oban's Sonar re-listened every 5 s; nerves_hub_web's device list
 // re-subscribed its devices on every refresh; livebook's
 // App.unsubscribe/1 subscribed). The subscription is judged by where it
@@ -2353,9 +2292,10 @@ static_render_registration(m, e, f, id, kind) :-
 // also undoes a subscription on its way (subscription_call
 // "unsubscribe") is taken to swap them, and is not judged. An
 // unsubscribe in another callback — terminate/2, a separate handler —
-// leaves the repeated one standing. A clause for a message the process
-// sends itself only where it starts runs once, and a subscription
-// reached only from such clauses is not judged.
+// leaves the repeated one standing. A clause that runs once per
+// incarnation (runs.dl's once clauses: one only init/1, join/3 or
+// mount/3's messages enter) subscribes once, and a subscription reached
+// only from such clauses is not judged.
 //
 // `repeated_subscription(mod, entry, func, site)` — `entry`, a callback
 // of `mod` that runs again and again, reaches in its own process the
@@ -2374,19 +2314,17 @@ entry_unsubscribes(e) :-
   subscription_call(id, _, "unsubscribe").
 
 // Walked back from each subscription along the calls that do not run
-// only in a clause for a message the process sends itself where it
-// starts (once_clause: from init/1, a channel's join/3, mount/3), which
-// runs once (BackwardUnguardedSameProcess, in the callback's own
-// process).
+// only in a clause that runs once (once_clause_site, runs.dl)
+// (BackwardUnguardedSameProcess, in the callback's own process).
 .init repeat_reach = BackwardUnguardedSameProcess
 
 repeat_reach.seed(f, id) :-
   subscription_call(id, f, "subscribe"),
-  !once_clause(id, f),
+  !once_clause_site(id, f),
   !state_decided(id),
   !in_endpoint(f).
 
-repeat_reach.guarded(s) :- once_clause(s, _).
+repeat_reach.guarded(s) :- once_clause_site(s, _).
 
 // A callback that asks its own state before it subscribes — a stored
 // scope pid compared with the current one, a membership test, a field
@@ -2397,10 +2335,7 @@ repeat_reach.guarded(s) :- state_decided(s).
 
 .decl state_param(func: symbol, pos: number)
 
-state_param(e, a - 1) :-
-  otp_callback(e, m, n, _),
-  function_def(e, m, n, a, _),
-  runs_again_callback(n, a).
+state_param(e, a - 1) :- again_root(e, "callback"), function_def(e, _, _, a, _).
 
 state_param(g, k) :- state_param(f, j), call_arg_forward(f, g, k, j).
 
@@ -2411,9 +2346,8 @@ state_decided(s) :- param_decided(s, f, k), state_param(f, k).
 // A subscription inside an endpoint's own subscribe/1,2 is the
 // caller's, at its call of the endpoint.
 repeated_subscription(m, e, f, id) :-
-  otp_callback(e, m, n, _),
-  function_def(e, m, n, a, _),
-  runs_again_callback(n, a),
+  again_root(e, "callback"),
+  function_def(e, m, _, _, _),
   repeat_reach.reaches(e, id),
   subscription_call(id, f, "subscribe"),
   !entry_unsubscribes(e).

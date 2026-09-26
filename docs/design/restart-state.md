@@ -53,10 +53,12 @@ Two more rows of the round point the same way:
 Let A and B be children of a supervisor S, in different branches.
 
 **Once code.** Code that runs once per incarnation of A: its start
-callbacks (`start_callback`: `init/1`, `handle_continue/2`, a Channel's
-`join/3`, a LiveView's `mount/3`) and what they run on A's own stack. That
-means the same process and no side path (`side_call`), including a peer's
-client API that A calls. It runs again only when A restarts.
+callbacks (`start_callback`: `init/1`, a Channel's `join/3`, a LiveView's
+`mount/3`), the clauses only their messages enter (a `handle_continue/2`
+only `init/1` continues to, a clause for a message only `init/1` sends A;
+docs/design/runs.md), and what they run on A's own stack. That means the
+same process and no side path (`side_call`), including a peer's client
+API that A calls. It runs again only when A restarts.
 
 **A holds something in B** (`holds_in(A, B, func, tag, how, store)`) when:
 - A's once code makes a request of B's process, a call or a cast with

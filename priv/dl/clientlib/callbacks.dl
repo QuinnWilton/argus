@@ -192,8 +192,11 @@ terminate_callback(func, mod, behaviour) :-
 // runs_again_callback(name, arity): a callback that runs whenever its
 // request or message comes (not init/1, handle_continue/2 or mount/3).
 // start_callback(mod, func): where a process starts, and runs once:
-// init/1 (init_function), a Channel's join/3, a LiveView's mount/3,
-// handle_continue/2. One table each, read by mailbox's timer loop.
+// init/1 (init_function), a Channel's join/3, a LiveView's mount/3.
+// handle_continue/2 is neither: it runs whenever a return continues to
+// it, once from init/1 or again from a handler, and runs.dl tells its
+// clauses apart by what continues to them. Read by runs.dl and by
+// mailbox's timer loop.
 .decl runs_again_callback(name: symbol, arity: number)
 
 runs_again_callback("handle_info", 2).
@@ -210,8 +213,4 @@ runs_again_callback("handle_demand", 2).
 start_callback(mod, f) :- init_function(mod, f).
 start_callback(mod, f) :- otp_callback(f, mod, "join", _), function_def(f, mod, "join", 3, _).
 start_callback(mod, f) :- otp_callback(f, mod, "mount", _), function_def(f, mod, "mount", 3, _).
-
-start_callback(mod, f) :-
-  otp_callback(f, mod, "handle_continue", _),
-  function_def(f, mod, "handle_continue", 2, _).
 

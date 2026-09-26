@@ -250,6 +250,33 @@ defmodule Argus.Extractors.GenStatemTest do
     end
   end
 
+  describe "extract/1 — inserted events" do
+    alias Argus.Test.Soundness.Runs
+
+    defp inserts(mod) do
+      for [_id, func, clause, type] <-
+            Map.get(GenStatem.extract(disassemble(mod)), :statem_insert, []) do
+        {func |> String.split(":") |> List.last(), clause, type}
+      end
+      |> Enum.sort()
+    end
+
+    test "an internal event init/1 and a cast clause insert, by their clauses" do
+      assert inserts(Runs.InsertAgain) == [
+               {"handle_event/4", ":cast", ":internal"},
+               {"init/1", "*", ":internal"}
+             ]
+    end
+
+    test "an event of a type the function does not spell is any type" do
+      assert {"handle_event/4", ":cast", "*"} in inserts(Runs.InsertAnyType)
+    end
+
+    test "a helper's literal action list" do
+      assert {"watch/0", "*", ":internal"} in inserts(Runs.InsertShared)
+    end
+  end
+
   describe "extract/1 — which functions are states" do
     alias Argus.Test.Soundness.Runs
 

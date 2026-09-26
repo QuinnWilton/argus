@@ -171,10 +171,16 @@ the code does not show it (the rubric's evidence clause).
   registrations one process makes once (a subscriber's `init/1` asking a
   registry) are reported. This is the class's largest false kind, and a
   prior candidate: does the requester ask again?
-- **Once at run time.** A handler clause for a message that comes once (a
-  channel's join, a gen_statem's internal event queued by `init/1`, a
-  status gate that lets a clause run once) runs again as far as the code
-  shows.
+- **Once at run time, but by protocol or by state.** A clause whose
+  every message once code makes runs once (runs.dl's once clauses,
+  docs/design/runs.md: sequin's `TableReaderServer`, whose `:internal`
+  event `init/1` alone inserts). A clause that runs once because another
+  process drives it so (a channel's join, sent once by the process that
+  started the channel) or because a status field lets it (Livebook's
+  `RuntimeServer` `:attach`) runs again as far as the code shows. So does
+  ra's `post_init/3` clause: ra inserts `:internal` events on its way
+  through three states, and the event type alone does not tell them
+  apart.
 - **A start the facts do not know.** A process a program function starts
   (a room, an outbound connection) is taken as one the site can meet
   again.
