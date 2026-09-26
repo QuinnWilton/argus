@@ -28,11 +28,20 @@ defmodule Argus.Extractors.ErrorHandling.Boundary do
   """
 
   alias Argus.Extractor.Helpers
+  alias Argus.Purity.Effects
 
   # Calls whose failure is the state of something else: a process, a
   # node, a port, a registered name. The first four are :erlang BIFs a
   # call_ext names (a send written `send/2` compiles to the `send`
-  # instruction, below).
+  # instruction, below). The premise is that the peer logged its own
+  # crash, and what reaches the caller is a dead peer, a timeout or a
+  # taken name. Two calls break it and are not here: `:erpc.call/4,5`
+  # hands the caller the remote function's own exception, logged by
+  # nobody (a KeyError in the program's code on the other node), and
+  # Elixir's `Supervisor.start_child/2` builds the child spec in the
+  # caller (`Supervisor.child_spec/2`), raising ArgumentError there for
+  # a module with no child_spec/1: the program's own bug, in its own
+  # process.
   @boundary_calls MapSet.new([
                     {:erlang, :send, 2},
                     {:erlang, :send, 3},
@@ -72,12 +81,9 @@ defmodule Argus.Extractors.ErrorHandling.Boundary do
                     {:supervisor, :restart_child, 2},
                     {Supervisor, :which_children, 1},
                     {Supervisor, :count_children, 1},
-                    {Supervisor, :start_child, 2},
                     {Supervisor, :terminate_child, 2},
                     {Supervisor, :delete_child, 2},
                     {Supervisor, :restart_child, 2},
-                    {:erpc, :call, 4},
-                    {:erpc, :call, 5},
                     {:gen_statem, :cast, 2},
                     {:gen_server, :cast, 2},
                     {GenServer, :cast, 2},
@@ -179,15 +185,34 @@ defmodule Argus.Extractors.ErrorHandling.Boundary do
   @doc """
   Whether a function's instructions are boundary operations and
   instructions that cannot raise, with at least one boundary operation:
-  a one-hop client API. Returns and tail calls end it.
+  a one-hop client API. Returns and tail calls end it. A function whose
+  clause heads can fail — a guard (`when is_pid(pid)`) or an argument it
+  dispatches on (`query(:primary, q)`), any test or select that fails to
+  its `func_info` — raises FunctionClauseError in its caller for an
+  argument nothing takes: the caller's own bug, which a try around the
+  call must not be excused for swallowing.
   """
   @spec function?([tuple() | atom()]) :: boolean()
   def function?(instrs) do
     body = Enum.reject(instrs, &(&1 == :return or match?({:func_info, _, _, _}, &1)))
 
     Enum.any?(body, &boundary_op?/1) and
-      Enum.all?(body, &(boundary_op?(&1) or inert?(&1)))
+      Enum.all?(body, &(boundary_op?(&1) or inert?(&1))) and
+      not clause_can_fail?(instrs)
   end
+
+  # The label of the function's `func_info` (the one just before it) is
+  # the target of a clause head that does not match.
+  defp clause_can_fail?(instrs) do
+    case clause_error_label(instrs) do
+      nil -> false
+      label -> Enum.any?(instrs, &(label in Argus.Instr.targets(&1)))
+    end
+  end
+
+  defp clause_error_label([{:label, label}, {:func_info, _, _, _} | _rest]), do: label
+  defp clause_error_label([_instr | rest]), do: clause_error_label(rest)
+  defp clause_error_label([]), do: nil
 
   # A boundary call as a tail call too: a wrapper's body is often one.
   defp boundary_op?(instr) do
@@ -244,38 +269,58 @@ defmodule Argus.Extractors.ErrorHandling.Boundary do
   # goes nowhere), nor does `r = do_work()` on the line before
   # `Logger.info(inspect(r))`: the try protects do_work too. Without a
   # line table the second test cannot be made, and nothing qualifies.
-
-  # The log call: a logger API, or an apply whose function is `log` on a
-  # module the program computes (ra's `(ra_env:logger_mod()):log(...)`,
-  # the configurable-logger dispatch).
-  @logger_functions [
-    :log,
-    :macro_log,
-    :debug,
-    :info,
-    :notice,
-    :warning,
-    :error,
-    :critical,
+  #
+  # And every such producer is pure (`Argus.Purity.Effects`: a pure
+  # call, a formatting protocol such as `inspect/2`, a pure BIF, a
+  # guard test): real work inside the arguments —
+  # `:logger.info("~p", [apply_entry!(t, e)])`, or an Erlang
+  # do-and-log macro whose whole expansion shares its use's line — is
+  # the program's own logic, and a catch-all around it turns its bug
+  # into silence. A call into the program, a fun built in the region or
+  # a call through one is not pure. The one exception is the module an
+  # apply dispatches to: a getter with no arguments may pick it (ra's
+  # `(ra_env:logger_mod()):log(...)`).
+  #
+  # The log call is a logger API — the logging modules of the effect
+  # model (`Argus.Purity.Effects`: `:logger`, `:error_logger`, `Logger`,
+  # the side paths calls.dl's side_api names too), at the functions that
+  # emit a line — or an apply of `log` shaped as the logger's own
+  # `log(Level, ...)`, its first argument a log level: the
+  # configurable-logger dispatch. An apply of `log` on anything else
+  # (`wal.log(entry)`, a write-ahead log's durable append) is work.
+  @log_levels [
+    :emergency,
     :alert,
-    :emergency
+    :critical,
+    :error,
+    :warning,
+    :warn,
+    :notice,
+    :info,
+    :debug
   ]
 
-  @error_logger_functions [
-    :error_msg,
-    :info_msg,
-    :warning_msg,
-    :error_report,
-    :info_report,
-    :warning_report,
-    :format
-  ]
+  # The functions of the logging modules that emit a line (and Elixir's
+  # Logger macros' expansion), not the ones that configure the logger.
+  @emitting %{
+    logger: [:log, :macro_log | @log_levels],
+    error_logger: [
+      :error_msg,
+      :info_msg,
+      :warning_msg,
+      :error_report,
+      :info_report,
+      :warning_report,
+      :format
+    ],
+    "Elixir.Logger": [:bare_log, :__do_log__]
+  }
 
   @doc """
   Whether the region `visited` is straight-line code that builds and
   emits log lines and does nothing else that can raise: every call or
-  raising instruction in it other than a log call produces a value that
-  reaches a log call's arguments.
+  raising instruction in it other than a log call is pure and produces a
+  value that reaches a log call's arguments.
   """
   @spec log_region?(Enumerable.t(non_neg_integer()), tuple(), %{pos_integer() => pos_integer()}) ::
           boolean()
@@ -290,9 +335,60 @@ defmodule Argus.Extractors.ErrorHandling.Boundary do
          true <- Enum.all?(raising, &raise_block?(elem(table, &1))),
          instrs = Enum.map(main, &{&1, elem(table, &1)}),
          true <- Enum.all?(instrs, fn {_at, instr} -> straight?(instr) end),
-         {:ok, produced, consumed, logged?} <- flow(instrs, lines(instrs, line_table)) do
-      logged? and MapSet.subset?(produced, consumed)
+         false <- Enum.any?(instrs, &match?({_at, {:make_fun3, _, _, _, _, _}}, &1)),
+         {:ok, flow} <- flow(instrs, lines(instrs, line_table)) do
+      flow.logged? and
+        Enum.all?(flow.produced, fn at ->
+          instr = elem(table, at)
+
+          cond do
+            MapSet.member?(flow.args, at) -> pure?(instr)
+            MapSet.member?(flow.module, at) -> pure?(instr) or getter?(instr)
+            true -> false
+          end
+        end)
     else
+      _ -> false
+    end
+  end
+
+  # A producer that does no work of its own: a guard test, a pure BIF, a
+  # pure call or a formatting protocol (`Argus.Purity.Effects`). A call
+  # into the program, or through a fun, is not.
+  defp pure?({:test, _, _, _}), do: true
+  defp pure?({:test, _, _, _, _}), do: true
+  defp pure?({:bif, name, _fail, args, _dst}), do: pure_call?(:erlang, name, length(args))
+
+  defp pure?({:gc_bif, name, _fail, _live, args, _dst}),
+    do: pure_call?(:erlang, name, length(args))
+
+  defp pure?(instr) do
+    cond do
+      match?({:ok, _, _, _}, Helpers.match_remote_call(instr)) ->
+        {:ok, m, f, a} = Helpers.match_remote_call(instr)
+        pure_call?(m, f, a)
+
+      Argus.Instr.call?(instr) or Argus.Instr.tail_call?(instr) ->
+        false
+
+      true ->
+        true
+    end
+  end
+
+  defp pure_call?(m, f, a) do
+    case Effects.classify(inspect(m), to_string(f), a) do
+      :pure -> true
+      {:opaque, :protocol} -> true
+      _ -> false
+    end
+  end
+
+  # A call with no arguments: a getter, which may pick an apply's module.
+  defp getter?(instr) do
+    case {Helpers.match_remote_call(instr), Helpers.match_local_call(instr)} do
+      {{:ok, _m, _f, 0}, _} -> true
+      {_, {:ok, _m, _f, 0}} -> true
       _ -> false
     end
   end
@@ -370,26 +466,40 @@ defmodule Argus.Extractors.ErrorHandling.Boundary do
 
   # Walks the region in order, carrying for each register the producers
   # (indices of raising instructions) whose values it holds, and the
-  # atoms moved into registers (an apply's function). Returns the
-  # producers, the producers some log call read, and whether one ran.
+  # atoms moved into registers (an apply's function, a level). Returns
+  # the producers, the ones some log call read as an argument, the ones
+  # it read only as the module an apply dispatches to, and whether one
+  # ran.
   defp flow(instrs, lines) do
-    Enum.reduce_while(instrs, {:ok, MapSet.new(), MapSet.new(), false, %{}, %{}}, fn
-      {at, instr}, {:ok, produced, consumed, logged?, holds, atoms} ->
-        read = instr |> Argus.Instr.uses() |> Enum.flat_map(&Map.get(holds, &1, []))
-        read = MapSet.new(read)
+    init = %{produced: MapSet.new(), args: MapSet.new(), module: MapSet.new(), logged?: false}
+
+    {flow, _holds, _atoms} =
+      Enum.reduce(instrs, {init, %{}, %{}}, fn {at, instr}, {flow, holds, atoms} ->
+        held = fn regs ->
+          regs |> Enum.flat_map(&Map.get(holds, &1, [])) |> MapSet.new()
+        end
+
+        read = held.(Argus.Instr.uses(instr))
 
         cond do
           log_call?(instr, atoms) ->
-            holds = step(instr, holds, [])
             line = Map.get(lines, at)
+            {arg_regs, module_regs} = log_operands(instr)
             # A producer on an earlier line is a statement of its own.
-            args =
-              MapSet.filter(
-                read,
-                &(line != nil and Map.get(lines, &1) != nil and Map.get(lines, &1) >= line)
+            same_line =
+              &MapSet.filter(
+                &1,
+                fn p -> line != nil and Map.get(lines, p) != nil and Map.get(lines, p) >= line end
               )
 
-            {:cont, {:ok, produced, MapSet.union(consumed, args), true, holds, %{}}}
+            flow = %{
+              flow
+              | args: MapSet.union(flow.args, same_line.(held.(arg_regs))),
+                module: MapSet.union(flow.module, same_line.(held.(module_regs))),
+                logged?: true
+            }
+
+            {flow, step(instr, holds, []), %{}}
 
           match?({:test, _, _, _}, instr) or match?({:test, _, _, _, _}, instr) ->
             # A test that can fail into raising code guards the values it
@@ -399,23 +509,28 @@ defmodule Argus.Extractors.ErrorHandling.Boundary do
                 Map.update(acc, reg, [at], &[at | &1])
               end)
 
-            {:cont, {:ok, MapSet.put(produced, at), consumed, logged?, holds, atoms}}
+            {%{flow | produced: MapSet.put(flow.produced, at)}, holds, atoms}
 
           inert?(instr) ->
-            {:cont,
-             {:ok, produced, consumed, logged?, step(instr, holds, MapSet.to_list(read)),
-              atoms(instr, atoms)}}
+            {flow, step(instr, holds, MapSet.to_list(read)), atoms(instr, atoms)}
 
           true ->
-            {:cont,
-             {:ok, MapSet.put(produced, at), consumed, logged?,
-              step(instr, holds, [at | MapSet.to_list(read)]), %{}}}
+            {%{flow | produced: MapSet.put(flow.produced, at)},
+             step(instr, holds, [at | MapSet.to_list(read)]), %{}}
         end
-    end)
-    |> case do
-      {:ok, produced, consumed, logged?, _holds, _atoms} -> {:ok, produced, consumed, logged?}
-    end
+      end)
+
+    {:ok, flow}
   end
+
+  # The registers a log call reads as its arguments, and the one an
+  # apply reads as the module it dispatches to.
+  defp log_operands({:apply, arity}), do: {x_regs(arity), [{:x, arity}]}
+  defp log_operands({:apply_last, arity, _}), do: {x_regs(arity), [{:x, arity}]}
+  defp log_operands(instr), do: {Argus.Instr.uses(instr), []}
+
+  defp x_regs(0), do: []
+  defp x_regs(arity), do: for(n <- 0..(arity - 1), do: {:x, n})
 
   # What each register holds after `instr`: carried copies keep theirs,
   # clobbered registers lose them, and what `instr` writes holds what it
@@ -457,17 +572,25 @@ defmodule Argus.Extractors.ErrorHandling.Boundary do
     Map.drop(atoms, defs)
   end
 
-  defp log_call?({:apply, arity}, atoms), do: Map.get(atoms, {:x, arity + 1}) == :log
-  defp log_call?({:apply_last, arity, _}, atoms), do: Map.get(atoms, {:x, arity + 1}) == :log
+  defp log_call?({:apply, arity}, atoms), do: logger_apply?(arity, atoms)
+  defp log_call?({:apply_last, arity, _}, atoms), do: logger_apply?(arity, atoms)
 
   defp log_call?(instr, _atoms) do
     case Helpers.match_remote_call(instr) do
-      {:ok, :logger, f, _} -> f in @logger_functions
-      {:ok, :error_logger, f, _} -> f in @error_logger_functions
-      {:ok, Logger, f, _} -> f in [:bare_log, :__do_log__]
+      {:ok, m, f, a} -> f in Map.get(@emitting, m, []) and logging_module?(m, f, a)
       _ -> false
     end
   end
+
+  # `Mod:log(Level, ...)`: the function is `log`, and its first argument
+  # a log level.
+  defp logger_apply?(arity, atoms) do
+    arity >= 2 and Map.get(atoms, {:x, arity + 1}) == :log and
+      Map.get(atoms, {:x, 0}) in @log_levels
+  end
+
+  defp logging_module?(m, f, a),
+    do: match?({:impure, :logging, _}, Effects.classify(inspect(m), to_string(f), a))
 
   @doc "Whether `instr` is an operation whose failure is another process's, a port's or a name's."
   @spec boundary?(tuple() | atom()) :: boolean()
