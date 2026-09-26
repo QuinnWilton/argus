@@ -901,20 +901,46 @@ dynamic_start_site_or_empty(f, "") :- dynamic_child(_, _, f), !dynamic_start_sit
 // stop exits with :noproc in the caller (horde#154, #193: the
 // DynamicSupervisorImpl stopping its ProcessesSupervisor sibling on
 // quorum loss, crashing at SIGTERM). terminate/2 is the other rule.
+
+// A handler stops a sibling the supervisor owns: the supervisor restarts
+// it, or has stopped it already and the stop exits in the handler.
+.decl stop_of_owned_sibling(mod: symbol, handler: symbol, via: symbol, sibling: symbol, sup: symbol)
+
+stop_of_owned_sibling(mod, handler, via, sibling, sup) :-
+  handler_function(mod, handler),
+  stops_process_of(handler, via, sibling),
+  sibling(sup, mod, sibling).
+
+// `handler` reaches `via`, which stops a process of `mod`'s: a
+// GenServer.stop that names mod, or mod's own API that stops a process
+// (`Sibling.stop/1`, target unknown), unless the handler hands it only
+// processes a function keeps for itself (private_stop).
+.decl stops_process_of(handler: symbol, via: symbol, mod: symbol)
+
+stops_process_of(h, via, m) :-
+  handler_function(_, h),
+  stop_reach.reaches(h, via),
+  stops_process(via, m).
+
+stops_process_of(h, via, m) :-
+  handler_function(_, h),
+  stop_reach.reaches(h, via),
+  function_def(via, m, _, _, _),
+  !private_stop(h, via, m).
+
+// `func` stops a process with GenServer.stop, `target` the module it
+// names.
 .decl stops_process(func: symbol, target: symbol)
 
 stops_process(f, target) :- sup_call(_, f, "GenServer", "stop", target).
 
+// What reaches a function that stops a process.
 .init stop_reach = CallReach
 
 stop_reach.seed(f, f) :- stops_process(f, _).
 
-// The stop names the sibling module.
 teardown_touches_sibling(mod, sib, "handler", "stop", via, sup, h, site, sup_site) :-
-  handler_function(mod, h),
-  stop_reach.reaches(h, via),
-  stops_process(via, sib),
-  sibling(sup, mod, sib),
+  stop_of_owned_sibling(mod, h, via, sib, sup),
   site_or_empty_call(h, via, site),
   supervisor_site_or_empty(sup, sup_site).
 
@@ -924,19 +950,7 @@ teardown_touches_sibling(mod, sib, "handler", "stop", via, sup, h, site, sup_sit
 site_or_empty_call(f, g, id) :- call_instr(f, g, id).
 site_or_empty_call(f, g, "") :- stop_reach.reaches(f, g), !call_instr(f, g, _).
 
-// The stop is the sibling's own API (`Sibling.stop/1`), target unknown —
-// unless the handler hands it only processes it started for itself.
-teardown_touches_sibling(mod, sib, "handler", "stop", via, sup, h, site, sup_site) :-
-  handler_function(mod, h),
-  stop_reach.reaches(h, via),
-  function_def(via, sib, _, _, _),
-  sibling(sup, mod, sib),
-  !private_stop(h, via, sib),
-  site_or_empty_call(h, via, site),
-  supervisor_site_or_empty(sup, sup_site).
-
-// Every process `h` hands `via`'s first parameter is one of sib's that
-// a function keeps for itself (points-to), and there is one.
+// A process `handler` hands `via` as its first parameter (points-to).
 .decl stop_arg(handler: symbol, via: symbol, proc: symbol)
 
 stop_arg(h, via, p) :-
@@ -944,6 +958,8 @@ stop_arg(h, via, p) :-
   pid_arg(_, h, via, "0", "call", sk, s),
   source_process(h, sk, s, p).
 
+// Every process of sib's that `handler` hands `via` is one a function
+// keeps for itself (private_process), and there is one.
 .decl private_stop(handler: symbol, via: symbol, sib: symbol)
 
 private_stop(h, via, sib) :-
@@ -952,6 +968,8 @@ private_stop(h, via, sib) :-
   private_process(p, _, _),
   !shared_stop(h, via, sib).
 
+// A process of sib's that `handler` hands `via` is one no function keeps
+// for itself.
 .decl shared_stop(handler: symbol, via: symbol, sib: symbol)
 
 shared_stop(h, via, sib) :-
