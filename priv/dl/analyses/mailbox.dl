@@ -784,6 +784,51 @@ task_owner(owner, mod) :-
 .decl monitor_leak(mod: symbol, func: symbol, site: symbol, how: symbol)
 .output monitor_leak
 
+// A monitor is taken again while the one before it is still live: the
+// run waits for the process's :DOWN, and a way out of the wait (it gave
+// up, or the answer came first) keeps the monitor.
+.decl monitor_kept_by_wait(monitor: symbol)
+
+monitor_kept_by_wait(monitor) :-
+  monitor_taken_again(monitor),
+  waits_for_down(monitor).
+
+// A monitor is taken again while the one before it is still live: the
+// server dropped its record of the process while the process may live,
+// and kept the monitor, so the next registration monitors it again.
+.decl monitor_kept_past_record(monitor: symbol)
+
+monitor_kept_past_record(monitor) :-
+  monitor_taken_again(monitor),
+  drops_record_of(_, monitor).
+
+// A monitor whose ref is thrown away is taken without asking the state
+// whether it holds one already: each time the same process is named
+// again, one more.
+.decl monitor_taken_unasked(monitor: symbol)
+
+monitor_taken_unasked(monitor) :-
+  monitor_taken_again(monitor),
+  throws_ref_away(monitor),
+  taken_without_asking_state(monitor).
+
+monitor_leak(mod, func, monitor, "wait") :-
+  monitor_kept_by_wait(monitor),
+  monitor_in(monitor, mod, func).
+
+monitor_leak(mod, func, monitor, "ended") :-
+  monitor_kept_past_record(monitor),
+  monitor_in(monitor, mod, func).
+
+monitor_leak(mod, func, monitor, "dropped") :-
+  monitor_taken_unasked(monitor),
+  monitor_in(monitor, mod, func).
+
+// The monitor call `monitor` is in `func`, of `mod`.
+.decl monitor_in(monitor: symbol, mod: symbol, func: symbol) inline
+
+monitor_in(s, m, f) :- monitor_call(s, f, _), function_def(f, m, _, _, _).
+
 // What the function runs in its own process, apart from the logging and
 // telemetry APIs (side_call, calls.dl): a demonitor with :flush there,
 // on any path, flushes a monitor's :DOWN (unhandled_info's question).
@@ -795,15 +840,16 @@ flush.seed(func) :- demonitor_call(_, func, "flush").
 
 // ── A monitor that can be taken again ───────────────────────────────
 //
-// The program's own code (a library's macro wrote nothing of it:
-// library_written) that runs again — a site of a clause that runs once
-// is not (once_site, runs.dl) — a monitor whose process is not
-// one the run itself starts, and that the run does not release.
-.decl leak_site(mod: symbol, func: symbol, site: symbol)
+// A monitor the program's own code (a library's macro wrote nothing of
+// it: library_written) takes again on a later run: its function runs
+// again, and its site is not in a clause that runs once (once_site,
+// runs.dl); its process is not one the run itself starts, and the run
+// does not release it.
+.decl monitor_taken_again(monitor: symbol)
 
-leak_site(m, f, s) :-
+monitor_taken_again(s) :-
   monitor_call(s, f, _),
-  function_def(f, m, _, _, _),
+  function_def(f, _, _, _, _),
   again_code(f),
   !once_site(s, f),
   !library_written(f),
@@ -890,25 +936,24 @@ collected_by_callers(g) :-
 // run. When the monitor is the function's tail call, its ref goes back
 // to the caller, and the wait may be the caller's (exq's WorkerDrainer
 // maps its workers' refs into a set and awaits them). The monitor is not
-// released on some way out (leak_site): a timed receive's `after`, the
-// clause for the answer, a path that never enters the receive.
+// released on some way out (monitor_taken_again): a timed receive's
+// `after`, the clause for the answer, a path that never enters the
+// receive.
 .init down_wait = SameProcessReachSetCut
 
 down_wait.cut(f, g) :- side_call(f, g).
 down_wait.seed(f) :- recv_takes_down(_, f).
 
-.decl waits_on(site: symbol)
+.decl waits_for_down(monitor: symbol)
 
-waits_on(s) :- monitor_call(s, f, _), down_wait.reaches(f).
+waits_for_down(s) :- monitor_call(s, f, _), down_wait.reaches(f).
 
-waits_on(s) :-
+waits_for_down(s) :-
   monitor_call(s, f, _),
   tail_call(s),
   call_edge(g, f),
   !runs_elsewhere(g, f),
   down_wait.reaches(g).
-
-monitor_leak(m, f, s, "wait") :- leak_site(m, f, s), waits_on(s).
 
 // ── "dropped": nothing can release it, and nothing asks first ───────
 //
@@ -929,14 +974,14 @@ unasked.guarded(c) :- state_decided(c).
 // (once_site, runs.dl).
 unasked.guarded(c) :- once_site(c, _).
 
-.decl takes_unasked(site: symbol)
+.decl taken_without_asking_state(monitor: symbol)
 
-takes_unasked(s) :- unasked.reaches(r, s), again_root(r, _).
+taken_without_asking_state(s) :- unasked.reaches(r, s), again_root(r, _).
 
-monitor_leak(m, f, s, "dropped") :-
-  leak_site(m, f, s),
-  monitor_ref_dropped(s, f),
-  takes_unasked(s).
+// The monitor's ref is thrown away (monitor_ref_dropped).
+.decl throws_ref_away(monitor: symbol) inline
+
+throws_ref_away(s) :- monitor_ref_dropped(s, _).
 
 // ── "ended": the server drops its record, and keeps the monitor ─────
 //
@@ -1109,37 +1154,39 @@ clause_releases(h, tag) :-
   clause_call(c, h, tag),
   release_reach.reaches(g).
 
-.decl dropped_record(site: symbol, func: symbol)
+// `func` drops the record the monitor at `monitor` keeps, while its
+// process may live, and neither it nor its clause releases the monitor:
+// a helper a callback's clause calls, or the callback itself.
+.decl drops_record_of(func: symbol, monitor: symbol)
 
-dropped_record(s, g) :-
+drops_record_of(g, s) :-
   monitor_record(s, m, k),
   record_drop(m, k, g, h, tag),
   !clause_releases(h, tag),
   !release_reach.reaches(g),
   g != h.
 
-dropped_record(s, h) :-
+drops_record_of(h, s) :-
   monitor_record(s, m, k),
   record_drop(m, k, h, h, tag),
   !clause_releases(h, tag).
-
-monitor_leak(m, f, s, "ended") :- leak_site(m, f, s), dropped_record(s, _).
 
 // What the finding relates (role): where the record is dropped
 // ("drop"), and the callbacks that run the monitoring function again
 // ("runs"), when it is not one itself. A callback runs it again on a
 // way that passes no site that runs once (once_site, runs.dl: a clause
 // the start's own messages enter, a site a gate on the state closes),
-// the way leak_site's again_code takes; for a ref thrown away, the way
-// takes_unasked walks, which passes no call the state decides either.
+// the way monitor_taken_again's again_code takes; for a ref thrown away,
+// the way taken_without_asking_state walks, which passes no call the
+// state decides either.
 .decl monitor_leak_frame(mod: symbol, site: symbol, how: symbol, role: symbol, func: symbol)
 .output monitor_leak_frame
 
-monitor_leak_frame(m, s, "ended", "drop", g) :- monitor_leak(m, _, s, "ended"), dropped_record(s, g).
+monitor_leak_frame(m, s, "ended", "drop", g) :- monitor_leak(m, _, s, "ended"), drops_record_of(g, s).
 
 .init again_toward = BackwardUnguardedSameProcess
 
-again_toward.seed(f, f) :- leak_site(_, f, _).
+again_toward.seed(f, f) :- monitor_taken_again(s), monitor_call(s, f, _).
 again_toward.guarded(c) :- once_site(c, _).
 
 monitor_leak_frame(m, s, how, "runs", r) :-
