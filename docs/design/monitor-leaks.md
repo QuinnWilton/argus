@@ -226,7 +226,11 @@ Added:
 - The helpers that release a ref they are handed.
 - The record and drop joins.
 - The evidence relation `monitor_leak_frame`, which relates where the
-  record is dropped and the callback that runs the site again.
+  record is dropped and the callback that runs the site again: a root
+  whose way to the monitoring function passes no site that runs once
+  (`once_site`), and, for a thrown-away ref, no call the state decides
+  either (`unasked`'s walk). A handle_continue/2 clause init/1 continues
+  to that also reaches the helper is not one.
 
 The unhandled_info monitor source keeps its own question (`flush`, a
 receive in reach) unchanged.

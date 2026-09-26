@@ -406,3 +406,66 @@ defmodule Argus.Test.Soundness.Monitors.DropAndDemonitor do
     {:noreply, %{state | subs: subs}}
   end
 end
+
+defmodule Argus.Test.Soundness.Monitors.WatchOnceAndAgain do
+  @moduledoc """
+  Watches its peer once, from the handle_continue/2 clause init/1
+  continues to, and again on every `:watch` call, through one helper that
+  throws the ref away. Only handle_call/3 runs the helper again.
+  """
+  use GenServer
+
+  @impl true
+  def init(peer), do: {:ok, %{peer: peer}, {:continue, :watch}}
+
+  @impl true
+  def handle_continue(:watch, state) do
+    :ok = watch(state.peer)
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_call({:watch, pid}, _from, state), do: {:reply, watch(pid), state}
+
+  defp watch(pid) do
+    Process.monitor(pid)
+    :ok
+  end
+end
+
+defmodule Argus.Test.Soundness.Monitors.AskOnceAndAgain do
+  @moduledoc """
+  Asks its peer once, from the handle_continue/2 clause init/1 continues
+  to, and again on every `:ask` call, through one helper whose timed wait
+  returns with the monitor live. Only handle_call/3 runs the helper again.
+  """
+  use GenServer
+
+  @impl true
+  def init(peer), do: {:ok, %{peer: peer}, {:continue, :ask}}
+
+  @impl true
+  def handle_continue(:ask, state) do
+    _ = ask(state.peer)
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_call({:ask, pid}, _from, state), do: {:reply, ask(pid), state}
+
+  defp ask(pid) do
+    ref = Process.monitor(pid)
+    send(pid, {:question, self(), ref})
+
+    receive do
+      {:answer, ^ref, a} ->
+        Process.demonitor(ref, [:flush])
+        {:ok, a}
+
+      {:DOWN, ^ref, :process, _, reason} ->
+        {:error, reason}
+    after
+      1000 -> :timeout
+    end
+  end
+end

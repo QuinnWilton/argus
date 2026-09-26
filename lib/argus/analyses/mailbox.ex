@@ -256,7 +256,7 @@ defmodule Argus.Analyses.Mailbox do
           {:site, :symbol, "the monitor call site"},
           {:how, :symbol, "wait | ended | dropped"},
           {:role, :symbol,
-           "drop (where the record is dropped) | runs (a root that runs the monitoring function again)"},
+           "drop (where the record is dropped) | runs (a root that runs the monitoring function again, on the way the finding's own walk takes)"},
           {:func, :symbol, "the function the frame points at"}
         ],
         key: [:mod, :site, :how, :role, :func],

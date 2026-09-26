@@ -6,6 +6,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## 0.20.0-dev — unreleased
 
+### Monitors: "runs again from here" names only callbacks that do
+
+**Fixed.** A monitor-leak finding's "runs again from here" frames were
+every callback that reaches the monitoring function on its own stack,
+whatever the way: a handle_continue/2 clause init/1 continues to (once
+code since the once-and-again round) was named beside the handler that
+really runs the helper again, and a callback whose only way passes a call
+its state decides was named for a thrown-away ref the finding says it
+asks nothing about. The frames are now the roots of the finding's own
+walk (mailbox.dl, `again_toward`: no site that runs once on the way;
+`unasked` for a thrown-away ref). Rows are unchanged on the 44 evaluation
+sets; 3 findings lose a frame (ejabberd's mod_muc start_room/9 and /11,
+whose handle_cast/2 and handle_info/2 reach it only through calls the
+state decides, and rabbit_alarm's handle_call/2, whose `register` clause
+matches the state's record in its head), and test/soundness/monitors_test.exs
+pins the once-clause shape for a thrown-away ref and a timed wait.
+
 ### Coupling: the registration's frame is the registrant's own step
 
 **Fixed.** "Coupled children under one_for_one" put its "registers with

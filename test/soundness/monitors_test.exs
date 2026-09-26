@@ -14,6 +14,7 @@ defmodule Argus.Soundness.MonitorsTest do
 
   import Argus.Test.Soundness, only: [fired: 2]
 
+  alias Argus.Test.Memo
   alias Argus.Test.Soundness.Monitors, as: M
 
   @wait {:warning, "Monitor left live each time a wait returns"}
@@ -117,6 +118,32 @@ defmodule Argus.Soundness.MonitorsTest do
                fired([M.DropAndDemonitor], :mailbox),
                &match?({_, _, {M.DropAndDemonitor, _, _}}, &1)
              )
+    end
+  end
+
+  # "runs again from here" names the callbacks the finding's own walk
+  # comes from. A handle_continue/2 clause init/1 continues to calls the
+  # helper once (once_site, runs.dl), so it is no such callback, though
+  # handle_continue/2 is one that runs again where a handler continues to
+  # it.
+  describe "the callbacks that run it again" do
+    for {mod, witness, func} <- [
+          {M.WatchOnceAndAgain, @dropped, :watch},
+          {M.AskOnceAndAgain, @wait, :ask}
+        ] do
+      test "#{inspect(mod)}: not the once clause that also reaches it" do
+        mod = unquote(mod)
+        {severity, title} = unquote(witness)
+        assert_fires([mod], {severity, title}, {mod, unquote(func), 1})
+
+        assert {:ok, %{findings: findings}} = Memo.run_analyses([mod], analyses: [:mailbox])
+        assert [finding] = Enum.filter(findings, &(&1.title == title))
+
+        runs =
+          for %{label: "runs again from here", mfa: mfa} <- finding.related, do: mfa
+
+        assert runs == [{mod, :handle_call, 3}]
+      end
     end
   end
 end

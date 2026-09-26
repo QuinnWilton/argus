@@ -1062,15 +1062,31 @@ monitor_leak(m, f, s, "ended") :- leak_site(m, f, s), dropped_record(s, _).
 
 // What the finding relates (role): where the record is dropped
 // ("drop"), and the callbacks that run the monitoring function again
-// ("runs"), when it is not one itself.
+// ("runs"), when it is not one itself. A callback runs it again on a
+// way that passes no site that runs once (once_site, runs.dl: a clause
+// the start's own messages enter, a site a gate on the state closes),
+// the way leak_site's again_code takes; for a ref thrown away, the way
+// takes_unasked walks, which passes no call the state decides either.
 .decl monitor_leak_frame(mod: symbol, site: symbol, how: symbol, role: symbol, func: symbol)
 .output monitor_leak_frame
 
 monitor_leak_frame(m, s, "ended", "drop", g) :- monitor_leak(m, _, s, "ended"), dropped_record(s, g).
 
+.init again_toward = BackwardUnguardedSameProcess
+
+again_toward.seed(f, f) :- leak_site(_, f, _).
+again_toward.guarded(c) :- once_site(c, _).
+
 monitor_leak_frame(m, s, how, "runs", r) :-
   monitor_leak(m, f, s, how),
-  toward_monitor.reaches(r, f),
+  how != "dropped",
+  again_toward.reaches(r, f),
+  r != f,
+  again_root(r, _).
+
+monitor_leak_frame(m, s, "dropped", "runs", r) :-
+  monitor_leak(m, f, s, "dropped"),
+  unasked.reaches(r, s),
   r != f,
   again_root(r, _).
 

@@ -1860,7 +1860,7 @@ And one witness shows the monitor before is still live when the site runs again:
 - `ended`: the clause the monitor is taken in records T in P, in a field of the state it returns or a row of a table it writes. A clause of a callback that runs again drops that record without releasing the monitor or stopping a process: a clause other than a `:DOWN` one removes an entry and returns the field (or deletes rows of the table), or any clause empties the field. T's next registration monitors it again. The drop is a related frame.
 - `dropped`: the ref is thrown away (`monitor_ref_dropped`, through callers when every return answers it), so only T's death releases the monitor, and some way from a root that runs again reaches s with no call the state decides (`state_decided`). Each time T is named again, one more.
 
-Each leaked monitor costs both processes until T exits, and then arrives as a `:DOWN` for a relationship that may have ended. The callback that runs the site again is a related frame.
+Each leaked monitor costs both processes until T exits, and then arrives as a `:DOWN` for a relationship that may have ended. The callback that runs the site again is a related frame: one whose way to the site passes no site that runs once (and, for a thrown-away ref, no call the state decides), as the witness's own walk.
 
 **Assumptions and limits.**
 - A raise ends the run: the release walk does not follow a path that raises, and a timed wait whose `after` raises starts no walk (encore's madrigal seed, `Soundness.Mailbox.RaisingAfter`): a caller that catches keeps the monitor.
