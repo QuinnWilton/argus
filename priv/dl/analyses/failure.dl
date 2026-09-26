@@ -329,15 +329,50 @@ exits_supervised_child(exit, child, sup) :-
   supervisor_child(sup, pos, child, _, _).
 
 // ══ Remote calls whose failure is not a value ═══════════════════════
-// A handler that unwraps only :exception lets {:erpc, :noconnection}
-// fall through to its case; one that names :erpc in some clause takes
-// the transport failure.
+
+// A rescue around :erpc.call unwraps only its :exception errors, so a
+// transport failure ({:erpc, :noconnection}) falls through the handler.
+.decl transport_failure_unhandled(func: symbol, try: symbol, call: symbol)
+
+transport_failure_unhandled(func, try, call) :-
+  guards_erpc_call(try, func, call),
+  unwraps_remote_exception(try, func),
+  !takes_transport_failure(try, func),
+  falls_through_after_exception(try, func).
+
 unhandled_failure(func, call, "erpc_transport", "", guard_end) :-
-  try_call(id, func, callee, call, guard_end),
-  (callee = ":erpc:call/4" ; callee = ":erpc:call/5"),
-  catch_tag(id, func, "error", ":exception"),
-  !catch_tag(id, func, "error", ":erpc"),
-  catch_falls_through(id, func, ":exception").
+  transport_failure_unhandled(func, try, call),
+  try_call(try, func, callee, call, guard_end),
+  erpc_call_api(callee).
+
+// The try guards an :erpc.call at `call` (try_call).
+.decl guards_erpc_call(try: symbol, func: symbol, call: symbol) inline
+
+guards_erpc_call(try, func, call) :-
+  try_call(try, func, callee, call, _),
+  erpc_call_api(callee).
+
+.decl erpc_call_api(callee: symbol)
+
+erpc_call_api(":erpc:call/4").
+erpc_call_api(":erpc:call/5").
+
+// A clause of the handler takes an error tagged :exception: the remote
+// function raised, and :erpc re-raises it here.
+.decl unwraps_remote_exception(try: symbol, func: symbol) inline
+
+unwraps_remote_exception(try, func) :- catch_tag(try, func, "error", ":exception").
+
+// A clause names :erpc: it takes the transport failure.
+.decl takes_transport_failure(try: symbol, func: symbol) inline
+
+takes_transport_failure(try, func) :- catch_tag(try, func, "error", ":erpc").
+
+// After comparing :exception the handler reaches a case with no clause
+// for some reason: the one it did not name raises there.
+.decl falls_through_after_exception(try: symbol, func: symbol) inline
+
+falls_through_after_exception(try, func) :- catch_falls_through(try, func, ":exception").
 
 // ── An rpc result that is not a value ─────────────────────────────────
 //
@@ -349,10 +384,49 @@ unhandled_failure(func, call, "erpc_transport", "", guard_end) :-
 // process on a gone node is alive (horde, until 30bb1a1). :erpc.call
 // raises instead, so in a boolean context it needs a rescue (horde's
 // fix: catch {:erpc, :noconnection} -> false).
-unhandled_failure(f, id, v, "case", "") :-
-  rpc_call(id, f, v, _),
-  answers_badrpc(v),
-  rpc_result(id, f, "case").
+
+// An rpc answers a gone node with {:badrpc, _}, and the code matches the
+// answer by shape with no clause for it.
+.decl badrpc_unmatched(func: symbol, rpc: symbol, variant: symbol)
+
+badrpc_unmatched(func, rpc, variant) :-
+  may_answer_badrpc(rpc, func, variant),
+  matched_by_shape(rpc, func).
+
+unhandled_failure(func, rpc, variant, "case", "") :-
+  badrpc_unmatched(func, rpc, variant).
+
+// An rpc answers a gone node with {:badrpc, _}, and the code tests the
+// answer as a boolean, where the tuple is true.
+.decl badrpc_as_true(func: symbol, rpc: symbol, variant: symbol)
+
+badrpc_as_true(func, rpc, variant) :-
+  may_answer_badrpc(rpc, func, variant),
+  used_as_boolean(rpc, func).
+
+unhandled_failure(func, rpc, variant, "boolean", "") :-
+  badrpc_as_true(func, rpc, variant).
+
+// An :erpc call raises when the node is gone, the code tests its answer as
+// a boolean, and nothing in the function takes the error.
+.decl erpc_raise_in_boolean(func: symbol, rpc: symbol)
+
+erpc_raise_in_boolean(func, rpc) :-
+  erpc_call(rpc, func),
+  used_as_boolean(rpc, func),
+  !catches_class(func, "error"),
+  !takes_erpc_error(func).
+
+unhandled_failure(func, rpc, "erpc", "boolean", "") :-
+  erpc_raise_in_boolean(func, rpc).
+
+// The rpc at `rpc` (`variant`) answers {:badrpc, _} itself when the
+// node is gone (badrpc_variant).
+.decl may_answer_badrpc(rpc: symbol, func: symbol, variant: symbol) inline
+
+may_answer_badrpc(rpc, func, variant) :-
+  rpc_call(rpc, func, variant, _),
+  badrpc_variant(variant).
 
 // The :rpc forms whose answer is the {:badrpc, _} itself: call,
 // block_call, the yield that collects an async_call, and multicall
@@ -360,35 +434,46 @@ unhandled_failure(f, id, v, "case", "") :-
 // the pair). nb_yield wraps the answer in {:value, _}, so a case over it
 // has a clause for the wrapper, and the badrpc it leaves out is nested:
 // not this rule's shape.
-.decl answers_badrpc(variant: symbol)
+.decl badrpc_variant(variant: symbol)
 
-answers_badrpc("rpc").
-answers_badrpc("block_call").
-answers_badrpc("yield").
-answers_badrpc("multicall").
+badrpc_variant("rpc").
+badrpc_variant("block_call").
+badrpc_variant("yield").
+badrpc_variant("multicall").
+
+// The answer is matched by shape in a function that compares nothing to
+// :badrpc and has a clause-less exit (rpc_result "case").
+.decl matched_by_shape(rpc: symbol, func: symbol) inline
+
+matched_by_shape(rpc, func) :- rpc_result(rpc, func, "case").
 
 // Used as a boolean: tested against true/false/nil after the call, or
 // returned as the result of a predicate (a function named `...?`), whose
 // callers test it.
-.decl rpc_boolean_use(id: symbol, func: symbol)
+.decl used_as_boolean(rpc: symbol, func: symbol)
 
-rpc_boolean_use(id, f) :- rpc_result(id, f, "boolean").
+used_as_boolean(rpc, func) :- rpc_result(rpc, func, "boolean").
 
-rpc_boolean_use(id, f) :-
-  rpc_result(id, f, "returned"),
-  function_def(f, _, name, _, _),
+used_as_boolean(rpc, func) :-
+  rpc_result(rpc, func, "returned"),
+  named_as_predicate(func).
+
+// The function's name ends in `?`: its callers test what it returns.
+.decl named_as_predicate(func: symbol) inline
+
+named_as_predicate(func) :-
+  function_def(func, _, name, _, _),
   match(".*\\?", name).
 
-unhandled_failure(f, id, v, "boolean", "") :-
-  rpc_call(id, f, v, _),
-  answers_badrpc(v),
-  rpc_boolean_use(id, f).
+// An :erpc call that waits for its answer.
+.decl erpc_call(rpc: symbol, func: symbol) inline
 
-unhandled_failure(f, id, "erpc", "boolean", "") :-
-  rpc_call(id, f, "erpc", _),
-  rpc_boolean_use(id, f),
-  !catches_class(f, "error"),
-  !catch_tag(_, f, "error", ":erpc").
+erpc_call(rpc, func) :- rpc_call(rpc, func, "erpc", _).
+
+// A clause somewhere in the function takes an error tagged :erpc.
+.decl takes_erpc_error(func: symbol) inline
+
+takes_erpc_error(func) :- catch_tag(_, func, "error", ":erpc").
 
 // ── An rpc answer a wrapper returns ───────────────────────────────────
 //
@@ -399,18 +484,49 @@ unhandled_failure(f, id, "erpc", "boolean", "") :-
 // CaseClauseError and a 500 (emqx#18287 fixed about fifteen such
 // callers). A wrapper returns an rpc's answer, or another wrapper's
 // (result_tested "returned", remote callees included); where its caller
-// matches that result by shape, or
-// tests it as a boolean, in a function comparing nothing to :badrpc
-// (result_tested), the {:badrpc, _} meets the test there. A function
-// that takes the failure itself (a :badrpc clause, rpc_result "badrpc")
-// wraps nothing. `rpc_wrapped` names the rpc for the finding's frame.
-.decl rpc_wrapper(w: symbol, variant: symbol, rpc: symbol)
+// matches that result by shape, or tests it as a boolean, in a function
+// comparing nothing to :badrpc (result_tested), the {:badrpc, _} meets
+// the test there. A function that takes the failure itself (a :badrpc
+// clause, rpc_result "badrpc") wraps nothing. `rpc_wrapped` names the
+// rpc for the finding's frame.
 
-rpc_wrapper(w, v, id) :-
-  rpc_call(id, w, v, _),
-  wrapped_answer(v),
-  rpc_result(id, w, "returned"),
-  !predicate_function(w).
+// A wrapper returns an rpc's answer, and its caller matches the result by
+// shape with no clause for {:badrpc, _}.
+.decl wrapped_badrpc_unmatched(caller: symbol, call: symbol, wrapper: symbol, variant: symbol)
+
+wrapped_badrpc_unmatched(caller, call, wrapper, variant) :-
+  rpc_wrapper(wrapper, variant, _),
+  matches_result_by_shape(call, caller, wrapper).
+
+unhandled_failure(caller, call, variant, "case", wrapper) :-
+  wrapped_badrpc_unmatched(caller, call, wrapper, variant).
+
+// A wrapper returns an rpc's answer, and its caller tests the result as a
+// boolean, where a {:badrpc, _} is true.
+.decl wrapped_badrpc_as_true(caller: symbol, call: symbol, wrapper: symbol, variant: symbol)
+
+wrapped_badrpc_as_true(caller, call, wrapper, variant) :-
+  rpc_wrapper(wrapper, variant, _),
+  tests_result_as_boolean(call, caller, wrapper).
+
+unhandled_failure(caller, call, variant, "boolean", wrapper) :-
+  wrapped_badrpc_as_true(caller, call, wrapper, variant).
+
+// `wrapper` returns the answer of the rpc at `rpc` (`variant`), its own
+// or another wrapper's, and takes no failure itself. A predicate's
+// answer is reported where the predicate is, not at its callers.
+.decl rpc_wrapper(wrapper: symbol, variant: symbol, rpc: symbol)
+
+rpc_wrapper(wrapper, variant, rpc) :-
+  rpc_call(rpc, wrapper, variant, _),
+  wrapped_answer(variant),
+  rpc_result(rpc, wrapper, "returned"),
+  !predicate_function(wrapper).
+
+rpc_wrapper(outer, variant, rpc) :-
+  result_tested(_, outer, wrapper, "returned"),
+  rpc_wrapper(wrapper, variant, rpc),
+  !predicate_function(outer).
 
 // The answers that are a {:badrpc, _} themselves. A multicall's is the
 // {results, bad_nodes} pair, which a caller's `{replies, _bad} =` match
@@ -422,54 +538,48 @@ wrapped_answer("rpc").
 wrapped_answer("block_call").
 wrapped_answer("yield").
 
-rpc_wrapper(g, v, id) :-
-  result_tested(_, g, w, "returned"),
-  rpc_wrapper(w, v, id),
-  !predicate_function(g).
+// A function named as a predicate that returns an rpc's or a wrapper's
+// answer: it hands its callers the answer as a boolean.
+.decl predicate_function(func: symbol)
 
-// A predicate's rpc answer is reported where the rpc is (above).
-.decl predicate_function(f: symbol)
+predicate_function(func) :-
+  rpc_result(_, func, "returned"),
+  named_as_predicate(func).
 
-predicate_function(f) :-
-  rpc_result(_, f, "returned"),
-  function_def(f, _, name, _, _),
-  match(".*\\?", name).
+predicate_function(func) :-
+  result_tested(_, func, _, "returned"),
+  named_as_predicate(func).
 
-predicate_function(f) :-
-  result_tested(_, f, _, "returned"),
-  function_def(f, _, name, _, _),
-  match(".*\\?", name).
+// The caller matches the wrapper's result, got at `call`, by shape, in a
+// function with a clause-less exit (result_tested "case").
+.decl matches_result_by_shape(call: symbol, caller: symbol, wrapper: symbol) inline
 
+matches_result_by_shape(call, caller, wrapper) :- result_tested(call, caller, wrapper, "case").
+
+// The caller tests the wrapper's result as a boolean, or is a predicate
+// that returns it (a cluster facade's `alive?/2` returning the proto's
+// `:rpc.call`): its name is the test, and it is reported at its call of
+// the wrapper, as a predicate making the rpc itself is at the rpc
+// (used_as_boolean).
+.decl tests_result_as_boolean(call: symbol, caller: symbol, wrapper: symbol)
+
+tests_result_as_boolean(call, caller, wrapper) :- result_tested(call, caller, wrapper, "boolean").
+
+tests_result_as_boolean(call, caller, wrapper) :-
+  result_tested(call, caller, wrapper, "returned"),
+  predicate_function(caller).
+
+// The rpc a wrapper's finding names in its frame.
 .decl rpc_wrapped(func: symbol, site: symbol, rpc: symbol, wrapper: symbol)
 .output rpc_wrapped
 
-rpc_wrapped(c, site, rpc, w) :-
-  result_tested(site, c, w, how),
-  how != "returned",
-  rpc_wrapper(w, _, rpc).
+rpc_wrapped(caller, call, rpc, wrapper) :-
+  matches_result_by_shape(call, caller, wrapper),
+  rpc_wrapper(wrapper, _, rpc).
 
-rpc_wrapped(g, site, rpc, w) :-
-  result_tested(site, g, w, "returned"),
-  predicate_function(g),
-  rpc_wrapper(w, _, rpc).
-
-unhandled_failure(c, site, v, "case", w) :-
-  result_tested(site, c, w, "case"),
-  rpc_wrapper(w, v, _).
-
-unhandled_failure(c, site, v, "boolean", w) :-
-  result_tested(site, c, w, "boolean"),
-  rpc_wrapper(w, v, _).
-
-// A predicate (a name ending in `?`) that returns a wrapper's answer
-// hands its callers the {:badrpc, _} as a boolean, which is true: its
-// name is the test (a cluster facade's `alive?/2` returning the proto's
-// `:rpc.call`). Reported at the predicate's call of the wrapper, as a
-// predicate making the rpc itself is at the rpc (rpc_boolean_use).
-unhandled_failure(g, site, v, "boolean", w) :-
-  result_tested(site, g, w, "returned"),
-  predicate_function(g),
-  rpc_wrapper(w, v, _).
+rpc_wrapped(caller, call, rpc, wrapper) :-
+  tests_result_as_boolean(call, caller, wrapper),
+  rpc_wrapper(wrapper, _, rpc).
 
 // ══ Results discarded ═══════════════════════════════════════════════
 
