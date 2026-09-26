@@ -561,6 +561,15 @@ own run of a shared maker is judged as the start's. **Effort** M.
 
 ### 9. Timers and subscriptions: which clause, which path (5 atoms, score 5)
 
+**Not yet; measured** (docs/design/runs.md, "Once by the state"): the
+once-by-state witness (`gated_once_site`: a gate on a field of the
+state, closed by the handler's own run, opened again by no return) sits
+beside `!state_decided(id)`, and reads 1 of the 43 rows it suppresses
+over the 44 evaluation sets (27 monitors, 16 subscriptions). The rest
+are the keyed kind this item's definition names (a stored pid compared,
+a membership test), nested or message-set fields, and gates a handler
+opens again: the keyed witness is still what lets the atom go.
+
 `mailbox.dl`'s `same_clause` `!has_clause` (two), `repeat_reach.seed`'s
 `!state_decided(id)`, `repeated_subscription`'s `!entry_unsubscribes(e)`,
 and the local-timer rule's `!init_function(mod, cancel)`. Rows: 12 live,
