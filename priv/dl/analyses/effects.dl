@@ -170,13 +170,20 @@ reaches_opaque(func, reason, detail, via, site) :-
 .decl effect_in_context(func: symbol, context: symbol, scope: symbol, category: symbol, api: symbol, via: symbol, site: symbol, opened: symbol)
 .output effect_in_context
 
-// The claim is false: a declared-pure function reaches a known effect.
-effect_in_context(func, "pure_contract", "", category, api, via, site, "") :-
+// A function declared pure performs an effect, itself or through a
+// function it calls.
+.decl violated_purity_claim(func: symbol, category: symbol, api: symbol, via: symbol, site: symbol)
+
+violated_purity_claim(func, category, api, via, site) :-
   declared_pure(func),
   reaches_effect(func, category, api, via, site).
 
-// The claim cannot be checked. Not a violation — the function may well be
-// pure — but nobody should rely on it having been verified.
+effect_in_context(func, "pure_contract", "", category, api, via, site, "") :-
+  violated_purity_claim(func, category, api, via, site).
+
+// A function declared pure reaches a call nothing can follow, and no
+// known effect: not a violation, since the function may well be pure,
+// but nobody should rely on it having been verified.
 .decl purity_unprovable(func: symbol, reason: symbol, detail: symbol, via: symbol, site: symbol)
 .output purity_unprovable
 
@@ -185,8 +192,8 @@ purity_unprovable(func, reason, detail, via, site) :-
   reaches_opaque(func, reason, detail, via, site),
   !reaches_effect(func, _, _, _, _).
 
-// The claim holds: nothing reachable performs an effect, and nothing
-// reachable is unaccounted for. Emitted deliberately — the value of a
+// A function declared pure reaches no effect and no call nothing can
+// follow: the claim holds. Emitted deliberately — the value of a
 // contract is knowing it was actually checked, and an analysis that only
 // ever reports failures cannot distinguish "verified" from "not looked at".
 .decl purity_verified(func: symbol)
@@ -208,36 +215,50 @@ purity_verified(func) :-
 // the caller has broken the contract, and it is the caller's line that has
 // to change.
 
-.decl higher_order_pure(func: symbol)
-
-// Transitive, not direct. `Enum.map(list, fn x -> f.(x) end)` puts the
-// call_fun inside the LIFTED closure, so the declared function never
-// contains one itself — checking only its own body would find nothing and
-// this whole rule would sit dead.
-higher_order_pure(func) :-
-  declared_pure(func),
-  reaches_opaque(func, "dynamic_call", "call_fun", _, _).
-
-// Which closures a caller builds, and whether they perform effects.
-.decl impure_closure(caller: symbol, closure: symbol, category: symbol, api: symbol, site: symbol)
-
-impure_closure(caller, closure, category, api, site) :-
-  closure_def(caller, closure),
-  reaches_effect(closure, category, api, _, site).
-
+// A caller hands a closure that performs an effect to a function
+// declared pure that calls the fun it is handed.
+//
 // `site` is the call handing the closure over, where the contract
-// breaks; `effect_site` the effect inside the closure. The closure is the
-// one that call is handed (handed_closure, clientlib/closures.dl).
+// breaks; `effect_site` the effect inside the closure.
 .decl impure_closure_to_pure(caller: symbol, callee: symbol, closure: symbol, category: symbol, api: symbol, site: symbol, effect_site: symbol)
 .output impure_closure_to_pure
 
 impure_closure_to_pure(caller, callee, closure, category, api, site, effect_site) :-
   higher_order_pure(callee),
-  call_edge(caller, callee),
-  pure_contract(callee, mod, name, arity),
-  call_site(site, caller, mod, name, arity),
+  calls_declared_pure(site, caller, callee),
   handed_closure(site, caller, closure),
   impure_closure(caller, closure, category, api, effect_site).
+
+// `func` is declared pure and calls a fun it is handed.
+//
+// Transitive, not direct. `Enum.map(list, fn x -> f.(x) end)` puts the
+// call_fun inside the LIFTED closure, so the declared function never
+// contains one itself — checking only its own body would find nothing and
+// this whole rule would sit dead.
+.decl higher_order_pure(func: symbol)
+
+higher_order_pure(func) :-
+  declared_pure(func),
+  reaches_opaque(func, "dynamic_call", "call_fun", _, _).
+
+// The call at `site` in `caller` is to `callee`, a function declared
+// pure: the call graph's edge, and the call instruction naming the
+// callee's module, name and arity.
+.decl calls_declared_pure(site: symbol, caller: symbol, callee: symbol) inline
+
+calls_declared_pure(site, caller, callee) :-
+  call_edge(caller, callee),
+  pure_contract(callee, mod, name, arity),
+  call_site(site, caller, mod, name, arity).
+
+// `closure` is built in `caller` and performs an effect, itself or
+// through a function it calls; `site` is the effect. Which closure a
+// call hands over is handed_closure (clientlib/closures.dl).
+.decl impure_closure(caller: symbol, closure: symbol, category: symbol, api: symbol, site: symbol)
+
+impure_closure(caller, closure, category, api, site) :-
+  closure_def(caller, closure),
+  reaches_effect(closure, category, api, _, site).
 
 // ══ Effects inside a transaction ════════════════════════════════════
 // Unrollbackable side effects inside a database transaction.
