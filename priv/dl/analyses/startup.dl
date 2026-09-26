@@ -683,31 +683,48 @@ init_effect(mod, "connect", api, "") :- connect_without_retry(mod, api).
 
 // ══ Start order ═════════════════════════════════════════════════════
 
-// ── Anti-patterns ────────────────────────────────────────────────
+// ── A dependency on a later sibling ──────────────────────────────────
+//
+// A synchronous dependency that holds the start (init_dep "call": before
+// the ack, on init/1's own stack) is a deadlock by construction: the
+// supervisor cannot reach the dependency until this init returns. One in
+// the startup window that does not hold it (init_window_dep, entries.dl:
+// a cast, or a call after the ack or in what init/1 starts) runs against
+// a process that is not alive yet: the cast is dropped, the call exits
+// :noproc, as a handle_continue's does. One row per witness; the finding
+// builders keep one per (child, dep) and the synchronous one wins.
 
-// A child's init/1 depends on another process, and that process starts
-// later under the same supervisor. A synchronous dependency that holds
-// the start (init_dep "call": before the ack, on init/1's own stack) is a
-// deadlock by construction: the supervisor cannot reach the dependency
-// until this init returns. One in the startup window that does not hold
-// it (init_window_dep, entries.dl: a cast, or a call after the ack or in
-// what init/1 starts) runs against a process that is not alive yet: the
-// cast is dropped, the call exits :noproc, as a handle_continue's does.
-// One row per witness; the finding builders keep one per (child, dep)
-// and the synchronous one wins.
+// A child's init/1 depends on a process that its supervisor starts after
+// it, so the process is not there yet when init/1 needs it.
 .decl later_sibling_dep(child: symbol, dep: symbol, kind: symbol, sup: symbol, sup_site: symbol, witness: symbol)
 
 later_sibling_dep(child, dep, kind, sup, sup_site, witness) :-
-  supervisor_site(sup, sup_site),
-  boots_before(sup, child, dep, _, _),
-  init_dep(child, dep, kind, witness),
-  child != dep.
+  depends_during_startup(child, dep, kind, witness),
+  starts_after(dep, child, sup),
+  child != dep,
+  tree_defined_at(sup, sup_site).
 
-later_sibling_dep(child, dep, kind, sup, sup_site, witness) :-
-  supervisor_site(sup, sup_site),
-  boots_before(sup, child, dep, _, _),
-  init_window_dep(child, dep, kind, witness),
-  child != dep.
+// mod's init/1 depends on `dep`, as `kind` says ("call" or "cast"):
+// holding its start (init_dep) or in the startup window after it
+// (init_window_dep), clientlib/entries.dl. `witness` is the function
+// that makes the dependency.
+.decl depends_during_startup(mod: symbol, dep: symbol, kind: symbol, witness: symbol)
+
+depends_during_startup(mod, dep, kind, witness) :- init_dep(mod, dep, kind, witness).
+depends_during_startup(mod, dep, kind, witness) :- init_window_dep(mod, dep, kind, witness).
+
+// `later` starts after `earlier` under `sup`, in another branch of its
+// child list (boots_before, clientlib/supervision.dl).
+.decl starts_after(later: symbol, earlier: symbol, sup: symbol) inline
+
+starts_after(later, earlier, sup) :- boots_before(sup, earlier, later, _, _).
+
+// The tree `sup` starts is defined at `site` (supervisor_site): the
+// finding anchors there, and a supervisor with no known site is not
+// reported.
+.decl tree_defined_at(sup: symbol, site: symbol) inline
+
+tree_defined_at(sup, site) :- supervisor_site(sup, site).
 
 blocks_on_peer(child, "init", dep, kind, "later", sup, sup_site, witness) :-
   later_sibling_dep(child, dep, kind, sup, sup_site, witness).
@@ -721,56 +738,128 @@ blocks_on_peer(child, "init", dep, kind, "later", sup, sup_site, witness) :-
 // inside that start_link, before D's start: the call exits :noproc, C
 // fails, the tree fails, and the application with it. Two supervision
 // trees are not "already running" for each other by being two: the
-// start function's own order places them. `start` is the start
-// function, `site` its call that starts D.
+// start function's own order places them.
+
+// A child's init/1 waits on a process that the function starting its tree
+// starts only after the tree is up, so the process is not there yet.
+// `start` is the start function, `site` its call that starts `dep`.
 .decl after_tree_dep(child: symbol, dep: symbol, start: symbol, site: symbol, witness: symbol)
 
-after_tree_dep(child, dep, s, site, witness) :-
-  supervisor_site(sup, t),
-  call_site(t, s, "Supervisor", "start_link", _),
-  boot_subtree(sup, _, child),
-  post_start_call(s, site, callee),
-  function_def(callee, dep, "start_link", _, _),
-  init_dep(child, dep, "call", witness),
+after_tree_dep(child, dep, start, site, witness) :-
+  starts_tree(start, sup),
+  in_tree(child, sup),
+  starts_after_tree(start, site, dep),
+  calls_during_init_by(child, dep, witness),
   child != dep.
 
-blocks_on_peer(child, "init", dep, "call", "after_tree", s, site, witness) :-
-  after_tree_dep(child, dep, s, site, witness).
+// The function starts sup's tree itself: the tree is defined at its
+// `Supervisor.start_link` call.
+.decl starts_tree(start: symbol, sup: symbol)
+
+starts_tree(start, sup) :-
+  supervisor_site(sup, site),
+  call_site(site, start, "Supervisor", "start_link", _).
+
+// The module is in the tree sup starts (boot_subtree).
+.decl in_tree(mod: symbol, sup: symbol) inline
+
+in_tree(mod, sup) :- boot_subtree(sup, _, mod).
+
+// After Supervisor.start_link returns, the function calls, at `site`,
+// the start_link of `dep` (post_start_call).
+.decl starts_after_tree(start: symbol, site: symbol, dep: symbol)
+
+starts_after_tree(start, site, dep) :-
+  post_start_call(start, site, callee),
+  function_def(callee, dep, "start_link", _, _).
+
+// mod's init/1 holds its start on a synchronous call to `dep`, made in
+// `witness` (init_dep "call"; calls_during_init without the witness).
+.decl calls_during_init_by(mod: symbol, dep: symbol, witness: symbol) inline
+
+calls_during_init_by(mod, dep, witness) :- init_dep(mod, dep, "call", witness).
+
+blocks_on_peer(child, "init", dep, "call", "after_tree", start, site, witness) :-
+  after_tree_dep(child, dep, start, site, witness).
 
 // ══ Deferred startup: handle_continue ═══════════════════════════════
 //
 // A.handle_continue sync-calls B AND B.handle_continue sync-calls A is
 // a call cycle in the continue phase, reported by blocking's call_cycle.
 
-// ── Pattern 2: handle_continue calls later-started sibling ───────────
+// ── handle_continue calls a later-started sibling ────────────────────
 
-blocks_on_peer(caller, "continue", callee, "call", "later", sup, site, "") :-
-  boots_before(sup, caller, callee, _, _),
-  continue_wait(caller, callee, site).
+// A handle_continue/2 calls a process its supervisor starts after the
+// worker, which is not there yet: the continue runs before the
+// supervisor has gone on to start it.
+.decl later_sibling_call_during_continue(worker: symbol, sibling: symbol, sup: symbol, call: symbol)
 
-// ── Pattern 3: handle_continue calls back into parent supervisor ─────
+later_sibling_call_during_continue(worker, sibling, sup, call) :-
+  continue_calls(worker, sibling, call),
+  starts_after(sibling, worker, sup).
 
-// The worker's handle_continue calls its parent supervisor (a
-// Supervisor query or management function) while the parent is still
-// mid-start_link, starting the children after the worker, and not
-// reading its mailbox. The worker blocks until the rest of the child
-// list is up, and a later child that waits on it deadlocks the boot.
-// The worker's last-child case is quiet: its init returning is the
-// supervisor's last wait. Supervisor.which_children and the other
-// management calls are sup_calls, not sync calls: they are read on the
-// continue's own stack (own_stack), the call their site.
-.decl continues_on_stack(worker: symbol, site: symbol, sup: symbol, detail: symbol)
+// The worker's handle_continue/2 makes a synchronous call to `target` at
+// `call` (continue_wait, clientlib/entries.dl; `call` empty when the
+// site is not known).
+.decl continue_calls(worker: symbol, target: symbol, call: symbol) inline
 
-continues_on_stack(worker, site, sup, cat(api, ".", op)) :-
+continue_calls(worker, target, call) :- continue_wait(worker, target, call).
+
+blocks_on_peer(worker, "continue", sibling, "call", "later", sup, call, "") :-
+  later_sibling_call_during_continue(worker, sibling, sup, call).
+
+// ── handle_continue calls back into its parent supervisor ────────────
+//
+// The supervisor is still mid-start_link, starting the children after
+// the worker, and not reading its mailbox: the worker blocks until the
+// rest of the child list is up, and a later child that waits on it
+// deadlocks the boot. The worker's last-child case is quiet: its init
+// returning is the supervisor's last wait.
+
+// A handle_continue/2 calls its own supervisor while the supervisor is
+// still starting the children after it.
+.decl parent_call_during_continue(worker: symbol, sup: symbol, call: symbol)
+
+parent_call_during_continue(worker, sup, call) :-
+  calls_supervisor_during_continue(worker, sup, call),
+  supervises(sup, worker),
+  has_later_sibling(sup, worker).
+
+// The worker's handle_continue/2 calls into the supervisor `sup`: a
+// management call (manages_supervisor_during_continue), or a plain
+// synchronous call on the supervisor's name (a GenServer.call the call
+// resolution sees), which reaches the same mailbox.
+.decl calls_supervisor_during_continue(worker: symbol, sup: symbol, call: symbol)
+
+calls_supervisor_during_continue(worker, sup, call) :-
+  manages_supervisor_during_continue(worker, sup, call, _).
+
+calls_supervisor_during_continue(worker, sup, call) :-
+  continue_calls(worker, sup, call),
+  supervisor(sup, _).
+
+// A handle_continue/2 of a worker whose init/1 continues makes a
+// Supervisor query or management call on `sup` at `call`, described by
+// `detail` (api.op). Supervisor.which_children and the other management
+// calls are sup_calls, not sync calls: they are read on the continue's
+// own stack (own_stack), the call their site.
+.decl manages_supervisor_during_continue(worker: symbol, sup: symbol, call: symbol, detail: symbol)
+
+manages_supervisor_during_continue(worker, sup, call, cat(api, ".", op)) :-
   init_continues_to(worker, _),
   handle_continue_clause(worker, _, f),
-  sup_management_call(site, f, api, op, sup).
+  sup_management_call(call, f, api, op, sup).
 
-continues_on_stack(worker, site, sup, cat(api, ".", op)) :-
+manages_supervisor_during_continue(worker, sup, call, cat(api, ".", op)) :-
   init_continues_to(worker, _),
   handle_continue_clause(worker, _, f),
-  own_stack.reaches(f, site),
-  sup_management_call(site, _, api, op, sup).
+  own_stack.reaches(f, call),
+  sup_management_call(call, _, api, op, sup).
+
+// The worker is one of sup's own children.
+.decl supervises(sup: symbol, worker: symbol) inline
+
+supervises(sup, worker) :- supervisor(sup, _), supervisor_child(sup, _, worker, _, _).
 
 // A child starts after the worker: one the list shows at a later
 // position, or one it may not show. A list the extractor cannot read to
@@ -786,66 +875,79 @@ has_later_sibling(sup, worker) :-
   supervisor_children_open(sup),
   supervisor_child(sup, _, worker, _, _).
 
-blocks_on_peer(worker, "continue", sup, "parent", "parent", sup, site, detail) :-
-  continues_on_stack(worker, site, sup, detail),
-  supervisor(sup, _),
-  supervisor_child(sup, _, worker, _, _),
+// A management call carries its api.op; a plain call, none.
+blocks_on_peer(worker, "continue", sup, "parent", "parent", sup, call, detail) :-
+  parent_call_during_continue(worker, sup, call),
+  manages_supervisor_during_continue(worker, sup, call, detail).
+
+blocks_on_peer(worker, "continue", sup, "parent", "parent", sup, call, "") :-
+  parent_call_during_continue(worker, sup, call),
+  continue_calls(worker, sup, call).
+
+// ── init/1 calls its parent supervisor after its ack ─────────────────
+
+// An init/1 calls its own supervisor after it acknowledges its start,
+// while the supervisor is still starting the children after it: the
+// supervisor has moved on to the later children and reads no mailbox
+// until they are up, as it does while a handle_continue runs. Not the
+// start's hold, which ended at the ack.
+.decl parent_call_after_ack(worker: symbol, sup: symbol, call: symbol)
+
+parent_call_after_ack(worker, sup, call) :-
+  manages_supervisor_after_ack(worker, sup, call, _),
+  supervises(sup, worker),
   has_later_sibling(sup, worker).
 
-// The same call made by init/1 after it acknowledges its start
-// (acked_on_stack): the supervisor has moved on to the later children
-// and reads no mailbox until they are up, as it does while a
-// handle_continue runs. Not the start's hold, which ended at the ack.
-.decl acked_on_stack(worker: symbol, site: symbol, sup: symbol, detail: symbol)
+// The worker's init/1 makes a Supervisor query or management call on
+// `sup` at `call` after it acknowledged its start (`detail` is api.op):
+// in a function it runs before the ack, at a call made after that
+// function's own ack, or anywhere on its own stack past an edge taken
+// only after the ack (after_ack).
+.decl manages_supervisor_after_ack(worker: symbol, sup: symbol, call: symbol, detail: symbol)
+
+manages_supervisor_after_ack(worker, sup, call, cat(api, ".", op)) :-
+  init_function(worker, i),
+  before_ack.reaches(i, f),
+  sup_management_call(call, f, api, op, sup),
+  start_acked(call, f).
+
+manages_supervisor_after_ack(worker, sup, call, cat(api, ".", op)) :-
+  init_function(worker, i),
+  after_ack.reaches(i, g),
+  sup_management_call(call, g, api, op, sup).
 
 .init after_ack = ForwardSameProcessReachCut
 
 after_ack.cut(f, g) :- side_call(f, g).
 after_ack.root(i, g) :- before_ack.reaches(i, f), acked_edge(f, g).
 
-acked_on_stack(worker, site, sup, cat(api, ".", op)) :-
-  init_function(worker, i),
-  before_ack.reaches(i, f),
-  sup_management_call(site, f, api, op, sup),
-  start_acked(site, f).
-
-acked_on_stack(worker, site, sup, cat(api, ".", op)) :-
-  init_function(worker, i),
-  after_ack.reaches(i, g),
-  sup_management_call(site, g, api, op, sup).
-
-blocks_on_peer(worker, "acked", sup, "parent", "parent", sup, site, detail) :-
-  acked_on_stack(worker, site, sup, detail),
-  supervisor(sup, _),
-  supervisor_child(sup, _, worker, _, _),
-  has_later_sibling(sup, worker).
-
-// A plain synchronous call on the supervisor's name (a GenServer.call
-// the call resolution sees) reaches the same mailbox.
-blocks_on_peer(worker, "continue", sup, "parent", "parent", sup, site, "") :-
-  continue_wait(worker, sup, site),
-  supervisor(sup, _),
-  supervisor_child(sup, _, worker, _, _),
-  has_later_sibling(sup, worker).
+blocks_on_peer(worker, "acked", sup, "parent", "parent", sup, call, detail) :-
+  parent_call_after_ack(worker, sup, call),
+  manages_supervisor_after_ack(worker, sup, call, detail).
 
 // ── Defensive variant: try/catch wraps the call ──────────────────────
 
-// Any try in the handle_continue of a pattern 2 caller is reported as a
-// crash-loop risk on top of it: the catch suppresses the literal
-// deadlock, but the supervisor's restart loop is still a bug.
-.decl try_in_handle_continue(mod: symbol)
+// A handle_continue/2 that calls a later sibling also catches: the catch
+// turns the deadlock into a crash the supervisor restarts, into the same
+// call, until its restart intensity is spent.
+.decl caught_later_sibling_call(worker: symbol, sup: symbol)
 
-// try_start carries its containing function and its kind ("try" or the
-// older "catch"), so both syntaxes are one rule and neither needs to join
+caught_later_sibling_call(worker, sup) :-
+  later_sibling_call_during_continue(worker, _, sup, _),
+  catches_in_continue(worker).
+
+// A handle_continue/2 of the module has a try (or an older catch).
+// try_start carries its containing function and its kind ("try" or
+// "catch"), so both syntaxes are one rule and neither needs to join
 // `instruction` — 343k rows on a real project, rewritten on every body
 // edit — purely to recover the function an instruction sits in.
-try_in_handle_continue(mod) :-
+.decl catches_in_continue(mod: symbol)
+
+catches_in_continue(mod) :-
   handle_continue_clause(mod, _, func),
   try_start(_, func, _, _).
 
-deferral_defect(worker, "continue_catch", "", sup) :-
-  blocks_on_peer(worker, "continue", _, "call", "later", sup, _, _),
-  try_in_handle_continue(worker).
+deferral_defect(worker, "continue_catch", "", sup) :- caught_later_sibling_call(worker, sup).
 
 // ── Init timeout used as a deferral ───────────────────────────────────
 //
@@ -858,9 +960,23 @@ deferral_defect(worker, "continue_catch", "", sup) :-
 // libcluster's Gossip strategy lost its deferred connect this way to
 // the first UDP datagram. Any integer works the same; 0 is the one that
 // is unmistakably a deferral.
+
+// An init/1 returns a timeout to defer the rest of its work, and any
+// message that arrives first cancels the timeout, and the work with it.
+.decl init_timeout_deferral(mod: symbol, site: symbol)
+
+init_timeout_deferral(mod, site) :-
+  init_function(mod, init),
+  returns_timeout(init, site).
+
+// The callback returns a timeout at `site` (callback_timeout "init").
+.decl returns_timeout(init: symbol, site: symbol) inline
+
+returns_timeout(init, site) :- callback_timeout(site, init, "init", _).
+
 deferral_defect(mod, "init_timeout", site, to_string(ms)) :-
-  init_function(mod, func),
-  callback_timeout(site, func, "init", ms).
+  init_timeout_deferral(mod, site),
+  callback_timeout(site, _, "init", ms).
 
 // ══ Distributed operations in init/1 ════════════════════════════════
 
