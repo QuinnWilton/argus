@@ -825,6 +825,73 @@ supervisor_site_or_empty(sup, "") :- dynamic_child(sup, _, _), !supervisor_site(
 .decl foreign_dynamic_children(mod: symbol, sup: symbol, via: symbol, site: symbol, sup_site: symbol)
 .output foreign_dynamic_children
 
+// A process starts children onto a supervisor in another tree, and its
+// terminate/2 does not stop them: they outlive the process's own tree.
+.decl children_left_behind(mod: symbol, sup: symbol, start: symbol)
+
+children_left_behind(mod, sup, start) :-
+  starts_children_under(mod, sup, start),
+  started_from_outside(start, sup),
+  in_another_tree(mod, sup),
+  !terminate_stops_children(mod).
+
+// `mod`'s process starts children under `sup` in `start`: its callbacks
+// reach the start — not the module the start function happens to live
+// in, which may be a plain helper called from several processes (or from
+// a request surface). A supervisor held as a pid ("dynamic") has no tree
+// to place: process points-to does not follow start_child's supervisor
+// argument, which is not a pid use.
+.decl starts_children_under(mod: symbol, sup: symbol, start: symbol)
+
+starts_children_under(mod, sup, start) :-
+  dynamic_child(sup, _, start),
+  sup != "dynamic",
+  starter_process(mod, start).
+
+// An entry of `mod`'s process (process_entry) reaches `start`.
+.init start_reach = CallReach
+
+start_reach.seed(s, s) :- dynamic_child(_, _, s).
+
+.decl starter_process(mod: symbol, start: symbol)
+
+starter_process(mod, s) :- process_entry(mod, c), start_reach.reaches(c, s).
+
+// The start function lives outside the supervisor's module. One in it
+// (`Postgrex.TypeSupervisor.start_server/2`, `DBConnection.Task.run_child/4`)
+// is that tree offering a shared service; the children are meant to
+// belong to it, whoever asks.
+.decl started_from_outside(start: symbol, sup: symbol)
+
+started_from_outside(start, sup) :-
+  dynamic_child(sup, _, start),
+  function_def(start, m, _, _, _),
+  m != sup.
+
+// `sup` sits in a tree `mod` is no member of. A supervisor named through
+// a registry (`Oban.Registry.via(Foreman)`) is no tree member.
+.decl in_another_tree(mod: symbol, sup: symbol)
+
+in_another_tree(mod, sup) :-
+  starts_children_under(mod, sup, _),
+  mod != sup,
+  tree_member(root, sup),
+  !tree_member(root, mod).
+
+// A tree's members by module, and by the registered name a child spec
+// gave them (`{DynamicSupervisor, name: Pool}` is a child named Pool).
+.decl tree_member(root: symbol, member: symbol)
+
+tree_member(root, mod) :- child_subtree(root, _, mod).
+tree_member(root, name) :- supervisor_child_name(root, _, name).
+
+tree_member(root, name) :-
+  child_subtree(root, _, mid),
+  supervisor_child_name(mid, _, name).
+
+// terminate/2, or a function it reaches, terminates a supervisor's child
+// or stops a supervisor (stopping_sup_op). Which supervisor is not
+// asked: any such call errs quiet.
 .decl terminate_stops_children(mod: symbol)
 
 terminate_stops_children(mod) :-
@@ -839,46 +906,9 @@ terminate_stops_children(mod) :-
 teardown_reach.root(func, func) :- terminate_callback(func, _, _).
 teardown_reach.limit(3).
 
-// A tree's members by module, and by the registered name a child spec
-// gave them (`{DynamicSupervisor, name: Pool}` is a child named Pool).
-.decl tree_member(root: symbol, member: symbol)
-
-tree_member(root, mod) :- child_subtree(root, _, mod).
-tree_member(root, name) :- supervisor_child_name(root, _, name).
-
-tree_member(root, name) :-
-  child_subtree(root, _, mid),
-  supervisor_child_name(mid, _, name).
-
-// The starter is the process whose callbacks reach the start — not the
-// module the start function happens to live in, which may be a plain
-// helper called from several processes (or from a request surface).
-.init start_reach = CallReach
-
-start_reach.seed(s, s) :- dynamic_child(_, _, s).
-
-.decl starter_process(mod: symbol, start: symbol)
-
-starter_process(mod, s) :- process_entry(mod, c), start_reach.reaches(c, s).
-
-// A start function that lives in the supervisor's own module
-// (`Postgrex.TypeSupervisor.start_server/2`, `DBConnection.Task.run_child/4`)
-// is that tree offering a shared service; the children are meant to
-// belong to it, whoever asks. A supervisor held as a pid ("dynamic") has
-// no tree to place: process points-to does not follow start_child's
-// supervisor argument, which is not a pid use. One named through a
-// registry (`Oban.Registry.via(Foreman)`) is no tree member either.
-foreign_dynamic_children(mod, sup, func, site, sup_site) :-
-  dynamic_child(sup, _, func),
-  sup != "dynamic",
-  function_def(func, fmod, _, _, _),
-  fmod != sup,
-  starter_process(mod, func),
-  mod != sup,
-  tree_member(root, sup),
-  !tree_member(root, mod),
-  !terminate_stops_children(mod),
-  dynamic_start_site_or_empty(func, site),
+foreign_dynamic_children(mod, sup, start, site, sup_site) :-
+  children_left_behind(mod, sup, start),
+  dynamic_start_site_or_empty(start, site),
   supervisor_site_or_empty(sup, sup_site).
 
 // The DynamicSupervisor.start_child call in `func`.
