@@ -1428,53 +1428,82 @@ reply_defect(mod, func, site, "statem_unreplied", tag) :- statem_call_unreplied(
 .decl unreceived_message(mod: symbol, func: symbol, site: symbol, message: symbol, runs: symbol, starter: symbol, spawn: symbol, recv: symbol)
 .output unreceived_message
 
-.decl spawned_target(runs: symbol)
+// A send reaches a spawned process that runs receives, and none of them
+// can take the message: it stays in the mailbox for the life of the
+// process.
+//
+// `runs` is the function the process started at `spawn` runs: a spawn
+// site may start more than one, and each is judged by its own receives.
+.decl message_never_received(send: symbol, spawn: symbol, runs: symbol, message: symbol)
 
-spawned_target(runs) :-
-  send_target(_, _, m, p),
-  m != "dynamic",
+message_never_received(send, spawn, runs, message) :-
+  sends_to_spawned(send, spawn, runs, message),
+  runs_a_receive(runs),
+  !receive_takes(runs, message),
+  !receive_takes_anything(runs),
+  !receives_out_of_sight(runs).
+
+unreceived_message(mod, func, send, message, runs, starter, spawn, recv) :-
+  message_never_received(send, spawn, runs, message),
+  send_target(send, func, message, _),
+  function_def(func, mod, _, _, _),
+  process_start(spawn, starter, _, "spawn", runs),
+  process_receive(runs, recv).
+
+// The send at `send` sends a literal `message` that process points-to
+// (sends.dl) follows to the process started at `spawn`, running `runs`.
+.decl sends_to_spawned(send: symbol, spawn: symbol, runs: symbol, message: symbol)
+
+sends_to_spawned(send, spawn, runs, message) :-
+  send_target(send, _, message, p),
+  message != "dynamic",
   instance(p, b),
-  process_start(_, _, b, "spawn", runs).
+  process_start(spawn, _, b, "spawn", runs).
 
+// What the process runs: the spawned function and what it calls in its
+// own process.
 .init spawned_reach = ForwardSameProcessReachCut
 
 spawned_reach.cut(f, g) :- side_call(f, g).
 
-spawned_reach.root(r, r) :- spawned_target(r).
+spawned_reach.root(r, r) :- sends_to_spawned(_, _, r, _).
 
-// A receive the process runs, and the messages its clauses take.
+// A receive the process runs.
 .decl process_receive(runs: symbol, recv: symbol)
 
 process_receive(r, id) :- spawned_reach.reaches(r, g), recv_pattern(id, g, _).
 
-.decl process_takes(runs: symbol, message: symbol)
+.decl runs_a_receive(runs: symbol) inline
 
-process_takes(r, m) :- spawned_reach.reaches(r, g), recv_pattern(_, g, m).
+runs_a_receive(r) :- process_receive(r, _).
 
-.decl process_opaque(runs: symbol)
+// A clause of a receive the process runs takes the message by name.
+.decl receive_takes(runs: symbol, message: symbol)
 
-process_opaque(r) :- spawned_reach.reaches(r, g), dynamic_call(_, g, _).
+receive_takes(r, m) :- spawned_reach.reaches(r, g), recv_pattern(_, g, m).
 
-process_opaque(r) :-
+// A clause of a receive the process runs matches anything recv_pattern
+// reads as "any" (a variable, a tuple pattern, a guard).
+.decl receive_takes_anything(runs: symbol)
+
+receive_takes_anything(r) :- receive_takes(r, "any").
+
+// The process runs code whose receives are not the program's to read: a
+// call through a fun or an apply, a gen_server or gen_statem enter_loop
+// (its callbacks take the mailbox), a hibernate that resumes in an MFA.
+.decl receives_out_of_sight(runs: symbol)
+
+receives_out_of_sight(r) :- spawned_reach.reaches(r, g), dynamic_call(_, g, _).
+
+receives_out_of_sight(r) :-
   spawned_reach.reaches(r, g),
   remote_call(_, g, m, "enter_loop", _),
   (m = ":gen_server" ; m = ":gen_statem" ; m = ":gen_event").
 
-process_opaque(r) :-
+receives_out_of_sight(r) :-
   spawned_reach.reaches(r, g),
   remote_call(_, g, m, "hibernate", _),
   (m = ":erlang" ; m = ":proc_lib").
-
-unreceived_message(mod, func, site, m, runs, starter, spawn, recv) :-
-  send_target(site, func, m, p),
-  m != "dynamic",
-  instance(p, b),
-  process_start(spawn, starter, b, "spawn", runs),
-  process_receive(runs, recv),
-  !process_takes(runs, m),
-  !process_takes(runs, "any"),
-  !process_opaque(runs),
-  function_def(func, mod, _, _, _).
 
 // ══ A message its server has no clause for ═════════════════════════
 //

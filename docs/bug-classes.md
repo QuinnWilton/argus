@@ -4893,7 +4893,7 @@ item; 5 to 8 are still open.
    permanent_child_stops_normally and coupling's restart_policy ignore
    `child_spec_restart` for a shorthand child; the `SiblingStop` quiet
    fixture's coordinator is not a child of the supervisor it asks.
-7. **mailbox's `process_opaque`** reads every `dynamic_call`, and the
+7. **mailbox's `receives_out_of_sight`** reads every `dynamic_call`, and the
    Purity extractor adds `dot_dispatch` rows, so unreceived_message can
    turn on which extractors ran.
 8. **effects' model lacks `:telemetry`**, so a terminate/2 that emits
