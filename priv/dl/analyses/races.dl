@@ -1569,6 +1569,45 @@ ets_race_frame(w_at, "rival", w2, h) :-
 // V's name: the writes join on V's identity (ets_value against ets_key),
 // the tables on what clientlib/tables.dl says each operation may touch.
 
+// A writer publishes a value in one row before it writes the row keyed
+// by that value, and a reader in another process that finds the value
+// looks up the missing row in the gap and crashes. `reader_func` is the
+// reader's function, whose processes are asked about.
+.decl publish_order_race(writer: symbol, publish: symbol, complete: symbol, reader: symbol, reader_func: symbol)
+
+publish_order_race(writer, publish, complete, reader, reader_func) :-
+  publishes_early(writer, publish, complete),
+  crashes_if_row_missing(reader, reader_func),
+  looks_up_row_of(reader, complete),
+  finds_published_value(reader, publish),
+  can_read_in_the_gap(writer, reader_func).
+
+// The reader raises when its key has no row, and nothing rescues the
+// raise: a reader that rescues the badarg does not crash in the gap.
+.decl crashes_if_row_missing(reader: symbol, reader_func: symbol)
+
+crashes_if_row_missing(r, g) :- raises_if_missing(r, g), !rescues_argument_error(g).
+
+// The reader reads a table the completing write writes, one another
+// process can read.
+.decl looks_up_row_of(reader: symbol, complete: symbol) inline
+
+looks_up_row_of(r, w2) :- readable_elsewhere(w2, bk, b), ets_table(r, bk, b).
+
+// A read of the published table hands its values out, and the reader's
+// key may be one of them (key_may_come_from, below).
+.decl finds_published_value(reader: symbol, publish: symbol) inline
+
+finds_published_value(r, w1) :-
+  ets_table(w1, ak, a),
+  handed_out_from(ak, a),
+  key_may_come_from(r, ak, a).
+
+// A table some read hands a value out of (hands_out, below).
+.decl handed_out_from(kind: symbol, table: symbol)
+
+handed_out_from(ak, a) :- ets_op(ra, _, _, _, "read"), ets_table(ra, ak, a), hands_out(ra).
+
 // A call that runs its callee on the caller's stack.
 // A call into a function the program defines is a call site of the
 // caller's (stage 0's call_site, call_instr), and runs_elsewhere never
@@ -1706,24 +1745,20 @@ readable_elsewhere(id, "field", t) :-
   ets_new(n, _, name),
   !ets_option(n, "access", "private").
 
-// The reader of B and the tables it shares with the writes.
-.decl publish_reader_candidate(func: symbol, publish: symbol, complete: symbol, reader: symbol, g: symbol, ak: symbol, a: symbol)
+// A reader that crashes on a missing row of a table an early publish
+// completes, with the table that publish writes: the readers and tables
+// whose keys are asked about below. A literal key is no value read from
+// anywhere.
+.decl gap_reader(reader: symbol, reader_func: symbol, published_kind: symbol, published: symbol)
 
-publish_reader_candidate(f, w1, w2, r, g, ak, a) :-
-  publishes_early(f, w1, w2),
+gap_reader(r, g, ak, a) :-
+  publishes_early(_, w1, w2),
   ets_table(w1, ak, a),
-  ets_op(ra, _, _, _, "read"),
-  ets_table(ra, ak, a),
-  hands_out(ra),
-  ets_table(w2, bk, b),
-  raises_if_missing(r, g),
-  ets_table(r, bk, b),
+  handed_out_from(ak, a),
+  crashes_if_row_missing(r, g),
+  looks_up_row_of(r, w2),
   ets_key(r, ks, _),
-  ks != "literal",
-  readable_elsewhere(w2, bk, b),
-  // A reader that rescues the raise on the missing row does not crash
-  // in the gap: the harm is the badarg.
-  !rescues_argument_error(g).
+  ks != "literal".
 
 // ── Where the reader's key comes from ──
 //
@@ -1734,10 +1769,10 @@ publish_reader_candidate(f, w1, w2, r, g, ak, a) :-
 // things does not read A's values.
 .decl key_needed(func: symbol, kind: symbol, src: symbol)
 
-key_needed(g, "param", p) :- publish_reader_candidate(_, _, _, r, g, _, _), ets_key(r, "param", p).
+key_needed(g, "param", p) :- gap_reader(r, g, _, _), ets_key(r, "param", p).
 
 key_needed(g, k, s) :-
-  publish_reader_candidate(_, _, _, r, g, _, _),
+  gap_reader(r, g, _, _),
   ets_key(r, ks, _),
   ks != "param",
   site_reads(r, g, k, s).
@@ -1785,49 +1820,53 @@ open_source(g, "call", h) :- key_needed(g, "call", h), returns_depends(h, k, s),
 .decl key_may_come_from(r: symbol, tk: symbol, t: symbol)
 
 key_may_come_from(r, tk, t) :-
-  publish_reader_candidate(_, _, _, r, g, tk, t),
+  gap_reader(r, g, tk, t),
   ets_key(r, "param", p),
   from_table(g, "param", p, tk, t).
 
 key_may_come_from(r, tk, t) :-
-  publish_reader_candidate(_, _, _, r, g, tk, t),
+  gap_reader(r, g, tk, t),
   ets_key(r, "param", p),
   open_source(g, "param", p),
   !ets_table(r, tk, t).
 
 key_may_come_from(r, tk, t) :-
-  publish_reader_candidate(_, _, _, r, g, tk, t),
+  gap_reader(r, g, tk, t),
   ets_key(r, ks, _),
   ks != "param",
   site_reads(r, g, k, s),
   from_table(g, k, s, tk, t).
 
 key_may_come_from(r, tk, t) :-
-  publish_reader_candidate(_, _, _, r, g, tk, t),
+  gap_reader(r, g, tk, t),
   ets_key(r, ks, _),
   ks != "param",
   site_reads(r, g, k, s),
   open_source(g, k, s),
   !ets_table(r, tk, t).
 
-.decl reads_in_the_gap(func: symbol, publish: symbol, complete: symbol, reader: symbol, g: symbol)
+// The writers and readers whose processes are asked about: the race
+// but for the processes.
+.decl gap_read(writer: symbol, reader_func: symbol)
 
-reads_in_the_gap(f, w1, w2, r, g) :-
-  publish_reader_candidate(f, w1, w2, r, g, ak, a),
-  key_may_come_from(r, ak, a).
+gap_read(writer, reader_func) :-
+  publishes_early(writer, publish, complete),
+  crashes_if_row_missing(reader, reader_func),
+  looks_up_row_of(reader, complete),
+  finds_published_value(reader, publish).
 
-runs.seed(f) :- reads_in_the_gap(f, _, _, _, _).
-runs.seed(g) :- reads_in_the_gap(_, _, _, _, g).
+runs.seed(f) :- gap_read(f, _).
+runs.seed(g) :- gap_read(_, g).
 
 // The reader can run while the writer is between the two writes: in
 // more than one process, or in a process other than the writer's.
-.decl can_read_in_the_gap(func: symbol, reader: symbol)
+.decl can_read_in_the_gap(writer: symbol, reader_func: symbol)
 
-can_read_in_the_gap(f, g) :- reads_in_the_gap(f, _, _, _, g), !runs.single_process(f).
-can_read_in_the_gap(f, g) :- reads_in_the_gap(f, _, _, _, g), !runs.single_process(g).
+can_read_in_the_gap(f, g) :- gap_read(f, g), !runs.single_process(f).
+can_read_in_the_gap(f, g) :- gap_read(f, g), !runs.single_process(g).
 
 can_read_in_the_gap(f, g) :-
-  reads_in_the_gap(f, _, _, _, g),
+  gap_read(f, g),
   runs.single_process(f),
   runs.entry_reaches(m, f),
   runs.runs_beside(m, f, g, g).
@@ -1839,8 +1878,7 @@ can_read_in_the_gap(f, g) :-
 .output ets_publish_order
 
 ets_publish_order(mod, writer, pub_kind, pub_table, row_kind, row_table, publish, complete, reader) :-
-  reads_in_the_gap(writer, publish, complete, reader, reader_func),
-  can_read_in_the_gap(writer, reader_func),
+  publish_order_race(writer, publish, complete, reader, _),
   in_module(writer, mod),
   table_of(publish, pub_kind, pub_table),
   table_of(complete, row_kind, row_table),
