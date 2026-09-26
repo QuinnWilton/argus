@@ -521,31 +521,41 @@ answers_straight_away(m) :- infinity_target(m), handle_call_function(m, h), !may
 .decl call_cycle(mod_a: symbol, mod_b: symbol, witness_a: symbol, witness_b: symbol, phase: symbol, site_a: symbol, site_b: symbol)
 .output call_cycle
 
-call_cycle(a, b, wa, wz, "call", sa, sz) :-
-  cycle_ring(a, b, z),
-  cycle_edge(a, b, wa),
-  cycle_edge(z, a, wz),
-  sync_site_or_empty(wa, b, sa),
-  sync_site_or_empty(wz, a, sz).
+// Servers wait on each other round a ring, each from its own process:
+// every wait is for a reply the next server sends only once its own wait
+// ends, so none ends. `a` is the ring's least module, from which it is
+// found once; `z` is the module whose wait closes the ring (b itself for
+// a ring of two).
+.decl wait_cycle(a: symbol, b: symbol, first_wait: symbol, closing_wait: symbol)
 
-// A cycle through a's process whose least module is a: a waits on b, b
-// reaches z through modules after a (b itself for a cycle of two), and z
-// waits on a. Walked from each module's waits on later ones only, so a
-// cycle is found once, from its least module, and none is enumerated
-// path by path.
-.decl cycle_ring(a: symbol, b: symbol, z: symbol)
+wait_cycle(a, b, first_wait, closing_wait) :-
+  process_waits_on(a, b, first_wait),
+  ring_closes_at(a, b, z),
+  process_waits_on(z, a, closing_wait).
 
-cycle_ring(a, b, z) :- after_reach(a, b, z), cycle_edge(z, a, _).
+call_cycle(a, b, first_wait, closing_wait, "call", site_a, site_z) :-
+  wait_cycle(a, b, first_wait, closing_wait),
+  sync_site_or_empty(first_wait, b, site_a),
+  sync_site_or_empty(closing_wait, a, site_z).
 
-// b is a module after a that a waits on, and z one b reaches through
-// waits among modules after a.
-.decl after_reach(a: symbol, b: symbol, z: symbol)
+// A ring through a's process whose least module is a: b, which a waits
+// on, reaches z through modules after a (b itself for a ring of two),
+// and z waits on a. Walked from each module's waits on later ones only,
+// so a ring is found once, from its least module, and none is
+// enumerated path by path.
+.decl ring_closes_at(a: symbol, b: symbol, z: symbol)
 
-after_reach(a, b, b) :- cycle_edge(a, b, _), a < b.
+ring_closes_at(a, b, z) :- waits_through_later(a, b, z), process_waits_on(z, a, _).
 
-after_reach(a, b, z) :-
-  after_reach(a, b, y),
-  cycle_edge(y, z, _),
+// b is a module after a that a's process waits on, and z one b's
+// reaches through waits among modules after a.
+.decl waits_through_later(a: symbol, b: symbol, z: symbol)
+
+waits_through_later(a, b, b) :- process_waits_on(a, b, _), a < b.
+
+waits_through_later(a, b, z) :-
+  waits_through_later(a, b, y),
+  process_waits_on(y, z, _),
   a < z.
 
 // ── Which process waits ──────────────────────────────────────────────
@@ -650,31 +660,53 @@ calls_back(b, a, w) :-
   clause_dep(b, clause, a, _),
   (request = clause ; clause = "any" ; request = "any").
 
-// One direction of a cycle: a wait a's process makes once it runs, or
-// on its way up where the start can be caught in it.
-.decl cycle_edge(a: symbol, b: symbol, w: symbol)
+// a's process waits on b's at `w`, one direction of a cycle: a wait it
+// makes once it runs, or on its way up where the start can be caught in
+// it.
+.decl process_waits_on(a: symbol, b: symbol, w: symbol)
 
-cycle_edge(a, b, w) :- process_dep(a, b, w, "run").
-cycle_edge(a, b, w) :- process_dep(a, b, w, "start"), nameable(a).
-cycle_edge(a, b, w) :- calls_back(b, a, w).
+process_waits_on(a, b, w) :- process_dep(a, b, w, "run").
+process_waits_on(a, b, w) :- process_dep(a, b, w, "start"), nameable(a).
+process_waits_on(a, b, w) :- calls_back(b, a, w).
 
-call_cycle(a, b, wa, wb, "continue", sa, sb) :-
-  continue_dep(a, b, wa),
-  continue_dep(b, a, wb),
-  a < b,
-  continue_wait(a, b, sa),
-  continue_wait(b, a, sb).
+// Two servers wait on each other from handle_continue/2: both have
+// returned from init/1, so their supervisor goes on, and neither reads
+// its mailbox again. Found once, from the lesser module.
+.decl continue_cycle(a: symbol, b: symbol, a_wait: symbol, b_wait: symbol)
 
-// A cycle of one: a synchronous call to the calling process itself — to
-// self(), to self() handed to a helper, or from a server's callback to a
-// name only its own module's processes hold (self_call, processes.dl).
-// gen checks a call's target against self() and exits with
-// :calling_self rather than wait forever for a reply the caller would
-// have to send. A module_sync_dep cycle needs two modules; this is the
-// one it cannot see.
-call_cycle(m, m, f, f, "self", id, id) :-
-  self_call(f, id),
-  function_def(f, m, _, _, _).
+continue_cycle(a, b, a_wait, b_wait) :-
+  continues_into_wait_on(a, b, a_wait),
+  continues_into_wait_on(b, a, b_wait),
+  once_per_pair(a, b).
+
+// A handle_continue/2 that init/1 continues to waits on another module's
+// server at `w` (continue_dep, clientlib/entries.dl).
+.decl continues_into_wait_on(mod: symbol, to: symbol, w: symbol) inline
+
+continues_into_wait_on(mod, to, w) :- continue_dep(mod, to, w).
+
+// The pair is taken in one order, so it is reported once.
+.decl once_per_pair(a: symbol, b: symbol) inline
+
+once_per_pair(a, b) :- a < b.
+
+call_cycle(a, b, a_wait, b_wait, "continue", site_a, site_b) :-
+  continue_cycle(a, b, a_wait, b_wait),
+  continue_wait(a, b, site_a),
+  continue_wait(b, a, site_b).
+
+// A server calls itself synchronously — through self(), self() handed to
+// a helper, or, from its callback, a name only its own module's
+// processes hold (self_call, processes.dl): gen exits with :calling_self
+// rather than wait forever for a reply only the caller could send. A
+// cycle of one, which the rings of two modules or more cannot see.
+.decl call_to_self(func: symbol, call: symbol)
+
+call_to_self(func, call) :- self_call(func, call).
+
+call_cycle(m, m, func, func, "self", call, call) :-
+  call_to_self(func, call),
+  function_def(func, m, _, _, _).
 
 // The call in a witness that makes its side of the dependency: the call
 // itself when the witness makes it; its call to the other module's client
@@ -697,7 +729,7 @@ sync_site_or_empty(f, m, "") :-
   !sync_site(f, m, _),
   !calls_into(f, m).
 
-
+// The witness calls a function of the other module.
 .decl calls_into(func: symbol, mod: symbol)
 
 calls_into(f, m) :-
@@ -728,59 +760,71 @@ call_cycle_path(a, b, from_mod, to_mod, witness, "static", site) :-
 // wait on the way from b back to a among modules after a.
 .decl ring_edge(a: symbol, b: symbol, from_mod: symbol, to_mod: symbol, witness: symbol)
 
-ring_edge(a, b, a, b, w) :- call_cycle(a, b, _, _, "call", _, _), cycle_edge(a, b, w).
+ring_edge(a, b, a, b, w) :- wait_cycle(a, b, _, _), process_waits_on(a, b, w).
 
 ring_edge(a, b, x, y, w) :-
-  call_cycle(a, b, _, _, "call", _, _),
-  after_reach(a, b, x),
-  cycle_edge(x, y, w),
+  wait_cycle(a, b, _, _),
+  waits_through_later(a, b, x),
+  process_waits_on(x, y, w),
   back_to(a, y).
 
 // y is a, or a module after a that reaches a through modules after a.
 .decl back_to(a: symbol, y: symbol)
 
-back_to(a, a) :- cycle_ring(a, _, _).
-back_to(a, z) :- cycle_ring(a, _, z).
+back_to(a, a) :- ring_closes_at(a, _, _).
+back_to(a, z) :- ring_closes_at(a, _, z).
 
 back_to(a, y) :-
   back_to(a, z),
   z != a,
-  cycle_edge(y, z, _),
+  process_waits_on(y, z, _),
   a < y.
 
 // ══ Synchronous fan-in ══════════════════════════════════════════════
-.decl sync_caller_witness(caller_mod: symbol, target_mod: symbol, witness: symbol)
 
-sync_caller_witness(caller_mod, target_mod, f) :- module_sync_dep(caller_mod, target_mod, f).
+// Many modules wait on one server's replies: it answers them one at a
+// time, and every call queues behind the others.
+.decl serialization_bottleneck(server: symbol, callers: number)
+
+serialization_bottleneck(server, callers) :-
+  caller_count(server, callers),
+  too_many_callers(callers).
+
+// How many modules have a function that waits on the server's process
+// (module_sync_dep, clientlib/calls.dl).
+.decl caller_count(server: symbol, callers: number)
+
+caller_count(server, n) :-
+  gen_server_like(server),
+  n = count : { sync_caller(_, server) }.
 
 .decl sync_caller(caller_mod: symbol, target_mod: symbol)
 
-sync_caller(caller_mod, target_mod) :- sync_caller_witness(caller_mod, target_mod, _).
+sync_caller(caller_mod, target_mod) :- module_sync_dep(caller_mod, target_mod, _).
 
-// ── Fan-in aggregation ─────────────────────────────────────────────────
+// Five or more: this separates normal centralized services (one to four
+// callers) from true serialization bottlenecks.
+.decl too_many_callers(callers: number) inline
 
-// Count of distinct caller modules for each GenServer target.
+too_many_callers(n) :- n >= 5.
+
+// Count of distinct caller modules for each such server.
 .decl sync_call_fan_in(target_mod: symbol, cnt: number)
 .output sync_call_fan_in
 
-sync_call_fan_in(target_mod, cnt) :-
-  gen_server_like(target_mod),
-  cnt = count : { sync_caller(_, target_mod) },
-  cnt >= 5.
+sync_call_fan_in(target_mod, cnt) :- serialization_bottleneck(target_mod, cnt).
 
 // ── Bottleneck callers ──────────────────────────────────────────────────
 
-// Sync callers filtered to only targets that exceed the fan-in threshold.
-// This separates normal centralized services (1–4 callers) from true
-// serialization bottlenecks. Evidence attached to the fan-in finding,
-// one related frame per caller module: one row per witness, frames
-// deduplicated on (caller_mod, target_mod).
+// The callers of each bottleneck: evidence attached to the fan-in
+// finding, one related frame per caller module: one row per witness,
+// frames deduplicated on (caller_mod, target_mod).
 .decl bottleneck_caller(caller_mod: symbol, target_mod: symbol, witness: symbol)
 .output bottleneck_caller
 
 bottleneck_caller(caller_mod, target_mod, witness) :-
-  sync_caller_witness(caller_mod, target_mod, witness),
-  sync_call_fan_in(target_mod, _).
+  module_sync_dep(caller_mod, target_mod, witness),
+  serialization_bottleneck(target_mod, _).
 
 // ══ A receive on an OTP process's own stack ═════════════════════════
 //
