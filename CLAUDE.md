@@ -94,6 +94,14 @@ those frameworks need.
   (`Extraction.derive_stage0/2`): Souffle never writes there, and no
   stage removes a file from it.
   `test/argus/analysis/shared_stage_test.exs` holds each race open.
+- An absent relation file is never an empty relation. Every writer
+  leaves a file per relation, empty when it has no rows
+  (`Pipeline.run/3` for every schema relation, Souffle for every output,
+  a kept solve's manifest for its outputs), so a reader that cannot
+  open one answers `Argus.MissingRelationError` naming the relation and
+  the file (a tagged error, or raised where the reader returns a value).
+  A new writer makes the empty case explicit; a new reader never maps
+  `{:error, _}` to `[]`.
 - Points-to follows only terms that hold a process or a table, and a
   callee that hands its parameter back returns each call's own argument
   (`passes`): context-insensitive merging through such helpers is what
@@ -255,6 +263,17 @@ names one with `cache:` on `Argus.run_analyses/2`, `Argus.analyze/3` or
   anything touched within the hour are spared; the suite's store also
   drops a set untouched for a week. Entries are read-only; a run links
   them into a scratch directory of its own.
+- **No check-then-act on an entry's name**: a fetch is the touch itself
+  and never makes an entry (`Argus.Cache.fetch/1`); an install is one
+  rename; a prune looks at a path again right before acting, renames it
+  aside before removing it, and puts back one a lookup touched between
+  (`remove_stale/1`, which every prune goes through); a reader that finds
+  a fetched entry gone, or short of a file its manifest names, takes it
+  for a miss and takes what is left out of its name (`evict/1`). A kept
+  text entry starts with its format line, so an empty file is no
+  answer. `test/argus/cache/races_test.exs` holds each race open with
+  `Argus.Test.FileGate`, a stand-in for the file server in a peer that
+  acts between a request and its answer.
 - **`ARGUS_NO_CACHE=1`** turns every store off: each run extracts and
   solves afresh, and the store tests (`@tag :cache`) are skipped. Use it
   after changing how a key is made or what a producer can read, when an
