@@ -2133,6 +2133,11 @@ upsert(r) :-
 
 .decl record_race_kind(func: symbol, read: symbol, write: symbol, kind: symbol)
 
+// Each kind is what the pair's own evidence shows, and a pair has every
+// kind its evidence supports: the read is reported at its strongest
+// (kind_rank, read_rank below), so a weaker kind beside a stronger one
+// changes nothing. A search whose write carries what it read is a lost
+// update, not a unique claim.
 record_race_kind(f, r, w, "unique") :-
   racing_record_pair(f, r, w),
   mnesia_op(w, _, "dirty_write", _, _, _, _, _),
@@ -2147,16 +2152,11 @@ record_race_kind(f, r, w, "lost_update") :-
 record_race_kind(f, r, w, "guarded") :-
   racing_record_pair(f, r, w),
   mnesia_op(w, _, "dirty_write", _, _, _, _, _),
-  !record_pair_carries_read(r, w),
-  !searches(r),
   guards_record(r, w).
 
 record_race_kind(f, r, w, "claim") :-
   racing_record_pair(f, r, w),
   mnesia_op(w, _, "dirty_write", _, _, _, _, _),
-  !record_pair_carries_read(r, w),
-  !searches(r),
-  !guards_record(r, w),
   record_decision_escapes(r),
   !upsert(r),
   !record_recomputed(r, w),
@@ -2186,42 +2186,16 @@ decides_more_here(f, r, w) :-
 record_race_kind(f, r, w, "decides_more") :-
   racing_record_pair(f, r, w),
   mnesia_op(w, _, "dirty_write", _, _, _, _, _),
-  !record_pair_carries_read(r, w),
-  !searches(r),
-  !guards_record(r, w),
   decides_more_here(f, r, w).
 
+// A dirty write a racing read decides is at least a fill, the weakest
+// kind: both racers write, and nothing above says either loses more than
+// the other's write (an upsert's branches, a value recomputed from the
+// key, a get-or-create that answers with what it read, a decision
+// nothing escapes).
 record_race_kind(f, r, w, "fill") :-
   racing_record_pair(f, r, w),
-  mnesia_op(w, _, "dirty_write", _, _, _, _, _),
-  !record_pair_carries_read(r, w),
-  !searches(r),
-  !guards_record(r, w),
-  !record_decision_escapes(r).
-
-record_race_kind(f, r, w, "fill") :-
-  racing_record_pair(f, r, w),
-  mnesia_op(w, _, "dirty_write", _, _, _, _, _),
-  !record_pair_carries_read(r, w),
-  !searches(r),
-  !guards_record(r, w),
-  upsert(r).
-
-record_race_kind(f, r, w, "fill") :-
-  racing_record_pair(f, r, w),
-  mnesia_op(w, _, "dirty_write", _, _, _, _, _),
-  !record_pair_carries_read(r, w),
-  !searches(r),
-  !guards_record(r, w),
-  record_recomputed(r, w).
-
-record_race_kind(f, r, w, "fill") :-
-  racing_record_pair(f, r, w),
-  mnesia_op(w, _, "dirty_write", _, _, _, _, _),
-  !record_pair_carries_read(r, w),
-  !searches(r),
-  !guards_record(r, w),
-  answers_with_read(f, r).
+  mnesia_op(w, _, "dirty_write", _, _, _, _, _).
 
 record_race_kind(f, r, w, "delete") :-
   racing_record_pair(f, r, w),
