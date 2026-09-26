@@ -786,6 +786,65 @@ watched_spawn(spawn) :-
 // use, and the BEAM keeps nothing that says a macro wrote it; keying the
 // belief on the target bounds what such a count can decide.
 
+// A site drops the callee's result where a clear majority of the callee's
+// sites judged with it bind the result.
+.decl ignored_where_most_are_used(func: symbol, site: symbol, callee: symbol, used: number, ignored: number, scope: symbol)
+
+ignored_where_most_are_used(func, site, callee, used, ignored, scope) :-
+  result_ignored(site, func, callee, scope),
+  !returns_no_failure(callee),
+  times_used(callee, scope, used),
+  times_ignored(callee, scope, ignored),
+  clear_majority(used, ignored),
+  !reported_elsewhere(site).
+
+// A site calls the callee with no try that takes what it raises, where a
+// clear majority of the callee's sites judged with it are guarded.
+.decl bare_where_most_are_guarded(func: symbol, site: symbol, callee: symbol, guarded: number, bare: number, scope: symbol)
+
+bare_where_most_are_guarded(func, site, callee, guarded, bare, scope) :-
+  called_bare(site, func, callee, scope),
+  times_guarded(callee, scope, guarded),
+  times_bare(callee, scope, bare),
+  clear_majority(guarded, bare).
+
+inconsistent_handling(func, site, callee, "result_checked", used, ignored, scope, "", "", "") :-
+  ignored_where_most_are_used(func, site, callee, used, ignored, scope).
+
+inconsistent_handling(func, site, callee, "exception_guarded", guarded, bare, scope, raises, cover, caught) :-
+  bare_where_most_are_guarded(func, site, callee, guarded, bare, scope),
+  call_result(site, func, callee, _, raises, _),
+  bare_cover(site, cover, caught).
+
+// A result is worth checking only if the callee can fail by returning:
+// a callee whose spec names no failure value (`:ets.new/2` returns a
+// table or raises, `:ets.delete/2` returns `true`) or never returns has
+// nothing in its result for a site to miss, however many other sites
+// happen to bind it. A callee with no spec is unknown and stays in: the
+// spec may only quiet the rule. Every callee call_result counts ships
+// specs, except the program's own start functions, whose OTP convention
+// is {:ok, pid} | {:error, _}; so there is no table of hand-written
+// shapes to keep.
+.decl returns_no_failure(callee: symbol)
+
+returns_no_failure(c) :- callee_returns(c, "total").
+returns_no_failure(c) :- callee_returns(c, "no_return").
+
+// A site unchecked_result or startup already owns is not reported twice.
+.decl reported_elsewhere(site: symbol)
+
+reported_elsewhere(site) :- unchecked_result(_, site, _, _).
+reported_elsewhere(site) :- start_result_owned(site).
+
+// A discarded start result is startup.ignored_start_result's finding,
+// whatever the other sites do; the same site is not reported twice, by
+// two concerns, under two titles.
+.decl start_result_owned(site: symbol)
+
+start_result_owned(site) :-
+  ignored_error_result(site, _, callee),
+  (contains(".start_link/", callee) ; contains(".start/", callee)).
+
 // A call site in a function another module's macro wrote, every clause
 // of it (macro_written, clientlib/generated.dl) — `use Ecto.Repo` defines
 // `stop/1` in every repo, on the `use` line — or in a closure inside one
@@ -1092,29 +1151,6 @@ guard_count(callee, t, guard, n) :-
   program_site(_, _, callee, _, guard, t),
   n = count : { program_site(_, _, callee, _, guard, t) }.
 
-// A result is worth checking only if the callee can fail by returning:
-// a callee whose spec names no failure value (`:ets.new/2` returns a
-// table or raises, `:ets.delete/2` returns `true`) or never returns has
-// nothing in its result for a site to miss, however many other sites
-// happen to bind it. A callee with no spec is unknown and stays in: the
-// spec may only quiet the rule. Every callee call_result counts ships
-// specs, except the program's own start functions, whose OTP convention
-// is {:ok, pid} | {:error, _}; so there is no table of hand-written
-// shapes to keep.
-.decl result_uncheckable(callee: symbol)
-
-result_uncheckable(c) :- callee_returns(c, "total").
-result_uncheckable(c) :- callee_returns(c, "no_return").
-
-// A discarded start result is startup.ignored_start_result's finding,
-// whatever the other sites do; the same site is not reported twice, by
-// two concerns, under two titles.
-.decl start_result_owned(site: symbol)
-
-start_result_owned(site) :-
-  ignored_error_result(site, _, callee),
-  (contains(".start_link/", callee) ; contains(".start/", callee)).
-
 // The program's belief is its clear majority: three or more sites that
 // agree, and the deviants a quarter or fewer of the population.
 .decl clear_majority(agree: number, deviate: number) inline
@@ -1167,14 +1203,6 @@ own_convention(c, b, t) :- stance(_, c, b, "agree", t).
 judged_in(site, b, t) :-
   stance(site, c, b, "deviate", t),
   own_convention(c, b, t).
-
-inconsistent_handling(func, site, callee, "result_checked", used, ignored, scope, "", "", "") :-
-  ignored_where_most_are_used(func, site, callee, used, ignored, scope).
-
-inconsistent_handling(func, site, callee, "exception_guarded", guarded, bare, scope, raises, cover, caught) :-
-  bare_where_most_are_guarded(func, site, callee, guarded, bare, scope),
-  call_result(site, func, callee, _, raises, _),
-  bare_cover(site, cover, caught).
 
 // ── How a bare site stands ──────────────────────────────────────
 //
@@ -1249,26 +1277,6 @@ caught_upto(site, i + 1, s) :-
   caught_upto(site, i, s),
   class_order(i, c),
   !deviant_catches(site, c).
-
-// A site unchecked_result or startup already owns is not reported twice.
-.decl ignored_where_most_are_used(func: symbol, site: symbol, callee: symbol, used: number, ignored: number, scope: symbol)
-
-ignored_where_most_are_used(func, site, callee, used, ignored, scope) :-
-  result_ignored(site, func, callee, scope),
-  !result_uncheckable(callee),
-  times_used(callee, scope, used),
-  times_ignored(callee, scope, ignored),
-  clear_majority(used, ignored),
-  !unchecked_result(func, site, _, _),
-  !start_result_owned(site).
-
-.decl bare_where_most_are_guarded(func: symbol, site: symbol, callee: symbol, guarded: number, bare: number, scope: symbol)
-
-bare_where_most_are_guarded(func, site, callee, guarded, bare, scope) :-
-  called_bare(site, func, callee, scope),
-  times_guarded(callee, scope, guarded),
-  times_bare(callee, scope, bare),
-  clear_majority(guarded, bare).
 
 // The sites that follow the convention, attached to the finding as its
 // evidence: what the convention looks like, drawn from the
