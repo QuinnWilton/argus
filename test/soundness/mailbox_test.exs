@@ -454,4 +454,21 @@ defmodule Argus.Soundness.MailboxTest do
       assert census_quiet?(@self_tag, C.Audit)
     end
   end
+
+  # census: init-watchdog
+  # A timer init/1 arms and cancels was excused: init/1 runs once.
+  describe "census hole: an init/1 watchdog's leftover" do
+    @stale "Timer cancelled without flushing its message"
+
+    for mod <- [C.HandshakeConn, C.RetryConn] do
+      test "#{inspect(mod)}: a clause acts on the timer init/1 cancelled" do
+        assert {:warning, @stale, {unquote(mod), :init, 1}} in fired(@census, :mailbox)
+      end
+    end
+
+    test "a leftover a catch-all drops, or one init/1 flushes, is quiet" do
+      assert census_quiet?(@stale, C.DroppedWatchdog)
+      assert census_quiet?(@stale, C.FlushedWatchdog)
+    end
+  end
 end

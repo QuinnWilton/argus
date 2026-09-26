@@ -240,6 +240,20 @@ timer_cancel_without_flush(mod, cancel, cancel, "", message, cancel_site, arm_si
   !runs_only_on_the_way_out(cancel),
   !flushes_after_cancel(cancel_site, message).
 
+// init/1 runs once, so what its watchdog delivers is no next run's. The
+// server's handle_info/2 takes it once init/1 returns, as if the timer
+// had just fired: a clause for the message acts on a timer init/1
+// cancelled (a handshake watchdog that stops a server whose handshake
+// went through). Left to a catch-all, it is dropped.
+timer_cancel_without_flush(mod, cancel, cancel, "", message, cancel_site, arm_site) :-
+  cancels_local(cancel_site, cancel, arm_site),
+  local_message(arm_site, message),
+  in_module(cancel, mod),
+  init_function(mod, cancel),
+  function_def(h, mod, "handle_info", 2, _),
+  callback_tag(h, "handle_info", message),
+  !flushes_after_cancel(cancel_site, message).
+
 // A cancel of a timer the same function armed and kept in a local.
 .decl cancels_local(cancel_site: symbol, cancel: symbol, arm_site: symbol) inline
 

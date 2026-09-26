@@ -89,6 +89,12 @@ site is judged by where it sends (`to_own_server`): its target resolves
 to the module's own server, or to nothing and names no other server. No
 row moves.
 
+**Fixed.** "Timer cancelled without flushing its message" excused every
+local timer init/1 arms and cancels, since init/1 runs once. Its
+leftover is taken by handle_info/2 once init/1 returns: it is reported
+when a clause takes the message (a handshake watchdog that stops a
+server whose handshake went through). No row moves.
+
 ### Races by their harm
 
 **Changed.** A check-then-act pair is reported when a rival can land on

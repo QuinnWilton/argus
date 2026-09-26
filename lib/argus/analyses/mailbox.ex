@@ -323,8 +323,8 @@ defmodule Argus.Analyses.Mailbox do
       "#{func} arms a timer with the message #{message} and cancels it before " <>
         "returning. If it fired first, Process.cancel_timer/1 leaves #{message} " <>
         "in the mailbox, and nothing flushes it, so the process handles a stale " <>
-        "one after this call has finished — on the next call, as if it were that " <>
-        "call's timeout.",
+        "one after this call has finished, as if the timer had just fired: as the " <>
+        "next call's timeout, or in handle_info/2.",
       at: Findings.at_site(cancel_site, mod),
       at_label: "cancels here",
       related: [Findings.related("armed with #{message} here", Findings.at_site(arm_site, mod))],
