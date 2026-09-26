@@ -47,6 +47,7 @@ defmodule Argus.Extractors.GenStatem.EventClauses do
   alias Argus.Cfg.Function
   alias Argus.Cfg.Walk
   alias Argus.Extractor.Dispatch
+  alias Argus.Instr
 
   @x0 {:x, 0}
 
@@ -180,6 +181,10 @@ defmodule Argus.Extractors.GenStatem.EventClauses do
   # A body is reachable from the starting points passing the success
   # branch only of tests on allowed registers and taking failure
   # branches freely, unless the failure is the FunctionClauseError label.
+  # A call is a body: no clause head calls anything (a guard's BIFs are
+  # `bif`/`gc_bif`), and after one `{x, 0}` holds its result, so a later
+  # test on it is the body's, not the head's (ra's `terminating_leader/3`
+  # takes every event and cases on what `leader/3` returns).
   defp reaches_body?(nil, _instrs, _starts, _allowed, _func_info), do: false
 
   defp reaches_body?(fun, instrs, starts, allowed, func_info) do
@@ -194,7 +199,7 @@ defmodule Argus.Extractors.GenStatem.EventClauses do
           {:call_ext_last, _, _, _}, _idx -> {:halt, :body}
           {:apply_last, _, _}, _idx -> {:halt, :body}
           {:wait, _}, _idx -> {:halt, :body}
-          _instr, _idx -> :continue
+          instr, _idx -> if Instr.call?(instr), do: {:halt, :body}, else: :continue
         end,
         follow?: &follow?(&1, &2, allowed, func_info)
       )

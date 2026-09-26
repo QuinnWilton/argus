@@ -6,6 +6,41 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## 0.20.0-dev — unreleased
 
+### gen_statem: a state an event is re-dispatched to, and a catch-all that hands its event on
+
+**Fixed.** The gen_statem extractor missed states, and "No clause for a
+message a gen_statem is sent" judged ra's machine without them.
+- A function a local call reaches was never a state. ra's `leader/3`,
+  `follower/3`, `candidate/3`, `pre_vote/3`, `await_condition/3` and
+  `receive_snapshot/3` re-dispatch a rewritten event to themselves, and
+  `terminating_leader/3` runs `leader/3`'s clauses. A function a local
+  call reaches is a state now when every such call hands it an event (the
+  caller's own first argument, or an event type) and a transition of the
+  module names it: a literal `{:next_state, s, ...}`, init/1's
+  `{:ok, s, ...}`, or the literal a call hands a helper whose
+  `{:next_state, target, ...}` reads that parameter (ra's
+  `next_state(follower, State, Actions)`). Redix's `disconnect/3`, handed
+  the data first, and a shared handler no transition names stay helpers.
+- A state whose every clause returns through a local helper is a state:
+  it returns the helper's action.
+- The catch-all walk went past a call into a `case` on its result, and
+  took those tests for the clause head's: `terminating_leader/3`'s
+  generic clause, which hands every event to `leader/3`, read as no
+  catch-all. A call ends the head: no head calls anything, and after one
+  `{x, 0}` holds its result.
+
+With ra's twelve states seen, the states that take `{ra_log_event, _}`,
+`nodeup`/`nodedown` and the monitors' `:DOWN` are known, and the rule's
+reading that a message some state takes is judged no further applies:
+ra's 11 rows, all false (the round-2 ledger read post_init as passed
+through at once), go. Over the 44 evaluation sets no other row of any
+analysis moves. Soundness fixtures in test/soundness/runs_test.exs: a
+call after a content test, a catch-all for casts alone, a type guard
+before the call, a re-dispatched helper no transition names, one whose
+name is written only as a message, a helper handed the data first and a
+state that returns through a helper all keep their finding; ra's
+re-dispatched named state and delegating catch-all are quiet. No schema
+change.
 ### Readers: an absent relation file is not an empty relation
 
 **Changed.** `Argus.Findings.extraction_errors/1` read a facts
@@ -92,6 +127,7 @@ way; they are touched first, without making a file, and an entry that
 does not read as digests is written again rather than left because it
 is there. `Argus.Cache.RacesTest` holds each race open with a stand-in
 for the file server (`Argus.Test.FileGate`).
+||||||| parent of 0f4bb044 ([gen_statem] a state an event is re-dispatched to is a state)
 
 ### Stages: a derivation beside another into the same directory
 

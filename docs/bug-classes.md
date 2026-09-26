@@ -1690,14 +1690,16 @@ The message is a literal atom or a tuple with a literal atom tag, or a shape the
 - Soundness assumption (review 2, item 34): a handle_event/4 clause that names a state is that state's `:info` catch-all, not the machine's (`Soundness.Mailbox.TwoStateInfo`; 391ecc6d counted it). Known false positive: a one-state machine (Postgrex's ReplicationConnection shape, `OneStateHandsOn`), a prior candidate.
 - The rule judges a message only when no state takes it. A message some state takes may be one the program sends only while the machine is in that state (`UnhandledInfo.PollerTakes`).
 - An `:info` clause that takes any content is a catch-all whatever it asks of the data or, in handle_event/4, of the state (391ecc6). For handle_event/4 that is quieter than the truth: a catch-all for some states counts for the machine (`OneStateInfoStatem`; Postgrex's ReplicationConnection names its one state).
+- A clause's head ends at its first call: a clause that hands every event on and cases on the answer is a catch-all (ra's `terminating_leader/3`, `Soundness.Runs.StatemDelegatingCatchAll`), and a test before the call still decides (`StatemContentThenCall`, `StatemCastCatchAll`, `StatemGuardedCall`, all reported).
+- The states are the extractor's (Unreachable gen_statem state, above): a state an event is re-dispatched to counts, so its clauses take what they take (ra's `leader/3` and its siblings; `Soundness.Runs.StatemRedispatchedState`, quiet).
 - It does not judge whether a machine's catch-all drops the content.
 - The finding names the state function that crashes. There is one finding per site.
 
-**Fixtures.** Positive: `UnhandledInfo.Poller` (`test/fixtures/unhandled_info_fixture.ex`). Quiet: `UnhandledInfo.PollerTakes` (same file). Asserted in `test/analyses/mailbox_unhandled_info_test.exs`.
+**Fixtures.** Positive: `UnhandledInfo.Poller` (`test/fixtures/unhandled_info_fixture.ex`). Quiet: `UnhandledInfo.PollerTakes` (same file). Asserted in `test/analyses/mailbox_unhandled_info_test.exs`; the extractor's readings in `test/soundness/runs_test.exs`.
 
 **Corpus.** Fix pairs: None. Present-only: None.
 
-**Precision.** Not measured.
+**Precision.** Once-and-again round (2026-09-26), 44 evaluation sets: 11 rows, all ra's and all false (the ledger of round 2), before the extractor saw ra's re-dispatched states and its delegating catch-alls; 0 after.
 
 ### A message a timed receive leaves behind
 
@@ -2560,7 +2562,7 @@ Another process takes or deletes the row between the check and the act, and the 
 `unreachable_state`
 · titles: "Unreachable gen_statem state" (`:warning`)
 
-**Property.** Take a module that declares `:gen_statem` (or GenStateMachine) and whose `callback_mode/0` resolves to `state_functions`. At least one of its transitions names its target literally, and none computes it at runtime, in a state function or in a helper. A state S (a state function: exported, arity 3, not a standard callback, never called locally, and returning a gen_statem action; or a state some transition names) is entered by no transition from another state, by no helper's `{:next_state, S, …}`, and is not the initial state. The initial state is what `init/1` returns in `{:ok, State, _}`. Only when that is computed, a state that has transitions of its own but no incoming one is taken as initial. The machine can never enter S: S is dead code, or a transition that should produce it is missing.
+**Property.** Take a module that declares `:gen_statem` (or GenStateMachine) and whose `callback_mode/0` resolves to `state_functions`. At least one of its transitions names its target literally, and none computes it at runtime, in a state function or in a helper. A state S (a state function: exported, arity 3, not a standard callback, called locally only by a function that hands it an event when a transition names it, and returning a gen_statem action itself or through a local helper; or a state some transition names) is entered by no transition from another state, by no helper's `{:next_state, S, …}`, and is not the initial state. The initial state is what `init/1` returns in `{:ok, State, _}`. Only when that is computed, a state that has transitions of its own but no incoming one is taken as initial. The machine can never enter S: S is dead code, or a transition that should produce it is missing.
 
 **Assumptions and limits.**
 - Soundness assumption (review 2, item 27): a helper's transition is a way in unless the target state's own function is the helper's only caller (6aff4d81 read a state re-entering itself through a helper as a way in). Positive: `Soundness.StateMachine.SelfHelperStatem` (test/soundness/state_machine_test.exs).
@@ -2568,7 +2570,8 @@ Another process takes or deletes the row between the check and the act, and the 
 - A transition a function that is not a state function returns (`statem_helper_transition`: a Redix-style `disconnect/2` returning `{:next_state, :disconnected, …}`, a lifted closure) is a way in from an unnamed state (`HelperTransitionStatem`). It errs quiet: a helper no state calls still counts.
 - A single transition to a computed state, a state function's or a helper's, silences the whole module, since it could land anywhere. The rule does not fall back to the states a dynamic target could be. A state name a helper carries in a tuple that is not an action (h2's `{ok, goaway_received, _}` which a caller drops) is not a transition, which is how h2's dead state is found.
 - A state entered only from `:gen_statem.enter_loop/4,5`, or from an `init/1` that returns through a helper, has no initial state read. The topological fallback then takes any state with transitions of its own and no incoming one for initial, so a dead state that transitions out escapes.
-- A state function whose body only delegates to a helper returns no action of its own and is not a state at all. A machine with no resolved transitions produces no findings (`DelegatingStatem`).
+- A state function whose body only delegates to a helper returns the helper's action, and is a state (`Soundness.Runs.StatemViaHelper`). A machine with no resolved transitions produces no findings (`DelegatingStatem`).
+- A function a state re-dispatches an event to is a state when a transition names it: its caller's own event (ra's `leader(EventType, Msg, State)` again, `terminating_leader/3` running `leader/3`'s clauses) or an event type it makes. One no transition names, or one handed the data first (Redix's `disconnect/3`), is a helper (`Soundness.Runs.StatemHelperNotNamed`, `StatemHelperNamedAsMessage`, `StatemDataFirst`).
 - Modules that do not declare the behaviour, and `handle_event_function` machines, are not judged.
 
 **Fixtures.** Positive: `OrphanStateStatem` (`abandoned/3`), `ClosedForeverStatem` (`abandoned/3`, a keep-state catch-all). Quiet: `OrphanStateStatem`'s `idle` (the `init/1` state, with no incoming edge) and `running`; `HelperTransitionStatem` (`disconnected`, entered only through a helper); `RestingStatem`; `SimpleStatem`, `DelegatingStatem` and `HandleEventStatem` (`test/fixtures/gen_statem_fixture.ex`). Asserted in `test/analyses/state_machine_test.exs`.

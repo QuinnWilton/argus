@@ -249,4 +249,45 @@ defmodule Argus.Extractors.GenStatemTest do
       assert is_list(totals)
     end
   end
+
+  describe "extract/1 — which functions are states" do
+    alias Argus.Test.Soundness.Runs
+
+    defp states(mod) do
+      for [_mod, state, _site] <- Map.get(GenStatem.extract(disassemble(mod)), :statem_state, []),
+          uniq: true,
+          do: state
+    end
+
+    test "a state an event is re-dispatched to, which a transition names" do
+      assert "active" in states(Runs.StatemRedispatchedState)
+    end
+
+    test "a function an event is re-dispatched to that no transition names is a helper" do
+      refute "common" in states(Runs.StatemHelperNotNamed)
+      refute "retry" in states(Runs.StatemHelperNamedAsMessage)
+    end
+
+    test "a function handed the data first is a helper" do
+      refute "disconnect" in states(Runs.StatemDataFirst)
+    end
+
+    test "a state whose clauses return through a local helper" do
+      assert "idle" in states(Runs.StatemViaHelper)
+    end
+
+    test "a clause that hands every event on is a catch-all, though a case follows the call" do
+      facts = GenStatem.extract(disassemble(Runs.StatemDelegatingCatchAll))
+      totals = for [_mod, func] <- Map.get(facts, :statem_event_catchall, []), do: func
+      assert Enum.any?(totals, &String.ends_with?(&1, ":draining/3"))
+    end
+
+    test "a call after a test of the content or a type guard is no catch-all" do
+      for mod <- [Runs.StatemContentThenCall, Runs.StatemCastCatchAll, Runs.StatemGuardedCall] do
+        facts = GenStatem.extract(disassemble(mod))
+        refute Map.get(facts, :statem_event_catchall), inspect(mod)
+        refute Map.get(facts, :statem_info_catchall), inspect(mod)
+      end
+    end
+  end
 end

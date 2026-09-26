@@ -48,6 +48,7 @@ defmodule Argus.Extractors.GenStatem do
   @behaviour Argus.Extractor
 
   alias Argus.Extractor.Dispatch
+  alias Argus.Extractor.Resolve
   alias Argus.Extractors.CallbackTag.MessageClauses
   alias Argus.Extractors.GenStatem.{CallClauses, EventClauses}
   alias Argus.Instr
@@ -221,24 +222,96 @@ defmodule Argus.Extractors.GenStatem do
   end
 
   # The {name, arity} pairs called directly by some function in this
-  # module. gen_statem dispatches to a state function externally
-  # (`apply(Mod, State, [EventType, EventContent, Data])`), so a real
-  # state is never the target of a local call. A helper that happens to
-  # be exported, arity-3, and returns a gen_statem action tuple on behalf
-  # of its caller (Redix's `disconnect(data, reason, flag)` returning
-  # `{:next_state, :disconnected, …}`) IS locally called — that is what
-  # separates it from a genuine dead state. (A state function delegating
-  # by a direct call to a sibling state would be excluded, a rare and
-  # acceptable false negative.)
+  # module other than to re-dispatch an event to a state. gen_statem
+  # dispatches to a state function externally (`apply(Mod, State,
+  # [EventType, EventContent, Data])`), so a state is the target of a
+  # local call only when a function hands it an event: its caller's own
+  # (ra's `leader(EventType, Msg, State)` again with a rewritten message,
+  # its `terminating_leader/3` running `leader/3`'s clauses) or one it
+  # makes (`receive_snapshot(info, receive_snapshot_timeout, State)`). A
+  # helper that happens to be exported, arity-3, and returns a gen_statem
+  # action tuple on behalf of its caller (Redix's `disconnect(data,
+  # reason, flag)` returning `{:next_state, :disconnected, …}`) is called
+  # with something else first — that is what separates it from a genuine
+  # dead state. A function an event is re-dispatched to is a state only
+  # when a transition of the module names it (named_states/2): a shared
+  # event handler no transition enters stays a helper.
   defp locally_called_set(mod, functions) do
     labels = function_labels(functions)
+    named = named_states(mod, functions)
+
+    calls =
+      for {:function, _n, _a, _e, instrs} <- functions,
+          {instr, idx} <- Enum.with_index(instrs),
+          fa = local_call_target(instr, mod, labels),
+          fa != nil,
+          do: {fa, redispatch?(instrs, idx)}
+
+    helpers = for {fa, false} <- calls, into: MapSet.new(), do: fa
+
+    for {{name, _arity} = fa, true} <- calls,
+        not MapSet.member?(named, name),
+        into: helpers,
+        do: fa
+  end
+
+  @event_types [:enter, :internal, :info, :cast, :timeout, :state_timeout]
+
+  # The call at idx hands its callee an event first: the caller's own
+  # first argument, or an event type.
+  defp redispatch?(instrs, idx) do
+    case Resolve.arg_position(instrs, idx, {:x, 0}) do
+      {:ok, 0} ->
+        true
+
+      _ ->
+        case Resolve.resolve_register(instrs, idx, {:x, 0}) do
+          {:ok, type} when type in @event_types -> true
+          _ -> false
+        end
+    end
+  end
+
+  # The states the module's transitions name: a literal
+  # `{:next_state, state, ...}` in any function, init/1's `{:ok, state,
+  # ...}`, and the literal a call hands a local helper whose return makes
+  # that parameter the target (ra's `next_state(follower, State,
+  # Actions)`, whose `{next_state, Next, ...}` reads its first parameter).
+  defp named_states(mod, functions) do
+    labels = function_labels(functions)
+    target_params = target_params(functions)
+
+    literal =
+      for {:function, name, arity, _e, instrs} <- functions,
+          {_idx, elements} <- return_shapes(instrs),
+          state <- named_target({name, arity}, elements),
+          into: MapSet.new(),
+          do: state
 
     for {:function, _n, _a, _e, instrs} <- functions,
-        instr <- instrs,
+        {instr, idx} <- Enum.with_index(instrs),
         fa = local_call_target(instr, mod, labels),
-        fa != nil,
-        into: MapSet.new() do
-      fa
+        k <- Map.get(target_params, fa, []),
+        {:ok, state} <- [Resolve.resolve_register(instrs, idx, {:x, k})],
+        is_atom(state),
+        into: literal,
+        do: state
+  end
+
+  defp named_target(_fa, [{:atom, :next_state}, {:atom, state} | _]), do: [state]
+  defp named_target({:init, 1}, [{:atom, :ok}, {:atom, state} | _]), do: [state]
+  defp named_target(_fa, _elements), do: []
+
+  # For each function, the parameters a `{:next_state, target, ...}` it
+  # returns takes its target from.
+  defp target_params(functions) do
+    for {:function, name, arity, _e, instrs} <- functions,
+        {idx, [{:atom, :next_state}, target | _]} <- return_shapes(instrs),
+        {kind, _} = reg <- [Instr.register(target)],
+        kind in [:x, :y],
+        {:ok, k} <- [Resolve.arg_position(instrs, idx, reg)],
+        reduce: %{} do
+      acc -> Map.update(acc, {name, arity}, [k], &Enum.uniq([k | &1]))
     end
   end
 
@@ -300,11 +373,15 @@ defmodule Argus.Extractors.GenStatem do
   #     reaches exported functions; excludes private helpers (`setopts/3`)
   #     and compiler-lifted closures (`-handle_pubsub_msg/2-fun-0-`,
   #     emitted as private arity-3 top-level functions).
-  #   * not locally called — a state is dispatched externally, never by a
-  #     sibling; excludes exported helpers a state calls directly.
+  #   * not locally called but to be handed an event — a state is
+  #     dispatched externally, and by a state that re-dispatches an event
+  #     to it when a transition names it (locally_called_set/2); excludes
+  #     exported helpers a state calls directly.
   #   * returns an action — every state clause returns a gen_statem action
-  #     tuple/atom; excludes exported client wrappers (`connect_to_node/3`
-  #     returning a `:gen_statem.call` result) and plain lookup helpers
+  #     tuple/atom, itself or through a local function whose result it
+  #     returns (a state whose every clause ends in `handle(msg, data)`);
+  #     excludes exported client wrappers (`connect_to_node/3` returning a
+  #     `:gen_statem.call` result) and plain lookup helpers
   #     (`get_connection/3`).
   #
   # Together these cut the corpus's gen_statem findings from 108 (all
@@ -312,14 +389,15 @@ defmodule Argus.Extractors.GenStatem do
   defp extract_state_functions(facts, mod, module_data, exports, locally_called) do
     mod_str = inspect(mod)
     functions = module_data.functions
+    acting = action_returning(mod, functions)
 
     state_funs =
-      Enum.filter(functions, fn {:function, name, arity, _entry, instrs} ->
+      Enum.filter(functions, fn {:function, name, arity, _entry, _instrs} ->
         arity == 3 and
           MapSet.member?(exports, {name, arity}) and
           not MapSet.member?(@non_state_callbacks, name) and
           not MapSet.member?(locally_called, {name, arity}) and
-          returns_statem_action?(instrs)
+          MapSet.member?(acting, {name, arity})
       end)
 
     # Register all states. In state_functions mode the state IS a
@@ -525,6 +603,47 @@ defmodule Argus.Extractors.GenStatem do
 
   # The two actions that are also valid as bare atoms (not just tuples).
   @statem_bare_actions MapSet.new([:keep_state_and_data, :repeat_state_and_data])
+
+  # The functions that return a gen_statem action: in their own body, or
+  # as the result of a local function that does (a tail call, a call
+  # whose result reaches a return).
+  defp action_returning(mod, functions) do
+    labels = function_labels(functions)
+
+    direct =
+      for {:function, name, arity, _e, instrs} <- functions,
+          returns_statem_action?(instrs),
+          into: MapSet.new(),
+          do: {name, arity}
+
+    returned =
+      for {:function, name, arity, _e, instrs} <- functions,
+          into: %{},
+          do: {{name, arity}, returned_locals(instrs, mod, labels)}
+
+    grow_acting(direct, returned)
+  end
+
+  defp grow_acting(acting, returned) do
+    grown =
+      for {fa, callees} <- returned,
+          not MapSet.member?(acting, fa),
+          Enum.any?(callees, &MapSet.member?(acting, &1)),
+          into: acting,
+          do: fa
+
+    if MapSet.size(grown) == MapSet.size(acting), do: acting, else: grow_acting(grown, returned)
+  end
+
+  defp returned_locals(instrs, mod, labels) do
+    for {instr, idx} <- Enum.with_index(instrs),
+        not raise_call?(instr),
+        Instr.tail_call?(instr) or (Instr.call?(instr) and result_returned?(instrs, idx)),
+        fa = local_call_target(instr, mod, labels),
+        fa != nil,
+        uniq: true,
+        do: fa
+  end
 
   defp returns_statem_action?(instrs) do
     tuple_action_return?(instrs) or bare_action_return?(instrs)
