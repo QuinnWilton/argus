@@ -426,12 +426,30 @@ table_at_param(f, p, name) :-
   p = to_string(n),
   table_at_param(c, to_string(m), name).
 
+// In `func`, the read's result decides whether the write runs, or feeds
+// what it stores, on one row (CheckThenAct's meets, followed across
+// calls). The row's table is known by its name ("by_name": the atom it
+// was created under, or the name an unnamed table was created with,
+// through the parameters it is passed in) or, when the program's users
+// hand it in, by the function and the parameter it arrives in
+// ("handed_in", below).
+.decl decides_write(func: symbol, read: symbol, write: symbol, row: EtsRow)
+
+decides_write(f, r, w, [["by_name", name], ks, k]) :- rows.meets(f, r, w, "literal", name, ks, k).
+
+decides_write(f, r, w, [["by_name", name], ks, k]) :-
+  rows.meets(f, r, w, "param", p, ks, k),
+  table_at_param(f, p, name).
+
+decides_write(f, r, w, [["handed_in", name], ks, k]) :-
+  rows.meets(f, r, w, "param", p, ks, k),
+  open_table(f, p, name).
+
+// The same pairs, by the table's name and the key alone: what the
+// rivals and the harms below are asked of.
 .decl reads_then_writes(func: symbol, read: symbol, write: symbol, name: symbol, key: symbol)
 
-reads_then_writes(f, r, w, name, k) :- rows.meets(f, r, w, "literal", name, _, k).
-reads_then_writes(f, r, w, name, k) :- rows.meets(f, r, w, "param", p, _, k), table_at_param(f, p, name).
-
-reads_then_writes(f, r, w, name, k) :- rows.meets(f, r, w, "param", p, _, k), open_table(f, p, name).
+reads_then_writes(f, r, w, name, k) :- decides_write(f, r, w, [[_, name], _, k]).
 
 // ── A table the program's users hand in ──
 //
@@ -1301,10 +1319,6 @@ ets_harm_by(f, r, w, "guarded", w2, h) :-
 
 ets_harm_by(f, r, w, "minted", w, f) :- mint_handed_out(w), rival(f, r, w, w, f).
 
-.decl ets_harm(func: symbol, read: symbol, write: symbol, kind: symbol)
-
-ets_harm(f, r, w, k) :- ets_harm_by(f, r, w, k, _, _).
-
 // ── Rows only their holder writes ────────────────────────────────
 //
 // A row whose key is minted where the row is made — a reference
@@ -1364,14 +1378,49 @@ held_row(w) :-
   !makes_row(w),
   !on_unheld_table(w).
 
-// Every pair that stands, at the sites it is reported at, with the harm
-// its rival witnesses.
+// A write another process makes, as made by calling `func`: the
+// function that names its key (rival, above).
+.type RivalWrite = [write: symbol, func: symbol]
+
+// The row's table is one any process can write: created :public
+// (public_table, clientlib/vocabulary.dl), or handed in by the program's
+// users, which the function writes from every caller's process (above).
+.decl on_public_table(row: EtsRow)
+
+on_public_table([["by_name", t], ks, k]) :- decides_write(_, _, _, [["by_name", t], ks, k]), public_table(t).
+on_public_table([["handed_in", t], ks, k]) :- decides_write(_, _, _, [["handed_in", t], ks, k]).
+
+// Another process's write can land on the pair's row between the read
+// and the write (rival, above: the pair itself in a second process, or
+// another write at a key that can be the pair's).
+.decl lands_between(rival: RivalWrite, read: symbol, write: symbol, func: symbol) inline
+
+lands_between([w2, h], r, w, f) :- rival(f, r, w, w2, h).
+
+// What the rival and the pair's write do to the row together is a harm
+// no order of the two, one after the other, leaves (ets_harm_by, above):
+// every harm is witnessed by a rival that lands between.
+.decl harms(rival: RivalWrite, read: symbol, write: symbol, func: symbol, harm: symbol) inline
+
+harms([w2, h], r, w, f, k) :- ets_harm_by(f, r, w, k, w2, h).
+
+// A read decides or feeds a write of the same row, on a table any
+// process can write, and another process's write that lands between the
+// two leaves a harm. `func` is where the read's result reaches the write.
+.decl read_then_write_race(func: symbol, read: symbol, write: symbol, row: EtsRow, harm: symbol)
+
+read_then_write_race(func, read, write, row, harm) :-
+  decides_write(func, read, write, row),
+  on_public_table(row),
+  lands_between(rival, read, write, func),
+  harms(rival, read, write, func, harm).
+
+// Every race, at the sites it is reported at: the operations, or the
+// calls to the accessors holding them.
 .decl ets_race(mod: symbol, func: symbol, name: symbol, key: symbol, read: symbol, write: symbol, kind: symbol)
 
-ets_race(mod, func, table, key, read_at, write_at, kind) :-
-  reads_then_writes(func, read, write, table, key),
-  public_table(table),
-  ets_harm(func, read, write, kind),
+ets_race(mod, func, table, key, read_at, write_at, harm) :-
+  read_then_write_race(func, read, write, [["by_name", table], _, key], harm),
   reported_at(func, read, read_at),
   reported_at(func, write, write_at),
   in_module(func, mod).
@@ -1379,10 +1428,9 @@ ets_race(mod, func, table, key, read_at, write_at, kind) :-
 // On a table the program's users hand in, the table is spelled by the
 // parameter it arrives in, counted from 0 as a key's is ("param 0"):
 // nothing names it.
-ets_race(mod, func, cat("param ", p), key, read_at, write_at, kind) :-
-  reads_then_writes(func, read, write, table, key),
+ets_race(mod, func, cat("param ", p), key, read_at, write_at, harm) :-
+  read_then_write_race(func, read, write, [["handed_in", table], _, key], harm),
   open_table(func, p, table),
-  ets_harm(func, read, write, kind),
   reported_at(func, read, read_at),
   reported_at(func, write, write_at),
   in_module(func, mod).
