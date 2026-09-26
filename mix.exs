@@ -12,6 +12,14 @@ defmodule Argus.MixProject do
       start_permanent: Mix.env() == :prod,
       elixirc_paths: elixirc_paths(Mix.env()),
       erlc_paths: erlc_paths(Mix.env()),
+      # The fixture projects' sources live under test/projects but are
+      # compiled by their own Mix projects, never loaded as tests; the
+      # corpus pairs and the pinned analysis inputs are data a test reads.
+      test_ignore_filters: [
+        &String.starts_with?(&1, "test/fixtures/"),
+        &String.starts_with?(&1, "test/projects/"),
+        &(&1 in ["test/corpus/pairs.exs", "test/argus/analysis_inputs.exs"])
+      ],
       deps: deps(),
       dialyzer: dialyzer(),
       # The test fixtures deliberately call into applications argus does not
@@ -77,7 +85,7 @@ defmodule Argus.MixProject do
     ]
   end
 
-  defp elixirc_paths(:test), do: ["lib", "test/fixtures"]
+  defp elixirc_paths(:test), do: ["lib", "test/fixtures", "test/support"]
   defp elixirc_paths(_), do: ["lib"]
 
   # The race paper's examples are Erlang, and are kept in the paper's words.

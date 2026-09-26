@@ -103,8 +103,10 @@ defmodule Argus.Graph.Environment do
     %{
       elixir: System.version(),
       otp: System.otp_release(),
-      scry: app_vsn(:scry),
-      scry_code: app_code_digest(:scry),
+      # The graph's own code lives in argus now: every argus beam, until
+      # each query is versioned by the code it runs.
+      scry: app_vsn(:panoptes),
+      scry_code: app_code_digest(:panoptes),
       # Extraction reads remote callees' specs off the code path; this
       # names every application there by version, and a dependency
       # outside OTP and Elixir also by its beams (a path dependency moves
