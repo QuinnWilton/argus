@@ -24,6 +24,7 @@ defmodule Argus.Soundness.RacesTest do
   @stale {:info, "ETS row refilled on a stale read"}
   @record {:warning, "Read-then-write race on a Mnesia record"}
   @registry {:warning, "Lookup-then-start race on a process name"}
+  @publish {:warning, "ETS row published before the row it points to"}
 
   defp assert_fires(modules, {severity, title}, mfa) do
     found = fired(modules, :races)
@@ -159,6 +160,20 @@ defmodule Argus.Soundness.RacesTest do
 
     test "a server and a task it starts per message" do
       assert_fires([R.RegCache, R.RegTaskClaim], @registry, {R.RegTaskClaim, :handle_cast, 2})
+    end
+  end
+
+  describe "a one-table map: the reader takes the value from the table" do
+    test "inline" do
+      assert_fires([R.OneTableTaken], @publish, {R.OneTableTaken, :register, 1})
+    end
+
+    test "through a helper handed the id" do
+      assert_fires([R.OneTableHelper], @publish, {R.OneTableHelper, :register, 1})
+    end
+
+    test "matched out of lookup/2" do
+      assert_fires([R.OneTableLookup], @publish, {R.OneTableLookup, :register, 1})
     end
   end
 

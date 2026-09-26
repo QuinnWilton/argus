@@ -167,7 +167,10 @@ defmodule Argus.Exclusions.RacesTest do
   end
 
   describe "a table published before it is complete" do
-    # races.dl, publishes_early: !may_share_table(w1, w2).
+    # races.dl, key_may_come_from: in a table that holds both rows, a key
+    # from outside the program may be the published row's own, which is
+    # written first; a reader must take the value from the table. (The
+    # retired !may_share_table(w1, w2) left one-table maps out whole.)
     test "a reader of the row a one-table map writes first cannot meet the gap", ctx do
       refute "id_of/1" in publish_readers(ctx, [R.TwoWayOneTable])
       assert publish_readers(ctx, [R.TwoWayTwoTables]) == ["name_of/1"]

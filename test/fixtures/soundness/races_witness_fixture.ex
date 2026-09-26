@@ -620,6 +620,64 @@ defmodule Argus.Test.Soundness.Races.RegTaskClaim do
   end
 end
 
+# ── Published before it is complete, in one table ─────────────────────
+
+defmodule Argus.Test.Soundness.Races.OneTableTaken do
+  # A two-way map in one table, and a reader that takes the id from the
+  # name's row and reads the id's row: it meets the gap.
+  @tab :sound_one_table
+
+  def start, do: :ets.new(@tab, [:named_table, :public])
+
+  def register(name) when is_binary(name) do
+    id = System.unique_integer([:positive])
+    :ets.insert(@tab, {name, id})
+    :ets.insert(@tab, {id, name})
+    id
+  end
+
+  def name_via(name) do
+    id = :ets.lookup_element(@tab, name, 2)
+    :ets.lookup_element(@tab, id, 2)
+  end
+end
+
+defmodule Argus.Test.Soundness.Races.OneTableHelper do
+  # The same, the id handed to a helper that reads its row.
+  @tab :sound_one_table_helper
+
+  def start, do: :ets.new(@tab, [:named_table, :public])
+
+  def register(name) when is_binary(name) do
+    id = System.unique_integer([:positive])
+    :ets.insert(@tab, {name, id})
+    :ets.insert(@tab, {id, name})
+    id
+  end
+
+  def name_via(name), do: name_of(:ets.lookup_element(@tab, name, 2))
+  defp name_of(id), do: :ets.lookup_element(@tab, id, 2)
+end
+
+defmodule Argus.Test.Soundness.Races.OneTableLookup do
+  # The same, the id read with lookup/2 and matched out of the row.
+  @tab :sound_one_table_lookup
+
+  def start, do: :ets.new(@tab, [:named_table, :public])
+
+  def register(name) when is_binary(name) do
+    id = System.unique_integer([:positive])
+    :ets.insert(@tab, {name, id})
+    :ets.insert(@tab, {id, name})
+    id
+  end
+
+  def name_via(name) do
+    [{^name, id}] = :ets.lookup(@tab, name)
+    :ets.lookup_element(@tab, id, 2)
+  end
+end
+
 # ── Mnesia deletes: made on the record, over a record made again ───────
 
 defmodule Argus.Test.Soundness.Races.LeaseReleaseDirty do

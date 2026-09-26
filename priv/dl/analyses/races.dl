@@ -1530,22 +1530,22 @@ publish_candidate(f, w1, w2) :-
   vs != "literal",
   key_in(f, a2, w2, vs, v).
 
-// The two writes may touch one table: then it is one row replacing
-// another, not a value published ahead of its row.
-.decl may_share_table(a: symbol, b: symbol)
-
-may_share_table(w1, w2) :-
-  publish_candidate(_, w1, w2),
-  ets_table(w1, k, t),
-  ets_table(w2, k, t).
-
+// The two writes are two rows: the completing row is keyed by V, the
+// value the first row holds past its key, and V is not that row's own
+// key (`{name, id}` then `{id, name}`), whether they share one table
+// (a map that goes both ways) or sit in two. A write of `{k, k}` then
+// `{k, ...}` is one row written twice.
 .decl publishes_early(func: symbol, publish: symbol, complete: symbol)
 
 publishes_early(f, w1, w2) :-
   publish_candidate(f, w1, w2),
   ets_table(w1, _, _),
   ets_table(w2, _, _),
-  !may_share_table(w1, w2).
+  insert_at(f, a1, w1),
+  value_in(f, a1, w1, _, vs, v),
+  key_in(f, a1, w1, ks, k),
+  key_in(f, _, w2, vs, v),
+  (vs != ks ; v != k).
 
 // A read that raises when the key has no row. lookup_element/4 and
 // update_counter/4 take a default and do not; update_element answers
@@ -1648,19 +1648,39 @@ open_source(g, "call", h) :- key_needed(g, "call", h), !returns_depends(h, _, _)
 open_source(g, k, s) :- key_needed(g, "param", p), call_arg_reads(c, g, n, k, s), p = to_string(n), open_source(c, k, s).
 open_source(g, "call", h) :- key_needed(g, "call", h), returns_depends(h, k, s), open_source(h, k, s).
 
+// A key whose origin the program does not show can hold V when the
+// reader reads another table than the one V is published in: every key
+// of that table is a value like V. In a table that holds both rows (a
+// map that goes both ways), such a key may as well be the published
+// row's own, whose row is written first: there the reader must take V
+// from the table.
 .decl key_may_come_from(r: symbol, tk: symbol, t: symbol)
 
 key_may_come_from(r, tk, t) :-
   publish_reader_candidate(_, _, _, r, g, tk, t),
   ets_key(r, "param", p),
-  (from_table(g, "param", p, tk, t) ; open_source(g, "param", p)).
+  from_table(g, "param", p, tk, t).
+
+key_may_come_from(r, tk, t) :-
+  publish_reader_candidate(_, _, _, r, g, tk, t),
+  ets_key(r, "param", p),
+  open_source(g, "param", p),
+  !ets_table(r, tk, t).
 
 key_may_come_from(r, tk, t) :-
   publish_reader_candidate(_, _, _, r, g, tk, t),
   ets_key(r, ks, _),
   ks != "param",
   site_reads(r, g, k, s),
-  (from_table(g, k, s, tk, t) ; open_source(g, k, s)).
+  from_table(g, k, s, tk, t).
+
+key_may_come_from(r, tk, t) :-
+  publish_reader_candidate(_, _, _, r, g, tk, t),
+  ets_key(r, ks, _),
+  ks != "param",
+  site_reads(r, g, k, s),
+  open_source(g, k, s),
+  !ets_table(r, tk, t).
 
 .decl reads_in_the_gap(func: symbol, publish: symbol, complete: symbol, reader: symbol, g: symbol)
 
