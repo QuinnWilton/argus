@@ -70,9 +70,10 @@ defmodule Mix.Tasks.Compile.ScryTest do
 
       # The fixture goldens: two coupling findings at the tree
       # definition and two task findings. Nothing else from the default
-      # set: Sonar's handle_info/2 has no catch-all, but nothing writes
-      # its mailbox that it does not take — the one call it makes out is
-      # a timed GenServer.call, whose late reply an alias drops.
+      # set: Sonar's handle_info/2 has no catch-all, which is no finding
+      # by itself, and nothing writes its mailbox that it does not take —
+      # the one call it makes out is a timed GenServer.call, whose late
+      # reply an alias drops.
       assert counts_by_code(diags) == %{"coupling" => 2, "mailbox" => 2}
 
       coupling = Enum.filter(diags, &(code_of(&1) == "coupling"))

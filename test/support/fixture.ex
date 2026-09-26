@@ -10,9 +10,9 @@ defmodule Scry.Test.Fixture do
   Notifier, anchored at the tree definition in application.ex),
   `mailbox: 2` (the leaked task in archive.ex and the linked task the same
   module starts in library code), nothing else. Sonar's handle_info/2
-  has no catch-all and is not reported: nothing writes its mailbox that
-  it does not take (its one outside call is a timed `GenServer.call`,
-  whose late reply an alias drops).
+  has no catch-all, which is no finding by itself: nothing writes its
+  mailbox that it does not take (its one outside call is a timed
+  `GenServer.call`, whose late reply an alias drops).
 
   The scry compiler task itself is resolved from this test VM's code
   path (the host app's, which a peer starts from), so the fixture needs
