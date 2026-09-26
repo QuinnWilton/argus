@@ -50,53 +50,64 @@
 // level (clientlib/tooling.dl, Argus.Findings.Tooling).
 .output tooling
 
-// ── The sinks ────────────────────────────────────────────────────
+// ── A sink a request reaches ─────────────────────────────────────
 
+// A request reaches a call that makes an atom, deserializes, decompresses
+// or runs code on input the program does not bound: the request's data
+// flows into its argument, a view renders it from a template's assigns,
+// or it is on the calls a request handler makes.
+.decl request_reached_sink(id: symbol, func: symbol, entry: symbol, kind: symbol, evidence: symbol)
+
+request_reached_sink(id, func, entry, kind, evidence) :-
+  sink(id, func, _, _, _),
+  reached_by_request(id, func, entry, kind, evidence).
+
+// A call that makes an atom, deserializes, decompresses or runs code, on
+// input the program does not bound, once per call in the source.
 // `safety` is the deserialization's option class — unsafe, atoms_only
 // ([:safe] passed: no new atoms, but a fun referencing a loaded module
 // still runs when the term is used) or dynamic — and empty for the other
 // sinks. It reaches the finding so the text can say which.
 .decl sink(id: symbol, func: symbol, api: symbol, kind: symbol, safety: symbol)
 
-sink(id, func, api, "atom", "") :-
-  unsafe_atom_creation(id, func, api),
-  !bounded_input(id, func),
+sink(id, func, api, kind, safety) :-
+  sink_call(id, func, api, kind, safety),
+  !bounded_sink_input(id, func, kind),
   !repeated_site(id).
 
-sink(id, func, api, "code", "") :- code_execution(id, func, api), !repeated_site(id).
+// Every site of the four sinks, bounded or not: the flow walk (below)
+// starts at each, since whether an atoms-of-atoms bound holds asks
+// whether request data reaches the site. A deserialization is one only
+// in the option classes that can make atoms or funs.
+.decl sink_call(id: symbol, func: symbol, api: symbol, kind: symbol, safety: symbol)
 
-// A one-shot decompression's input has no bound the program can write:
-// a literal compressed blob is not a shape anyone decompresses, so no
-// allowlist quiets it. What bounds it is the streaming form, which is
-// not a sink.
-sink(id, func, api, "decompression", "") :-
-  unsafe_decompression(id, func, api, _),
-  !repeated_site(id).
+sink_call(id, func, api, "atom", "") :- unsafe_atom_creation(id, func, api).
+sink_call(id, func, api, "code", "") :- code_execution(id, func, api).
+sink_call(id, func, api, "decompression", "") :- unsafe_decompression(id, func, api, _).
+
+sink_call(id, func, api, "deserialization", safety) :-
+  unsafe_deserialization(id, func, api, safety),
+  unsafe_safety_class(safety).
+
+// The program bounds the input of an atom or deserialization sink
+// (bounded_input). A code sink's module may be bounded while its function
+// is not, and a one-shot decompression's input has no bound the program
+// can write: a literal compressed blob is not a shape anyone
+// decompresses, so no allowlist quiets it. What bounds a decompression is
+// the streaming form, which is not a sink.
+.decl bounded_sink_input(id: symbol, func: symbol, kind: symbol)
+
+bounded_sink_input(id, func, "atom") :- sink_call(id, func, _, "atom", _), bounded_input(id, func).
+
+bounded_sink_input(id, func, "deserialization") :-
+  sink_call(id, func, _, "deserialization", _),
+  bounded_input(id, func).
 
 // The argument a decompression reads: the compressed data, not the
 // zstream `inflate/2` takes first (which lives in the handler's state).
 .decl sink_data_arg(id: symbol, func: symbol, pos: number)
 
 sink_data_arg(id, func, pos) :- unsafe_decompression(id, func, _, pos).
-
-// Every site of the four sinks, bounded or not: the flow walk (below)
-// starts at each, since whether an atoms-of-atoms bound holds asks
-// whether request data reaches the site.
-.decl sink_site(id: symbol, func: symbol, kind: symbol)
-
-sink_site(id, func, "atom") :- unsafe_atom_creation(id, func, _).
-sink_site(id, func, "code") :- code_execution(id, func, _).
-sink_site(id, func, "decompression") :- unsafe_decompression(id, func, _, _).
-
-sink_site(id, func, "deserialization") :-
-  unsafe_deserialization(id, func, _, safety),
-  unsafe_safety_class(safety).
-
-sink(id, func, api, "deserialization", safety) :-
-  unsafe_deserialization(id, func, api, safety),
-  unsafe_safety_class(safety),
-  !bounded_input(id, func),
-  !repeated_site(id).
 
 // ── Input the program bounds ─────────────────────────────────────
 //
@@ -249,6 +260,35 @@ bounded_first(first) :- sink_copy(_, f, first), bounded_input(first, f).
 
 // ── Reachability from a request surface ──────────────────────────
 
+// How a request reaches the sink at `id` in `func`, strongest evidence
+// first: its data flows into the sink's argument ("flow"), else a view
+// renders the sink from a template's assigns ("rendered"; only the call
+// that reaches the view's dispatch is on its path, so it replaces the
+// path rows, as a flow does), else the sink is on the calls a request
+// handler makes, graded by how far (request_reaches). One evidence per
+// sink: the analysis module dedupes on the site, keeping the
+// lexicographically least row, and "adjacent" sorts before "flow".
+.decl reached_by_request(id: symbol, func: symbol, entry: symbol, kind: symbol, evidence: symbol)
+
+reached_by_request(id, func, entry, kind, "flow") :-
+  sink(id, func, _, _, _),
+  request_data_reaches(id, entry, kind).
+
+reached_by_request(id, func, entry, kind, "rendered") :-
+  sink(id, func, _, _, _),
+  request_reaches(entry, kind, func, _),
+  !request_data_reaches(id, _, _),
+  rendered_from_assigns(id).
+
+reached_by_request(id, func, entry, kind, proximity) :-
+  sink(id, func, _, _, _),
+  request_reaches(entry, kind, func, proximity),
+  !request_data_reaches(id, _, _),
+  !rendered_from_assigns(id).
+
+// A request entry reaches `func` on its calls: `func` is the entry
+// ("direct", its arguments ARE the request), one call away ("adjacent"),
+// or further ("transitive": a path, not a proven flow).
 .decl request_reaches(entry: symbol, kind: symbol, func: symbol, proximity: symbol)
 
 request_reaches(entry, kind, entry, "direct") :-
@@ -338,7 +378,7 @@ sink_flow_reaches(c, q, t) :-
   call_arg(c, f, np, cat("\"", cat(name, "\""))).
 
 sink_flow_seed(func, pos, id) :-
-  sink_site(id, func, k),
+  sink_call(id, func, _, k, _),
   k != "decompression",
   sink_arg_derived(id, func, _, pos).
 
@@ -346,9 +386,11 @@ sink_flow_seed(func, pos, id) :-
   sink_data_arg(id, func, arg),
   sink_arg_derived(id, func, arg, pos).
 
-.decl sink_flow_from(id: symbol, entry: symbol, kind: symbol)
+// Request data reaches the sink's argument: the walk back from it ends
+// at one of a request entry's request-carrying parameters.
+.decl request_data_reaches(id: symbol, entry: symbol, kind: symbol)
 
-sink_flow_from(id, entry, kind) :-
+request_data_reaches(id, entry, kind) :-
   sink_flow_reaches(entry, pos, id),
   request_param(entry, pos),
   request_entry(entry, kind).
@@ -376,9 +418,10 @@ template_function(f) :-
   function_def(f, _, name, 1, _),
   match(".*[.](html|heex|eex|json|text|xml|js|txt)", name).
 
-.decl sink_rendered(id: symbol)
+// The sink's argument is made of a template's assigns.
+.decl rendered_from_assigns(id: symbol)
 
-sink_rendered(id) :-
+rendered_from_assigns(id) :-
   template_function(t),
   sink_flow_reaches(t, 0, id).
 
@@ -387,16 +430,48 @@ sink_rendered(id) :-
 // Anchored at the sink's call site, because that is where the fix
 // goes, with one reaching entry point so the report can show the path
 // is real. A sink reachable from several entries is one finding: the
-// analysis module dedupes on the site — keeping the lexicographically
-// least row, which is why a proven flow must replace the path rows for
-// its site rather than sit beside them: "adjacent" sorts before "flow".
+// analysis module dedupes on the site.
+
+// Each sink a request reaches, with what its function reads when the
+// evidence is a path (graded_by_reads).
+.decl sink_reachable(id: symbol, func: symbol, api: symbol, sink: symbol, entry: symbol, kind: symbol, proximity: symbol, source: symbol, permille: number, safety: symbol)
+.output sink_reachable
+
+sink_reachable(id, func, api, s, entry, kind, evidence, source, p, safety) :-
+  request_reached_sink(id, func, entry, kind, evidence),
+  sink(id, func, api, s, safety),
+  graded_by_reads(func, evidence, source, p).
 
 // What the sink's own function reads, when priors are on (Argus.Priors;
 // off by default): a path row to a helper that converts a stored record
 // is the sequin shape — real as a path, storage as data — and the
-// finding says so at a step lower severity. A proven flow needs no
-// prior. 0.7 is where the calibration spike measured 95% precision.
+// finding says so at a step lower severity. A proven flow, or a render
+// from assigns, needs no prior and is not graded. 0.7 is where the
+// calibration spike measured 95% precision.
+.decl graded_by_reads(func: symbol, evidence: symbol, source: symbol, permille: number)
 
+graded_by_reads(func, evidence, "", 0) :-
+  request_reached_sink(_, func, _, _, evidence),
+  proven_reach(evidence).
+
+graded_by_reads(func, evidence, source, p) :-
+  request_reached_sink(_, func, _, _, evidence),
+  !proven_reach(evidence),
+  sink_func_reads(func, source, p).
+
+graded_by_reads(func, evidence, "", 0) :-
+  request_reached_sink(_, func, _, _, evidence),
+  !proven_reach(evidence),
+  !sink_func_reads(func, _, _).
+
+// Evidence that the request's data, not only its path, reaches the sink.
+.decl proven_reach(evidence: symbol)
+
+proven_reach("flow").
+proven_reach("rendered").
+
+// The stored sources a sink's function reads by the prior, at 0.7 or
+// more, where the function holds one sink.
 .decl sink_func_reads(func: symbol, source: symbol, permille: number)
 
 sink_func_reads(func, source, p) :-
@@ -412,37 +487,6 @@ sink_func_reads(func, source, p) :-
 
 several_sinks(func) :- sink(a, func, _, _, _), sink(b, func, _, _, _), a != b.
 
-// One arm per sink, strongest evidence first: a proven flow, else a sink
-// a view renders (only the call that reaches the view's dispatch is on
-// its path, so its row replaces the path rows, as a flow's does), else
-// the request path, graded by what the sink's function reads.
-.decl sink_reachable(id: symbol, func: symbol, api: symbol, sink: symbol, entry: symbol, kind: symbol, proximity: symbol, source: symbol, permille: number, safety: symbol)
-.output sink_reachable
-
-sink_reachable(id, func, api, s, entry, kind, "flow", "", 0, safety) :-
-  sink(id, func, api, s, safety),
-  sink_flow_from(id, entry, kind).
-
-sink_reachable(id, func, api, s, entry, kind, "rendered", "", 0, safety) :-
-  sink(id, func, api, s, safety),
-  request_reaches(entry, kind, func, _),
-  !sink_flow_from(id, _, _),
-  sink_rendered(id).
-
-sink_reachable(id, func, api, s, entry, kind, proximity, source, p, safety) :-
-  sink(id, func, api, s, safety),
-  request_reaches(entry, kind, func, proximity),
-  !sink_flow_from(id, _, _),
-  !sink_rendered(id),
-  sink_func_reads(func, source, p).
-
-sink_reachable(id, func, api, s, entry, kind, proximity, "", 0, safety) :-
-  sink(id, func, api, s, safety),
-  request_reaches(entry, kind, func, proximity),
-  !sink_flow_from(id, _, _),
-  !sink_rendered(id),
-  !sink_func_reads(func, _, _).
-
 // The same sinks where no request path exists: atom creation and code
 // execution reachable from an exported function, and every unsafe
 // deserialization. Reported here only, so a sink is one finding.
@@ -455,13 +499,13 @@ export_reach.root(func) :- api_export(func).
 unreached_sink(id, func, api, "code", "") :-
   sink(id, func, api, "code", ""),
   export_reach.reaches(func),
-  !sink_reachable(id, _, _, _, _, _, _, _, _, _).
+  !request_reached_sink(id, _, _, _, _).
 
 unreached_sink(id, func, api, "atom", "") :-
   sink(id, func, api, "atom", ""),
   export_reach.reaches(func),
   caller_input(id),
-  !sink_reachable(id, _, _, _, _, _, _, _, _, _).
+  !request_reached_sink(id, _, _, _, _).
 
 // What the value such a sink converts is, when priors are on
 // (Argus.Priors; off by default): library API handed a pool's name, a
@@ -668,11 +712,11 @@ unreached_sink(id, func, api, "decompression", "") :-
   sink(id, func, api, "decompression", ""),
   export_reach.reaches(func),
   inflate_caller_input(id),
-  !sink_reachable(id, _, _, _, _, _, _, _, _, _).
+  !request_reached_sink(id, _, _, _, _).
 
 unreached_sink(id, func, api, "deserialization", safety) :-
   sink(id, func, api, "deserialization", safety),
-  !sink_reachable(id, _, _, _, _, _, _, _, _, _).
+  !request_reached_sink(id, _, _, _, _).
 
 // The exported functions the sink is reachable from, walked back from
 // the sink a few calls: evidence for "the module's public surface
