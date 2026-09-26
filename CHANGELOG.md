@@ -100,6 +100,13 @@ server whose handshake went through). No row moves.
 init/1 that awaits a task calling a later sibling holds its start on it,
 and is the startup deadlock it was not. No row moves.
 
+**Fixed.** startup took two supervision trees as running for each other
+by being two. A start function that starts a tree and then, once it
+returns, starts D (`post_start_call`) is the witness that a child of the
+tree whose init/1 calls D waits on a process started after it:
+"Startup deadlock: init waits on a later sibling", ordering
+`after_tree`. No row moves.
+
 ### Races by their harm
 
 **Changed.** A check-then-act pair is reported when a rival can land on

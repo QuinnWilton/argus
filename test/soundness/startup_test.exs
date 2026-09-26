@@ -161,4 +161,19 @@ defmodule Argus.Soundness.StartupTest do
       assert {:warning, @before_dep, {C.TaskSup, :init, 1}} in fired(@census, :startup)
     end
   end
+
+  # census: after-tree
+  # Two supervision trees were taken as running for each other by being
+  # two, though the start function starts the peer after the tree.
+  describe "census hole: a peer the start function starts after the tree" do
+    for mod <- [C.Cache, C.SizedCache] do
+      test "#{inspect(mod)}: init/1 waits on a process started after its tree" do
+        assert census_deadlock?(unquote(mod))
+      end
+    end
+
+    test "a peer started before the tree is quiet" do
+      refute Enum.any?(fired(@census, :startup), &match?({_, _, {C.EarlyConfigCache, _, _}}, &1))
+    end
+  end
 end

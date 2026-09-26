@@ -239,10 +239,13 @@ blocks_on_peer(mod, "init", callee, "call", "unknown", "", site, "conditional") 
 
 // A call to a sibling that starts later is reported once, with the
 // tree ordering, under "Start order" below (later_sibling_dep): the
-// deadlock, not also a call of unknown place beside it.
+// deadlock, not also a call of unknown place beside it. So is a call to
+// a process the start function starts only after the tree
+// (after_tree_dep).
 .decl later_sibling_call(child: symbol, dep: symbol)
 
 later_sibling_call(child, dep) :- later_sibling_dep(child, dep, "call", _, _, _).
+later_sibling_call(child, dep) :- after_tree_dep(child, dep, _, _, _).
 
 // ── Supervisor management calls from init/1 ──────────────────────────
 //
@@ -599,6 +602,31 @@ later_sibling_dep(child, dep, kind, sup, sup_site, witness) :-
 
 blocks_on_peer(child, "init", dep, kind, "later", sup, sup_site, witness) :-
   later_sibling_dep(child, dep, kind, sup, sup_site, witness).
+
+// ── A process the start function starts after the tree ───────────────
+//
+// The same deadlock one level up: a function starts a tree
+// (`Supervisor.start_link(children, opts)`, an Application's start/2)
+// and then, once it returns, starts D itself (post_start_call). A child
+// C of the tree whose init/1 holds its start on D (init_dep "call") runs
+// inside that start_link, before D's start: the call exits :noproc, C
+// fails, the tree fails, and the application with it. Two supervision
+// trees are not "already running" for each other by being two: the
+// start function's own order places them. `start` is the start
+// function, `site` its call that starts D.
+.decl after_tree_dep(child: symbol, dep: symbol, start: symbol, site: symbol, witness: symbol)
+
+after_tree_dep(child, dep, s, site, witness) :-
+  supervisor_site(sup, t),
+  call_site(t, s, "Supervisor", "start_link", _),
+  boot_subtree(sup, _, child),
+  post_start_call(s, site, callee),
+  function_def(callee, dep, "start_link", _, _),
+  init_dep(child, dep, "call", witness),
+  child != dep.
+
+blocks_on_peer(child, "init", dep, "call", "after_tree", s, site, witness) :-
+  after_tree_dep(child, dep, s, site, witness).
 
 // ══ Deferred startup: handle_continue ═══════════════════════════════
 //

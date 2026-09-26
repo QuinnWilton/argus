@@ -428,6 +428,33 @@ defmodule Argus.Analyses.Startup do
     )
   end
 
+  def finding(:blocks_on_peer, [child, "init", dep, "call", "after_tree", start, site, witness]) do
+    Findings.new(
+      :error,
+      "Startup deadlock: init waits on a later sibling",
+      "#{child} blocks in init/1 on #{dep}, which #{Findings.call_name(start)} " <>
+        "starts only after the tree holding #{child} has started. That tree's " <>
+        "start cannot return until #{child}'s init/1 does, and #{dep} is not " <>
+        "started until then: the call exits :noproc, #{child} fails, and the " <>
+        "tree and whatever starts it fail with it.",
+      at: Findings.at_mfa(child, :init, 1),
+      at_label: "this init blocks the start sequence",
+      help: [
+        "start `#{dep}` before the tree, or as its child ahead of `#{child}` " <>
+          "(supervisors start children in order), or defer the call to " <>
+          "`handle_continue/2`"
+      ],
+      related: [
+        Findings.related(
+          "#{dep} started here, after the tree",
+          Findings.at_site_in_func(site, start)
+        ),
+        Findings.related("init-time call", Findings.at_func(witness)),
+        Findings.related("later dependency", Findings.at_module(dep))
+      ]
+    )
+  end
+
   def finding(:blocks_on_peer, [child, "init", dep, _kind, "later", sup, sup_site, witness]) do
     Findings.new(
       :warning,
