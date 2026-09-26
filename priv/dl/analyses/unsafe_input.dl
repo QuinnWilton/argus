@@ -119,9 +119,9 @@ sink_data_arg(id, func, pos) :- unsafe_decompression(id, func, _, pos).
 // "forwards"]` makes one of two atoms. A membership test against a list
 // the function takes as a parameter bounds it where every caller passes
 // a literal list (call_arg_allowlist): hexpm's `safe_to_atom(bin,
-// allowed)`, called with `@sort_params`. Only the argument an atom or a
-// deserialization sink reads (position 0) is asked; a code sink's module
-// may be bounded while its function is not.
+// allowed)`, called with `@sort_params`. Only the argument at position 0
+// is asked, the one an atom or a deserialization sink reads
+// (bounded_sink_input).
 .decl bounded_input(id: symbol, func: symbol)
 
 bounded_input(id, f) :- sink_arg_bounded(id, f, 0, "").
@@ -137,6 +137,8 @@ bounded_input(id, f) :-
   call_edge(_, f),
   !unlisted_caller(f, q).
 
+// A caller of `func` hands its allowlist parameter `pos` something other
+// than a literal list.
 .decl unlisted_caller(func: symbol, pos: symbol)
 
 unlisted_caller(f, q) :-
@@ -146,6 +148,7 @@ unlisted_caller(f, q) :-
   call_edge(c, f),
   !allowlist_at(c, f, q).
 
+// The caller hands the callee's parameter `pos` a literal list.
 .decl allowlist_at(caller: symbol, callee: symbol, pos: symbol)
 
 allowlist_at(c, f, to_string(n)) :- call_arg_allowlist(c, f, n).
@@ -195,16 +198,21 @@ atoms_chosen(id) :- sink_arg_bounded(id, f, 0, "atoms"), atoms_fed_back(f).
 
 atoms_reach.seed(f, f) :- sink_arg_bounded(_, f, 0, "atoms").
 
+// A request entry reaches the function making atoms of atoms.
 .decl atoms_requested(func: symbol)
 
 atoms_requested(f) :- request_entry(e, _), atoms_reach.reaches(e, f).
 
+// The function's atoms come back to it: it is on a cycle of the call
+// graph, or it is the fun a fold runs.
 .decl atoms_fed_back(func: symbol)
 
 atoms_fed_back(f) :-
   atoms_reach.reaches(g, f),
   call_edge(f, g),
   !comprehension_loop(f, g).
+
+atoms_fed_back(f) :- fold_closure(f), sink_arg_bounded(_, f, 0, "atoms").
 
 // The edge an Erlang comprehension's function makes to itself, walking
 // its list: the loop the comprehension compiles to, not a way back. A
@@ -217,8 +225,6 @@ comprehension_loop(f, f) :-
   call_edge(f, f),
   function_def(f, _, n, _, _),
   match("-.*-l[b]?c[$].*", n).
-
-atoms_fed_back(f) :- fold_closure(f), sink_arg_bounded(_, f, 0, "atoms").
 
 // A closure handed to a fold, which calls it with its own last answer.
 .decl fold_closure(closure: symbol)
@@ -254,6 +260,7 @@ fold_api(":maps", "fold").
 
 repeated_site(id) :- sink_copy(id, _, first), !bounded_first(first).
 
+// The first copy is bounded, so its copies are reported in its stead.
 .decl bounded_first(id: symbol)
 
 bounded_first(first) :- sink_copy(_, f, first), bounded_input(first, f).
