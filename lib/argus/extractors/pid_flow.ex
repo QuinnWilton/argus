@@ -84,7 +84,9 @@ defmodule Argus.Extractors.PidFlow do
     tuple with a literal atom first, or `dynamic`.
   - `pid_signal(id, func, signal, src_kind, src)` — the exit signal
     (`exit`: `Process.exit/2`, `:erlang.exit/2`), monitor (`monitor`),
-    link (`link`) or unlink (`unlink`) at `id` goes to the source.
+    link (`link`), unlink (`unlink`) or stop (`stop`: a gen behaviour's
+    or an Agent's `stop`, a supervisor's `terminate_child/2` of a pid) at
+    `id` goes to the source.
   - `pid_object(func, obj, shape, tag, arity)` — `func` builds the term
     `obj`: a `map`, `tuple` or `list`, with a tuple's literal atom tag and
     arity (else `""` and 0). Only a term that holds a source is an object.
@@ -1771,10 +1773,28 @@ defmodule Argus.Extractors.PidFlow do
   end
 
   # An exit signal, a monitor or a link, with the register naming the
-  # process it goes to.
+  # process it goes to; and a stop: a gen behaviour's stop of the process,
+  # or a supervisor's terminate_child of the child's pid (a
+  # `Supervisor.terminate_child/2` of a child id names no process, and
+  # resolves to none).
   @signals %{
     {Process, :exit, 2} => {"exit", {:x, 0}},
     {:erlang, :exit, 2} => {"exit", {:x, 0}},
+    {GenServer, :stop, 1} => {"stop", {:x, 0}},
+    {GenServer, :stop, 2} => {"stop", {:x, 0}},
+    {GenServer, :stop, 3} => {"stop", {:x, 0}},
+    {:gen_server, :stop, 1} => {"stop", {:x, 0}},
+    {:gen_server, :stop, 3} => {"stop", {:x, 0}},
+    {:gen_statem, :stop, 1} => {"stop", {:x, 0}},
+    {:gen_statem, :stop, 3} => {"stop", {:x, 0}},
+    {:proc_lib, :stop, 1} => {"stop", {:x, 0}},
+    {:proc_lib, :stop, 3} => {"stop", {:x, 0}},
+    {Agent, :stop, 1} => {"stop", {:x, 0}},
+    {Agent, :stop, 2} => {"stop", {:x, 0}},
+    {Agent, :stop, 3} => {"stop", {:x, 0}},
+    {DynamicSupervisor, :terminate_child, 2} => {"stop", {:x, 1}},
+    {Supervisor, :terminate_child, 2} => {"stop", {:x, 1}},
+    {:supervisor, :terminate_child, 2} => {"stop", {:x, 1}},
     {Process, :monitor, 1} => {"monitor", {:x, 0}},
     {Process, :monitor, 2} => {"monitor", {:x, 0}},
     {:erlang, :monitor, 2} => {"monitor", {:x, 1}},

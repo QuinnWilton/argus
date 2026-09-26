@@ -156,7 +156,7 @@ defmodule Argus.Schema.Processes do
         fields: [
           {:id, :instr_id, "instruction ID of the call"},
           {:func, :func_id, "function making it"},
-          {:signal, :symbol, "exit, monitor, link or unlink"},
+          {:signal, :symbol, "exit, monitor, link, unlink or stop"},
           {:src_kind, :symbol,
            "where the value comes from: proc, param, result, name, self, obj, load, reply or remote"},
           {:src, :symbol,
@@ -164,8 +164,9 @@ defmodule Argus.Schema.Processes do
         ],
         doc: """
         The exit signal (Process.exit/2, :erlang.exit/2), monitor \
-        (Process.monitor/1,2, :erlang.monitor/2,3), link or unlink at `id` goes \
-        to the source.
+        (Process.monitor/1,2, :erlang.monitor/2,3), link, unlink or stop (a \
+        gen behaviour's or an Agent's stop, a supervisor's \
+        `terminate_child/2` of a pid) at `id` goes to the source.
         """
       },
       %{

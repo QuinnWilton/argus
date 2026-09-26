@@ -107,6 +107,17 @@ tree whose init/1 calls D waits on a process started after it:
 "Startup deadlock: init waits on a later sibling", ordering
 `after_tree`. No row moves.
 
+**Fixed.** Schema 143. `pid_signal` has a `stop` kind: a gen behaviour's
+or an Agent's `stop`, and a supervisor's `terminate_child/2` of a pid,
+which the points-to stage resolves as it does a monitor. "Server
+terminates a process it still monitors" was excused by any demonitor
+anywhere in the module, and did not tie the kill to the monitored
+process. The kill must be of the monitored process (or either does not
+resolve), and only a demonitor on the kill's own way releases it. The
+clientlib's `module_demonitors` goes. 2 rows come (Livebook's
+`RuntimeServer`, whose kills drop the record the `:DOWN` clause looks
+up: false; the class needs its harm witness).
+
 ### Races by their harm
 
 **Changed.** A check-then-act pair is reported when a rival can land on

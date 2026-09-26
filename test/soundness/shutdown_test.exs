@@ -43,4 +43,42 @@ defmodule Argus.Soundness.ShutdownTest do
       assert fired([S.ExitClauseLoop, S.CatchAllLoop], :shutdown) == []
     end
   end
+
+  # The exclusion census's shutdown hole (docs/design/exclusions.md): a
+  # demonitor anywhere in the module excused every kill of a monitored
+  # process. The kill is tied to the monitored process (points-to), and
+  # only a demonitor on the kill's own way releases it.
+  describe "census hole: a kill of a monitored process" do
+    alias Argus.Test.Soundness.Census.Shutdown, as: C
+
+    @census [
+      C.Job,
+      C.Runner,
+      C.Stopper,
+      C.HelperKiller,
+      C.ReleasingRunner,
+      C.Registry,
+      C.UnwatchedKiller
+    ]
+
+    @kills "Server terminates a process it still monitors"
+
+    for mfa <- [
+          {C.Runner, :handle_info, 2},
+          {C.Stopper, :handle_info, 2},
+          {C.HelperKiller, :kill_job, 1}
+        ] do
+      test "#{inspect(mfa)}: an unrelated demonitor releases nothing the kill brings" do
+        assert {:info, @kills, unquote(Macro.escape(mfa))} in fired(@census, :shutdown)
+      end
+    end
+
+    test "a demonitor on the kill's way, and a kill of an unmonitored process, are quiet" do
+      found = fired(@census, :shutdown)
+
+      for mod <- [C.ReleasingRunner, C.UnwatchedKiller] do
+        refute Enum.any?(found, &match?({_, @kills, {^mod, _, _}}, &1)), inspect(mod)
+      end
+    end
+  end
 end
