@@ -583,27 +583,31 @@ rpc_wrapped(caller, call, rpc, wrapper) :-
 
 // ══ Results discarded ═══════════════════════════════════════════════
 
-// ── Task.Supervisor.start_child detection ──────────────────────────────
+// A Task.Supervisor.start_child's result is dropped, so a start that
+// fails goes unnoticed.
+.decl discarded_task_start(func: symbol, start: symbol)
 
-.decl task_start_child_call(func: symbol, id: symbol)
+discarded_task_start(func, start) :-
+  starts_supervised_task(start, func),
+  !start_result_checked(start).
 
-task_start_child_call(func, id) :-
-  remote_call(id, func, "Task.Supervisor", "start_child", _).
+unchecked_result(func, start, "Task.Supervisor.start_child", "") :-
+  discarded_task_start(func, start).
 
-// ── Unchecked start_child ──────────────────────────────────────────────
+// The call at `start` is Task.Supervisor.start_child.
+.decl starts_supervised_task(start: symbol, func: symbol)
 
-// A start_child call whose result is checked: either in tail position
-// (result propagated to caller) or followed by a branch instruction in
-// the same function (result pattern-matched).
-.decl start_child_result_checked(func: symbol, id: symbol)
+starts_supervised_task(start, func) :-
+  remote_call(start, func, "Task.Supervisor", "start_child", _).
 
-// Tail position: result goes to the caller.
-start_child_result_checked(func, id) :-
-  task_start_child_call(func, id),
-  tail_call(id).
+// The start's result is checked: in tail position (propagated to the
+// caller), or followed by a branch in the same function (pattern-matched).
+.decl start_result_checked(start: symbol)
 
-// Branch after start_child: result is pattern-matched.
-//
+start_result_checked(start) :-
+  starts_supervised_task(start, _),
+  tail_call(start).
+
 // `call_followed_by_branch` is emitted by the extractor and holds exactly
 // what the two `instruction` joins used to compute: this call has some
 // branch later in its function. Asking Datalog to compare two instruction
@@ -619,14 +623,53 @@ start_child_result_checked(func, id) :-
 // it computes. Sharpening it (asking whether the call's result register is
 // actually inspected, which the extractor helpers can do) changes findings
 // and belongs in its own commit.
-start_child_result_checked(func, id) :-
-  task_start_child_call(func, id),
-  call_followed_by_branch(id).
+start_result_checked(start) :-
+  starts_supervised_task(start, _),
+  call_followed_by_branch(start).
 
-// start_child call whose result is not checked by any of the above.
-unchecked_result(func, id, "Task.Supervisor.start_child", "") :-
-  task_start_child_call(func, id),
-  !start_child_result_checked(func, id).
+// A Process.whereis of a literal name is used without testing for nil,
+// and no try around the use takes how a nil pid fails there.
+.decl whereis_without_nil_case(func: symbol, lookup: symbol, name: symbol)
+
+whereis_without_nil_case(func, lookup, name) :-
+  used_untested(lookup, func, name),
+  !nil_use_caught(lookup, func).
+
+unchecked_result(func, lookup, "Process.whereis", name) :-
+  whereis_without_nil_case(func, lookup, name).
+
+// The Process.whereis at `lookup` looks up the literal `name`, and its
+// result is used without a test against nil (name_lookup "unchecked").
+.decl used_untested(lookup: symbol, func: symbol, name: symbol) inline
+
+used_untested(lookup, func, name) :- name_lookup(lookup, func, "whereis", _, "literal", name, "unchecked").
+
+// A lookup whose first use fails, on a nil or :undefined pid, the way a
+// try around that use takes (nil_use, from ProcessRegistry: the use, and
+// how it fails): its missing case is handled where it is used. A BIF or
+// a send raises badarg, which a handler of the error class takes, or one
+// naming :badarg (`process_info(whereis(n), ...)` under `catch
+// error:badarg`, rabbit_vm's memory/0); a call to the name exits with
+// :noproc, which only a handler of the exit class takes — a `rescue`
+// around `GenServer.call(Process.whereis(n), ...)` takes nothing of it; a
+// use nothing is known of needs a handler of both. The coverage asked is
+// the use's own (nil_use's `use` column), or the lookup's when the use
+// is no call (a `send`), which a try covers with it.
+.decl nil_use_caught(lookup: symbol, func: symbol)
+
+nil_use_caught(lookup, f) :- nil_use(lookup, f, u, "error"), covered_by_catch(u, f, _, "error").
+
+nil_use_caught(lookup, f) :-
+  nil_use(lookup, f, u, "error"),
+  try_covers(t, f, u, "try"),
+  catch_tag(t, f, "error", ":badarg").
+
+nil_use_caught(lookup, f) :- nil_use(lookup, f, u, "exit"), covered_by_catch(u, f, _, "exit").
+
+nil_use_caught(lookup, f) :-
+  nil_use(lookup, f, u, "any"),
+  covered_by_catch(u, f, _, "error"),
+  covered_by_catch(u, f, _, "exit").
 
 // ══ Processes nobody watches ════════════════════════════════════════
 
@@ -673,33 +716,6 @@ watched_spawn(id) :-
 unchecked_result(func, id, "Process.whereis", name) :-
   name_lookup(id, func, "whereis", _, "literal", name, "unchecked"),
   !nil_use_caught(id, func).
-
-// A lookup whose first use fails, on a nil or :undefined pid, the way a
-// try around that use takes (nil_use, from ProcessRegistry: the use, and
-// how it fails): its missing case is handled where it is used. A BIF or
-// a send raises badarg, which a handler of the error class takes, or one
-// naming :badarg (`process_info(whereis(n), ...)` under `catch
-// error:badarg`, rabbit_vm's memory/0); a call to the name exits with
-// :noproc, which only a handler of the exit class takes — a `rescue`
-// around `GenServer.call(Process.whereis(n), ...)` takes nothing of it; a
-// use nothing is known of needs a handler of both. The coverage asked is
-// the use's own (nil_use's `use` column), or the lookup's when the use
-// is no call (a `send`), which a try covers with it.
-.decl nil_use_caught(id: symbol, func: symbol)
-
-nil_use_caught(id, f) :- nil_use(id, f, u, "error"), covered_by_catch(u, f, _, "error").
-
-nil_use_caught(id, f) :-
-  nil_use(id, f, u, "error"),
-  try_covers(t, f, u, "try"),
-  catch_tag(t, f, "error", ":badarg").
-
-nil_use_caught(id, f) :- nil_use(id, f, u, "exit"), covered_by_catch(u, f, _, "exit").
-
-nil_use_caught(id, f) :-
-  nil_use(id, f, u, "any"),
-  covered_by_catch(u, f, _, "error"),
-  covered_by_catch(u, f, _, "exit").
 
 // ── The belief the other call sites hold ────────────────────────
 //
