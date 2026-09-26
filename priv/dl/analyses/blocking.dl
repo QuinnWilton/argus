@@ -185,10 +185,13 @@ handler_inferred(h, id, to) :-
   sync_call_site(id, h, t, _),
   unresolved_target(t).
 
+// A call h makes itself runs on h's stack: runs_elsewhere holds only for
+// an edge h does not call. An edge h has no call of (a closure it builds)
+// is on h's stack unless it leads off it (runs_elsewhere: a closure a
+// spawn runs, a fun h only registers).
 handler_inferred(h, id, to) :-
   handle_call_function(_, h),
   call_instr(h, g, id),
-  !runs_elsewhere(h, g),
   reaches_tag_dep(g, to).
 
 handler_inferred(h, "", to) :-
@@ -245,6 +248,9 @@ chain_site(from, to, id) :-
   request_chain(mid, mid_clause, to, dm),
   d = dm + 1.
 
+// A chain anchors at from's call that starts it; one whose first hop is
+// no call instruction of from's (a closure it hands on) anchors at the
+// function, and only then.
 .decl chain_at(from: symbol, to: symbol, site: symbol)
 
 chain_at(from, to, id) :- chain_site(from, to, id).
@@ -375,7 +381,6 @@ timed_wait_site(mod, t, ms, id) :-
   callback_sync_dep_timeout(mod, t, ms),
   handle_call_function(mod, h),
   call_instr(h, g, id),
-  !runs_elsewhere(h, g),
   !side_call(h, g),
   reaches_sync_dep_timeout(g, t, ms).
 
@@ -656,6 +661,9 @@ bottleneck_caller(caller_mod, target_mod, witness) :-
   sync_call_fan_in(target_mod, _).
 
 // ══ A receive on an OTP process's own stack ═════════════════════════
+//
+// An edge into what another process runs, or into a fun only kept for
+// later (runs_elsewhere), leaves the callback's stack.
 .decl same_process_edge(caller: symbol, callee: symbol)
 
 same_process_edge(caller, callee) :-
@@ -737,7 +745,6 @@ receive_in_callback(id, func, callback, behaviour, proximity, "down") :-
 
 receive_in_callback(id, func, callback, behaviour, proximity, "down") :-
   recv_start(id, func, 1, _),
-  !down_bounded(id),
   callback_reaches(callback, func, proximity),
   loop_entry(callback, m, behaviour),
   trapped_exit_ends(id, func, m),
