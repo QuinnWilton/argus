@@ -83,6 +83,12 @@ module, a handle_info/2 of that module that collects a task, or, on the
 starting server's stack, a clause open to a tuple of any tag. The
 clientlib's `mailbox_handler` goes. No row moves.
 
+**Fixed.** "Server sends itself a tag it cannot handle" excused a sender
+function wholesale once it called or cast to any other module. Each call
+site is judged by where it sends (`to_own_server`): its target resolves
+to the module's own server, or to nothing and names no other server. No
+row moves.
+
 ### Races by their harm
 
 **Changed.** A check-then-act pair is reported when a rival can land on

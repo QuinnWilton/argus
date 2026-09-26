@@ -1073,49 +1073,70 @@ kind_callback("cast", "handle_cast").
 handler(mod, "handle_call", func) :- handle_call_function(mod, func).
 handler(mod, "handle_cast", func) :- handle_cast_function(mod, func).
 
-// A function that calls or casts to a DIFFERENT module is a proxy, and its
-// tags are that module's business. Excluded wholesale: wrapping someone
-// else's server is a legitimate shape, and getting it wrong means reporting
-// correct code.
-.decl proxies(func: symbol)
+// Judged per call site, by where that site sends: a function that
+// casts an audit log to another server and then calls its own server
+// with a stale tag sends its own server that tag all the same.
+//
+// The site at `id` sends to its module's own server when its target
+// resolves to one of the module's processes (call_site_target, the
+// points-to stage: a name the module registers, self(), a pid the
+// module's start returned), or when it resolves to no process and names
+// no other server — neither a literal name the module does not register
+// nor a tag another module's handler discriminates on (horde's
+// ProcessesSupervisor calling its DynamicSupervisorImpl through a pid).
+// A site that resolves to another module's server is that server's
+// business.
+.decl to_own_server(mod: symbol, id: symbol)
 
-proxies(func) :-
-  sync_call(func, callee),
-  function_def(func, mod, _, _, _),
+to_own_server(mod, id) :-
+  call_tag(id, f, kind, _),
+  function_def(f, mod, _, _, _),
+  call_site_target(id, f, kind, p),
+  server_process(p, mod).
+
+to_own_server(mod, id) :-
+  call_tag(id, f, kind, _),
+  function_def(f, mod, _, _, _),
+  !call_site_target(id, f, kind, _),
+  !names_other_server(id),
+  !tag_elsewhere(id).
+
+// The site names a server by a literal that is not its module's own: a
+// name its module does not register (a sync_call_site's callee, or the
+// name pid_call reads).
+.decl names_other_server(id: symbol)
+
+names_other_server(id) :-
+  call_tag(id, f, "call", _),
+  sync_call_site(id, f, callee, _),
+  function_def(f, mod, _, _, _),
   callee != mod,
-  callee != "dynamic".
+  callee != "dynamic",
+  !named_process(mod, callee).
 
-proxies(func) :-
-  async_cast(func, callee),
-  function_def(func, mod, _, _, _),
-  callee != mod,
-  callee != "dynamic".
+names_other_server(id) :-
+  call_tag(id, f, kind, _),
+  pid_call(id, f, kind, "name", n),
+  function_def(f, mod, _, _, _),
+  n != mod,
+  !named_process(mod, n).
 
-// A call or cast process points-to follows to another module's server.
-proxies(func) :-
-  call_target(func, kind, p),
-  (kind = "call" ; kind = "cast"),
-  server_process(p, other),
-  function_def(func, mod, _, _, _),
-  other != mod.
+.decl tag_elsewhere(id: symbol)
 
-// A dynamic-target call whose tag some OTHER module's handler
-// discriminates on is that module's business (horde's ProcessesSupervisor
-// calling its DynamicSupervisorImpl through a pid), not a self-send.
-proxies(func) :-
-  call_tag(_, func, kind, tag),
+tag_elsewhere(id) :-
+  call_tag(id, f, kind, tag),
   tag_handler(other, kind, tag),
-  function_def(func, mod, _, _, _),
+  function_def(f, mod, _, _, _),
   other != mod.
 
 // A handler with a clause for the tag, or a catch-all (callback_total),
 // takes it: the bug is a tag no clause can take.
 reply_defect(mod, sender, "", cat("unhandled_", kind), tag) :-
-  call_tag(_, sender, kind, tag),
+  call_tag(id, sender, kind, tag),
   function_def(sender, mod, _, _, _),
   kind_callback(kind, callback),
   handler(mod, callback, h),
-  !proxies(sender),
+  to_own_server(mod, id),
   !callback_tag(h, callback, tag),
   !callback_total(h, callback).
 

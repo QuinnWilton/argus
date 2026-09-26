@@ -434,4 +434,24 @@ defmodule Argus.Soundness.MailboxTest do
       assert census_quiet?(@never, C.TupleConsumer)
     end
   end
+
+  # census: self-tag
+  # A self-sent tag was excused once its function also cast elsewhere.
+  describe "census hole: a self-sent tag beside a cast to another server" do
+    @self_tag "Server sends itself a tag it cannot handle"
+
+    for mfa <- [
+          {C.AuditedCounter, :bump, 1},
+          {C.AuditedCaster, :reset, 0},
+          {C.SelfCaster, :handle_call, 3}
+        ] do
+      test "#{inspect(mfa)} sends its own server a tag it has no clause for" do
+        assert {:error, @self_tag, unquote(Macro.escape(mfa))} in fired(@census, :mailbox)
+      end
+    end
+
+    test "the cast to the other server is that server's business" do
+      assert census_quiet?(@self_tag, C.Audit)
+    end
+  end
 end

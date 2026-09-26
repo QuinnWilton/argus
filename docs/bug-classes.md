@@ -1929,10 +1929,7 @@ Each leaked monitor costs both processes until T exits, and then arrives as a `:
 `reply_defect` · kind=`unhandled_call` | `unhandled_cast`
 · titles: "Server sends itself a tag it cannot handle" (`:error`)
 
-**Property.** A function of a GenServer module makes a GenServer.call (or cast) whose message has a literal tag: an atom, or a tuple's first atom. The module's handle_call/3 (or handle_cast/2) neither compares that tag anywhere nor has a catch-all. The function is not a proxy:
-- it calls or casts no literal other module;
-- points-to follows none of its calls or casts to another module's server;
-- no other module's handler discriminates on a tag it sends.
+**Property.** A function of a GenServer module makes a GenServer.call (or cast) whose message has a literal tag: an atom, or a tuple's first atom. The module's handle_call/3 (or handle_cast/2) neither compares that tag anywhere nor has a catch-all. The call site sends to the module's own server (`to_own_server`), judged per site: its target resolves to one of the module's processes (`call_site_target`), or it resolves to no process and names no other server — neither a literal name the module does not register nor a tag another module's handler discriminates on. Until the census round the sender was judged per function, and any call or cast of it to another module excused every tag it sent (`Census.Mailbox.AuditedCounter`: an audit cast beside a stale call to its own server).
 
 For a call, the server raises FunctionClauseError and the caller exits with it, pointing at the call instead of the missing clause. For a cast, the caller learns nothing, and the server restarts with its state gone.
 
@@ -1942,7 +1939,7 @@ For a call, the server raises FunctionClauseError and the caller exits with it, 
 - Clause tags are over-approximated: an atom compared anywhere in the handler's body counts. A clause that takes the request by shape alone (`req when is_atom(req)`) is not read as taking it.
 - There is one finding per module and tag, anchored at a sender.
 
-**Fixtures.** Positive: `MessageContract.Mismatch` (`test/fixtures/message_contract_fixture.ex`). Quiet: `MessageContract.Agrees`, `CatchAll`, `StaleWrite`, `Forwarder` (with `Sink`) (same file). Asserted in `test/analyses/mailbox_message_test.exs`.
+**Fixtures.** Positive: `MessageContract.Mismatch` (`test/fixtures/message_contract_fixture.ex`); `Census.Mailbox.AuditedCounter`, `AuditedCaster`, `SelfCaster` (a cast to `self()`) (test/fixtures/soundness/mailbox_census.ex, asserted by test/soundness/mailbox_test.exs). Quiet: `MessageContract.Agrees`, `CatchAll`, `StaleWrite`, `Forwarder` (with `Sink`) (same file). Asserted in `test/analyses/mailbox_message_test.exs`.
 
 **Corpus.** Fix pairs: None. Present-only: None.
 
