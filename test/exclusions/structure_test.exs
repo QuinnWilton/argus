@@ -32,7 +32,7 @@ defmodule Argus.Exclusions.StructureTest do
   end
 
   describe "a supervisor's own child_spec/1" do
-    # structure.dl, own_spec_worker: !child_spec_type(child, "supervisor").
+    # structure.dl, own_spec_says_worker: !child_spec_type(child, "supervisor").
     test "a spec that says :supervisor where it starts the tree, beside a typeless :ignore",
          ctx do
       assert registered_as_worker(ctx, @switchable) == []

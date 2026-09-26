@@ -24,59 +24,83 @@
 // -behaviour(supervisor) were registered through a helper that builds
 // `worker` specs with a finite shutdown, and the fix switched them to the
 // supervisor-building helper.
-//
-// The form join is load-bearing, not a detail. `supervisor_child.type` is a
-// DEFAULT for the `{Module, args}` and bare-`Module` shorthands — those
-// state no type, `Module.child_spec/1` decides, and `use Supervisor`
-// generates `type: :supervisor` where the extractor writes `worker`. A first
-// version of this rule without the join reported 26 modules on the corpus
-// and every one was that artefact. Only a spec that SAID `worker` counts.
-
-.decl child_is_a_supervisor(child: symbol)
-
-child_is_a_supervisor(child) :- behaves_as(child, "Supervisor").
 
 .decl supervisor_registered_as_worker(sup: symbol, child: symbol, position: number)
 .output supervisor_registered_as_worker
 
-// A child spec whose start function is the supervisor's own module's
-// (Phoenix.Endpoint.Supervisor's `%{id: :warmup, start: {__MODULE__,
-// :warmup, [mod]}}`) starts whatever that function starts, which the
-// module's behaviour does not say: not the supervisor itself.
+// A supervisor's child spec says in so many words that its child is a
+// worker, and the child is itself a supervisor.
 supervisor_registered_as_worker(sup, child, position) :-
-  supervisor_child(sup, position, child, _, "worker"),
-  supervisor_child_form(sup, position, "explicit"),
-  child_is_a_supervisor(child),
-  child != sup.
+  spec_says_worker(sup, position, child),
+  is_supervisor(child).
 
-// A shorthand names a child by its module (`{Mod, args}`, a bare `Mod`,
-// a DynamicSupervisor.start_child/2 of one), and `Mod.child_spec/1`
-// decides its type: a map it writes with no `:type` is a worker by the
-// supervisor's default (child_spec_type). supavisor 6b77121 is the fixed
-// instance: TenantSupervisor, a `use Supervisor` module, overrode
-// child_spec/1 with a map that said `restart: :transient` and nothing of
-// its type, and DynamicSupervisor.start_child/2 started every tenant's
-// tree as a worker (5 s shutdown, skipped by the release handler). A
-// child_spec/1 one of whose returns says `:supervisor` is not judged.
-.decl own_spec_worker(child: symbol)
+// A shorthand names a child by its module, and `Mod.child_spec/1`
+// decides its type. supavisor 6b77121 is the fixed instance:
+// TenantSupervisor, a `use Supervisor` module, overrode child_spec/1 with
+// a map that said `restart: :transient` and nothing of its type, and
+// DynamicSupervisor.start_child/2 started every tenant's tree as a worker
+// (5 s shutdown, skipped by the release handler).
 
-own_spec_worker(child) :-
-  child_spec_type(child, "worker"),
-  !child_spec_type(child, "supervisor"),
-  child_is_a_supervisor(child).
-
+// A supervisor's own child_spec/1 leaves its type to the worker default,
+// and a supervisor starts it by that spec.
 .decl own_spec_registered_as_worker(child: symbol, sup: symbol, via: symbol)
 .output own_spec_registered_as_worker
 
-own_spec_registered_as_worker(child, sup, "") :-
-  own_spec_worker(child),
+own_spec_registered_as_worker(child, sup, via) :-
+  is_supervisor(child),
+  own_spec_says_worker(child),
+  started_by_own_spec(child, sup, via).
+
+// The module declares the Supervisor behaviour (behaves_as, so Erlang's
+// -behaviour(supervisor) counts).
+.decl is_supervisor(mod: symbol)
+
+is_supervisor(mod) :- behaves_as(mod, "Supervisor").
+
+// The spec at `position` in sup's child list was written out (a tuple or
+// a map, "explicit") and says `worker`, or is a map that states no type
+// and takes the supervisor's worker default.
+//
+// The form join is load-bearing, not a detail. `supervisor_child.type` is
+// a DEFAULT for the `{Module, args}` and bare-`Module` shorthands: those
+// state no type, `Module.child_spec/1` decides, and `use Supervisor`
+// generates `type: :supervisor` where the extractor writes `worker`. A
+// first version of this rule without the join reported 26 modules on the
+// corpus and every one was that artefact.
+//
+// A spec whose start function is the supervisor's own module's
+// (Phoenix.Endpoint.Supervisor's `%{id: :warmup, start: {__MODULE__,
+// :warmup, [mod]}}`) starts whatever that function starts, which the
+// module's behaviour does not say: not the supervisor itself.
+.decl spec_says_worker(sup: symbol, position: number, child: symbol)
+
+spec_says_worker(sup, position, child) :-
+  supervisor_child(sup, position, child, _, "worker"),
+  supervisor_child_form(sup, position, "explicit"),
+  child != sup.
+
+// The module's own child_spec/1 returns a map with no `:type`, a worker
+// by the supervisor's default (child_spec_type), and none of its returns
+// says `:supervisor`: a child_spec/1 whose returns disagree is not
+// judged.
+.decl own_spec_says_worker(child: symbol)
+
+own_spec_says_worker(child) :-
+  child_spec_type(child, "worker"),
+  !child_spec_type(child, "supervisor").
+
+// sup starts `child` by the child's own child_spec/1: a shorthand in its
+// child list (`{Mod, args}`, a bare `Mod`), a spec of the parent's own
+// module aside, or a DynamicSupervisor.start_child/2 of one, `via` the
+// function that makes that call ("" for a child list).
+.decl started_by_own_spec(child: symbol, sup: symbol, via: symbol)
+
+started_by_own_spec(child, sup, "") :-
   supervisor_child(sup, position, child, _, _),
   supervisor_child_form(sup, position, "shorthand"),
   child != sup.
 
-own_spec_registered_as_worker(child, sup, via) :-
-  own_spec_worker(child),
-  dynamic_child(sup, child, via).
+started_by_own_spec(child, sup, via) :- dynamic_child(sup, child, via).
 
 // ── ConsumerSupervisor children that never finish ────────────────────
 //
