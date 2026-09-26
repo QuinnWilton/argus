@@ -96,6 +96,8 @@ state_has_incoming(mod, state) :-
   call_edge(c, h),
   !state_function(mod, state, c).
 
+// A helper no function in view calls may be called from anywhere (an
+// export the program's callers use), so its transition stays a way in.
 state_has_incoming(mod, state) :-
   statem_helper_transition(mod, h, state),
   state != "stop",

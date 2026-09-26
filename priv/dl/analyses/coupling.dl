@@ -256,7 +256,10 @@ keeping_basis("handed", "inferred").
 //
 // sup_site anchors at the tree definition; witness is a function in the
 // permanent child through which the dependency flows. One row per
-// witness — finding builders dedupe on (sup, permanent, sibling).
+// witness — finding builders dedupe on (sup, permanent, sibling). A child
+// that reaches the sibling's module only through instances it started
+// for itself (private_module_dep) never meets the supervised sibling's
+// absence.
 sibling_dependency(sup, perm, sibling, "restart_policy", restart, sup_site, witness, witness, basis, p) :-
   supervisor(sup, _),
   supervisor_site(sup, sup_site),

@@ -37,7 +37,8 @@ imprecision_event(c, f, r, why) :- imprecision(c, f, r, why).
 // ── Passive shape-gap queries ───────────────────────────────────────
 
 // A supervisor that was recognized (we extracted its strategy) but no
-// static children — neither supervisor_child nor dynamic_child fires.
+// static children — neither supervisor_child nor dynamic_child fires,
+// and no start_child of a spec adds one (added_child).
 // Either init/1 builds children at runtime via Enum.map/comprehensions,
 // or the child spec shape isn't recognized by the extractor. Both are
 // recall gaps worth surfacing.

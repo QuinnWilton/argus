@@ -401,6 +401,10 @@ sink_func_reads(func, source, p) :-
 
 several_sinks(func) :- sink(a, func, _, _, _), sink(b, func, _, _, _), a != b.
 
+// One arm per sink, strongest evidence first: a proven flow, else a sink
+// a view renders (only the call that reaches the view's dispatch is on
+// its path, so its row replaces the path rows, as a flow's does), else
+// the request path, graded by what the sink's function reads.
 .decl sink_reachable(id: symbol, func: symbol, api: symbol, sink: symbol, entry: symbol, kind: symbol, proximity: symbol, source: symbol, permille: number, safety: symbol)
 .output sink_reachable
 

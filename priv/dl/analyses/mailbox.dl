@@ -588,6 +588,9 @@ runs_trapping(f) :- server_side(mod, f), module_traps(_, mod).
 // like a library function: elixir-nodejs#45's `NodeJS.Supervisor.call/3`,
 // a `use Supervisor` module's public call, linked every caller to the
 // pool worker's task (PoolCallSupervisor; ServerSideTaskAwait is quiet).
+// The owner is the named function a closure's task belongs to (the row
+// is its, not the closure's); one that returns the task
+// (task_factory) hands its caller the link with it, in plain sight.
 task_result_defect(owner, id, "linked_in_library") :-
   task_async_call(f, id),
   enclosing_function(f, owner),
@@ -1037,6 +1040,8 @@ proxies(func) :-
   function_def(func, mod, _, _, _),
   other != mod.
 
+// A handler with a clause for the tag, or a catch-all (callback_total),
+// takes it: the bug is a tag no clause can take.
 reply_defect(mod, sender, "", cat("unhandled_", kind), tag) :-
   call_tag(_, sender, kind, tag),
   function_def(sender, mod, _, _, _),
@@ -2272,6 +2277,8 @@ arms_when_empty(e, c, key) :-
   loop_key(_, _, _, key),
   (field_nil_test(g, key) ; field_nil_test(e, key)).
 
+// A loop any arm of which drops its ref cannot be stopped by any cancel:
+// the rule above reports it, and this one would repeat it under the key.
 timer_loop_rearmed(mod, lit, e, c, b, a, key) :-
   second_arm(mod, lit, e, c, _, b),
   loop_key(mod, lit, a, key),
