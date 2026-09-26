@@ -87,6 +87,13 @@ those frameworks need.
   `source_process` and `source_table` are staged only for the sources
   the analyses ask about (points_to.dl names them); a rule asking about
   another source adds it there.
+- A facts directory a caller hands in may be shared: scry names its
+  directories by their content, so derivations over the same facts
+  write into the same one at once. A stage solves into a directory of
+  its own and renames each output into place whole
+  (`Extraction.derive_stage0/2`): Souffle never writes there, and no
+  stage removes a file from it.
+  `test/argus/analysis/shared_stage_test.exs` holds each race open.
 - Points-to follows only terms that hold a process or a table, and a
   callee that hands its parameter back returns each call's own argument
   (`passes`): context-insensitive merging through such helpers is what

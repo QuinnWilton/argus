@@ -6,6 +6,30 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## 0.20.0-dev — unreleased
 
+### Stages: a derivation beside another into the same directory
+
+**Fixed.** `derive_stage0/2` and `derive_points_to/2` had Souffle write
+a stage's outputs straight into the facts directory it read, and the
+points-to stage then removed the reports it read back
+(`points_to_overflow.csv`, `pervasive.csv`) from there. scry names its
+fact directories by their content, so every solve over the same facts
+(its async tests over the parity fixture, an LSP session beside a
+compile) derives the same stage into the same directory at once. A
+derivation whose solver had written its reports lost them to another
+that finished first, read its own and removed them, and failed with
+`{:missing_output, "points_to_overflow"}`: scry's intermittent
+points-to error. And Souffle opens each output truncated and writes it
+where it stands, so a reader of the directory could read a staged file
+cut short, a stage silently wrong. Each stage now solves into a
+directory of its own inside the facts directory and renames each output
+into place: a reader sees the old file or the new one, whole. A failed
+stage writes nothing and leaves the directory as it found it; it used to
+remove every staged file, rows another derivation may have staged and
+be reading. `Argus.Analysis.SharedStageTest` holds a solver where each
+race needs it. The store's solves and the analyses' solves were never
+affected: each writes into a directory of its own, and a kept solve is
+installed whole by one rename. No schema change.
+
 ### Coupling: a registration through a client API that takes the server
 
 **Fixed.** coupling's restart isolation missed a registration made

@@ -43,7 +43,7 @@ defmodule Argus.Analysis.Extraction do
   # call graph is always available when Datalog rules consume it.
   @universal_extractors [Argus.Extractors.CallArgs]
 
-  # The relations stage 0 writes; a directory holding all four is staged.
+  # The relations stage 0 writes; a directory holding every one is staged.
   @stage0_relations ~w(call_edge call_site unconditional_call_edge call_tag fun_handed_to)
 
   # The relations the points-to stage writes (points_to.dl's outputs):
@@ -51,11 +51,6 @@ defmodule Argus.Analysis.Extraction do
   @points_to_relations ~w(server_process instance supervised_process private_process process
                           named_pid process_call process_signal call_site_target self_call
                           source_process source_table points_to_mode)
-
-  # What the points-to stage reports beside them, as `.csv` outputs read
-  # into its results: which relations outgrew its budget, and which
-  # leaves a bounded stage resolved coarsely.
-  @points_to_reports ~w(points_to_overflow pervasive)
 
   @doc """
   Extracts facts from the given modules once, for one or more analyses.
@@ -294,17 +289,87 @@ defmodule Argus.Analysis.Extraction do
   inputs, since it moves only when the *call* structure changes, not when
   a function body does.
 
-  Writes `call_edge.facts` into `facts_dir`. Idempotent — re-running
-  overwrites with the same content for the same inputs.
+  Writes the `stage0_relations/0` files into `facts_dir`, none when it
+  fails. The solver writes them into a directory of its own, and each
+  is renamed into place whole, so a reader of `facts_dir` never sees one
+  being written. Idempotent, and safe beside another derivation into
+  the same directory: re-running replaces each file with the same
+  content for the same inputs.
   """
   @spec derive_stage0(Path.t(), keyword()) :: :ok | {:error, term()}
   def derive_stage0(facts_dir, opts \\ []) do
-    # Souffle writes outputs into -D; stage0.dl names them `.facts` so the
-    # directory it lands in is directly reusable as a fact directory.
-    case Souffle.run(facts_dir, stage0_rules_path(), Keyword.put(opts, :output_dir, facts_dir)) do
-      {:ok, _} -> :ok
+    # stage0.dl names its outputs `.facts`, so the directory they land in
+    # is directly reusable as a fact directory.
+    result =
+      with {:ok, _results, aside} <- solve_aside(facts_dir, stage0_rules_path(), opts) do
+        try do
+          publish(aside, facts_dir, @stage0_relations)
+        after
+          File.rm_rf(aside)
+        end
+      end
+
+    case result do
+      :ok -> :ok
       {:error, reason} -> {:error, {:stage0, reason}}
     end
+  end
+
+  # A stage solved over `facts_dir` into a directory of its own inside
+  # it, never into `facts_dir` itself: `{:ok, results, aside}`, the
+  # outputs in `aside` for `publish/3`, or the solve's error (`aside`
+  # gone). Inside, so a rename moves each output into place: the same
+  # volume, whoever made the directory.
+  defp solve_aside(facts_dir, rules_path, opts) do
+    aside = Path.join(facts_dir, ".stage-#{:os.getpid()}-#{System.unique_integer([:positive])}")
+
+    case File.mkdir(aside) do
+      :ok ->
+        case Souffle.run(facts_dir, rules_path, Keyword.put(opts, :output_dir, aside)) do
+          {:ok, results} ->
+            {:ok, results, aside}
+
+          {:error, _} = error ->
+            File.rm_rf(aside)
+            error
+        end
+
+      {:error, reason} ->
+        {:error, {:mkdir_failed, aside, reason}}
+    end
+  end
+
+  # Each `.facts` file a stage wrote into `aside`, renamed into
+  # `facts_dir` over what is there: `required` names the relations it
+  # must have written. A reader of `facts_dir` sees each file whole, the
+  # old one or the new, never one being written.
+  #
+  # Never solved in place: a directory can have several readers and
+  # writers at once. scry names its fact directories by their content,
+  # so every solve over the same facts derives the same stage into the
+  # same one. Souffle opens an output truncated and writes it where it
+  # stands, so a reader there would see a file cut short; and a stage's
+  # reports, read back and removed from there, would be removed from
+  # under another derivation that has written them and not yet read
+  # them (`{:missing_output, "points_to_overflow"}`).
+  defp publish(aside, facts_dir, required) do
+    with {:ok, names} <- File.ls(aside) do
+      written = names |> Enum.filter(&String.ends_with?(&1, ".facts")) |> Enum.sort()
+
+      case Enum.reject(required, &("#{&1}.facts" in written)) do
+        [] -> rename_each(written, aside, facts_dir)
+        [missing | _] -> {:error, {:missing_output, missing}}
+      end
+    end
+  end
+
+  defp rename_each(names, from, to) do
+    Enum.reduce_while(names, :ok, fn name, :ok ->
+      case File.rename(Path.join(from, name), Path.join(to, name)) do
+        :ok -> {:cont, :ok}
+        {:error, reason} -> {:halt, {:error, {:publish_failed, name, reason}}}
+      end
+    end)
   end
 
   @doc "The path to the stage-0 rules file."
@@ -353,41 +418,49 @@ defmodule Argus.Analysis.Extraction do
   (`Argus.Findings.run/2`): time can fail the stage, never change what
   it answers.
 
-  Writes the `points_to_relations/0` files into `facts_dir`, none when
-  it fails. Idempotent.
+  Writes the `points_to_relations/0` files into `facts_dir`, each renamed
+  into place whole (as stage 0's, `derive_stage0/2`), and none when it
+  fails: a failure leaves the directory as it found it. What the stage
+  reports (its overflow, its pervasive leaves) is read back, never left
+  among the facts. Idempotent, and safe beside another derivation into
+  the same directory.
   """
   @spec derive_points_to(Path.t(), keyword()) :: :ok | {:error, term()}
   def derive_points_to(facts_dir, opts \\ []) do
-    solve = fn rules_path, dir ->
-      result = Souffle.run(dir, rules_path, Keyword.put(opts, :output_dir, dir))
-
-      # What the stage reports (its overflow, its pervasive leaves) is
-      # read back here, not a relation the directory holds.
-      for report <- @points_to_reports, do: File.rm(Path.join(dir, report <> ".csv"))
-
-      with {:ok, results} <- result, do: {:ok, results, dir}
+    # Each solve over `facts_dir` into a directory of its own; the last
+    # one's outputs are the stage's, any before it (an exact stage that
+    # outgrew its budget: what it had reached, none of it an answer)
+    # are discarded with it.
+    solve = fn rules_path, {dir, asides} ->
+      with {:ok, results, aside} <- solve_aside(dir, rules_path, opts),
+           do: {:ok, results, {dir, [aside | asides]}}
     end
 
-    case stage_points_to(solve, facts_dir) do
-      {:ok, _dir} ->
-        :ok
+    {result, asides} =
+      case stage_points_to(solve, {facts_dir, []}) do
+        {:ok, {_dir, [aside | _] = asides}} ->
+          {publish(aside, facts_dir, @points_to_relations), asides}
 
-      {:error, reason, _dir} ->
-        # A stage that outgrew its budget wrote what it had reached, none
-        # of it an answer; a directory holding every staged file is one
-        # ensure_points_to/3 takes as staged.
-        Enum.each(@points_to_relations, &File.rm(Path.join(facts_dir, "#{&1}.facts")))
-        points_to_failed(reason)
+        {:error, reason, {_dir, asides}} ->
+          {{:error, reason}, asides}
+      end
+
+    Enum.each(asides, &File.rm_rf/1)
+
+    case result do
+      :ok -> :ok
+      {:error, reason} -> points_to_failed(reason)
     end
   end
 
   # The points-to stage: the exact program, and the bounded one when the
   # exact fixpoint outgrows its budget. `solve` takes a rules path and
-  # what the previous solve returned (the facts it solves over: a
-  # directory, or `Argus.Cache.Facts`), and returns what
-  # `Argus.Cache.Facts.solve/3` does. The answer is `{:ok, solved}` or
-  # `{:error, reason, solved}`, `solved` what the last solve returned,
-  # for the caller to clean up after.
+  # what the previous solve returned (the facts it solves over:
+  # `Argus.Cache.Facts`, or a directory and the solves' own output
+  # directories), and returns what `Argus.Cache.Facts.solve/3` does.
+  # The answer is `{:ok, solved}` or `{:error, reason, solved}`,
+  # `solved` what the last solve returned, for the caller to clean up
+  # after.
   defp stage_points_to(solve, facts) do
     case solve.(points_to_rules_path(), facts) do
       {:ok, results, solved} ->

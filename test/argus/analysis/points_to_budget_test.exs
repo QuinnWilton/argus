@@ -172,37 +172,50 @@ defmodule Argus.Analysis.PointsToBudgetTest do
     end
   end
 
-  test "a stage that runs out of time fails and leaves nothing staged", %{tmp_dir: tmp} do
-    dir = merged_heap!(Path.join(tmp, "late"), @within)
-    # Staged once already: a failure takes the old rows away too.
-    assert :ok = Analysis.derive_points_to(dir)
+  # A failed stage stages nothing, and leaves a directory as it found
+  # it: rows an earlier derivation staged over the same facts are the
+  # answer, and another derivation into the directory may be reading
+  # them. `fail` derives into a directory and returns the log.
+  defp fails_as_found!(tmp, name, fail) do
+    fresh = merged_heap!(Path.join(tmp, name), @within)
+    staged_dir = merged_heap!(Path.join(tmp, name <> "-staged"), @within)
+    assert :ok = Analysis.derive_points_to(staged_dir)
+    before = staged(staged_dir)
+
+    log = capture_log(fn -> Enum.each([fresh, staged_dir], fail) end)
+
+    assert staged_nothing?(fresh)
+    assert staged(staged_dir) == before
+    # Nothing else is left behind: no report, no solve's own directory.
+    assert Enum.sort(File.ls!(staged_dir)) ==
+             Enum.sort(File.ls!(fresh) ++ Enum.map(Map.keys(before), &"#{&1}.facts"))
+
+    log
+  end
+
+  test "a stage that runs out of time fails and stages nothing", %{tmp_dir: tmp} do
+    slow = slowed!(tmp, 5)
 
     log =
-      capture_log(fn ->
+      fails_as_found!(tmp, "late", fn dir ->
         assert {:error, {:points_to, :souffle_timeout}} =
-                 Analysis.derive_points_to(dir,
-                   souffle_bin: slowed!(tmp, 5),
-                   souffle_timeout: 500
-                 )
+                 Analysis.derive_points_to(dir, souffle_bin: slow, souffle_timeout: 500)
       end)
 
     assert log =~ "did not finish within :souffle_timeout"
-    assert staged_nothing?(dir)
   end
 
-  test "a stage that outgrows the budget even bounded fails and leaves nothing staged",
+  test "a stage that outgrows the budget even bounded fails and stages nothing",
        %{tmp_dir: tmp} do
-    dir = merged_heap!(Path.join(tmp, "over-bounded"), @within)
-    assert :ok = Analysis.derive_points_to(dir)
+    overflowing = overflowing!(tmp, "points_to*.dl")
 
     log =
-      capture_log(fn ->
+      fails_as_found!(tmp, "over-bounded", fn dir ->
         assert {:error, {:points_to, {:over_budget, [{"source_pts", 500_000, 500_000}]}}} =
-                 Analysis.derive_points_to(dir, souffle_bin: overflowing!(tmp, "points_to*.dl"))
+                 Analysis.derive_points_to(dir, souffle_bin: overflowing)
       end)
 
     assert log =~ "outgrew its budget even bounded"
-    assert staged_nothing?(dir)
   end
 
   describe "through a store" do
