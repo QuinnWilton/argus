@@ -42,7 +42,13 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
   A clause that takes the reason by its shape alone, a tuple whose
   elements it never compares (`catch exit:{Reason, _}`), is
   `open_tuples`: it catches every tuple reason of its class, whatever
-  the tag, `{:shutdown, _}` and `{:normal, _}` among them.
+  the tag, `{:shutdown, _}` and `{:normal, _}` among them — when it
+  keeps what it catches. A path that re-raises in tail position (`exit:
+  {Reason, _} -> exit(Reason)`) takes nothing: no tag, no tuple and no
+  class outright. And a tag the path passed an inequality with (`when
+  Reason =/= shutdown`, or the other side of an earlier clause's test)
+  is one it does not take: an open clause counts only when another
+  catching path takes each tag it excluded.
 
   An Elixir `rescue X` tests the reason's `__struct__` (a `map_get`
   before `Exception.normalize/3`); the register that read holds is
@@ -139,7 +145,7 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
           totals: acc.totals |> MapSet.to_list() |> Enum.sort(),
           tags: acc.tags |> MapSet.to_list() |> Enum.sort(),
           tuple_tags: acc.tuple_tags |> MapSet.to_list() |> Enum.sort(),
-          open_tuples: acc.open_tuples |> MapSet.to_list() |> Enum.sort(),
+          open_tuples: open_tuples(acc),
           falls_through: acc.falls_through |> MapSet.to_list() |> Enum.sort(),
           handled: acc.handled |> MapSet.to_list() |> Enum.sort(),
           visited: seen |> Enum.map(&elem(&1, 0)) |> Enum.uniq() |> Enum.sort(),
@@ -176,7 +182,8 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
       aliases: MapSet.new([@x1]),
       heads: MapSet.new(),
       tags: MapSet.new(),
-      tuple_tags: MapSet.new()
+      tuple_tags: MapSet.new(),
+      excluded: MapSet.new()
     }
   end
 
@@ -248,15 +255,32 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
       reg(a) == @x0 and path.class == nil and class_atom(b) != nil ->
         # The clause begins here: the atoms compared before it belong to
         # the dispatch, not to this clause.
-        clause = %{path | class: class_atom(b), tags: MapSet.new(), tuple_tags: MapSet.new()}
+        clause = %{
+          path
+          | class: class_atom(b),
+            tags: MapSet.new(),
+            tuple_tags: MapSet.new(),
+            excluded: MapSet.new()
+        }
+
         {seen, acc} = next(idx, clause, instrs, labels, seen, acc)
         goto(fail, path, instrs, labels, seen, acc)
 
       alias?(a, path) or alias?(b, path) ->
         # Only the equal side is the compared value; the other side is
-        # every other one, as open as before the test.
+        # every other one, as open as before the test, less the value.
         tested = %{path | tested: true}
-        branch(idx, fail, %{tested | valued: true}, tested, instrs, labels, seen, acc)
+
+        branch(
+          idx,
+          fail,
+          %{tested | valued: true},
+          exclude(tested, instr),
+          instrs,
+          labels,
+          seen,
+          acc
+        )
 
       true ->
         branch(idx, fail, path, instrs, labels, seen, acc)
@@ -283,10 +307,10 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
             {shaped, tested}
 
           op in [:is_ne_exact, :is_ne] ->
-            {tested, %{tested | valued: true}}
+            {exclude(tested, instr), %{tested | valued: true}}
 
           true ->
-            {%{tested | valued: true}, tested}
+            {%{tested | valued: true}, exclude(tested, instr)}
         end
 
       branch(idx, fail, pass, failed, instrs, labels, seen, acc)
@@ -309,7 +333,6 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
          seen,
          acc
        ) do
-    {path, acc} = note(path, acc, instr)
     arms = Enum.chunk_every(pairs, 2)
 
     if reg(src) == @x0 and path.class == nil do
@@ -319,7 +342,8 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
             path
             | class: class_atom(val) || :*,
               tags: MapSet.new(),
-              tuple_tags: MapSet.new()
+              tuple_tags: MapSet.new(),
+              excluded: MapSet.new()
           }
 
           goto(l, clause, instrs, labels, s, a)
@@ -327,15 +351,28 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
 
       goto(default, path, instrs, labels, seen, acc)
     else
+      # Each arm is the reason equal to its own value: the path to it
+      # compares that value alone. The default is every other value, and
+      # takes none of the arms'.
       {arm_path, default_path} =
         if alias?(src, path),
-          do: {%{path | tested: true, valued: true}, %{path | tested: true}},
+          do: {%{path | tested: true, valued: true}, exclude(%{path | tested: true}, instr)},
           else: {path, path}
 
+      # Arms sharing a target are one path there (the walk enters a
+      # position once per state): it compares all their values.
       {seen, acc} =
-        Enum.reduce(arms, {seen, acc}, fn [_val, {:f, l}], {s, a} ->
-          goto(l, arm_path, instrs, labels, s, a)
+        arms
+        |> Enum.group_by(fn [_val, {:f, l}] -> l end, fn [val, _] -> val end)
+        |> Enum.sort()
+        |> Enum.reduce({seen, acc}, fn {l, vals}, {s, a} ->
+          list = Enum.flat_map(vals, &[&1, {:f, l}])
+          {arm, a} = note(arm_path, a, {:select_val, src, {:f, default}, {:list, list}})
+          goto(l, arm, instrs, labels, s, a)
         end)
+
+      {default_path, acc} =
+        if alias?(src, path), do: {default_path, acc}, else: note(default_path, acc, instr)
 
       goto(default, default_path, instrs, labels, seen, acc)
     end
@@ -431,7 +468,8 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
         {seen, acc}
 
       Instr.exits?(instr) ->
-        {seen, instr |> tail_reraise?() |> handled(caught(acc, path), path)}
+        reraise = tail_reraise?(instr)
+        {seen, handled(reraise, caught(acc, path, reraise), path)}
 
       true ->
         path = %{
@@ -463,25 +501,62 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
 
   # ── Path state ──────────────────────────────────────────────────────
 
-  defp caught(acc, path) do
+  # A path that ends the handler. One that re-raises in tail position
+  # (`exit(reason)` after `:exit, {reason, _}`, a `reraise`) catches its
+  # class and hands every reason on: it takes no tag, no tuple and no
+  # class outright, and the caller dies of what it re-raised. Tags the
+  # path passed an inequality with (`when reason != :shutdown`, the
+  # other side of `{:noproc, _} ->`) are the ones it does not take.
+  defp caught(acc, path, reraise) do
     class = path.class || :*
-    pairs = Enum.map(path.tags, &{class, &1})
-    tuple_pairs = Enum.map(path.tuple_tags, &{class, &1})
+    acc = %{acc | classes: MapSet.put(acc.classes, class)}
 
-    acc = %{
-      acc
-      | classes: MapSet.put(acc.classes, class),
-        tags: Enum.reduce(pairs, acc.tags, &MapSet.put(&2, &1)),
-        tuple_tags: Enum.reduce(tuple_pairs, acc.tuple_tags, &MapSet.put(&2, &1))
-    }
+    # A re-raising path still discriminates the tags it compares (the
+    # erpc rule asks which error shapes a handler tells apart before it
+    # re-raises); an exit it hands on is taken by nobody.
+    if reraise do
+      if class == :exit,
+        do: acc,
+        else: %{acc | tags: Enum.reduce(path.tags, acc.tags, &MapSet.put(&2, {class, &1}))}
+    else
+      pairs = for t <- path.tags, not MapSet.member?(path.excluded, t), do: {class, t}
+      tuple_pairs = for t <- path.tuple_tags, not MapSet.member?(path.excluded, t), do: {class, t}
 
-    acc =
-      if path.tested and path.tuple and not path.valued,
-        do: %{acc | open_tuples: MapSet.put(acc.open_tuples, class)},
-        else: acc
+      acc = %{
+        acc
+        | tags: Enum.reduce(pairs, acc.tags, &MapSet.put(&2, &1)),
+          tuple_tags: Enum.reduce(tuple_pairs, acc.tuple_tags, &MapSet.put(&2, &1))
+      }
 
-    if path.tested, do: acc, else: %{acc | totals: MapSet.put(acc.totals, class)}
+      acc =
+        if path.tested and path.tuple and not path.valued,
+          do: %{acc | open_tuples: MapSet.put(acc.open_tuples, {class, path.excluded})},
+          else: acc
+
+      if path.tested, do: acc, else: %{acc | totals: MapSet.put(acc.totals, class)}
+    end
   end
+
+  # A clause open to every tuple of its class but the ones it excluded
+  # takes every tuple when another catching path takes each excluded one
+  # (`{:noproc, _} -> a; {reason, _} -> b`, brod's safe_gen_call); not
+  # when an excluded one goes nowhere (`{reason, _} when reason !=
+  # :shutdown`).
+  defp open_tuples(acc) do
+    for {class, excluded} <- acc.open_tuples,
+        Enum.all?(excluded, fn t ->
+          MapSet.member?(acc.tags, {class, t}) or MapSet.member?(acc.tuple_tags, {class, t})
+        end),
+        uniq: true do
+      class
+    end
+    |> Enum.sort()
+  end
+
+  # The atoms `instr` compares, on the side of it where the reason is
+  # none of them.
+  defp exclude(path, instr),
+    do: %{path | excluded: Enum.reduce(compared_atoms(instr), path.excluded, &MapSet.put(&2, &1))}
 
   defp copy(path, src, dst) do
     if alias?(src, path),
