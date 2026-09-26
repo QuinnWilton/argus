@@ -315,56 +315,37 @@ defmodule Argus.Extractors.Handles do
     handle_read = Enum.filter(reads, &(&1 in regs.handle))
 
     cond do
-      not Instr.known?(instr) ->
-        :done
-
-      # The second element: the handle on the `{:ok, _}` arm, the reason on
-      # the `{:error, _}` one. The compiler may take it out before the tag
-      # is tested; the path owns a handle only once it takes the `:ok` arm
-      # (`established/5`).
-      match?({:get_tuple_element, _, 1, _}, instr) and tuple_read != [] ->
-        {:get_tuple_element, _src, 1, dst} = instr
-        carried = carry(instr, regs)
-        {:next, %{carried | handle: Enum.sort(Enum.uniq([Instr.register(dst) | carried.handle]))}}
-
-      # A copy, or the tuple taken apart in a head (`{:ok, h} = ...` is a
-      # test and a projection; a `case` reads the tag first) or tested:
-      # nothing handed on.
-      copy?(instr) ->
-        {:next, carry(instr, regs)}
-
-      # The answer's tag, which a `case` reads before it picks an arm.
-      match?({:get_tuple_element, _, 0, _}, instr) and tuple_read != [] ->
-        {:get_tuple_element, _src, 0, dst} = instr
-        carried = carry(instr, regs)
-        {:next, %{carried | tags: Enum.sort(Enum.uniq([Instr.register(dst) | carried.tags]))}}
-
-      match?({:get_tuple_element, _, _, _}, instr) and handle_read == [] ->
-        {:next, carry(instr, regs)}
-
-      handle_read == [] and tuple_read != [] and test?(instr) ->
-        {:next, carry(instr, regs)}
-
-      # The whole answer looked at (inspected for a log line), not taken.
-      handle_read == [] and tuple_read != [] and leaves_open?(instr, tuple_read) ->
-        {:next, carry(instr, regs)}
-
-      # The whole answer handed on, returned or built into a term.
-      handle_read == [] and tuple_read != [] ->
-        :done
-
-      handle_read != [] ->
-        handle_use(instr, idx, handle_read, regs)
-
-      raises?(instr) ->
-        :done
-
-      Instr.exits?(instr) ->
-        if regs.owned, do: {:dropped, idx}, else: :done
-
-      true ->
-        {:next, carry(instr, regs)}
+      not Instr.known?(instr) -> :done
+      handle_read == [] and tuple_read != [] -> tuple_use(instr, tuple_read, regs)
+      handle_read != [] -> handle_use(instr, idx, handle_read, regs)
+      copy?(instr) -> {:next, carry(instr, regs)}
+      raises?(instr) -> :done
+      Instr.exits?(instr) -> if regs.owned, do: {:dropped, idx}, else: :done
+      true -> {:next, carry(instr, regs)}
     end
+  end
+
+  # What an instruction reading the answer, and not the handle, does:
+  # takes the handle out (the second element: the handle on the `{:ok,
+  # _}` arm, the reason on the `{:error, _}` one; the path owns a handle
+  # only once it takes the `:ok` arm, `established/5`), reads the tag a
+  # `case` picks its arm by, copies or tests it, looks at it (an inspect
+  # for a log line), or hands the whole answer on.
+  defp tuple_use({:get_tuple_element, _src, 1, dst} = instr, _read, regs) do
+    carried = carry(instr, regs)
+    {:next, %{carried | handle: Enum.sort(Enum.uniq([Instr.register(dst) | carried.handle]))}}
+  end
+
+  defp tuple_use({:get_tuple_element, _src, 0, dst} = instr, _read, regs) do
+    carried = carry(instr, regs)
+    {:next, %{carried | tags: Enum.sort(Enum.uniq([Instr.register(dst) | carried.tags]))}}
+  end
+
+  defp tuple_use(instr, read, regs) do
+    if match?({:get_tuple_element, _, _, _}, instr) or copy?(instr) or test?(instr) or
+         leaves_open?(instr, read),
+       do: {:next, carry(instr, regs)},
+       else: :done
   end
 
   defp handle_use(instr, idx, read, regs) do

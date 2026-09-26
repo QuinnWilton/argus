@@ -117,6 +117,7 @@ defmodule Argus.Extractors.PidFlow do
 
   @behaviour Argus.Extractor
 
+  alias Argus.Cfg.Function, as: Graph
   alias Argus.Extractor.CallSites
   alias Argus.Extractor.Helpers
   alias Argus.Extractor.Resolve
@@ -1452,8 +1453,8 @@ defmodule Argus.Extractors.PidFlow do
     pid = MapSet.new(Resolve.writers(fun.instrs, idx, {:x, 0}))
 
     with true <- MapSet.size(pid) > 0,
-         %Argus.Cfg.Function{} = cfg <- fun.cfg.(),
-         %{id: probe} <- Argus.Cfg.Function.block_at(cfg, idx) do
+         %Graph{} = cfg <- fun.cfg.(),
+         %{id: probe} <- Graph.block_at(cfg, idx) do
       Enum.any?(0..(tuple_size(fun.code) - 1)//1, fn t ->
         case node_test(fun, t, pid) do
           nil -> false
@@ -1468,10 +1469,10 @@ defmodule Argus.Extractors.PidFlow do
   # The test at `t` ends its block; its `equal` edge leads to a block that
   # only that edge enters, and that block dominates the probe's.
   defp on_arm?(cfg, t, equal, probe) do
-    with %{id: test, range: {_, ^t}, succs: succs} <- Argus.Cfg.Function.block_at(cfg, t),
+    with %{id: test, range: {_, ^t}, succs: succs} <- Graph.block_at(cfg, t),
          [arm] <- for({to, ^equal} <- succs, do: to),
          %{preds: [{^test, ^equal}]} <- Map.get(cfg.blocks, arm) do
-      Argus.Cfg.Function.dominates?(cfg, arm, probe)
+      Graph.dominates?(cfg, arm, probe)
     else
       _ -> false
     end

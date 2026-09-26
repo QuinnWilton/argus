@@ -172,6 +172,13 @@ defmodule Argus.Test.Fixtures.Handles do
     @moduledoc false
     def whole(path), do: :file.open(path, [:read])
 
+    # The answer looked at for a log line, then returned whole.
+    def logged_answer(path) do
+      answer = :file.open(path, [:read])
+      IO.inspect(answer, label: "open")
+      answer
+    end
+
     def ok_tuple(path) do
       case :file.open(path, [:read]) do
         {:ok, _fd} = ok -> ok
