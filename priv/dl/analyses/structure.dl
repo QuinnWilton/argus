@@ -139,34 +139,54 @@ consumer_supervisor_permanent_child(sup, child, sup_site) :-
 
 // ── Duplicate process names ──────────────────────────────────────
 
-// Module that registers a specific name. `site` is the registration
-// instruction — anchor-grade evidence.
-.decl module_registers_name(mod: symbol, name: symbol, site: symbol)
-
-module_registers_name(mod, name, id) :-
-  process_register(id, func, name, _),
-  name != "dynamic",
-  name != ":dynamic",
-  function_def(func, mod, _, _, _).
-
 // Same name registered by two different modules. One row per pair of
 // registration sites — finding builders dedupe on (name, mod1, mod2).
 .decl duplicate_process_name(name: symbol, mod1: symbol, mod2: symbol, site1: symbol, site2: symbol)
 .output duplicate_process_name
 
+// Two modules register the same name, and whichever process registers
+// second fails: at most one of them can run at a time. `mod1` sorts
+// before `mod2`, so each pair is one row.
 duplicate_process_name(name, mod1, mod2, site1, site2) :-
-  module_registers_name(mod1, name, site1),
-  module_registers_name(mod2, name, site2),
+  registers_name(mod1, name, site1),
+  registers_name(mod2, name, site2),
   mod1 < mod2.
+
+// Code of `mod` registers a literal name at `site`, the registration
+// instruction (anchor-grade evidence). A name computed at run time
+// ("dynamic", ":dynamic") is no one name.
+.decl registers_name(mod: symbol, name: symbol, site: symbol)
+
+registers_name(mod, name, site) :-
+  process_register(site, func, name, _),
+  name != "dynamic",
+  name != ":dynamic",
+  function_def(func, mod, _, _, _).
 
 // ── Global register without conflict resolution ──────────────────
 
-// :global.register_name/2 (without resolve function) is race-prone
-// during network partitions. register_name/3 supplies an explicit
-// conflict-resolution function — the fixed form — so only /2 is
-// flagged. site is the registration instruction.
 .decl global_register_risk(func: symbol, name: symbol, site: symbol)
 .output global_register_risk
 
-global_register_risk(func, name, id) :-
-  global_register(id, func, name, "2").
+// A :global registration names no conflict resolver, so after a
+// partition heals :global kills one of the name's two holders at random.
+.decl global_name_without_resolver(func: symbol, name: symbol, register: symbol)
+
+global_name_without_resolver(func, name, register) :-
+  registers_globally(register, func, name),
+  !names_resolver(register).
+
+// :global.register_name/2 or /3 at `register`, the registration
+// instruction, in `func`.
+.decl registers_globally(register: symbol, func: symbol, name: symbol) inline
+
+registers_globally(register, func, name) :- global_register(register, func, name, _).
+
+// The registration is register_name/3, which supplies an explicit
+// conflict-resolution function: the fixed form, taken as deliberate even
+// when it passes :global's own random_exit_name/3.
+.decl names_resolver(register: symbol)
+
+names_resolver(register) :- global_register(register, _, _, "3").
+
+global_register_risk(func, name, site) :- global_name_without_resolver(func, name, site).
