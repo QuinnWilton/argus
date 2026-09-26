@@ -172,7 +172,37 @@ defmodule Argus.Souffle.CacheTest do
       assert [<<"p-", _key::binary-size(64)>> = name] =
                programs |> File.ls!() |> Enum.reject(&String.starts_with?(&1, "souffle-"))
 
-      assert File.read!(Path.join(programs, name)) == "edge\tedge.facts\n"
+      assert File.read!(Path.join(programs, name)) == "argus-inputs-3\nedge\tedge.facts\n"
+    end
+
+    test "an entry that is not a whole answer is resolved again, never read as none",
+         %{tmp_dir: tmp} do
+      skip_without_souffle()
+      {rules, _facts} = program!(tmp)
+      programs = Path.join(tmp, "programs")
+      assert {:ok, ["edge"]} = Souffle.input_relations(rules, programs: programs)
+
+      [name] = programs |> File.ls!() |> Enum.reject(&String.starts_with?(&1, "souffle-"))
+      entry = Path.join(programs, name)
+      # What a touch racing a prune used to leave at an entry's name: read
+      # as a list, it is a program that reads nothing.
+      File.chmod!(entry, 0o644)
+      File.write!(entry, "")
+
+      assert fresh(:input_relations, [rules, [programs: programs]]) == {:ok, ["edge"]}
+      assert File.read!(entry) == "argus-inputs-3\nedge\tedge.facts\n"
+    end
+  end
+
+  # What a fresh VM — one that has resolved and asked nothing — answers.
+  defp fresh(function, args) do
+    {:ok, peer, _node} = :peer.start_link(%{connection: :standard_io})
+
+    try do
+      :ok = :peer.call(peer, :code, :add_pathsa, [:code.get_path()])
+      :peer.call(peer, Souffle, function, args, 60_000)
+    after
+      :peer.stop(peer)
     end
   end
 
@@ -206,6 +236,13 @@ defmodule Argus.Souffle.CacheTest do
       end
     end
 
+    defp kept_version!(dir) do
+      [kept] = kept_versions(dir)
+      path = Path.join(dir, kept)
+      File.chmod!(path, 0o644)
+      path
+    end
+
     test "keeps the answer under the binary's stamp for the next VM", %{tmp_dir: tmp} do
       bin = solver!(tmp, "/bin/echo")
       dir = Path.join(tmp, "programs")
@@ -213,18 +250,33 @@ defmodule Argus.Souffle.CacheTest do
 
       assert Cache.version(bin, dir) == answer
       assert [<<"souffle-", _key::binary-size(64)>> = kept] = kept_versions(dir)
-      assert File.read!(Path.join(dir, kept)) == answer
+      assert File.read!(Path.join(dir, kept)) == "argus-solver-version-2\n" <> answer
 
       # A fresh VM reads the kept answer instead of asking: a planted
       # one shows.
-      File.chmod!(Path.join(dir, kept), 0o644)
-      File.write!(Path.join(dir, kept), "planted")
+      File.write!(kept_version!(dir), "argus-solver-version-2\nplanted")
       assert fresh_version(bin, dir) == "planted"
 
       # Another binary at the same path is another stamp: asked again.
       bin = solver!(tmp, "/usr/bin/true")
       assert fresh_version(bin, dir) == ""
       assert length(kept_versions(dir)) == 2
+    end
+
+    test "an entry that is not a whole answer is asked again, never read as none",
+         %{tmp_dir: tmp} do
+      bin = solver!(tmp, "/bin/echo")
+      dir = Path.join(tmp, "programs")
+      {answer, 0} = System.cmd(bin, ["--version"])
+      assert Cache.version(bin, dir) == answer
+
+      # What a touch racing a prune used to leave at an entry's name: read
+      # as an answer, a solver that says nothing.
+      entry = kept_version!(dir)
+      File.write!(entry, "")
+
+      assert fresh_version(bin, dir) == answer
+      assert File.read!(entry) == "argus-solver-version-2\n" <> answer
     end
 
     test "asks a script every time and keeps nothing", %{tmp_dir: tmp} do

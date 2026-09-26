@@ -209,20 +209,24 @@ defmodule Argus.Souffle do
     end
   end
 
+  # What a kept list of a program's inputs starts with, and part of its
+  # key: bump it when what an entry holds changes.
+  @inputs_format "argus-inputs-3"
+
   # The answer kept in a store's `programs/`, or resolved and kept there.
+  # A program may read nothing, so an entry's first line says it is one:
+  # an empty or foreign file at its name is no answer, and is written
+  # again.
   defp kept(nil, path, bin, _version), do: resolve_inputs(bin, path)
 
   defp kept(dir, path, bin, {program, _bin, version}) do
-    key = Argus.Cache.key(["argus-inputs-2", program, version])
+    key = Argus.Cache.key([@inputs_format, program, version])
     entry = Path.join(dir, "#{Cache.program_name(path)}-#{key}")
 
     with {:ok, entry} <- Argus.Cache.fetch(entry),
-         {:ok, text} <- File.read(entry) do
-      {:ok,
-       for(
-         line <- String.split(text, "\n", trim: true),
-         do: List.to_tuple(String.split(line, "\t"))
-       )}
+         {:ok, text} <- File.read(entry),
+         [@inputs_format | lines] <- String.split(text, "\n", trim: true) do
+      {:ok, for(line <- lines, do: List.to_tuple(String.split(line, "\t")))}
     else
       _missing ->
         with {:ok, inputs} = ok <- resolve_inputs(bin, path) do
@@ -235,7 +239,11 @@ defmodule Argus.Souffle do
   # A store that cannot be written to is resolved around, not failed on.
   defp keep_inputs(entry, inputs) do
     staging = "#{entry}.#{:os.getpid()}.#{System.unique_integer([:positive])}"
-    text = Enum.map(inputs, fn {name, file} -> [name, "\t", file, "\n"] end)
+
+    text = [
+      @inputs_format,
+      "\n" | Enum.map(inputs, fn {name, file} -> [name, "\t", file, "\n"] end)
+    ]
 
     with :ok <- File.mkdir_p(Path.dirname(entry)),
          :ok <- File.write(staging, text),

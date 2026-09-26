@@ -528,7 +528,10 @@ defmodule Argus.Souffle.Cache do
   end
 
   # Moves every kept version: bump it when what an entry holds changes.
-  @version_format "argus-solver-version-1"
+  # An entry's first line is this, then the answer: a solver may answer
+  # nothing, so an empty or foreign file at the entry's name is no
+  # answer, and is written again.
+  @version_format "argus-solver-version-2"
   @racy_seconds 2
 
   defp kept_version(bin, dir) do
@@ -537,7 +540,7 @@ defmodule Argus.Souffle.Cache do
         entry = Path.join(dir, "souffle-" <> Argus.Cache.key([@version_format, bin | stamp]))
 
         with {:ok, entry} <- Argus.Cache.fetch(entry),
-             {:ok, version} <- File.read(entry) do
+             {:ok, @version_format <> "\n" <> version} <- File.read(entry) do
           version
         else
           _missing ->
@@ -583,7 +586,7 @@ defmodule Argus.Souffle.Cache do
     staging = "#{entry}.#{:os.getpid()}.#{System.unique_integer([:positive])}"
 
     with :ok <- File.mkdir_p(Path.dirname(entry)),
-         :ok <- File.write(staging, version),
+         :ok <- File.write(staging, [@version_format, "\n", version]),
          :ok <- Argus.Cache.install(staging, entry) do
       :ok
     else

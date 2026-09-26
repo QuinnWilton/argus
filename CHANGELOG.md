@@ -6,6 +6,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## 0.20.0-dev — unreleased
 
+### Stores: a kept program answer says it is one
+
+**Fixed.** A store's `programs/` keeps, for a fresh VM, the relations
+each program reads and the solver's version, as plain text. An empty
+file is a valid list of inputs (a program that reads nothing) and a
+valid version (a solver that prints nothing), so the empty file a
+lookup racing a prune used to leave (see above) was read as an answer:
+a program that reads nothing keys its solves on nothing it reads, and
+every set of facts was served the first one's kept solve. Each entry
+now starts with a line naming its format (`argus-inputs-3`,
+`argus-solver-version-2`, both new keys): anything else at the name is
+no answer, and is resolved again and written over. The first run after
+this resolves each program's inputs and asks the solver's version
+once.
+
 ### Stores: a lookup that races a prune
 
 **Fixed.** `Argus.Cache.fetch/1` asked whether an entry was there and
