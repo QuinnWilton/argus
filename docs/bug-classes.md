@@ -1370,7 +1370,7 @@ process left.
   on behalf of another's once request: MongooseIM's `gen_hook` sets up
   each hook's instrumentation with `mongoose_instrument` in its
   `add_handler` clause.
-- A request is a call or cast `sync_request_at` and `async_dep` resolve,
+- A request is a call or cast `sync_request_at` and `async_request_at` resolve,
   or one through B's own client API whose server is an argument or a
   name the extractor cannot read (eusapia's
   `Notifier.listen(server, channel)`), which is B's by the tag B's own

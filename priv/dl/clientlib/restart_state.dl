@@ -58,8 +58,10 @@
 //
 // `once_request(a, b, kind, tag, func)`: a's once code, in func, calls
 // ("call") or casts to ("cast") b's process with a request tagged `tag`
-// ("any" where it carries none the program sees). A request of a's own
-// process is not one a restart of another can lose.
+// ("any" where it carries none the program sees). A call and a cast are
+// read in one vocabulary (calls.dl): sync_request_at and
+// async_request_at pair each request's target with its own site's tag.
+// A request of a's own process is not one a restart of another can lose.
 .decl once_request(a: symbol, b: symbol, kind: symbol, tag: symbol, func: symbol)
 
 once_request(a, b, "call", tag, g) :-
@@ -69,18 +71,18 @@ once_request(a, b, "call", tag, g) :-
 
 once_request(a, b, "cast", tag, g) :-
   once_code(a, g),
-  async_dep(g, b),
-  cast_tag(g, tag),
+  async_request_at(g, _, b, tag),
   a != b.
 
 // A request through b's own client API when the server is an argument
 // or a name the extractor cannot read: `def listen(server, channel), do:
 // GenServer.call(server, {:listen, channel, self()})`, eusapia's
-// Notifier, whose listener names the server it was configured with. The request is b's by its tag: b's own handler takes it (the
-// self-directed call of resolved_calls.dl, which the chains read; this
-// program does not include it, and a cast has no such row anywhere). A
-// proxy's client function sends another server's tag, which its own
-// handler does not take, and resolves to nothing.
+// Notifier, whose listener names the server it was configured with. The
+// request is b's by the tag of the same site: b's own handler takes it
+// (the self-directed call of resolved_calls.dl, which the chains read;
+// this program does not include it, and a cast has no such row
+// anywhere). A proxy's client function sends another server's tag,
+// which its own handler does not take, and resolves to nothing.
 once_request(a, b, "call", tag, g) :-
   once_code(a, g),
   sync_call_site(id, g, t, _),
@@ -93,9 +95,9 @@ once_request(a, b, "call", tag, g) :-
 
 once_request(a, b, "cast", tag, g) :-
   once_code(a, g),
-  async_cast(g, t),
+  async_cast_site(id, g, t),
   unresolved_target(t),
-  call_tag(_, g, "cast", tag),
+  call_tag(id, g, "cast", tag),
   function_def(g, b, _, _, _),
   handle_cast_function(b, h),
   callback_tag(h, "handle_cast", tag),
@@ -119,25 +121,6 @@ once_request(a, b, "cast", tag, h) :-
   child_subtree(_, _, a),
   async_request_at(h, id, b, tag),
   a != b.
-
-// The casts g makes, at their sites, by the tag each carries: "any" for
-// a cast whose message has none.
-.decl cast_site(func: symbol, site: symbol, tag: symbol)
-
-cast_site(g, id, tag) :- call_tag(id, g, "cast", tag).
-
-cast_site(g, id, "any") :-
-  async_dep(g, _),
-  call_site(id, g, gs, "cast", _),
-  (gs = "GenServer" ; gs = ":gen_server"),
-  !call_tag(id, g, "cast", _).
-
-cast_site(g, id, "any") :- process_call(g, id, _, "cast", _).
-
-// The tags g's casts carry.
-.decl cast_tag(func: symbol, tag: symbol)
-
-cast_tag(g, tag) :- cast_site(g, _, tag).
 
 // ── What b's handler keeps ───────────────────────────────────────────
 

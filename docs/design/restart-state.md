@@ -112,8 +112,9 @@ The reason `cached_pid` is the model's other half, unchanged. There, A's
 
 - The tree is what the supervision extractor reads (its entry in the
   vocabulary).
-- A request is what `sync_request_at` and `async_dep` resolve: a target by
-  name, by client API, by points-to, or by message tag. A client API of
+- A request is what `sync_request_at` and `async_request_at` (calls.dl)
+  resolve: a target by name, by client API, by points-to, or by message
+  tag, each paired with the tag of its own site. A client API of
   B's whose server is an argument or a name the extractor cannot read
   (eusapia's `Notifier.listen(server, channel)`) is B's by the tag B's
   own handler takes, for a call and for a cast.

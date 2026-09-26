@@ -49,6 +49,22 @@ per-use cast from a handler, and a cast to a proxy, by name and through
 its client function, whose handler does not take the tag. Each quiet
 shape fires once its distinguishing feature is removed.
 
+**Changed.** Coupling reads a cast in the vocabulary a call is read in.
+`once_request`'s whole-function cast clause and a cast's registration
+site (`request_site`, coupling.dl) read `async_request_at`, and the
+clause for a cast through the keeper's own client API pairs the
+unresolved target with the tag of the same site, as the call clause
+does. restart_state.dl's `cast_site` and `cast_tag` are deleted: they
+paired every target a function casts to with every tag it casts, and
+tagged each cast points-to resolves "any" beside its own tag (one
+negated atom goes with them). Finding rows and frames are unchanged on
+the 44 evaluation sets. The 14 cast once requests and 11 holds that go
+were "any" duplicates of requests and keepings kept under the site's
+own tag: ejabberd's `invalidate`, `emqx_telemetry`'s
+`start_reporting`/`stop_reporting`, Livebook's `NotebookManager`,
+`vmq_swc_group_coordinator`'s `group_initialized` and zotonic's
+`set_site_status`.
+
 ### Races: what is ordered before the pair (schema 147)
 
 The races rewrite's concurrency fix counted every other process that

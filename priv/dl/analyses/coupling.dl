@@ -101,12 +101,12 @@ step_site(a, b, c, how, x) :-
   once_step(a, _, c, e),
   once_path.reaches(e, g).
 
-// The instruction of func that makes the request to mod's process: a
-// call's site, or a cast's by the tag it carries.
+// The instruction of func that makes the request to mod's process, a
+// call's or a cast's, with the tag it carries.
 .decl request_site(func: symbol, site: symbol, mod: symbol, tag: symbol)
 
 request_site(g, id, b, tag) :- sync_request_at(g, id, b, tag), id != "".
-request_site(g, id, b, tag) :- async_dep(g, b), cast_site(g, id, tag).
+request_site(g, id, b, tag) :- async_request_at(g, id, b, tag), id != "".
 
 .decl stepped(caller: symbol, callee: symbol, how: symbol)
 
