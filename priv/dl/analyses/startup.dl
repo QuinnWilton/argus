@@ -127,7 +127,9 @@ init_safe_cross_supervisor(child, dep) :-
 .decl unconditional_sync_call_in_init(mod: symbol, callee: symbol)
 
 // The call making the dependency is itself unconditional — not some
-// other GenServer.call in init.
+// other GenServer.call in init. A call made after init/1's own ack
+// (start_acked), or an edge taken only after it (acked_edge), no longer
+// holds the start: it cannot make the start's wait unconditional.
 unconditional_sync_call_in_init(mod, callee) :-
   init_function(mod, func),
   sync_site(func, callee, id),
@@ -184,7 +186,6 @@ init_wait_site(mod, callee, id) :-
   init_function(mod, f),
   call_instr(f, g, id),
   !start_acked(id, f),
-  !runs_elsewhere(f, g),
   !side_call(f, g),
   reaches_sync_dep(g, callee).
 
@@ -246,6 +247,8 @@ later_sibling_call(child, dep) :- later_sibling_dep(child, dep, "call", _, _, _)
 // from init; Oban's Midwife started every queue from init. Reported for
 // every management op, since terminate_child waits for a whole
 // shutdown and which_children on the parent is the classic deadlock.
+// One made after init/1's own ack (start_acked) no longer holds the
+// start: the server is up, and nothing waits on its init/1.
 blocks_on_peer(mod, "init", target, "sup", "", "", site, cat(api, ".", op)) :-
   init_function(mod, func),
   sup_management_call(site, func, api, op, target),
@@ -261,6 +264,7 @@ blocks_on_peer(mod, "init", target, "sup", "", "", site, cat(api, ".", op)) :-
 sup_reach.cut(f, g) :- side_call(f, g).
 sup_reach.cut(f, g) :- acked_edge(f, g).
 
+// A seed is a management call before its function's ack, as above.
 sup_reach.seed(g, site) :- sup_management_call(site, g, _, _, _), !start_acked(site, g).
 
 blocks_on_peer(mod, "init", target, "sup", "", "", site, cat(api, ".", op)) :-
@@ -412,6 +416,9 @@ receive_reach.cut(f, g) :- acked_edge(f, g).
 receive_reach.cut(f, g) :- side_call(f, g).
 receive_reach.seed(f, f) :- unbounded_wait_at(f, _).
 
+// A wait that ends when its peer does is "down": a monitored peer's
+// :DOWN (peer_bounded), or a linked peer's exit init/1 traps
+// (exit_bounded). The rest wait on whatever the peer chooses to send.
 init_effect(mod, "receive", r, id) :-
   init_function(mod, f),
   receive_reach.reaches(f, r),
@@ -429,7 +436,6 @@ init_effect(mod, "down", r, id) :-
   init_function(mod, f),
   receive_reach.reaches(f, r),
   unbounded_wait_at(r, id),
-  !peer_bounded(id),
   exit_bounded(mod, id).
 
 // ── An init/1 that becomes the server before its start returns ──
@@ -474,6 +480,8 @@ recv_site(f, id) :- call_site(id, f, ":gen_tcp", "recv", _).
 recv_site(f, id) :- call_site(id, f, ":ssl", "recv", _).
 recv_site(f, id) :- call_arg(f, g, pos, ":infinity"), infinite_recv_param(g, pos), call_instr(f, g, id).
 
+// A receiving function with no such site of its own is anchored at the
+// function, its site empty.
 .decl recv_site_or_empty(func: symbol, site: symbol)
 
 recv_site_or_empty(f, id) :- recv_site(f, id).
@@ -487,13 +495,15 @@ recv_site_or_empty(f, "") :- infinite_recv(f), !recv_site(f, _).
 .decl init_reaches_recv(mod: symbol, api: symbol, call: symbol)
 .output init_reaches_recv
 
+// The first step out of init/1 takes the walks' own cut: an edge taken
+// only after init/1's ack (acked_edge) starts no path that holds the
+// start.
 .decl init_recv_step(mod: symbol, api: symbol, call: symbol)
 
 init_recv_step(mod, r, call) :-
   init_effect(mod, "recv", r, _),
   init_function(mod, f),
   call_instr(f, g, call),
-  !runs_elsewhere(f, g),
   !acked_edge(f, g),
   recv_reach.reaches(g, r).
 
@@ -502,7 +512,6 @@ init_recv_step(mod, r, call) :-
   (kind = "receive" ; kind = "down"),
   init_function(mod, f),
   call_instr(f, g, call),
-  !runs_elsewhere(f, g),
   !acked_edge(f, g),
   receive_reach.reaches(g, r).
 
@@ -850,6 +859,8 @@ blocks_on_peer(init, "init", "", "remote", "", "", id, op) :-
   rpc_during_init(init, id),
   rpc_call(id, _, op, _).
 
+// Each operation below holds the start only before init/1's own ack
+// (start_acked): after it, the starter has its answer.
 blocks_on_peer(func, "init", "", "remote", "", "", id, op) :-
   global_register(id, func, _, _),
   init_function(_, func),
@@ -899,7 +910,8 @@ post_start_initialization(func, site, callee, start) :-
   config_reach.reaches(callee),
   start_link_site_or_empty(func, start).
 
-// The Supervisor.start_link the write comes after.
+// The Supervisor.start_link the write comes after; a start spelled
+// another way leaves the frame out (its site empty).
 .decl start_link_site_or_empty(func: symbol, site: symbol)
 
 start_link_site_or_empty(f, id) :- call_site(id, f, "Supervisor", "start_link", _).
