@@ -6,6 +6,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## 0.20.0-dev — unreleased
 
+### Stores: a lookup that races a prune
+
+**Fixed.** `Argus.Cache.fetch/1` asked whether an entry was there and
+then touched it with `File.touch/1`, which makes a file where there is
+none: a prune that took the entry in between left an empty file at its
+name. The next lookup found it, touched it and read it as the answer,
+so it was never pruned again: an empty kept solve failed every solve
+of its key, and an empty kept list of a program's inputs read as a
+program that reads nothing. A fetch is now one change of the entry's
+times, which finds the entry or fails and never makes one. The specs
+environment's kept ebin digests were read and then touched the same
+way; they are touched first, without making a file, and an entry that
+does not read as digests is written again rather than left because it
+is there. `Argus.Cache.RacesTest` holds each race open with a stand-in
+for the file server (`Argus.Test.FileGate`).
+
 ### Stages: a derivation beside another into the same directory
 
 **Fixed.** `derive_stage0/2` and `derive_points_to/2` had Souffle write

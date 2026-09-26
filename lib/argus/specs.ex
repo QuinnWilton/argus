@@ -46,6 +46,9 @@ defmodule Argus.Specs do
   output.
   """
 
+  require Record
+  Record.defrecordp(:file_info, Record.extract(:file_info, from_lib: "kernel/include/file.hrl"))
+
   @max_depth 4
 
   @typedoc "A normalized return shape."
@@ -642,11 +645,11 @@ defmodule Argus.Specs do
         {:ok, entries}
 
       _ ->
+        # Touched as a store's hit is, so retention sees it in use.
         with path when is_binary(path) <- ebin_entry(ebin, stats, cache),
+             :ok <- touch(path),
              {:ok, bytes} <- File.read(path),
              {:ok, entries} when is_list(entries) <- safe_decode(bytes) do
-          # Touched as a store's hit is, so retention sees it in use.
-          File.touch(path)
           :persistent_term.put({__MODULE__, :ebin, ebin}, {stats, entries})
           {:ok, entries}
         else
@@ -655,15 +658,26 @@ defmodule Argus.Specs do
     end
   end
 
+  # `Argus.Cache.fetch/1`'s touch, which the store's code stays out of
+  # every producer's key to keep: first, and one change of the times
+  # that finds the entry or fails. Read first and touched after, a prune
+  # in between left an empty file at the entry's name (`File.touch/1`
+  # makes one), which nothing wrote again.
+  defp touch(path) do
+    now = System.os_time(:second)
+    :file.write_file_info(path, file_info(mtime: now, atime: now), [{:time, :posix}])
+  end
+
   # Kept in the VM and in `cache` unless the stamp is racy; a cache that
-  # cannot be written to goes without.
+  # cannot be written to goes without. Only a miss comes here, so what
+  # is at the entry's name, if anything, could not be read as digests:
+  # it is replaced, never taken for an answer because it is there.
   defp keep_digests(_ebin, {_beams, _stats, true}, _entries, _cache), do: :ok
 
   defp keep_digests(ebin, {_beams, stats, false}, entries, cache) do
     :persistent_term.put({__MODULE__, :ebin, ebin}, {stats, entries})
 
     with path when is_binary(path) <- ebin_entry(ebin, stats, cache),
-         false <- File.exists?(path),
          :ok <- File.mkdir_p(cache) do
       staging = "#{path}.#{:os.getpid()}.#{System.unique_integer([:positive])}"
 

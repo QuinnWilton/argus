@@ -63,6 +63,9 @@ defmodule Argus.Cache do
   answer looks stale, and once before a release.
   """
 
+  require Record
+  Record.defrecordp(:file_info, Record.extract(:file_info, from_lib: "kernel/include/file.hrl"))
+
   @typedoc "What `stale/2` spares; see there."
   @type prune_option ::
           {:keep, [String.t()]} | {:recent, non_neg_integer()} | {:max_age, pos_integer()}
@@ -113,14 +116,22 @@ defmodule Argus.Cache do
   @doc """
   A kept entry: `{:ok, path}` (touched, so a pruner sees it in use) or
   `:miss`.
+
+  The touch is the lookup: one change of the entry's times, which
+  finds the entry or fails, and never makes one. Asking whether it
+  exists and then touching it would let a prune take the entry in
+  between, and a touch of a path that is not there writes an empty
+  file at the entry's name: an answer no writer gave, read back and
+  touched on every lookup after, so never pruned again. An entry that
+  cannot be touched is a miss too: a pruner could not see it in use.
   """
   @spec fetch(Path.t()) :: {:ok, Path.t()} | :miss
   def fetch(entry) do
-    if File.exists?(entry) do
-      File.touch(entry)
-      {:ok, entry}
-    else
-      :miss
+    now = System.os_time(:second)
+
+    case :file.write_file_info(entry, file_info(mtime: now, atime: now), [{:time, :posix}]) do
+      :ok -> {:ok, entry}
+      {:error, _} -> :miss
     end
   end
 
