@@ -216,6 +216,12 @@ of them runs again after the start phase.
   the restart-state model leaves a peer's own schedule to the priors. It
   is seeded at supervised modules, since coupling's question is about
   children.
+- `once_step(mod, func, site, callee)`: the calls the once phase makes
+  at its own level, a start callback's calls and the calls at the sites
+  of the once phase. once_code is the start callbacks and what the steps
+  reach. The step is the module's own code where what it reaches may be a
+  helper's or another module's API, so a finding about a request once code
+  makes points at it (coupling's registration frame).
 - `again_code(func)`: reached from a root that runs again as a whole, or
   from a call in a clause that runs again. That is a clause not once, or a
   site no clause tag names. The reach does not enter a clause function by
@@ -349,7 +355,10 @@ The extractor also reads `statem_insert` (inserted events).
   handle_continue/2 is once code only for the start's continue chain:
   `start_callback` no longer names it, and a clause only handlers continue
   to (Livebook's NotebookManager `:dump_state`) is not. A gated site's
-  reach is once code, and a call at one is a once request.
+  reach is once code, and a call at one is a once request. The finding's
+  registration frame is the `once_step` that makes the request or leads
+  to it, asked of sites: a handle_continue/2 clause is no once code as a
+  function.
 
 ## What it assumes
 

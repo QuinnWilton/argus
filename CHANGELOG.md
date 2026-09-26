@@ -6,6 +6,31 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## 0.20.0-dev — unreleased
 
+### Coupling: the registration's frame is the registrant's own step
+
+**Fixed.** "Coupled children under one_for_one" put its "registers with
+the sibling here" frame inside the keeper's client API when the
+registrant called it from `handle_continue/2`: depot's and eusapia's
+Sonar showed `def listen(server, channel)` in the Notifier, never its own
+`Notifier.listen(state.notifier, @channel)`. Since the once-and-again
+round, a handle_continue/2 clause is once code only at its sites, not as
+a function, and the frame asked for a call into the keeper's module from
+a function that is once code; finding none, it fell back to the function
+making the request, the keeper's `listen/2`. The frame is now a
+definition over the once phase's own steps (`once_step`, runs.dl, which
+once_code's walk is rooted at): the request itself when a start
+callback or a site of the once phase makes it, else the step's call
+whose walk (once_code's edges) reaches it. The step is the registrant's
+own code, never the keeper's: a registration through a helper of the
+registrant's shows the outermost call, above the helper, and one through
+a helper module shows the call in the registrant. The module ranking
+(own_site) the old frame needed is gone. A direct cast now shows its
+site, not its function. Rows, severities and details are unchanged on
+the 44 evaluation sets; 13 coupling frames move, all into the
+registrant's module at its once phase (ejabberd 5, emqx 2, livebook,
+mongooseim 2, vernemq 2, zotonic), and test/soundness/coupling_test.exs
+pins the frame's module and line for four shapes.
+
 ### Shutdown: a table the process owns goes with it
 
 **Fixed.** "Cleanup in terminate/2 of a process that never traps exits"

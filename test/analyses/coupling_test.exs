@@ -176,14 +176,15 @@ defmodule Argus.Analyses.CouplingTest do
                results["dual_restart_authority"]
     end
 
-    test "the coupling site is the call into the sibling, not one inside it" do
+    test "the coupling site is the caller's own step, not a call below it" do
       skip_without_souffle()
 
       # A's init/1 reaches B through a helper module H. B's record/1 is a
       # default-argument head calling record/2, B's own function, which
-      # makes the call B's handler keeps. The site is H's call into B, not
-      # B's call inside its own API: anchored there, every caller of B
-      # got the same line of B's API.
+      # makes the call B's handler keeps. The site is A's own step, its
+      # init/1's call into H: not B's call inside its own API (anchored
+      # there, every caller of B got the same line of B's API), and not
+      # H's call into B, which is not A's code.
       facts =
         registered()
         |> Map.merge(%{
@@ -203,7 +204,7 @@ defmodule Argus.Analyses.CouplingTest do
           sync_call_site: [["B:record/2#4", "B:record/2", "B", "5000"]]
         })
 
-      assert ["H:report/1#2"] =
+      assert ["A:init/1#1"] =
                for(
                  [_, "A", "B", "restart_isolation", "table", _, _store, site | _] <-
                    coupling_rows(facts),

@@ -14,7 +14,8 @@ defmodule Argus.Soundness.CouplingTest do
     (`HookUser`) or from a fun init/1 hands to `Enum.each/2` (`EachUser`)
     still fires, and so does one made through a client API that takes
     the server as an argument (`ServerArgListener`, `ServerArgCastJoiner`:
-    the request is the keeper's by the tag its own handler takes). A call
+    the request is the keeper's by the tag its own handler takes), also
+    from a helper of the caller's own (`HelperListener`). A call
     made on each use (`Relay`, `ServerArgPublisher`) does not, and neither
     does a client function whose tag its own module does not take
     (`ProxyUser`).
@@ -40,6 +41,7 @@ defmodule Argus.Soundness.CouplingTest do
   alias Argus.Test.Memo
 
   @title "Coupled children under one_for_one"
+  @source Path.expand("../fixtures/soundness/coupling_soundness.ex", __DIR__)
 
   @fixtures [
     Restart.CastSup,
@@ -97,7 +99,10 @@ defmodule Argus.Soundness.CouplingTest do
     Restart.ServerArgCastJoiner,
     Restart.ProxySup,
     Restart.Proxy,
-    Restart.ProxyUser
+    Restart.ProxyUser,
+    Restart.HelperListenSup,
+    Restart.HelperListenKeeper,
+    Restart.HelperListener
   ]
 
   setup_all do
@@ -117,7 +122,8 @@ defmodule Argus.Soundness.CouplingTest do
         Restart.ComputedSup,
         :restart_record_sup,
         Restart.ServerArgSup,
-        Restart.ServerArgCastSup
+        Restart.ServerArgCastSup,
+        Restart.HelperListenSup
       ] do
     test "#{inspect(sup)}: a registration its sibling keeps is reported", %{fired: fired} do
       assert coupled(fired, unquote(sup)) == [:warning]
@@ -171,6 +177,56 @@ defmodule Argus.Soundness.CouplingTest do
           do: caller
 
     assert callers == [inspect(Restart.ServerArgListener)]
+  end
+
+  # Where the finding shows the registration: the step of the caller's
+  # once phase that makes it or leads to it, which is the caller's own
+  # code. Not the keeper's client API the step calls (depot's and
+  # eusapia's Sonar, calling `Notifier.listen(server, channel)` from
+  # handle_continue/2), and not a helper of the caller's below the step.
+  describe "the registration's frame" do
+    for {sup, caller, text} <- [
+          {Restart.ServerArgSup, Restart.ServerArgListener,
+           ":ok = ServerArgKeeper.listen(s.keeper, :health)"},
+          {Restart.ContinueSup, Restart.ContinueJoiner,
+           ":ok = Argus.Test.Fixtures.Restart.ContinueKeeper.join(self())"},
+          {Restart.HelperListenSup, Restart.HelperListener, ":ok = listen_on(s.keeper)"},
+          {Restart.HookSup, Restart.HookUser, "    register_hooks()"}
+        ] do
+      test "#{inspect(caller)}: at the caller's own step" do
+        sup = unquote(sup)
+        caller = unquote(caller)
+
+        assert {:ok, %{findings: findings}} =
+                 Memo.run_analyses(@fixtures, analyses: [:coupling])
+
+        assert [finding] =
+                 Enum.filter(findings, &(&1.title == @title and &1.mfa == {sup, :init, 1}))
+
+        frame =
+          Enum.find(finding.related, &(&1.label == "registers with the sibling here")) ||
+            flunk("no registration frame in #{inspect(finding.related)}")
+
+        assert frame.module == caller
+        assert frame.instr != nil, "the frame is a function's head, not the step's call"
+        assert frame_line(frame) == fixture_line(unquote(text))
+      end
+    end
+  end
+
+  defp frame_line(frame) do
+    {:ok, facts} = Argus.Pipeline.extract([frame.module])
+    Argus.Lines.resolve(Argus.Lines.from_facts(facts), frame.instr)
+  end
+
+  # The fixture's line holding `text`, found by the text so the fixture
+  # can move freely.
+  defp fixture_line(text) do
+    @source
+    |> File.read!()
+    |> String.split("\n")
+    |> Enum.find_index(&String.contains?(&1, text))
+    |> Kernel.+(1)
   end
 
   # The exclusion census's coupling hole (docs/design/exclusions.md): the

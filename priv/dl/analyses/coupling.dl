@@ -65,74 +65,68 @@ coupling(sup, caller_mod, callee_mod, sup_site) :-
   !derived_process_link(caller_mod, callee_mod),
   !derived_process_link(callee_mod, caller_mod).
 
-// Where the caller asks: the request itself when the caller's own code
-// makes it, else the caller's call into the keeper's module that leads
-// to it (ejabberd's acl:init/1 calling ejabberd_hooks:add/4, whose
-// gen_server call is the keeper's API's). The walk goes back from the
-// functions that make a kept request to the calls into the keeper's
-// module that the caller's once code makes.
-.init kept_request_reach = SameProcessReach
+// Where the caller asks: the step of its once phase that makes the
+// request or leads to it (once_step, runs.dl). The phase runs at its own
+// level in a start callback and at the sites of the phase (a
+// handle_continue/2 clause init/1 continues to): a request made there is
+// its own step, and one made below it — in a helper of the caller's, or
+// in the keeper's client API the phase calls (eusapia's Sonar calling
+// `Notifier.listen(server, channel)` from handle_continue/2, ejabberd's
+// acl:init/1 calling ejabberd_hooks:add/4) — is the phase's call that
+// leads to it. The step is the caller's own code, never the keeper's:
+// the finding shows where the caller, starting, registers. The walk
+// back from the request takes the edges once_code's walk takes.
+.init once_path = SameProcessReachCut
 
-kept_request_reach.seed(g, g) :- holds_in(_, _, g, _, _, _).
+once_path.cut(f, g) :- side_call(f, g).
+once_path.seed(g, g) :- holds_in(_, _, g, _, _, _).
+
+.decl step_site(caller: symbol, callee: symbol, site: symbol, how: symbol, store: symbol)
+
+step_site(a, b, id, how, x) :-
+  coupling(_, a, b, _),
+  holds_in(a, b, g, tag, how, x),
+  start_callback(a, g),
+  request_site(g, id, b, tag).
+
+step_site(a, b, id, how, x) :-
+  coupling(_, a, b, _),
+  holds_in(a, b, h, tag, how, x),
+  once_phase_site(a, h, id),
+  request_site(h, id, b, tag).
+
+step_site(a, b, c, how, x) :-
+  coupling(_, a, b, _),
+  holds_in(a, b, g, _, how, x),
+  once_step(a, _, c, e),
+  once_path.reaches(e, g).
+
+// The instruction of func that makes the request to mod's process: a
+// call's site, or a cast's by the tag it carries.
+.decl request_site(func: symbol, site: symbol, mod: symbol, tag: symbol)
+
+request_site(g, id, b, tag) :- sync_request_at(g, id, b, tag), id != "".
+request_site(g, id, b, tag) :- async_dep(g, b), cast_site(g, id, tag).
+
+.decl stepped(caller: symbol, callee: symbol, how: symbol)
+
+stepped(a, b, how) :- step_site(a, b, _, how, _).
 
 .decl holds_site(caller: symbol, callee: symbol, site: symbol, how: symbol, store: symbol)
 
-holds_site(a, b, id, how, x) :-
-  coupling(_, a, b, _),
-  holds_in(a, b, g, tag, how, x),
-  function_def(g, gm, _, _, _),
-  gm != b,
-  sync_request_at(g, id, b, tag),
-  id != "".
+holds_site(a, b, id, how, x) :- step_site(a, b, id, how, x).
 
-holds_site(a, b, id, how, x) :-
-  coupling(_, a, b, _),
-  holds_in(a, b, g, _, how, x),
-  once_code(a, f),
-  function_def(f, fm, _, _, _),
-  fm != b,
-  call_instr(f, e, id),
-  function_def(e, b, _, _, _),
-  kept_request_reach.reaches(e, g).
-
-// A fun of the keeper's module the once code hands to a call
-// (`lists:foreach(fun ejabberd_pkix:add_certfile/1, Files)`): the call it
-// is handed to is where it runs.
-holds_site(a, b, id, how, x) :-
+// No step of the keeping has an instruction (a request in init/1 whose
+// call the facts place at no site of its own, a closure init/1 builds
+// and keeps): the start callback that reaches the request. Every keeping
+// holds_in finds has a site, so the frame never decides which keeping
+// the row reports (chosen_keeping).
+holds_site(a, b, s, how, x) :-
   coupling(_, a, b, _),
   holds_in(a, b, g, _, how, x),
-  once_code(a, f),
-  function_def(f, fm, _, _, _),
-  fm != b,
-  fun_handed(id, f, e, _),
-  function_def(e, b, _, _, _),
-  kept_request_reach.reaches(e, g).
-
-// Neither: the function that makes the request.
-holds_site(a, b, g, how, x) :-
-  coupling(_, a, b, _),
-  holds_in(a, b, g, _, how, x),
-  !holds_call(a, b).
-
-.decl holds_call(caller: symbol, callee: symbol)
-
-holds_call(a, b) :-
-  coupling(_, a, b, _),
-  holds_in(a, b, g, tag, _, _),
-  function_def(g, gm, _, _, _),
-  gm != b,
-  sync_request_at(g, id, b, tag),
-  id != "".
-
-holds_call(a, b) :-
-  coupling(_, a, b, _),
-  holds_in(a, b, g, _, _, _),
-  once_code(a, f),
-  function_def(f, fm, _, _, _),
-  fm != b,
-  (call_instr(f, e, _) ; fun_handed(_, f, e, _)),
-  function_def(e, b, _, _, _),
-  kept_request_reach.reaches(e, g).
+  start_callback(a, s),
+  once_path.reaches(s, g),
+  !stepped(a, b, how).
 
 // ══ The one output: a child depending on a sibling ═══════════════════
 //
@@ -141,8 +135,9 @@ holds_call(a, b) :-
 //   restart_isolation — two branches of a one_for_one supervisor, one
 //     holding something in the other; detail is how the other keeps it
 //     (table, monitor, state, dict, handed), witness what keeps it (an
-//     instruction or function of the keeper) and site the caller's
-//     request, or the call into the keeper's module that makes it.
+//     instruction or function of the keeper) and site the step of the
+//     caller's once phase that makes the request or leads to it
+//     (holds_site): the caller's own code.
 //   restart_policy — a permanent child depends on a sibling that may
 //     never come back; detail is the sibling's restart policy.
 //   cached_pid — init/1 looks the sibling up by name under one_for_one
@@ -193,23 +188,12 @@ dep_basis(f, t, "inferred", 0) :-
 .decl sibling_dependency(sup: symbol, caller: symbol, callee: symbol, reason: symbol, detail: symbol, sup_site: symbol, witness: symbol, site: symbol, basis: symbol, permille: number)
 .output sibling_dependency
 
-// A site in the caller's own module is preferred to one in a helper
-// module its once code runs (ejabberd_sm's init/1 reaching
-// ejabberd_c2s:host_up/1). What the keeper does with code outside the
-// program is inferred, and the row says so; a keeping the program shows
-// is preferred to it.
+// What the keeper does with code outside the program is inferred, and
+// the row says so; a keeping the program shows is preferred to it.
 sibling_dependency(sup, a, b, "restart_isolation", how, sup_site, x, site, basis, 0) :-
   coupling(sup, a, b, sup_site),
   chosen_keeping(a, b, how),
   holds_site(a, b, site, how, x),
-  own_site(a, b, site),
-  keeping_basis(how, basis).
-
-sibling_dependency(sup, a, b, "restart_isolation", how, sup_site, x, site, basis, 0) :-
-  coupling(sup, a, b, sup_site),
-  chosen_keeping(a, b, how),
-  holds_site(a, b, site, how, x),
-  !has_own_site(a, b),
   keeping_basis(how, basis).
 
 .decl chosen_keeping(caller: symbol, callee: symbol, how: symbol)
@@ -223,20 +207,6 @@ chosen_keeping(a, b, "handed") :-
 .decl shown_keeping(caller: symbol, callee: symbol)
 
 shown_keeping(a, b) :- holds_site(a, b, _, how, _), keeping_basis(how, "resolved").
-
-.decl own_site(caller: symbol, callee: symbol, site: symbol)
-
-own_site(a, b, id) :- holds_site(a, b, id, _, _), site_in(id, a).
-
-.decl has_own_site(caller: symbol, callee: symbol)
-
-has_own_site(a, b) :- own_site(a, b, _).
-
-.decl site_in(site: symbol, mod: symbol)
-
-site_in(id, m) :- holds_site(_, _, id, _, _), call_instr(f, _, id), function_def(f, m, _, _, _).
-site_in(id, m) :- holds_site(_, _, id, _, _), sync_call_site(id, f, _, _), function_def(f, m, _, _, _).
-site_in(id, m) :- holds_site(_, _, id, _, _), fun_handed(id, f, _, _), function_def(f, m, _, _, _).
 
 .decl keeping_basis(how: symbol, basis: symbol)
 

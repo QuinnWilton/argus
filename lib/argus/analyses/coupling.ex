@@ -102,7 +102,7 @@ defmodule Argus.Analyses.Coupling do
            "restart_isolation: the sibling's instruction or function that keeps it; " <>
              "otherwise the function in the caller carrying the dependency"},
           {:site, :symbol,
-           "restart_isolation: the child's request, or its call into the sibling's module that makes it; " <>
+           "restart_isolation: the step of the child's once phase that makes the request or leads to it; " <>
              "otherwise the witness function ID"},
           {:basis, :symbol,
            "resolved | inferred | doubted — how the dependency (restart_isolation: the keeping) was established, see coupling.dl"},

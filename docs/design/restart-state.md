@@ -96,8 +96,14 @@ while A runs on. If A restarts alone, its `init/1` registers a second time
 beside the old incarnation's registration, and A has lost its own record of
 the first. The fix is the same for both: `rest_for_one` with B first, or
 `one_for_all`. The finding anchors at the tree definition. It has two
-related frames: A's call (labelled "kept by the sibling") and what B keeps
-(the store).
+related frames: where A registers (labelled "registers with the sibling
+here") and what B keeps (the store). Where A registers is the step of A's
+once phase that makes the request or leads to it (`once_step`, runs.dl):
+the request itself when a start callback or a site of the once phase
+makes it, else the call there whose walk reaches it. The step is A's own
+code, never B's client API, whatever A calls below it: depot's and
+eusapia's Sonar registers where its `handle_continue/2` calls
+`Notifier.listen(server, channel)`, not in `listen/2`.
 
 The reason `cached_pid` is the model's other half, unchanged. There, A's
 `init/1` keeps B's pid, which B's restart makes stale.

@@ -738,6 +738,67 @@ defmodule Argus.Test.Fixtures.Restart.ServerArgCastJoiner do
   end
 end
 
+# ── Registered through a helper of the listener's own ────────────────
+#
+# The listener's handle_continue/2 hands the keeper it was configured
+# with to a helper of its own, which calls the keeper's
+# `listen(server, channel)`. The registration is the listener's step:
+# the handle_continue/2 call, above the helper and the keeper's API.
+
+defmodule Argus.Test.Fixtures.Restart.HelperListenSup do
+  @moduledoc false
+  use Supervisor
+  alias Argus.Test.Fixtures.Restart
+
+  def start_link(arg), do: Supervisor.start_link(__MODULE__, arg, name: __MODULE__)
+
+  @impl true
+  def init(_arg),
+    do:
+      Supervisor.init([Restart.HelperListenKeeper, Restart.HelperListener],
+        strategy: :one_for_one
+      )
+end
+
+defmodule Argus.Test.Fixtures.Restart.HelperListenKeeper do
+  @moduledoc false
+  use GenServer
+
+  def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
+  def listen(server, channel), do: GenServer.call(server, {:listen, channel, self()})
+
+  @impl true
+  def init(_), do: {:ok, %{listeners: %{}}}
+
+  @impl true
+  def handle_call({:listen, channel, pid}, _from, s),
+    do: {:reply, :ok, %{s | listeners: Map.put(s.listeners, channel, pid)}}
+end
+
+defmodule Argus.Test.Fixtures.Restart.HelperListener do
+  @moduledoc "Listens once, from handle_continue/2, through a helper of its own."
+  use GenServer
+
+  alias Argus.Test.Fixtures.Restart.HelperListenKeeper
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(opts),
+    do: {:ok, %{keeper: Keyword.get(opts, :keeper, HelperListenKeeper)}, {:continue, :listen}}
+
+  @impl true
+  def handle_continue(:listen, s) do
+    :ok = listen_on(s.keeper)
+    {:noreply, s}
+  end
+
+  @impl true
+  def handle_info({:event, :health, _}, s), do: {:noreply, s}
+
+  defp listen_on(keeper), do: HelperListenKeeper.listen(keeper, :health)
+end
+
 # ── A proxy: a client function that sends another server's tag ───────
 #
 # `forward/2` takes the server too, but its message is `{:store, _}`,

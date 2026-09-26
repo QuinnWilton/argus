@@ -1407,8 +1407,10 @@ process left.
 - Only `:one_for_one` is judged. Under `:rest_for_one`, an earlier child
   holding something in a later one has the same loss, and it is not
   reported.
-- The finding anchors at the tree definition. Its related frames are A's
-  request (or A's call into B's module that makes it), labelled
+- The finding anchors at the tree definition. Its related frames are the
+  step of A's once phase that makes the request or leads to it (A's own
+  code: a start callback's call, or the call at a site of the once
+  phase, never B's client API or a helper below the step), labelled
   "registers with the sibling here", and what B keeps it in.
 
 **Fixtures.** Positive, all in test/fixtures/soundness/coupling_soundness.ex
@@ -1417,6 +1419,9 @@ test/soundness/coupling_test.exs:
 - `Restart.CastJoiner` → `CastKeeper`: a cast, a map state.
 - `ContinueJoiner` → `ContinueKeeper`: from `handle_continue/2`, a monitor.
 - `HookUser` → `HookKeeper`: through a helper, an ETS row.
+- `HelperListener` → `HelperListenKeeper`: from `handle_continue/2`,
+  through a helper of its own and the keeper's API taking the server; the
+  registration's frame is the `handle_continue/2` call.
 - `EachUser` → `EachKeeper`: a fun handed to `Enum.each/2`.
 - `DictUser` → `DictKeeper`: the process dictionary.
 - `FlagUser` → `FlagKeeper`: a flag a bare cast sets.

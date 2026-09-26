@@ -34,6 +34,9 @@
 //     stack: the same process, and no side path (side_call, calls.dl).
 //     Seeded at the modules a supervisor starts: coupling's question is
 //     about children.
+//   once_step(mod, func, site, callee): a call mod's once phase makes at
+//     its own level, in a start callback or at a site of the phase, into
+//     callee. once_code is the start callbacks and what the steps reach.
 //   again_code(func): func runs again and again in the process that runs
 //     it: reached, on that process's stack, from a root that runs again
 //     as a whole (again_root) or from a call in a clause that runs again.
@@ -699,23 +702,48 @@ start_clause(m, h, t) :-
 once_phase_site(m, h, s) :- start_clause(m, h, t), clause_call(s, h, t).
 once_phase_site(m, h, s) :- gated_once_site(s, h), function_def(h, m, _, _, _).
 
-.init once_reach = ForwardSameProcessReachCut
+// The calls mod's once phase makes at its own level: a call its start
+// callback makes, or the call at a site of the phase (a
+// handle_continue/2 clause init/1 continues to). Everything else once
+// code runs is below one of them, and the step is mod's own code where
+// what it reaches may be a helper's or another module's API: where a
+// finding about a request once code makes points (coupling's
+// holds_site).
+.decl once_step(mod: symbol, func: symbol, site: symbol, callee: symbol)
 
-once_reach.cut(f, g) :- side_call(f, g).
-once_reach.root(m, s) :- start_callback(m, s), child_subtree(_, _, m).
+once_step(m, s, c, g) :-
+  start_callback(m, s),
+  child_subtree(_, _, m),
+  call_instr(s, g, c),
+  !side_call(s, g).
 
-once_reach.root(m, g) :-
+once_step(m, s, c, g) :-
+  start_callback(m, s),
+  child_subtree(_, _, m),
+  fun_handed(c, s, g, _),
+  !runs_elsewhere(s, g),
+  !side_call(s, g).
+
+once_step(m, h, c, g) :-
   child_subtree(_, _, m),
   once_phase_site(m, h, c),
   call_instr(h, g, c),
   !runs_elsewhere(h, g),
   !side_call(h, g).
 
-once_reach.root(m, g) :-
+once_step(m, h, c, g) :-
   child_subtree(_, _, m),
   once_phase_site(m, h, c),
   fun_handed(c, h, g, _),
   !runs_elsewhere(h, g).
+
+// A start callback's own steps are on its walk already; rooting them
+// too keeps once_code what the steps reach.
+.init once_reach = ForwardSameProcessReachCut
+
+once_reach.cut(f, g) :- side_call(f, g).
+once_reach.root(m, s) :- start_callback(m, s), child_subtree(_, _, m).
+once_reach.root(m, g) :- once_step(m, _, _, g).
 
 .decl once_code(mod: symbol, func: symbol)
 

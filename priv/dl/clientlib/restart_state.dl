@@ -110,18 +110,24 @@ once_request(a, b, "call", tag, h) :-
   sync_request_at(h, id, b, tag),
   a != b.
 
-// The tags g's casts carry, "any" for a cast whose message has none.
-.decl cast_tag(func: symbol, tag: symbol)
+// The casts g makes, at their sites, by the tag each carries: "any" for
+// a cast whose message has none.
+.decl cast_site(func: symbol, site: symbol, tag: symbol)
 
-cast_tag(g, tag) :- call_tag(_, g, "cast", tag).
+cast_site(g, id, tag) :- call_tag(id, g, "cast", tag).
 
-cast_tag(g, "any") :-
+cast_site(g, id, "any") :-
   async_dep(g, _),
   call_site(id, g, gs, "cast", _),
   (gs = "GenServer" ; gs = ":gen_server"),
   !call_tag(id, g, "cast", _).
 
-cast_tag(g, "any") :- process_call(g, _, _, "cast", _).
+cast_site(g, id, "any") :- process_call(g, id, _, "cast", _).
+
+// The tags g's casts carry.
+.decl cast_tag(func: symbol, tag: symbol)
+
+cast_tag(g, tag) :- cast_site(g, _, tag).
 
 // ── What b's handler keeps ───────────────────────────────────────────
 
