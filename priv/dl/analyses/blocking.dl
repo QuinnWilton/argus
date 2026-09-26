@@ -165,14 +165,29 @@ clause_reach(m, c, to, tc) :-
 
 chain_cycle_clause(m, c) :- clause_reach(m, c, m, c).
 
-// The shortest chain between two servers, from any clause of the first.
-.decl timeout_chain(from: symbol, to: symbol, depth: number)
+// A request into `from`'s handle_call/3 waits on `to`'s server through
+// `depth` handle_call hops: the shortest chain, from any clause of from.
+.decl waits_through_chain(from: symbol, to: symbol, depth: number)
 
-timeout_chain(from, to, d) :- request_chain(from, _, to, d).
+waits_through_chain(from, to, d) :- request_chain(from, _, to, d).
 
-timeout_chain(from, to, d1) <= timeout_chain(from, to, d2) :- d2 <= d1.
+waits_through_chain(from, to, d1) <= waits_through_chain(from, to, d2) :- d2 <= d1.
 
 // ── Output: timeout chain risk ───────────────────────────────────────
+
+// A request into `from`'s handle_call/3 waits on a server whose own
+// handle_call/3 waits on another, on to `to`: the first caller's timeout
+// has to cover every hop after its own.
+.decl nested_call_chain(from: symbol, to: symbol, depth: number)
+
+nested_call_chain(from, to, depth) :-
+  waits_through_chain(from, to, depth),
+  passes_through_another_server(depth).
+
+// The chain has a server between its two ends: two hops or more.
+.decl passes_through_another_server(depth: number) inline
+
+passes_through_another_server(depth) :- depth >= 2.
 
 // A hop that exists only by tag attribution, and the chains that cross
 // one: an inferred hop is the first thing to doubt in a long chain.
@@ -236,8 +251,7 @@ timeout_chain_inferred(from, to) :- request_chain_inferred(from, _, to).
 .decl chain_site(from: symbol, to: symbol, site: symbol)
 
 chain_site(from, to, id) :-
-  timeout_chain(from, to, d),
-  d >= 2,
+  nested_call_chain(from, to, d),
   handle_call_function(from, h),
   site_request(h, id, mid, request),
   id != "",
@@ -256,26 +270,58 @@ chain_site(from, to, id) :-
 chain_at(from, to, id) :- chain_site(from, to, id).
 
 chain_at(from, to, "") :-
-  timeout_chain(from, to, d),
-  d >= 2,
+  nested_call_chain(from, to, _),
   !chain_site(from, to, _).
 
-// Chains of depth >= 2 are risky: the outermost caller's timeout must
-// accommodate the sum of all intermediate timeouts.
+// Each chain at its first call, "tag" when a hop on it exists only by
+// tag attribution, "static" otherwise.
 chain_found(from, to, "chain", depth, "tag", 0, 0, site) :-
-  timeout_chain(from, to, depth),
-  depth >= 2,
+  nested_call_chain(from, to, depth),
   timeout_chain_inferred(from, to),
   chain_at(from, to, site).
 
 chain_found(from, to, "chain", depth, "static", 0, 0, site) :-
-  timeout_chain(from, to, depth),
-  depth >= 2,
+  nested_call_chain(from, to, depth),
   !timeout_chain_inferred(from, to),
   chain_at(from, to, site).
 
 // ── Output: blocking cast handler ────────────────────────────────────
-//
+
+// A handle_cast/2 waits for another server's reply: the caster chose a
+// cast so as not to wait, and the server it cast to waits instead,
+// reading none of its mailbox until the reply comes.
+.decl blocking_cast_handler(mod: symbol, handler: symbol, to: symbol)
+
+blocking_cast_handler(mod, handler, to) :-
+  handles_casts(mod, handler),
+  waits_on_server(handler, to),
+  requests_through_a_clause_it_enters(handler, to).
+
+// `handler` is `mod`'s handle_cast/2.
+.decl handles_casts(mod: symbol, handler: symbol) inline
+
+handles_casts(mod, h) :- handle_cast_function(mod, h).
+
+// The handler waits on another module's server, on its own stack or in
+// a task it awaits (handler_dep's "call" kind, clientlib/entries.dl).
+.decl waits_on_server(handler: symbol, to: symbol) inline
+
+waits_on_server(h, to) :- handler_dep(_, "handle_cast", to, "call", h).
+
+// Some way from the handler to the wait enters each callee through a
+// clause its literal argument can select (site_request, which reads the
+// clause each call enters, as the chains do; reaches_sync_dep, which
+// handler_dep reads, does not). A handler whose every way to the wait
+// passes a clause it cannot select waits on nothing: zotonic's
+// mod_acl_user_groups casts itself `rebuild` and hands it on to
+// handle_info(rebuild, s), whose other clauses are the ones that call
+// z_dispatcher.
+.decl requests_through_a_clause_it_enters(handler: symbol, to: symbol) inline
+
+requests_through_a_clause_it_enters(h, to) :- site_request(h, _, to, _).
+
+site_demand(h) :- handle_cast_function(_, h).
+
 // Anchored at the call that waits: handle_cast/2 compiles every clause
 // into one function, and the clause making the call is not the first
 // (exq's Manager.Server calls Redis in its :cleanup_host_stats clause,
@@ -283,71 +329,81 @@ chain_found(from, to, "chain", depth, "static", 0, 0, site) :-
 // on the way to the wait (site_request, clientlib/calls.dl): the
 // GenServer.call itself, or the call into the helper that makes it. One
 // finding per target, at the earliest such call (the relation's key).
-site_demand(h) :- handle_cast_function(_, h).
-
 .decl cast_call_site(mod: symbol, to: symbol, site: symbol)
 
 cast_call_site(mod, to, id) :-
-  handler_dep(mod, "handle_cast", to, "call", h),
+  blocking_cast_handler(mod, h, to),
   site_request(h, id, to, _),
   id != "".
 
 chain_found(mod, to, "cast", 1, "", 0, 0, id) :- cast_call_site(mod, to, id).
 
-// A wait only a closure or a fun handed on makes has no site of its own.
-// A handler whose every way to the wait enters a callee through a clause
-// its literal argument cannot select waits on nothing: zotonic's
-// mod_acl_user_groups casts itself `rebuild` and hands it on to
-// handle_info(rebuild, s), whose other clauses are the ones that call
-// z_dispatcher. site_request reads the clause each call enters, as the
-// chains do; reaches_sync_dep, which handler_dep reads, does not.
+// A wait only a closure or a fun handed on makes has no site of its own,
+// and is anchored at the handler.
 chain_found(mod, to, "cast", 1, "", 0, 0, "") :-
-  handler_dep(mod, "handle_cast", to, "call", h),
-  site_request(h, "", to, _),
+  blocking_cast_handler(mod, _, to),
   !cast_call_site(mod, to, _).
 
 // ── Timeout-aware sync dependency ──────────────────────────────────
 
-.decl callback_sync_dep_timeout(from_mod: symbol, to_mod: symbol, timeout_ms: number)
+// `mod`'s handle_call/3 waits on another module's server for up to `ms`
+// (-1 for :infinity, 0 when the bytecode does not show it).
+.decl handle_call_waits_on(mod: symbol, to: symbol, ms: number)
 
-callback_sync_dep_timeout(from_mod, to_mod, timeout_ms) :-
-  handle_call_function(from_mod, func),
-  reaches_sync_dep_timeout(func, to_mod, timeout_ms),
-  from_mod != to_mod.
+handle_call_waits_on(mod, to, ms) :-
+  handle_call_function(mod, h),
+  reaches_sync_dep_timeout(h, to, ms),
+  mod != to.
 
 // ── Output: timeout insufficient ───────────────────────────────────
 
-// A calls B with T_AB, B's handle_call calls someone with T_BC.
-// If T_AB < T_BC: A's budget strictly cannot accommodate B's downstream
-// work — B may legitimately wait longer than A is willing to.
-//
-// Equality is deliberately NOT flagged: the extractor encodes the
-// GenServer.call default as 5000, so T_AB = T_BC almost always means
-// "both sides use the default" — the universal configuration, not a
-// misconfiguration. The boundary case is real (equal budgets leave B
-// zero processing slack) but flagging it would mark nearly every
-// two-hop chain in real code as an error.
-chain_found(a, b, "budget", 1, "", t_ab, t_bc, site) :-
-  callback_sync_dep_timeout(a, b, t_ab),
-  callback_sync_dep_timeout(b, _, t_bc),
-  t_ab > 0,     // not dynamic
-  t_ab != -1,   // not infinity
-  t_bc > 0,     // not dynamic
-  t_ab < t_bc,
-  timed_wait(a, b, t_ab, site).
+// A handle_call/3 gives a server less time to answer than that server's
+// own handle_call/3 gives the server it calls: the callee may wait
+// longer, legitimately, than its caller is willing to.
+.decl insufficient_timeout(caller: symbol, callee: symbol, caller_ms: number, callee_ms: number)
+
+insufficient_timeout(caller, callee, caller_ms, callee_ms) :-
+  handle_call_waits_on(caller, callee, caller_ms),
+  handle_call_waits_on(callee, _, callee_ms),
+  runs_out_before(caller_ms, callee_ms).
+
+// Both timeouts are finite and in the bytecode (not :infinity, -1, nor
+// unknown, 0), and the first is the shorter. Equality is deliberately
+// not flagged: the extractor encodes the GenServer.call default as 5000,
+// so equal budgets almost always mean "both sides use the default" — the
+// universal configuration, not a misconfiguration. The boundary case is
+// real (equal budgets leave the callee no slack) but flagging it would
+// mark nearly every two-hop chain in real code as an error.
+.decl runs_out_before(caller_ms: number, callee_ms: number) inline
+
+runs_out_before(caller_ms, callee_ms) :-
+  caller_ms > 0,
+  callee_ms > 0,
+  caller_ms < callee_ms.
+
+chain_found(caller, callee, "budget", 1, "", caller_ms, callee_ms, site) :-
+  insufficient_timeout(caller, callee, caller_ms, callee_ms),
+  timed_wait(caller, callee, caller_ms, site).
 
 // ── Output: infinity timeout in chain ──────────────────────────────
 
-// Sync call in a chain uses :infinity timeout — can block forever, when
-// the server called waits on something itself. One whose handle_call/3
-// answers at once (answers_straight_away, below) ends the chain: nothing
-// downstream of it can hang the caller (Phoenix's CodeReloader stops its
-// own Proxy, whose :stop clause only replies).
-wait_found(cat(mod, ":handle_call/3"), site, "infinity", target, "", "") :-
-  callback_sync_dep_timeout(mod, target, -1),
-  gen_server_like(target),
-  !answers_straight_away(target),
-  timed_wait(mod, target, -1, site).
+// A handle_call/3 waits with no deadline on a server that may itself
+// wait, so a caller waiting on the first waits forever with it.
+.decl infinite_wait_in_chain(caller: symbol, server: symbol)
+
+infinite_wait_in_chain(caller, server) :-
+  handle_call_waits_forever_on(caller, server),
+  gen_server_like(server),
+  !answers_straight_away(server).
+
+// The handle_call/3's wait on the server has an :infinity timeout.
+.decl handle_call_waits_forever_on(mod: symbol, to: symbol) inline
+
+handle_call_waits_forever_on(mod, to) :- handle_call_waits_on(mod, to, -1).
+
+wait_found(cat(caller, ":handle_call/3"), site, "infinity", server, "", "") :-
+  infinite_wait_in_chain(caller, server),
+  timed_wait(caller, server, -1, site).
 
 // Where a handle_call/3 makes a wait with a given timeout (-1 for
 // :infinity): the call itself (or the tag-attributed call on a pid it
@@ -359,26 +415,26 @@ wait_found(cat(mod, ":handle_call/3"), site, "infinity", target, "", "") :-
 .decl timed_wait_site(mod: symbol, target: symbol, ms: number, site: symbol)
 
 timed_wait_site(mod, t, ms, id) :-
-  callback_sync_dep_timeout(mod, t, ms),
+  handle_call_waits_on(mod, t, ms),
   handle_call_function(mod, h),
   sync_call_site(id, h, t, ms).
 
 timed_wait_site(mod, t, ms, id) :-
-  callback_sync_dep_timeout(mod, t, ms),
+  handle_call_waits_on(mod, t, ms),
   handle_call_function(mod, h),
   tag_resolved_site(id, h, "call", t),
   sync_call_site(id, h, u, ms),
   unresolved_target(u).
 
 timed_wait_site(mod, t, ms, anchor) :-
-  callback_sync_dep_timeout(mod, t, ms),
+  handle_call_waits_on(mod, t, ms),
   handle_call_function(mod, h),
   process_call(h, anchor, site, "call", p),
   server_process(p, t),
   sync_call_site(site, _, _, ms).
 
 timed_wait_site(mod, t, ms, id) :-
-  callback_sync_dep_timeout(mod, t, ms),
+  handle_call_waits_on(mod, t, ms),
   handle_call_function(mod, h),
   call_instr(h, g, id),
   !side_call(h, g),
@@ -389,7 +445,7 @@ timed_wait_site(mod, t, ms, id) :-
 timed_wait(mod, t, ms, id) :- timed_wait_site(mod, t, ms, id).
 
 timed_wait(mod, t, ms, "") :-
-  callback_sync_dep_timeout(mod, t, ms),
+  handle_call_waits_on(mod, t, ms),
   !timed_wait_site(mod, t, ms, _).
 
 // ── A server that answers at once ──────────────────────────────────────
@@ -400,8 +456,10 @@ timed_wait(mod, t, ms, "") :-
 // cannot see (a fun, an apply, another module's function handed as a
 // fun), and no call out of its module that answers_in_time does not
 // vouch for — the rpc rule's vocabulary of calls that return at once.
-// Asked of the
-// servers an :infinity hop reaches. A server can still be slow because
+// Asked of the servers an :infinity hop reaches (infinity_target): one
+// whose handle_call/3 answers at once ends the chain, and nothing
+// downstream of it can hang the caller (Phoenix's CodeReloader stops its
+// own Proxy, whose :stop clause only replies). A server can still be slow because
 // it is busy with another request, or stuck in another callback; the
 // hop does not add a wait of its own to the chain. startup's
 // `handler_blocks` is the dual, and differs on purpose: it reports, so
@@ -410,7 +468,7 @@ timed_wait(mod, t, ms, "") :-
 // once.
 .decl infinity_target(mod: symbol)
 
-infinity_target(m) :- callback_sync_dep_timeout(_, m, -1).
+infinity_target(m) :- handle_call_waits_forever_on(_, m).
 
 // What holds the handler up: its own stack in its module, and a task it
 // waits for; not a closure it hands to a process that runs apart.
@@ -418,30 +476,34 @@ infinity_target(m) :- callback_sync_dep_timeout(_, m, -1).
 
 answer_reach.root(h, h) :- infinity_target(m), handle_call_function(m, h).
 
-.decl call_waits(handler: symbol)
+// The handle_call/3 may wait before it answers: a receive with no
+// `after`, a reply it defers, a call it cannot see, or a call out of its
+// module that does not answer in time.
+.decl may_wait_to_answer(handler: symbol)
 
-call_waits(h) :- answer_reach.reaches(h, f), recv_start(_, f, 1, _).
+may_wait_to_answer(h) :- answer_reach.reaches(h, f), recv_start(_, f, 1, _).
 
 // A handler that returns {:noreply, …} answers later, from another
 // callback, when some other message comes — or never: the hop waits on
 // that, not on the handler.
-call_waits(h) :- infinity_target(m), defers_reply(m, h, _).
-call_waits(h) :- answer_reach.reaches(h, f), dynamic_call(_, f, kind), unseen_call(kind).
+may_wait_to_answer(h) :- infinity_target(m), defers_reply(m, h, _).
+may_wait_to_answer(h) :- answer_reach.reaches(h, f), dynamic_call(_, f, kind), unseen_call(kind).
 
-call_waits(h) :-
+may_wait_to_answer(h) :-
   answer_reach.reaches(h, f),
   fun_ref(f, g),
   function_def(f, own, _, _, _),
   !function_def(g, own, _, _, _).
 
-call_waits(h) :-
+may_wait_to_answer(h) :-
   answer_reach.reaches(h, f),
   out_call(f, id, _, _, _),
   !answers_in_time(id).
 
+// The server's handle_call/3 answers at once: it cannot wait.
 .decl answers_straight_away(mod: symbol)
 
-answers_straight_away(m) :- infinity_target(m), handle_call_function(m, h), !call_waits(h).
+answers_straight_away(m) :- infinity_target(m), handle_call_function(m, h), !may_wait_to_answer(h).
 
 // ══ Mutual synchronous dependency ═══════════════════════════════════
 // `phase` is "call" for processes that synchronously call each other
