@@ -291,6 +291,70 @@ defmodule Argus.Schema.Callbacks do
         server, not as the start. An ack made in a helper the function \
         calls is not seen.
         """
+      },
+      %{
+        name: :state_gate,
+        layer: 2,
+        fields: [
+          {:site, :symbol, "a call or send"},
+          {:func, :symbol, "the handler holding it"},
+          {:key, :symbol,
+           "the inspected map key, or an Erlang record's field as its 0-based tuple position ({2})"},
+          {:value, :symbol, "an atom the field holds when the site runs, inspected"}
+        ],
+        doc: """
+        The call (or send) at `site`, in a GenServer handler \
+        (handle_call/3, handle_cast/2, handle_info/2, handle_continue/2), \
+        runs only while the state the handler was handed holds `value` \
+        under `key`: on every path from the entry to the site, the tests \
+        of that field admit only the atoms of the site's rows (a clause \
+        head `%{registered: false}`, `if state.timer == nil`, `case \
+        state.status`; `if state.owner` admits nil and false). A field of \
+        a value made from the state (a nested map, `Map.get/2`) is not \
+        read, nor a struct's `__struct__`. \
+        (`Argus.Extractors.StateGate`.)
+        """
+      },
+      %{
+        name: :gate_closed,
+        layer: 2,
+        fields: [
+          {:site, :symbol, "a gated call or send (state_gate)"},
+          {:func, :symbol, "the handler holding it"},
+          {:key, :symbol, "the gated field, as state_gate spells it"}
+        ],
+        doc: """
+        Every way `func` completes after `site` hands back a state whose \
+        `key` holds a value none of the site's state_gate rows admits — a \
+        literal outside them, a value no atom is (what a call known to \
+        answer a reference, a pid or a number made, the caller in \
+        handle_call/3's `from`), no such field — or ends the process (a \
+        `{:stop, ...}`, a raise). A return through a local helper handed \
+        the state reads the helper's returns; the handler of a `try` the \
+        site may be inside is a way to complete. A `throw` after the site \
+        (gen_server takes the thrown value as the result), a state handed \
+        back unchanged, or one the reading cannot follow, closes nothing.
+        """
+      },
+      %{
+        name: :state_return,
+        layer: 2,
+        fields: [
+          {:func, :symbol, "a GenServer handler or code_change/3"},
+          {:key, :symbol, "a field some state_gate row of the module names"},
+          {:value, :symbol,
+           "the literal it is set to, inspected; 'nonatom' for a value no atom is; " <>
+             "'dynamic' for any value, or a state the return does not show"}
+        ],
+        doc: """
+        A way `func` completes hands back a state whose `key` holds \
+        `value`: the handlers' returns (`{:noreply, state, ...}`, \
+        `{:reply, reply, state, ...}`) and code_change/3's `{:ok, state}`, \
+        through the local helpers they return through or hand the state \
+        to. A return that keeps the field, or ends the process, has no \
+        row; a `throw` in the function is `dynamic`. Read only for the \
+        keys the module's gates test: what could set a gate's field back.
+        """
       }
     ])
   end

@@ -6,6 +6,83 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## 0.20.0-dev — unreleased
 
+### Once by the state: a handler's site its own run closes the gate on (schema 144)
+
+**Changed.** clientlib runs.dl reads a second reason a site runs once per
+incarnation (docs/design/runs.md, "Once by the state"). A GenServer
+handler that asks its state whether it has done a thing yet, does it, and
+records that it has (`handle_info(:registered, %{registered: false} =
+s)` arming a loop and returning `%{s | registered: true}`) runs the site
+at most once when all of these hold:
+- every path to the site passes a test of a field of the state that
+  admits only some atoms (a clause head's map or record pattern, `if
+  state.timer == nil`, `case state.status`, `if state.owner`);
+- every way the handler completes after it sets the field outside them,
+  or ends the process: a literal, a value no atom is (a fresh ref, the
+  caller's pid in handle_call/3's `from`, what a spawn or a timer
+  answers), a `{:stop, ...}`, a raise;
+- no return of the module's handlers or code_change/3 sets the field to
+  one of them, or to a value it does not show; terminate/2's return is
+  dropped;
+- nothing in the program calls the handler.
+A test of a nested field, `Map.get/2`'s answer, the message, or a
+struct's `__struct__` is no gate; a throw after the site, or a raise of
+a class that may be `throw`, closes nothing (gen_server takes the
+thrown value as the result); the handler of a `try` the site may be in is
+a way to complete. `gated_once_site(site, func)` joins `once_clause_site`
+as `once_site(site, func)`, which the monitors, the timer loop's second
+arms and the repeated subscriptions now ask. The reach of code that runs
+again does not pass a call at a gated site, and coupling's once code
+gains the gated sites' reach (`once_phase_site` replaces
+`start_clause_site`).
+
+Over the 44 evaluation sets, against d2a1d3ad:
+- "Periodic timer loop armed again while it runs" 17 → 16, the one gone
+  false: blockster's `BuxBoosterBetSettler` starts its loop in the
+  `:registered` clause while `registered: false`, which the clause sets.
+  Precision 8/17 → 8/16.
+- "Monitor taken again with its ref thrown away" 44 → 43, the one gone
+  false: honeydew's `JobMonitor` claims while `worker: nil` and sets the
+  caller. Precision 4/44 → 4/43.
+- No other row of any analysis moves, and no encore benchmark row.
+The status-gated rows left are right to stay: Livebook's `RuntimeServer`
+sets the owner its message names (nil is one), zotonic's `z_db_pgsql`
+opens its gate again on an idle disconnect, rabbit's
+`mirrored_supervisor` closes its head's gate with the supervisor its
+message names. FLAME's `Runner` gates on a nested field, past the
+reading.
+
+**Added.** `Argus.Extractors.StateGate` (mailbox, coupling) and three
+relations:
+- `state_gate(site, func, key, value)`: the call or send at `site`, in
+  a GenServer handler, runs only while the state holds the atom `value`
+  under `key` (a map key, inspected, or a record's field as `{i}`).
+- `gate_closed(site, func, key)`: every way `func` completes after
+  `site` sets `key` outside the site's admitted atoms, or ends the
+  process.
+- `state_return(func, key, value)`: a way a handler or code_change/3
+  completes sets `key` (a gated one of the module) to `value`: a
+  literal, `nonatom`, or `dynamic`.
+
+**Exclusions.** None deleted; 8 negated atoms added, all in the
+witness's own definition in runs.dl: its two soundness conditions
+(`!call_edge`, `!gate_reopened`) and the complement behind "every call of
+this callee is gated" (`open_edge`, 6). mailbox's 5 reads of
+`once_clause_site` read `once_site`. The subscription and dropped-ref
+walks keep `state_decided` (any state test decides): it suppresses 43
+rows over the sets, of which the gate reads 1 itself (blockster's
+`SortedPostsCache` subscribing in its `:registered` clause); the rest are
+keyed tracking (a stored pid compared, a membership test), nested or
+message-set fields, and gates opened again, which a keyed witness would
+have to replace.
+
+**Not claimed.** Once by protocol (a Phoenix channel's join, rabbit's
+`{init, Recover}`): a witness in the manner of `monitor_started` (a send
+to the pid a start in the same function answered) clears none of them,
+since each starter is a fun or a program function that may hand back a
+process others hold. It is left to the priors as library knowledge of
+the handshake.
+
 ### Census holes: the definitions made right
 
 The exclusion census confirmed soundness holes behind exclusions and

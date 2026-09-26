@@ -28,11 +28,12 @@
 //
 // Provides:
 //   once_code(mod, func): func may run in mod's once phase: from a start
-//     callback, a clause that runs once, or the start's continue chain
+//     callback, a clause that runs once, the start's continue chain
 //     (start_clause: a handle_continue/2 clause init/1's continue enters,
-//     whatever else continues to it), on its own stack: the same process,
-//     and no side path (side_call, calls.dl). Seeded at the modules a
-//     supervisor starts: coupling's question is about children.
+//     whatever else continues to it), or a gated once site, on its own
+//     stack: the same process, and no side path (side_call, calls.dl).
+//     Seeded at the modules a supervisor starts: coupling's question is
+//     about children.
 //   again_code(func): func runs again and again in the process that runs
 //     it: reached, on that process's stack, from a root that runs again
 //     as a whole (again_root) or from a call in a clause that runs again.
@@ -42,6 +43,11 @@
 //     tag runs once per incarnation.
 //   once_clause_site(site, func): every clause of func the site is in
 //     runs once.
+//   gated_once_site(site, func): a GenServer handler's site a gate on a
+//     field of the state lets run once, whose own run closes the gate
+//     and which nothing opens again (below).
+//   once_site(site, func): the site runs at most once per incarnation:
+//     in a clause that runs once, or gated once.
 //   again_root(func, how): where code that runs again as a whole starts:
 //     "callback" (runs_again_callback, callbacks.dl, handle_continue/2,
 //     a GenEvent handler's handle_event/2 and handle_call/2), "state" (a
@@ -54,8 +60,9 @@
 // the program calls is taken as called again, though its callers
 // outside may call it once. Quiet where the program does not show a
 // clause runs once: a message another process sends once, to a process
-// it has just started (a channel's join), and a clause a status field
-// lets run once, run again as far as this reads.
+// it has just started (a channel's join), runs again as far as this
+// reads, and so does a site a status field lets run once unless the
+// module's returns show the field cannot let it run again.
 //
 // Requires imports.dl (reach.dl, ways_in.dl, generated.dl, receive.dl)
 // and otp.dl (callbacks.dl, calls.dl, supervision.dl, runs_elsewhere.dl).
@@ -569,6 +576,94 @@ once_clause_site(s, h) :-
 
 again_tag_site(s, h) :- clause_fn(_, h, _), clause_call(s, h, t), !once_clause(h, t).
 
+// ── Once by the state ────────────────────────────────────────────────
+//
+// A GenServer handler that asks its state whether it has done a thing
+// yet, does it, and records that it has: `handle_info(:registered,
+// %{registered: false} = s)` arms its loop and returns `%{s | registered:
+// true}`. Whatever enters the clause again finds the field set, and the
+// arm does not run. A site runs at most once per incarnation this way
+// when all of these hold:
+//
+// - every path to it passes a test of a field of the state that admits
+//   only some atoms (state_gate, Argus.Extractors.StateGate): `false`,
+//   `nil`, `:awaiting_boot`;
+// - every way the handler completes after it hands back that field
+//   outside them, or ends the process (gate_closed): `true`, a pid, a
+//   ref, `:booted`;
+// - no return of the module's handlers or code_change/3 sets the field
+//   to an atom the gate admits, or to a value the return does not show
+//   (state_return). init/1 starts the field there for each incarnation,
+//   and terminate/2's return is dropped;
+// - nothing in the program calls the handler: the state it is handed is
+//   the process's own, and what it returns is what the process keeps.
+//   A call of a handler with a state of the caller's making runs the
+//   site whatever the process holds.
+//
+// A GenServer, or a wrapper that hands its users GenServer's callbacks
+// (behaves_as, behaviours.dl): a result of a shape GenServer does not
+// return (Connection's `{:connect, info, state}`, a replication
+// connection's `{:noreply, [data], state}`) reads as any state
+// (state_return's `dynamic`). A server under a behaviour the table does
+// not know is not read.
+.decl state_server(mod: symbol)
+
+state_server(m) :- behaves_as(m, "GenServer").
+
+// The callbacks whose returns set a GenServer's state.
+.decl state_setter(mod: symbol, func: symbol)
+
+state_setter(m, f) :-
+  state_server(m),
+  function_def(f, m, n, a, _),
+  ((n = "handle_call", a = 3) ; (n = "handle_cast", a = 2) ; (n = "handle_info", a = 2) ;
+   (n = "handle_continue", a = 2) ; (n = "code_change", a = 3)).
+
+// Some return of the module sets the gated field to what the gate at
+// site admits, or to a value it does not show: the gate may open again.
+.decl gate_reopened(site: symbol, func: symbol, key: symbol)
+
+gate_reopened(s, f, k) :-
+  state_gate(s, f, k, v),
+  function_def(f, m, _, _, _),
+  state_setter(m, c),
+  (state_return(c, k, v) ; state_return(c, k, "dynamic")).
+
+.decl gated_once_site(site: symbol, func: symbol)
+
+gated_once_site(s, f) :-
+  state_gate(s, f, k, _),
+  gate_closed(s, f, k),
+  function_def(f, m, _, _, _),
+  state_setter(m, f),
+  !call_edge(_, f),
+  !gate_reopened(s, f, k).
+
+// A site that runs at most once per incarnation: in a clause that runs
+// once, or behind a gate its run closes.
+.decl once_site(site: symbol, func: symbol)
+
+once_site(s, f) :- once_clause_site(s, f).
+once_site(s, f) :- gated_once_site(s, f).
+
+// A handler's callee every call of which is at a gated site: the reach
+// from the handler, which runs again as a whole, does not follow it.
+.decl gated_edge(func: symbol, callee: symbol)
+
+gated_edge(f, g) :- gated_once_site(c, f), call_instr(f, g, c), !open_edge(f, g).
+gated_edge(f, g) :- gated_once_site(c, f), fun_handed(c, f, g, _), !open_edge(f, g).
+
+.decl open_edge(func: symbol, callee: symbol)
+
+open_edge(f, g) :- gated_once_site(_, f), call_instr(f, g, c), !gated_once_site(c, f).
+open_edge(f, g) :- gated_once_site(_, f), fun_handed(c, f, g, _), !gated_once_site(c, f).
+
+open_edge(f, g) :-
+  gated_once_site(_, f),
+  call_edge(f, g),
+  !call_instr(f, g, _),
+  !fun_handed(_, f, g, _).
+
 // ── Once code ────────────────────────────────────────────────────────
 //
 // once_code is what may run in a process's once phase: its start
@@ -596,11 +691,13 @@ start_clause(m, h, t) :-
   enters(a, b, m, h, t),
   start_clause(m, a, b).
 
-// A site of a clause function some clause of which, in the once phase,
-// holds it.
-.decl start_clause_site(site: symbol, func: symbol)
+// A site of mod's handler func that runs in mod's once phase: in a
+// clause of the phase, or behind a gate on the state its own run closes
+// (gated_once_site), whatever enters the handler.
+.decl once_phase_site(mod: symbol, func: symbol, site: symbol)
 
-start_clause_site(s, h) :- start_clause(_, h, t), clause_call(s, h, t).
+once_phase_site(m, h, s) :- start_clause(m, h, t), clause_call(s, h, t).
+once_phase_site(m, h, s) :- gated_once_site(s, h), function_def(h, m, _, _, _).
 
 .init once_reach = ForwardSameProcessReachCut
 
@@ -609,17 +706,15 @@ once_reach.root(m, s) :- start_callback(m, s), child_subtree(_, _, m).
 
 once_reach.root(m, g) :-
   child_subtree(_, _, m),
-  start_clause(m, h, t),
+  once_phase_site(m, h, c),
   call_instr(h, g, c),
-  clause_call(c, h, t),
   !runs_elsewhere(h, g),
   !side_call(h, g).
 
 once_reach.root(m, g) :-
   child_subtree(_, _, m),
-  start_clause(m, h, t),
+  once_phase_site(m, h, c),
   fun_handed(c, h, g, _),
-  clause_call(c, h, t),
   !runs_elsewhere(h, g).
 
 .decl once_code(mod: symbol, func: symbol)
@@ -680,14 +775,16 @@ child_start(f) :- child_subtree(_, _, m), function_def(f, m, "start_link", _, _)
 
 loop_back.seed(f, f) :- receives(f).
 
-// Reached from a root that runs again as a whole, or from a call in a
-// clause that runs again (a clause not once, a site no clause tag names).
+// Reached from a root that runs again as a whole, or from a call of a
+// clause function at a site that does not run once (once_site: a clause
+// not once, a site no clause tag names, a call no gate closes).
 // The reach does not enter a clause function by a call: entering one is
 // a message, and its clauses are judged by what enters them.
 .init again_reach = ForwardSameProcessReachSetCut
 
 again_reach.cut(f, g) :- side_call(f, g).
 again_reach.cut(f, g) :- call_edge(f, g), clause_fn(_, g, _).
+again_reach.cut(f, g) :- gated_edge(f, g).
 again_reach.root(f) :- again_root(f, _), !clause_fn(_, f, _).
 
 again_reach.root(g) :-
@@ -696,13 +793,13 @@ again_reach.root(g) :-
   !runs_elsewhere(h, g),
   !side_call(h, g),
   !hands_on(_, h, g, c, _),
-  (again_tag_site(c, h) ; !clause_call(c, h, _)).
+  !once_site(c, h).
 
 again_reach.root(g) :-
   clause_fn(_, h, _),
   fun_handed(c, h, g, _),
   !runs_elsewhere(h, g),
-  (again_tag_site(c, h) ; !clause_call(c, h, _)).
+  !once_site(c, h).
 
 again_reach.root(g) :-
   clause_fn(_, h, _),

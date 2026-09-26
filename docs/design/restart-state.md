@@ -56,9 +56,12 @@ Let A and B be children of a supervisor S, in different branches.
 callbacks (`start_callback`: `init/1`, a Channel's `join/3`, a LiveView's
 `mount/3`), the clauses only their messages enter (a `handle_continue/2`
 only `init/1` continues to, a clause for a message only `init/1` sends A;
-docs/design/runs.md), and what they run on A's own stack. That means the
-same process and no side path (`side_call`), including a peer's client
-API that A calls. It runs again only when A restarts.
+docs/design/runs.md), the sites a gate on A's state lets run once (a
+handler that asks a field whether it has done a thing, does it, and sets
+the field so, which nothing sets back: runs.md's `gated_once_site`), and
+what they run on A's own stack. That means the same process and no side
+path (`side_call`), including a peer's client API that A calls. It runs
+again only when A restarts.
 
 **A holds something in B** (`holds_in(A, B, func, tag, how, store)`) when:
 - A's once code makes a request of B's process, a call or a cast with

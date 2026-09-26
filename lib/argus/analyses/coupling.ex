@@ -75,6 +75,11 @@ defmodule Argus.Analyses.Coupling do
       # program code calls is code that runs again unless a library wrote
       # it (clientlib/runs.dl, what once code's clauses are told against).
       Argus.Extractors.Generated,
+      # Where a handler runs only while a field of its state says it has
+      # not yet, and what the returns set the field to (state_gate,
+      # gate_closed, state_return): a site that runs once by the state
+      # (clientlib/runs.dl, gated_once_site).
+      Argus.Extractors.StateGate,
       Argus.Extractors.Tooling
     ]
 

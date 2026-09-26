@@ -732,7 +732,7 @@ flush.seed(func) :- demonitor_call(_, func, "flush").
 //
 // The program's own code (a library's macro wrote nothing of it:
 // library_written) that runs again — a site of a clause that runs once
-// is not (once_clause_site, runs.dl) — a monitor whose process is not
+// is not (once_site, runs.dl) — a monitor whose process is not
 // one the run itself starts, and that the run does not release.
 .decl leak_site(mod: symbol, func: symbol, site: symbol)
 
@@ -740,7 +740,7 @@ leak_site(m, f, s) :-
   monitor_call(s, f, _),
   function_def(f, m, _, _, _),
   again_code(f),
-  !once_clause_site(s, f),
+  !once_site(s, f),
   !library_written(f),
   !starts_its_target(s),
   !released_by_run(s, f).
@@ -861,8 +861,8 @@ unasked.seed(f, s) :- monitor_ref_dropped(s, f), !state_decided(s).
 unasked.guarded(c) :- state_decided(c).
 
 // A call in a clause that runs once is no way from code that runs again
-// (once_clause_site, runs.dl).
-unasked.guarded(c) :- once_clause_site(c, _).
+// (once_site, runs.dl).
+unasked.guarded(c) :- once_site(c, _).
 
 .decl takes_unasked(site: symbol)
 
@@ -2093,7 +2093,7 @@ tick_clause(id, h, lit) :-
 // A callback that runs again and again, whenever its request or message
 // comes (again_root, runs.dl): not init/1 or mount/3. handle_continue/2
 // is one, and its clauses that run once are no second path
-// (once_clause_site, below).
+// (once_site, below).
 .decl rearm_entry(mod: symbol, entry: symbol)
 
 rearm_entry(mod, e) :-
@@ -2129,7 +2129,7 @@ arm_path.cut(g, h) :- looping_server(_, h), call_edge(g, h).
 // A second arm of `lit`'s loop: `site` is where the callback `entry`
 // arms it (the arm itself) or makes the call that does (`arm_site` in
 // `func`), outside the clause of handle_info/2 the loop runs in and
-// outside a clause that runs once (once_clause_site, runs.dl).
+// outside a site that runs once (once_site, runs.dl).
 .decl second_arm(mod: symbol, lit: symbol, entry: symbol, site: symbol, func: symbol, arm_site: symbol)
 
 second_arm(mod, lit, e, b, e, b) :-
@@ -2137,7 +2137,7 @@ second_arm(mod, lit, e, b, e, b) :-
   rearm_entry(mod, e),
   self_arm(b, e, lit),
   !tick_clause(b, e, lit),
-  !once_clause_site(b, e).
+  !once_site(b, e).
 
 second_arm(mod, lit, e, c, g, b) :-
   loop_arm(mod, lit, _, _, _),
@@ -2146,7 +2146,7 @@ second_arm(mod, lit, e, c, g, b) :-
   arm_path.reaches(c, g),
   self_arm(b, g, lit),
   !tick_clause(c, e, lit),
-  !once_clause_site(c, e).
+  !once_site(c, e).
 
 // A callback that runs the loop's clause itself, handing handle_info/2
 // the loop's own message (`def handle_cast(:now, s), do: handle_info(:tick, s)`).
@@ -2158,7 +2158,7 @@ second_arm(mod, lit, e, c, f, a) :-
   rearm_entry(mod, e),
   call_instr(e, h, c),
   call_arg(e, h, 0, lit),
-  !once_clause_site(c, e).
+  !once_site(c, e).
 
 // How the loop keeps its ref: dropped where it is armed, or under a
 // state key (timer_key: stored there, or returned to a caller that
@@ -2403,17 +2403,17 @@ entry_unsubscribes(e) :-
   subscription_call(id, _, "unsubscribe").
 
 // Walked back from each subscription along the calls that do not run
-// only in a clause that runs once (once_clause_site, runs.dl)
+// only at a site that runs once (once_site, runs.dl)
 // (BackwardUnguardedSameProcess, in the callback's own process).
 .init repeat_reach = BackwardUnguardedSameProcess
 
 repeat_reach.seed(f, id) :-
   subscription_call(id, f, "subscribe"),
-  !once_clause_site(id, f),
+  !once_site(id, f),
   !state_decided(id),
   !in_endpoint(f).
 
-repeat_reach.guarded(s) :- once_clause_site(s, _).
+repeat_reach.guarded(s) :- once_site(s, _).
 
 // A callback that asks its own state before it subscribes — a stored
 // scope pid compared with the current one, a membership test, a field

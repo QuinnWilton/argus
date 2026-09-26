@@ -101,14 +101,13 @@ once_request(a, b, "cast", tag, g) :-
   callback_tag(h, "handle_cast", tag),
   a != b.
 
-// A call made in a clause of a's own the once phase enters
-// (start_clause_site, runs.dl): a handle_info/2 clause for a message a's
-// start sends.
+// A call a handler of a's makes at a site of its once phase
+// (once_phase_site, runs.dl): in a handle_info/2 clause for a message a's
+// start sends, or behind a gate on the state its run closes.
 once_request(a, b, "call", tag, h) :-
-  clause_fn(a, h, _),
+  once_phase_site(a, h, id),
   child_subtree(_, _, a),
   sync_request_at(h, id, b, tag),
-  start_clause_site(id, h),
   a != b.
 
 // The tags g's casts carry, "any" for a cast whose message has none.

@@ -174,13 +174,16 @@ the code does not show it (the rubric's evidence clause).
 - **Once at run time, but by protocol or by state.** A clause whose
   every message once code makes runs once (runs.dl's once clauses,
   docs/design/runs.md: sequin's `TableReaderServer`, whose `:internal`
-  event `init/1` alone inserts). A clause that runs once because another
-  process drives it so (a channel's join, sent once by the process that
-  started the channel) or because a status field lets it (Livebook's
-  `RuntimeServer` `:attach`) runs again as far as the code shows. So does
-  ra's `post_init/3` clause: ra inserts `:internal` events on its way
-  through three states, and the event type alone does not tell them
-  apart.
+  event `init/1` alone inserts), and so does a site a gate on the state
+  lets run once and its own run closes (runs.dl's `gated_once_site`:
+  honeydew's `JobMonitor` claims while `worker: nil` and sets the
+  caller's pid). A clause that runs once because another process drives
+  it so (a channel's join, sent once by the process that started the
+  channel), or because a status field lets it past what the gate reads
+  (Livebook's `RuntimeServer` `:attach` sets the owner the message names,
+  which may be nil), runs again as far as the code shows. So does ra's
+  `post_init/3` clause: ra inserts `:internal` events on its way through
+  three states, and the event type alone does not tell them apart.
 - **A start the facts do not know.** A process a program function starts
   (a room, an outbound connection) is taken as one the site can meet
   again.
