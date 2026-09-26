@@ -25,9 +25,6 @@ defmodule Argus.Extractors.CallbackTag do
     (`MessageClauses.tag_shapes/2`)
   - `callback_ref_head(func, callback)` — a clause matches `{ref, _} when
     is_reference(ref)`, an async_nolink task's reply
-  - `callback_takes_every(func, callback, tag, arity)` — some clause takes
-    every message of that shape, whatever its other elements and the
-    state (`MessageClauses.takes_every/2`)
   - `callback_takes_down(func, callback, type)` — some clause takes every
     `:DOWN` of a monitor of `type` (`process`, `port`, or `any` for a
     clause that leaves the type alone), whatever reason the runtime gives
@@ -66,7 +63,6 @@ defmodule Argus.Extractors.CallbackTag do
       :callback_tag,
       :callback_tag_shape,
       :callback_takes_down,
-      :callback_takes_every,
       :callback_total
     ]
 
@@ -100,12 +96,6 @@ defmodule Argus.Extractors.CallbackTag do
       for {tag, arity} <- MessageClauses.tag_shapes(instrs, {:x, 0}), reduce: facts do
         acc ->
           add_fact(acc, :callback_tag_shape, [func_id, callback, inspect(tag), to_string(arity)])
-      end
-
-    facts =
-      for {tag, arity} <- MessageClauses.takes_every(instrs, {:x, 0}), reduce: facts do
-        acc ->
-          add_fact(acc, :callback_takes_every, [func_id, callback, inspect(tag), to_string(arity)])
       end
 
     facts =

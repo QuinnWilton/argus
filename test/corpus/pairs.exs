@@ -124,21 +124,14 @@
     pre: "412b55567b6f0f3feb587e38466fcab047581c0f",
     finding: {:startup, "init/1 waits on a socket with no timeout"}
   },
-  %{
-    repo: "elixir-lang/gen_stage",
-    issue: "gen_stage#238",
-    module: "GenStage.Streamer",
-    pre: "ee272d3df26ff9463a577e46cac43afdcc989aa5",
-    fix: "ae0a6c61bf0a0fdd200a34ce0079296d1480914b",
-    finding: {:mailbox, "handle_info/2 has no catch-all"}
-  },
-  %{
-    repo: "commanded/commanded",
-    issue: "commanded#332",
-    module: "Commanded.ProcessManagers.ProcessManagerInstance",
-    pre: "9f45a30",
-    finding: {:mailbox, "handle_info/2 has no catch-all"}
-  },
+  # gen_stage#238 (ee272d3 -> ae0a6c6, GenStage.Streamer) and commanded#332
+  # (9f45a30, Commanded.ProcessManagers.ProcessManagerInstance) were pairs of
+  # the retired "handle_info/2 has no catch-all". Neither tree shows a
+  # message the program sends: gen_stage#238's `{{ref, n}, chunk}` came
+  # from ExAws inside the user's stream, which the Streamer runs, and
+  # commanded#332 asks for a catch-all with no message named. unhandled_info
+  # reports a message the program is shown to send; a server running code
+  # it did not build shows none.
   %{
     repo: "elixir-horde/horde",
     issue: "horde#217",

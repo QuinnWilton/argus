@@ -552,26 +552,6 @@ defmodule Argus.Test.Fixtures.TrapsTakingNormalExits do
   def handle_info({:DOWN, _ref, :process, _pid, _reason}, state), do: {:noreply, state}
 end
 
-defmodule Argus.Test.Fixtures.MonitorsWithCatchall do
-  @moduledoc false
-  use GenServer
-
-  def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
-
-  @impl true
-  def init(state), do: {:ok, state}
-
-  @impl true
-  def handle_call(:watch, {pid, _tag}, state) do
-    ref = Process.monitor(pid)
-    {:reply, ref, state}
-  end
-
-  @impl true
-  def handle_info({:DOWN, _ref, :process, _pid, _reason}, state), do: {:noreply, state}
-  def handle_info(_msg, state), do: {:noreply, state}
-end
-
 defmodule Argus.Test.Fixtures.PartialInfoServer do
   @moduledoc false
   # Handles one message and nothing else; monitors nothing, traps nothing —
@@ -860,9 +840,11 @@ defmodule Argus.Test.Fixtures.CleansUpThroughHelperTrap do
   def terminate(_reason, file), do: File.close(file)
 end
 
-# Adversarial probes for the "takes every :DOWN and :EXIT" suppression
-# (FP hunt round 3): each takes every process monitor's :DOWN or every
-# :EXIT, and the runtime still writes it something no clause takes.
+# Probes of the retired "handle_info/2 has no catch-all" rule's runtime
+# source (FP hunt round 3): each takes every process monitor's :DOWN or
+# every :EXIT, and the runtime still writes it something no clause takes
+# (a port monitor's :DOWN, node events, a port's output, a :DOWN reason
+# its guard refuses), which unhandled_info names.
 
 defmodule Argus.Test.Fixtures.MonitorsPortTakingProcessDowns do
   @moduledoc "Monitors a port: its :DOWN says :port, and only :process ones are taken."

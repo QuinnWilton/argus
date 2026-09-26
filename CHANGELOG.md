@@ -17,6 +17,31 @@ which is what `unhandled_info` witnesses: a send, a timer, a monitor's
 it. This round gives `unhandled_info` the sources the retired rule's
 real bugs came from, and then retires the rule.
 
+**Removed.** `mailbox.partial_handler` and its titles "handle_info/2
+has no catch-all in a process the runtime writes to", "handle_info/2 has
+no catch-all" and "gen_statem state without the :info catch-all its
+siblings have". The rule reported a handle_info/2 (or a gen_statem
+state) for the catch-all it lacks and subtracted correct code with 21
+negated conditions; on live code about one row in twenty-six was a bug.
+Every bug it was credited with where the program shows the message is
+now `unhandled_info`'s (a guarded or port monitor's `:DOWN`, node
+events, a port's output, a start_timer's message, a GenStage's timer,
+an async_nolink task's messages, what a timed receive leaves behind),
+and the statem timeout is `unhandled_timeout`'s. What it reported
+without a message — a server running a fun from its state, a caller's
+stream, a configured callback module; a ref pinned to the state; a
+state beside siblings with a catch-all — is not reported: a missing
+catch-all is no finding by itself. Corpus pairs `gen_stage#238` and
+`commanded#332` are gone with it (neither tree shows the message; the
+note in `test/corpus/pairs.exs` says why), and docs/bug-classes.md keeps
+a retired entry with each credited bug's fate. The mailbox extractor
+list drops ParamFlow, which only its closure walk read.
+
+**Removed.** Schema 136. `apply_param(id, func, pos)` and
+`mailbox_writer`'s `apply` kind (ErrorHandling), and
+`callback_takes_every(func, callback, tag, arity)` (CallbackTag,
+`MessageClauses.takes_every/2`): only the retired rule read them.
+
 **Changed.** A monitor's `:DOWN` is taken only by a clause that takes
 it whatever reason the runtime gives it. The ref, the object and the
 state are the program's: a clause pinning the ref to the state takes
@@ -71,18 +96,22 @@ source `late` ("No handle_info/2 clause for a message a timed receive
 leaves behind", `:warning`, anchored at the receive). A function on a
 server's stack asks for a message and waits for it with an `after`: it
 spawns a process and waits for its reply by a value it holds (`{ref,
-…}`: vernemq's vmq_ql_query spawn_links a row initializer, waits
-`RowQueryTimeout` for `{CallerRef, …}` and kills it), or it subscribes
-(Phoenix.PubSub, Registry, `:pg`, `:gen_event`) and waits for one event
-(realtime's `Connect.wait_for_connection`, reached from the replication
-Watchdog, waits for a "ready" map about one pid). A reply sent as the
+…}`), or it subscribes (Phoenix.PubSub, Registry, `:pg`, `:gen_event`)
+and waits for one event (realtime's `Connect.wait_for_connection`,
+reached from the replication Watchdog, waits for a "ready" map about one
+pid). A reply sent as the
 timeout fires, or an event broadcast before the unsubscribe or about
 another subject than the one the receive selects, stays in the mailbox
 and reaches handle_info/2. The message is the shape the receive waits
 for; a clause headed by a reference, an open clause of that shape, or a
 catch-all takes it. A wait with no `after`, an `after 0` poll and a
 timed GenServer.call (which neither spawns nor subscribes, and waits on
-an alias) are no source.
+an alias) are no source. vernemq's vmq_ql_query has the spawn shape (a
+row initializer's `{CallerRef, …}` after `RowQueryTimeout`), but its
+wait sits in a closure handed to `Module:fold_init_rows/…`, a module the
+program computes: no `fun_handed` row records the closure, so
+`runs_elsewhere.dl` takes it as kept and nothing shows it on the
+server's stack. It is not reported.
 
 **Added.** Schema 135. `recv_shape(id, func, shape)` (ErrorHandling,
 `MessageClauses.receive_shapes/2`): the shape a clause of a receive that

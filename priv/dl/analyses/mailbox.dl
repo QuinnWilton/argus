@@ -2,13 +2,17 @@
 //
 // A process's mailbox is written by more than its owner: a task's
 // reply, a monitor's :DOWN, a timer that fired before it was cancelled,
-// a subscription's broadcast, the module's own client API. Every finding here is a message and the clause that
-// is not there for it, or the reply a caller waits for that never
-// comes: a handle_info without a catch-all, an async_nolink task whose
-// reply lands unhandled, a monitor left live past its wait, a cancelled
-// timer's stale message, a tag the module sends itself and cannot
-// handle, a handle_call that defers a reply it cannot send, a statem
-// timeout no clause matches.
+// a subscription's broadcast, the module's own client API. Every finding
+// here is a message the program is shown to send and the clause that is
+// not there for it, or the reply a caller waits for that never comes: a
+// message a server is sent and cannot take (a send, a timer, a monitor's
+// :DOWN, a socket's close, node events, a port's output, an async_nolink
+// task's reply and :DOWN, what a timed receive leaves behind), a monitor
+// left live past its wait, a cancelled timer's stale message, a tag the
+// module sends itself and cannot handle, a handle_call that defers a
+// reply it cannot send, a statem timeout no clause matches. A
+// handle_info/2 with no catch-all is no finding by itself: only a
+// message that falls through it is.
 
 .include "../clientlib/imports.dl"
 .include "../clientlib/otp.dl"
@@ -27,12 +31,6 @@
 
 // ══ The outputs ═════════════════════════════════════════════════════
 //
-// `partial_handler(mod, handler, source, missing, detail)` — a message
-//   with no clause for it. `source` says who writes it: "runtime" (the
-//   process monitors or traps exits), "late_message" (its callbacks reach
-//   a task, timer, subscription or a fun they did not build),
-//   "statem_info" (the state function `handler`, for state `detail`,
-//   lacks the :info catch-all its siblings have).
 // `unconsumed_monitor(mod, func, site, kind)` — a monitor left live:
 //   "timed_wait" (past a receive with an after clause, never flushed),
 //   "never_released" (a server that removes entries but never
@@ -48,9 +46,6 @@
 //   clientlib's `self_call`, a call provably to the calling process), "dropped_from" (a
 //   handle_call defers a reply without keeping `from`; `site` is the
 //   return), "statem_unreplied" (a {:call, from} clause answers nothing).
-.decl partial_handler(mod: symbol, handler: symbol, source: symbol, missing: symbol, detail: symbol)
-.output partial_handler
-
 .decl unconsumed_monitor(mod: symbol, func: symbol, site: symbol, kind: symbol)
 .output unconsumed_monitor
 
@@ -60,240 +55,7 @@
 .decl reply_defect(mod: symbol, func: symbol, site: symbol, kind: symbol, tag: symbol)
 .output reply_defect
 
-// ══ handle_info without a catch-all, and stale timers ═══════════════
-// ── handle_info without a catch-all, in a process the runtime writes to ──
-//
-// Once a GenServer defines handle_info/2, any message no clause matches
-// is a FunctionClauseError, not the default log-and-continue. That only
-// matters for messages the process did not ask for by protocol — and a
-// process that monitors or traps exits has asked the runtime to send it
-// messages whose timing it does not control: a late {:DOWN, ...} after a
-// demonitor without :flush, an {:EXIT, ...} from a Plug's port. Bandit's
-// connection process crashed on exactly those until a catch-all landed.
-//
-// Subsumed by trap_exit_without_exit_clause when that fires, and by
-// unhandled_info's "crash" when a message the module is sent names the
-// clause that is missing: one finding per module, the more specific one.
-.decl receives_runtime_messages(mod: symbol)
-
-receives_runtime_messages(mod) :- module_traps(_, mod).
-
-// A monitor the server itself holds: taken on its own stack (a callback,
-// or what one reaches in the module). A client function of the same
-// module — `def await_up, do: Process.monitor(whereis(__MODULE__))` —
-// runs in the caller, and its :DOWN lands in the caller's mailbox.
-receives_runtime_messages(mod) :- monitors_on_own_stack(mod).
-
-// What the runtime writes has a clause: a server that monitors on its own
-// stack takes every process monitor's :DOWN (`{:DOWN, _ref, :process,
-// _pid, _reason}`, no pinned ref, no compared state field), and one that
-// traps exits every :EXIT. A late :DOWN after a demonitor without :flush
-// is a :DOWN like any other, and an :EXIT from a port a callback opened an
-// :EXIT (callback_takes_every, CallbackTag). eventstore's AdvisoryLocks
-// and Config.Store, FLAME's Pool, Lightning's RuntimeManager: their
-// clauses take every message the runtime can send them. A handler with a
-// clause per monitor (the ref pinned to the state) takes a subset, and
-// stays reported.
-.decl takes_runtime_messages(mod: symbol)
-
-takes_runtime_messages(mod) :-
-  partial_handle_info(mod, h),
-  receives_runtime_messages(mod),
-  (!monitors_on_own_stack(mod) ; callback_takes_every(h, "handle_info", ":DOWN", 5)),
-  (!module_traps(_, mod) ; callback_takes_every(h, "handle_info", ":EXIT", 3)),
-  !other_runtime_writer(mod).
-
-// The runtime writes more than a process monitor's :DOWN and an :EXIT to
-// a server that asks: a port monitor's `{:DOWN, ref, :port, port,
-// reason}` (a monitor whose type is not the literal :process), a port's
-// output (`{port, {:data, _}}`, `{port, {:exit_status, _}}`) to the
-// process that opened it, and `{:nodeup, n}`/`{:nodedown, n}` to one
-// that monitors nodes. A server whose own stack asks for any of them
-// keeps its finding, whatever its :DOWN and :EXIT clauses take.
-.decl other_runtime_writer(mod: symbol)
-
-other_runtime_writer(mod) :-
-  server_side(mod, f),
-  call_arg(f, ":erlang:monitor/2", 0, v),
-  v != ":process".
-
-other_runtime_writer(mod) :- server_side(mod, f), remote_call(_, f, ":erlang", "open_port", _).
-other_runtime_writer(mod) :- server_side(mod, f), remote_call(_, f, "Port", "open", _).
-other_runtime_writer(mod) :- server_side(mod, f), remote_call(_, f, ":net_kernel", "monitor_nodes", _).
-other_runtime_writer(mod) :- server_side(mod, f), remote_call(_, f, ":erlang", "monitor_node", _).
-other_runtime_writer(mod) :- server_side(mod, f), remote_call(_, f, "Node", "monitor", _).
-
-.decl monitors_on_own_stack(mod: symbol)
-
-monitors_on_own_stack(mod) :- monitor_call(_, f, _), server_side(mod, f).
-
-// Runtime messages some of which no clause takes: the finding's source,
-// and what the late-message variant below steps aside for.
-.decl runtime_uncovered(mod: symbol)
-
-runtime_uncovered(mod) :- receives_runtime_messages(mod), !takes_runtime_messages(mod).
-
-partial_handler(mod, h, "runtime", "catch_all", "") :-
-  gen_server_like(mod),
-  partial_handle_info(mod, h),
-  !library_written(h),
-  runtime_uncovered(mod),
-  !trap_exit_without_exit_clause(mod, _),
-  !info_crash(mod).
-
-// ── handle_info without a catch-all, with a late-message source ──
-//
-// The variant above needs the module itself to invite runtime messages.
-// A mailbox is written by more than its owner: a Task.async replies,
-// code the process runs through a closure or apply sends what it sends
-// (gen_stage#238: a hackney message crashing a Flow producer that ran
-// the user's stream), a timer fires after the state
-// that expected it is gone, a subscription broadcasts, a start-up
-// message is re-sent by a restart loop (cachex#314). A timed call that
-// gave up leaves no late reply since OTP 24 (below). A partial
-// handle_info/2 in a process whose callbacks reach such a source is a
-// FunctionClauseError waiting for that message. Without any source in
-// reach the shape is a style note, and stays quiet. Info: the two rules
-// above stay the warning-grade shapes. A source in what a callback
-// spawns or hands a task writes to that process's mailbox, not this one.
-//
-// Not sources:
-// - a timed GenServer (gen) call: since OTP 24 gen waits on an alias
-//   it deactivates when it gives up, and a reply sent after that is
-//   dropped. gen_stage#238's late message was hackney's, from the
-//   stream it ran (an apply, below);
-// - the logging and telemetry APIs (side_call, clientlib/calls.dl):
-//   their handlers are dispatched by value and write to no mailbox of
-//   the caller's that the program can see, and :telemetry's own apply
-//   of a handler fun is that dispatch;
-// - a call through a fun or a module the process's own code builds or
-//   names (apply_param resolved at its callers, below): what it runs is
-//   in the call graph, and walked.
-.init mailbox_reach = SameProcessReachSetCut
-
-mailbox_reach.cut(f, g) :- side_call(f, g).
-mailbox_reach.seed(f) :- mailbox_writer(id, f, kind), kind != "cancel", !handled_self_timer(id).
-mailbox_reach.seed(c) :- hands_unseen(c).
-
-// A function that calls through its parameter runs what its callers hand
-// it (apply_param). A caller that forwards its own parameter into that
-// position asks its callers in turn; one that hands, in that position, a
-// fun it builds or a literal external fun (fun_handed at the position),
-// or names a literal module, shows what runs. Any other caller hands
-// code the program does not show — a fun it read from its state, a
-// module it was sent, a fun in one argument beside a closure in another
-// — and is a source, as is a callback calling through its own
-// parameter: the behaviour fills those, with the message or the state (a
-// server whose state is the fun it runs). A closure calling through a
-// variable it captured runs what its builder captured: made of the
-// builder's parameter (call_arg_derived, a make_fun3's environment), the
-// builder's callers are asked; anything else — a fun the builder read
-// from its state (`cb = state.callback`, then `Enum.each(items, fn i ->
-// cb.(i) end)`), a call's result — the builder hands unseen.
-.decl applies_through(func: symbol, pos: number)
-
-applies_through(f, k) :- apply_param(_, f, k).
-applies_through(c, k2) :- applies_through(f, k), call_arg_forward(c, f, k, k2).
-applies_through(c, p) :- applies_through(f, k), captures(c, f, k, p).
-
-// The closure `closure` its builder makes holds, in its parameter `k`,
-// something made of the builder's parameter `p`.
-.decl captures(builder: symbol, closure: symbol, k: number, p: number)
-
-captures(c, f, k, p) :- closure_def(c, f), call_arg_derived(c, f, k, p).
-
-.decl hands_unseen(caller: symbol)
-
-hands_unseen(c) :-
-  applies_through(f, k),
-  call_instr(c, f, id),
-  !fun_handed(id, c, _, k),
-  !call_arg_forward(c, f, k, _),
-  !names_module(c, f, k).
-
-hands_unseen(c) :-
-  applies_through(f, k),
-  closure_def(c, f),
-  !call_arg_derived(c, f, k, _).
-
-hands_unseen(f) :- applies_through(f, _), process_entry(_, f).
-
-// `caller` hands `callee` a literal module at `pos` on every call.
-.decl names_module(caller: symbol, callee: symbol, pos: number)
-
-names_module(c, f, k) :-
-  applies_through(f, k),
-  call_arg(c, f, k, v),
-  v != "dynamic",
-  !call_arg(c, f, k, "dynamic").
-
-// A timer the process arms for itself whose message its own
-// handle_info/2 takes — the tag (timer_tag: the atom, or a tuple's first
-// element) compared, in a clause of the message's shape — leaves nothing
-// unhandled behind: the late message is one the process takes (a
-// janitor's :purge, a metrics loop's :check, a warmer's `{:warm, nil}`).
-// A cancel writes nothing; the timer it stops was armed somewhere, and
-// that arm is the source if any.
-.decl handled_self_timer(id: symbol)
-
-handled_self_timer(id) :-
-  timer_arm(id, f, "self", _, _, _),
-  timer_tag(id, tag, _),
-  function_def(f, mod, _, _, _),
-  callback_tag(h, "handle_info", tag),
-  function_def(h, mod, _, _, _),
-  !timer_refused(h, id).
-
-// :erlang.start_timer/3,4 (no timer_arm: its message carries the ref,
-// and the flush rules do not ask of it) sends `{:timeout, ref, msg}`: a
-// 3-tuple, which GenServer's idle `handle_info(:timeout, s)` does not
-// take.
-handled_self_timer(id) :-
-  mailbox_writer(id, f, "timer"),
-  !timer_arm(id, _, _, _, _, _),
-  timer_tag(id, tag, _),
-  function_def(f, mod, _, _, _),
-  callback_tag(h, "handle_info", tag),
-  function_def(h, mod, _, _, _),
-  !timer_refused(h, id).
-
-// The handler's clause heads take the timer's tag only in other shapes
-// (callback_tag_shape): `{:tick, n}` for a `{:tick, 1, :slow}` timer, the
-// atom `:timeout` for a start_timer's `{:timeout, ref, msg}`. A handler
-// whose heads say nothing of the tag (it compares it in its body), or
-// with a clause that takes a message by its shape alone, is not asked.
-.decl timer_refused(handler: symbol, id: symbol)
-
-timer_refused(h, id) :-
-  timer_tag(id, tag, ar),
-  callback_tag_shape(h, "handle_info", tag, _),
-  !callback_tag_shape(h, "handle_info", tag, ar),
-  !callback_tag_shape(h, "handle_info", tag, -1),
-  !callback_open(h, "handle_info", _, _).
-
-.decl late_message_source(mod: symbol)
-
-late_message_source(mod) :-
-  process_entry(mod, c),
-  mailbox_reach.reaches(c).
-
-// A handle_info/2 every clause of which a library's macro wrote
-// (library_written, clientlib/generated.dl: `use Cachex.Warmer`'s) is
-// that library's protocol for its own messages, and the finding would
-// point at the `use` line, where the module has nothing to add a clause
-// to. One the program's own macro wrote is the program's: the clause
-// belongs in that macro. Every partial_handler source asks it.
-
-partial_handler(mod, h, "late_message", "catch_all", "") :-
-  gen_server_like(mod),
-  partial_handle_info(mod, h),
-  !library_written(h),
-  late_message_source(mod),
-  !runtime_uncovered(mod),
-  !trap_exit_without_exit_clause(mod, _),
-  !statem_process(mod),
-  !info_crash(mod).
-
+// ══ Stale timers ══════════════════════════════════════════════════
 // ── A timer cancelled but not flushed ────────────────────────────────
 //
 // Process.cancel_timer/1 does not remove a message the timer already
@@ -1183,29 +945,6 @@ reply_defect(mod, func, id, "dropped_from", "") :-
 
 // ══ gen_statem events without a clause ══════════════════════════════
 
-// ── A state without an :info catch-all, beside states that have one ──
-//
-// In state_functions mode every state is its own callback, and a stray
-// message is handled per state. Redix's Cluster.Manager gave
-// disconnected/3 and cooling_down/3 an `(:info, _msg, _data)` clause and
-// ready/3 none; an unexpected message in :ready was a FunctionClauseError
-// that took the whole :one_for_all cluster tree with it. The sibling
-// asymmetry is the precision gate: a module that handles stray messages
-// in some states and not others has forgotten, not decided.
-// statem_state carries one row per site a state is seen at — its own
-// function and every transition targeting it — so the function_def join
-// picks the definition.
-partial_handler(mod, func, "statem_info", "catch_all", state) :-
-  statem_module(mod, "state_functions"),
-  statem_state(mod, state, func),
-  function_def(func, mod, _, _, _),
-  !unhandled_info(_, _, _, _, _, mod, func, "state_crash"),
-  !statem_info_catchall(mod, func),
-  !statem_event_catchall(mod, func),
-  statem_state(mod, other, g),
-  other != state,
-  statem_info_catchall(mod, g).
-
 // ── A timeout armed that no clause handles ──────────────────────────
 //
 // `unhandled_timeout(mod, state, kind)` — the witness is the timeout: a
@@ -1322,13 +1061,20 @@ unreceived_message(mod, func, site, m, runs, starter, spawn, recv) :-
 // ══ A message its server has no clause for ═════════════════════════
 //
 // The GenServer half of the question unreceived_message asks of a
-// spawned process. A message reaches a server's handle_info/2 four
-// ways the program spells out: a send process points-to follows to the
-// server (sends.dl), a timer the server arms for itself, a monitor
-// the server takes, whose {:DOWN, …} the runtime sends, and a socket the
-// server makes active, whose close the runtime sends. When no clause
-// of handle_info/2 takes the message, what happens depends on what the
-// module has in its place (`fallback`):
+// spawned process. A message reaches a server's handle_info/2 in ways
+// the program spells out, each a witness (`source`): a send process
+// points-to follows to the server (sends.dl), a timer the server arms
+// for itself, a monitor the server takes, whose {:DOWN, …} the runtime
+// sends, a socket the server makes active, whose close the runtime
+// sends, the node monitoring it turns on, a port it opens, an
+// async_nolink task it starts and does not collect, and a timed receive
+// on its stack that can give up before the message it asked for comes.
+// Each is below. A handle_info/2 with no catch-all is no finding by
+// itself (the retired "handle_info/2 has no catch-all"): what a server
+// runs that it did not build — a fun from its state, a caller's stream —
+// shows no message, and is not judged. When no clause of handle_info/2
+// takes the message, what happens depends on what the module has in its
+// place (`fallback`):
 //
 // - "crash": clauses and no catch-all. The message is a
 //   FunctionClauseError that takes the server down, every time it is
@@ -1351,10 +1097,13 @@ unreceived_message(mod, func, site, m, runs, starter, spawn, recv) :-
 // may take it there, and is not judged. Neither is a message a clause
 // could take by its shape alone (callback_open: `msg when is_atom(msg)`
 // takes any atom, `{ref, result}` a tuple of any tag). Judged for a
-// literal atom and a tuple with a literal tag, :DOWN included. A message
-// the server's own receives could take (a selective receive in a
-// callback), and a monitor whose function waits on it or demonitors with
-// :flush, are not judged.
+// literal atom and a tuple with a literal tag, :DOWN included, and the
+// shapes the runtime writes (a port's output, a task's `{ref, …}`). A
+// runtime :DOWN is taken only by a clause for every reason of it. A
+// message the server's own receives could take (a selective receive in
+// a callback), and a monitor whose function waits on it or demonitors
+// with :flush, are not judged; what a timed receive leaves behind is its
+// own source (below).
 .decl unhandled_info(mod: symbol, func: symbol, site: symbol, message: symbol, source: symbol, server: symbol, handler: symbol, fallback: symbol)
 .output unhandled_info
 
@@ -1844,6 +1593,20 @@ unhandled_info(mod, g, r, msg, "late", m, h, "crash") :-
   !taken_at(h, r, msg),
   function_def(g, mod, _, _, _).
 
+// The handler's clause heads take the timer's tag only in other shapes
+// (callback_tag_shape): `{:tick, n}` for a `{:tick, 1, :slow}` timer, the
+// atom `:timeout` for a start_timer's `{:timeout, ref, msg}`. A handler
+// whose heads say nothing of the tag (it compares it in its body), or
+// with a clause that takes a message by its shape alone, is not asked.
+.decl timer_refused(handler: symbol, id: symbol)
+
+timer_refused(h, id) :-
+  timer_tag(id, tag, ar),
+  callback_tag_shape(h, "handle_info", tag, _),
+  !callback_tag_shape(h, "handle_info", tag, ar),
+  !callback_tag_shape(h, "handle_info", tag, -1),
+  !callback_open(h, "handle_info", _, _).
+
 // A timer whose tag a clause compares, but whose shape no clause head
 // takes (timer_refused: a `{:tick, 1, :slow}` beside `{:tick, n}`), is
 // as unhandled as one whose tag none compares.
@@ -1912,11 +1675,6 @@ unhandled_info(mod, g, r, msg, "late", m, h, "state_crash") :-
   !statem_takes(m, msg),
   function_def(g, mod, _, _, _).
 
-// The module's partial handle_info/2 is already named by a message it
-// cannot take: partial_handler's catch-all findings step aside.
-.decl info_crash(mod: symbol)
-
-info_crash(m) :- unhandled_info(_, _, _, _, _, m, _, "crash").
 
 // ══ A periodic timer loop armed again while it runs ═════════════════
 //

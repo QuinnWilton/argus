@@ -149,10 +149,78 @@ defmodule Argus.Analyses.MailboxUnhandledInfoTest do
     assert results["unhandled_info"] == []
   end
 
-  test "partial_handler steps aside for the module a crash names", %{results: results} do
-    mods = for [mod | _] <- results["partial_handler"], do: mod
-    refute Enum.any?(mods, &String.ends_with?(&1, ".Reconnect"))
-    refute Enum.any?(mods, &String.ends_with?(&1, ".MemoryCheck"))
+  describe "the retired catch-all rule's probes" do
+    # "handle_info/2 has no catch-all" (partial_handler, retired) reported
+    # each of these for the catch-all it lacks. A missing catch-all is no
+    # finding by itself: a message the program is shown to send that falls
+    # through it is, and a probe that shows none is quiet.
+    alias Argus.Test.Fixtures, as: F
+    alias Argus.Test.Fixtures.Hypothesized, as: H
+    alias Argus.Test.Fixtures.LateMessage, as: L
+
+    @probes [
+      # The runtime source: what it writes a server that monitors or traps.
+      # The ref pinned to the state, a state field compared: the program's.
+      {[F.MonitorsWithoutCatchall], []},
+      {[F.MonitorsDownWhenActive], []},
+      {[L.MonitorsInMacro, L.MonitorMacro], []},
+      # No link: the one :EXIT a GenServer gets, its parent's, it takes itself.
+      {[F.TrapsTakingNormalExits], []},
+      {[F.MonitorsPortTakingProcessDowns], [{"{:DOWN, …}", "monitor"}]},
+      {[F.MonitorsDownGuardedByReason], [{"{:DOWN, …}", "monitor"}]},
+      {[F.MonitorsNodesTakingDowns], [{"{:nodedown, …}", "node"}, {"{:nodeup, …}", "node"}]},
+      {[F.TrapsOpeningPort], [{"{port, {:data, …}}", "port"}]},
+      # The late-message source: a timer, a task, a self-send, a fun.
+      {[F.PartialInfoStage], [{":tick", "timer"}]},
+      {[L.StartTimerIdle], [{"{:timeout, …}", "timer"}]},
+      # A timer whose message the state holds shows no message.
+      {[F.PartialInfoServer], []},
+      {[F.InlineOrTaskPartialInfoServer], []},
+      # A self-sent :warm, a warmer's {:warm, nil}: each has its clause.
+      {[F.SelfSendPartialInfoServer], []},
+      {[L.Warmer, L.WarmerMacro], []},
+      # Code the server runs that it did not build shows no message.
+      {[F.AppliesPartialInfoServer], []},
+      {[L.RunsSentFun], []},
+      {[L.CallsInClosure], []},
+      {[L.HandsMixed], []},
+      # The task_nolink source, folded: a task's reply and :DOWN.
+      {[H.NolinkPartialInfo], [{"{:DOWN, …}", "task"}, {"{ref, …}", "task"}]},
+      {[L.NolinkInMacro, L.NolinkMacro], [{"{:DOWN, …}", "task"}]},
+      # The statem_info source: a state without the :info catch-all its
+      # siblings have, and no message shown to reach it.
+      {[F.AsymmetricInfoStatem], []},
+      # Its quiet neighbours stay quiet: every :DOWN and :EXIT taken, a
+      # timer's tag taken, a timer a task arms, a monitor a client
+      # function takes in its caller, nothing that writes the mailbox, a
+      # closure the server builds, the logger's handlers, a machine whose
+      # every state has the catch-all.
+      {[F.TrapsTakingEveryExit], []},
+      {[F.TaggedTimerServer], []},
+      {[F.HandledTimerServer], []},
+      {[F.TaskTimerPartialInfoServer], []},
+      {[F.ClientMonitorsServer], []},
+      {[F.TotalInfoServer], []},
+      {[F.QuietPartialInfoServer], []},
+      {[L.HandsClosure], []},
+      {[L.LogsOnTick], []},
+      {[F.SymmetricInfoStatem], []}
+    ]
+
+    for {modules, expected} <- @probes do
+      @modules modules
+      @expected expected
+      test "#{modules |> hd() |> inspect() |> String.replace("Argus.Test.Fixtures.", "")}" do
+        {:ok, results} = Memo.analyze(@modules, :mailbox)
+
+        found =
+          for [_, _, _, message, source | _] <- results["unhandled_info"],
+              do: {message, source}
+
+        assert Enum.sort(found) == @expected
+        refute Map.has_key?(results, "partial_handler")
+      end
+    end
   end
 
   describe "finding" do

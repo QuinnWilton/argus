@@ -271,24 +271,6 @@ defmodule Argus.Schema.ErrorHandling do
         """
       },
       %{
-        name: :apply_param,
-        layer: 2,
-        fields: [
-          {:id, :symbol, "the call through a fun, or the apply"},
-          {:func, :symbol, "the function"},
-          {:pos, :number, "the parameter holding the fun or the module"}
-        ],
-        doc: """
-        The call through a fun (or the apply) at `id` runs what `func`'s \
-        parameter `pos` holds: the fun, or the module an apply names. Its \
-        callers choose what runs (`Argus.Extractors.ErrorHandling`). A \
-        call through a fun the function builds, a literal external fun or \
-        an apply that resolves (`resolved_apply`) has no row: the call \
-        graph follows it. One through anything else is mailbox_writer's \
-        `apply`.
-        """
-      },
-      %{
         name: :recv_shape,
         layer: 2,
         fields: [
@@ -537,14 +519,13 @@ defmodule Argus.Schema.ErrorHandling do
           {:id, :symbol, "the call site"},
           {:func, :symbol, "the function"},
           {:kind, :symbol,
-           "'task' | 'task_nolink' | 'timer' | 'timer_bare' | 'cancel' | 'pubsub' | 'self' | 'apply'"}
+           "'task' | 'task_nolink' | 'timer' | 'timer_bare' | 'cancel' | 'pubsub' | 'self'"}
         ],
         doc: """
         A call after which something other than a peer's request can land in \
-        the calling process's mailbox: a Task.async reply, a timer message, a \
-        subscription's broadcasts, a message the function sends to itself, \
-        or caller-supplied code run through a closure or apply. What makes a \
-        partial handle_info/2 a risk rather than a style note.
+        the calling process's mailbox: a Task.async reply, an async_nolink \
+        task's reply and :DOWN, a timer message, a subscription's \
+        broadcasts, a message the function sends to itself.
         """
       },
       %{

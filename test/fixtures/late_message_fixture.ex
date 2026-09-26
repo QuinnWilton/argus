@@ -1,8 +1,11 @@
 defmodule Argus.Test.Fixtures.LateMessage do
   @moduledoc """
-  Fixtures for `partial_handler`'s "late_message" source: what can leave
-  a message in a server's mailbox that its partial handle_info/2 does
-  not take, and what cannot.
+  Probes of the retired "handle_info/2 has no catch-all" rule's
+  late-message source: what can leave a message in a server's mailbox
+  that its partial handle_info/2 does not take, and what shows no
+  message. `unhandled_info` reports the ones the program is shown to
+  send (test/analyses/mailbox_unhandled_info_test.exs, "the retired
+  catch-all rule's probes").
   """
 
   defmodule WarmerMacro do

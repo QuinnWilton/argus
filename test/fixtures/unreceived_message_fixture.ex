@@ -166,7 +166,7 @@ defmodule Argus.Test.Fixtures.UnreceivedMessage do
   end
 
   defmodule Server do
-    @moduledoc "The target is a GenServer: what it does with an unexpected message is partial_handler's."
+    @moduledoc "The target is a GenServer: a message it has no clause for is unhandled_info's."
     use GenServer
 
     def start do

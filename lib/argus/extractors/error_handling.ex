@@ -69,12 +69,7 @@ defmodule Argus.Extractors.ErrorHandling do
     a computed value), `timer_bare` (a timer whose message is a bare atom
     or literal, indistinguishable from an earlier instance), `cancel`
     (cancel_timer), `pubsub` (a subscription), `self` (the function sends
-    to self()), `apply` (the function runs a fun or a module read from
-    somewhere the call graph does not reach — the state, a message, a
-    call's result — which may do anything with this mailbox: the Flow
-    producer of gen_stage#238 ran user code that called hackney)
-  - `apply_param(id, func, pos)` — the call through a fun, or the apply,
-    at `id` runs what `func`'s parameter `pos` holds: its callers choose
+    to self())
   - `start_timer_arm(id, func, target)` — an `:erlang.start_timer/3,4` at
     `id` arms `{:timeout, ref, msg}` for the calling process (`self`) or
     another (`other`)
@@ -109,7 +104,6 @@ defmodule Argus.Extractors.ErrorHandling do
   alias Argus.Instr
   alias Argus.Instr.Reaching
   alias Argus.InstrId
-  alias Argus.Pipeline.Emit.Applies
   alias Argus.Pipeline.Normalize
 
   import Argus.Extractor.Helpers,
@@ -175,7 +169,6 @@ defmodule Argus.Extractors.ErrorHandling do
   @impl true
   def relations,
     do: [
-      :apply_param,
       :bare_rescue,
       :call_result,
       :cancel_clause,
@@ -1864,85 +1857,8 @@ defmodule Argus.Extractors.ErrorHandling do
           do: add_fact(acc, :mailbox_writer, [InstrId.mint(func_id, idx), func_id, "self"]),
           else: acc
 
-      emit_applies(acc, func_id, instrs)
+      acc
     end)
-  end
-
-  # A call through a fun or a computed module runs code this module may
-  # not own. What it runs decides whether that code is out of sight:
-  #
-  # - a closure the function builds, a literal external fun, or an apply
-  #   whose module and function resolve (resolved_apply): the call graph
-  #   has the edge, and the walk that asks what the process runs follows
-  #   it, so the call adds nothing unseen;
-  # - the function's own parameter (the fun, or the module an apply
-  #   names): its callers choose, and `apply_param` names the position
-  #   for a rule to ask them (a caller that hands a fun it builds, or a
-  #   literal module, shows what runs);
-  # - anything else (a fun or a module read from the state, a message, a
-  #   call's result): `apply`, a mailbox_writer — the Flow producer of
-  #   gen_stage#238 ran the continuation of a stream it was handed.
-  defp emit_applies(facts, func_id, instrs) do
-    instrs
-    |> Enum.with_index()
-    |> Enum.reduce({facts, false}, fn {instr, idx}, {acc, opaque_seen?} ->
-      case apply_origin(instrs, idx, instr) do
-        :none ->
-          {acc, opaque_seen?}
-
-        :seen ->
-          {acc, opaque_seen?}
-
-        {:param, k} ->
-          {add_fact(acc, :apply_param, [InstrId.mint(func_id, idx), func_id, to_string(k)]),
-           opaque_seen?}
-
-        :opaque when opaque_seen? ->
-          {acc, true}
-
-        :opaque ->
-          {add_fact(acc, :mailbox_writer, [InstrId.mint(func_id, idx), func_id, "apply"]), true}
-      end
-    end)
-    |> elem(0)
-  end
-
-  defp apply_origin(instrs, idx, {:call_fun, n}), do: fun_origin(instrs, idx, {:x, n})
-  defp apply_origin(instrs, idx, {:call_fun2, _tag, _n, fun}), do: fun_origin(instrs, idx, fun)
-  defp apply_origin(instrs, idx, {:apply, n} = instr), do: mfa_origin(instrs, idx, instr, n)
-
-  defp apply_origin(instrs, idx, {:apply_last, n, _} = instr),
-    do: mfa_origin(instrs, idx, instr, n)
-
-  defp apply_origin(instrs, idx, instr) do
-    case match_remote_call(instr) do
-      {:ok, :erlang, :apply, 2} -> fun_origin(instrs, idx, {:x, 0})
-      {:ok, :erlang, :apply, 3} -> mfa_origin(instrs, idx, instr, 0)
-      _ -> :none
-    end
-  end
-
-  defp fun_origin(instrs, idx, reg) do
-    case Resolve.fun_origin(instrs, idx, reg) do
-      {kind, _mfa} when kind in [:closure, :external] -> :seen
-      {:param, k} -> {:param, k}
-      nil -> :opaque
-    end
-  end
-
-  # An apply whose target resolves is a call the graph follows; one
-  # whose module is a parameter is the callers' to name.
-  defp mfa_origin(instrs, idx, instr, module_reg) do
-    case Applies.resolve(instrs, idx, instr) do
-      {:ok, _mfa} ->
-        :seen
-
-      :error ->
-        case arg_position(instrs, idx, {:x, module_reg}) do
-          {:ok, k} -> {:param, k}
-          :no -> :opaque
-        end
-    end
   end
 
   # Elixir's `send/2` is a call to :erlang.send/2, not the `send` opcode

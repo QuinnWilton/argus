@@ -9,8 +9,6 @@ defmodule Argus.Analyses.MailboxStatemTest do
   # (`Argus.Test.Batch`; ARGUS_VERIFY_BATCH=1 checks each slice against
   # a solve of its own).
   @batched [
-    Argus.Test.Fixtures.AsymmetricInfoStatem,
-    Argus.Test.Fixtures.SymmetricInfoStatem,
     Argus.Test.Fixtures.TimeoutMismatchStatem,
     Argus.Test.Fixtures.TimeoutHandledStatem,
     Argus.Test.Fixtures.TimeoutStatem,
@@ -33,34 +31,7 @@ defmodule Argus.Analyses.MailboxStatemTest do
     results
   end
 
-  defp statem_info(results),
-    do:
-      Rows.where(results, :mailbox, "partial_handler",
-        source: "statem_info",
-        drop: [:source, :missing]
-      )
-
   defp statem_timeouts(results), do: Map.get(results, "unhandled_timeout", [])
-
-  describe "partial_handler: statem_info" do
-    test "the state without an :info catch-all is reported when its siblings have one", ctx do
-      skip_without_souffle()
-
-      results = analyze(ctx, [Argus.Test.Fixtures.AsymmetricInfoStatem])
-
-      assert [[mod, site, "ready"]] = statem_info(results)
-      assert mod =~ "AsymmetricInfoStatem"
-      assert site =~ "AsymmetricInfoStatem:ready/3"
-    end
-
-    test "a machine whose every state has the catch-all is clean", ctx do
-      skip_without_souffle()
-
-      results = analyze(ctx, [Argus.Test.Fixtures.SymmetricInfoStatem])
-
-      assert statem_info(results) == []
-    end
-  end
 
   describe "unhandled_timeout" do
     test "a {:timeout, ...} action matched as :info is reported", ctx do

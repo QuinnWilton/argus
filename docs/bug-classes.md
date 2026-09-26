@@ -121,7 +121,7 @@ classes of one risk get one severity.
 | [`shutdown`](#shutdown) | 9 | cleanup a supervisor shutdown will skip, and teardown that hurts a peer |
 | [`blocking`](#blocking) | 15 | synchronous waits that can last forever or nest: call chains, cycles, fan-in, rpc, locks, receives in callbacks |
 | [`coupling`](#coupling) | 5 | two owners of one relationship across supervisor branches |
-| [`mailbox`](#mailbox) | 23 | messages that arrive with no clause for them, and replies that never come |
+| [`mailbox`](#mailbox) | 21 | messages that arrive with no clause for them, and replies that never come |
 | [`failure`](#failure) | 13 | error paths swallowed, half-caught or ignored |
 | [`structure`](#structure) | 4 | child specs, registrations and tree shapes that are wrong on their own |
 | [`races`](#races) | 8 | check-then-act races on a process name, an ETS key or a Mnesia record that another process can write between the check and the act, ETS values published before the rows they point to, and ETS rows acted on after another process may have removed them |
@@ -256,7 +256,7 @@ than more; it errs loud when the same uncertainty can add a finding.
 
 - **Names.** `side_api`, `side_call` (calls.dl).
 - **Meaning.** `side_call(f, g)` is an edge from a function outside the logging and telemetry APIs (`:logger`, `:error_logger`, Logger, `:telemetry`) into one of them. Their handlers are dispatched by value, so the call graph reaches only the APIs' own machinery, which waits on its own servers and writes to no mailbox of the program's.
-- **Direction.** No walk about a wait or a mailbox write crosses a side path: calls.dl's dependency words, startup's walks of init/1's stack, mailbox's late-message, timer, monitor, flush and spawned-receive walks, blocking's receive and socket walks, and a handle_call/3 that logs still answers at once; a handler the program attaches that does wait is not seen from the call site (quiet).
+- **Direction.** No walk about a wait or a mailbox write crosses a side path: calls.dl's dependency words, startup's walks of init/1's stack, mailbox's timer, monitor, flush, subscription and spawned-receive walks, blocking's receive and socket walks, and a handle_call/3 that logs still answers at once; a handler the program attaches that does wait is not seen from the call site (quiet).
 - **Used by.** calls.dl's dependency words (blocking, coupling, shutdown, startup), init_phase.dl and global_reach.dl, blocking, mailbox and startup.
 
 ### A wait on a peer
@@ -355,7 +355,7 @@ than more; it errs loud when the same uncertainty can add a finding.
 - **Names.** `library_written`, `program_module` (generated.dl), over the `macro_written` and `macro_generated` facts.
 - **Meaning.** `macro_written(f)`: a macro wrote every clause of f (or marked it `generated: true`). `macro_generated(f, by)`: the definition's metadata, which is its first clause's, names `by`'s macro, so a function whose first clause a `use` put ahead of the module's own is named too; it is read for `by` only. `library_written(f)`: every clause written by the macro of a module outside the program, whose finding would point at a `use` line.
 - **Direction.** A function the program's own macro wrote is the program's (loud); a library analyzed with the program is the program.
-- **Used by.** mailbox (every partial_handler source; unhandled_info's GenServer default) and failure (a belief counts no call a macro wrote).
+- **Used by.** mailbox (unhandled_info's task source and GenServer default) and failure (a belief counts no call a macro wrote).
 
 ### Who holds ETS state
 
@@ -376,7 +376,7 @@ than more; it errs loud when the same uncertainty can add a finding.
 - **Names.** `library_written` (generated.dl), over `macro_written` and `macro_generated` (`Argus.Extractors.Generated`).
 - **Meaning.** A function every clause of which another module wrote: an Elixir `use` expansion (the definition's `context:`), or in Erlang a function under a `-file` attribute naming an OTP header (yecc's runtime from `yeccpre.hrl`, leex's `leexinc.hrl`, an installed application's include) or, without abstract code, a yecc parser's `yecc*` functions. It is the library's when the writer is none of the program's modules; a `use` of the program's own macro, and a header of the program's own, are the program's code.
 - **Direction.** Quiet: a library-written handler or catch-all is not the program's to change. Beams without debug info show nothing but yecc's names.
-- **Used by.** mailbox (a late message's partial handle_info/2), failure (catch-alls). failure's per-callee beliefs set aside every `macro_generated` owner.
+- **Used by.** mailbox (an async_nolink task's start), failure (catch-alls). failure's per-callee beliefs set aside every `macro_generated` owner.
 
 ### Receives and mailbox handlers
 
@@ -385,12 +385,12 @@ than more; it errs loud when the same uncertainty can add a finding.
 - **Direction.** Receive shapes are per function, not per receive; rules that anchor at one receive read `recv_start` directly.
 - **Used by.** effects and mailbox (receive.dl), blocking and startup (`down_bounded`, `exit_pinned`), mailbox and shutdown (process_kind.dl).
 
-### A late-message source
+### A message a server is shown to be sent
 
-- **Names.** `late_message_source` (local to mailbox.dl).
-- **Meaning.** A process has a late-message source when one of its entries reaches, in its own process and not through a side path, something that writes to its mailbox on a schedule it does not control: a timer, a task's reply, a subscription, a monitor, a message it sends itself, or a call through a fun or module the process's own code did not build or name.
-- **Direction.** A self-timer whose tag the module's handle_info compares and a timed GenServer call (since OTP 24 a late reply is dropped) are not sources; a source in what a callback spawns writes to that process, not this one (quiet).
-- **Used by.** mailbox (a partial handle_info/2 with a late-message source).
+- **Names.** `info_message(server, func, site, message, source)`, `taken_at`, `down_taken` (local to mailbox.dl).
+- **Meaning.** A message reaches a server's handle_info/2 by a witness the program spells out: a send process points-to follows to the server, a timer it arms for itself (a send_after's, a start_timer's `{:timeout, ref, msg}`), a monitor it takes (`:DOWN`), a socket it makes active (its close), node monitoring it turns on (`{:nodeup, …}`, `{:nodedown, …}`), a port it opens (`{port, {:data, …}}`), an async_nolink task it starts and does not collect (`{ref, …}`, `:DOWN`), or a timed receive on its stack that can give up before the message it asked for comes. The witness runs on the server's stack in any module (`RunsInServer`). A runtime `:DOWN` is taken by a clause for every reason of it (`callback_takes_down`): the ref, the object and the state are the program's to pin, the reason is the runtime's.
+- **Direction.** Constructive: no message, no finding. What the server runs that it did not build (a fun from its state, a caller's stream, a module the program computes) shows no message and is not judged (the retired "handle_info/2 has no catch-all" judged it).
+- **Used by.** mailbox (`unhandled_info`).
 
 ### Timer flush
 
@@ -1520,89 +1520,43 @@ sets and the 26 live projects:
 
 `mailbox` owns a message that arrives and that nothing takes, or takes wrongly, and a reply a caller waits for that never comes. More than its owner writes a process's mailbox: a task's reply, a monitor's `:DOWN`, a timer that fired before it was cancelled, a subscription, the module's own client API. Every finding is such a message and the clause that is missing for it, or a promise of a reply that cannot be kept. Some neighbouring defects belong to other concerns. A trapped exit with no `:EXIT` clause, and a process that traps exits with no handle_info/2 at all, are `shutdown`'s (`unhandled_exit_signal`). So is the `:DOWN` a server causes by killing a child it monitors (`kills_monitored_child`). A receive that can hang a callback, and a synchronous call a process makes to itself, are `blocking`'s. A gen_statem's state graph is `state_machine`'s.
 
-### A monitoring or trapping server with no handle_info/2 catch-all
+### Retired: a server whose handle_info/2 has no catch-all
 
-`partial_handler` · source=`runtime`
-· titles: "handle_info/2 has no catch-all in a process the runtime writes to" (`:info`)
+`partial_handler` (removed in 0.20.0-dev)
+· titles: "handle_info/2 has no catch-all in a process the runtime writes to", "handle_info/2 has no catch-all", "gen_statem state without the :info catch-all its siblings have" (all retired)
 
-**Property.** A module that behaves as GenServer or GenStage defines handle_info/2 with no clause that accepts every message. The process has also asked the runtime for messages whose timing it does not control. Either some function of the module calls `Process.flag(:trap_exit, true)`, or some function on the server's own stack (`server_side`: a callback, or what the callbacks reach inside the module) takes a monitor. Once handle_info/2 is defined, a message that no clause matches is a FunctionClauseError instead of GenServer's log-and-continue. Examples are a late `{:DOWN, ...}` after a demonitor without `:flush`, and an `{:EXIT, ...}` from a port a callback opened. The server crashes on the first such message.
+The class started from every server whose handle_info/2 lacks a catch-all and subtracted correct code with 21 negated conditions (a runtime writer taken whole, a self-timer whose tag a clause compares, a closure or module the program builds, a macro's handler, a more specific finding). On live code about one row in twenty-six was a bug. A missing catch-all matters only when a message falls through it, and that is what `unhandled_info` witnesses: the message, where it comes from, and the clause that is not there for it (the classes below). The retired rule's credited bugs went as follows.
 
-**Assumptions and limits.**
-- A catch-all is read from the bytecode: it is a clause whose failure never reaches the function's `func_info`. A guarded catch-all (`msg when is_tuple(msg)`) is not total, so a module with only a guarded catch-all is reported.
-- A trap_exit call counts wherever it is in the module, including in a client function that runs in its caller. A monitor counts only on the server's own stack: `def await_up, do: Process.monitor(...)` is the caller's monitor (pinned by `ClientMonitorsServer`).
-- The rule steps aside for two more specific findings on the same module. The first is `shutdown`'s `unhandled_exit_signal` "no_exit_clause", when the process traps exits and no clause compares `:EXIT` (pinned by `TrapsWithoutExitClause`). The step-aside is computed here, so a run of `mailbox` without `shutdown` reports neither. The second is `unhandled_info` "crash", when a message the module is sent names the missing clause.
-- A handle_info/2 that another module's macro wrote in full is still judged here, although the late-message source skips it.
-- Suppressed when a clause takes everything the runtime can send: every process monitor's `:DOWN` for a server that monitors on its own stack, every `:EXIT` for one that traps (`callback_takes_every`, CallbackTag: the head tests the message only for its tuple-ness, arity and tag, a `:DOWN`'s third element only against `:process`, and the state only for its struct or record type). A late `:DOWN` after a demonitor without `:flush` is a `:DOWN` like any other. A server whose own stack asks the runtime for more keeps the finding (`other_runtime_writer`): a monitor whose type is not the literal `:process` (a port's `:DOWN` says `:port`), a port it opens (its output), node monitoring (`:nodeup`/`:nodedown`). A module suppressed here falls to the late-message variant when it has a late source (`runtime_uncovered`).
-- The finding does not name a message. It is one finding per module and handler.
-
-**Fixtures.** Positive: `MonitorsWithoutCatchall` (its `:DOWN` clause pins the ref to the state), `MonitorsDownWhenActive` (a state field compared), `TrapsTakingNormalExits` (one exit reason), and the suppression's adversarial probes `MonitorsPortTakingProcessDowns`, `MonitorsNodesTakingDowns`, `TrapsOpeningPort`, `MonitorsDownGuardedByReason` (`test/fixtures/error_handling_fixture.ex`); `LateMessage.MonitorsInMacro` under the program's own macro. Quiet: `MonitorsWithCatchall`, `MonitorsTakingEveryDown`, `TrapsTakingEveryExit`, `ClientMonitorsServer`, `TrapsWithoutExitClause` (same file). Asserted in `test/analyses/mailbox_info_test.exs`; `callback_takes_every` in `test/extractors/callback_tag_test.exs`.
-
-**Corpus.** Fix pairs: None. Present-only: None.
-
-**Precision.** FP hunt round 3 (2026-09-25) sampled 5 rows on the seven new programs: 0 true, all five servers taking every `:DOWN` (and every `:EXIT`) they could be sent (`runtime-messages-covered`, as 4 of round 2's). The suppression above took the class from 20 rows to 3 over the 26 live programs. 24c1ba3 stopped counting a monitor in a client function, but gives no count.
-
-### A server with a late-message source and no handle_info/2 catch-all
-
-`partial_handler` · source=`late_message`
-· titles: "handle_info/2 has no catch-all" (`:info`)
-
-**Property.** The module is a GenServer or GenStage, not a gen_statem. Its handle_info/2 is partial (`partial_handle_info`), and the module wrote at least one clause of it. Some entry of the process (`process_entry`: init/1, a callback, terminate/2) reaches a mailbox writer in the server's own process. The reach does not pass through a logging or telemetry call (`side_call`). A mailbox writer is a call after which something other than a peer's request can land in the mailbox:
-- a Task.async or Task.Supervisor.async reply, or a Task.Supervisor.async_nolink task;
-- a timer, unless the process arms it for itself with a message whose tag its own handle_info/2 compares;
-- a subscription (Phoenix.PubSub, Registry, `:pg`, a `:gen_event` handler);
-- a message the function sends to itself;
-- a call through a fun or a module the program does not show. That covers a fun read from the state, a message or a call's result, a callback calling through its own parameter, and a parameter that some caller fills from such a place.
-
-Such a message is a FunctionClauseError the first time it arrives, and a restart loop if a restart sends it again.
-
-**Assumptions and limits.**
-- These are not sources:
-  - A timed GenServer.call. Since OTP 24, gen waits on an alias and drops a late reply (`LateMessage.TimedCall`).
-  - A logging or telemetry call (`LateMessage.LogsOnTick`).
-  - A closure the function builds and hands to a helper that calls it (`LateMessage.HandsClosure`).
-  - An `:erlang.start_timer` whose `:timeout` the handler takes (`LateMessage.StartTimer`).
-  - A self-armed timer with a handled tag (`HandledTimerServer`, `TaggedTimerServer`).
-  - A timer armed by a task the server starts (`TaskTimerPartialInfoServer`).
-- The rule does not judge a handle_info/2 whose every clause another module's macro wrote (`LateMessage.Warmer`, the Cachex.Warmer shape). That handle_info/2 is the library's protocol, and the finding would point at the `use` line.
-- It still reports these shapes, which may be false positives:
-  - A timer armed for another process. Its message lands elsewhere, but it still counts as a source for the arming server.
-  - A task collected where it starts. Task.await or Task.yield plus Task.shutdown leaves no late message, but the task still counts.
-  - A source that only terminate/2 reaches.
-  - A mailbox writer in a dispatcher clause that no callback selects, because reach is not clause-aware.
-- An async_nolink task that the function does not collect is both a source here and the next class. As the rules are written, the same handle_info/2 gets both findings, even when it has clauses for both of the task's messages (`Hypothesized.NolinkBothClauses`).
-- The rule steps aside for the runtime source, for `shutdown`'s missing-`:EXIT` finding and for `unhandled_info` "crash". The finding does not name the source it found.
-
-**Fixtures.** Positive: `PartialInfoServer`, `PartialInfoStage`, `AppliesPartialInfoServer`, `SelfSendPartialInfoServer`, `InlineOrTaskPartialInfoServer` (`test/fixtures/error_handling_fixture.ex`); `LateMessage.RunsSentFun` (`test/fixtures/late_message_fixture.ex`). Quiet: `TotalInfoServer`, `QuietPartialInfoServer`, `HandledTimerServer`, `TaggedTimerServer`, `TaskTimerPartialInfoServer`, and `MonitorsWithoutCatchall`, which is reported as runtime instead (`test/fixtures/error_handling_fixture.ex`); `LateMessage.Warmer`, `LateMessage.HandsClosure`, `LateMessage.TimedCall`, `LateMessage.StartTimer`, `LateMessage.LogsOnTick` (`test/fixtures/late_message_fixture.ex`); `Quiet.TimerWithCatchAll` (`test/fixtures/quiet_shapes_fixture.ex`). Asserted in `test/analyses/mailbox_info_test.exs` and `test/analyses/quiet_shapes_test.exs`.
-
-**Corpus.** Fix pairs: `gen_stage#238` (elixir-lang/gen_stage, ee272d3 → ae0a6c6, GenStage.Streamer). Present-only: `commanded#332` (commanded/commanded, 9f45a30, Commanded.ProcessManagers.ProcessManagerInstance).
-
-**Precision.** Before 92f6404, about 83% of this title's rows on real programs were noise. That commit stopped counting calls through funs whose code the program shows, logging and telemetry, timed gen calls and handlers a macro wrote. After it, logflare went from 22 rows to 9 and the Phoenix stack from 6 to 3, and both corpus instances still fire. Seven of logflare's rows were a macro-written handle_info (CHANGELOG 0.20.0-dev, "Process rules, read against real programs"). 022d1e7 and 794635d stopped counting self-armed timers that the handler takes, but give no count.
+- Covered by a witnessed message. A monitor's `:DOWN` whose clause guards the reason, or compares the type with `:process` for a port monitor (`MonitorsDownGuardedByReason`, `MonitorsPortTakingProcessDowns`; source `monitor`). Node events (`MonitorsNodesTakingDowns`; source `node`). A port's output (`TrapsOpeningPort`; source `port`). A start_timer's `{:timeout, ref, msg}` (`LateMessage.StartTimerIdle`; source `timer`). A GenStage's own timer (`PartialInfoStage`, once GenStage starts are server starts). An async_nolink task's reply and `:DOWN` (the `task_nolink` source, folded; source `task`). realtime's replication Watchdog: a "ready" map `Connect.wait_for_connection`'s timed receive leaves (source `late`).
+- Not a bug by construction: the program shows no message that falls through. A ref pinned to the state, a state field compared (`MonitorsWithoutCatchall`, `MonitorsDownWhenActive`, encore ostinato's `Consumer`): the program's choice of which monitor it keeps. A trap with no link (`TrapsTakingNormalExits`): a GenServer takes its parent's `:EXIT` itself. A self-sent or armed message the handler takes (`SelfSendPartialInfoServer`, encore canon's `Voice`, whose one subscription's `:pulse` is taken). A state with no `:info` catch-all beside states that have one, and no message shown to reach it (`AsymmetricInfoStatem`, rabbit's `rabbit_ff_controller` in `standing_by`).
+- Not constructively coverable: the server runs code it did not build, and the program shows no message. A fun or a module read from the state, handed in a message, or configured (`AppliesPartialInfoServer`, `LateMessage.RunsSentFun`; live: nerves_hub_link's ArchiveManager and UpdateManager, eventstore's Subscription, FLAME's Pool, kafka_ex's consumer group Manager); a caller's stream (`gen_stage#238`: an `ExAws` download's late `{{ref, n}, chunk}` in the user's stream); a request with no message named (`commanded#332`). Their risk is the library's contract with its callers' code, not a message this program sends.
+- Not reached: vernemq's `vmq_ql_query` has the `late` shape (a spawn_link'd row initializer's `{CallerRef, …}` after `RowQueryTimeout`), but its wait is in a closure handed to `Module:fold_init_rows/…`, a module the program computes. The emitter records no `fun_handed` for a call through a computed module, so `runs_elsewhere.dl` takes the closure as kept, and nothing shows it runs on the server's stack.
 
 ### An async_nolink task whose reply or :DOWN has no clause
 
-`partial_handler` · source=`task_nolink`, missing=`reply` | `down`
-· titles: "async_nolink task's messages have no handle_info clause" (`:warning`)
+`unhandled_info` · source=`task`, fallback=`crash` | `state_crash`
+· titles: "No handle_info/2 clause for a message the server is sent" (`:warning`); "No clause for a message a gen_statem is sent" (`:warning`)
 
-**Property.** A process module's entries reach a function in the module's own process. That function calls Task.Supervisor.async_nolink and does not collect the task (it calls no Task.await, yield or shutdown). The module's handle_info/2 is partial and lacks a clause for one of the two messages the task sends the starting process. The first is a `{ref, result}` clause headed by a reference (`missing` = `reply`); the second is any clause comparing `:DOWN` (`missing` = `down`). The first task to finish is a FunctionClauseError in the server.
+**Property.** A function the server's callbacks run in its own process, in any module, calls Task.Supervisor.async_nolink and does not collect the task (it calls no Task.await, yield or shutdown). The task sends the server two messages it did not ask for by name: its reply, `{ref, result}`, and, the task being monitored, `{:DOWN, ref, :process, pid, reason}` when it ends (after the reply, or in its place when it crashes). A clause headed by a reference, or one that takes any tuple, takes the reply; the `:DOWN` is taken as a monitor's is, by a clause for every reason of it, or by an open clause that can hold five elements (a `{ref, result} when is_reference(ref)` clause takes no `:DOWN`). With neither, the first task to finish, or to crash, is a FunctionClauseError in the server.
 
 **Assumptions and limits.**
-- Soundness assumption (review 2, item 23): a library-written handle_info/2 steps aside only when the async_nolink site itself is library-written (535216a4 asked of the handler, so the program's own task under a library's `use` went silent: `Soundness.Mailbox.NolinkWarmer`).
+- Soundness assumption (review 2, item 23): a start a library's macro wrote is that library's protocol with its own handle_info/2 (`library_written`); the program's own task under a library's `use` lands there all the same (`Soundness.Mailbox.NolinkWarmer`).
 - "Collected" means a collector call anywhere in the starting function. It need not be on every path or for this task.
 - An async_nolink inside a task the server starts writes to that task's mailbox, and is not counted.
-- The module need not be a GenServer: any process module with a partial handle_info/2 is judged.
-- `:DOWN` counts as handled when it is compared anywhere in handle_info/2's body. This over-approximates, which keeps the rule quiet.
-- There is one finding per module and starting function. When both clauses are missing, the two rows merge. The finding's prose then names only the `:DOWN`, although its help names both clauses.
-- The same handle_info/2 also gets the late-message note.
+- A reply clause that flushes the monitor (`Process.demonitor(ref, [:flush])`) leaves the `:DOWN` of a task that crashes: still reported (`Witness.NolinkReplyOnly`). A `:DOWN` clause for `:normal` alone takes no crash's (`Witness.NolinkDownNormalOnly`).
+- An unguarded 2-tuple clause (`{ref, {result, output}}`) takes the reply by its shape (`Witness.NolinkTupleClause`, the nerves_hub_link SupportScriptsManager false positive of FP hunt round 2).
+- Judged for the crash only: a catch-all takes both messages. There is one finding per start and server, anchored at the start; when both messages have no clause the finding names the `:DOWN`.
+- Folded in 0.20.0-dev from `partial_handler`'s `task_nolink` source ("async_nolink task's messages have no handle_info clause"), which was already defined from its witness.
 
-**Fixtures.** Positive: `Hypothesized.NolinkPartialInfo` (`test/fixtures/hypothesized_shapes_fixture.ex`). Quiet: `Hypothesized.NolinkBothClauses`, `Hypothesized.NolinkCollected` (same file). Asserted in `test/analyses/hypothesized_shapes_test.exs`.
+**Fixtures.** Positive: `Hypothesized.NolinkPartialInfo` (`test/fixtures/hypothesized_shapes_fixture.ex`); `Witness.NolinkReplyOnly`, `Witness.NolinkDownNormalOnly`, `Witness.NolinkInHelper` (`test/fixtures/soundness/mailbox_witness_fixture.ex`); `Soundness.Mailbox.NolinkWarmer`. Quiet: `Hypothesized.NolinkBothClauses`, `Hypothesized.NolinkCollected`, `Witness.NolinkTupleClause`. Asserted in `test/analyses/hypothesized_shapes_test.exs`, `test/analyses/mailbox_unhandled_info_test.exs` and `test/soundness/mailbox_test.exs`.
 
 **Corpus.** Fix pairs: None. Present-only: None. CHANGELOG 0.14.0 draws the rule from archethic-node#1306, sentry-elixir#172 and Engram#1552, but none of them is a pair.
 
-**Precision.** Not measured. The maintainer notes record that 0.14.0's six new rules, this one among them, added four findings over the 14-tree diff, all confirmed real. It does not say how many were this rule's.
+**Precision.** FP hunt round 2 sampled one row (nerves_hub_link's SupportScriptsManager): false, its 2-tuple clause takes the reply, and the fold keeps it quiet. The maintainer notes record that 0.14.0's six new rules, this one among them, added four findings over the 14-tree diff, all confirmed real.
 
 ### A gen_statem timeout no clause handles
 
-`partial_handler` · source=`statem_timeout`, missing=`event_timeout` | `generic_timeout` | `state_timeout`
+`unhandled_timeout` · kind=`event_timeout` | `generic_timeout` | `state_timeout`
 · titles: "Timeout armed but never handled" (`:error`)
 
 **Property.** A gen_statem state function (or handle_event/4) returns an action that arms a timeout, and no callback of the module either accepts every event or has a clause for the event type the timeout delivers. There are three kinds:
@@ -1618,6 +1572,7 @@ When the timer fires, the event raises FunctionClauseError or falls through to a
 - The rule reads generic-timeout heads compiled as a tuple test plus an element test. This is the Postgrex.ReplicationConnection and Finch.HTTP2.Pool shape (`GenericTimeoutHandledStatem`).
 - Event-type clauses are over-approximated: any comparison of the first argument counts. The rule therefore errs quiet.
 - There is one finding per module and timeout kind. No positive fixture arms a `:state_timeout`.
+- Its own relation since 0.20.0-dev (it was `partial_handler`'s `statem_timeout` source): the armed timeout is the witness, and its event is no `:info` message.
 
 **Fixtures.** Positive: `TimeoutMismatchStatem` (`event_timeout`), `GenericTimeoutMismatchStatem` (`generic_timeout`) (`test/fixtures/gen_statem_fixture.ex`). Quiet: `TimeoutHandledStatem`, `TimeoutStatem`, `GenericTimeoutHandledStatem` (same file); `Quiet.GenericTimeoutStatem` (`test/fixtures/quiet_shapes_fixture.ex`). Asserted in `test/analyses/mailbox_statem_test.exs` and `test/analyses/quiet_shapes_test.exs`.
 
@@ -1625,37 +1580,20 @@ When the timer fires, the event raises FunctionClauseError or falls through to a
 
 **Precision.** Not measured. Two false-positive shapes were removed while the rule lived in `gen_statem`. First, DBConnection.Connection and Finch.HTTP2.Pool were reported at error severity for timeouts they handle (CHANGELOG 0.13.2, Fixed). Second, 2b77fef made the rule read unfused generic-timeout heads, which would otherwise have reported Postgrex.ReplicationConnection and Finch.HTTP2.Pool.
 
-### A gen_statem state without the :info catch-all its siblings have
-
-`partial_handler` · source=`statem_info`
-· titles: "gen_statem state without the :info catch-all its siblings have" (`:warning`)
-
-**Property.** A gen_statem runs in `state_functions` mode. One of its state functions accepts neither every `:info` event nor every event, while some other state function of the same machine has an `:info` catch-all. Suppose a message arrives while the machine is in that state and matches none of its clauses: a late `:DOWN`, a reply to a call that timed out, a library's notification. The message is a FunctionClauseError. It takes the machine down, and under `:one_for_all` its whole tree.
-
-**Assumptions and limits.**
-- The sibling asymmetry is the precision gate. A machine none of whose states has the catch-all is not reported, because it is read as a decision.
-- A clause that takes any `:info` content is a catch-all whatever it asks of the data (`ready(:info, msg, %{events: e})`), as a GenServer's is whatever it asks of the state (391ecc6; `DataPatternInfoStatem`).
-- The rule does not judge `handle_event_function` mode.
-- It steps aside for a state function that `unhandled_info` "state_crash" names for a message the program sends.
-- There is one finding per state.
-
-**Fixtures.** Positive: `AsymmetricInfoStatem` (`test/fixtures/gen_statem_fixture.ex`). Quiet: `SymmetricInfoStatem` (same file). Asserted in `test/analyses/mailbox_statem_test.exs`.
-
-**Corpus.** Fix pairs: None. Present-only: None. 5976d53 draws the shape from Redix's Cluster.Manager, but it is not a pair.
-
-**Precision.** Not measured.
-
 ### A message a server is sent with no handle_info/2 clause
 
 `unhandled_info` · fallback=`crash`
-· titles: "No handle_info/2 clause for a message the server is sent" (`:error` for a message the program sends or arms, `:warning` for a monitor's `:DOWN`)
+· titles: "No handle_info/2 clause for a message the server is sent" (`:error` for a message the program sends or arms, `:warning` for what the runtime writes when something else happens: a monitor's `:DOWN`, node events, a port's output, a task's messages)
 
-**Property.** A message reaches a GenServer or GenStage process in one of three ways the program spells out:
-- a send that process points-to follows to the server (`send_target`, `server_process`);
-- a timer that a function run by the server's callbacks arms for the server itself;
-- a monitor that such a function takes, whose `{:DOWN, …}` the runtime sends.
+**Property.** A message reaches a GenServer or GenStage process in one of these ways the program spells out, each a witness (`source`):
+- a send that process points-to follows to the server (`send_target`, `server_process`; `send`);
+- a timer that a function run by the server's callbacks arms for the server itself: a send_after's message, or `:erlang.start_timer/3,4`'s `{:timeout, ref, msg}` (`timer`);
+- a monitor that such a function takes, whose `{:DOWN, …}` the runtime sends (`monitor`);
+- node monitoring such a function turns on with a literal `true`: `:net_kernel.monitor_nodes/1,2` sends `{:nodeup, …}` and `{:nodedown, …}`, `:erlang.monitor_node/2,3` and `Node.monitor/2,3` `{:nodedown, …}` (`node`);
+- a port such a function opens, which sends what its program writes as `{port, {:data, …}}` (`port`; not when the opening function reads the port in a receive of its own, or hands it on with `Port.connect/2`);
+- an async_nolink task it starts (`task`, below), a socket it makes active (`socket`, below), and what a timed receive on its stack leaves behind (`late`, below).
 
-The message is a literal atom or a tuple with a literal atom tag. No clause of the server's handle_info/2 compares that tag, and none takes the message by shape alone (`msg when is_atom(msg)`, `{ref, result} when is_reference(ref)`). No receive in the server's own code could take it, and handle_info/2 has no catch-all. Every time the message arrives it is a FunctionClauseError that takes the server down.
+The message is a literal atom or a tuple with a literal atom tag, or a shape the runtime writes (a port's output, a task's reply). No clause of the server's handle_info/2 compares that tag, and none takes the message by shape alone (`msg when is_atom(msg)`, `{ref, result} when is_reference(ref)`). A runtime `:DOWN` (a monitor's, a task's) is taken only by a clause for every reason of it (`callback_takes_down`): a clause that pins the ref or the object, or asks the state, takes the `:DOWN` of the monitor the program keeps there, while one that tests the reason (`when reason in [:normal, :shutdown]`, `{:shutdown, _}`) leaves the runtime's other reasons, and one that compares the type with `:process` takes no port monitor's. No receive in the server's own code could take it, and handle_info/2 has no catch-all. Every time the message arrives it is a FunctionClauseError that takes the server down. A handle_info/2 with no catch-all and no such message is no finding (the retired "handle_info/2 has no catch-all").
 
 **Assumptions and limits.**
 - Soundness assumption (review 2, item 33): a gen envelope is read by tag and size per send (`send_envelope`, PidFlow): `{:system, x}` and `{:"$gen_cast", a, b}` are messages (`Soundness.Mailbox.EnvelopeSystem2`, `EnvelopeCast3`; fc7174b took the tag alone).
@@ -1666,9 +1604,11 @@ The message is a literal atom or a tuple with a literal atom tag. No clause of t
 - A timer counts only where the server's callbacks reach it in the server's own process. A timer a task arms is the task's.
 - The sender need not be in the server's module (`Pinger` sends to `PingServer`). The finding anchors at the send, timer or monitor, and relates the handle_info/2. There is one finding per site and server.
 - A handle_info/2 that another module's macro wrote is judged like the module's own.
-- This finding makes the runtime and late-message catch-all notes step aside for the module.
+- A GenStage the program starts with `GenStage.start_link/2,3` or `start/2,3` is a server (PidFlow), as one a child spec names is.
+- Node events and a port's output are judged where nothing takes them at all, not where a catch-all drops them.
+- A `:time_offset` monitor sends a `{:CHANGE, …}`, no `:DOWN`, and is no source; a monitor whose type is not a literal is read as a process's.
 
-**Fixtures.** Positive: `UnhandledInfo.MemoryCheck`, `UnhandledInfo.Reconnect`, `UnhandledInfo.Pinger` (to `UnhandledInfo.PingServer`), `UnhandledInfo.Retry` (two rows) (`test/fixtures/unhandled_info_fixture.ex`). Quiet: `UnhandledInfo.Handled`, `Delegates`, `OpenClause`, `WaitsForDown`, `Flushes`, `Client`, `WarmUp`, `Unjudged`, `TerminateWaits` (same file). Asserted in `test/analyses/mailbox_unhandled_info_test.exs`.
+**Fixtures.** Positive: `UnhandledInfo.MemoryCheck`, `UnhandledInfo.Reconnect`, `UnhandledInfo.Pinger` (to `UnhandledInfo.PingServer`), `UnhandledInfo.Retry` (two rows) (`test/fixtures/unhandled_info_fixture.ex`); the retired catch-all rule's probes `MonitorsPortTakingProcessDowns`, `MonitorsDownGuardedByReason`, `MonitorsNodesTakingDowns`, `TrapsOpeningPort`, `PartialInfoStage` (`test/fixtures/error_handling_fixture.ex`), `LateMessage.StartTimerIdle`; `Witness.DownOnlyNormal`, `DownGuardIn`, `DownShutdownOnly`, `PortDownPinned`, `NodesDownOnly`, `NodeDownInHelper`, `NodesWithOptions`, `MonitorNodeCall`, `PortExitStatusOnly`, `PortInHelper`, `PortFromCall`, `StartTimerMessageClause`, `StartTimerInHelper`, `StartTimerTwoTuple`, `StageTimer`, `StageMonitor`, `StageNamed` (`test/fixtures/soundness/mailbox_witness_fixture.ex`). Quiet: `UnhandledInfo.Handled`, `Delegates`, `OpenClause`, `WaitsForDown`, `Flushes`, `Client`, `WarmUp`, `Unjudged`, `TerminateWaits` (same file); `Witness.DownSplitReasons`, `DownReasonInBody`, `PortDownAnyType`, `NodesTaken`, `NodesOff`, `PortReadThere`, `PortDataTaken`, `StartTimerElsewhere`; `MonitorsTakingEveryDown`, `MonitorsWithoutCatchall`, `MonitorsDownWhenActive`, `LateMessage.StartTimer`, and the retired rule's other probes. Asserted in `test/analyses/mailbox_unhandled_info_test.exs` (with each retired probe's outcome) and `test/soundness/mailbox_test.exs`.
 
 **Corpus.** Fix pairs: `sequin@6693949` (sequinstream/sequin, 94fbd52 → 6693949, Sequin.DatabasesRuntime.SlotMessageStore); `astarte@f3edb85` (astarte-platform/astarte, subdir `apps/astarte_data_updater_plant`, 6539a98 → f3edb85, Astarte.DataUpdaterPlant.AMQPEventsProducer). Present-only: None.
 
@@ -1706,13 +1646,33 @@ The message is a literal atom or a tuple with a literal atom tag. No clause of t
 - An `:info` clause that takes any content is a catch-all whatever it asks of the data or, in handle_event/4, of the state (391ecc6). For handle_event/4 that is quieter than the truth: a catch-all for some states counts for the machine (`OneStateInfoStatem`; Postgrex's ReplicationConnection names its one state).
 - It does not judge whether a machine's catch-all drops the content.
 - The finding names the state function that crashes. There is one finding per site.
-- It makes the `statem_info` finding step aside for that state.
 
 **Fixtures.** Positive: `UnhandledInfo.Poller` (`test/fixtures/unhandled_info_fixture.ex`). Quiet: `UnhandledInfo.PollerTakes` (same file). Asserted in `test/analyses/mailbox_unhandled_info_test.exs`.
 
 **Corpus.** Fix pairs: None. Present-only: None.
 
 **Precision.** Not measured.
+
+### A message a timed receive leaves behind
+
+`unhandled_info` · source=`late`, fallback=`crash` | `state_crash`
+· titles: "No handle_info/2 clause for a message a timed receive leaves behind" (`:warning`)
+
+**Property.** A function the server's callbacks run in its own process, in any module, asks for a message and waits for it in a receive with an `after`. It spawns a process (`spawn_call`) and waits for its reply by a value the function holds, a tuple whose first element the receive compares with it (`{ref, …}`, most often a ref it made); or it subscribes (Phoenix.PubSub, Registry, `:pg`, `:gen_event`, reached from the function in its own process) and waits for one event of the subscription, in any shape the receive names (a map, a tagged tuple, an atom). The wait can give up before the message comes: a reply sent as the timeout fires, or an event broadcast before the unsubscribe, or about another subject than the one the receive selects, stays in the mailbox. The server's handle_info/2 is where it lands, and with no clause of its shape (a clause headed by a reference, an open clause, a map clause) and no catch-all it is a FunctionClauseError.
+
+**Assumptions and limits.**
+- The message is the shape the receive waits for (`recv_shape`, the receive's clause heads read as a callback's are): `{ref, …}` for a spawn's reply, anything but `any` for a subscription's events. A wait with no `after` takes the message whenever it comes, and an `after 0` poll waits for nothing: neither is a source (`Witness.SpawnBlockingWait`, `Witness.SpawnPoll`).
+- A timed GenServer.call is no source: it neither spawns nor subscribes, and it waits on an alias it deactivates when it gives up (`LateMessage.TimedCall`).
+- Judged for the crash only: a catch-all dropping a late reply is what the catch-all is for (`Witness.LateCatchAll`).
+- A spawn anywhere in the function counts, a subscription in what the function reaches in its own process (not through the logging or telemetry API). The receive need not wait for what the spawned process sends if it pins a value; the shape is the witness that a reply is expected.
+- A wait in a closure handed to a call through a module the program computes is not reached: no `fun_handed` row records the closure, and `runs_elsewhere.dl` takes it as kept (vernemq's `vmq_ql_query`, whose closure goes to `Module:fold_init_rows/…`).
+- The finding anchors at the receive (the source finds the `receive` keyword) and relates the handle_info/2. There is one finding per receive and server.
+
+**Fixtures.** Positive: `Witness.LateSpawnReply` (the vmq_ql_query shape), `Witness.LateSpawnInHelper` (through `Witness.Probe`), `Witness.LateSubscription` (through `Witness.Waiting`, the realtime Watchdog shape), `Witness.LateSubscriptionTagged`, `Witness.LateStatem` (`state_crash`) (`test/fixtures/soundness/mailbox_witness_fixture.ex`). Quiet: `Witness.SpawnBlockingWait`, `Witness.LateReplyTaken`, `Witness.LateCatchAll`, `Witness.SpawnPoll`, `LateMessage.TimedCall`. Asserted in `test/soundness/mailbox_test.exs` and `test/analyses/mailbox_unhandled_info_test.exs`.
+
+**Corpus.** Fix pairs: None. Present-only: None. Live: realtime's replication Watchdog (FP hunt eval set, a TP of the retired rule's late-message source).
+
+**Precision.** See the round notes below (0.20.0-dev, "handle_info/2 has no catch-all retired").
 
 ### The close of a socket the server holds, with no clause for it
 
@@ -4372,6 +4332,9 @@ under `priv/dl/` unless they say otherwise.
    aside for a library's handler; unhandled_info's GenServer default and
    failure's program calls read `macro_written`, so a clause a `use` put
    first no longer makes the module's own handler a macro's.
+   *Superseded (0.20.0-dev):* `partial_handler` is retired; its task
+   source, now unhandled_info's, keeps the step-aside for a start a
+   library's macro wrote.
    *Justified:* shutdown's rules, coupling's `dual_restart_authority`
    and failure's rescue and orphan rules judge the module's process (its
    trap flag, its tree, its supervisor), which a `use` that writes a
@@ -4599,7 +4562,9 @@ interaction rather than reach (L17).
   `System.cmd` and `Process.register` twice (effect model and bytecode
   facts); failure's belief counts compiler copies of one line; an
   ordered_set two modules write is n(n−1)/2 findings; an async_nolink
-  handler gets both the `task_nolink` warning and the late-message note;
+  handler gets both the `task_nolink` warning and the late-message note
+  (resolved in 0.20.0-dev: the late-message note is retired and the
+  task's two messages are one unhandled_info finding);
   registry_race's key merges a start row and an unregister row.
   *Resolved:* the later-sibling call is one finding (`later_sibling_call`),
   and a helper's table several processes may make is one finding per
@@ -4658,6 +4623,8 @@ interaction rather than reach (L17).
   `partial_handler.missing` spells `catchall` where
   `unhandled_info.fallback` spells `catch_all`. *Resolved:* both spell
   `catch_all`. *Left:* `source`'s two meanings, which its field docs say.
+  *Superseded (0.20.0-dev):* `partial_handler` is retired; `source` is
+  unhandled_info's witness alone.
 - `kind`, `via` and `sink` mean different things in different concerns;
   a table is `name` (the `:ets.new/2` atom) in ets_check_act and the ets
   concern, `table` or `published_in` elsewhere. *Left*, as the column
@@ -4700,6 +4667,9 @@ Each is taken against the severity rubric at the top of this catalog.
   runtime source (`:info`) is a partial handle_info that a runtime
   message may reach, and `statem_info` (`:warning`) a state its siblings'
   catch-alls say needs one: the second has the program's own evidence.
+  *Superseded (0.20.0-dev):* both are retired with `partial_handler`;
+  what the runtime writes (a `:DOWN`, node events, a port's output) is
+  unhandled_info's `:warning`.
 - A read that raises in a caller because what it reads may be gone:
   ets_read_outside_owner `:info` (the concern's only fix pair) against
   ets_missing_row and ets_publish_order `:warning`. *Resolved:*

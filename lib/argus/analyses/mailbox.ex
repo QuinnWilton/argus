@@ -6,12 +6,6 @@ defmodule Argus.Analyses.Mailbox do
   here is a message and the clause that is not there for it, or a reply
   a caller waits for that never comes.
 
-  - `partial_handler(mod, handler, source, missing, detail)` — a message
-    with no clause for it. `source` says who writes it: `runtime`
-    (monitors, trapped exits), `late_message` (a task, a timer, a
-    subscription, a fun the callbacks run that they did not build),
-    `statem_info` (a state without the `:info` catch-all its siblings
-    have).
   - `unhandled_timeout(mod, state, kind)` — a gen_statem timeout armed in
     `state` (a state function's name, or `handle_event`) whose event type
     (`event_timeout`, `generic_timeout`, `state_timeout`) no clause of the
@@ -101,10 +95,6 @@ defmodule Argus.Analyses.Mailbox do
       Argus.Extractors.Generated,
       # The sockets a server makes active (unhandled_info's "socket").
       Argus.Extractors.Sockets,
-      # What a closure captured from its builder (call_arg_derived over a
-      # make_fun3's environment): a late message's source when it runs a
-      # fun the builder read from its state.
-      Argus.Extractors.ParamFlow,
       # Which clause of handle_info/2 a call runs in (clause_call): a
       # periodic timer loop is the clause for its own message.
       Argus.Extractors.ClauseCall,
@@ -116,19 +106,6 @@ defmodule Argus.Analyses.Mailbox do
   @impl true
   def output_relations do
     [
-      %{
-        name: :partial_handler,
-        fields: [
-          {:mod, :symbol, "the process module"},
-          {:handler, :symbol, "the handle_info/2 function, or the statem state function"},
-          {:source, :symbol, "runtime | late_message | statem_info"},
-          {:missing, :symbol, "catch_all"},
-          {:detail, :symbol, "the state name for statem_info"}
-        ],
-        # One finding per handler.
-        key: [:mod, :handler, :missing, :detail],
-        doc: "A message arrives and no clause takes it."
-      },
       %{
         name: :unhandled_timeout,
         fields: [
@@ -327,46 +304,6 @@ defmodule Argus.Analyses.Mailbox do
   end
 
   @impl true
-  def finding(:partial_handler, [mod, func, "runtime", _, _]) do
-    Findings.new(
-      :info,
-      "handle_info/2 has no catch-all in a process the runtime writes to",
-      "#{mod} monitors processes or traps exits, so messages arrive at " <>
-        "times it does not control — a late {:DOWN, ...} after a " <>
-        "demonitor without :flush, an {:EXIT, ...} from a port a callback " <>
-        "opened. Its handle_info/2 matches specific messages only, and " <>
-        "once handle_info/2 is defined an unmatched message is a " <>
-        "FunctionClauseError rather than GenServer's log-and-continue.",
-      at: Findings.at_func(func),
-      to_block: :function,
-      at_label: "no clause here accepts an unexpected message",
-      help: [
-        "add a final `handle_info(msg, state)` clause that logs the " <>
-          "message and returns `{:noreply, state}`"
-      ]
-    )
-  end
-
-  def finding(:partial_handler, [mod, func, "late_message", _, _]) do
-    Findings.new(
-      :info,
-      "handle_info/2 has no catch-all",
-      "#{mod} matches specific messages in handle_info/2 and nothing else. " <>
-        "A mailbox is written by more than its owner: a library it called " <>
-        "can leave a late reply, a supervisor restart can re-send a " <>
-        "start-up message. Once handle_info/2 is defined, one such message " <>
-        "is a FunctionClauseError and the process dies — in a restart loop " <>
-        "if the message repeats.",
-      at: Findings.at_func(func),
-      to_block: :function,
-      at_label: "no clause here accepts an unexpected message",
-      help: [
-        "add a final `handle_info(msg, state)` clause that logs the " <>
-          "message and returns `{:noreply, state}`"
-      ]
-    )
-  end
-
   def finding(:timer_cancel_without_flush, [mod, func, _arm, "", message, cancel_site, arm_site]) do
     Findings.new(
       :warning,
@@ -810,22 +747,6 @@ defmodule Argus.Analyses.Mailbox do
         "reply here with `{:reply, value, state}`, or keep `from` in state and " <>
           "`GenServer.reply/2` when the work completes"
       ]
-    )
-  end
-
-  def finding(:partial_handler, [mod, site, "statem_info", _, state]) do
-    Findings.new(
-      :warning,
-      "gen_statem state without the :info catch-all its siblings have",
-      "#{mod}'s other states end with an `(:info, _msg, _data)` clause; " <>
-        "#{state} does not. Any message that arrives while the machine is " <>
-        "in #{state} and matches none of its clauses — a late :DOWN, a " <>
-        "reply to a call that timed out, a library's notification — is a " <>
-        "FunctionClauseError, and takes the process (and under :one_for_all, " <>
-        "its whole tree) down with it.",
-      at: Findings.at_site(site, mod),
-      at_label: "no clause here accepts an unexpected message",
-      help: ["add a final `#{state}(:info, _msg, data)` clause, as the other states have"]
     )
   end
 
