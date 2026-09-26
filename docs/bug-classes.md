@@ -303,10 +303,10 @@ than more; it errs loud when the same uncertainty can add a finding.
 
 ### Supervision structure
 
-- **Names.** `child_subtree`, `starts_before`, `boot_subtree`, `boots_before`, `template_supervisor`, `application_root`, `child_restart`, `sibling`, `sup_management_call`, `child_creating_op`, `unbounded_sup_op`, `stopping_sup_op` (supervision.dl).
-- **Meaning.** `child_subtree(sup, branch, mod)` maps every module under a supervisor, static and dynamic children at any depth, to the direct child branch it belongs to. `starts_before(sup, earlier, later, …)` joins two branches in start order: what the earlier branch holds is running when the later's init runs, and under rest_for_one the later restarts when the earlier crashes; shutdown reads it for stop order, where whatever a branch holds stops with it. `boots_before` is the same order over `boot_subtree`, the static children a supervisor starts in its own start: a DynamicSupervisor's child and a simple_one_for_one supervisor's template child (`template_supervisor`) start when something asks, after the tree is up, and the startup rules about what an init meets during the boot read this one. `application_root(sup)` is the supervisor an Application's start/2 starts, which dies only with the application. Children come from map specs, `{Mod, args}` shorthands and OTP's tuple specs `{Id, {M, F, A}, Restart, Shutdown, Type, Modules}` (the one listed module, else the start function's). The supervision extractor reads the child list in order through the writes that reach it: into the local functions that build it, with their parameters bound to the call's arguments (ejabberd_sup's `worker/1`, mnesia_kernel_sup's `worker_spec/3`), through `++` and `lists:append/2`, `Enum.reject(&is_nil/1)`, `Supervisor.child_spec/2`'s overrides and a `Mod.child_spec/1` call (the shorthand spelled out); a list whose element or tail it cannot follow is open (`supervisor_children_open`), and the flat scans of the tree function stand in for what it hides. A `supervisor:start_child/2` or `Supervisor.start_child/2` of a spec adds a child (`added_child`, with its restart), as a `DynamicSupervisor.start_child/2` does (`dynamic_child`, with `dynamic_child_restart` when its spec states a restart other than `:permanent`); both are members of the tree and start on demand. `child_restart(sup, pos, child, restart)` is the restart a child runs under: the spec's, or for a shorthand its own `child_spec/1`'s when that states one (`child_spec_restart`). `sibling` is two direct children of one supervisor. `sup_management_call` is a call to a supervisor's API, and the op tables say which calls create a child, which wait for a whole shutdown and which stop children.
+- **Names.** `child_subtree`, `starts_before`, `boot_subtree`, `boots_before`, `template_supervisor`, `application_root`, `child_restart`, `ends_with`, `sibling`, `sup_management_call`, `child_creating_op`, `unbounded_sup_op`, `stopping_sup_op` (supervision.dl).
+- **Meaning.** `child_subtree(sup, branch, mod)` maps every module under a supervisor, static and dynamic children at any depth, to the direct child branch it belongs to. `starts_before(sup, earlier, later, …)` joins two branches in start order: what the earlier branch holds is running when the later's init runs, and under rest_for_one the later restarts when the earlier crashes; shutdown reads it for stop order, where whatever a branch holds stops with it. `boots_before` is the same order over `boot_subtree`, the static children a supervisor starts in its own start: a DynamicSupervisor's child and a simple_one_for_one supervisor's template child (`template_supervisor`) start when something asks, after the tree is up, and the startup rules about what an init meets during the boot read this one. `application_root(sup)` is the supervisor an Application's start/2 starts, which dies only with the application. Children come from map specs, `{Mod, args}` shorthands and OTP's tuple specs `{Id, {M, F, A}, Restart, Shutdown, Type, Modules}` (the one listed module, else the start function's). The supervision extractor reads the child list in order through the writes that reach it: into the local functions that build it, with their parameters bound to the call's arguments (ejabberd_sup's `worker/1`, mnesia_kernel_sup's `worker_spec/3`), through `++` and `lists:append/2`, `Enum.reject(&is_nil/1)`, `Supervisor.child_spec/2`'s overrides and a `Mod.child_spec/1` call (the shorthand spelled out); a list whose element or tail it cannot follow is open (`supervisor_children_open`), and the flat scans of the tree function stand in for what it hides. A `supervisor:start_child/2` or `Supervisor.start_child/2` of a spec adds a child (`added_child`, with its restart), as a `DynamicSupervisor.start_child/2` does (`dynamic_child`, with `dynamic_child_restart` when its spec states a restart other than `:permanent`); both are members of the tree and start on demand. `child_restart(sup, pos, child, restart)` is the restart a child runs under: the spec's, or for a shorthand its own `child_spec/1`'s when that states one (`child_spec_restart`). `ends_with(dying, other)` says a supervised module's end ends another's. This holds when other is in dying's subtree, or dying is a direct child of a `one_for_all` supervisor, or of a `rest_for_one` supervisor with other in a later branch. A crash that exhausts an intensity is not followed. A strategy is read from the flags whether the tuple is a literal or built at run time (mnesia_kernel_sup's `{one_for_all, 0, timer:hours(24)}`). `sibling` is two direct children of one supervisor. `sup_management_call` is a call to a supervisor's API, and the op tables say which calls create a child, which wait for a whole shutdown and which stop children.
 - **Direction.** Supervision is module-level: two instances of one child module are one module here, and the lists of every clause of one init/1 are one tree, in the order the bytecode lists them (kernel's `kernel_sup` and `kernel_safe_sup` are one `:kernel`). A child is read only from a spec the extractor reads; a module or a restart it cannot tell names no child (quiet for what a child excuses, loud for what it would excuse), but where it stands in, a flat scan can name a child that is not one (a keyword pair naming a loaded Erlang module).
-- **Used by.** coupling, shutdown and startup; calls.dl limits module-level reach to supervised modules through it.
+- **Used by.** coupling, ets (`ends_with`: a reader that outlives a table's owner), shutdown and startup; calls.dl limits module-level reach to supervised modules through it.
 
 ### What a restart loses
 
@@ -2667,22 +2667,85 @@ Another process takes or deletes the row between the check and the act, and the 
 `ets_read_outside_owner`
 · titles: "ETS table read while its owner may be restarting" (`:info`)
 
-**Property.** Some table T is created by an `:ets.new/2` a process runs on its own stack (the owner, `table_held` since round 2c: a server's callbacks and what its start function spawns on its own code, a spawned, Task or Agent process, an Application's start/2, a module under a non-process behaviour), with no `heir` option, and some read of T that raises when the table is gone (every read but `:ets.info/1,2`; `take` included) sits in a function the owner's process does not run, such as the module's API, run in callers' processes. T is named at the read, or passed as a literal through the reader's table parameters, and no handler that takes ArgumentError (a rescue of ArgumentError or `:badarg`, a bare rescue or `catch :error`, or Erlang's `catch`) sits in the reader, or, for a read inside a closure, in the function that built the closure or in a function that builder calls (a rescuing wrapper the closure is handed to). A table under a name computed at runtime is tied only to reads of computed-name tables in its owner's own module. From the moment the owner crashes until its restart reaches `:ets.new/2` again, the read raises ArgumentError in the caller instead of returning a value; Redix.Cluster's callers saw exactly that during a `:one_for_all` restart (redix#338).
+**Property.** Some table T is created by an `:ets.new/2` a process P runs
+on its own stack. P is the owner, `table_held` since round 2c: a
+server's callbacks and what its start function spawns on its own code;
+a spawned, Task or Agent process; an Application's start/2; a module
+under a non-process behaviour. T has no `heir` option. Some read of T
+that raises when the table is gone sits in a function F (every read but
+`:ets.info/1,2`, `take` included). A process that runs F outlives P
+(`reader_outlives`, docs/design/restart-state.md): it goes on after P
+ends, or no process in view runs F, so callers outside them do. A
+process does not outlive P when:
+- it is P
+- P's end is the application's (`application_lifetime`)
+- P's supervisors end it with P (`ends_with`, supervision.dl): the
+  reader is in P's subtree, or P is a direct child of a `one_for_all`
+  supervisor, or of a `rest_for_one` supervisor with the reader in a
+  later branch
+- P, or a process ending with P, spawned it linked
+
+T is named at the read, or passed as a literal through the reader's
+table parameters. No handler that takes ArgumentError covers the read:
+a rescue of ArgumentError or `:badarg`, a bare rescue or `catch :error`,
+or Erlang's `catch`, in the reader, or, for a read inside a closure, in
+the function that built the closure or in a function that builder calls
+(a rescuing wrapper the closure is handed to). The read is not made only
+where T is there. A table under a name computed at runtime is tied only
+to reads of computed-name tables in its owner's own module. From the
+moment the owner crashes until its restart reaches `:ets.new/2` again,
+the read raises ArgumentError in the caller instead of returning a
+value. Redix.Cluster's callers saw exactly that during a `:one_for_all`
+restart (redix#338).
 
 **Assumptions and limits.**
-- "The owner's process runs" is call-graph reach on the stack of the owner's roots (`owner_reaches`, SameProcessReach): a function both the owner's process and callers' processes call is taken to run in the owner, so those reads are missed.
+- Which processes run a reader is call-graph reach on the stack of each process root (`owner_reaches`, SameProcessReach). A function both the owner's process and a sibling's run has a reader that outlives: the sibling. Since the restart-state round it is reported (`Lifetime.SharedOwner.lookup/1`). Before, it was taken as the owner's own and missed. Two alternative modules of which configuration runs only one are both taken as running: partisan's peer service managers read each other's connection table (12 rows).
+- A restart intensity the crash exhausts is not followed. An owner deep in a branch is restarted by its own supervisor, and the branch goes on, so its `one_for_all` parent's other branches outlive it (`Lifetime.DeepReader`). mnesia's intensity-0 `one_for_all` chain, which stops the application, is not read. A linked reader that traps exits outlives its peer, and is taken as ended (quiet).
 - The rescue is asked of the reader's whole function, not of the read: a rescue around unrelated code in the reader silences it.
-- A read made only on the side of a test of the function's `:ets.whereis/1` of the table that found it there, on every path to the read (`ets_read_when_present`, round 2c), reads only while it is there (hackney's HTTP/3 connection table, Sentry's dedupe). A whereis in another clause or another function, one whose answer is logged and the table read anyway, and a read on the `:undefined` side guard nothing (`WhereisElsewhereOwner`; `Probe.R2.G5.WhereisClauses`, `WhereisNoted`, `S2c.Ets.WhereisInverted`, `WhereisOther`, `WhereisStored`). The window between the question and the read is left.
+- A read is made only where the table is there when every path to it passes one of these (`ets_read_when_present`, widened in the restart-state round):
+  - the side of a test of the function's `:ets.whereis/1` of the table that found it (round 2c: hackney's HTTP/3 connection table, Sentry's dedupe)
+  - an instruction that makes the table: its named `:ets.new/2`, or a call to a function of the module that makes it (an ensure helper: blockster's `SystemConfig`, sequin's `Benchmark.Stats`)
+
+  Such a read is not reported. These guard nothing:
+  - a whereis in another clause or another function
+  - one whose answer is logged and the table read anyway
+  - a read on the `:undefined` side before a make
+  - a make on one branch only, a make after the read, a make of another table, or of an unnamed table of the atom
+
+  Fixtures: `WhereisElsewhereOwner`; `Probe.R2.G5.WhereisClauses`, `WhereisNoted`, `S2c.Ets.WhereisInverted`, `WhereisOther`, `WhereisStored`; `Lifetime.EnsureReader`. The window between the question and the read is left. A table the reader makes is its own, and "dies with its owner" judges it.
 - A read through a table reference held in state or a variable, rather than a literal name passed through parameters, is not tied to T.
 - A read is joined to a table by the atom both are keyed by, and then asked whether its operand can name that table (`read_misses`): an atom reaches only a named table, a reference only the table the `:ets.new/2` that returned it made. A read whose operand is only literals (or a caller's literal through the read's parameter) is not paired with an unnamed table of its atom, and one whose operand is only references other `:ets.new/2` calls returned is paired only with those tables or, both possibly named, the one table the name holds. A table is unnamed only when its options were read whole (`ets_options_known`) and give no `:named_table`; options built at run time may name it: mnesia_schema's `?ets_first(schema)` beside the unnamed scratch table `do_read_disc_schema/2` makes, qlc_pt's `no_shadows/2` reading its own unnamed table under qlc's atom (3 rows, ETS rows round). An operand with any other answer (a parameter's field, another call's result, one the operand walk cannot follow) keeps the pair.
-- Whether the owner restarts at all is not asked; an owner that never comes back makes the window permanent, which the finding still describes. The exception is an owner that lives as long as its application (`application_lifetime`): the process an Application's start/2 runs in, and the supervisor that start/2 starts and no other supervisor in view does (`application_root`, the owner "ETS table dies with its owner" excuses): when it dies the application stops, nothing restarts it, and no read meets its table gone while the application runs. Asked of the owner's process, so a keeper the root supervisor spawns and a table one of its children makes are still reported. 20 rows over emqx, hackney and vernemq (ETS rows round). A process that outlives the application (a kernel process whose exit halts the node) or a keeper that cannot crash on its own is a prior candidate, not a structural fact.
+- Whether the owner restarts at all is not asked; an owner that never comes back makes the window permanent, which the finding still describes. An owner that lives as long as its application (`application_lifetime`) has no reader that outlives it: the process an Application's start/2 runs in, and the supervisor that start/2 starts and no other supervisor in view does (`application_root`, the owner "ETS table dies with its owner" excuses): when it dies the application stops, nothing restarts it, and no read meets its table gone while the application runs. Asked of the owner's process, so a keeper the root supervisor spawns and a table one of its children makes are still reported. 20 rows over emqx, hackney and vernemq (ETS rows round). A process that outlives the application (a kernel process whose exit halts the node) or a keeper that cannot crash on its own is a prior candidate, not a structural fact.
 - One finding per owner module and reader function, anchored at the read, with the `:ets.new/2` as a related frame.
 
 **Fixtures.** Positive: `EtsOwners.Owner`, `EtsOwners.HelperOwner` with `EtsOwners.Helper` (test/fixtures/ets_reader_fixture.ex); `:ets_catch_reader` `peek/1` (test/fixtures/erl/ets_catch_reader.erl). Positive also: `EtsOwners.WhereisElsewhereOwner`. Quiet: `EtsOwners.GuardedOwner`, `WhereisOwner`, `ClosureGuardedOwner`, `HeirOwner`, `InsideOwner`, `InfoOwner`, `BadargOwner`, `DynamicOwnerNamedRead`; `:ets_catch_reader` `lookup/1`; `Quiet.RescueAllReader` (test/fixtures/quiet_shapes_fixture.ex). Asserted by test/analyses/singleton_shapes_test.exs and test/analyses/quiet_shapes_test.exs. The operand's names (test/fixtures/soundness/ets_rows_soundness.ex, asserted by test/soundness/ets_test.exs): positive `Rows.Ets.NamedServer` beside `ScratchSameAtom`, `OptionNamed`, `ConfiguredOptions`, `HelperNamed` beside `HelperScratch`, `StateTableReader`; quiet `Rows.Ets.UnnamedOwner`, `OwnScratchReader` beside `ScratchAtomServer`. The application's lifetime (test/fixtures/erl): `:rows_snapshot_reader` reading `dual_sup`'s, `fake_root_sup`'s, `branch_sup`'s and `worker_owner`'s tables and `:rows_root_tabs` reading `rows_root_sup`'s keeper's and `rows_root_child`'s are reported; `:rows_snapshot_reader` `root/1` (`root_app_sup`) and `:rows_root_tabs` `lookup/1` (the helper table `rows_root_sup` makes) are quiet.
 
+The readers' lifetimes (test/fixtures/soundness/ets_lifetime_soundness.ex, asserted by test/soundness/ets_lifetime_test.exs):
+- Reported:
+  - `Lifetime.RestEarlier`, `OneReader`, `DeepReader`
+  - `UnlinkOwner.load/0`
+  - `SharedOwner.lookup/1`
+  - `EnsureReader`'s `get_branch/2`, `get_after/1`, `get_other/1` and `get_unnamed/1`
+- Quiet:
+  - `SupChild`, `AllReader`, `RestLater`
+  - `LinkOwner.load/0`
+  - `EnsureReader.get/1` and `get_inline/1`
+
 **Corpus.** Fix pairs: `redix#338` (whatyouhide/redix, b77331e → b31bd23, Redix.Cluster.Manager). Present-only: none.
 
 **Precision.** 37 rows in the 2026-09-25 corpus tally, counted per checkout, at 21 reader functions in bb, commanded, db_connection, ecto, phoenix, phoenix_pubsub, postgrex, redix and ztlp; unjudged as a set. Corpus reading removed three false-positive shapes (6527007): `:ets.info` reads in ztlp's and nerves_hub_web's `count/0`, postgrex's `catch :error, :badarg` soft read, and computed-name tables joined to every read in the owner's module. Making `:ets.take/2` a read added bb's `BB.Command.ResultCache.fetch_and_delete/1`, judged real (dcdf78c). ETS rows round (2026-09-25, 19 evaluation sets: the eight corpus programs, the Phoenix-stack deps, OTP kernel, stdlib and mnesia, emqx, rabbitmq, hackney, ra, ejabberd, vernemq, grpc): 132 rows at 8097be4, 205 after round 2c's one owner per table, 182 after the two fixes above. The 73 rows round 2c added were read in full (7 true: emqx's authz source registry, vernemq's `vmq_passwd`, `vmq_queue_sup` and webhook cache readers); a sample of 20 of the 120 older rows unjudged before found 4 true (Livebook's `SystemResources.memory/0`, `Phoenix.Tracker.pool_size/1`, vernemq's `vmq_swc_store` cache, ejabberd's `gen_mod` module table). Estimated precision 20% at 8097be4, 16% after round 2c, 18% after the fixes; what is left is in the round's backlog below. The class was `:warning` from the consistency round (781189c) to here, and is `:info` again: what is left turns on how long the owner lives, which the rubric's owner-lifetime clause keeps at `:info` until a prior answers it.
+
+Restart-state round (2026-09-26), 19 evaluation sets and 26 live projects: 247 → 261 rows.
+- **Gone, 21, all false.**
+  - 16 in sequin's `Benchmark.Stats` and 2 in blockster's `SystemConfig` read after an ensure helper.
+  - 2 in emqx's `emqx_durable_timer`, reading its supervisor's table.
+  - 1 in Plug.Upload, a child reading its supervisor's table.
+- **Added, 35.** These are functions the owner's process and other processes both run: false negatives before.
+  - 16 true: MongooseIM's `ejabberd_sm`, `mongoose_domain_core` and `mongoose_subdomain_core` readers; vernemq's `vmq_passwd`, `vmq_ssl_psk` and `vmq_cluster`; emqx's `emqx_mgmt_cache`, logflare's `AllLogsLogged`, nerves_hub_web's `CLISessionCache`, zotonic's `z_sites_dispatcher`.
+  - 19 false:
+    - partisan's alternative peer service managers (11) and its monitor table (1)
+    - kernel's `global` and `application_controller` (3), whose exit halts the node
+    - mnesia (4), under the intensity-0 chain the facts do not carry
 
 ### Table without read_concurrency
 
@@ -4046,6 +4109,14 @@ Left to a reader, as prior candidates:
 - **Is the store a cache anyone refills?** vernemq's `vmq_crl_srv` CRL
   table is refilled by `check_crl/2` on every TLS handshake. 1 row.
 
+The same round restated "ETS table read while its owner may be
+restarting" on the lifetime side of the model: a reader that outlives the
+table's owner (`reader_outlives`, `ends_with`). The ETS rows round's
+lazy-ensure candidate became structural: a read after an ensure helper
+is made where the table is there. The class entry has the rows (247 →
+261: 21 false gone, 35 added, 16 of them true). Its keeper and
+node-lifetime candidates stay priors.
+
 Structural gaps found:
 - **A module the program starts as a server but that declares no
   behaviour is no process module to any analysis.** Examples are
@@ -4066,6 +4137,15 @@ Structural gaps found:
   it moves process points-to for every Erlang program.
 - **`returned_update` sees a fresh record only in a callback's state slot,
   and a helper's returned state only through a tail call.**
+- **The facts carry no restart intensity.** An intensity-0 chain up to the
+  application's root (mnesia's) ends the application with any child, and
+  `ends_with` does not follow it.
+- **shutdown's "terminate/2 calls a sibling that may already be down"
+  asks no reason.** When a supervisor ends the siblings of a crashed
+  child, it stops them with reason `shutdown`. mnesia's terminate/2 hands
+  its reason to `mnesia_monitor:terminate_proc/3`, whose sibling call is
+  in a clause guarded `R /= shutdown`. The strategy read above moves those
+  three rows from `:info` to `:warning`, and they are false.
 
 ### Prior candidates, evaluated
 
