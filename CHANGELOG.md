@@ -10,6 +10,88 @@ What 0.20.0 will ship; the release dates this heading and drops the
 `-dev` from `mix.exs`. Grouped by concern. Each entry opens with what it
 does: **Added**, **Changed**, **Fixed** or **Removed**.
 
+### Mining, round 4: another node, a lost handle, a LiveView's subscriptions
+
+Six classes from the ranked backlog of round 3 (`docs/bug-classes.md`,
+"Round 4 of the mining"), each with fixtures beside its suppressions,
+corpus pairs where a fixed tree builds here, and a precision read over
+the live projects.
+
+**Added.** Schema 121. failure's `remote_pid_probe(func, anchor, site,
+bif, api, kind)`, "Local-only BIF on a pid that may be on another node"
+(`:warning` for a `lookup`, `:error` for a `resolver`): `Process.alive?/1`,
+`Process.info/1,2` and the other BIFs that act on a local process only,
+handed a pid a cluster-wide registry or a process group answered, a
+process's links or `$callers`, or one `:global` or syn hands a conflict
+resolver. `Argus.Extractors.PidFlow` names those answers a `remote`
+source (`pid_remote`; `pid_arg` rows `resolver` and `element` for the
+resolver's parameters and the element a fun `Enum` or `:lists` runs on
+each pid) and records each probe (`pid_probe`), leaving out one a test of
+`node(pid)` decides; `clientlib/remote_pids.dl` follows a probe of a
+helper's parameter to its callers, as process points-to does, and the
+remote source into a callee's result. Points-to resolves no `remote`
+source: the stage's rows are unchanged. A probe on the arm where a test
+found `node(pid)` equal to this node is left out, and one on the other
+arm or after the arms join is not; a try that takes the ArgumentError
+and goes on (`site_takes_argument_error`, new in
+`clientlib/exceptions.dl`: `site_rescues_argument_error`'s question, less
+a handler that re-raises) clears it. `Argus.Extractor.Resolve.writers/3`
+is every write that may reach a register, copies followed and every arm
+kept.
+
+**Added.** failure's `rpc_undefined(func, anchor, site, callee, why)`,
+"RPC to a function the module does not export" (`:error`): an rpc whose
+module is one of the program's and whose function, at the argument
+list's length, the module does not export (`missing`) or keeps private
+(`private`). `Argus.Extractors.ApiCalls` names the function a literal
+rpc runs (`rpc_callee`) and a wrapper whose three parameters in a row
+are the rpc's module, function and arguments, through a closure it
+builds (`rpc_mfa_param`); `Argus.Extractors.CallArgs` names a literal
+MFA a call hands a function of the program (`mfa_arg`);
+`clientlib/rpc_targets.dl` joins them through forwarding wrappers.
+
+**Added.** failure's `resource_dropped(func, site, api, drop)`, "File,
+socket or port lost on a path that never closes it" (`:warning`), from a
+new extractor, `Argus.Extractors.Handles` (`handle_dropped`): a path
+from an opening call that has taken the `{:ok, _}` arm, only reads,
+writes, sends on or inspects the handle, and then loses it on the way to
+a return. A path that raises loses nothing.
+
+**Added.** mailbox's `static_render_registration(mod, entry, func, site,
+kind)`, "LiveView registers for messages on the static render"
+(`:warning`): a subscription, a timer to self or a monitor that a
+LiveView's `mount/3` or `handle_params/3`, a LiveComponent's `mount/1` or
+`update/2`, or an `on_mount/4` hook reaches off the arm where
+`connected?/1` answered true. A new extractor, `Argus.Extractors.LiveView`,
+records the calls on that arm (`connected_guarded`) and every
+subscription and its undoing (`pubsub_call`: Phoenix.PubSub, `:pg`, an
+endpoint's own, `socket.endpoint.subscribe/1` as an apply);
+`clientlib/live_view.dl` names the static-render callbacks, endpoints and
+subscriptions, and `clientlib/reach.dl` gains `BackwardUnguardedSameProcess`,
+`BackwardUnguarded` less the edges into another process.
+
+**Added.** mailbox's `repeated_subscription(mod, entry, func, site)`,
+"Subscription made again each time a callback runs" (`:warning`): a
+callback that runs again and again reaches a subscription, by a way that
+does not run only in a clause for a message sent once from where the
+process starts (`once_clause`), and unsubscribes nothing on its own way.
+
+**Added.** shutdown's `drain_keeps_fetching(mod, drain, gate, key)`,
+"Broadway producer keeps fetching while it drains" (`:warning`): a
+`prepare_for_draining/1` that sets a field to nil while the fetch
+handle_demand/2 reaches runs when that field is nil, and sets no flag a
+function handle_demand/2 reaches compares with a literal.
+`Argus.Extractors.ErrorHandling` records the literal fields a function's
+returned map sets (`returned_update`) and the map fields it compares with
+a literal (`field_value_test`).
+
+**Added.** The corpus harness takes `submodules: true`: a checkout
+initializes its git submodules (aprs.me vendors its `aprs` dependency).
+
+**Corpus.** Ten fix pairs: aprs.me@37c9ac7, aprs.me@9212088, phoenix_live_dashboard#495, realtime#1229, thousand_island#78, nerves_hub_web#2588, broadway_sqs@5b8f18a, broadway_cloud_pub_sub@fb44279, off_broadway_redis_stream#58.
+
+**Precision.** Over the eighteen live projects: remote pids 0 rows; rpc 1 (true); lost handles 5 (4 true); static render 2 (true); repeated subscription 1 (false, a tuple once-message); drain 0.
+
 ### Priors, round 3: tooling, and programs found on PATH
 
 **Added.** Schema 118. `tooling_module(mod, basis)` from a new

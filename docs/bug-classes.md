@@ -100,11 +100,11 @@ classes of one risk get one severity.
 | Concern | Classes | Owns |
 |---|---|---|
 | [`startup`](#startup) | 17 | work in `init/1` or `handle_continue/2` that blocks, deadlocks or races the tree's start |
-| [`shutdown`](#shutdown) | 8 | cleanup a supervisor shutdown will skip, and teardown that hurts a peer |
+| [`shutdown`](#shutdown) | 9 | cleanup a supervisor shutdown will skip, and teardown that hurts a peer |
 | [`blocking`](#blocking) | 15 | synchronous waits that can last forever or nest: call chains, cycles, fan-in, rpc, locks, receives in callbacks |
 | [`coupling`](#coupling) | 5 | two owners of one relationship across supervisor branches |
-| [`mailbox`](#mailbox) | 21 | messages that arrive with no clause for them, and replies that never come |
-| [`failure`](#failure) | 10 | error paths swallowed, half-caught or ignored |
+| [`mailbox`](#mailbox) | 23 | messages that arrive with no clause for them, and replies that never come |
+| [`failure`](#failure) | 13 | error paths swallowed, half-caught or ignored |
 | [`structure`](#structure) | 4 | child specs, registrations and tree shapes that are wrong on their own |
 | [`races`](#races) | 8 | check-then-act races on a process name, an ETS key or a Mnesia record that another process can write between the check and the act, ETS values published before the rows they point to, and ETS rows acted on after another process may have removed them |
 | [`state_machine`](#state_machine) | 2 | gen_statem states no transition reaches, and terminal states that never stop |
@@ -389,6 +389,27 @@ than more; it errs loud when the same uncertainty can add a finding.
 - **Meaning.** `socket_active(id, f, transport, mode, param)` is a connect or setopts call and the `:active` mode its literal options give: an active socket sends its data and its close to the process that controls it, the one that connected it unless it was handed on. `socket_opts_arg` is the literal list a caller hands a wrapper whose options are a parameter. `socket_wait(id, f, api, timeout, param)` is a blocking socket call and how long it may wait: `infinity` when its arity leaves the timeout out or `:infinity` is passed.
 - **Direction.** Only literal options are read: a mode built at runtime is `dynamic` and says nothing (quiet). `:inet.setopts/2` is a TCP socket's only where the process also connects one.
 - **Used by.** mailbox (the socket source of `unhandled_info`) and blocking (the `socket` kind of `unbounded_wait`).
+
+### A pid of another node
+
+- **Names.** `remote_origin`, `remote_value`, `returns_remote`, `probes_param`, `probes_field`, `remote_probe`, `syn_resolver` (remote_pids.dl), over the `pid_remote` and `pid_probe` facts.
+- **Meaning.** `remote_origin(o, api, kind)` is a call that answers with, or hands a fun of the program, a pid that may be another node's: a cluster-wide registry's or a process group's answer, a process's links or `$callers` (`lookup`), or the two pids `:global` or syn hands a conflict resolver (`resolver`). `remote_value(f, src_kind, src, o)` is a value of f that may be such a pid: the answer itself, the parameters the runtime fills with one (a resolver's, the element a fun is run on), a callee's result that returns one. `remote_probe(f, anchor, site, o)` is a BIF that acts on a local process only, at `site`, handed one: in f's own code, or through f's call at `anchor` into a helper that probes its parameter (`probes_param`, lifted over forwarding callers as process points-to lifts a use).
+- **Direction.** Errs quiet: a pid kept in a term the function did not build (a state, a message) and read back elsewhere is not followed, and only the listed calls are sources.
+- **Used by.** failure.
+
+### What an rpc runs
+
+- **Names.** `rpc_holder`, `rpc_runs` (rpc_targets.dl), over `rpc_callee`, `rpc_mfa_param` and `mfa_arg`.
+- **Meaning.** `rpc_runs(f, anchor, site, mod, callee)` says the rpc at `site` runs `callee` of `mod` on another node, named by f's literals: at the rpc itself, or at f's call (`anchor`) into a wrapper whose parameters in a row are the rpc's module, function and argument list (`rpc_holder`, through a closure the wrapper builds and through wrappers that forward the three in the same positions).
+- **Direction.** Errs quiet: a wrapper that builds its argument list, or takes the three out of order, runs nothing known.
+- **Used by.** failure.
+
+### A LiveView's lifecycle and a process's subscriptions
+
+- **Names.** `static_render_callback`, `endpoint_module`, `in_endpoint`, `subscription_call` (live_view.dl), over the `connected_guarded`, `pubsub_call` and `param_decided` facts (`Argus.Extractors.LiveView`).
+- **Meaning.** `static_render_callback(mod, f)` is a callback that runs twice, once for the static render in the HTTP connection's process and again connected: a LiveView's mount/3 and handle_params/3, a LiveComponent's mount/1 and update/2, an `on_mount/4` hook. `connected_guarded(site, f)` is a call on the arm where `connected?/1` answered true (`get_connect_params/1`, not nil). `subscription_call(site, f, op)` subscribes the process or undoes it: Phoenix.PubSub and `:pg`, an endpoint's own subscribe/1,2 and unsubscribe/1 (`endpoint_module`: the module `use Phoenix.Endpoint` compiles `__sockets__/0` into), and `socket.endpoint.subscribe/1`, an apply. `param_decided(site, f, pos)` is a call into the program, or a subscription, that runs only on some arms of a test of what f's parameter pos holds, a test whose other arms only raise deciding nothing.
+- **Direction.** Errs quiet on a subscription through a module held in a value the apply cannot name, and loud on a static render a hook the program registers another way (`attach_hook`).
+- **Used by.** mailbox.
 
 ## startup
 
@@ -875,6 +896,24 @@ The call exits with `:noproc`, so what it was for never happens, and terminate/2
 **Corpus.** Fix pairs: `phoenix_pubsub#194` (phoenixframework/phoenix_pubsub, 8b92e8f → 148ae10, Phoenix.Tracker.Shard).
 
 **Precision.** Not measured.
+
+### A Broadway producer that keeps fetching while it drains
+
+`drain_keeps_fetching`
+· titles: "Broadway producer keeps fetching while it drains" (`:warning`)
+
+**Property.** A module that implements `Broadway.Producer` defines `prepare_for_draining/1`, which returns a state that sets some field K to nil (`returned_update`), while a function its `handle_demand/2` reaches in the module tests K against nil (`field_nil_test`) — the gate of its fetch — and no other field the drain sets to a literal is one such a function compares with a literal (`field_value_test`). Since Broadway 1.1 a draining producer is no longer switched to `:accumulate` (GenStage 1.2): processors still send demand while the pipeline drains, and stopping the fetch is the producer's job. A drain that cancels the poll timer and clears its ref sets the very value the fetch's clause asks for, so the next demand fetches again, and what it fetches is never processed before the pipeline stops: SQS messages whose visibility timeout has started are redelivered late, entries popped from a queue are lost (broadway_sqs, broadway_cloud_pub_sub, off_broadway_redis_stream, each fixed with a `draining: true` flag and a first clause that takes it). The finding is at `prepare_for_draining/1`, with the fetch's gate as a related frame.
+
+**Assumptions and limits.**
+- A flag the drain sets to a literal and a function handle_demand/2 reaches compares with a literal (`draining: true` and a clause taking it) clears it (`Drain.Flagged`, quiet). Beside it (positive): a flag set and never read (`FlagUnread`), a counter the drain resets that the next demand undoes (`CounterReset`, compared only by `> 0`), a drain that clears the field without cancelling the timer (`NoCancel`: cancelling is not asked).
+- The gate is read by its nil test on K anywhere handle_demand/2 reaches in the module; a fetch reached through another module, or gated by something else, is not seen (quiet).
+- A producer whose source keeps what it hands out until acknowledged loses nothing but time; the finding does not say which kind a source is.
+
+**Fixtures.** Positive: `Drain.CancelsOnly` (broadway_sqs's shape), `FlagUnread`, `CounterReset`, `NoCancel` (test/fixtures/drain_fixture.ex). Quiet: `Drain.Flagged` (the fix), `Drain.OtherField` (a cleared field no fetch tests) (same file). Asserted in test/analyses/shutdown_drain_test.exs.
+
+**Corpus.** Fix pairs: `broadway_sqs@5b8f18a` (elixir-broadway/broadway_sqs, fb517d7 → 5b8f18a, BroadwaySQS.Producer), `broadway_cloud_pub_sub@fb44279` (5c432c0 → fb44279, BroadwayCloudPubSub.Producer), `off_broadway_redis_stream#58` (akash-akya/off_broadway_redis_stream, 39ebe39 → 60ec40f, OffBroadwayRedisStream.Producer).
+
+**Precision.** Round 4: no rows over the live projects (none is a Broadway producer); the three fix pairs are its only rows.
 
 ## blocking
 
@@ -1770,6 +1809,44 @@ For a call, the server raises FunctionClauseError and the caller exits with it, 
 
 **Precision.** Not measured. CHANGELOG 0.12.1 records one false-positive fix: a clause that parks `from` at the head of a tuple.
 
+### A registration made on the static render
+
+`static_render_registration` · kind=`subscribe` | `timer` | `monitor`
+· titles: "LiveView registers for messages on the static render" (`:warning`)
+
+**Property.** A LiveView's `mount/3` or `handle_params/3`, a LiveComponent's `mount/1` or `update/2`, or an `on_mount/4` hook runs twice: first for the static render, in the HTTP connection's process, then in the LiveView's own process once the socket connects. Such a callback of a module m reaches, in its own process (`ForwardSameProcessReachCut`), a call that registers the calling process for later messages: a subscription (`Phoenix.PubSub.subscribe`, a Registry or `:pg` join, an endpoint's `subscribe/1,2`, `socket.endpoint.subscribe/1`), a timer to self (`Process.send_after(self(), …)`, `:timer.send_interval`) or a monitor — and it is not on the arm where `Phoenix.LiveView.connected?/1` answered true (or `get_connect_params/1` answered), neither the registration nor any call on some way to it (`connected_guarded`, `Argus.Extractors.LiveView`; walked back from the registration with `BackwardUnguardedSameProcess`). On the static render it registers the HTTP connection's process, which a keep-alive client keeps alive: that process takes every broadcast and every tick meant for the LiveView (Bandit logs each as unexpected: Logflare's cluster page armed a one-second interval there), and the registration's work is done twice. One finding per registration and module, at the registration, with the callback as a related frame when they differ.
+
+**Assumptions and limits.**
+- A registration is cleared only on the arm where `connected?/1` answered true (`get_connect_params/1`, not nil): the block that arm's edge alone enters dominates it, in the callback or at every call on the way to it (`Guarded`, quiet). The nearest shapes still fire: the registration on the other arm (`Adversarial.ElseArm`, `Unless`), after the arms join (`AskedElsewhere`), a helper called from the false arm (`HelperOnFalseArm`), a helper called both on the true arm and after the join (`HelperBothSides`), a fun handed to `Enum.each` after the join (`HandedAfterJoin`).
+- A subscription inside an endpoint's own `subscribe/1,2` (`in_endpoint`) is the caller's, at its call of the endpoint (`Adversarial.NamedEndpoint`); one through `socket.endpoint`, an apply, is judged at the apply (`EndpointSubscribes`).
+- `handle_event/3` and `handle_info/2` run only connected and are not read (`EventOnly`).
+
+**Fixtures.** Positive: `StaticRender.Subscribes` (livebook's hub page), `Ticks` (Logflare's interval), `AskedElsewhere` (through a helper), `EndpointSubscribes` (`socket.endpoint.subscribe/1`, an apply), `Component` (a LiveComponent's `update/2` monitoring), and the six `StaticRender.Adversarial` modules (test/fixtures/static_render_fixture.ex). Quiet: `StaticRender.Guarded` (in the callback, and around the call into a helper), `EventOnly` (same file). Asserted in test/analyses/mailbox_static_render_test.exs.
+
+**Corpus.** None: livebook ec90333 → a05d6c5 (the hub page) and Logflare 5c19a7a → ec7331b (the cluster page's interval) are the fixes, and neither tree builds on an installed toolchain (livebook's 2023 dependencies, Logflare's Tesla builder under Elixir 1.18 and 1.19).
+
+**Precision.** Round 4: 2 rows over the live projects, both true: pinchflat's JobTableLive and MediaItemTableLive subscribe through `PinchflatWeb.Endpoint.subscribe/1` in mount/3.
+
+### A subscription made again each time a callback runs
+
+`repeated_subscription`
+· titles: "Subscription made again each time a callback runs" (`:warning`)
+
+**Property.** A callback of a module m that runs again and again — handle_info/2, handle_cast/2, handle_call/3, a LiveView's handle_params/3 or handle_event/3, a channel's handle_in/3, handle_async/3, handle_demand/2 (`rearm_callback`) — reaches in its own process, by some way that does not run only in a clause for a message the process sends itself where it starts (`once_clause`), a subscription: `Phoenix.PubSub.subscribe`, a `:pg` join, an endpoint's `subscribe/1,2`, or `socket.endpoint.subscribe/1` (`pubsub_call`), and that callback unsubscribes nothing on its own way (`Phoenix.PubSub.unsubscribe`, `:pg.leave`, an endpoint's `unsubscribe/1`). A subscription is not idempotent: each one delivers every later broadcast once more, so each run of the callback adds a copy for the life of the process (nerves_hub_web's device list re-subscribed every device on each refresh until the LiveView drowned in its own messages; livebook's `App.unsubscribe/1` called `subscribe`). One finding per subscription and module.
+
+**Assumptions and limits.**
+- Judged by where a subscription is made, not by its topic, which is rarely a literal: a callback that subscribes once per distinct topic (a room a user joins once) is a finding all the same (loud).
+- A subscription decided by a test of the process's own state — a stored scope pid compared with the current one, a membership test on the subscriptions the state keeps, a field matched in a head — is taken as kept track of: the test reads the callback's last parameter, or the parameter of a helper the callback hands the state to (`param_decided` with `state_param`, over `call_arg_forward`); a test whose other arms only raise (a badmatch) decides nothing (`StateChecked` (teiserver's fix), `ScopeRestart` and `HelperStateChecked` (firezone's re-join after its `:pg` scope restarts), quiet). Beside it (positive): a state test that decides something else before the subscription (`StateAskedElsewhere`, `HelperStateElsewhere`), a test of the message alone (`MessageDecided`), a match on the state that only raises (`StateMatchRaises`). A test in a helper the state reaches other than as a forwarded parameter (a field handed on) is not read (loud).
+- A callback that also unsubscribes on its way, in the same function (nerves_hub_web's fix: the old devices' topics undone before the new ones), is taken to swap them (`DeviceListFixed`, quiet). An unsubscribe elsewhere leaves the repeated one standing (positive): only in terminate/2 (`UnsubscribesAtStop`), in another callback (`UnsubscribesElsewhere`), in a helper another entry calls (`HelperOfAnotherEntry`). One function's clauses are one callback: teiserver's session subscribes in one handle_call/3 clause and unsubscribes in another, and is not judged (quiet).
+- A clause for a message the process sends itself only where it starts (`once_clause`: from init/1, a channel's join/3, mount/3; nerves_hub_web's ExtensionsChannel `:init_extensions`) runs once, and a subscription reached only from such clauses is not judged (`OnceFromInit`, quiet). Beside it (positive): the message sent again from a handler (`SentAgain`), re-armed by a timer (`Rearmed`), a subscription in another clause of the same handler (`OtherClause`). A message a peer sends once (a script runner's one error reply) is not known to come once (loud). A subscription in handle_continue/2, which a handler can continue to again and again, is not read (quiet).
+- A subscription inside an endpoint's own `subscribe/1,2` is the caller's, at its call of the endpoint.
+
+**Fixtures.** Positive: `Resubscribe.Ticker` (a tick), `DeviceList` (`socket.endpoint.subscribe/1` in a closure), `Session` with `Apps` (an unsubscribe that subscribes), `Channel` with `Endpoint` (a named endpoint), `Navigates` (handle_params/3), `UnsubscribesAtStop`, `UnsubscribesElsewhere`, `HelperOfAnotherEntry` with `Rooms`, `SentAgain`, `Rearmed`, `OtherClause`, `StateAskedElsewhere`, `HelperStateElsewhere`, `MessageDecided`, `StateMatchRaises` (test/fixtures/resubscribe_fixture.ex). Quiet: `Resubscribe.Once` (init/1), `DeviceListFixed` (unsubscribes the old devices first), `OnceFromInit`, `StateChecked`, `ScopeRestart`, `HelperStateChecked` (same file). Asserted in test/analyses/mailbox_resubscribe_test.exs.
+
+**Corpus.** Fix pairs: `nerves_hub_web#2588` (nerves-hub/nerves_hub_web, 29e5b56 → 59dd4c6, NervesHubWeb.Live.Devices.Index: `socket.endpoint.subscribe/1` in handle_async/3's closure, and at the fix an unsubscribe of the old devices first). livebook 3e63097 and oban 9dd5106 (a pid consed onto a server's list, the registry side) are not pairs: livebook's 2024 tree does not build here, and oban's is another shape.
+
+**Precision.** Round 4: 1 row over the live projects, false: firezone's relay channel subscribes in the clause for `{:after_join, …}`, a tuple its join/3 sends once, which `once_clause` (atoms) does not read. Before the state test 13 rows, 11 of them firezone's re-join after its `:pg` scope restarts, guarded by the stored scope pid.
+
 ## failure
 
 An error path the code could have seen and did not take: an exception a catch-all handler discards, a remote call whose failure value nothing matches, a result used without its failure case, a process nothing watches, an exit signal sent from a callback past the supervisor that owns its target, and a call site that breaks the program's own convention for a callee's failure. A discarded `start_link`/`start` result belongs to startup (`ignored_start_result`), an rpc or call with no bounded timeout and a `{:noproc, _}`-only catch to blocking, a lookup-then-start race on a process name and a missing ETS row to races (`registry_race`, `ets_missing_row`), and a callback stopping a sibling through its API to shutdown.
@@ -1969,6 +2046,64 @@ An error path the code could have seen and did not take: an exception a catch-al
 **Corpus.** Present-only: `supavisor@a8463de` (supabase/supavisor, a8463de, Supavisor.DbHandler), "Call made bare where other call sites catch its exit" (`:gen_statem.call/3`). No fix pair exists: the rule needs three guarded sites and a quarter or fewer bare, and the eleven catch-adding fixes the hunt found were all below that (maintainer notes, 2026-09-23).
 
 **Precision.** Two corpus sites at introduction, both `:ets.lookup_element` called bare where the module rescues it elsewhere (00917e6), later judged deliberate (maintainer notes). The guard-class audit took the corpus from 3 to 2 when db_connection's `Holder.hash_holder/2`, guarded by its caller, dropped out (the belief audit, 5478aa7). Keying the belief on its target took OTP kernel, stdlib and mnesia, the Phoenix stack and sequin from 22 findings to 2: supavisor's DbHandler, a real bug, and user_sup's `register(user, self())` against peer.erl's three guarded registrations of the same name, not judged in the entry (364e74b, CHANGELOG 0.20.0-dev).
+
+### A local-only BIF on a pid that may be on another node
+
+`remote_pid_probe` · kind=`lookup` | `resolver`
+· titles: "Local-only BIF on a pid that may be on another node" (`:warning` for `lookup`, `:error` for `resolver`)
+
+**Property.** Some call in a function g to a BIF that acts on a process of this node only — `is_process_alive/1` (`Process.alive?/1`), `process_info/1,2` (`Process.info/1,2`), `garbage_collect/1,2`, `suspend_process/1,2`, `resume_process/1`, `process_display/2` — is handed a pid that may be another node's (`pid_probe`), and no test of `node(pid)` decides whether the call runs. The pid is one of (`pid_remote`, `clientlib/remote_pids.dl`): what a cluster-wide registry answers (`:global.whereis_name/1`, `GenServer.whereis/1` of a `{:global, _}` or `{:via, :global | :syn | Horde.Registry | Swarm, _}` name, `:syn` and Horde lookups), a member of a process group (`:pg`, `:pg2`, `:syn`, Swarm), a process's links (`Process.info(pid, :links)`), a process's `$callers`, or a pid `:global` (`register_name/3`, `re_register_name/3`) or syn (`resolve_registry_conflict/4`) hands a conflict resolver. It reaches the BIF in g's own code, through a callee's result, through a list `Enum` or `:lists` walks with a fun (the fun's first parameter), or through the parameter of a helper g calls — then the finding is g's, at its call into the helper, with the BIF as a related frame. The BIF raises ArgumentError (badarg) on a pid of another node: a leader election, a replication manager or a dashboard page crashes whenever the pid it looked up lives elsewhere (`kind` `lookup`, `:warning`), and a resolver crashes on every conflict it is called for, one of whose two pids is always another node's (`resolver`, `:error`).
+
+**Assumptions and limits.**
+- A test that finds `node(p)` equal to another node (`node()`), for a p that may be the same value, clears a BIF on the arm where the two are equal — the equality's pass edge, an inequality's fail edge, into a block that edge alone enters and that dominates the BIF (`NodeGuarded.cleanup/1`, `inequality_else/1`, quiet). Beside it, the nearest real shapes still fire (positive fixtures): the BIF on the other arm (`else_arm/1`, `unless_local/1`, `when_remote/1`), after the arms join (`asked_before/1`), or under a test of another pid (`other_node/2`). A test made in a helper (`local?(pid)`) is not seen (loud).
+- A try around the BIF, or around the call into its helper, that takes the ArgumentError and goes on (`site_takes_argument_error`: a rescue of ArgumentError, `:badarg` or every error whose handler returns without raising again, or Erlang's `catch`) clears it (`Rescued.alive?/1`, `Helper.guarded/1`). A rescue of another exception (`wrong_rescue/1`), one that re-raises (`reraises/1`), an `after` (`after_only/1`) and a rescue around another call of the function (`other_call/1`) do not.
+- A pid kept in a term the function did not build — a server's state, a message, a map a helper reads a field of — and read back elsewhere is not followed (quiet): serviceradar's session map (R3A-5) and grpc's channel struct (M4-20) are out of reach. A list of remote pids handed to a helper that walks it is not followed either.
+- Only the few sources above are remote. A pid received from another node in a message, or answered by an rpc, is not known to be one (elixir-ls's debugger variables, M4-19).
+- `$callers` holds another node's pid only when a process was started for a remote caller (`Task.Supervisor.async({sup, node}, …)`); a program that never starts one never meets it, and the row reads as a latent defect.
+
+**Fixtures.** Positive: `RemotePid.GlobalAlive`, `NodeGuarded.asked_before/1`, `else_arm/1`, `unless_local/1`, `when_remote/1` and `other_node/2`, `Rescued.wrong_rescue/1`, `reraises/1`, `after_only/1` and `other_call/1`, `Resolver.register/1` (two rows, `resolver`), `SynHandler`, `Members.live/1` (a captured `&Process.alive?/1`) and `sizes/1` (a comprehension's closure), `Helper.leader_alive?/1` (at the call into the helper), `Names.global_info/1` and `leader_info/0` (a helper's result), `Links.children/2` (links reversed and walked) (test/fixtures/remote_pid_fixture.ex). Quiet: `NodeGuarded.cleanup/1` and `inequality_else/1`, `Rescued.alive?/1`, `Resolver.register_by_node/1`, `Members.local/1`, `Helper.local_alive?/1` and `guarded/1`, `Names.local_info/1`, `Links.local_children/2` (same file). Asserted in test/analyses/failure_remote_pid_test.exs.
+
+**Corpus.** Fix pairs: `aprs.me@37c9ac7` (aprsme/aprs.me, 9caab57 → 37c9ac7, Aprsme.Cluster.LeaderElection, `lookup`: the cleanup's `Process.alive?/1` on the `:global` holder), `aprs.me@9212088` (777acc2 → 9212088, same module, `resolver`: two rows at pre), `phoenix_live_dashboard#495` (phoenixframework/phoenix_live_dashboard, f12805a → 57e8a1f, Phoenix.LiveDashboard.SystemInfo: a process's links walked and asked for their group leader). aprs.me's trees vendor a submodule and need OTP 27 (`submodules: true`). firezone f41a6f9 (an umbrella of 2025), serviceradar b409606 (a pid kept in a state map, out of reach), sentry-elixir 2b53d0a (logger metadata's `:callers`, not `Process.get/1`: 0 rows at pre) and elixir-ls d5248ef (a pid of any origin) are not pairs.
+
+**Precision.** Round 4 (2026-09-25): no rows over the eighteen live projects (brod, exq, sentry-elixir, changelog, ejabberd, rabbitmq, elixir-ls, kafka_ex, quantum, firezone, ra, hackney, grpc, nerves_hub_link, pinchflat, mongooseim, vernemq, akkoma); the three fix pairs' pre trees are its only rows, all true.
+
+### An rpc to a function the module does not export
+
+`rpc_undefined` · why=`missing` | `private`
+· titles: "RPC to a function the module does not export" (`:error`)
+
+**Property.** Some `:rpc` or `:erpc` call (`call/4,5`, `block_call/4,5`, `multicall/5`, `:erpc.call/4,5`, `:erpc.multicall/4,5`) runs `Mod.fun/n` on another node, where Mod is one of the program's modules and Mod exports no `fun/n` (`missing`: no such function at that arity; `private`: defined, not exported). The three are the site's literals (`rpc_callee`: a literal module and name, and an argument list whose length every path shows), or a wrapper's parameters in a row — its own, or captured by a closure it builds (`rpc_mfa_param`) — filled by a caller's literals (`mfa_arg`), through wrappers that forward them in the same positions (`clientlib/rpc_targets.dl`). The compiler checks `Mod.fun(...)` but not an MFA spelled for rpc, so a misspelt name, a function since removed or made private, or an argument too many is `undef` on the remote node on every call: `{:badrpc, {:EXIT, {:undef, _}}}` from `:rpc`, an ErlangError from `:erpc` (realtime's remote transactions, twice). The finding is at the rpc, or at the caller's call into the wrapper, with the rpc as a related frame.
+
+**Assumptions and limits.**
+- The same release runs on the other node: the module's beam in the program is the one the rpc reaches. A call meant for another version of the module (a rolling upgrade calling an old node's function) reads as undefined (loud); none is known.
+- Only a module of the analyzed program is judged: an rpc into a dependency or OTP (`:some_library`) says nothing (`Caller.outside/1`).
+- An argument list whose length a path does not show (`[a | rest]`) names no function (`Caller.unknown_length/2`). A wrapper whose three parameters are not in a row, or that builds the list itself, is not followed; `call_arg_forward` reads the first four positions, so a forwarding chain is followed only there.
+
+**Fixtures.** Positive: `RpcTarget.Caller.missing/1` (through `Wrapper.enhanced_call/5`'s `:timer.tc` closure), `wrong_arity/1`, `private/1`, `forwarded/1` (through `Wrapper.forward/4` into `Wrapper.call/4`) (test/fixtures/rpc_target_fixture.ex). Quiet: `Caller.ok_direct/1`, `ok_wrapped/1`, `ok_forwarded/1`, `outside/1`, `unknown_length/2` (same file). Asserted in test/analyses/failure_rpc_target_test.exs.
+
+**Corpus.** Fix pairs: `realtime#1229` (supabase/realtime, 0147dbb → ac00218, Realtime.Database: `transaction/4` through `Realtime.Rpc.enhanced_call/5`'s closure). realtime#818 (63b49d2 → d2f5339, `run_db_request/2`) is the same shape in a tree that builds on no installed toolchain.
+
+**Precision.** Round 4: one row over the live projects, true: rabbit's `rabbit_connection_tracking:count_on_node/1` rpcs itself on a remote node through `rabbit_misc:rpc_call/4`, and it is not exported, so `count/0` (the management overview's connection total) counts only the local node.
+
+### A file, socket or port lost on a path that never closes it
+
+`resource_dropped`
+· titles: "File, socket or port lost on a path that never closes it" (`:warning`)
+
+**Property.** Some call in a function f opens a handle the calling process owns — a file (`:file.open/2`, `File.open/1,2`, `File.open!/1,2`), a socket (`:gen_tcp.connect/listen/accept`, `:ssl.connect/listen`, `:gen_udp.open`, `:socket.open/accept`) or a port (`Port.open/2`, `:erlang.open_port/2`) — and on some path from it that goes on to return, the handle is only read, written, sent on or tested (the operations that leave it open, with it as their first argument) and then lost: no register holds it any more, or f returns or tail-calls without it, or tail-calls one of those operations, whose result it returns and not the handle (`handle_dropped`, `Argus.Extractors.Handles`). On that path it is never closed, returned, stored in a term, sent, or handed to any other call. The process that opened it holds it until it exits: a long-lived process that runs f per request, per reconnect or per retry holds one more descriptor each time (thousand_island's `sendfile/4` opened a raw fd per call and never closed it; a connect whose next step fails returned the error with the socket open). The finding is at the opening call, with the point where the path loses it as a related frame.
+
+**Assumptions and limits.**
+- A path owns the handle once it takes the `{:ok, _}` arm — the pass edge of `is_tagged_tuple(answer, 2, :ok)`, a test of the answer's tag against `:ok`, a select's `:ok` arm — even where the compiler takes the handle out of the tuple only on the paths that use it; the `{:error, _}` arm owns none (`Quiet.ok_tuple/1`). An `ok` arm that loses it still fires (`Adversarial.ok_arm/1`, `with_else/1`, `early_error/2`).
+- A path that raises (a badmatch, an `:erlang.error/1..3`, `exit/1`, `throw/1`) loses nothing here: the process exits or a handler up the stack decides (`Quiet.raises/1`). A returning path beside a raising one still fires (`Adversarial.raise_or_return/1`, `badmatch_then_return/1`, `raise_before_open/2`).
+- Any call other than the leave-open operations and `inspect/1,2` (`Kernel`, `IO`) counts as handing the handle on: a close, `:gen_tcp.controlling_process/2`, a helper of the program alike (`Connect.handed_off/3`, `to_helper/2`). A handle only looked at still fires (`Adversarial.inspected/1`, `logged/1`, `compared/2`). A helper that only reads it and returns hides the loss (quiet).
+- A process that exits right after — a Task, a one-off script — loses nothing by it; the rule does not know how long the opening process lives (loud).
+- `File.open/3` with a function closes the file itself and is not read.
+
+**Fixtures.** Positive: `Handles.Sendfile.tcp/4` and `ssl/4`, `Connect.leaky/2`, `Ports.fire_and_forget/1`, and the nine `Handles.Adversarial` functions beside the three quieting conditions (test/fixtures/handle_fixture.ex). Quiet: `Sendfile.fixed/4` (`try ... after`), `Connect.closes/2`, `handed_off/3`, `to_helper/2`, `Ports.kept/2`, `Quiet.whole/1`, `ok_tuple/1`, `raises/1`, `sent/2` (same file). Asserted in test/analyses/failure_resource_test.exs.
+
+**Corpus.** Fix pairs: `thousand_island#78` (mtrudel/thousand_island, db0db57 → 45e7b51, ThousandIsland.Transports.TCP; the SSL transport's row clears too). mint#416 (a socket kept in the conn struct and marked closed) is out of reach: 0 rows at both sides.
+
+**Precision.** Round 4: 5 rows over the live projects, 4 true — ejabberd's `ejd2sql:open_sql_dump/1` (an error return with the fd open), mongooseim's `gdpr_api:run/3` (a port left open on the timeout), akkoma's `Docs.JSON.process/1` (a failed write) and `Upload.tempfile_for_image/1` (never closed) — and 1 harmless: ejabberd_listener's `init/4`, whose error paths end the process. Before the `:ok`-arm ownership 20 rows, 15 of them error arms.
 
 ## structure
 
@@ -3133,6 +3268,83 @@ Prior candidates the round added: *is this call a start handshake the
 module's API makes once* (rabbit's `mirrored_supervisor` `{init, _}`,
 the timer loop's one false row); *does this retry loop's second arm fire
 while the loop runs* (the retry loops the timer rule leaves out).
+
+### Round 4 of the mining: what it implemented, and what is left
+
+Round 4 (2026-09-25) took the ranked list above in order and mined 43
+more fixed bugs in areas no round had covered — distribution, hot code
+upgrade, NIF and port lifecycle, `:telemetry` and Logger handlers,
+Broadway and GenStage, Oban, `persistent_term` and atomics (4 in
+classes argus has, 28 it could formalize, 4 for a reader, 7 out of
+scope; `mining-round4.md` in the session notes).
+
+Implemented from round 3's list:
+
+1. **A local-only BIF on a pid that can be remote**: "A local-only BIF on
+   a pid that may be on another node" (failure, above).
+2. **A resource released only on the success path**, for the handles a
+   process owns — files, sockets, ports: "A file, socket or port lost on a
+   path that never closes it" (failure). mint's `state: :closed` without
+   a close (a socket kept in a struct field) and a release a raise skips
+   are left: the first needs to know a field holds a handle, the second
+   is harmless unless a handler up the stack keeps the process alive.
+5. **A subscription made again and again**: "A subscription made again
+   each time a callback runs" (mailbox).
+6. **A subscription, monitor or timer in a disconnected mount**: "A
+   registration made on the static render" (mailbox).
+7. **Draining that only cancels the timer**: "A Broadway producer that
+   keeps fetching while it drains" (shutdown).
+8. **An rpc to an MFA the program does not export**: "An rpc to a
+   function the module does not export" (failure).
+
+Left, with what stands in the way:
+
+1. **A handle overwritten in the state without being closed** (round 3's
+   3: postgrex 9eee621 → 71095dc, faktory_worker 1c5d30f → 725e366).
+   *Needs a handle's points-to.* Neither instance opens the socket in
+   the callback that overwrites it: postgrex stores `{:ok, protocol}`,
+   a struct whose `sock` field `Postgrex.Protocol` filled several calls
+   down; faktory_worker's connection comes through a behaviour's
+   `connect/1`. Knowing that a state field holds an open handle is
+   PidFlow's question for pids, asked of sockets and ports: a leaf per
+   opening call, a field that holds one, and an update that sets the
+   field without a close of what it held.
+2. **A LiveView broadcast with no handle_info/2 clause** (round 3's 4:
+   nerves_hub_web 1684dcf → c97ba3e, algora 3ee678c → c561d6d). *Needs a
+   message run through the clause heads.* A Phoenix broadcast arrives as
+   `%Phoenix.Socket.Broadcast{event: "fwup_progress"}`, and a handler's
+   heads match its event string through a decision tree the compiler
+   splits into integer and byte-string segments (`"lo" <>
+   "cation:updated"`), which `callback_tag`'s atoms do not see; the topic
+   ties a subscription to a broadcast only by its literal prefix, and
+   nerves_hub_web subscribes through `socket.endpoint`, an apply
+   (`pubsub_call` reads it now). algora's broadcast message is its
+   caller's struct, a parameter of `Chat.broadcast/1`.
+3. **A raising `:telemetry` handler** (round 4, 5 fixed: firezone twice,
+   nerves_hub_web 2649062 → d3814d5, sentry-elixir, operately): a function
+   attached with `:telemetry.attach/4` or `attach_many/4` whose clauses do
+   not take every event it is handed, or that calls something that can
+   raise with no try around it; the first raise detaches it for the
+   node's life. `fun_handed_to` names the handler; totality is
+   `callback_total`'s test. The same holds for a `:logger` handler's
+   `log/2`.
+4. **`persistent_term` churn** (round 4, 5 fixed: grpc twice, broadway,
+   Logflare, finch; aprs.me live): a put or erase in a handler, a timer
+   loop or a stop path (a global GC of every process per write), or keyed
+   by a per-instance value (`self()`, a ref) and never erased. Best pair
+   grpc dec9f85 → de97e87.
+5. **A `:telemetry` handler attached and never detached, or detached
+   under another id** (round 4, 3: electric, nebulex 57b0d6a → b6e79ea,
+   an OpenTelemetry exporter).
+6. Singletons of round 4: a timer loop dropped on an error branch
+   (firezone d62f827 → 544b645), a port wait with no `:EXIT` clause
+   (muontrap d697b08 → 4968a51), a callback return the behaviour rejects
+   (exile 7aa4fae → d03f306), a literal module atom with no such module
+   applied (broadway 7c93cdb → 2baf2ba), rows keyed by `self()` orphaned
+   at exit (Logflare), a `:global` name re-registered by its own holder
+   (aprs.me dda4bbc → 66061a5), a stale node route (finitomata), a Logger
+   backend reporting its own errors (honeybadger), and round 3's
+   singletons, still open.
 
 ### Prior candidates
 
