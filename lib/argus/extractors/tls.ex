@@ -45,18 +45,31 @@ defmodule Argus.Extractors.Tls do
   field. The options of a listener named only in a supervisor's child
   list are data, not a call, and are not read.
 
+  Only a TLS option of the server's is: `verify` in the options
+  themselves or under the keys that hold a server's TLS options
+  (`transport_options:`, `thousand_island_options:`, `socket_opts:`,
+  `options:`; `Argus.Extractors.Tls.Options`). A `verify_none` a server's
+  options carry under `plug:` or `handler_options:` is the plug's or the
+  handler's own — a reverse proxy's options for the upstream it dials —
+  and a client's. Nor is a server's that names what to check its clients
+  against (`cacerts`, `cacertfile`), a `verify_fun` or
+  `fail_if_no_peer_cert`: it meant to authenticate its clients, and
+  `verify_none` lets any client in. A server's call is its own site only
+  when its options ask no client certificate either.
+
   ## Emitted facts
 
   - `tls_verification(id, func, setting)` — `"none"` | `"peer"` | `"absent"`
   - `tls_connect(id, func, api, opts)` — a TLS connect and how its options
     were supplied: `"literal"` | `"dynamic"`
-  - `tls_server_side(id, func)` — the setting at `id` configures a server:
-    the site of a server's call, or a mention whose value is made only
-    into the options of one
+  - `tls_server_side(id, func)` — the setting at `id` configures a server
+    that asks its clients for no certificate: the site of a server's call,
+    or a mention whose value is made only into the TLS options of one
   """
 
   @behaviour Argus.Extractor
 
+  alias Argus.Extractors.Tls.Options
   alias Argus.Instr
   alias Argus.Instr.Reaching
   alias Argus.InstrId
@@ -93,6 +106,11 @@ defmodule Argus.Extractors.Tls do
     {ThousandIsland, :start_link, 1} => 0,
     {ThousandIsland, :child_spec, 1} => 0
   }
+
+  # The keys a server's TLS options sit under, and the options that say it
+  # authenticates its clients.
+  @tls_containers ~w(transport_options thousand_island_options socket_opts options)a
+  @client_auth ~w(cacerts cacertfile verify_fun fail_if_no_peer_cert)a
 
   # Calls that build an option list of their arguments: a value handed to
   # one is in what it returns.
@@ -168,9 +186,16 @@ defmodule Argus.Extractors.Tls do
 
     server_sites = Map.new(servers)
 
+    options =
+      Map.new(servers, fn {idx, pos} ->
+        {idx, instrs |> Options.tree(idx, {:x, pos}) |> Options.entries()}
+      end)
+
     facts =
       Enum.reduce(servers, facts, fn {idx, _pos}, acc ->
-        add_fact(acc, :tls_server_side, [InstrId.mint(func_id, idx), func_id])
+        if client_auth?(Map.fetch!(options, idx)),
+          do: acc,
+          else: add_fact(acc, :tls_server_side, [InstrId.mint(func_id, idx), func_id])
       end)
 
     if servers == [] or mentions == [] do
@@ -179,10 +204,41 @@ defmodule Argus.Extractors.Tls do
       mentions
       |> Enum.reject(&Map.has_key?(server_sites, &1))
       |> Enum.filter(&only_server_options?(instrs, indexed, &1, server_sites))
+      |> Enum.filter(&server_tls_option?(options, &1))
       |> Enum.reduce(facts, fn idx, acc ->
         add_fact(acc, :tls_server_side, [InstrId.mint(func_id, idx), func_id])
       end)
     end
+  end
+
+  # Each server call whose options hold the mention holds it as its own
+  # TLS `verify`, and names nothing to check its clients with; and one
+  # does hold it (a mention the options were built around some other way
+  # is not read as the server's).
+  defp server_tls_option?(options, mention) do
+    holding =
+      for {_idx, entries} <- options,
+          paths = for({:value, path, :verify_none, ^mention} <- entries, do: path),
+          paths != [],
+          do: {entries, paths}
+
+    holding != [] and
+      Enum.all?(holding, fn {entries, paths} ->
+        Enum.all?(paths, &tls_option?(&1, :verify)) and not client_auth?(entries)
+      end)
+  end
+
+  defp client_auth?(entries) do
+    Enum.any?(entries, fn
+      {:key, path} -> Enum.any?(@client_auth, &tls_option?(path, &1))
+      _value -> false
+    end)
+  end
+
+  # `key` is a TLS option of the server's: at the top of its options, or
+  # under keys that hold a server's TLS options.
+  defp tls_option?(path, key) do
+    List.last(path) == key and Enum.all?(Enum.drop(path, -1), &(&1 in @tls_containers))
   end
 
   # Every read of a value made of the mention is a server call's options,
