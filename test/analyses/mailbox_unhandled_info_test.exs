@@ -129,6 +129,8 @@ defmodule Argus.Analyses.MailboxUnhandledInfoTest do
     alias Argus.Test.Soundness.Witness, as: W
 
     quiet = [
+      W.PmapServer,
+      W.Pmap,
       W.SpawnBlockingWait,
       W.LateReplyTaken,
       W.LateCatchAll,

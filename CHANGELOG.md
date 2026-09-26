@@ -66,7 +66,10 @@ process turns on with a literal `true` (`:net_kernel.monitor_nodes/1,2`,
 own or hands the port on with `Port.connect/2` (source `port`); and
 `:erlang.start_timer/3,4` armed for itself sends `{:timeout, ref, msg}`,
 which GenServer's idle `:timeout` clause, a clause for the bare message
-or a `{:timeout, ref}` clause does not take (source `timer`). Node
+or a `{:timeout, ref}` clause does not take (source `timer`), unless the
+arming function waits in a receive of its own, as a wait's deadline does
+(mongoose_lib's `pmap/3` arms one, collects, then cancels and flushes
+it). Node
 events and port output are judged where no clause takes them at all
 ("No handle_info/2 clause for a message the server is sent",
 `:warning`), not in a catch-all; a start timer is judged as every timer

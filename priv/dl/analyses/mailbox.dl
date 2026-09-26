@@ -1152,10 +1152,15 @@ info_message(m, f, id, cat("{", tag, ", …}"), "timer") :-
 
 // :erlang.start_timer/3,4 armed for the server itself sends `{:timeout,
 // ref, msg}`: a 3-tuple tagged :timeout (timer_tag), which GenServer's
-// idle `handle_info(:timeout, s)` does not take.
+// idle `handle_info(:timeout, s)` does not take. A start timer is most
+// often a wait's own deadline: armed by the function that then waits for
+// it, or for what it bounds, in a receive and cancels and flushes it
+// (mongoose_lib:pmap/3). Like a monitor its function waits on, its
+// message is taken where it is armed.
 info_message(m, f, id, "{:timeout, …}", "timer") :-
   start_timer_arm(id, f, "self"),
-  runs_in_server(m, f).
+  runs_in_server(m, f),
+  !receive_reach.reaches(f).
 
 // A monitor its own function waits on, in a receive or behind a
 // demonitor with :flush, is consumed where it is taken.

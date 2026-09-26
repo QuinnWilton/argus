@@ -903,3 +903,52 @@ defmodule Argus.Test.Soundness.Witness.StageNamed do
   @impl true
   def handle_info(:tick, state), do: {:noreply, [], state}
 end
+
+defmodule Argus.Test.Soundness.Witness.Pmap do
+  @moduledoc false
+  # mongoose_lib:pmap/3's shape: a start timer bounds a collection the
+  # function waits for, and is cancelled and flushed after it.
+  def pmap(fun, items, timeout) do
+    timer = :erlang.start_timer(timeout, self(), :pmap_timeout)
+    running = for item <- items, do: spawn_monitor(fn -> exit({:result, fun.(item)}) end)
+    result = collect(running, timer)
+    :erlang.cancel_timer(timer)
+
+    receive do
+      {:timeout, ^timer, _} -> :ok
+    after
+      0 -> :ok
+    end
+
+    result
+  end
+
+  defp collect([], _timer), do: []
+
+  defp collect([{pid, ref} | rest] = all, timer) do
+    receive do
+      {:DOWN, ^ref, :process, ^pid, {:result, r}} -> [r | collect(rest, timer)]
+      {:DOWN, ^ref, :process, ^pid, reason} -> [{:error, reason} | collect(rest, timer)]
+      {:timeout, ^timer, :pmap_timeout} -> Enum.each(all, fn {p, _} -> Process.exit(p, :kill) end)
+    end
+  end
+end
+
+defmodule Argus.Test.Soundness.Witness.PmapServer do
+  @moduledoc false
+  # Quiet: the server runs the pmap, whose timer never reaches handle_info/2.
+  use GenServer
+
+  def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
+
+  @impl true
+  def init(arg), do: {:ok, arg}
+
+  @impl true
+  def handle_call({:all, items}, _from, state),
+    do:
+      {:reply, Argus.Test.Soundness.Witness.Pmap.pmap(&Function.identity/1, items, 1_000), state}
+
+  @impl true
+  def handle_info(:tick, state), do: {:noreply, state}
+end
