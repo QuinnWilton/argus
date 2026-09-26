@@ -1334,7 +1334,7 @@ runs.seed(f) :- reads_in_the_gap(f, _, _, _, _).
 runs.seed(g) :- reads_in_the_gap(_, _, _, _, g).
 
 // The reader can run while the writer is between the two writes: in
-// more than one process, or one the writer's process does not reach.
+// more than one process, or in a process other than the writer's.
 .decl can_read_in_the_gap(func: symbol, reader: symbol)
 
 can_read_in_the_gap(f, g) :- reads_in_the_gap(f, _, _, _, g), !runs.single_process(f).
@@ -1342,8 +1342,9 @@ can_read_in_the_gap(f, g) :- reads_in_the_gap(f, _, _, _, g), !runs.single_proce
 
 can_read_in_the_gap(f, g) :-
   reads_in_the_gap(f, _, _, _, g),
-  runs.entry_reaches(m, g),
-  !runs.entry_reaches(m, f).
+  runs.single_process(f),
+  runs.entry_reaches(m, f),
+  runs.runs_apart_from(m, g).
 
 // A table is spelled by its identity's kind and the identity: "named" and
 // the name, "new" and the :ets.new/2 site, or "field" and the module and
@@ -1536,7 +1537,9 @@ runs.seed(h) :- remover_in(_, h).
 
 // The remover can run while `func` is between the check and the act,
 // and take the row a pair in `func` acts on: `func` runs in more than one
-// process, or the remover runs in a process that does not run it.
+// process, or the remover runs in a process other than the one `func`
+// runs in (runs_apart_from, clientlib/concurrency.dl), whether or not
+// that one runs the remover too.
 .decl can_run_in_between(remover: symbol, func: symbol)
 
 can_run_in_between(d, f) :-
@@ -1550,8 +1553,9 @@ can_run_in_between(d, f) :-
   removes_rows(d, table),
   may_remove_pair_row(d, f),
   remover_in(d, h),
-  runs.entry_reaches(m, h),
-  !runs.entry_reaches(m, f).
+  runs.single_process(f),
+  runs.entry_reaches(m, f),
+  runs.runs_apart_from(m, h).
 
 // The key of a pair `func` reports, and whether a remover's key can be it.
 .decl found_pair_key(func: symbol, table: EtsTable, key_kind: symbol, key: symbol)
