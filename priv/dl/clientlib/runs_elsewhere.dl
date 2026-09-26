@@ -79,11 +79,12 @@ runs_elsewhere(f, g) :-
   held_closures(f, 1),
   !call_instr(f, g, _).
 
-// Registered or kept, never run here.
+// Registered or kept, never run here: a fun handed to no call that may
+// run it here (runs_handed). One handed to a start is the second
+// clause's already.
 runs_elsewhere(f, g) :-
   fun_edge(f, g),
   !runs_handed(f, g),
-  !started_handed(f, g),
   !call_instr(f, g, _),
   !calls_fun(f).
 
@@ -114,10 +115,6 @@ fun_sink(":application:set_env/4", "keep").
 .decl runs_handed(func: symbol, fun: symbol)
 
 runs_handed(f, g) :- fun_handed_to(f, g, h), !fun_sink(h, _).
-
-.decl started_handed(func: symbol, fun: symbol)
-
-started_handed(f, g) :- fun_handed_to(f, g, h), fun_sink(h, "start").
 
 // A closure func builds and hands to no call: into a term.
 .decl held_closure(func: symbol, closure: symbol)

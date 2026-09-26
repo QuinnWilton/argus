@@ -153,13 +153,8 @@
 }
 
 // Forward over what the root's own process runs (runs_elsewhere, as
-// SameProcessReach): a spawned function and the loop it calls.
-.comp ForwardSameProcessReach : Forward {
-  reaches(r, h) :- reaches(r, g), call_edge(g, h), !runs_elsewhere(g, h).
-}
-
-// ForwardSameProcessReach, less the edges the instance names `cut` (a
-// side path, side_call in calls.dl).
+// SameProcessReach): a spawned function and the loop it calls, less the
+// edges the instance names `cut` (a side path, side_call in calls.dl).
 .comp ForwardSameProcessReachCut : Forward {
   .decl cut(func: symbol, callee: symbol)
   reaches(r, h) :- reaches(r, g), call_edge(g, h), !runs_elsewhere(g, h), !cut(g, h).

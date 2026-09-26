@@ -366,7 +366,8 @@ tag_resolved_site(id, func, kind, mod) :-
   !pointsto_resolved(id, func, kind).
 
 // By uniqueness: one handler in the whole program, for a tag specific
-// enough to name it, and no evidence pointing elsewhere.
+// enough to name it. With one handler, evidence can point nowhere else:
+// a caller's module that refers to it is the clause above's.
 tag_resolved_site(id, func, kind, mod) :-
   call_tag(id, func, kind, tag),
   tag_handler(mod, kind, tag),
@@ -375,7 +376,6 @@ tag_resolved_site(id, func, kind, mod) :-
   !info_tag(tag),
   function_def(func, fm, _, _, _),
   fm != mod,
-  !referred_handler(fm, kind, tag, _),
   !pointsto_resolved(id, func, kind).
 
 // The sync dependencies that exist only by tag attribution, propagated

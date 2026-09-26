@@ -34,7 +34,7 @@ defmodule Argus.DlComponentsTest do
   .init forward = ForwardCallReach
   .init forward_intra = ForwardIntraModuleReach
   .init forward_set = ForwardCallReachSet
-  .init forward_same = ForwardSameProcessReach
+  .init forward_same = ForwardSameProcessReachCut
   .init forward_cut = ForwardSameProcessReachCut
   .init bounded = ForwardBoundedCallReach
 
@@ -116,7 +116,8 @@ defmodule Argus.DlComponentsTest do
     assert out["forward"] == ~w(a b c sink)
     assert out["forward_intra"] == ~w(a b c sink)
     assert out["forward_set"] == ~w(a b c sink)
-    # The edge into what the spawn runs, b -> c, is not followed.
+    # The edge into what the spawn runs, b -> c, is not followed (an
+    # instance that cuts nothing).
     assert out["forward_same"] == ~w(a b)
     # e's closure k runs in e's process; the instance cuts k -> sink.
     assert out["forward_cut"] == ~w(e k)

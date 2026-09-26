@@ -318,9 +318,11 @@ update_base(o, b) :- pid_base(f, o, bk, bs), source_pts(f, bk, bs, b).
 returns_pts(g, x) :- pid_return(g, k, s), k != "param", k != "result", source_pts(g, k, s, x).
 .plan 0:(2,1)
 
-returns_pts(g, x) :- pid_return(g, "result", c), pid_result(c, g, h), returns_pts(h, x), !fresh_return(h, x).
+returns_pts(g, x) :- pid_return(g, "result", c), pid_result(c, g, h), returns_pts(h, x).
 .plan 0:(3,2,1)
 
+// What the callee allocated while it ran (fresh_return) is the caller's
+// result by whichever of these rules it also arrives.
 returns_pts(g, x) :- pid_return(g, "result", c), pid_result(c, g, h), fresh_return(h, x).
 
 returns_pts(g, x) :-
@@ -329,8 +331,7 @@ returns_pts(g, x) :-
   passes(h, i),
   pid_arg(c, g, h, i, "call", sk, s),
   sk != "param",
-  source_pts(g, sk, s, x),
-  !fresh_return(h, x).
+  source_pts(g, sk, s, x).
 .plan 0:(5,4,2,1,3)
 
 // `func` may return its parameter `pos` as it was passed: directly, or
