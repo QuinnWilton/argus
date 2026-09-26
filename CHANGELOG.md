@@ -298,7 +298,6 @@ way; they are touched first, without making a file, and an entry that
 does not read as digests is written again rather than left because it
 is there. `Argus.Cache.RacesTest` holds each race open with a stand-in
 for the file server (`Argus.Test.FileGate`).
-||||||| parent of 0f4bb044 ([gen_statem] a state an event is re-dispatched to is a state)
 
 ### Stages: a derivation beside another into the same directory
 
@@ -622,7 +621,6 @@ else -1 (`MessageClauses.open_clauses/2`). Read by mailbox.
 that leaves the type alone) whatever its reason. `monitor_type(id,
 type)` (Monitor): the monitor at `id` watches a `process`, a `port` or
 a `time_offset`, or `dynamic`. Read by mailbox.
-||||||| parent of 11a3a45c ([docs] the exclusion census and a ranked plan to replace the patches)
 
 ### Restart-state round, part 2: a reader that outlives a table's owner
 
