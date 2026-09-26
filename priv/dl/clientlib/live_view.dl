@@ -1,0 +1,42 @@
+// A LiveView's lifecycle, and the subscriptions a process makes.
+//
+// A LiveView's mount/3 and handle_params/3, a LiveComponent's mount/1
+// and update/2 and an on_mount/4 hook run twice: once for the static
+// render, in the HTTP connection's process, and again in the LiveView's
+// process once the socket connects (`static_render_callback`). What
+// decides which run it is — `connected?/1`, `get_connect_params/1` —
+// is `connected_guarded` (Argus.Extractors.LiveView).
+//
+// A subscription is Phoenix.PubSub's or a `:pg` join, an endpoint's own
+// `subscribe/1,2` (the module `use Phoenix.Endpoint` compiles
+// `__sockets__/0` into: `endpoint_module`), or `socket.endpoint.subscribe/1`,
+// an apply; its undoing is the matching unsubscribe or leave
+// (`subscription_call`). What an endpoint's own subscribe/1,2 runs
+// inside it (`in_endpoint`) is the caller's call of the endpoint.
+//
+// Prerequisites: include clientlib/imports.dl and behaviours.dl (otp.dl
+// includes it) before this file.
+
+.decl static_render_callback(mod: symbol, func: symbol)
+
+static_render_callback(m, f) :- behaves_as(m, "Phoenix.LiveView"), function_def(f, m, "mount", 3, _).
+static_render_callback(m, f) :- behaves_as(m, "Phoenix.LiveView"), function_def(f, m, "handle_params", 3, _).
+static_render_callback(m, f) :- behaves_as(m, "Phoenix.LiveComponent"), function_def(f, m, "mount", 1, _).
+static_render_callback(m, f) :- behaves_as(m, "Phoenix.LiveComponent"), function_def(f, m, "update", 2, _).
+static_render_callback(m, f) :- function_def(f, m, "on_mount", 4, 1).
+
+.decl endpoint_module(mod: symbol)
+
+endpoint_module(m) :- function_def(_, m, "__sockets__", 0, _).
+
+.decl in_endpoint(func: symbol)
+
+in_endpoint(f) :- endpoint_module(m), function_def(f, m, _, _, _).
+
+// The call at `site` in `func` subscribes (`op` "subscribe") or undoes a
+// subscription ("unsubscribe").
+.decl subscription_call(site: symbol, func: symbol, op: symbol)
+
+subscription_call(id, f, op) :- pubsub_call(id, f, op, "pubsub").
+subscription_call(id, f, op) :- pubsub_call(id, f, op, "apply").
+subscription_call(id, f, op) :- pubsub_call(id, f, op, m), endpoint_module(m).

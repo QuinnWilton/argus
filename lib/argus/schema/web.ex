@@ -1,8 +1,8 @@
 defmodule Argus.Schema.Web do
   @moduledoc """
   What a web application declares: its routes, the fields of its Ecto
-  schemas with the ones it redacts, and which fields a derived `Inspect`
-  prints.
+  schemas with the ones it redacts, which fields a derived `Inspect`
+  prints, and where a LiveView asks whether it is connected.
 
   Layer 2 of `Argus.Schema`, which reads the relations from here.
   """
@@ -26,6 +26,46 @@ defmodule Argus.Schema.Web do
         because Phoenix compiles pipelines into the dispatch function rather \
         than into this literal, so whether a route is authenticated is \
         derivable but not from here.
+        """
+      },
+      %{
+        name: :connected_guarded,
+        layer: 2,
+        fields: [
+          {:id, :symbol, "instruction ID of the call"},
+          {:func, :symbol, "containing function ID"}
+        ],
+        doc: """
+        The call at `id` runs only on the arm where \
+        `Phoenix.LiveView.connected?/1` answered true (or \
+        `get_connect_params/1` answered, not nil, as it does only once \
+        connected): the block that arm's edge alone enters dominates the \
+        call's (Argus.Extractors.LiveView). A LiveView's mount runs once \
+        for the static render, in the HTTP connection's process, and again \
+        connected; what registers the process for later messages belongs \
+        on that arm. A call on the other arm, or after the arms join, has \
+        no row.
+        """
+      },
+      %{
+        name: :pubsub_call,
+        layer: 2,
+        fields: [
+          {:id, :symbol, "instruction ID of the call"},
+          {:func, :symbol, "containing function ID"},
+          {:op, :symbol, "subscribe | unsubscribe"},
+          {:via, :symbol,
+           "pubsub (Phoenix.PubSub, :pg), the module whose subscribe/1,2 or " <>
+             "unsubscribe/1 it is, or apply (a module held in a value)"}
+        ],
+        doc: """
+        The call at `id` subscribes the calling process to a topic or joins \
+        it to a group, or undoes that (Argus.Extractors.LiveView): \
+        `Phoenix.PubSub.subscribe/2,3` and `unsubscribe/2`, `:pg.join` and \
+        `:pg.leave` (`pubsub`); a module's own `subscribe/1,2` or \
+        `unsubscribe/1`, which is an endpoint's when the module is one \
+        (`via` names it); or `socket.endpoint.subscribe(topic)`, an apply of \
+        either name to a module held in a value (`apply`).
         """
       },
       %{

@@ -393,6 +393,37 @@ defmodule Argus.Schema.ErrorHandling do
         """
       },
       %{
+        name: :field_value_test,
+        layer: 2,
+        fields: [
+          {:func, :symbol, "the function"},
+          {:key, :symbol, "the inspected map key"},
+          {:value, :symbol, "the literal atom or integer it is compared with, inspected"}
+        ],
+        doc: """
+        `func` tests the map field under `key` for equality with a literal \
+        (nil among them): a clause head `%{draining: true}`, an `if \
+        state.mode == :idle`, a `case` arm. field_nil_test is the nil half, \
+        read alone where only an empty field matters.
+        """
+      },
+      %{
+        name: :returned_update,
+        layer: 2,
+        fields: [
+          {:func, :symbol, "the function"},
+          {:key, :symbol, "the inspected map key"},
+          {:value, :symbol, "the literal it is set to, inspected, or 'dynamic'"}
+        ],
+        doc: """
+        What `func` returns sets the map field under `key`: the returned \
+        map, or a map an element of the returned tuple holds — a callback's \
+        `{:noreply, [], %{state | receive_timer: nil}}`. The state a \
+        callback hands back, where field_nil_test is what a clause head \
+        needs of it.
+        """
+      },
+      %{
         name: :returns_call,
         layer: 2,
         fields: [

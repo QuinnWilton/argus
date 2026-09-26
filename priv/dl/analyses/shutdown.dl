@@ -767,3 +767,55 @@ permanent_child_stops_normally(sup, child, reason, site, sup_site) :-
   name != "terminate",
   callback_stop_reason(site, func, reason),
   (reason = ":normal" ; reason = ":shutdown").
+
+// ══ A Broadway producer that drains by cancelling its poll ═════════
+//
+// Since Broadway 1.1 a producer is no longer switched to :accumulate
+// while its pipeline drains (GenStage 1.2): processors still send
+// demand, and stopping the fetch is the producer's own job in
+// prepare_for_draining/1. A drain that cancels the poll timer and clears
+// the field holding its ref (`%{state | receive_timer: nil}`) sets the
+// very value the fetch's clause asks for (`handle_receive_messages(
+// %{receive_timer: nil} = state)`, field_nil_test): the next demand
+// fetches again, and what it fetches — SQS messages whose visibility
+// timeout has started, entries popped from a queue — is never processed
+// before the pipeline stops (broadway_sqs, broadway_cloud_pub_sub,
+// off_broadway_redis_stream, all fixed with a `draining: true` flag and a
+// clause that takes it first).
+//
+// `drain_keeps_fetching(mod, drain, gate, key)` — `drain` (the
+// producer's prepare_for_draining/1) sets `key` to nil in the state it
+// returns, and `gate`, which handle_demand/2 reaches in the module,
+// tests `key` against nil; and no other field the drain sets to a
+// literal is one a function handle_demand/2 reaches compares with a
+// literal (a `draining: true` the fetch takes first). Whether the drain
+// cancels a timer is not asked: one that only clears the field lets the
+// fetch run all the same.
+.decl drain_keeps_fetching(mod: symbol, drain: symbol, gate: symbol, key: symbol)
+.output drain_keeps_fetching
+
+.init drain_reach = ForwardIntraModuleSameProcessReach
+
+drain_reach.root(f, f) :-
+  behaves_as(m, "Broadway.Producer"),
+  function_def(f, m, "handle_demand", 2, _).
+
+.decl drain_flag_read(mod: symbol, drain: symbol)
+
+drain_flag_read(m, d) :-
+  function_def(d, m, "prepare_for_draining", 1, _),
+  returned_update(d, k, v),
+  v != "nil",
+  v != "dynamic",
+  function_def(h, m, "handle_demand", 2, _),
+  drain_reach.reaches(h, g),
+  field_value_test(g, k, _).
+
+drain_keeps_fetching(m, d, g, key) :-
+  behaves_as(m, "Broadway.Producer"),
+  function_def(d, m, "prepare_for_draining", 1, _),
+  returned_update(d, key, "nil"),
+  function_def(h, m, "handle_demand", 2, _),
+  drain_reach.reaches(h, g),
+  field_nil_test(g, key),
+  !drain_flag_read(m, d).

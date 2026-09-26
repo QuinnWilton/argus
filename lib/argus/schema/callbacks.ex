@@ -113,6 +113,26 @@ defmodule Argus.Schema.Callbacks do
         """
       },
       %{
+        name: :param_decided,
+        layer: 2,
+        fields: [
+          {:id, :symbol, "instruction ID of the call"},
+          {:func, :symbol, "the function containing it"},
+          {:pos, :number, "0-based position of the parameter the deciding test reads"}
+        ],
+        doc: """
+        The call at `id` — into the program, or a subscription — runs only \
+        on some arms of a test of what `func`'s parameter `pos` holds: the \
+        parameter, a field of it, or a call's answer on it \
+        (`MapSet.member?(state.subscribed, id)`, a stored pid compared with \
+        the current one). A test whose other arms only raise (a match that \
+        fails with a badmatch, a clause head that fails with a \
+        function_clause) decides nothing (Argus.Extractors.LiveView). Where \
+        the parameter is a process's state, the call is decided by what \
+        the process knows.
+        """
+      },
+      %{
         name: :clause_call,
         layer: 2,
         fields: [

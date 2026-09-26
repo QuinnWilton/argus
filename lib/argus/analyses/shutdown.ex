@@ -29,6 +29,10 @@ defmodule Argus.Analyses.Shutdown do
   - `permanent_child_stops_normally(sup, child, reason, site, sup_site)`
     — a permanent child returns `{:stop, :normal, ...}` and is started
     straight back.
+  - `drain_keeps_fetching(mod, drain, gate, key)` — a Broadway producer's
+    `prepare_for_draining/1` sets `key` to nil and no flag the fetch
+    reads, while a fetch handle_demand/2 reaches runs when `key` is nil:
+    demand during the drain fetches messages nothing processes.
   """
 
   @behaviour Argus.Analysis
@@ -176,6 +180,19 @@ defmodule Argus.Analyses.Shutdown do
         key: [:sup, :child],
         doc:
           "A permanent child returns {:stop, :normal | :shutdown, ...}; the supervisor restarts it."
+      },
+      %{
+        name: :drain_keeps_fetching,
+        fields: [
+          {:mod, :symbol, "the Broadway producer"},
+          {:drain, :symbol, "its prepare_for_draining/1"},
+          {:gate, :symbol, "the function handle_demand/2 reaches that fetches when key is nil"},
+          {:key, :symbol, "the state field the drain sets to nil"}
+        ],
+        key: [:mod],
+        doc:
+          "A Broadway producer whose drain clears the field the fetch asks to be nil " <>
+            "and sets no flag it reads: demand during the drain fetches again."
       },
       Argus.Findings.Tooling.relation()
     ]
@@ -372,6 +389,27 @@ defmodule Argus.Analyses.Shutdown do
           "the entry from the bookkeeping in the same step"
       ],
       related: [Findings.related("monitor established", Findings.at_site(site, mod))]
+    )
+  end
+
+  def finding(:drain_keeps_fetching, [mod, drain, gate, key]) do
+    Findings.new(
+      :warning,
+      "Broadway producer keeps fetching while it drains",
+      "#{mod}'s prepare_for_draining/1 sets #{key} to nil — the field its poll timer's " <>
+        "ref is kept in — and sets no flag its fetch reads. Since Broadway 1.1 a " <>
+        "draining producer still " <>
+        "gets demand, and #{Findings.call_name(gate)}, which handle_demand/2 reaches, " <>
+        "fetches when #{key} is nil: the drain's own write lets the next demand fetch " <>
+        "again. Messages fetched now are never processed before the pipeline stops " <>
+        "(redelivered late, or lost for a source that pops them).",
+      at: Findings.at_func(drain),
+      at_label: "cancels the poll and leaves the fetch open",
+      related: [Findings.related("fetches when #{key} is nil", Findings.at_func(gate))],
+      help: [
+        "set a `draining: true` field here and give the fetch a first clause that " <>
+          "takes it and returns `{:noreply, [], state}`"
+      ]
     )
   end
 

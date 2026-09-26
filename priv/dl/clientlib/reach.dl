@@ -330,6 +330,27 @@
     !fun_handed(_, f, h, _).
 }
 
+// BackwardUnguarded over what one process runs: an edge that leaves the
+// caller's stack (runs_elsewhere: a task's closure, a spawned fun, a fun
+// kept to run later) is not followed, so a seed a callback reaches is
+// one it reaches in its own process.
+.comp BackwardUnguardedSameProcess {
+  .decl seed(func: symbol, target: symbol)
+  .decl guarded(call: symbol)
+  .decl reaches(func: symbol, target: symbol)
+
+  reaches(f, t) :- seed(f, t).
+  reaches(f, t) :- reaches(h, t), call_instr(f, h, id), !guarded(id), !runs_elsewhere(f, h).
+  reaches(f, t) :- reaches(h, t), fun_handed(id, f, h, _), !guarded(id), !runs_elsewhere(f, h).
+
+  reaches(f, t) :-
+    reaches(h, t),
+    call_edge(f, h),
+    !runs_elsewhere(f, h),
+    !call_instr(f, h, _),
+    !fun_handed(_, f, h, _).
+}
+
 // The same, walked against the edges: from a few interesting functions
 // to the callers that reach them within `limit` calls.
 .comp BackwardBoundedCallReach {

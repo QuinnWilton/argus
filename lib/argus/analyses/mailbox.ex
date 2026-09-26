@@ -47,6 +47,18 @@ defmodule Argus.Analyses.Mailbox do
     GenServer's `default` handle_info/2, which logs it as an error; or,
     sent to a gen_statem none of whose callbacks takes it, a state with no
     `:info` catch-all (`state_crash`, `handler` is that state's function).
+  - `static_render_registration(mod, entry, func, site, kind)` — a
+    LiveView callback that also runs on the static render (`mount/3`,
+    `handle_params/3`, a LiveComponent's `mount/1` and `update/2`, an
+    `on_mount/4` hook) reaches, in its own process and with no
+    `connected?/1` test in the way, a registration for later messages
+    (`kind` `subscribe`, `timer` to self, `monitor`): on the static render
+    it registers the HTTP connection's process.
+  - `repeated_subscription(mod, entry, func, site)` — a callback that runs
+    again and again (a handler, `handle_params/3`, `handle_event/3`, a
+    channel's `handle_in/3`) reaches a subscription (PubSub, an
+    endpoint's, `:pg`), and nothing the module's callbacks run ever
+    unsubscribes: each run adds one more copy of every later broadcast.
   """
 
   @behaviour Argus.Analysis
@@ -90,6 +102,8 @@ defmodule Argus.Analyses.Mailbox do
       # Which clause of handle_info/2 a call runs in (clause_call): a
       # periodic timer loop is the clause for its own message.
       Argus.Extractors.ClauseCall,
+      # Where a LiveView asks connected?/1 (connected_guarded).
+      Argus.Extractors.LiveView,
       Argus.Extractors.Tooling
     ]
 
@@ -151,6 +165,35 @@ defmodule Argus.Analyses.Mailbox do
         # the loop's re-arms it multiplies.
         key: [:mod, :message, :site],
         doc: "A periodic timer loop that another callback arms again while it runs."
+      },
+      %{
+        name: :static_render_registration,
+        fields: [
+          {:mod, :symbol, "the LiveView (or LiveComponent, or on_mount hook) module"},
+          {:entry, :symbol, "the callback that runs on the static render too"},
+          {:func, :symbol, "the function making the registration"},
+          {:site, :symbol, "the subscription, timer or monitor"},
+          {:kind, :symbol, "subscribe | timer | monitor"}
+        ],
+        # One per registration, whichever callbacks of the module reach it.
+        key: [:mod, :site],
+        doc:
+          "A LiveView callback that runs on the static render registers the process " <>
+            "for later messages without asking connected?/1."
+      },
+      %{
+        name: :repeated_subscription,
+        fields: [
+          {:mod, :symbol, "the process module"},
+          {:entry, :symbol, "a callback that runs again and again and reaches it"},
+          {:func, :symbol, "the function subscribing"},
+          {:site, :symbol, "the subscription"}
+        ],
+        # One per subscription and module, whichever callbacks reach it.
+        key: [:mod, :site],
+        doc:
+          "A callback that runs again and again subscribes the process each time, " <>
+            "and the module never unsubscribes."
       },
       %{
         name: :timer_cancel_under_test,
@@ -379,6 +422,59 @@ defmodule Argus.Analyses.Mailbox do
         "keep the loop's ref in the state and cancel it before arming again",
         "or put a ref in the message (`{#{message}, ref}`) and let the loop drop a stale one",
         "or leave the arming to init/1 and the loop, and do the work directly here"
+      ]
+    )
+  end
+
+  def finding(:static_render_registration, [_mod, entry, func, site, kind]) do
+    what =
+      case kind do
+        "subscribe" -> "subscribes it to a topic"
+        "timer" -> "arms a timer to it"
+        _ -> "monitors a process from it"
+      end
+
+    Findings.new(
+      :warning,
+      "LiveView registers for messages on the static render",
+      "#{Findings.call_name(entry)} runs twice: first for the static render, in the " <>
+        "HTTP connection's process, then in the LiveView's own once the socket " <>
+        "connects. #{Findings.call_name(func)} #{what} on both runs, with no " <>
+        "`connected?/1` test in the way: the first registers the HTTP connection's " <>
+        "process, which a keep-alive client keeps alive, so it takes every " <>
+        "message meant for the LiveView (the server logs each as unexpected) and " <>
+        "the registration's work is done twice.",
+      at: Findings.at_site_in_func(site, func),
+      at_label: "runs on the static render too",
+      related:
+        if(func == entry,
+          do: [],
+          else: [Findings.related("the callback that reaches it", Findings.at_func(entry))]
+        ),
+      help: ["wrap it in `if connected?(socket) do ... end`"]
+    )
+  end
+
+  def finding(:repeated_subscription, [mod, entry, func, site]) do
+    Findings.new(
+      :warning,
+      "Subscription made again each time a callback runs",
+      "#{Findings.call_name(entry)} runs again and again, and each run reaches " <>
+        "#{Findings.call_name(func)}'s subscription. A second subscription to a " <>
+        "topic the process already holds is not a no-op: every later broadcast " <>
+        "arrives once more, and nothing #{mod} runs ever unsubscribes, so the " <>
+        "copies accumulate for the life of the process.",
+      at: Findings.at_site_in_func(site, func),
+      at_label: "subscribes again on every run",
+      related:
+        if(func == entry,
+          do: [],
+          else: [Findings.related("the callback that runs it again", Findings.at_func(entry))]
+        ),
+      help: [
+        "subscribe once, where the process starts (init/1, a mounted LiveView), or " <>
+          "keep the topics subscribed in the state and skip the ones already there",
+        "or unsubscribe from the previous topics before subscribing to the new ones"
       ]
     )
   end

@@ -187,6 +187,8 @@ defmodule Argus.Extractors.ErrorHandling do
       :timer_ref,
       :timer_store,
       :field_nil_test,
+      :returned_update,
+      :field_value_test,
       :timer_dropped,
       :timer_tag,
       :trap_exit,
@@ -841,6 +843,8 @@ defmodule Argus.Extractors.ErrorHandling do
         |> emit_stores(mod, func_id, instrs)
         |> emit_returns(mod, func_id, instrs)
         |> emit_nil_tests(func_id, instrs)
+        |> emit_returned_updates(func_id, instrs)
+        |> emit_value_tests(func_id, instrs)
       end
     end)
   end
@@ -859,6 +863,65 @@ defmodule Argus.Extractors.ErrorHandling do
     |> Enum.reduce(facts, fn key, acc -> add_fact(acc, :field_nil_test, [func_id, key]) end)
   end
 
+  # The map fields a function sets to a literal in what it returns: the
+  # map itself, or one an element of the returned tuple holds — a
+  # callback's `{:noreply, [], %{state | receive_timer: nil}}`. What a
+  # state a callback hands back says, where a clause head's test says
+  # what it needs (field_nil_test).
+  defp emit_returned_updates(facts, func_id, instrs) do
+    instrs
+    |> Enum.with_index()
+    |> Enum.flat_map(fn
+      {:return, idx} -> returned_updates(instrs, idx)
+      _ -> []
+    end)
+    |> Enum.uniq()
+    |> Enum.sort()
+    |> Enum.reduce(facts, fn {key, value}, acc ->
+      add_fact(acc, :returned_update, [func_id, key, value])
+    end)
+  end
+
+  defp returned_updates(instrs, idx) do
+    instrs
+    |> Resolve.writers(idx, {:x, 0})
+    |> Enum.flat_map(fn
+      {:param, _k} ->
+        []
+
+      at ->
+        case Reaching.at(instrs, at) do
+          {:put_tuple2, _dst, {:list, elements}} ->
+            for {:x, _} = reg <- Enum.map(elements, &Instr.register/1),
+                w <- Resolve.writers(instrs, at, reg),
+                is_integer(w),
+                pair <- map_updates(Reaching.at(instrs, w)),
+                do: pair
+
+          instr ->
+            map_updates(instr)
+        end
+    end)
+  end
+
+  defp map_updates({op, _fail, _src, _dst, _live, {:list, pairs}})
+       when op in [:put_map_assoc, :put_map_exact] do
+    pairs
+    |> Enum.chunk_every(2)
+    |> Enum.flat_map(fn
+      [{:atom, key}, value] -> [{inspect(key), literal_value(value)}]
+      _ -> []
+    end)
+  end
+
+  defp map_updates(_instr), do: []
+
+  defp literal_value(nil), do: "[]"
+  defp literal_value({:atom, atom}), do: inspect(atom)
+  defp literal_value({:integer, n}), do: Integer.to_string(n)
+  defp literal_value({:literal, term}), do: spell(term)
+  defp literal_value(_register), do: "dynamic"
+
   defp nil_tested(instrs, idx, {:test, op, _fail, [a, b]})
        when op in [:is_eq_exact, :is_ne_exact, :is_eq, :is_ne] do
     cond do
@@ -875,6 +938,41 @@ defmodule Argus.Extractors.ErrorHandling do
   end
 
   defp nil_tested(_instrs, _idx, _instr), do: []
+
+  # The map fields the function tests for equality with a literal atom
+  # or integer, nil among them: a clause head `%{draining: true}`, an
+  # `if state.mode == :idle`. The literal is inspected. What a flag a
+  # callback sets (returned_update) is compared with.
+  defp emit_value_tests(facts, func_id, instrs) do
+    instrs
+    |> Enum.with_index()
+    |> Enum.flat_map(fn {instr, idx} -> value_tested(instrs, idx, instr) end)
+    |> Enum.uniq()
+    |> Enum.sort()
+    |> Enum.reduce(facts, fn {key, value}, acc ->
+      add_fact(acc, :field_value_test, [func_id, key, value])
+    end)
+  end
+
+  defp value_tested(instrs, idx, {:test, op, _fail, [a, b]})
+       when op in [:is_eq_exact, :is_ne_exact, :is_eq, :is_ne] do
+    case {literal_value(a), literal_value(b)} do
+      {"dynamic", "dynamic"} -> []
+      {"dynamic", value} -> for key <- field_key(instrs, idx, a), do: {key, value}
+      {value, "dynamic"} -> for key <- field_key(instrs, idx, b), do: {key, value}
+      _ -> []
+    end
+  end
+
+  defp value_tested(instrs, idx, {:select_val, src, _fail, {:list, pairs}}) do
+    for value <- Enum.take_every(pairs, 2),
+        spelled = literal_value(value),
+        spelled != "dynamic",
+        key <- field_key(instrs, idx, src),
+        do: {key, spelled}
+  end
+
+  defp value_tested(_instrs, _idx, _instr), do: []
 
   defp empty?({:atom, atom}), do: atom in [nil, :undefined]
   defp empty?(_operand), do: false
