@@ -64,7 +64,7 @@ defmodule Mix.Tasks.Compile.ScryExtractionTest do
       {_status, diagnostics} = Fixture.compile!()
 
       assert partial(diagnostics) == []
-      assert length(findings(diagnostics)) == 4
+      assert length(findings(diagnostics)) == 3
       assert length(QueryLog.executions(log, :module_extraction)) == 5
 
       # And with nothing left to retry, the next run is a noop again.
@@ -94,7 +94,7 @@ defmodule Mix.Tasks.Compile.ScryExtractionTest do
 
       assert [lost] = partial(diagnostics)
       assert lost.message =~ "Depot.Garbage could not be extracted"
-      assert length(findings(diagnostics)) == 4
+      assert length(findings(diagnostics)) == 3
     end)
   end
 end

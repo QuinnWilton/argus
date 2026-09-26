@@ -5,10 +5,12 @@ defmodule Depot.Application do
 
   @impl true
   def start(_type, _args) do
-    # Notifier starts first; Queue and Sonar both depend on it through
-    # GenServer calls. Under :one_for_one a Notifier crash restarts only
-    # the Notifier, and both dependents keep running against a Notifier
-    # that has forgotten them — the coupling one_for_one_coupling reports.
+    # Notifier starts first; Sonar listens on it from handle_continue/2
+    # and Queue notifies it on every event. Under :one_for_one a Notifier
+    # crash restarts only the Notifier, which comes back with no
+    # listeners, and Sonar runs on deaf — the coupling argus reports.
+    # Queue's notifications reach the new Notifier by name: it holds
+    # nothing there to lose.
     children = [
       Depot.Notifier,
       Depot.Queue,

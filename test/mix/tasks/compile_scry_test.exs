@@ -68,13 +68,13 @@ defmodule Mix.Tasks.Compile.ScryTest do
       result = compile!()
       diags = scry_diagnostics(result)
 
-      # The fixture goldens: two coupling findings at the tree
-      # definition and two task findings. Nothing else from the default
-      # set: Sonar's handle_info/2 has no catch-all, which is no finding
-      # by itself, and nothing writes its mailbox that it does not take —
-      # the one call it makes out is a timed GenServer.call, whose late
-      # reply an alias drops.
-      assert counts_by_code(diags) == %{"coupling" => 2, "mailbox" => 2}
+      # The fixture goldens: one coupling finding at the tree definition
+      # (Sonar's listener registration, which Notifier keeps) and two
+      # task findings. Queue notifies Notifier on each use and holds
+      # nothing there. Nothing else from the default set: Sonar's
+      # handle_info/2 has no catch-all, which is no finding by itself, and
+      # nothing writes its mailbox that it does not take.
+      assert counts_by_code(diags) == %{"coupling" => 1, "mailbox" => 2}
 
       coupling = Enum.filter(diags, &(code_of(&1) == "coupling"))
       assert Enum.all?(coupling, &String.ends_with?(&1.file, "lib/depot/application.ex"))
@@ -88,10 +88,14 @@ defmodule Mix.Tasks.Compile.ScryTest do
       assert first_coupling.details =~ "supervision tree defined here"
 
       assert first_coupling.details =~
-               "help: restart-coupled siblings belong under `rest_for_one`"
+               "help: put the pair under `rest_for_one` with `Depot.Notifier` started"
 
-      assert first_coupling.details =~ "├─["
-      assert first_coupling.details =~ "coupling call"
+      # The two related frames: Sonar's listen from handle_continue/2 and
+      # the Notifier clause that keeps it.
+      assert first_coupling.details =~ "├─[lib/depot/sonar.ex:"
+      assert first_coupling.details =~ "registers with the sibling here"
+      assert first_coupling.details =~ "├─[lib/depot/notifier.ex:"
+      assert first_coupling.details =~ "kept here"
 
       # Extraction ran for every fixture module.
       modules = QueryLog.executions(log, :module_extraction)
@@ -108,7 +112,7 @@ defmodule Mix.Tasks.Compile.ScryTest do
 
       # Prior findings re-emit from memo hits: same diagnostics, zero
       # extraction, zero solves.
-      assert counts_by_code(diags) == %{"coupling" => 2, "mailbox" => 2}
+      assert counts_by_code(diags) == %{"coupling" => 1, "mailbox" => 2}
       assert QueryLog.executions(log, :module_extraction) == []
       assert QueryLog.executions(log, :souffle_solve) == []
 
@@ -136,7 +140,8 @@ defmodule Mix.Tasks.Compile.ScryTest do
       assert line_after == line_before + 1
 
       # ── semantic edit ───────────────────────────────────────────────
-      # one_for_one → rest_for_one clears the coupling findings; the
+      # one_for_one → rest_for_one clears the coupling finding (a
+      # Notifier restart now restarts Sonar, which listens again); the
       # leaked task remains.
       rewritten =
         application

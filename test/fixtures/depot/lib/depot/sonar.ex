@@ -1,6 +1,11 @@
 defmodule Depot.Sonar do
   @moduledoc """
-  Health monitor for the queue: emits heartbeats through `Depot.Notifier`.
+  Health monitor for the queue: listens on the `:health` channel and
+  emits heartbeats through `Depot.Notifier`.
+
+  The listener registration is made once, from `handle_continue/2`, and
+  lives in the Notifier's state. A Notifier restart forgets it, and
+  Sonar, not restarted with it, never listens again.
   """
   use GenServer
 
@@ -22,7 +27,14 @@ defmodule Depot.Sonar do
   @impl true
   def init(opts) do
     notifier = Keyword.get(opts, :notifier, Notifier)
-    {:ok, %{notifier: notifier}}
+    {:ok, %{notifier: notifier}, {:continue, :register}}
+  end
+
+  @impl true
+  def handle_continue(:register, state) do
+    # Registration lives in the Notifier's state. Lost on Notifier restart.
+    Notifier.listen(state.notifier, @channel)
+    {:noreply, state}
   end
 
   @impl true

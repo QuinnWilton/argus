@@ -84,7 +84,7 @@ defmodule Mix.Tasks.Compile.ScryConfigTest do
         {_status, diagnostics} = compile!()
         diags = Enum.filter(diagnostics, &(&1.compiler_name == "scry"))
 
-        # The coupling findings anchor in the ignored file: reports
+        # The coupling finding anchors in the ignored file: reports
         # suppressed. The mailbox findings (archive.ex) are
         # untouched. That the
         # coupling ROWS were computed at all is asserted by the unfiltered
@@ -102,10 +102,11 @@ defmodule Mix.Tasks.Compile.ScryConfigTest do
         {_status, diagnostics} = compile!()
         diags = Enum.filter(diagnostics, &(&1.compiler_name == "scry"))
 
-        # No Archive extraction, so no task findings; the couplings
-        # (Sonar/Queue against Notifier via Application) are unaffected.
+        # No Archive extraction, so no task findings; the coupling
+        # (Sonar's registration with Notifier, at Application's tree) is
+        # unaffected.
         refute Depot.Archive in QueryLog.executions(log, :module_extraction)
-        assert Enum.sort(codes(diags)) == ["coupling", "coupling"]
+        assert codes(diags) == ["coupling"]
       end)
     end
 

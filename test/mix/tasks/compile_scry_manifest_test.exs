@@ -377,7 +377,7 @@ defmodule Mix.Tasks.Compile.ScryManifestTest do
 
       # Full rebuild, same findings, no crash.
       assert counts_by_code(scry_diagnostics(result)) ==
-               %{"coupling" => 2, "mailbox" => 2}
+               %{"coupling" => 1, "mailbox" => 2}
 
       assert QueryLog.executions(log, :module_extraction) != []
     end)
