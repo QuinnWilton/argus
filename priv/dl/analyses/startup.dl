@@ -764,12 +764,36 @@ deferral_defect(mod, "init_timeout", site, to_string(ms)) :-
 // waits on the lock, and the lock waits on the nodes in its list: every
 // connected node when `dep` is "cluster", only this node's global server
 // when it is "local" (it still waits forever on a local holder), and
-// "unknown" when the list is not in the bytecode. A retry count the
+// "unknown" when the list is not in the bytecode. `lock` is the :global
+// call itself, in whichever function holds it (init/1 included).
+
+// An init/1 waits for a :global lock that retries until it is granted,
+// so its supervisor's start waits as long as anyone else holds the lock.
+.decl lock_during_init(init: symbol, lock: symbol)
+
+lock_during_init(init, lock) :-
+  is_init(init),
+  waits_for(init, lock),
+  retries_until_locked(lock).
+
+// `func` waits while the :global call at `lock` runs: the call is on
+// func's own stack, entering only the clauses a literal first argument
+// matches, or in a task func awaits (global_path).
+.decl waits_for(func: symbol, lock: symbol) inline
+
+waits_for(func, lock) :- global_path(func, _, lock).
+
+// A :global call that retries until it is granted: its retries are
+// :infinity, or not in the bytecode and assumed :infinity
+// (lock_until_granted).
+.decl retries_until_locked(lock: symbol) inline
+
+retries_until_locked(lock) :- lock_until_granted(lock, _, _, _, _).
+
+// Each lock is reported with its node list as `dep`. A retry count the
 // bytecode does not show is assumed :infinity, the default the wrappers
-// forward, and the row says so by its kind ("global_assumed"). `lock` is
-// the :global call itself, in whichever function holds it (init/1
-// included). One row per site — finding builders dedupe on (func,
-// nodes, op).
+// forward, and the row says so by its kind ("global_assumed"). One row
+// per site — finding builders dedupe on (func, nodes, op).
 blocks_on_peer(init, "init", nodes, "global", "", "", lock, op) :-
   lock_during_init(init, lock),
   global_op(lock, _, op, "infinity", nodes).
@@ -778,13 +802,6 @@ blocks_on_peer(init, "init", nodes, "global_assumed", "", "", lock, op) :-
   lock_during_init(init, lock),
   global_op(lock, _, op, "dynamic", nodes).
 
-.decl lock_during_init(init: symbol, lock: symbol)
-
-lock_during_init(init, lock) :-
-  is_init(init),
-  reaches_in_same_process(init, lock),
-  retries_until_locked(lock).
-
 // A lock with a positive retry count gives up and returns false, after
 // backoff that OTP caps at 8 s a try. Over [node()] that is the fix the
 // "local" finding recommends, and is quiet. Over other nodes each try
@@ -792,39 +809,30 @@ lock_during_init(init, lock) :-
 // the node is declared down, so the start waits for a bounded but
 // possibly long time: reported one severity below the other kinds, as
 // "global_bounded".
-blocks_on_peer(init, "init", nodes, "global_bounded", "", "", lock, op) :-
-  bounded_lock_during_init(init, lock),
-  bounded_lock(lock, _, op, _, nodes).
 
+// An init/1 waits for a :global lock that gives up only after its
+// retries, and each retry waits on other nodes.
 .decl bounded_lock_during_init(init: symbol, lock: symbol)
 
 bounded_lock_during_init(init, lock) :-
   is_init(init),
-  reaches_in_same_process(init, lock),
+  waits_for(init, lock),
   gives_up_after_retries(lock),
   waits_on_other_nodes(lock).
 
-// `func` is on the stack when the :global call at `site` runs: the calls
-// that stay in the calling process, entering only the clauses a literal
-// first argument matches, and the tasks it awaits (global_path).
-.decl reaches_in_same_process(func: symbol, site: symbol) inline
-
-reaches_in_same_process(f, site) :- global_path(f, _, site).
-
-// A :global call that retries until it is granted (lock_until_granted).
-.decl retries_until_locked(site: symbol) inline
-
-retries_until_locked(site) :- lock_until_granted(site, _, _, _, _).
-
 // A :global call that retries a bounded number of times (bounded_lock).
-.decl gives_up_after_retries(site: symbol) inline
+.decl gives_up_after_retries(lock: symbol) inline
 
-gives_up_after_retries(site) :- bounded_lock(site, _, _, _, _).
+gives_up_after_retries(lock) :- bounded_lock(lock, _, _, _, _).
 
 // Its node list holds other nodes, or may (not "local").
-.decl waits_on_other_nodes(site: symbol) inline
+.decl waits_on_other_nodes(lock: symbol) inline
 
-waits_on_other_nodes(site) :- global_op(site, _, _, _, nodes), nodes != "local".
+waits_on_other_nodes(lock) :- global_op(lock, _, _, _, nodes), nodes != "local".
+
+blocks_on_peer(init, "init", nodes, "global_bounded", "", "", lock, op) :-
+  bounded_lock_during_init(init, lock),
+  bounded_lock(lock, _, op, _, nodes).
 
 // A lock during init, of any kind reported above.
 .decl init_lock(init: symbol, lock: symbol)
