@@ -167,6 +167,17 @@ fixtures named break it one way each and must stay reported
 - Tooling (every analysis): nothing of the product calls the module.
   Broken by: a release task, a `lib/**/test/` context a controller
   calls. Known limit: a module reached only by a dynamic call.
+- Supervision children (the permanent-child excuses of ets and
+  shutdown): a child is read only from a spec the extractor reads, with
+  the restart it states, and a shorthand runs under its own
+  `child_spec/1`'s restart. Broken by: a module a helper takes from a
+  call, a restart a helper is handed, a `start_child` whose module is the
+  function's parameter, a restart from a call, a
+  `Supervisor.child_spec/2` override, a temporary `start_child` spec, a
+  shorthand whose own `child_spec/1` says `:transient`
+  (test/soundness/supervision_test.exs).
+  Known limit: where the in-order reader cannot follow an element, the
+  flat scans stand in and may name a child that is not one.
 
 ## Vocabulary
 
@@ -292,9 +303,9 @@ than more; it errs loud when the same uncertainty can add a finding.
 
 ### Supervision structure
 
-- **Names.** `child_subtree`, `starts_before`, `boot_subtree`, `boots_before`, `template_supervisor`, `application_root`, `sibling`, `sup_management_call`, `child_creating_op`, `unbounded_sup_op`, `stopping_sup_op` (supervision.dl).
-- **Meaning.** `child_subtree(sup, branch, mod)` maps every module under a supervisor, static and dynamic children at any depth, to the direct child branch it belongs to. `starts_before(sup, earlier, later, …)` joins two branches in start order: what the earlier branch holds is running when the later's init runs, and under rest_for_one the later restarts when the earlier crashes; shutdown reads it for stop order, where whatever a branch holds stops with it. `boots_before` is the same order over `boot_subtree`, the static children a supervisor starts in its own start: a DynamicSupervisor's child and a simple_one_for_one supervisor's template child (`template_supervisor`) start when something asks, after the tree is up, and the startup rules about what an init meets during the boot read this one. `application_root(sup)` is the supervisor an Application's start/2 starts, which dies only with the application. Children come from map specs, `{Mod, args}` shorthands and OTP's tuple specs `{Id, {M, F, A}, Restart, Shutdown, Type, Modules}` (the one listed module, else the start function's). `sibling` is two direct children of one supervisor. `sup_management_call` is a call to a supervisor's API, and the op tables say which calls create a child, which wait for a whole shutdown and which stop children.
-- **Direction.** Supervision is module-level: two instances of one child module are one module here.
+- **Names.** `child_subtree`, `starts_before`, `boot_subtree`, `boots_before`, `template_supervisor`, `application_root`, `child_restart`, `sibling`, `sup_management_call`, `child_creating_op`, `unbounded_sup_op`, `stopping_sup_op` (supervision.dl).
+- **Meaning.** `child_subtree(sup, branch, mod)` maps every module under a supervisor, static and dynamic children at any depth, to the direct child branch it belongs to. `starts_before(sup, earlier, later, …)` joins two branches in start order: what the earlier branch holds is running when the later's init runs, and under rest_for_one the later restarts when the earlier crashes; shutdown reads it for stop order, where whatever a branch holds stops with it. `boots_before` is the same order over `boot_subtree`, the static children a supervisor starts in its own start: a DynamicSupervisor's child and a simple_one_for_one supervisor's template child (`template_supervisor`) start when something asks, after the tree is up, and the startup rules about what an init meets during the boot read this one. `application_root(sup)` is the supervisor an Application's start/2 starts, which dies only with the application. Children come from map specs, `{Mod, args}` shorthands and OTP's tuple specs `{Id, {M, F, A}, Restart, Shutdown, Type, Modules}` (the one listed module, else the start function's). The supervision extractor reads the child list in order through the writes that reach it: into the local functions that build it, with their parameters bound to the call's arguments (ejabberd_sup's `worker/1`, mnesia_kernel_sup's `worker_spec/3`), through `++` and `lists:append/2`, `Enum.reject(&is_nil/1)`, `Supervisor.child_spec/2`'s overrides and a `Mod.child_spec/1` call (the shorthand spelled out); a list whose element or tail it cannot follow is open (`supervisor_children_open`), and the flat scans of the tree function stand in for what it hides. A `supervisor:start_child/2` or `Supervisor.start_child/2` of a spec adds a child (`added_child`, with its restart), as a `DynamicSupervisor.start_child/2` does (`dynamic_child`, with `dynamic_child_restart` when its spec states a restart other than `:permanent`); both are members of the tree and start on demand. `child_restart(sup, pos, child, restart)` is the restart a child runs under: the spec's, or for a shorthand its own `child_spec/1`'s when that states one (`child_spec_restart`). `sibling` is two direct children of one supervisor. `sup_management_call` is a call to a supervisor's API, and the op tables say which calls create a child, which wait for a whole shutdown and which stop children.
+- **Direction.** Supervision is module-level: two instances of one child module are one module here, and the lists of every clause of one init/1 are one tree, in the order the bytecode lists them (kernel's `kernel_sup` and `kernel_safe_sup` are one `:kernel`). A child is read only from a spec the extractor reads; a module or a restart it cannot tell names no child (quiet for what a child excuses, loud for what it would excuse), but where it stands in, a flat scan can name a child that is not one (a keyword pair naming a loaded Erlang module).
 - **Used by.** coupling, shutdown and startup; calls.dl limits module-level reach to supervised modules through it.
 
 ### A request entry and its parameters
@@ -946,15 +957,15 @@ The call exits with `:noproc`, so what it was for never happens, and terminate/2
 **Property.** Some supervisor P lists a child C as `:permanent`, and some callback of C other than terminate/2 returns `{:stop, :normal, ...}` or `{:stop, :shutdown, ...}` with a literal reason. A supervisor restarts a permanent child whatever its exit reason: the process asks to go away and is started straight back, what the stop was for (a graceful permdown, a drain-and-quit) is undone at once, and the restart counts toward P's intensity (Phoenix PubSub's tracker shards on graceful permdown, until their spec became `:transient`). One finding per supervisor and child, with P's child spec as a related frame.
 
 **Assumptions and limits.**
-- The restart is the one P's child list gives. A shorthand spec (`C` or `{C, args}`) is taken as permanent even when C's own `child_spec/1` (`use GenServer, restart: :transient`) says otherwise (reports).
+- The restart is the one P's child list gives, or for a shorthand spec (`C`, `{C, args}`, `C.child_spec(args)`) the one C's own `child_spec/1` states (`child_restart`: `use GenServer, restart: :transient`, a hand-written transient map). Before the supervision round a shorthand was taken as permanent whatever its `child_spec/1` said (realtime's `Tenants.Connect`, `use GenServer, restart: :temporary`, was reported).
 - Only a literal `:normal` or `:shutdown`: `{:shutdown, term}`, which is restarted too, and a computed reason are not read; neither is `exit(:normal)` from a callback.
 - Children started under a DynamicSupervisor, permanent by default, are not read.
 
-**Fixtures.** Positive: `PermanentQuitter` under `QuitterSupervisor` (test/fixtures/supervision_fixture.ex). Quiet: `PermanentQuitter` under `TransientQuitterSupervisor` (same file). Asserted in test/analyses/shutdown_supervision_test.exs.
+**Fixtures.** Positive: `PermanentQuitter` under `QuitterSupervisor` (test/fixtures/supervision_fixture.ex), `ChildSpecs.PermanentStopper` under `ChildSpecs.RestartSup`. Quiet: `PermanentQuitter` under `TransientQuitterSupervisor` (same file), `ChildSpecs.TransientOwner` and `ProvisionerLike` under `RestartSup` (test/fixtures/supervision_specs_fixture.ex). Asserted in test/analyses/shutdown_supervision_test.exs.
 
 **Corpus.** Fix pairs: `phoenix_pubsub#194` (phoenixframework/phoenix_pubsub, 8b92e8f → 148ae10, Phoenix.Tracker.Shard).
 
-**Precision.** Not measured.
+**Precision.** Not measured as a class. The supervision round (19 evaluation sets) moved it by 1 gone (`Tenants.Connect`, above: false) and 5 added, all read: none true. mnesia_controller, mnesia_recover and mnesia_subscr stop only after their supervisor's `'EXIT'` (a stop nothing restarts); emqx's `emqx_otel_cpu_sup` has a `stop` call clause nothing sends (the program stops it with `terminate_child`); kernel's `inet_db:stop/0` is exported and never called, and under kernel_sup's `{one_for_all, 0, 1}` the stop would halt the node rather than restart it. The rule does not ask whether the stop is reachable or whether the parent is the one going.
 
 ### A Broadway producer that keeps fetching while it drains
 
@@ -1356,11 +1367,11 @@ A synchronous wait that can last forever or nest: every finding is a process wai
 `dual_restart_authority`
 · titles: "Two restart authorities for the same child" (`:warning`)
 
-**Property.** A module M has a function F that, through calls within M, reaches both a `DynamicSupervisor.start_child/2` of a known child module C under supervisor S and a monitor of the pid that start returned (named so by the extractor, or followed back to the start by process points-to); some function of M whose clause heads match `{:DOWN, ...}` reaches, within M, a start of C under S again; and C's own `child_spec/1` does not declare `restart: :temporary`. M and the supervisor both restart C: a child that fails on a semantic error crash-loops under two authorities, exhausts the supervisor's restart intensity, and the escalation reaches the tree above (redix#334).
+**Property.** A module M has a function F that, through calls within M, reaches both a `DynamicSupervisor.start_child/2` of a known child module C under supervisor S and a monitor of the pid that start returned (named so by the extractor, or followed back to the start by process points-to); some function of M whose clause heads match `{:DOWN, ...}` reaches, within M, a start of C under S again; and neither C's own `child_spec/1` nor that start's own spec (`dynamic_child_restart`) declares `restart: :temporary`. M and the supervisor both restart C: a child that fails on a semantic error crash-loops under two authorities, exhausts the supervisor's restart intensity, and the escalation reaches the tree above (redix#334).
 
 **Assumptions and limits.**
 - Only `DynamicSupervisor.start_child/2` with a resolvable child module is a start; `Task.Supervisor` children and a static supervisor's `restart_child` are not.
-- A `restart: :temporary` given at the call site (an inline map spec, or `Supervisor.child_spec/2` overrides) is not read, so that shape is reported although M is then the only authority.
+- A `restart: :temporary` given at the call site (an inline map spec, or `Supervisor.child_spec/2` overrides) is read since the supervision round (`dynamic_child_restart`): redix#334's own fix is that shape, and was quiet at the fix only because its child went unread before (`Argus.CouplingTest.TempOwner`, inline in `test/analyses/coupling_test.exs`).
 - The `:DOWN` handler is the whole function: a `handle_info/2` whose `:DOWN` clause only forgets the child, while another clause starts one, is reported.
 - F need not run in M's own process: a client function that starts and monitors in its caller's process counts.
 - `Quiet.UnrelatedMonitorRestarter` pins the suppressed shape: the monitor is of another process than the one started (Oban.Queues).
@@ -2178,20 +2189,20 @@ An error path the code could have seen and did not take: an exception a catch-al
 `supervisor_registered_as_worker`
 · titles: "Supervisor registered as a worker" (`:error`)
 
-**Property.** Some supervisor S's child list holds a spec that states `type: :worker` explicitly, and the spec's start module declares the Supervisor behaviour (`behaves_as`, so Erlang's `-behaviour(supervisor)` counts). The type decides the default shutdown: a supervisor child gets unlimited time to take its own subtree down, and a worker gets a finite one (5 s). Registered as a worker, the supervisor is killed part-way through terminating its children, and its grandchildren are orphaned rather than terminated. They keep running, holding what they held, with no supervisor above them (RabbitMQ e40387e4).
+**Property.** Some supervisor S's child list holds a spec that states `type: :worker`, or a map spec that states no type (a worker by the supervisor's default), and the spec's start module, not S's own, declares the Supervisor behaviour (`behaves_as`, so Erlang's `-behaviour(supervisor)` counts). Or (`own_spec_registered_as_worker`) a module that declares the Supervisor behaviour writes its own `child_spec/1` as a map with no type (`child_spec_type`), and a shorthand names it: `{Mod, args}` or a bare `Mod` in a child list, or a `DynamicSupervisor.start_child/2` of one (supavisor 6b77121: TenantSupervisor's `child_spec/1` said `restart: :transient` and nothing of its type). The type decides the default shutdown: a supervisor child gets unlimited time to take its own subtree down, and a worker gets a finite one (5 s). Registered as a worker, the supervisor is killed part-way through terminating its children, and its grandchildren are orphaned rather than terminated. They keep running, holding what they held, with no supervisor above them (RabbitMQ e40387e4).
 
 **Assumptions and limits.**
-- Only a spec that states its type counts. The `{Module, args}` and bare-module shorthands state none, so `Module.child_spec/1` decides, and `use Supervisor` gets it right. The extractor writes `worker` as those shorthands' default, and before the rule required a stated type it reported 26 modules, every one that artefact (3b597f2).
-- The child is the module in the spec's `start` MFA. A spec that starts a supervisor through a helper module's function is missed.
+- Only a spec the program wrote out counts: a tuple, or a map with or without `:type` (the map's default is the supervisor's, not the extractor's). The `{Module, args}` and bare-module shorthands state none, so `Module.child_spec/1` decides, and `use Supervisor` gets it right; the extractor writes `worker` as those shorthands' default, and before the rule required a written spec it reported 26 modules, every one that artefact (3b597f2). A shorthand is judged by its child's own `child_spec/1` instead: a map with no type is a worker, `use Supervisor`'s generated one and an override over `super/1` say `:supervisor`, and a module whose returns disagree is not judged.
+- The child is the module in the spec's `start` MFA. A spec that starts a supervisor through a helper module's function is missed, and a spec whose start function is the parent's own (Phoenix.Endpoint.Supervisor's `:warmup` map) starts what that function starts: not judged.
 - The child must declare the Supervisor behaviour. A DynamicSupervisor or ConsumerSupervisor callback module declares its own, and Elixir's `DynamicSupervisor`, `PartitionSupervisor` and `Task.Supervisor`, started directly, are usually outside the analyzed modules, so a worker-typed spec for any of them is missed.
-- The legacy Erlang six-tuple spec (`{Id, StartMFA, Restart, Shutdown, Type, Modules}`) is not read, and neither is a spec handed to `supervisor:start_child/2`. That is how RabbitMQ built its specs, so the motivating instance itself is out of reach.
+- The Erlang six-tuple spec is read, from a helper too with its parameters bound, but a spec handed to `supervisor:start_child/2` (`added_child`) is not judged, and RabbitMQ's helper took the module from its caller in another module, so the motivating instance itself is out of reach.
 - A spec that says `type: :worker` but also `shutdown: :infinity` escapes the orphaning, and is still reported.
 
-**Fixtures.** Positive: `SupAsWorker`. Quiet: `SupShorthand`, which lists the same child `SubSupervisor` by shorthand (`test/fixtures/supervision_fixture.ex`). Asserted in `test/analyses/structure_test.exs`.
+**Fixtures.** Positive: `SupAsWorker`. Quiet: `SupShorthand`, which lists the same child `SubSupervisor` by shorthand (`test/fixtures/supervision_fixture.ex`). The typeless map: positive `ChildSpecs.TypelessSup`'s `PoolSup` map, `ChildSpecs.TenantSup` started by `ChildSpecs.Tenants` and listed by `ShorthandTenants`; quiet the warmup map, `TypedTenantSup`, `SuperTenantSup`, `TypelessWorker` and `PoolSup` by shorthand (test/fixtures/supervision_specs_fixture.ex). Asserted in `test/analyses/structure_test.exs`.
 
-**Corpus.** Fix pairs: None. Present-only: None.
+**Corpus.** Fix pairs: `supavisor#850` (supabase/supavisor, d223446 → 6b77121, `Supavisor.TenantSupervisor`; round 4 of the mining, M4-25). Present-only: None.
 
-**Precision.** It went from 26 false positives to 0 when the rule began requiring a stated type, and it finds nothing on the corpus, which is expected: Elixir's shorthand resolves the type correctly (3b597f2).
+**Precision.** It went from 26 false positives to 0 when the rule began requiring a stated type, and it finds nothing on the corpus, which is expected: Elixir's shorthand resolves the type correctly (3b597f2). Supervision round (19 evaluation sets): 2 rows, both true: emqx's `emqx_ds_shared_sub_registry`, a `-behaviour(supervisor)` module `emqx_persistent_session_ds_sup` registers through its `worker/3` helper (`type => worker`, a 10 s shutdown), and logflare's `Backends.SourceSup`, a `use Supervisor` module whose own `child_spec/1` map says `restart: :transient` and nothing of its type, started per source by `DynamicSupervisor.start_child/2`: supavisor's bug.
 
 ### ConsumerSupervisor template restarts finished children
 
@@ -2495,22 +2506,23 @@ Another process takes or deletes the row between the check and the act, and the 
 `ets_unprotected_owner`
 · titles: "ETS table dies with its owner" (`:warning`)
 
-**Property.** Some `:ets.new/2` call, of a table whose name is a known atom (named or not), sits in a function of a module that declares a behaviour, and the table has no `heir` option, while that module is not an Application, is not a permanent child of any supervisor in view, and is not started under a DynamicSupervisor. ETS deletes a table when the process that owns it exits: after one crash of the owner the table and every row in it are gone, and with no permanent supervisor to run the `:ets.new/2` again, readers get ArgumentError until something recreates it.
+**Property.** Some `:ets.new/2` call, of a table whose name is a known atom (named or not), sits in a function of a module that declares a behaviour, and the table has no `heir` option, while that module is not an Application, is not a permanent child of any supervisor in view (`child_restart`: a spec that says `:permanent`, or a shorthand whose own `child_spec/1` says no other restart; or a `start_child` of a permanent spec, `added_child`), and is not started under a DynamicSupervisor. ETS deletes a table when the process that owns it exits: after one crash of the owner the table and every row in it are gone, and with no permanent supervisor to run the `:ets.new/2` again, readers get ArgumentError until something recreates it.
 
 **Assumptions and limits.**
 - The owner is taken to be the creating function's module, and "is a process" to be "runs as a process" (`process_behaviour_module`: a process behaviour's, or one whose module handles messages as a server does), not the process that runs the `:ets.new/2`: a table created in an API function a caller's process runs is attributed to the module, and a table created in a plain spawned process is not reported (encore chaconne's `Chaconne.Scratch`, a documented false-negative probe). A module of another behaviour runs in its caller and owns nothing (grpc's load-balancing strategies, vernemq's hook and HTTP-config modules, ejabberd's `gen_mod` import tables: 8 rows; `EtsStrategyImpl`, quiet).
-- A permanent child is excused because its restart recreates the table; the rows are still lost on every crash, which the finding's prose describes but the excuse does not weigh. A library's process whose supervisor is the user's, out of view, is reported.
+- A permanent child is excused because its restart recreates the table; the rows are still lost on every crash, which the finding's prose describes but the excuse does not weigh. ejabberd_hooks is the costly case: its table holds the hooks other modules registered, its restart makes it empty, and nothing registers them again (round 1 judged that row true; the supervision round's reading of ejabberd_sup excuses it). Whether a restart rebuilds what others wrote is a prior candidate (the ETS rows round's list below). A library's process whose supervisor is the user's, out of view, is reported.
+- The permanent child is read from the specs the supervision extractor reads (the vocabulary's "Supervision structure"): a helper's tuple spec with its parameters bound, a list joined with `++`, `Enum.reject(&is_nil/1)`, a `Mod.child_spec/1` call, a `start_child` of a spec. A module or a restart it cannot read (a module a helper takes from a call, the function's parameter, a restart from a call) is no excuse (test/soundness/supervision_test.exs). A comprehension over a literal list of modules (emqx's `emqx_ds_beamformer_sup`) and a module a `start_child` takes from configuration (vernemq's reg views) are still not read.
 - The creation site is joined to the owner by the table's atom, not by the owner's own function, so a name created in two modules can pair one module's owner with the other's site.
 - When the `:ets.new/2` options cannot be read, the table looks as if it had no heir and is reported.
 - The idiomatic unnamed table in a server's state is reported here and by `ets_unnamed_in_process` at the same `:ets.new/2`.
 - One finding per table and owner module, anchored at the `:ets.new/2`.
 - Suppressed for a private table (no other process reads it, so none meets it gone, and its rows are the owner's state: zotonic's `mod_logging` dedup table) and for the supervisor an Application's start/2 starts and no other supervisor in view starts (`application_root`: partisan_sup, round 2's vmq_bridge_sup), as for the Application module. OTP's tuple child specs are children since FP hunt round 3, so an Erlang tree's permanent children are excused too (zotonic's `z_file_mtime`).
 
-**Fixtures.** Positive: `EtsOwner` (test/fixtures/ets_fixture.ex), asserted by test/analyses/ets_test.exs and test/findings_test.exs; `tuple_spec_first` alone and `branch_sup` (test/fixtures/erl); the excuses' adversarial probes `EtsProtectedOwner`, `EtsOptionsFromArgOwner`, `EtsPrivateAndPublicOwner`, `worker_owner`, `dual_sup`, `fake_root_sup` and `tuple_restart_sup`'s temporary, transient and parameter-built children. Quiet: `EtsOwner` beside `EtsPermanentSupervisor` or `ErlangStyleEtsSupervisor`, `EtsApplicationOwner` and `EtsPrivateOwner` (test/fixtures/ets_fixture.ex), `tuple_spec_first` under `tuple_spec_sup` and `root_app_sup` under `root_app` (test/fixtures/erl), asserted by test/analyses/ets_test.exs. No test asserts that a heir silences it (`EtsWellConfigured` has one, but no assertion reads its row).
+**Fixtures.** Positive: `EtsOwner` (test/fixtures/ets_fixture.ex), asserted by test/analyses/ets_test.exs and test/findings_test.exs; `tuple_spec_first` alone and `branch_sup` (test/fixtures/erl); the excuses' adversarial probes `EtsProtectedOwner`, `EtsOptionsFromArgOwner`, `EtsPrivateAndPublicOwner`, `worker_owner`, `dual_sup`, `fake_root_sup` and `tuple_restart_sup`'s temporary, transient and parameter-built children. Quiet: `EtsOwner` beside `EtsPermanentSupervisor` or `ErlangStyleEtsSupervisor`, `EtsApplicationOwner` and `EtsPrivateOwner` (test/fixtures/ets_fixture.ex), `tuple_spec_first` under `tuple_spec_sup` and `root_app_sup` under `root_app` (test/fixtures/erl), asserted by test/analyses/ets_test.exs. No test asserts that a heir silences it (`EtsWellConfigured` has one, but no assertion reads its row). The supervision round's shapes: `ChildSpecs.*Owner` under `spec_helper_sup`, `spec_start_child`, `ChildSpecs.AppendedApp`, `RejectSup`, `OverrideSup`, `RestartSup` and `Starter` (test/fixtures/supervision_specs_fixture.ex, test/fixtures/erl), asserted by test/soundness/supervision_test.exs: eleven excused, nine still reported.
 
 **Corpus.** None.
 
-**Precision.** 15 rows in the corpus tally of 2026-09-25 (after 1a571e2), counted per checkout, at six creation sites: `DBConnection.ConnectionPool.init/1`, `Postgrex.Protocol.queries_new/0`, `Redix.Connection.init/1`, `Supavisor.ClientAuthentication.RefreshLimiter.init/1`, `Supavisor.PeepStorage.new/1` and a closure in it. Three of the six are unnamed tables `ets_unnamed_in_process` also reports at the same site. Unjudged on the corpus. FP hunt round 3 sampled 5 rows on the seven new programs: 0 true (two permanent children under OTP tuple specs, a private table, an application's root supervisor, a permanent child whose module is a runtime value); with the fixes above the class went 80 → 54 over the 26 live programs. In encore, chaconne's `Chaconne.Orphan.init/1` is hand-verified (frozen 2026-08-12), and three heirless named tables are pinned quiet by the permanent-child excuse. ETS rows round (2026-09-25, 19 evaluation sets): 98 rows at 8097be4, 85 after round 2c (30 gone to round 3's excuses, 17 added). The 17 added were read in full: 3 true (blockster's `PromoQA` rate limiter made by the first `Task.start` that asks, vernemq's PSK and web-UI token tables made in whatever process starts a listener). A sample of 12 of the 65 older rows found none true: 8 are permanent children the supervision extractor does not see (tuple specs a helper returns, `supervisor:start_child/2` specs, map specs with no `restart` key, bare modules in a child list built with `++`), the rest a lazily made cache, a table only its owner uses, and an owner whose crash stops the application. Estimated precision 7%.
+**Precision.** 15 rows in the corpus tally of 2026-09-25 (after 1a571e2), counted per checkout, at six creation sites: `DBConnection.ConnectionPool.init/1`, `Postgrex.Protocol.queries_new/0`, `Redix.Connection.init/1`, `Supavisor.ClientAuthentication.RefreshLimiter.init/1`, `Supavisor.PeepStorage.new/1` and a closure in it. Three of the six are unnamed tables `ets_unnamed_in_process` also reports at the same site. Unjudged on the corpus. FP hunt round 3 sampled 5 rows on the seven new programs: 0 true (two permanent children under OTP tuple specs, a private table, an application's root supervisor, a permanent child whose module is a runtime value); with the fixes above the class went 80 → 54 over the 26 live programs. In encore, chaconne's `Chaconne.Orphan.init/1` is hand-verified (frozen 2026-08-12), and three heirless named tables are pinned quiet by the permanent-child excuse. ETS rows round (2026-09-25, 19 evaluation sets): 98 rows at 8097be4, 85 after round 2c (30 gone to round 3's excuses, 17 added). The 17 added were read in full: 3 true (blockster's `PromoQA` rate limiter made by the first `Task.start` that asks, vernemq's PSK and web-UI token tables made in whatever process starts a listener). A sample of 12 of the 65 older rows found none true: 8 are permanent children the supervision extractor does not see (tuple specs a helper returns, `supervisor:start_child/2` specs, map specs with no `restart` key, bare modules in a child list built with `++`), the rest a lazily made cache, a table only its owner uses, and an owner whose crash stops the application. Estimated precision 7%. Supervision round (2026-09-26, the same 19 sets): 85 → 60 rows, 25 gone and none added. The 25 were read in full, and every one is an owner a supervisor restarts: ejabberd_sup's nine (`worker/1` and `supervisor/2` specs), mnesia_kernel_sup's five (`worker_spec/3`), dets_server's three and rabbit_vhost_sup_sup (`supervisor:start_child/2` of a permanent spec), vmq_generic_msg_store's per-bucket state table (a `start_child` in a comprehension), emqx's `emqx_mgmt_cache` and session bookkeeper (map specs a helper builds), and hexpm's `TmpDir`, logflare's ClickHouse `CircuitBreaker`, nerves_hub_web's health-profile cache and supavisor's `RefreshLimiter` (lists joined with `++`, a `child_spec/1` call). Seven of the eight sampled missed children are among them; the eighth, `emqx_ds_beamformer_rt`, is a comprehension over a literal list of modules. Two of the 25 were judged true in round 1 (ejabberd_hooks, ejabberd_captcha) for the rows a restart loses, the limit above. The three true rows the ETS rows round found are all still reported (3 of 60 known true; the sampled older rows found none); the sample's other shapes (a lazily made cache, a table only its owner uses, an owner whose crash stops the application) are the prior candidates below.
 
 ### Table read while its owner may be restarting
 
@@ -3709,6 +3721,13 @@ Questions for a reader (re-tier only):
   question; the creation site's own "dies with its owner" row
   (blockster's `SystemConfig.ensure_ets_table/0`, `PromoQA`, sequin's
   `ensure_tables/0`) is the finding that matters there.
+- *Does the owner's restart rebuild what other processes wrote into its
+  table?* (supervision round) A permanent child's table comes back empty:
+  harmless for a cache its own init refills (ejabberd_shaper,
+  translate), costly for a registry others filled (ejabberd_hooks: every
+  module's hooks, round 1's true row; gen_mod's `ejabberd_modules`). The
+  structural half, the writers of the table outside its owner's init, is
+  in the facts; whether they write again after the restart is not.
 - *Does this supervisor escalate?* A supervisor that makes a table in
   init/1 restarts only when its children spend its intensity: realistic
   for emqx's authz supervisor (intensity 0) and ejabberd's
@@ -3733,14 +3752,18 @@ Structural gaps left:
   `Keep` is false, the only branch that makes it). The first needs an
   extractor fact, every completing path from the `:ets.new/2` passing a
   delete of its table; the second a path condition on `Keep` as well.
-- Permanent children the supervision extractor misses (8 of the 12
+- Permanent children the supervision extractor missed (8 of the 12
   sampled "dies with its owner" rows): tuple specs a local helper
   returns (ejabberd_sup's `worker/1`, mnesia_kernel_sup's
   `worker_spec/3`), specs handed to `supervisor:start_child/2`
   (dets_server's `ensure_started`), map specs with no `restart` key
   (permanent by default) built in a comprehension or a `child_spec/1`,
   and bare modules in a child list built with `++`, `Enum.reject` or a
-  helper (hexpm, nerves_hub_web, supavisor).
+  helper (hexpm, nerves_hub_web, supavisor). *Read since the
+  supervision round* (25 rows gone, all false), but for the
+  comprehension over a literal list of modules (emqx's
+  `emqx_ds_beamformer_sup`: `Type <- [catchup, rt]`), which needs a
+  value a generator ranges over.
 - Guards the read rule does not see (sample, 6 of 20 older rows): a
   whereis on a table parameter (hexpm's `Cache.fetch/3`, realtime's
   `MetricsCleaner`: `ets_read_when_present` is emitted for named tables
@@ -3766,6 +3789,77 @@ Structural gaps left:
 - Test-only code (1 row): hexpm's `Hexpm.Store.Memory.start/0`, started
   from test_helper.exs in the test runner; the tooling prior's
   (`prior_tooling`), not structural.
+
+### What reading more children moved (supervision round)
+
+The supervision round (2026-09-26) taught the supervision extractor the
+missed shapes above, a `start_child` of a spec (`added_child`), a
+shorthand's own `child_spec/1` restart (`child_restart`) and type
+(`child_spec_type`), and moved "ETS table read while its owner may be
+restarting" back to `:info` (the rubric's owner-lifetime clause). Over
+the ETS rows round's 19 evaluation sets, with eleven analyses: 25 "ETS
+table dies with its owner" rows gone, none added (the class entry has
+them); "read while its owner may be restarting" and the races did not
+move. What moved elsewhere, by class:
+
+- startup, "init/1 blocks on a synchronous call" and "can block" (info,
+  a peer of unknown place): 36 gone, 2 added. The gone rows' peers are
+  now known earlier siblings or servers of another tree: 27 ejabberd
+  children calling `ejabberd_hooks`, `ejabberd_router`, `ejabberd_pkix`
+  or `ejabberd_redis`, kernel's `net_kernel` → `inet_db`, emqx's
+  resource manager and cluster rpc, sequin's `WalPipelineServer`.
+  Sampled 8: five go because the peer starts earlier in a list now read
+  in order (ejabberd's `acl`, `ejabberd_listener` and
+  `ejabberd_redis_sup` → `ejabberd_hooks`, `mod_muc` → `ejabberd_router`,
+  `net_kernel` → `inet_db`): right. Two go by the older cross-tree
+  assumption, which now meets children it knows (ejabberd's redis
+  backends → `ejabberd_redis`, sequin's `WalPipelineServer` →
+  `ConnectionCache`): an assumption, not a proof. One, emqx_cluster_rpc's
+  conditional call to itself, was false (the call runs in the mria stop
+  callback init registers) and goes because `init_safe_cross_supervisor`
+  never finds a module sharing a supervisor with itself. The 2 added
+  (vernemq's `vmq_diversity_script` → `vmq_diversity_plugin`,
+  `vmq_swc_store` → `vmq_swc_metrics`) were quiet
+  by the cross-tree guess until both were known under one supervisor;
+  the scripts and stores start on demand after those peers are up:
+  false.
+- startup, "Startup deadlock: init waits on a later sibling" (error): 1
+  gone, vernemq's `vmq_swc_store`, which round 2 judged false because the
+  flat scan misread `vmq_swc_store_sup`'s order; the list is read in order
+  now.
+- startup, "init/1 waits on a server whose handler can block"
+  (warning): 3 added in mnesia, the unknown-place rows of
+  `mnesia_controller` and `mnesia_monitor` re-graded now that the peers
+  are known earlier siblings. False: the rule asks whether any handler of
+  the peer can block, and the clause each init's message reaches does
+  not.
+- shutdown, "terminate/2 calls a sibling that may already be down"
+  (info): 3 added in mnesia (`mnesia_monitor:terminate_proc/3` on the
+  crash path, under an intensity-0 `one_for_all` tree that stops mnesia
+  anyway): false.
+- shutdown, "Children started under another tree outlive their owner":
+  3 added, Task.Supervisor tasks the application's named task
+  supervisors now place in the tree: hexpm's `SyntaxHighlight.run/4`
+  (async_nolink, yielded or shut down), nerves_hub_web's bulk tag tasks
+  (async, awaited) and supavisor's `async_stop/1` (a fire-and-forget
+  stop). False, the class's known limit for linked and awaited tasks.
+- shutdown, "Permanent child stops itself and is restarted": 1 gone, 5
+  added (the class entry).
+- coupling, "Coupled children under one_for_one": 44 pairs added, none
+  gone (32 under ejabberd_sup, 6 under emqx_sys_sup, 3 under vernemq's
+  `vmq_swc_sup`, 2 under hackney's tree, 1 under supavisor's
+  `TenantSupervisor`); "One-way coupling" (info), 72 pairs added. Read:
+  the 19 ejabberd pairs whose callee is `ejabberd_hooks` are true (the
+  caller registers its hooks by a call at init, and an `ejabberd_hooks`
+  restart drops them while the caller runs on); the other 25 are false:
+  calls by registered name through which the caller holds nothing
+  across the callee's restart (`emqx_alarm`'s callers, ejabberd's
+  routing calls, supavisor's `Terminator` → `Manager`), the class's own
+  stated limit, and hackney's pool and connection pairs, whose
+  connection is a temporary template child no supervisor restarts. The
+  one-way pairs say themselves they are not to fix.
+- structure, "Supervisor registered as a worker": 2 added, both true
+  (the class entry).
 
 ### Prior candidates, evaluated
 
