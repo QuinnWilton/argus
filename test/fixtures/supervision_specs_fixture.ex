@@ -181,6 +181,42 @@ defmodule Argus.Test.Fixtures.ChildSpecs.Starter do
   end
 end
 
+defmodule Argus.Test.Fixtures.ChildSpecs.PoolSup do
+  @moduledoc false
+  use Supervisor
+
+  def start_link(arg), do: Supervisor.start_link(__MODULE__, arg)
+
+  @impl true
+  def init(_arg), do: Supervisor.init([], strategy: :one_for_one)
+end
+
+defmodule Argus.Test.Fixtures.ChildSpecs.TypelessSup do
+  @moduledoc false
+  # A map spec with no :type is a worker by the supervisor's default
+  # (supavisor 6b77121's pool specs): a supervisor started by one is
+  # registered as a worker. A shorthand states nothing, and a spec whose
+  # start function is the parent's own starts what that function starts.
+  use Supervisor
+
+  alias Argus.Test.Fixtures.ChildSpecs, as: Specs
+
+  def start_link(arg), do: Supervisor.start_link(__MODULE__, arg)
+
+  @impl true
+  def init(arg) do
+    children = [
+      %{id: :pool, start: {Specs.PoolSup, :start_link, [arg]}},
+      {Specs.PoolSup, arg},
+      %{id: :warmup, start: {__MODULE__, :warmup, [arg]}}
+    ]
+
+    Supervisor.init(children, strategy: :one_for_one)
+  end
+
+  def warmup(_arg), do: :ignore
+end
+
 defmodule Argus.Test.Fixtures.ChildSpecs.NamedPoolsApp do
   @moduledoc false
   # A helper handed each pool's name builds `{DynamicSupervisor, name:
@@ -202,6 +238,105 @@ defmodule Argus.Test.Fixtures.ChildSpecs.NamedPoolsApp do
 
   defp pool(name) do
     Supervisor.child_spec({DynamicSupervisor, name: name, strategy: :one_for_one}, id: name)
+  end
+end
+
+defmodule Argus.Test.Fixtures.ChildSpecs.TenantSup do
+  @moduledoc false
+  # supavisor d223446's TenantSupervisor: a supervisor whose hand-written
+  # child_spec/1 states a restart and no type, so whoever starts it by the
+  # shorthand registers a worker.
+  use Supervisor
+
+  def start_link(args), do: Supervisor.start_link(__MODULE__, args)
+
+  @impl true
+  def init(_args), do: Supervisor.init([], strategy: :one_for_one)
+
+  def child_spec(args),
+    do: %{id: args.id, start: {__MODULE__, :start_link, [args]}, restart: :transient}
+end
+
+defmodule Argus.Test.Fixtures.ChildSpecs.TypedTenantSup do
+  @moduledoc false
+  # The fix: the same map with `type: :supervisor`.
+  use Supervisor
+
+  def start_link(args), do: Supervisor.start_link(__MODULE__, args)
+
+  @impl true
+  def init(_args), do: Supervisor.init([], strategy: :one_for_one)
+
+  def child_spec(args) do
+    %{
+      id: args.id,
+      start: {__MODULE__, :start_link, [args]},
+      restart: :transient,
+      type: :supervisor
+    }
+  end
+end
+
+defmodule Argus.Test.Fixtures.ChildSpecs.SuperTenantSup do
+  @moduledoc false
+  # Overrides over the generated child_spec/1, which says :supervisor.
+  use Supervisor
+
+  def start_link(args), do: Supervisor.start_link(__MODULE__, args)
+
+  @impl true
+  def init(_args), do: Supervisor.init([], strategy: :one_for_one)
+
+  def child_spec(args), do: Supervisor.child_spec(super(args), restart: :transient)
+end
+
+defmodule Argus.Test.Fixtures.ChildSpecs.TypelessWorker do
+  @moduledoc false
+  # A typeless map for a worker is right.
+  use GenServer
+
+  def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
+
+  @impl true
+  def init(arg), do: {:ok, arg}
+
+  def child_spec(arg), do: %{id: __MODULE__, start: {__MODULE__, :start_link, [arg]}}
+end
+
+defmodule Argus.Test.Fixtures.ChildSpecs.Tenants do
+  @moduledoc false
+  # Starts each by the shorthand, as supavisor's start_local_pool/1 did.
+  alias Argus.Test.Fixtures.ChildSpecs, as: Specs
+
+  def start_tenant(args),
+    do: DynamicSupervisor.start_child(Specs.TenantPool, {Specs.TenantSup, args})
+
+  def start_typed(args),
+    do: DynamicSupervisor.start_child(Specs.TenantPool, {Specs.TypedTenantSup, args})
+
+  def start_super(args),
+    do: DynamicSupervisor.start_child(Specs.TenantPool, {Specs.SuperTenantSup, args})
+
+  def start_worker(arg),
+    do: DynamicSupervisor.start_child(Specs.TenantPool, {Specs.TypelessWorker, arg})
+end
+
+defmodule Argus.Test.Fixtures.ChildSpecs.ShorthandTenants do
+  @moduledoc false
+  # A child list naming the typeless supervisor by the shorthand, beside
+  # a `use Supervisor` module whose generated child_spec/1 says
+  # :supervisor.
+  use Supervisor
+
+  alias Argus.Test.Fixtures.ChildSpecs, as: Specs
+
+  def start_link(arg), do: Supervisor.start_link(__MODULE__, arg)
+
+  @impl true
+  def init(_arg) do
+    Supervisor.init([{Specs.TenantSup, %{id: :first}}, {Specs.PoolSup, []}],
+      strategy: :one_for_one
+    )
   end
 end
 

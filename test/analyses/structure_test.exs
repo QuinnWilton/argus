@@ -42,6 +42,65 @@ defmodule Argus.Analyses.StructureTest do
     end
   end
 
+  describe "supervisor registered as a worker, by a map that says no type" do
+    alias Argus.Test.Fixtures.ChildSpecs, as: Specs
+
+    @typeless [
+      Specs.TypelessSup,
+      Specs.PoolSup,
+      Specs.TenantSup,
+      Specs.TypedTenantSup,
+      Specs.SuperTenantSup,
+      Specs.TypelessWorker,
+      Specs.Tenants,
+      Specs.ShorthandTenants
+    ]
+
+    setup do
+      {:ok, r} = Memo.analyze(@typeless, :structure)
+      %{r: r}
+    end
+
+    test "a map spec with no :type registers the supervisor it starts as a worker", %{r: r} do
+      skip_without_souffle()
+
+      # TypelessSup's `%{id: :pool, start: {PoolSup, ...}}`; its warmup map,
+      # whose start function is the parent's own, starts what that
+      # function starts, and the shorthand beside it states nothing.
+      assert Map.get(r, "supervisor_registered_as_worker", []) ==
+               [[inspect(Specs.TypelessSup), inspect(Specs.PoolSup), "0"]]
+    end
+
+    test "a supervisor whose own child_spec/1 says no type, wherever a shorthand names it", %{
+      r: r
+    } do
+      skip_without_souffle()
+
+      # supavisor 6b77121: started by DynamicSupervisor.start_child/2 and
+      # listed by the shorthand. The fixed map, overrides over the
+      # generated child_spec/1, `use Supervisor`'s own and a worker's
+      # typeless map are quiet.
+      rows = r |> Map.get("own_spec_registered_as_worker", []) |> Enum.sort()
+
+      {:ok, found} = Memo.run_analyses(@typeless, analyses: [:structure])
+
+      assert {:error, {Specs.TenantSup, :child_spec, 1}} in for(
+               f <- found.findings,
+               f.title == "Supervisor registered as a worker",
+               do: {f.severity, f.mfa}
+             )
+
+      assert rows == [
+               [inspect(Specs.TenantSup), inspect(Specs.ShorthandTenants), ""],
+               [
+                 inspect(Specs.TenantSup),
+                 inspect(Specs.TenantPool),
+                 "#{inspect(Specs.Tenants)}:start_tenant/1"
+               ]
+             ]
+    end
+  end
+
   describe "ConsumerSupervisor templates" do
     test "a ConsumerSupervisor with a permanent template is reported; a temporary one is not" do
       skip_without_souffle()

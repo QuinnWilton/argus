@@ -27,7 +27,7 @@
   state_machine:
     ~w(call_edge call_site function_def prior_tooling statem_helper_transition statem_initial statem_module statem_returns_call statem_state statem_transition tail_call tooling_module),
   structure:
-    ~w(call_edge function_def global_register implements_behaviour prior_tooling process_register supervisor_child supervisor_child_form supervisor_site tooling_module),
+    ~w(call_edge child_spec_type dynamic_child function_def global_register implements_behaviour prior_tooling process_register supervisor_child supervisor_child_form supervisor_site tooling_module),
   unsafe_input:
     ~w(async_cast awaits_child_exit call_arg call_arg_allowlist call_arg_chosen call_arg_derived call_arg_forward call_arg_reads call_edge call_site code_execution dynamic_call dynamic_child fun_handed fun_handed_to fun_ref function_def http_route implements_behaviour prior_reads prior_tooling prior_value_source process_start remote_call returns_reads sink_arg_bounded sink_arg_chosen sink_arg_derived sink_copy sink_reads socket_active socket_transport supervisor_max_children sync_call_site task_supervisor_start tooling_module unsafe_atom_creation unsafe_decompression unsafe_deserialization)
 ]

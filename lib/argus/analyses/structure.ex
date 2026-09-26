@@ -3,9 +3,13 @@ defmodule Argus.Analyses.Structure do
   A child spec, registration or tree shape that is wrong on its own.
 
   - `supervisor_registered_as_worker(sup, child, position)` — a child
-    spec that explicitly says `type: :worker` for a module that is a
-    supervisor, so it gets a finite shutdown and its grandchildren are
-    orphaned rather than terminated.
+    spec that says `type: :worker`, or a map spec that says no type (a
+    worker by default), for a module that is a supervisor, so it gets a
+    finite shutdown and its grandchildren are orphaned rather than
+    terminated.
+  - `own_spec_registered_as_worker(child, sup, via)` — the same defect
+    written in the child's own child_spec/1: a map with no type, which a
+    shorthand or a `DynamicSupervisor.start_child/2` of one takes.
   - `consumer_supervisor_permanent_child(sup, child, sup_site)` — a
     ConsumerSupervisor template with `restart: :permanent` restarts every
     finished child.
@@ -54,7 +58,18 @@ defmodule Argus.Analyses.Structure do
           {:position, :number, "the child's start position"}
         ],
         key: [:sup, :child],
-        doc: "A supervisor child spec that explicitly says type: :worker."
+        doc: "A supervisor child spec that says type: :worker, or a map spec that says no type."
+      },
+      %{
+        name: :own_spec_registered_as_worker,
+        fields: [
+          {:child, :symbol, "the child, which is itself a supervisor"},
+          {:sup, :symbol, "the supervisor a shorthand names it under, or dynamic"},
+          {:via, :symbol,
+           "the function whose DynamicSupervisor.start_child/2 starts it; empty for a child list"}
+        ],
+        key: [:child],
+        doc: "A supervisor whose own child_spec/1 states no type, named by a shorthand: a worker."
       },
       %{
         name: :consumer_supervisor_permanent_child,
@@ -97,7 +112,8 @@ defmodule Argus.Analyses.Structure do
       :error,
       "Supervisor registered as a worker",
       "#{child} implements the Supervisor behaviour, and #{sup}'s child spec " <>
-        "explicitly says type: :worker. " <>
+        "says type: :worker, or is a map that says no type, which a supervisor " <>
+        "takes as a worker. " <>
         "OTP requires a supervisor child to be registered with " <>
         "type: :supervisor and shutdown: :infinity. The type is what tells the " <>
         "parent to give the child unlimited time to bring its own subtree " <>
@@ -108,9 +124,9 @@ defmodule Argus.Analyses.Structure do
         "RabbitMQ shipped exactly this (e40387e4): three modules carrying the " <>
         "supervisor behaviour registered through a helper that builds worker " <>
         "specs. " <>
-        "Note this is reported only for specs that SAY worker — the " <>
-        "{Module, args} shorthand states no type and child_spec/1 gets it " <>
-        "right, so those are not findings.",
+        "Note this is reported only for specs the program wrote out — the " <>
+        "{Module, args} shorthand states no type and the child's own " <>
+        "child_spec/1 decides it.",
       at: Findings.at_module(child),
       at_label: "this module is a supervisor",
       help: [
@@ -119,6 +135,35 @@ defmodule Argus.Analyses.Structure do
           "declare the type"
       ],
       related: [Findings.related("parent supervisor", Findings.at_module(sup))]
+    )
+  end
+
+  def finding(:own_spec_registered_as_worker, [child, sup, via]) do
+    {starter, started} =
+      if via == "",
+        do: {"#{sup}'s child list names it by the shorthand", Findings.at_module(sup)},
+        else: {"#{via} starts it with DynamicSupervisor.start_child/2", Findings.at_func(via)}
+
+    Findings.new(
+      :error,
+      "Supervisor registered as a worker",
+      "#{child} implements the Supervisor behaviour, and its own child_spec/1 " <>
+        "writes a map with no :type, which a supervisor takes as type: :worker; " <>
+        "#{starter}. OTP requires a supervisor child to be registered with " <>
+        "type: :supervisor and shutdown: :infinity: a worker gets a finite " <>
+        "shutdown, so it is killed part-way through unlinking its children and " <>
+        "the grandchildren are orphaned rather than terminated, and the release " <>
+        "handler does not descend into a worker, so a hot upgrade skips every " <>
+        "process under it. supavisor shipped exactly this (6b77121): " <>
+        "TenantSupervisor's hand-written child_spec/1 said restart: :transient " <>
+        "and nothing of its type.",
+      at: Findings.at_mfa(child, :child_spec, 1),
+      at_label: "no :type: a worker",
+      help: [
+        "add `type: :supervisor` to the map `#{child}.child_spec/1` returns, or " <>
+          "build it with `Supervisor.child_spec/2` over `super/1`"
+      ],
+      related: [Findings.related("started here", started)]
     )
   end
 

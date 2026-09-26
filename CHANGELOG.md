@@ -75,6 +75,25 @@ tables (its `ensure_started/0` adds it to kernel_safe_sup),
 rabbit_vhost_sup_sup's, and vernemq's per-bucket message-store state
 table.
 
+**Fixed.** structure's "Supervisor registered as a worker" missed a
+supervisor whose spec is a map with no `:type`, a worker by the
+supervisor's own default (round 4 of the mining, M4-25: supavisor
+6b77121). A map spec now counts as written out (`supervisor_child_form`
+`explicit` with or without `:type`), and a spec whose start function is
+the parent's own module's (Phoenix.Endpoint.Supervisor's `:warmup` map)
+is not judged. Schema 129: `child_spec_type(mod, type)` (Supervision
+extractor), the type a module's own `child_spec/1` states, `worker` for a
+map it writes with none (`use Supervisor`'s generated one says
+`supervisor`); a new output, `own_spec_registered_as_worker(child, sup,
+via)`, reports a supervisor so written wherever a shorthand or a
+`DynamicSupervisor.start_child/2` names it, at its `child_spec/1`, under
+the same title. Corpus pair `supavisor#850` (d223446 → 6b77121,
+TenantSupervisor; built on OTP 27, as its locked credo and artificery
+need). Over the evaluation sets: emqx's `emqx_ds_shared_sub_registry`
+(a `-behaviour(supervisor)` module its parent's `worker/3` helper
+registers) and logflare's `Backends.SourceSup` (supavisor's bug, started
+per source), both true.
+
 ### Owner lifetime stays :info
 
 **Changed.** ets's "ETS table read while its owner may be restarting"

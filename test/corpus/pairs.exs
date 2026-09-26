@@ -942,5 +942,21 @@
     pre: "39ebe39cf1e727c362cfa8d442ca20ad2252c084",
     fix: "60ec40f2a5b9bbf1fd10025190f3abf1b1f1701e",
     finding: {:shutdown, "Broadway producer keeps fetching while it drains"}
+  },
+  # ── structure: a supervisor its own child_spec/1 registers as a worker ─
+  # Round 4 of the mining (M4-25): TenantSupervisor, a `use Supervisor`
+  # module, overrode child_spec/1 with a map that said restart: :transient
+  # and nothing of its type, and DynamicSupervisor.start_child/2 started
+  # every tenant's tree as a worker; the fix added type: :supervisor.
+  %{
+    repo: "supabase/supavisor",
+    issue: "supavisor#850",
+    module: "Supavisor.TenantSupervisor",
+    pre: "d2234462d2a272eea242ce06a3158be3fddd7f23",
+    fix: "6b77121fc697b419e8203bac1c52a69910bb80f3",
+    # Its locked credo and artificery build only on OTP 27 and Elixir 1.18.
+    otp: "27.3.3",
+    elixir: "1.18.3-otp-27",
+    finding: {:structure, "Supervisor registered as a worker"}
   }
 ]

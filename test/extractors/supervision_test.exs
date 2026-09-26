@@ -687,4 +687,33 @@ defmodule Argus.Extractors.SupervisionTest do
              ]
     end
   end
+
+  describe "extract/1 — the type a module's own child_spec/1 states" do
+    alias Argus.Test.Fixtures.ChildSpecs, as: Specs
+
+    defp own_type(mod) do
+      {:ok, data} = BeamSpy.BeamFile.disassemble(to_string(:code.which(mod)))
+
+      for [_mod, type] <- Map.get(Supervision.extract(data), :child_spec_type, []), do: type
+    end
+
+    test "a map with no :type is a worker; use Supervisor's and a stated type are not" do
+      assert own_type(Specs.TenantSup) == ["worker"]
+      assert own_type(Specs.TypelessWorker) == ["worker"]
+      assert own_type(Specs.TypedTenantSup) == ["supervisor"]
+      assert own_type(Specs.SuperTenantSup) == ["supervisor"]
+      assert own_type(Specs.PoolSup) == ["supervisor"]
+    end
+
+    test "a map spec in a child list states its type: a worker by default" do
+      {:ok, data} =
+        BeamSpy.BeamFile.disassemble(to_string(:code.which(Specs.TypelessSup)))
+
+      forms =
+        for [_sup, pos, form] <- Supervision.extract(data)[:supervisor_child_form],
+            do: {pos, form}
+
+      assert Enum.sort(forms) == [{"0", "explicit"}, {"1", "explicit"}]
+    end
+  end
 end

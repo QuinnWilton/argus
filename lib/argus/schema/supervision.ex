@@ -80,6 +80,9 @@ defmodule Argus.Schema.Supervision do
         Whether a child spec stated its `type`, or whether \
         `supervisor_child.type` is the extractor's default.
 
+        A map spec and OTP's tuple form are the program's statement: a map \
+        with no `:type` is a worker by the supervisor's own default (round \
+        4 of the mining: supavisor 6b77121 registered a supervisor so). \
         The `{Module, args}` and bare-`Module` forms state nothing: \
         `Module.child_spec/1` decides, and `use Supervisor` generates \
         `type: :supervisor` where the default written here is `worker`. Any \
@@ -116,6 +119,22 @@ defmodule Argus.Schema.Supervision do
           {:restart, :symbol, "restart its child_spec/1 declares (permanent/transient/temporary)"}
         ],
         doc: "The restart type a module's own child_spec/1 gives a shorthand {Mod, args} spec."
+      },
+      %{
+        name: :child_spec_type,
+        layer: 2,
+        fields: [
+          {:mod, :symbol, "module"},
+          {:type, :symbol, "type its child_spec/1 states (worker/supervisor)"}
+        ],
+        doc: """
+        The type a module's own child_spec/1 gives the child a shorthand \
+        `{Mod, args}`, a bare `Mod` or a `start_child` of one names: a \
+        spec's `:type`, or `worker` for a map it writes with none (the \
+        supervisor's default). `use Supervisor` states `supervisor`; a \
+        child_spec/1 that hands back another module's states nothing, and \
+        no row is written.
+        """
       },
       %{
         name: :post_start_call,

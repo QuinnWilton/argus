@@ -25,6 +25,8 @@ defmodule Argus.Extractors.Supervision do
     instruction was found
   - `child_spec_restart(mod, restart)` — the restart the module's own
     child_spec/1 declares
+  - `child_spec_type(mod, type)` — the type the module's own child_spec/1
+    states, `worker` for a map it writes with none
   - `post_start_call(func, site, callee)` — a call made after a
     Supervisor.start_link in the same function
   - `supervisor_child(sup, position, child_mod, restart, type)` — child spec
@@ -81,6 +83,7 @@ defmodule Argus.Extractors.Supervision do
     do: [
       :added_child,
       :child_spec_restart,
+      :child_spec_type,
       :post_start_call,
       :dynamic_child,
       :dynamic_child_restart,
@@ -140,6 +143,7 @@ defmodule Argus.Extractors.Supervision do
     base_facts
     |> extract_dynamic_children(mod, behaviours, module_data)
     |> extract_child_spec_restart(mod_str, module_data.functions)
+    |> extract_child_spec_type(mod_str, module_data.functions)
     |> extract_post_start_calls(mod_str, module_data)
   end
 
@@ -182,6 +186,33 @@ defmodule Argus.Extractors.Supervision do
         |> Enum.reduce(facts, fn restart, acc ->
           add_fact(acc, :child_spec_restart, [mod_str, to_string(restart)])
         end)
+    end
+  end
+
+  # The type a module's own child_spec/1 states for the child a shorthand
+  # names: a spec's `:type`, or a worker by the supervisor's default for a
+  # map it writes with none (supavisor 6b77121: TenantSupervisor, a `use
+  # Supervisor` module whose hand-written child_spec/1 left the type out).
+  # `use Supervisor` generates one that says `:supervisor`, `use
+  # GenServer` one that says nothing, so a worker. What child_spec/1
+  # hands back is read as a child list's element is; another module's
+  # child_spec/1 it calls states nothing here.
+  defp extract_child_spec_type(facts, mod_str, functions) do
+    case find_function(functions, :child_spec, 1) do
+      nil ->
+        facts
+
+      body ->
+        frame = frame(body, functions)
+
+        fn -> returns(frame, &element_at/3, &element_written/3) end
+        |> fueled()
+        |> Enum.flat_map(fn
+          {:ok, specs} -> for {_mod, _restart, type, _name, :explicit} <- specs, do: word(type)
+          :error -> []
+        end)
+        |> Enum.uniq()
+        |> Enum.reduce(facts, &add_fact(&2, :child_spec_type, [mod_str, &1]))
     end
   end
 
@@ -1686,18 +1717,23 @@ defmodule Argus.Extractors.Supervision do
   end
 
   # A map spec states its restart and its type or takes the supervisor's
-  # defaults, `:permanent` and `:worker`; a key the reader cannot know may
-  # be either field, which is then unknown. The form is `:explicit` when
-  # the map states its type. A map spec's registered name lives inside its
-  # :start MFA args, too deep to read reliably here — left unrecorded.
+  # defaults, `:permanent` and `:worker`: the program wrote the spec out,
+  # so its type is stated either way (`:explicit`), which
+  # structure's "Supervisor registered as a worker" reads (supavisor
+  # 6b77121's pool specs were maps with no `:type`). A key the reader
+  # cannot know may be either field, which is then unknown. A map spec's
+  # registered name lives inside its :start MFA args, too deep to read
+  # reliably here — left unrecorded.
   defp map_spec(%{start: start} = map) do
     case map_start_module(start) do
       nil ->
         []
 
       mod ->
-        form = if Map.has_key?(map, :type), do: :explicit, else: :shorthand
-        [{mod, map_field(map, :restart, :permanent), map_field(map, :type, :worker), nil, form}]
+        [
+          {mod, map_field(map, :restart, :permanent), map_field(map, :type, :worker), nil,
+           :explicit}
+        ]
     end
   end
 
