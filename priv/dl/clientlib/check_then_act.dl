@@ -464,22 +464,64 @@ module_identity("module field").
   also_writes(w1, w2, f) :- later_branch(w2, w1), !later_branch(w1, _), chosen(f, _, w1, _).
 }
 
+// ── A decision that hands a message on ──────────────────────────────
+//
+// A read whose decision also hands a message to another process, where
+// the read's value decides (effect_decided) or in a function it decides
+// the call of (one call down): both racers hand it, and the receiver acts
+// twice — a job claimed by deleting its row and handed to a worker runs
+// twice. A message is a send (sends_message, effect_model.dl) or a call
+// or a cast to a peer (peer_call, peer_cast, calls.dl): each is one more
+// request the receiver acts on. A kill or a stop is not one: a second is
+// the first one's echo (sequin's Havoc.stop/1, hackney's stop_pool/1).
+// The ETS and the Mnesia read-then-write rules each instantiate it, with
+// their pairs' reads and the values that carry them.
+//
+// Requires otp.dl (calls.dl) as well.
+.decl delivers_message(func: symbol)
+
+delivers_message(f) :- sends_message(_, f).
+
+delivers_message(f) :-
+  call_site(_, f, m, n, a),
+  c = cat(m, ":", n, "/", to_string(a)),
+  (peer_call(c) ; peer_cast(c)).
+
+.comp DecisionSends {
+  // The pairs' reads, and a value in `func` that carries `read`.
+  .decl read(read: symbol)
+  .decl carried(func: symbol, kind: symbol, src: symbol, read: symbol)
+
+  .decl sends(read: symbol)
+
+  sends(r) :- read(r), carried(f, kind, src, r), effect_decided(f, kind, src), delivers_message(f).
+
+  sends(r) :-
+    read(r),
+    carried(f, kind, src, r),
+    call_decided(f, g, kind, src),
+    delivers_message(g).
+}
+
 // ── Made of a read ───────────────────────────────────────────────────
 //
 // Whether a write stores what a read returned, or a value made of it, by
-// data alone (Argus.Extractors.Dependence's site_reads, call_arg_reads,
-// returns_reads): a value computed under a test on the read, but not
-// from it, is not made of it (returns_depends and call_arg_depends, which
-// count a decision too, are CheckThenAct's carriers, not this). The
-// instance names the reads and the writes it asks about. A write stores a
+// data (Argus.Extractors.Dependence's site_reads, call_arg_reads,
+// returns_reads) — or by a helper that maps what it is handed to what it
+// returns, deciding by it (returns_depends): a function of the read all
+// the same. A value computed under a test on the read in the write's own
+// function, but not from it, is not made of it (call_arg_depends and the
+// decisions CheckThenAct's carriers count). The instance names the reads
+// and the writes it asks about. A write stores a
 // read's value when, in the write's own function, what it writes is made
 // of:
 //
 // - the read's own result;
 // - a call's result, where the callee returns a read's result or a value
 //   made of one, however many helpers down (`set(next())`, next/0
-//   returning `count() + 1`), or returns what it is handed and is handed
-//   one (`insert({k, next(n)})`);
+//   returning `count() + 1`), or returns what it is handed, or a value
+//   what it is handed decides, and is handed one (`insert({k, next(n)})`,
+//   next/1 matching `:queued -> :running`);
 // - a parameter some caller fills with such a value, through any chain of
 //   callers.
 //
@@ -512,6 +554,33 @@ module_identity("module field").
     call_arg_reads(h, g, n, k, s),
     q = to_string(n).
 
+  asked(h, k, s) :-
+    asked(h, "call", g),
+    maps_param(g, q),
+    call_arg_reads(h, g, n, k, s),
+    q = to_string(n).
+
+  // What a helper returns is a function of its parameter `pos`: made of
+  // it (returns_reads) or decided by it (returns_depends), in the helper
+  // or in a helper it hands the parameter to and returns from, however
+  // many down (`next(s)` calling `step(s)`, which matches on it).
+  // Derived only for the helpers the question reaches.
+  .decl map_needed(func: symbol)
+
+  map_needed(g) :- asked(_, "call", g).
+  map_needed(g2) :- map_needed(g), returns_depends(g, "call", g2).
+
+  .decl maps_param(func: symbol, pos: symbol)
+
+  maps_param(g, q) :- map_needed(g), returns_depends(g, "param", q).
+  maps_param(g, q) :- map_needed(g), returns_reads(g, "param", q).
+
+  maps_param(g, q) :-
+    map_needed(g),
+    returns_depends(g, "call", g2),
+    call_arg_depends(g, g2, n, "param", q),
+    maps_param(g2, to_string(n)).
+
   .decl made(func: symbol, kind: symbol, src: symbol)
 
   made(h, "site", r) :- asked(h, "site", r), read(r).
@@ -520,6 +589,20 @@ module_identity("module field").
   made(h, "call", g) :-
     asked(h, "call", g),
     returns_reads(g, "param", q),
+    call_arg_reads(h, g, n, k, s),
+    q = to_string(n),
+    made(h, k, s).
+
+  // A helper whose result its parameter decides, handed a value made of
+  // a read: `next(stage)` picks the stage after the one it is handed by
+  // matching on it, which is a function of the read as `stage + 1` is,
+  // though no byte of the read reaches the result. Two racers that read
+  // :queued both write :running, and the step one of them took is lost.
+  // (maps_param counts what decides the result as well as what makes
+  // it; returns_reads, above, only what makes it.)
+  made(h, "call", g) :-
+    asked(h, "call", g),
+    maps_param(g, q),
     call_arg_reads(h, g, n, k, s),
     q = to_string(n),
     made(h, k, s).

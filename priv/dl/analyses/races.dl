@@ -927,27 +927,20 @@ harmless_race(f, r, w) :-
   !writes_back(name, ks, k),
   !decision_sends(r).
 
-// The read's decision sends a message: where its value is carried, an
-// effect runs because of it (effect_decided, function-level) in a
-// function that sends, or a function it decides the call of sends (one
-// call down). A second kill or a second stop of the same process is the
-// first one's echo (sequin's Havoc.stop/1, hackney's stop_pool/1); a
-// second message is one more the receiver acts on. Asked only of a delete: a trip's helper that re-sends what
-// every racer agrees on (supavisor's circuit breaker telling the other
-// nodes it opened) is left alone, as decides_more leaves it.
+// The read's decision hands a message on (DecisionSends,
+// clientlib/check_then_act.dl: a send, a call or a cast, where its value
+// decides or one call down). Asked only of a delete: a trip's helper
+// that re-sends what every racer agrees on (supavisor's circuit breaker
+// telling the other nodes it opened) is left alone, as decides_more
+// leaves it.
+.init row_sends = DecisionSends
+
+row_sends.read(r) :- reads_then_writes(_, r, _, _, _).
+row_sends.carried(f, kind, src, r) :- row_sends.read(r), rows.carries(f, kind, src, r, _, _, _, _).
+
 .decl decision_sends(read: symbol)
 
-decision_sends(r) :-
-  reads_then_writes(_, r, _, _, _),
-  rows.carries(f, kind, src, r, _, _, _, _),
-  effect_decided(f, kind, src),
-  sends_message(_, f).
-
-decision_sends(r) :-
-  reads_then_writes(_, r, _, _, _),
-  rows.carries(f, kind, src, r, _, _, _, _),
-  call_decided(f, g, kind, src),
-  sends_message(_, g).
+decision_sends(r) :- row_sends.sends(r).
 
 harmless_race(f, r, w) :-
   reads_then_writes(f, r, w, name, _),
@@ -1814,20 +1807,18 @@ harmless_record_race(f, r, w) :-
   !record_writes_back(t),
   !record_decision_sends(r).
 
-// The ETS rule's decision_sends, for records.
+// The ETS rule's decision_sends, for records (DecisionSends).
+.init record_sends = DecisionSends
+
+record_sends.read(r) :- reads_then_writes_record(_, r, _, _, _).
+
+record_sends.carried(f, kind, src, r) :-
+  record_sends.read(r),
+  records.carries(f, kind, src, r, _, _, _, _).
+
 .decl record_decision_sends(read: symbol)
 
-record_decision_sends(r) :-
-  reads_then_writes_record(_, r, _, _, _),
-  records.carries(f, kind, src, r, _, _, _, _),
-  effect_decided(f, kind, src),
-  sends_message(_, f).
-
-record_decision_sends(r) :-
-  reads_then_writes_record(_, r, _, _, _),
-  records.carries(f, kind, src, r, _, _, _, _),
-  call_decided(f, g, kind, src),
-  sends_message(_, g).
+record_decision_sends(r) :- record_sends.sends(r).
 
 harmless_record_race(f, r, w) :-
   reads_then_writes_record(f, r, w, t, _),
@@ -2007,6 +1998,35 @@ record_value(f, "call", g, r) :-
   call_arg_reads(f, g, n, kind, src),
   returns_reads(g, "param", to_string(n)).
 
+// A helper that maps what it is handed to what it returns, deciding by
+// it (`next(stage)` matching `:queued -> :running`): its result is a
+// function of the read, as ETS's MadeOfRead counts it (record_maps_param,
+// the same closure over the helpers such a value reaches).
+record_value(f, "call", g, r) :-
+  record_value(f, kind, src, r),
+  call_arg_reads(f, g, n, kind, src),
+  record_maps_param(g, to_string(n)).
+
+.decl record_map_needed(func: symbol)
+
+record_map_needed(g) :- record_value(f, kind, src, _), call_arg_reads(f, g, _, kind, src).
+
+record_map_needed(g) :-
+  racing_record_pair(_, _, w),
+  records.act(w, h, _, _, _, _),
+  site_reads(w, h, "call", g).
+record_map_needed(g2) :- record_map_needed(g), returns_depends(g, "call", g2).
+
+.decl record_maps_param(func: symbol, pos: symbol)
+
+record_maps_param(g, q) :- record_map_needed(g), returns_depends(g, "param", q).
+
+record_maps_param(g, q) :-
+  record_map_needed(g),
+  returns_depends(g, "call", g2),
+  call_arg_depends(g, g2, n, "param", q),
+  record_maps_param(g2, to_string(n)).
+
 // A helper returns what the read found, or a value made of it, by data:
 // the read in the helper, or a helper it calls and returns from.
 .decl returns_record(func: symbol, read: symbol)
@@ -2055,6 +2075,15 @@ record_pair_carries_read(r, w) :-
   call_arg_reads(h, g, n, "param", p),
   path_param(f, r, h, p),
   returns_reads(g, "param", to_string(n)).
+
+record_pair_carries_read(r, w) :-
+  racing_record_pair(f, r, w),
+  records.act(w, h, _, _, _, _),
+  h != f,
+  site_reads(w, h, "call", g),
+  call_arg_reads(h, g, n, "param", p),
+  path_param(f, r, h, p),
+  record_maps_param(g, to_string(n)).
 
 // The write stores a value a call computed only because of the read:
 // the cache-aside `[] -> v = compute(k); save(k, v); v`, which every
