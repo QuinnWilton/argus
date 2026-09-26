@@ -31,6 +31,13 @@ defmodule Argus.Extractors.SupervisionTest do
       assert site =~ ~r/^Argus\.Test\.Fixtures\.GoodSupervisor:init\/1#\d+$/
     end
 
+    test "reads the strategy of a flags tuple built at run time" do
+      {:ok, data} = BeamSpy.BeamFile.disassemble(to_string(:code.which(:flags_runtime_sup)))
+      facts = Supervision.extract(data)
+
+      assert [":flags_runtime_sup", "one_for_all"] in facts[:supervisor]
+    end
+
     test "extracts child specs" do
       {:ok, data} =
         BeamSpy.BeamFile.disassemble(to_string(:code.which(Argus.Test.Fixtures.GoodSupervisor)))

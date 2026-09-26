@@ -6,6 +6,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## 0.20.0-dev — unreleased
 
+### Restart-state round, part 2: a reader that outlives a table's owner
+
+**Fixed.** The supervision extractor reads the strategy of a flags tuple
+built at run time (`{one_for_all, 0, timer:hours(24)}`, mnesia_kernel_sup
+and mnesia_sup, which read as `unknown` before). Their trees gain an
+anchor line. shutdown's "terminate/2 calls a sibling that may already be
+down" moves from `:info` to `:warning` on mnesia's three rows. Those rows
+are false: the sibling call sits in a clause of
+`mnesia_monitor:terminate_proc/3` that a `shutdown` reason skips. The
+rule does not ask about reasons (bug-classes.md, the restart-state
+round's gaps).
+
 ### Restart-state round: what a restart loses
 
 "Coupled children under one_for_one" reported every call or cast between

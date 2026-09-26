@@ -1407,6 +1407,13 @@ defmodule Argus.Extractors.Supervision do
              is_integer(intensity) and is_integer(period) ->
         strategy
 
+      # A flags tuple built at run time (`{one_for_all, 0,
+      # timer:hours(24)}`, mnesia_kernel_sup's) still names its strategy
+      # as a literal first element.
+      {:put_tuple2, _, {:list, [{:atom, strategy}, _intensity, _period]}}
+      when strategy in @strategies ->
+        strategy
+
       {:put_tuple2, _, {:list, elements}} ->
         extract_strategy_from_elements(elements)
 
