@@ -308,6 +308,20 @@ than more; it errs loud when the same uncertainty can add a finding.
 - **Direction.** Supervision is module-level: two instances of one child module are one module here, and the lists of every clause of one init/1 are one tree, in the order the bytecode lists them (kernel's `kernel_sup` and `kernel_safe_sup` are one `:kernel`). A child is read only from a spec the extractor reads; a module or a restart it cannot tell names no child (quiet for what a child excuses, loud for what it would excuse), but where it stands in, a flat scan can name a child that is not one (a keyword pair naming a loaded Erlang module).
 - **Used by.** coupling, shutdown and startup; calls.dl limits module-level reach to supervised modules through it.
 
+### What a restart loses
+
+- **Names.** `holds_in`, `once_code`, `once_request`, `kept`, `initial_field` (restart_state.dl), over `returned_update`, `clause_call`, `ets_op`, `pid_signal`, `monitor_call`, `impure_call` and `unknown_call`.
+- **Meaning.** A restarted process starts from what its init/1 makes, so what another process put into it is gone and comes back only if that process puts it there again. `once_code(mod, f)`: f runs once per incarnation of mod's process, from a start callback (`start_callback`) on its own stack, a peer's client API included. `once_request(a, b, kind, tag, f)`: a's once code, in f, calls or casts to b's process with a request tagged `tag`. `kept(b, h, tag, how, store)`: the clause of b's handler h for `tag` keeps something of it in b's process. `how` is one of:
+  - `table`: an ETS write.
+  - `monitor`: a monitor or link.
+  - `dict`: a process-dictionary write.
+  - `state`: a returned state setting a field to a value b's init/1 does not start it at (`initial_field`), or replacing it with one whose fields it does not spell.
+  - `handed`: a call out of the program the effect model does not know.
+
+  `holds_in(a, b, f, tag, how, store)` joins the two sides. docs/design/restart-state.md is the model.
+- **Direction.** Quiet on what it cannot see a request for: a send, a gen_statem request, a request made in a spawned process, a registration a handler makes on another's behalf, the init/1 of a module that declares no behaviour. Loud on keeping it cannot see into: code outside the program keeps, and a request with no tag enters every clause.
+- **Used by.** coupling (`restart_isolation`).
+
 ### A request entry and its parameters
 
 - **Names.** `request_entry`, `request_param` (request_entry.dl).
@@ -1279,29 +1293,149 @@ A synchronous wait that can last forever or nest: every finding is a process wai
 
 ## coupling
 
-`coupling` owns a relationship between two supervised processes that a restart breaks: a supervisor restarts what it owns, and a sibling holding a pid, a monitor or a cached reply of the restarted child is not restarted with it. The strategy decides who survives whom, so most findings anchor at the tree definition, with the dependency's call as a labelled frame. What a sibling does to another during teardown is `shutdown`'s (`teardown_touches_sibling`), and a wait on a sibling during `init/1` is `startup`'s (`blocks_on_peer`).
+`coupling` owns a relationship between two supervised processes that a restart breaks: a supervisor restarts what it owns, and the restarted child starts afresh without what a sibling registered with it (`holds_in`, the vocabulary's "What a restart loses"), while a sibling that cached its pid keeps a dead one. The sibling is not restarted with it. The strategy decides who survives whom, so most findings anchor at the tree definition, with the registration as a labelled frame. What a sibling does to another during teardown is `shutdown`'s (`teardown_touches_sibling`), and a wait on a sibling during `init/1` is `startup`'s (`blocks_on_peer`).
 
 ### Coupled children under one_for_one
 
-`sibling_dependency` · reason=`restart_isolation`, detail=`call` | `cast`
-· titles: "Coupled children under one_for_one" (`:warning`; `:info` when basis is `doubted`); "One-way coupling under one_for_one" (`:info`)
+`sibling_dependency` · reason=`restart_isolation`, detail=`table` | `monitor` | `state` | `dict` | `handed`
+· titles: "Coupled children under one_for_one" (`:warning`; `:info` when detail is `handed`, basis `inferred`)
 
-**Property.** Some supervisor S has the literal strategy `:one_for_one`, and modules A and B lie in different child branches of S (`child_subtree`: a direct child and everything supervised below it). Some function of A depends on B's process (`stateful_module_dep`): it calls or casts to a process started with B's callbacks, whether the target is B's literal name, a literal handed to a forwarding wrapper, a pid process points-to follows to B's server, or a message tag only B's handlers take; or it reaches a function of B's module that does so; or, with nothing resolved, it reaches any function of B's module while some function of B makes a call or cast (column `basis` = `inferred`). A must not depend on B only through processes A started for itself (`private_module_dep`), and no link may join the two modules' processes. `detail` is `call` when some depending function waits on a reply along some path, `cast` when every path is one-way. When B crashes and S restarts it alone, A keeps running with whatever pid, monitor or reply of the old B it holds: calls to the old pid exit with `:noproc` and casts to it vanish.
+**Property.** Some supervisor S has the literal strategy `:one_for_one`,
+and modules A and B lie in different child branches of S
+(`child_subtree`). A *holds something in* B (`holds_in`,
+`clientlib/restart_state.dl`; the model is docs/design/restart-state.md):
+- A's once code makes a call or a cast to B's process. Once code is what
+  runs once per incarnation of A: its start callbacks (`init/1`,
+  `handle_continue/2`, a Channel's `join/3`, a LiveView's `mount/3`) and
+  what they run on A's own stack, including B's client API.
+- B's handler clause for that request keeps something of it in B's
+  process. The clause is found by the request's tag (`clause_call`).
+  `detail` says what B keeps:
+  - `table`: an ETS row.
+  - `monitor`: a monitor or link.
+  - `state`: a state field set to a value B's `init/1` does not start it
+    at, or a whole state its fields do not spell.
+  - `dict`: an entry in its process dictionary.
+  - `handed`: B hands the request to code outside the program, which may
+    keep it.
+
+No link joins the two modules' processes, and A does not reach B only
+through an instance A started for itself (`private_module_dep`). When B
+crashes and S restarts it alone, B's `init/1` starts it without what A
+put there, and A never registers again. The result:
+- hooks that never run
+- a subscriber that gets nothing
+- a gauge gone
+- a "not initialised" flag that stays down
+
+When A restarts alone, it registers a second time beside what its old
+process left.
 
 **Assumptions and limits.**
-- The tree is what the supervision extractor reads: literal child lists, specs built by helpers up to three calls deep and by comprehensions; a child list built wholly at runtime has no children (`coverage.coverage_supervisor_no_children` reports it). The strategy must be a literal.
-- The call graph is complete except for dynamic calls. A target registered through `{:via, ...}` is followed only by process points-to or a unique message tag.
-- The dependency is module-level and value-insensitive: a guarded dispatcher whose other clause calls B couples A to B. The `inferred` basis is the July 2026 false-positive class (reaching a pure function of a module that calls a server elsewhere); it is reported at full severity unless the `prior_talks_to_process` prior (off by default) puts B's API at 0.3 or below, which marks the row `doubted` and steps it down. An inferred row with no path that waits is graded `cast` and its prose says A "sends casts" to B although A sends nothing (`FacadeCaller` in the fixture below).
-- The rule does not ask whether A holds anything across the restart: a caller that names B by its registered name on every call is reported too.
-- Any link excludes the pair, including a link from a caller that traps exits, which the link does not restart.
-- Only `:one_for_one` is judged. Under `:rest_for_one` an earlier child that depends on a later one survives the later one's restart with the same stale state, and is not reported.
-- A dependency that is also `restart_policy` or `cached_pid` is reported under each reason, stacked at the same anchor for the first two.
+- The tree is what the supervision extractor reads (the vocabulary's
+  "Supervision structure"). The strategy must be a literal.
+- Once code comes from `start_callback`. A module the program starts as
+  a server but that declares no behaviour has no `init/1` any analysis
+  sees, so its registrations are missed. ejabberd's `ejabberd_sql_sup`
+  registers its hooks and returns `ignore`: one of the 19 ejabberd pairs.
+  A registration made from a handler that runs again (on a reconnect or
+  a config reload) is missed. So is one a keeper makes in its own handler
+  on behalf of another's once request: MongooseIM's `gen_hook` sets up
+  each hook's instrumentation with `mongoose_instrument` in its
+  `add_handler` clause.
+- A request is a call or cast `sync_request_at` and `async_dep` resolve.
+  These are missed:
+  - a send to B's `handle_info/2`
+  - a gen_statem's call or cast
+  - a request made in a process the once code spawns
+  - a row A writes into B's public table itself
+  - a registration through a library registry the program starts as a
+    sibling (`Registry`, `:pg`, `Phoenix.PubSub`)
+- What B keeps is read from its handler clause. A request whose tag the
+  program cannot see enters every clause.
+- A field set back to the value `init/1` gives it keeps nothing
+  (`initial_field`). ejabberd_access_permissions' `invalidate` cast resets
+  its cached definitions.
+- The model does not ask whether B rebuilds what it kept. `Livebook.Storage`
+  reads its table back from disk, and `emqx_alarm` keeps alarms in Mnesia
+  through `mria`. It does not ask whether A makes the request again on its
+  own schedule (`emqx_os_mon`'s periodic check re-raises its alarm). It
+  does not ask whether the library B hands a request to keeps it past B's
+  restart (ejabberd_pkix hands certificates to `pkix`). These are the
+  class's false positives, and prior candidates below.
+- A request made on each use is not reported. A caller that names B on
+  every call re-resolves it after a restart, and nothing it holds is lost.
+  During B's restart window such a call exits `:noproc`, which is not this
+  class.
+- Only `:one_for_one` is judged. Under `:rest_for_one`, an earlier child
+  holding something in a later one has the same loss, and it is not
+  reported.
+- The finding anchors at the tree definition. Its related frames are A's
+  request (or A's call into B's module that makes it), labelled
+  "registers with the sibling here", and what B keeps it in.
 
-**Fixtures.** Positive: hand-authored fact sets in `test/analyses/coupling_test.exs` (a sync call, a cast-only dependency, an Erlang-spelled `:gen_statem.call` anchor, the inferred and doubted bases) and in `test/analyses/coupling_supervision_test.exs` (a call through a pid, anchored at that call); `DeadlockOrderSupervisor` with `SyncInitServer` and `WorkerA` (`test/fixtures/sync_init_fixture.ex`, `test/fixtures/supervision_fixture.ex`), asserted in `test/findings_test.exs`; `PrivateConn.Reporter` depending on `PrivateConn.Cache` (`test/fixtures/private_conn_fixture.ex`), asserted in `test/analyses/private_instance_test.exs`; `FacadeSupervisor`, `FacadeCaller`, `FacadeHelper` (`test/fixtures/coupling_facade_fixture.ex`), the inferred one-way row with and without a doubting prior, asserted in `test/priors/priors_test.exs`. Quiet: `Argus.CouplingTest.LinkA` and `LinkB` (inline source in `test/analyses/coupling_test.exs`, linked through a whereis pid); `PrivateConn.Pool` and its own `PrivateConn.Conn` (`test/analyses/private_instance_test.exs`); the linked hand-authored fact set in `test/analyses/coupling_test.exs`.
+**Fixtures.** Positive, all in test/fixtures/soundness/coupling_soundness.ex
+and test/fixtures/erl/restart_record_*.erl, asserted by
+test/soundness/coupling_test.exs:
+- `Restart.CastJoiner` → `CastKeeper`: a cast, a map state.
+- `ContinueJoiner` → `ContinueKeeper`: from `handle_continue/2`, a monitor.
+- `HookUser` → `HookKeeper`: through a helper, an ETS row.
+- `EachUser` → `EachKeeper`: a fun handed to `Enum.each/2`.
+- `DictUser` → `DictKeeper`: the process dictionary.
+- `FlagUser` → `FlagKeeper`: a flag a bare cast sets.
+- `MixedUser` → `MixedKeeper`: a registering clause beside a resetting one.
+- `ClauseWriter` → `ClauseKeeper`: the clause a request enters.
+- `ComputedUser` → `ComputedKeeper`: a state `Map.update/4` computes.
+- `:restart_record_user` → `:restart_record_keeper`: an Erlang record
+  state, no monitor.
+- `Subscriber` → `BrokerClient`: handed to a library, `:info`.
 
-**Corpus.** Fix pairs: `jackalope@8b7415f` (smartrent/jackalope, 35b0670 → 8b7415f, Hare.Application). Present-only: None.
+Hand-authored fact sets in test/analyses/coupling_test.exs cover:
+- a call kept as a row, and the same pair linked
+- a cast from `init/1` against one from a handler
+- a read, a reset and a kept field
+- the site in a helper module
 
-**Precision.** On the July 2026 audit of 15 OTP libraries the rule (then `one_for_one_coupling`) left three rows, Oban's Sonar, Midwife and Stager, all judged true positives (maintainer notes, 2026-07-17; CHANGELOG 0.5.0 "Fixed (precision — 15-project OTP corpus audit)" lists "Oban's coupling" among the verified real findings). The 0.5.1 survey of 24 Hex packages graded tzdata's `ReleaseUpdater → EtsHolder` and sentry's `Scheduler → ClientReport.Sender` as cast-only couplings, now `:info` (d22e5df). The `inferred`/`doubted` basis exists because the module-level clause was the audit's false-positive class (2d5b41c). Merging the three coupling relations left the corpus tally and a 14-tree diff unchanged (4f92fcf); the private-instance and cached-pid changes left the corpus, realtime, logflare, hexpm and OTP unchanged (fbab8ff, 120dfc6). No sampled precision figure beyond these.
+test/analyses/coupling_supervision_test.exs covers a registration through
+a pid. `PrivateConn.Reporter` subscribing to `PrivateConn.Cache`
+(test/fixtures/private_conn_fixture.ex) is asserted in
+test/analyses/private_instance_test.exs.
+
+Quiet:
+- `Restart.Relay` → `Store`: a call on each use, encore `_smoke`'s shape.
+- `CacheUser` → `CacheKeeper` and `:restart_reset_user`: a reset to the
+  initial value.
+- `ConfigUser` → `ConfigKeeper` and `ClauseReader`: a read.
+- `PrivateConn.Pool` and its own `Conn`.
+- `Argus.CouplingTest.LinkA` and `LinkB`: linked.
+
+**Corpus.** Fix pairs: `jackalope@8b7415f` (smartrent/jackalope, 35b0670 →
+8b7415f, Hare.Application). Hare's `handle_continue/2` subscribes through
+`Hare.TortoiseClient`, which hands the subscription to Tortoise, so the row
+is `handed` at `:info`. Present-only: None.
+
+**Precision.** The July 2026 audit of 15 OTP libraries judged Oban's Sonar,
+Midwife and Stager true: each `listen`s on the notifier at start.
+
+Restart-state round (2026-09-26), over the ETS rows round's 19 evaluation
+sets and the 26 live projects:
+- **Before.** 93 "Coupled" rows (25 true, 27%) and 148 "One-way" rows
+  (1 true).
+- **After.** 30 rows. At `:warning`, 24 of 28 are true (86%):
+  - ejabberd's 18 hook registrations
+  - MongooseIM's `gen_hook` and `mongoose_instrument` registrations (3)
+  - vernemq's `vmq_swc_store` gauge and `group_initialized` (2)
+  - `ejabberd_local`'s route monitor in `ejabberd_router` (1)
+
+  Both `:info` rows (`handed`) are false.
+- **False, 4.** `Livebook.Storage` rebuilds from disk. `emqx_alarm` keeps
+  alarms in Mnesia and its monitors re-raise them (2 rows). vernemq's CRL
+  cache is refilled on use.
+- **Lost, 2 true pairs.** `ejabberd_sql_sup` declares no behaviour.
+  `gen_hook` → `mongoose_instrument` is registered from a handler.
+- **Supervision round.** Its 44 "Coupled" pairs were 19 true: 18 still
+  reported, `ejabberd_sql_sup` lost. Its 25 false pairs and 72 "One-way"
+  pairs are gone.
 
 ### Permanent child depends on a sibling that may not come back
 
@@ -2510,7 +2644,11 @@ Another process takes or deletes the row between the check and the act, and the 
 
 **Assumptions and limits.**
 - The owner is taken to be the creating function's module, and "is a process" to be "runs as a process" (`process_behaviour_module`: a process behaviour's, or one whose module handles messages as a server does), not the process that runs the `:ets.new/2`: a table created in an API function a caller's process runs is attributed to the module, and a table created in a plain spawned process is not reported (encore chaconne's `Chaconne.Scratch`, a documented false-negative probe). A module of another behaviour runs in its caller and owns nothing (grpc's load-balancing strategies, vernemq's hook and HTTP-config modules, ejabberd's `gen_mod` import tables: 8 rows; `EtsStrategyImpl`, quiet).
-- A permanent child is excused because its restart recreates the table; the rows are still lost on every crash, which the finding's prose describes but the excuse does not weigh. ejabberd_hooks is the costly case: its table holds the hooks other modules registered, its restart makes it empty, and nothing registers them again (round 1 judged that row true; the supervision round's reading of ejabberd_sup excuses it). Whether a restart rebuilds what others wrote is a prior candidate (the ETS rows round's list below). A library's process whose supervisor is the user's, out of view, is reported.
+- A permanent child is excused because its restart recreates the table. The class is about the table vanishing for its readers, and a permanent owner's restart makes it again. The rows are still lost on every crash, and the finding's prose describes that, but the excuse does not weigh it. Rows another process put there once and never puts back are coupling's restart_isolation: coupling knows who put them there and whether the supervisor restarts that module with the owner, and this rule knows neither.
+  - ejabberd_hooks was the costly case. Its table holds the hooks other modules registered, its restart makes the table empty, and nothing registers them again. Round 1 judged that row true, and the supervision round's reading of ejabberd_sup excused it. The loss is now 18 coupling rows, one per registering module.
+  - ejabberd_captcha's rows are captchas in flight, made on each request, so nothing is held across its restart.
+
+  A library's process whose supervisor is the user's, out of view, is reported.
 - The permanent child is read from the specs the supervision extractor reads (the vocabulary's "Supervision structure"): a helper's tuple spec with its parameters bound, a list joined with `++`, `Enum.reject(&is_nil/1)`, a `Mod.child_spec/1` call, a `start_child` of a spec. A module or a restart it cannot read (a module a helper takes from a call, the function's parameter, a restart from a call) is no excuse (test/soundness/supervision_test.exs). A comprehension over a literal list of modules (emqx's `emqx_ds_beamformer_sup`) and a module a `start_child` takes from configuration (vernemq's reg views) are still not read.
 - The creation site is joined to the owner by the table's atom, not by the owner's own function, so a name created in two modules can pair one module's owner with the other's site.
 - When the `:ets.new/2` options cannot be read, the table looks as if it had no heir and is reported.
@@ -3860,6 +3998,74 @@ move. What moved elsewhere, by class:
   one-way pairs say themselves they are not to fix.
 - structure, "Supervisor registered as a worker": 2 added, both true
   (the class entry).
+
+### What a restart loses (restart-state round)
+
+The restart-state round (2026-09-26) replaced coupling's per-call
+definition of "Coupled children under one_for_one" with the model in
+docs/design/restart-state.md. A child holds something in its sibling when
+the child's once code makes a request the sibling keeps. The class entry
+has the rows: 241 → 30 over the 19 evaluation sets and 26 live projects,
+and 25 of 26 known true pairs → 24 (86% at `:warning`).
+
+**Deleted.**
+- The "One-way coupling under one_for_one" title.
+- The call/cast grading (`stateful_module_dep_kind`,
+  `stateful_module_dep_call`).
+- The `inferred`/`doubted` bases for `restart_isolation`. They remain for
+  `restart_policy`, where the harm is absence.
+- The anchoring walk: `direct_coupling_site`'s three clauses,
+  `sibling_entry_call` and `sibling_caller_reach`.
+- The stated limit that a caller naming B on every call is reported.
+
+**Added.**
+- `initial_field`, which follows from the model: a restart restores what
+  init/1 sets.
+- `handed`, a loud allowance at `:info` by the rubric's evidence clause.
+- `returned_update` reads Erlang records and whole states per clause
+  (schema 130).
+
+Left to a reader, as prior candidates:
+- **Does the keeper rebuild what it kept?** `Livebook.Storage` loads its
+  table from disk and saves each insert. `emqx_alarm` keeps alarms in a
+  Mnesia table through `mria`. A keeper whose init/1 reads a durable
+  store, or whose handler writes one, loses nothing a restart can take.
+  Mnesia is visible (`mnesia_op`), but `mria` and disk writes through a
+  library are not. 3 rows.
+- **Does the registrant register again on its own schedule?**
+  `emqx_os_mon` and `emqx_sys_mon` re-raise their alarms on every
+  periodic check. A request the once code makes and a periodic callback
+  also makes (a timer loop, `loop_arm` in mailbox.dl, or a `start_timer`
+  loop) is repaired within a period. This could be structural, but the
+  loop words are mailbox-local and `start_timer`'s ref-tagged message is
+  not read as a loop. 2 rows.
+- **Does the library the keeper hands a request to keep it past the
+  keeper's restart?** The rows are `ejabberd_pkix` → `pkix`,
+  `z_sites_manager` → a config read, and jackalope's Tortoise (true: the
+  connection is in the keeper's branch). 3 rows, `:info`.
+- **Is the store a cache anyone refills?** vernemq's `vmq_crl_srv` CRL
+  table is refilled by `check_crl/2` on every TLS handshake. 1 row.
+
+Structural gaps found:
+- **A module the program starts as a server but that declares no
+  behaviour is no process module to any analysis.** Examples are
+  ejabberd's `ejabberd_sql_sup` and `ejabberd_tmp_sup`, OTP's `inet_db`,
+  `pg` and `group`, and several emqx modules. The right fix is where
+  `process_behaviour_module` is decided: infer the behaviour from the
+  module's own start (`supervisor:start_link(_, ?MODULE, _)`). That moves
+  every analysis and needs its own measurement.
+- **A registration a keeper makes on behalf of another's once request is
+  not once code.** MongooseIM's `gen_hook` `add_handler` sets up each
+  hook's instrumentation with `mongoose_instrument`, whose restart then
+  makes `execute/3` raise for every hook run. Following once code through
+  the handler clauses a once request enters would find it.
+- **PidFlow reads `update_record` updates as `{:integer, pos}`, but the
+  normalized instruction spells a bare integer.** A pid stored into a
+  record field by `State#state{pid = Pid}` is not followed into the
+  field. Found here; `returned_update` reads both spellings. Not fixed:
+  it moves process points-to for every Erlang program.
+- **`returned_update` sees a fresh record only in a callback's state slot,
+  and a helper's returned state only through a tail call.**
 
 ### Prior candidates, evaluated
 
