@@ -9,6 +9,7 @@
 //   starts_before(sup, earlier, later, earlier_pos, later_pos)
 //   boots_before(sup, earlier, later, earlier_pos, later_pos)
 //   child_restart(sup, pos, child, restart)
+//   ends_with(dying, other)
 
 // ── Child subtree ─────────────────────────────────────────────────────
 
@@ -186,6 +187,35 @@ application_root(sup) :-
   !supervisor_child(_, _, sup, _, _),
   !dynamic_child(_, sup, _),
   !added_child(_, sup, _, _, _).
+
+// ── What ends with a process ─────────────────────────────────────────
+//
+// `ends_with(dying, other)`: when the process of `dying` (a supervised
+// module) ends, its supervisors end `other`'s too. `dying` is a
+// supervisor and `other` lies in its subtree; or `dying` is a direct
+// child of a supervisor whose strategy restarts `other`'s branch with it
+// (`:one_for_all`, or `:rest_for_one` with `other`'s branch later). A
+// `dying` deeper in a branch is restarted by its own supervisor, and the
+// branch around it goes on (a restart intensity the crash exhausts, which
+// the facts do not show, is not followed). What the application's end
+// takes is `application_root`'s question. docs/design/restart-state.md is
+// the model: what one process holds that another's end discards.
+.decl ends_with(dying: symbol, other: symbol)
+
+ends_with(d, o) :- supervisor(d, _), child_subtree(d, _, o), o != d.
+
+ends_with(d, o) :-
+  supervisor(s, "one_for_all"),
+  supervisor_child(s, _, d, _, _),
+  child_subtree(s, b, o),
+  b != d.
+
+ends_with(d, o) :-
+  supervisor(s, "rest_for_one"),
+  supervisor_child(s, dp, d, _, _),
+  supervisor_child(s, bp, b, _, _),
+  bp > dp,
+  child_subtree(s, b, o).
 
 // ── Siblings ─────────────────────────────────────────────────────────
 //

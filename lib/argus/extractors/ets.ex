@@ -43,9 +43,11 @@ defmodule Argus.Extractors.ETS do
     argument `pos` of the call at `id` that `ets_effect_order` orders, in
     `ets_key`'s vocabulary: how a callee's key or value reads in its
     caller
-  - `ets_read_when_present(read, whereis)` — every path to the read of a
+  - `ets_read_when_present(read, witness)` — every path to the read of a
     named table passes the side of a test on the function's
-    `:ets.whereis/1` of it that found the table there
+    `:ets.whereis/1` of it that found the table there, or an instruction
+    that makes it (its named `:ets.new/2`, a call to a function of the
+    module that makes it); the witness is the first of them
   """
 
   @behaviour Argus.Extractor
@@ -132,58 +134,161 @@ defmodule Argus.Extractors.ETS do
     |> emit_present_reads(module_data)
   end
 
-  # ── Reads made where the table was found ─────────────────────────
+  # ── Reads made where the table is there ──────────────────────────
 
-  # `:ets.whereis/1` answers `:undefined` for a table that is gone. A
-  # read of the same named table made only where a test of that answer
-  # found it there — on every path from the function's entry, past the
+  # A read of a named table the function reaches only where the table is
+  # there reads a table that was there a moment before; the window
+  # between the two stays open. The table is there past the side of a
+  # test of the function's `:ets.whereis/1` answer that found it — the
   # side of a comparison with `:undefined` (or of a `case` on it) that
-  # holds anything else — reads a table that was there a moment before;
-  # the window between the two stays open. The test is the first
-  # instruction that reads the answer on the straight line after the
-  # call, the answer followed through the registers it is copied to. An
-  # answer read any other way first (handed to a call, compared in a
-  # value) guards nothing, and a read reached on a path that skips the
-  # test's present side, or on its `:undefined` side, is not one.
+  # holds anything else, the test being the first instruction that reads
+  # the answer on the straight line after the call, the answer followed
+  # through the registers it is copied to — and past an instruction that
+  # makes it: an `:ets.new/2` of the table as a named table, or a call to
+  # a function of the module that makes it on its way (an ensure helper,
+  # `ensure_tables()` before each read). A make of a name already taken
+  # raises, which a rescue takes when the table is there, so what goes on
+  # past it has the table either way. An answer read any other way first
+  # (handed to a call, compared in a value) guards nothing, and a read
+  # reached on a path that skips both, or on the whereis's `:undefined`
+  # side before a make, is not one.
   defp emit_present_reads(facts, module_data) do
     ops = Map.get(facts, :ets_op, [])
+    makers = table_makers(facts, module_data)
 
     reads =
       for [id, func, name, _op, "read"] <- ops,
           name != "dynamic",
-          do: {func, name, id}
+          do: {{func, name}, id}
 
-    for [w, func, name, "whereis", _kind] <- ops,
-        name != "dynamic",
-        guarded = for({^func, ^name, r} <- reads, do: r),
-        guarded != [],
-        read <- present_reads(module_data, func, w, guarded),
-        reduce: facts do
-      acc -> add_fact(acc, :ets_read_when_present, [read, w])
-    end
+    wheres =
+      for [w, func, name, "whereis", _kind] <- ops,
+          name != "dynamic",
+          do: {{func, name}, w}
+
+    reads
+    |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
+    |> Enum.sort()
+    |> Enum.reduce(facts, fn {{func, name} = key, guarded}, acc ->
+      ws = for {^key, w} <- wheres, do: w
+
+      for {read, witness} <- present_reads(module_data, func, name, ws, makers, guarded),
+          reduce: acc do
+        acc -> add_fact(acc, :ets_read_when_present, [read, witness])
+      end
+    end)
   end
 
-  defp present_reads(module_data, func, whereis, reads) do
-    {name, arity} = Normalize.func_id_name_arity(func)
-    atom = String.to_existing_atom(name)
+  # `{read, witness}` for each of `reads` in `func` the walk from the
+  # entry cannot reach but through a found side of a whereis in `wheres`
+  # or past a make of `name`: the witness is the first such instruction.
+  defp present_reads(module_data, func, name, wheres, makers, reads) do
+    {fname, arity} = Normalize.func_id_name_arity(func)
+    atom = String.to_existing_atom(fname)
 
     with instrs when is_list(instrs) <- Helpers.find_function(module_data.functions, atom, arity),
-         %Cfg.Function{} = fun <- Helpers.cfg(module_data, atom, arity),
-         table = List.to_tuple(instrs),
-         at = instr_idx(whereis),
-         {:ok, edges} <- present_edges(fun, table, at + 1, [{:x, 0}]) do
-      reached = reach_avoiding(fun, edges)
+         %Cfg.Function{} = fun <- Helpers.cfg(module_data, atom, arity) do
+      table = List.to_tuple(instrs)
 
-      Enum.reject(reads, fn read ->
-        case Cfg.Function.block_at(fun, instr_idx(read)) do
-          nil -> true
-          block -> MapSet.member?(reached, block.id)
-        end
-      end)
+      edges =
+        Enum.flat_map(wheres, fn w ->
+          case present_edges(fun, table, instr_idx(w) + 1, [{:x, 0}]) do
+            {:ok, found} -> found
+            :error -> []
+          end
+        end)
+
+      makes = make_sites(instrs, func, module_data.module, name, makers)
+
+      witnesses =
+        (Enum.map(wheres, &instr_idx/1) ++ makes)
+        |> Enum.sort()
+
+      if witnesses == [] do
+        []
+      else
+        {seen, barrier} = reach_until(fun, edges, makes)
+        witness = InstrId.mint(func, hd(witnesses))
+
+        for read <- reads, present?(fun, seen, barrier, instr_idx(read)), do: {read, witness}
+      end
     else
       _ -> []
     end
   end
+
+  defp present?(fun, seen, barrier, idx) do
+    case Cfg.Function.block_at(fun, idx) do
+      nil ->
+        false
+
+      block ->
+        not MapSet.member?(seen, block.id) or
+          (Map.has_key?(barrier, block.id) and Map.fetch!(barrier, block.id) < idx)
+    end
+  end
+
+  # For each named table, the `:ets.new/2` sites that make it as a named
+  # table (`{:site, func, idx}`) and the functions of the module that make
+  # it (`{name, arity}`): with such a site in their own code, or calling
+  # one that makes it.
+  defp table_makers(facts, %{module: mod, functions: functions}) do
+    named =
+      for [id, "named_table", "true"] <- Map.get(facts, :ets_option, []),
+          into: MapSet.new(),
+          do: id
+
+    direct =
+      for [id, func, name] <- Map.get(facts, :ets_new, []),
+          name != "dynamic",
+          MapSet.member?(named, id),
+          reduce: %{} do
+        acc ->
+          made = [{:site, func, instr_idx(id)}, func_key(func)]
+          Map.update(acc, name, MapSet.new(made), &MapSet.union(&1, MapSet.new(made)))
+      end
+
+    calls =
+      Map.new(functions, fn {:function, name, arity, _entry, instrs} ->
+        {{name, arity}, instrs |> Enum.flat_map(&local_callee(&1, mod)) |> Enum.uniq()}
+      end)
+
+    Map.new(direct, fn {name, makers} -> {name, close_makers(makers, calls)} end)
+  end
+
+  defp close_makers(makers, calls) do
+    more =
+      for {caller, callees} <- calls,
+          not MapSet.member?(makers, caller),
+          Enum.any?(callees, &MapSet.member?(makers, &1)),
+          into: MapSet.new(),
+          do: caller
+
+    if MapSet.size(more) == 0, do: makers, else: close_makers(MapSet.union(makers, more), calls)
+  end
+
+  defp func_key(func) do
+    {name, arity} = Normalize.func_id_name_arity(func)
+    {String.to_existing_atom(name), arity}
+  end
+
+  # The indices in `func`'s `instrs` that make the table `name`: its named
+  # `:ets.new/2` sites there, and its local calls to a function that makes
+  # it.
+  defp make_sites(instrs, func, mod, name, makers) do
+    makers = Map.get(makers, name, MapSet.new())
+
+    for {instr, idx} <- Enum.with_index(instrs),
+        MapSet.member?(makers, {:site, func, idx}) or
+          Enum.any?(local_callee(instr, mod), &MapSet.member?(makers, &1)),
+        do: idx
+  end
+
+  defp local_callee({op, _arity, {mod, name, arity}}, mod) when op in [:call, :call_only],
+    do: [{name, arity}]
+
+  defp local_callee({:call_last, _arity, {mod, name, arity}, _dealloc}, mod), do: [{name, arity}]
+  defp local_callee(_instr, _mod), do: []
 
   # The edges out of the test that finds the answer held in `regs` is
   # not `:undefined`: `{:ok, [{from, to}]}`, or `:error` when the answer
@@ -264,23 +369,39 @@ defmodule Argus.Extractors.ETS do
     Enum.uniq(Argus.Instr.carry(instr, regs) ++ copies)
   end
 
-  # The blocks reached from the entry without taking any of `edges`.
-  defp reach_avoiding(fun, edges) do
+  # The blocks reached from the entry without taking any of `edges` and
+  # without going on past an instruction in `stops`, and for each block
+  # holding one, the first: what lies after it in the block is past it.
+  defp reach_until(fun, edges, stops) do
     avoid = MapSet.new(edges)
-    walk_avoiding([fun.entry], fun, avoid, MapSet.new([fun.entry]))
+
+    barrier =
+      Enum.reduce(stops, %{}, fn idx, acc ->
+        case Cfg.Function.block_at(fun, idx) do
+          nil -> acc
+          block -> Map.update(acc, block.id, idx, &min(&1, idx))
+        end
+      end)
+
+    {walk_until([fun.entry], fun, avoid, barrier, MapSet.new([fun.entry])), barrier}
   end
 
-  defp walk_avoiding([], _fun, _avoid, seen), do: seen
+  defp walk_until([], _fun, _avoid, _barrier, seen), do: seen
 
-  defp walk_avoiding([id | rest], fun, avoid, seen) do
+  defp walk_until([id | rest], fun, avoid, barrier, seen) do
     next =
-      for {to, _kind} <- Map.fetch!(fun.blocks, id).succs,
-          not MapSet.member?(avoid, {id, to}),
-          not MapSet.member?(seen, to),
-          uniq: true,
-          do: to
+      if Map.has_key?(barrier, id),
+        do: [],
+        else:
+          for(
+            {to, _kind} <- Map.fetch!(fun.blocks, id).succs,
+            not MapSet.member?(avoid, {id, to}),
+            not MapSet.member?(seen, to),
+            uniq: true,
+            do: to
+          )
 
-    walk_avoiding(next ++ rest, fun, avoid, Enum.reduce(next, seen, &MapSet.put(&2, &1)))
+    walk_until(next ++ rest, fun, avoid, barrier, Enum.reduce(next, seen, &MapSet.put(&2, &1)))
   end
 
   # ── Effects in order ─────────────────────────────────────────────

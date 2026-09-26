@@ -56,6 +56,24 @@ defmodule Argus.Extractors.ETSTest do
     end
   end
 
+  describe "reads made where the table is there" do
+    # The functions of Lifetime.EnsureReader with a read every path to
+    # which passes a whereis that found the table or a make of it.
+    defp present_readers do
+      facts = ETS.extract(disassemble(Lifetime.EnsureReader))
+      ops = Map.new(Map.get(facts, :ets_op, []), fn [id, func | _] -> {id, func} end)
+
+      for [read, _witness] <- Map.get(facts, :ets_read_when_present, []), uniq: true do
+        ops |> Map.fetch!(read) |> String.split(":") |> List.last()
+      end
+      |> Enum.sort()
+    end
+
+    test "a make before the read, through an ensure helper or inline, and nothing else" do
+      assert present_readers() == ["get/1", "get_inline/1"]
+    end
+  end
+
   describe "extract/1" do
     test "detects ets_new for named table" do
       facts = ETS.extract(disassemble(Argus.Test.Fixtures.EtsOwner))

@@ -71,14 +71,17 @@ defmodule Argus.Schema.OwnedResources do
         layer: 2,
         fields: [
           {:read, :symbol, "the read (an ets_op of kind read)"},
-          {:whereis, :symbol, "the :ets.whereis/1 of the same named table, in the same function"}
+          {:witness, :symbol,
+           "the first :ets.whereis/1 of the same named table in the function, or else the first instruction that makes it"}
         ],
         doc: """
-        Every path from the function's entry to the read passes a test of \
-        the whereis result that found the table there: the side of a \
-        comparison with `:undefined` (or a `case` arm) where it is not \
-        `:undefined`. A read the function makes on a path that skips the \
-        test, or on the `:undefined` side, has no row.
+        Every path from the function's entry to the read passes where the \
+        table is there: the side of a test of a whereis result that found \
+        it (of a comparison with `:undefined`, or a `case` arm, where it is \
+        not `:undefined`), or an instruction that makes it — its named \
+        `:ets.new/2`, or a call to a function of the module that makes it \
+        (an ensure helper). A read the function makes on a path that skips \
+        both, or on the `:undefined` side before a make, has no row.
         """
       },
       %{

@@ -84,6 +84,9 @@
 ets_reach.seed(f, f) :- ets_new(_, f, _).
 ets_reach.seed(f, f) :- ets_op(_, f, _, _, "read").
 ets_reach.seed(f, f) :- named_read(_, f, _).
+// A function that spawns a linked process: which process runs it says
+// what the spawn ends with (linked_by, below).
+ets_reach.seed(f, f) :- spawn_call(_, f, _, _, _, "spawn_link", _, _, _, _).
 
 .decl process_root(root: symbol, proc: symbol, mod: symbol, kind: symbol)
 
@@ -443,12 +446,15 @@ ets_write_only_table(name, mod, id) :-
 // the table alive; a rescue in the reader (or in a wrapper the reader
 // hands its closure to) turns the window into a result.
 //
-// The reader is "outside the owner" when the owner's process does not
-// run it (owner_reaches): what only the API reaches runs in callers, and
-// a table a closure the owner spawns creates is that process's, a read
-// in the owner's own callbacks made from outside it. An application's
-// start/2 process lives as long as the application: no restart window,
-// no finding.
+// The window needs a reader that outlives the owner (reader_outlives,
+// below): a process that runs the read goes on after the owner's process
+// ends. The owner's own process does not (owner_reaches); nor does one
+// its supervisors end with it (ends_with, supervision.dl: a child of the
+// owner's subtree, a sibling a one_for_all or rest_for_one restarts with
+// it), nor any when the owner's end is the application's
+// (application_lifetime). A reader no process in view runs is called
+// from outside them, and goes on. docs/design/restart-state.md is the
+// model: what one process holds that another's end discards.
 // :ets.info/1,2 answers :undefined for a table that is gone; it is how a
 // reader asks, not a read that raises (ets_answers_missing_table,
 // clientlib/effect_model.dl).
@@ -488,13 +494,16 @@ read_rescued(site, g) :-
 caller_rescues(f) :- rescues_argument_error(f).
 
 // A reader that asks `:ets.whereis/1` of the table before reading it
-// (hackney's HTTP/3 connection table, Sentry's dedupe) reads only while
-// the table is there — when the read is made only on the side of the
-// answer's test that found it (ets_read_when_present, from the ETS
-// extractor: every path to the read passes it). A whereis in another
-// clause, one whose answer is logged and the table read anyway, or a
-// read on the `:undefined` side guards nothing. The window between the
-// question and the read is left.
+// (hackney's HTTP/3 connection table, Sentry's dedupe), or makes it on
+// its way when it is missing (an ensure helper before each read:
+// blockster's SystemConfig, sequin's Benchmark.Stats), reads only while
+// the table is there — when every path to the read passes the side of
+// the answer's test that found it, or an instruction that makes it
+// (ets_read_when_present, from the ETS extractor). A whereis in another
+// clause, one whose answer is logged and the table read anyway, a read
+// on the `:undefined` side, or a make on one path only guards nothing.
+// The window between the question and the read is left, and a table the
+// reader makes is its own (dies-with-owner's row for it stands).
 .decl read_when_present(site: symbol)
 
 read_when_present(site) :- ets_read_when_present(site, _).
@@ -532,18 +541,86 @@ named_read(name, caller, site) :-
 // The owner is table_held's: the process whose stack runs the
 // :ets.new/2, a helper module's named table included (the server whose
 // init/1 calls `Metrics.setup()` holds it, and `Metrics.lookup/1`, run
-// by callers, reads it from outside). Not an owner that lives as long as
-// its application (application_lifetime), and not a table the read's
-// operand cannot name (read_misses).
+// by callers, reads it from outside). The table goes with it (no heir),
+// a reader outlives it, the read can meet the table gone (not rescued,
+// not made only where it is there), and the read's operand can name it
+// (read_misses).
 ets_read_outside_owner(name, owner, reader, site, id) :-
   table_held(name, p, owner, id),
-  !application_lifetime(p),
   !ets_option(id, "heir", "true"),
   named_read(name, reader, site),
-  !owner_reaches(p, owner, reader),
+  reader_outlives(p, owner, reader),
   !read_guarded(reader, site),
   !read_when_present(site),
   !read_misses(site, id).
+
+// A process that runs `reader` goes on after the owner's process `p`
+// ends: not p itself, not one p's end takes (ends_with, for a
+// supervised owner's own process), and none at all when p's end is the
+// application's. A reader no process in view runs is run by a caller
+// outside them.
+.decl reader_outlives(proc: symbol, owner: symbol, reader: symbol)
+
+reader_outlives(p, owner, reader) :-
+  read_owner(p, owner, reader),
+  !application_lifetime(p),
+  owner_reaches(q, qm, reader),
+  q != p,
+  !ended_with(p, owner, q, qm).
+
+reader_outlives(p, owner, reader) :-
+  read_owner(p, owner, reader),
+  !application_lifetime(p),
+  !runs_somewhere(reader).
+
+.decl read_owner(proc: symbol, owner: symbol, reader: symbol)
+
+read_owner(p, owner, reader) :- table_held(name, p, owner, _), named_read(name, reader, _).
+
+.decl runs_somewhere(func: symbol)
+
+runs_somewhere(f) :- named_read(_, f, _), owner_reaches(_, _, f).
+
+// The reader's process q (of qm's code) ends when the owner's process p
+// ends: q is a supervised module's own process its supervisors end with
+// the owner's server (ends_with), or q is spawned linked
+// (`spawn_link`) by a process that is p or ends with it — the link ends
+// it too. A linked process that traps exits outlives its peer and is
+// taken as ended (quiet): a spawned loader rarely traps.
+.decl ended_with(proc: symbol, owner: symbol, q: symbol, qm: symbol)
+
+ended_with(p, owner, q, qm) :-
+  read_owner(p, owner, reader),
+  process_root(_, p, owner, "server"),
+  owner_reaches(q, qm, reader),
+  process_root(_, q, qm, "server"),
+  ends_with(owner, qm).
+
+ended_with(p, owner, q, qm) :-
+  read_owner(p, owner, reader),
+  owner_reaches(q, qm, reader),
+  linked_by(q, r),
+  ends_by(p, owner, r).
+
+// The process `q` (process_root's "spawn <function it runs>") is
+// spawned linked by a function the process `r` runs.
+.decl linked_by(q: symbol, starter: symbol)
+
+linked_by(cat("spawn ", g), r) :-
+  process_start(id, s, _, "spawn", g),
+  spawn_call(id, s, _, _, _, "spawn_link", _, _, _, _),
+  owner_reaches(r, _, s).
+
+// `r` is the owner's process p, or a process that ends with it.
+.decl ends_by(proc: symbol, owner: symbol, r: symbol)
+
+ends_by(p, owner, p) :- read_owner(p, owner, _).
+
+ends_by(p, owner, r) :-
+  read_owner(p, owner, _),
+  process_root(_, p, owner, "server"),
+  process_root(_, r, rm, "server"),
+  ends_with(owner, rm).
 
 // A process whose exit is its application's: the process an
 // Application's start/2 runs in, and the supervisor that start/2 starts

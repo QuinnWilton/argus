@@ -8,6 +8,35 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Restart-state round, part 2: a reader that outlives a table's owner
 
+**Changed.** ets's "ETS table read while its owner may be restarting"
+reports a read when a process that runs it outlives the table's owner
+(`reader_outlives`). It no longer subtracts the owner's own process and
+the application's lifetime from every read made outside the owner. A
+process ends with the owner when any of these hold:
+- it is the owner
+- the owner's end is the application's
+- the owner's supervisors end it with the owner (`ends_with`, new in
+  clientlib supervision.dl): it is in the owner's subtree, a
+  `one_for_all` sibling, or a later `rest_for_one` sibling
+- it was spawned linked by the owner or by a process that ends with it
+
+A function the owner's process runs, which another process runs too, is
+no longer taken as the owner's own. The model is
+docs/design/restart-state.md. Over the evaluation sets:
+- 21 false rows go: reads after an ensure helper, and children reading
+  their supervisor's table.
+- 35 rows come: 16 true reads the owner's own callbacks shared with
+  other processes, and 19 false. The false ones are partisan's
+  alternative managers, kernel processes whose exit halts the node, and
+  mnesia's intensity-0 chain.
+
+**Changed.** Schema 131. `ets_read_when_present(read, witness)` (the ETS
+extractor; the field was `whereis`) also holds when every path to the
+read passes an instruction that makes the table: its named
+`:ets.new/2`, or a call to a function of the module that makes it (an
+ensure helper). The witness is the first whereis of the table, or else
+the first make.
+
 **Fixed.** The supervision extractor reads the strategy of a flags tuple
 built at run time (`{one_for_all, 0, timer:hours(24)}`, mnesia_kernel_sup
 and mnesia_sup, which read as `unknown` before). Their trees gain an

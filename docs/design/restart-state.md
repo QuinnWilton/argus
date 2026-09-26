@@ -211,3 +211,82 @@ Beside them are the quiet shapes:
 - the read-only request, in a keeper with no other clause and in one
   whose other clause writes
 - the linked pair
+
+## A table read while its owner is gone
+
+The same lifetime model restates "ETS table read while its owner may be
+restarting" (`ets_read_outside_owner`). A process that owns a table
+takes the table with it when it ends. Another process that reads the
+table harms itself only if it is still running then.
+
+The old rule reported every read made in a function the owner's own
+process does not run. It then subtracted cases:
+- the owner's process running the function at all, even if other
+  processes also ran it (`owner_reaches`)
+- an owner whose end is the application's (`application_lifetime`)
+- a rescue, a whereis test, or an operand that cannot name the table
+
+The first subtraction was unsound. A helper that both the owner's
+callbacks and a sibling call was taken as the owner's own.
+
+Stated constructively, the rule reports a read at site R, in function F,
+of table T, when all of these hold:
+
+- **The table goes with its owner.** T is held by process P
+  (`table_held`) and has no heir.
+- **A reader outlives P** (`reader_outlives`). Some process Q that runs F
+  goes on after P ends, or no process in view runs F, so its callers are
+  outside the program's processes. Q does not outlive P when any of
+  these hold:
+  - Q is P.
+  - P's end is the application's: P is the application's process or the
+    root supervisor its start/2 starts.
+  - P's supervisors end Q with it (`ends_with`, supervision.dl):
+    - Q is in P's subtree, when P is a supervisor.
+    - P is a direct child of a `:one_for_all` supervisor and Q is in
+      another branch.
+    - P is a direct child of a `:rest_for_one` supervisor and Q is in a
+      later branch.
+  - Q is spawned linked (`spawn_link`) by P or by a process that ends
+    with P.
+- **The read can meet T gone.**
+  - It is not rescued.
+  - It is not made only where T is there. The table is there past a
+    whereis test that found it, and past an instruction that makes it on
+    the reader's own path: its named `:ets.new/2`, or an ensure helper of
+    the module. This is `ets_read_when_present`, widened.
+  - Its operand can name T (`read_misses`).
+
+What it subsumes and deletes:
+- The separate `!owner_reaches` and `!application_lifetime` negations
+  become cases of "a reader outlives P".
+- The ETS rows round's lazy-ensure prior candidate becomes structural.
+- The limit "a function both the owner's process and callers' processes
+  call is taken to run in the owner" goes. That function's callers are
+  readers that outlive.
+
+What it assumes and does not claim:
+- **Escalation.** A restart intensity the crash exhausts is not followed:
+  mnesia's intensity-0 `one_for_all` chain stops the application, and
+  the facts do not carry intensity.
+- **Trapped exits.** A linked process that traps exits outlives its peer,
+  and is taken as ended. That errs quiet.
+- **Owners that cannot end.** A keeper that cannot crash, or a process
+  whose exit halts the node (`application_controller`, `code_server`),
+  remains a prior candidate, as the rubric's owner-lifetime clause says.
+- **Alternative modules.** Two modules of which configuration runs only
+  one are taken as both running: partisan's peer service managers.
+
+Soundness fixtures, in test/soundness/ets_lifetime_test.exs. These still
+fire:
+- an earlier `:rest_for_one` sibling
+- a `:one_for_one` sibling
+- a `:one_for_all` sibling of a branch that restarts the owner alone
+- an unlinked loader
+- the shared helper
+- an ensure on one branch, an ensure after the read, an ensure of another
+  table, and an ensure that makes an unnamed table of the atom
+
+These are quiet: the owner's supervised child, the `:one_for_all`
+sibling, the later `:rest_for_one` sibling, the linked loader, and the two
+safe ensures.
