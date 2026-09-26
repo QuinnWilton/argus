@@ -21,51 +21,73 @@
 // level (clientlib/tooling.dl, Argus.Findings.Tooling).
 .output tooling
 
-// ══ Coupling under one_for_one ══════════════════════════════════════
-.decl derived_process_link(from_mod: symbol, to_mod: symbol)
-
-derived_process_link(a, b) :- process_link(a, b).
-derived_process_link(sup, child) :- supervisor_child(sup, _, child, _, _).
-
-// A link to a pid the extractor could not name ("dynamic"), which the
-// points-to analysis follows to a server started with b's callbacks.
-derived_process_link(a, b) :-
-  signal_target(_, f, "link", p),
-  function_def(f, a, _, _, _),
-  server_process(p, b).
-
-// Two children in different branches of a one_for_one supervisor, one
-// holding something in the other (holds_in, clientlib/restart_state.dl):
-// its once code — init/1 and what runs on its stack before it serves, a
-// handle_continue/2 — made a request the other keeps (an ETS row, a
-// monitor, a state field, its process dictionary, or code outside the
-// program it hands the request to). When the keeper restarts alone its
-// init/1 builds it afresh without what the other put there, and the
-// other, not restarted, never puts it back; when the other restarts
-// alone it registers again beside its old incarnation's registration.
-// docs/design/restart-state.md is the model.
+// ══ A registration a sibling's restart loses ═══════════════════════
 //
-// A call made on each use is not one: the next call reaches the new
-// process by name and nothing is lost that the caller holds. Linked
-// pairs are excluded — an exit propagates through the link and both
-// restart together — and so is a caller whose every resolved call to
-// the keeper's module goes to an instance it started for itself
-// (private_module_dep, calls.dl): a supervisor restarting its child does
-// not touch the one a sibling keeps.
-.decl coupling(sup: symbol, caller_mod: symbol, callee_mod: symbol, sup_site: symbol)
+// docs/design/restart-state.md is the model.
 
-coupling(sup, caller_mod, callee_mod, sup_site) :-
+// Two children a one_for_one supervisor restarts apart, one of which
+// registered with the other while starting: when the keeper restarts
+// alone its init/1 builds afresh without the registration, and the
+// registrant, not restarted, never makes it again.
+.decl lost_registration(sup: symbol, caller: symbol, keeper: symbol)
+
+lost_registration(sup, caller, keeper) :-
+  restarted_apart(sup, caller, keeper),
+  registers_with(caller, keeper),
+  !only_own_instances(caller, keeper),
+  !linked(caller, keeper).
+
+// sup is a one_for_one supervisor and the two modules sit in different
+// branches of it, so the restart of one leaves the other running.
+.decl restarted_apart(sup: symbol, a: symbol, b: symbol) inline
+
+restarted_apart(sup, a, b) :-
   supervisor(sup, "one_for_one"),
-  supervisor_site(sup, sup_site),
-  child_subtree(sup, caller_branch, caller_mod),
-  child_subtree(sup, callee_branch, callee_mod),
-  caller_branch != callee_branch,
-  holds_in(caller_mod, callee_mod, _, _, _, _),
-  !private_module_dep(caller_mod, callee_mod),
-  !derived_process_link(caller_mod, callee_mod),
-  !derived_process_link(callee_mod, caller_mod).
+  child_subtree(sup, a_branch, a),
+  child_subtree(sup, b_branch, b),
+  a_branch != b_branch.
 
-// Where the caller asks: the step of its once phase that makes the
+// The caller's once code — init/1 and what runs on its stack before it
+// serves, a handle_continue/2 — made a request the keeper keeps: an ETS
+// row, a monitor, a state field, its process dictionary, or code outside
+// the program it hands the request to (holds_in,
+// clientlib/restart_state.dl). A call made on each use is not one: the
+// next call reaches the new process by name and nothing is lost that the
+// caller holds. When the caller restarts alone it registers again beside
+// its old incarnation's registration.
+.decl registers_with(caller: symbol, keeper: symbol) inline
+
+registers_with(caller, keeper) :- holds_in(caller, keeper, _, _, _, _).
+
+// Every resolved call `from` makes to `to`'s module goes to an instance
+// it started for itself (private_module_dep, calls.dl): a supervisor
+// restarting its child does not touch the one a sibling keeps.
+.decl only_own_instances(from: symbol, to: symbol)
+
+only_own_instances(from, to) :- private_module_dep(from, to).
+
+// The two modules' processes are linked, one way or the other: an exit
+// propagates through the link and both restart together.
+.decl linked(a: symbol, b: symbol)
+
+linked(a, b) :- links_to(a, b).
+linked(a, b) :- links_to(b, a).
+
+// `from` links to `to`: a link the extractor names, a supervisor's link
+// to its child, or a link to a pid the extractor could not name
+// ("dynamic") that the points-to analysis follows to a server started
+// with `to`'s callbacks.
+.decl links_to(from: symbol, to: symbol)
+
+links_to(from, to) :- process_link(from, to).
+links_to(sup, child) :- supervisor_child(sup, _, child, _, _).
+
+links_to(from, to) :-
+  signal_target(_, func, "link", pid),
+  function_def(func, from, _, _, _),
+  server_process(pid, to).
+
+// Where the caller registers: the step of its once phase that makes the
 // request or leads to it (once_step, runs.dl). The phase runs at its own
 // level in a start callback and at the sites of the phase (a
 // handle_continue/2 clause init/1 continues to): a request made there is
@@ -81,52 +103,52 @@ coupling(sup, caller_mod, callee_mod, sup_site) :-
 once_path.cut(f, g) :- side_call(f, g).
 once_path.seed(g, g) :- holds_in(_, _, g, _, _, _).
 
-.decl step_site(caller: symbol, callee: symbol, site: symbol, how: symbol, store: symbol)
+.decl step_site(caller: symbol, keeper: symbol, site: symbol, how: symbol, store: symbol)
 
-step_site(a, b, id, how, x) :-
-  coupling(_, a, b, _),
-  holds_in(a, b, g, tag, how, x),
-  start_callback(a, g),
-  request_site(g, id, b, tag).
+step_site(caller, keeper, site, how, store) :-
+  lost_registration(_, caller, keeper),
+  holds_in(caller, keeper, func, tag, how, store),
+  start_callback(caller, func),
+  request_site(func, site, keeper, tag).
 
-step_site(a, b, id, how, x) :-
-  coupling(_, a, b, _),
-  holds_in(a, b, h, tag, how, x),
-  once_phase_site(a, h, id),
-  request_site(h, id, b, tag).
+step_site(caller, keeper, site, how, store) :-
+  lost_registration(_, caller, keeper),
+  holds_in(caller, keeper, func, tag, how, store),
+  once_phase_site(caller, func, site),
+  request_site(func, site, keeper, tag).
 
-step_site(a, b, c, how, x) :-
-  coupling(_, a, b, _),
-  holds_in(a, b, g, _, how, x),
-  once_step(a, _, c, e),
-  once_path.reaches(e, g).
+step_site(caller, keeper, step, how, store) :-
+  lost_registration(_, caller, keeper),
+  holds_in(caller, keeper, func, _, how, store),
+  once_step(caller, _, step, callee),
+  once_path.reaches(callee, func).
 
 // The instruction of func that makes the request to mod's process, a
 // call's or a cast's, with the tag it carries.
 .decl request_site(func: symbol, site: symbol, mod: symbol, tag: symbol)
 
-request_site(g, id, b, tag) :- sync_request_at(g, id, b, tag), id != "".
-request_site(g, id, b, tag) :- async_request_at(g, id, b, tag), id != "".
+request_site(func, site, mod, tag) :- sync_request_at(func, site, mod, tag), site != "".
+request_site(func, site, mod, tag) :- async_request_at(func, site, mod, tag), site != "".
 
-.decl stepped(caller: symbol, callee: symbol, how: symbol)
+.decl stepped(caller: symbol, keeper: symbol, how: symbol)
 
-stepped(a, b, how) :- step_site(a, b, _, how, _).
+stepped(caller, keeper, how) :- step_site(caller, keeper, _, how, _).
 
-.decl holds_site(caller: symbol, callee: symbol, site: symbol, how: symbol, store: symbol)
+.decl holds_site(caller: symbol, keeper: symbol, site: symbol, how: symbol, store: symbol)
 
-holds_site(a, b, id, how, x) :- step_site(a, b, id, how, x).
+holds_site(caller, keeper, site, how, store) :- step_site(caller, keeper, site, how, store).
 
 // No step of the keeping has an instruction (a request in init/1 whose
 // call the facts place at no site of its own, a closure init/1 builds
 // and keeps): the start callback that reaches the request. Every keeping
 // holds_in finds has a site, so the frame never decides which keeping
 // the row reports (chosen_keeping).
-holds_site(a, b, s, how, x) :-
-  coupling(_, a, b, _),
-  holds_in(a, b, g, _, how, x),
-  start_callback(a, s),
-  once_path.reaches(s, g),
-  !stepped(a, b, how).
+holds_site(caller, keeper, start, how, store) :-
+  lost_registration(_, caller, keeper),
+  holds_in(caller, keeper, func, _, how, store),
+  start_callback(caller, start),
+  once_path.reaches(start, func),
+  !stepped(caller, keeper, how).
 
 // ══ The one output: a child depending on a sibling ═══════════════════
 //
@@ -188,25 +210,31 @@ dep_basis(f, t, "inferred", 0) :-
 .decl sibling_dependency(sup: symbol, caller: symbol, callee: symbol, reason: symbol, detail: symbol, sup_site: symbol, witness: symbol, site: symbol, basis: symbol, permille: number)
 .output sibling_dependency
 
-// What the keeper does with code outside the program is inferred, and
-// the row says so; a keeping the program shows is preferred to it.
-sibling_dependency(sup, a, b, "restart_isolation", how, sup_site, x, site, basis, 0) :-
-  coupling(sup, a, b, sup_site),
-  chosen_keeping(a, b, how),
-  holds_site(a, b, site, how, x),
+// A supervisor with no site of its own is not reported. What the keeper
+// does with code outside the program is inferred, and the row says so; a
+// keeping the program shows is preferred to it.
+sibling_dependency(sup, caller, keeper, "restart_isolation", how, sup_site, store, site, basis, 0) :-
+  lost_registration(sup, caller, keeper),
+  supervisor_site(sup, sup_site),
+  chosen_keeping(caller, keeper, how),
+  holds_site(caller, keeper, site, how, store),
   keeping_basis(how, basis).
 
-.decl chosen_keeping(caller: symbol, callee: symbol, how: symbol)
+.decl chosen_keeping(caller: symbol, keeper: symbol, how: symbol)
 
-chosen_keeping(a, b, how) :- holds_site(a, b, _, how, _), keeping_basis(how, "resolved").
+chosen_keeping(caller, keeper, how) :-
+  holds_site(caller, keeper, _, how, _),
+  keeping_basis(how, "resolved").
 
-chosen_keeping(a, b, "handed") :-
-  holds_site(a, b, _, "handed", _),
-  !shown_keeping(a, b).
+chosen_keeping(caller, keeper, "handed") :-
+  holds_site(caller, keeper, _, "handed", _),
+  !shown_keeping(caller, keeper).
 
-.decl shown_keeping(caller: symbol, callee: symbol)
+.decl shown_keeping(caller: symbol, keeper: symbol)
 
-shown_keeping(a, b) :- holds_site(a, b, _, how, _), keeping_basis(how, "resolved").
+shown_keeping(caller, keeper) :-
+  holds_site(caller, keeper, _, how, _),
+  keeping_basis(how, "resolved").
 
 .decl keeping_basis(how: symbol, basis: symbol)
 

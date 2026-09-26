@@ -90,7 +90,7 @@ defmodule Argus.Exclusions.CouplingTest do
   defp function(id), do: id |> String.split(":") |> List.last() |> String.split("#") |> hd()
 
   describe "restart isolation" do
-    # coupling.dl, coupling: !derived_process_link(callee_mod, caller_mod).
+    # coupling.dl, lost_registration: !linked(caller, keeper).
     test "a hub that links each subscriber it keeps restarts together with them", ctx do
       assert dependencies(ctx, @linked_hub) == []
       assert {"restart_isolation", "state", "handle_call/3"} in dependencies(ctx, @unlinked_hub)
