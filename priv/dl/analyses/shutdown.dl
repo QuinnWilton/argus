@@ -1007,28 +1007,26 @@ shared_stop(h, via, sib) :-
   server_process(p, sib),
   !private_process(p, _, _).
 
-// ── Trap exit without handler ────────────────────────────────────
-
-// Module traps exits but defines no handle_info callback that could
-// receive {:EXIT, ...} messages. This is a heuristic — we check if
-// the module has any handle_info function.
+// ── Trapped exits nothing takes ──────────────────────────────────
 //
-// gen_statem / GenStateMachine modules deliver info events (including
-// {:EXIT, ...}) to their state functions or handle_event/4, not to a
-// handle_info callback, so the has_handle_info check is meaningless for
-// them — every trapping gen_statem would be a false positive (Swarm's
-// Tracker even matches {:EXIT, ...} explicitly). Exclude them.
-
-// `witness` is the function that sets trap_exit. One row per witness —
-// finding builders dedupe on (mod, kind). `kind` is "no_handler" (no
-// handle_info at all) or "no_exit_clause" (a handle_info that never
-// matches {:EXIT, ...}).
+// Trapping turns a linked process's exit into an {:EXIT, pid, reason}
+// message, and something in the process must take it. `witness` is the
+// function that sets trap_exit. One row per witness — finding builders
+// dedupe on (mod, kind). `kind` is "no_handler" (a server with no
+// handle_info at all), "no_exit_clause" (a handle_info that never matches
+// {:EXIT, ...}) or "no_receive_clause" (a hand-rolled loop whose receives
+// never take it).
 .decl unhandled_exit_signal(mod: symbol, kind: symbol, witness: symbol)
 .output unhandled_exit_signal
 
-unhandled_exit_signal(mod, "no_handler", func) :-
-  module_traps(func, mod),
-  gen_server_like(mod),
+// A server traps exits and defines no handle_info to take the
+// {:EXIT, ...} gen_server hands it. This is a heuristic: any handle_info,
+// at any arity, counts.
+.decl exit_without_handler(mod: symbol, trap: symbol)
+
+exit_without_handler(mod, trap) :-
+  module_traps(trap, mod),
+  hands_exits_to_handle_info(mod),
   !has_handle_info(mod).
 
 // A process whose trapped exits gen_server hands to handle_info/2: a
@@ -1038,77 +1036,16 @@ unhandled_exit_signal(mod, "no_handler", func) :-
 // loop (a LiveView, a channel, a GenEvent) takes them its own way, and a
 // process under a behaviour argus does not know (gen_batch_server
 // passes `{info, {'EXIT', ...}}` to handle_batch/2, a cowboy_loop
-// handler to info/3) runs a receive argus does not see.
-//
-// ── A hand-rolled loop that traps and takes no exit ─────────────────
-//
-// A process no behaviour runs reads its mailbox in its own receive: a
-// spawn_link'ed loop, a proc_lib process. When it traps exits and none
-// of the receives it runs has a clause that can take an `{:EXIT, pid,
-// reason}` (recv_takes_exit: one for :EXIT, or one that fixes no tag), a
-// linked process's exit becomes a message nothing takes: it stays in the
-// mailbox, every receive scans past it, and the exit trapping was meant
-// to answer (the parent's shutdown among them) goes unanswered. The
-// receives are what the trapping function runs after it in its process,
-// and what a spawned function that reaches it there runs: a loop entered
-// after a setup that traps. The trap is any not on a process module's
-// own stack (trap_on_process_stack, process_kind.dl: a behaviour's loop
-// reads that mailbox, not these receives): one in a module no behaviour
-// runs, and one in what a spawn or proc_lib runs, which module_traps
-// leaves out (traps_elsewhere) because it is not the module's server's.
-// Not asked of a process that runs no receive (grpc's Mint adapter traps
-// for its caller), or one that runs code whose receives are not the
-// program's to read: a call through a fun or an apply, an enter_loop, a
-// hibernate.
-.decl trap_loop_candidate(func: symbol)
+// handler to info/3) runs a receive argus does not see. A gen_statem
+// delivers {:EXIT, ...} to its state functions or handle_event/4, so a
+// has_handle_info check would call every trapping gen_statem (Swarm's
+// Tracker matches {:EXIT, ...} explicitly) a finding.
+.decl hands_exits_to_handle_info(mod: symbol) inline
 
-trap_loop_candidate(func) :-
-  trap_exit(func, mod),
-  !trap_on_process_stack(func),
-  !statem_process(mod).
+hands_exits_to_handle_info(mod) :- gen_server_like(mod).
 
-.init trap_loop_caller = SameProcessReach
-
-trap_loop_caller.seed(f, f) :- trap_loop_candidate(f).
-
-.init trap_loop = ForwardSameProcessReachCut
-
-trap_loop.cut(f, g) :- side_call(f, g).
-trap_loop.root(f, f) :- trap_loop_candidate(f).
-
-trap_loop.root(f, r) :-
-  trap_loop_candidate(f),
-  trap_loop_caller.reaches(r, f),
-  process_start(_, _, _, "spawn", r).
-
-.decl trap_loop_receives(func: symbol)
-
-trap_loop_receives(f) :- trap_loop.reaches(f, g), recv_start(_, g, _, _).
-
-.decl trap_loop_takes_exit(func: symbol)
-
-trap_loop_takes_exit(f) :- trap_loop.reaches(f, g), recv_takes_exit(_, g).
-
-.decl trap_loop_opaque(func: symbol)
-
-trap_loop_opaque(f) :- trap_loop.reaches(f, g), dynamic_call(_, g, _).
-
-trap_loop_opaque(f) :-
-  trap_loop.reaches(f, g),
-  remote_call(_, g, m, "enter_loop", _),
-  (m = ":gen_server" ; m = ":gen_statem" ; m = ":gen_event").
-
-trap_loop_opaque(f) :-
-  trap_loop.reaches(f, g),
-  remote_call(_, g, m, "hibernate", _),
-  (m = ":erlang" ; m = ":proc_lib").
-
-unhandled_exit_signal(mod, "no_receive_clause", func) :-
-  trap_loop_candidate(func),
-  function_def(func, mod, _, _, _),
-  trap_loop_receives(func),
-  !trap_loop_takes_exit(func),
-  !trap_loop_opaque(func).
+unhandled_exit_signal(mod, "no_handler", trap) :-
+  exit_without_handler(mod, trap).
 
 // ── Trap exit with a handle_info that never matches {:EXIT, ...} ──
 //
@@ -1123,9 +1060,100 @@ unhandled_exit_signal(mod, "no_receive_clause", func) :-
 //
 // callback_tag over-approximates (every atom compared anywhere in the
 // body counts), so a module that mentions :EXIT at all is not reported —
-// the direction that keeps the rule quiet rather than noisy.
-unhandled_exit_signal(mod, "no_exit_clause", func) :-
-  trap_exit_without_exit_clause(mod, func).
+// the direction that keeps the rule quiet rather than noisy. The bug is
+// the vocabulary's own word (trap_exit_without_exit_clause,
+// process_kind.dl): a module that traps, has a partial handle_info/2
+// that never takes :EXIT, and is no gen_statem.
+unhandled_exit_signal(mod, "no_exit_clause", trap) :-
+  trap_exit_without_exit_clause(mod, trap).
+
+// ── A hand-rolled loop that traps and takes no exit ─────────────────
+//
+// A process no behaviour runs reads its mailbox in its own receive: a
+// spawn_link'ed loop, a proc_lib process. When it traps exits and none
+// of the receives it runs has a clause that can take an `{:EXIT, pid,
+// reason}` (recv_takes_exit: one for :EXIT, or one that fixes no tag), a
+// linked process's exit becomes a message nothing takes: it stays in the
+// mailbox, every receive scans past it, and the exit trapping was meant
+// to answer (the parent's shutdown among them) goes unanswered.
+
+// A process no behaviour runs traps exits, and none of the receives its
+// loop runs can take the {:EXIT, ...}.
+.decl exit_without_receive(mod: symbol, trap: symbol)
+
+exit_without_receive(mod, trap) :-
+  traps_in_own_loop(mod, trap),
+  trap_loop_receives(trap),
+  !trap_loop_takes_exit(trap),
+  !trap_loop_hides_receives(trap).
+
+// The trap at `trap`, a function of `mod`'s, is one no behaviour's loop
+// answers (trap_loop_candidate).
+.decl traps_in_own_loop(mod: symbol, trap: symbol) inline
+
+traps_in_own_loop(mod, trap) :-
+  trap_loop_candidate(trap),
+  function_def(trap, mod, _, _, _).
+
+// A trap_exit not on a process module's own stack (trap_on_process_stack,
+// process_kind.dl: a behaviour's loop reads that mailbox, not these
+// receives), in a module that is no gen_statem: one in a module no
+// behaviour runs, and one in what a spawn or proc_lib runs, which
+// module_traps leaves out (traps_elsewhere) because it is not the
+// module's server's.
+.decl trap_loop_candidate(func: symbol)
+
+trap_loop_candidate(func) :-
+  trap_exit(func, mod),
+  !trap_on_process_stack(func),
+  !statem_process(mod).
+
+// The loop is what the trapping function runs after it in its process,
+// and what a spawned function that reaches it there runs: a loop entered
+// after a setup that traps.
+.init trap_loop_caller = SameProcessReach
+
+trap_loop_caller.seed(f, f) :- trap_loop_candidate(f).
+
+.init trap_loop = ForwardSameProcessReachCut
+
+trap_loop.cut(f, g) :- side_call(f, g).
+trap_loop.root(f, f) :- trap_loop_candidate(f).
+
+trap_loop.root(f, r) :-
+  trap_loop_candidate(f),
+  trap_loop_caller.reaches(r, f),
+  process_start(_, _, _, "spawn", r).
+
+// The loop runs a receive. One that runs none (grpc's Mint adapter traps
+// for its caller) is not asked.
+.decl trap_loop_receives(trap: symbol)
+
+trap_loop_receives(f) :- trap_loop.reaches(f, g), recv_start(_, g, _, _).
+
+// Some receive the loop runs can take an {:EXIT, ...} (recv_takes_exit).
+.decl trap_loop_takes_exit(trap: symbol)
+
+trap_loop_takes_exit(f) :- trap_loop.reaches(f, g), recv_takes_exit(_, g).
+
+// The loop runs code whose receives are not the program's to read: a
+// call through a fun or an apply, an enter_loop, a hibernate.
+.decl trap_loop_hides_receives(trap: symbol)
+
+trap_loop_hides_receives(f) :- trap_loop.reaches(f, g), dynamic_call(_, g, _).
+
+trap_loop_hides_receives(f) :-
+  trap_loop.reaches(f, g),
+  remote_call(_, g, m, "enter_loop", _),
+  (m = ":gen_server" ; m = ":gen_statem" ; m = ":gen_event").
+
+trap_loop_hides_receives(f) :-
+  trap_loop.reaches(f, g),
+  remote_call(_, g, m, "hibernate", _),
+  (m = ":erlang" ; m = ":proc_lib").
+
+unhandled_exit_signal(mod, "no_receive_clause", trap) :-
+  exit_without_receive(mod, trap).
 
 // ══ Teardown that hurts a monitored child ═══════════════════════════
 
