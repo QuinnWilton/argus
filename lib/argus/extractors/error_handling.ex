@@ -1791,9 +1791,23 @@ defmodule Argus.Extractors.ErrorHandling do
   defp result_use([{:test, _op, _f, src, _fields} | rest], aliases, instrs),
     do: use_if_aliased(alias?(src, aliases), rest, aliases, instrs)
 
-  defp result_use([{op, src, _f, _list} | rest], aliases, instrs)
-       when op in [:select_val, :select_tuple_arity],
-       do: use_if_aliased(alias?(src, aliases), rest, aliases, instrs)
+  # Elixir's `if x`, `x && y` and `unless x` compile to a select over
+  # false and nil whose default is the truthy side: a truthiness test,
+  # where a {:badrpc, _} is true. A select that names `true` too (`case x
+  # do true -> ...; false -> ... end`) matches by shape, and a
+  # {:badrpc, _} falls to its default, the case's own raise.
+  @falsy [{:atom, false}, {:atom, nil}]
+
+  defp result_use([{:select_val, src, _f, {:list, pairs}} | rest], aliases, instrs) do
+    cond do
+      not alias?(src, aliases) -> result_use(rest, aliases, instrs)
+      Enum.all?(Enum.take_every(pairs, 2), &(&1 in @falsy)) -> "boolean"
+      true -> shape_use(instrs)
+    end
+  end
+
+  defp result_use([{:select_tuple_arity, src, _f, _list} | rest], aliases, instrs),
+    do: use_if_aliased(alias?(src, aliases), rest, aliases, instrs)
 
   defp result_use([{:move, src, dst} | rest], aliases, instrs),
     do: result_use(rest, retarget(aliases, src, dst), instrs)

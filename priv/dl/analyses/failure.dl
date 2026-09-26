@@ -335,12 +335,27 @@ rpc_wrapped(c, site, rpc, w) :-
   how != "returned",
   rpc_wrapper(w, _, rpc).
 
+rpc_wrapped(g, site, rpc, w) :-
+  result_tested(site, g, w, "returned"),
+  predicate_function(g),
+  rpc_wrapper(w, _, rpc).
+
 unhandled_failure(c, site, v, "case", w) :-
   result_tested(site, c, w, "case"),
   rpc_wrapper(w, v, _).
 
 unhandled_failure(c, site, v, "boolean", w) :-
   result_tested(site, c, w, "boolean"),
+  rpc_wrapper(w, v, _).
+
+// A predicate (a name ending in `?`) that returns a wrapper's answer
+// hands its callers the {:badrpc, _} as a boolean, which is true: its
+// name is the test (a cluster facade's `alive?/2` returning the proto's
+// `:rpc.call`). Reported at the predicate's call of the wrapper, as a
+// predicate making the rpc itself is at the rpc (rpc_boolean_use).
+unhandled_failure(g, site, v, "boolean", w) :-
+  result_tested(site, g, w, "returned"),
+  predicate_function(g),
   rpc_wrapper(w, v, _).
 
 // ══ Results discarded ═══════════════════════════════════════════════

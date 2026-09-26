@@ -128,6 +128,14 @@ comprehension's function. Only the comprehension's own loop, its edge to
 itself, is left out: one whose body calls back into a function that
 reaches it feeds its atoms back. No row moves.
 
+**Fixed.** The error handling extractor reads a select over `false` and
+`nil` (Elixir's `if`, `&&`, `unless`) as a boolean test of an rpc's
+answer, where a `{:badrpc, _}` is true; a `case` naming `true` is still a
+match. A predicate returning a wrapper's rpc answer is a boolean use of
+it. 1 row comes, true: Livebook's
+`NodeManager.start_runtime_server/2`, whose `if pid = :rpc.call(...)`
+monitors a gone node's `{:badrpc, _}`.
+
 ### Races by their harm
 
 **Changed.** A check-then-act pair is reported when a rival can land on

@@ -75,4 +75,47 @@ defmodule Argus.Soundness.FailureTest do
   test "the negatives beside them stay quiet", %{found: found} do
     for mfa <- @quiet, do: refute(Enum.any?(found, &(elem(&1, 2) == mfa)), inspect(mfa))
   end
+
+  # The exclusion census's failure hole (docs/design/exclusions.md): an
+  # Elixir truthiness test of an rpc's answer, and a predicate returning a
+  # wrapper's.
+  describe "census hole: an rpc answer used as a boolean" do
+    alias Argus.Test.Soundness.Census.Failure, as: C
+
+    @census [
+      C.Proto,
+      C.Cluster,
+      C.Router,
+      C.SafeRouter,
+      C.SafeProto,
+      C.SafeCluster
+    ]
+
+    @boolean "RPC result used as a boolean"
+
+    defp census do
+      {:ok, res} = Memo.run_analyses(@census, analyses: [:failure])
+      MapSet.new(res.findings, &{&1.severity, &1.title, &1.mfa})
+    end
+
+    for mfa <- [
+          {C.Cluster, :alive?, 2},
+          {C.Router, :route, 3},
+          {C.Router, :ping, 2},
+          {C.Router, :forward, 3},
+          {C.Router, :reap, 2}
+        ] do
+      test "#{inspect(mfa)} fires: #{@boolean}" do
+        assert {:warning, @boolean, unquote(Macro.escape(mfa))} in census()
+      end
+    end
+
+    test "a match that takes :badrpc, and a predicate over a callee that does, are quiet" do
+      found = census()
+
+      for mod <- [C.SafeRouter, C.SafeProto, C.SafeCluster] do
+        refute Enum.any?(found, &match?({_, @boolean, {^mod, _, _}}, &1)), inspect(mod)
+      end
+    end
+  end
 end
