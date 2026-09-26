@@ -1104,15 +1104,18 @@ ets_race_frame(w, "read", r2, f2) :-
 // the tables on what clientlib/tables.dl says each operation may touch.
 
 // A call that runs its callee on the caller's stack.
+// A call into a function the program defines is a call site of the
+// caller's (stage 0's call_site, call_instr), and runs_elsewhere never
+// holds for an edge its caller calls: every such call runs on the
+// caller's stack.
 .decl same_stack_site(site: symbol, caller: symbol, callee: symbol)
 
-same_stack_site(c, f, g) :- local_call(c, f, g, _), !runs_elsewhere(f, g).
+same_stack_site(c, f, g) :- local_call(c, f, g, _).
 
 same_stack_site(c, f, g) :-
   remote_call(c, f, m, n, a),
   g = cat(m, ":", n, "/", to_string(a)),
-  function_def(g, _, _, _, _),
-  !runs_elsewhere(f, g).
+  function_def(g, _, _, _, _).
 
 .decl object_insert(w: symbol, func: symbol)
 
@@ -1252,6 +1255,8 @@ publish_reader_candidate(f, w1, w2, r, g, ak, a) :-
   ets_key(r, ks, _),
   ks != "literal",
   readable_elsewhere(w2, bk, b),
+  // A reader that rescues the raise on the missing row does not crash
+  // in the gap: the harm is the badarg.
   !rescues_argument_error(g).
 
 // ── Where the reader's key comes from ──
@@ -1800,6 +1805,8 @@ dirty_op(site, op) :- mnesia_op(site, _, op, _, _, _, _, _).
 // record of their own, under keys of their own, not the same one.
 .decl harmless_record_race(func: symbol, read: symbol, write: symbol)
 
+// Deleting twice is deleting once only when the delete is all the
+// decision does: one that also sends has both racers send.
 harmless_record_race(f, r, w) :-
   reads_then_writes_record(f, r, w, t, _),
   mnesia_op(w, _, op, _, _, _, _, _),
