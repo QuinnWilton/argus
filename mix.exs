@@ -53,6 +53,18 @@ defmodule Argus.MixProject do
       # BEAM file analysis: disassembly and the corrected Line-chunk table
       # that line_info resolution depends on (0.2.0+).
       {:beam_spy, "~> 0.2"},
+      # The incremental query graph (memos, the manifest, the blob store).
+      # The workspace's roux until 0.2 is on Hex.
+      {:roux, path: "../roux"},
+      {:telemetry, "~> 1.0"},
+      # Findings rendered as source frames.
+      {:pentiment, "~> 0.2"},
+      # Pentiment's lexers: syntax highlighting of the frames on a terminal.
+      # Optional, because a hard dependency collides with the `only: :dev`
+      # or `only: :docs` restriction most projects put on makeup through
+      # ex_doc; a project that wants highlighting adds the lexers itself.
+      {:makeup_elixir, "~> 1.0", optional: true},
+      {:makeup_erlang, "~> 1.0", optional: true},
 
       # Dev/Test
       {:stream_data, "~> 1.0", only: [:test, :dev]},
