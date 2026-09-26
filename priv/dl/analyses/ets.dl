@@ -318,75 +318,140 @@ ets_unprotected_owner(name, mod, site) :- table_dies_with_owner(name, _, mod, si
 
 // ── Concurrent access patterns ─────────────────────────────────────
 
-// Module reading from a table.
-.decl ets_reader_module(name: symbol, mod: symbol)
+// Two modules read a table made without :read_concurrency, whose readers
+// then take the table's lock in turn.
+.decl reads_without_read_concurrency(table: symbol, create: symbol)
 
-ets_reader_module(name, mod) :-
+reads_without_read_concurrency(table, create) :-
+  read_by_two_modules(table, _, _),
+  makes_table(create, table),
+  !made_for_concurrent_reads(create).
+
+// Two modules write a table made without :write_concurrency, whose
+// writers then take the table's lock in turn.
+.decl writes_without_write_concurrency(table: symbol, create: symbol)
+
+writes_without_write_concurrency(table, create) :-
+  written_by_two_modules(table, _, _),
+  makes_table(create, table),
+  !made_for_concurrent_writes(create).
+
+// Two modules write a table made as an ordered_set, whose writers contend
+// more than a hash table's do.
+.decl ordered_set_written_by_two_modules(table: symbol, first: symbol, second: symbol, create: symbol)
+
+ordered_set_written_by_two_modules(table, first, second, create) :-
+  written_by_two_modules(table, first, second),
+  makes_table(create, table),
+  ordered_set(create).
+
+// Two modules, `first` before `second`, read the named table (each pair
+// once). A table whose name is "dynamic" is no one table, and is left out.
+.decl read_by_two_modules(table: symbol, first: symbol, second: symbol)
+
+read_by_two_modules(table, m1, m2) :-
+  reads_in_module(table, m1),
+  reads_in_module(table, m2),
+  m1 < m2.
+
+// Two modules, `first` before `second`, write the named table (each pair
+// once).
+.decl written_by_two_modules(table: symbol, first: symbol, second: symbol)
+
+written_by_two_modules(table, m1, m2) :-
+  writes_in_module(table, m1),
+  writes_in_module(table, m2),
+  m1 < m2.
+
+// Code of `mod` reads the named table.
+.decl reads_in_module(table: symbol, mod: symbol)
+
+reads_in_module(name, mod) :-
   ets_op(_, func, name, _, "read"),
   name != "dynamic",
   function_def(func, mod, _, _, _).
 
-// Module writing to a table.
-.decl ets_writer_module(name: symbol, mod: symbol)
+// Code of `mod` writes the named table.
+.decl writes_in_module(table: symbol, mod: symbol)
 
-ets_writer_module(name, mod) :-
+writes_in_module(name, mod) :-
   ets_op(_, func, name, _, "write"),
   name != "dynamic",
   function_def(func, mod, _, _, _).
 
-// Cross-module reads without read_concurrency.
+// The :ets.new/2 at `create` makes the table of that name ("dynamic", a
+// name computed at run time, is none).
+.decl makes_table(create: symbol, table: symbol)
+
+makes_table(create, table) :- ets_new(create, _, table), table != "dynamic".
+
+.decl made_for_concurrent_reads(create: symbol) inline
+
+made_for_concurrent_reads(create) :- ets_option(create, "read_concurrency", "true").
+
+// :write_concurrency true, or :auto.
+.decl made_for_concurrent_writes(create: symbol)
+
+made_for_concurrent_writes(create) :- ets_option(create, "write_concurrency", "true").
+made_for_concurrent_writes(create) :- ets_option(create, "write_concurrency", "auto").
+
+.decl ordered_set(create: symbol) inline
+
+ordered_set(create) :- ets_option(create, "type", "ordered_set").
+
+// The module that makes the table at `create`.
+.decl made_in(create: symbol, mod: symbol) inline
+
+made_in(create, mod) :- ets_new(create, func, _), function_def(func, mod, _, _, _).
+
 .decl ets_missing_read_concurrency(name: symbol, mod: symbol, site: symbol)
 .output ets_missing_read_concurrency
 
-ets_missing_read_concurrency(name, mod, id) :-
-  ets_reader_module(name, m1),
-  ets_reader_module(name, m2),
-  name != "dynamic",
-  m1 < m2,
-  ets_new(id, func, name),
-  function_def(func, mod, _, _, _),
-  !ets_option(id, "read_concurrency", "true").
+ets_missing_read_concurrency(name, mod, site) :-
+  reads_without_read_concurrency(name, site),
+  made_in(site, mod).
 
-// Cross-module writes without write_concurrency.
 .decl ets_missing_write_concurrency(name: symbol, mod: symbol, site: symbol)
 .output ets_missing_write_concurrency
 
-ets_missing_write_concurrency(name, mod, id) :-
-  ets_writer_module(name, m1),
-  ets_writer_module(name, m2),
-  name != "dynamic",
-  m1 < m2,
-  ets_new(id, func, name),
-  function_def(func, mod, _, _, _),
-  !ets_option(id, "write_concurrency", "true"),
-  !ets_option(id, "write_concurrency", "auto").
+ets_missing_write_concurrency(name, mod, site) :-
+  writes_without_write_concurrency(name, site),
+  made_in(site, mod).
 
-// Write contention on ordered_set (higher lock contention).
 // site is the :ets.new/2 instruction that chose ordered_set.
 .decl ets_ordered_set_contention(name: symbol, mod1: symbol, mod2: symbol, site: symbol)
 .output ets_ordered_set_contention
 
-ets_ordered_set_contention(name, mod1, mod2, id) :-
-  ets_writer_module(name, mod1),
-  ets_writer_module(name, mod2),
-  name != "dynamic",
-  mod1 < mod2,
-  ets_new(id, _, name),
-  ets_option(id, "type", "ordered_set").
+ets_ordered_set_contention(name, mod1, mod2, site) :-
+  ordered_set_written_by_two_modules(name, mod1, mod2, site).
 
 // ── Stale reference risk ───────────────────────────────────────────
 
-// Table created without named_table by a process —
-// the reference becomes invalid if the owner restarts.
-// site is the :ets.new/2 instruction — the creation line.
+// A process module's own server makes a table without a name: whoever
+// keeps the reference holds a dead one once the server restarts and
+// makes the table again. `create` is the :ets.new/2 instruction, the
+// creation line.
+.decl unnamed_table_in_server(table: symbol, owner_mod: symbol, create: symbol)
+
+unnamed_table_in_server(table, owner_mod, create) :-
+  table_held(table, owner, owner_mod, create),
+  runs_as_server(owner),
+  !named_site(create).
+
+// `owner` is a process module's own process (process_root's "server").
+.decl runs_as_server(owner: symbol)
+
+runs_as_server(p) :- process_root(_, p, mod, "server"), process_module(mod).
+
+// The :ets.new/2 at `create` makes a named table.
+.decl named_site(create: symbol) inline
+
+named_site(create) :- ets_option(create, "named_table", "true").
+
 .decl ets_unnamed_in_process(name: symbol, mod: symbol, site: symbol)
 .output ets_unnamed_in_process
 
-ets_unnamed_in_process(name, mod, id) :-
-  table_held(name, p, mod, id),
-  process_root(_, p, mod, "server"),
-  process_module(mod),
-  !ets_option(id, "named_table", "true").
+ets_unnamed_in_process(name, mod, site) :- unnamed_table_in_server(name, mod, site).
 
 // ── Write-only tables ──────────────────────────────────────────────
 //
