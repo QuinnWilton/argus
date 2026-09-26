@@ -933,6 +933,21 @@ computed_read(p, owner, reader, site, id) :-
 // whose child spec says `restart: :temporary` (never restarted). A start
 // function the program's own supervisors never call is still judged: a
 // library's server is started by its users'.
+
+// A server's start function makes a named table in its caller's process,
+// so the table outlives the server, and the restart's `:ets.new/2` of the
+// taken name raises before the server can start again.
+.decl table_made_in_start(mod: symbol, start: symbol, create: symbol)
+
+table_made_in_start(mod, start, create) :-
+  starts_server(start, mod),
+  makes_on_its_stack(start, create),
+  named_site(create),
+  !made_by_server(create, mod),
+  !made_only_when_free(create, start),
+  !given_away(create, start),
+  !rescued_when_taken(create).
+
 .decl starts_server_api(mod: symbol, func: symbol)
 
 starts_server_api("GenServer", "start_link").
@@ -947,9 +962,11 @@ starts_server_api("Agent", "start_link").
 starts_server_api("Supervisor", "start_link").
 starts_server_api(":supervisor", "start_link").
 
-.decl server_start_function(mod: symbol, start: symbol)
+// `start` is mod's `start_link`, and starts a server itself (a call to
+// one of the APIs above).
+.decl starts_server(start: symbol, mod: symbol)
 
-server_start_function(m, s) :-
+starts_server(s, m) :-
   function_def(s, m, "start_link", _, 1),
   process_behaviour_module(m),
   remote_call(_, s, api, op, _),
@@ -960,6 +977,15 @@ server_start_function(m, s) :-
 
 start_side.seed(f, f) :- ets_new(n, f, _), ets_option(n, "named_table", "true").
 
+// The :ets.new/2 at `create` runs on start's own stack: in the start
+// function, or a function it calls in the same process.
+.decl makes_on_its_stack(start: symbol, create: symbol)
+
+makes_on_its_stack(start, create) :-
+  starts_server(start, _),
+  start_side.reaches(start, f),
+  ets_new(create, f, _).
+
 // The module's own process makes it: init/1 or a callback reaches it.
 .decl made_by_server(site: symbol, mod: symbol)
 
@@ -967,6 +993,36 @@ made_by_server(n, m) :-
   ets_new(n, f, _),
   process_entry(m, c),
   start_side.reaches(c, f).
+
+// The function that makes the table, or the start function, makes it only
+// past the `:undefined` side of its own `:ets.whereis/1` or `:ets.info/1,2`
+// of that table (ets_made_when_absent): where the name is free.
+.decl made_only_when_free(create: symbol, start: symbol)
+
+made_only_when_free(create, start) :-
+  makes_on_its_stack(start, create),
+  ets_new(create, f, name),
+  ets_made_when_absent(f, name, _).
+
+made_only_when_free(create, start) :-
+  makes_on_its_stack(start, create),
+  ets_new(create, _, name),
+  ets_made_when_absent(start, name, _).
+
+// The function that makes the table, or the start function, gives the
+// table away (`:ets.give_away/3` of the same table, or of an operand
+// that may be it): its new owner is no longer the caller.
+.decl given_away(create: symbol, start: symbol)
+
+given_away(create, start) :-
+  makes_on_its_stack(start, create),
+  ets_new(create, f, name),
+  (gives_table_away(f, name) ; gives_some_table_away(f)).
+
+given_away(create, start) :-
+  makes_on_its_stack(start, create),
+  ets_new(create, _, name),
+  (gives_table_away(start, name) ; gives_some_table_away(start)).
 
 .decl gives_table_away(func: symbol, name: symbol)
 
@@ -976,19 +1032,15 @@ gives_table_away(f, name) :- ets_op(_, f, name, "give_away", _), name != "dynami
 
 gives_some_table_away(f) :- ets_op(_, f, "dynamic", "give_away", _).
 
+// A rescue at the `:ets.new/2` takes the ArgumentError a taken name
+// raises.
+.decl rescued_when_taken(create: symbol)
+
+rescued_when_taken(create) :- ets_new(create, f, _), site_rescues_argument_error(create, f).
+
 .decl ets_created_in_start(name: symbol, mod: symbol, site: symbol, start: symbol)
 .output ets_created_in_start
 
-ets_created_in_start(name, m, n, s) :-
-  server_start_function(m, s),
-  start_side.reaches(s, f),
-  ets_new(n, f, name),
-  ets_option(n, "named_table", "true"),
-  !made_by_server(n, m),
-  !ets_made_when_absent(f, name, _),
-  !ets_made_when_absent(s, name, _),
-  !gives_table_away(f, name),
-  !gives_table_away(s, name),
-  !gives_some_table_away(f),
-  !gives_some_table_away(s),
-  !site_rescues_argument_error(n, f).
+ets_created_in_start(name, mod, site, start) :-
+  table_made_in_start(mod, start, site),
+  ets_new(site, _, name).
