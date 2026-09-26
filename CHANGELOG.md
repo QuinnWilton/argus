@@ -6,6 +6,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## 0.20.0-dev — unreleased
 
+### Stores: a prune beside a reader
+
+**Fixed.** `Argus.Cache.prune/2` (and `Argus.Corpus.prune_facts/2`,
+`prune_solves/2`, `mix argus.corpus prune`) listed what was stale and
+then removed each path with `File.rm_rf!/1`. A lookup that touched an
+entry in between lost it anyway, and removing a directory file by file
+let a reader list a kept solve with some outputs gone: a solve read
+back with relations missing, which reads as no rows. **Added**
+`Argus.Cache.remove_stale/1`, which every prune now goes through: it
+looks at the path again, renames it out of its name before removing
+it (a reader finds an entry whole or not at all), and puts it back
+when a lookup touched it between the look and the rename. A prune
+returns only what it removed.
+
 ### Stores: a kept program answer says it is one
 
 **Fixed.** A store's `programs/` keeps, for a fresh VM, the relations

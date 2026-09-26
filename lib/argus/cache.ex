@@ -54,6 +54,15 @@ defmodule Argus.Cache do
   which is what `stale/2` reads to tell an entry in use from one nobody
   will read again.
 
+  A prune removes an entry the same way it was installed: renamed out
+  of its name first (`remove_stale/1`), so a reader finds an entry
+  whole or not at all, never partly removed. What a prune decided to
+  remove is looked at again as it goes: one a lookup touched since is
+  kept, and put back when the touch came between that look and the
+  rename. No step reads an entry's state and then acts on its name
+  assuming it still holds: a fetch is the touch itself (`fetch/1`), and
+  an install is the rename.
+
   ## Turning it off
 
   `ARGUS_NO_CACHE=1` makes every store a no-op: nothing is read from one
@@ -226,7 +235,7 @@ defmodule Argus.Cache do
     # once a day has passed, as a staging name is.
     work =
       stale_entries(Path.join(root, "work"), [], fn name, _type ->
-        if Regex.match?(~r/^\d+-\d+$/, name), do: :staging
+        if Regex.match?(~r/^\d+-\d+(\.\d+\.\d+)?$/, name), do: :staging
       end)
 
     @subdirs
@@ -235,12 +244,72 @@ defmodule Argus.Cache do
     |> Enum.sort()
   end
 
-  @doc "Removes `stale/2`; the paths it removed."
+  @doc """
+  Removes `stale/2`, each by `remove_stale/1`; the paths it removed. An
+  entry a lookup touched after `stale/2` looked at it stays.
+  """
   @spec prune(Path.t(), [prune_option()]) :: [Path.t()]
   def prune(root, opts \\ []) do
-    stale = stale(root, opts)
-    Enum.each(stale, &File.rm_rf!/1)
-    stale
+    root |> stale(opts) |> Enum.filter(&remove_stale/1)
+  end
+
+  @doc """
+  Removes one path `stale/2` named — an entry, a staging name or a
+  run's scratch directory — unless it has been touched within the hour
+  by now; whether it did.
+
+  Whole: the path is renamed out of its name first, to a staging name
+  beside it (which a crashed prune leaves to a later one), and removed
+  from there, so a reader of the entry finds all of it or none of it.
+  A lookup whose touch came between the look and the rename gets its
+  entry back: the look is repeated on what was renamed, and an entry
+  touched since returns to its name, unless a writer installed the key
+  again meanwhile.
+  """
+  @spec remove_stale(Path.t()) :: boolean()
+  def remove_stale(path) do
+    with true <- untouched?(path),
+         aside = "#{path}.#{:os.getpid()}.#{System.unique_integer([:positive])}",
+         :ok <- File.rename(path, aside) do
+      if untouched?(aside) do
+        File.rm_rf(aside)
+        true
+      else
+        put_back(aside, path)
+        false
+      end
+    else
+      _ -> false
+    end
+  end
+
+  # Untouched for the hour an entry is presumed in use. Renaming a path
+  # within its directory leaves its modification time as it was.
+  defp untouched?(path) do
+    case File.lstat(path, time: :posix) do
+      {:ok, %File.Stat{mtime: touched}} -> System.os_time(:second) - touched > @live_seconds
+      {:error, _} -> false
+    end
+  end
+
+  # An entry a lookup touched as it was being removed, back under its
+  # name. A writer that installed the key meanwhile keeps its own: a
+  # directory is not renamed over one that is there, and a file is
+  # linked back, which fails where one is.
+  defp put_back(aside, path) do
+    case File.lstat(aside) do
+      {:ok, %File.Stat{type: :directory}} ->
+        with {:error, _} <- File.rename(aside, path), do: File.rm_rf(aside)
+
+      {:ok, _file} ->
+        _ = File.ln(aside, path)
+        File.rm(aside)
+
+      {:error, _} ->
+        :ok
+    end
+
+    :ok
   end
 
   @doc false

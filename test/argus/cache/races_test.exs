@@ -72,6 +72,97 @@ defmodule Argus.Cache.RacesTest do
     end
   end
 
+  describe "prune/2" do
+    @hour 60 * 60
+
+    # A kept solve untouched for two hours, the only one of its program:
+    # stale with `recent: 0`.
+    defp stale_solve!(root) do
+      entry = Path.join(root, "solves/p-#{key("a")}")
+      File.mkdir_p!(entry)
+
+      for name <- ["a.csv", "b.csv", ".argus-digests"],
+          do: File.write!(Path.join(entry, name), "x\n")
+
+      File.touch!(entry, System.os_time(:second) - 2 * @hour)
+      entry
+    end
+
+    # A lookup touching `entry` the moment the pruner's `nth` look at it
+    # has been answered.
+    defp lookup_at(entry, nth),
+      do: %{
+        name: :lookup,
+        ops: [:read_link_info],
+        path: entry,
+        nth: nth,
+        action: {Cache, :fetch, [entry]}
+      }
+
+    test "keeps an entry a lookup touched after the prune found it stale", %{tmp_dir: root} do
+      entry = stale_solve!(root)
+
+      {removed, %{lookup: {:ok, ^entry}}} =
+        gated(peer!(), [lookup_at(entry, 1)], {Cache, :prune, [root, [recent: 0]]})
+
+      assert removed == []
+      assert File.ls!(entry) |> Enum.sort() == [".argus-digests", "a.csv", "b.csv"]
+    end
+
+    test "puts back an entry a lookup touched as it was being taken", %{tmp_dir: root} do
+      entry = stale_solve!(root)
+
+      # The second look is the one just before the entry is renamed out
+      # of its name: the touch lands after it.
+      {removed, %{lookup: {:ok, ^entry}}} =
+        gated(peer!(), [lookup_at(entry, 2)], {Cache, :prune, [root, [recent: 0]]})
+
+      assert removed == []
+      assert File.ls!(entry) |> Enum.sort() == [".argus-digests", "a.csv", "b.csv"]
+      assert File.ls!(Path.dirname(entry)) == [Path.basename(entry)]
+    end
+
+    test "takes an entry whole: a reader sees all of it or none of it", %{tmp_dir: root} do
+      entry = stale_solve!(root)
+
+      # A reader listing the entry the moment the pruner first changes
+      # anything under its name.
+      reader = %{
+        name: :reader,
+        ops: [:delete, :del_dir, :rename],
+        path: entry,
+        prefix: true,
+        action: {File, :ls, [entry]}
+      }
+
+      {removed, %{reader: listed}} =
+        gated(peer!(), [reader], {Cache, :prune, [root, [recent: 0]]})
+
+      assert removed == [entry]
+      refute File.exists?(entry)
+
+      case listed do
+        {:error, :enoent} -> :ok
+        {:ok, names} -> assert Enum.sort(names) == [".argus-digests", "a.csv", "b.csv"]
+      end
+    end
+
+    test "a corpus checkout's store keeps an entry touched after it was found stale",
+         %{tmp_dir: root} do
+      entry = stale_solve!(Path.join(root, key("f")))
+
+      {removed, %{lookup: {:ok, ^entry}}} =
+        gated(
+          peer!(),
+          [lookup_at(entry, 1)],
+          {Argus.Corpus, :prune_solves, [Path.join(root, "#{key("f")}/solves"), [recent: 0]]}
+        )
+
+      assert removed == []
+      assert File.dir?(entry)
+    end
+  end
+
   describe "a specs environment's kept ebin digests" do
     # An ebin of one beam, written long enough ago that a stamp vouches
     # for it: its digests are kept in `cache`.

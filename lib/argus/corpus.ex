@@ -320,14 +320,12 @@ defmodule Argus.Corpus do
   def stale_solves(solves, opts \\ []), do: stale(solves, opts, &solve_entry_kind/2)
 
   @doc """
-  Removes `stale_solves/2` from one entry's kept solves; the paths it
-  removed.
+  Removes `stale_solves/2` from one entry's kept solves, each by
+  `Argus.Cache.remove_stale/1`; the paths it removed.
   """
   @spec prune_solves(Path.t(), [prune_option()]) :: [Path.t()]
   def prune_solves(solves, opts \\ []) do
-    stale = stale_solves(solves, opts)
-    Enum.each(stale, &File.rm_rf!/1)
-    stale
+    solves |> stale_solves(opts) |> Enum.filter(&Argus.Cache.remove_stale/1)
   end
 
   # `Argus.Cache`'s retention policy: each group keeps its own
@@ -338,14 +336,12 @@ defmodule Argus.Corpus do
   end
 
   @doc """
-  Removes `stale_facts/2` from a checkout's facts cache; the paths it
-  removed.
+  Removes `stale_facts/2` from a checkout's facts cache, each by
+  `Argus.Cache.remove_stale/1`; the paths it removed.
   """
   @spec prune_facts(Path.t(), [prune_option()]) :: [Path.t()]
   def prune_facts(cache, opts \\ []) do
-    stale = stale_facts(cache, opts)
-    Enum.each(stale, &File.rm_rf!/1)
-    stale
+    cache |> stale_facts(opts) |> Enum.filter(&Argus.Cache.remove_stale/1)
   end
 
   @doc "The facts cache of every checkout under `root/0` that has one."

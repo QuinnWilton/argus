@@ -135,10 +135,16 @@ defmodule Mix.Tasks.Argus.Corpus do
               path <- Corpus.stale_solves(solves, policy),
               do: path
 
-        stale = stale_entries ++ stale_solves
-        size = stale |> Enum.map(&tree_bytes/1) |> Enum.sum()
-        unless dry_run?, do: Enum.each(stale, &File.rm_rf!/1)
-        {count + length(stale), bytes + size}
+        stale = Enum.map(stale_entries ++ stale_solves, &{&1, tree_bytes(&1)})
+
+        # Each as `Argus.Cache.prune/2` removes it: whole, and not when a
+        # run touched it since it was found stale.
+        gone =
+          if dry_run?,
+            do: stale,
+            else: Enum.filter(stale, fn {path, _bytes} -> Argus.Cache.remove_stale(path) end)
+
+        {count + length(gone), bytes + (gone |> Enum.map(&elem(&1, 1)) |> Enum.sum())}
       end)
 
     verb = if dry_run?, do: "would remove", else: "removed"
