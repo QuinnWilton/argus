@@ -265,6 +265,44 @@ defmodule Argus.Soundness.MailboxTest do
     end
   end
 
+  describe "what a timed receive leaves behind (partial_handler's late message, constructive)" do
+    alias Argus.Test.Soundness.Witness, as: W
+
+    @late "No handle_info/2 clause for a message a timed receive leaves behind"
+
+    test "a spawned worker's reply, waited for by its ref and killed on the timeout" do
+      assert {:warning, @late, {W.LateSpawnReply, :handle_info, 2}} in fired(
+               [W.LateSpawnReply],
+               :mailbox
+             )
+    end
+
+    test "the same wait in a helper module on the server's stack" do
+      assert {:warning, @late, {W.Probe, :probe, 1}} in fired(
+               [W.LateSpawnInHelper, W.Probe],
+               :mailbox
+             )
+    end
+
+    test "a subscription's event, waited for about one subject in a helper" do
+      assert {:warning, @late, {W.Waiting, :wait_ready, 3}} in fired(
+               [W.LateSubscription, W.Waiting],
+               :mailbox
+             )
+    end
+
+    test "a :pg group's tagged event, waited for in init/1" do
+      assert {:warning, @late, {W.LateSubscriptionTagged, :init, 1}} in fired(
+               [W.LateSubscriptionTagged],
+               :mailbox
+             )
+    end
+
+    test "a gen_statem state that spawns and waits, with no :info catch-all" do
+      assert {:warning, @late, {W.LateStatem, :idle, 3}} in fired([W.LateStatem], :mailbox)
+    end
+  end
+
   test "lists:map/2 of monitors whose refs are dropped (item 26)" do
     assert Enum.any?(fired([M.ListsMapDropped], :mailbox), &match?({:info, @ref_dropped, _}, &1))
   end

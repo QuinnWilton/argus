@@ -289,6 +289,28 @@ defmodule Argus.Schema.ErrorHandling do
         """
       },
       %{
+        name: :recv_shape,
+        layer: 2,
+        fields: [
+          {:id, :symbol, "the receive (its loop_rec)"},
+          {:func, :symbol, "the function it is in"},
+          {:shape, :symbol,
+           "':atom' | '{:tag, …}' | '{ref, …}' | 'map' | 'tuple' | 'any': what a clause takes"}
+        ],
+        doc: """
+        The shape a clause of the receive at `id` takes the message in, \
+        read on its head as a callback's clauses are \
+        (`Argus.Extractors.CallbackTag.MessageClauses.receive_shapes/2`): \
+        the atom itself, a tuple with a literal atom tag (`{:tag, …}`), a \
+        tuple whose first element is compared with a value the function \
+        holds — a ref it made, a pid it was handed — (`{ref, …}`), a map, a \
+        tuple of any tag (`tuple`), or anything (`any`). recv_pattern reads \
+        each clause's first test only; this is the whole head. Only for a \
+        receive that waits, forever or with an `after`: an `after 0` poll \
+        takes what is already there and is no row.
+        """
+      },
+      %{
         name: :start_timer_arm,
         layer: 2,
         fields: [

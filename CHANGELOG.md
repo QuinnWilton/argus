@@ -60,6 +60,30 @@ monitor (`{ref, result} when is_reference(ref)`) takes no `:DOWN`, so a
 task that crashes is still reported; a `:DOWN` clause for `:normal`
 alone now is too. The start may be in any module on the server's stack.
 
+**Added.** A message a timed receive leaves behind: `unhandled_info`'s
+source `late` ("No handle_info/2 clause for a message a timed receive
+leaves behind", `:warning`, anchored at the receive). A function on a
+server's stack asks for a message and waits for it with an `after`: it
+spawns a process and waits for its reply by a value it holds (`{ref,
+…}`: vernemq's vmq_ql_query spawn_links a row initializer, waits
+`RowQueryTimeout` for `{CallerRef, …}` and kills it), or it subscribes
+(Phoenix.PubSub, Registry, `:pg`, `:gen_event`) and waits for one event
+(realtime's `Connect.wait_for_connection`, reached from the replication
+Watchdog, waits for a "ready" map about one pid). A reply sent as the
+timeout fires, or an event broadcast before the unsubscribe or about
+another subject than the one the receive selects, stays in the mailbox
+and reaches handle_info/2. The message is the shape the receive waits
+for; a clause headed by a reference, an open clause of that shape, or a
+catch-all takes it. A wait with no `after`, an `after 0` poll and a
+timed GenServer.call (which neither spawns nor subscribes, and waits on
+an alias) are no source.
+
+**Added.** Schema 135. `recv_shape(id, func, shape)` (ErrorHandling,
+`MessageClauses.receive_shapes/2`): the shape a clause of a receive that
+waits takes the message in — the atom, `{:tag, …}`, `{ref, …}` (a tuple
+whose first element is compared with a value the function holds), `map`,
+`tuple` or `any`. Read by mailbox.
+
 **Changed.** A gen_statem timeout no clause takes is its own relation,
 `mailbox.unhandled_timeout(mod, state, kind)` (kind `event_timeout`,
 `generic_timeout`, `state_timeout`), in place of `partial_handler`'s

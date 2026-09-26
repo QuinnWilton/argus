@@ -124,11 +124,16 @@ defmodule Argus.Analyses.MailboxUnhandledInfoTest do
     assert results["unhandled_info"] == []
   end
 
-  test "a task's messages taken, node events with a clause each, a port read where it opens" do
+  test "a wait with no after, a late reply taken, a task's messages taken, node events taken" do
     alias Argus.Test.Fixtures.LateMessage
     alias Argus.Test.Soundness.Witness, as: W
 
     quiet = [
+      W.SpawnBlockingWait,
+      W.LateReplyTaken,
+      W.LateCatchAll,
+      W.SpawnPoll,
+      LateMessage.TimedCall,
       W.NolinkTupleClause,
       Argus.Test.Fixtures.Hypothesized.NolinkBothClauses,
       Argus.Test.Fixtures.Hypothesized.NolinkCollected,

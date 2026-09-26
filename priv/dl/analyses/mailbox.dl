@@ -1382,6 +1382,7 @@ info_reach.seed(f) :- socket_opened(f, _).
 info_reach.seed(f) :- node_events(_, f, _).
 info_reach.seed(f) :- port_opened(_, f).
 info_reach.seed(f) :- mailbox_writer(_, f, "task_nolink").
+info_reach.seed(f) :- late_wait(_, f, _).
 
 .decl runs_in_server(mod: symbol, func: symbol)
 
@@ -1473,6 +1474,44 @@ info_message(m, f, id, "{:DOWN, …}", "task") :-
   mailbox_writer(id, f, "task_nolink"),
   runs_in_server(m, f),
   !library_written(f).
+
+// ── A message a timed receive leaves behind ─────────────────────────
+//
+// A function on a server's stack asks for a message and then waits for
+// it with an `after`. It spawns a process and takes the reply by a value
+// it holds (`{ref, …}`): vernemq's vmq_ql_query spawn_links a row
+// initializer and waits RowQueryTimeout for `{CallerRef, …}`, then kills
+// it. Or it subscribes and waits for one event of the subscription:
+// realtime's Connect.wait_for_connection, which the replication Watchdog
+// reaches, subscribes to a tenant's topic and waits for a "ready" map
+// about one pid. The wait can give up before the message comes, and a
+// reply sent as the timeout fires, or an event broadcast before the
+// unsubscribe (or about another pid, which the receive never selects),
+// stays in the mailbox: the server's handle_info/2 is where it lands.
+// The message is the shape the receive waits for (recv_shape; a receive
+// that waits, not an `after 0` poll). A gen call is no such wait: it
+// neither spawns nor subscribes, and it waits on an alias it deactivates.
+// Only the crash is judged: a catch-all dropping a late reply is what it
+// is for.
+.init subscribe_reach = SameProcessReachSetCut
+
+subscribe_reach.cut(f, g) :- side_call(f, g).
+subscribe_reach.seed(f) :- mailbox_writer(_, f, "pubsub").
+
+.decl late_wait(recv: symbol, func: symbol, message: symbol)
+
+late_wait(r, g, "{ref, …}") :-
+  recv_start(r, g, 0, _),
+  recv_shape(r, g, "{ref, …}"),
+  spawn_call(_, g, _, _, _, _, _, _, _, _).
+
+late_wait(r, g, shape) :-
+  recv_start(r, g, 0, _),
+  recv_shape(r, g, shape),
+  shape != "any",
+  subscribe_reach.reaches(g).
+
+info_message(m, g, r, msg, "late") :- late_wait(r, g, msg), runs_in_server(m, g).
 
 // ── Node events and a port's output ─────────────────────────────────
 //
@@ -1719,6 +1758,11 @@ info_taken(h, msg) :-
   match("[{].*", msg),
   callback_open(h, "handle_info", "tuple", _).
 
+// A tuple of any tag a timed receive waits for.
+info_taken(h, "tuple") :-
+  info_fallback(_, "tuple", h, _),
+  callback_open(h, "handle_info", "tuple", _).
+
 // How the message at `id` is told taken: a :DOWN the runtime sends for a
 // monitor (a monitor's, a task's) by a clause for every reason of it
 // ("reason"), anything else by its tag or its shape ("tag").
@@ -1728,7 +1772,8 @@ taken_by(id, msg, "reason") :- down_type_at(id, _), info_message(_, _, id, msg, 
 
 taken_by(id, msg, "tag") :-
   info_message(_, _, id, msg, source),
-  (source = "send" ; source = "timer" ; source = "socket" ; source = "node" ; source = "port").
+  (source = "send" ; source = "timer" ; source = "socket" ; source = "node" ; source = "port" ;
+   source = "late").
 
 taken_by(id, "{ref, …}", "tag") :- info_message(_, _, id, "{ref, …}", "task").
 
@@ -1779,6 +1824,7 @@ drop_judged("socket").
 
 unhandled_info(mod, f, id, msg, source, m, h, fallback) :-
   info_message(m, f, id, msg, source),
+  source != "late",
   gen_server_like(m),
   !statem_process(m),
   info_fallback(m, msg, h, fallback),
@@ -1786,6 +1832,17 @@ unhandled_info(mod, f, id, msg, source, m, h, fallback) :-
   !taken_at(h, id, msg),
   !server_receives(m, msg),
   function_def(f, mod, _, _, _).
+
+// What a timed receive leaves behind is the one message the server's
+// own receive waits for: that receive is why it comes, not a clause that
+// takes it once the wait has given up.
+unhandled_info(mod, g, r, msg, "late", m, h, "crash") :-
+  info_message(m, g, r, msg, "late"),
+  gen_server_like(m),
+  !statem_process(m),
+  partial_handle_info(m, h),
+  !taken_at(h, r, msg),
+  function_def(g, mod, _, _, _).
 
 // A timer whose tag a clause compares, but whose shape no clause head
 // takes (timer_refused: a `{:tick, 1, :slow}` beside `{:tick, n}`), is
@@ -1818,6 +1875,10 @@ statem_takes(m, msg) :-
 
 statem_takes(m, msg) :- info_message(m, _, _, msg, _), statem_info_open(m, _, "any").
 
+statem_takes(m, "tuple") :-
+  info_message(m, _, _, "tuple", _),
+  statem_info_open(m, _, "tuple").
+
 statem_takes(m, "{port, {:data, …}}") :-
   info_message(m, _, _, "{port, {:data, …}}", "port"),
   statem_info_tag(m, _, ":data").
@@ -1839,10 +1900,17 @@ statem_info_partial(m, h) :-
 
 unhandled_info(mod, f, id, msg, source, m, h, "state_crash") :-
   info_message(m, f, id, msg, source),
+  source != "late",
   statem_info_partial(m, h),
   !statem_takes(m, msg),
   !server_receives(m, msg),
   function_def(f, mod, _, _, _).
+
+unhandled_info(mod, g, r, msg, "late", m, h, "state_crash") :-
+  info_message(m, g, r, msg, "late"),
+  statem_info_partial(m, h),
+  !statem_takes(m, msg),
+  function_def(g, mod, _, _, _).
 
 // The module's partial handle_info/2 is already named by a message it
 // cannot take: partial_handler's catch-all findings step aside.

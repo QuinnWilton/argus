@@ -80,6 +80,7 @@ defmodule Argus.Extractors.CallbackTag.MessageClauses do
            passed: boolean(),
            valued: boolean(),
            tuple: boolean(),
+           map: boolean(),
            shape_tag: atom() | nil,
            arity: integer() | nil,
            constrained: boolean(),
@@ -184,6 +185,32 @@ defmodule Argus.Extractors.CallbackTag.MessageClauses do
   end
 
   @doc """
+  The shapes the clauses of the receive whose `loop_rec` is at `idx`
+  take the message in: the atom (`:tick`), a tuple with that tag
+  (`{:tick, …}`), a tuple whose first element is compared with a value
+  the function holds — a ref it made, a pid — (`{ref, …}`), a map, a
+  tuple of any tag (`tuple`), or anything (`any`: a variable, a guard
+  that is no shape).
+  """
+  @spec receive_shapes([tuple()], non_neg_integer()) :: [String.t()]
+  def receive_shapes(instrs, idx) do
+    {:loop_rec, _fail, register} = Enum.at(instrs, idx)
+
+    instrs
+    |> entries_from(idx + 1, register)
+    |> Enum.map(fn {_body, path} -> receive_shape(path) end)
+    |> Enum.uniq()
+    |> Enum.sort()
+  end
+
+  defp receive_shape(%{shape_tag: tag, arity: 0}) when tag != nil, do: inspect(tag)
+  defp receive_shape(%{shape_tag: tag}) when tag != nil, do: "{#{inspect(tag)}, …}"
+  defp receive_shape(%{tuple: true, valued: true}), do: "{ref, …}"
+  defp receive_shape(%{map: true}), do: "map"
+  defp receive_shape(%{tuple: true}), do: "tuple"
+  defp receive_shape(_path), do: "any"
+
+  @doc """
   Whether the function has a catch-all for the message in `register`
   that does nothing with it but report it. False without a catch-all.
   """
@@ -209,9 +236,13 @@ defmodule Argus.Extractors.CallbackTag.MessageClauses do
   # Every body a path through the clause heads enters, with the path.
   @spec entries([tuple()], Instr.reg()) :: [{non_neg_integer(), path()}]
   defp entries(instrs, register) do
+    start = (Enum.find_index(instrs, &match?({:func_info, _, _, _}, &1)) || -1) + 1
+    entries_from(instrs, start, register)
+  end
+
+  defp entries_from(instrs, start, register) do
     tuple = List.to_tuple(instrs)
     labels = Dispatch.labels(instrs)
-    start = (Enum.find_index(instrs, &match?({:func_info, _, _, _}, &1)) || -1) + 1
 
     path = %{
       tracked: %{Instr.register(register) => :msg},
@@ -219,6 +250,7 @@ defmodule Argus.Extractors.CallbackTag.MessageClauses do
       passed: false,
       valued: false,
       tuple: false,
+      map: false,
       shape_tag: nil,
       arity: nil,
       constrained: false,
@@ -259,6 +291,7 @@ defmodule Argus.Extractors.CallbackTag.MessageClauses do
     shaped? = op in @tuple_tests and :msg in kinds
     {pass, fail} = shapes(op, args, path)
     pass = pass |> constrain(constraining?(op, args, path)) |> touch(op, args, path)
+    pass = if op == :is_map and :msg in kinds, do: %{pass | map: true}, else: pass
 
     branch(idx, l, {kinds != [], valued?, shaped?}, pass, fail, tuple, labels, st)
   end
@@ -347,8 +380,13 @@ defmodule Argus.Extractors.CallbackTag.MessageClauses do
   defp step({op, src, dst}, idx, path, tuple, labels, st) when op in [:get_hd, :get_tl],
     do: walk(idx + 1, %{path | tracked: track(path.tracked, src, dst, :part)}, tuple, labels, st)
 
-  # The failure exit: not a clause.
+  # The failure exit: not a clause. A receive's is the next message
+  # (loop_rec_end) or the wait for one.
   defp step({:func_info, _, _, _}, _idx, _path, _tuple, _labels, st), do: st
+  defp step({:loop_rec_end, _}, _idx, _path, _tuple, _labels, st), do: st
+  defp step({:wait, _}, _idx, _path, _tuple, _labels, st), do: st
+  defp step({:wait_timeout, _, _}, _idx, _path, _tuple, _labels, st), do: st
+  defp step(:timeout, _idx, _path, _tuple, _labels, st), do: st
 
   # Bookkeeping the compiler emits between a head and its body.
   defp step({op, _}, idx, path, tuple, labels, st) when op in [:label, :line, :init_yregs],

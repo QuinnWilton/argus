@@ -121,6 +121,27 @@ defmodule Argus.Extractors.ErrorHandlingTest do
     end
   end
 
+  describe "extract/1 — recv_shape" do
+    alias Argus.Test.Soundness.Witness, as: W
+
+    defp shapes(mod) do
+      facts = ErrorHandling.extract(disassemble(mod))
+      name = &(&1 |> String.split(":") |> List.last())
+      for [_id, func, shape] <- Map.get(facts, :recv_shape, []), do: {name.(func), shape}
+    end
+
+    test "a receive's clauses by shape, for a receive that waits" do
+      # `{^ref, _}`: a tuple whose first element is a value the function holds.
+      assert shapes(W.LateSpawnReply) == [{"handle_info/2", "{ref, …}"}]
+      assert shapes(W.Waiting) == [{"wait_ready/3", "map"}]
+      assert shapes(W.LateSubscriptionTagged) == [{"init/1", "{:ready, …}"}]
+      # A wait with no `after` is a receive that waits too.
+      assert shapes(W.SpawnBlockingWait) == [{"handle_call/3", "{ref, …}"}]
+      # An `after 0` poll takes what is there and waits for nothing.
+      assert shapes(W.SpawnPoll) == []
+    end
+  end
+
   describe "extract/1 — apply_param and the apply writer" do
     alias Argus.Test.Fixtures.LateMessage
 

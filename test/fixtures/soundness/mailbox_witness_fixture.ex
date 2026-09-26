@@ -578,3 +578,264 @@ defmodule Argus.Test.Soundness.Witness.NolinkTupleClause do
   def handle_info({:DOWN, _ref, :process, _pid, reason}, state),
     do: {:noreply, Map.put(state, :failed, reason)}
 end
+
+# ── What a timed receive leaves behind ──────────────────────────────────
+
+defmodule Argus.Test.Soundness.Witness.LateSpawnReply do
+  @moduledoc false
+  # The vmq_ql_query shape: spawn a worker, wait for its reply by the ref
+  # made for it, kill it on the timeout. A reply sent as the timeout fires
+  # stays in the mailbox, and handle_info/2 takes only :tick.
+  use GenServer
+
+  def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
+
+  @impl true
+  def init(work), do: {:ok, work}
+
+  @impl true
+  def handle_info(:tick, work) do
+    ref = make_ref()
+    parent = self()
+    pid = spawn_link(fn -> send(parent, {ref, work.()}) end)
+
+    receive do
+      {^ref, _result} -> :ok
+    after
+      100 ->
+        Process.unlink(pid)
+        Process.exit(pid, :kill)
+    end
+
+    {:noreply, work}
+  end
+end
+
+defmodule Argus.Test.Soundness.Witness.Probe do
+  @moduledoc false
+  def probe(target) do
+    ref = make_ref()
+    parent = self()
+    spawn(fn -> send(parent, {ref, :net_adm.ping(target)}) end)
+
+    receive do
+      {^ref, answer} -> answer
+    after
+      1_000 -> :timeout
+    end
+  end
+end
+
+defmodule Argus.Test.Soundness.Witness.LateSpawnInHelper do
+  @moduledoc false
+  # A helper module spawns and waits on the server's stack; the server
+  # takes only its own jobs.
+  use GenServer
+
+  def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
+
+  @impl true
+  def init(arg), do: {:ok, arg}
+
+  @impl true
+  def handle_call({:ping, node}, _from, state),
+    do: {:reply, Argus.Test.Soundness.Witness.Probe.probe(node), state}
+
+  @impl true
+  def handle_info({:job, _}, state), do: {:noreply, state}
+end
+
+defmodule Argus.Test.Soundness.Witness.Waiting do
+  @moduledoc false
+  # The Connect.wait_for_connection shape: subscribe, wait a while for
+  # one event about one subject, and leave.
+  def wait_ready(registry, key, pid) do
+    {:ok, _} = Registry.register(registry, key, nil)
+
+    receive do
+      %{event: "ready", pid: ^pid, conn: conn} -> {:ok, conn}
+    after
+      5_000 -> {:error, :initializing}
+    end
+  end
+end
+
+defmodule Argus.Test.Soundness.Witness.LateSubscription do
+  @moduledoc false
+  # A watchdog on whose stack the wait runs: an event broadcast about
+  # another pid, or after the wait gave up, reaches a handle_info/2 that
+  # takes only its health check.
+  use GenServer
+
+  def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
+
+  @impl true
+  def init(%{registry: _, key: _, pid: _} = state), do: {:ok, state}
+
+  @impl true
+  def handle_info(:health_check, state) do
+    Argus.Test.Soundness.Witness.Waiting.wait_ready(state.registry, state.key, state.pid)
+    {:noreply, state}
+  end
+end
+
+defmodule Argus.Test.Soundness.Witness.LateSubscriptionTagged do
+  @moduledoc false
+  # A :pg group joined and one tagged event waited for, from init/1.
+  use GenServer
+
+  def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
+
+  @impl true
+  def init(peer) do
+    :ok = :pg.join(:peers, self())
+
+    receive do
+      {:ready, ^peer} -> :ok
+    after
+      1_000 -> :ok
+    end
+
+    {:ok, peer}
+  end
+
+  @impl true
+  def handle_info(:tick, peer), do: {:noreply, peer}
+end
+
+defmodule Argus.Test.Soundness.Witness.LateStatem do
+  @moduledoc false
+  # A gen_statem state spawns and waits; its other state has an :info
+  # catch-all, this one does not.
+  @behaviour :gen_statem
+
+  def start_link(arg), do: :gen_statem.start_link(__MODULE__, arg, [])
+
+  @impl true
+  def callback_mode, do: :state_functions
+
+  @impl true
+  def init(work), do: {:ok, :idle, work}
+
+  def idle(:cast, :run, work) do
+    ref = make_ref()
+    parent = self()
+    spawn(fn -> send(parent, {ref, work.()}) end)
+
+    receive do
+      {^ref, _} -> {:next_state, :busy, work}
+    after
+      500 -> {:next_state, :busy, work}
+    end
+  end
+
+  def busy(:cast, :done, work), do: {:next_state, :idle, work}
+  def busy(:info, _msg, _work), do: :keep_state_and_data
+end
+
+# Quiet: a wait with no `after`, a clause for a late reply, a catch-all, a
+# poll, a timed GenServer.call.
+
+defmodule Argus.Test.Soundness.Witness.SpawnBlockingWait do
+  @moduledoc false
+  use GenServer
+
+  def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
+
+  @impl true
+  def init(work), do: {:ok, work}
+
+  @impl true
+  def handle_call(:run, _from, work) do
+    ref = make_ref()
+    parent = self()
+    spawn_link(fn -> send(parent, {ref, work.()}) end)
+
+    receive do
+      {^ref, result} -> {:reply, result, work}
+    end
+  end
+
+  @impl true
+  def handle_info(:tick, work), do: {:noreply, work}
+end
+
+defmodule Argus.Test.Soundness.Witness.LateReplyTaken do
+  @moduledoc false
+  use GenServer
+
+  def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
+
+  @impl true
+  def init(work), do: {:ok, work}
+
+  @impl true
+  def handle_call(:run, _from, work) do
+    ref = make_ref()
+    parent = self()
+    spawn(fn -> send(parent, {ref, work.()}) end)
+
+    receive do
+      {^ref, result} -> {:reply, result, work}
+    after
+      100 -> {:reply, :timeout, work}
+    end
+  end
+
+  @impl true
+  def handle_info({ref, _late}, work) when is_reference(ref), do: {:noreply, work}
+  def handle_info(:tick, work), do: {:noreply, work}
+end
+
+defmodule Argus.Test.Soundness.Witness.LateCatchAll do
+  @moduledoc false
+  use GenServer
+
+  def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
+
+  @impl true
+  def init(work), do: {:ok, work}
+
+  @impl true
+  def handle_call(:run, _from, work) do
+    ref = make_ref()
+    parent = self()
+    spawn(fn -> send(parent, {ref, work.()}) end)
+
+    receive do
+      {^ref, result} -> {:reply, result, work}
+    after
+      100 -> {:reply, :timeout, work}
+    end
+  end
+
+  @impl true
+  def handle_info(_late, work), do: {:noreply, work}
+end
+
+defmodule Argus.Test.Soundness.Witness.SpawnPoll do
+  @moduledoc false
+  use GenServer
+
+  def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
+
+  @impl true
+  def init(work), do: {:ok, work}
+
+  @impl true
+  def handle_cast(:flush, work) do
+    ref = make_ref()
+    spawn(fn -> :ok end)
+
+    receive do
+      {^ref, _} -> :ok
+    after
+      0 -> :ok
+    end
+
+    {:noreply, work}
+  end
+
+  @impl true
+  def handle_info(:tick, work), do: {:noreply, work}
+end

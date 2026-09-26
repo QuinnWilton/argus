@@ -78,6 +78,11 @@ defmodule Argus.Extractors.ErrorHandling do
   - `start_timer_arm(id, func, target)` — an `:erlang.start_timer/3,4` at
     `id` arms `{:timeout, ref, msg}` for the calling process (`self`) or
     another (`other`)
+  - `recv_shape(id, func, shape)` — the shape a clause of the receive at
+    `id` takes the message in (`MessageClauses.receive_shapes/2`): the
+    atom, `{:tag, …}`, `{ref, …}` (a tuple whose first element is
+    compared with a value the function holds), `map`, `tuple` or `any`;
+    for a receive that waits, not an `after 0` poll
   - `timer_tag(id, tag, arity)` — the atom the message of the timer armed
     at `id` is told apart by: the message itself (`arity` 0), or a
     tuple's first element (`arity` its size)
@@ -97,6 +102,7 @@ defmodule Argus.Extractors.ErrorHandling do
   alias Argus.Extractor.Identity
   alias Argus.Extractor.Resolve
   alias Argus.Extractor.Runtime
+  alias Argus.Extractors.CallbackTag.MessageClauses
   alias Argus.Extractors.ErrorHandling.Boundary
   alias Argus.Extractors.ErrorHandling.CatchClauses
   alias Argus.Extractors.ErrorHandling.ClauseHead
@@ -182,6 +188,7 @@ defmodule Argus.Extractors.ErrorHandling do
       :ignored_error_result,
       :mailbox_writer,
       :recv_pattern,
+      :recv_shape,
       :result_tested,
       :returns_call,
       :rpc_result,
@@ -1525,17 +1532,40 @@ defmodule Argus.Extractors.ErrorHandling do
     instrs
     |> Enum.with_index()
     |> Enum.reduce(facts, fn
-      {{:loop_rec, _f, _dst}, idx}, acc ->
-        instrs
-        |> recv_heads(idx + 1, labels, [])
-        |> Enum.uniq()
-        |> Enum.reduce(acc, fn m, inner ->
-          add_fact(inner, :recv_pattern, [InstrId.mint(func_id, idx), func_id, m])
-        end)
+      {{:loop_rec, {:f, fail}, _dst}, idx}, acc ->
+        id = InstrId.mint(func_id, idx)
+
+        acc =
+          instrs
+          |> recv_heads(idx + 1, labels, [])
+          |> Enum.uniq()
+          |> Enum.reduce(acc, fn m, inner -> add_fact(inner, :recv_pattern, [id, func_id, m]) end)
+
+        if waits?(instrs, Map.get(labels, fail)) do
+          instrs
+          |> MessageClauses.receive_shapes(idx)
+          |> Enum.reduce(acc, fn shape, inner ->
+            add_fact(inner, :recv_shape, [id, func_id, shape])
+          end)
+        else
+          acc
+        end
 
       _, acc ->
         acc
     end)
+  end
+
+  # Whether the receive waits for a message (with or without an `after`):
+  # its empty-mailbox block reaches a wait or a wait_timeout before the
+  # bare `timeout` an `after 0` poll compiles to.
+  defp waits?(_instrs, nil), do: false
+
+  defp waits?(instrs, from) do
+    instrs
+    |> Enum.drop(from)
+    |> Enum.find(&(match?({:wait, _}, &1) or match?({:wait_timeout, _, _}, &1) or &1 == :timeout))
+    |> then(&(&1 != :timeout and &1 != nil))
   end
 
   defp recv_heads(instrs, idx, labels, seen) do

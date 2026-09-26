@@ -45,7 +45,9 @@ defmodule Argus.Analyses.Mailbox do
     `{:tcp_closed, …}` or `{:ssl_closed, …}` — the events of the `node`
     monitoring it turns on, the output of a `port` it opens, the reply
     and the `:DOWN` of a `task` it starts with async_nolink and does not
-    collect) that no clause of its handle_info/2 takes:
+    collect, what a `late` timed receive leaves behind: the reply of a
+    process it spawns, an event of a subscription it makes) that no
+    clause of its handle_info/2 takes:
     `fallback` says what does instead — nothing (`crash`, a
     FunctionClauseError), a `catch_all` that only logs or ignores it, or
     GenServer's `default` handle_info/2, which logs it as an error; or,
@@ -235,14 +237,14 @@ defmodule Argus.Analyses.Mailbox do
           {:mod, :symbol, "the sending module"},
           {:func, :symbol,
            "the function that sends, arms the timer, monitors, makes the socket active, " <>
-             "turns on node monitoring, opens the port or starts the task"},
+             "turns on node monitoring, opens the port, starts the task or waits"},
           {:site, :symbol,
            "the send, the timer, the monitor, the socket's activation, the node " <>
-             "monitoring, the port's open or the task's start"},
+             "monitoring, the port's open, the task's start or the timed receive"},
           {:message, :symbol,
            "the literal atom, {:tag, …}, {:DOWN, …}, {:tcp_closed, …}, {:ssl_closed, …}, " <>
-             "{:nodeup, …}, {:nodedown, …}, {port, {:data, …}} or {ref, …}"},
-          {:source, :symbol, "send | timer | monitor | socket | node | port | task"},
+             "{:nodeup, …}, {:nodedown, …}, {port, {:data, …}}, {ref, …}, map or tuple"},
+          {:source, :symbol, "send | timer | monitor | socket | node | port | task | late"},
           {:server, :symbol, "the GenServer module whose handle_info/2 it reaches"},
           {:handler, :symbol, "its handle_info/2, or the gen_statem state function"},
           {:fallback, :symbol, "crash | catch_all | default | state_crash"}
@@ -559,6 +561,49 @@ defmodule Argus.Analyses.Mailbox do
           "connection and reconnects or stops",
         "or keep the socket passive (`active: false`) and read it with a timed recv, which " <>
           "returns `{:error, :closed}`"
+      ]
+    )
+  end
+
+  # What a timed receive leaves behind: anchored at the wait that gives
+  # up, where the message was asked for and is not waited for long enough.
+  def finding(:unhandled_info, [_mod, func, site, message, "late", server, handler, fallback]) do
+    what =
+      case fallback do
+        "state_crash" ->
+          "no callback of the machine has a clause for it, and " <>
+            "#{Findings.call_name(handler)} has no :info catch-all, so in that state it is a " <>
+            "FunctionClauseError that takes the machine down"
+
+        _crash ->
+          "none of its clauses matches it and there is no catch-all, so it is a " <>
+            "FunctionClauseError that takes the server down"
+      end
+
+    Findings.new(
+      :warning,
+      "No handle_info/2 clause for a message a timed receive leaves behind",
+      "#{Findings.call_name(func)} asks for #{late_message(message)} — it spawns the process " <>
+        "that replies, or subscribes to what it waits for — and waits for it with an " <>
+        "`after`. The wait can give up before the message comes: a reply sent as the " <>
+        "timeout fires, or an event broadcast before the unsubscribe or about another " <>
+        "subject than the one the receive selects, stays in the mailbox and reaches " <>
+        "#{server}'s handle_info/2: #{what}.",
+      # The loop_rec carries no line of its own: the source finds the receive.
+      at: Findings.at_instr(site),
+      at_source: "receive",
+      to_block: :receive,
+      at_label: "this wait can give up before the message comes",
+      related: [
+        Findings.related("the callback it reaches", Findings.at_func(handler),
+          to_block: :function
+        )
+      ],
+      help: [
+        "add a handle_info/2 clause that takes #{late_clause(message)} and drops it",
+        "or have the reply sent to an alias the wait deactivates when it gives up " <>
+          "(`:erlang.alias/1`, as a GenServer.call does), or unsubscribe and flush before " <>
+          "returning"
       ]
     )
   end
@@ -883,6 +928,16 @@ defmodule Argus.Analyses.Mailbox do
   # joins or leaves, a port's program writes — is :warning.
   defp crash_severity(source) when source in ["monitor", "node", "port", "task"], do: :warning
   defp crash_severity(_sent_or_armed), do: :error
+
+  defp late_message("{ref, …}"), do: "a reply that carries a ref it holds, {ref, …},"
+  defp late_message("map"), do: "a map"
+  defp late_message("tuple"), do: "a tuple"
+  defp late_message(message), do: message
+
+  defp late_clause("{ref, …}"), do: "a late `{ref, _}`"
+  defp late_clause("map"), do: "the map"
+  defp late_clause("tuple"), do: "the tuple"
+  defp late_clause(message), do: "a late #{message}"
 
   defp socket_kind("{:ssl_closed, …}"), do: "a TLS"
   defp socket_kind(_tcp), do: "a TCP"
