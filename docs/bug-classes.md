@@ -1527,10 +1527,10 @@ sets and the 26 live projects:
 
 The class started from every server whose handle_info/2 lacks a catch-all and subtracted correct code with 21 negated conditions (a runtime writer taken whole, a self-timer whose tag a clause compares, a closure or module the program builds, a macro's handler, a more specific finding). On live code about one row in twenty-six was a bug. A missing catch-all matters only when a message falls through it, and that is what `unhandled_info` witnesses: the message, where it comes from, and the clause that is not there for it (the classes below). The retired rule's credited bugs went as follows.
 
-- Covered by a witnessed message. A linked process's exit that a clause for `:normal` alone does not take, in a server that traps exits (sequin's Redis `ConnectionCache`, vernemq's `vmq_tracer`; source `exit`). A monitor's `:DOWN` whose clause guards the reason, or compares the type with `:process` for a port monitor (`MonitorsDownGuardedByReason`, `MonitorsPortTakingProcessDowns`; source `monitor`). Node events (`MonitorsNodesTakingDowns`; source `node`). A port's output (`TrapsOpeningPort`; source `port`). A start_timer's `{:timeout, ref, msg}` (`LateMessage.StartTimerIdle`; source `timer`). A GenStage's own timer (`PartialInfoStage`, once GenStage starts are server starts). An async_nolink task's reply and `:DOWN` (the `task_nolink` source, folded; source `task`). realtime's replication Watchdog: a "ready" map `Connect.wait_for_connection`'s timed receive leaves (source `late`).
+- Covered by a witnessed message. A linked process's exit that a clause for `:normal` alone does not take, in a server that traps exits (vernemq's `vmq_tracer`; source `exit`). A monitor's `:DOWN` whose clause guards the reason, or compares the type with `:process` for a port monitor (`MonitorsDownGuardedByReason`, `MonitorsPortTakingProcessDowns`; source `monitor`). Node events (`MonitorsNodesTakingDowns`; source `node`). A port's output (`TrapsOpeningPort`; source `port`). A start_timer's `{:timeout, ref, msg}` (`LateMessage.StartTimerIdle`; source `timer`). A GenStage's own timer (`PartialInfoStage`, once GenStage starts are server starts). An async_nolink task's reply and `:DOWN` (the `task_nolink` source, folded; source `task`). realtime's replication Watchdog: a "ready" map `Connect.wait_for_connection`'s timed receive leaves (source `late`).
 - Not a bug by construction: the program shows no message that falls through. A ref pinned to the state, a state field compared (`MonitorsWithoutCatchall`, `MonitorsDownWhenActive`, encore ostinato's `Consumer`): the program's choice of which monitor it keeps. A trap with no link (`TrapsTakingNormalExits`, vernemq's `vmq_ql_query_mgr`): a GenServer takes its parent's `:EXIT` itself. Every runtime message a clause takes under the state that asks for it (OTP's `peer`, Livebook's Fly and K8s runtimes, DBConnection's `Ownership.Proxy`). A self-sent or armed message the handler takes (`SelfSendPartialInfoServer`, encore canon's `Voice`, whose one subscription's `:pulse` is taken). A state with no `:info` catch-all beside states that have one, and no message shown to reach it (`AsymmetricInfoStatem`, rabbit's `rabbit_ff_controller` in `standing_by`).
 - Not constructively coverable: the server runs code it did not build, and the program shows no message. A fun or a module read from the state, handed in a message, or configured (`AppliesPartialInfoServer`, `LateMessage.RunsSentFun`; live: nerves_hub_link's ArchiveManager and UpdateManager, eventstore's Subscription, FLAME's Pool, kafka_ex's consumer group Manager); a caller's stream (`gen_stage#238`: an `ExAws` download's late `{{ref, n}, chunk}` in the user's stream); a request with no message named (`commanded#332`). Their risk is the library's contract with its callers' code, not a message this program sends.
-- Not reached: vernemq's `vmq_ql_query` has the `late` shape (a spawn_link'd row initializer's `{CallerRef, …}` after `RowQueryTimeout`), but its wait is in a closure handed to `Module:fold_init_rows/…`, a module the program computes. The emitter records no `fun_handed` for a call through a computed module, so `runs_elsewhere.dl` takes the closure as kept, and nothing shows it runs on the server's stack.
+- Not reached, or not read: sequin's Redis `ConnectionCache` has the `exit` shape (it takes `{:EXIT, _pid, :normal}` alone), but it start_links its connections through `state.start_fn`, a fun in its state the call graph does not follow. sequin's `Databases.ConnectionCache` stops a connection in an async_nolink task that returns `nil` when the connection is already dead, and `{ref, nil}` matches neither of its reply clauses: the `task` source reads clause shapes, not the task's return values. vernemq's `vmq_ql_query` has the `late` shape (a spawn_link'd row initializer's `{CallerRef, …}` after `RowQueryTimeout`), but its wait is in a closure handed to `Module:fold_init_rows/…`, a module the program computes. The emitter records no `fun_handed` for a call through a computed module, so `runs_elsewhere.dl` takes the closure as kept, and nothing shows it runs on the server's stack.
 
 ### An async_nolink task whose reply or :DOWN has no clause
 
@@ -4108,6 +4108,78 @@ Structural gaps found:
   its reason to `mnesia_monitor:terminate_proc/3`, whose sibling call is
   in a clause guarded `R /= shutdown`. The strategy read above moves those
   three rows from `:info` to `:warning`, and they are false.
+
+### What retiring "handle_info/2 has no catch-all" moved (2026-09-26)
+
+`partial_handler` is retired; the classes that replace it are the
+`unhandled_info` sources above (`monitor` by reason and type, `node`,
+`port`, `timer` for `:erlang.start_timer`, `task`, `late`, `exit`) and
+`unhandled_timeout`. Over the 26 live programs of the FP hunts and the
+10 evaluation sets (supavisor, realtime, sequin, blockster_v2, hexpm,
+nerves_hub, livebook, logflare, OTP, the Phoenix stack), every
+analysis, against main at ea9bdbff: 95 rows gone, 3 added, nothing else
+moved (the GenStage server start and the clause reader's guard fix
+moved no other analysis's rows).
+
+- Gone: 82 "handle_info/2 has no catch-all", 9 "... in a process the
+  runtime writes to", 2 "gen_statem state without the :info catch-all
+  its siblings have", 2 "async_nolink task's messages have no
+  handle_info clause". All 95 are read: 50 by the FP hunts' ledgers and
+  the late-message eval (5 true by their rubric, 45 false), 45 in this
+  round. By the constructive reading: 6 show a message that falls
+  through (five bugs), 12 run code the server did not build (no message
+  shown), and 77 show every message they are sent taken.
+- The six with a message: realtime's replication Watchdog (source
+  `late`, reported) and vernemq's `vmq_tracer` (source `exit`,
+  reported); vernemq's `vmq_ql_query` (the `late` shape, not reached:
+  its wait is in a closure handed to `Module:fold_init_rows/…`, a module
+  the program computes); sequin's Redis `ConnectionCache` (the `exit`
+  shape, not reached: it start_links through `state.start_fn`, a fun in
+  its state); sequin's `Databases.ConnectionCache` (two rows, one bug:
+  its stop task returns `nil` when the connection is already dead, and
+  `{ref, nil}` matches neither `{ref, :ok}` nor `{ref, {:start_result,
+  _}}`; the `task` source reads clause shapes, not the task's return
+  values). rabbit's `rabbit_ff_controller`, counted true by the sibling
+  rule, is not among them: no message reaches `standing_by`.
+- The twelve that run foreign code, true by the late-message rubric
+  where judged (nerves_hub_link's ArchiveManager, kafka_ex's consumer
+  group Manager): a configured callback module, a fun from options or
+  the state, a user's Lua script or io request. No message is shown;
+  the risk is the library's contract with its callers' code.
+- Added: realtime's Watchdog (`late`, true), vernemq's `vmq_tracer`
+  (`exit`, true: a rate tracer that crashes is a FunctionClauseError),
+  ra's `ra_server_proc` node events (false, the known transient-state
+  class: `leader/3` and `follower/3` take the events but are not read
+  as states, and `post_init` leaves before any arrives). A fourth,
+  mongoose_lib's `pmap/3` start timer, went before the end: its arming
+  function waits for it and flushes it.
+- `unhandled_info` over the same sets: 20 rows before (2 true, 11 false,
+  7 unjudged), 23 after (4 true, 12 false, 7 unjudged); judged
+  precision 15% to 25%. Eleven of the twelve false rows are ra's
+  transient-state class, before and after.
+- Negations in mailbox.dl: 139 to 121. The retired family had 31 (`!`
+  literals: 18 in `partial_handler`'s rules, 13 in the helpers only it
+  read), 3 of which move unchanged into `unhandled_timeout` ("no clause
+  takes the event type"). The new sources add 10: in their rule bodies
+  the "no clause takes it" and GenServer-or-statem split every source
+  has (5, the `late` and `exit` rules'); a start timer's and a port's
+  own receive and `Port.connect` (3, the monitor's convention: consumed
+  where it is asked for); a library's own async_nolink start (2, kept
+  from task_nolink).
+- Encore: canon mailbox 2 to 1 and ostinato 3 to 2, the retired rule's
+  rows, never seeds; every seeded flaw unchanged.
+
+Prior candidates and structural gaps from this round: a library that
+runs its callers' code in its own process (the foreign twelve: the
+contract, not a message); a task's return values against its reply
+clause (sequin's `{ref, nil}`); a fun or module in the state the call
+graph does not follow (sequin's `start_fn`, vmq_ql_query's
+`fold_init_rows`), for which a closure handed to a call through a
+computed module is taken as kept (`runs_elsewhere.dl`); gen_statem
+states the extractor does not read (ra); vernemq's `vmq_passwd_reloader`
+re-arms its reload timer without keeping the new ref, so its
+`config_changed` cancels one that already fired and reload loops pile
+up (the periodic-loop class's shape, not reported: a candidate).
 
 ### Prior candidates, evaluated
 

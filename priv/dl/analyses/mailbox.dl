@@ -1277,10 +1277,11 @@ info_message(m, g, r, msg, "late") :- late_wait(r, g, msg), runs_in_server(m, g)
 // anything (a worker started from a callback is linked to the server).
 // The exit is taken as a :DOWN is: by a clause for every reason of it
 // (callback_takes_exit), whatever it pins of `from` or asks of the state,
-// or by an open clause that can hold three elements. sequin's Redis
-// ConnectionCache start_links eredis connections and takes only
-// `{:EXIT, _pid, :normal}`; vernemq's vmq_tracer spawn_links its rate
-// tracer and takes only its :normal exit. A handler that names no :EXIT
+// or by an open clause that can hold three elements. vernemq's
+// vmq_tracer spawn_links its rate tracer and takes only its :normal
+// exit. (sequin's Redis ConnectionCache takes only `{:EXIT, _pid,
+// :normal}` too, but start_links through a fun in its state, which the
+// call graph does not follow.) A handler that names no :EXIT
 // at all is shutdown's finding (unhandled_exit_signal "no_exit_clause");
 // this judges one that takes some exits (it compares :EXIT) and not
 // others.

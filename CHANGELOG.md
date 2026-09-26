@@ -28,10 +28,11 @@ it, whatever it pins of `from` or asks of the state; a clause for
 `:normal` alone, a guard or a pattern on the reason takes some exits
 and not a crash's. Judged where the handler names `:EXIT` at all (a
 handler with no `:EXIT` clause is shutdown's "trap_exit without an
-{:EXIT, ...} clause"). sequin's Redis `ConnectionCache` (start_links its
-eredis connections, takes `{:EXIT, _pid, :normal}` alone) and vernemq's
-`vmq_tracer` (spawn_links its rate tracer, takes its `:normal` exit
-alone) were the retired rule's rows for this bug.
+{:EXIT, ...} clause"). vernemq's `vmq_tracer` (spawn_links its rate
+tracer, takes its `:normal` exit alone) is reported. sequin's Redis
+`ConnectionCache` has the same bug (it takes `{:EXIT, _pid, :normal}`
+alone), but it start_links its eredis connections through a fun in its
+state, which the call graph does not follow: not reported.
 
 **Fixed.** The clause reader (CallbackTag, GenStatem) reads a guard's
 `element(i, msg)` as the message's part, as it reads a head's pattern:
