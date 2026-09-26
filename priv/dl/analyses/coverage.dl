@@ -20,8 +20,6 @@
 .include "../clientlib/otp.dl"
 .include "../clientlib/process_statem.dl"
 
-// ── Input facts ──────────────────────────────────────────────────────
-
 // ── Active instrumentation passthrough ──────────────────────────────
 //
 // Expose the raw imprecision events so the consumer can aggregate them
@@ -35,93 +33,159 @@
 imprecision_event(c, f, r, why) :- imprecision(c, f, r, why).
 
 // ── Passive shape-gap queries ───────────────────────────────────────
+//
+// Each gap is a detection rule named for what it reports (a place the
+// extractors recognised and could not fill in), and a report under the
+// coverage_ name the consumers read.
 
-// A supervisor that was recognized (we extracted its strategy) but no
-// static children — neither supervisor_child nor dynamic_child fires,
-// and no start_child of a spec adds one (added_child).
-// Either init/1 builds children at runtime via Enum.map/comprehensions,
-// or the child spec shape isn't recognized by the extractor. Both are
-// recall gaps worth surfacing.
+// ── A supervisor with no known children ─────────────────────────────
+
 .decl coverage_supervisor_no_children(sup: symbol)
 .output coverage_supervisor_no_children
 
-coverage_supervisor_no_children(sup) :-
-  supervisor(sup, _),
-  !supervisor_child(sup, _, _, _, _),
-  !dynamic_child(sup, _, _),
-  !added_child(sup, _, _, _, _).
+// A supervisor Argus recognised has no child it could extract: init/1
+// builds the children at run time (Enum.map, a comprehension), or the
+// extractor does not know the spec's shape.
+.decl supervisor_without_known_children(sup: symbol)
 
-// A GenServer behaviour module that is never the target of a sync_call
-// or async_cast, nor of a call process points-to follows to it, AND is
-// not a supervisor child (static or dynamic).
-// Supervised modules are definitively reachable — the supervisor starts
-// them — so they shouldn't be flagged as "isolated" even when we can't
-// see their callers.
+supervisor_without_known_children(sup) :-
+  recognised_supervisor(sup),
+  !has_known_child(sup).
+
+coverage_supervisor_no_children(sup) :- supervisor_without_known_children(sup).
+
+// The supervision extractor recorded a strategy for `sup`.
+.decl recognised_supervisor(sup: symbol) inline
+
+recognised_supervisor(sup) :- supervisor(sup, _).
+
+// The extractor found a child of `sup`: one in its child list
+// (supervisor_child), one it starts dynamically (dynamic_child), or one a
+// start_child of a spec adds (added_child).
+.decl has_known_child(sup: symbol)
+
+has_known_child(sup) :- supervisor_child(sup, _, _, _, _).
+has_known_child(sup) :- dynamic_child(sup, _, _).
+has_known_child(sup) :- added_child(sup, _, _, _, _).
+
+// ── A GenServer with no known traffic ───────────────────────────────
+
 .decl coverage_genserver_isolated(mod: symbol)
 .output coverage_genserver_isolated
 
-coverage_genserver_isolated(mod) :-
+// A GenServer module no call or cast Argus resolved reaches, and no
+// supervisor starts: nothing talks to it, or call-site resolution missed
+// how.
+.decl genserver_without_known_traffic(mod: symbol)
+
+genserver_without_known_traffic(mod) :-
   behaves_as(mod, "GenServer"),
-  !sync_call(_, mod),
-  !async_cast(_, mod),
-  !reached_by_pid(mod),
-  !supervisor_child(_, _, mod, _, _),
-  !dynamic_child(_, mod, _),
-  !added_child(_, mod, _, _, _).
+  !receives_known_traffic(mod),
+  !started_by_supervisor(mod).
+
+coverage_genserver_isolated(mod) :- genserver_without_known_traffic(mod).
+
+// A sync_call or async_cast names the module as its target, or a call
+// process points-to follows reaches a process of the module's.
+.decl receives_known_traffic(mod: symbol)
+
+receives_known_traffic(mod) :- sync_call(_, mod).
+receives_known_traffic(mod) :- async_cast(_, mod).
+receives_known_traffic(mod) :- reached_by_pid(mod).
 
 // Traffic process points-to follows to a module's process, through the
 // pid a start returned or a lookup found: the extractor's target is
-// "dynamic" for it, and the server is not isolated.
+// "dynamic" for it.
 .decl reached_by_pid(mod: symbol)
 
 reached_by_pid(m) :- call_target(_, _, p), server_process(p, m).
 
-// An ETS table was created with a statically known name but we see no
-// read or write operations against that name anywhere in the corpus.
-// Most commonly means all access sites fell through to "dynamic" and
-// lost the table name. Excluding "dynamic" itself from the join is
-// critical — otherwise every project with any dynamic ETS access would
-// fire this on every statically-named table.
-//
-// Also excluded: tables whose creating module has ANY ets_ops (even
-// with dynamic table refs). When a module creates one named table and
-// also accesses ETS via a tid parameter, the dynamic ops almost
-// certainly refer to the same table — the name-based join just can't
-// see the connection. Flagging these as "unused" is misleading.
-.decl ets_module_has_ops(name: symbol, mod: symbol)
+// A supervisor starts the module, as a static child, a dynamic child or
+// one added by start_child: it is definitively reachable even when its
+// callers are not seen.
+.decl started_by_supervisor(mod: symbol)
 
-ets_module_has_ops(name, mod) :-
+started_by_supervisor(mod) :- supervisor_child(_, _, mod, _, _).
+started_by_supervisor(mod) :- dynamic_child(_, mod, _).
+started_by_supervisor(mod) :- added_child(_, mod, _, _, _).
+
+// ── A named table with no known use ─────────────────────────────────
+
+.decl coverage_ets_unused(name: symbol)
+.output coverage_ets_unused
+
+// An ETS table is made under a literal name, and no operation Argus read
+// names it or may reach it by reference: most often every access went
+// through a reference the extractor could not name.
+.decl named_table_without_known_use(name: symbol)
+
+named_table_without_known_use(name) :-
+  makes_named_table(name),
+  !used_by_name(name),
+  !maker_uses_ets(name).
+
+coverage_ets_unused(name) :- named_table_without_known_use(name).
+
+// An :ets.new/2 makes a table under a literal name. "dynamic" is no one
+// name: joining on it, every project with any dynamic ETS access would
+// report every statically named table.
+.decl makes_named_table(name: symbol) inline
+
+makes_named_table(name) :- ets_new(_, _, name), name != "dynamic".
+
+// An ETS operation names the table.
+.decl used_by_name(name: symbol)
+
+used_by_name(name) :- ets_op(_, _, name, _, _).
+
+// A module that makes the named table does any ETS operation, even
+// through a reference: when a module makes one named table and also
+// reaches ETS through a tid parameter, those operations almost certainly
+// are that table's, and the name-based join just can't see the
+// connection.
+.decl maker_uses_ets(name: symbol)
+
+maker_uses_ets(name) :-
   ets_new(_, create_func, name),
   name != "dynamic",
   function_def(create_func, mod, _, _, _),
   ets_op(_, op_func, _, _, _),
   function_def(op_func, mod, _, _, _).
 
-.decl coverage_ets_unused(name: symbol)
-.output coverage_ets_unused
+// ── A registered name with no known traffic ─────────────────────────
 
-coverage_ets_unused(name) :-
-  ets_new(_, _, name),
-  name != "dynamic",
-  !ets_op(_, _, name, _, _),
-  !ets_module_has_ops(name, _).
-
-// A named process was registered but no sync or async traffic targets it,
-// by name or through a pid points-to follows to it.
-// Excludes "dynamic" names — they can't be meaningfully joined with
-// callers, so flagging them as unreachable is vacuous.
 .decl coverage_named_process_unreachable(name: symbol, mod: symbol)
 .output coverage_named_process_unreachable
 
-coverage_named_process_unreachable(name, mod) :-
-  named_process(mod, name),
-  name != "dynamic",
-  !sync_call(_, name),
-  !async_cast(_, name),
-  !name_reached_by_pid(name).
+// A process of `mod` is registered under a literal name, and no call or
+// cast Argus resolved reaches it, by the name or through a pid.
+.decl named_process_without_known_traffic(name: symbol, mod: symbol)
 
-// Traffic to the process registered under the name, through a pid (a
-// whereis, the start's result) rather than the name itself.
+named_process_without_known_traffic(name, mod) :-
+  registers_literal_name(mod, name),
+  !name_receives_known_traffic(name).
+
+coverage_named_process_unreachable(name, mod) :-
+  named_process_without_known_traffic(name, mod).
+
+// A process of `mod` is registered under `name`. "dynamic" names can't
+// be meaningfully joined with callers, so reporting them unreached would
+// be vacuous.
+.decl registers_literal_name(mod: symbol, name: symbol) inline
+
+registers_literal_name(mod, name) :- named_process(mod, name), name != "dynamic".
+
+// A sync_call or async_cast names the process's registered name, or a
+// call reaches it through a pid (a whereis, the start's result) that
+// process points-to follows to the name.
+.decl name_receives_known_traffic(name: symbol)
+
+name_receives_known_traffic(name) :- sync_call(_, name).
+name_receives_known_traffic(name) :- async_cast(_, name).
+name_receives_known_traffic(name) :- name_reached_by_pid(name).
+
+// Traffic to the process registered under the name, through a pid rather
+// than the name itself.
 .decl name_reached_by_pid(name: symbol)
 
 name_reached_by_pid(n) :- call_target(_, _, p), named_pid(n, p).
