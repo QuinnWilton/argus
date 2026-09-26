@@ -173,6 +173,19 @@ task_start_api("Task", "async", "linked").
 task_start_api("Task.Supervisor", "async", "linked").
 task_start_api("Task.Supervisor", "async_nolink", "unlinked").
 
+// How a Task.Supervisor call starts its tasks (task_supervisor_start's
+// `op`): one per call ("one": start_child, async, async_nolink), or a
+// stream of them ("stream": async_stream, async_stream_nolink), which
+// runs at most `max_concurrency` at a time for the process enumerating
+// it and waits for each.
+.decl task_supervisor_op(op: symbol, how: symbol)
+
+task_supervisor_op("start_child", "one").
+task_supervisor_op("async", "one").
+task_supervisor_op("async_nolink", "one").
+task_supervisor_op("async_stream", "stream").
+task_supervisor_op("async_stream_nolink", "stream").
+
 // Waits for what a task does: the caller holds until the task returns
 // (or the wait gives up). Task.shutdown is not one: it stops the task.
 .decl task_wait(func: symbol)

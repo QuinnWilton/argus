@@ -85,16 +85,21 @@ defmodule Argus.Priors.Questions.ValueSource do
     {:code_execution, "code"}
   ]
 
-  # Request-entry callbacks, as clientlib/request_entry.dl spells them:
-  # a sink there is the request's, and its row is not the one this
-  # prior re-tiers.
+  # Request-entry callbacks by behaviour, as clientlib/request_entry.dl
+  # names them: a sink there is the request's, and its row is not one
+  # this prior re-tiers. Only a saving: the analysis reads the prior of a
+  # sink no request reaches, whatever was asked, so a callback missing
+  # here costs a question, never a finding. A controller action is read
+  # from the facts as request_entry.dl reads it (entry?/2).
   @entries %{
     "Plug" => [{"call", 2}],
     "Phoenix.LiveView" => [{"mount", 3}, {"handle_params", 3}, {"handle_event", 3}],
     "Phoenix.LiveComponent" => [{"handle_event", 3}],
     "Phoenix.Channel" => [{"handle_in", 3}],
     "Oban.Worker" => [{"perform", 1}],
-    "Broadway" => [{"handle_message", 3}, {"handle_batch", 4}]
+    "Broadway" => [{"handle_message", 3}, {"handle_batch", 4}],
+    "ThousandIsland.Handler" => [{"handle_data", 3}],
+    "WebSock" => [{"handle_in", 2}]
   }
 
   @impl true
@@ -114,10 +119,13 @@ defmodule Argus.Priors.Questions.ValueSource do
     index = Code.index(facts)
 
     # A bounded atom or deserialization is no sink; a code sink is one
-    # whatever its command (unsafe_input.dl's `sink`).
+    # whatever its command (unsafe_input.dl's `sink`). An atom made of
+    # atoms is reported only where the atoms are a caller's choice or its
+    # own (unsafe_input.dl's `atoms_chosen`), and what the string is has
+    # no better answer than an atom's name: it is not asked either.
     bounded =
       for r <- Map.get(facts, :sink_arg_bounded, []),
-          r.arg_pos == 0 and r.list_param == "",
+          r.arg_pos == 0 and r.list_param in ["", "atoms"],
           into: MapSet.new(),
           do: site(r.id)
 
@@ -243,15 +251,27 @@ defmodule Argus.Priors.Questions.ValueSource do
   # unsafe_input does not report it.
   defp macro?(index, func), do: String.starts_with?(index.funcs[func].name, "MACRO-")
 
+  # request_entry.dl's controller: an exported arity-2 function of a Plug
+  # that defines phoenix_controller_pipeline/2.
+  defp controller_action?(index, behaviours, %{mod: mod, arity: 2, exported: true}) do
+    "Plug" in behaviours and
+      Enum.any?(index.funcs, fn {_f, m} ->
+        m.mod == mod and m.name == "phoenix_controller_pipeline" and m.arity == 2
+      end)
+  end
+
+  defp controller_action?(_index, _behaviours, _meta), do: false
+
   defp entry?(index, func) do
     case index.funcs[func] do
       nil ->
         false
 
-      %{mod: mod, name: name, arity: arity} ->
-        index.behaviours
-        |> Map.get(mod, [])
-        |> Enum.any?(fn b -> {name, arity} in Map.get(@entries, b, []) end)
+      %{mod: mod, name: name, arity: arity} = meta ->
+        behaviours = Map.get(index.behaviours, mod, [])
+
+        Enum.any?(behaviours, fn b -> {name, arity} in Map.get(@entries, b, []) end) or
+          controller_action?(index, behaviours, meta)
     end
   end
 end

@@ -506,18 +506,56 @@ defmodule Argus.Schema.CallValues do
           {:func, :func_id, "function containing the sink"},
           {:arg_pos, :number, "0-based argument position at the sink"},
           {:list_param, :symbol,
-           "empty when the bound holds; else the position of the function's list " <>
-             "parameter the bound needs to be a literal list"}
+           "empty when the bound holds; 'atoms' for an atom made of atoms that exist, " <>
+             "which holds where those atoms are not the caller's choice; else the position " <>
+             "of the function's list parameter the bound needs to be a literal list"}
         ],
         doc: """
         On every path to the sink, its argument is one of a set the program \
-        wrote: compared equal to a literal (a clause head, a guard's `in`, a \
-        case arm), or found in a literal list (`x in @allowed`, \
-        `:lists.member/2`, `Enum.member?/2`) on the branch where it holds \
-        (Argus.Extractors.ParamFlow.Bounded). A membership test against a list \
-        the function takes as a parameter bounds it only where the callers \
-        pass a literal list (call_arg_allowlist): `list_param` names that \
-        parameter.
+        wrote, at most 1,024 values: compared equal to a literal (a clause \
+        head, a guard's `in`, a case arm), found in a literal list (`x in \
+        @allowed`, `:lists.member/2`, `Enum.member?/2`) on the branch where it \
+        holds, an integer between two close ends, or a value made of such \
+        values, their counts multiplied (Argus.Extractors.ParamFlow.Bounded). \
+        A membership test against a list the function takes as a parameter \
+        bounds it only where the callers pass a literal list \
+        (call_arg_allowlist): `list_param` names that parameter. At an atom \
+        sink, an argument made of atoms that exist (an `is_atom/1` test, an \
+        atom's name) is `list_param` "atoms": a bound only where no outside \
+        party chose those atoms (sink_arg_chosen) and the site's own atoms do \
+        not come back to it.
+        """
+      },
+      %{
+        name: :sink_arg_chosen,
+        layer: 2,
+        fields: [
+          {:id, :instr_id, "instruction ID of the sink call"},
+          {:func, :func_id, "function containing the sink"},
+          {:arg_pos, :number, "0-based argument position at the sink"}
+        ],
+        doc: """
+        The sink's argument is made of an atom an existing-atom lookup \
+        returned in its function (`String.to_existing_atom/1`, \
+        `:erlang.binary_to_existing_atom/1,2`, `List.to_existing_atom/1`): \
+        one of the atoms that exist, chosen by whoever named it. An atom made \
+        of it is new, and names the next lookup's choice: no atoms-of-atoms \
+        bound holds.
+        """
+      },
+      %{
+        name: :call_arg_chosen,
+        layer: 2,
+        fields: [
+          {:caller, :symbol, "calling function ID"},
+          {:callee, :symbol, "callee function ID (mod:func/arity)"},
+          {:arg_pos, :number, "0-based argument position at the call site"}
+        ],
+        doc: """
+        At some call site in the caller, the argument is made of an atom an \
+        existing-atom lookup returned there (sink_arg_chosen's question, one \
+        call up): chained with call_arg_derived, whether a caller's chosen \
+        atom reaches a sink's argument.
         """
       },
       %{

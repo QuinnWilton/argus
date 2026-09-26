@@ -27,7 +27,13 @@ defmodule Argus.Extractors.ParamFlow.Propagators do
   @spec_table [
     {:erlang,
      ~w(binary_to_list list_to_binary iolist_to_binary tuple_to_list list_to_tuple binary_part
-        split_binary atom_to_binary term_to_binary hd tl)a, :any, [0]},
+        split_binary atom_to_binary atom_to_list term_to_binary hd tl)a, :any, [0]},
+    # An existing atom's lookup answers the atom its string names: the
+    # caller's string, as an atom (`String.to_existing_atom/1` compiles to
+    # the first). ParamFlow also marks what it returns as the caller's
+    # choice among the atoms that exist.
+    {:erlang, ~w(binary_to_existing_atom list_to_existing_atom)a, :any, [0]},
+    {Atom, ~w(to_string to_charlist)a, 1, [0]},
     {:erlang, ~w(element map_get)a, :any, [1]},
     {:erlang, [:++], 2, [0, 1]},
     {:maps, [:get], 2, [1]},
@@ -68,8 +74,9 @@ defmodule Argus.Extractors.ParamFlow.Propagators do
     {Enum, ~w(into zip join map_join)a, :any, [0, 1]},
     {Enum, [:reduce], 2, [0]},
     {Enum, [:reduce], 3, [0, 1]},
-    {List, ~w(first last flatten to_string to_charlist wrap delete to_tuple zip keyfind)a, :any,
-     [0]},
+    {List,
+     ~w(first last flatten to_string to_charlist wrap delete to_tuple zip keyfind to_existing_atom)a,
+     :any, [0]},
     {List, ~w(insert_at replace_at)a, 3, [0, 2]},
     {List, [:update_at], 3, [0]},
     {Map,
@@ -99,11 +106,12 @@ defmodule Argus.Extractors.ParamFlow.Propagators do
     {URI, ~w(decode decode_www_form decode_query parse new)a, :any, [0]},
     {Plug.Conn.Query, [:decode], :any, [0]},
     {Plug.Conn, ~w(get_req_header fetch_query_params read_body)a, :any, [0]},
-    # fetch_cookies/2 names the cookies to verify: `signed:` and
-    # `encrypted:` values in the conn it returns are the server's own
-    # (firezone's session cookies, decoded with binary_to_term), and the
-    # conn is fresh rather than carry its other data along with them.
-    {Plug.Conn, [:fetch_cookies], 1, [0]},
+    # The conn fetch_cookies/2 returns carries every cookie the client
+    # sent. The ones its `signed:` and `encrypted:` options name are the
+    # server's own once read out of it (firezone's session cookies,
+    # decoded with binary_to_term): ParamFlow.Cookies cuts those reads,
+    # not the conn.
+    {Plug.Conn, [:fetch_cookies], :any, [0]},
     {Plug.Conn.Utils, :any, :any, [0]},
     # `@scope` in an EEx template: the assign's value, read out of the
     # assigns the template is rendered with.

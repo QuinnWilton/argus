@@ -23,11 +23,20 @@ defmodule Argus.Extractors.ParamFlow do
   - `sink_arg_bounded(id, func, arg_pos, list_param)` — the sink's
     argument is one of a set the program wrote, on every path to it:
     compared equal to a literal, found in a literal list on the branch
-    where it holds, or an integer between two close ends — or, at an
-    atom sink, made of atoms that exist
-    (`Argus.Extractors.ParamFlow.Bounded`); `list_param`, when not
-    empty, is the function's parameter that list is, which the callers
-    must fill with a literal list.
+    where it holds, or an integer between two close ends, at most 1,024
+    values in all — or, at an atom sink, made of atoms that exist
+    (`Argus.Extractors.ParamFlow.Bounded`). `list_param` is empty for
+    the first; `"atoms"` for the second, which holds only where the rules
+    find the atoms are not the caller's choice (below); otherwise the
+    function's parameter that list is, which the callers must fill with a
+    literal list.
+  - `call_arg_chosen(caller, callee, arg_pos)` and `sink_arg_chosen(id,
+    func, arg_pos)` — the argument is made of an atom an existing-atom
+    lookup returned (`String.to_existing_atom/1`,
+    `:erlang.binary_to_existing_atom/2`, `List.to_existing_atom/1`): one
+    of the atoms that exist, of the caller's choosing. An atom made of it
+    grows the set it was chosen from, one per call — the next caller names
+    the atom the last one made — so it is no atoms-of-atoms bound.
   - `call_arg_allowlist(caller, callee, arg_pos)` — every call the caller
     makes to the callee passes a literal list at `arg_pos`.
   - `sink_copy(id, func, first)` — the sink call at `id` repeats `first`,
@@ -75,6 +84,7 @@ defmodule Argus.Extractors.ParamFlow do
   alias Argus.Extractor.ValueFlow
   alias Argus.Extractors.ApiCalls
   alias Argus.Extractors.ParamFlow.Bounded
+  alias Argus.Extractors.ParamFlow.Cookies
   alias Argus.Extractors.ParamFlow.Propagators
   alias Argus.Instr
   alias Argus.InstrId
@@ -85,16 +95,42 @@ defmodule Argus.Extractors.ParamFlow do
 
   @max_args 4
 
+  # The lookups that answer an atom that exists, named by a string the
+  # caller hands them: what they return is the caller's choice among the
+  # atoms that exist (the `chosen` marker, `call_arg_chosen`).
+  @choosers MapSet.new([
+              {":erlang", "binary_to_existing_atom", 1},
+              {":erlang", "binary_to_existing_atom", 2},
+              {":erlang", "list_to_existing_atom", 1},
+              {"String", "to_existing_atom", 1},
+              {"List", "to_existing_atom", 1}
+            ])
+
   @impl true
   def relations,
-    do: [:call_arg_allowlist, :call_arg_derived, :sink_arg_bounded, :sink_arg_derived, :sink_copy]
+    do: [
+      :call_arg_allowlist,
+      :call_arg_chosen,
+      :call_arg_derived,
+      :sink_arg_bounded,
+      :sink_arg_chosen,
+      :sink_arg_derived,
+      :sink_copy
+    ]
 
   @impl true
   @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()
   def extract(module_data) do
     with typed when typed != nil <- Helpers.typed(module_data),
          reaching when reaching != nil <- Helpers.reaching(module_data) do
-      inputs = derive(typed, reaching, Helpers.copies(module_data), bif_operands(module_data))
+      inputs =
+        derive(
+          typed,
+          reaching,
+          Helpers.copies(module_data),
+          bif_operands(module_data),
+          Cookies.server_writes(module_data)
+        )
 
       %{}
       |> emit_call_sites(module_data, inputs)
@@ -112,7 +148,7 @@ defmodule Argus.Extractors.ParamFlow do
 
   # Per function, what each write is derived from, with the reads the
   # values are joined over: %{func_id => {reads, outs}}.
-  defp derive(typed, triples, copies, bif_operands) do
+  defp derive(typed, triples, copies, bif_operands, server_writes) do
     writes =
       typed
       |> Map.get(:def, [])
@@ -134,7 +170,8 @@ defmodule Argus.Extractors.ParamFlow do
       locals: locals,
       dynamics: dynamics,
       copies: copies,
-      bif_operands: bif_operands
+      bif_operands: bif_operands,
+      server_writes: server_writes
     }
 
     reads = ValueFlow.reads_by_function(triples)
@@ -179,13 +216,23 @@ defmodule Argus.Extractors.ParamFlow do
       MapSet.member?(ctx.tails, id) ->
         MapSet.new()
 
+      # A cookie the server verified (Cookies): its own bytes, not the
+      # request's.
+      MapSet.member?(ctx.server_writes, {id, reg}) ->
+        MapSet.new()
+
       Map.has_key?(ctx.remote, id) ->
         {mod, fun, arity} = Map.fetch!(ctx.remote, id)
 
-        case Propagators.positions(mod, fun, arity) do
-          nil -> MapSet.new()
-          positions -> union_of(inputs, Enum.map(positions, &"x#{&1}"))
-        end
+        derived =
+          case Propagators.positions(mod, fun, arity) do
+            nil -> MapSet.new()
+            positions -> union_of(inputs, Enum.map(positions, &"x#{&1}"))
+          end
+
+        if MapSet.member?(@choosers, {mod, fun, arity}),
+          do: MapSet.put(derived, :chosen),
+          else: derived
 
       MapSet.member?(ctx.locals, id) or MapSet.member?(ctx.dynamics, id) ->
         MapSet.new()
@@ -384,7 +431,7 @@ defmodule Argus.Extractors.ParamFlow do
         for %{idx: idx, mfa: {_m, _f, sink_arity} = mfa} <- sites,
             pos <- 0..(sink_arity - 1)//1,
             {:ok, bound} <- [Map.fetch(Map.get(bounds, idx, %{}), {:x, pos})],
-            bound != :atoms or ApiCalls.atom_sink?(mfa),
+            not match?({:atoms, _}, bound) or ApiCalls.atom_sink?(mfa),
             reduce: acc do
           inner ->
             add_fact(inner, :sink_arg_bounded, [
@@ -469,8 +516,8 @@ defmodule Argus.Extractors.ParamFlow do
     end)
   end
 
-  defp list_param(:always), do: ""
-  defp list_param(:atoms), do: ""
+  defp list_param({:values, _n}), do: ""
+  defp list_param({:atoms, _n}), do: "atoms"
   defp list_param({:param, q}), do: to_string(q)
 
   # The positions at which every call from a function to a callee passes
@@ -515,19 +562,23 @@ defmodule Argus.Extractors.ParamFlow do
   defp literal_list_move?({:move, {:literal, list}, _dst}) when is_list(list), do: list != []
   defp literal_list_move?(_instr), do: false
 
-  # Only the first @max_args positions of a call, like call_arg.
+  # Only the first @max_args positions of a call, like call_arg. A
+  # parameter is a call_arg_derived row; an existing atom's lookup, a
+  # call_arg_chosen one.
   defp emit_call_arg(facts, _prefix, _derived, pos) when pos >= @max_args, do: facts
 
   defp emit_call_arg(facts, prefix, derived, _pos) do
-    Enum.reduce(derived, facts, fn param, acc ->
-      add_fact(acc, :call_arg_derived, prefix ++ [to_string(param)])
+    Enum.reduce(derived, facts, fn
+      :chosen, acc -> add_fact(acc, :call_arg_chosen, prefix)
+      param, acc -> add_fact(acc, :call_arg_derived, prefix ++ [to_string(param)])
     end)
   end
 
   # A sink's every position, since the finding hangs on it.
   defp emit_sink_arg(facts, prefix, derived) do
-    Enum.reduce(derived, facts, fn param, acc ->
-      add_fact(acc, :sink_arg_derived, prefix ++ [to_string(param)])
+    Enum.reduce(derived, facts, fn
+      :chosen, acc -> add_fact(acc, :sink_arg_chosen, prefix)
+      param, acc -> add_fact(acc, :sink_arg_derived, prefix ++ [to_string(param)])
     end)
   end
 end

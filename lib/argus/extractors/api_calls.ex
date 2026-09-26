@@ -732,8 +732,18 @@ defmodule Argus.Extractors.ApiCalls do
     {value, track_dynamic(facts, value, ctx, :port_target, rel)}
   end
 
-  @interpreters ~w(sh bash zsh dash ksh csh tcsh fish cmd cmd.exe powershell pwsh
-                   python python3 perl ruby node erl elixir iex escript osascript)
+  # The programs that run what their arguments say: shells and
+  # interpreters, and the wrappers that run another program named in
+  # their arguments (`env cmd`, `sudo cmd`, `xargs cmd`, `timeout 5 cmd`),
+  # hand a command to a remote shell (`ssh host cmd`), or run one in a
+  # container (`docker exec c cmd`). A literal program not listed runs
+  # only itself; one of these runs its caller's data.
+  @interpreters ~w(sh bash zsh dash ksh csh tcsh fish ash busybox cmd cmd.exe powershell pwsh
+                   python python2 python3 perl ruby node deno bun erl elixir iex escript mix
+                   php lua luajit tclsh wish Rscript julia awk gawk mawk nawk osascript
+                   env sudo doas su runuser xargs nohup nice ionice timeout stdbuf time watch
+                   flock setsid chroot nsenter unshare strace ltrace
+                   ssh docker podman kubectl nerdctl lxc-attach)
 
   # A literal command runs only itself: its arguments are argv, never
   # parsed by a shell, so caller data in them is not code execution. The
@@ -765,6 +775,10 @@ defmodule Argus.Extractors.ApiCalls do
     end
   end
 
+  # The finders a program's literal name is read through. `:os.find_executable/2`
+  # searches the path it is handed: whatever file of that name sits
+  # there runs, so the name says what it is only when the path is a
+  # literal too.
   @finders [{System, :find_executable, 1}, {:os, :find_executable, 1}, {:os, :find_executable, 2}]
 
   defp static_command(ctx) do
@@ -775,6 +789,7 @@ defmodule Argus.Extractors.ApiCalls do
       _ ->
         with {:ok, finder, at} when finder in @finders <-
                call_result_origin(ctx.instrs, ctx.idx, {:x, 0}),
+             true <- literal_search_path?(finder, ctx.instrs, at),
              {:ok, name} <- resolve_register(ctx.instrs, at, {:x, 0}),
              name when is_binary(name) <- program_name(name) do
           {:ok, name}
@@ -783,6 +798,15 @@ defmodule Argus.Extractors.ApiCalls do
         end
     end
   end
+
+  defp literal_search_path?({:os, :find_executable, 2}, instrs, at),
+    do:
+      match?(
+        {:ok, path} when is_list(path) or is_binary(path),
+        resolve_register(instrs, at, {:x, 1})
+      )
+
+  defp literal_search_path?(_finder, _instrs, _at), do: true
 
   defp program_name(name) when is_binary(name), do: name
 

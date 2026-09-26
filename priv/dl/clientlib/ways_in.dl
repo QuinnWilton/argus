@@ -12,7 +12,8 @@
 //   (`MACRO-name`, run at compile time with the code that uses it), and
 //   the reflection a module is compiled with (`__info__/1`,
 //   `module_info/0,1`, `__struct__`, `__impl__`, `__schema__` and the
-//   other `__name__` functions a `use` defines for its library to read).
+//   other `__name__` functions of no arguments a `use` defines for its
+//   library to read; reflection/2).
 //   A function the program also calls is still its users' API (an Ecto
 //   type's cast/1). Callbacks are exported, and the runtime calls them:
 //   a rule for which the runtime's call is not an outside party's leaves
@@ -36,10 +37,26 @@
 .decl api_export(func: symbol)
 
 api_export(f) :-
-  function_def(f, _, n, _, 1),
+  function_def(f, _, n, a, 1),
   !match("MACRO-.*", n),
-  !match("__.*__", n),
+  !reflection(n, a),
   n != "module_info".
+
+// The reflection a module is compiled with, which takes no outside data:
+// any `__name__` function of no arguments (`__routes__/0`, `__live__/0`),
+// and the compiler's and Ecto's lookups by a key of their own. A
+// `__name__` function that takes arguments is otherwise a way in like
+// any export: Phoenix's `__match_route__/3` takes the request's path.
+.decl reflection(name: symbol, arity: number)
+
+reflection(n, 0) :- function_def(_, _, n, 0, 1), match("__.*__", n).
+reflection("__info__", 1).
+reflection("__struct__", 1).
+reflection("__impl__", 1).
+reflection("__protocol__", 1).
+reflection("__schema__", 1).
+reflection("__schema__", 2).
+reflection("__deriving__", 3).
 
 // A module some other module of the program calls into.
 .decl called_by_other_module(mod: symbol)

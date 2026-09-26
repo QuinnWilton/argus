@@ -75,10 +75,18 @@ defmodule Argus.Analyses.UnsafeInput do
       Argus.Extractors.Supervision,
       # A start whose caller waits for the child's :DOWN (awaits_child_exit).
       Argus.Extractors.Monitor,
+      # Where a start hands its fun to a new process (process_start):
+      # runs_elsewhere's edges, off a request's own stack.
+      Argus.Extractors.PidFlow,
       Argus.Extractors.Endpoint,
       # What a call's arguments are made of whatever the callee
       # (call_arg_reads): whether a caller's input reaches an atom.
       Argus.Extractors.Dependence,
+      # A process that makes a socket active (socket_active): its
+      # handle_info/2 takes a peer's bytes, no runtime callback.
+      Argus.Extractors.Sockets,
+      # Literal and forwarded call arguments: a render naming its template.
+      Argus.Extractors.CallArgs,
       Argus.Extractors.Tooling
     ]
 
@@ -208,6 +216,7 @@ defmodule Argus.Analyses.UnsafeInput do
         route_opts(proximity, "inflated with no size bound here", @inflate_help)
     )
     |> retier(func, proximity, source, p)
+    |> requested()
   end
 
   def finding(:sink_reachable, [
@@ -231,6 +240,7 @@ defmodule Argus.Analyses.UnsafeInput do
         route_opts(proximity, "decoded here", deserialization_help(safety))
     )
     |> retier(func, proximity, source, p)
+    |> requested()
   end
 
   def finding(:sink_reachable, [id, func, api, "code", entry, kind, proximity, source, p, _s]) do
@@ -244,7 +254,7 @@ defmodule Argus.Analyses.UnsafeInput do
     )
     |> retier(func, proximity, source, p)
     |> at_least(:warning)
-    |> Map.put(:floor, :warning)
+    |> requested()
   end
 
   def finding(:sink_reachable, [id, func, api, "atom", entry, kind, proximity, source, p, _s]) do
@@ -259,6 +269,7 @@ defmodule Argus.Analyses.UnsafeInput do
         route_opts(proximity, "atom interned from a string here", @atom_help)
     )
     |> retier(func, proximity, source, p)
+    |> requested()
   end
 
   def finding(:sink_without_request_path, [id, func, api, "atom", source, p, _safety]) do
@@ -313,6 +324,7 @@ defmodule Argus.Analyses.UnsafeInput do
       help: @code_help
     )
     |> trusted_value("the command it runs", source, p)
+    |> Map.put(:floor, :warning)
   end
 
   def finding(:unbounded_children_from_request, [sup, child, via, kind]) do
@@ -463,8 +475,16 @@ defmodule Argus.Analyses.UnsafeInput do
   # `pipe_through`, and an administrator's token reaching code on the
   # host is an escalation past the application's own authority (akkoma's
   # ConfigDB evaluated posted config three ways). `floor:` holds it there
-  # past the tooling step too (Argus.Findings.Tooling).
+  # past the tooling step too (Argus.Findings.Tooling), as a request's
+  # every sink is. So is code execution no request reaches: a value prior
+  # takes it to `:warning` at most, and the tooling step no further.
   defp code_severity(proximity), do: at_least(severity(proximity), :warning)
+
+  # A sink a request reaches is the deployed system's, whatever its
+  # module's name or path says (a release task an operator's rpc runs, an
+  # exam platform's `Test` context): the tooling step does not move it
+  # (`floor:`, Argus.Findings.Tooling).
+  defp requested(%{severity: severity} = attrs), do: Map.put(attrs, :floor, severity)
 
   defp at_least(%{severity: severity} = attrs, floor),
     do: %{attrs | severity: at_least(severity, floor)}

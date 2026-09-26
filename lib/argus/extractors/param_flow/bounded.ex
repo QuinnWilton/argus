@@ -42,6 +42,20 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
   `String.Chars.to_string/1`, ...) is bounded too: the image of a finite
   set is finite, so `:"phrase_\#{n}"` makes one of eight atoms.
 
+  ## How many
+
+  A bound says which values it admits — the literals themselves, an
+  integer range, or, for a value made of others, how many — and the
+  limit is on that count, not on each piece: a value made of several
+  bounded ones is one of the product of their counts (`"tile_\#{x}_\#{y}"`
+  with `x` and `y` each in `0..1023` is one of 1,048,576 — the whole
+  default table — and is not bounded). Where two ways into a block meet,
+  literals join as a set (`r in ~w(a b c d)` compiles to four tests, and
+  their four edges admit four values), ranges as their hull, and
+  anything else as the sum of the two counts, unless both ways carry the
+  same description: the same values, as a loop's back edge carries what
+  its entry did.
+
   ## Atoms made of atoms
 
   A value that is an atom — tested by `is_atom/1`, or read out of one by
@@ -50,11 +64,20 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
   made of it and of literals (`:"\#{name}_id"`, Erlang's
   `list_to_atom(atom_to_list(Tab) ++ "_sup")`) is one more per existing
   atom, not one per string an outside party can send. Such a value is
-  bounded `:atoms`, which only an atom sink takes as bounded: a
-  deserialization's question is what its bytes are, not how many there
-  can be. A program that feeds the atoms it makes back into the same
-  site grows one suffix at a time; that is not this shape, and its first
-  atom made of a string is reported where it is made.
+  bounded `{:atoms, n}` (`n` values per atom), which only an atom sink
+  takes as bounded — a deserialization's question is what its bytes are,
+  not how many there can be — and only where the atoms that exist are
+  not the caller's choice. They are when the atom came out of
+  `String.to_existing_atom/1` (the next request names the atom this one
+  made: `:name_desc`, then `:name_desc_desc`, ...), when a request's data
+  reaches the sink, and when the site's own atoms come back to it (a
+  recursion that names each child after its parent). This module cannot
+  see those; `unsafe_input.dl` asks them of the `"atoms"` row
+  (`Argus.Extractors.ParamFlow` marks an argument made of an existing
+  atom's lookup `sink_arg_chosen`/`call_arg_chosen`).
+
+  A path on which the value is made of atoms and one on which it is in a
+  list the caller passes admit neither bound on both: they meet to none.
   """
 
   alias Argus.Cfg.Function, as: CfgFunction
@@ -62,11 +85,24 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
   alias Argus.Instr
 
   @typedoc """
-  Why a value is bounded: always (one of a set the program wrote),
-  `:atoms` (made of atoms that exist and of values the program wrote), or
-  when the caller's parameter `q` is a literal list.
+  Why a value is bounded: one of the values `desc` describes, which the
+  program wrote (`{:values, desc}`); made of atoms that exist and of
+  values the program wrote, `desc` counting those per atom (`{:atoms,
+  desc}`); or one of a list the caller's parameter `q` holds, where every
+  caller passes a literal list (`{:param, q}`).
   """
-  @type bound :: :always | :atoms | {:param, non_neg_integer()}
+  @type bound :: {:values, desc()} | {:atoms, desc()} | {:param, non_neg_integer()}
+
+  @typedoc """
+  Which values: these literals (`{:set, sorted}`), the integers from `lo`
+  to `hi`, an existing atom (`:atom`, one per atom), or `n` values made
+  of others, told apart from another `n` by `tag`.
+  """
+  @type desc ::
+          {:set, [term()]}
+          | {:range, integer(), integer()}
+          | :atom
+          | {:many, pos_integer(), non_neg_integer()}
 
   @typep reg :: {:x | :y, non_neg_integer()}
 
@@ -83,8 +119,8 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
           ranges: %{reg() => range()}
         }
 
-  # The widest integer range that bounds a value: a thousandth of the
-  # default atom table.
+  # The most values a bound admits: a thousandth of the default atom
+  # table, for an integer range and for a product of bounded pieces alike.
   @range_limit 1024
 
   # Conversions whose result is a function of their arguments alone: a
@@ -143,7 +179,7 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
 
   @doc """
   The literal lists at `idxs`: `%{idx => %{reg => bound}}`, the registers
-  holding a list the program wrote (`:always`) or the function's own
+  holding a list the program wrote (`{:values, n}`) or the function's own
   list parameter (`{:param, q}`) before each instruction.
   """
   @spec literal_lists(CfgFunction.t(), [tuple()], non_neg_integer(), [non_neg_integer()]) ::
@@ -262,7 +298,7 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
     reg = Instr.register(a)
 
     if register?(reg),
-      do: bound(after_instr, holders(after_instr, reg), :atoms),
+      do: bound(after_instr, holders(after_instr, reg), {:atoms, :atom}),
       else: after_instr
   end
 
@@ -294,10 +330,11 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
       {:select_arm, _} ->
         arms
         |> Enum.filter(&(elem(&1, 1) == succ))
-        |> Enum.map(fn {value, _} -> narrow_eq(after_instr, src, value) end)
+        |> Enum.map(&elem(&1, 0))
         |> case do
           [] -> after_instr
-          [first | rest] -> Enum.reduce(rest, first, &meet(&2, &1))
+          [value] -> narrow_eq(after_instr, src, value)
+          values -> narrow_arms(after_instr, src, values)
         end
 
       :select_fail ->
@@ -379,11 +416,12 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
       state
     else
       dst = Instr.register(dst)
-      state = %{state | bounded: Map.put(state.bounded, dst, :always)}
+      state = %{state | bounded: Map.put(state.bounded, dst, {:values, {:set, [element(src)]}})}
 
-      if list_literal?(src),
-        do: %{state | lists: Map.put(state.lists, dst, :always)},
-        else: state
+      case list_literal(src) do
+        {:ok, list} -> %{state | lists: Map.put(state.lists, dst, list_bound(list))}
+        :error -> state
+      end
     end
   end
 
@@ -399,24 +437,53 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
     if defs == [] or uses == [] or Instr.call?(instr) or copy?(instr) do
       state
     else
-      case combine(Enum.map(uses, &Map.get(before.bounded, &1))) do
+      case combine(Enum.map(uses, &Map.get(before.bounded, &1)), instr) do
         nil -> state
         bound -> %{state | bounded: Enum.reduce(defs, state.bounded, &Map.put(&2, &1, bound))}
       end
     end
   end
 
-  # What a value made of values with these bounds is: always bounded when
-  # each is, made of atoms when each is one or the other.
-  defp combine([_ | _] = bounds) do
-    cond do
-      Enum.all?(bounds, &(&1 == :always)) -> :always
-      Enum.all?(bounds, &(&1 in [:always, :atoms])) -> :atoms
-      true -> nil
+  # What a value made of values with these bounds is, by the operation
+  # `how` that makes it: one of the product of their counts, made of atoms
+  # when any piece is, and unbounded past the limit or when a piece is
+  # unbounded or the caller's list.
+  defp combine([_ | _] = bounds, how) do
+    if Enum.all?(bounds, &match?({kind, _} when kind in [:values, :atoms], &1)) do
+      count = Enum.reduce(bounds, 1, fn {_kind, desc}, acc -> count(desc) * acc end)
+      kind = if Enum.any?(bounds, &match?({:atoms, _}, &1)), do: :atoms, else: :values
+      counted(kind, {:many, count, :erlang.phash2({how, bounds})})
     end
   end
 
-  defp combine([]), do: nil
+  defp combine([], _how), do: nil
+
+  defp counted(kind, desc), do: if(count(desc) <= @range_limit, do: {kind, desc})
+
+  defp count({:set, values}), do: length(values)
+  defp count({:range, lo, hi}), do: hi - lo + 1
+  defp count(:atom), do: 1
+  defp count({:many, n, _tag}), do: n
+
+  # The values of either way in: literals as a set, integers as the range
+  # that holds both, anything else as the sum of the counts. The tag of a
+  # sum is the pair's, whichever way round it was met.
+  defp join(same, same), do: same
+  defp join({:set, a}, {:set, b}), do: {:set, :lists.umerge(a, b)}
+  defp join({:range, lo1, hi1}, {:range, lo2, hi2}), do: {:range, min(lo1, lo2), max(hi1, hi2)}
+
+  defp join({:set, values} = set, {:range, lo, hi} = range) do
+    if Enum.all?(values, &is_integer/1),
+      do: {:range, min(lo, Enum.min(values)), max(hi, Enum.max(values))},
+      else: summed(set, range)
+  end
+
+  defp join({:range, _, _} = range, {:set, _} = set), do: join(set, range)
+  defp join(one, other), do: summed(one, other)
+
+  defp summed(one, other) do
+    {:many, count(one) + count(other), :erlang.phash2(Enum.sort([one, other]))}
+  end
 
   # The result of a conversion call, asked before the call destroys its
   # arguments: an atom's name whatever the argument, or a pure conversion
@@ -425,10 +492,10 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
     with {:ok, mod, fun, arity} <- Helpers.match_remote_call(instr) do
       cond do
         MapSet.member?(@atom_names, {mod, fun, arity}) ->
-          :atoms
+          {:atoms, :atom}
 
         MapSet.member?(@conversions, {mod, fun, arity}) ->
-          combine(for i <- 0..(arity - 1)//1, do: Map.get(state.bounded, {:x, i}))
+          combine(for(i <- 0..(arity - 1)//1, do: Map.get(state.bounded, {:x, i})), instr)
 
         true ->
           nil
@@ -449,9 +516,19 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
 
   defp copy?(instr), do: Enum.any?(Instr.defs(instr), &(Instr.copy_source(instr, &1) != nil))
 
-  defp list_literal?(nil), do: true
-  defp list_literal?({:literal, list}) when is_list(list), do: true
-  defp list_literal?(_operand), do: false
+  defp list_literal(nil), do: {:ok, []}
+  defp list_literal({:literal, list}) when is_list(list), do: {:ok, list}
+  defp list_literal(_operand), do: :error
+
+  # A member of a literal list is one of its elements: as many values as
+  # the list has (an improper literal counts its cells). The program wrote
+  # every one, so a long list is still a bound; the limit is on what
+  # values made of it multiply to.
+  defp list_bound(list), do: {:values, {:set, list |> cells([]) |> Enum.sort() |> Enum.dedup()}}
+
+  defp cells([value | rest], acc), do: cells(rest, [value | acc])
+  defp cells([], acc), do: acc
+  defp cells(tail, acc), do: [tail | acc]
 
   # What a membership call is asked, before the call destroys it: the
   # registers holding the element that outlive the call, and the list's
@@ -481,7 +558,8 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
     case register_and_literal(a, b) do
       {:ok, reg} ->
         holders = holders(state, reg)
-        %{state | pending: Map.put(state.pending, Instr.register(dst), {holders, :always})}
+        bound = {:values, {:set, [element_of(a, b)]}}
+        %{state | pending: Map.put(state.pending, Instr.register(dst), {holders, bound})}
 
       :error ->
         state
@@ -498,12 +576,24 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
     case register_and_literal(a, b) do
       {:ok, reg} ->
         state
-        |> bound(holders(state, reg), :always)
+        |> bound(holders(state, reg), {:values, {:set, [element_of(a, b)]}})
         |> settle(reg, literal_of(a, b) == true)
 
       :error ->
         state
     end
+  end
+
+  # Several arms of a select reach one block: the register is one of the
+  # values they name. A membership result is settled by one arm only, so
+  # several settle nothing (a `true` arm and a `false` arm to one block
+  # say nothing of the element).
+  defp narrow_arms(state, src, values) do
+    reg = Instr.register(src)
+
+    if register?(reg),
+      do: bound(state, holders(state, reg), {:values, arm_values(values)}),
+      else: state
   end
 
   # `a` differs from `b`: a membership result that is not `false` (nor
@@ -525,6 +615,9 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
       else: state
   end
 
+  defp arm_values(values),
+    do: {:set, values |> Enum.map(&element/1) |> Enum.sort() |> Enum.dedup()}
+
   defp settle(state, reg, true) do
     case Map.fetch(state.pending, reg) do
       {:ok, {holders, bound}} -> bound(state, holders, bound)
@@ -543,10 +636,14 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
     %{state | bounded: bounded}
   end
 
-  defp stronger(:always, _bound), do: :always
-  defp stronger(_bound, :always), do: :always
-  defp stronger(:atoms, _bound), do: :atoms
-  defp stronger(_bound, :atoms), do: :atoms
+  # Both hold: the fewer values, and a count over a condition.
+  defp stronger({kind, a}, {kind, b}) when kind in [:values, :atoms],
+    do: if(count(b) < count(a), do: {kind, b}, else: {kind, a})
+
+  defp stronger({:values, _} = values, _bound), do: values
+  defp stronger(_bound, {:values, _} = values), do: values
+  defp stronger({:atoms, _} = atoms, _bound), do: atoms
+  defp stronger(_bound, {:atoms, _} = atoms), do: atoms
   defp stronger(old, _new), do: old
 
   # `a >= b` (`ge?`) or `a < b` holds on this edge: a register compared
@@ -587,7 +684,7 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
 
       case range do
         {true, lo, hi} when is_integer(lo) and is_integer(hi) and hi - lo < @range_limit ->
-          bound(state, regs, :always)
+          bound(state, regs, {:values, {:range, lo, max(hi, lo)}})
 
         _ ->
           state
@@ -616,6 +713,18 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
 
   defp literal_of(a, b) do
     if register?(Instr.register(a)), do: literal_value(b), else: literal_value(a)
+  end
+
+  # A literal operand as a member of a set of values: its value, or the
+  # operand itself when its kind is not read (two such operands are equal
+  # only when they are the same literal).
+  defp element_of(a, b), do: if(register?(Instr.register(a)), do: element(b), else: element(a))
+
+  defp element(operand) do
+    case literal_value(operand) do
+      :unknown -> {:operand, operand}
+      value -> value
+    end
   end
 
   defp literal_value({:atom, a}), do: a
@@ -675,11 +784,20 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
         do: {reg, weaker}
   end
 
+  # One of two ways in: the values of both (join/2); made of atoms if
+  # either is; a caller's list where the other way is the program's own
+  # values. Atoms one way and a caller's list the other admit neither
+  # bound.
   defp weaker(same, same), do: same
-  defp weaker(:always, other), do: other
-  defp weaker(other, :always), do: other
-  defp weaker(:atoms, other), do: other
-  defp weaker(other, :atoms), do: other
+
+  defp weaker({kind1, a}, {kind2, b})
+       when kind1 in [:values, :atoms] and kind2 in [:values, :atoms] do
+    kind = if :atoms in [kind1, kind2], do: :atoms, else: :values
+    counted(kind, join(a, b))
+  end
+
+  defp weaker({:values, _}, {:param, _} = param), do: param
+  defp weaker({:param, _} = param, {:values, _}), do: param
   defp weaker(_one, _another), do: nil
 
   defp meet_groups(a, b) do

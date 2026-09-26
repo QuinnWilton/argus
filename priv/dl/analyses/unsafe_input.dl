@@ -43,6 +43,7 @@
 .include "../clientlib/behaviours.dl"
 .include "../clientlib/callbacks.dl"
 .include "../clientlib/request_entry.dl"
+.include "../clientlib/runs_elsewhere.dl"
 .include "../clientlib/tooling.dl"
 
 // A finding in code only developers' tools or tests run steps down a
@@ -76,7 +77,20 @@ sink(id, func, api, "decompression", "") :-
 // zstream `inflate/2` takes first (which lives in the handler's state).
 .decl sink_data_arg(id: symbol, func: symbol, pos: number)
 
-sink_data_arg(id, func, pos) :- unsafe_decompression(id, func, _, pos), sink(id, func, _, _, _).
+sink_data_arg(id, func, pos) :- unsafe_decompression(id, func, _, pos).
+
+// Every site of the four sinks, bounded or not: the flow walk (below)
+// starts at each, since whether an atoms-of-atoms bound holds asks
+// whether request data reaches the site.
+.decl sink_site(id: symbol, func: symbol, kind: symbol)
+
+sink_site(id, func, "atom") :- unsafe_atom_creation(id, func, _).
+sink_site(id, func, "code") :- code_execution(id, func, _).
+sink_site(id, func, "decompression") :- unsafe_decompression(id, func, _, _).
+
+sink_site(id, func, "deserialization") :-
+  unsafe_deserialization(id, func, _, safety),
+  unsafe_safety_class(safety).
 
 sink(id, func, api, "deserialization", safety) :-
   unsafe_deserialization(id, func, api, safety),
@@ -102,8 +116,13 @@ sink(id, func, api, "deserialization", safety) :-
 bounded_input(id, f) :- sink_arg_bounded(id, f, 0, "").
 
 bounded_input(id, f) :-
+  sink_arg_bounded(id, f, 0, "atoms"),
+  !atoms_chosen(id).
+
+bounded_input(id, f) :-
   sink_arg_bounded(id, f, 0, q),
   q != "",
+  q != "atoms",
   call_edge(_, f),
   !unlisted_caller(f, q).
 
@@ -112,12 +131,92 @@ bounded_input(id, f) :-
 unlisted_caller(f, q) :-
   sink_arg_bounded(_, f, 0, q),
   q != "",
+  q != "atoms",
   call_edge(c, f),
   !allowlist_at(c, f, q).
 
 .decl allowlist_at(caller: symbol, callee: symbol, pos: symbol)
 
 allowlist_at(c, f, to_string(n)) :- call_arg_allowlist(c, f, n).
+
+// ── Atoms made of atoms ──────────────────────────────────────────
+//
+// An atom made of an atom that exists and of literals (`:"#{name}_id"`,
+// `list_to_atom(atom_to_list(Tab) ++ "_sup")`, sink_arg_bounded's
+// "atoms") is one per atom its callers hand in: a library's pool and
+// table names, the program's own. That count is only a bound while the
+// atoms that exist are not the caller's to choose, and the site's own
+// atoms are among them the moment it makes one. They are the caller's
+// choice:
+//
+// - when an existing atom's lookup made the atom (sink_arg_chosen, or
+//   call_arg_chosen at a call whose argument reaches the site): a
+//   caller sends "name", then "name_desc" — the atom the first request
+//   made — then "name_desc_desc", one new atom per request;
+// - when a request reaches the site at all: a request carries strings,
+//   and an atom made of one is a lookup's or a sink's, here or before
+//   the value was kept in a process's state, which the flow does not
+//   follow;
+// - when the site's atoms come back to it: a function on a cycle of the
+//   call graph (a recursion naming each child after its parent), or one
+//   a fold's closure reaches (`Enum.reduce(1..n, base, fn _, a ->
+//   :"#{a}.child" end)`, each answer the next call's argument).
+//
+// A process that keeps the atom it made in its state and makes the next
+// of it is the last shape, through the runtime: its callbacks take their
+// state from the program, not from a caller (runtime_callback), and it
+// is not reported with or without the bound.
+.decl atoms_chosen(id: symbol)
+
+atoms_chosen(id) :- sink_arg_bounded(id, f, 0, "atoms"), sink_arg_chosen(id, f, 0).
+
+atoms_chosen(id) :-
+  sink_arg_bounded(id, _, 0, "atoms"),
+  sink_flow_reaches(g, k, id),
+  call_arg_chosen(_, g, k).
+
+atoms_chosen(id) :- sink_arg_bounded(id, f, 0, "atoms"), atoms_requested(f).
+atoms_chosen(id) :- sink_arg_bounded(id, f, 0, "atoms"), atoms_fed_back(f).
+
+.init atoms_reach = CallReach
+
+atoms_reach.seed(f, f) :- sink_arg_bounded(_, f, 0, "atoms").
+
+.decl atoms_requested(func: symbol)
+
+atoms_requested(f) :- request_entry(e, _), atoms_reach.reaches(e, f).
+
+.decl atoms_fed_back(func: symbol)
+
+atoms_fed_back(f) :- atoms_reach.reaches(g, f), call_edge(f, g).
+atoms_fed_back(f) :- atoms_reach.reaches(c, f), fold_closure(c).
+
+// A closure handed to a fold, which calls it with its own last answer.
+.decl fold_closure(closure: symbol)
+
+fold_closure(c) :-
+  fun_handed(id, caller, c, _),
+  remote_call(id, caller, m, n, _),
+  fold_api(m, n).
+
+.decl fold_api(mod: symbol, func: symbol)
+
+fold_api("Enum", "reduce").
+fold_api("Enum", "reduce_while").
+fold_api("Enum", "map_reduce").
+fold_api("Enum", "flat_map_reduce").
+fold_api("Enum", "scan").
+fold_api("List", "foldl").
+fold_api("List", "foldr").
+fold_api("Stream", "iterate").
+fold_api("Stream", "unfold").
+fold_api("Stream", "scan").
+fold_api("Stream", "transform").
+fold_api(":lists", "foldl").
+fold_api(":lists", "foldr").
+fold_api(":lists", "mapfoldl").
+fold_api(":lists", "mapfoldr").
+fold_api(":maps", "fold").
 
 // A copy of an earlier sink site: the compiler duplicated the code that
 // holds it (a body shared by two clause heads), and the source has one
@@ -159,10 +258,16 @@ request_reaches(entry, kind, func, "transitive") :-
 // Backward from each sink's argument over call_arg_derived to a request
 // entry, then only the parameters that carry the request count.
 
-// ParamReach's walk, cut at a template's assigns: the view's render/2
-// dispatches on the template's name, which the flow does not read, so a
-// controller rendering "token.json" would flow into "_scopes.html" through
-// the dispatch. What reaches a sink from a template's assigns is
+// ParamReach's walk, with one edge read by name: a view's dispatch on
+// the template's name (Phoenix.Template's render_template/2, a clause per
+// template, which render/2 calls) reaches every template, so a
+// controller rendering "token.json" would flow into "_scopes.html"
+// through it. The walk crosses a dispatch only to a render that names
+// the template it came from, as a literal (`render("_scopes.html",
+// assigns)`), through the functions that hand the name down (render/2 to
+// render_template/2). Any other caller of a template — the one clause of
+// a view with one template, a helper calling it directly — hands it its
+// assigns as any call does. What a template's assigns carry otherwise is
 // `rendered` (below), whichever controller put it there.
 .decl sink_flow_seed(func: symbol, pos: number, target: symbol)
 .decl sink_flow_reaches(func: symbol, pos: number, target: symbol)
@@ -174,13 +279,52 @@ sink_flow_reaches(f, p, t) :-
   sink_flow_reaches(g, k, t),
   !template_function(g).
 
+sink_flow_reaches(f, p, t) :-
+  call_arg_derived(f, g, k, p),
+  sink_flow_reaches(g, k, t),
+  template_function(g),
+  !template_dispatch(f).
+
+// A function that calls more than one template: a dispatch on the name.
+.decl template_dispatch(func: symbol)
+
+template_dispatch(f) :-
+  call_edge(f, t1),
+  template_function(t1),
+  call_edge(f, t2),
+  template_function(t2),
+  t1 != t2.
+
+// The assigns reach f's parameter `ap` for the template called `name`,
+// and f's parameter `np` must name it: the dispatch's two parameters
+// (template, assigns), and each function that hands both down.
+.decl named_flow(func: symbol, ap: number, np: number, target: symbol, name: symbol)
+
+named_flow(f, ap, 1 - ap, t, name) :-
+  call_arg_derived(f, g, 0, ap),
+  sink_flow_reaches(g, 0, t),
+  template_function(g),
+  template_dispatch(f),
+  function_def(f, _, _, 2, _),
+  function_def(g, _, name, 1, _),
+  ap <= 1.
+
+named_flow(c, q, r, t, name) :-
+  named_flow(f, ap, np, t, name),
+  call_arg_derived(c, f, ap, q),
+  call_arg_forward(c, f, np, r).
+
+sink_flow_reaches(c, q, t) :-
+  named_flow(f, ap, np, t, name),
+  call_arg_derived(c, f, ap, q),
+  call_arg(c, f, np, cat("\"", cat(name, "\""))).
+
 sink_flow_seed(func, pos, id) :-
-  sink(id, func, _, k, _),
+  sink_site(id, func, k),
   k != "decompression",
   sink_arg_derived(id, func, _, pos).
 
 sink_flow_seed(func, pos, id) :-
-  sink(id, func, _, "decompression", _),
   sink_data_arg(id, func, arg),
   sink_arg_derived(id, func, arg, pos).
 
@@ -240,7 +384,15 @@ sink_rendered(id) :-
 sink_func_reads(func, source, p) :-
   sink(_, func, _, _, _),
   prior_reads(func, source, p),
-  p >= 700.
+  p >= 700,
+  !several_sinks(func).
+
+// A prior answers per function, not per call: of a function holding two
+// sinks it cannot say which one converts what it names, and it re-tiers
+// neither.
+.decl several_sinks(func: symbol)
+
+several_sinks(func) :- sink(a, func, _, _, _), sink(b, func, _, _, _), a != b.
 
 .decl sink_reachable(id: symbol, func: symbol, api: symbol, sink: symbol, entry: symbol, kind: symbol, proximity: symbol, source: symbol, permille: number, safety: symbol)
 .output sink_reachable
@@ -302,7 +454,8 @@ unreached_sink(id, func, api, "atom", "") :-
 sink_value(func, s, source, p) :-
   unreached_sink(_, func, _, s, _),
   prior_value_source(func, s, source, _, p),
-  p >= 900.
+  p >= 900,
+  !several_sinks(func).
 
 .decl sink_without_request_path(id: symbol, func: symbol, api: symbol, sink: symbol, source: symbol, permille: number, safety: symbol)
 .output sink_without_request_path
@@ -411,12 +564,30 @@ outside_api(f) :-
 // LiveView's handle_event/3, which takes the client's), and Broadway's
 // process_name/2, which the topology calls with the pipeline's own name
 // when it starts.
+//
+// Not a process's handle_info/2 when the process makes a socket active:
+// the bytes a peer sends arrive as its messages (`{:tcp, socket, data}`),
+// an outside party's data — a Ranch protocol written as a gen_server
+// loop, a GenServer holding a client connection. Any activation counts,
+// a mode the bytecode does not show included (mailbox's rules ask the
+// opposite question, whether a message surely arrives, and read only the
+// modes it can see): the runtime's call is the program's own only where
+// nothing says a socket feeds it.
 .decl runtime_callback(mod: symbol, name: symbol, arity: number)
 
 runtime_callback(m, n, a) :-
   otp_callback(f, m, n, _),
   message_callback(n),
-  function_def(f, m, n, a, _).
+  function_def(f, m, n, a, _),
+  !socket_messages(m, n).
+
+.decl socket_messages(mod: symbol, callback: symbol)
+
+socket_messages(m, "handle_info") :-
+  socket_active(_, f, _, mode, _),
+  mode != "false",
+  mode != "unset",
+  function_def(f, m, _, _, _).
 
 runtime_callback(m, "process_name", 2) :-
   behaves_as(m, "Broadway"),
@@ -571,33 +742,51 @@ unbounded_children_from_request(sup, child, via, kind) :-
 // Tasks the request's own enumeration runs: Task.Supervisor's
 // async_stream and async_stream_nolink start at most max_concurrency
 // tasks at a time for the process that enumerates the stream, and it
-// waits for each, so what they start lives no longer than the request.
-// A function that also starts tasks another way keeps its row: the
+// waits for each, so what they start lives no longer than the request —
+// when the request's own process enumerates it. Reached through a start
+// (a `Task.start(fn -> fan_out(ids) end)` from handle_event/3,
+// runs_elsewhere) the stream runs in a process the request does not wait
+// for, and each request adds another max_concurrency tasks beside the
+// last. A function that also starts tasks another way keeps its row: the
 // Task dynamic_child row is per function, not per call (TaskLive fires,
 // StreamLive is quiet).
-.decl task_stream_op(op: symbol)
-
-task_stream_op("async_stream").
-task_stream_op("async_stream_nolink").
-
-.decl task_start_op(op: symbol)
-
-task_start_op("start_child").
-task_start_op("async").
-task_start_op("async_nolink").
-
 .decl stream_only(via: symbol, child: symbol)
 
 stream_only(via, "Task") :-
   task_supervisor_start(_, via, op),
-  task_stream_op(op),
-  !starts_tasks_otherwise(via).
+  task_supervisor_op(op, "stream"),
+  !starts_tasks_otherwise(via),
+  !streams_detached(via).
 
 .decl starts_tasks_otherwise(via: symbol)
 
 starts_tasks_otherwise(via) :-
   task_supervisor_start(_, via, op),
-  task_start_op(op).
+  task_supervisor_op(op, "one").
+
+// A request reaches the streaming function through an edge off its own
+// stack: some function a request reaches starts (or keeps) a fun whose
+// code reaches it. Or the streaming function itself starts one, which
+// may enumerate the stream it built (a stream is lazy: its tasks start
+// where it is run, `Task.start(fn -> Stream.run(stream) end)`). Known
+// limit: a stream handed back to a caller that runs it in a process of
+// its own reads as enumerated by the request.
+.init detach_reach = CallReach
+
+detach_reach.seed(f, via) :-
+  task_supervisor_start(_, via, op),
+  task_supervisor_op(op, "stream"),
+  runs_elsewhere(f, g),
+  start_reach.reaches(g, via).
+
+.decl streams_detached(via: symbol)
+
+streams_detached(via) :- request_entry(entry, _), detach_reach.reaches(entry, via).
+
+streams_detached(via) :-
+  task_supervisor_start(_, via, op),
+  task_supervisor_op(op, "stream"),
+  runs_elsewhere(via, _).
 
 // A dangerous path in a dependency is not a finding when nothing turns
 // it on. Phoenix's long-poll transport starts a process per
