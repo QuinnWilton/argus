@@ -1153,7 +1153,31 @@ blocks_on_peer(init, "init", "", "remote", "", "", op, name) :-
 // they read — a persistent_term, an ETS row, an application env — that
 // the caller writes only afterwards is a window in which they run against
 // nothing (phoenixframework/phoenix#5981: the endpoint's warmup after the
-// listener was accepting). Writes reached from a call after start_link.
+// listener was accepting).
+
+// A function starts a supervision tree and only afterwards writes state
+// other processes read, so the children are already serving when the
+// write lands.
+.decl write_after_tree_starts(func: symbol, call: symbol, callee: symbol)
+
+write_after_tree_starts(func, call, callee) :-
+  calls_after_tree_starts(func, call, callee),
+  writes_shared_state(callee).
+
+// After Supervisor.start_link returns, `func` calls `callee` at `call`
+// (post_start_call).
+.decl calls_after_tree_starts(func: symbol, call: symbol, callee: symbol) inline
+
+calls_after_tree_starts(func, call, callee) :- post_start_call(func, call, callee).
+
+// The callee writes state other processes read (persistent_term, ETS,
+// application env): it is such a write (config_write_api), or a function
+// that reaches one (config_writer, clientlib/effect_model.dl).
+.decl writes_shared_state(callee: symbol)
+
+writes_shared_state(callee) :- config_write_api(callee).
+writes_shared_state(callee) :- config_reach.reaches(callee).
+
 .init config_reach = CallReachSet
 
 config_reach.seed(f) :- config_writer(f).
@@ -1161,14 +1185,8 @@ config_reach.seed(f) :- config_writer(f).
 .decl post_start_initialization(func: symbol, site: symbol, callee: symbol, start: symbol)
 .output post_start_initialization
 
-post_start_initialization(func, site, callee, start) :-
-  post_start_call(func, site, callee),
-  config_write_api(callee),
-  start_link_site_or_empty(func, start).
-
-post_start_initialization(func, site, callee, start) :-
-  post_start_call(func, site, callee),
-  config_reach.reaches(callee),
+post_start_initialization(func, call, callee, start) :-
+  write_after_tree_starts(func, call, callee),
   start_link_site_or_empty(func, start).
 
 // The Supervisor.start_link the write comes after; a start spelled
@@ -1180,23 +1198,38 @@ start_link_site_or_empty(f, "") :- post_start_call(f, _, _), !call_site(_, f, "S
 
 // ── Ignored start results ────────────────────────────────────────
 
-// GenServer/Supervisor start result not checked.
-//
-// callee is rendered as "Mod.func/arity", so the function name is
-// always preceded by "." and followed by "/" — matching the delimited
-// name keeps a callee like "Mod.restart_link/1" from substring-matching
-// "start_link".
+// A function starts a process and never looks at whether the start
+// succeeded.
+.decl ignored_start(func: symbol, callee: symbol)
+
+ignored_start(func, callee) :-
+  ignores_result(func, callee),
+  starts_process(callee).
+
+// The function calls `callee`, which returns a tagged tuple, and does not
+// match the result (ignored_error_result).
+.decl ignores_result(func: symbol, callee: symbol) inline
+
+ignores_result(func, callee) :- ignored_error_result(_, func, callee).
+
+// The callee is a start_link or a start. It is rendered as
+// "Mod.func/arity", so the function name is always preceded by "." and
+// followed by "/": matching the delimited name keeps a callee like
+// "Mod.restart_link/1" from substring-matching "start_link".
 //
 // NOTE Souffle's contains(needle, haystack) takes the needle FIRST. The
 // rule originally wrote contains(callee, "start_link") — "is the callee
 // a substring of 'start_link'" — which is false for every real callee,
 // so this relation had never produced a single row.
+.decl starts_process(callee: symbol) inline
+
+starts_process(callee) :- contains(".start_link/", callee).
+starts_process(callee) :- contains(".start/", callee).
+
 .decl ignored_start_result(func: symbol, callee: symbol)
 .output ignored_start_result
 
-ignored_start_result(func, callee) :-
-  ignored_error_result(_, func, callee),
-  (contains(".start_link/", callee) ; contains(".start/", callee)).
+ignored_start_result(func, callee) :- ignored_start(func, callee).
 
 // ══ A wait whose peer answers, when priors are on ═══════════════════
 //
