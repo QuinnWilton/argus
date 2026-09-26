@@ -253,64 +253,80 @@ protects_other_call(try, func) :-
 
 // ── Exit in GenServer callback ───────────────────────────────────
 
-// Only exit *signals* — Process.exit/2, :erlang.exit/2 — count here.
-// `:erlang.exit/1` (target "self") *raises* an exit in the current
-// process: the "let it crash on an impossible state" idiom
-// (`exit(:unexpected_checkout)`) and ordinary client-call failure
-// propagation, both fully supervision-visible and not a bypass. It is
-// excluded via `target != "self"`, the sentinel the extractor uses for
-// the /1 form. The exit is the callback's own or in what the callback
-// runs in its own process.
-.init exit_reach = SameProcessReach
+// A server's callback sends an exit signal to a process the server did
+// not start and no supervisor is known to own, stopping it behind the
+// back of whatever supervises it.
+.decl exit_past_supervisor(func: symbol, exit: symbol, target: symbol, callback: symbol)
 
-exit_reach.seed(g, id) :- exit_call(id, g, target), target != "self".
+exit_past_supervisor(func, exit, target, callback) :-
+  sends_exit_signal(exit, func, target),
+  runs_in_callback(exit, callback),
+  !exit_to_own_process(exit, _),
+  !exits_supervised_child(exit, _, _).
 
-.decl callback_exit(func: symbol, id: symbol, target: symbol)
+// A server's callback sends an exit signal to a supervisor's child, which
+// the supervisor will restart: a stop that fights the supervisor.
+.decl exit_to_supervised_child(func: symbol, exit: symbol, child: symbol, callback: symbol)
 
-callback_exit(func, id, target) :-
-  handler_function(_, func),
-  exit_reach.reaches(func, id),
-  exit_call(id, _, target).
-
-// Where process points-to (signals.dl) resolves the signal: a process
-// the sending module started itself — a helper kept in the state, a
-// worker it spawned — is its own to stop, and a child a supervisor
-// owns is the bypass the finding is about, named with its supervisor.
-.decl exit_to_supervised(id: symbol, child: symbol, sup: symbol)
-
-exit_to_supervised(id, child, sup) :-
-  signal_target(id, _, "exit", p),
-  supervised_process(p, sup, pos),
-  supervisor_child(sup, pos, child, _, _).
+exit_to_supervised_child(func, exit, child, callback) :-
+  sends_exit_signal(exit, func, _),
+  runs_in_callback(exit, callback),
+  exits_supervised_child(exit, child, _).
 
 // One finding per exit call, in the function that makes it, whichever
 // callbacks run it: Exq's Redis connection helper kills the connection
 // on a failover from every server that queries Redis, and that is one
 // exit, not ten. `callback` is one of the callbacks that reach it (the
-// finding keeps the least).
-orphan_process(g, id, "exit", target, callback) :-
-  callback_exit(callback, id, target),
-  exit_call(id, g, target),
-  !exit_to_own_process(id, _),
-  !exit_to_supervised(id, _, _).
+// finding keeps the least). "exit" is to a process the rule knows only
+// as a value, "exit_supervised" to a supervisor's child.
+orphan_process(func, exit, "exit", target, callback) :-
+  exit_past_supervisor(func, exit, target, callback).
 
-// "exit_supervised": the target is a child a supervisor owns, which it
-// will restart — a stop that fights the supervisor, where "exit" is to a
-// process the rule knows only as a value.
-orphan_process(g, id, "exit_supervised", child, callback) :-
-  callback_exit(callback, id, _),
-  exit_call(id, g, _),
-  exit_to_supervised(id, child, _).
+orphan_process(func, exit, "exit_supervised", child, callback) :-
+  exit_to_supervised_child(func, exit, child, callback).
 
 // The supervisor that owns an exit's target: evidence on its finding.
 .decl exit_target_owner(func: symbol, target: symbol, sup: symbol, sup_site: symbol)
 .output exit_target_owner
 
-exit_target_owner(g, child, sup, sup_site) :-
-  callback_exit(_, id, _),
-  exit_call(id, g, _),
-  exit_to_supervised(id, child, sup),
+exit_target_owner(func, child, sup, sup_site) :-
+  exit_to_supervised_child(func, exit, child, _),
+  exits_supervised_child(exit, child, sup),
   supervisor_site(sup, sup_site).
+
+// `func` sends an exit signal to `target` at `exit`: Process.exit/2 or
+// :erlang.exit/2. `:erlang.exit/1` (target "self", the sentinel the
+// extractor uses for the /1 form) *raises* an exit in the current
+// process: the "let it crash on an impossible state" idiom
+// (`exit(:unexpected_checkout)`) and ordinary client-call failure
+// propagation, both fully supervision-visible and not a bypass.
+.decl sends_exit_signal(exit: symbol, func: symbol, target: symbol) inline
+
+sends_exit_signal(exit, func, target) :- exit_call(exit, func, target), target != "self".
+
+// A message handler of a server runs the exit, itself or in what it runs
+// in its own process.
+.init exit_reach = SameProcessReach
+
+exit_reach.seed(func, exit) :- sends_exit_signal(exit, func, _).
+
+.decl runs_in_callback(exit: symbol, callback: symbol)
+
+runs_in_callback(exit, callback) :-
+  handler_function(_, callback),
+  exit_reach.reaches(callback, exit).
+
+// Where process points-to (signals.dl) resolves the signal: a process
+// the sending module started itself — a helper kept in the state, a
+// worker it spawned — is its own to stop (exit_to_own_process), and a
+// child a supervisor owns is the bypass the finding is about, named with
+// its supervisor.
+.decl exits_supervised_child(exit: symbol, child: symbol, sup: symbol)
+
+exits_supervised_child(exit, child, sup) :-
+  signal_target(exit, _, "exit", p),
+  supervised_process(p, sup, pos),
+  supervisor_child(sup, pos, child, _, _).
 
 // ══ Remote calls whose failure is not a value ═══════════════════════
 // A handler that unwraps only :exception lets {:erpc, :noconnection}
