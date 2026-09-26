@@ -70,9 +70,39 @@
 .output deferral_defect
 
 // ══ Synchronous calls from init/1 ═══════════════════════════════════
-.decl raw_sync_call_in_init(mod: symbol, callee: symbol)
 
-raw_sync_call_in_init(mod, callee) :- init_dep(mod, callee, "call", _).
+// An init/1 waits on a synchronous call to a process that no supervision
+// tree is known to have started first, so its supervisor's start waits on
+// a process that may not be there.
+.decl call_to_unplaced_peer_during_init(mod: symbol, peer: symbol)
+
+call_to_unplaced_peer_during_init(mod, peer) :-
+  calls_during_init(mod, peer),
+  !already_running(mod, peer),
+  !later_sibling_call(mod, peer).
+
+// mod's init/1 holds its start on a synchronous call to `peer`: on its own
+// stack, before it acknowledges its start (init_dep "call",
+// clientlib/entries.dl).
+.decl calls_during_init(mod: symbol, peer: symbol)
+
+calls_during_init(mod, peer) :- init_dep(mod, peer, "call", _).
+
+// The peer is running when mod's init/1 calls it: it starts earlier under
+// the same supervisor, or under another supervision tree.
+.decl already_running(mod: symbol, peer: symbol)
+
+already_running(mod, peer) :- init_safe_sibling(mod, peer).
+already_running(mod, peer) :- init_safe_cross_supervisor(mod, peer).
+
+// The call is to a sibling that starts later (later_sibling_dep) or to a
+// process the start function starts only after the tree (after_tree_dep):
+// "Start order" below reports it once, with the tree ordering, as the
+// deadlock it is, not also as a call of unknown place beside it.
+.decl later_sibling_call(child: symbol, dep: symbol)
+
+later_sibling_call(child, dep) :- later_sibling_dep(child, dep, "call", _, _, _).
+later_sibling_call(child, dep) :- after_tree_dep(child, dep, _, _, _).
 
 // ── Supervision-aware filtering ────────────────────────────────────────
 
@@ -99,7 +129,7 @@ likely_supervised(mod) :-
 .decl init_safe_sibling(child: symbol, dep: symbol)
 
 init_safe_sibling(child, dep) :-
-  raw_sync_call_in_init(child, dep),
+  calls_during_init(child, dep),
   starts_before(_, dep, child, _, _).
 
 // Both likely supervised but under disjoint supervisor trees — callee
@@ -109,13 +139,13 @@ init_safe_sibling(child, dep) :-
 .decl init_safe_cross_supervisor(child: symbol, dep: symbol)
 
 init_safe_cross_supervisor(child, dep) :-
-  raw_sync_call_in_init(child, dep),
+  calls_during_init(child, dep),
   child_subtree(_, _, child),
   likely_supervised(dep),
   !shares_supervisor(child, dep).
 
 init_safe_cross_supervisor(child, dep) :-
-  raw_sync_call_in_init(child, dep),
+  calls_during_init(child, dep),
   likely_supervised(child),
   child_subtree(_, _, dep),
   !shares_supervisor(child, dep).
@@ -170,19 +200,19 @@ unconditional_sync_call_in_init(mod, callee) :-
 .decl init_wait_site(mod: symbol, callee: symbol, site: symbol)
 
 init_wait_site(mod, callee, id) :-
-  raw_sync_call_in_init(mod, callee),
+  calls_during_init(mod, callee),
   init_function(mod, f),
   sync_site(f, callee, id),
   !start_acked(id, f).
 
 init_wait_site(mod, callee, id) :-
-  raw_sync_call_in_init(mod, callee),
+  calls_during_init(mod, callee),
   init_function(mod, f),
   tag_resolved_site(id, f, "call", callee),
   !start_acked(id, f).
 
 init_wait_site(mod, callee, id) :-
-  raw_sync_call_in_init(mod, callee),
+  calls_during_init(mod, callee),
   init_function(mod, f),
   call_instr(f, g, id),
   !start_acked(id, f),
@@ -191,7 +221,7 @@ init_wait_site(mod, callee, id) :-
 
 // A task init/1 awaits (awaits_task): the wait is at its start.
 init_wait_site(mod, callee, id) :-
-  raw_sync_call_in_init(mod, callee),
+  calls_during_init(mod, callee),
   init_function(mod, f),
   awaits_task(f, id, g),
   !start_acked(id, f),
@@ -212,40 +242,24 @@ init_wait(mod, callee, id) :-
   !init_waits_unconditionally_at(mod, callee).
 
 init_wait(mod, callee, "") :-
-  raw_sync_call_in_init(mod, callee),
+  calls_during_init(mod, callee),
   !init_wait_site(mod, callee, _).
 
-// ── Filtered output ────────────────────────────────────────────────────
+// ── The report ─────────────────────────────────────────────────────────
 
-// `kind` is "unconditional" when some path from init to the call runs on
-// every init, "conditional" when every path goes through a call site in
-// init that a branch guards (postgrex's `sync_connect: true`, goth's
+// `detail` is "unconditional" when some path from init to the call runs
+// on every init, "conditional" when every path goes through a call site
+// in init that a branch guards (postgrex's `sync_connect: true`, goth's
 // `prefetch: :sync`).
-blocks_on_peer(mod, "init", callee, "call", "unknown", "", site, "unconditional") :-
-  raw_sync_call_in_init(mod, callee),
-  !init_safe_sibling(mod, callee),
-  !init_safe_cross_supervisor(mod, callee),
-  !later_sibling_call(mod, callee),
-  unconditional_sync_call_in_init(mod, callee),
-  init_wait(mod, callee, site).
+blocks_on_peer(mod, "init", peer, "call", "unknown", "", site, "unconditional") :-
+  call_to_unplaced_peer_during_init(mod, peer),
+  unconditional_sync_call_in_init(mod, peer),
+  init_wait(mod, peer, site).
 
-blocks_on_peer(mod, "init", callee, "call", "unknown", "", site, "conditional") :-
-  raw_sync_call_in_init(mod, callee),
-  !init_safe_sibling(mod, callee),
-  !init_safe_cross_supervisor(mod, callee),
-  !later_sibling_call(mod, callee),
-  !unconditional_sync_call_in_init(mod, callee),
-  init_wait(mod, callee, site).
-
-// A call to a sibling that starts later is reported once, with the
-// tree ordering, under "Start order" below (later_sibling_dep): the
-// deadlock, not also a call of unknown place beside it. So is a call to
-// a process the start function starts only after the tree
-// (after_tree_dep).
-.decl later_sibling_call(child: symbol, dep: symbol)
-
-later_sibling_call(child, dep) :- later_sibling_dep(child, dep, "call", _, _, _).
-later_sibling_call(child, dep) :- after_tree_dep(child, dep, _, _, _).
+blocks_on_peer(mod, "init", peer, "call", "unknown", "", site, "conditional") :-
+  call_to_unplaced_peer_during_init(mod, peer),
+  !unconditional_sync_call_in_init(mod, peer),
+  init_wait(mod, peer, site).
 
 // ── Supervisor management calls from init/1 ──────────────────────────
 //
@@ -282,6 +296,21 @@ blocks_on_peer(mod, "init", target, "sup", "", "", site, cat(api, ".", op)) :-
   init_function(mod, func),
   sup_reach.reaches(func, site),
   sup_management_call(site, _, api, op, target).
+
+// ── A server that blocks in its handler ────────────────────────────────
+
+// An init/1 calls a server that is already running, and a handler of
+// that server can wait without a bound, so the call, and the start, wait
+// as long as the handler does.
+.decl call_to_blocking_server_during_init(mod: symbol, server: symbol, handler: symbol, wait: symbol)
+
+call_to_blocking_server_during_init(mod, server, handler, wait) :-
+  calls_during_init(mod, server),
+  already_running(mod, server),
+  handler_blocks(server, handler, wait).
+
+blocks_on_peer(mod, "init", server, "blocking_server", "earlier", "", wait, handler) :-
+  call_to_blocking_server_during_init(mod, server, handler, wait).
 
 // A handler of the server init/1 waits on that waits without a bound:
 // evidence for a report, so only operations with no bound of their own
@@ -324,11 +353,6 @@ infinite_call_reach.seed(g, site) :- sync_call_site(site, g, _, -1).
 handler_blocks(mod, h, site) :-
   handler_function(mod, h),
   infinite_call_reach.reaches(h, site).
-
-blocks_on_peer(mod, "init", dep, "blocking_server", "earlier", "", site, h) :-
-  raw_sync_call_in_init(mod, dep),
-  (init_safe_sibling(mod, dep) ; init_safe_cross_supervisor(mod, dep)),
-  handler_blocks(dep, h, site).
 
 // ── An unbounded socket receive on init's path ───────────────────────
 //

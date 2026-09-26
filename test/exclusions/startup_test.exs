@@ -112,7 +112,7 @@ defmodule Argus.Exclusions.StartupTest do
       assert lines(@call_after_ack, sites) == [fixture_line("pool = Config.fetch(:pool_size)")]
     end
 
-    # startup.dl, blocks_on_peer: !later_sibling_call(mod, callee).
+    # startup.dl, call_to_unplaced_peer_during_init: !later_sibling_call(mod, peer).
     test "made on some starts to a later sibling is the start order's finding alone", ctx do
       assert [{"Excl.Startup.ConditionalLaterSibling.Store", "later", _, _}] =
                peers(ctx, @later_sibling)
