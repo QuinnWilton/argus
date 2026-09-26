@@ -170,7 +170,30 @@ exports(module, func) :- function_def(func, module, _, _, 1).
 .decl resource_dropped(func: symbol, site: symbol, api: symbol, drop: symbol)
 .output resource_dropped
 
-resource_dropped(f, id, api, d) :- handle_dropped(id, f, api, d).
+// A function opens a file, socket or port, and a path that returns loses
+// the handle without closing it.
+.decl lost_handle(func: symbol, open: symbol, drop: symbol)
+
+lost_handle(func, open, drop) :-
+  opens_handle(open, func),
+  loses_handle(open, drop).
+
+resource_dropped(func, open, api, drop) :-
+  lost_handle(func, open, drop),
+  handle_dropped(open, func, api, drop).
+
+// The call at `open`, in `func`, opens a file, socket or port that some
+// path from it drops (handle_dropped).
+.decl opens_handle(open: symbol, func: symbol) inline
+
+opens_handle(open, func) :- handle_dropped(open, func, _, _).
+
+// On a path from the open that returns, the handle is gone at `drop`:
+// only read, written, sent on or tested on the way, never closed,
+// returned, stored or handed on (handle_dropped, Argus.Extractors.Handles).
+.decl loses_handle(open: symbol, drop: symbol) inline
+
+loses_handle(open, drop) :- handle_dropped(open, _, _, drop).
 
 // ── Swallowed errors ─────────────────────────────────────────────
 
