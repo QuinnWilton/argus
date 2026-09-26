@@ -220,6 +220,14 @@
   reaches(h) :- reaches(g), call_edge(g, h).
 }
 
+// ForwardCallReachSet over what the root's own process runs
+// (runs_elsewhere), less the edges the instance names `cut` (a side
+// path): the functions some root reaches on its own stack.
+.comp ForwardSameProcessReachSetCut : ForwardSet {
+  .decl cut(func: symbol, callee: symbol)
+  reaches(h) :- reaches(g), call_edge(g, h), !runs_elsewhere(g, h), !cut(g, h).
+}
+
 // Depth-bounded, for the rules that want "close to" rather than
 // "anywhere below": `limit(3)` covers terminate -> cleanup helper -> the
 // API it calls, and stops before a client library's connection pool.

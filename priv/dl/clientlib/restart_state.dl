@@ -49,21 +49,9 @@
 // schedule of its own. Those are the priors' (docs/bug-classes.md).
 //
 // Requires otp.dl (callbacks.dl, calls.dl, supervision.dl) and
-// effect_model.dl (structural_call).
-
-// ── Once code ────────────────────────────────────────────────────────
-//
-// What a supervised module's once code runs on its own stack. Seeded at
-// the start callbacks of modules a supervisor starts: the question is
-// about children.
-.init once_reach = ForwardSameProcessReachCut
-
-once_reach.cut(f, g) :- side_call(f, g).
-once_reach.root(s, s) :- start_callback(m, s), child_subtree(_, _, m).
-
-.decl once_code(mod: symbol, func: symbol)
-
-once_code(m, g) :- start_callback(m, s), once_reach.reaches(s, g).
+// effect_model.dl (structural_call). Once code (once_code) is runs.dl's
+// word, shared with mailbox's monitors.
+.include "runs.dl"
 
 // ── Requests the once code makes ─────────────────────────────────────
 //

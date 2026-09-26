@@ -1,0 +1,116 @@
+// Code that runs once, and code that runs again.
+//
+// A process runs some of its code once per incarnation and some of it
+// again and again. What its once code asks for — a registration made
+// from init/1, a monitor its start takes — it asks for once; what code
+// that runs again asks for, it asks for again each time. Two questions
+// turn on which:
+//
+// - coupling (clientlib/restart_state.dl): a request a process's once
+//   code makes of a sibling is lost when the sibling restarts, since
+//   nothing makes it again.
+// - mailbox (docs/design/monitor-leaks.md): a monitor that code which
+//   runs again takes is taken again, and piles up unless each one is
+//   released.
+//
+// once_code(mod, func): func runs in mod's process from a start callback
+//   (start_callback, callbacks.dl: init/1, handle_continue/2, a
+//   Channel's join/3, a LiveView's mount/3), on its own stack: the same
+//   process, and no side path (side_call, calls.dl). Seeded at the
+//   modules a supervisor starts: coupling's question is about children.
+// again_code(func): func runs again and again in the process that runs
+//   it. It is reached on that process's own stack from a root that runs
+//   again (again_root):
+//   - "callback": a callback that runs whenever its request or message
+//     comes (runs_again_callback, callbacks.dl), or a GenEvent handler's
+//     handle_event/2 or handle_call/2;
+//   - "state": a gen_statem's state function or handle_event/4
+//     (statem_event_clause);
+//   - "loop": a receive loop, a function that receives and reaches
+//     itself again on its own stack;
+//   - "api": a function only callers outside the program call
+//     (api_export, ways_in.dl), which may call it on every use: no
+//     function of the program calls it, it is no process's callback, no
+//     start of the program runs it (process_start: a process's body, run
+//     once per process), no supervisor starts it (the start_link of a
+//     module a child spec names), and no library's macro wrote it
+//     (library_written,
+//     generated.dl: such a function is the library's to call, as
+//     HTTPoison calls the transformer its `use` writes, once per spawned
+//     process).
+//   A function both kinds reach is both: a helper init/1 and a handler
+//   share runs again.
+//
+// Direction. Loud where the caller is not in view: an exported function
+// nothing in the program calls is taken as called again, though its
+// callers outside may call it once (a callback of a behaviour the program
+// does not declare, a start function a child spec names other than
+// start_link); and a
+// handler clause for a message that comes once (a channel's join
+// message, an internal event a gen_statem's start queues) runs again as
+// far as the code shows. Quiet in one place: a start callback a handler
+// asks for again (`{:noreply, s, {:continue, x}}` runs handle_continue/2
+// again) is taken as once code.
+//
+// Requires imports.dl (reach.dl, ways_in.dl, generated.dl, receive.dl)
+// and otp.dl (callbacks.dl, calls.dl, supervision.dl).
+
+// ── Once code ────────────────────────────────────────────────────────
+.init once_reach = ForwardSameProcessReachCut
+
+once_reach.cut(f, g) :- side_call(f, g).
+once_reach.root(s, s) :- start_callback(m, s), child_subtree(_, _, m).
+
+.decl once_code(mod: symbol, func: symbol)
+
+once_code(m, g) :- start_callback(m, s), once_reach.reaches(s, g).
+
+// ── Code that runs again ─────────────────────────────────────────────
+.decl again_root(func: symbol, how: symbol)
+
+again_root(e, "callback") :-
+  otp_callback(e, m, n, _),
+  function_def(e, m, n, a, _),
+  runs_again_callback(n, a).
+
+again_root(e, "callback") :-
+  otp_callback(e, m, n, "GenEvent"),
+  function_def(e, m, n, 2, _),
+  (n = "handle_event" ; n = "handle_call").
+
+again_root(f, "state") :- statem_event_clause(_, f, _).
+
+again_root(f, "loop") :-
+  receives(f),
+  call_edge(f, g),
+  !runs_elsewhere(f, g),
+  loop_back.reaches(g, f).
+
+again_root(f, "api") :-
+  api_export(f),
+  !call_edge(_, f),
+  !process_entry(_, f),
+  !library_written(f),
+  !child_start(f),
+  !process_start(_, _, _, _, f).
+
+// The start_link/N of a module a supervisor starts: its caller is the
+// supervisor, through the child spec (the call graph shows no edge), once
+// per start of the child.
+.decl child_start(func: symbol)
+
+child_start(f) :- child_subtree(_, _, m), function_def(f, m, "start_link", _, _).
+
+// A receive loop's way back to itself, on its own stack.
+.init loop_back = SameProcessReach
+
+loop_back.seed(f, f) :- receives(f).
+
+.init again_reach = ForwardSameProcessReachSetCut
+
+again_reach.cut(f, g) :- side_call(f, g).
+again_reach.root(f) :- again_root(f, _).
+
+.decl again_code(func: symbol)
+
+again_code(f) :- again_reach.reaches(f).
