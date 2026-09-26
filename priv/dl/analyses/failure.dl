@@ -75,16 +75,39 @@
 .decl remote_pid_probe(func: symbol, anchor: symbol, site: symbol, bif: symbol, api: symbol, kind: symbol)
 .output remote_pid_probe
 
-// A try around the BIF, or around the call into its helper, that takes
-// the ArgumentError it raises and goes on (site_takes_argument_error: a
-// rescue of ArgumentError or of every error that does not re-raise, or
-// Erlang's `catch`) handles the other node's pid.
-remote_pid_probe(f, a, id, bif, api, kind) :-
-  remote_probe(f, a, id, o),
-  pid_probe(id, g, bif, _, _),
-  remote_origin(o, api, kind),
-  !site_takes_argument_error(id, g),
-  !site_takes_argument_error(a, f).
+// A BIF that acts on a local process only is handed a pid that may be
+// another node's, and no try takes the ArgumentError it raises there.
+// `prober` is the function the BIF is in, where a try can take it too.
+.decl local_bif_on_remote_pid(func: symbol, anchor: symbol, probe: symbol, origin: symbol)
+
+local_bif_on_remote_pid(func, anchor, probe, origin) :-
+  probes_local_process(probe, prober),
+  hands_remote_pid(func, anchor, probe, origin),
+  !site_takes_argument_error(probe, prober),
+  !site_takes_argument_error(anchor, func).
+
+remote_pid_probe(func, anchor, probe, bif, api, kind) :-
+  local_bif_on_remote_pid(func, anchor, probe, origin),
+  pid_probe(probe, _, bif, _, _),
+  remote_origin(origin, api, kind).
+
+// The BIF at `probe`, in `prober`, acts on a process of this node only,
+// and raises badarg on another node's pid (pid_probe, remote_pids.dl).
+.decl probes_local_process(probe: symbol, prober: symbol) inline
+
+probes_local_process(probe, prober) :- pid_probe(probe, prober, _, _, _).
+
+// `func` hands the BIF a pid the call at `origin` answered, which may be
+// another node's: at the BIF itself (`anchor` is the BIF), or at func's
+// call (`anchor`) into the helper that makes it (remote_probe).
+.decl hands_remote_pid(func: symbol, anchor: symbol, probe: symbol, origin: symbol) inline
+
+hands_remote_pid(func, anchor, probe, origin) :- remote_probe(func, anchor, probe, origin).
+
+// site_takes_argument_error (exceptions.dl) is a try around the BIF, or
+// around the call into its helper, that takes the ArgumentError and goes
+// on: a rescue of ArgumentError or of every error that does not re-raise,
+// or Erlang's `catch`. It handles the other node's pid.
 
 // `rpc_undefined(func, anchor, site, callee, why)` — the rpc at `site`
 //   runs `callee`, a function of one of the program's modules that the
