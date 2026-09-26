@@ -925,3 +925,78 @@ defmodule Argus.Test.Soundness.Races.PoolStopElixir do
     end
   end
 end
+
+defmodule Argus.Test.Soundness.Races.ModuleStop do
+  # ejabberd's stop_module_keep_config/2: what the lookup found is handed
+  # to a helper whose closure removes each of the module's hooks from
+  # another table. Both racers remove them.
+  @tab :sound_modules
+  @hooks :sound_module_hooks
+
+  def start do
+    :ets.new(@tab, [:named_table, :public])
+    :ets.new(@hooks, [:named_table, :public])
+  end
+
+  def start_module(mod, hooks) do
+    Enum.each(hooks, &:ets.insert(@hooks, {&1, mod}))
+    :ets.insert(@tab, {mod, hooks})
+  end
+
+  def stop_module(mod) do
+    case :ets.lookup(@tab, mod) do
+      [{^mod, hooks}] ->
+        del_hooks(hooks)
+        :ets.delete(@tab, mod)
+
+      [] ->
+        :ok
+    end
+  end
+
+  defp del_hooks(hooks), do: Enum.each(hooks, fn hook -> :ets.delete(@hooks, hook) end)
+end
+
+defmodule Argus.Test.Soundness.Races.ModuleStopCount do
+  # The same stop, handing what it found to a helper that only computes:
+  # nothing more is done twice.
+  @tab :sound_modules_count
+
+  def start, do: :ets.new(@tab, [:named_table, :public])
+  def start_module(mod, hooks), do: :ets.insert(@tab, {mod, hooks})
+
+  def stop_module(mod) do
+    case :ets.lookup(@tab, mod) do
+      [{^mod, hooks}] ->
+        _ = count(hooks)
+        :ets.delete(@tab, mod)
+
+      [] ->
+        :ok
+    end
+  end
+
+  defp count(hooks), do: length(hooks)
+end
+
+defmodule Argus.Test.Soundness.Races.ModuleStopOwnTable do
+  # The same stop, handing what it found to a helper that writes the
+  # pair's own table: the race's own writes, not more.
+  @tab :sound_modules_own
+
+  def start, do: :ets.new(@tab, [:named_table, :public])
+  def start_module(mod, hooks), do: :ets.insert(@tab, {mod, hooks})
+
+  def stop_module(mod) do
+    case :ets.lookup(@tab, mod) do
+      [{^mod, hooks}] ->
+        forget(hooks)
+        :ets.delete(@tab, mod)
+
+      [] ->
+        :ok
+    end
+  end
+
+  defp forget(hooks), do: Enum.each(hooks, fn hook -> :ets.delete(@tab, hook) end)
+end

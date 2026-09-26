@@ -1100,6 +1100,53 @@ decides_more(f, r, w) :-
 
 decides_more(f, r, w) :- reads_then_writes(f, r, w, _, _), row_sends.sends(f, r).
 
+// Or it hands a value the read decides or is made into to a helper that
+// changes other state on its own stack, however far down: ejabberd's
+// stop_module_keep_config/2 hands the registrations its lookup found to
+// del_registrations/3, whose closure removes each hook from the hooks'
+// tables, and both racers remove them; blockster's weekly movers, found
+// not yet written today, hand the article's parameters to the generator,
+// and both racers generate it. A helper the decision only calls, handing
+// it nothing of the read, is not asked: a refill's fetch runs because of
+// the miss, and is how the copy is made, not more.
+decides_more(f, r, w) :-
+  decision_hands(f, r, w, h),
+  reads_then_writes(f, r, w, name, _),
+  decision_reach.reaches(h, k),
+  changes_state_in(k, name2),
+  name2 != name.
+
+// The helpers a pair's decision hands a value that carries the read, on
+// the pair's path, by data (call_arg_reads).
+.decl decision_hands(meet: symbol, read: symbol, write: symbol, helper: symbol)
+
+decision_hands(f, r, w, h) :-
+  reads_then_writes(f, r, w, _, _),
+  pair_path(f, r, g),
+  rows.carries(g, kind, src, r, _, _, _, _),
+  call_arg_reads(g, h, _, kind, src).
+
+// What the helper runs in its caller's process.
+.init decision_reach = ForwardSameProcessReachCut
+
+decision_reach.root(h, h) :- decision_hands(_, _, _, h).
+decision_reach.cut(f, g) :- side_call(f, g).
+
+// changes_state_in(func, name): func writes the ETS table `name`, or
+// changes something else a process or the outside world acts on ("*"):
+// another store, a registration, a message, a call or cast to a peer, a
+// runtime write of a process, a port, a file, the network or a node
+// (Argus.Extractors.Dependence's effect_decided, whatever decides it).
+.decl changes_state_in(func: symbol, name: symbol)
+
+changes_state_in(k, name) :- ets_op(s, k, _, _, "write"), ets_op_table(s, name).
+changes_state_in(k, "*") :- shared_write(s), !ets_op(s, _, _, _, _), (mnesia_op(s, k, _, _, _, _, _, _) ; creating_op(s, k, _, _, _, _) ; name_release(s, k, _, _, _)).
+changes_state_in(k, "*") :- delivers_message(k).
+
+changes_state_in(k, "*") :-
+  impure_call(_, k, _, category, "write"),
+  (category = "io" ; category = "process" ; category = "port" ; category = "node" ; category = "network" ; category = "code_loading").
+
 // A write of shared state other than the pair's table: the same table's
 // other writes under the decision are the race's own (its other branch,
 // or a later write of it), not more.

@@ -33,6 +33,15 @@ variable, and the pair did not meet: OTP global's
 `delete_node_resources/2` and `delete_global_name2/2` delete by the
 row's element. They meet now, with the global server their only writer.
 
+**Changed.** A decision that hands a value it carries to a helper that
+changes other state on its own stack, however far down, does more
+(`decision_hands`, `changes_state_in`): ejabberd's
+`stop_module_keep_config/2` hands the registrations it found to
+`del_registrations/3`, whose closure removes each hook, and blockster's
+weekly movers, found not generated today, hand the article's parameters
+to the generator. A helper the decision only calls, handing it nothing,
+is not asked: a refill's fetch is how the copy is made.
+
 ### Monitors: "runs again from here" names only callbacks that do
 
 **Fixed.** A monitor-leak finding's "runs again from here" frames were

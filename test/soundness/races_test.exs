@@ -96,6 +96,18 @@ defmodule Argus.Soundness.RacesTest do
     test "the same stop through Elixir's Supervisor" do
       assert_fires([R.PoolStopElixir], @ets, {R.PoolStopElixir, :stop, 1})
     end
+
+    test "what the lookup found handed to a helper that removes hooks elsewhere" do
+      assert_fires([R.ModuleStop], @ets, {R.ModuleStop, :stop_module, 1})
+    end
+
+    test "what the lookup found handed to a helper that only computes" do
+      assert_quiet([R.ModuleStopCount])
+    end
+
+    test "what the lookup found handed to a helper that writes the pair's own table" do
+      assert_quiet([R.ModuleStopOwnTable])
+    end
   end
 
   describe "a pinned match's key" do
