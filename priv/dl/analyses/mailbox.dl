@@ -1554,6 +1554,141 @@ receives_out_of_sight(r) :-
 .decl unhandled_info(mod: symbol, func: symbol, site: symbol, message: symbol, source: symbol, server: symbol, handler: symbol, fallback: symbol)
 .output unhandled_info
 
+// A server is sent a message no clause of its handle_info/2 takes, and
+// no receive of its own could take it: the message crashes the server,
+// or a catch-all drops it.
+.decl unhandled_message(server: symbol, site: symbol, message: symbol, source: symbol, handler: symbol, fallback: symbol)
+
+unhandled_message(server, site, message, source, handler, fallback) :-
+  sent_to_server(server, _, site, message, source),
+  runs_gen_server(server),
+  info_fallback(server, message, handler, fallback),
+  fallback_judged(source, fallback),
+  !taken_at(handler, site, message),
+  !server_receives(server, message).
+
+// A server that traps exits takes some :EXIT messages, and no clause
+// takes the exit of a process linked to it, whatever its reason: the
+// exit crashes the server.
+.decl unhandled_exit(server: symbol, link: symbol, message: symbol, handler: symbol)
+
+unhandled_exit(server, link, message, handler) :-
+  trapped_exit(server, _, link, message),
+  runs_gen_server(server),
+  partial_handle_info(server, handler),
+  takes_some_exits(handler),
+  !taken_at(handler, link, message).
+
+// A timed receive on a server's stack gives up, and the message it waited
+// for comes later to a handle_info/2 with no clause for it: the server
+// crashes. That receive is why the message comes, so a receive of the
+// server's own is no excuse.
+.decl late_message_unhandled(server: symbol, recv: symbol, message: symbol, handler: symbol)
+
+late_message_unhandled(server, recv, message, handler) :-
+  left_by_timed_receive(server, _, recv, message),
+  runs_gen_server(server),
+  partial_handle_info(server, handler),
+  !taken_at(handler, recv, message).
+
+// A server arms a timer for itself whose tag a clause of handle_info/2
+// compares, but whose shape no clause head takes (timer_refused: a
+// `{:tick, 1, :slow}` beside `{:tick, n}`): it is as unhandled as one
+// whose tag none compares.
+.decl timer_shape_unhandled(server: symbol, arm: symbol, message: symbol, handler: symbol, fallback: symbol)
+
+timer_shape_unhandled(server, arm, message, handler, fallback) :-
+  timer_to_itself(server, _, arm, message),
+  runs_gen_server(server),
+  info_fallback(server, message, handler, fallback),
+  info_taken(handler, message),
+  timer_refused(handler, arm),
+  !server_receives(server, message).
+
+// A gen_statem is sent a message no callback of the machine takes, and a
+// state function with no :info catch-all crashes on it (below).
+.decl statem_message_unhandled(machine: symbol, site: symbol, message: symbol, callback: symbol)
+
+statem_message_unhandled(machine, site, message, callback) :-
+  sent_to_server(machine, _, site, message, _),
+  statem_info_partial(machine, callback),
+  !statem_takes(machine, message),
+  !server_receives(machine, message).
+
+// A timed receive on a gen_statem's stack gives up, and the message it
+// waited for comes later as an :info no callback of the machine takes.
+.decl statem_late_message_unhandled(machine: symbol, recv: symbol, message: symbol, callback: symbol)
+
+statem_late_message_unhandled(machine, recv, message, callback) :-
+  left_by_timed_receive(machine, _, recv, message),
+  statem_info_partial(machine, callback),
+  !statem_takes(machine, message).
+
+unhandled_info(mod, f, id, msg, source, m, h, fallback) :-
+  unhandled_message(m, id, msg, source, h, fallback),
+  sent_to_server(m, f, id, msg, source),
+  function_def(f, mod, _, _, _).
+
+unhandled_info(mod, f, id, msg, "exit", m, h, "crash") :-
+  unhandled_exit(m, id, msg, h),
+  trapped_exit(m, f, id, msg),
+  function_def(f, mod, _, _, _).
+
+unhandled_info(mod, g, r, msg, "late", m, h, "crash") :-
+  late_message_unhandled(m, r, msg, h),
+  left_by_timed_receive(m, g, r, msg),
+  function_def(g, mod, _, _, _).
+
+unhandled_info(mod, f, id, msg, "timer", m, h, fallback) :-
+  timer_shape_unhandled(m, id, msg, h, fallback),
+  timer_to_itself(m, f, id, msg),
+  function_def(f, mod, _, _, _).
+
+unhandled_info(mod, f, id, msg, source, m, h, "state_crash") :-
+  statem_message_unhandled(m, id, msg, h),
+  sent_to_server(m, f, id, msg, source),
+  function_def(f, mod, _, _, _).
+
+unhandled_info(mod, g, r, msg, "late", m, h, "state_crash") :-
+  statem_late_message_unhandled(m, r, msg, h),
+  left_by_timed_receive(m, g, r, msg),
+  function_def(g, mod, _, _, _).
+
+// `func` sends `server` `message` at `site` (info_message, below), from
+// any source but a timed receive's leftover.
+.decl sent_to_server(server: symbol, func: symbol, site: symbol, message: symbol, source: symbol) inline
+
+sent_to_server(m, f, id, msg, source) :- info_message(m, f, id, msg, source), source != "late".
+
+// What a timed receive at `recv` in `func` leaves behind for `server`
+// (info_message's source "late").
+.decl left_by_timed_receive(server: symbol, func: symbol, recv: symbol, message: symbol) inline
+
+left_by_timed_receive(m, g, r, msg) :- info_message(m, g, r, msg, "late").
+
+// The exit of a process `func` links to at `link`, in a server that
+// traps exits (info_message's source "exit").
+.decl trapped_exit(server: symbol, func: symbol, link: symbol, message: symbol) inline
+
+trapped_exit(m, f, id, msg) :- info_message(m, f, id, msg, "exit").
+
+// A timer `func` arms at `arm` for the server it runs in (info_message's
+// source "timer").
+.decl timer_to_itself(server: symbol, func: symbol, arm: symbol, message: symbol) inline
+
+timer_to_itself(m, f, id, msg) :- info_message(m, f, id, msg, "timer").
+
+// The server takes its messages in handle_info/2: a gen_server-like
+// behaviour's, not a gen_statem's.
+.decl runs_gen_server(server: symbol)
+
+runs_gen_server(m) :- gen_server_like(m), !statem_process(m).
+
+// Some clause of the handler compares :EXIT: it takes some exits.
+.decl takes_some_exits(handler: symbol) inline
+
+takes_some_exits(h) :- callback_tag(h, "handle_info", ":EXIT").
+
 // A message a server is sent, and where it comes from: `func` sends it
 // at `site`, to a server running `server`'s callbacks.
 .decl info_message(server: symbol, func: symbol, site: symbol, message: symbol, source: symbol)
@@ -2057,49 +2192,30 @@ taken_at(h, id, "{ref, …}") :-
   info_fallback(m, "{ref, …}", h, _),
   callback_ref_head(h, "handle_info").
 
-// Where a catch-all's dropping the message is judged: a message the
-// program sends or arms, a monitor's :DOWN, a socket's close. Every
-// source is judged where nothing takes it at all.
-.decl drop_judged(source: symbol)
+// Which fallback of a source's message unhandled_message judges: a
+// crash, for every source but the two with rules of their own (a timed
+// receive's leftover, a trapped exit); a catch-all's drop, or
+// GenServer's default, only for a message the program sends or arms, a
+// monitor's :DOWN and a socket's close.
+.decl fallback_judged(source: symbol, fallback: symbol)
 
-drop_judged("send").
-drop_judged("timer").
-drop_judged("monitor").
-drop_judged("socket").
+fallback_judged("send", "crash").
+fallback_judged("timer", "crash").
+fallback_judged("monitor", "crash").
+fallback_judged("task", "crash").
+fallback_judged("node", "crash").
+fallback_judged("port", "crash").
+fallback_judged("socket", "crash").
 
-unhandled_info(mod, f, id, msg, source, m, h, fallback) :-
-  info_message(m, f, id, msg, source),
-  source != "late",
-  source != "exit",
-  gen_server_like(m),
-  !statem_process(m),
-  info_fallback(m, msg, h, fallback),
-  (fallback = "crash" ; drop_judged(source)),
-  !taken_at(h, id, msg),
-  !server_receives(m, msg),
-  function_def(f, mod, _, _, _).
+fallback_judged("send", "catch_all").
+fallback_judged("timer", "catch_all").
+fallback_judged("monitor", "catch_all").
+fallback_judged("socket", "catch_all").
 
-// A trapped exit: judged where the handler takes some exits (it compares
-// :EXIT) and none takes this one whatever its reason.
-unhandled_info(mod, f, id, msg, "exit", m, h, "crash") :-
-  info_message(m, f, id, msg, "exit"),
-  gen_server_like(m),
-  !statem_process(m),
-  partial_handle_info(m, h),
-  callback_tag(h, "handle_info", ":EXIT"),
-  !taken_at(h, id, msg),
-  function_def(f, mod, _, _, _).
-
-// What a timed receive leaves behind is the one message the server's
-// own receive waits for: that receive is why it comes, not a clause that
-// takes it once the wait has given up.
-unhandled_info(mod, g, r, msg, "late", m, h, "crash") :-
-  info_message(m, g, r, msg, "late"),
-  gen_server_like(m),
-  !statem_process(m),
-  partial_handle_info(m, h),
-  !taken_at(h, r, msg),
-  function_def(g, mod, _, _, _).
+fallback_judged("send", "default").
+fallback_judged("timer", "default").
+fallback_judged("monitor", "default").
+fallback_judged("socket", "default").
 
 // The handler's clause heads take the timer's tag only in other shapes
 // (callback_tag_shape): `{:tick, n}` for a `{:tick, 1, :slow}` timer, the
@@ -2114,19 +2230,6 @@ timer_refused(h, id) :-
   !callback_tag_shape(h, "handle_info", tag, ar),
   !callback_tag_shape(h, "handle_info", tag, -1),
   !callback_open(h, "handle_info", _, _).
-
-// A timer whose tag a clause compares, but whose shape no clause head
-// takes (timer_refused: a `{:tick, 1, :slow}` beside `{:tick, n}`), is
-// as unhandled as one whose tag none compares.
-unhandled_info(mod, f, id, msg, "timer", m, h, fallback) :-
-  info_message(m, f, id, msg, "timer"),
-  gen_server_like(m),
-  !statem_process(m),
-  info_fallback(m, msg, h, fallback),
-  info_taken(h, msg),
-  timer_refused(h, id),
-  !server_receives(m, msg),
-  function_def(f, mod, _, _, _).
 
 // ── The same message sent to a gen_statem ──────────────────────────
 //
@@ -2168,20 +2271,6 @@ statem_info_partial(m, h) :-
   statem_event_clause(m, h, _),
   !statem_info_catchall(m, h),
   !statem_event_catchall(m, h).
-
-unhandled_info(mod, f, id, msg, source, m, h, "state_crash") :-
-  info_message(m, f, id, msg, source),
-  source != "late",
-  statem_info_partial(m, h),
-  !statem_takes(m, msg),
-  !server_receives(m, msg),
-  function_def(f, mod, _, _, _).
-
-unhandled_info(mod, g, r, msg, "late", m, h, "state_crash") :-
-  info_message(m, g, r, msg, "late"),
-  statem_info_partial(m, h),
-  !statem_takes(m, msg),
-  function_def(g, mod, _, _, _).
 
 
 // ══ A periodic timer loop armed again while it runs ═════════════════
