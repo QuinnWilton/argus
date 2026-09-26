@@ -32,6 +32,14 @@
 // credential is someone else's system; a hash is an offline attack; a
 // session token expires.
 
+// A schema field named for a secret is printed in full by inspect/1: into
+// log lines, changeset errors and crash reports.
+.decl printed_secret(mod: symbol, field: symbol, kind: symbol)
+
+printed_secret(mod, field, kind) :-
+  holds_secret(mod, field, kind),
+  !hidden_from_inspect(mod, field).
+
 
 .decl secret_kind(fragment: symbol, kind: symbol)
 
@@ -54,9 +62,11 @@ secret_kind("refresh_token", "token").
 secret_kind("auth_token", "token").
 secret_kind("session_token", "token").
 
-.decl matches_kind(mod: symbol, field: symbol, kind: symbol)
+// The field's name names a secret of `kind` (one of several, for a name
+// that matches more than one fragment), and not a fact about it.
+.decl named_for_secret(mod: symbol, field: symbol, kind: symbol)
 
-matches_kind(mod, field, kind) :-
+named_for_secret(mod, field, kind) :-
   schema_field(mod, field, _),
   secret_kind(fragment, kind),
   contains(fragment, field),
@@ -67,7 +77,7 @@ matches_kind(mod, field, kind) :-
 // value in its field `token`. The module's name is the signal the bare
 // field name lacks: `token` alone is also a currency ticker (blockster's
 // Hub) or a lexer's, and stays the classifier's to judge.
-matches_kind(mod, ":token", "token") :-
+named_for_secret(mod, ":token", "token") :-
   schema_field(mod, ":token", _),
   match(".*Token", mod).
 
@@ -92,12 +102,13 @@ secret_rank("credential", 1).
 secret_rank("password", 2).
 secret_rank("token", 3).
 
-.decl sensitive_field(mod: symbol, field: symbol, kind: symbol)
+// The field holds a secret, of the most severe kind its name names.
+.decl holds_secret(mod: symbol, field: symbol, kind: symbol)
 
-sensitive_field(mod, field, kind) :-
-  matches_kind(mod, field, kind),
+holds_secret(mod, field, kind) :-
+  named_for_secret(mod, field, kind),
   secret_rank(kind, rank),
-  rank = min r : { matches_kind(mod, field, other), secret_rank(other, r) }.
+  rank = min r : { named_for_secret(mod, field, other), secret_rank(other, r) }.
 
 // What inspect/1 leaves out. Ecto implements `redact: true` by deriving
 // Inspect with `except:` the redacted fields — unless the schema derives
@@ -107,13 +118,6 @@ sensitive_field(mod, field, kind) :-
 // field it shows is printed whatever `redact:` says. Without one in view
 // (a hand-written impl, or a run that did not include the impl module),
 // `redact: true` is taken at its word.
-.decl derive_hides(mod: symbol, field: symbol)
-
-derive_hides(mod, field) :-
-  inspect_derived(mod),
-  schema_field(mod, field, _),
-  !inspect_shows(mod, field).
-
 .decl hidden_from_inspect(mod: symbol, field: symbol)
 
 hidden_from_inspect(mod, field) :-
@@ -122,25 +126,39 @@ hidden_from_inspect(mod, field) :-
 
 hidden_from_inspect(mod, field) :- derive_hides(mod, field).
 
+// The schema's own derived Inspect leaves the field out.
+.decl derive_hides(mod: symbol, field: symbol)
+
+derive_hides(mod, field) :-
+  inspect_derived(mod),
+  schema_field(mod, field, _),
+  !inspect_shows(mod, field).
+
 // Where the fix goes: the field's `redact: true`, or — when the schema
 // derives Inspect itself — that derive's field list. Ecto's own derive
 // hides exactly the redacted fields; any other derive is the schema's.
 // Ecto derives Inspect only for a schema with a redacted field, so a
 // derive in a schema with none is the schema's own.
+//
+// The schema's derived Inspect hides a field not marked `redact: true`.
 .decl hides_unredacted(mod: symbol)
 
 hides_unredacted(mod) :- derive_hides(mod, field), !redacted_field(mod, field).
 
+// The schema's derived Inspect shows a field marked `redact: true`.
 .decl shows_redacted(mod: symbol)
 
 shows_redacted(mod) :- redacted_field(mod, field), inspect_shows(mod, field).
 
+// The schema derives Inspect itself, not through Ecto's redaction.
 .decl own_derive(mod: symbol)
 
 own_derive(mod) :- inspect_derived(mod), hides_unredacted(mod).
 own_derive(mod) :- inspect_derived(mod), shows_redacted(mod).
 own_derive(mod) :- inspect_derived(mod), schema_field(mod, _, _), !redacted_field(mod, _).
 
+// The schema's fix goes into its own derive's list ("derive") or its
+// fields' `redact: true` ("redact").
 .decl hides_via(mod: symbol, via: symbol)
 
 hides_via(mod, "derive") :- own_derive(mod).
@@ -150,8 +168,6 @@ hides_via(mod, "redact") :- schema_field(mod, _, _), !own_derive(mod).
 // it differently here. That is a stronger finding than one that never
 // considered it, and the finding text says so — one sequin schema redacts a
 // field while twenty-four of its siblings do not.
-// A schema that hides nothing hides none of its fields either: its
-// "unaware" rows below need not ask about the field.
 .decl schema_redacts_something(mod: symbol)
 
 schema_redacts_something(mod) :- hidden_from_inspect(mod, _).
@@ -170,6 +186,7 @@ schema_anchor(mod, anchor) :-
   embedded_in(mod, parent),
   schema_anchor(parent, anchor).
 
+// The lineless schema `child` is embedded by `parent`.
 .decl embedded_in(child: symbol, parent: symbol)
 
 embedded_in(child, parent) :-
@@ -180,18 +197,19 @@ embedded_in(child, parent) :-
 // A lineless schema no schema of the run embeds keeps its own anchor.
 schema_anchor(mod, mod) :- lineless_schema(mod), !embedded_in(mod, _).
 
+// The report adds whether the schema hides any field ("aware"), where
+// the fix goes (`via`), and the line the field is anchored on.
 .decl unredacted_secret(mod: symbol, field: symbol, kind: symbol, aware: symbol, via: symbol, anchor: symbol)
 .output unredacted_secret
 
 unredacted_secret(mod, field, kind, "aware", via, anchor) :-
-  sensitive_field(mod, field, kind),
-  !hidden_from_inspect(mod, field),
+  printed_secret(mod, field, kind),
   schema_redacts_something(mod),
   hides_via(mod, via),
   schema_anchor(mod, anchor).
 
 unredacted_secret(mod, field, kind, "unaware", via, anchor) :-
-  sensitive_field(mod, field, kind),
+  printed_secret(mod, field, kind),
   !schema_redacts_something(mod),
   hides_via(mod, via),
   schema_anchor(mod, anchor).
@@ -213,26 +231,35 @@ unredacted_secret(mod, field, kind, "unaware", via, anchor) :-
 // credential is a secret the model is sure of, and unsure only which
 // kind. The kind reported is the likeliest of the three.
 
-.decl model_named_secret(mod: symbol, field: symbol, kind: symbol, permille: number)
+// A schema field a model judges a secret is printed in full by inspect/1.
+.decl printed_inferred_secret(mod: symbol, field: symbol, kind: symbol, permille: number)
 
-model_named_secret(mod, field, detail, p) :-
+printed_inferred_secret(mod, field, kind, p) :-
+  model_names_secret(mod, field, kind, p),
+  !hidden_from_inspect(mod, field).
+
+// A schema field the priors' classifier judges a secret with `permille`
+// in a thousand, and whose name the table does not name.
+.decl model_names_secret(mod: symbol, field: symbol, kind: symbol, permille: number)
+
+model_names_secret(mod, field, detail, p) :-
   prior_sensitive("schema_field", mod, field, "secret", detail, _, p),
   schema_field(mod, field, _),
   p >= 900,
-  !matches_kind(mod, field, _).
+  !named_for_secret(mod, field, _).
+
 
 .decl unredacted_secret_inferred(mod: symbol, field: symbol, kind: symbol, aware: symbol, via: symbol, permille: number, anchor: symbol)
 .output unredacted_secret_inferred
 
 unredacted_secret_inferred(mod, field, kind, "aware", via, p, anchor) :-
-  model_named_secret(mod, field, kind, p),
-  !hidden_from_inspect(mod, field),
+  printed_inferred_secret(mod, field, kind, p),
   schema_redacts_something(mod),
   hides_via(mod, via),
   schema_anchor(mod, anchor).
 
 unredacted_secret_inferred(mod, field, kind, "unaware", via, p, anchor) :-
-  model_named_secret(mod, field, kind, p),
+  printed_inferred_secret(mod, field, kind, p),
   !schema_redacts_something(mod),
   hides_via(mod, via),
   schema_anchor(mod, anchor).
