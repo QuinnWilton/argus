@@ -878,13 +878,16 @@ defmodule Argus.Cache.Facts do
   file while another reads the directory. The facts are returned as
   they are when every solve is kept, and a program whose inputs cannot
   be resolved is left to its solve to report.
+
+  A kept solve counted on here is touched, as a hit is, so a prune
+  between this and the solve sees it in use and leaves it.
   """
   @spec prepare(t(), [Path.t()], keyword()) :: {:ok, t()} | {:error, term()}
   def prepare(%__MODULE__{} = facts, rules_paths, opts) do
     missing =
       for rules_path <- rules_paths,
           {:ok, entry, inputs} <- [keyed(facts, rules_path, opts)],
-          not File.exists?(entry),
+          Cache.fetch(entry) == :miss,
           input <- inputs,
           uniq: true,
           do: input

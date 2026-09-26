@@ -20,6 +20,15 @@ is not an extraction's or was changed under the read. Both now raise
 %Argus.MissingRelationError{}}` instead of findings that say no module
 failed to extract.
 
+### Stores: a kept solve a fan-out counts on
+
+**Fixed.** `Argus.Cache.Facts.prepare/3` asked whether each solve was
+kept with `File.exists?/1`, placing no inputs for the ones that were,
+and did not touch them: a prune before the solves ran could take an
+entry the fan-out counted on, and that solve then placed its inputs
+into a directory the others were already reading. It looks them up as
+a hit does now (`Argus.Cache.fetch/1`), so a prune sees them in use.
+
 ### Stores: a kept entry that is gone, or short, when it is read
 
 **Fixed.** A kept solve was read back by listing its directory and

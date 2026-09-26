@@ -260,6 +260,33 @@ defmodule Argus.Cache.RacesTest do
       end
     end
 
+    test "one a run counts on as kept stays through a prune before it is read",
+         %{tmp_dir: tmp} do
+      {rules, facts_dir} = program!(tmp)
+      store = Path.join(tmp, "store")
+      facts = store_facts(store, facts_dir)
+      assert {:ok, @solved, _} = Cache.Facts.solve(facts, rules, [])
+      {:ok, entry} = Cache.Facts.entry(facts, rules, [])
+      # Kept two hours ago, and not read since.
+      File.touch!(entry, System.os_time(:second) - 2 * 60 * 60)
+
+      # A prune the moment the fan-out's preparation has looked at the
+      # entry and counted it kept, so placed nothing for it.
+      prune = %{
+        name: :prune,
+        ops: [:read_file_info, :write_file_info],
+        path: entry,
+        action: {Cache, :prune, [store, [recent: 0]]}
+      }
+
+      {{:ok, prepared}, %{prune: pruned}} =
+        gated(peer!(), [prune], {Cache.Facts, :prepare, [facts, [rules], []]})
+
+      assert prepared.dir == nil
+      assert pruned == []
+      assert File.dir?(entry)
+    end
+
     test "an output its manifest names and the entry lacks is an error naming it",
          %{tmp_dir: tmp} do
       entry = Path.join(tmp, "p-#{key("c")}")
