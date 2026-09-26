@@ -143,6 +143,8 @@ unhandled_failure(func, id, "rescue", "", guard_end) :-
 
 boundary_through_api(id, f) :- try_wrapper_call(id, f, _), !wraps_other(id, f).
 
+// A protected call that is no boundary function, or one the call graph
+// does not resolve (it names no known boundary), keeps the try reported.
 .decl wraps_other(id: symbol, func: symbol)
 
 wraps_other(id, f) :-
@@ -214,6 +216,9 @@ exit_target_owner(g, child, sup, sup_site) :-
   supervisor_site(sup, sup_site).
 
 // ══ Remote calls whose failure is not a value ═══════════════════════
+// A handler that unwraps only :exception lets {:erpc, :noconnection}
+// fall through to its case; one that names :erpc in some clause takes
+// the transport failure.
 unhandled_failure(func, call, "erpc_transport", "", guard_end) :-
   try_call(id, func, callee, call, guard_end),
   (callee = ":erpc:call/4" ; callee = ":erpc:call/5"),
@@ -673,18 +678,19 @@ seeded_row(t, k) :-
 
 .decl removes_row(table: symbol, key: symbol)
 
+// A removal at the key, one at a key not known (it may be any of the
+// table's literal keys), or one that clears every key: the last clause
+// alone already names every literal key of a cleared table.
 removes_row(t, k) :-
   ets_op(w, _, t, op, "write"),
   ets_key(w, "literal", k),
-  ets_removal_op(op),
-  !ets_removes_every_key(op).
+  ets_removal_op(op).
 
 removes_row(t, k) :-
   ets_op(w, _, t, op, "write"),
   ets_key(w, ks, _),
   ks != "literal",
   ets_removal_op(op),
-  !ets_removes_every_key(op),
   ets_op(w2, _, t, _, _),
   ets_key(w2, "literal", k).
 
