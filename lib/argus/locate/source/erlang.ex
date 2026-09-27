@@ -143,9 +143,8 @@ defmodule Argus.Locate.Source.Erlang do
   # around it. It guards the expression it heads, so its keyword is
   # known; the span stays the line's (`block_end/3` is nil for it).
   defp old_style_catch?(tokens, line) do
-    Enum.any?(0..(tuple_size(tokens) - 1)//1, fn i ->
-      line_of(elem(tokens, i)) == line and kind(elem(tokens, i)) == :catch and
-        not try_section?(tokens, i)
+    Enum.any?(on_line(tokens, line), fn i ->
+      kind(elem(tokens, i)) == :catch and not try_section?(tokens, i)
     end)
   end
 
@@ -210,22 +209,28 @@ defmodule Argus.Locate.Source.Erlang do
     end
   end
 
-  # The innermost opener still open at `anchor` that is a `try`.
-  defp enclosing_try(tokens, anchor) do
-    stack =
-      Enum.reduce(0..(anchor - 1)//1, [], fn i, stack ->
-        token = elem(tokens, i)
+  # The innermost opener still open at `anchor`, when it is a `try`:
+  # found walking back from the anchor, past every construct opened and
+  # closed on the way (the file's tokens are balanced), so a question
+  # about one anchor costs the distance to its enclosing construct, not
+  # the length of the file.
+  defp enclosing_try(tokens, anchor), do: enclosing(tokens, anchor - 1, 0)
 
-        cond do
-          opener?(tokens, i) -> [{kind(token), i} | stack]
-          kind(token) in @closers -> Enum.drop(stack, 1)
-          true -> stack
-        end
-      end)
+  defp enclosing(_tokens, i, _depth) when i < 0, do: :error
 
-    case stack do
-      [{:try, at} | _] -> {:ok, at}
-      _ -> :error
+  defp enclosing(tokens, i, depth) do
+    cond do
+      opener?(tokens, i) and depth == 0 ->
+        if kind(elem(tokens, i)) == :try, do: {:ok, i}, else: :error
+
+      opener?(tokens, i) ->
+        enclosing(tokens, i - 1, depth - 1)
+
+      kind(elem(tokens, i)) in @closers ->
+        enclosing(tokens, i - 1, depth + 1)
+
+      true ->
+        enclosing(tokens, i - 1, depth)
     end
   end
 
@@ -315,10 +320,30 @@ defmodule Argus.Locate.Source.Erlang do
   end
 
   defp first_on_line(tokens, line, pred) do
-    Enum.find_value(0..(tuple_size(tokens) - 1)//1, :error, fn i ->
-      token = elem(tokens, i)
-      if line_of(token) == line and pred.(token), do: {:ok, i}
-    end)
+    case Enum.find(on_line(tokens, line), &pred.(elem(tokens, &1))) do
+      nil -> :error
+      i -> {:ok, i}
+    end
+  end
+
+  # The indexes of the tokens on `line`: the tokens are in the order of
+  # their lines, so the first is found by bisection.
+  defp on_line(tokens, line) do
+    size = tuple_size(tokens)
+    first = first_at_or_after(tokens, line, 0, size)
+
+    Stream.iterate(first, &(&1 + 1))
+    |> Enum.take_while(&(&1 < size and line_of(elem(tokens, &1)) == line))
+  end
+
+  defp first_at_or_after(_tokens, _line, low, high) when low >= high, do: low
+
+  defp first_at_or_after(tokens, line, low, high) do
+    mid = div(low + high, 2)
+
+    if line_of(elem(tokens, mid)) < line,
+      do: first_at_or_after(tokens, line, mid + 1, high),
+      else: first_at_or_after(tokens, line, low, mid)
   end
 
   # The line of the last token before the one at `at`.
