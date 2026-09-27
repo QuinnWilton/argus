@@ -36,4 +36,33 @@ defmodule Argus.Project.ScanTest do
       assert scan == %{modules: %{}, ignored: %{Gen.Thing => first}, duplicates: []}
     end
   end
+
+  describe "scan/2" do
+    test "the program's ebins, and its dependencies' with include_deps", %{tmp_dir: dir} do
+      own = beam!(Path.join(dir, "app/ebin"), Elixir.Own)
+      dep = beam!(Path.join(dir, "dep/ebin"), :dep_mod)
+
+      project = %Argus.Project{
+        kind: :beams,
+        root: dir,
+        apps: [{:app, Path.join(dir, "app/ebin")}],
+        deps: [{:dep, Path.join(dir, "dep/ebin")}],
+        state_dir: Path.join(dir, ".argus")
+      }
+
+      alone = Scan.scan(Argus.Config.load([]), project)
+      assert {alone.modules, alone.apps} == {%{Own => own}, [:app]}
+
+      both = Scan.scan(Argus.Config.load(include_deps: true), project)
+      assert {both.modules, both.apps} == {%{Own => own, dep_mod: dep}, [:app, :dep]}
+    end
+
+    test "an ignore regex matches a module by its Elixir or its Erlang name", %{tmp_dir: dir} do
+      beam!(Path.join(dir, "ebin"), :my_gen_parser)
+      beam!(Path.join(dir, "ebin"), Elixir.MyApp.Gen)
+
+      scan = Scan.discover([Path.join(dir, "ebin")], [~r/^my_gen_/, ~r/^MyApp\.Gen$/])
+      assert Map.keys(scan.ignored) |> Enum.sort() == [MyApp.Gen, :my_gen_parser]
+    end
+  end
 end

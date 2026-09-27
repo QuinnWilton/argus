@@ -1,0 +1,9 @@
+{application, mk_app, [
+    {description, "A pool that hands out workers"},
+    {vsn, "0.1.0"},
+    {modules, []},
+    {registered, [mk_pool]},
+    {applications, [kernel, stdlib, mk_dep]},
+    {mod, {mk_app, []}},
+    {env, []}
+]}.

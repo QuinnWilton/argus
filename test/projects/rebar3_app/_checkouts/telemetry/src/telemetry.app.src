@@ -1,0 +1,7 @@
+{application, telemetry, [
+    {description, "A stand-in for telemetry 0.4, at a version argus's escript does not carry"},
+    {vsn, "0.4.3-argus-fixture"},
+    {registered, []},
+    {applications, [kernel, stdlib]},
+    {env, []}
+]}.

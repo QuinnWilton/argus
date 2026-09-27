@@ -1,0 +1,7 @@
+{application, ledger, [
+    {description, "The ledger: records what the shop does"},
+    {vsn, "0.1.0"},
+    {registered, []},
+    {applications, [kernel, stdlib, telemetry]},
+    {env, []}
+]}.

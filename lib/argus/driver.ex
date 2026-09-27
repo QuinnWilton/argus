@@ -47,9 +47,12 @@ defmodule Argus.Driver do
           optional(atom()) => term()
         }
 
-  @doc "The current Mix project: its directory, and its manifest path for state."
+  @doc """
+  The current Mix project (`Argus.Project.Mix.current/0`): its directory,
+  its ebins, and its manifest path for state.
+  """
   @spec mix_project() :: project()
-  def mix_project, do: %{kind: :mix, root: File.cwd!(), state_dir: Mix.Project.manifest_path()}
+  def mix_project, do: Argus.Project.Mix.current()
 
   @doc """
   The manifest the graph is kept in between runs, in the project's state
@@ -75,8 +78,9 @@ defmodule Argus.Driver do
 
   ## Options
 
-    * `:project` — the project (`t:project/0`), default the current Mix
-      project;
+    * `:project` — the project (`t:project/0`: an `Argus.Project`, whose
+      program's and dependencies' ebins the scan reads), default the
+      current Mix project;
     * `:manifest` — the manifest to keep the graph in, default
       `manifest_file/1`;
     * `:store` — the blob store, default `Argus.Graph.store/0`;
@@ -95,7 +99,7 @@ defmodule Argus.Driver do
       db = session.db
 
       %{modules: discovered, ignored: ignored, duplicates: duplicates} =
-        Argus.Project.Scan.scan(config)
+        Argus.Project.Scan.scan(config, project)
 
       files =
         Map.new(Map.values(discovered) ++ Map.values(ignored), fn path ->

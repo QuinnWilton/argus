@@ -1,14 +1,13 @@
 defmodule Argus.Project.Scan do
   @moduledoc """
-  Beam discovery and change detection for the compiler driver.
+  Beam discovery and change detection for the driver.
 
-  `scan/1` globs the project's ebin (and dependency ebins when
-  `include_deps` is set) into a `module => beam_path` map, applying
-  module-level ignores at discovery so ignored modules are never even
-  extracted. Ignored modules are still watched: their beams are on the
-  code path, where a caller's extraction reads their specs
-  (`Argus.Graph` tracks those callers through the `:ignored_beam`
-  input).
+  `scan/2` globs the program's ebins (`Argus.Project`, and its
+  dependencies' when `include_deps` is set) into a `module => beam_path`
+  map, applying module-level ignores at discovery so ignored modules are
+  never even extracted. Ignored modules are still watched: a caller's
+  extraction reads their specs (`Argus.Graph` tracks those callers
+  through the `:ignored_beam` input).
 
   The driver syncs what a scan found into the graph's inputs itself
   (`Roux.Sources.sync/5`, `Argus.Driver`).
@@ -44,26 +43,20 @@ defmodule Argus.Project.Scan do
         }
 
   @doc """
-  Discovers the beams to analyze: `module => beam_path`, plus the
-  ignored modules, every module more than one ebin defines
-  (`include_deps` only), and the applications whose ebins were read.
+  Discovers the beams to analyze: `module => beam_path` over the
+  project's program (`Argus.Project` `apps`) and, with `include_deps`,
+  its dependencies, plus the ignored modules, every module more than one
+  ebin defines, and the applications whose ebins were read.
   """
-  @spec scan(Argus.Config.t()) :: project_scan()
-  def scan(%Argus.Config{} = config) do
-    ebins =
-      if config.include_deps do
-        [Mix.Project.compile_path() | dep_ebins()]
-      else
-        [Mix.Project.compile_path()]
-      end
+  @spec scan(Argus.Config.t(), Argus.Project.t()) :: project_scan()
+  def scan(%Argus.Config{} = config, %Argus.Project{} = project) do
+    ebins = if config.include_deps, do: project.apps ++ project.deps, else: project.apps
 
     ebins
+    |> Enum.map(&elem(&1, 1))
     |> discover(config.ignore_modules)
-    |> Map.put(:apps, Enum.map(ebins, &app_of/1))
+    |> Map.put(:apps, ebins |> Enum.map(&elem(&1, 0)) |> Enum.uniq())
   end
-
-  # Mix builds each application into `<build>/lib/<app>/ebin`.
-  defp app_of(ebin), do: ebin |> Path.dirname() |> Path.basename() |> String.to_atom()
 
   @doc """
   The beams in `ebins`, minus the modules `ignore` matches (regexes over
@@ -117,15 +110,5 @@ defmodule Argus.Project.Scan do
       %Regex{} = regex -> Enum.any?(names, &Regex.match?(regex, &1))
       atom when is_atom(atom) -> atom == module
     end)
-  end
-
-  # Sorted, so which of two dependencies defining a module wins does not
-  # depend on the filesystem's listing order.
-  defp dep_ebins do
-    Mix.Project.build_path()
-    |> Path.join("lib/*/ebin")
-    |> Path.wildcard()
-    |> Enum.reject(&(&1 == Mix.Project.compile_path()))
-    |> Enum.sort()
   end
 end

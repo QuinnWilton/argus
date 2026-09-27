@@ -1,0 +1,8 @@
+{application, shop, [
+    {description, "The shop: a supervisor, a notifier and a sonar"},
+    {vsn, "0.1.0"},
+    {registered, [shop_sup, shop_notifier]},
+    {mod, {shop_app, []}},
+    {applications, [kernel, stdlib, ledger]},
+    {env, []}
+]}.

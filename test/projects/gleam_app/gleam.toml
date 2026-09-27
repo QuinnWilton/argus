@@ -1,0 +1,8 @@
+# A Gleam project for argus's tests: no dependencies, so it builds offline.
+name = "gleam_app"
+version = "0.1.0"
+target = "erlang"
+
+[dependencies]
+
+[dev-dependencies]
