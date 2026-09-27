@@ -36,6 +36,7 @@ defmodule Argus.Analysis.Extraction do
   alias Argus.Cache.Facts
   alias Argus.Pipeline
   alias Argus.Souffle
+  alias Argus.Souffle.Stages
 
   # CallArgs is a universal extractor — it emits call_arg facts that
   # clientlib/calls.dl's resolved_arg uses to resolve sync_call /
@@ -176,14 +177,14 @@ defmodule Argus.Analysis.Extraction do
   def solve_points_to(facts, opts) do
     solve = fn rules_path, facts -> Facts.solve(facts, rules_path, opts) end
 
-    case stage_points_to(solve, facts) do
-      {:ok, solved} ->
+    case Stages.points_to(solve, facts, points_to_rules_path(), points_to_bounded_rules_path()) do
+      {:ok, solved, _mode} ->
         {:ok, solved}
 
       {:error, reason, solved} ->
         # A directory a solve made for itself goes with the failure.
         if solved.work != facts.work, do: Facts.release(solved)
-        points_to_failed(reason)
+        Stages.failed(reason)
     end
   end
 
@@ -437,8 +438,13 @@ defmodule Argus.Analysis.Extraction do
     end
 
     {result, asides} =
-      case stage_points_to(solve, {facts_dir, []}) do
-        {:ok, {_dir, [aside | _] = asides}} ->
+      case Stages.points_to(
+             solve,
+             {facts_dir, []},
+             points_to_rules_path(),
+             points_to_bounded_rules_path()
+           ) do
+        {:ok, {_dir, [aside | _] = asides}, _mode} ->
           {publish(aside, facts_dir, @points_to_relations), asides}
 
         {:error, reason, {_dir, asides}} ->
@@ -449,111 +455,8 @@ defmodule Argus.Analysis.Extraction do
 
     case result do
       :ok -> :ok
-      {:error, reason} -> points_to_failed(reason)
+      {:error, reason} -> Stages.failed(reason)
     end
-  end
-
-  # The points-to stage: the exact program, and the bounded one when the
-  # exact fixpoint outgrows its budget. `solve` takes a rules path and
-  # what the previous solve returned (the facts it solves over:
-  # `Argus.Cache.Facts`, or a directory and the solves' own output
-  # directories), and returns what `Argus.Cache.Facts.solve/3` does.
-  # The answer is `{:ok, solved}` or `{:error, reason, solved}`,
-  # `solved` what the last solve returned, for the caller to clean up
-  # after.
-  defp stage_points_to(solve, facts) do
-    case solve.(points_to_rules_path(), facts) do
-      {:ok, results, solved} ->
-        case overflow(results) do
-          {:ok, []} -> {:ok, solved}
-          {:ok, exact_over} -> bounded_points_to(solve, solved, exact_over)
-          {:error, reason} -> {:error, reason, solved}
-        end
-
-      {:error, reason} ->
-        {:error, reason, facts}
-    end
-  end
-
-  # The bounded stage over the facts the exact one was solved over: it
-  # writes every relation the exact one does, so each partial one is
-  # replaced.
-  defp bounded_points_to(solve, facts, exact_over) do
-    case solve.(points_to_bounded_rules_path(), facts) do
-      {:ok, results, solved} ->
-        case overflow(results) do
-          {:ok, []} ->
-            report_bounded(exact_over, results)
-            {:ok, solved}
-
-          {:ok, over} ->
-            {:error, {:over_budget, over}, solved}
-
-          {:error, reason} ->
-            {:error, reason, solved}
-        end
-
-      {:error, reason} ->
-        {:error, reason, facts}
-    end
-  end
-
-  # The relations that reached the stage's budget, `{relation, rows,
-  # budget}`: none when the fixpoint is complete. Every stage writes the
-  # file, so a solve without it is not one of the stage's.
-  defp overflow(results) do
-    case Map.fetch(results, "points_to_overflow") do
-      {:ok, rows} ->
-        {:ok,
-         for [relation, count, budget] <- rows do
-           {relation, String.to_integer(count), String.to_integer(budget)}
-         end}
-
-      :error ->
-        {:error, {:missing_output, "points_to_overflow"}}
-    end
-  end
-
-  defp report_bounded(exact_over, results) do
-    leaves = results |> Map.get("pervasive", []) |> List.flatten() |> Enum.sort()
-
-    Logger.warning(
-      "points-to: the exact stage outgrew its budget (#{budget_summary(exact_over)}); " <>
-        "ran it bounded, " <> pervasive_summary(leaves)
-    )
-  end
-
-  # A failed stage degrades every analysis that reads it: said once
-  # here, whichever caller runs it.
-  defp points_to_failed(reason) do
-    Logger.warning(
-      "points-to: " <> failure_summary(reason) <> "; the analyses reading it degrade"
-    )
-
-    {:error, {:points_to, reason}}
-  end
-
-  defp failure_summary({:over_budget, over}),
-    do: "the stage outgrew its budget even bounded (#{budget_summary(over)})"
-
-  defp failure_summary(:souffle_timeout),
-    do: "the stage did not finish within :souffle_timeout"
-
-  defp failure_summary(reason), do: "the stage failed: #{inspect(reason)}"
-
-  defp budget_summary(over) do
-    Enum.map_join(over, ", ", fn {relation, rows, budget} ->
-      "#{relation} reached #{rows} rows, over #{budget}"
-    end)
-  end
-
-  defp pervasive_summary([]), do: "which found no leaf pervasive"
-
-  defp pervasive_summary(leaves) do
-    shown = Enum.take(leaves, 3)
-    more = if length(leaves) > length(shown), do: ", …", else: ""
-
-    "resolving #{length(leaves)} pervasive leaves coarsely (#{Enum.join(shown, ", ")}#{more})"
   end
 
   @doc "The path to the points-to stage's rules file."
