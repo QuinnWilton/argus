@@ -386,17 +386,18 @@ sibling_dependency(sup, mod, name, "cached_pid", "", sup_site, init, init, "reso
 .decl orphaned_children(sup: symbol, owner: symbol, owner_pos: number, holder: symbol, holder_pos: number, start: symbol, basis: symbol)
 
 orphaned_children(sup, owner, owner_pos, holder, holder_pos, start, basis) :-
-  restarts_later_children(sup),
+  restarts_only_later_children(sup),
   runs_in_child(sup, owner_pos, owner),
   starts_child(owner, start),
   starts_under_earlier_child(start, sup, owner_pos, holder_pos, basis),
   child_at(sup, holder_pos, holder).
 
 // sup's strategy is rest_for_one: a child's restart restarts the
-// children after it, not the ones before.
-.decl restarts_later_children(sup: symbol)
+// children after it, not the ones before (shutdown's
+// restarts_later_siblings also holds of one_for_all).
+.decl restarts_only_later_children(sup: symbol)
 
-restarts_later_children(sup) :- supervisor(sup, "rest_for_one").
+restarts_only_later_children(sup) :- supervisor(sup, "rest_for_one").
 
 // `mod` runs in the branch of sup's child at `pos`: the child or any
 // module below it.
