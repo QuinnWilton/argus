@@ -37,14 +37,16 @@ defmodule Argus.Analyses.ShutdownSupervisionTest do
         Specs.RestartSup,
         Specs.TransientOwner,
         Specs.ProvisionerLike,
-        Specs.PermanentStopper
+        Specs.PermanentStopper,
+        Specs.InitStopper
       ]
 
       assert {:ok, results} = Memo.analyze(modules, :shutdown)
 
       # `use GenServer, restart: :transient` and a hand-written transient
       # child_spec/1 a list calls are not restarted after a normal stop;
-      # the default is.
+      # the default is. An init/1 that stops fails its start: nothing to
+      # restart.
       assert for([_sup, child | _] <- results["permanent_child_stops_normally"], do: child) ==
                [inspect(Specs.PermanentStopper)]
     end

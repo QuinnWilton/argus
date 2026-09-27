@@ -1250,12 +1250,16 @@ restarts_always(sup, child) :-
   restart_policy(sup, child, "permanent").
 
 // A callback of `child`'s returns a stop tuple at `stop` with a literal
-// `reason` (callback_stop_reason). terminate/2 returns no stop tuple.
+// `reason` (callback_stop_reason). terminate/2 returns no stop tuple, and
+// init/1's `{:stop, reason}` is a start that fails: there is no child
+// for the supervisor to restart (vmq_diversity_script_state's "normal
+// stop as we don't want to exhaust the supervisor strategy").
 .decl stops_itself(child: symbol, stop: symbol, reason: symbol)
 
 stops_itself(child, stop, reason) :-
   function_def(func, child, name, _, _),
   name != "terminate",
+  !init_function(child, func),
   callback_stop_reason(stop, func, reason).
 
 // A reason a process stops with to go away for good.

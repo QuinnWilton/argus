@@ -426,6 +426,20 @@ defmodule Argus.Test.Fixtures.ChildSpecs.PermanentStopper do
   def handle_cast(:done, state), do: {:stop, :normal, state}
 end
 
+defmodule Argus.Test.Fixtures.ChildSpecs.InitStopper do
+  @moduledoc false
+  # A permanent child whose init/1 gives up with :normal: the start fails,
+  # and there is no process for the supervisor to restart.
+  use GenServer
+
+  def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
+
+  @impl true
+  def init(arg) do
+    if arg == :skip, do: {:stop, :normal}, else: {:ok, arg}
+  end
+end
+
 defmodule Argus.Test.Fixtures.ChildSpecs.RestartSup do
   @moduledoc false
   use Supervisor
@@ -440,7 +454,8 @@ defmodule Argus.Test.Fixtures.ChildSpecs.RestartSup do
       [
         {Specs.TransientOwner, arg},
         Specs.ProvisionerLike.child_spec(arg),
-        {Specs.PermanentStopper, arg}
+        {Specs.PermanentStopper, arg},
+        {Specs.InitStopper, arg}
       ],
       strategy: :one_for_one
     )
