@@ -60,7 +60,7 @@ defmodule Argus.Pipeline.Emit do
         |> add_fact(:function_def, [
           func_id,
           mod_str,
-          to_string(name),
+          InstrId.name(name),
           to_string(arity),
           exported
         ])
@@ -311,13 +311,13 @@ defmodule Argus.Pipeline.Emit do
   # External calls.
   defp emit_specific(facts, id, func_id, {:call_ext, _arity, {:extfunc, mod, func, arity}}) do
     facts
-    |> add_fact(:remote_call, [id, func_id, inspect(mod), to_string(func), to_string(arity)])
+    |> add_fact(:remote_call, [id, func_id, inspect(mod), InstrId.name(func), to_string(arity)])
     |> maybe_dynamic(id, func_id, mod, func)
   end
 
   defp emit_specific(facts, id, func_id, {:call_ext_only, _arity, {:extfunc, mod, func, arity}}) do
     facts
-    |> add_fact(:remote_call, [id, func_id, inspect(mod), to_string(func), to_string(arity)])
+    |> add_fact(:remote_call, [id, func_id, inspect(mod), InstrId.name(func), to_string(arity)])
     |> add_fact(:tail_call, [id])
     |> maybe_dynamic(id, func_id, mod, func)
   end
@@ -329,7 +329,7 @@ defmodule Argus.Pipeline.Emit do
          {:call_ext_last, _arity, {:extfunc, mod, func, arity}, _dealloc}
        ) do
     facts
-    |> add_fact(:remote_call, [id, func_id, inspect(mod), to_string(func), to_string(arity)])
+    |> add_fact(:remote_call, [id, func_id, inspect(mod), InstrId.name(func), to_string(arity)])
     |> add_fact(:tail_call, [id])
     |> maybe_dynamic(id, func_id, mod, func)
   end
@@ -607,9 +607,7 @@ defmodule Argus.Pipeline.Emit do
   # out (`strip_location/1`).
   defp spell(val), do: val |> strip_location() |> Terms.spell()
 
-  defp format_mfa({mod, name, arity}) do
-    "#{inspect(mod)}:#{name}/#{arity}"
-  end
+  defp format_mfa({mod, name, arity}), do: InstrId.func_id(mod, name, arity)
 
   defp maybe_literal(facts, id, dst, {:integer, n}) do
     add_fact(facts, :literal_value, [id, format_operand(dst), to_string(n)])

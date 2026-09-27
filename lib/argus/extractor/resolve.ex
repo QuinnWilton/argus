@@ -290,7 +290,7 @@ defmodule Argus.Extractor.Resolve do
           writer ->
             case Reaching.at(instrs, writer) do
               {:call_ext, _, {:extfunc, mod, func, arity}} ->
-                {:ok, {:call_field, "#{inspect(mod)}:#{func}/#{arity}", idx}}
+                {:ok, {:call_field, Argus.InstrId.func_id(mod, func, arity), idx}}
 
               _ ->
                 :dynamic

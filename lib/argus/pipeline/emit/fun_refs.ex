@@ -104,7 +104,8 @@ defmodule Argus.Pipeline.Emit.FunRefs do
   defp callee(instr) do
     case Helpers.match_remote_call(instr) do
       {:ok, mod, fun, arity} ->
-        {:ok, {mod, fun, arity}, Propagators.positions(inspect(mod), to_string(fun), arity) || []}
+        {:ok, {mod, fun, arity},
+         Propagators.positions(inspect(mod), InstrId.name(fun), arity) || []}
 
       :none ->
         case Helpers.match_local_call(instr) do

@@ -520,13 +520,17 @@ defmodule Argus.Extractors.GenStatem do
     # function — its ID is the natural site.
     facts =
       Enum.reduce(state_funs, facts, fn {:function, name, arity, _, _}, acc ->
-        add_fact(acc, :statem_state, [mod_str, to_string(name), "#{mod_str}:#{name}/#{arity}"])
+        add_fact(acc, :statem_state, [
+          mod_str,
+          InstrId.name(name),
+          InstrId.func_id(mod_str, name, arity)
+        ])
       end)
 
     # Extract transitions and timeouts from each state function.
     facts =
       Enum.reduce(state_funs, facts, fn {:function, name, arity, _entry, instrs}, acc ->
-        state_name = to_string(name)
+        state_name = InstrId.name(name)
         # The module atom itself, not one re-read from its inspected name:
         # String.to_atom("A.B") is :"A.B", not A.B, and every site ID minted
         # from it was unresolvable.

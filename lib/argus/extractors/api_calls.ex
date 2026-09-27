@@ -555,7 +555,7 @@ defmodule Argus.Extractors.ApiCalls do
 
   defp read(:func, ctx, _mfa, facts, _rel), do: {ctx.func_id, facts}
   defp read(:mod, _ctx, {m, _f, _a}, facts, _rel), do: {inspect(m), facts}
-  defp read(:fun, _ctx, {_m, f, _a}, facts, _rel), do: {to_string(f), facts}
+  defp read(:fun, _ctx, {_m, f, _a}, facts, _rel), do: {InstrId.name(f), facts}
   defp read(:arity, _ctx, {_m, _f, a}, facts, _rel), do: {to_string(a), facts}
   defp read(:api, _ctx, {m, f, a}, facts, _rel), do: {"#{inspect(m)}.#{f}/#{a}", facts}
   defp read(:mod_fun, _ctx, {m, f, _a}, facts, _rel), do: {"#{inspect(m)}.#{f}", facts}

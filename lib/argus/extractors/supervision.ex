@@ -279,7 +279,8 @@ defmodule Argus.Extractors.Supervision do
   defp tree_function(functions) do
     Enum.find_value(functions, fn
       {:function, name, arity, _label, instrs} ->
-        if Enum.any?(instrs, &supervisor_start_call?/1), do: {"#{name}/#{arity}", instrs}
+        if Enum.any?(instrs, &supervisor_start_call?/1),
+          do: {"#{InstrId.name(name)}/#{arity}", instrs}
 
       _ ->
         nil

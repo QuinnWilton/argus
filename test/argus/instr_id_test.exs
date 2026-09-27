@@ -30,15 +30,64 @@ defmodule Argus.InstrIdTest do
     assert InstrId.parse(":func/1#0") == :error
   end
 
+  test "a function named nil keeps its name (gleam@dynamic:nil/0)" do
+    id = InstrId.mint(InstrId.func_id(:gleam@dynamic, nil, 0), 5)
+    assert id == ":gleam@dynamic:nil/0#5"
+
+    assert InstrId.parse(id) ==
+             {:ok, %InstrId{module: ":gleam@dynamic", func: "nil", arity: 0, idx: 5}}
+  end
+
+  test "a function name holding the separators, or none at all, round-trips" do
+    for {module, name} <- [
+          {:lists, :"a:b"},
+          {:lists, :"weird#1"},
+          {:lists, :"f/2#3"},
+          {:lists, :""},
+          {:"my:mod", :run},
+          {:"my\"mod", :"x:y"},
+          {Demo, :"::"}
+        ] do
+      id = InstrId.mint(InstrId.func_id(module, name, 2), 7)
+      assert {:ok, parsed} = InstrId.parse(id)
+
+      assert {parsed.module, parsed.func, parsed.arity, parsed.idx} ==
+               {inspect(module), Atom.to_string(name), 2, 7}
+    end
+  end
+
+  property "any module and function atom round-trip through an ID" do
+    atom = map(string(:printable, max_length: 12), &String.to_atom/1)
+
+    check all(
+            module <- one_of([atom, member_of([Demo, Demo.Sub, :lists, nil, :gleam@dynamic])]),
+            name <- one_of([atom, member_of([nil, true, :"-f/1-fun-0-", :""])]),
+            arity <- integer(0..255),
+            idx <- integer(0..10_000)
+          ) do
+      id = InstrId.mint(InstrId.func_id(module, name, arity), idx)
+      assert {:ok, parsed} = InstrId.parse(id)
+
+      assert parsed == %InstrId{
+               module: inspect(module),
+               func: Atom.to_string(name),
+               arity: arity,
+               idx: idx
+             }
+
+      assert InstrId.format(parsed) == id
+    end
+  end
+
   property "parse is the inverse of format, including pathological names" do
     name_chars = [?a..?z, ?A..?Z, ?0..?9, ?_, ?-, ?.]
 
     # Function names may embed the separator characters themselves (quoted
-    # atoms, generated closure names) — parsing must stay right-anchored.
+    # atoms, generated closure names).
     func_gen =
       gen all(
             base <- string(name_chars, min_length: 1),
-            infix <- member_of(["", "/", "#", "/2-fun-0-"])
+            infix <- member_of(["", "/", "#", ":", "/2-fun-0-"])
           ) do
         base <> infix <> "x"
       end

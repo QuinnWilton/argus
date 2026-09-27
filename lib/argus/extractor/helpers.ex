@@ -222,7 +222,7 @@ defmodule Argus.Extractor.Helpers do
   """
   @spec cfg(map(), atom() | String.t(), arity()) :: Argus.Cfg.Function.t() | nil
   def cfg(%{cfg: cfgs}, name, arity) when is_map(cfgs),
-    do: Map.get(cfgs, {to_string(name), arity})
+    do: Map.get(cfgs, {Argus.InstrId.name(name), arity})
 
   def cfg(module_data, name, arity) when is_atom(name),
     do: Argus.Cfg.build_for(module_data, name, arity)

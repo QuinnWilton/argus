@@ -64,7 +64,7 @@ defmodule Argus.Extractors.Purity do
         add_fact(acc, :pure_contract, [
           InstrId.func_id(mod, name, arity),
           mod_str,
-          to_string(name),
+          InstrId.name(name),
           to_string(arity)
         ])
 

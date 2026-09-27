@@ -121,7 +121,7 @@ defmodule Argus.Cfg do
         Map.get(data, :line_table, %{})
       )
 
-    facts |> Argus.Facts.decode() |> build() |> Map.get({to_string(name), arity})
+    facts |> Argus.Facts.decode() |> build() |> Map.get({Argus.InstrId.name(name), arity})
   end
 
   # Collect one relation into %{fa => %{key => value}} via a row shaper that

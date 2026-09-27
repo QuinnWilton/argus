@@ -37,6 +37,7 @@ defmodule Argus.Pipeline.Emit.Spawns do
   alias Argus.Extractor.Helpers
   alias Argus.Extractor.Resolve
   alias Argus.Extractor.Terms
+  alias Argus.InstrId
   @typep form :: {:fun, non_neg_integer()} | {:mfa, non_neg_integer()}
   @typep tie ::
            :spawn
@@ -120,7 +121,7 @@ defmodule Argus.Pipeline.Emit.Spawns do
       func,
       to_string(arity),
       variant(instrs, idx, tie),
-      "#{inspect(m)}.#{f}/#{a}",
+      "#{inspect(m)}.#{InstrId.name(f)}/#{a}",
       source,
       to_string(param),
       to_string(args)
@@ -130,8 +131,8 @@ defmodule Argus.Pipeline.Emit.Spawns do
   # {source, mod, func, arity, param}.
   defp runs(instrs, idx, {:fun, n}) do
     case Resolve.fun_origin(instrs, idx, {:x, n}) do
-      {:closure, {mod, fun, arity}} -> {"closure", inspect(mod), to_string(fun), arity, -1}
-      {:external, {mod, fun, arity}} -> {"fun", inspect(mod), to_string(fun), arity, -1}
+      {:closure, {mod, fun, arity}} -> {"closure", inspect(mod), InstrId.name(fun), arity, -1}
+      {:external, {mod, fun, arity}} -> {"fun", inspect(mod), InstrId.name(fun), arity, -1}
       {:param, k} -> {"param", "dynamic", "dynamic", -1, k}
       nil -> {"dynamic", "dynamic", "dynamic", -1, -1}
     end
@@ -144,10 +145,10 @@ defmodule Argus.Pipeline.Emit.Spawns do
     case {mod, fun} do
       {{:ok, mod}, {:ok, fun}} ->
         arity = Resolve.list_length(instrs, idx, {:x, n + 2}) || -1
-        {"mfa", inspect(mod), to_string(fun), arity, -1}
+        {"mfa", inspect(mod), InstrId.name(fun), arity, -1}
 
       _ ->
-        {"dynamic", spelled(mod, &inspect/1), spelled(fun, &to_string/1), -1, -1}
+        {"dynamic", spelled(mod, &inspect/1), spelled(fun, &InstrId.name/1), -1, -1}
     end
   end
 

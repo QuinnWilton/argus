@@ -6,12 +6,14 @@ defmodule Argus.InstrId do
   parses those strings into a struct so in-process consumers don't have to
   pattern-match on the wire format.
 
-  Parsing is anchored from the **right** — the trailing `#idx`, then the
-  trailing `/arity`, then the last `:` separating module from function — so
-  compiler-generated function names containing `/`, `#`, or `:` (e.g.
-  `-points/2-fun-0-`, quoted atoms) parse correctly. A function name that
-  itself contains `:` is inherently ambiguous against an Erlang module name;
-  the last-`:` rule matches how the IDs are produced.
+  The module is spelled as `inspect/1` spells it (`Demo`, `:lists`,
+  `:"my-mod"`) and the function as its atom's text (`name/1`), so a
+  function of any name round-trips. Parsing takes the trailing `#idx` and
+  the trailing `/arity` from the **right**, and the module from the
+  **left** — an inspected module holds no `:` past its leading one
+  unless it is quoted, and a quoted one ends at its closing quote — so a
+  function name may contain `/`, `#` or `:` (a generated
+  `-points/2-fun-0-`, a quoted atom), or be empty.
 
   ## The wire format lives here
 
@@ -52,6 +54,9 @@ defmodule Argus.InstrId do
       iex> Argus.InstrId.parse("Demo:-points/2-fun-0-/3#5")
       {:ok, %Argus.InstrId{module: "Demo", func: "-points/2-fun-0-", arity: 3, idx: 5}}
 
+      iex> Argus.InstrId.parse(":gleam@dynamic:nil/0#5")
+      {:ok, %Argus.InstrId{module: ":gleam@dynamic", func: "nil", arity: 0, idx: 5}}
+
       iex> Argus.InstrId.parse("not an id")
       :error
   """
@@ -59,8 +64,7 @@ defmodule Argus.InstrId do
   @pure true
   def parse(id) when is_binary(id) do
     with {:ok, prefix, idx} <- split_trailing_int(id, "#"),
-         {:ok, mod_func, arity} <- split_trailing_int(prefix, "/"),
-         {:ok, module, func} <- split_last(mod_func, ":") do
+         {:ok, %{module: module, func: func, arity: arity}} <- parse_func(prefix) do
       {:ok, %__MODULE__{module: module, func: func, arity: arity, idx: idx}}
     end
   end
@@ -110,8 +114,26 @@ defmodule Argus.InstrId do
   @spec func_id(module() | String.t(), atom() | String.t(), arity()) :: String.t()
   @pure true
   def func_id(module, name, arity) when is_integer(arity) and arity >= 0 do
-    func_id(module, to_string(name) <> "/" <> Integer.to_string(arity))
+    func_id(module, name(name) <> "/" <> Integer.to_string(arity))
   end
+
+  @doc """
+  A function's name as an ID, and every fact column that names a
+  function, spells it: its atom's text. Not `to_string/1`, and not
+  interpolation, which spell the atom `nil` as `""` — a function named
+  `nil` (Gleam's `gleam@dynamic:nil/0`) would have an ID no parse gives
+  back and a name no row of its calls shares.
+
+      iex> Argus.InstrId.name(nil)
+      "nil"
+
+      iex> Argus.InstrId.name(:"-run/1-fun-0-")
+      "-run/1-fun-0-"
+  """
+  @spec name(atom() | String.t()) :: String.t()
+  @pure true
+  def name(name) when is_atom(name), do: Atom.to_string(name)
+  def name(name) when is_binary(name), do: name
 
   @doc "Render back to the wire format (inverse of `parse/1`)."
   @spec format(t()) :: String.t()
@@ -141,7 +163,7 @@ defmodule Argus.InstrId do
   @pure true
   def parse_func(func_id) when is_binary(func_id) do
     with {:ok, mod_func, arity} <- split_trailing_int(func_id, "/"),
-         {:ok, module, func} <- split_last(mod_func, ":") do
+         {:ok, module, func} <- split_module(mod_func) do
       {:ok, %{module: module, func: func, arity: arity}}
     end
   end
@@ -187,6 +209,40 @@ defmodule Argus.InstrId do
       _ -> :error
     end
   end
+
+  # The module from the left, as `inspect/1` spells it: a quoted atom to
+  # its closing quote, an unquoted Erlang atom or an alias to the first
+  # `:` (neither holds one); the function is everything after that `:`.
+  defp split_module(":\"" <> quoted = mod_func) do
+    with {:ok, length} <- closing_quote(quoted, 0),
+         module_size = 2 + length,
+         <<module::binary-size(module_size), ":", func::binary>> <- mod_func do
+      {:ok, module, func}
+    else
+      _ -> :error
+    end
+  end
+
+  defp split_module(":" <> atom), do: split_first(atom, ":")
+  defp split_module(alias_name), do: split_first(alias_name, "")
+
+  defp split_first(string, prefix) do
+    case :binary.match(string, ":") do
+      {pos, 1} when pos > 0 ->
+        {:ok, prefix <> binary_part(string, 0, pos),
+         binary_part(string, pos + 1, byte_size(string) - pos - 1)}
+
+      _ ->
+        :error
+    end
+  end
+
+  # The bytes up to and including the closing quote; an escape (`\"`,
+  # `\\`) is skipped whole.
+  defp closing_quote(<<?\\, _escaped, rest::binary>>, n), do: closing_quote(rest, n + 2)
+  defp closing_quote(<<?", _rest::binary>>, n), do: {:ok, n + 1}
+  defp closing_quote(<<_byte, rest::binary>>, n), do: closing_quote(rest, n + 1)
+  defp closing_quote(<<>>, _n), do: :error
 
   defp split_last(string, sep) do
     case :binary.matches(string, sep) do

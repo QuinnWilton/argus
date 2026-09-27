@@ -111,18 +111,15 @@ defmodule Argus.Pipeline.Normalize do
   defp alloc_words(_not_a_cons), do: 0
 
   @doc """
-  The name and arity a function ID was minted from, parsed right-anchored
-  so compiler-generated names containing `/` or `:` survive.
+  The name and arity a function ID was minted from
+  (`Argus.InstrId.parse_func/1`), so a name containing `/`, `#` or `:`
+  survives. Raises `ArgumentError` for a string that is not one.
   """
   @spec func_id_name_arity(String.t()) :: {String.t(), non_neg_integer()}
   def func_id_name_arity(func_id) do
-    {head, arity} = split_last(func_id, "/")
-    {_mod, name} = split_last(head, ":")
-    {name, String.to_integer(arity)}
-  end
-
-  defp split_last(string, sep) do
-    parts = String.split(string, sep)
-    {Enum.join(Enum.drop(parts, -1), sep), List.last(parts)}
+    case InstrId.parse_func(func_id) do
+      {:ok, %{func: name, arity: arity}} -> {name, arity}
+      :error -> raise ArgumentError, "not a function ID: #{inspect(func_id)}"
+    end
   end
 end
