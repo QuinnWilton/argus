@@ -206,12 +206,33 @@ defmodule Argus.Graph do
   """
   @spec set_program(Roux.Database.t(), term(), [Path.t() | binary()]) :: [term()]
   def set_program(db, program, beams) do
+    {data, paths} = Enum.split_with(beams, &match?(<<"FOR1", _::binary>>, &1))
+    paths = paths |> Enum.map(&Path.expand/1) |> Enum.uniq() |> Enum.sort()
+
+    # The program's digests kept whole by every file's stamp: a warm call
+    # stats its beams and reads one entry; a call after an edit falls to
+    # each beam's own (`beam_input/2`) and reads only what moved.
+    digests =
+      Roux.Stamp.memo(
+        {__MODULE__, :program_beams, paths},
+        paths,
+        fn -> Map.new(paths, &{&1, elem(beam_input(&1, db.blob), 1)}) end,
+        store: db.blob
+      )
+
     keys =
-      for beam <- beams do
-        {key, value} = beam_input(beam)
-        :ok = Input.set(db, :beam, key, value)
-        key
+      for {path, value} <- digests do
+        :ok = Input.set(db, :beam, path, value)
+        path
       end
+
+    keys =
+      keys ++
+        for beam <- data do
+          {key, value} = beam_input(beam)
+          :ok = Input.set(db, :beam, key, value)
+          key
+        end
 
     keys = keys |> Enum.uniq() |> Enum.sort()
     :ok = Input.set(db, :program, program, keys)
@@ -258,19 +279,31 @@ defmodule Argus.Graph do
   The digest is of the beam without the chunks extraction never reads
   (`Roux.Code.canonical_beam/1`).
   """
-  @spec beam_input(Path.t() | binary()) :: {term(), map()}
-  def beam_input(<<"FOR1", _::binary>> = data) do
+  @spec beam_input(Path.t() | binary(), Blob.t() | nil) :: {term(), map()}
+  def beam_input(beam, store \\ nil)
+
+  def beam_input(<<"FOR1", _::binary>> = data, _store) do
     hash = hash(data)
     {{:data, hash}, %{hash: hash, data: data}}
   end
 
-  def beam_input(path) when is_binary(path) do
+  # A file's digest kept by its stamp, in the VM and (given one) the
+  # store: a call over a program's beams stats each, and reads and
+  # hashes only one that moved.
+  def beam_input(path, store) when is_binary(path) do
     path = Path.expand(path)
 
-    # Raw: a call's every beam is read here, side by side with the rest
-    # of the VM's file work, which the file server would queue.
+    digest =
+      Roux.Stamp.memo({__MODULE__, :beam, path}, [path], fn -> read_hash(path) end, store: store)
+
+    {path, %{hash: digest}}
+  end
+
+  # Raw: the file server would queue it behind the rest of the VM's file
+  # work.
+  defp read_hash(path) do
     case :file.read_file(path, [:raw]) do
-      {:ok, bytes} -> {path, %{hash: hash(bytes)}}
+      {:ok, bytes} -> hash(bytes)
       {:error, reason} -> raise File.Error, reason: reason, action: "read file", path: path
     end
   end

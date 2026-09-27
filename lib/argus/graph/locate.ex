@@ -55,7 +55,8 @@ defmodule Argus.Graph.Locate do
   end
 
   # The code a line table is made by: an edit to it makes tables anew.
-  defp table_code, do: for(module <- [__MODULE__, Pack, Argus.Tsv], do: module.module_info(:md5))
+  defp table_code,
+    do: for(module <- [__MODULE__, Pack, Argus.Tsv, Argus.Lines], do: module.module_info(:md5))
 
   # A module's lines: its `line_info` rows as written (an instruction's
   # line is found in them when a finding asks, `instr_line/2`), and each
@@ -77,8 +78,15 @@ defmodule Argus.Graph.Locate do
 
   defquery :declaration_line, key: beam_key, returns: pos_integer() | nil do
     case Runtime.query(db, :module_beam, beam_key) do
-      {:ok, beam} -> beam |> Frontend.read() |> Argus.Lines.declaration_line()
-      :external -> nil
+      # Kept by the beam's digest: reading it means decoding the module's
+      # debug info.
+      {:ok, beam} ->
+        Roux.Blob.cached(db.blob, {__MODULE__, :declaration_line, table_code(), beam.hash}, fn ->
+          beam |> Frontend.read() |> Argus.Lines.declaration_line()
+        end)
+
+      :external ->
+        nil
     end
   end
 
