@@ -1329,14 +1329,18 @@ minted_key(w) :-
 mints_rows(k, t) :- ets_table(w, k, t), minted_key(w).
 names_rows(k, t) :- ets_table(w, k, t), makes_row(w), !minted_key(w).
 
-.decl held_table(kind: symbol, table: symbol)
+// Every row the table gets is made at a minted key: rows only their
+// minter can name, not a process that holds the table (ets.dl's
+// may_hold_table, failure.dl's always_holds_table).
+.decl mints_every_row(kind: symbol, table: symbol)
 
-held_table(k, t) :- mints_rows(k, t), !names_rows(k, t).
+mints_every_row(k, t) :- mints_rows(k, t), !names_rows(k, t).
 
-// The pair's act makes no row, and every table it may touch is held.
-.decl on_unheld_table(write: symbol)
+// The pair's write may touch a table some row of which is made at a key
+// it is given or computes (held_row asks the opposite).
+.decl on_table_not_all_minted(write: symbol)
 
-on_unheld_table(w) :- reads_then_writes(_, _, w, _, _), ets_table(w, k, t), !held_table(k, t).
+on_table_not_all_minted(w) :- reads_then_writes(_, _, w, _, _), ets_table(w, k, t), !mints_every_row(k, t).
 
 .decl held_row(write: symbol)
 
@@ -1344,7 +1348,7 @@ held_row(w) :-
   reads_then_writes(_, _, w, _, _),
   ets_table(w, _, _),
   !makes_row(w),
-  !on_unheld_table(w).
+  !on_table_not_all_minted(w).
 
 // A write another process makes, as made by calling `func`: the
 // function that names its key (rival, above).

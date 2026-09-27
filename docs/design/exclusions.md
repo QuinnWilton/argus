@@ -128,7 +128,7 @@ was asked in `blocking` (`handler_inferred`, `timed_wait_site`),
 - `effects`: `!body_reach.reaches(body, via)` in the second
   `escapes_transaction` rule; `started_reach` includes `body_reach`, whose
   rows the first rule has.
-- `ets`: `table_held`'s `!function_def(func, mod, ...)` (a named table is
+- `ets`: `may_hold_table`'s `!function_def(func, mod, ...)` (a named table is
   never handed back, so the first rule has the owner's own module's rows),
   and `read_misses`'s `!read_through_caller(s)` (its second rule covers
   those reads with fewer conditions).
@@ -532,7 +532,7 @@ the program. The factory excuse is keyed on the start, not the owner.
 
 ### 6. A table that dies with its owner needs a reader (4 atoms, score 6)
 
-`ets.dl`'s `table_held` `!handed_back(id, p)` and the three D atoms it
+`ets.dl`'s `may_hold_table` `!handed_back(id, p)` and the three D atoms it
 carries (`ets_permanent_owner`, the private excuse,
 `ets_application_owner`). The class is at about 7% precision (ETS rows
 round), and its false positives were tables only their owner uses.

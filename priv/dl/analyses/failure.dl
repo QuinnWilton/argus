@@ -1032,9 +1032,12 @@ init_always_runs(m, g) :-
   !runs_elsewhere(f, g),
   function_def(g, _, _, _, _).
 
-.decl table_owner(table: symbol, mod: symbol)
+// `mod`'s process always holds `table`: every path through its init/1
+// makes it and nothing deletes it (ets.dl's may_hold_table asks some
+// path, the reporting direction).
+.decl always_holds_table(table: symbol, mod: symbol)
 
-table_owner(t, m) :-
+always_holds_table(t, m) :-
   ets_new(n, g, t),
   t != "dynamic",
   !conditional_call(n),
@@ -1047,12 +1050,12 @@ table_deleted(t) :- ets_op(w, _, t, "delete", _), remote_call(w, _, ":ets", "del
 
 .decl reached_by_other(func: symbol, mod: symbol)
 
-reached_by_other(f, m) :- table_owner(_, m), process_entry(m2, c), m2 != m, own.reaches(c, f).
+reached_by_other(f, m) :- always_holds_table(_, m), process_entry(m2, c), m2 != m, own.reaches(c, f).
 
 .decl in_owner(func: symbol, table: symbol)
 
 in_owner(f, t) :-
-  table_owner(t, m),
+  always_holds_table(t, m),
   process_entry(m, c),
   own.reaches(c, f),
   !reached_by_other(f, m),
@@ -1067,7 +1070,7 @@ in_owner(f, t) :-
 .decl seeded_row(table: symbol, key: symbol)
 
 seeded_row(t, k) :-
-  table_owner(t, m),
+  always_holds_table(t, m),
   ets_op(w, g, t, op, "write"),
   (op = "insert" ; op = "insert_new"),
   ets_key(w, "literal", k),

@@ -73,16 +73,16 @@
 // elsewhere (in persistent_term, another table) is not seen.
 //
 // Three words about who holds ETS state, apart on purpose:
-// - this one (and owner_reaches): the process a table dies with,
-//   anywhere on its stack — the direction that reports (a crash takes
-//   the table, a caller's read raises); both rules below that ask who
-//   owns a table (it dies with its owner; it is read outside its owner)
-//   read it;
-// - failure.dl's `table_owner`/`in_owner`/`seeded_row`: a table (and
+// - this one, may_hold_table (and owner_reaches): the process a table
+//   dies with, when SOME path on its stack makes it — the direction that
+//   reports (a crash takes the table, a caller's read raises); both
+//   rules below that ask who owns a table (it dies with its owner; it is
+//   read outside its owner) read it;
+// - failure.dl's `always_holds_table`/`in_owner`/`seeded_row`: a table (and
 //   rows) created on EVERY path through init/1 and never dropped, and a
 //   function only that process runs — what makes an operation unable to
 //   fail, the direction that stays quiet, so it asks more;
-// - races.dl's `held_table`/`held_row`: rows, not tables — a row only
+// - races.dl's `mints_every_row`/`held_row`: rows, not tables — a row only
 //   the writer that minted its key can name.
 //
 // Backward from the table functions (creators and readers) to the roots
@@ -204,9 +204,12 @@ known_reaches(t) :- known_root(c), ets_reach.reaches(c, t).
 
 owner_reaches(p, m, t) :- process_root(c, p, m, _), ets_reach.reaches(c, t).
 
-.decl table_held(name: symbol, proc: symbol, mod: symbol, site: symbol)
+// The process `proc` (of `mod`'s code) may hold the table made at
+// `site`: some path on its stack runs the :ets.new/2 (failure.dl's
+// always_holds_table asks every path, the quiet direction).
+.decl may_hold_table(name: symbol, proc: symbol, mod: symbol, site: symbol)
 
-table_held(name, p, mod, id) :-
+may_hold_table(name, p, mod, id) :-
   ets_new(id, func, name),
   name != "dynamic",
   owner_reaches(p, mod, func),
@@ -216,7 +219,7 @@ table_held(name, p, mod, id) :-
 // A named table is held by whichever process runs its :ets.new/2, in
 // that process's module or in a helper's (`Metrics.setup()`): a named
 // table is never handed back (handed_back asks an unnamed one).
-table_held(name, p, mod, id) :-
+may_hold_table(name, p, mod, id) :-
   ets_new(id, func, name),
   name != "dynamic",
   owner_reaches(p, mod, func),
@@ -254,7 +257,7 @@ returned_term(f, o) :- returned_term(f, p), pid_field(f, p, _, "obj", o).
 .decl table_dies_with_owner(table: symbol, owner: symbol, owner_mod: symbol, create: symbol)
 
 table_dies_with_owner(table, owner, owner_mod, create) :-
-  table_held(table, owner, owner_mod, create),
+  may_hold_table(table, owner, owner_mod, create),
   !has_heir(create),
   !private_table(create),
   !restarted_by_supervisor(owner),
@@ -434,7 +437,7 @@ ets_ordered_set_contention(name, mod1, mod2, site) :-
 .decl unnamed_table_in_server(table: symbol, owner_mod: symbol, create: symbol)
 
 unnamed_table_in_server(table, owner_mod, create) :-
-  table_held(table, owner, owner_mod, create),
+  may_hold_table(table, owner, owner_mod, create),
   runs_as_server(owner),
   !named_site(create).
 
@@ -564,18 +567,18 @@ read_while_owner_restarts(reader, read, create, owner, owner_mod) :-
   !handles_missing_table(read, reader).
 
 // `reader` reads, at `read`, the table made at `create`, which the process
-// `owner` (of `owner_mod`'s code) holds (table_held): the read's table is
+// `owner` (of `owner_mod`'s code) holds (may_hold_table): the read's table is
 // that one (reads_made_table); or the table's name is computed at run
 // time, and the read is one the owner's own module makes of a table no
 // view names (computed_read).
 .decl reads_held_table(read: symbol, reader: symbol, create: symbol, owner: symbol, owner_mod: symbol)
 
-// The owner is table_held's: the process whose stack runs the
+// The owner is may_hold_table's: the process whose stack runs the
 // :ets.new/2, a helper module's named table included (the server whose
 // init/1 calls `Metrics.setup()` holds it, and `Metrics.lookup/1`, run
 // by callers, reads it from outside).
 reads_held_table(read, reader, create, owner, owner_mod) :-
-  table_held(_, owner, owner_mod, create),
+  may_hold_table(_, owner, owner_mod, create),
   reads_made_table(read, reader, create).
 
 // A table under a name computed at runtime: only the owner's own API can
@@ -733,7 +736,7 @@ reader_outlives(reader, p, owner) :-
 
 .decl read_owner(proc: symbol, owner: symbol, reader: symbol)
 
-read_owner(p, owner, reader) :- table_held(_, p, owner, create), reads_made_table(_, reader, create).
+read_owner(p, owner, reader) :- may_hold_table(_, p, owner, create), reads_made_table(_, reader, create).
 read_owner(p, owner, reader) :- computed_read(p, owner, reader, _, _).
 
 .decl runs_somewhere(func: symbol)

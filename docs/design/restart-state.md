@@ -264,7 +264,7 @@ Stated constructively, the rule reports a read at site R, in function F,
 of table T, when all of these hold:
 
 - **The table goes with its owner.** T is held by process P
-  (`table_held`) and has no heir.
+  (`may_hold_table`) and has no heir.
 - **A reader outlives P** (`reader_outlives`). Some process Q that runs F
   goes on after P ends, or no process in view runs F, so its callers are
   outside the program's processes. Q does not outlive P when any of

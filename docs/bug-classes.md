@@ -382,9 +382,9 @@ than more; it errs loud when the same uncertainty can add a finding.
 
 ### Who holds ETS state
 
-- **Names.** `table_held`, `owner_reaches` (ets.dl); `table_owner`, `in_owner`, `seeded_row` (failure.dl); `held_table`, `held_row` (races.dl).
-- **Meaning.** Three words, apart on purpose. `table_held(name, mod, site)`: mod's process runs the `:ets.new` at site on its own stack, in mod's code or, for a named table, in a helper's; the table dies with that process. failure's `table_owner`: the table is made on every path through init/1 and never dropped, so while the process runs it is there, and `in_owner` is a function only that process runs. races' `held_row`: a row whose key only the writer that minted it can name.
-- **Direction.** `table_held` reports (a crash takes the table), so it takes any path; `table_owner` quiets (an operation cannot fail), so it asks every path. An unnamed table another module makes is a value it hands back, the caller's data, and not held (quiet).
+- **Names.** `may_hold_table`, `owner_reaches` (ets.dl); `always_holds_table`, `in_owner`, `seeded_row` (failure.dl); `mints_every_row`, `held_row` (races.dl).
+- **Meaning.** Three words, apart on purpose, and named for the difference. `may_hold_table(name, proc, mod, site)`: some path on the process's own stack runs the `:ets.new` at site, in mod's code or, for a named table, in a helper's; the table dies with that process. failure's `always_holds_table(table, mod)`: the table is made on every path through init/1 and never dropped, so while the process runs it is there, and `in_owner` is a function only that process runs. races' `mints_every_row` and `held_row`: rows, not processes: a table whose every row is made at a minted key, and a row whose key only the writer that minted it can name.
+- **Direction.** `may_hold_table` reports (a crash takes the table), so it takes any path; `always_holds_table` quiets (an operation cannot fail), so it asks every path. Which table each means is the one identity ("A table and its identity") only in ets.dl: failure.dl still keys `always_holds_table` by the `:ets.new/2` atom. An unnamed table another module makes is a value it hands back, the caller's data, and not held (quiet).
 - **Used by.** ets, failure and races, each its own.
 
 ### Test code
@@ -2676,7 +2676,7 @@ Another process takes or deletes the row between the check and the act, and the 
 · titles: "ETS table read while its owner may be restarting" (`:info`)
 
 **Property.** Some table T is created by an `:ets.new/2` a process P runs
-on its own stack. P is the owner, `table_held` since round 2c: a
+on its own stack. P is the owner, `may_hold_table` since round 2c: a
 server's callbacks and what its start function spawns on its own code;
 a spawned, Task or Agent process; an Application's start/2; a module
 under a non-process behaviour. T has no `heir` option. Some read of T
@@ -4509,15 +4509,15 @@ under `priv/dl/` unless they say otherwise.
    and Mnesia; a delete whose decision sends is not harmless
    (`decision_sends`), which the loose write-back had hidden (ejabberd's
    `check_captcha/2`, `CheckThenAct.CaptchaCheck`).
-8. **Who owns a table.** failure's `table_owner`/`in_owner`/`seeded_row`,
+8. **Who owns a table.** failure's `always_holds_table`/`in_owner`/`seeded_row`,
    ets.dl's `ets_owner_process` (any behaviour, module-level) and
    `owner_reaches` (`CallReach` from `process_entry`), races'
-   `held_table`/`held_row`, and concurrency.dl's `entry_reaches` answer
+   `mints_every_row`/`held_row`, and concurrency.dl's `entry_reaches` answer
    it four ways.
-   *Resolved.* ets.dl's owner is process-level (`table_held` over
+   *Resolved.* ets.dl's owner is process-level (`may_hold_table` over
    `owner_reaches`, a `SameProcessReach`), with a helper's named table
    held by the process that runs it. *Justified:* failure's
-   `table_owner` (made on every path through init/1, never dropped: the
+   `always_holds_table` (made on every path through init/1, never dropped: the
    quiet direction) and races' `held_row` (row ownership by minted key)
    are other questions; the vocabulary's "Who holds ETS state" and
    ets.dl say why. concurrency.dl's `entry_reaches` is which process
@@ -4702,7 +4702,7 @@ interaction rather than reach (L17).
   function of the owner's module; coupling's `stateful_module_dep`
   keeps its inferred module-level clause (graded, but reported at full
   severity with priors off). *Resolved* for ets: a table's owner is the
-  process that runs its `:ets.new` (`table_held`), and mailbox's
+  process that runs its `:ets.new` (`may_hold_table`), and mailbox's
   `self_call` kind is `unhandled_call`, a different defect named apart
   from clientlib's `self_call`. *Left:* duplicate_process_name,
   kills_monitored_child, rest_for_one_orphaned_children and coupling's
