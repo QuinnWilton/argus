@@ -56,6 +56,7 @@ defmodule Argus.Run do
   @doc "`Argus.run_analyses/2` over the graph."
   @spec run_analyses([atom() | String.t()], keyword()) :: {:ok, Findings.t()} | {:error, term()}
   def run_analyses(modules, opts) do
+    Argus.Priors.check!(opts)
     {selection, opts} = Keyword.pop(opts, :analyses, :all)
 
     with {:ok, requests} <- Sets.resolve(selection),
@@ -74,6 +75,8 @@ defmodule Argus.Run do
   @spec analyze([atom() | String.t()], Analysis.analysis(), keyword()) ::
           {:ok, Analysis.result()} | {:error, term()}
   def analyze(modules, analysis, opts) do
+    Argus.Priors.check!(opts)
+
     with {:ok, _path} <- Analysis.Catalog.rules_path(analysis) do
       in_session(modules, [analysis], opts, fn db ->
         Graph.Findings.results(db, @program, analysis)
@@ -91,6 +94,8 @@ defmodule Argus.Run do
   @spec extract_facts([atom() | String.t()], [Analysis.analysis()], keyword()) ::
           {:ok, Path.t()} | {:error, term()}
   def extract_facts(modules, analyses, opts) do
+    Argus.Priors.check!(opts)
+
     in_session(modules, analyses, opts, fn db -> materialize(db, analyses, opts) end)
   end
 
