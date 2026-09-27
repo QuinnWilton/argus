@@ -52,25 +52,19 @@ defmodule Argus.Test.Memo do
   end
 
   @doc """
-  Resolves what each shipped program reads (`Argus.Souffle.input_relations/2`)
-  from the suite's store, asking the solver only for a program edited
-  since, in parallel: every later ask in the run is the VM's memo. The
-  answer is the program's (keyed by its content and the solver), not a
-  test's; without a store (`ARGUS_NO_CACHE`) each program is asked once.
+  Resolves what each shipped program reads (`Argus.Souffle.input_relations/2`),
+  in parallel, once: every later ask in the run is the VM's memo.
   """
   @spec warm_programs() :: :ok
   def warm_programs do
     if Argus.Souffle.available?() do
-      programs =
-        if Argus.Cache.enabled?(), do: [programs: Path.join(store(), "programs")], else: []
-
       [
         Argus.Analysis.stage0_rules_path(),
         Argus.Analysis.points_to_rules_path(),
         Argus.Analysis.points_to_bounded_rules_path()
       ]
       |> Kernel.++(for name <- Argus.Analysis.builtin_analyses(), do: rules_path(name))
-      |> Task.async_stream(&Argus.Souffle.input_relations(&1, programs), timeout: :infinity)
+      |> Task.async_stream(&Argus.Souffle.input_relations/1, timeout: :infinity)
       |> Stream.run()
     end
 
@@ -84,8 +78,7 @@ defmodule Argus.Test.Memo do
 
   @doc """
   An analysis's rules solved over hand-built facts (`Argus.Pipeline.write_facts/2`
-  into a directory of the call's own, removed after), each solve kept in
-  the suite's store and keyed on what it reads (`solve_cache:`).
+  into a directory of the call's own, removed after).
   """
   @spec run_rules(map(), atom()) :: {:ok, map()} | {:error, term()}
   def run_rules(facts, analysis) do
@@ -99,7 +92,7 @@ defmodule Argus.Test.Memo do
 
     try do
       :ok = Argus.Pipeline.write_facts(facts, dir)
-      Argus.Analysis.run_rules(dir, analysis, solve_cache: Path.join(store(), "solves"))
+      Argus.Analysis.run_rules(dir, analysis)
     after
       File.rm_rf(dir)
     end

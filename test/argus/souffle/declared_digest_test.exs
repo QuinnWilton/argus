@@ -1,7 +1,7 @@
 defmodule Argus.Souffle.DeclaredDigestTest do
   @moduledoc """
   A solve is keyed on the program as it reads it
-  (`Argus.Souffle.Cache.declared_digest/2`): of the generated
+  (`Argus.Souffle.Program.declared_digest/2`): of the generated
   declaration files, only the declarations of the relations Souffle
   loads for it. This checks that claim against the solver, for every
   shipped program over the fixtures' facts: in a copy of `priv/dl`
@@ -17,7 +17,7 @@ defmodule Argus.Souffle.DeclaredDigestTest do
   use ExUnit.Case, async: true
 
   alias Argus.Souffle
-  alias Argus.Souffle.Cache
+  alias Argus.Souffle.Program
 
   @moduletag :tmp_dir
   @moduletag :cache_verify
@@ -49,7 +49,7 @@ defmodule Argus.Souffle.DeclaredDigestTest do
 
   test "the generated files hold declarations alone", %{dl: dl} do
     for file <- @generated do
-      assert {:ok, [_ | _]} = Cache.declarations(File.read!(Path.join(dl, file))), file
+      assert {:ok, [_ | _]} = Program.declarations(File.read!(Path.join(dl, file))), file
     end
   end
 
@@ -62,7 +62,7 @@ defmodule Argus.Souffle.DeclaredDigestTest do
 
   test "a declaration read as text is any other file: a comment that splices is not skipped" do
     assert {:ok, [{"a", ".decl a(x: symbol)\n.input a"}]} =
-             Cache.declarations("// A.\n\n.decl a(x: symbol)\n.input a\n")
+             Program.declarations("// A.\n\n.decl a(x: symbol)\n.input a\n")
 
     for text <- [
           "// ends in a splice \\\n.decl a(x: symbol)\n.input a\n",
@@ -74,7 +74,7 @@ defmodule Argus.Souffle.DeclaredDigestTest do
           "a(1).\n",
           "/* block */\n.decl a(x: symbol)\n.input a\n"
         ] do
-      assert Cache.declarations(text) == :error, inspect(text)
+      assert Program.declarations(text) == :error, inspect(text)
     end
   end
 
@@ -104,9 +104,7 @@ defmodule Argus.Souffle.DeclaredDigestTest do
       end)
 
     assert broken, "no declaration a program does not load breaks it: nothing to check"
-    solves = Path.join(tmp, "solves")
-    assert {:error, _} = Souffle.run(facts, broken, solve_cache: solves)
-    assert File.ls(solves) in [{:ok, []}, {:error, :enoent}]
+    assert {:error, _} = Souffle.run(facts, broken)
   end
 
   defp check(program, facts, dl, tmp) do
@@ -114,7 +112,7 @@ defmodule Argus.Souffle.DeclaredDigestTest do
     relative = Path.relative_to(program, dl)
     {:ok, kept} = Souffle.input_relations(program)
     {:ok, original} = solve(facts, program, Path.join([tmp, name, "original"]))
-    digest = Cache.declared_digest(program, kept)
+    digest = Program.declared_digest(program, kept)
 
     # Every declaration it does not load renamed and reworded — retyped
     # and widened too where no rule names it — and one relation added:
@@ -128,15 +126,15 @@ defmodule Argus.Souffle.DeclaredDigestTest do
     perturbed = perturb(Path.join([tmp, name, "perturbed"]), dl, &(&1 not in kept), change)
     perturbed = Path.join(perturbed, relative)
 
-    assert Cache.declared_digest(perturbed, kept) == digest, name
-    refute Cache.declared_digest(perturbed, :all) == Cache.declared_digest(program, :all)
+    assert Program.declared_digest(perturbed, kept) == digest, name
+    refute Program.declared_digest(perturbed, :all) == Program.declared_digest(program, :all)
     assert {:ok, ^kept} = Souffle.input_relations(perturbed)
     assert {:ok, ^original} = solve(facts, perturbed, Path.join([tmp, name, "out"])), name
 
     # A declaration it loads moves its key.
     if loaded = Enum.find(kept, &generated?(dl, &1)) do
       moved = perturb(Path.join([tmp, name, "moved"]), dl, &(&1 == loaded), &rename/2)
-      refute Cache.declared_digest(Path.join(moved, relative), kept) == digest, name
+      refute Program.declared_digest(Path.join(moved, relative), kept) == digest, name
     end
 
     :ok
@@ -144,7 +142,7 @@ defmodule Argus.Souffle.DeclaredDigestTest do
 
   defp generated?(dl, relation) do
     Enum.any?(@generated, fn file ->
-      {:ok, blocks} = Cache.declarations(File.read!(Path.join(dl, file)))
+      {:ok, blocks} = Program.declarations(File.read!(Path.join(dl, file)))
       List.keymember?(blocks, relation, 0)
     end)
   end
@@ -161,7 +159,7 @@ defmodule Argus.Souffle.DeclaredDigestTest do
   # The relations a program's own rules name (its files other than the
   # generated ones, without their comments).
   defp named(program) do
-    for {_spelled, file} <- Cache.program_files(program),
+    for {_spelled, file} <- Program.program_files(program),
         Path.basename(file) not in @generated,
         code = file |> File.read!() |> String.replace(~r{/\*.*?\*/|//[^\n]*}s, ""),
         [_, relation] <- Regex.scan(~r/\b([a-z_][a-z0-9_]*)\s*\(/, code),
@@ -178,7 +176,7 @@ defmodule Argus.Souffle.DeclaredDigestTest do
 
     for file <- @generated do
       path = Path.join(root, file)
-      {:ok, blocks} = Cache.declarations(File.read!(path))
+      {:ok, blocks} = Program.declarations(File.read!(path))
 
       body =
         Enum.map_join(blocks, "\n", fn {relation, block} ->

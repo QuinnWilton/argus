@@ -238,7 +238,7 @@ defmodule Argus.Analysis.Extraction do
 
   @doc """
   Whether an analysis reads what the points-to stage writes, as Souffle
-  resolves its inputs (`programs:` as `Argus.Analysis.input_relations/2`
+  resolves its inputs (`:souffle_bin` as `Argus.Analysis.input_relations/2`
   takes it). An analysis whose inputs cannot be resolved is taken to
   read it: deriving the stage then reports the real trouble.
   """

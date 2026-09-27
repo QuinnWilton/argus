@@ -318,15 +318,14 @@ defmodule Argus.Analysis do
   Incremental consumers use this to project a per-analysis fact directory,
   so an analysis only re-solves when a relation it truly reads has moved.
 
-  `programs:` names a directory the answer is kept in across VMs
-  (`Argus.Souffle.input_relations/2`).
+  `:souffle_bin` names the solver to ask (default: the one on `PATH`).
 
   Returns `{:ok, [relation_name]}` or `{:error, reason}`.
   """
   @spec input_relations(analysis(), keyword()) :: {:ok, [String.t()]} | {:error, term()}
   def input_relations(analysis, opts \\ []) do
     with {:ok, rules_path} <- Catalog.rules_path(analysis) do
-      Souffle.input_relations(rules_path, Keyword.take(opts, [:programs, :souffle_bin]))
+      Souffle.input_relations(rules_path, Keyword.take(opts, [:souffle_bin]))
     end
   end
 

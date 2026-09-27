@@ -11,8 +11,7 @@ defmodule Argus.Souffle.Program do
   input no rule that reaches an output reads, before it loads anything,
   so a relation added to the schema, or another relation's prose,
   moves no program's digest. The query graph keys each program on it
-  (`Argus.Graph.Programs`), as the batch solve store does
-  (`Argus.Souffle.Cache`).
+  (`Argus.Graph.Programs`).
   """
 
   # How long `stamped/2` trusts its files without a look, and the size

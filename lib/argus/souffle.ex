@@ -8,7 +8,7 @@ defmodule Argus.Souffle do
 
   """
 
-  alias Argus.Souffle.Cache
+  alias Argus.Souffle.Program
 
   @type result :: %{String.t() => [[String.t()]]}
 
@@ -24,30 +24,26 @@ defmodule Argus.Souffle do
   - `:souffle_bin` — path to the souffle binary (default: auto-detect on PATH)
   - `:souffle_timeout` — milliseconds before the run is aborted (default: 5 min)
   - `:output_dir` — where Souffle should write `.csv` outputs (default: tmpdir)
-  - `:solve_cache` — a directory of kept solves, or `{dir, group}`
-    (`Argus.Souffle.Cache`): a solve whose program, solver and input
-    files have not moved is read back from it rather than run. Keyed by
-    the content of exactly the files in `facts_dir` the program reads,
-    so any facts directory can share one. Off by default, and ignored
-    under `ARGUS_NO_CACHE` (`Argus.Cache.enabled?/0`).
+
+  Every call solves: the graph keeps its solves in the blob store
+  (`Argus.Souffle.Solve`). `:solve_cache`, the batch pipeline's store of
+  kept solves, went with it in 0.20 and raises.
   """
   @spec run(Path.t(), Path.t(), keyword()) :: {:ok, result()} | {:error, term()}
   def run(facts_dir, rules_path, opts \\ []) do
-    souffle_bin = Keyword.get(opts, :souffle_bin, find_souffle())
+    if Keyword.has_key?(opts, :solve_cache) do
+      raise ArgumentError,
+            ":solve_cache: kept solves live in the blob store since 0.20 " <>
+              "(Argus.Souffle.Solve, through Argus.run_analyses/2 or the query graph)"
+    end
 
-    case souffle_bin do
+    case Keyword.get(opts, :souffle_bin, find_souffle()) do
       nil ->
         {:error, :souffle_not_found}
 
       bin ->
         timeout = Keyword.get(opts, :souffle_timeout, @default_souffle_timeout)
-
-        # A program whose inputs cannot be resolved is solved uncached:
-        # the solve reports the real trouble.
-        case Cache.entry(rules_path, bin, facts_dir, opts) do
-          {:ok, entry} -> run_cached(entry, bin, facts_dir, rules_path, timeout, opts)
-          _none_or_error -> run_uncached(bin, facts_dir, rules_path, timeout, opts)
-        end
+        run_uncached(bin, facts_dir, rules_path, timeout, opts)
     end
   end
 
@@ -65,74 +61,6 @@ defmodule Argus.Souffle do
 
       {:error, _} = error ->
         error
-    end
-  end
-
-  # A kept solve is read from its entry; a missing one is solved into a
-  # staging directory and installed. Either way a caller's `:output_dir`
-  # receives a copy of the outputs, as if the solver had written them.
-  # A cache that cannot be written to is solved around, not failed on.
-  #
-  # A kept solve gone by the time it is read (a prune beside this run), or
-  # not holding every output its manifest names, is a miss; one still
-  # there is taken out of its name, so the solve installs it again.
-  defp run_cached(entry, bin, facts_dir, rules_path, timeout, opts) do
-    with {:ok, results} <- read_kept(entry),
-         :ok <- place(entry, opts) do
-      {:ok, results}
-    else
-      _miss ->
-        case Cache.staging(entry) do
-          {:ok, staging} ->
-            solve_and_keep(entry, staging, bin, facts_dir, rules_path, timeout, opts)
-
-          {:error, _} ->
-            run_uncached(bin, facts_dir, rules_path, timeout, opts)
-        end
-    end
-  end
-
-  defp read_kept(entry) do
-    with {:ok, entry} <- Cache.fetch(entry),
-         {:ok, _results} = read <- read_outputs(entry) do
-      read
-    else
-      :miss ->
-        :miss
-
-      {:error, _} ->
-        Argus.Cache.evict(entry)
-        :miss
-    end
-  end
-
-  defp solve_and_keep(entry, staging, bin, facts_dir, rules_path, timeout, opts) do
-    case run_souffle(bin, facts_dir, rules_path, staging, timeout) do
-      {:ok, result} ->
-        # Not kept (the rename failed): the outputs are read from the
-        # staging directory, which goes with this call.
-        from =
-          case Cache.install(staging, entry) do
-            :ok -> entry
-            {:error, _} -> staging
-          end
-
-        try do
-          with :ok <- place(from, opts), do: {:ok, result}
-        after
-          if from == staging, do: File.rm_rf(staging)
-        end
-
-      {:error, _} = error ->
-        File.rm_rf(staging)
-        error
-    end
-  end
-
-  defp place(entry, opts) do
-    case Keyword.fetch(opts, :output_dir) do
-      {:ok, output_dir} -> Cache.place(entry, output_dir)
-      :error -> :ok
     end
   end
 
@@ -167,13 +95,11 @@ defmodule Argus.Souffle do
   what will actually be opened.
 
   The answer is memoized for the life of the VM, keyed by the program
-  with its includes (`Argus.Souffle.Cache.declared_digest/2`: every
+  with its includes (`Argus.Souffle.Program.declared_digest/2`: every
   declaration, but not the comments, of a file of declarations alone)
-  and the solver: an edited rule or declaration, or a swapped solver,
-  misses. `programs:` names a directory where it is kept across VMs as
-  well (`Argus.Cache`), with the solver's version
-  (`Argus.Souffle.Cache.version/2`), so a warm run starts no solver to
-  ask.
+  and the solver's version (`version/1`): an edited rule or
+  declaration, or a swapped solver, misses. The query graph keeps what
+  a program reads in its store (`Argus.Graph.Programs`).
   """
   @spec input_relations(Path.t(), keyword()) :: {:ok, [String.t()]} | {:error, term()}
   def input_relations(rules_path, opts \\ []) do
@@ -203,14 +129,11 @@ defmodule Argus.Souffle do
 
         if File.regular?(path) do
           # By the declarations, not their comments: a schema edit that
-          # moves only prose resolves nothing again. With a store, the
-          # solver's version is kept there too: a warm VM starts no
-          # solver at all.
-          programs = Keyword.get(opts, :programs)
-          version = {Cache.declared_digest(path, :all), bin, Cache.version(bin, programs)}
+          # moves only prose resolves nothing again.
+          version = {Program.declared_digest(path, :all), bin, version(bin)}
 
           memoized({{__MODULE__, :inputs, path}, version}, fn ->
-            kept(programs, path, bin, version)
+            resolve_inputs(bin, path)
           end)
         else
           resolve_inputs(bin, path)
@@ -285,49 +208,25 @@ defmodule Argus.Souffle do
     end
   end
 
-  # What a kept list of a program's inputs starts with, and part of its
-  # key: bump it when what an entry holds changes.
-  @inputs_format "argus-inputs-3"
-
-  # The answer kept in a store's `programs/`, or resolved and kept there.
-  # A program may read nothing, so an entry's first line says it is one:
-  # an empty or foreign file at its name is no answer, and is written
-  # again.
-  defp kept(nil, path, bin, _version), do: resolve_inputs(bin, path)
-
-  defp kept(dir, path, bin, {program, _bin, version}) do
-    key = Argus.Cache.key([@inputs_format, program, version])
-    entry = Path.join(dir, "#{Cache.program_name(path)}-#{key}")
-
-    with {:ok, entry} <- Argus.Cache.fetch(entry),
-         {:ok, text} <- File.read(entry),
-         [@inputs_format | lines] <- String.split(text, "\n", trim: true) do
-      {:ok, for(line <- lines, do: List.to_tuple(String.split(line, "\t")))}
-    else
-      _missing ->
-        with {:ok, inputs} = ok <- resolve_inputs(bin, path) do
-          keep_inputs(entry, inputs)
-          ok
+  @doc """
+  The solver's `--version` output, once per VM for each binary (asked
+  again when the binary is replaced: `Argus.Souffle.Program.stamped/2`),
+  or `"unrunnable"`: the part of a key that names the solver wherever
+  it is installed.
+  """
+  @spec version(String.t()) :: String.t()
+  def version(bin) do
+    Program.stamped({__MODULE__, :version, bin}, fn ->
+      version =
+        try do
+          {out, _status} = System.cmd(bin, ["--version"], stderr_to_stdout: true)
+          out
+        rescue
+          _ -> "unrunnable"
         end
-    end
-  end
 
-  # A store that cannot be written to is resolved around, not failed on.
-  defp keep_inputs(entry, inputs) do
-    staging = "#{entry}.#{:os.getpid()}.#{System.unique_integer([:positive])}"
-
-    text = [
-      @inputs_format,
-      "\n" | Enum.map(inputs, fn {name, file} -> [name, "\t", file, "\n"] end)
-    ]
-
-    with :ok <- File.mkdir_p(Path.dirname(entry)),
-         :ok <- File.write(staging, text),
-         :ok <- Argus.Cache.install(staging, entry) do
-      :ok
-    else
-      _ -> File.rm(staging)
-    end
+      {[bin], version}
+    end)
   end
 
   # Only a resolved answer is kept: a failure is reported every time it
@@ -523,51 +422,6 @@ defmodule Argus.Souffle do
       {^port, _} -> flush(port)
     after
       0 -> :ok
-    end
-  end
-
-  @doc false
-  # A kept solve's relations (`Argus.Souffle.Cache`), as `run/3` returns
-  # them: every output its manifest names, each `.csv` read and each
-  # other file (a stage's `.facts`) there. A file the manifest names and
-  # the entry does not hold is an `Argus.MissingRelationError`, never a
-  # relation without rows: the entry was taken from under its reader, or
-  # is damaged. An entry without a manifest is an error too.
-  @spec read_outputs(Path.t()) :: {:ok, result()} | {:error, term()}
-  def read_outputs(entry) do
-    with {:ok, digests} <- Cache.manifest(entry) do
-      digests
-      |> Map.keys()
-      |> Enum.sort()
-      |> Enum.reduce_while({:ok, %{}}, fn file, {:ok, acc} ->
-        case read_kept_output(Path.join(entry, file)) do
-          {:ok, nil} -> {:cont, {:ok, acc}}
-          {:ok, rows} -> {:cont, {:ok, Map.put(acc, Path.rootname(file), rows)}}
-          {:error, _} = error -> {:halt, error}
-        end
-      end)
-    end
-  end
-
-  defp read_kept_output(path) do
-    result =
-      if Path.extname(path) == ".csv" do
-        with {:ok, content} <- File.read(path), do: {:ok, Argus.Tsv.decode(content)}
-      else
-        with {:ok, _stat} <- File.lstat(path), do: {:ok, nil}
-      end
-
-    case result do
-      {:ok, _} = ok ->
-        ok
-
-      {:error, reason} ->
-        {:error,
-         %Argus.MissingRelationError{
-           relation: path |> Path.basename() |> Path.rootname(),
-           path: path,
-           reason: reason
-         }}
     end
   end
 

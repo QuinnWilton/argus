@@ -47,7 +47,6 @@ defmodule Argus.Cache.CodeTest do
         {:ok, closure} = Code.closure(producer),
         mod <- [
           Argus.Souffle,
-          Argus.Souffle.Cache,
           Argus.Cache,
           Argus.Analysis,
           Argus.Analysis.Sets,
