@@ -1133,21 +1133,11 @@ trap_loop_receives(f) :- trap_loop.reaches(f, g), recv_start(_, g, _, _).
 
 trap_loop_takes_exit(f) :- trap_loop.reaches(f, g), recv_takes_exit(_, g).
 
-// The loop runs code whose receives are not the program's to read: a
-// call through a fun or an apply, an enter_loop, a hibernate.
+// The loop runs code whose receives are not the program's to read
+// (hides_receives, clientlib/receive.dl).
 .decl trap_loop_hides_receives(trap: symbol)
 
-trap_loop_hides_receives(f) :- trap_loop.reaches(f, g), dynamic_call(_, g, _).
-
-trap_loop_hides_receives(f) :-
-  trap_loop.reaches(f, g),
-  remote_call(_, g, m, "enter_loop", _),
-  (m = ":gen_server" ; m = ":gen_statem" ; m = ":gen_event").
-
-trap_loop_hides_receives(f) :-
-  trap_loop.reaches(f, g),
-  remote_call(_, g, m, "hibernate", _),
-  (m = ":erlang" ; m = ":proc_lib").
+trap_loop_hides_receives(f) :- trap_loop.reaches(f, g), hides_receives(g).
 
 unhandled_exit_signal(mod, "no_receive_clause", trap) :-
   exit_without_receive(mod, trap).

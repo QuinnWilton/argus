@@ -21,6 +21,22 @@ blocking_receive(func) :- recv_start(_, func, 1, _).
 
 timed_receive(func) :- recv_start(_, func, 0, _).
 
+// `func` runs code whose receives are not the program's to read: a call
+// through a fun or an apply, a gen_server, gen_statem or gen_event
+// enter_loop (its callbacks take the mailbox), a hibernate that resumes
+// in an MFA.
+.decl hides_receives(func: symbol) inline
+
+hides_receives(g) :- dynamic_call(_, g, _).
+
+hides_receives(g) :-
+  remote_call(_, g, m, "enter_loop", _),
+  (m = ":gen_server" ; m = ":gen_statem" ; m = ":gen_event").
+
+hides_receives(g) :-
+  remote_call(_, g, m, "hibernate", _),
+  (m = ":erlang" ; m = ":proc_lib").
+
 // A receive in the module has a clause for this literal message, or
 // one that matches anything ("any").
 .decl receives_message(mod: symbol, message: symbol)

@@ -1488,22 +1488,11 @@ receive_takes(r, m) :- spawned_reach.reaches(r, g), recv_pattern(_, g, m).
 
 receive_takes_anything(r) :- receive_takes(r, "any").
 
-// The process runs code whose receives are not the program's to read: a
-// call through a fun or an apply, a gen_server or gen_statem enter_loop
-// (its callbacks take the mailbox), a hibernate that resumes in an MFA.
+// The process runs code whose receives are not the program's to read
+// (hides_receives, clientlib/receive.dl).
 .decl receives_out_of_sight(runs: symbol)
 
-receives_out_of_sight(r) :- spawned_reach.reaches(r, g), dynamic_call(_, g, _).
-
-receives_out_of_sight(r) :-
-  spawned_reach.reaches(r, g),
-  remote_call(_, g, m, "enter_loop", _),
-  (m = ":gen_server" ; m = ":gen_statem" ; m = ":gen_event").
-
-receives_out_of_sight(r) :-
-  spawned_reach.reaches(r, g),
-  remote_call(_, g, m, "hibernate", _),
-  (m = ":erlang" ; m = ":proc_lib").
+receives_out_of_sight(r) :- spawned_reach.reaches(r, g), hides_receives(g).
 
 // ══ A message its server has no clause for ═════════════════════════
 //
