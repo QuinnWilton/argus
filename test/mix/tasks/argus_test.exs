@@ -28,7 +28,7 @@ defmodule Mix.Tasks.ArgusTest do
   # not per test. The `compile!()` each test opens with is then a no-op.
   setup_all do
     peer = Peer.start!()
-    copy = Fixture.checkout!(Path.join(System.tmp_dir!(), "scry_task_depot"), @quick)
+    copy = Fixture.checkout!(Path.join(System.tmp_dir!(), "argus_task_depot"), @quick)
     Fixture.in_peer(peer, copy, :depot, fn _log -> compile!() end)
     %{copy: copy, peer: peer}
   end
@@ -152,7 +152,7 @@ defmodule Mix.Tasks.ArgusTest do
 
       copy =
         Fixture.checkout!(
-          Path.join(System.tmp_dir!(), "scry_#{app}"),
+          Path.join(System.tmp_dir!(), "argus_#{app}"),
           [severity: [mailbox: :error]] ++ @quick,
           app
         )
@@ -180,7 +180,7 @@ defmodule Mix.Tasks.ArgusTest do
 
     test "a project that does not compile is an error, with no report", %{peer: peer} do
       app = :depot_task_broken
-      copy = Fixture.checkout!(Path.join(System.tmp_dir!(), "scry_#{app}"), @quick, app)
+      copy = Fixture.checkout!(Path.join(System.tmp_dir!(), "argus_#{app}"), @quick, app)
 
       File.write!(
         Path.join(copy, "lib/depot/broken.ex"),

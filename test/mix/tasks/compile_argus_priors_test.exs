@@ -28,7 +28,7 @@ defmodule Mix.Tasks.Compile.ArgusPriorsTest do
   end
 
   defp checkout!(app) do
-    copy = Fixture.checkout!(Path.join(System.tmp_dir!(), "scry_priors_#{app}"), @quick, app)
+    copy = Fixture.checkout!(Path.join(System.tmp_dir!(), "argus_priors_#{app}"), @quick, app)
     {copy, app}
   end
 
@@ -36,8 +36,8 @@ defmodule Mix.Tasks.Compile.ArgusPriorsTest do
 
   # The runner directly, on the beams the compile left: what it returns
   # carries every entry field, which a diagnostic does not.
-  defp run(scry_config, manifest) do
-    Argus.Driver.run(Argus.Config.load(@quick ++ scry_config), manifest: manifest, force: false)
+  defp run(config, manifest) do
+    Argus.Driver.run(Argus.Config.load(@quick ++ config), manifest: manifest, force: false)
   end
 
   defp entries(result),
@@ -51,7 +51,7 @@ defmodule Mix.Tasks.Compile.ArgusPriorsTest do
     {copy, app} = checkout!(:depot_priors)
 
     scratch =
-      Path.join(System.tmp_dir!(), "scry_priors_cache_#{System.unique_integer([:positive])}")
+      Path.join(System.tmp_dir!(), "argus_priors_cache_#{System.unique_integer([:positive])}")
 
     File.rm_rf!(scratch)
     log = Path.join(scratch, "asked.log")
@@ -159,11 +159,11 @@ defmodule Mix.Tasks.Compile.ArgusPriorsTest do
        %{peer: peer} do
     app = :depot_priors_heuristic
     blocking = [analyses: [:blocking]]
-    copy = Fixture.checkout!(Path.join(System.tmp_dir!(), "scry_priors_#{app}"), blocking, app)
+    copy = Fixture.checkout!(Path.join(System.tmp_dir!(), "argus_priors_#{app}"), blocking, app)
     File.write!(Path.join(copy, "lib/depot/ledger.ex"), @ledger)
 
     scratch =
-      Path.join(System.tmp_dir!(), "scry_priors_heuristic_#{System.unique_integer([:positive])}")
+      Path.join(System.tmp_dir!(), "argus_priors_heuristic_#{System.unique_integer([:positive])}")
 
     File.rm_rf!(scratch)
     File.mkdir_p!(scratch)
@@ -181,8 +181,8 @@ defmodule Mix.Tasks.Compile.ArgusPriorsTest do
     Fixture.in_peer(peer, copy, app, fn _log ->
       assert {_status, _} = compile!()
 
-      wait = fn scry_config, manifest ->
-        config = Argus.Config.load(blocking ++ scry_config)
+      wait = fn config, manifest ->
+        config = Argus.Config.load(blocking ++ config)
         result = Argus.Driver.run(config, manifest: Path.join(scratch, manifest), force: false)
         assert result |> Result.degraded() == []
 
@@ -238,7 +238,7 @@ defmodule Mix.Tasks.Compile.ArgusPriorsTest do
     {copy, app} = checkout!(:depot_priors_empty)
 
     scratch =
-      Path.join(System.tmp_dir!(), "scry_priors_empty_#{System.unique_integer([:positive])}")
+      Path.join(System.tmp_dir!(), "argus_priors_empty_#{System.unique_integer([:positive])}")
 
     File.rm_rf!(scratch)
     File.mkdir_p!(scratch)

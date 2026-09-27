@@ -2,8 +2,8 @@ defmodule Mix.Tasks.Compile.ArgusTest do
   @moduledoc """
   The Mix compiler integration, driven through the REAL chain:
   `compile!()` runs `:elixir` (producing the beams) and
-  then `:scry` (analyzing them) inside a checked-out fixture project.
-  Each scry run builds a fresh roux database restored from the manifest,
+  then `:argus` (analyzing them) inside a checked-out fixture project.
+  Each argus run builds a fresh roux database restored from the manifest,
   so every warm assertion exercises the cross-VM serialization path.
 
   The Mix project stack, the working directory and the telemetry the
@@ -26,7 +26,7 @@ defmodule Mix.Tasks.Compile.ArgusTest do
   end
 
   setup do
-    %{copy: Path.join(System.tmp_dir!(), "scry_mix_depot")}
+    %{copy: Path.join(System.tmp_dir!(), "argus_mix_depot")}
   end
 
   defp compile!, do: Fixture.compile!()
@@ -42,7 +42,7 @@ defmodule Mix.Tasks.Compile.ArgusTest do
     File.touch!(path, System.os_time(:second) + bump)
   end
 
-  defp scry_diagnostics({_status, diagnostics}) do
+  defp argus_diagnostics({_status, diagnostics}) do
     Enum.filter(diagnostics, &(&1.compiler_name == "argus"))
   end
 
@@ -68,7 +68,7 @@ defmodule Mix.Tasks.Compile.ArgusTest do
     Fixture.in_peer(peer, copy, :depot, fn log ->
       # ── cold build ──────────────────────────────────────────────────
       result = compile!()
-      diags = scry_diagnostics(result)
+      diags = argus_diagnostics(result)
 
       # The fixture goldens: one coupling finding at the tree definition
       # (Sonar's listener registration, which Notifier keeps) and two
@@ -110,7 +110,7 @@ defmodule Mix.Tasks.Compile.ArgusTest do
       # ── warm noop ───────────────────────────────────────────────────
       QueryLog.reset(log)
       result = compile!()
-      diags = scry_diagnostics(result)
+      diags = argus_diagnostics(result)
 
       # Prior findings re-emit from memo hits: same diagnostics, zero
       # extraction, zero solves.
@@ -123,7 +123,7 @@ defmodule Mix.Tasks.Compile.ArgusTest do
 
       # ── line-only edit (the headline) ───────────────────────────────
       # A comment shifts every line: :elixir rewrites the beam
-      # (Line/Dbgi chunks), scry re-extracts exactly that module, the
+      # (Line/Dbgi chunks), argus re-extracts exactly that module, the
       # semantic facts compare equal, and NO solve re-runs — while the
       # reported line moves down by one.
       application = Path.join(copy, "lib/depot/application.ex")
@@ -132,7 +132,7 @@ defmodule Mix.Tasks.Compile.ArgusTest do
 
       QueryLog.reset(log)
       result = compile!()
-      diags = scry_diagnostics(result)
+      diags = argus_diagnostics(result)
 
       assert [extracted] = QueryLog.executions(log, :module_facts)
       assert String.ends_with?(extracted, "/Elixir.Depot.Application.beam")
@@ -155,7 +155,7 @@ defmodule Mix.Tasks.Compile.ArgusTest do
 
       QueryLog.reset(log)
       result = compile!()
-      diags = scry_diagnostics(result)
+      diags = argus_diagnostics(result)
 
       assert counts_by_code(diags) == %{"mailbox" => 2}
       assert {:project, :coupling} in QueryLog.executions(log, :solve)
@@ -174,7 +174,7 @@ defmodule Mix.Tasks.Compile.ArgusTest do
       QueryLog.reset(log)
       result = compile!()
 
-      assert scry_diagnostics(result) == []
+      assert argus_diagnostics(result) == []
       assert {:project, :mailbox} in QueryLog.executions(log, :solve)
 
       # And a further run is a clean noop.
@@ -182,7 +182,7 @@ defmodule Mix.Tasks.Compile.ArgusTest do
       result = compile!()
       assert QueryLog.executions(log, :module_facts) == []
       assert QueryLog.executions(log, :solve) == []
-      assert scry_diagnostics(result) == []
+      assert argus_diagnostics(result) == []
     end)
   end
 end

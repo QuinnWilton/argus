@@ -35,7 +35,7 @@ defmodule Mix.Tasks.Compile.ArgusManifestTest do
   end
 
   setup do
-    %{copy: Path.join(System.tmp_dir!(), "scry_manifest_depot")}
+    %{copy: Path.join(System.tmp_dir!(), "argus_manifest_depot")}
   end
 
   defp compile!, do: Fixture.compile!()
@@ -51,7 +51,7 @@ defmodule Mix.Tasks.Compile.ArgusManifestTest do
     File.touch!(path, System.os_time(:second) + bump)
   end
 
-  defp scry_diagnostics({_status, diagnostics}) do
+  defp argus_diagnostics({_status, diagnostics}) do
     Enum.filter(diagnostics, &(&1.compiler_name == "argus"))
   end
 
@@ -174,7 +174,7 @@ defmodule Mix.Tasks.Compile.ArgusManifestTest do
       assert ran(log, :module_semantic) == []
       assert ran(log, :solve) == []
       assert ran(log, :findings) == []
-      assert counts_by_code(scry_diagnostics(warm)) == counts_by_code(scry_diagnostics(cold))
+      assert counts_by_code(argus_diagnostics(warm)) == counts_by_code(argus_diagnostics(cold))
     end)
   end
 
@@ -194,7 +194,7 @@ defmodule Mix.Tasks.Compile.ArgusManifestTest do
       assert ran(log, :located) == []
       assert ran(log, :module_facts) == []
       assert ran(log, :solve) == []
-      assert counts_by_code(scry_diagnostics(warm)) == counts_by_code(scry_diagnostics(cold))
+      assert counts_by_code(argus_diagnostics(warm)) == counts_by_code(argus_diagnostics(cold))
     end)
   end
 
@@ -249,7 +249,7 @@ defmodule Mix.Tasks.Compile.ArgusManifestTest do
       assert extracted == []
       assert ran(log, :module_semantic) == []
       assert ran(log, :solve) == []
-      assert counts_by_code(scry_diagnostics(warm)) == counts_by_code(scry_diagnostics(cold))
+      assert counts_by_code(argus_diagnostics(warm)) == counts_by_code(argus_diagnostics(cold))
     end)
   end
 
@@ -287,7 +287,7 @@ defmodule Mix.Tasks.Compile.ArgusManifestTest do
       warm = compile!()
 
       assert length(ran(log, :module_semantic)) == map_size(modules)
-      assert counts_by_code(scry_diagnostics(warm)) == counts_by_code(scry_diagnostics(cold))
+      assert counts_by_code(argus_diagnostics(warm)) == counts_by_code(argus_diagnostics(cold))
 
       # What it wrote holds nothing of the other query, and is read back.
       {:ok, data} = Manifest.load(Argus.Driver.manifest_file())
@@ -348,7 +348,7 @@ defmodule Mix.Tasks.Compile.ArgusManifestTest do
 
     Fixture.in_peer(peer, copy, :depot_quick, fn log ->
       result = compile!()
-      assert counts_by_code(scry_diagnostics(result)) != %{}
+      assert counts_by_code(argus_diagnostics(result)) != %{}
 
       File.write!(Argus.Driver.manifest_file(), "not a manifest")
 
@@ -356,7 +356,7 @@ defmodule Mix.Tasks.Compile.ArgusManifestTest do
       result = compile!()
 
       # Full rebuild, same findings, no crash.
-      assert counts_by_code(scry_diagnostics(result)) ==
+      assert counts_by_code(argus_diagnostics(result)) ==
                %{"coupling" => 1, "mailbox" => 2}
 
       assert ran(log, :module_facts) != []

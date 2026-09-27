@@ -26,11 +26,11 @@ defmodule Mix.Tasks.Compile.ArgusConfigTest do
   # Each scenario needs its own app atom: in_project caches project
   # config by app name, so a shared :depot would pin the first
   # scenario's argus: config for every later one.
-  defp checkout!(scry_config, app) do
+  defp checkout!(config, app) do
     copy =
       Fixture.checkout!(
-        Path.join(System.tmp_dir!(), "scry_cfg_#{app}"),
-        Keyword.merge(@quick, scry_config),
+        Path.join(System.tmp_dir!(), "argus_cfg_#{app}"),
+        Keyword.merge(@quick, config),
         app
       )
 

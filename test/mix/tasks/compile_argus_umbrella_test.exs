@@ -1,8 +1,8 @@
 defmodule Mix.Tasks.Compile.ArgusUmbrellaTest do
   @moduledoc """
-  An umbrella whose child appends `:scry` to its compilers. Mix runs a
+  An umbrella whose child appends `:argus` to its compilers. Mix runs a
   non-recursive compiler once at the umbrella root, where there is no
-  app and no ebin; scry is recursive, so it runs inside each child that
+  app and no ebin; argus is recursive, so it runs inside each child that
   lists it and analyzes that child's beams. In its own peer
   (`Argus.Test.Peer`): the Mix project stack and the working directory
   are VM-wide.
@@ -20,7 +20,7 @@ defmodule Mix.Tasks.Compile.ArgusUmbrellaTest do
   @fixture Path.expand("../../projects/umbrella", __DIR__)
 
   setup do
-    copy = Path.join(System.tmp_dir!(), "scry_umbrella")
+    copy = Path.join(System.tmp_dir!(), "argus_umbrella")
     File.rm_rf!(copy)
     File.cp_r!(@fixture, copy)
     %{copy: copy, peer: Peer.start!()}
@@ -30,7 +30,7 @@ defmodule Mix.Tasks.Compile.ArgusUmbrellaTest do
     copy: copy,
     peer: peer
   } do
-    Fixture.in_peer(peer, copy, :scry_umbrella_fixture, fn _log ->
+    Fixture.in_peer(peer, copy, :argus_umbrella_fixture, fn _log ->
       {_result, stderr} = Fixture.compile_io!()
 
       # The child's own flaw is found in its own file (paths are

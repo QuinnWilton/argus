@@ -26,11 +26,11 @@ defmodule Mix.Tasks.Compile.ArgusSouffleGateTest do
 
   # Each scenario needs its own app atom: in_project caches project
   # config by app name.
-  defp checkout!(scry_config, app) do
+  defp checkout!(config, app) do
     copy =
       Fixture.checkout!(
-        Path.join(System.tmp_dir!(), "scry_gate_#{app}"),
-        Keyword.merge(@quick, scry_config),
+        Path.join(System.tmp_dir!(), "argus_gate_#{app}"),
+        Keyword.merge(@quick, config),
         app
       )
 
@@ -116,7 +116,10 @@ defmodule Mix.Tasks.Compile.ArgusSouffleGateTest do
       real = System.find_executable("souffle")
 
       dir =
-        Path.join(System.tmp_dir!(), "scry_failing_souffle_#{System.unique_integer([:positive])}")
+        Path.join(
+          System.tmp_dir!(),
+          "argus_failing_souffle_#{System.unique_integer([:positive])}"
+        )
 
       File.mkdir_p!(dir)
       wrapper = Path.join(dir, "souffle")
