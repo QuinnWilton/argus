@@ -22,6 +22,29 @@ defmodule Argus.Extractors.ETSTest do
     end
   end
 
+  describe "a literal named only while an answer is unset" do
+    defp defaults(mod) do
+      facts = ETS.extract(disassemble(mod))
+      ops = Map.new(facts[:ets_op], fn [id, func, _t, op, _k] -> {id, {short(func), op}} end)
+      for [id, name, site] <- facts[:ets_table_default], do: {ops[id], name, short(site)}
+    end
+
+    test "the unset arm of a case on a call's answer" do
+      defaults = defaults(Argus.Test.Fixtures.Dictionary.TmpOptions)
+
+      assert {{"set_option/2", "insert"}, ":dict_options", site} =
+               List.keyfind(defaults, {"set_option/2", "insert"}, 0)
+
+      assert site =~ ~r"^set_option/2#\d+$"
+      assert List.keyfind(defaults, {"get_option/1", "lookup"}, 0)
+    end
+
+    test "the `||` of a read in place, and not of a parameter" do
+      assert [{{"put/2", "insert"}, ":or_default", _site}] =
+               defaults(Argus.Test.Fixtures.Dictionary.OrDefault)
+    end
+  end
+
   describe "keypos" do
     test "a table keyed past the first element says which" do
       facts = ETS.extract(disassemble(Argus.Test.Fixtures.CheckThenAct.RecordTable))

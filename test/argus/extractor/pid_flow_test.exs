@@ -145,6 +145,54 @@ defmodule Argus.Extractors.PidFlowTest do
     end
   end
 
+  describe "the process dictionary" do
+    alias Argus.Test.Fixtures.Dictionary
+
+    defp dict_facts(modules) do
+      {:ok, facts} = Argus.Pipeline.extract(modules, extractors: [PidFlow])
+
+      Map.new([:dict_op, :dict_put, :table_use, :pid_return], fn relation ->
+        rows =
+          for row <- Map.get(facts, relation, []),
+              do: Enum.map(row, &String.replace(&1, "Argus.Test.Fixtures.Dictionary.", ""))
+
+        {relation, rows}
+      end)
+    end
+
+    test "every put, read and erase, with its literal key" do
+      r = dict_facts([Dictionary.TmpOptions])
+      ops = for [_id, func, op, key] <- r.dict_op, uniq: true, do: {func, op, key}
+
+      assert {"TmpOptions:create_tmp/0", "put", ":dict_options"} in ops
+      assert {"TmpOptions:get_tmp/0", "get", ":dict_options"} in ops
+      assert {"TmpOptions:delete_tmp/0", "erase", ":dict_options"} in ops
+    end
+
+    test "a put keeps its value under the key, and a read hands it back" do
+      r = dict_facts([Dictionary.TmpOptions])
+
+      assert [[_, "TmpOptions:create_tmp/0", ":dict_options", "table", "table " <> site]] =
+               r.dict_put
+
+      assert site =~ "TmpOptions:create_tmp/0#"
+      assert ["TmpOptions:get_tmp/0", "dict", ":dict_options"] in r.pid_return
+    end
+
+    test "a key computed at run time is a key not known, and keeps nothing" do
+      r = dict_facts([Dictionary.ComputedKey])
+      ops = for [_id, func, op, key] <- r.dict_op, uniq: true, do: {func, op, key}
+
+      assert {"ComputedKey:run/2", "put", "dynamic"} in ops
+      assert {"ComputedKey:run/2", "get", "dynamic"} in ops
+      assert {"ComputedKey:run_literal/1", "put", "{:computed, :fixed}"} in ops
+      assert for([_, "ComputedKey:run/2" | _] <- r.dict_put, do: :row) == []
+
+      assert [_, "ComputedKey:run_literal/1", "dict", "{:computed, :fixed}"] =
+               Enum.find(r.table_use, &match?([_, "ComputedKey:run_literal/1" | _], &1))
+    end
+  end
+
   describe "terms that hold pids" do
     test "a start returns its process in {:ok, pid}" do
       f = facts([F.Worker])

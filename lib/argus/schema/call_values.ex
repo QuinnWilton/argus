@@ -243,6 +243,23 @@ defmodule Argus.Schema.CallValues do
         """
       },
       %{
+        name: :ets_table_default,
+        layer: 2,
+        fields: [
+          {:id, :instr_id, "instruction ID of the ETS operation"},
+          {:name, :symbol, "the inspected literal name"},
+          {:site, :instr_id, "the call whose answer was tested"}
+        ],
+        doc: """
+        The table operand of the ETS operation at `id` is the literal `name` \
+        only where a test found what the call at `site` returned unset \
+        (`undefined`, `nil` or `false`), and that answer otherwise: \
+        `case get_tmp_config() do undefined -> :options; t -> t end`, or \
+        `Process.get(:tab) || :options`. The literal is one of the operand's \
+        ets_table_path rows.
+        """
+      },
+      %{
         name: :ets_tid_arg,
         layer: 2,
         fields: [

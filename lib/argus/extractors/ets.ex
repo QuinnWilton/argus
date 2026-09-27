@@ -32,6 +32,11 @@ defmodule Argus.Extractors.ETS do
     tables one function was handed in one map (`%{forward: f, reverse:
     r}`) are two paths, where `ets_op` knows both by the name they were
     created with
+  - `ets_table_default(id, name, site)` — the operand is a literal
+    name only where a test found the value the call at `site` returned
+    unset (`undefined`, `nil` or `false`), and that value otherwise:
+    `case get_tmp_config() do undefined -> :options; t -> t end`, or
+    `Process.get(:tab) || :options`
   - `ets_value(id, pos, source, value)` — what identifies element `pos`
     (1 and up) of the object an `insert`/`insert_new` writes, as
     `ets_key` identifies element 0
@@ -61,6 +66,8 @@ defmodule Argus.Extractors.ETS do
   alias Argus.Extractor.CallSites
   alias Argus.Extractor.Helpers
   alias Argus.Extractor.Identity
+  alias Argus.Instr
+  alias Argus.Instr.Reaching
   alias Argus.InstrId
   alias Argus.Pipeline.Normalize
 
@@ -111,6 +118,7 @@ defmodule Argus.Extractors.ETS do
       :ets_option,
       :ets_options_known,
       :ets_table_path,
+      :ets_table_default,
       :ets_tid_arg,
       :ets_value,
       :ets_effect_order,
@@ -675,6 +683,7 @@ defmodule Argus.Extractors.ETS do
     |> ops(id, ctx.func_id, table_ref, func, arity)
     |> maybe_table_param(id, table_ref, ctx)
     |> table_path(id, ctx)
+    |> table_default(id, ctx)
     |> maybe_key(id, ctx, func)
     |> maybe_values(id, ctx, func)
   end
@@ -723,6 +732,149 @@ defmodule Argus.Extractors.ETS do
       acc -> add_fact(acc, :ets_table_path, [id, source, root, path])
     end
   end
+
+  # A literal the operand holds only as the default of a value a test
+  # found unset: the `undefined` (or `nil`, `false`) arm of a case on a
+  # call's answer, the other arm being the answer itself. The literal's
+  # move follows the test's equal edge: the fall-through of an equality
+  # test, or a label only such tests and select_val arms jump to. Every
+  # write of the tested register must be a call (a function returning a
+  # dictionary read, or the read itself): the row names each.
+  @unset [:undefined, nil, false]
+
+  defp table_default(facts, id, ctx) do
+    for {name, site} <- defaults(ctx.instrs, ctx.idx, {:x, 0}, 4), reduce: facts do
+      acc -> add_fact(acc, :ets_table_default, [id, name, InstrId.mint(ctx.func_id, site)])
+    end
+  end
+
+  defp defaults(_instrs, _idx, _reg, 0), do: []
+
+  defp defaults(instrs, idx, reg, fuel) do
+    instrs
+    |> Reaching.sources(idx, reg)
+    |> Enum.flat_map(fn
+      {:param, _k} ->
+        []
+
+      at ->
+        instr = Reaching.at(instrs, at)
+
+        case {Instr.copy_source(instr, reg), instr} do
+          {{kind, _} = source, _instr} when kind in [:x, :y] ->
+            defaults(instrs, at, source, fuel - 1)
+
+          {_, {:move, {:atom, name}, _dst}} when name not in @unset ->
+            for site <- unset_sources(instrs, at), do: {inspect(name), site}
+
+          _other ->
+            []
+        end
+    end)
+    |> Enum.uniq()
+  end
+
+  # The calls whose answer a test found unset just before `at`, where
+  # every write of the tested register is such a call.
+  defp unset_sources(instrs, at) do
+    with {:ok, test_at, tested} <- unset_test(instrs, at),
+         sites = Reaching.sources(instrs, test_at, tested),
+         true <- sites != [] and Enum.all?(sites, &answer_site?(instrs, &1)) do
+      sites
+    else
+      _ -> []
+    end
+  end
+
+  defp answer_site?(_instrs, {:param, _k}), do: false
+
+  defp answer_site?(instrs, at) do
+    case Reaching.at(instrs, at) do
+      {:bif, :get, _fail, [_key], _dst} -> true
+      instr -> match?({:ok, _, _, _}, match_remote_call(instr)) or local_call?(instr)
+    end
+  end
+
+  defp local_call?(instr), do: match?({:ok, _, _, _}, Helpers.match_local_call(instr))
+
+  # The test whose equal edge enters `at`, and the register it tests.
+  defp unset_test(instrs, at) do
+    case previous(instrs, at) do
+      {:ok, prev_at, {:test, op, _fail, [tested, {:atom, value}]}}
+      when op in [:is_eq_exact, :is_eq] and value in @unset ->
+        {:ok, prev_at, Instr.register(tested)}
+
+      {:ok, label_at, {:label, label}} ->
+        with {:ok, _, before} <- previous(instrs, label_at),
+             true <- no_fall_through?(before),
+             [{test_at, tested} | _] = jumps <- unset_jumps(instrs, label),
+             true <- Enum.all?(jumps, &(elem(&1, 1) == tested)) do
+          {:ok, test_at, tested}
+        else
+          _ -> :none
+        end
+
+      _ ->
+        :none
+    end
+  end
+
+  defp previous(_instrs, 0), do: :none
+
+  defp previous(instrs, at) do
+    case Reaching.at(instrs, at - 1) do
+      {:line, _} -> previous(instrs, at - 1)
+      instr -> {:ok, at - 1, instr}
+    end
+  end
+
+  defp no_fall_through?(instr),
+    do: match?({:select_val, _, _, _}, instr) or match?({:jump, _}, instr) or instr == :return
+
+  # Every instruction that jumps to `label`, as {index, tested register},
+  # when each is a test's or a select_val's unset arm; [] when any is not.
+  defp unset_jumps(instrs, label) do
+    instrs
+    |> Enum.with_index()
+    |> Enum.reduce_while([], fn {instr, i}, acc ->
+      case jump_to(instr, label) do
+        :none -> {:cont, acc}
+        {:unset, tested} -> {:cont, [{i, Instr.register(tested)} | acc]}
+        :other -> {:halt, :other}
+      end
+    end)
+    |> case do
+      :other -> []
+      jumps -> Enum.reverse(jumps)
+    end
+  end
+
+  defp jump_to({:test, op, {:f, label}, [tested, {:atom, value}]}, label)
+       when op in [:is_ne_exact, :is_ne] and value in @unset,
+       do: {:unset, tested}
+
+  defp jump_to({:select_val, tested, {:f, fail}, {:list, arms}}, label) do
+    targets = arms |> Enum.chunk_every(2) |> Enum.filter(&match?([_, {:f, ^label}], &1))
+
+    cond do
+      fail == label -> :other
+      targets == [] -> :none
+      Enum.all?(targets, &match?([{:atom, v}, _] when v in @unset, &1)) -> {:unset, tested}
+      true -> :other
+    end
+  end
+
+  defp jump_to(instr, label) do
+    if references?(instr, label), do: :other, else: :none
+  end
+
+  defp references?({:f, label}, label), do: true
+
+  defp references?(tuple, label) when is_tuple(tuple),
+    do: references?(Tuple.to_list(tuple), label)
+
+  defp references?(list, label) when is_list(list), do: Enum.any?(list, &references?(&1, label))
+  defp references?(_term, _label), do: false
 
   # The identities of an inserted object's elements past the key. An
   # element nothing identifies is left out, as is a list of objects.

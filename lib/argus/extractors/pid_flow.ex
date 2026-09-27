@@ -46,7 +46,10 @@ defmodule Argus.Extractors.PidFlow do
     load's id, see `pid_load`);
   - `reply` — what the `GenServer.call` at a site returned: the reply of
     the server the call reaches.
-  - `table` — the ETS table the `:ets.new/2` at a site made.
+  - `table` — the ETS table the `:ets.new/2` at a site made;
+  - `dict` — what the running process keeps in its dictionary under a
+    literal key: a `get/1` (`Process.get/1,2`), and the old value a
+    `put/2` or an `erase/1` (`Process.delete/1`) hands back.
 
   A timer's `apply_after/4`, `apply_interval/4` and `apply_repeatedly/4`
   start a process too: the MFA runs in it, handed the argument list, and
@@ -104,6 +107,13 @@ defmodule Argus.Extractors.PidFlow do
     answered with.
   - `table_use(id, func, src_kind, src)` — the `:ets` operation at `id`
     names its table with the source: `clientlib/tables.dl` resolves it.
+  - `dict_op(id, func, op, key)` — the call at `id` is a `put`, `get` or
+    `erase` of the process dictionary, under a literal key or `dynamic`
+    (`erase/0` erases every key, a key not known).
+  - `dict_put(id, func, key, src_kind, src)` — the `put/2` at `id` keeps
+    the source in the process dictionary under the literal `key`: a
+    `dict` source of `key`, in a function the same process runs, may
+    read it back (`clientlib/processes.dl`).
 
   ## Reading the bytecode
 
@@ -235,6 +245,20 @@ defmodule Argus.Extractors.PidFlow do
     {GenServer, :whereis, 1} => :any,
     {:global, :whereis_name, 1} => :global,
     {Registry, :whereis_name, 1} => :registry
+  }
+
+  # The process dictionary: the key is in x0, and a put's value in x1.
+  # Each hands back the key's value (a put and an erase the old one);
+  # Process.get/2's default in x1 is its answer when the key is unset.
+  @dictionary_ops %{
+    {:erlang, :put, 2} => "put",
+    {Process, :put, 2} => "put",
+    {:erlang, :get, 1} => "get",
+    {Process, :get, 1} => "get",
+    {Process, :get, 2} => "get",
+    {:erlang, :erase, 1} => "erase",
+    {Process, :delete, 1} => "erase",
+    {:erlang, :erase, 0} => "erase"
   }
 
   # Library calls that read a field of a term: {term position, key
@@ -371,7 +395,9 @@ defmodule Argus.Extractors.PidFlow do
       :pid_remote,
       :pid_probe,
       :table_alloc,
-      :table_use
+      :table_use,
+      :dict_op,
+      :dict_put
     ]
 
   @impl true
@@ -825,6 +851,13 @@ defmodule Argus.Extractors.PidFlow do
     write(r, dst, value)
   end
 
+  defp bif(ctx, :get, [key], dst, r) do
+    case dictionary_key(ctx.fun.instrs, ctx.idx, key) do
+      "dynamic" -> r
+      spelled -> write(r, dst, MapSet.new([{:dict, spelled}]))
+    end
+  end
+
   defp bif(_ctx, _name, _args, _dst, r), do: r
 
   # ── Calls ────────────────────────────────────────────────────────────
@@ -990,6 +1023,9 @@ defmodule Argus.Extractors.PidFlow do
       mfa == {Registry, :lookup, 2} ->
         registry_lookup(ctx, instrs, r)
 
+      Map.has_key?(@dictionary_ops, mfa) ->
+        write(r, {:x, 0}, dictionary_value(ctx, mfa))
+
       Map.has_key?(@field_reads, mfa) ->
         {term, key} = Map.fetch!(@field_reads, mfa)
         {value, r} = library_load(ctx, term, key, r)
@@ -1049,6 +1085,37 @@ defmodule Argus.Extractors.PidFlow do
   defp lookup_name(:registry, {registry, key}), do: name_of({:via, Registry, {registry, key}})
   defp lookup_name(:any, name), do: name_of(name)
   defp lookup_name(_registry, _name), do: nil
+
+  # What a dictionary call hands back: the value kept under its literal
+  # key (none for erase/0 or a key not known), and Process.get/2's
+  # default.
+  defp dictionary_value(ctx, mfa) do
+    kept =
+      case dictionary_key(ctx.fun.instrs, ctx.idx, {:x, 0}) do
+        "dynamic" -> []
+        _spelled when mfa == {:erlang, :erase, 0} -> []
+        spelled -> [{:dict, spelled}]
+      end
+
+    default = if mfa == {Process, :get, 2}, do: Enum.to_list(val(ctx, {:x, 1})), else: []
+    MapSet.new(kept ++ default)
+  end
+
+  # A dictionary key as the rows spell it: a literal term, or `dynamic`.
+  defp dictionary_key(_instrs, _idx, {:atom, atom}), do: key_spelling(atom)
+  defp dictionary_key(_instrs, _idx, {:integer, n}), do: key_spelling(n)
+  defp dictionary_key(_instrs, _idx, {:literal, term}), do: key_spelling(term)
+
+  defp dictionary_key(instrs, idx, operand) do
+    case Resolve.resolve_register(instrs, idx, operand) do
+      {:ok, term} -> key_spelling(term)
+      _ -> "dynamic"
+    end
+  end
+
+  defp key_spelling(term) do
+    if term not in [nil, true, false] and literal?(term), do: Terms.spell(term), else: "dynamic"
+  end
 
   # `Registry.lookup(reg, key)` returns `[{pid, value}]`: a list whose
   # elements are tuples holding the pid registered under the key.
@@ -1396,6 +1463,11 @@ defmodule Argus.Extractors.PidFlow do
     end)
   end
 
+  defp emit_other(facts, at, _ictx, {:bif, :get, _fail, [key], _dst}) do
+    spelled = dictionary_key(at.fun.instrs, at.idx, key)
+    add_fact(facts, :dict_op, [site(at.fun, at.idx), at.fun.func_id, "get", spelled])
+  end
+
   defp emit_other(facts, _at, _ictx, _instr), do: facts
 
   defp emit_site(facts, at, ictx, %{mfa: mfa} = site) do
@@ -1407,6 +1479,7 @@ defmodule Argus.Extractors.PidFlow do
     |> emit_send(at, ictx, mfa)
     |> emit_signal(at, ictx, mfa)
     |> emit_table(at, ictx, mfa)
+    |> emit_dictionary(at, ictx, mfa)
     |> emit_remote(at, mfa)
     |> emit_probe(at, ictx, mfa)
     |> emit_resolver(at, mfa)
@@ -1645,6 +1718,29 @@ defmodule Argus.Extractors.PidFlow do
   end
 
   defp emit_table(facts, _at, _ictx, _mfa), do: facts
+
+  # The process dictionary: every put, get and erase, and what a put
+  # keeps under a literal key. erase/0 erases every key: a key not known.
+  defp emit_dictionary(facts, at, ictx, mfa) do
+    case Map.fetch(@dictionary_ops, mfa) do
+      {:ok, op} ->
+        id = site(at.fun, at.idx)
+
+        key =
+          if mfa == {:erlang, :erase, 0},
+            do: "dynamic",
+            else: dictionary_key(at.fun.instrs, at.idx, {:x, 0})
+
+        facts = add_fact(facts, :dict_op, [id, at.fun.func_id, op, key])
+
+        if op == "put" and key != "dynamic",
+          do: sources(facts, at, :dict_put, [id, at.fun.func_id, key], val(ictx, {:x, 1})),
+          else: facts
+
+      :error ->
+        facts
+    end
+  end
 
   # Every argument of a call into project code.
   defp emit_args(facts, at, ictx, %{mfa: {_m, _f, arity} = mfa} = site) do
@@ -1989,6 +2085,9 @@ defmodule Argus.Extractors.PidFlow do
       {:name, name} ->
         [{"name", name}]
 
+      {:dict, key} ->
+        [{"dict", key}]
+
       :self ->
         [{"self", "self"}]
 
@@ -2018,6 +2117,7 @@ defmodule Argus.Extractors.PidFlow do
   defp emit_row(facts, :pid_load, row), do: add_fact(facts, :pid_load, row)
   defp emit_row(facts, :pid_probe, row), do: add_fact(facts, :pid_probe, row)
   defp emit_row(facts, :table_use, row), do: add_fact(facts, :table_use, row)
+  defp emit_row(facts, :dict_put, row), do: add_fact(facts, :dict_put, row)
 
   # ── Names ────────────────────────────────────────────────────────────
 

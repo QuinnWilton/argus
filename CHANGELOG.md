@@ -124,6 +124,19 @@ the same advice.
 **Changed.** The points-to stage's choice between the exact and the
 bounded program is `Argus.Souffle.Stages`.
 
+### The process dictionary (schema 154)
+
+**Added.** Schema 154. PidFlow records every `put/2`, `get/1`, `erase/1`
+and `erase/0` of the process dictionary (and Elixir's `Process.put/2`,
+`Process.get/1,2`, `Process.delete/1`) as `dict_op(id, func, op, key)`,
+the key a literal or `dynamic`, and what a put keeps under a literal
+key as `dict_put(id, func, key, src_kind, src)`; a read of the key is a
+new source kind, `dict`, in every PidFlow relation. The ETS extractor
+records `ets_table_default(id, name, site)`: the operand is the literal
+`name` only where a test found the answer of the call at `site` unset
+(`undefined`, `nil`, `false`), and that answer otherwise. Readers of
+positional columns see two new relations and one new source kind.
+
 ### One ETS table identity (clientlib/tables.dl)
 
 **Changed.** races and ets name a table one way: `EtsTable = [kind,

@@ -38,9 +38,9 @@ defmodule Argus.Schema.Processes do
           {:arg_pos, :symbol, "0-based parameter position, as a symbol"},
           {:via, :symbol, "call, init, spawn, child, closure, resolver or element"},
           {:src_kind, :symbol,
-           "where the value comes from: proc, param, result, name, self, obj, load, reply or remote"},
+           "where the value comes from: proc, param, result, name, self, obj, load, reply, remote or dict"},
           {:src, :symbol,
-           "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to or the site that answered a pid of another node"}
+           "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
         ],
         doc: """
         At `id`, `callee`'s parameter `arg_pos` may hold the source: a call \
@@ -62,9 +62,9 @@ defmodule Argus.Schema.Processes do
         fields: [
           {:func, :func_id, "function returning"},
           {:src_kind, :symbol,
-           "where the value comes from: proc, param, result, name, self, obj, load, reply or remote"},
+           "where the value comes from: proc, param, result, name, self, obj, load, reply, remote or dict"},
           {:src, :symbol,
-           "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to or the site that answered a pid of another node"}
+           "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
         ],
         doc: "`func` may return the source, directly or by a tail call."
       },
@@ -77,9 +77,9 @@ defmodule Argus.Schema.Processes do
           {:api_kind, :symbol,
            "call or cast (the sync_call/async_cast table), or info for a send"},
           {:src_kind, :symbol,
-           "where the value comes from: proc, param, result, name, self, obj, load, reply or remote"},
+           "where the value comes from: proc, param, result, name, self, obj, load, reply, remote or dict"},
           {:src, :symbol,
-           "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to or the site that answered a pid of another node"}
+           "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
         ],
         doc: """
         The GenServer-style call or cast at `id`, or the send (info), may \
@@ -95,9 +95,9 @@ defmodule Argus.Schema.Processes do
           {:func, :func_id, "function making the call, cast or send"},
           {:api_kind, :symbol, "call, cast or info (a send)"},
           {:src_kind, :symbol,
-           "where the value comes from: proc, param, result, name, self, obj, load, reply or remote"},
+           "where the value comes from: proc, param, result, name, self, obj, load, reply, remote or dict"},
           {:src, :symbol,
-           "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to or the site that answered a pid of another node"}
+           "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
         ],
         doc: """
         The message of the call, cast or send at `id` may be the source. It \
@@ -114,9 +114,9 @@ defmodule Argus.Schema.Processes do
           {:func, :func_id, "function registering"},
           {:name, :symbol, "the literal name"},
           {:src_kind, :symbol,
-           "where the value comes from: proc, param, result, name, self, obj, load, reply or remote"},
+           "where the value comes from: proc, param, result, name, self, obj, load, reply, remote or dict"},
           {:src, :symbol,
-           "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to or the site that answered a pid of another node"}
+           "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
         ],
         doc:
           "The call at `id` registers the source under `name` (Process.register/2, :erlang.register/2)."
@@ -130,9 +130,9 @@ defmodule Argus.Schema.Processes do
           {:message, :symbol,
            "literal atom, {:tag, …} for a tuple with a literal atom tag, or dynamic"},
           {:src_kind, :symbol,
-           "where the value comes from: proc, param, result, name, self, obj, load, reply or remote"},
+           "where the value comes from: proc, param, result, name, self, obj, load, reply, remote or dict"},
           {:src, :symbol,
-           "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to or the site that answered a pid of another node"}
+           "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
         ],
         doc: """
         The send at `id` (`send/2`, `!`, Process.send/3) goes to the source or, \
@@ -158,9 +158,9 @@ defmodule Argus.Schema.Processes do
           {:func, :func_id, "function making it"},
           {:signal, :symbol, "exit, monitor, link, unlink or stop"},
           {:src_kind, :symbol,
-           "where the value comes from: proc, param, result, name, self, obj, load, reply or remote"},
+           "where the value comes from: proc, param, result, name, self, obj, load, reply, remote or dict"},
           {:src, :symbol,
-           "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to or the site that answered a pid of another node"}
+           "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
         ],
         doc: """
         The exit signal (Process.exit/2, :erlang.exit/2), monitor \
@@ -205,9 +205,9 @@ defmodule Argus.Schema.Processes do
           {:sel, :symbol,
            "a map key (inspected), {i} for tuple position i (0-based), [] for a list's elements, * for an unknown map key"},
           {:src_kind, :symbol,
-           "where the value comes from: proc, param, result, name, self, obj, load, reply or remote"},
+           "where the value comes from: proc, param, result, name, self, obj, load, reply, remote or dict"},
           {:src, :symbol,
-           "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to or the site that answered a pid of another node"}
+           "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
         ],
         doc: "The field `sel` of `obj` may hold the source."
       },
@@ -218,9 +218,9 @@ defmodule Argus.Schema.Processes do
           {:func, :func_id, "function building the term"},
           {:obj, :symbol, "the term"},
           {:src_kind, :symbol,
-           "where the value comes from: proc, param, result, name, self, obj, load, reply or remote"},
+           "where the value comes from: proc, param, result, name, self, obj, load, reply, remote or dict"},
           {:src, :symbol,
-           "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to or the site that answered a pid of another node"}
+           "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
         ],
         doc: """
         `obj` updates the source: the fields `obj` does not set (pid_sets) are \
@@ -244,9 +244,9 @@ defmodule Argus.Schema.Processes do
           {:load, :symbol, "the load: the reading instruction's ID and the field"},
           {:sel, :symbol, "the field read, as in pid_field"},
           {:src_kind, :symbol,
-           "where the value comes from: proc, param, result, name, self, obj, load, reply or remote"},
+           "where the value comes from: proc, param, result, name, self, obj, load, reply, remote or dict"},
           {:src, :symbol,
-           "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to or the site that answered a pid of another node"}
+           "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
         ],
         doc: """
         The load `load` (a `load` source in `func`) reads the field `sel` of \
@@ -329,6 +329,38 @@ defmodule Argus.Schema.Processes do
         doc: """
         The table operand of the ETS operation at `id` is the source: \
         clientlib/tables.dl chains it to the tables it may be.
+        """
+      },
+      %{
+        name: :dict_op,
+        layer: 2,
+        fields: [
+          {:id, :instr_id, "instruction ID of the call"},
+          {:func, :func_id, "function containing it"},
+          {:op, :symbol, "put, get or erase"},
+          {:key, :symbol, "the literal key, or dynamic"}
+        ],
+        doc: """
+        The call at `id` puts, gets or erases a key of the process \
+        dictionary: `put/2`, `get/1`, `erase/1` and `erase/0` (a key not \
+        known), and Elixir's `Process.put/2`, `Process.get/1,2` and \
+        `Process.delete/1`.
+        """
+      },
+      %{
+        name: :dict_put,
+        layer: 2,
+        fields: [
+          {:id, :instr_id, "instruction ID of the put"},
+          {:func, :func_id, "function containing it"},
+          {:key, :symbol, "the literal key"},
+          {:src_kind, :symbol, "as in pid_arg"},
+          {:src, :symbol, "as in pid_arg"}
+        ],
+        doc: """
+        The `put/2` at `id` keeps the source in the running process's \
+        dictionary under `key`: a `dict` source of `key`, read in a \
+        function the same process runs, may be it (clientlib/processes.dl).
         """
       },
       %{
