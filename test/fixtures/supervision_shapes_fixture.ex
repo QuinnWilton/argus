@@ -55,6 +55,38 @@ defmodule Argus.Test.Fixtures.SupervisionShapes do
     end
   end
 
+  defmodule ShorthandConsumers do
+    @moduledoc false
+    # A shorthand template states no restart: EventWorker's own
+    # child_spec/1 (`use GenServer, restart: :temporary`) gives it.
+    use ConsumerSupervisor
+
+    def start_link(opts), do: ConsumerSupervisor.start_link(__MODULE__, opts)
+
+    @impl true
+    def init(_opts) do
+      ConsumerSupervisor.init([Argus.Test.Fixtures.SupervisionShapes.EventWorker],
+        strategy: :one_for_one
+      )
+    end
+  end
+
+  defmodule ShorthandPermanentConsumers do
+    @moduledoc false
+    # A shorthand template whose module states no restart runs under the
+    # default, :permanent.
+    use ConsumerSupervisor
+
+    def start_link(opts), do: ConsumerSupervisor.start_link(__MODULE__, opts)
+
+    @impl true
+    def init(_opts) do
+      ConsumerSupervisor.init([{Argus.Test.Fixtures.SupervisionShapes.Conn, []}],
+        strategy: :one_for_one
+      )
+    end
+  end
+
   defmodule Conn do
     @moduledoc false
     use GenServer

@@ -193,6 +193,7 @@ defmodule Argus.Schema.Supervision do
           {:child_mod, :symbol, "child module"},
           {:restart, :symbol,
            "restart the spec states or defaults to (permanent/transient/temporary), " <>
+             "'own' for a shorthand, whose module's child_spec/1 gives it, " <>
              "'dynamic' when the reader cannot tell"},
           {:type, :symbol, "child type the spec states or defaults to (worker/supervisor)"},
           {:caller_func, :symbol, "function that calls start_child"}

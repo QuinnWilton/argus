@@ -61,6 +61,34 @@ defmodule Argus.Test.Fixtures.ChildSpecs.MapOwner do
   end
 end
 
+defmodule Argus.Test.Fixtures.ChildSpecs.StartedShorthandTempOwner do
+  @moduledoc false
+  # A temporary child a shorthand start_child adds: never restarted.
+  use GenServer, restart: :temporary
+
+  def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
+
+  @impl true
+  def init(_arg) do
+    :ets.new(:specs_started_shorthand_temp, [:named_table, :public, :set])
+    {:ok, nil}
+  end
+end
+
+defmodule Argus.Test.Fixtures.ChildSpecs.OverriddenPermanentOwner do
+  @moduledoc false
+  # Permanent by its own child_spec/1, temporary by the override a list states.
+  use GenServer, restart: :permanent
+
+  def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
+
+  @impl true
+  def init(_arg) do
+    :ets.new(:specs_overridden_permanent, [:named_table, :public, :set])
+    {:ok, nil}
+  end
+end
+
 defmodule Argus.Test.Fixtures.ChildSpecs.Remote do
   @moduledoc false
   # Children another module decides: the extractor does not read them.
@@ -145,6 +173,9 @@ defmodule Argus.Test.Fixtures.ChildSpecs.OverrideSup do
   def init(arg) do
     children = [
       Supervisor.child_spec({Specs.OverriddenOwner, []}, restart: :temporary),
+      # The override is the restart even where the module's own
+      # child_spec/1 states another.
+      Supervisor.child_spec({Specs.OverriddenPermanentOwner, []}, restart: :temporary),
       %{id: :runtime, start: {Specs.RuntimeMapOwner, :start_link, [arg]}},
       %{id: :restart, start: {Specs.RuntimeRestartOwner, :start_link, [arg]}, restart: restart()}
     ]
@@ -162,6 +193,11 @@ defmodule Argus.Test.Fixtures.ChildSpecs.Starter do
   alias Argus.Test.Fixtures.ChildSpecs, as: Specs
 
   def start_permanent, do: Supervisor.start_child(Specs.Supervisor, {Specs.StartedOwner, []})
+
+  # A shorthand start_child states no restart: `use GenServer, restart:
+  # :temporary` is the child's, and it is never restarted.
+  def start_shorthand_temporary,
+    do: Supervisor.start_child(Specs.Supervisor, {Specs.StartedShorthandTempOwner, []})
 
   def start_temporary(arg) do
     Supervisor.start_child(Specs.Supervisor, %{

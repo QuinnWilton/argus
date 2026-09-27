@@ -114,6 +114,26 @@ defmodule Argus.Analyses.StructureTest do
       sups = Enum.map(Map.get(r, "consumer_supervisor_permanent_child", []), &hd/1)
       assert sups == ["Argus.Test.Fixtures.SupervisionShapes.PermanentConsumers"]
     end
+
+    test "a shorthand template's restart is its module's own child_spec/1's" do
+      skip_without_souffle()
+
+      {:ok, r} =
+        Memo.analyze(
+          [
+            Shapes.ShorthandConsumers,
+            Shapes.ShorthandPermanentConsumers,
+            Shapes.EventWorker,
+            Shapes.Conn
+          ],
+          :structure
+        )
+
+      # `[EventWorker]` is temporary by `use GenServer, restart:
+      # :temporary`; `{Conn, []}` states none and is permanent.
+      sups = Enum.map(Map.get(r, "consumer_supervisor_permanent_child", []), &hd/1)
+      assert sups == [inspect(Shapes.ShorthandPermanentConsumers)]
+    end
   end
 
   describe "duplicate_process_name" do

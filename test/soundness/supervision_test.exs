@@ -20,7 +20,8 @@ defmodule Argus.Soundness.SupervisionTest do
   @owners ~w(HelperOwner ModulesOwner HelperTempOwner EnvOwner AddedOwner AddedMapOwner
              AddedTempOwner AddedParamOwner AddedDynOwner AppendedOwner OptionalOwner
              RejectedOwner OverriddenOwner RuntimeMapOwner RuntimeRestartOwner StartedOwner
-             StartedTempOwner DynamicOwner TransientOwner)a
+             StartedTempOwner DynamicOwner TransientOwner StartedShorthandTempOwner
+             OverriddenPermanentOwner)a
 
   @modules [
              :spec_helper_sup,
@@ -46,10 +47,13 @@ defmodule Argus.Soundness.SupervisionTest do
   end
 
   # A restart the spec says is not permanent: handed to a helper, stated
-  # by a start_child's spec, by a Supervisor.child_spec/2 override, by a
-  # map, or by the shorthand's own child_spec/1 (`use GenServer, restart:
-  # :transient`).
-  for owner <- ~w(HelperTempOwner AddedTempOwner OverriddenOwner StartedTempOwner TransientOwner)a do
+  # by a start_child's spec, by a Supervisor.child_spec/2 override (over
+  # the module's own `restart: :permanent` too), by a map, or by the
+  # shorthand's own child_spec/1 (`use GenServer, restart: :transient`),
+  # in a child list or a start_child.
+  for owner <-
+        ~w(HelperTempOwner AddedTempOwner OverriddenOwner StartedTempOwner TransientOwner
+           StartedShorthandTempOwner OverriddenPermanentOwner)a do
     test "#{owner}'s table still dies with it: its spec's restart is not permanent", %{dies: dies} do
       assert Module.concat(Specs, unquote(owner)) in dies
     end

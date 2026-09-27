@@ -1241,12 +1241,13 @@ normal_stop_of_permanent_child(sup, child, reason, stop) :-
   stops_itself(child, stop, reason),
   normal_reason(reason).
 
-// sup restarts `child` whatever its exit reason: its spec says :permanent.
+// sup restarts `child` whatever its exit reason: it runs under :permanent
+// (restart_policy: its spec's, or a shorthand's own child_spec/1's).
 .decl restarts_always(sup: symbol, child: symbol)
 
 restarts_always(sup, child) :-
   supervisor(sup, _),
-  child_restart(sup, _, child, "permanent").
+  restart_policy(sup, child, "permanent").
 
 // A callback of `child`'s returns a stop tuple at `stop` with a literal
 // `reason` (callback_stop_reason). terminate/2 returns no stop tuple.

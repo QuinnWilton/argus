@@ -124,6 +124,29 @@ the same advice.
 **Changed.** The points-to stage's choice between the exact and the
 bounded program is `Argus.Souffle.Stages`.
 
+### Supervision: one reading of the restart a child runs under (schema 151)
+
+**Fixed.** Schema 151. structure's ConsumerSupervisor rule and coupling's
+restart_policy sibling rule read a shorthand spec's restart (`{Mod,
+args}`, a bare `Mod`) as `:permanent`, the extractor's default, while
+shutdown and ets read the module's own `child_spec/1`: `use GenServer,
+restart: :temporary` written in shorthand was a permanent child to two
+analyses and a temporary one to the other two. All four now read the
+clientlib word `restart_policy(sup, child, restart)`
+(clientlib/supervision.dl): the spec as written when it states a
+restart, otherwise the module's own `child_spec/1`'s, otherwise OTP's
+default `:permanent`, over the child list, DynamicSupervisor starts and
+`Supervisor.start_child` specs alike. `listed_as_permanent` is gone.
+`added_child.restart` is `own` for a shorthand `Supervisor.start_child`
+(livebook's `Apps.Manager`), which its module's `child_spec/1` gives, as
+`dynamic_child_restart` has no row for one. A shorthand whose restart a
+`Supervisor.child_spec/2` override states is read as the override's,
+not the module's. Findings: quantum-core's ExecutorSupervisor
+(`use Task`, temporary) is quiet; thousand_island's ShutdownListener on
+its transient Listener is reported (2 checkouts); shutdown reads
+children a `start_child` adds (4 Erlang rows added on the live set, all
+judged false; docs/bug-classes.md).
+
 ### Order: the block facts hold only what runs_after can answer (schema 150)
 
 **Changed.** Schema 150. `site_block` and `block_flow` (schema 149,

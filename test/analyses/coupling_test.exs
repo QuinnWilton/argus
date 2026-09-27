@@ -301,6 +301,7 @@ defmodule Argus.Analyses.CouplingTest do
           ["Sup", "0", "A", "permanent", "worker"],
           ["Sup", "1", "B", "temporary", "worker"]
         ],
+        supervisor_child_form: [["Sup", "0", "explicit"], ["Sup", "1", "explicit"]],
         function_def: [
           ["A:h/0", "A", "h", "0", "1"],
           ["B:pure/1", "B", "pure", "1", "1"],

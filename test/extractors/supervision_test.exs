@@ -587,6 +587,7 @@ defmodule Argus.Extractors.SupervisionTest do
       assert tree(Specs.OverrideSup) ==
                {[
                   {inspect(Specs.OverriddenOwner), "temporary", "worker"},
+                  {inspect(Specs.OverriddenPermanentOwner), "temporary", "worker"},
                   {inspect(Specs.RuntimeMapOwner), "permanent", "worker"},
                   {inspect(Specs.RuntimeRestartOwner), "dynamic", "worker"}
                 ], false}
@@ -655,16 +656,23 @@ defmodule Argus.Extractors.SupervisionTest do
              ]
     end
 
-    test "Supervisor.start_child/2 adds its spec's child; DynamicSupervisor's reads Mod.child_spec/1" do
+    test "Supervisor.start_child/2 adds its spec's child; a shorthand's restart is its own child_spec/1's" do
       {added, dynamic} = added(Specs.Starter)
 
       assert added == [
                [
                  inspect(Specs.Supervisor),
                  inspect(Specs.StartedOwner),
-                 "permanent",
+                 "own",
                  "worker",
                  "#{inspect(Specs.Starter)}:start_permanent/0"
+               ],
+               [
+                 inspect(Specs.Supervisor),
+                 inspect(Specs.StartedShorthandTempOwner),
+                 "own",
+                 "worker",
+                 "#{inspect(Specs.Starter)}:start_shorthand_temporary/0"
                ],
                [
                  inspect(Specs.Supervisor),

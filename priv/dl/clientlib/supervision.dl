@@ -8,9 +8,10 @@
 //   child_subtree(sup, branch, mod)
 //   starts_before(sup, earlier, later, earlier_pos, later_pos)
 //   boots_before(sup, earlier, later, earlier_pos, later_pos)
+//   restart_policy(sup, child, restart)
 //   child_restart(sup, pos, child, restart)
-//   listed_as_permanent(sup, child)
 //   dynamic_restart(sup, child, caller, restart)
+//   added_restart(sup, child, caller, restart)
 //   reaches_child_start(func, start)
 //   ends_with(dying, other)
 
@@ -47,13 +48,44 @@ child_subtree(sup, branch, descendant) :-
 
 // ── The restart a child runs under ────────────────────────────────────
 //
-// supervisor_child's restart is what the spec states. A shorthand
-// (`{Mod, args}`, a bare `Mod`, a `Mod.child_spec(args)` call) states
-// none, and the extractor writes :permanent, the supervisor's default,
-// where the child's own child_spec/1 may say otherwise (`use GenServer,
-// restart: :transient`, logflare's ClickHouse Provisioner's hand-written
-// map): for a shorthand the restart is child_spec_restart's when the
-// module states one.
+// `restart_policy(sup, child, restart)` is the restart `sup` really gives
+// `child`, however the child joined it: listed in its init/1
+// (child_restart), started by a DynamicSupervisor.start_child
+// (dynamic_restart) or added by a Supervisor.start_child (added_restart).
+// Each reads it the same way: the spec as written wins when it states a
+// restart; a shorthand (`{Mod, args}`, a bare `Mod`, a `Mod.child_spec(args)`
+// call) states none, and its module's own child_spec/1 gives it
+// (child_spec_restart: `use GenServer, restart: :temporary`, logflare's
+// ClickHouse Provisioner's hand-written map); a module whose child_spec/1
+// states none either runs under OTP's default, :permanent. A spec whose
+// restart the extractor could not read ("dynamic") has no row: it is
+// neither shown permanent nor shown to leave the child down. A
+// Task.Supervisor's task (child `Task`) is not a module's, and its
+// restart, the start's option, is not read: it has no row either.
+// Every rule asking whether a supervisor restarts a child reads this.
+.decl restart_policy(sup: symbol, child: symbol, restart: symbol)
+
+restart_policy(sup, child, restart) :- child_restart(sup, _, child, restart), known_restart(restart).
+restart_policy(sup, child, restart) :- dynamic_restart(sup, child, _, restart), known_restart(restart).
+restart_policy(sup, child, restart) :- added_restart(sup, child, _, restart), known_restart(restart).
+
+.decl known_restart(restart: symbol)
+
+known_restart("permanent").
+known_restart("transient").
+known_restart("temporary").
+
+// The restart of the child at `pos` in sup's child list. supervisor_child's
+// restart is what the extractor read: a spec's own (a map's, `:permanent`
+// when the map states none: a map does not call the module's child_spec/1;
+// OTP's tuple form's), and for a shorthand the default, :permanent, or
+// another value when `Supervisor.child_spec({Mod, arg}, restart:
+// :temporary)` overrides it. A shorthand read as :permanent takes its
+// module's child_spec/1's restart when that states one. Known limit: an
+// override of `restart: :permanent` itself reads as the default, and a
+// shorthand whose `type:` alone is overridden reads as explicit
+// (supervisor_child_form is the type's form), so its module's restart is
+// not consulted there; the corpus has neither.
 .decl child_restart(sup: symbol, pos: number, child: symbol, restart: symbol)
 
 child_restart(sup, pos, child, restart) :-
@@ -61,39 +93,57 @@ child_restart(sup, pos, child, restart) :-
   supervisor_child_form(sup, pos, "explicit").
 
 child_restart(sup, pos, child, restart) :-
-  supervisor_child(sup, pos, child, _, _),
+  supervisor_child(sup, pos, child, restart, _),
+  supervisor_child_form(sup, pos, "shorthand"),
+  restart != "permanent".
+
+child_restart(sup, pos, child, restart) :-
+  supervisor_child(sup, pos, child, "permanent", _),
   supervisor_child_form(sup, pos, "shorthand"),
   child_spec_restart(child, restart).
 
-child_restart(sup, pos, child, restart) :-
-  supervisor_child(sup, pos, child, restart, _),
+child_restart(sup, pos, child, "permanent") :-
+  supervisor_child(sup, pos, child, "permanent", _),
   supervisor_child_form(sup, pos, "shorthand"),
   !child_spec_restart(child, _).
-
-// A spec in sup's child list says :permanent, as the extractor reads it:
-// a shorthand spec reads as :permanent, the default, whatever the
-// module's child_spec/1 says (child_restart, above, reads that instead).
-.decl listed_as_permanent(sup: symbol, child: symbol) inline
-
-listed_as_permanent(sup, child) :- supervisor_child(sup, _, child, "permanent", _).
 
 // A DynamicSupervisor.start_child gives its child the restart of the spec
 // it hands over: a map's (`:permanent` when it states none, whatever the
 // module's child_spec/1 says), an override's, or for a shorthand (`Mod`,
 // `{Mod, arg}`, which states none: dynamic_child_restart has no row) the
 // module's own child_spec/1's, `:permanent` when that states none either.
+// A Task.Supervisor start is a dynamic_child too, of child `Task`, and
+// has no spec: its restart is the start's `:restart` option, :temporary
+// by default, and has no row here.
 .decl dynamic_restart(sup: symbol, child: symbol, caller: symbol, restart: symbol)
 
 dynamic_restart(sup, child, f, restart) :- dynamic_child_restart(sup, child, f, restart).
 
 dynamic_restart(sup, child, f, restart) :-
   dynamic_child(sup, child, f),
+  child != "Task",
   !dynamic_child_restart(sup, child, f, _),
   child_spec_restart(child, restart).
 
 dynamic_restart(sup, child, f, "permanent") :-
   dynamic_child(sup, child, f),
+  child != "Task",
   !dynamic_child_restart(sup, child, f, _),
+  !child_spec_restart(child, _).
+
+// A Supervisor.start_child's child runs under the restart its spec
+// states; a shorthand's (`own`) is its module's child_spec/1's, and
+// :permanent when that states none.
+.decl added_restart(sup: symbol, child: symbol, caller: symbol, restart: symbol)
+
+added_restart(sup, child, f, restart) :- added_child(sup, child, restart, _, f), restart != "own".
+
+added_restart(sup, child, f, restart) :-
+  added_child(sup, child, "own", _, f),
+  child_spec_restart(child, restart).
+
+added_restart(sup, child, f, "permanent") :-
+  added_child(sup, child, "own", _, f),
   !child_spec_restart(child, _).
 
 // ── Start order ───────────────────────────────────────────────────────

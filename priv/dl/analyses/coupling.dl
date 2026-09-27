@@ -255,17 +255,20 @@ keeping_basis("handed", "inferred").
 .decl dependency_on_unrestarted_sibling(sup: symbol, child: symbol, sibling: symbol, restart: symbol, witness: symbol)
 
 dependency_on_unrestarted_sibling(sup, child, sibling, restart, witness) :-
-  listed_as_permanent(sup, child),
+  restart_policy(sup, child, "permanent"),
   may_stay_down(sup, sibling, restart),
   depends_on(child, sibling, witness),
   !only_own_instances(child, sibling).
 
 // `sibling` is a child of sup under a restart policy that can leave it
-// dead (`restart`).
+// dead (`restart`; restart_policy: its spec's, or a shorthand's own
+// child_spec/1's). A start_child whose supervisor the extractor could
+// not resolve ("dynamic") names no sibling.
 .decl may_stay_down(sup: symbol, sibling: symbol, restart: symbol)
 
 may_stay_down(sup, sibling, restart) :-
-  supervisor_child(sup, _, sibling, restart, _),
+  restart_policy(sup, sibling, restart),
+  sup != "dynamic",
   leaves_down(restart).
 
 // A restart policy under which a child can exit and stay gone.

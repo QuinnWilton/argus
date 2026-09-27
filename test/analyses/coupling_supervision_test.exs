@@ -54,6 +54,8 @@ defmodule Argus.Analyses.CouplingSupervisionTest do
           ["Sup", "0", "P", "permanent", "worker"],
           ["Sup", "1", "S", sibling_restart, "worker"]
         ],
+        # Map specs: the restart is the one they state.
+        supervisor_child_form: [["Sup", "0", "explicit"], ["Sup", "1", "explicit"]],
         function_def: [["P:call_s/0", "P", "call_s", "0", "1", "1"]],
         sync_call: [["P:call_s/0", "S"]]
       }
@@ -81,6 +83,35 @@ defmodule Argus.Analyses.CouplingSupervisionTest do
       # A permanent sibling is always restarted — the dependency is safe
       # from this rule's perspective.
       assert dependency_rows(base_facts("permanent")) == []
+    end
+
+    # Both children listed by the shorthand: `{P, arg}`, `{S, arg}`. The
+    # extractor writes the default, :permanent, for each; the restart each
+    # runs under is its module's own child_spec/1's when that states one.
+    defp shorthand_facts(own_restarts) do
+      %{
+        base_facts("permanent")
+        | supervisor_child_form: [["Sup", "0", "shorthand"], ["Sup", "1", "shorthand"]]
+      }
+      |> Map.put(:child_spec_restart, own_restarts)
+    end
+
+    test "a shorthand sibling whose own child_spec/1 says :temporary is flagged" do
+      skip_without_souffle()
+
+      # `use GenServer, restart: :temporary` on S: the shorthand listing
+      # it states nothing, and S is never restarted.
+      assert [["Sup", "P", "S", "restart_policy", "temporary", _site, _witness, _ | _]] =
+               dependency_rows(shorthand_facts([["S", "temporary"]]))
+    end
+
+    test "a shorthand child whose own child_spec/1 says :temporary is not the permanent one" do
+      skip_without_souffle()
+
+      # P is temporary by its own child_spec/1: it stays down beside S
+      # rather than running against a sibling that is gone.
+      assert dependency_rows(shorthand_facts([["P", "temporary"], ["S", "temporary"]])) == []
+      assert dependency_rows(shorthand_facts([])) == []
     end
 
     test "a registration through a pid is anchored at the call that makes it" do

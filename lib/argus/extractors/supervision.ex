@@ -40,7 +40,8 @@ defmodule Argus.Extractors.Supervision do
     has none, or an override's); none for a shorthand
   - `added_child(sup, child_mod, restart, type, caller_func)` — a child a
     `Supervisor.start_child/2` or `supervisor:start_child/2` adds with a
-    spec it states
+    spec it states; `own` for a shorthand's restart, which its module's
+    child_spec/1 gives
   - `named_process(mod, name)` — named process registration detected
   """
 
@@ -348,14 +349,20 @@ defmodule Argus.Extractors.Supervision do
   # A child a `start_child` adds to a supervisor with the children of its
   # own init/1 (`supervisor:start_child(kernel_safe_sup, {dets, {dets_server,
   # start_link, []}, permanent, ...})`): the spec is read as a child list's
-  # element is, and its restart and type are the spec's. A list argument
+  # element is, and its restart and type are the spec's. A shorthand
+  # (`Supervisor.start_child(sup, Mod)`, livebook's Apps.Manager) states
+  # no restart: its module's child_spec/1 gives it, and the restart is
+  # written `own`, as dynamic_child_restart leaves such a start without a
+  # row (the reader writes a shorthand's restart as the default
+  # `:permanent`; another value is an override's). A list argument
   # starts a simple_one_for_one template, whose child the supervisor's
   # own init/1 names; a spec the reader cannot read names no child.
   defp handle_dynamic_start(facts, ctx, {api, :start_child, 2}, self_sup, functions)
        when api in [Supervisor, :supervisor] do
     case fueled_value(fn -> element_operand(frame(ctx.instrs, functions), ctx.idx, {:x, 1}) end) do
-      {:ok, [{mod, restart, type, _name, _form}]} when mod not in [GenServer, Agent, Task] ->
+      {:ok, [{mod, restart, type, _name, form}]} when mod not in [GenServer, Agent, Task] ->
         sup = resolve_start_child_sup(ctx.instrs, ctx.idx, self_sup, functions)
+        restart = if form == :shorthand and restart == :permanent, do: :own, else: restart
         add_fact(facts, :added_child, [sup, inspect(mod), word(restart), word(type), ctx.func_id])
 
       _ ->

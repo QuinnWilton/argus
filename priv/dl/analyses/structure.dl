@@ -112,13 +112,14 @@ started_by_own_spec(child, sup, via) :- dynamic_child(sup, child, via).
 .decl consumer_supervisor_permanent_child(sup: symbol, child: symbol, sup_site: symbol)
 .output consumer_supervisor_permanent_child
 
-// A ConsumerSupervisor's child template is :permanent, so every child
-// that finishes its event is started straight back.
+// A ConsumerSupervisor's child template is :permanent (restart_policy:
+// its spec's, or a shorthand's own child_spec/1's), so every child that
+// finishes its event is started straight back.
 .decl permanent_consumer_template(sup: symbol, child: symbol)
 
 permanent_consumer_template(sup, child) :-
   is_consumer_supervisor(sup),
-  listed_as_permanent(sup, child).
+  restart_policy(sup, child, "permanent").
 
 // The module declares the ConsumerSupervisor behaviour.
 .decl is_consumer_supervisor(mod: symbol) inline
