@@ -204,16 +204,25 @@ defmodule Argus.Analyses.MailboxTaskTest do
                  [
                    Argus.Test.Fixtures.YieldsLinkedTask,
                    Argus.Test.Fixtures.TrapsAndYields,
-                   Argus.Test.Fixtures.TrapsButYieldsInClient
+                   Argus.Test.Fixtures.TrapsButYieldsInClient,
+                   Argus.Test.Fixtures.TrapsAroundTasks,
+                   Argus.Test.Fixtures.TrapsInHelperBeforeTask,
+                   Argus.Test.Fixtures.TrapsAfterTask,
+                   Argus.Test.Fixtures.ClearsBeforeTask
                  ],
                  :mailbox
                )
 
-      # The trap is the server's process's: its handle_call is covered,
-      # its client function, run in callers, is not.
+      # The trap is the process's at the task's start (trapping_at): the
+      # trapping server's handle_call is covered, its client function, run
+      # in callers, is not; a function that traps before it starts the
+      # tasks, itself or through a helper, is covered, and one that traps
+      # only after the start, or clears the flag first, is not.
       funcs = results |> tasks("yield_linked") |> Enum.map(&hd/1) |> Enum.sort()
 
       assert funcs == [
+               "Argus.Test.Fixtures.ClearsBeforeTask:handle_call/3",
+               "Argus.Test.Fixtures.TrapsAfterTask:fetch/1",
                "Argus.Test.Fixtures.TrapsButYieldsInClient:fetch/1",
                "Argus.Test.Fixtures.YieldsLinkedTask:fan_out/1"
              ]

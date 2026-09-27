@@ -148,6 +148,14 @@ init/1 traps anywhere before its ack: a trap set after the wait, or
 cleared before it, leaves the wait a "receive". `init_traps_exits` is
 gone.
 
+Mailbox: "Task.yield on a linked task cannot see it crash" asks whether
+the process traps exits when it starts the task (`trapping_at`), not
+whether the function is a trapping server's: a plain function that
+traps before it starts its tasks is quiet, and a callback that clears
+the flag first, or a function that traps only after the start, is
+reported. A linked peer's `{:EXIT, ...}` source reads `server_traps`.
+`runs_trapping` is gone.
+
 ### Coupling: a sibling asked only in terminate/2 is not a dependency
 
 **Fixed.** "Permanent child depends on a transient sibling" read a call

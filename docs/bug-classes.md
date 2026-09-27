@@ -1911,11 +1911,11 @@ Each leaked monitor costs both processes until T exits, and then arrives as a `:
 `task_result_defect` · kind=`yield_linked`
 · titles: "Task.yield on a linked task cannot see it crash" (`:warning`)
 
-**Property.** A function, together with the closures it defines, starts a task with Task.async or Task.Supervisor.async and collects with Task.yield or Task.yield_many, and no function of its module sets trap_exit. `yield`'s `{:exit, reason}` result is documented for a crashed task. But the link delivers the crash to the caller first, so the branch that handles a failed task never runs: the caller is already dead.
+**Property.** A function, together with the closures it defines, starts a task with Task.async or Task.Supervisor.async and collects with Task.yield or Task.yield_many, and the process is not trapping exits when it starts the task (`trapping_at`, clientlib/trapping.dl). `yield`'s `{:exit, reason}` result is documented for a crashed task. But the link delivers the crash to the caller first, so the branch that handles a failed task never runs: the caller is already dead.
 
 **Assumptions and limits.**
 - The yield can be any yield in the function; it need not collect this task.
-- The trap_exit check is module-level. A library function called from a trapping process in another module is reported. A module that traps exits in an unrelated function is quiet.
+- Trapping is read at the task's start (`trapping_at`): a trap earlier in the function or in a helper it called before (hexpm's release task traps, starts, yields and clears), or a callback of a server that traps; a clear before the start undoes it. A MAY reading: a function called both from a trapping caller and another counts as trapping. A client function of a trapping server's module runs in its callers and is reported.
 - A closure counts for the function that defines it, even when the closure runs in another process.
 - There is one finding per task start. Up to three yield sites are related frames (`task_yield_site`).
 
@@ -4607,7 +4607,10 @@ under `priv/dl/` unless they say otherwise.
     *Resolved.* `module_traps` is a trap on the process's own stack
     (mining round 2); mailbox's `yield_linked` asks whether the process
     the yielding function runs in traps (`runs_trapping`), not its
-    module.
+    module. Since schema 153 every reader asks clientlib/trapping.dl:
+    `trapping_at(func, site)` at a point (blocking's and startup's
+    `:EXIT` waits, mailbox's task start) and `server_traps` while a
+    server's callbacks run (shutdown, mailbox's `{:EXIT, ...}` source).
 20. **The Task API.** mailbox's `task_async_call`/`task_await_call`/
     `task_factory` and runs_elsewhere.dl's `async_start`/`task_wait`/
     `awaits_task` disagree on `async_nolink` and `Task.shutdown`.

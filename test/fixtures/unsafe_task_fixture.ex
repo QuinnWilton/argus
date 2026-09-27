@@ -303,3 +303,65 @@ defmodule Argus.Test.Fixtures.ServerSideTaskAwait do
     {:reply, Task.await(task), state}
   end
 end
+
+defmodule Argus.Test.Fixtures.TrapsAroundTasks do
+  @moduledoc false
+  # hexpm's release task: a plain function traps exits before it starts
+  # the tasks and clears the flag after it yields, so a crashing task's
+  # exit reaches yield as {:exit, reason}.
+  def fan_out(work) do
+    Process.flag(:trap_exit, true)
+    tasks = Enum.map(work, fn item -> Task.async(fn -> item end) end)
+    results = Task.yield_many(tasks, 1_000)
+    Process.flag(:trap_exit, false)
+    results
+  end
+end
+
+defmodule Argus.Test.Fixtures.TrapsInHelperBeforeTask do
+  @moduledoc false
+  # The trap is set by a helper called before the task starts.
+  def fetch(item) do
+    trap_exits()
+    task = Task.async(fn -> item end)
+    Task.yield(task, 1_000)
+  end
+
+  defp trap_exits, do: Process.flag(:trap_exit, true)
+end
+
+defmodule Argus.Test.Fixtures.TrapsAfterTask do
+  @moduledoc false
+  # Traps only after the task is started: a task that crashes first takes
+  # the caller down before yield can report it.
+  def fetch(item) do
+    task = Task.async(fn -> item end)
+    Process.flag(:trap_exit, true)
+    Task.yield(task, 1_000)
+  end
+end
+
+defmodule Argus.Test.Fixtures.ClearsBeforeTask do
+  @moduledoc false
+  # The server traps exits, but this callback clears the flag before it
+  # starts the task: at the start the process does not trap.
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(state) do
+    Process.flag(:trap_exit, true)
+    {:ok, state}
+  end
+
+  @impl true
+  def handle_call(:work, _from, state) do
+    Process.flag(:trap_exit, false)
+    task = Task.async(fn -> :work end)
+    {:reply, Task.yield(task, 1_000), state}
+  end
+
+  @impl true
+  def handle_info({:EXIT, _pid, _reason}, state), do: {:noreply, state}
+end

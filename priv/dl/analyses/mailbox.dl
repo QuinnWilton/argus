@@ -697,14 +697,14 @@ takes_task_reply(h) :- callback_open(h, "handle_info", "tuple", -1).
 // path was unreachable). async_nolink is the tool for that shape.
 
 // A function yields on the tasks it starts linked to its process, and
-// the process does not trap exits: a crashing task kills the caller
-// before yield can report the crash.
+// the process does not trap exits when it starts them: a crashing task
+// kills the caller before yield can report the crash.
 .decl yield_on_linked_task(owner: symbol, start: symbol)
 
 yield_on_linked_task(owner, start) :-
   starts_linked_task_in(owner, start),
   yields_on_task(owner, _),
-  !runs_trapping(owner).
+  !starts_trapping(start).
 
 task_result_defect(owner, start, "yield_linked") :- yield_on_linked_task(owner, start).
 
@@ -726,15 +726,14 @@ starts_linked_task_in(owner, start) :-
 yields_on_task(owner, id) :- remote_call(id, g, "Task", "yield", _), enclosing_function(g, owner).
 yields_on_task(owner, id) :- remote_call(id, g, "Task", "yield_many", _), enclosing_function(g, owner).
 
-// The function runs on the stack of a server that traps exits
-// (module_traps: the process whose entries reach the trap). The trap is
-// the owner's process's, not its module's: a client function of a
-// trapping server's module runs in its callers, which the module's trap
-// says nothing of; a library function's callers are not known, and trap
-// or not.
-.decl runs_trapping(func: symbol)
+// The process is trapping exits when it starts the task at `start`
+// (trapping_at, clientlib/trapping.dl): set earlier on the way there, or
+// the function is a callback of a server that traps. A client function
+// of a trapping server's module runs in its callers, which the server's
+// trap says nothing of.
+.decl starts_trapping(start: symbol)
 
-runs_trapping(f) :- server_side(mod, f), module_traps(_, mod).
+starts_trapping(start) :- starts_linked_task(f, start), trapping_at(f, start).
 
 // ── Evidence: where a task is yielded ─────────────────────────────────
 .decl task_yield_site(func: symbol, kind: symbol, site: symbol)
@@ -1878,7 +1877,7 @@ info_message(m, g, r, msg, "late") :- late_wait(r, g, msg), runs_in_server(m, g)
 
 // ── A linked process's exit, in a server that traps exits ────────────
 //
-// A server that traps exits (module_traps) receives the end of every
+// A server that traps exits (server_traps) receives the end of every
 // process or port linked to it as `{:EXIT, from, reason}`, the reason
 // whatever the linked process ended with. A link its own stack makes is
 // the witness: a spawn_link, a link/1, a port it opens, a start_link of
@@ -1897,7 +1896,7 @@ info_message(m, g, r, msg, "late") :- late_wait(r, g, msg), runs_in_server(m, g)
 info_message(m, f, id, "{:EXIT, …}", "exit") :-
   link_site(id, f),
   runs_in_server(m, f),
-  module_traps(_, m).
+  server_traps(m).
 
 // ── Node events and a port's output ─────────────────────────────────
 //
