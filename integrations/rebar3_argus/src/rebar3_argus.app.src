@@ -1,0 +1,9 @@
+{application, rebar3_argus, [
+    {description, "rebar3 argus: argus's BEAM analyses over a rebar3 project"},
+    {vsn, "0.1.0"},
+    {registered, []},
+    {applications, [kernel, stdlib]},
+    {env, []},
+    {licenses, ["MIT"]},
+    {links, [{"GitHub", "https://github.com/QuinnWilton/argus"}]}
+]}.

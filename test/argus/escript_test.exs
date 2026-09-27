@@ -24,22 +24,11 @@ defmodule Argus.EscriptTest do
   @repo Path.expand("../..", __DIR__)
 
   setup_all do
-    dir = Path.join(System.tmp_dir!(), "argus_escript_#{System.unique_integer([:positive])}")
+    bin = Argus.Test.Escript.build!()
+    dir = Path.join(System.tmp_dir!(), "argus_escript_run_#{System.unique_integer([:positive])}")
     File.mkdir_p!(dir)
-
-    {output, status} =
-      System.cmd("mix", ["escript.build"],
-        cd: @repo,
-        env: [{"MIX_ENV", "prod"}],
-        stderr_to_stdout: true
-      )
-
-    assert status == 0, output
-
-    escript = Path.join(dir, "argus")
-    File.cp!(Path.join(@repo, "argus"), escript)
     on_exit(fn -> File.rm_rf(dir) end)
-    %{dir: dir, bin: escript, store: Path.join(dir, "store")}
+    %{dir: dir, bin: bin, store: Path.join(dir, "store")}
   end
 
   # Its stdout and status; its stderr (the report, in text) goes to a
