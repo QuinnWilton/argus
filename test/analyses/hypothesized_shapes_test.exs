@@ -30,7 +30,10 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
           H.YieldBoolean,
           H.NbYieldCase,
           H.ErpcBooleanNoRescue,
-          H.ErpcBooleanRescued
+          H.ErpcBooleanRescued,
+          H.ErpcBooleanUnrelatedRescue,
+          H.ErpcBooleanCatchesExit,
+          H.ErpcBooleanCallerRescues
         ],
         :failure
       )
@@ -43,7 +46,9 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
 
     assert Enum.sort(reported) == [
              {"Argus.Test.Fixtures.Hypothesized.BlockCallCaseNoBadrpc:status/1", "case"},
+             {"Argus.Test.Fixtures.Hypothesized.ErpcBooleanCatchesExit:status/1", "boolean"},
              {"Argus.Test.Fixtures.Hypothesized.ErpcBooleanNoRescue:alive?/1", "boolean"},
+             {"Argus.Test.Fixtures.Hypothesized.ErpcBooleanUnrelatedRescue:status/2", "boolean"},
              {"Argus.Test.Fixtures.Hypothesized.RpcBoolean:alive?/1", "boolean"},
              {"Argus.Test.Fixtures.Hypothesized.RpcCaseNoBadrpc:status/1", "case"},
              {"Argus.Test.Fixtures.Hypothesized.YieldBoolean:alive?/1", "boolean"}

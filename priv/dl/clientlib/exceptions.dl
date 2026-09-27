@@ -72,28 +72,6 @@ site_rescues_argument_error(c, f) :- covered_by_catch(c, f, _, "error").
 site_rescues_argument_error(c, f) :- try_covers(t, f, c, "try"), catch_tag(t, f, "error", "ArgumentError").
 site_rescues_argument_error(c, f) :- try_covers(t, f, c, "try"), catch_tag(t, f, "error", ":badarg").
 
-// The same question for a call whose failure the rule would report
-// unless the try goes on from it: the call at `call` in `func` is inside
-// a try that takes the ArgumentError (as site_rescues_argument_error
-// asks) and whose handler returns without raising again (try_takes: a
-// rescue that only re-raises, or an `after`, takes nothing), or inside
-// Erlang's `catch Expr`.
-.decl site_takes_argument_error(call: symbol, func: symbol)
-
-site_takes_argument_error(c, f) :-
-  try_covers(t, f, c, "try"),
-  try_takes(t, "error"),
-  catch_total(t, f, class),
-  (class = "error" ; class = "*").
-
-site_takes_argument_error(c, f) :-
-  try_covers(t, f, c, "try"),
-  try_takes(t, "error"),
-  catch_tag(t, f, "error", tag),
-  (tag = "ArgumentError" ; tag = ":badarg").
-
-site_takes_argument_error(c, f) :- try_covers(_, f, c, "catch").
-
 // ── A raise, and the handlers that take it ──────────────────────────
 //
 // The raises a rule asks whether a handler takes, each with the class it

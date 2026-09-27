@@ -186,6 +186,57 @@ defmodule Argus.Test.Fixtures.RemotePid do
 
   # A helper that probes its parameter: the finding is the caller's, at
   # its call into the helper; a caller with a local pid is quiet.
+  # The probe's function is private, and its one caller rescues the
+  # badarg around the call.
+  defmodule CallerRescues do
+    @moduledoc false
+    def alive?(name) do
+      probe(name)
+    rescue
+      ArgumentError -> false
+    end
+
+    defp probe(name) do
+      pid = :global.whereis_name(name)
+      Process.alive?(pid)
+    end
+  end
+
+  # The pid passes through two helpers; a rescue around the call between
+  # them takes the badarg (quiet). Around neither end, and the same shape
+  # with the rescue around other code, is reported.
+  defmodule MiddleRescue do
+    @moduledoc false
+    def leader_alive?(name) do
+      pid = :global.whereis_name(name)
+      check(pid)
+    end
+
+    def leader_seen?(name) do
+      pid = :global.whereis_name(name)
+      check_elsewhere(pid)
+    end
+
+    defp check(pid) do
+      alive?(pid)
+    rescue
+      ArgumentError -> false
+    end
+
+    defp check_elsewhere(pid) do
+      seen = alive?(pid)
+
+      try do
+        :erlang.binary_to_term(:erlang.term_to_binary(pid))
+      rescue
+        _ -> seen
+      end
+    end
+
+    defp alive?(pid) when is_pid(pid), do: Process.alive?(pid)
+    defp alive?(_), do: false
+  end
+
   defmodule Helper do
     @moduledoc false
     def leader_alive?(name) do

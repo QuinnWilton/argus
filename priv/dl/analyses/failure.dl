@@ -19,6 +19,7 @@
 .include "../clientlib/rpc_targets.dl"
 .include "../clientlib/tooling.dl"
 .include "../clientlib/order.dl"
+.include "../clientlib/escape.dl"
 
 // A finding in code only developers' tools or tests run steps down a
 // level (clientlib/tooling.dl, Argus.Findings.Tooling).
@@ -77,15 +78,13 @@
 .output remote_pid_probe
 
 // A BIF that acts on a local process only is handed a pid that may be
-// another node's, and no try takes the ArgumentError it raises there.
-// `prober` is the function the BIF is in, where a try can take it too.
+// another node's, and the ArgumentError it raises there escapes.
 .decl local_bif_on_remote_pid(func: symbol, anchor: symbol, probe: symbol, origin: symbol)
 
 local_bif_on_remote_pid(func, anchor, probe, origin) :-
-  probes_local_process(probe, prober),
+  probes_local_process(probe, _),
   hands_remote_pid(func, anchor, probe, origin),
-  !site_takes_argument_error(probe, prober),
-  !site_takes_argument_error(anchor, func).
+  probe_raise_escapes(probe, func, anchor).
 
 remote_pid_probe(func, anchor, probe, bif, api, kind) :-
   local_bif_on_remote_pid(func, anchor, probe, origin),
@@ -105,10 +104,21 @@ probes_local_process(probe, prober) :- pid_probe(probe, prober, _, _, _).
 
 hands_remote_pid(func, anchor, probe, origin) :- remote_probe(func, anchor, probe, origin).
 
-// site_takes_argument_error (exceptions.dl) is a try around the BIF, or
-// around the call into its helper, that takes the ArgumentError and goes
-// on: a rescue of ArgumentError or of every error that does not re-raise,
-// or Erlang's `catch`. It handles the other node's pid.
+// The probe's ArgumentError escapes `func` through `anchor` (Escape,
+// clientlib/escape.dl): no try that takes it and goes on covers the BIF,
+// the call into its helper, nor a call between on the path down, and not
+// every caller of `func` is inside one. A path from the anchor's callee
+// to the probe that another call takes (not the pid's) counts as the
+// pid's: some such path is unguarded.
+.decl probe_raise_escapes(probe: symbol, func: symbol, anchor: symbol)
+
+probe_raise_escapes(probe, func, anchor) :- probe_raise.escapes_through(probe, func, "badarg", anchor).
+
+.init probe_raise = Escape
+
+probe_raise.asked(probe, prober, func, "badarg") :-
+  remote_probe(func, _, probe, _),
+  pid_probe(probe, prober, _, _, _).
 
 // `rpc_undefined(func, anchor, site, callee, why)` — the rpc at `site`
 //   runs `callee`, a function of one of the program's modules that the
@@ -409,14 +419,13 @@ unhandled_failure(func, rpc, variant, "boolean", "") :-
   badrpc_as_true(func, rpc, variant).
 
 // An :erpc call raises when the node is gone, the code tests its answer as
-// a boolean, and nothing in the function takes the error.
+// a boolean, and the raise escapes.
 .decl erpc_raise_in_boolean(func: symbol, rpc: symbol)
 
 erpc_raise_in_boolean(func, rpc) :-
   erpc_call(rpc, func),
   used_as_boolean(rpc, func),
-  !catches_class(func, "error"),
-  !takes_erpc_error(func).
+  erpc_raise_escapes(rpc, func).
 
 unhandled_failure(func, rpc, "erpc", "boolean", "") :-
   erpc_raise_in_boolean(func, rpc).
@@ -471,10 +480,17 @@ named_as_predicate(func) :-
 
 erpc_call(rpc, func) :- rpc_call(rpc, func, "erpc", _).
 
-// A clause somewhere in the function takes an error tagged :erpc.
-.decl takes_erpc_error(func: symbol) inline
+// The {:erpc, reason} the call raises escapes its function (Escape,
+// clientlib/escape.dl): no try around the call takes the error class or
+// names :erpc and goes on, and not every caller of the function is inside
+// one. A try around other code in the function takes nothing of it.
+.decl erpc_raise_escapes(rpc: symbol, func: symbol)
 
-takes_erpc_error(func) :- catch_tag(_, func, "error", ":erpc").
+erpc_raise_escapes(rpc, func) :- erpc_raise.escapes(rpc, func, "erpc").
+
+.init erpc_raise = Escape
+
+erpc_raise.asked(rpc, func, func, "erpc") :- erpc_call(rpc, func), used_as_boolean(rpc, func).
 
 // ── An rpc answer a wrapper returns ───────────────────────────────────
 //

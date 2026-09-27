@@ -18,6 +18,8 @@ defmodule Argus.Analyses.FailureRemotePidTest do
     RemotePid.SynHandler,
     RemotePid.Members,
     RemotePid.Helper,
+    RemotePid.CallerRescues,
+    RemotePid.MiddleRescue,
     RemotePid.Names,
     RemotePid.Links
   ]
@@ -128,6 +130,21 @@ defmodule Argus.Analyses.FailureRemotePidTest do
                {"Helper:leader_alive?/1", false, ":erlang.is_process_alive/1",
                 ":global.whereis_name/1", "lookup"}
              ] = probes(ctx, RemotePid.Helper)
+    end
+
+    test "a private probe whose every caller rescues the badarg is quiet", ctx do
+      skip_without_souffle()
+      assert probes(ctx, RemotePid.CallerRescues) == []
+    end
+
+    test "a rescue around a call between the helpers takes the badarg; one around other code does not",
+         ctx do
+      skip_without_souffle()
+
+      assert [
+               {"MiddleRescue:leader_seen?/1", false, ":erlang.is_process_alive/1",
+                ":global.whereis_name/1", "lookup"}
+             ] = probes(ctx, RemotePid.MiddleRescue)
     end
 
     test "a process's links, reordered and walked (phoenix_live_dashboard before 57e8a1f)", ctx do

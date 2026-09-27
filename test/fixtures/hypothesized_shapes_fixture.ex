@@ -157,6 +157,49 @@ defmodule Argus.Test.Fixtures.Hypothesized do
     end
   end
 
+  # A rescue around other code in the function takes nothing the rpc
+  # raises.
+  defmodule ErpcBooleanUnrelatedRescue do
+    @moduledoc false
+    def status(pid, payload) do
+      decoded =
+        try do
+          :erlang.binary_to_term(payload)
+        rescue
+          _ -> nil
+        end
+
+      if :erpc.call(node(pid), Process, :alive?, [pid]),
+        do: {:up, decoded},
+        else: {:down, decoded}
+    end
+  end
+
+  # A catch of exits takes nothing of the {:erpc, _} error.
+  defmodule ErpcBooleanCatchesExit do
+    @moduledoc false
+    def status(pid) do
+      if :erpc.call(node(pid), Process, :alive?, [pid]), do: :up, else: :down
+    catch
+      :exit, _ -> :down
+    end
+  end
+
+  # The predicate is private and its one caller catches the rpc's error.
+  defmodule ErpcBooleanCallerRescues do
+    @moduledoc false
+    def alive?(pid) do
+      remote_alive?(pid)
+    catch
+      :error, {:erpc, _} -> false
+    end
+
+    defp remote_alive?(pid) do
+      n = node(pid)
+      Enum.member?(Node.list(), n) && :erpc.call(n, Process, :alive?, [pid])
+    end
+  end
+
   # ── timers ───────────────────────────────────────────────────────────
 
   defmodule TimerCancelNoFlush do

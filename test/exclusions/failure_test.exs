@@ -65,7 +65,7 @@ defmodule Argus.Exclusions.FailureTest do
   defp short(func), do: func |> String.split(":") |> List.last()
 
   describe "a remote pid probed" do
-    # failure.dl, remote_pid_probe: !site_takes_argument_error(id, g).
+    # failure.dl, remote_pid_probe: probe_raise_escapes (Escape).
     test "through a helper that rescues the ArgumentError itself", ctx do
       assert probes(ctx, [F.RemoteProbe.HelperRescues]) == []
 
