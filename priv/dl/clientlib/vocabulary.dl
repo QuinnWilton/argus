@@ -71,6 +71,25 @@ bounded_lock(site, f, op, retries, nodes) :-
   retrying_lock(site, f, op, retries, nodes),
   retries != "infinity".
 
+// A :global call that retries until it is granted: its retries are
+// :infinity, or not in the bytecode and assumed :infinity as the
+// wrappers forward it (lock_until_granted).
+.decl retries_until_locked(lock: symbol) inline
+
+retries_until_locked(lock) :- lock_until_granted(lock, _, _, _, _).
+
+// A :global call that retries a bounded number of times, then gives up
+// (bounded_lock).
+.decl gives_up_after_retries(lock: symbol) inline
+
+gives_up_after_retries(lock) :- bounded_lock(lock, _, _, _, _).
+
+// A :global call whose node list holds other nodes, or may (not
+// "local"): each try waits on them.
+.decl waits_on_other_nodes(lock: symbol) inline
+
+waits_on_other_nodes(lock) :- global_op(lock, _, _, _, nodes), nodes != "local".
+
 // An ETS table created :public under a name: any process can write it.
 .decl public_table(name: symbol) inline
 

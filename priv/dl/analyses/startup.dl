@@ -1008,13 +1008,6 @@ lock_during_init(init, lock) :-
 
 waits_for(func, lock) :- global_path(func, _, lock).
 
-// A :global call that retries until it is granted: its retries are
-// :infinity, or not in the bytecode and assumed :infinity
-// (lock_until_granted).
-.decl retries_until_locked(lock: symbol) inline
-
-retries_until_locked(lock) :- lock_until_granted(lock, _, _, _, _).
-
 // Each lock is reported with its node list as `dep`. A retry count the
 // bytecode does not show is assumed :infinity, the default the wrappers
 // forward, and the row says so by its kind ("global_assumed"). One row
@@ -1044,16 +1037,6 @@ bounded_lock_during_init(init, lock) :-
   waits_for(init, lock),
   gives_up_after_retries(lock),
   waits_on_other_nodes(lock).
-
-// A :global call that retries a bounded number of times (bounded_lock).
-.decl gives_up_after_retries(lock: symbol) inline
-
-gives_up_after_retries(lock) :- bounded_lock(lock, _, _, _, _).
-
-// Its node list holds other nodes, or may (not "local").
-.decl waits_on_other_nodes(lock: symbol) inline
-
-waits_on_other_nodes(lock) :- global_op(lock, _, _, _, nodes), nodes != "local".
 
 blocks_on_peer(init, "init", nodes, "global_bounded", "", "", lock, op) :-
   bounded_lock_during_init(init, lock),

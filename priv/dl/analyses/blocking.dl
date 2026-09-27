@@ -1486,23 +1486,6 @@ bounded_lock_wait(func, lock) :-
 
 takes_global_lock(func, lock) :- global_op(lock, func, _, _, _).
 
-// A :global call that retries until it is granted: its retries are
-// :infinity, or not in the bytecode and assumed :infinity as the
-// wrappers forward it (lock_until_granted).
-.decl retries_until_locked(lock: symbol) inline
-
-retries_until_locked(lock) :- lock_until_granted(lock, _, _, _, _).
-
-// A :global call that retries a bounded number of times (bounded_lock).
-.decl gives_up_after_retries(lock: symbol) inline
-
-gives_up_after_retries(lock) :- bounded_lock(lock, _, _, _, _).
-
-// Its node list holds other nodes, or may (not "local").
-.decl waits_on_other_nodes(lock: symbol) inline
-
-waits_on_other_nodes(lock) :- global_op(lock, _, _, _, nodes), nodes != "local".
-
 // A lock over the cluster's nodes stalls on a netsplit; one over
 // `[node()]` waits only on a local holder. `nodes` says which, `detail`
 // the retries ("infinity", "dynamic" or the count). `lock` is the
