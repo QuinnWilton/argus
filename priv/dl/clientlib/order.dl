@@ -3,11 +3,19 @@
 // runs_after(before, after): control can reach `after` from `before` in
 // one trip through their function — later in the same basic block, or in
 // a block the flow (block_flow) leads to from before's. Both are
-// site_block instructions of one function: a call, a receive, a send or
-// a branch (site_block's kind says which; `branch` itself is not in a
-// solve's facts). A MAY word: some path from `before` runs `after`, and
-// another may not; a rule that suppresses on it stays quiet when any
-// path does what it asks.
+// site_block instructions of one function: a call to a named function,
+// a receive or a branch (site_block's kind says which; `branch` itself
+// is not in a solve's facts). A MAY word: some path from `before` runs
+// `after`, and another may not; a rule that suppresses on it stays quiet
+// when any path does what it asks.
+//
+// `before` is a call or a receive. The pipeline emits only what an order
+// from one of those takes part in (no row for a site none runs before,
+// nor for a function of branches alone), and contracts the flow to the
+// blocks holding a row; asked of a branch, the word can miss an answer.
+// A BIF instruction, a call through a fun or `apply` and a send are no
+// sites: a rule that needs one adds its relation to the pipeline's
+// @ordered_sites.
 //
 // What it covers, and what it does not:
 //

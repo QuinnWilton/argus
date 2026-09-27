@@ -124,6 +124,23 @@ the same advice.
 **Changed.** The points-to stage's choice between the exact and the
 bounded program is `Argus.Souffle.Stages`.
 
+### Order: the block facts hold only what runs_after can answer (schema 150)
+
+**Changed.** Schema 150. `site_block` and `block_flow` (schema 149,
+clientlib/order.dl's `runs_after`) held every call, receive, send and
+branch and every one-trip edge of the functions holding one: on ash
+(1327 modules) 194k and 318k rows, loaded by every solve that asks the
+order (mailbox, failure, blocking), about half a second each. They now
+hold what an order from a call or a receive can reach: `site_block` a
+call to a named function (`local_call`, `remote_call`), a receive or a
+branch that a call or receive runs before, or a call or receive that
+something runs after (no BIF instruction, dynamic call or send, which no
+rule asks about); `block_flow` the flow contracted to the blocks holding
+a row, an edge to each such block that is the next on a path. On ash:
+150k and 115k rows, and those three solves lose about 60% of what the
+facts cost them. No finding moves. `runs_after` is asked of a call or a
+receive; asked of a branch, it can miss an answer.
+
 ### Coupling: a cast made at a site of the once phase is a registration (schema 148)
 
 **Fixed.** "Coupled children under one_for_one" missed a registration a

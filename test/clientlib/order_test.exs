@@ -3,8 +3,10 @@ defmodule Argus.Clientlib.OrderTest do
   clientlib/order.dl's `runs_after`, over the block facts the pipeline
   derives (`site_block`, `block_flow`): the shapes it must order, and
   agreement with `Argus.Cfg.Function.precedes?/3`, the reading of the
-  graph the extractors order effects by, over every pair of sites in the
-  fixture and in a real library module.
+  graph the extractors order effects by, from every call and receive to
+  every call, receive and branch in the fixture and in a real library
+  module: the pipeline emits only the sites such an order takes part in,
+  and the check is over the instructions, not over what it emitted.
   """
   use ExUnit.Case, async: true
 
@@ -15,7 +17,8 @@ defmodule Argus.Clientlib.OrderTest do
 
   defp priv_dl, do: Path.join(:code.priv_dir(:panoptes), "dl")
 
-  # Every site is asked about, so the rows are the whole relation.
+  # Every call and receive is asked about (a branch is never asked of),
+  # so the rows are the whole relation.
   defp runs_after(modules, tmp_dir) do
     unless Souffle.available?(), do: flunk("souffle not installed")
 
@@ -29,15 +32,24 @@ defmodule Argus.Clientlib.OrderTest do
     .include "#{Path.join(priv_dl(), "clientlib/order.dl")}"
 
     .init order = RunsAfter
-    order.asked(a) :- site_block(a, _, _, _).
+    order.asked(a) :- site_block(a, "call", _, _).
+    order.asked(a) :- site_block(a, "receive", _, _).
 
     .decl runs_after(before: symbol, after: symbol)
     .output runs_after
     runs_after(a, z) :- order.runs_after(a, z).
 
-    .decl site(id: symbol)
+    .decl site(id: symbol, kind: symbol)
     .output site
-    site(a) :- site_block(a, _, _, _).
+    site(a, k) :- site_block(a, k, _, _).
+
+    // Every instruction of the kinds site_block holds, emitted or not.
+    .decl instruction_of(id: symbol, kind: symbol)
+    .output instruction_of
+    instruction_of(id, "call") :- local_call(id, _, _, _).
+    instruction_of(id, "call") :- remote_call(id, _, _, _, _).
+    instruction_of(id, "receive") :- recv_start(id, _, _, _).
+    instruction_of(id, "branch") :- branch(id, _, _).
 
     .decl callee(id: symbol, func: symbol)
     .output callee
@@ -107,25 +119,34 @@ defmodule Argus.Clientlib.OrderTest do
     end
   end
 
-  test "agrees with Cfg.Function.precedes?/3 on every pair of sites", %{tmp_dir: tmp_dir} do
+  test "agrees with Cfg.Function.precedes?/3 from every call and receive", %{tmp_dir: tmp_dir} do
     modules = [Order, GenServer, :gen_server]
     results = runs_after(modules, tmp_dir)
     ordered = MapSet.new(results["runs_after"], fn [a, z] -> {a, z} end)
+    emitted = MapSet.new(results["site"], fn [id, kind] -> {id, kind} end)
+    instructions = MapSet.new(results["instruction_of"], fn [id, kind] -> {id, kind} end)
+
+    # Nothing but those kinds, each row its instruction's kind.
+    assert MapSet.subset?(emitted, instructions)
 
     for module <- modules do
       {:ok, typed} = Pipeline.extract([module], format: :typed)
       cfgs = Cfg.build(typed)
 
       sites =
-        for [id] <- results["site"],
+        for {id, kind} <- instructions,
             {:ok, %InstrId{} = site} = InstrId.parse(id),
             site.module == inspect(module),
-            do: site
+            Map.has_key?(cfgs, InstrId.fa(site)),
+            do: {site, kind}
 
-      by_function = Enum.group_by(sites, &InstrId.fa/1)
+      by_function = Enum.group_by(sites, fn {site, _} -> InstrId.fa(site) end)
       assert by_function != %{}
 
-      for {fa, sites} <- by_function, a <- sites, z <- sites do
+      for {fa, sites} <- by_function,
+          {a, kind} <- sites,
+          kind in ["call", "receive"],
+          {z, _} <- sites do
         expected = Cfg.Function.precedes?(Map.fetch!(cfgs, fa), a.idx, z.idx)
         actual = MapSet.member?(ordered, {InstrId.format(a), InstrId.format(z)})
 
