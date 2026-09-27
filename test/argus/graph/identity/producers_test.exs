@@ -13,6 +13,8 @@ defmodule Argus.Graph.Identity.ProducersTest do
   alias Argus.Pipeline
 
   @moduletag :identity_verify
+  # Minutes under a full suite's load.
+  @moduletag timeout: 600_000
   @moduletag timeout: 600_000
 
   # A spread of the fixtures, the ones a few extractors need (named, so

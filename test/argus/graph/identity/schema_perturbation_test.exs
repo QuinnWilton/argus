@@ -1,8 +1,8 @@
-defmodule Argus.SchemaPerturbationTest do
+defmodule Argus.Graph.Identity.SchemaPerturbationTest do
   @moduledoc """
-  A producer's shard is keyed on the schema entries it recorded reading
-  (`Argus.Cache.Reads`), not on the schema's code. `Argus.SchemaReadsTest`
-  checks that every accessor records what it returns; this checks the
+  A producer's rows are kept on the schema entries it recorded reading
+  (`schema_entry`, `Argus.Graph.Reads`), not on the schema's code.
+  `Argus.Graph.Identity.SchemaReadsTest` checks that every accessor records what it returns; this checks the
   claim itself, whatever path the data took: each producer runs over the
   fixtures in a VM of its own whose schema has every entry it did not
   read changed — its fields renamed and retyped, a field added, its
@@ -19,7 +19,9 @@ defmodule Argus.SchemaPerturbationTest do
   """
   use ExUnit.Case, async: true
 
-  @moduletag :cache_verify
+  @moduletag :identity_verify
+  # Minutes under a full suite's load.
+  @moduletag timeout: 600_000
 
   # Every fixture (extracting them all takes a second), and runtime
   # modules for shapes they do not have: the check reaches only the paths
@@ -50,7 +52,7 @@ defmodule Argus.SchemaPerturbationTest do
       quote do
         defmodule unquote(mod) do
           def relations,
-            do: Argus.Cache.Reads.record(unquote(read), unquote(Macro.escape(relations)))
+            do: Argus.Schema.Reads.record(unquote(read), unquote(Macro.escape(relations)))
         end
       end
     )
@@ -103,13 +105,13 @@ defmodule Argus.SchemaPerturbationTest do
   """
 
   @digests ~S"""
-  Map.new(reads, &{&1, Argus.Cache.Reads.digest(&1)})
+  Map.new(reads, &{&1, Argus.Graph.Reads.entry_digest(&1)})
   """
 
   setup_all do
     [{_mod, endpoint}] =
       Code.compile_string("""
-      defmodule Argus.SchemaPerturbationTest.Endpoint do
+      defmodule Argus.Graph.Identity.SchemaPerturbationTest.Endpoint do
         def __sockets__, do: [{"/live", Phoenix.LiveView.Socket, [websocket: [], longpoll: []]}]
       end
       """)
@@ -263,7 +265,7 @@ defmodule Argus.SchemaPerturbationTest do
 
   defp concerns do
     for mod <- Application.spec(:panoptes, :modules),
-        Argus.Cache.Code.schema_module?(mod),
+        Argus.Graph.Reads.schema_module?(mod),
         Code.ensure_loaded?(mod),
         function_exported?(mod, :relations, 0),
         do: mod

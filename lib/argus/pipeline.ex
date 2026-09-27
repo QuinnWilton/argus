@@ -98,8 +98,8 @@ defmodule Argus.Pipeline do
 
   # The extractors that read the decoded facts (`Helpers.typed/1`): a
   # kept base's are read back only when one of them runs.
-  # `Argus.Cache.CodeClosureTest` fails when an extractor off the list
-  # computes them.
+  # `Argus.Graph.Identity.ProducerClosureTest` fails when an extractor off
+  # the list computes them.
   @typed_readers [
     Argus.Extractors.Dependence,
     Argus.Extractors.ParamFlow,

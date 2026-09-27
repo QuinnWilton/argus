@@ -1,12 +1,12 @@
-defmodule Argus.Cache.CodeClosureTest do
+defmodule Argus.Graph.Identity.ProducerClosureTest do
   @moduledoc """
-  A producer's shard is keyed on the code it runs (`Argus.Cache.Code`):
-  every module it executes must be in its closure, or an edit to that
-  module would leave a stale shard in place. The closures are read from
-  import tables; this runs each producer with call counting on and
-  checks the reading against what executed. The producers are split
-  three ways, each part in a VM of its own, so the parts run side by
-  side.
+  A producer's rows are kept in each module's pack under the digest of
+  the code it runs (`Argus.Graph.Code.closure/1`): every module it
+  executes must be in its closure, or an edit to that module would leave
+  stale rows in place. The closures are read from import tables; this
+  runs each producer with call counting on and checks the reading
+  against what executed. The producers are split three ways, each part
+  in a VM of its own, so the parts run side by side.
 
   The kept bases (`Argus.Pipeline.Base`) are keyed on the base's code
   too: the base runs here keeping them, and each extractor runs again
@@ -15,16 +15,21 @@ defmodule Argus.Cache.CodeClosureTest do
   (`Argus.Pipeline.typed_readers/0`), and one missing from that list
   computes them again.
 
-  The closures are the ones a store keys on (`schema: :recorded`),
-  without the schema's modules: a producer executes those outside its
-  code key, and is keyed on the entries it read of them instead — which
-  every export records (`Argus.SchemaReadsTest`).
+  The closures leave the schema's modules out: a producer executes
+  those outside its code key, and is keyed on the entries it read of
+  them instead — which every export records
+  (`Argus.Graph.Identity.SchemaReadsTest`).
   """
   use ExUnit.Case,
     async: true,
     parameterize: for(part <- 0..2, do: %{part: part, parts: 3})
 
-  alias Argus.Cache.Code
+  @moduletag :identity_verify
+  # Minutes under a full suite's load.
+  @moduletag timeout: 600_000
+
+  alias Argus.Graph.Code
+  alias Argus.Graph.Reads
 
   @beams for(
            mod <- Application.spec(:panoptes, :modules),
@@ -123,14 +128,14 @@ defmodule Argus.Cache.CodeClosureTest do
       end
 
     for producer <- producers do
-      {:ok, closure} = Code.closure(producer, schema: :recorded)
+      {:ok, closure} = Code.closure(producer)
       closure = MapSet.new(closure, &elem(&1, 0))
       %{fresh: ran, kept: over_kept} = Map.fetch!(executed, producer)
 
       assert ran != [], "#{inspect(producer)} executed nothing"
 
       outside =
-        Enum.reject(ran ++ over_kept, &(MapSet.member?(closure, &1) or Code.schema_module?(&1)))
+        Enum.reject(ran ++ over_kept, &(MapSet.member?(closure, &1) or Reads.schema_module?(&1)))
 
       assert outside == [], "#{inspect(producer)} runs code its key does not cover"
 

@@ -142,7 +142,7 @@ jobs:
       # The peer and Mix-project tests (`:project`) run here too; they
       # have a job of their own below only to be rerun alone.
       - name: Run tests
-        run: mix test --include cache_verify
+        run: mix test --include identity_verify
 
   project:
     name: Project tests (Mix compiler, driver, peers)

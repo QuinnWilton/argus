@@ -19,9 +19,9 @@ defmodule Argus.Schema do
   the entries it read, not on this module's code (`Argus.Graph.Reads`),
   so an edit to a relation no producer reads re-extracts nothing. A new
   accessor records what it returns, as the others do —
-  `Argus.SchemaReadsTest` calls every export and fails otherwise — and
-  `columns/1` is the read to make when a relation's columns are all a
-  caller needs: its prose is then no part of the key.
+  `Argus.Graph.Identity.SchemaReadsTest` calls every export and fails
+  otherwise — and `columns/1` is the read to make when a relation's
+  columns are all a caller needs: its prose is then no part of the key.
   """
 
   alias Argus.Schema.Reads
@@ -121,10 +121,10 @@ defmodule Argus.Schema do
   # Every accessor records the entry it returns (`Argus.Schema.Reads`):
   # a producer's rows are keyed on the entries it read, not on this
   # module's code, and an accessor that returned schema data without
-  # recording it would leave stale rows in place after an edit to
-  # that entry. `Argus.SchemaReadsTest` calls every export here and in
-  # the concern modules, and fails unless each records a read naming
-  # exactly what it returned; `reread/1` answers each read again.
+  # recording it would leave stale rows in place after an edit to that
+  # entry. `Argus.Graph.Identity.SchemaReadsTest` calls every export here
+  # and in the concern modules, and fails unless each records a read
+  # naming exactly what it returned; `reread/1` answers each read again.
 
   @doc """
   The fact-schema version, asserted by in-process consumers at compile time.

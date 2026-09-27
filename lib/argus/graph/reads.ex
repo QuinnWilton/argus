@@ -44,12 +44,34 @@ defmodule Argus.Graph.Reads do
   @installed_key {__MODULE__, :installed}
 
   @doc """
-  Whether `module` is schema data (`Argus.Cache.Code.schema_module?/1`):
-  what every query's code version leaves out, being keyed on the
-  entries it read instead.
+  Whether `module` is schema data: `Argus.Schema` or a module under it,
+  but `Argus.Schema.Reads`, which records and holds no entry. What
+  every query's code version leaves out (walking through it, so what it
+  calls is still covered), being keyed on the entries it read instead.
   """
   @spec schema_module?(module()) :: boolean()
-  def schema_module?(module), do: Argus.Cache.Code.schema_module?(module)
+  def schema_module?(Argus.Schema), do: true
+
+  # The recorder is code: what it records is what every reader is keyed
+  # on, and a change to it moves them.
+  def schema_module?(Argus.Schema.Reads), do: false
+
+  def schema_module?(module) when is_atom(module),
+    do: String.starts_with?(Atom.to_string(module), "Elixir.Argus.Schema.")
+
+  @doc """
+  The digest of what `read` names now (`Argus.Schema.reread/1`):
+  SHA-256 of its deterministic external term, as lowercase hex. What
+  `schema_entry` answers for the read.
+  """
+  @spec entry_digest(Schema.Reads.read()) :: String.t()
+  def entry_digest(read) when is_binary(read) do
+    value = Schema.reread(read)
+
+    :sha256
+    |> :crypto.hash(:erlang.term_to_binary(value, [:deterministic]))
+    |> Base.encode16(case: :lower)
+  end
 
   @doc """
   The `around:` hook of every query of the graph: runs `body` with a set
@@ -104,7 +126,7 @@ defmodule Argus.Graph.Reads do
   # (`"columns call_arg"`, `"fetch supervisor"`): the digest of what the
   # entry is now. Versioned by the schema's code, as nothing else here is.
   defquery :schema_entry, key: read, returns: String.t() do
-    Argus.Cache.Reads.digest(read)
+    entry_digest(read)
   end
 
   # What reading `module`'s specs gives, as a digest, depending on the

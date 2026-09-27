@@ -73,7 +73,7 @@ defmodule Argus.Souffle.Program do
   name that is now declared twice — fails the program, and that is
   caught before a solve is keyed: the relations it loads are resolved
   again (`Argus.Souffle.input_relations/2`) under `relations = :all`,
-  which every declaration moves. `Argus.Souffle.DeclaredDigestTest`
+  which every declaration moves. `Argus.Graph.Identity.DeclaredDigestTest`
   changes every declaration a shipped program does not load and
   checks that its outputs, byte for byte, and this digest do not move.
   """

@@ -359,7 +359,7 @@ defmodule Argus.Graph.Pack do
         schema = if producer == :base, do: schema, else: :ordsets.union(schema, base_reads)
 
         installed =
-          if Argus.Cache.Code.reads_installed?(producer), do: extraction.installed, else: []
+          if Argus.Graph.Code.reads_installed?(producer), do: extraction.installed, else: []
 
         # A callee by its name: a fresh VM decodes a trace only when
         # every atom in it exists (`Roux.Blob.decode/1`), and a callee

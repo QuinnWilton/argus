@@ -1,12 +1,13 @@
-defmodule Argus.Cache.CodeTest do
+defmodule Argus.Graph.CodeTest do
   @moduledoc """
-  A producer's shard is keyed on the code it runs (`Argus.Cache.Code`).
-  That the closures cover what each producer executes is
-  `Argus.Cache.CodeClosureTest`'s.
+  A producer's rows are kept under the digest of the code it runs
+  (`Argus.Graph.Code`'s `producer_code`). That the closures cover what
+  each producer executes is `Argus.Graph.Identity.ProducerClosureTest`'s.
   """
   use ExUnit.Case, async: true
 
-  alias Argus.Cache.Code
+  alias Argus.Graph.Code
+  alias Argus.Graph.Reads
 
   defp producers do
     {:ok, all} = Argus.Analysis.set(:all)
@@ -61,46 +62,36 @@ defmodule Argus.Cache.CodeTest do
     refute Code.reads_installed?(Argus.Extractors.ETS)
   end
 
-  test "schema: :recorded leaves the schema's modules out, and keys what they call" do
-    {:ok, included} = Code.closure(:base)
-    {:ok, recorded} = Code.closure(:base, schema: :recorded)
-    included = Enum.map(included, &elem(&1, 0))
-    recorded = Enum.map(recorded, &elem(&1, 0))
+  test "the schema's modules are left out, and what they call is walked" do
+    {:ok, base} = Code.closure(:base)
+    base = Enum.map(base, &elem(&1, 0))
 
-    # The concern modules are read at Argus.Schema's compile time: their
-    # relations reach a key as its literals.
-    assert Argus.Schema in included
-    assert Enum.filter(included, &Code.schema_module?/1) == included -- recorded
-    refute Enum.any?(recorded, &Code.schema_module?/1)
+    refute Argus.Schema in base
+    refute Enum.any?(base, &Reads.schema_module?/1)
 
-    # Walked through: what records their reads is code, and keyed.
-    assert Argus.Schema.Reads in recorded
+    # Walked through: what records their reads is code, and in it.
+    assert Argus.Schema.Reads in base
+    refute Reads.schema_module?(Argus.Schema.Reads)
+    assert Reads.schema_module?(Argus.Schema.Processes)
 
-    {:ok, extractor} = Code.closure(Argus.Extractors.ETS, schema: :recorded)
-    refute Enum.any?(extractor, fn {mod, _beam} -> Code.schema_module?(mod) end)
-
-    assert {:ok, one} = Code.digest(:base)
-    assert {:ok, other} = Code.digest(:base, schema: :recorded)
-    assert one != other
-    assert_raise ArgumentError, fn -> Code.digest(:base, schema: :other) end
+    {:ok, extractor} = Code.closure(Argus.Extractors.ETS)
+    refute Enum.any?(extractor, fn {mod, _beam} -> Reads.schema_module?(mod) end)
   end
 
-  test "digests differ between producers and are stable within a VM" do
-    assert {:ok, base} = Code.digest(:base)
-    assert {:ok, ets} = Code.digest(Argus.Extractors.ETS)
-    assert base != ets
-    assert {:ok, ^ets} = Code.digest(Argus.Extractors.ETS)
+  test "a producer's roots are the pipeline's, and the extractor's own" do
+    assert Code.producer_roots(:base) == [Argus.Pipeline]
+    assert Code.producer_roots(Argus.Extractors.ETS) == [Argus.Pipeline, Argus.Extractors.ETS]
   end
 
-  test "a producer compiled in memory has no key" do
+  test "a producer compiled in memory has no closure, and may read specs" do
     [{mod, _bin}] =
       Elixir.Code.compile_string("""
-      defmodule Argus.Cache.CodeTest.InMemory do
+      defmodule Argus.Graph.CodeTest.InMemory do
         def extract(_data), do: %{}
       end
       """)
 
     assert {:error, {:no_beam, ^mod}} = Code.closure(mod)
-    assert {:error, {:no_beam, ^mod}} = Code.digest(mod)
+    assert Code.reads_installed?(mod)
   end
 end

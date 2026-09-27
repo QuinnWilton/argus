@@ -1,8 +1,8 @@
-defmodule Argus.SchemaReadsTest do
+defmodule Argus.Graph.Identity.SchemaReadsTest do
   @moduledoc """
-  A producer's shard is keyed on the schema entries it read, not on the
-  schema's code (`Argus.Cache.Reads`; `Argus.Cache.Code` with `schema:
-  :recorded`). That holds only while nothing hands out schema data
+  A query is keyed on the schema entries it read, not on the schema's
+  code (`schema_entry`, `Argus.Graph.Reads`), and a producer's rows are
+  kept the same way (`Argus.Graph.Pack`). That holds only while nothing hands out schema data
   without recording the read. This calls every export of `Argus.Schema`
   and of every module under it, with every valid argument, and fails
   unless each call records a read whose value (`Argus.Schema.reread/1`)
@@ -15,16 +15,16 @@ defmodule Argus.SchemaReadsTest do
   """
   use ExUnit.Case, async: true
 
-  alias Argus.Cache.Reads
   alias Argus.Schema
+  alias Argus.Schema.Reads
 
   @internal [module_info: 0, module_info: 1, __info__: 1]
 
-  # The modules a producer's code key leaves out under `schema:
-  # :recorded`: exactly those whose every export this checks.
+  # The modules every query's code version leaves out: exactly those
+  # whose every export this checks.
   defp schema_modules do
     for mod <- Application.spec(:panoptes, :modules),
-        Argus.Cache.Code.schema_module?(mod),
+        Argus.Graph.Reads.schema_module?(mod),
         do: mod
   end
 
@@ -77,7 +77,7 @@ defmodule Argus.SchemaReadsTest do
             flunk("""
             #{inspect(mod)}.#{fun}/#{arity} takes arguments this test does not know. \
             Everything under Argus.Schema is data a producer's key names by the reads \
-            it records (Argus.Cache.Reads): list its valid arguments in arguments/3, \
+            it records (Argus.Schema.Reads): list its valid arguments in arguments/3, \
             or move code that is not schema data out of the namespace.\
             """)
 

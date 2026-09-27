@@ -1,7 +1,7 @@
-defmodule Argus.Souffle.DeclaredDigestTest do
+defmodule Argus.Graph.Identity.DeclaredDigestTest do
   @moduledoc """
-  A solve is keyed on the program as it reads it
-  (`Argus.Souffle.Program.declared_digest/2`): of the generated
+  A solve is keyed on the program as it reads it (`Argus.Graph.Programs`,
+  through `Argus.Souffle.Program.declared_digest/2`): of the generated
   declaration files, only the declarations of the relations Souffle
   loads for it. This checks that claim against the solver, for every
   shipped program over the fixtures' facts: in a copy of `priv/dl`
@@ -20,7 +20,9 @@ defmodule Argus.Souffle.DeclaredDigestTest do
   alias Argus.Souffle.Program
 
   @moduletag :tmp_dir
-  @moduletag :cache_verify
+  @moduletag :identity_verify
+  # Minutes under a full suite's load.
+  @moduletag timeout: 600_000
 
   @generated ~w(base.dl layer2.dl priors.dl)
 

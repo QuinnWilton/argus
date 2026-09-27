@@ -1,7 +1,8 @@
-defmodule Argus.Cache.ReadsTest do
+defmodule Argus.Schema.ReadsTest do
   use ExUnit.Case, async: true
 
-  alias Argus.Cache.Reads
+  alias Argus.Graph
+  alias Argus.Schema.Reads
 
   test "a read outside any tracking records nothing and returns the value" do
     assert Reads.record("names", :value) == :value
@@ -29,6 +30,17 @@ defmodule Argus.Cache.ReadsTest do
     assert outer == ["all", "names", "version"]
   end
 
+  test "an isolated set leaves the one around it as it was" do
+    {:outer, outer} =
+      Reads.track(fn ->
+        Reads.record("names", 1)
+        {:inner, ["version"]} = Reads.isolated(fn -> Reads.record("version", :inner) end)
+        :outer
+      end)
+
+    assert outer == ["names"]
+  end
+
   test "a raise inside keeps its reads for the set around it, and goes on" do
     {_, outer} =
       Reads.track(fn ->
@@ -49,9 +61,12 @@ defmodule Argus.Cache.ReadsTest do
   end
 
   test "a read's digest is of what it names now" do
-    assert Reads.digest("columns bif_call") ==
-             Reads.value_digest(Argus.Schema.columns(:bif_call))
+    value = :erlang.term_to_binary(Argus.Schema.columns(:bif_call), [:deterministic])
 
-    refute Reads.digest("columns bif_call") == Reads.digest("columns remote_call")
+    assert Graph.Reads.entry_digest("columns bif_call") ==
+             :sha256 |> :crypto.hash(value) |> Base.encode16(case: :lower)
+
+    refute Graph.Reads.entry_digest("columns bif_call") ==
+             Graph.Reads.entry_digest("columns remote_call")
   end
 end

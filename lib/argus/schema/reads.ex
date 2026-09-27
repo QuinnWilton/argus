@@ -9,12 +9,11 @@ defmodule Argus.Schema.Reads do
   Layer-1 relations by their columns, and nothing else — so each
   accessor of the schema records the entry it returned, and a cache
   keys what was computed on what those entries are (the query graph's
-  `schema_entry` edges, `Argus.Graph.Reads`; the batch store's keys,
-  `Argus.Cache.Reads`).
+  `schema_entry` edges, `Argus.Graph.Reads`).
 
   This module only records. It is code, not schema data: a change to it
   moves what every reader of the schema is keyed on, as any other code
-  does (`Argus.Cache.Code.schema_module?/1` leaves it in).
+  does (`Argus.Graph.Reads.schema_module?/1` leaves it in).
 
   ## Recording
 
@@ -31,11 +30,12 @@ defmodule Argus.Schema.Reads do
 
   A read is recorded by name (`t:read/0`), not by value: its value is
   read again by whoever keys on it, through the same accessor
-  (`Argus.Schema.reread/1`). `Argus.SchemaReadsTest` calls every export
-  of the schema's modules and fails unless each records a read whose
-  value is exactly what it returned, and `Argus.SchemaPerturbationTest`
-  runs every producer against a schema in which every entry it did not
-  read is changed, and fails unless its rows are byte-identical.
+  (`Argus.Schema.reread/1`). `Argus.Graph.Identity.SchemaReadsTest`
+  calls every export of the schema's modules and fails unless each
+  records a read whose value is exactly what it returned, and
+  `Argus.Graph.Identity.SchemaPerturbationTest` runs every producer
+  against a schema in which every entry it did not read is changed, and
+  fails unless its rows are byte-identical.
 
   Only the process that tracks records: a computation that hands
   schema data to a process of its own tracks there too, and records

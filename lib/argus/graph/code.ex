@@ -35,10 +35,45 @@ defmodule Argus.Graph.Code do
   @spec roots() :: [module()]
   def roots, do: Argus.Analysis.builtin_analysis_modules() ++ Extraction.extractors()
 
+  @doc """
+  The roots of a producer's code: `Argus.Pipeline` for the base, and
+  the extractor besides for an extractor, which it reaches only by
+  dynamic dispatch (`extractor.extract/1`). Every extractor reads what
+  the base computes, so the base's code is in every producer's.
+  """
+  @spec producer_roots(Argus.Pipeline.producer()) :: [module()]
+  def producer_roots(:base), do: [Argus.Pipeline]
+  def producer_roots(extractor) when is_atom(extractor), do: [Argus.Pipeline, extractor]
+
+  @doc """
+  The modules a producer's rows depend on, each with the file its
+  object code was read from (`Roux.Code.closure/2` of
+  `producer_roots/1`): the schema's modules are left out, and walked
+  through, as `producer_code` digests them. An edit to one extractor
+  moves its own closure's digest and no other producer's.
+  """
+  @spec closure(Argus.Pipeline.producer()) ::
+          {:ok, [{module(), Roux.Code.location()}]} | {:error, {:no_beam, module()}}
+  def closure(producer),
+    do: Roux.Code.closure(producer_roots(producer), exclude: &Reads.schema_module?/1)
+
+  @doc """
+  Whether a producer can read specs from the code path
+  (`Argus.Specs.installed/2`): its rows then depend on the specs it
+  read (`installed_specs`, `Argus.Graph.Reads`) as well as on the
+  module. A producer whose closure cannot be read may.
+  """
+  @spec reads_installed?(Argus.Pipeline.producer()) :: boolean()
+  def reads_installed?(producer) do
+    case closure(producer) do
+      {:ok, modules} -> List.keymember?(modules, Argus.Specs, 0)
+      {:error, _} -> true
+    end
+  end
+
   defquery :producer_code, key: :all, code: {__MODULE__, :roots, []} do
     for producer <- Extraction.producers(), into: %{} do
-      roots = if producer == :base, do: [Argus.Pipeline], else: [Argus.Pipeline, producer]
-      {producer, digest(roots, db)}
+      {producer, digest(producer_roots(producer), db)}
     end
   end
 
