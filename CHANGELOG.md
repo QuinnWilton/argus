@@ -85,12 +85,13 @@ their options are removed.
   gone (`ARGUS_VERIFY_BATCH` still solves each batched set alone), and
   the `:cache_verify` tag is `:identity_verify`.
 
-**Added.** `Argus.Graph`, the query graph over roux 0.2: a beam's facts
-by its content and the code extracting it, each relation's digest a
-Merkle over the modules' own, each solve by the digests of what it
-reads (`Argus.Souffle.Solve`, the action cache), and each analysis's
-findings kept line-free and placed last (`Argus.Graph.Locate`). A
-module's rows are one segment per producer in a `Roux.Blob` store,
+**Added.** A dependency on roux `~> 0.2` (from Hex). `Argus.Graph`,
+the query graph over roux 0.2: a beam's facts by its content and the
+code extracting it, each relation's digest a Merkle over the modules'
+own, each solve by the digests of what it reads (`Argus.Souffle.Solve`,
+the action cache), and each analysis's findings kept line-free and
+placed last (`Argus.Graph.Locate`). A module's rows are one segment
+per producer in a `Roux.Blob` store,
 found again by one verifying trace per module that keeps a few
 variants of each producer's (`Argus.Graph.Pack`): an extractor edit
 runs that extractor alone over each module's kept base, which the cold

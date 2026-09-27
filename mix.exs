@@ -65,8 +65,7 @@ defmodule Argus.MixProject do
       # that line_info resolution depends on (0.2.0+).
       {:beam_spy, "~> 0.2"},
       # The incremental query graph (memos, the manifest, the blob store).
-      # The workspace's roux until 0.2 is on Hex.
-      {:roux, path: "../roux"},
+      {:roux, "~> 0.2"},
       {:telemetry, "~> 1.0"},
       # Findings rendered as source frames.
       {:pentiment, "~> 0.2"},

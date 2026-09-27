@@ -9,26 +9,12 @@ on:
 env:
   MIX_ENV: test
 
-# argus depends on roux by path (`../roux`) until roux 0.2 is on Hex:
-# every job checks both out side by side and runs in argus's directory.
-defaults:
-  run:
-    working-directory: argus
-
 jobs:
   format:
     name: Format
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          path: argus
-
-      - uses: actions/checkout@v4
-        with:
-          repository: QuinnWilton/roux
-          ref: main
-          path: roux
 
       - name: Set up Elixir
         uses: erlef/setup-beam@v1
@@ -39,8 +25,8 @@ jobs:
       - name: Restore dependencies cache
         uses: actions/cache@v4
         with:
-          path: argus/deps
-          key: ${{ runner.os }}-mix-${{ hashFiles('argus/mix.lock') }}
+          path: deps
+          key: ${{ runner.os }}-mix-${{ hashFiles('mix.lock') }}
           restore-keys: ${{ runner.os }}-mix-
 
       - name: Install dependencies
@@ -54,14 +40,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          path: argus
-
-      - uses: actions/checkout@v4
-        with:
-          repository: QuinnWilton/roux
-          ref: main
-          path: roux
 
       - name: Set up Elixir
         uses: erlef/setup-beam@v1
@@ -72,8 +50,8 @@ jobs:
       - name: Restore dependencies cache
         uses: actions/cache@v4
         with:
-          path: argus/deps
-          key: ${{ runner.os }}-mix-${{ hashFiles('argus/mix.lock') }}
+          path: deps
+          key: ${{ runner.os }}-mix-${{ hashFiles('mix.lock') }}
           restore-keys: ${{ runner.os }}-mix-
 
       - name: Install dependencies
@@ -92,14 +70,6 @@ jobs:
         otp: ["28.3"]
     steps:
       - uses: actions/checkout@v4
-        with:
-          path: argus
-
-      - uses: actions/checkout@v4
-        with:
-          repository: QuinnWilton/roux
-          ref: main
-          path: roux
 
       - name: Set up Elixir
         uses: erlef/setup-beam@v1
@@ -117,8 +87,8 @@ jobs:
       - name: Restore dependencies cache
         uses: actions/cache@v4
         with:
-          path: argus/deps
-          key: ${{ runner.os }}-mix-${{ matrix.elixir }}-${{ hashFiles('argus/mix.lock') }}
+          path: deps
+          key: ${{ runner.os }}-mix-${{ matrix.elixir }}-${{ hashFiles('mix.lock') }}
           restore-keys: ${{ runner.os }}-mix-${{ matrix.elixir }}-
 
       - name: Install dependencies
@@ -143,14 +113,6 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
-        with:
-          path: argus
-
-      - uses: actions/checkout@v4
-        with:
-          repository: QuinnWilton/roux
-          ref: main
-          path: roux
 
       - name: Set up Elixir
         uses: erlef/setup-beam@v1
@@ -168,8 +130,8 @@ jobs:
       - name: Restore dependencies cache
         uses: actions/cache@v4
         with:
-          path: argus/deps
-          key: ${{ runner.os }}-mix-1.19.4-${{ hashFiles('argus/mix.lock') }}
+          path: deps
+          key: ${{ runner.os }}-mix-1.19.4-${{ hashFiles('mix.lock') }}
           restore-keys: ${{ runner.os }}-mix-1.19.4-
 
       - name: Install dependencies
@@ -183,14 +145,6 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
-        with:
-          path: argus
-
-      - uses: actions/checkout@v4
-        with:
-          repository: QuinnWilton/roux
-          ref: main
-          path: roux
 
       - name: Set up Elixir
         uses: erlef/setup-beam@v1
@@ -208,8 +162,8 @@ jobs:
       - name: Restore dependencies cache
         uses: actions/cache@v4
         with:
-          path: argus/deps
-          key: ${{ runner.os }}-mix-1.19.4-${{ hashFiles('argus/mix.lock') }}
+          path: deps
+          key: ${{ runner.os }}-mix-1.19.4-${{ hashFiles('mix.lock') }}
           restore-keys: ${{ runner.os }}-mix-1.19.4-
 
       - name: Install dependencies
@@ -227,14 +181,6 @@ jobs:
       MIX_ENV: dev
     steps:
       - uses: actions/checkout@v4
-        with:
-          path: argus
-
-      - uses: actions/checkout@v4
-        with:
-          repository: QuinnWilton/roux
-          ref: main
-          path: roux
 
       - name: Set up Elixir
         uses: erlef/setup-beam@v1
@@ -245,16 +191,16 @@ jobs:
       - name: Restore dependencies cache
         uses: actions/cache@v4
         with:
-          path: argus/deps
-          key: ${{ runner.os }}-mix-${{ hashFiles('argus/mix.lock') }}
+          path: deps
+          key: ${{ runner.os }}-mix-${{ hashFiles('mix.lock') }}
           restore-keys: ${{ runner.os }}-mix-
 
       - name: Restore PLT cache
         uses: actions/cache@v4
         id: plt-cache
         with:
-          path: argus/priv/plts
-          key: ${{ runner.os }}-plt-${{ hashFiles('argus/mix.lock') }}
+          path: priv/plts
+          key: ${{ runner.os }}-plt-${{ hashFiles('mix.lock') }}
           restore-keys: ${{ runner.os }}-plt-
 
       - name: Install dependencies
@@ -276,14 +222,6 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
-        with:
-          path: argus
-
-      - uses: actions/checkout@v4
-        with:
-          repository: QuinnWilton/roux
-          ref: main
-          path: roux
 
       - name: Set up Elixir, rebar3 and Gleam
         uses: erlef/setup-beam@v1
@@ -303,8 +241,8 @@ jobs:
       - name: Restore dependencies cache
         uses: actions/cache@v4
         with:
-          path: argus/deps
-          key: ${{ runner.os }}-mix-escript-${{ hashFiles('argus/mix.lock') }}
+          path: deps
+          key: ${{ runner.os }}-mix-escript-${{ hashFiles('mix.lock') }}
           restore-keys: ${{ runner.os }}-mix-escript-
 
       - name: Install dependencies
@@ -318,11 +256,11 @@ jobs:
       - name: Run the escript from outside the repository
         run: |
           cd "$RUNNER_TEMP"
-          "$GITHUB_WORKSPACE/argus/argus" version
-          "$GITHUB_WORKSPACE/argus/argus" list > /dev/null
+          "$GITHUB_WORKSPACE/argus" version
+          "$GITHUB_WORKSPACE/argus" list > /dev/null
 
       - name: Compile the rebar3 plugin
-        working-directory: argus/integrations/rebar3_argus
+        working-directory: integrations/rebar3_argus
         run: rebar3 compile
 
       - name: Run the escript, rebar3, gleam and plugin tests
@@ -334,4 +272,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: argus-escript
-          path: argus/argus
+          path: argus
