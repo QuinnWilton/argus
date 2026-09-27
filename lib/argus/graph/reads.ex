@@ -132,7 +132,7 @@ defmodule Argus.Graph.Reads do
         interface(db, module, path, source)
 
       :runtime ->
-        Argus.Specs.interface_digest(module, source)
+        runtime_interface(db, module, source)
 
       :absent ->
         "absent"
@@ -152,6 +152,23 @@ defmodule Argus.Graph.Reads do
       {:ok, :runtime} -> :runtime
       {:ok, path} -> {:path, Path.expand(path)}
       :error -> :absent
+    end
+  end
+
+  # A module the runtime carries (preloaded, as `:erlang` is, or loaded
+  # from no file): its digest kept under the digest of its loaded code,
+  # which moves with any other code of it. `:erlang`'s specs are read on
+  # every run, and fetching them is most of a warm run's specs work.
+  defp runtime_interface(db, module, source) do
+    if :erlang.module_loaded(module) do
+      Roux.Stamp.memo(
+        {__MODULE__, :runtime_interface, module, module.module_info(:md5)},
+        [],
+        fn -> Argus.Specs.interface_digest(module, source) end,
+        store: db.blob
+      )
+    else
+      Argus.Specs.interface_digest(module, source)
     end
   end
 
