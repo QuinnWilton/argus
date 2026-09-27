@@ -97,7 +97,7 @@ defmodule Argus.Cfg.Function do
       {nil, _} -> false
       {_, nil} -> false
       {%Block{id: same}, %Block{id: same}} -> from < to
-      {a, %Block{id: target}} -> reach_block(fun, forward(fun, a), target, %{})
+      {a, %Block{id: target}} -> reach_block(fun, forward_succs(fun, a), target, %{})
     end
   end
 
@@ -112,12 +112,18 @@ defmodule Argus.Cfg.Function do
         reach_block(fun, rest, target, seen)
 
       true ->
-        next = forward(fun, Map.fetch!(fun.blocks, id))
+        next = forward_succs(fun, Map.fetch!(fun.blocks, id))
         reach_block(fun, next ++ rest, target, Map.put(seen, id, true))
     end
   end
 
-  defp forward(fun, %Block{id: id, succs: succs}) do
+  @doc """
+  The blocks control passes to from `block` within one trip through the
+  function: its successors, less one that dominates it (the edge closes a
+  loop). The edges `precedes?/3` follows, and the pipeline's `block_flow`.
+  """
+  @spec forward_succs(t(), Block.t()) :: [Block.id()]
+  def forward_succs(%__MODULE__{} = fun, %Block{id: id, succs: succs}) do
     succs
     |> Enum.map(&elem(&1, 0))
     |> Enum.reject(&dominates?(fun, &1, id))

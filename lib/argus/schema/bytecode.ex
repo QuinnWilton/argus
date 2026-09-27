@@ -270,6 +270,46 @@ defmodule Argus.Schema.Bytecode do
         """
       },
       %{
+        name: :site_block,
+        layer: 1,
+        fields: [
+          {:id, :instr_id, "a call, receive, send or branch instruction"},
+          {:kind, :symbol, "call | receive | send | branch"},
+          {:block, :instr_id, "the first instruction of its basic block"},
+          {:idx, :number, "its index in the function, which orders it within the block"}
+        ],
+        doc: """
+        The basic block (`Argus.Cfg`) holding each instruction a rule can \
+        ask the order of: a call (`local_call`, `remote_call`, `bif_call`, \
+        `dynamic_call`), a receive (`recv_start`), a send (`send_msg`) and \
+        a branch (`branch`, which only the in-process passes read: `kind` \
+        says which a row is, and a receive's `loop_rec` is both). A block \
+        is named by its first instruction. \
+        With `block_flow` it is what clientlib/order.dl's `runs_after` \
+        reads, so a rule asks whether one instruction runs after another \
+        without reading `instruction` or `next`, the largest and most \
+        volatile relations in the schema. Positional like `def_use`: an \
+        edit to a function body moves its rows.
+        """
+      },
+      %{
+        name: :block_flow,
+        layer: 1,
+        fields: [
+          {:from, :instr_id, "a basic block, by its first instruction"},
+          {:to, :instr_id, "a block control can pass to next"}
+        ],
+        doc: """
+        Control passes from one basic block to another within one trip \
+        through their function: every edge of `Argus.Cfg`, less one into a \
+        block that dominates its source (a loop's back edge), as \
+        `Argus.Cfg.Function.precedes?/3` reads the graph. Emitted only for \
+        the functions holding a `site_block` instruction; a receive's \
+        loop back to its `loop_rec` is no flow, so one trip through a \
+        receive orders its clauses after it and nothing before it.
+        """
+      },
+      %{
         name: :send_msg,
         layer: 1,
         fields: [

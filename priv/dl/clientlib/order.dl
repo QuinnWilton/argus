@@ -1,0 +1,67 @@
+// Instruction order within one function, as a component.
+//
+// runs_after(before, after): control can reach `after` from `before` in
+// one trip through their function — later in the same basic block, or in
+// a block the flow (block_flow) leads to from before's. Both are
+// site_block instructions of one function: a call, a receive, a send or
+// a branch (site_block's kind says which; `branch` itself is not in a
+// solve's facts). A MAY word: some path from `before` runs `after`, and
+// another may not; a rule that suppresses on it stays quiet when any
+// path does what it asks.
+//
+// What it covers, and what it does not:
+//
+// - One function body. A callee's work runs after an instruction when
+//   the call does (a call is a site); a rule asking about a helper asks
+//   runs_after of the call site, then what the callee reaches (mailbox's
+//   flush after a cancel does). A closure runs when the call it is
+//   handed to runs it: ask of that call (fun_handed's id), not of the
+//   closure.
+// - One trip. A loop's back edge is no flow, so an instruction earlier
+//   in a receive's wait loop does not run after a later one, though the
+//   next trip runs it again. Inside a body the BEAM loops only there;
+//   everything else loops by recursion, where each trip is a new call
+//   and the order within the body is the order of the trip.
+// - A try's handler runs after the try (the edge leaves the block that
+//   opens it), not after each instruction the try covers: an instruction
+//   in the body does not reach the handler through block_flow.
+// - Not "always runs after": no post-dominance. No shipped rule asks it
+//   yet; the facts would be block_flow's post-dominators, from Argus.Cfg.
+//
+// Seed it with the instructions a rule asks about, and read runs_after:
+//
+//   .init after_cancel = RunsAfter
+//   after_cancel.asked(c) :- timer_cancel(c, _, _, _, _).
+//   ... after_cancel.runs_after(cancel, recv), site_block(recv, "receive", _, _) ...
+//
+// The closure over block_flow is taken only from the blocks holding an
+// asked instruction: a function's blocks are few, and the rules ask
+// about few instructions. The declarations are indented on purpose
+// (dl_declarations_test scans for `^.decl`); an instance adds no
+// `.input`.
+
+.comp RunsAfter {
+  .decl asked(before: symbol)
+  .decl runs_after(before: symbol, after: symbol)
+
+  // The blocks holding an asked instruction, and what their flow reaches.
+  .decl asked_block(block: symbol)
+  .decl flows_to(from: symbol, to: symbol)
+
+  asked_block(b) :- asked(a), site_block(a, _, b, _).
+
+  flows_to(b, c) :- asked_block(b), block_flow(b, c).
+  flows_to(b, d) :- flows_to(b, c), block_flow(c, d).
+
+  runs_after(a, z) :-
+    asked(a),
+    site_block(a, _, b, i),
+    site_block(z, _, b, j),
+    i < j.
+
+  runs_after(a, z) :-
+    asked(a),
+    site_block(a, _, b, _),
+    flows_to(b, c),
+    site_block(z, _, c, _).
+}

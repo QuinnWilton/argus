@@ -33,7 +33,10 @@
 // analysis that read it would take branch/jump/next/label_at as inputs,
 // rows that move on every body edit. Intra-function reachability is
 // computed per module in Elixir (`Argus.Cfg`) and arrives as facts such
-// as `conditional_call` and `def_use`.
+// as `conditional_call` and `def_use`; whether one instruction runs after
+// another is `runs_after` (order.dl), over the block facts the pipeline
+// derives for the instructions a rule can ask about (`site_block`,
+// `block_flow`).
 .include "../base.dl"
 
 // Layer-2 domain-extractor declarations, generated from the same schema.

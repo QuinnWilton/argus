@@ -25,9 +25,9 @@ defmodule Argus.SchemaVersionTest do
   # Bump BOTH when the schema changes. The digest covers name, layer, and
   # each field's name, type and position; the doc strings are deliberately
   # excluded so that improving a description is not a schema change.
-  @version 148
-  @version 148
-  @shape_digest "038656DD2D27DD0E3A0A617AE8446B312150B1E8B39E01BCFA933FCD116894A1"
+  @version 149
+  @version 149
+  @shape_digest "CA1308DBAD4A6A14A6E788A8D4AE8393D243CE0F26DEDC303A6FDD479FBE711B"
 
   defp shape_digest do
     Schema.all()

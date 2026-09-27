@@ -544,9 +544,13 @@ defmodule Argus.Pipeline do
             errors
           )
 
+        {order, errors} =
+          attempt("block_order", fn -> derive_block_order(base_facts, cfgs) end, errors)
+
         base_facts
         |> merge_facts(derive_def_use(reaching))
         |> merge_facts(conditional || %{})
+        |> merge_facts(order || %{})
         |> merge_facts(error_facts(mod_str, errors))
       end
 
@@ -827,6 +831,62 @@ defmodule Argus.Pipeline do
       rows -> %{conditional_call: Enum.sort(rows)}
     end
   end
+
+  # The basic block of every instruction a rule can ask the order of
+  # (site_block), and the flow between the blocks of the functions
+  # holding one (block_flow): what clientlib/order.dl's runs_after reads.
+  # Positional like conditional_call, and derived here for the same
+  # reason: the graphs exist in Argus.Cfg, and the alternative is
+  # reading `instruction` and `next` in every solve that asks. A block
+  # is named by its first instruction. The flow is one trip's
+  # (Cfg.Function.forward_succs/2): a loop's back edge would order two
+  # instructions of its body both ways.
+  @ordered_sites [
+    local_call: "call",
+    remote_call: "call",
+    bif_call: "call",
+    dynamic_call: "call",
+    recv_start: "receive",
+    send_msg: "send",
+    branch: "branch"
+  ]
+
+  defp derive_block_order(base_facts, cfgs) do
+    placed =
+      for {relation, kind} <- @ordered_sites,
+          [id | _] <- Map.get(base_facts, relation, []),
+          {:ok, %InstrId{func: name, arity: arity, idx: idx} = site} <- [InstrId.parse(id)],
+          fun = Map.get(cfgs, {name, arity}),
+          fun != nil,
+          block = Cfg.Function.block_at(fun, idx),
+          block != nil,
+          do: {site, kind, fun, block}
+
+    sites =
+      for {site, kind, _fun, block} <- placed,
+          do: [InstrId.format(site), kind, block_name(site, block), Integer.to_string(site.idx)]
+
+    flows =
+      for {site, _kind, fun, _block} <-
+            Enum.uniq_by(placed, fn {site, _, _, _} -> InstrId.fa(site) end),
+          {_id, block} <- fun.blocks,
+          to <- Cfg.Function.forward_succs(fun, block),
+          do: [block_name(site, block), block_name(site, Map.fetch!(fun.blocks, to))]
+
+    %{}
+    |> put_rows(:site_block, sites)
+    |> put_rows(:block_flow, flows)
+  end
+
+  # A block's name: the ID of its first instruction, in the function of
+  # `site`.
+  defp block_name(%InstrId{} = site, %Cfg.Block{range: {first, _last}}),
+    do: InstrId.format(%{site | idx: first})
+
+  defp put_rows(facts, _relation, []), do: facts
+
+  defp put_rows(facts, relation, rows),
+    do: Map.put(facts, relation, rows |> Enum.uniq() |> Enum.sort())
 
   # The blocks ending in a tail call that raises (`erlang:error/1`,
   # `exit/1`, `throw/1`, `raise/3`): the compiler's badmap and a dot
