@@ -1,0 +1,266 @@
+defmodule Argus.Locate.Source.Erlang do
+  @moduledoc """
+  The last step of an anchor, taken in Erlang source
+  (`Argus.Locate.Source`), on the file's tokens (`:erl_scan`) rather
+  than its layout: Erlang's formatting says less than Elixir's, and its
+  blocks are closed by tokens (`end`, `;`, `.`) wherever they fall.
+
+  - `:guard` — the `catch` or `after` of the `try` whose body the anchor
+    is in, to the last token before the `try`'s `end`. An anchor in the
+    `of` clauses or the handlers themselves is not guarded by them, nor
+    one under an old-style `catch Expr`: nil.
+  - `:receive` — the `receive` on the anchor's line, to the last token
+    before its `end` (its `after` clause included).
+  - `:clause` — the function clause the anchor heads, to the `;` or `.`
+    that ends it.
+  - `:function` — every clause of the function the anchor heads, to the
+    `.` that ends it.
+
+  Nesting counts brackets (`(`, `[`, `{`, `<<`) and the keywords an
+  `end` closes (`begin`, `case`, `if`, `receive`, `try`, `maybe`, and a
+  `fun` that opens a body, not a `fun name/1` reference). A file that
+  does not scan, or a shape not found where the anchor is, is nil: the
+  frame keeps the bytecode's place.
+
+  `refine/3` finds a fragment as `Argus.Locate.Source.Elixir` does: the
+  first line at or after the anchor that holds it as a whole token.
+  """
+
+  @behaviour Argus.Locate.Source
+
+  @openers [:"(", :"[", :"{", :"<<", :begin, :case, :if, :receive, :try, :maybe]
+  @closers [:")", :"]", :"}", :">>", :end]
+
+  @identifier ~c"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_@"
+
+  @impl true
+  @spec refine(String.t(), pos_integer(), String.t() | nil) :: pos_integer()
+  def refine(_path, line, nil), do: line
+
+  def refine(path, line, fragment) when is_binary(fragment) and fragment != "" do
+    case File.read(path) do
+      {:ok, content} ->
+        content
+        |> String.split("\n")
+        |> Enum.drop(line - 1)
+        |> Enum.find_index(&contains_token?(&1, fragment))
+        |> case do
+          nil -> line
+          offset -> line + offset
+        end
+
+      {:error, _} ->
+        line
+    end
+  end
+
+  @impl true
+  @spec block_end(String.t(), pos_integer(), Argus.Locate.Source.block() | nil) ::
+          pos_integer() | nil
+  def block_end(_path, _line, nil), do: nil
+
+  def block_end(path, line, kind) do
+    with {:ok, tokens} <- tokens(path),
+         last when is_integer(last) and last > line <- last_line(tokens, line, kind) do
+      last
+    else
+      _ -> nil
+    end
+  end
+
+  @impl true
+  @spec guard_keyword(String.t(), pos_integer()) :: String.t() | nil
+  def guard_keyword(path, line) do
+    with {:ok, tokens} <- tokens(path),
+         {:ok, keyword, _end_at} <- guard(tokens, line) do
+      Atom.to_string(keyword)
+    else
+      _ -> nil
+    end
+  end
+
+  # ── Shapes ──────────────────────────────────────────────────────────
+
+  defp last_line(tokens, line, :guard) do
+    case guard(tokens, line) do
+      {:ok, _keyword, end_at} -> line_before(tokens, end_at)
+      :error -> nil
+    end
+  end
+
+  defp last_line(tokens, line, :receive) do
+    with {:ok, at} <- first_on_line(tokens, line, &(kind(&1) == :receive)),
+         {:ok, end_at} <- matching_end(tokens, at) do
+      line_before(tokens, end_at)
+    else
+      _ -> nil
+    end
+  end
+
+  defp last_line(tokens, line, :clause) do
+    with {:ok, head} <- function_head(tokens, line),
+         {:ok, arrow} <- at_depth(tokens, head, &(kind(&1) == :->)),
+         {:ok, stop} <- at_depth(tokens, arrow + 1, &(kind(&1) in [:";", :dot])) do
+      line_of(elem(tokens, stop))
+    else
+      _ -> nil
+    end
+  end
+
+  defp last_line(tokens, line, :function) do
+    with {:ok, head} <- function_head(tokens, line),
+         {:ok, dot} <- at_depth(tokens, head, &(kind(&1) == :dot)) do
+      line_of(elem(tokens, dot))
+    else
+      _ -> nil
+    end
+  end
+
+  defp last_line(_tokens, _line, _kind), do: nil
+
+  # The `try` whose body holds the first token on `line` (past a `try`
+  # the line opens with: `try f() catch ...` guards `f()`): its `catch` or
+  # `after` keyword and the index of its `end`. Only an anchor in the
+  # body is guarded: an `of`, `catch` or `after` of that try met before
+  # the anchor means the anchor is past the body.
+  defp guard(tokens, line) do
+    with {:ok, anchor} <- first_on_line(tokens, line, &(kind(&1) != :try)),
+         {:ok, try_at} <- enclosing_try(tokens, anchor),
+         :ok <- in_body(tokens, try_at, anchor),
+         {:ok, keyword_at} <- try_section(tokens, try_at + 1, [:catch, :after]),
+         {:ok, end_at} <- matching_end(tokens, try_at) do
+      {:ok, kind(elem(tokens, keyword_at)), end_at}
+    end
+  end
+
+  # The innermost opener still open at `anchor` that is a `try`.
+  defp enclosing_try(tokens, anchor) do
+    stack =
+      Enum.reduce(0..(anchor - 1)//1, [], fn i, stack ->
+        token = elem(tokens, i)
+
+        cond do
+          opener?(tokens, i) -> [{kind(token), i} | stack]
+          kind(token) in @closers -> Enum.drop(stack, 1)
+          true -> stack
+        end
+      end)
+
+    case stack do
+      [{:try, at} | _] -> {:ok, at}
+      _ -> :error
+    end
+  end
+
+  # No section keyword of the try between it and the anchor.
+  defp in_body(tokens, try_at, anchor) do
+    case try_section(tokens, try_at + 1, [:of, :catch, :after]) do
+      {:ok, at} when at < anchor -> :error
+      _ -> :ok
+    end
+  end
+
+  # The first token of `keywords` at the depth of `from` (a try's body),
+  # before the construct around it closes.
+  defp try_section(tokens, from, keywords) do
+    at_depth(tokens, from, &(kind(&1) in keywords))
+  end
+
+  # The first token from `from` on at depth 0 relative to it that `pred`
+  # accepts; :error when the enclosing construct closes first.
+  defp at_depth(tokens, from, pred), do: at_depth(tokens, from, pred, 0)
+
+  defp at_depth(tokens, i, _pred, _depth) when i >= tuple_size(tokens), do: :error
+
+  defp at_depth(tokens, i, pred, depth) do
+    token = elem(tokens, i)
+
+    cond do
+      depth == 0 and pred.(token) -> {:ok, i}
+      opener?(tokens, i) -> at_depth(tokens, i + 1, pred, depth + 1)
+      kind(token) in @closers and depth == 0 -> :error
+      kind(token) in @closers -> at_depth(tokens, i + 1, pred, depth - 1)
+      true -> at_depth(tokens, i + 1, pred, depth)
+    end
+  end
+
+  # The `end` that closes the opener at `at`.
+  defp matching_end(tokens, at), do: at_depth(tokens, at + 1, &(kind(&1) == :end))
+
+  # The function head `line` starts: an atom that begins a form or a
+  # clause (after a `.` or a `;` at depth 0), followed by `(`.
+  defp function_head(tokens, line) do
+    with {:ok, at} <- first_on_line(tokens, line, fn _ -> true end),
+         :atom <- kind(elem(tokens, at)),
+         true <- at + 1 < tuple_size(tokens) and kind(elem(tokens, at + 1)) == :"(",
+         true <- at == 0 or kind(elem(tokens, at - 1)) in [:dot, :";"] do
+      {:ok, at}
+    else
+      _ -> :error
+    end
+  end
+
+  # ── Tokens ──────────────────────────────────────────────────────────
+
+  defp tokens(path) do
+    with {:ok, content} <- File.read(path),
+         {:ok, tokens, _end} <- :erl_scan.string(String.to_charlist(content), {1, 1}) do
+      {:ok, List.to_tuple(tokens)}
+    else
+      _ -> :error
+    end
+  end
+
+  defp kind(token), do: elem(token, 0)
+
+  defp line_of(token) do
+    case :erl_scan.location(token) do
+      {line, _column} -> line
+      line -> line
+    end
+  end
+
+  # A `fun` opens a body when a clause follows (`fun(`, `fun Name(`),
+  # not when it names a function (`fun f/1`, `fun m:f/1`).
+  defp opener?(tokens, i) do
+    case kind(elem(tokens, i)) do
+      :fun -> fun_body?(tokens, i)
+      kind -> kind in @openers
+    end
+  end
+
+  defp fun_body?(tokens, i) do
+    next = if i + 1 < tuple_size(tokens), do: kind(elem(tokens, i + 1))
+    after_next = if i + 2 < tuple_size(tokens), do: kind(elem(tokens, i + 2))
+    next == :"(" or (next == :var and after_next == :"(")
+  end
+
+  defp first_on_line(tokens, line, pred) do
+    Enum.find_value(0..(tuple_size(tokens) - 1)//1, :error, fn i ->
+      token = elem(tokens, i)
+      if line_of(token) == line and pred.(token), do: {:ok, i}
+    end)
+  end
+
+  # The line of the last token before the one at `at`.
+  defp line_before(_tokens, 0), do: nil
+  defp line_before(tokens, at), do: line_of(elem(tokens, at - 1))
+
+  # ── Fragments ───────────────────────────────────────────────────────
+
+  defp contains_token?(text, fragment) do
+    size = byte_size(fragment)
+
+    text
+    |> :binary.matches(fragment)
+    |> Enum.any?(fn {pos, ^size} ->
+      boundary?(text, pos - 1) and boundary?(text, pos + size)
+    end)
+  end
+
+  defp boundary?(_text, at) when at < 0, do: true
+
+  defp boundary?(text, at) do
+    at >= byte_size(text) or :binary.at(text, at) not in @identifier
+  end
+end

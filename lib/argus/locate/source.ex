@@ -16,8 +16,9 @@ defmodule Argus.Locate.Source do
       `rescue` from a `catch`).
 
   Each language reads its own source: `for/1` picks the rules by the
-  file's extension — `Argus.Locate.Source.Elixir` for `.ex` and `.exs`
-  — and `Argus.Locate.Source.Opaque` for everything else (a beam path, the
+  file's extension — `Argus.Locate.Source.Elixir` for `.ex` and `.exs`,
+  `Argus.Locate.Source.Erlang` for `.erl` and `.hrl` — and
+  `Argus.Locate.Source.Opaque` for everything else (a beam path, the
   anchor of a module that recorded no source), which keeps the
   bytecode's place. Every rule fails closed: a shape it does not find,
   or a file it cannot read, leaves the place as the bytecode put it.
@@ -43,6 +44,9 @@ defmodule Argus.Locate.Source do
       iex> Argus.Locate.Source.for("lib/app/worker.ex")
       Argus.Locate.Source.Elixir
 
+      iex> Argus.Locate.Source.for("src/app_worker.erl")
+      Argus.Locate.Source.Erlang
+
       iex> Argus.Locate.Source.for("_build/default/lib/app/ebin/app.beam")
       Argus.Locate.Source.Opaque
   """
@@ -50,6 +54,7 @@ defmodule Argus.Locate.Source do
   def for(path) when is_binary(path) do
     case Path.extname(path) do
       ext when ext in [".ex", ".exs"] -> Argus.Locate.Source.Elixir
+      ext when ext in [".erl", ".hrl"] -> Argus.Locate.Source.Erlang
       _other -> Argus.Locate.Source.Opaque
     end
   end
