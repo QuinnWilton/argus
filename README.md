@@ -167,7 +167,22 @@ The 0.17 entry of the CHANGELOG says where each one's findings went.
 
 # Ad-hoc Datalog rules over the same facts.
 {:ok, results} = Argus.analyze([MyApp.Worker], {:custom, "path/to/rules.dl"})
+
+# Keep the graph between calls: a call after an edit runs only what the
+# edit reached.
+{:ok, found} = Argus.run_analyses(beams, analyses: :all, manifest: "_build/argus.manifest")
 ```
+
+Every call keeps each module's facts and each solve in a blob store
+named by content (`ARGUS_CACHE_DIR`, else `~/.cache/argus/store`; or
+`store:`), shared by every run on the machine, so a later call extracts
+and solves only what changed; `argus gc` collects it, and every run
+collects it at most once a day. Since 0.20 argus has one backend, this
+query graph: the batch pipeline's options (`backend:`, `cache:`,
+`solve_cache:`, `facts_dir:`, `extractors:`, `relations:`) raise,
+naming what replaces each. `Argus.Analysis.extract_facts/3` still
+writes a facts directory, and `Argus.Analysis.run_rules/3` solves one
+written by hand.
 
 ## Priors
 

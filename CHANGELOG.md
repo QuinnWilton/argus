@@ -6,64 +6,94 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## 0.20.0-dev — unreleased
 
-### The fold: scry's query graph is argus's
+### The fold: scry's query graph is argus's only backend
 
-scry, the analysis-only Mix compiler, is folded into argus: its roux
-query graph is argus's second backend, and the batch pipeline stays the
-default while both are kept.
+scry, the analysis-only Mix compiler, is folded into argus, and its roux
+query graph is argus's one backend: the batch pipeline, its stores and
+their options are removed.
 
-**Added.** `Argus.Graph`, the query graph over roux 0.2: a beam's
-facts by its content and the code extracting it (one pack per module,
-kept in a `Roux.Blob` store with a verifying trace, so a fresh VM finds
-them again), each relation's digest a Merkle over the modules' own,
-each solve by the digests of what it reads (`Argus.Souffle.Solve`, the
-action cache), and each analysis's findings kept line-free and placed
-last (`Argus.Graph.Locate`). A schema read depends on the declaration
-it read (`schema_entry`), and a callee's specs on the directory they
-came from (`installed_specs`, through `Argus.Specs.Source` when the run
-has one); a code edit moves exactly the queries whose code closure it
-touches. The store is `ARGUS_CACHE_DIR`, else
-`$XDG_CACHE_HOME/argus/store`, else `~/.cache/argus/store`; under
-`ARGUS_NO_CACHE` it is a temporary one.
+**Breaking.** What a caller of 0.19 changes:
 
-**Added.** `backend: :graph` on `Argus.run_analyses/2`,
-`Argus.analyze/3` and `Argus.Analysis.extract_facts/3`. The answers are
-the batch backend's, except that each finding and related frame says
-where it is (`file`, `line`, `end_line`), refined by its source as
-every report is (`Argus.Located.refine/1`: the line a fragment names,
-the end of an open span, the keyword in place of `{guard}`); the batch
-backend leaves them nil. `Argus.Located` is a finding placed by its
-bytecode; `Argus.Driver` runs a project through the graph for every
-frontend and returns an `Argus.Driver.Result`. `Argus.Specs.interface_digest/2`
-is what reading a module's specs can give, as a digest.
+- `Argus.run_analyses/2`, `Argus.analyze/3`,
+  `Argus.Analysis.extract_facts/3` and `Argus.Findings.run/2` run on the
+  query graph, and the batch pipeline's options raise `ArgumentError`
+  naming what replaces each (`Argus.Run.check_options!/1`): `backend:`
+  (there is one); `cache:` (the blob store is `store:`, a `Roux.Blob` or
+  its root, and `manifest:` keeps the graph between calls);
+  `solve_cache:` (solves are kept in the store's action cache);
+  `facts_dir:` (write a directory with `extract_facts/3`, or by hand,
+  and solve it with `Argus.Analysis.run_rules/3`); `extractors:` (every
+  built-in extractor runs once for every analysis: extract another's
+  rows with `Argus.Pipeline.extract/2`); `relations:` (a solve reads what
+  its program reads). `Argus.Souffle.run/3` raises on `solve_cache:`, and
+  `Argus.Souffle.input_relations/2` takes no `programs:`.
+- Removed: `Argus.Cache`, `Argus.Cache.Facts`, `Argus.Cache.Code`
+  (a producer's closure is `Argus.Graph.Code.closure/1`, over
+  `Roux.Code`), `Argus.Cache.Reads` (`Argus.Schema.Reads` records;
+  `Argus.Graph.Reads.entry_digest/1` and `schema_module?/1`),
+  `Argus.BeamDigest` (`Roux.Code.beam_digest/2`), `Argus.Souffle.Cache`
+  and the names that delegated to it (`Argus.Souffle.Program`),
+  `Argus.Findings.Runner`, `Argus.Symbols` and the interned facts
+  (`Argus.Facts.intern/2`, `materialize/2`, `decode/2`; `decode/1`
+  stays), `Argus.Pipeline.Shards`, `Argus.Pipeline.run_shards/3` and
+  `extract_shards/3` (a module's producers apart:
+  `Argus.Pipeline.extract_module/2`), `Argus.Pipeline.Writer.digests/1`,
+  and `Argus.Specs.environment_digest/1` and the kept ebin digests
+  (`Argus.Specs.interface_digest/2`). The batch store's fixes of this
+  release (the "Stores" entries below) went with it.
+- The facts directory `extract_facts/3` returns holds the rows the
+  named analyses' producers write (`line_info` included, the
+  imprecision trace only for `:coverage`), in an order of the graph's
+  own, each file a hard link into the store. The relations only the
+  in-process passes read (`Argus.Schema.in_process_only/0`) get a file
+  only when a `{:custom, path}` program among the analyses reads them,
+  and then hold its rows (**added**: the graph extracts them for such a
+  program, `module_in_process`): a program reading one over a directory
+  made for other analyses fails on the missing file instead of solving
+  over an empty relation.
+- `mix argus.corpus prune` is gone (`argus gc`, or `mix argus gc`,
+  collects the blob store), and the corpus's stores beside each checkout
+  (`<checkout>/.argus-facts`) are no longer read: remove them.
+- The test harnesses' `ARGUS_BACKEND` and `ARGUS_VERIFY_BACKEND` are
+  gone (`ARGUS_VERIFY_BATCH` still solves each batched set alone), and
+  the `:cache_verify` tag is `:identity_verify`.
 
-**Added.** The harnesses (`Argus.Test.Memo`, `Argus.Test.Batch`,
-`Argus.Corpus`) run on the backend `ARGUS_BACKEND` names (`batch`, the
-default, or `graph`); `ARGUS_VERIFY_BACKEND=1` runs every call on both
-and raises unless the answers are the same in normal form
-(`Argus.Run.normal_form/1`). `mix test --only parity` is the
-incremental-equals-batch gate over argus's own fixtures, and `:project`
-tags the peer and Mix-project tests. CI runs the suite on each backend.
+**Added.** `Argus.Graph`, the query graph over roux 0.2: a beam's facts
+by its content and the code extracting it, each relation's digest a
+Merkle over the modules' own, each solve by the digests of what it
+reads (`Argus.Souffle.Solve`, the action cache), and each analysis's
+findings kept line-free and placed last (`Argus.Graph.Locate`). A
+module's rows are one segment per producer in a `Roux.Blob` store,
+found again by one verifying trace per module that keeps a few
+variants of each producer's (`Argus.Graph.Pack`): an extractor edit
+runs that extractor alone over each module's kept base, which the cold
+run keeps, and writes its segment alone; an edit undone finds the rows
+the old code made. A schema read depends on the declaration it read
+(`schema_entry`), and a callee's specs on the directory they came from
+(`installed_specs`, through `Argus.Specs.Source` when the run has one);
+a code edit moves exactly the queries whose code closure it touches.
+The store is `ARGUS_CACHE_DIR`, else `$XDG_CACHE_HOME/argus/store`,
+else `~/.cache/argus/store`; under `ARGUS_NO_CACHE` it is a temporary
+one. A call may keep its graph in a manifest (`manifest:`); the corpus
+keeps one per checkout and argus worktree
+(`<checkout>/.argus/manifest-<worktree>`), seeded from the newest
+another worktree kept. The driver collects the blob store once a day
+(`Roux.Blob.maybe_gc/2`).
 
-**Changed.** The query graph is the default backend of
-`Argus.run_analyses/2`, `Argus.analyze/3` and
-`Argus.Analysis.extract_facts/3`, and of the test harnesses
-(`ARGUS_BACKEND=batch` for the batch one). A call that passes an option
-only the batch backend reads (`:facts_dir`, `:cache`, `:solve_cache`,
-`:extractors`, `:relations`) still runs on it, as does `backend:
-:batch` (`Argus.Run.backend/1`). The graph's findings carry their
-`file`, `line` and `end_line`; the facts directory `extract_facts/3`
-returns holds the rows the batch pipeline's does (the producers the
-named analyses run, `line_info` included), in an order of the graph's
-own, and leaves empty the relations only a pipeline process reads (a
-custom program that reads one names `backend: :batch`). A call may keep its graph
-in a manifest (`manifest:`); the corpus keeps one per checkout and
-argus worktree (`<checkout>/.argus/manifest-<worktree>`), seeded from
-the newest another worktree kept. A custom program's input is its own
-include closure, never the directory it sits in. The driver collects
-the blob store once a day (`Roux.Blob.maybe_gc/2`), line tables are
-kept in its action cache by pack, and a project's own ebins are not
-stamped.
+**Added.** Each finding and related frame says where it is (`file`,
+`line`, `end_line`), refined by its source as every report is
+(`Argus.Located.refine/1`: the line a fragment names, the end of an
+open span, the keyword in place of `{guard}`). `Argus.Located` is a
+finding placed by its bytecode; `Argus.Driver` runs a project through
+the graph for every frontend and returns an `Argus.Driver.Result`.
+`Argus.Specs.interface_digest/2` is what reading a module's specs can
+give, as a digest. A custom program's input is its own include
+closure, never the directory it sits in.
+
+**Added.** `mix test --only parity` is the incremental-equals-fresh gate
+over argus's own fixtures, `:project` tags the peer and Mix-project
+tests, and the identity checks of the keys live in
+`test/argus/graph/identity` (`:identity_verify`, which CI includes).
 
 **Changed.** A program's key (`Argus.Souffle.Program.declared_digest/2`,
 which the graph keys every solve on) reads a text file without its lines
@@ -91,11 +121,8 @@ refused until it is fixed: `chmod go-w <root> <root>/FORMAT`, or remove
 the store and let the next run make it again. `argus gc` exits 3 with
 the same advice.
 
-**Changed.** `Argus.Souffle.Cache` is `Argus.Souffle.Program` (the old
-names delegate); the points-to stage's choice between the exact and the
-bounded program is `Argus.Souffle.Stages`, which both backends call;
-schema reads are recorded by `Argus.Schema.Reads`
-(`Argus.Cache.Reads` delegates).
+**Changed.** The points-to stage's choice between the exact and the
+bounded program is `Argus.Souffle.Stages`.
 
 ### Coupling: a cast made at a site of the once phase is a registration (schema 148)
 
