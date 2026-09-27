@@ -288,10 +288,7 @@ carries_message(arm, lit) :- armed_literal(arm, _, "self", lit).
 // if the timer had just fired. Left to a catch-all, it is dropped.
 .decl cancelled_in_init(cancel: symbol)
 
-cancelled_in_init(cancel) :-
-  timer_cancel(cancel, c, _, _, _),
-  in_module(c, mod),
-  init_function(mod, c).
+cancelled_in_init(cancel) :- timer_cancel(cancel, c, _, _, _), is_init(c).
 
 // The module of the cancel has a handle_info/2 whose clauses compare the
 // message (callback_tag).
