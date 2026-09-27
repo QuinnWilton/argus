@@ -288,6 +288,14 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: argus
+
+      - uses: actions/checkout@v4
+        with:
+          repository: QuinnWilton/roux
+          ref: roux-0.2
+          path: roux
 
       - name: Set up Elixir, rebar3 and Gleam
         uses: erlef/setup-beam@v1
@@ -307,8 +315,8 @@ jobs:
       - name: Restore dependencies cache
         uses: actions/cache@v4
         with:
-          path: deps
-          key: ${{ runner.os }}-mix-escript-${{ hashFiles('**/mix.lock') }}
+          path: argus/deps
+          key: ${{ runner.os }}-mix-escript-${{ hashFiles('argus/mix.lock') }}
           restore-keys: ${{ runner.os }}-mix-escript-
 
       - name: Install dependencies
@@ -322,11 +330,11 @@ jobs:
       - name: Run the escript from outside the repository
         run: |
           cd "$RUNNER_TEMP"
-          "$GITHUB_WORKSPACE/argus" version
-          "$GITHUB_WORKSPACE/argus" list > /dev/null
+          "$GITHUB_WORKSPACE/argus/argus" version
+          "$GITHUB_WORKSPACE/argus/argus" list > /dev/null
 
       - name: Compile the rebar3 plugin
-        working-directory: integrations/rebar3_argus
+        working-directory: argus/integrations/rebar3_argus
         run: rebar3 compile
 
       - name: Run the escript, rebar3, gleam and plugin tests
@@ -338,4 +346,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: argus-escript
-          path: argus
+          path: argus/argus
