@@ -128,6 +128,12 @@
   runs_beside(m, f, g, x) :- entry_reaches(m, f), seed(x), request_entry(e, _), walk.reaches(e, g).
   runs_beside(m, f, g, x) :- entry_reaches(m, f), seed(x), outside_reaches(g).
 
+  // `func` runs in one process, entry m's, and a process other than m's
+  // can run `other` beside it (runs_beside): the second process of a
+  // race whose own function runs in only one.
+  .decl beside_single_process(func: symbol, other: symbol) inline
+  beside_single_process(f, g) :- single_process(f), entry_reaches(m, f), runs_beside(m, f, g, g).
+
   // The same, of what the other process runs once it has started: a
   // write only its init/1 (or an Application's start/2) makes runs while
   // it starts, which a supervisor's ordered start runs before the pair's

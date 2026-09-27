@@ -243,11 +243,9 @@ pair_scope(f, a, scope) :- names.meets(f, _, a, "literal", scope, _, _).
 other_claimant(f, a) :-
   names.meets(f, _, a, _, _, "literal", k),
   pair_scope(f, a, scope),
-  runs.single_process(f),
-  runs.entry_reaches(m, f),
   claims_name(a2, g, scope, k),
   a2 != a,
-  runs.runs_beside(m, f, g, g).
+  runs.beside_single_process(f, g).
 
 // Another process can claim the name while `func` is between the lookup
 // and the claim: `func` runs in more than one process, so two of its
@@ -1867,9 +1865,7 @@ can_read_in_the_gap(f, g) :- gap_read(f, g), !runs.single_process(g).
 
 can_read_in_the_gap(f, g) :-
   gap_read(f, g),
-  runs.single_process(f),
-  runs.entry_reaches(m, f),
-  runs.runs_beside(m, f, g, g).
+  runs.beside_single_process(f, g).
 
 // A table is spelled by its identity's kind and the identity: "named" and
 // the name, "new" and the :ets.new/2 site, or "field" and the module and
@@ -2106,8 +2102,9 @@ removes_row(remove, [table, ks, k]) :-
 
 // The removal runs in a process other than the one running `func`: `func`
 // runs in more than one process, or the removal runs beside it
-// (runs_beside, clientlib/concurrency.dl). Nothing orders two processes,
-// so another process can always run between the check and the use.
+// (beside_single_process, clientlib/concurrency.dl). Nothing orders two
+// processes, so another process can always run between the check and the
+// use.
 .decl runs_in_another_process(remove: symbol, func: symbol)
 
 runs_in_another_process(d, f) :-
@@ -2119,9 +2116,7 @@ runs_in_another_process(d, f) :-
   found_row_act(f, table),
   removes_rows(d, table),
   remover_in(d, h),
-  runs.single_process(f),
-  runs.entry_reaches(m, f),
-  runs.runs_beside(m, f, h, h).
+  runs.beside_single_process(f, h).
 
 // A check decides a row is there, a use that fails when the row is missing
 // relies on it, and another process can remove the row in between.
@@ -2253,10 +2248,8 @@ written_by_another_process(t, f) :-
 
 written_by_another_process(t, f) :-
   reads_then_writes_record(f, _, _, t, _),
-  runs.single_process(f),
-  runs.entry_reaches(m, f),
   mnesia_write_table(_, g, t),
-  runs.runs_beside(m, f, g, g).
+  runs.beside_single_process(f, g).
 
 // ── A cluster lock every writer takes ──
 //
@@ -2754,10 +2747,8 @@ mnesia_race_frame(w1, "also_writes", w2, f) :- record_writes.also_writes(w1, w2,
 
 mnesia_race_frame(w, "other_writer", o, g) :-
   mnesia_check_act(_, f, t, _, _, w, _, _),
-  runs.single_process(f),
-  runs.entry_reaches(m, f),
   mnesia_write_table(o, g, t),
-  runs.runs_beside(m, f, g, g).
+  runs.beside_single_process(f, g).
 
 mnesia_race_frame(w, "read", r2, f2) :-
   mnesia_check_act(_, _, _, _, r, w, _, _),
