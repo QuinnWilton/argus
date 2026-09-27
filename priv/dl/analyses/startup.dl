@@ -502,33 +502,20 @@ receives_without_timeout(f, id) :-
 
 // The receive ends when its peer exits: it takes the pinned `:DOWN` of a
 // monitor (down_bounded, clientlib/receive.dl), or the `:EXIT` of a
-// linked process in a module whose init/1 traps exits
-// (ends_with_linked_exit).
+// linked process while the process traps exits (ends_with_linked_exit).
 .decl ends_with_peer(mod: symbol, recv: symbol) inline
 
 ends_with_peer(mod, recv) :- down_bounded(recv).
-ends_with_peer(mod, recv) :- ends_with_linked_exit(mod, recv).
+ends_with_peer(mod, recv) :- ends_with_linked_exit(recv).
 
 // The receive takes the pinned `:EXIT` of a process or port its function
-// links to (exit_pinned, clientlib/receive.dl), and mod's init/1 traps
-// exits, so the signal arrives as that message.
-.decl ends_with_linked_exit(mod: symbol, recv: symbol)
+// links to (exit_pinned, clientlib/receive.dl), and the process is
+// trapping exits when it waits (trapping_at, clientlib/trapping.dl), so
+// the signal arrives as that message: a flag set after the wait, or
+// cleared before it, is not in effect for it.
+.decl ends_with_linked_exit(recv: symbol)
 
-ends_with_linked_exit(mod, recv) :-
-  exit_pinned(recv, _),
-  init_traps_exits(mod).
-
-// init/1 traps exits, itself or in what it runs in its own process before
-// its start is acknowledged: a flag set after the ack is not in effect
-// for a wait before it.
-.decl init_traps_exits(mod: symbol)
-
-init_traps_exits(m) :- init_function(m, f), trap_reach.reaches(f).
-
-.init trap_reach = SameProcessReachSetCut
-
-trap_reach.cut(f, g) :- acked_edge(f, g).
-trap_reach.seed(t) :- trap_exit(_, t, _).
+ends_with_linked_exit(recv) :- exit_pinned(recv, f), trapping_at(f, recv).
 
 init_effect(mod, "receive", waiter, recv) :-
   endless_receive_during_init(mod, waiter, recv).

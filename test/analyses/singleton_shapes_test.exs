@@ -214,7 +214,11 @@ defmodule Argus.Analyses.SingletonShapesTest do
       InitRecv.UnlinkedExit,
       InitRecv.LinkedUntrapped,
       InitRecv.CancelsHanded,
-      InitRecv.FlushesUnchecked
+      InitRecv.FlushesUnchecked,
+      InitRecv.TrapsAfterWait,
+      InitRecv.TrapsInHelperFirst,
+      InitRecv.TrapsThenClears,
+      InitRecv.TrapsOnOption
     ]
 
     {:ok, r} = Memo.analyze(fixtures, :startup)
@@ -229,17 +233,21 @@ defmodule Argus.Analyses.SingletonShapesTest do
 
     # A receive before the ack holds the starter; a loop's clause for its
     # parent's exit does not bound its wait for the next message. An
-    # :EXIT clause bounds nothing unless the process traps exits and its
-    # function links to the one it waits on; a cancel bounds nothing
-    # unless the receive runs on its `false` side.
+    # :EXIT clause bounds nothing unless the process is trapping exits
+    # when it waits (a trap set after the wait, or cleared before it, is
+    # not) and its function links to the one it waits on; a cancel bounds
+    # nothing unless the receive runs on its `false` side.
     assert mods.("receive") ==
-             ~w(CancelsHanded FlushesUnchecked LinkedUntrapped LoopsOnParent UnlinkedExit
-                WaitsBeforeAck)
+             ~w(CancelsHanded FlushesUnchecked LinkedUntrapped LoopsOnParent TrapsAfterWait
+                TrapsThenClears UnlinkedExit WaitsBeforeAck)
 
-    # A pinned :DOWN, or a trapped :EXIT of a linked port, ends the wait
-    # when the other process does; one that lives and does not answer
-    # holds the start.
-    assert mods.("down") == ~w(AsksByHand AsksWithMonitor AwaitsHandedDown ClosesPort)
+    # A pinned :DOWN, or a trapped :EXIT of a linked process or port (the
+    # trap set earlier, by a helper, or on one path), ends the wait when
+    # the other process does; one that lives and does not answer holds
+    # the start.
+    assert mods.("down") ==
+             ~w(AsksByHand AsksWithMonitor AwaitsHandedDown ClosesPort TrapsInHelperFirst
+                TrapsOnOption)
 
     # With gen_server's own code in the program: the loop enter_loop
     # runs is the server's, entered after the ack.

@@ -142,6 +142,12 @@ only while the process traps exits at the receive (`trapping_at`), not
 whenever the module traps somewhere: a clear before the wait, or an
 init/1 that traps only around a start, leaves it blocking.
 
+Startup: init/1's wait on a linked process's `:EXIT` is "down" only
+when the process traps exits at the receive (`trapping_at`), not when
+init/1 traps anywhere before its ack: a trap set after the wait, or
+cleared before it, leaves the wait a "receive". `init_traps_exits` is
+gone.
+
 ### Coupling: a sibling asked only in terminate/2 is not a dependency
 
 **Fixed.** "Permanent child depends on a transient sibling" read a call

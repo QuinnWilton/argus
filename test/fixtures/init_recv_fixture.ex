@@ -690,3 +690,94 @@ defmodule Argus.Test.Fixtures.InitRecv.FlushesUnlessCancelled do
     end
   end
 end
+
+defmodule Argus.Test.Fixtures.InitRecv.TrapsAfterWait do
+  @moduledoc false
+  # Traps exits, but only after the wait: while it waits the linked
+  # worker's :EXIT is a signal, not a message, and a worker that exits
+  # :normal before it sends leaves the wait with nothing to take.
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(arg) do
+    parent = self()
+    pid = spawn_link(fn -> send(parent, {:done, self(), arg}) end)
+
+    result =
+      receive do
+        {:done, ^pid, result} -> result
+        {:EXIT, ^pid, reason} -> reason
+      end
+
+    Process.flag(:trap_exit, true)
+    {:ok, result}
+  end
+end
+
+defmodule Argus.Test.Fixtures.InitRecv.TrapsInHelperFirst do
+  @moduledoc false
+  # The trap is set by a helper init/1 calls before the wait: the
+  # worker's exit arrives as the :EXIT the wait takes.
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(arg) do
+    trap_exits()
+    parent = self()
+    pid = spawn_link(fn -> send(parent, {:done, self(), arg}) end)
+
+    receive do
+      {:done, ^pid, result} -> {:ok, result}
+      {:EXIT, ^pid, reason} -> {:stop, reason}
+    end
+  end
+
+  defp trap_exits, do: Process.flag(:trap_exit, true)
+end
+
+defmodule Argus.Test.Fixtures.InitRecv.TrapsThenClears do
+  @moduledoc false
+  # Traps exits around the start of the worker, and clears the flag
+  # before the wait: the :EXIT the wait takes never comes as a message.
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(arg) do
+    Process.flag(:trap_exit, true)
+    parent = self()
+    pid = spawn_link(fn -> send(parent, {:done, self(), arg}) end)
+    Process.flag(:trap_exit, false)
+
+    receive do
+      {:done, ^pid, result} -> {:ok, result}
+      {:EXIT, ^pid, reason} -> {:stop, reason}
+    end
+  end
+end
+
+defmodule Argus.Test.Fixtures.InitRecv.TrapsOnOption do
+  @moduledoc false
+  # Traps exits only when an option says so: on that path the wait ends
+  # with the worker, and argus counts a trap any path sets.
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(opts) do
+    if Keyword.get(opts, :trap, false), do: Process.flag(:trap_exit, true)
+    parent = self()
+    pid = spawn_link(fn -> send(parent, {:done, self(), opts}) end)
+
+    receive do
+      {:done, ^pid, result} -> {:ok, result}
+      {:EXIT, ^pid, reason} -> {:stop, reason}
+    end
+  end
+end
