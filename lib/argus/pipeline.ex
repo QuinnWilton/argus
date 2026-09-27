@@ -891,8 +891,8 @@ defmodule Argus.Pipeline do
 
     flows =
       for [{site, _kind, fun, _block} | _] = held <- kept,
-          holding = MapSet.new(held, fn {_, _, _, block} -> block.id end),
-          from <- holding,
+          holding = Map.new(held, fn {_, _, _, block} -> {block.id, true} end),
+          from <- Map.keys(holding),
           to <- next_holding(fun, holding, Map.fetch!(fun.blocks, from)),
           do: [
             block_name(site, Map.fetch!(fun.blocks, from)),
@@ -923,10 +923,10 @@ defmodule Argus.Pipeline do
       end)
 
     reached = reached_from(fun, Map.keys(first_start))
-    holding = MapSet.new(held, fn {_, _, _, block} -> block.id end)
+    holding = Map.new(held, fn {_, _, _, block} -> {block.id, true} end)
 
     after_start? = fn {site, _kind, _fun, block} ->
-      MapSet.member?(reached, block.id) or Map.get(first_start, block.id, site.idx) < site.idx
+      Map.has_key?(reached, block.id) or Map.get(first_start, block.id, site.idx) < site.idx
     end
 
     before_site? = fn {site, kind, _fun, block} ->
@@ -938,41 +938,42 @@ defmodule Argus.Pipeline do
   end
 
   # The blocks one trip's flow reaches from any of `from`, by one edge or
-  # more.
+  # more, as a map of block id to true (a plain map, as Cfg.Function's own
+  # walks keep theirs: MapSet is opaque to dialyzer through these clauses).
   defp reached_from(fun, from) do
     succs = Enum.flat_map(from, &Cfg.Function.forward_succs(fun, Map.fetch!(fun.blocks, &1)))
-    reach(fun, succs, MapSet.new())
+    reach(fun, succs, %{})
   end
 
   defp reach(_fun, [], seen), do: seen
 
   defp reach(fun, [id | rest], seen) do
-    if MapSet.member?(seen, id) do
+    if Map.has_key?(seen, id) do
       reach(fun, rest, seen)
     else
       succs = Cfg.Function.forward_succs(fun, Map.fetch!(fun.blocks, id))
-      reach(fun, succs ++ rest, MapSet.put(seen, id))
+      reach(fun, succs ++ rest, Map.put(seen, id, true))
     end
   end
 
   # The blocks of `holding` one trip's flow reaches from `block` through
   # blocks outside it: the first of `holding` on each path.
   defp next_holding(fun, holding, block),
-    do: next_holding(fun, holding, Cfg.Function.forward_succs(fun, block), MapSet.new(), [])
+    do: next_holding(fun, holding, Cfg.Function.forward_succs(fun, block), %{}, [])
 
   defp next_holding(_fun, _holding, [], _seen, found), do: found
 
   defp next_holding(fun, holding, [id | rest], seen, found) do
     cond do
-      MapSet.member?(seen, id) ->
+      Map.has_key?(seen, id) ->
         next_holding(fun, holding, rest, seen, found)
 
-      MapSet.member?(holding, id) ->
-        next_holding(fun, holding, rest, MapSet.put(seen, id), [id | found])
+      Map.has_key?(holding, id) ->
+        next_holding(fun, holding, rest, Map.put(seen, id, true), [id | found])
 
       true ->
         succs = Cfg.Function.forward_succs(fun, Map.fetch!(fun.blocks, id))
-        next_holding(fun, holding, succs ++ rest, MapSet.put(seen, id), found)
+        next_holding(fun, holding, succs ++ rest, Map.put(seen, id, true), found)
     end
   end
 
