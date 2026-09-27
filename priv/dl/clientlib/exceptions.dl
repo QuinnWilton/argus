@@ -93,3 +93,60 @@ site_takes_argument_error(c, f) :-
   (tag = "ArgumentError" ; tag = ":badarg").
 
 site_takes_argument_error(c, f) :- try_covers(_, f, c, "catch").
+
+// ── A raise, and the handlers that take it ──────────────────────────
+//
+// The raises a rule asks whether a handler takes, each with the class it
+// is raised in: "badarg", the ArgumentError a BIF raises on a missing
+// table or row, a taken name or another node's pid; "erpc", the
+// `{:erpc, reason}` :erpc.call raises when the node is gone; "error",
+// "exit" and "throw", any reason of the class.
+.decl raise_class(raise: symbol, class: symbol)
+
+raise_class("badarg", "error").
+raise_class("erpc", "error").
+raise_class("error", "error").
+raise_class("exit", "exit").
+raise_class("throw", "throw").
+
+// A reason tag a handler clause names that takes the raise.
+.decl raise_tag(raise: symbol, tag: symbol)
+
+raise_tag("badarg", "ArgumentError").
+raise_tag("badarg", ":badarg").
+raise_tag("erpc", ":erpc").
+
+// The handler of the try at `id` in `func` takes `raise` and goes on: a
+// clause takes the raise's whole class or names its tag, and some path
+// through the handler takes that class without raising again (try_takes:
+// a rescue that only re-raises, or an `after`, takes nothing). Erlang's
+// `catch Expr` takes every raise. Tags are catch_tag's over-approximation
+// (every atom a clause compares), which errs quiet.
+.decl handler_takes(id: symbol, func: symbol, raise: symbol)
+
+handler_takes(t, f, r) :-
+  raise_class(r, c),
+  try_takes(t, c),
+  (catch_total(t, f, c) ; catch_total(t, f, "*")).
+
+handler_takes(t, f, r) :-
+  raise_class(r, c),
+  try_takes(t, c),
+  raise_tag(r, tag),
+  catch_tag(t, f, c, tag).
+
+handler_takes(t, f, r) :- try_start(t, f, "catch", _), raise_class(r, _).
+
+// The call at `call` in `func` is inside a try whose handler takes
+// `raise` (try_covers: on a path from the try that has not passed its
+// `try_end`). A handler around other code in the function does not count.
+.decl site_takes(call: symbol, func: symbol, raise: symbol)
+
+site_takes(c, f, r) :- try_covers(t, f, c, _), handler_takes(t, f, r).
+
+// Some handler in `func` takes `raise`, whatever it covers: the
+// function-wide answer, for an edge that has no call to hold a try
+// against.
+.decl takes_somewhere(func: symbol, raise: symbol)
+
+takes_somewhere(f, r) :- handler_takes(_, f, r).

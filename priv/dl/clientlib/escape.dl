@@ -1,0 +1,155 @@
+// Whether a raise escapes to the process.
+//
+// A rule that reports a crash asks whether anything takes the raise
+// first. Asked of whole functions, the answer is wrong both ways: a
+// `rescue` around unrelated code after the raising call takes nothing
+// of it, and a rescue around the call into the helper that raises takes
+// all of it. So the question is asked of the raising site and the calls
+// that lead to it:
+//
+//   escapes(site, func, raise): no handler that takes `raise`
+//   (handler_takes, exceptions.dl) covers `site`, nor any call on some
+//   path of calls from `func` down to the site's function, and not every
+//   call to `func` is inside one.
+//
+// `func` is the function the rule reasons about (where a check meets its
+// act, where a pid is handed out, the function a reader runs in); the
+// site's own function when the rule has no other. A rule seeds the
+// raises it asks about with `asked(site, site_func, func, raise)` and
+// reads `escapes` or its complement `rescued`; `escapes_through` names
+// the path's call in `func` (the site itself when it is in `func`, empty
+// through an edge with no call instruction), for a rule anchored on it.
+//
+// The path is ForwardBoundedCallReach's walk, within sixteen calls,
+// along calls no handler of the raise covers. An edge with no call
+// instruction (a closure, a fun reference, a resolved apply) is held
+// against the call it is handed to (fun_handed, resolved_apply): a try
+// around `Enum.each(xs, fn ... end)` covers the closure. An edge that
+// names no such call is followed unless its function has a handler that
+// takes the raise somewhere (takes_somewhere), the function-wide answer,
+// which errs quiet. An edge into what another process runs (a spawn, a
+// task's start, runs_elsewhere) is not followed: what the fun raises
+// ends that process, not the path's.
+//
+// The callers are asked one level up, and only when the program shows
+// them all: `func` is not exported, no fun reference names it, and every
+// call to it, and every call it is handed to as a closure, is inside a
+// handler that takes the raise (a closure handed to a process start is
+// not: it raises in the process it starts). One unguarded caller keeps
+// the raise escaping.
+//
+// What it does not see:
+//
+// - A handler further up than `func`'s callers: a supervisor's restart,
+//   a `try` two calls up. The raise still ends the process it is in,
+//   which is what the rules report.
+// - Which reason the site raises beyond its class and tag: a handler
+//   that takes ArgumentError takes every ArgumentError, whichever call
+//   raised it.
+// - A handler that takes the raise on some paths and re-raises it on
+//   others counts as taking it (try_takes: some path goes on).
+//
+// Requires imports.dl, exceptions.dl and runs_elsewhere.dl (otp.dl).
+.comp Escape {
+  .decl asked(site: symbol, site_func: symbol, func: symbol, raise: symbol)
+  .decl escapes_through(site: symbol, func: symbol, raise: symbol, first: symbol)
+  .decl escapes(site: symbol, func: symbol, raise: symbol)
+  .decl rescued(site: symbol, func: symbol, raise: symbol)
+
+  .decl root(func: symbol, raise: symbol)
+
+  root(f, r) :- asked(_, _, f, r).
+
+  .decl raise_asked(raise: symbol)
+
+  raise_asked(r) :- root(_, r).
+
+  // ── The path down ──
+
+  // The call at `call` hands `func` a fun that runs `callee` (a closure,
+  // a fun reference, an apply the facts resolve).
+  .decl handed(func: symbol, callee: symbol, call: symbol)
+
+  handed(f, g, id) :- fun_handed(id, f, g, _).
+  handed(f, g, id) :- resolved_apply(id, f, g).
+
+  // f's edge to g with no call instruction, open for `raise`: some call
+  // that runs it in f's process is unguarded, or it names none and f
+  // takes the raise nowhere.
+  .decl open_fun_edge(func: symbol, callee: symbol, raise: symbol)
+
+  open_fun_edge(f, g, r) :-
+    raise_asked(r),
+    handed(f, g, call),
+    !call_instr(f, g, _),
+    !site_takes(call, f, r),
+    !starts_a_process(call),
+    !runs_elsewhere(f, g).
+
+  open_fun_edge(f, g, r) :-
+    raise_asked(r),
+    call_edge(f, g),
+    !call_instr(f, g, _),
+    !handed(f, g, _),
+    !takes_somewhere(f, r),
+    !runs_elsewhere(f, g).
+
+  // `func` runs `callee`, `depth` calls down a path from the root on
+  // which no handler takes `raise`; `first` is the path's call in the
+  // root.
+  .decl reaches(root: symbol, raise: symbol, callee: symbol, depth: number, first: symbol)
+
+  reaches(f, r, g, 1, call) :- root(f, r), call_instr(f, g, call), !site_takes(call, f, r).
+  reaches(f, r, g, 1, "") :- root(f, r), open_fun_edge(f, g, r).
+
+  reaches(f, r, h, d + 1, first) :-
+    reaches(f, r, g, d, first),
+    d < 16,
+    call_instr(g, h, call),
+    !site_takes(call, g, r).
+
+  reaches(f, r, h, d + 1, first) :-
+    reaches(f, r, g, d, first),
+    d < 16,
+    open_fun_edge(g, h, r).
+
+  // ── The callers up ──
+
+  // Some way into `func` the program shows is not inside a handler that
+  // takes `raise`, or one it cannot show: an export, a fun reference.
+  .decl called_unguarded(func: symbol, raise: symbol)
+
+  called_unguarded(f, r) :- root(f, r), call_instr(h, f, c), !site_takes(c, h, r).
+  called_unguarded(f, r) :- root(f, r), api_export(f).
+  called_unguarded(f, r) :- root(f, r), fun_ref(_, f).
+  called_unguarded(f, r) :- root(f, r), handed(h, f, c), !site_takes(c, h, r).
+  called_unguarded(f, r) :- root(f, r), handed(_, f, c), starts_a_process(c).
+  called_unguarded(f, r) :- root(f, r), call_edge(h, f), runs_elsewhere(h, f).
+
+  called_unguarded(f, r) :-
+    root(f, r),
+    call_edge(h, f),
+    !call_instr(h, f, _),
+    !handed(h, f, _).
+
+  .decl callers_take(func: symbol, raise: symbol)
+
+  callers_take(f, r) :- root(f, r), call_edge(_, f), !called_unguarded(f, r).
+
+  // ── The answer ──
+
+  escapes_through(s, f, r, s) :-
+    asked(s, f, f, r),
+    !site_takes(s, f, r),
+    !callers_take(f, r).
+
+  escapes_through(s, f, r, first) :-
+    asked(s, g, f, r),
+    reaches(f, r, g, _, first),
+    !site_takes(s, g, r),
+    !callers_take(f, r).
+
+  escapes(s, f, r) :- escapes_through(s, f, r, _).
+
+  rescued(s, f, r) :- asked(s, _, f, r), !escapes(s, f, r).
+}
