@@ -15,9 +15,9 @@ defmodule Argus.Schema do
 
   The schema is data, read only through the functions of this module
   and of its concern modules, each of which records the entry it
-  returns (`Argus.Schema.Reads`): a producer's shard is keyed on the
-  entries it read, not on this module's code (`Argus.Cache.Code`), so
-  an edit to a relation no producer reads moves no shard. A new
+  returns (`Argus.Schema.Reads`): a producer's rows are kept keyed on
+  the entries it read, not on this module's code (`Argus.Graph.Reads`),
+  so an edit to a relation no producer reads re-extracts nothing. A new
   accessor records what it returns, as the others do —
   `Argus.SchemaReadsTest` calls every export and fails otherwise — and
   `columns/1` is the read to make when a relation's columns are all a
@@ -121,7 +121,7 @@ defmodule Argus.Schema do
   # Every accessor records the entry it returns (`Argus.Schema.Reads`):
   # a producer's rows are keyed on the entries it read, not on this
   # module's code, and an accessor that returned schema data without
-  # recording it would leave a stale shard in place after an edit to
+  # recording it would leave stale rows in place after an edit to
   # that entry. `Argus.SchemaReadsTest` calls every export here and in
   # the concern modules, and fails unless each records a read naming
   # exactly what it returned; `reread/1` answers each read again.

@@ -18,12 +18,15 @@ end)
 # ARGUS_NO_CACHE turns the stores off. The perturbation checks of what a
 # key covers (`@tag :cache_verify`) take seconds each and only move with
 # the schema, the stores or what a producer reads, so they run in CI and
-# on request (`mix test --include cache_verify`), not on every edit. The
+# on request (`mix test --include cache_verify`), not on every edit; so
+# do the identity checks of a module's rows extracted apart and together
+# (`@tag :identity_verify`, `mix test --include identity_verify`). The
 # graph's incremental≡batch gate (`@tag :parity`) solves every analysis a
 # dozen times over: CI runs it, and so does a change to the graph
 # (`mix test --include parity`). The built escript (`@tag :escript`) and
 # the real rebar3 and gleam (`:rebar3`, `:gleam`) run in CI's escript job
 # and on request: `mix test --include escript --include rebar3 --include
 # gleam`.
-exclude = if Argus.Dirs.keep?(), do: [:cache_verify], else: [:cache, :cache_verify]
+verify = [:cache_verify, :identity_verify]
+exclude = if Argus.Dirs.keep?(), do: verify, else: [:cache | verify]
 ExUnit.start(exclude: [:parity, :escript, :rebar3, :gleam | exclude])

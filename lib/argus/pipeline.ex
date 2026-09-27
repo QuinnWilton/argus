@@ -14,24 +14,24 @@ defmodule Argus.Pipeline do
   - `run/3` streams each module's facts to `.facts` files (one per
     relation, tab-separated) as extraction completes, so the program's
     fact set never exists in memory at once. `extract/2` returns the
-    merged facts in memory.
+    merged facts in memory, and `extract_module/2` one module's, each
+    producer's apart, as the query graph keeps them
+    (`Argus.Graph.Extraction`).
 
   ## Producers
 
   Each row has one producer: `:base`, the facts every extraction makes
   (`Emit`'s, `def_use` and `conditional_call`, and the extraction errors
   of the steps they come from), or the extractor that emitted it. A
-  producer's rows depend on the modules and on its own code, and on no
-  other producer's: that is what lets `run_shards/3` extract some
-  producers on their own, into a directory each, and a store keep them
-  apart (`Argus.Cache.Facts`) — or `extract_shards/3` return them apart
-  in memory, for a caller that keeps them itself. `run/3` writes a
-  relation's rows grouped by producer — `:base` first, then the
-  extractors in the order `extractors:` names them, each group in module
-  order — which is what joining the producers' directories in that order
-  gives (`Argus.Pipeline.Shards`). Nearly every relation has one
-  producer; the few with several are `extraction_error`, `imprecision`
-  and `dynamic_call`.
+  producer's rows depend on the module and on its own code, and on no
+  other producer's: that is what lets the query graph extract some
+  producers of a module on their own (`extract_module/2`), over the
+  module's kept base (`Argus.Pipeline.Base`), and keep each producer's
+  rows apart. `run/3` writes a relation's rows module by module, in
+  input order, and within a module producer by producer — `:base`
+  first, then the extractors in the order `extractors:` names them.
+  Nearly every relation has one producer; the few with several are
+  `extraction_error`, `imprecision` and `dynamic_call`.
 
   A module's failures stay with the module: an extractor that raises, or
   a module that outlives the per-module `:timeout`, is recorded as an
@@ -45,7 +45,7 @@ defmodule Argus.Pipeline do
   alias Argus.Extractor.Helpers
   alias Argus.Instr.Reaching
   alias Argus.InstrId
-  alias Argus.Pipeline.{Base, Disassemble, Emit, Shards, Writer}
+  alias Argus.Pipeline.{Base, Disassemble, Emit, Writer}
   alias Argus.Schema.Reads
 
   @typedoc """
@@ -54,48 +54,12 @@ defmodule Argus.Pipeline do
   """
   @type producer :: :base | module()
 
-  @typedoc """
-  What `run_shards/3` reports beside the directories it wrote:
-
-    * `lost` — the modules (as `extraction_error` names them) whose
-      extraction timed out or whose worker exited. What they would have
-      produced depends on the machine's load as much as on the code, so
-      a run that lost one is no answer to keep.
-    * `installed` — the modules whose specs were read from the code
-      path (`Argus.Specs.installed/2`) while extracting: beyond the
-      beams, what `Argus.Extractors.Specs`'s rows depend on.
-    * `digests` — from `run_shards/3`, for each producer, the SHA-256
-      (lowercase hex) of each file it wrote, by file name, hashed as the
-      rows were written (`Argus.Pipeline.Writer.digests/1`): what a
-      store keys the solves reading them on, without reading them back.
-    * `reads` — for `:base` and each extractor that ran, what its rows
-      depend on of the schema (`Argus.Schema.Reads`), sorted: the base's
-      what computing the modules' bases read (and its own derivations,
-      when its rows were asked for), an extractor's those and its own.
-      Over bases read from `bases:`, what computed them is not among
-      them: the caller that kept them knows it. From
-      `extract_shards/3`, for each producer named, what formatting its
-      rows read too.
-    * `bases` — with `keep_bases: true`, each module's base
-      (`Argus.Pipeline.Base.keep/4`), in input order: nil for a module
-      whose base was not computed (it could not be disassembled or
-      emitted, or it was lost) or was read from `bases:`.
-  """
-  @type shard_info :: %{
-          required(:lost) => [String.t()],
-          required(:installed) => [module()],
-          optional(:digests) => %{producer() => %{String.t() => String.t()}},
-          optional(:reads) => %{producer() => [Argus.Schema.Reads.read()]},
-          optional(:bases) => [binary() | nil]
-        }
-
   @type extract_opts :: [
           concurrency: pos_integer(),
           extractors: [module()],
           timeout: timeout(),
           trace_imprecision: boolean(),
-          format: :raw | :typed | :interned,
-          symbols: Argus.Symbols.t(),
+          format: :raw | :typed,
           specs_source: Argus.Specs.Source.t()
         ]
 
@@ -105,9 +69,7 @@ defmodule Argus.Pipeline do
           extractors: [module()],
           timeout: timeout(),
           trace_imprecision: boolean(),
-          relations: :all | [atom()] | {:except, [atom()]},
-          bases: [binary() | nil],
-          keep_bases: boolean()
+          relations: :all | [atom()] | {:except, [atom()]}
         ]
 
   @default_timeout 120_000
@@ -169,10 +131,9 @@ defmodule Argus.Pipeline do
   passes (`Argus.Schema.in_process_only/0`), which no Souffle program
   reads and which are most of the fact volume.
 
-  Each producer's rows are written to a directory of its own inside
-  `output_dir` and moved into place when the run is done (see
-  "Producers" above); an extractor named twice in `extractors:` runs
-  once.
+  Each module's rows are written as its extraction completes, module by
+  module in input order (see "Producers" above); an extractor named
+  twice in `extractors:` runs once.
   """
   @spec run(
           modules :: [Disassemble.module_input()],
@@ -181,171 +142,70 @@ defmodule Argus.Pipeline do
         ) ::
           {:ok, Path.t()} | {:error, term()}
   def run(modules, output_dir, opts \\ []) do
-    producers = [:base | Enum.uniq(Keyword.get(opts, :extractors, []))]
-
-    parts =
-      Path.join(
-        output_dir,
-        ".argus-producers-#{:os.getpid()}-#{System.unique_integer([:positive])}"
-      )
-
-    dirs =
-      producers |> Enum.with_index() |> Enum.map(fn {p, i} -> {p, Path.join(parts, "#{i}")} end)
-
-    try do
-      with :ok <- File.mkdir_p(output_dir),
-           {:ok, _info} <- run_shards(modules, dirs, opts),
-           :ok <-
-             dirs
-             |> Enum.map(&elem(&1, 1))
-             |> Shards.parts()
-             |> Shards.assemble(output_dir, :move),
-           :ok <- touch_relations(output_dir) do
-        {:ok, output_dir}
-      end
-    after
-      File.rm_rf(parts)
-    end
-  end
-
-  @doc """
-  Extracts facts from the given modules and writes each producer's rows
-  to a directory of its own: `dirs` pairs producers (`t:producer/0`)
-  with directories, `:base` first when it is there. The extractors that
-  run are the ones named; `:base` is computed whether or not it is
-  named, since every extractor reads what it computes, and its rows are
-  written only when it is. `extractors:` is ignored.
-
-  A producer's directory holds a `.facts` file for each relation it
-  emitted rows for, and nothing else: no empty files, unlike `run/3`.
-  Its rows are the ones `run/3` writes for it — they do not depend on
-  which other producers run — so joining the directories of `:base`
-  and of each extractor, in `run/3`'s order, gives `run/3`'s directory
-  (`Argus.Pipeline.Shards`). `relations:`, `trace_imprecision:`,
-  `concurrency:` and `timeout:` mean what they do for `run/3`.
-
-  Each module's base — what the extractors read of it besides its
-  disassembly (`Argus.Pipeline.Base`) — can be kept and read back:
-  `keep_bases: true` returns each one in `info.bases`, and `bases:`,
-  one per module in input order (nil where there is none), has the
-  extractors run over those in place of computing them. The extractors'
-  rows are the same either way. A base read back is used only when
-  `:base` is not among `dirs`: the base's own rows are the emitter's,
-  which no kept base holds.
-
-  Returns `{:ok, info}` (`t:shard_info/0`) or `{:error, reason}`.
-  """
-  @spec run_shards([Disassemble.module_input()], [{producer(), Path.t()}], run_opts()) ::
-          {:ok, shard_info()} | {:error, term()}
-  def run_shards(modules, dirs, opts \\ []) do
+    extractors = Enum.uniq(Keyword.get(opts, :extractors, []))
     written = Writer.written(Keyword.get(opts, :relations, :all))
-    selected = MapSet.new(dirs, &elem(&1, 0))
-    extractors = for {producer, _dir} <- dirs, producer != :base, do: producer
-    keep? = Keyword.get(opts, :keep_bases, false)
-    how = %{base: MapSet.member?(selected, :base), keep: keep?}
+    order = [:base | extractors]
     opts = Keyword.put(opts, :extractors, extractors)
 
-    with :ok <- mkdir_all(dirs),
-         {:ok, paths} <- Disassemble.resolve_paths(modules),
-         {:ok, inputs} <- with_bases(paths, Keyword.get(opts, :bases), how) do
-      writers = Map.new(dirs, fn {producer, dir} -> {producer, Writer.new(dir, written)} end)
+    # Each producer's rows encoded in the worker, in producer order, so
+    # the caller only writes.
+    shape = fn produced, _kept, _reads ->
+      by_producer = Map.new(produced)
+
+      for producer <- order,
+          facts = Map.get(by_producer, producer),
+          facts != nil,
+          do: Writer.encode(facts, written)
+    end
+
+    with :ok <- mkdir(output_dir),
+         {:ok, paths} <- Disassemble.resolve_paths(modules) do
       memo = new_memo(opts)
 
-      # The names a module's base extraction errors give are read here,
-      # whether or not the base's rows are written: for a module the run
-      # lost they are the module's, which a run of extractors alone would
-      # otherwise not know it lost.
-      shape = fn produced, kept, reads ->
-        encoded =
-          for {producer, facts} <- produced,
-              MapSet.member?(selected, producer),
-              do: {producer, Writer.encode(facts, written)}
-
-        names = for {:base, %{extraction_error: rows}} <- produced, [name | _] <- rows, do: name
-        {encoded, kept, names, reads}
-      end
-
-      read_by = Map.new([:base | extractors], &{&1, []})
-
       try do
-        inputs
-        |> extract_stream(opts, memo, how, shape)
-        |> Enum.reduce_while({:ok, writers, [], [], read_by}, fn
-          {status, {encoded, kept, names, reads}}, {:ok, writers, lost, bases, read_by}
-          when status in [:ok, :lost] ->
-            lost = if status == :lost, do: lost ++ names, else: lost
-            bases = if keep?, do: [kept | bases], else: bases
-            read_by = add_reads(read_by, reads)
-
-            case append_all(writers, encoded) do
-              {:ok, writers} -> {:cont, {:ok, writers, lost, bases, read_by}}
-              {:error, _} = error -> {:halt, error}
+        paths
+        |> Enum.map(&{&1, nil})
+        |> extract_stream(opts, memo, %{base: true, keep: false}, shape)
+        |> Enum.reduce_while({:ok, Writer.new(output_dir, written)}, fn
+          {status, encoded}, {:ok, writer} when status in [:ok, :lost] ->
+            case append_all(writer, encoded) do
+              {:ok, writer} -> {:cont, {:ok, writer}}
+              {:error, reason} -> {:halt, {:error, reason, writer}}
             end
 
-          {:error, reason}, _ ->
-            {:halt, {:error, reason}}
+          {:error, reason}, {:ok, writer} ->
+            {:halt, {:error, reason, writer}}
         end)
         |> case do
-          {:ok, writers, lost, bases, read_by} ->
-            close_all(writers)
-            digests = Map.new(writers, fn {producer, w} -> {producer, Writer.digests(w)} end)
+          {:ok, writer} ->
+            Writer.close(writer)
+            with :ok <- touch_relations(output_dir), do: {:ok, output_dir}
 
-            info = %{
-              lost: lost,
-              installed: installed_reads(memo),
-              digests: digests,
-              reads: read_by
-            }
-
-            {:ok, if(keep?, do: Map.put(info, :bases, Enum.reverse(bases)), else: info)}
-
-          {:error, _} = error ->
-            error
+          {:error, reason, writer} ->
+            Writer.close(writer)
+            {:error, reason}
         end
       after
-        close_all(writers)
         :ets.delete(memo)
       end
     end
   end
 
-  # Each producer's reads over the modules so far, and one module's.
-  defp add_reads(read_by, reads) do
-    Map.new(read_by, fn {producer, read} ->
-      {producer, :ordsets.union(read, Map.get(reads, producer, []))}
-    end)
+  defp mkdir(dir) do
+    case File.mkdir_p(dir) do
+      :ok -> :ok
+      {:error, reason} -> {:error, {:mkdir_failed, dir, reason}}
+    end
   end
 
-  # Each path with the base to read back for it, or nil: none when the
-  # base's own rows are asked for.
-  defp with_bases(paths, nil, _how), do: {:ok, Enum.map(paths, &{&1, nil})}
-  defp with_bases(paths, _bases, %{base: true}), do: {:ok, Enum.map(paths, &{&1, nil})}
-
-  defp with_bases(paths, bases, _how) when length(bases) == length(paths),
-    do: {:ok, Enum.zip(paths, bases)}
-
-  defp with_bases(paths, bases, _how),
-    do: {:error, {:bases_mismatch, length(paths), length(bases)}}
-
-  defp mkdir_all(dirs) do
-    Enum.reduce_while(dirs, :ok, fn {_producer, dir}, :ok ->
-      case File.mkdir_p(dir) do
-        :ok -> {:cont, :ok}
-        {:error, reason} -> {:halt, {:error, {:mkdir_failed, dir, reason}}}
-      end
-    end)
-  end
-
-  defp append_all(writers, encoded) do
-    Enum.reduce_while(encoded, {:ok, writers}, fn {producer, bytes}, {:ok, writers} ->
-      case Writer.append_encoded(Map.fetch!(writers, producer), bytes) do
-        {:ok, writer} -> {:cont, {:ok, Map.put(writers, producer, writer)}}
+  defp append_all(writer, encoded) do
+    Enum.reduce_while(encoded, {:ok, writer}, fn bytes, {:ok, writer} ->
+      case Writer.append_encoded(writer, bytes) do
+        {:ok, writer} -> {:cont, {:ok, writer}}
         {:error, _} = error -> {:halt, error}
       end
     end)
   end
-
-  defp close_all(writers), do: Enum.each(writers, fn {_producer, w} -> Writer.close(w) end)
 
   # The modules whose installed specs the run read: the memo's keys
   # (`Argus.Specs.installed/2` and the types it resolved through).
@@ -363,26 +223,16 @@ defmodule Argus.Pipeline do
 
   With `format: :typed`, rows are decoded against the schema via
   `Argus.Facts.decode/1` (field-name-keyed maps, integers, `Argus.InstrId`
-  structs) instead of the raw string lists that `.facts` files use. With
-  `format: :interned`, rows are tuples of `Argus.Symbols` ids interned in
-  the worker that extracted them against the `symbols:` table the caller
-  owns (`Argus.Facts.interned/0`); the caller keeps the table, and reads
-  the rows back through `Argus.Facts.materialize/2` or `decode/2`.
+  structs) instead of the raw string lists that `.facts` files use.
   """
   @spec extract(modules :: [Disassemble.module_input()], extract_opts()) ::
           {:ok, Emit.facts() | Argus.Facts.t()} | {:error, term()}
   def extract(modules, opts \\ []) do
     format = Keyword.get(opts, :format, :raw)
 
-    if format == :interned and not match?(%Argus.Symbols{}, opts[:symbols]) do
-      raise ArgumentError, "format: :interned needs the symbols: table the ids refer to"
-    end
-
-    opts = if format == :interned, do: opts, else: Keyword.delete(opts, :symbols)
-
     with {:ok, paths} <- Disassemble.resolve_paths(modules) do
       memo = new_memo(opts)
-      shape = extract_shape(format, Keyword.get(opts, :symbols))
+      shape = extract_shape(format)
 
       merged =
         try do
@@ -406,94 +256,6 @@ defmodule Argus.Pipeline do
     {:extraction_error, reason} -> {:error, reason}
   end
 
-  @doc """
-  Extracts facts from the given modules and returns each producer's rows
-  apart, in memory: `run_shards/3`'s directories as `extract/2` returns
-  facts.
-
-  `producers` names the producers (`t:producer/0`) whose rows come back.
-  The extractors that run are the ones named; `:base` is computed whether
-  or not it is named, since every extractor reads what it computes. A
-  producer's rows are the ones it gives beside any other producers (see
-  "Producers"), each relation's in the order `run_shards/3` writes them,
-  and a producer named that emitted no rows maps to an empty map. `format:`, `symbols:`,
-  `trace_imprecision:`, `concurrency:` and `timeout:` mean what they do
-  for `extract/2`; `extractors:` is ignored.
-
-  Returns `{:ok, facts, info}`: each named producer's facts, and what
-  `run_shards/3` reports beside them (`t:shard_info/0`). Only an input
-  that cannot be read is an error.
-  """
-  @spec extract_shards([Disassemble.module_input()], [producer()], extract_opts()) ::
-          {:ok, %{producer() => Emit.facts() | Argus.Facts.t()}, shard_info()}
-          | {:error, term()}
-  def extract_shards(modules, producers, opts \\ []) do
-    format = Keyword.get(opts, :format, :raw)
-
-    if format == :interned and not match?(%Argus.Symbols{}, opts[:symbols]) do
-      raise ArgumentError, "format: :interned needs the symbols: table the ids refer to"
-    end
-
-    producers = Enum.uniq(producers)
-    selected = MapSet.new(producers)
-    extractors = for producer <- producers, producer != :base, do: producer
-    opts = Keyword.put(opts, :extractors, extractors)
-    finish = format_facts(format, Keyword.get(opts, :symbols))
-
-    # The worker keeps the named producers' facts, in the order
-    # `run_shards/3` writes them and formatted, and the names its base's
-    # extraction errors give, which for a module it lost are the module's.
-    #
-    # Formatting reads the schema (`format: :typed` and `:interned`
-    # decode by each relation's columns), so what a producer's facts
-    # read includes what formatting them did.
-    shape = fn produced, _kept, reads ->
-      {shards, reads} =
-        for {p, facts} <- produced, MapSet.member?(selected, p), reduce: {[], reads} do
-          {shards, reads} ->
-            {formatted, read} = Reads.track(fn -> facts |> in_file_order() |> finish.() end)
-            {[{p, formatted} | shards], Map.update(reads, p, read, &:ordsets.union(&1, read))}
-        end
-
-      names = for {:base, %{extraction_error: rows}} <- produced, [name | _] <- rows, do: name
-      {Enum.reverse(shards), names, Map.take(reads, producers)}
-    end
-
-    with {:ok, paths} <- Disassemble.resolve_paths(modules) do
-      memo = new_memo(opts)
-
-      try do
-        paths
-        |> Enum.map(&{&1, nil})
-        |> extract_stream(
-          opts,
-          memo,
-          %{base: MapSet.member?(selected, :base), keep: false},
-          shape
-        )
-        |> Enum.reduce_while({:ok, [], [], Map.new(producers, &{&1, []})}, fn
-          {status, {shards, names, reads}}, {:ok, chunks, lost, read_by}
-          when status in [:ok, :lost] ->
-            lost = if status == :lost, do: lost ++ names, else: lost
-            {:cont, {:ok, [shards | chunks], lost, add_reads(read_by, reads)}}
-
-          {:error, reason}, _ ->
-            {:halt, {:error, reason}}
-        end)
-        |> case do
-          {:ok, chunks, lost, read_by} ->
-            facts = join_shards(producers, Enum.reverse(chunks))
-            {:ok, facts, %{lost: lost, installed: installed_reads(memo), reads: read_by}}
-
-          {:error, _} = error ->
-            error
-        end
-      after
-        :ets.delete(memo)
-      end
-    end
-  end
-
   @typedoc """
   What `extract_module/2` made of one module:
 
@@ -505,7 +267,10 @@ defmodule Argus.Pipeline do
       encodes them (per relation, the bytes of its lines), for the
       producers asked for, `:base` too when the module was lost;
     * `reads` — what each producer's rows depend on of the schema
-      (`t:shard_info/0`'s `reads`), for the producers asked for;
+      (`Argus.Schema.Reads`), sorted, for the producers asked for: the
+      base's what computing the module's base read (and its own
+      derivations, when its rows were asked for), an extractor's those
+      and its own;
     * `installed` — the modules whose specs were read from the code path;
     * `base` — the module's base, kept (`Argus.Pipeline.Base`), when
       `keep_base: true` asked and it was computed; else nil.
@@ -519,9 +284,9 @@ defmodule Argus.Pipeline do
         }
 
   @doc """
-  Extracts one module, for the producers named, as `run_shards/3` would
-  write their rows: what an incremental consumer keeps per module and
-  producer (`Argus.Graph.Extraction`).
+  Extracts one module, for the producers named, each producer's rows
+  apart: what the query graph keeps per module and producer
+  (`Argus.Graph.Pack`).
 
   `producers` names the producers whose rows come back; `:base` is
   computed whether or not it is named, since every extractor reads what
@@ -582,33 +347,6 @@ defmodule Argus.Pipeline do
     end
   end
 
-  # A module's facts as `Writer` writes them: the relations with rows,
-  # each in the order it lands in the file (extraction prepends).
-  defp in_file_order(facts) do
-    for {relation, rows} <- facts, rows != [], into: %{}, do: {relation, Enum.reverse(rows)}
-  end
-
-  # Each producer's facts over the modules, `modules` holding each
-  # module's `[{producer, facts}]` in module order: a relation's rows are
-  # its rows from each module, in that order.
-  defp join_shards(producers, modules) do
-    by_producer =
-      modules
-      |> Enum.concat()
-      |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
-
-    Map.new(producers, fn producer ->
-      facts =
-        by_producer
-        |> Map.get(producer, [])
-        |> Enum.flat_map(&Map.to_list/1)
-        |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
-        |> Map.new(fn {relation, rows} -> {relation, Enum.concat(rows)} end)
-
-      {producer, facts}
-    end)
-  end
-
   # One `{:ok, shaped} | {:lost, shaped} | {:error, reason}` per module,
   # in input order: `:lost` for a module that outlived the timeout or
   # whose worker exited, whose facts are its one `extraction_error` row.
@@ -626,9 +364,9 @@ defmodule Argus.Pipeline do
   # `shape` is what the worker does to a module's facts — a list of
   # `{producer, facts}`, `:base` first — before they cross to the
   # caller, which takes them one module at a time in input order:
-  # merging and interning them (`extract/2`), or encoding each
-  # producer's as the lines of its files (`run_shards/3`), so the caller
-  # only writes. Encoding in the caller left the workers waiting on it: on
+  # merging them (`extract/2`), or encoding each producer's as the lines
+  # of its files (`run/3`, `extract_module/2`), so the caller only
+  # writes. Encoding in the caller left the workers waiting on it: on
   # the Phoenix stack writing the facts took longer than extracting them
   # at eight workers.
   defp extract_stream(inputs, opts, memo, how, shape) do
@@ -852,9 +590,9 @@ defmodule Argus.Pipeline do
   # Every column is a string, as `Argus.Tsv` writes it. A value of any
   # other type is the extractor's bug, and it fails the extractor's own
   # step here: met later, by the writer, it failed the whole module, and
-  # that failure was recorded as the base's, in a shard whose key holds
-  # none of the extractor's code, so the store went on serving the lost
-  # module after the extractor was fixed.
+  # that failure was recorded as the base's, kept under a key that holds
+  # none of the extractor's code, so the kept rows went on serving the
+  # lost module after the extractor was fixed.
   defp well_formed!(facts) do
     Enum.each(facts, fn {relation, rows} ->
       case Enum.find(rows, &(not Enum.all?(&1, fn value -> is_binary(value) end))) do
@@ -962,8 +700,8 @@ defmodule Argus.Pipeline do
   # extracted gives the rows decoding the merged facts would (a row
   # decodes on its own), in parallel: decoding the Phoenix stack's in
   # the caller took longer than extracting it.
-  defp extract_shape(format, symbols) do
-    finish = format_facts(format, symbols)
+  defp extract_shape(format) do
+    finish = format_facts(format)
 
     fn produced, _kept, _reads ->
       produced
@@ -973,9 +711,8 @@ defmodule Argus.Pipeline do
   end
 
   # Raw rows as `format:` asks for them.
-  defp format_facts(:raw, _symbols), do: & &1
-  defp format_facts(:typed, _symbols), do: &Argus.Facts.decode/1
-  defp format_facts(:interned, symbols), do: &Argus.Facts.intern(&1, symbols)
+  defp format_facts(:raw), do: & &1
+  defp format_facts(:typed), do: &Argus.Facts.decode/1
 
   # The module's name as `function_def` spells it, read from the beam's
   # header alone; the path when even that fails (and a placeholder for

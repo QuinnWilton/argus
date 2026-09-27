@@ -19,7 +19,6 @@ defmodule Argus.SchemaPerturbationTest do
   """
   use ExUnit.Case, async: true
 
-  @moduletag :tmp_dir
   @moduletag :cache_verify
 
   # Every fixture (extracting them all takes a second), and runtime
@@ -61,14 +60,46 @@ defmodule Argus.SchemaPerturbationTest do
   :ok
   """
 
+  # Each module extracted afresh, keeping its base, then over the base
+  # kept: every producer's rows per module, in `beams`' order, and what
+  # each read.
   @extract ~S"""
-  {:ok, %{lost: [], reads: reads, bases: bases}} =
-    Argus.Pipeline.run_shards(beams, fresh, trace_imprecision: true, keep_bases: true)
+  # Each task is handed what it extracts over: a closure over `fresh`
+  # would copy all of it into every task.
+  each = fn inputs, opts ->
+    inputs
+    |> Task.async_stream(
+      fn {beam, more} ->
+        {:ok, %{status: :ok} = extraction} =
+          Argus.Pipeline.extract_module(beam, [trace_imprecision: true] ++ opts ++ more)
 
-  {:ok, %{lost: []}} =
-    Argus.Pipeline.run_shards(beams, over, trace_imprecision: true, bases: bases)
+        {beam, extraction}
+      end,
+      timeout: :infinity
+    )
+    |> Map.new(fn {:ok, pair} -> pair end)
+  end
 
-  reads
+  fresh = each.(Enum.map(beams, &{&1, []}), producers: producers, keep_base: true)
+  bases = Enum.map(beams, &{&1, [base: fresh[&1].base]})
+  over = each.(bases, producers: producers -- [:base])
+
+  # Digests, not the rows: they cross the peer's standard I/O.
+  rows = fn extractions, producer ->
+    Enum.map(beams, fn beam ->
+      rows = :erlang.term_to_binary(extractions[beam].facts[producer], [:deterministic])
+      :crypto.hash(:sha256, rows)
+    end)
+  end
+
+  %{
+    reads:
+      Map.new(producers, fn producer ->
+        {producer, beams |> Enum.flat_map(&fresh[&1].reads[producer]) |> Enum.uniq() |> Enum.sort()}
+      end),
+    fresh: Map.new(producers, &{&1, rows.(fresh, &1)}),
+    over: Map.new(producers -- [:base], &{&1, rows.(over, &1)})
+  }
   """
 
   @digests ~S"""
@@ -98,47 +129,29 @@ defmodule Argus.SchemaPerturbationTest do
     [:base | Enum.uniq([Argus.Extractors.CallArgs | extractors])]
   end
 
-  defp dirs(root, producers), do: Enum.map(producers, &{&1, Path.join(root, inspect(&1))})
-
-  defp contents(dir) do
-    case File.ls(dir) do
-      {:ok, names} -> Map.new(names, &{&1, File.read!(Path.join(dir, &1))})
-      {:error, :enoent} -> %{}
-    end
-  end
-
-  test "a producer's rows do not move with any schema entry it did not read",
-       %{tmp_dir: tmp, beams: beams} do
+  test "a producer's rows do not move with any schema entry it did not read", %{beams: beams} do
     producers = producers()
-    fresh = dirs(Path.join(tmp, "fresh"), producers)
-    over = dirs(Path.join(tmp, "over"), producers -- [:base])
 
     # The rows here are extracted in a VM set up as the perturbed one is,
     # so that nothing but the schema tells them apart: not the modules
     # another test compiled into this one, nor its code path.
-    {read_by, digests} =
+    {here, digests} =
       with_peer(fn peer ->
-        read_by = eval(peer, @extract, beams: beams, fresh: fresh, over: over)
-        reads = read_by |> Map.values() |> Enum.concat() |> Enum.uniq()
-        {read_by, eval(peer, @digests, reads: reads)}
+        here = eval(peer, @extract, beams: beams, producers: producers)
+        reads = here.reads |> Map.values() |> Enum.concat() |> Enum.uniq()
+        {here, eval(peer, @digests, reads: reads)}
       end)
 
-    assert Enum.all?(producers, &(Map.fetch!(read_by, &1) != [])),
+    assert Enum.all?(producers, &(Map.fetch!(here.reads, &1) != [])),
            "a producer read nothing of the schema: the decoded facts should be read"
 
     # The producers that read the same entries are checked together.
-    for {reads, group} <- Enum.group_by(producers, &Map.fetch!(read_by, &1)) do
-      root = Path.join(tmp, "group#{:erlang.phash2(reads)}")
-      check_group(root, beams, group, reads, Map.take(digests, reads), fresh: fresh, over: over)
+    for {reads, group} <- Enum.group_by(producers, &Map.fetch!(here.reads, &1)) do
+      check_group(beams, group, reads, Map.take(digests, reads), here)
     end
   end
 
-  defp check_group(root, beams, group, reads, digests, here) do
-    there = [
-      fresh: dirs(Path.join(root, "fresh"), group),
-      over: dirs(Path.join(root, "over"), group -- [:base])
-    ]
-
+  defp check_group(beams, group, reads, digests, here) do
     with_peer(fn peer ->
       perturbation = perturbed(reads)
       :ok = eval(peer, @install, install(perturbation))
@@ -147,15 +160,20 @@ defmodule Argus.SchemaPerturbationTest do
       names = for {_mod, _read, rels} <- perturbation.modules, rel <- rels, do: rel.name
       assert Enum.sort(eval(peer, "Argus.Schema.names()", [])) == Enum.sort(names)
 
-      peer_reads = eval(peer, @extract, [beams: beams] ++ there)
+      there = eval(peer, @extract, beams: beams, producers: group)
 
-      for mode <- [:fresh, :over], {producer, dir} <- there[mode] do
-        assert contents(dir) == contents(Keyword.fetch!(here[mode], producer)),
+      for mode <- [:fresh, :over], {producer, rows} <- Map.fetch!(there, mode) do
+        moved =
+          for {beam, there, here} <- Enum.zip([beams, rows, here[mode][producer]]),
+              there != here,
+              do: beam
+
+        assert moved == [],
                "#{inspect(producer)}'s rows (#{mode}) moved with schema entries it did not " <>
-                 "record reading (it recorded #{inspect(reads)})"
+                 "record reading (it recorded #{inspect(reads)}), in #{inspect(moved)}"
       end
 
-      for producer <- group, do: assert(Map.fetch!(peer_reads, producer) == reads)
+      for producer <- group, do: assert(Map.fetch!(there.reads, producer) == reads)
 
       # Nothing it read moved, so neither did its key.
       assert eval(peer, @digests, reads: reads) == digests
@@ -190,8 +208,12 @@ defmodule Argus.SchemaPerturbationTest do
     end
   end
 
+  # Only the value comes back: the peer's connection is its standard
+  # I/O, and the script's binding holds every module's extraction.
   defp eval(peer, script, binding) do
-    {value, _binding} = :peer.call(peer, Elixir.Code, :eval_string, [script, binding], 600_000)
+    only_value = "elem(Code.eval_string(script, binding), 0)"
+    args = [only_value, [script: script, binding: binding]]
+    {value, _binding} = :peer.call(peer, Elixir.Code, :eval_string, args, 600_000)
     value
   end
 

@@ -2,16 +2,12 @@ defmodule Argus.Pipeline.Writer do
   @moduledoc """
   Appends one module's facts at a time to per-relation `.facts` files,
   opening each file on first use. Rows land in the order extraction
-  yields them, which `Argus.Pipeline` keeps deterministic.
-
-  Each file's bytes are hashed as they are written (`digests/1`): a
-  store keys what reads a file on its digest (`Argus.Cache.Facts`), and
-  reading every file back to hash it cost a cold run as much again as
-  writing it.
+  yields them, which `Argus.Pipeline` keeps deterministic. `encode/2`
+  is also how the query graph keeps a module's rows (`Argus.Graph.Pack`).
   """
 
   @enforce_keys [:dir, :written, :files]
-  defstruct [:dir, :written, :files, hashes: %{}]
+  defstruct [:dir, :written, :files]
 
   @typedoc """
   Which relations receive rows: every one (`nil`), the ones named, or
@@ -22,8 +18,7 @@ defmodule Argus.Pipeline.Writer do
   @type t :: %__MODULE__{
           dir: Path.t(),
           written: written(),
-          files: %{atom() => File.io_device()},
-          hashes: %{atom() => :crypto.hash_state()}
+          files: %{atom() => File.io_device()}
         }
 
   @spec new(Path.t(), written()) :: t()
@@ -85,18 +80,6 @@ defmodule Argus.Pipeline.Writer do
     Enum.each(files, fn {_relation, device} -> File.close(device) end)
   end
 
-  @doc """
-  The SHA-256, as lowercase hex, of the bytes this writer appended to
-  each file it opened, by file name (`jump.facts`): the file's digest
-  when the writer created it, as it does in a directory of its own.
-  """
-  @spec digests(t()) :: %{String.t() => String.t()}
-  def digests(%__MODULE__{hashes: hashes}) do
-    Map.new(hashes, fn {relation, hash} ->
-      {"#{relation}.facts", hash |> :crypto.hash_final() |> Base.encode16(case: :lower)}
-    end)
-  end
-
   defp skip?(%__MODULE__{written: written}, relation), do: not written?(written, relation)
 
   defp written?(nil, _relation), do: true
@@ -122,10 +105,7 @@ defmodule Argus.Pipeline.Writer do
     with {:ok, device, writer} <- device(writer, relation) do
       case :file.write(device, bytes) do
         :ok ->
-          hash = Map.get_lazy(writer.hashes, relation, fn -> :crypto.hash_init(:sha256) end)
-
-          {:ok,
-           %{writer | hashes: Map.put(writer.hashes, relation, :crypto.hash_update(hash, bytes))}}
+          {:ok, writer}
 
         {:error, reason} ->
           {:error, {:write_failed, Path.join(writer.dir, "#{relation}.facts"), reason}}

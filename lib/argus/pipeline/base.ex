@@ -10,9 +10,9 @@ defmodule Argus.Pipeline.Base do
   graphs and the reaching definitions. On a large program that is two
   fifths of extraction, and every extractor run over the module pays
   it again — after an edit to one extractor, most of the time that
-  extractor's shard takes to extract. `Argus.Cache.Facts` keeps the
-  bases of a set of beams keyed as it keys the base's own shard, and an
-  extractor extracted again runs over them.
+  extractor takes to extract again. The query graph keeps each module's
+  base in its store beside the module's pack (`Argus.Graph.Pack`), and
+  an extractor extracted again runs over it.
 
   ## What is kept, and what is computed again
 
@@ -40,8 +40,8 @@ defmodule Argus.Pipeline.Base do
   and the debug-info chunk is read from the beam, as it always is.
 
   A step that failed when the base was computed keeps its `nil`, so an
-  extractor reads what it read then; the failure itself is the base
-  shard's row.
+  extractor reads what it read then; the failure itself is one of the
+  base's rows.
   """
 
   alias Argus.Instr.Reaching

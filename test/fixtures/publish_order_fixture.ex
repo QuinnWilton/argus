@@ -11,8 +11,8 @@ defmodule Argus.Test.Fixtures.PublishOrder do
   defmodule MapFields do
     @moduledoc """
     Two unnamed public tables handed around in one map, created with one
-    name: only the fields tell them apart. The shape `Argus.Symbols.ETS`
-    had.
+    name: only the fields tell them apart. The shape argus's interned
+    symbol table had, before 0.20.
     """
     def new do
       %{

@@ -11,8 +11,6 @@ defmodule Argus.Pipeline.BaseTest do
   alias Argus.Pipeline
   alias Argus.Pipeline.{Base, Disassemble, Emit}
 
-  @moduletag :tmp_dir
-
   @modules [
     Argus.Test.Fixtures.EtsBounded,
     Argus.Test.Fixtures.PidFlow.ConnSup,
@@ -42,12 +40,6 @@ defmodule Argus.Pipeline.BaseTest do
     cfg = Argus.Cfg.build(typed)
     reaching = Reaching.uses(data.module, data.functions)
     {data, typed, cfg, reaching}
-  end
-
-  defp contents(dir) do
-    for name <- dir |> File.ls!() |> Enum.sort(), into: %{} do
-      {name, File.read!(Path.join(dir, name))}
-    end
   end
 
   test "a kept base reads back as it was computed, in another process" do
@@ -85,38 +77,26 @@ defmodule Argus.Pipeline.BaseTest do
     assert Base.restore(kept, "elsewhere.beam").data.beam == "elsewhere.beam"
   end
 
-  test "extractors over kept bases write what they write over computed ones; a base missing or unreadable is computed",
-       %{tmp_dir: tmp} do
+  test "extractors over a kept base give what they give over a computed one; a base unreadable is computed" do
     extractors = [Argus.Extractors.CallArgs, Argus.Extractors.ETS, Argus.Extractors.PidFlow]
-    dirs = fn root -> Enum.map(extractors, &{&1, Path.join([tmp, root, inspect(&1)])}) end
 
-    assert {:ok, %{bases: [first | rest]}} =
-             Pipeline.run_shards(@modules, dirs.("fresh"), keep_bases: true)
+    for mod <- @modules do
+      {:ok, fresh} = Pipeline.extract_module(path(mod), producers: extractors, keep_base: true)
+      assert is_binary(fresh.base)
 
-    assert {:ok, _} = Pipeline.run_shards(@modules, dirs.("kept"), bases: [first | rest])
-
-    assert {:ok, _} =
-             Pipeline.run_shards(@modules, dirs.("mixed"), bases: [nil, "not a base" | tl(rest)])
-
-    for {extractor, dir} <- dirs.("fresh") do
-      [{^extractor, kept}] = Enum.filter(dirs.("kept"), &(elem(&1, 0) == extractor))
-      [{^extractor, mixed}] = Enum.filter(dirs.("mixed"), &(elem(&1, 0) == extractor))
-      assert contents(kept) == contents(dir), inspect(extractor)
-      assert contents(mixed) == contents(dir), inspect(extractor)
+      for base <- [fresh.base, "not a base", nil] do
+        {:ok, over} = Pipeline.extract_module(path(mod), producers: extractors, base: base)
+        assert over.facts == fresh.facts, "#{inspect(mod)} over #{inspect(base, limit: 3)}"
+      end
     end
   end
 
-  test "the base's own rows are the emitter's, whatever bases are handed in", %{tmp_dir: tmp} do
-    fresh = [{:base, Path.join(tmp, "fresh")}]
-    handed = [{:base, Path.join(tmp, "handed")}]
-    assert {:ok, %{bases: bases}} = Pipeline.run_shards(@modules, fresh, keep_bases: true)
-    assert {:ok, info} = Pipeline.run_shards(@modules, handed, bases: bases)
-    refute Map.has_key?(info, :bases)
-    assert contents(Path.join(tmp, "handed")) == contents(Path.join(tmp, "fresh"))
-  end
-
-  test "bases that are not one per module are refused", %{tmp_dir: tmp} do
-    assert {:error, {:bases_mismatch, 5, 1}} =
-             Pipeline.run_shards(@modules, [{Argus.Extractors.ETS, tmp}], bases: [nil])
+  test "the base's own rows are the emitter's, whatever base is handed in" do
+    for mod <- @modules do
+      {:ok, fresh} = Pipeline.extract_module(path(mod), producers: [:base], keep_base: true)
+      {:ok, handed} = Pipeline.extract_module(path(mod), producers: [:base], base: fresh.base)
+      assert handed.facts == fresh.facts
+      assert handed.base == nil
+    end
   end
 end

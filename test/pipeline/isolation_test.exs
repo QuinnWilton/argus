@@ -99,20 +99,6 @@ defmodule Argus.Pipeline.IsolationTest do
 
       assert reason =~ "300 ms"
     end
-
-    test "is recorded in interned facts too", %{beams: [_fast, slow]} do
-      symbols = Argus.Symbols.new()
-
-      assert {:ok, facts} =
-               Pipeline.extract([slow],
-                 extractors: [Hangs],
-                 timeout: 300,
-                 format: :interned,
-                 symbols: symbols
-               )
-
-      assert %{extraction_error: [[_, "pipeline", _]]} = Argus.Facts.materialize(facts, symbols)
-    end
   end
 
   describe "an extractor whose row holds a non-string" do

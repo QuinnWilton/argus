@@ -66,18 +66,20 @@ defmodule Argus.Cache.CodeClosureTest do
 
   Enum.each(mods, &Code.ensure_loaded/1)
 
-  scratch = fn -> Path.join(System.tmp_dir!(), "argus_code_#{:os.getpid()}_#{System.unique_integer([:positive])}") end
+  extract = fn beam, opts ->
+    {:ok, %{status: :ok} = extraction} = Argus.Pipeline.extract_module(beam, opts)
+    extraction
+  end
 
   # The bases the extractors run over, kept untraced.
-  dir = scratch.()
-  {:ok, %{bases: bases}} = Argus.Pipeline.run_shards(beams, [{:base, dir}], keep_bases: true)
-  File.rm_rf!(dir)
+  bases = Map.new(beams, &{&1, extract.(&1, producers: [:base], keep_base: true).base})
 
   run = fn producer, opts ->
     for m <- mods, do: :erlang.trace_pattern({m, :_, :_}, true, [:call_count])
-    dir = scratch.()
-    {:ok, _} = Argus.Pipeline.run_shards(beams, [{producer, dir}], [trace_imprecision: true] ++ opts)
-    File.rm_rf!(dir)
+
+    for beam <- beams do
+      extract.(beam, [producers: [producer], trace_imprecision: true] ++ opts.(beam))
+    end
 
     executed =
       for m <- mods,
@@ -92,8 +94,12 @@ defmodule Argus.Cache.CodeClosureTest do
   end
 
   Map.new(producers, fn
-    :base -> {:base, %{fresh: run.(:base, keep_bases: true), kept: []}}
-    extractor -> {extractor, %{fresh: run.(extractor, []), kept: run.(extractor, bases: bases)}}
+    :base ->
+      {:base, %{fresh: run.(:base, fn _beam -> [keep_base: true] end), kept: []}}
+
+    extractor ->
+      fresh = run.(extractor, fn _beam -> [] end)
+      {extractor, %{fresh: fresh, kept: run.(extractor, &[base: bases[&1]])}}
   end)
   """
 
