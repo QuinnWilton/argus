@@ -1575,16 +1575,18 @@ ets_race_frame(w_at, "rival", w2, h) :-
 
 publish_order_race(writer, publish, complete, reader, reader_func) :-
   publishes_early(writer, publish, complete),
-  crashes_if_row_missing(reader, reader_func),
+  fails_if_row_missing_unless_function_rescues(reader, reader_func),
   looks_up_row_of(reader, complete),
   finds_published_value(reader, publish),
   can_read_in_the_gap(writer, reader_func).
 
-// The reader raises when its key has no row, and nothing rescues the
-// raise: a reader that rescues the badarg does not crash in the gap.
-.decl crashes_if_row_missing(reader: symbol, reader_func: symbol)
+// The reader raises when its key has no row, and its function rescues
+// no badarg anywhere: a reader that rescues it does not crash in the
+// gap. Coarser than the missing-row race's fails_if_row_missing, which
+// asks for a rescue only around the act and the calls that lead to it.
+.decl fails_if_row_missing_unless_function_rescues(reader: symbol, reader_func: symbol)
 
-crashes_if_row_missing(r, g) :- raises_if_missing(r, g), !rescues_argument_error(g).
+fails_if_row_missing_unless_function_rescues(r, g) :- raises_if_row_missing(r, g), !rescues_argument_error(g).
 
 // The reader reads a table the completing write writes, one another
 // process can read.
@@ -1712,12 +1714,13 @@ publishes_early(f, w1, w2) :-
   key_in(f, _, w2, vs, v),
   (vs != ks ; v != k).
 
-// A read that raises when the key has no row. lookup_element/4 and
+// A read that raises when the key has no row (ets.dl's
+// raises_if_table_missing asks of a missing table). lookup_element/4 and
 // update_counter/4 take a default and do not; update_element answers
 // false.
-.decl raises_if_missing(r: symbol, func: symbol)
+.decl raises_if_row_missing(r: symbol, func: symbol)
 
-raises_if_missing(r, g) :-
+raises_if_row_missing(r, g) :-
   ets_op(r, g, _, op, _),
   remote_call(r, _, m, op, a),
   ets_raises_without_row(m, op, a).
@@ -1753,7 +1756,7 @@ gap_reader(r, g, ak, a) :-
   publishes_early(_, w1, w2),
   ets_table(w1, ak, a),
   handed_out_from(ak, a),
-  crashes_if_row_missing(r, g),
+  fails_if_row_missing_unless_function_rescues(r, g),
   looks_up_row_of(r, w2),
   ets_key(r, ks, _),
   ks != "literal".
@@ -1849,7 +1852,7 @@ key_may_come_from(r, tk, t) :-
 
 gap_read(writer, reader_func) :-
   publishes_early(writer, publish, complete),
-  crashes_if_row_missing(reader, reader_func),
+  fails_if_row_missing_unless_function_rescues(reader, reader_func),
   looks_up_row_of(reader, complete),
   finds_published_value(reader, publish).
 
@@ -1918,7 +1921,7 @@ missing.check(read, func, lifted_kind, table, key_kind, key) :-
   table_kind_as(table_kind, lifted_kind).
 
 missing.act(act, func, lifted_kind, table, key_kind, key) :-
-  raises_if_missing(act, func),
+  raises_if_row_missing(act, func),
   table_and_key(act, table_kind, table, key_kind, key),
   table_kind_as(table_kind, lifted_kind).
 
@@ -1980,12 +1983,12 @@ unguarded_path.elsewhere(c) :- process_start(c, _, _, kind, _), kind != "server"
 
 raises_unguarded(f, a) :-
   missing.meets(f, _, a, _, _, _, _),
-  raises_if_missing(a, f),
+  raises_if_row_missing(a, f),
   !site_rescues_argument_error(a, f).
 
 raises_unguarded(f, a) :-
   missing.meets(f, _, a, _, _, _, _),
-  raises_if_missing(a, g),
+  raises_if_row_missing(a, g),
   unguarded_path.reaches(f, g, _, _),
   !site_rescues_argument_error(a, g).
 

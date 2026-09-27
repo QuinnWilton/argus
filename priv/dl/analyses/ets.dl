@@ -604,12 +604,13 @@ ets_read_outside_owner(name, owner_mod, reader, read, create) :-
   read_while_owner_restarts(reader, read, create, _, owner_mod),
   ets_new(create, _, name).
 
-// :ets.info/1,2 answers :undefined for a table that is gone; it is how a
-// reader asks, not a read that raises (ets_answers_missing_table,
-// clientlib/effect_model.dl).
-.decl raising_read(site: symbol)
+// The read at `site` raises when its table is gone (races'
+// raises_if_row_missing asks of a missing row). :ets.info/1,2 answers
+// :undefined for a table that is gone; it is how a reader asks, not a
+// read that raises (ets_answers_missing_table, clientlib/effect_model.dl).
+.decl raises_if_table_missing(site: symbol)
 
-raising_read(site) :- ets_op(site, _, _, op, "read"), !ets_answers_missing_table(op).
+raises_if_table_missing(site) :- ets_op(site, _, _, op, "read"), !ets_answers_missing_table(op).
 
 // A rescue that catches the ArgumentError a missing table raises, around
 // the read itself (site_rescues_argument_error, in exceptions.dl): a
@@ -662,7 +663,7 @@ read_when_present(site) :- ets_read_when_present(site, _).
 
 table_param(reader, pos, site) :-
   ets_op(site, reader, "dynamic", _, "read"),
-  raising_read(site),
+  raises_if_table_missing(site),
   ets_op_param(site, pos).
 
 table_param(f, p, site) :-
@@ -674,7 +675,7 @@ table_param(f, p, site) :-
 named_read(name, reader, site) :-
   ets_op(site, reader, name, _, "read"),
   name != "dynamic",
-  raising_read(site).
+  raises_if_table_missing(site).
 
 named_read(name, caller, site) :-
   call_arg(caller, g, q, name),
@@ -892,7 +893,7 @@ computed_read(p, owner, reader, site, id) :-
   owner_reaches(p, owner, creator),
   !has_heir(id),
   ets_op(site, reader, "dynamic", _, "read"),
-  raising_read(site),
+  raises_if_table_missing(site),
   function_def(reader, owner, _, _, _).
 
 // ── A named table a start function creates ─────────────────────────

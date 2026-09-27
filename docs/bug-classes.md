@@ -4529,8 +4529,8 @@ under `priv/dl/` unless they say otherwise.
     (clientlib/effect_model.dl), read by races, ets, failure and
     `removal_api`; the ETS extractor classifies `match_delete` as a
     write.
-12. **An ETS operation that raises.** races' `raises_if_missing` (a
-    missing row), ets.dl's `raising_read` and failure's
+12. **An ETS operation that raises.** races' `raises_if_row_missing` (a
+    missing row), ets.dl's `raises_if_table_missing` and failure's
     `fails_on_missing_table` (a missing table).
     *Resolved.* `ets_raises_without_row` and `ets_answers_missing_table`
     (effect_model.dl). *Justified:* failure keeps
