@@ -19,6 +19,9 @@ defmodule Argus.Graph.Environment do
 
   alias Roux.Blob
 
+  require Record
+  Record.defrecordp(:file_info, Record.extract(:file_info, from_lib: "kernel/include/file.hrl"))
+
   @doc """
   The solver on `PATH`: `%{bin:, version:, timeout:}`, or nil. Its
   version is asked once for each binary (`Roux.Stamp`), kept in `store`
@@ -123,14 +126,19 @@ defmodule Argus.Graph.Environment do
   """
   @spec app_code(Path.t()) :: String.t()
   def app_code(dir) do
-    stamps =
-      for beam <- dir |> Path.join("*.beam") |> Path.wildcard() |> Enum.sort() do
-        case File.stat(beam, time: :posix) do
-          {:ok, %File.Stat{size: size, mtime: mtime, inode: inode}} ->
-            {Path.basename(beam), size, mtime, inode}
+    # Raw: the calls never queue behind the file server, whose one
+    # process every `File` call of the VM goes through.
+    names =
+      case :prim_file.list_dir(dir) do
+        {:ok, names} -> names |> Enum.map(&List.to_string/1) |> Enum.sort()
+        {:error, _} -> []
+      end
 
-          {:error, reason} ->
-            {Path.basename(beam), reason}
+    stamps =
+      for name <- names, String.ends_with?(name, ".beam") do
+        case :file.read_file_info(Path.join(dir, name), [:raw, {:time, :posix}]) do
+          {:ok, file_info(size: size, mtime: mtime, inode: inode)} -> {name, size, mtime, inode}
+          {:error, reason} -> {name, reason}
         end
       end
 

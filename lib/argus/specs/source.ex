@@ -45,14 +45,27 @@ defmodule Argus.Specs.Source do
   def new(%Argus.Project{apps: apps, deps: deps}), do: new(Enum.map(apps ++ deps, &elem(&1, 1)))
 
   def new(ebins) when is_list(ebins) do
+    # A directory's listing, not a wildcard: thousands of names, and
+    # filelib's pattern matching is most of a warm run's listing time.
     index =
       for dir <- ebins ++ otp_ebins(),
-          beam <- dir |> Path.join("*.beam") |> Path.wildcard() |> Enum.sort(),
+          name <- beams_in(dir),
           reduce: %{} do
-        index -> Map.put_new(index, Path.basename(beam, ".beam"), beam)
+        index -> Map.put_new(index, Path.basename(name, ".beam"), Path.join(dir, name))
       end
 
     %__MODULE__{index: index}
+  end
+
+  defp beams_in(dir) do
+    case :prim_file.list_dir(dir) do
+      {:ok, names} ->
+        for name <- names, name = List.to_string(name), String.ends_with?(name, ".beam"), do: name
+
+      {:error, _} ->
+        []
+    end
+    |> Enum.sort()
   end
 
   # The installed OTP's ebins: the code path's entries under its root.
