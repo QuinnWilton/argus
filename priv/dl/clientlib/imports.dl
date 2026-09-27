@@ -83,6 +83,11 @@ call_instr(f, g, id) :-
   g = cat(mod, cat(":", cat(name, cat("/", to_string(arity))))),
   function_def(g, _, _, _, _).
 
+// A function and the module it is defined in.
+.decl in_module(func: symbol, mod: symbol) inline
+
+in_module(f, m) :- function_def(f, m, _, _, _).
+
 // Transitive call reachability, closed over the staged edges. No
 // built-in analysis reads it any more: the closure is quadratic in the
 // call graph (17M rows from 100k edges on one corpus project, ~500 MB per

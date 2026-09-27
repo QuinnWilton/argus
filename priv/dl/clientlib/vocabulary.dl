@@ -13,19 +13,15 @@
 // rpc_without_timeout(func, call, variant).`), so the sentence carries
 // only the words it is about.
 //
-// These are the terms more than one analysis says: a function's module,
-// the callbacks a process runs at its edges, a lock that retries, a
-// public table. Each is inlined — Souffle substitutes the body where the
+// These are the terms more than one analysis says: the callbacks a
+// process runs at its edges, a lock that retries, a public table. A
+// function's module (in_module) is imports.dl's, since every analysis
+// says it. Each is inlined — Souffle substitutes the body where the
 // word is used — so naming a concept costs no relation of its own. What
 // only one analysis says lives in that analysis's file, next to the rule
 // that reads it.
 //
 // Included after otp.dl, whose callbacks these name.
-
-// A function and the module it is defined in.
-.decl in_module(func: symbol, mod: symbol) inline
-
-in_module(f, m) :- function_def(f, m, _, _, _).
 
 // init/1 of a behaviour module: the callback its supervisor waits on.
 .decl is_init(func: symbol) inline

@@ -335,12 +335,12 @@ turns_off_verification(setting, func) :- tls_verification(setting, func, "none")
 // `func`'s module offers a verified connection (module_can_verify).
 .decl module_offers_verification(func: symbol)
 
-module_offers_verification(func) :- function_def(func, mod, _, _, _), module_can_verify(mod).
+module_offers_verification(func) :- in_module(func, mod), module_can_verify(mod).
 
 // Some function of `mod` sets `verify: :verify_peer`.
 .decl module_can_verify(mod: symbol)
 
-module_can_verify(mod) :- tls_verification(_, func, "peer"), function_def(func, mod, _, _, _).
+module_can_verify(mod) :- tls_verification(_, func, "peer"), in_module(func, mod).
 
 // A server's `verify_none` (tls_server_side: a listener's or an accepted
 // socket's options, made only into those) is not this bug: the server
