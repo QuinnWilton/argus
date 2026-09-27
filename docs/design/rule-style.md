@@ -37,7 +37,7 @@ keeps how each word is computed out of that rule.
      in `clientlib/`. No extractor facts (`ets_op`, `call_instr`,
      `remote_call`), no component internals (`missing.meets`), no
      arithmetic, no string comparisons on kinds.
-   - A negation reads as a sentence too (`!traps_exits(mod)`,
+   - A negation reads as a sentence too (`!server_traps(mod)`,
      `!rescued(use, func)`), never an implementation detail.
    - Variables are named for what they are (`check`, `use`, `remove`,
      `row`), not `a`, `d`, `w2`. A variable the detection needs but a

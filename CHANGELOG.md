@@ -156,6 +156,10 @@ the flag first, or a function that traps only after the start, is
 reported. A linked peer's `{:EXIT, ...}` source reads `server_traps`.
 `runs_trapping` is gone.
 
+Shutdown: every rule that asks whether the process traps (the cleanup
+rules, the sibling rules) reads `server_traps`; its own `traps_exits` is
+gone.
+
 ### Coupling: a sibling asked only in terminate/2 is not a dependency
 
 **Fixed.** "Permanent child depends on a transient sibling" read a call

@@ -24,9 +24,10 @@
 .output tooling
 
 // ══ terminate/2 and the exits it needs to trap ══════════════════════
-.decl traps_exits(mod: symbol)
-
-traps_exits(mod) :- module_traps(_, mod).
+//
+// A supervisor's shutdown signal arrives while the server runs its
+// callbacks, so "the process traps" here is server_traps
+// (clientlib/trapping.dl): some entry leaves the flag set.
 
 // ── What runs when a supervisor stops the process ────────────────
 //
@@ -123,7 +124,7 @@ terminate_reach.limit(2).
 skipped_cleanup(mod, terminate, cleanup) :-
   terminate_callback(terminate, mod, _),
   does_cleanup(terminate, cleanup),
-  !traps_exits(mod).
+  !server_traps(mod).
 
 // terminate/2 does cleanup at `write`: a write on the path a supervisor
 // stop takes whose effect outlasts the process, not one the runtime
@@ -261,7 +262,7 @@ cleanup_defect(mod, behaviour, "never_runs", category, api, via) :-
 unclear_cleanup(mod, terminate, work) :-
   terminate_callback(terminate, mod, _),
   does_unclassified_work(terminate, work),
-  !traps_exits(mod),
+  !server_traps(mod),
   !terminate_does_cleanup(mod).
 
 // terminate/2 makes the call at `work` on the path a supervisor stop
@@ -309,7 +310,7 @@ cleanup_defect(mod, behaviour, "unclear", "", api, via) :-
 truncated_cleanup(mod, terminate, cleanup) :-
   terminate_callback(terminate, mod, _),
   does_cleanup(terminate, cleanup),
-  traps_exits(mod),
+  server_traps(mod),
   unbounded(cleanup).
 
 // The call has no bound of its own inside the shutdown timeout: network
@@ -628,7 +629,7 @@ sync_caller_in(h, m) :- reaches_sync_caller_in(h, m).
 //
 // Both run terminate/2 while the supervisor stops mod, which it does
 // with exit(pid, :shutdown): only a process that traps exits runs
-// terminate/2 then (traps_exits). One that does not is killed without
+// terminate/2 then (server_traps). One that does not is killed without
 // it, and its terminate/2 runs only after a {:stop, ...} or a crash,
 // while the sibling is up; that cleanup never running is
 // cleanup_defect's "never_runs", not this.
@@ -663,7 +664,7 @@ sync_caller_in(h, m) :- reaches_sync_caller_in(h, m).
 
 call_to_stopped_sibling(mod, terminate, via, sibling, sup) :-
   terminate_waits_unguarded(mod, terminate, via, sibling),
-  traps_exits(mod),
+  server_traps(mod),
   stops_before(sup, sibling, mod).
 
 // terminate/2 calls a sibling with no try taking the exit, its process
@@ -674,7 +675,7 @@ call_to_stopped_sibling(mod, terminate, via, sibling, sup) :-
 
 call_to_crashed_sibling(mod, terminate, via, sibling, sup) :-
   terminate_waits_unguarded(mod, terminate, via, sibling),
-  traps_exits(mod),
+  server_traps(mod),
   stops_before(sup, mod, sibling),
   crash_restarts_later(sup, sibling).
 
@@ -685,7 +686,7 @@ call_to_crashed_sibling(mod, terminate, via, sibling, sup) :-
 
 call_to_sibling_in_unknown_order(mod, terminate, via, sibling, sup) :-
   terminate_waits_unguarded(mod, terminate, via, sibling),
-  traps_exits(mod),
+  server_traps(mod),
   order_unsettled(sup, sibling, mod).
 
 // mod's terminate/2 waits on `other` on the stop, with no try taking the
