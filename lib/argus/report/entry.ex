@@ -5,7 +5,7 @@ defmodule Argus.Report.Entry do
 
   An entry is made from an `Argus.Located` (`from_located/1`), which is
   where the bytecode put the finding; the source takes the last step
-  (`Argus.Locate.Source.for/1` picks its rules):
+  (`Argus.Located.refine/1`, as `Argus.run_analyses/2` takes it too):
 
     * `line` is the bytecode's line (as the file stands: a generated
       Erlang file's `-file` directives renumber its lines), moved to the
@@ -24,8 +24,6 @@ defmodule Argus.Report.Entry do
   `file` is absolute; the renderers show it relative to where the run
   was asked from.
   """
-
-  alias Argus.Locate.Source
 
   @enforce_keys [
     :analysis,
@@ -73,22 +71,22 @@ defmodule Argus.Report.Entry do
   @spec from_located(Argus.Located.t()) :: t() | nil
   def from_located(%Argus.Located{file: nil}), do: nil
 
-  def from_located(%Argus.Located{finding: finding, file: file} = located) do
-    {line, end_line, guard} = refine(file, located, finding)
+  def from_located(%Argus.Located{} = located) do
+    %Argus.Located{finding: finding} = refined = Argus.Located.refine(located)
 
     %__MODULE__{
       analysis: finding.analysis,
       severity: finding.severity,
-      file: file,
-      line: line,
-      end_line: end_line,
-      title: fill_guard(finding.title, guard),
-      detail: fill_guard(finding.detail, guard),
+      file: refined.file,
+      line: refined.line,
+      end_line: refined.end_line,
+      title: finding.title,
+      detail: finding.detail,
       # Map.get, not dot access: a finding memoized before its shape
       # gained these fields must still render.
-      at_label: fill_guard(Map.get(finding, :at_label), guard),
-      help: Enum.map(Map.get(finding, :help, []), &fill_guard(&1, guard)),
-      related: related(Map.get(finding, :related, []), located.related),
+      at_label: Map.get(finding, :at_label),
+      help: Map.get(finding, :help, []),
+      related: related(Map.get(finding, :related, []), refined.related),
       provenance: Map.get(finding, :provenance, :structural),
       confidence: Map.get(finding, :confidence)
     }
@@ -106,38 +104,7 @@ defmodule Argus.Report.Entry do
 
   defp related(frames, places) do
     for {frame, %{file: file} = place} <- Enum.zip(frames, places), file != nil do
-      {line, end_line, guard} = refine(file, place, frame)
-
-      %{
-        label: fill_guard(Map.get(frame, :label, ""), guard),
-        file: file,
-        line: line,
-        end_line: end_line
-      }
+      %{label: Map.get(frame, :label, ""), file: file, line: place.line, end_line: place.end_line}
     end
   end
-
-  # The source's last step for one anchor: its line, the end of its
-  # span, and the word its prose's `{guard}` stands for.
-  defp refine(file, place, anchored) do
-    rules = Source.for(file)
-    line = rules.refine(file, rules.line(file, place.line), Map.get(anchored, :at_source))
-    to_block = Map.get(anchored, :to_block)
-
-    guard =
-      if to_block == :guard,
-        do: rules.guard_keyword(file, line) || "handler",
-        else: "handler"
-
-    end_line =
-      case place.end_line do
-        nil -> rules.block_end(file, line, to_block)
-        end_line -> rules.line(file, end_line)
-      end
-
-    {line, end_line, guard}
-  end
-
-  defp fill_guard(nil, _word), do: nil
-  defp fill_guard(text, word), do: String.replace(text, "{guard}", word)
 end
