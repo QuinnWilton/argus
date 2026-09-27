@@ -266,7 +266,13 @@ defmodule Argus.Graph do
 
   def beam_input(path) when is_binary(path) do
     path = Path.expand(path)
-    {path, %{hash: path |> File.read!() |> hash()}}
+
+    # Raw: a call's every beam is read here, side by side with the rest
+    # of the VM's file work, which the file server would queue.
+    case :file.read_file(path, [:raw]) do
+      {:ok, bytes} -> {path, %{hash: hash(bytes)}}
+      {:error, reason} -> raise File.Error, reason: reason, action: "read file", path: path
+    end
   end
 
   @doc "The digest a beam's `beam` input holds for its bytes."

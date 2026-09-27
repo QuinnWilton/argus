@@ -81,10 +81,7 @@ defmodule Argus.Graph.Frontend do
   def read(%{data: data}), do: data
 
   defp header_module(input) do
-    target =
-      if is_binary(input) and match?(<<"FOR1", _::binary>>, input),
-        do: input,
-        else: String.to_charlist(input)
+    target = bytes_or_path(input)
 
     case :beam_lib.info(target) do
       info when is_list(info) -> Keyword.get(info, :module)
@@ -101,8 +98,7 @@ defmodule Argus.Graph.Frontend do
   # the module's findings (its facts still feed every cross-module
   # analysis either way).
   defp source_path(beam, root) do
-    input = read(beam)
-    target = if Map.has_key?(beam, :data), do: input, else: String.to_charlist(input)
+    target = bytes_or_path(read(beam))
 
     with {:ok, {_mod, [compile_info: info]}} <- :beam_lib.chunks(target, [:compile_info]),
          source when is_list(source) <- Keyword.get(info, :source, :missing),
@@ -111,6 +107,18 @@ defmodule Argus.Graph.Frontend do
       found
     else
       _ -> Map.get(beam, :path, :external)
+    end
+  end
+
+  # A beam's bytes, read raw (never queued behind the file server) when
+  # it is a file; its path when it cannot be read, for `:beam_lib` to
+  # report.
+  defp bytes_or_path(<<"FOR1", _::binary>> = bytes), do: bytes
+
+  defp bytes_or_path(path) do
+    case :file.read_file(path, [:raw]) do
+      {:ok, bytes} -> bytes
+      {:error, _} -> String.to_charlist(path)
     end
   end
 
