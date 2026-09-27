@@ -19,7 +19,9 @@ defmodule Argus.Report.Notice do
     * `:points_to_bounded` — the process points-to stage outgrew its
       budget and ran bounded;
     * `:config_renamed` — configuration under scry's name, which argus
-      does not read (`Argus.ConfigError` raises with this wording).
+      does not read (`Argus.ConfigError` raises with this wording);
+    * `:stale` — sources newer than their beams (the escript, which
+      never builds): the findings are about the code as last built.
   """
 
   alias Argus.Driver.Result
@@ -34,6 +36,7 @@ defmodule Argus.Report.Notice do
           | :duplicate
           | :points_to_bounded
           | :config_renamed
+          | :stale
 
   @type t :: %__MODULE__{
           kind: kind(),
@@ -178,6 +181,25 @@ defmodule Argus.Report.Notice do
       :error,
       "scry has moved into argus: rename #{key} to #{renamed} " <>
         "(the configuration is otherwise the same)"
+    )
+  end
+
+  @doc """
+  Sources newer than their beams, or without one (`Argus.Project.stale/1`):
+  the findings are about the code as last built, and `build` builds it.
+  """
+  @spec stale([Path.t()], String.t() | nil) :: t()
+  def stale(sources, build) do
+    count = length(sources)
+    {shown, rest} = Enum.split(sources, 3)
+    listed = Enum.join(shown, ", ") <> if(rest == [], do: "", else: ", and #{length(rest)} more")
+
+    notice(
+      :stale,
+      :warning,
+      "#{count} #{if count == 1, do: "source is", else: "sources are"} newer than " <>
+        "#{if count == 1, do: "its beam", else: "their beams"} (#{listed}): the findings are " <>
+        "about the code as last built" <> if(build, do: "; run `#{build}` first", else: "")
     )
   end
 
