@@ -633,6 +633,34 @@ defmodule Argus.Test.Fixtures.PidFlow do
     def handle_call(:query, _from, s), do: {:reply, GenServer.call(s.conn, :query), s}
   end
 
+  defmodule DictConnUser do
+    @moduledoc """
+    ConnUser, keeping the connection in its dictionary: init/1 puts it,
+    and handle_call/3 reads it back through a helper.
+    """
+    use GenServer
+
+    alias Argus.Test.Fixtures.PidFlow.Conn
+
+    def start_link(_), do: GenServer.start_link(__MODULE__, :ok)
+
+    @impl true
+    def init(:ok) do
+      {:ok, conn} = Conn.start_link(:private)
+      Process.put(:dict_conn, conn)
+      {:ok, nil}
+    end
+
+    @impl true
+    def handle_call(:query, _from, s), do: {:reply, GenServer.call(conn(), :query), s}
+
+    # Called by the process's callers, in their own processes: nothing
+    # they run put the key.
+    def query_directly, do: GenServer.call(conn(), :query)
+
+    defp conn, do: Process.get(:dict_conn)
+  end
+
   defmodule ConnSup do
     @moduledoc false
     use Supervisor

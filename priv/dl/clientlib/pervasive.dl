@@ -78,6 +78,7 @@ coarse(f, "proc", p, $Top(), p) :- stage_mode("bounded"), process_start(_, f, p,
 coarse(f, "self", "self", $Top(), p) :- stage_mode("bounded"), self_pid(f, p).
 coarse(f, "table", t, $Top(), t) :- stage_mode("bounded"), table_alloc(_, f, t).
 coarse(f, "name", n, $Top(), p) :- reads_name(f, n), coarse_named(n, p).
+coarse(f, "dict", k, r, x) :- dict_read(f, k, g, sk, s), coarse(g, sk, s, r, x).
 
 // A store: one field further down.
 coarse(f, "obj", o, $Under([sel, kind, tag, ar]), x) :-
@@ -149,6 +150,7 @@ coarse_ret(g, r, x) :-
   pid_return(g, k, s),
   k != "param",
   k != "result",
+  k != "dict",
   !fresh_route(g, k, s),
   coarse(g, k, s, r, x).
 
@@ -163,6 +165,7 @@ coarse_ret(g, r, x) :-
   coarse(g, sk, s, r, x).
 
 coarse(f, "result", c, r, x) :- pid_result(c, f, g), coarse_ret(g, r, x).
+coarse(f, "result", c, r, x) :- pid_result(c, f, g), returns_key(g, k), coarse(f, "dict", k, r, x).
 coarse(f, "result", c, r, x) :- pid_result(c, f, g), pid_return(f, "result", c), coarse_fresh(g, r, x).
 
 coarse(f, "result", c, r, x) :-
@@ -184,6 +187,7 @@ coarse(f, "result", c, $Under(["{1}", "", "", ""]), cat("start ", c)) :-
 coarse_ret_all(g, r, x) :- coarse_ret(g, r, x).
 coarse_ret_all(g, r, x) :- coarse_fresh(g, r, x).
 coarse_ret_all(g, r, x) :- passes(g, j), coarse(g, "param", j, r, x).
+coarse_ret_all(g, r, x) :- returns_key(g, k), coarse(g, "dict", k, r, x).
 
 // The field of a returned tuple a state slot names: the value itself when
 // the leaf is that field, somewhere when it is deeper or not known.

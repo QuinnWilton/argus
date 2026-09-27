@@ -5,6 +5,7 @@ defmodule Argus.Analyses.EtsCheckActTest do
   alias Argus.Souffle
   alias Argus.Test.Batch
   alias Argus.Test.Fixtures.CheckThenAct, as: C
+  alias Argus.Test.Fixtures.Dictionary, as: D
   alias Argus.Test.Memo
 
   # Every test reads its fixtures' rows from one solve of them all
@@ -57,7 +58,9 @@ defmodule Argus.Analyses.EtsCheckActTest do
     C.SerialAccessors,
     C.CounterAccessors,
     C.CounterAccessorChain,
-    C.AccessorThroughHelper
+    C.AccessorThroughHelper,
+    D.CallerTable,
+    D.SharedCallerTable
   ]
 
   setup_all do
@@ -448,6 +451,18 @@ defmodule Argus.Analyses.EtsCheckActTest do
     test "two unnamed tables made under one atom are two tables", ctx do
       skip_without_souffle()
       assert races(ctx, [C.TwoTablesOneName]) == []
+    end
+  end
+
+  describe "ets_check_act through the process dictionary" do
+    test "a table its maker keeps in its dictionary is its own", ctx do
+      skip_without_souffle()
+      assert races(ctx, [D.CallerTable]) == []
+    end
+
+    test "a kept table whose reference is sent on is shared", ctx do
+      skip_without_souffle()
+      assert [{"bump/2", ":shared_caller_table", _} | _] = races(ctx, [D.SharedCallerTable])
     end
   end
 

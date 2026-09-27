@@ -68,6 +68,11 @@
 .decl coarse_table(table: symbol)
 .input coarse_table
 
+// An unnamed table its process keeps in its dictionary and never hands
+// to another (points_to.dl).
+.decl kept_in_dictionary(table: symbol)
+.input kept_in_dictionary
+
 // ── Derived here, over the staged rows ─────────────────────────────
 
 // Everything that goes to a process: a call, cast or send; signals.dl

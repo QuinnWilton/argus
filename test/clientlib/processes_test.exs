@@ -38,6 +38,7 @@ defmodule Argus.Clientlib.ProcessesTest do
     PidFlow.Carrier,
     PidFlow.Conn,
     PidFlow.ConnUser,
+    PidFlow.DictConnUser,
     PidFlow.ConnSup,
     PidFlow.Joiner,
     PidFlow.Reindexer,
@@ -495,6 +496,16 @@ defmodule Argus.Clientlib.ProcessesTest do
     assert ["start ConnUser:init/1#8", base] in r["instance"]
     assert ["child ConnSup#0", "Conn"] in r["server_process"]
     assert ["start ConnUser:init/1#8", "Conn"] in r["server_process"]
+  end
+
+  test "a pid a server keeps in its dictionary is the one its callbacks call", ctx do
+    r = solve(ctx, ~w(process_call))
+
+    targets = for ["DictConnUser:handle_call/3", _, _, "call", p] <- r["process_call"], do: p
+    assert targets == ["start DictConnUser:init/1#8"]
+
+    # The callers' own processes put nothing under the key.
+    assert for(["DictConnUser:query_directly/0" | _] = row <- r["process_call"], do: row) == []
   end
 
   test "a computed module, apply and a library pid name no process", ctx do

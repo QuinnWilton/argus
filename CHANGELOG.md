@@ -137,6 +137,17 @@ records `ets_table_default(id, name, site)`: the operand is the literal
 (`undefined`, `nil`, `false`), and that answer otherwise. Readers of
 positional columns see two new relations and one new source kind.
 
+Process points-to (processes.dl) follows a value through the
+dictionary: a `dict` read points to every put of its key in a function
+the same process may run (some function reaches both on its own stack,
+or callbacks of one module do), and a helper returning the read returns,
+at each call, what the caller's process holds there. So a table or a pid
+a process keeps in its dictionary is the one its later operations and
+calls name. The points-to stage stages `kept_in_dictionary`: an unnamed
+table its maker keeps in its dictionary and hands to no other process,
+which tables.dl reads as private to it (`kept_by_its_process`), whatever
+its options.
+
 ### One ETS table identity (clientlib/tables.dl)
 
 **Changed.** races and ets name a table one way: `EtsTable = [kind,

@@ -149,6 +149,42 @@ source_table(f, sk, s, t) :-
 
 .output source_table(filename="source_table.facts")
 
+// A table the process that made it keeps in its dictionary, whose
+// reference never leaves that process: no term holds it (a message, a
+// server's state, a reply, a start's argument are all terms), no start,
+// spawn or closure another process runs is handed it. Each process that
+// runs the code makes and keeps a table of its own, so no other process
+// can reach the one a process keeps (tables.dl reads it as private to
+// its process). A reference handed to code outside the program (stored
+// in another table, in :persistent_term, returned to an outside caller)
+// is not seen, and ets.dl's give_away is asked apart, in tables.dl.
+.decl kept_in_dictionary(table: symbol)
+
+kept_in_dictionary(t) :-
+  dict_put(_, g, _, sk, s),
+  source_pts(g, sk, s, t),
+  table_alloc(_, _, t),
+  !leaves_process(t).
+
+.decl leaves_process(table: symbol)
+
+leaves_process(t) :- field_pts(_, _, t), table_alloc(_, _, t).
+
+leaves_process(t) :-
+  pid_arg(_, f, _, _, via, sk, s),
+  via != "call",
+  via != "closure",
+  source_pts(f, sk, s, t),
+  table_alloc(_, _, t).
+
+leaves_process(t) :-
+  pid_arg(_, f, g, _, "closure", sk, s),
+  runs_elsewhere(_, g),
+  source_pts(f, sk, s, t),
+  table_alloc(_, _, t).
+
+.output kept_in_dictionary(filename="kept_in_dictionary.facts")
+
 // The tables the bounded stage resolved coarsely (pervasive leaves): its
 // source_table rows for them are a superset, which a rule that needs
 // the table an operation surely names must not take as one (tables.dl).

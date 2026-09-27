@@ -20,7 +20,9 @@
 //   self   — self(), which is whichever process runs the function;
 //   obj    — a term the function built;
 //   load   — a field read from a term the function did not build;
-//   reply  — what a GenServer.call at a site returned.
+//   reply  — what a GenServer.call at a site returned;
+//   dict   — what the running process keeps in its dictionary under a
+//            literal key (see "The process dictionary" below).
 // Parameters are context-insensitive, like Andersen's analysis: a
 // parameter points to everything any caller passes it. That is "may
 // point to", and a rule that concludes something from it asks what a
@@ -231,6 +233,14 @@ source_pts(f, "result", c, cat("start ", c)) :-
 
 source_pts(f, "result", c, cat("result ", c)) :- kept_fresh(c, f, x), start_object(x, _).
 source_pts(f, "name", n, p) :- reads_name(f, n), named_pid(n, p), !pervasive(p).
+source_pts(f, "dict", k, x) :- dict_read(f, k, g, sk, s), source_pts(g, sk, s, x).
+.plan 0:(2,1)
+
+// A callee that hands back what the dictionary holds under a key returns,
+// at each call, what the caller's process holds there (see "The process
+// dictionary" below).
+source_pts(f, "result", c, x) :- pid_result(c, f, g), returns_key(g, k), source_pts(f, "dict", k, x).
+.plan 0:(3,1,2)
 source_pts(f, "self", "self", p) :- self_pid(f, p), !pervasive(p).
 
 // An ETS table is an object too, allocated by the :ets.new/2 that made
@@ -315,7 +325,12 @@ update_base(o, b) :- pid_base(f, o, bk, bs), source_pts(f, bk, bs, b).
 // the callee's own returns, and of what it hands back, the argument this
 // function passed it unless that is one of its parameters, which it then
 // hands back itself.
-returns_pts(g, x) :- pid_return(g, k, s), k != "param", k != "result", source_pts(g, k, s, x).
+returns_pts(g, x) :-
+  pid_return(g, k, s),
+  k != "param",
+  k != "result",
+  k != "dict",
+  source_pts(g, k, s, x).
 .plan 0:(2,1)
 
 returns_pts(g, x) :- pid_return(g, "result", c), pid_result(c, g, h), returns_pts(h, x).
@@ -354,6 +369,7 @@ passes(g, j) :-
 returns_all(g, x) :- returns_pts(g, x).
 returns_all(g, x) :- passes(g, j), param_pts(g, j, x).
 .plan 0:(2,1)
+returns_all(g, x) :- returns_key(g, k), source_pts(g, "dict", k, x).
 
 // A parameter is filled by the process that runs the function as an
 // entry — a server start's init argument, a spawned function's arguments,
@@ -402,6 +418,103 @@ named_pid(n, p) :-
   named_process(mod, n),
   !resolved_name(n),
   server_process(p, mod).
+
+// ── The process dictionary ──────────────────────────────────────────
+//
+// Each process has a dictionary of its own: `put(key, value)` keeps a
+// value there and a later `get(key)` in the same process reads it back
+// (dict_op, dict_put; `erase/1` hands it back too). So a value is a heap
+// field keyed by the literal key, like a registered name, except that
+// only the process that put it can read it. A `dict` source of `key` in
+// `func` points to what every put of `key` in a function the same
+// process may run points to.
+//
+// Which functions one process runs is approximated from the call graph,
+// on each process's own stack (runs_elsewhere cut, as SameProcessReach):
+// a put and a read share a dictionary when some function reaches both
+// (validate/1 calls create_tmp_config/0, which puts, and set_option/2,
+// which reads), or when both are reached from callbacks of one module
+// (a server's init/1 puts, its handle_call/3 reads). What that leaves
+// out and adds:
+//
+// - Order is not asked: a put the process makes only after the read
+//   counts, and so does a put an erase undoes (a MAY word: the value may
+//   be there). The dictionary words over order are dictionary.dl's.
+// - Two processes running the same code share its puts: a helper both
+//   of two servers' callbacks call reads what either's callbacks put,
+//   as a context-insensitive parameter holds every caller's value.
+// - A function outside the program that puts (a dependency's
+//   `Logger.metadata/1`), a key computed at run time, and a put through
+//   `apply` are not followed: the read points to nothing, and the rules
+//   on it stay quiet.
+// - A put in a function no function of the program reaches along with
+//   the read (each an API an outside caller calls in turn, in its own
+//   process) is not connected: the program does not show one caller.
+
+// A function returning what the dictionary holds under a key returns
+// it at each call, in the caller's process: a helper such as
+// `defp table, do: Process.get(:table)`, which both a server's callbacks
+// and its API functions call, reads the server's put in the callbacks
+// and nothing in the API's callers. So the value is not one of the
+// helper's returns (returns_pts), and `returns_key` lifts it, like a
+// parameter it hands back (passes), to each call.
+.decl returns_key(func: symbol, key: symbol)
+
+returns_key(g, k) :- pid_return(g, "dict", k).
+returns_key(g, k) :- pid_return(g, "result", c), pid_result(c, g, h), returns_key(h, k).
+
+// A dictionary read of `key` in `func`, and each put of it the same
+// process may make, in `putter`, of the source (sk, s).
+.decl dict_read(func: symbol, key: symbol, putter: symbol, src_kind: symbol, src: symbol)
+
+dict_read(f, k, g, sk, s) :-
+  reads_dict(f, k),
+  dict_put(_, g, k, sk, s),
+  shares_dictionary(f, g).
+
+// The dict sources each function reads, so the rules resolving them are
+// bound by the function that uses them.
+.decl reads_dict(func: symbol, key: symbol)
+
+reads_dict(f, k) :- pid_arg(_, f, _, _, _, "dict", k).
+reads_dict(f, k) :- pid_return(f, "dict", k).
+reads_dict(f, k) :- pid_call(_, f, _, "dict", k).
+reads_dict(f, k) :- pid_message(_, f, _, "dict", k).
+reads_dict(f, k) :- pid_register(_, f, _, "dict", k).
+reads_dict(f, k) :- pid_field(f, _, _, "dict", k).
+reads_dict(f, k) :- pid_base(f, _, "dict", k).
+reads_dict(f, k) :- pid_signal(_, f, _, "dict", k).
+reads_dict(f, k) :- pid_load(f, _, _, "dict", k).
+reads_dict(f, k) :- table_use(_, f, "dict", k).
+reads_dict(f, k) :- dict_put(_, f, _, "dict", k).
+reads_dict(f, k) :- pid_result(_, f, g), returns_key(g, k).
+
+// The functions a process's own stack reaches a dictionary read or put
+// from: seeded at the functions holding a read of a key some function
+// puts, and a put of a key some function reads.
+.init dict_stack = SameProcessReach
+
+dict_stack.seed(f, f) :- reads_dict(f, k), dict_put(_, _, k, _, _).
+dict_stack.seed(g, g) :- dict_put(_, g, k, _, _), reads_dict(_, k).
+
+// `func` and `other` may run in one process, as far as their dictionaries
+// go: some function reaches both on its own stack, or callbacks of one
+// module do.
+.decl shares_dictionary(func: symbol, other: symbol)
+
+shares_dictionary(f, g) :-
+  reads_dict(f, k),
+  dict_put(_, g, k, _, _),
+  dict_stack.reaches(a, f),
+  dict_stack.reaches(a, g).
+
+shares_dictionary(f, g) :-
+  reads_dict(f, k),
+  dict_put(_, g, k, _, _),
+  dict_stack.reaches(a, f),
+  process_entry(m, a),
+  process_entry(m, b),
+  dict_stack.reaches(b, g).
 
 // ── Who runs a function ─────────────────────────────────────────────
 

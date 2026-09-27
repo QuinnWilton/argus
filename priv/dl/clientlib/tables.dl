@@ -278,10 +278,12 @@ names_a_table(id) :- ets_table(id, k, t), table_made_at(k, t, _).
 
 // ── Access ──────────────────────────────────────────────────────────
 
-// A table some site makes :private, readable by its owner alone.
+// A table some site makes :private, readable by its owner alone, or one
+// only the process that made it can reach (kept_by_its_process).
 .decl table_private(kind: symbol, ident: symbol)
 
 table_private(k, t) :- table_made_at(k, t, n), ets_option(n, "access", "private").
+table_private(k, t) :- kept_by_its_process(k, t).
 
 // A table another process can read: made somewhere the program shows,
 // and not private.
@@ -289,10 +291,31 @@ table_private(k, t) :- table_made_at(k, t, n), ets_option(n, "access", "private"
 
 table_readable_elsewhere(k, t) :- table_made_at(k, t, _), !table_private(k, t).
 
-// A table some site makes :public: any process can write it.
+// A table some site makes :public, which any process that reaches it can
+// write: every process, unless only its maker reaches it.
 .decl table_public(kind: symbol, ident: symbol)
 
-table_public(k, t) :- table_made_at(k, t, n), ets_option(n, "access", "public").
+table_public(k, t) :-
+  table_made_at(k, t, n),
+  ets_option(n, "access", "public"),
+  !kept_by_its_process(k, t).
+
+// An unnamed table the process that made it keeps in its dictionary and
+// never hands to another (kept_in_dictionary, points_to.dl), nor gives
+// away: each process running the code keeps a table of its own, and
+// whatever its options, no other process holds a reference to it.
+.decl kept_by_its_process(kind: symbol, ident: symbol)
+
+kept_by_its_process("new", n) :-
+  site_table(n, "new", n),
+  table_alloc(n, _, x),
+  kept_in_dictionary(x),
+  !handed_to_another("new", n).
+
+// A table some :ets.give_away/3 hands to another process.
+.decl handed_to_another(kind: symbol, ident: symbol)
+
+handed_to_another(k, t) :- ets_op(id, _, _, "give_away", _), ets_table(id, k, t).
 
 // ── Tables across calls ─────────────────────────────────────────────
 
