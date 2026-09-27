@@ -151,6 +151,48 @@ defmodule Argus.Specs do
   end
 
   @doc """
+  What reading `module`'s specs from the code path can give, as a
+  lowercase hex digest: its spec and type declarations as its beam
+  holds them, with their line annotations cleared — an edit that moves
+  a line of `module` moves nothing a reader of its specs computes. A
+  function of `module`'s own beam alone: a spec resolved through another
+  module's type (`installed/1`) is that module's read too.
+
+  What a module's rows depend on of each module whose specs the specs
+  extractor read (`Argus.Pipeline`'s `installed`): the query graph
+  keys that read on this (`Argus.Graph.Reads`'s `installed_specs`).
+  """
+  @spec interface_digest(module()) :: String.t()
+  def interface_digest(module) when is_atom(module) do
+    specs =
+      case fetch(fn -> Code.Typespec.fetch_specs(module) end) do
+        {:ok, specs} ->
+          Enum.map(specs, fn {name_arity, clauses} ->
+            {name_arity, Enum.map(clauses, &unannotated/1)}
+          end)
+
+        :error ->
+          :none
+      end
+
+    types =
+      for {name_arity, {args, body}} <- stamped_types(module),
+          into: %{},
+          do: {name_arity, {Enum.map(args, &unannotated/1), unannotated(body)}}
+
+    {specs, types}
+    |> :erlang.term_to_binary([:deterministic])
+    |> then(&:crypto.hash(:sha256, &1))
+    |> Base.encode16(case: :lower)
+  end
+
+  defp unannotated(form) do
+    :erl_parse.map_anno(fn _anno -> :erl_anno.new(0) end, form)
+  rescue
+    _ -> form
+  end
+
+  @doc """
   Classifies a list of spec clauses (Erlang abstract format, as
   `Code.Typespec.fetch_specs/1` returns them) against the types of the
   module they belong to, as `{params, body}` by `{name, arity}`.
