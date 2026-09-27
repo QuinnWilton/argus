@@ -690,30 +690,43 @@ used_untested(lookup, func, name) :- name_lookup(lookup, func, "whereis", _, "li
 
 // A lookup whose first use fails, on a nil or :undefined pid, the way a
 // try around that use takes (nil_use, from ProcessRegistry: the use, and
-// how it fails): its missing case is handled where it is used. A BIF or
-// a send raises badarg, which a handler of the error class takes, or one
-// naming :badarg (`process_info(whereis(n), ...)` under `catch
-// error:badarg`, rabbit_vm's memory/0); a call to the name exits with
-// :noproc, which only a handler of the exit class takes — a `rescue`
-// around `GenServer.call(Process.whereis(n), ...)` takes nothing of it; a
-// use nothing is known of needs a handler of both. The coverage asked is
-// the use's own (nil_use's `use` column), or the lookup's when the use
-// is no call (a `send`), which a try covers with it.
+// how it fails): its missing case is handled where the failure does not
+// escape the function (Escape, clientlib/escape.dl: a try around the
+// use, around a call on every path down to it, or around every call to
+// the function). A BIF or a send raises badarg, which a handler of the
+// error class takes, or one naming ArgumentError or :badarg
+// (`process_info(whereis(n), ...)` under `catch error:badarg`,
+// rabbit_vm's memory/0); a call to the name exits with :noproc, which
+// only a handler of the exit class takes — a `rescue` around
+// `GenServer.call(Process.whereis(n), ...)` takes nothing of it; a use
+// nothing is known of needs a handler of both. The coverage asked is the
+// use's own (nil_use's `use` column), or the lookup's when the use is no
+// call (a `send`), which a try covers with it.
 .decl nil_use_caught(lookup: symbol, func: symbol)
 
-nil_use_caught(lookup, f) :- nil_use(lookup, f, u, "error"), covered_by_catch(u, f, _, "error").
-
-nil_use_caught(lookup, f) :-
-  nil_use(lookup, f, u, "error"),
-  try_covers(t, f, u, "try"),
-  catch_tag(t, f, "error", ":badarg").
-
-nil_use_caught(lookup, f) :- nil_use(lookup, f, u, "exit"), covered_by_catch(u, f, _, "exit").
+nil_use_caught(lookup, f) :- nil_use(lookup, f, u, "error"), nil_use_fault.rescued(u, f, "badarg").
+nil_use_caught(lookup, f) :- nil_use(lookup, f, u, "exit"), nil_use_fault.rescued(u, f, "exit").
 
 nil_use_caught(lookup, f) :-
   nil_use(lookup, f, u, "any"),
-  covered_by_catch(u, f, _, "error"),
-  covered_by_catch(u, f, _, "exit").
+  nil_use_fault.rescued(u, f, "badarg"),
+  nil_use_fault.rescued(u, f, "exit").
+
+.init nil_use_fault = Escape
+
+// The raise each way a use fails: "error" a badarg, "exit" the :noproc
+// exit, "any" either.
+.decl nil_use_raise(fails: symbol, raise: symbol)
+
+nil_use_raise("error", "badarg").
+nil_use_raise("exit", "exit").
+nil_use_raise("any", "badarg").
+nil_use_raise("any", "exit").
+
+nil_use_fault.asked(u, f, f, r) :-
+  used_untested(lookup, f, _),
+  nil_use(lookup, f, u, fails),
+  nil_use_raise(fails, r).
 
 // ══ Processes nobody watches ════════════════════════════════════════
 

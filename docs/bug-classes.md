@@ -434,7 +434,7 @@ than more; it errs loud when the same uncertainty can add a finding.
 - **Names.** `raise_class`, `raise_tag`, `handler_takes`, `site_takes`, `takes_somewhere` (exceptions.dl); the `Escape` component's `escapes`, `escapes_through` and `rescued` (escape.dl).
 - **Meaning.** `escapes(site, func, raise)`: no handler that takes `raise` and goes on covers the raising site, nor any call on some path of calls from `func` (the function the rule reasons about) down to the site's function, and not every call to `func` is inside one. A raise is `"badarg"` (the ArgumentError a BIF raises), `"erpc"` (`{:erpc, reason}`) or a whole class; a handler takes it when a clause takes its class or names its tag and some path through the handler goes on (a rescue that only re-raises, or an `after`, takes nothing). A closure is held against the call it is handed to, on the path down and among the callers; a fun handed to a process start raises in that process.
 - **Direction.** The path is followed at most 16 calls deep (a site further down is rescued, quiet); an edge with no call to hold a try against is closed by a handler anywhere in its function (quiet); the callers are asked one level up, and only when the program shows them all (loud).
-- **Used by.** races (`ets_missing_row`, `ets_publish_order`), failure (`remote_pid_probe`, the `erpc` boolean), ets (`ets_read_outside_owner`, `ets_created_in_start`).
+- **Used by.** races (`ets_missing_row`, `ets_publish_order`), failure (`remote_pid_probe`, the `erpc` boolean, a whereis result used untested), ets (`ets_read_outside_owner`, `ets_created_in_start`).
 
 ### Effect categories
 
@@ -2164,8 +2164,9 @@ An error path the code could have seen and did not take: an exception a catch-al
 - Only a literal name; a name computed at runtime is not read (`WhereisModule`).
 - The check is looked for in straight-line code after the call; one made by a callee, or on a later branch, is missed (reports). A result returned to the caller counts as unchecked.
 - Looking a name up and then starting the process under it is races' `registry_race`, not this.
+- A first use whose failure does not escape f is handled (`escapes`, clientlib/escape.dl): a try around the use, a call on every path down to it, or every call to f, that takes its badarg (a BIF, a send) or its `:noproc` exit (a call to the name), or both when the use is not known (`StaticWhereis.memory/0`, `guarded_memory/0` quiet; `memory_or_raise/0`, `memory_and_config/0`, `memory_catching_exit/0` reported).
 
-**Fixtures.** Positive: `StaticWhereis` (test/fixtures/process_registry_fixture.ex). Quiet: `WhereisModule` (same file). Asserted in test/analyses/failure_whereis_test.exs.
+**Fixtures.** Positive: `StaticWhereis` (test/fixtures/process_registry_fixture.ex). Quiet: `WhereisModule`, `StaticWhereis.memory/0` and `raw_memory/0` (same file). Asserted in test/analyses/failure_whereis_test.exs.
 
 **Corpus.** None.
 

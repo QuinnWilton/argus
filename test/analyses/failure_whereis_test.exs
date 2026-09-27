@@ -39,6 +39,9 @@ defmodule Argus.Analyses.FailureWhereisTest do
 
       refute "memory/0" in funcs, "the ArgumentError rescue takes nil's badarg"
       assert "memory_or_raise/0" in funcs, "a KeyError rescue does not"
+      assert "memory_and_config/0" in funcs, "a rescue around other code does not"
+      assert "memory_catching_exit/0" in funcs, "a catch of exits does not"
+      refute "raw_memory/0" in funcs, "a rescue around every call to the function takes it"
     end
 
     test "does not flag whereis on a runtime-computed name" do

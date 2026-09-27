@@ -161,6 +161,37 @@ defmodule Argus.Test.Fixtures.StaticWhereis do
   rescue
     KeyError -> 0
   end
+
+  # A rescue around other code in the function takes nothing of the use.
+  def memory_and_config do
+    {:memory, bytes} = Process.info(Process.whereis(:my_metrics), :memory)
+
+    try do
+      {bytes, :persistent_term.get(:metrics_config)}
+    rescue
+      ArgumentError -> {bytes, nil}
+    end
+  end
+
+  # A catch of exits takes nothing of the badarg.
+  def memory_catching_exit do
+    {:memory, bytes} = Process.info(Process.whereis(:my_metrics), :memory)
+    bytes
+  catch
+    :exit, _ -> 0
+  end
+
+  # The use is in a private function whose one caller rescues it.
+  def guarded_memory do
+    raw_memory()
+  rescue
+    ArgumentError -> 0
+  end
+
+  defp raw_memory do
+    {:memory, bytes} = Process.info(Process.whereis(:my_metrics), :memory)
+    bytes
+  end
 end
 
 defmodule Argus.Test.Fixtures.NamedStarts do
