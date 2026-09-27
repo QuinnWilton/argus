@@ -8,8 +8,6 @@ defmodule Mix.Tasks.Argus.Corpus do
       mix argus.corpus fetch          # clone and compile every pair, ahead of a test run
       mix argus.corpus tally          # every finding title, counted across all checkouts
       mix argus.corpus tally --title "owner may be restarting"   # the rows behind one title
-      mix argus.corpus prune          # drop facts no run has used lately
-      mix argus.corpus prune --keep 0 --dry-run
 
   `fetch` is what `Argus.CorpusTest` does lazily; running it first keeps
   the test run itself short. `tally` is the noise check after a rule
@@ -17,20 +15,14 @@ defmodule Mix.Tasks.Argus.Corpus do
   checkout once, `ARGUS_CORPUS_JOBS` at a time (`Argus.Corpus.jobs/0`),
   and its output does not depend on which finishes first.
 
-  `prune` removes, from every checkout's store, what
-  `Argus.Corpus.stale_facts/2` names: within each producer's shards and
-  each program's solves, the entries untouched for an hour beyond the
-  `--keep` most recent (default 3); the whole-facts entries an older
-  argus kept, by the same policy; and staging directories a crashed run
-  left a day ago. An entry touched within the hour is never removed — a
-  run beside this one may be reading it. Within each older entry that
-  stays, the kept solves of each program go by the same policy
-  (`Argus.Corpus.stale_solves/2`).
+  Every checkout's graph is kept in its manifest, over the shared blob
+  store (`Argus.Corpus.manifest/1`); `argus gc` collects the store (the
+  former `prune`), and every driver run collects it once a day.
   """
 
   use Mix.Task
 
-  @usage "usage: mix argus.corpus fetch | tally [--title SUBSTRING] | prune [--keep N] [--dry-run]"
+  @usage "usage: mix argus.corpus fetch | tally [--title SUBSTRING]"
 
   alias Argus.Corpus
 
@@ -39,10 +31,17 @@ defmodule Mix.Tasks.Argus.Corpus do
     Mix.Task.run("app.config")
 
     case args do
-      ["fetch" | _] -> fetch()
-      ["tally" | rest] -> tally(rest)
-      ["prune" | rest] -> prune(rest)
-      _ -> Mix.raise(@usage)
+      ["fetch" | _] ->
+        fetch()
+
+      ["tally" | rest] ->
+        tally(rest)
+
+      ["prune" | _rest] ->
+        Mix.raise("mix argus.corpus prune is gone: `argus gc` collects the blob store")
+
+      _ ->
+        Mix.raise(@usage)
     end
   end
 
@@ -109,64 +108,4 @@ defmodule Mix.Tasks.Argus.Corpus do
 
   defp format_error(why) when is_binary(why), do: why
   defp format_error(why), do: inspect(why)
-
-  defp prune(args) do
-    {opts, rest, invalid} = OptionParser.parse(args, strict: [keep: :integer, dry_run: :boolean])
-    if rest != [] or invalid != [], do: Mix.raise(@usage)
-
-    policy =
-      case Keyword.fetch(opts, :keep) do
-        {:ok, keep} when keep >= 0 -> [recent: keep]
-        {:ok, _negative} -> Mix.raise("--keep must be 0 or more")
-        :error -> []
-      end
-
-    dry_run? = Keyword.get(opts, :dry_run, false)
-
-    {count, bytes} =
-      Enum.reduce(Corpus.facts_caches(), {0, 0}, fn cache, {count, bytes} ->
-        stale_entries = Corpus.stale_facts(cache, policy)
-
-        # The kept solves of the entries that stay; a removed entry takes
-        # its own with it.
-        stale_solves =
-          for solves <- Corpus.solve_caches(cache),
-              Path.dirname(solves) not in stale_entries,
-              path <- Corpus.stale_solves(solves, policy),
-              do: path
-
-        stale = Enum.map(stale_entries ++ stale_solves, &{&1, tree_bytes(&1)})
-
-        # Each as `Argus.Cache.prune/2` removes it: whole, and not when a
-        # run touched it since it was found stale.
-        gone =
-          if dry_run?,
-            do: stale,
-            else: Enum.filter(stale, fn {path, _bytes} -> Argus.Cache.remove_stale(path) end)
-
-        {count + length(gone), bytes + (gone |> Enum.map(&elem(&1, 1)) |> Enum.sum())}
-      end)
-
-    verb = if dry_run?, do: "would remove", else: "removed"
-    Mix.shell().info("#{verb} #{count} entries, #{format_bytes(bytes)}")
-    :ok
-  end
-
-  defp tree_bytes(path) do
-    case File.lstat(path) do
-      {:ok, %File.Stat{type: :directory}} ->
-        path |> File.ls!() |> Enum.map(&tree_bytes(Path.join(path, &1))) |> Enum.sum()
-
-      {:ok, %File.Stat{size: size}} ->
-        size
-
-      {:error, _} ->
-        0
-    end
-  end
-
-  defp format_bytes(bytes) when bytes >= 1024 * 1024 * 1024,
-    do: "#{Float.round(bytes / (1024 * 1024 * 1024), 1)} GB"
-
-  defp format_bytes(bytes), do: "#{Float.round(bytes / (1024 * 1024), 1)} MB"
 end

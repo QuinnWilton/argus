@@ -30,21 +30,8 @@ defmodule Argus.Corpus do
   run executes nothing but its reads; after an edit to one extractor,
   every module's facts run that extractor alone.
 
-  On the batch backend (`ARGUS_BACKEND=batch`), each checkout keeps a
-  store beside it, `.argus-facts` (`Argus.Cache`):
-  every producer's facts as a shard and every solve, keyed by content
-  (`analyze/2`). A warm run extracts nothing and solves nothing; after
-  an edit to one extractor only that extractor's shard is extracted
-  again, after an edit to a rule only the programs it reaches solve
-  again, and a solve whose inputs came out byte-identical is read back.
-  None of the keys names the directory argus was built in, so every
-  worktree of one commit shares the entries. An analysis prunes its
-  checkout's store (`stale_facts/2`), sparing within each producer and
-  program the few most recently used — the baseline of a
-  before-and-after comparison among them — and `mix argus.corpus prune`
-  does so across every checkout. Entries an older argus kept whole
-  (`<digest>/facts` with its `solves/`) are never read, and go by the
-  same policy.
+  The blob store is collected by `argus gc` (and once a day by every
+  driver run); a checkout's manifest goes with the checkout.
 
   `analyze_all/2` runs checkouts `jobs/0` at a time; the test gate and
   `mix argus.corpus tally` both go through it.
@@ -100,12 +87,6 @@ defmodule Argus.Corpus do
           sha: String.t(),
           app: String.t() | nil
         }
-
-  # Each checkout's store, beside it.
-  @facts_cache ".argus-facts"
-
-  # Beside the facts in each facts cache entry: `analyze/2`'s kept solves.
-  @solves "solves"
 
   @pairs_file Path.join([__DIR__, "..", "..", "test", "corpus", "pairs.exs"]) |> Path.expand()
 
@@ -165,34 +146,18 @@ defmodule Argus.Corpus do
   Runs every analysis over one side of a pair; the findings as
   `Argus.run_analyses/2` returns them.
 
-  Clones and compiles the checkout if needed (`ensure/2`), then runs
-  through the checkout's store (`cache:`, `Argus.Cache`): the facts are
-  read from its shards, extracting only the producers no entry holds
-  for the current code, and each solve is read back when what it reads
-  is unchanged. Under `ARGUS_NO_CACHE` everything is extracted and
-  solved afresh. The store is pruned afterwards (`prune_facts/2`).
-
-  `ARGUS_BACKEND=graph` runs it on the query graph instead, through its
-  blob store (`Argus.Graph.store/0`); `ARGUS_VERIFY_BACKEND=1` on both,
-  and fails unless they agree (`Argus.Run.both/2`).
+  Clones and compiles the checkout if needed (`ensure/2`), then runs on
+  the query graph with the checkout's manifest (`manifest/1`) over the
+  shared blob store: only what an edit reached since the last run runs
+  again. Under `ARGUS_NO_CACHE` nothing is kept, and everything runs.
+  `opts` may carry the code directories' `stamps:`, read once for many
+  checkouts (`analyze_all/2`).
   """
   @spec analyze(pair(), :pre | :fix, keyword()) :: {:ok, Argus.Findings.t()} | {:error, term()}
   def analyze(pair, side, opts \\ []) do
     with %{} = co <- checkout(pair, side) || {:error, "no #{side} side for #{pair.issue}"},
          {:ok, beams} <- ensure(pair, side) do
-      store = store(co)
-
-      try do
-        Argus.Run.both(
-          fn
-            :batch -> Argus.run_analyses(beams, analyses: :all, cache: store)
-            :graph -> Argus.run_analyses(beams, [analyses: :all] ++ graph_opts(co, opts))
-          end,
-          {:corpus, co.name}
-        )
-      after
-        if Argus.Cache.enabled?(), do: prune_facts(store)
-      end
+      Argus.run_analyses(beams, [analyses: :all] ++ graph_opts(co, opts))
     end
   end
 
@@ -200,12 +165,9 @@ defmodule Argus.Corpus do
   # directories' stamps when the caller read them for many checkouts.
   # Under `ARGUS_NO_CACHE` nothing is kept.
   defp graph_opts(co, opts) do
-    kept =
-      if Argus.Cache.enabled?(),
-        do: [manifest: seed_manifest(manifest(co))] ++ Keyword.take(opts, [:stamps]),
-        else: []
-
-    kept
+    if Argus.Cache.enabled?(),
+      do: [manifest: seed_manifest(manifest(co))] ++ Keyword.take(opts, [:stamps]),
+      else: []
   end
 
   @doc """
@@ -263,10 +225,6 @@ defmodule Argus.Corpus do
 
     manifest
   end
-
-  @doc "A checkout's store (`Argus.Cache`): `<checkout>/.argus-facts`."
-  @spec store(checkout()) :: Path.t()
-  def store(%{dir: dir}), do: Path.join(dir, @facts_cache)
 
   @doc """
   How many checkouts `analyze_all/2` runs at once: `ARGUS_CORPUS_JOBS`,
@@ -366,124 +324,12 @@ defmodule Argus.Corpus do
     end)
   end
 
-  # ── Facts cache ───────────────────────────────────────────────────────
-
-  @typedoc """
-  What `stale_facts/2` spares beyond the entries in use: `keep:`, an
-  entry never removed, and `recent:`, how many of the others survive
-  regardless of age (default 3), the most recently touched first.
-  """
-  @type prune_option :: {:keep, String.t()} | {:recent, non_neg_integer()}
-
-  @doc """
-  The entries of a checkout's store (`<checkout>/.argus-facts`) that
-  `prune_facts/2` removes: `Argus.Cache.stale/2`'s — within each
-  producer's shards and each program's solves, every entry untouched
-  for an hour other than `keep:` and the `recent:` most recently
-  touched — and, among the whole-facts entries an older argus kept
-  (`<digest>/facts`), every one untouched for an hour beyond `keep:`
-  and the `recent:` most recent; and a staging directory untouched for
-  a day.
-
-  An hour is how long an entry is presumed in use: a hit touches its
-  entry, so one a VM beside this one is reading is never older than the
-  run reading it. The `recent:` entries are the baselines: an agent that
-  tallies before a change to extraction and again after needs the first
-  entries still there at the end, however long the change took. A
-  staging directory is one a VM is filling or one whose VM died
-  mid-copy; after a day it is the latter.
-  """
-  @spec stale_facts(Path.t(), [prune_option()]) :: [Path.t()]
-  def stale_facts(cache, opts \\ []) do
-    Enum.sort(
-      stale(cache, opts, &facts_entry_kind/2) ++
-        Argus.Cache.stale(cache, Keyword.update(opts, :keep, [], &List.wrap/1))
-    )
-  end
-
-  @doc """
-  The kept solves of one facts cache entry (`<entry>/solves`, see
-  `analyze/2`) that `prune_solves/2` removes, by `stale_facts/2`'s
-  policy applied to each program on its own: every solve untouched for
-  an hour beyond the `recent:` most recently touched of its program
-  (default 3), other than `keep:`, and a staging directory untouched
-  for a day. A rule edit leaves its program's earlier solves behind;
-  the policy keeps the before-edit ones for a comparison, as it keeps
-  the facts.
-  """
-  @spec stale_solves(Path.t(), [prune_option()]) :: [Path.t()]
-  def stale_solves(solves, opts \\ []), do: stale(solves, opts, &solve_entry_kind/2)
-
-  @doc """
-  Removes `stale_solves/2` from one entry's kept solves, each by
-  `Argus.Cache.remove_stale/1`; the paths it removed.
-  """
-  @spec prune_solves(Path.t(), [prune_option()]) :: [Path.t()]
-  def prune_solves(solves, opts \\ []) do
-    solves |> stale_solves(opts) |> Enum.filter(&Argus.Cache.remove_stale/1)
-  end
-
-  # `Argus.Cache`'s retention policy: each group keeps its own
-  # `recent:` survivors.
-  defp stale(dir, opts, kind_of) do
-    opts = Keyword.update(opts, :keep, [], &List.wrap/1)
-    Argus.Cache.stale_entries(dir, opts, kind_of)
-  end
-
-  @doc """
-  Removes `stale_facts/2` from a checkout's facts cache, each by
-  `Argus.Cache.remove_stale/1`; the paths it removed.
-  """
-  @spec prune_facts(Path.t(), [prune_option()]) :: [Path.t()]
-  def prune_facts(cache, opts \\ []) do
-    cache |> stale_facts(opts) |> Enum.filter(&Argus.Cache.remove_stale/1)
-  end
-
-  @doc "The facts cache of every checkout under `root/0` that has one."
-  @spec facts_caches() :: [Path.t()]
-  def facts_caches do
-    for name <- ls(root()),
-        cache = Path.join([root(), name, @facts_cache]),
-        File.dir?(cache),
-        do: cache
-  end
-
-  @doc "The kept solves of every installed entry of a facts cache."
-  @spec solve_caches(Path.t()) :: [Path.t()]
-  def solve_caches(cache) do
-    for name <- ls(cache),
-        facts_entry_kind(name, :directory) == {:installed, :facts},
-        solves = Path.join([cache, name, @solves]),
-        File.dir?(solves),
-        do: solves
-  end
+  # ── Helpers ──────────────────────────────────────────────────────────
 
   defp ls(dir) do
     case File.ls(dir) do
       {:ok, names} -> Enum.sort(names)
       {:error, _} -> []
-    end
-  end
-
-  # A directory, never a file of that name.
-  defp facts_entry_kind(_name, type) when type != :directory, do: nil
-
-  defp facts_entry_kind(name, :directory) do
-    cond do
-      Regex.match?(~r/^[0-9a-f]{64}$/, name) -> {:installed, :facts}
-      Regex.match?(~r/^[0-9a-f]{64}\.\d+\.\d+$/, name) -> :staging
-      true -> nil
-    end
-  end
-
-  # `<program>-<key>`, as `Argus.Souffle.Cache` names a kept solve.
-  defp solve_entry_kind(_name, type) when type != :directory, do: nil
-
-  defp solve_entry_kind(name, :directory) do
-    case Regex.run(~r/^([a-z0-9_]+)-[0-9a-f]{64}(\.\d+\.\d+)?$/, name) do
-      [_, program] -> {:installed, program}
-      [_, _program, _staging] -> :staging
-      nil -> nil
     end
   end
 
