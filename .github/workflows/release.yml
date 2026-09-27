@@ -1,0 +1,54 @@
+# A DRAFT release: builds the argus escript and its sha256, and attaches
+# both to a draft GitHub release for a person to review and publish.
+# Run by hand only (Actions → Release → Run workflow): nothing triggers
+# it, and it publishes nothing on its own. The rebar3 plugin downloads
+# `argus` and `argus.sha256` from a published release's assets
+# ({argus_plugin, [{version, V}]}).
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "The version to release (the tag is v<version>; mix.exs must say the same)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  escript:
+    name: Build the escript
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          elixir-version: "1.19.4"
+          otp-version: "28.3"
+
+      - name: Check the version
+        run: |
+          grep -q "@version \"${{ inputs.version }}\"" mix.exs ||
+            { echo "mix.exs does not say version ${{ inputs.version }}"; exit 1; }
+
+      - name: Install dependencies
+        run: mix deps.get
+
+      - name: Build the escript
+        run: mix escript.build
+        env:
+          MIX_ENV: prod
+
+      - name: Checksum
+        run: sha256sum argus | cut -d' ' -f1 > argus.sha256
+
+      - name: Draft the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "v${{ inputs.version }}" argus argus.sha256
+          --draft --title "argus ${{ inputs.version }}"
+          --notes "The argus escript (needs Erlang/OTP 28 and souffle on PATH). Check it with: sha256sum -c <(echo \"$(cat argus.sha256)  argus\")"

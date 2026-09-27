@@ -144,3 +144,64 @@ jobs:
 
       - name: Run dialyzer
         run: mix dialyzer
+
+  # The argus escript and the rebar3 plugin, built from this commit and
+  # run as users run them: the escript from outside the repository over
+  # the fixture projects, the fixtures built by rebar3 and gleam
+  # themselves, and `rebar3 argus` against the escript just built.
+  escript:
+    name: Escript and rebar3 plugin
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Elixir, rebar3 and Gleam
+        uses: erlef/setup-beam@v1
+        with:
+          elixir-version: "1.19.4"
+          otp-version: "28.3"
+          rebar3-version: "3.25.1"
+          gleam-version: "1.14.0"
+
+      - name: Install Souffle
+        run: |
+          sudo wget https://souffle-lang.github.io/ppa/souffle-key.public -O /usr/share/keyrings/souffle-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/souffle-archive-keyring.gpg] https://souffle-lang.github.io/ppa/ubuntu/ stable main" | sudo tee /etc/apt/sources.list.d/souffle.list
+          sudo apt-get update
+          sudo apt-get install -y souffle
+
+      - name: Restore dependencies cache
+        uses: actions/cache@v4
+        with:
+          path: deps
+          key: ${{ runner.os }}-mix-escript-${{ hashFiles('**/mix.lock') }}
+          restore-keys: ${{ runner.os }}-mix-escript-
+
+      - name: Install dependencies
+        run: mix deps.get
+
+      - name: Build the escript
+        run: mix escript.build
+        env:
+          MIX_ENV: prod
+
+      - name: Run the escript from outside the repository
+        run: |
+          cd "$RUNNER_TEMP"
+          "$GITHUB_WORKSPACE/argus" version
+          "$GITHUB_WORKSPACE/argus" list > /dev/null
+
+      - name: Compile the rebar3 plugin
+        working-directory: integrations/rebar3_argus
+        run: rebar3 compile
+
+      - name: Run the escript, rebar3, gleam and plugin tests
+        run: >-
+          mix test --include escript --include rebar3 --include gleam
+          test/argus/escript_test.exs test/integrations
+
+      - name: Keep the escript
+        uses: actions/upload-artifact@v4
+        with:
+          name: argus-escript
+          path: argus
