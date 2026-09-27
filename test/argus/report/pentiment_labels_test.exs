@@ -6,6 +6,8 @@ defmodule Argus.Report.PentimentLabelsTest do
 
   use ExUnit.Case, async: true
 
+  alias Argus.Report.{Entry, Pentiment}
+
   @moduletag :tmp_dir
 
   @source """
@@ -29,7 +31,7 @@ defmodule Argus.Report.PentimentLabelsTest do
   end
 
   defp entry(file, related) do
-    %Argus.Report.Entry{
+    %Entry{
       file: file,
       line: 3,
       end_line: nil,
@@ -46,7 +48,7 @@ defmodule Argus.Report.PentimentLabelsTest do
   end
 
   defp details(file, dir, related),
-    do: Argus.Report.Pentiment.format(entry(file, related), dir)
+    do: Pentiment.format(entry(file, related), dir)
 
   test "a frame on the primary's span joins the primary label", %{path: file, dir: dir} do
     details =
@@ -71,7 +73,7 @@ defmodule Argus.Report.PentimentLabelsTest do
 
   test "a frame on an unlabelled primary gives the primary its message", %{path: file, dir: dir} do
     details =
-      Argus.Report.Pentiment.format(
+      Pentiment.format(
         %{
           entry(file, [%{label: "the edge", file: file, line: 3, end_line: nil}])
           | at_label: nil

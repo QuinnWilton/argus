@@ -6,6 +6,8 @@ defmodule Argus.Report.PentimentSpanTest do
 
   use ExUnit.Case, async: true
 
+  alias Argus.Report.{Entry, Pentiment}
+
   @moduletag :tmp_dir
 
   @source """
@@ -27,7 +29,7 @@ defmodule Argus.Report.PentimentSpanTest do
   end
 
   test "the span is a bracket from the anchor to the end line", %{path: file, dir: dir} do
-    entry = %Argus.Report.Entry{
+    entry = %Entry{
       file: file,
       line: 8,
       end_line: nil,
@@ -44,7 +46,7 @@ defmodule Argus.Report.PentimentSpanTest do
       confidence: nil
     }
 
-    details = Argus.Report.Pentiment.format(entry, dir)
+    details = Pentiment.format(entry, dir)
 
     assert details =~ "╰── guarded by this catch"
     assert details =~ "the one site that disagrees"
@@ -60,7 +62,7 @@ defmodule Argus.Report.PentimentSpanTest do
     path: file,
     dir: dir
   } do
-    entry = %Argus.Report.Entry{
+    entry = %Entry{
       file: file,
       line: 3,
       end_line: 3,
@@ -75,7 +77,7 @@ defmodule Argus.Report.PentimentSpanTest do
       confidence: nil
     }
 
-    details = Argus.Report.Pentiment.format(entry, dir)
+    details = Pentiment.format(entry, dir)
 
     refute details =~ "│ │"
     assert details =~ "╰── the call"

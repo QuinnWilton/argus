@@ -26,7 +26,7 @@ defmodule Argus.Report.GoldenTest do
 
   import ExUnit.CaptureIO
 
-  alias Argus.Test.{Fixture, Peer}
+  alias Argus.Test.{Fixture, Peer, ReportShapes}
 
   @moduletag timeout: 300_000
   @moduletag :souffle
@@ -56,7 +56,7 @@ defmodule Argus.Report.GoldenTest do
   defp render(diagnostics) do
     diagnostics
     |> Enum.filter(&(&1.compiler_name == "argus"))
-    |> Argus.Test.ReportShapes.render_diagnostics(&Path.basename/1)
+    |> ReportShapes.render_diagnostics(&Path.basename/1)
   end
 
   test "the text report is byte-identical to its golden", %{outputs: outputs} do
@@ -69,7 +69,7 @@ defmodule Argus.Report.GoldenTest do
 
   test "the JSON is its golden's, its keys in the schema's order", %{outputs: outputs} do
     check!("findings.json", outputs.json, &JSON.decode!/1)
-    Argus.Test.ReportShapes.assert_key_order!(outputs.json)
+    ReportShapes.assert_key_order!(outputs.json)
   end
 
   defp check!(file, actual, read) do

@@ -11,6 +11,8 @@ defmodule Mix.Tasks.Compile.ArgusPriorsTest do
   use Argus.Test.Peer
 
   alias Argus.Driver.Result
+  alias Argus.Mix.Diagnostics
+  alias Argus.Report
   alias Argus.Test.{Fixture, Peer}
 
   @moduletag timeout: 300_000
@@ -39,7 +41,7 @@ defmodule Mix.Tasks.Compile.ArgusPriorsTest do
   end
 
   defp entries(result),
-    do: Argus.Report.build(result.located, Argus.Config.load([]), File.cwd!())
+    do: Report.build(result.located, Argus.Config.load([]), File.cwd!())
 
   defp keys(result),
     do: result |> entries() |> Enum.map(&{&1.analysis, &1.title, &1.file, &1.line}) |> Enum.sort()
@@ -211,8 +213,8 @@ defmodule Mix.Tasks.Compile.ArgusPriorsTest do
 
       [rendered] =
         result.located
-        |> Argus.Report.build(config, cwd)
-        |> Argus.Mix.Diagnostics.build(cwd)
+        |> Report.build(config, cwd)
+        |> Diagnostics.build(cwd)
         |> Enum.filter(&(&1.diagnostic.message =~ ":infinity timeout inside a call chain"))
 
       assert rendered.diagnostic.severity == :information
@@ -221,8 +223,8 @@ defmodule Mix.Tasks.Compile.ArgusPriorsTest do
       json =
         ExUnit.CaptureIO.capture_io(fn ->
           result.located
-          |> Argus.Report.build(config, cwd)
-          |> Argus.Report.Json.print(cwd)
+          |> Report.build(config, cwd)
+          |> Report.Json.print(cwd)
         end)
 
       assert [%{"severity" => "info", "provenance" => "heuristic", "confidence" => 950}] =

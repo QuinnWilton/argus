@@ -50,6 +50,8 @@ defmodule Argus.Specs do
   """
 
   require Record
+
+  alias Argus.Specs.Source
   Record.defrecordp(:file_info, Record.extract(:file_info, from_lib: "kernel/include/file.hrl"))
 
   @max_depth 4
@@ -397,7 +399,7 @@ defmodule Argus.Specs do
         {:ok, module}
 
       source ->
-        case Argus.Specs.Source.read(source, module) do
+        case Source.read(source, module) do
           {:ok, binary, _stamp} -> {:ok, binary}
           :error -> :error
         end
@@ -418,7 +420,7 @@ defmodule Argus.Specs do
   defp stamp(module, memo) do
     case source(memo) do
       nil -> code_path_stamp(module)
-      source -> {:source, Argus.Specs.Source.stamp(source, module)}
+      source -> {:source, Source.stamp(source, module)}
     end
   end
 

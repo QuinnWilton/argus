@@ -34,6 +34,9 @@ defmodule Mix.Tasks.Compile.Argus do
 
   use Mix.Task.Compiler
 
+  alias Argus.Mix.Diagnostics
+  alias Argus.Report
+
   # Mix runs a non-recursive compiler once at an umbrella's root, where
   # there is no app and no ebin to read. Recursive, it runs inside each
   # child that lists it, against that child's own beams.
@@ -54,14 +57,13 @@ defmodule Mix.Tasks.Compile.Argus do
     result =
       Argus.Driver.run(config, force: Keyword.get(opts, :force, false))
 
-    notices = Argus.Report.Notice.from_result(result, config, cwd)
-    entries = Argus.Report.build(result.located, config, cwd)
+    notices = Report.Notice.from_result(result, config, cwd)
+    entries = Report.build(result.located, config, cwd)
 
     rendered =
-      Enum.map(notices, &Argus.Mix.Diagnostics.notice/1) ++
-        Argus.Mix.Diagnostics.build(entries, cwd)
+      Enum.map(notices, &Diagnostics.notice/1) ++ Diagnostics.build(entries, cwd)
 
-    Argus.Mix.Diagnostics.print(rendered)
+    Diagnostics.print(rendered)
 
     diagnostics = Enum.map(rendered, & &1.diagnostic)
     write_sidecar(diagnostics)
