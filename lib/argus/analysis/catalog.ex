@@ -18,17 +18,32 @@ defmodule Argus.Analysis.Catalog do
   @spec names() :: [atom()]
   def names, do: Enum.map(modules(), & &1.name())
 
-  @doc "The built-in analysis modules, sorted by name."
+  @doc """
+  The built-in analysis modules, sorted by name. Found once per VM among
+  the application's modules (thousands in the test build, whose
+  fixtures are compiled into it), and kept: the application's module
+  list is fixed when it loads.
+  """
   @spec modules() :: [module()]
   def modules do
-    argus_modules()
-    |> Enum.filter(fn mod ->
-      Code.ensure_loaded?(mod) and
-        function_exported?(mod, :name, 0) and
-        function_exported?(mod, :rules_file, 0) and
-        function_exported?(mod, :output_relations, 0)
-    end)
-    |> Enum.sort_by(& &1.name())
+    case :persistent_term.get({__MODULE__, :modules}, nil) do
+      nil ->
+        modules =
+          argus_modules()
+          |> Enum.filter(fn mod ->
+            Code.ensure_loaded?(mod) and
+              function_exported?(mod, :name, 0) and
+              function_exported?(mod, :rules_file, 0) and
+              function_exported?(mod, :output_relations, 0)
+          end)
+          |> Enum.sort_by(& &1.name())
+
+        :persistent_term.put({__MODULE__, :modules}, modules)
+        modules
+
+      modules ->
+        modules
+    end
   end
 
   @doc "The built-in analysis module named `name`: `{:ok, module}` or `:error`."
