@@ -15,6 +15,8 @@ defmodule Argus.Analyses.EtsStartTest do
     [F.InInit],
     [F.AsksFirst],
     [F.Rescues],
+    [F.HelperRescues],
+    [F.RescuesElsewhere],
     [F.GivesAway],
     [F.Unnamed],
     [F.Temporary],
@@ -59,6 +61,13 @@ defmodule Argus.Analyses.EtsStartTest do
       assert created(ctx, [F.InSupervisorStart]) ==
                [{":in_supervisor_start", "InSupervisorStart", "start_link/1"}]
     end
+
+    test "through a helper, with a rescue around other code in start_link", ctx do
+      skip_without_souffle()
+
+      assert created(ctx, [F.RescuesElsewhere]) ==
+               [{":rescues_elsewhere_cache", "RescuesElsewhere", "start_link/1"}]
+    end
   end
 
   describe "quiet" do
@@ -75,6 +84,11 @@ defmodule Argus.Analyses.EtsStartTest do
     test "made under a rescue of the ArgumentError", ctx do
       skip_without_souffle()
       assert created(ctx, [F.Rescues]) == []
+    end
+
+    test "made in a helper whose call a rescue of the ArgumentError covers", ctx do
+      skip_without_souffle()
+      assert created(ctx, [F.HelperRescues]) == []
     end
 
     test "given away to the server it starts", ctx do

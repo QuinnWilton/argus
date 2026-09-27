@@ -11,7 +11,7 @@
   effects:
     ~w(call_edge call_site closure_def dynamic_call ets_new ets_op fun_handed fun_handed_to fun_ref function_def implements_behaviour impure_call port_open prior_tooling process_register process_start protocol_dispatch pure_contract recv_start remote_call resolved_apply send_msg spawn_call started_as tooling_module unknown_call),
   ets:
-    ~w(added_child call_arg call_arg_forward call_edge call_site catch_tag catch_total child_spec_restart closure_def dynamic_call dynamic_child dynamic_child_restart ets_key ets_made_when_absent ets_new ets_op ets_op_param ets_option ets_options_known ets_read_when_present ets_table_path fun_handed fun_handed_to fun_ref function_def implements_behaviour pid_field pid_return prior_tooling process_start remote_call spawn_call started_as statem_event_clause supervisor supervisor_child supervisor_child_form table_alloc tooling_module try_covers try_start),
+    ~w(added_child call_arg call_arg_forward call_edge call_site catch_class catch_tag catch_total child_spec_restart dynamic_call dynamic_child dynamic_child_restart ets_key ets_made_when_absent ets_new ets_op ets_op_param ets_option ets_options_known ets_read_when_present ets_table_path fun_handed fun_handed_to fun_ref function_def implements_behaviour pid_field pid_return prior_tooling process_start remote_call resolved_apply spawn_call started_as statem_event_clause supervisor supervisor_child supervisor_child_form table_alloc tooling_module try_covers try_start),
   exposure:
     ~w(call_edge function_def inspect_derived inspect_shows lineless_schema prior_sensitive prior_tooling redacted_field schema_field tls_connect tls_server_side tls_verification tooling_module),
   failure:

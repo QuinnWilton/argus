@@ -19,6 +19,7 @@
 .include "../clientlib/process_statem.dl"
 .include "../clientlib/vocabulary.dl"
 .include "../clientlib/tooling.dl"
+.include "../clientlib/escape.dl"
 
 // A finding in code only developers' tools or tests run steps down a
 // level (clientlib/tooling.dl, Argus.Findings.Tooling).
@@ -569,18 +570,12 @@ reads_held_table(read, reader, create, owner, owner_mod) :-
   computed_read(owner, owner_mod, reader, read, create).
 
 // The read meets a missing table without raising out of the reader: it
-// is rescued (read_rescued), a read through a caller's literal whose
-// caller rescues it as a whole, or it is made only while the table is
-// there (read_when_present; the extractor gives no read of a computed
-// name one).
+// is rescued (read_rescued), or it is made only while the table is there
+// (read_when_present; the extractor gives no read of a computed name
+// one).
 .decl handles_missing_table(read: symbol, reader: symbol)
 
 handles_missing_table(read, reader) :- read_rescued(read, reader).
-
-handles_missing_table(read, reader) :-
-  named_read(_, reader, read),
-  !ets_op(read, reader, _, _, _),
-  rescues_argument_error(reader).
 
 handles_missing_table(read, reader) :- read_when_present(read), named_read(_, reader, read).
 
@@ -599,32 +594,23 @@ ets_read_outside_owner(name, owner_mod, reader, read, create) :-
 
 raises_if_table_missing(site) :- ets_op(site, _, _, op, "read"), !ets_answers_missing_table(op).
 
-// A rescue that catches the ArgumentError a missing table raises, around
-// the read itself (site_rescues_argument_error, in exceptions.dl): a
-// rescue around unrelated code elsewhere in the reader does not take it,
-// as ets_missing_row learned (9406a24). A read in a closure is rescued
-// where the closure is handed to a call a rescue covers, in its builder
-// or any function enclosing it, or to a function that rescues around
-// what it runs (a rescuing wrapper). A read through a caller's literal
-// (named_read's second clause) has no site in the caller, and asks the
-// caller's function as a whole (quiet).
+// The ArgumentError a missing table raises does not escape the reader
+// (Escape, clientlib/escape.dl): a try that takes it and goes on covers
+// the read, or a call on every path from the reader down to it (a read
+// through a caller's literal is made in the helper the literal is handed
+// to), or every call to the reader. A rescue around unrelated code
+// elsewhere in the reader does not take it, as ets_missing_row learned
+// (9406a24). A read in a closure is rescued where every call the closure
+// is handed to is covered.
 .decl read_rescued(site: symbol, func: symbol)
 
-read_rescued(site, g) :- ets_op(site, g, _, _, _), site_rescues_argument_error(site, g).
+read_rescued(site, reader) :- table_miss.rescued(site, reader, "badarg").
 
-read_rescued(site, g) :-
-  ets_op(site, g, _, _, _),
-  enclosing_function(g, a),
-  closure_def(b, a),
-  fun_handed(call, b, a, _),
-  site_rescues_argument_error(call, b).
+.init table_miss = Escape
 
-read_rescued(site, g) :-
-  ets_op(site, g, _, _, _),
-  enclosing_function(g, a),
-  closure_def(b, a),
-  fun_handed_to(b, a, t),
-  rescues_argument_error(t).
+table_miss.asked(site, g, reader, "badarg") :- named_read(_, reader, site), ets_op(site, g, _, _, _).
+table_miss.asked(site, reader, reader, "badarg") :- computed_read(_, _, reader, site, _).
+table_miss.asked(create, f, start, "badarg") :- makes_on_its_stack(start, create), ets_new(create, f, _).
 
 // A reader that asks `:ets.whereis/1` of the table before reading it
 // (hackney's HTTP/3 connection table, Sentry's dedupe), or makes it on
@@ -924,7 +910,7 @@ table_made_in_start(mod, start, create) :-
   !made_by_server(create, mod),
   !made_only_when_free(create, start),
   !given_away(create, start),
-  !rescued_when_taken(create).
+  !rescued_when_taken(create, start).
 
 .decl starts_server_api(mod: symbol, func: symbol)
 
@@ -1010,11 +996,13 @@ gives_table_away(f, name) :- ets_op(_, f, name, "give_away", _), name != "dynami
 
 gives_some_table_away(f) :- ets_op(_, f, "dynamic", "give_away", _).
 
-// A rescue at the `:ets.new/2` takes the ArgumentError a taken name
-// raises.
-.decl rescued_when_taken(create: symbol)
+// The ArgumentError a taken name raises at the `:ets.new/2` does not
+// escape the start function (Escape): a try that takes it covers the
+// :ets.new/2, a call on every path from the start down to it, or every
+// call to the start.
+.decl rescued_when_taken(create: symbol, start: symbol)
 
-rescued_when_taken(create) :- ets_new(create, f, _), site_rescues_argument_error(create, f).
+rescued_when_taken(create, start) :- table_miss.rescued(create, start, "badarg").
 
 .decl ets_created_in_start(name: symbol, mod: symbol, site: symbol, start: symbol)
 .output ets_created_in_start

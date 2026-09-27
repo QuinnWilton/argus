@@ -81,26 +81,36 @@ defmodule Argus.Analyses.SingletonShapesTest do
           EtsOwners.BadargOwner,
           EtsOwners.DynamicOwnerNamedRead,
           EtsOwners.UnrelatedRescueOwner,
-          EtsOwners.SpawnedReader
+          EtsOwners.SpawnedReader,
+          EtsOwners.HelperUnrelatedRescueOwner,
+          EtsOwners.HelperGuardedOwner,
+          EtsOwners.CallerRescuedOwner,
+          EtsOwners.WrongRescueOwner
         ],
         :ets
       )
 
-    # A rescue guards the read it covers, not one elsewhere in the reader
-    # (UnrelatedRescueOwner); a task the owner starts runs apart from it
-    # (SpawnedReader).
+    # A rescue guards the read it covers, the call into the helper that
+    # reads, or every call to the reader; not one elsewhere in the reader
+    # (UnrelatedRescueOwner, HelperUnrelatedRescueOwner) nor one of another
+    # exception (WrongRescueOwner). A task the owner starts runs apart
+    # from it (SpawnedReader).
     assert rows(r, "ets_read_outside_owner", 1) == [
              "Argus.Test.Fixtures.EtsOwners.HelperOwner",
+             "Argus.Test.Fixtures.EtsOwners.HelperUnrelatedRescueOwner",
              "Argus.Test.Fixtures.EtsOwners.Owner",
              "Argus.Test.Fixtures.EtsOwners.SpawnedReader",
-             "Argus.Test.Fixtures.EtsOwners.UnrelatedRescueOwner"
+             "Argus.Test.Fixtures.EtsOwners.UnrelatedRescueOwner",
+             "Argus.Test.Fixtures.EtsOwners.WrongRescueOwner"
            ]
 
     assert rows(r, "ets_read_outside_owner", 2) == [
              "Argus.Test.Fixtures.EtsOwners.HelperOwner:lookup/1",
+             "Argus.Test.Fixtures.EtsOwners.HelperUnrelatedRescueOwner:lookup/1",
              "Argus.Test.Fixtures.EtsOwners.Owner:lookup/1",
              "Argus.Test.Fixtures.EtsOwners.SpawnedReader:-handle_cast/2-fun-0-/1",
-             "Argus.Test.Fixtures.EtsOwners.UnrelatedRescueOwner:lookup/1"
+             "Argus.Test.Fixtures.EtsOwners.UnrelatedRescueOwner:lookup/1",
+             "Argus.Test.Fixtures.EtsOwners.WrongRescueOwner:lookup/1"
            ]
   end
 

@@ -262,3 +262,89 @@ defmodule Argus.Test.Fixtures.EtsOwners.HelperOwner do
     {:ok, %{}}
   end
 end
+
+defmodule Argus.Test.Fixtures.EtsOwners.HelperUnrelatedRescueOwner do
+  @moduledoc false
+  # The caller's literal names the table; its rescue covers other code.
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+  def lookup(key) do
+    rows = Argus.Test.Fixtures.EtsOwners.Helper.fetch(:ets_reader_helper_unrelated, key)
+
+    try do
+      Enum.map(rows, &elem(&1, 1))
+    rescue
+      ArgumentError -> []
+    end
+  end
+
+  @impl true
+  def init(_opts) do
+    :ets.new(:ets_reader_helper_unrelated, [:named_table, :protected, :set])
+    {:ok, %{}}
+  end
+end
+
+defmodule Argus.Test.Fixtures.EtsOwners.HelperGuardedOwner do
+  @moduledoc false
+  # The caller's literal names the table, and a rescue covers the call.
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+  def lookup(key) do
+    Argus.Test.Fixtures.EtsOwners.Helper.fetch(:ets_reader_helper_guarded, key)
+  rescue
+    ArgumentError -> []
+  end
+
+  @impl true
+  def init(_opts) do
+    :ets.new(:ets_reader_helper_guarded, [:named_table, :protected, :set])
+    {:ok, %{}}
+  end
+end
+
+defmodule Argus.Test.Fixtures.EtsOwners.CallerRescuedOwner do
+  @moduledoc false
+  # The read is in a private function whose one caller rescues it.
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+  def lookup(key) do
+    read(key)
+  rescue
+    ArgumentError -> []
+  end
+
+  defp read(key), do: :ets.lookup(:ets_reader_caller_rescued, key)
+
+  @impl true
+  def init(_opts) do
+    :ets.new(:ets_reader_caller_rescued, [:named_table, :protected, :set])
+    {:ok, %{}}
+  end
+end
+
+defmodule Argus.Test.Fixtures.EtsOwners.WrongRescueOwner do
+  @moduledoc false
+  # A rescue of another exception around the read takes nothing of it.
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+  def lookup(key) do
+    :ets.lookup(:ets_reader_wrong_rescue, key)
+  rescue
+    KeyError -> []
+  end
+
+  @impl true
+  def init(_opts) do
+    :ets.new(:ets_reader_wrong_rescue, [:named_table, :protected, :set])
+    {:ok, %{}}
+  end
+end

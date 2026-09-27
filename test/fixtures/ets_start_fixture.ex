@@ -107,6 +107,48 @@ defmodule Argus.Test.Fixtures.EtsStart do
     def init(opts), do: {:ok, opts}
   end
 
+  defmodule HelperRescues do
+    @moduledoc "start_link rescues the ArgumentError around its call into the helper that creates. Quiet."
+    use GenServer
+
+    def start_link(opts) do
+      try do
+        create_table()
+      rescue
+        ArgumentError -> :helper_rescues_cache
+      end
+
+      GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+    end
+
+    defp create_table, do: :ets.new(:helper_rescues_cache, [:named_table, :public])
+
+    @impl true
+    def init(opts), do: {:ok, opts}
+  end
+
+  defmodule RescuesElsewhere do
+    @moduledoc "start_link rescues other code; the create through its helper still raises."
+    use GenServer
+
+    def start_link(opts) do
+      create_table()
+
+      try do
+        :persistent_term.get(:rescues_elsewhere_config)
+      rescue
+        ArgumentError -> nil
+      end
+
+      GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+    end
+
+    defp create_table, do: :ets.new(:rescues_elsewhere_cache, [:named_table, :public])
+
+    @impl true
+    def init(opts), do: {:ok, opts}
+  end
+
   defmodule GivesAway do
     @moduledoc "start_link hands the table to the server it started, which then owns it. Quiet."
     use GenServer
