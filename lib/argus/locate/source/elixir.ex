@@ -20,6 +20,11 @@ defmodule Argus.Locate.Source.Elixir do
 
   @identifier ~c"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_?!@:"
 
+  @doc "The bytecode's line: Elixir source renumbers nothing."
+  @impl true
+  @spec line(String.t(), pos_integer()) :: pos_integer()
+  def line(_path, line), do: line
+
   @doc """
   The line of `fragment` at or after `line` in the file at `path`.
   """

@@ -133,4 +133,40 @@ defmodule Argus.Locate.Source.ErlangTest do
     assert Erlang.guard_keyword(Path.join(dir, "missing.erl"), 1) == nil
     assert Erlang.refine(Path.join(dir, "missing.erl"), 3, "x") == 3
   end
+
+  test "a line a -file directive renumbered is found where it stands", %{tmp_dir: dir} do
+    # What a Gleam build writes: each function after a -file naming its
+    # .gleam source, numbered from there.
+    path = Path.join(dir, "gen.erl")
+
+    File.write!(path, """
+    -module(gen).
+    -export([a/0, b/0]).
+
+    -file("src/gen.gleam", 40).
+    a() ->
+        ok.
+
+    -file("src/gen.gleam", 10).
+    b() ->
+        spawn(fun() -> ok end),
+        ok.
+    """)
+
+    # The compiler's own numbering, for the record.
+    {:ok, :gen, beam} = :compile.file(String.to_charlist(path), [:binary, :debug_info])
+
+    {:ok, {:gen, [abstract_code: {:raw_abstract_v1, forms}]}} =
+      :beam_lib.chunks(beam, [:abstract_code])
+
+    assert [{41, :a}, {11, :b}] = for({:function, {l, _}, name, 0, _} <- forms, do: {l, name})
+
+    assert Erlang.line(path, 41) == 5
+    assert Erlang.line(path, 11) == 9
+    assert Erlang.line(path, 12) == 10
+    # A number no directive's run holds is kept.
+    assert Erlang.line(path, 3) == 3
+    # A file without directives is numbered as it stands.
+    assert Erlang.line(Path.join(dir, "missing.erl"), 7) == 7
+  end
 end

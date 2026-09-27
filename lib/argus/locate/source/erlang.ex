@@ -24,6 +24,14 @@ defmodule Argus.Locate.Source.Erlang do
 
   `refine/3` finds a fragment as `Argus.Locate.Source.Elixir` does: the
   first line at or after the anchor that holds it as a whole token.
+
+  `line/2` undoes `-file` directives. A generated file — the Erlang a
+  Gleam build writes (`-file("src/app/worker.gleam", 10).` before each
+  function), a yecc or leex parser — renumbers what follows each
+  directive, and the bytecode's lines are those numbers: the physical
+  line is found from the one directive whose run of lines holds the
+  number, and kept as it is when none does (the lines before the first
+  directive) or more than one could.
   """
 
   @behaviour Argus.Locate.Source
@@ -32,6 +40,45 @@ defmodule Argus.Locate.Source.Erlang do
   @closers [:")", :"]", :"}", :">>", :end]
 
   @identifier ~c"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_@"
+
+  @impl true
+  @spec line(String.t(), pos_integer()) :: pos_integer()
+  def line(path, line) do
+    with {:ok, content} <- File.read(path),
+         [_ | _] = runs <- file_runs(String.split(content, "\n")) do
+      case for(
+             {first, number, count} <- runs,
+             line >= number,
+             line < number + count,
+             do: {first, number}
+           ) do
+        [{first, number}] -> first + (line - number)
+        _ -> line
+      end
+    else
+      _ -> line
+    end
+  end
+
+  # Each `-file(Name, Number).` directive's run: the physical line after
+  # it, the number that line bears, and how many lines the run has (to
+  # the next directive, or the end). The lines before the first directive
+  # hold the module's attributes, not its code: a number no run holds is
+  # kept as it is.
+  defp file_runs(lines) do
+    directives =
+      for {text, index} <- Enum.with_index(lines, 1),
+          [_, number] <- [Regex.run(~r/^\s*-file\("[^"]*",\s*(\d+)\)\s*\./, text)],
+          do: {index, String.to_integer(number)}
+
+    ends = Enum.map(Enum.drop(directives, 1), &elem(&1, 0)) ++ [length(lines) + 1]
+
+    # The line after a directive bears its number plus one (epp numbers
+    # the directive's own line with it).
+    Enum.zip_with(directives, ends, fn {at, number}, next ->
+      {at + 1, number + 1, next - at - 1}
+    end)
+  end
 
   @impl true
   @spec refine(String.t(), pos_integer(), String.t() | nil) :: pos_integer()

@@ -27,6 +27,9 @@ defmodule Argus.Locate.Source do
   @typedoc "The block a finding says its anchor sits in (`Argus.Findings`)."
   @type block :: :guard | :receive | :clause | :function
 
+  @doc "The line of the file as it stands that the bytecode's `line` names."
+  @callback line(path :: String.t(), line :: pos_integer()) :: pos_integer()
+
   @doc "The line of `fragment` at or after `line`, or `line`."
   @callback refine(path :: String.t(), line :: pos_integer(), fragment :: String.t() | nil) ::
               pos_integer()

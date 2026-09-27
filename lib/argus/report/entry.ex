@@ -7,7 +7,9 @@ defmodule Argus.Report.Entry do
   where the bytecode put the finding; the source takes the last step
   (`Argus.Locate.Source.for/1` picks its rules):
 
-    * `line` is the bytecode's line, moved to the fragment the finding
+    * `line` is the bytecode's line (as the file stands: a generated
+      Erlang file's `-file` directives renumber its lines), moved to the
+      fragment the finding
       names (`at_source`) when the source has it at or after that line;
     * `end_line` is where the bytecode closed the span, else the end of
       the block the finding says its anchor sits in (`to_block`), else
@@ -119,7 +121,7 @@ defmodule Argus.Report.Entry do
   # span, and the word its prose's `{guard}` stands for.
   defp refine(file, place, anchored) do
     rules = Source.for(file)
-    line = rules.refine(file, place.line, Map.get(anchored, :at_source))
+    line = rules.refine(file, rules.line(file, place.line), Map.get(anchored, :at_source))
     to_block = Map.get(anchored, :to_block)
 
     guard =
@@ -127,7 +129,13 @@ defmodule Argus.Report.Entry do
         do: rules.guard_keyword(file, line) || "handler",
         else: "handler"
 
-    {line, place.end_line || rules.block_end(file, line, to_block), guard}
+    end_line =
+      case place.end_line do
+        nil -> rules.block_end(file, line, to_block)
+        end_line -> rules.line(file, end_line)
+      end
+
+    {line, end_line, guard}
   end
 
   defp fill_guard(nil, _word), do: nil

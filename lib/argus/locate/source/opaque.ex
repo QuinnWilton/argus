@@ -9,6 +9,9 @@ defmodule Argus.Locate.Source.Opaque do
   @behaviour Argus.Locate.Source
 
   @impl true
+  def line(_path, line), do: line
+
+  @impl true
   def refine(_path, line, _fragment), do: line
 
   @impl true
