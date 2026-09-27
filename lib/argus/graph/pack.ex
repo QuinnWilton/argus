@@ -61,9 +61,11 @@ defmodule Argus.Graph.Pack do
   # how one is named, changes.
   @format "argus-pack-4"
 
-  # How many of a module's traces a lookup weighs, most recently used
-  # first: only those are read.
-  @candidates 3
+  # How many of a module's traces a lookup weighs when the most recently
+  # used one leaves a producer to run: every one it keeps, most recently
+  # used first. One whose rows all hold is marked used then, whatever
+  # the refresh interval, so the next lookup reads it first.
+  @candidates 8
 
   # How many a module keeps, the most recently used: one per code and
   # per what its producers observed (another VM's code path, an edit
@@ -106,8 +108,13 @@ defmodule Argus.Graph.Pack do
     {kept, observe} = best(store, name, producers, codes, observe)
 
     case kept do
-      %{missing: [], trace: trace} ->
+      %{missing: [], trace: trace, first?: true} ->
         used(trace)
+        Runtime.hold([trace.value.pack | base_digests(trace.value)])
+        {:ok, facts(module, trace.value, false)}
+
+      %{missing: [], trace: trace} ->
+        _ = Blob.touch(trace.path)
         Runtime.hold([trace.value.pack | base_digests(trace.value)])
         {:ok, facts(module, trace.value, false)}
 
@@ -174,8 +181,8 @@ defmodule Argus.Graph.Pack do
     none = %{trace: nil, missing: producers, base: nil}
 
     case weigh(Trace.fetch(store, name, limit: 1), store, producers, codes, {none, observer}) do
-      {%{missing: []}, _observer} = found ->
-        found
+      {%{missing: []} = found, observer} ->
+        {Map.put(found, :first?, true), observer}
 
       {_best, observer} ->
         store
