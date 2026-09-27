@@ -345,6 +345,19 @@ defmodule Argus.Run do
       )
       |> Enum.flat_map(fn {:ok, outcomes} -> outcomes end)
 
+    # Every analysis's findings refined by their sources in one pass, each
+    # file read once for all of them (`Argus.Locate.Source.within/1`).
+    outcomes =
+      Argus.Locate.Source.within(fn ->
+        Enum.map(outcomes, fn
+          {:ran, entry, located} ->
+            {:ran, entry, Enum.map(located, &(&1 |> Located.refine() |> Located.to_finding()))}
+
+          degraded ->
+            degraded
+        end)
+      end)
+
     errors = Graph.Findings.extraction_errors(db, @program)
     {:ok, %{collect(outcomes) | extraction_errors: errors}}
   end
@@ -359,11 +372,10 @@ defmodule Argus.Run do
 
     case result do
       {{:ok, located}, {:ok, _findings, failures}} ->
-        findings = Enum.map(located, &(&1 |> Located.refine() |> Located.to_finding()))
-
+        # Placed; refined by the caller (`findings/3`).
         ran =
-          {:ran, %{analysis: name, duration_ms: duration_ms, finding_count: length(findings)},
-           findings}
+          {:ran, %{analysis: name, duration_ms: duration_ms, finding_count: length(located)},
+           located}
 
         [ran | Degradation.rows(name, failures)]
 

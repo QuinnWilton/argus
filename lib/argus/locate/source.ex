@@ -61,4 +61,54 @@ defmodule Argus.Locate.Source do
       _other -> Argus.Locate.Source.Opaque
     end
   end
+
+  @scope {__MODULE__, :scope}
+
+  @doc """
+  Runs `fun` with every read of a source file (`read/3`) kept for its
+  length: placing a program's findings reads the same files for every
+  finding and frame in them, and an Erlang file's tokens are the whole
+  file scanned. The files are read as they stand when first asked for;
+  what `fun` returns comes back. Nested calls share the outer one's.
+  """
+  @spec within((-> result)) :: result when result: var
+  def within(fun) when is_function(fun, 0) do
+    case Process.get(@scope) do
+      nil ->
+        Process.put(@scope, %{})
+
+        try do
+          fun.()
+        after
+          Process.delete(@scope)
+        end
+
+      _open ->
+        fun.()
+    end
+  end
+
+  @doc """
+  `compute`'s value for `path` under `kind` (a file's content, its
+  tokens, its directives), kept for the length of `within/1` when one is
+  open, and computed every time otherwise.
+  """
+  @spec read(String.t(), atom(), (-> value)) :: value when value: var
+  def read(path, kind, compute) when is_function(compute, 0) do
+    case Process.get(@scope) do
+      nil ->
+        compute.()
+
+      kept ->
+        case Map.fetch(kept, {kind, path}) do
+          {:ok, value} ->
+            value
+
+          :error ->
+            value = compute.()
+            Process.put(@scope, Map.put(kept, {kind, path}, value))
+            value
+        end
+    end
+  end
 end

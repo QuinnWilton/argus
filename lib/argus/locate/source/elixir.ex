@@ -33,7 +33,7 @@ defmodule Argus.Locate.Source.Elixir do
   def refine(_path, line, nil), do: line
 
   def refine(path, line, fragment) when is_binary(fragment) and fragment != "" do
-    case File.read(path) do
+    case Argus.Locate.Source.read(path, :content, fn -> File.read(path) end) do
       {:ok, content} ->
         content
         |> String.split("\n")
@@ -74,7 +74,7 @@ defmodule Argus.Locate.Source.Elixir do
   def block_end(_path, _line, nil), do: nil
 
   def block_end(path, line, kind) do
-    case File.read(path) do
+    case Argus.Locate.Source.read(path, :content, fn -> File.read(path) end) do
       {:ok, content} ->
         lines = content |> String.split("\n") |> List.to_tuple()
 
@@ -100,7 +100,7 @@ defmodule Argus.Locate.Source.Elixir do
   @impl true
   @spec guard_keyword(String.t(), pos_integer()) :: String.t() | nil
   def guard_keyword(path, line) do
-    with {:ok, content} <- File.read(path),
+    with {:ok, content} <- Argus.Locate.Source.read(path, :content, fn -> File.read(path) end),
          lines = content |> String.split("\n") |> List.to_tuple(),
          {:ok, anchor} <- fetch(lines, line),
          {:ok, keyword_line} <- guard_keyword(lines, line + 1, indent(anchor), @scan_limit),

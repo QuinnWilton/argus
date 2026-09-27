@@ -40,12 +40,15 @@ defmodule Argus.Report do
           String.t()
         ) :: [Entry.t()]
   def build(located, %Argus.Config{} = config, cwd) when is_map(located) do
-    for {_analysis, {:ok, placed}} <- Enum.sort(located),
-        one <- placed,
-        %Entry{} = entry <- [Entry.from_located(one)],
-        not ignored_file?(entry.file, config, cwd) do
-      %{entry | severity: Map.get(config.severity, entry.analysis, entry.severity)}
-    end
+    # Every source read once for the whole report (`Argus.Locate.Source.within/1`).
+    Argus.Locate.Source.within(fn ->
+      for {_analysis, {:ok, placed}} <- Enum.sort(located),
+          one <- placed,
+          %Entry{} = entry <- [Entry.from_located(one)],
+          not ignored_file?(entry.file, config, cwd) do
+        %{entry | severity: Map.get(config.severity, entry.analysis, entry.severity)}
+      end
+    end)
     |> Enum.sort_by(&{severity_rank(&1.severity), &1.file, &1.line, &1.analysis, &1.title})
   end
 

@@ -45,8 +45,7 @@ defmodule Argus.Locate.Source.Erlang do
   @impl true
   @spec line(String.t(), pos_integer()) :: pos_integer()
   def line(path, line) do
-    with {:ok, content} <- File.read(path),
-         [_ | _] = runs <- file_runs(String.split(content, "\n")) do
+    with [_ | _] = runs <- runs(path) do
       case for(
              {first, number, count} <- runs,
              line >= number,
@@ -60,6 +59,17 @@ defmodule Argus.Locate.Source.Erlang do
       _ -> line
     end
   end
+
+  defp runs(path) do
+    Argus.Locate.Source.read(path, :erlang_runs, fn ->
+      case content(path) do
+        {:ok, content} -> file_runs(String.split(content, "\n"))
+        {:error, _} -> []
+      end
+    end)
+  end
+
+  defp content(path), do: Argus.Locate.Source.read(path, :content, fn -> File.read(path) end)
 
   # Each `-file(Name, Number).` directive's run: the physical line after
   # it, the number that line bears, and how many lines the run has (to
@@ -86,7 +96,7 @@ defmodule Argus.Locate.Source.Erlang do
   def refine(_path, line, nil), do: line
 
   def refine(path, line, fragment) when is_binary(fragment) and fragment != "" do
-    case File.read(path) do
+    case content(path) do
       {:ok, content} ->
         content
         |> String.split("\n")
@@ -270,12 +280,14 @@ defmodule Argus.Locate.Source.Erlang do
   # ── Tokens ──────────────────────────────────────────────────────────
 
   defp tokens(path) do
-    with {:ok, content} <- File.read(path),
-         {:ok, tokens, _end} <- :erl_scan.string(String.to_charlist(content), {1, 1}) do
-      {:ok, List.to_tuple(tokens)}
-    else
-      _ -> :error
-    end
+    Argus.Locate.Source.read(path, :erlang_tokens, fn ->
+      with {:ok, content} <- content(path),
+           {:ok, tokens, _end} <- :erl_scan.string(String.to_charlist(content), {1, 1}) do
+        {:ok, List.to_tuple(tokens)}
+      else
+        _ -> :error
+      end
+    end)
   end
 
   defp kind(token), do: elem(token, 0)
