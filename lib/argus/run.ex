@@ -14,7 +14,10 @@ defmodule Argus.Run do
   The answers are the batch backend's (`Argus.Findings.run/2`), relation
   for relation and finding for finding, except that each finding and
   related frame also says where it is (`file`, `line`, `end_line`:
-  `Argus.Located`), which the batch backend leaves nil.
+  `Argus.Located`), which the batch backend leaves nil, and that the
+  source has refined it as every frontend's report does
+  (`Argus.Located.refine/1`): the line a fragment names, the end of an
+  open span, and the keyword in place of `{guard}` in the prose.
 
   ## Options
 
@@ -34,6 +37,7 @@ defmodule Argus.Run do
   alias Argus.Findings
   alias Argus.Findings.Degradation
   alias Argus.Graph
+  alias Argus.Located
   alias Argus.Pipeline.Disassemble
 
   @program :batch
@@ -139,7 +143,9 @@ defmodule Argus.Run do
   An answer of `Argus.run_analyses/2` or `Argus.analyze/3` in the form
   two backends are compared in: findings sorted by analysis, severity,
   title, mfa, instruction and anchor label, each without where it is
-  (`file`, `line`, `end_line`, on it and its frames); `ran` (without
+  (`file`, `line`, `end_line`, on it and its frames) nor the word its
+  source put in its prose (`{guard}`, and the keywords the graph's
+  refine step puts there, all read as `{guard}`); `ran` (without
   its duration), `degraded` and `extraction_errors` as sets; an
   analysis's rows as each relation's sorted, empty relations left out.
   An error is compared as it is.
@@ -170,7 +176,30 @@ defmodule Argus.Run do
   defp unplaced(finding) do
     finding
     |> Map.drop(@places)
-    |> Map.update(:related, [], fn frames -> Enum.map(frames, &Map.drop(&1, @places)) end)
+    |> unguarded([:title, :detail, :at_label, :help])
+    |> Map.update(:related, [], fn frames ->
+      Enum.map(frames, &(&1 |> Map.drop(@places) |> unguarded([:label])))
+    end)
+  end
+
+  # The words a source puts for `{guard}` (`Argus.Located.refine/1`),
+  # read back as the placeholder on both sides: the batch backend has
+  # no source and leaves it.
+  @guard_words ~r/\{guard\}|\b(?:rescue|catch|after|handler)\b/
+
+  defp unguarded(map, fields) do
+    Enum.reduce(fields, map, fn field, map ->
+      case Map.fetch(map, field) do
+        {:ok, text} when is_binary(text) ->
+          %{map | field => Regex.replace(@guard_words, text, "{guard}")}
+
+        {:ok, texts} when is_list(texts) ->
+          %{map | field => Enum.map(texts, &Regex.replace(@guard_words, &1, "{guard}"))}
+
+        _absent_or_nil ->
+          map
+      end
+    end)
   end
 
   # What two normal forms differ in: per relation (or part of a
@@ -252,7 +281,7 @@ defmodule Argus.Run do
 
     case result do
       {{:ok, located}, {:ok, _findings, failures}} ->
-        findings = Enum.map(located, &Argus.Located.to_finding/1)
+        findings = Enum.map(located, &(&1 |> Located.refine() |> Located.to_finding()))
 
         ran =
           {:ran, %{analysis: name, duration_ms: duration_ms, finding_count: length(findings)},

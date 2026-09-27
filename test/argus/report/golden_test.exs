@@ -3,7 +3,8 @@ defmodule Argus.Report.GoldenTest do
   What every frontend prints, pinned byte for byte over the depot fixture
   with every analysis on: the text report (frames and summary) of `mix
   argus`, its JSON, and the compiler's diagnostics (message, place and
-  the plain frame in `details`). `Argus.Report.ShapesTest` pins every
+  the plain frame in `details`); and `Argus.run_analyses/2` on the
+  query graph, whose findings are the JSON's entries. `Argus.Report.ShapesTest` pins every
   shape a finding can take the same way.
 
   The goldens were recorded from scry's renderer before it moved into
@@ -47,10 +48,51 @@ defmodule Argus.Report.GoldenTest do
         text = capture_io(:stderr, fn -> Mix.Task.rerun("argus", ["--all"]) end)
         json = capture_io(fn -> Mix.Task.rerun("argus", ["--all", "--format", "json"]) end)
 
-        %{text: text, json: json, diagnostics: render(diagnostics)}
+        # The same program through the API, on the query graph: its
+        # findings are what the report's entries say, place and prose.
+        beams = Path.wildcard(Path.join(Mix.Project.compile_path(), "*.beam"))
+
+        {:ok, found} =
+          Argus.run_analyses(beams, analyses: Argus.Config.all_analyses(), backend: :graph)
+
+        %{
+          text: text,
+          json: json,
+          diagnostics: render(diagnostics),
+          api: as_entries(found.findings, File.cwd!())
+        }
       end)
 
     %{outputs: outputs}
+  end
+
+  # The findings as `Argus.Report.Json` writes entries, decoded: those
+  # with a place in the program, each frame outside it left out.
+  defp as_entries(findings, cwd) do
+    for %{file: file} = finding <- findings, file != nil do
+      %{
+        "analysis" => Atom.to_string(finding.analysis),
+        "severity" => Atom.to_string(finding.severity),
+        "file" => Argus.Report.relative(file, cwd),
+        "line" => finding.line,
+        "end_line" => finding.end_line,
+        "title" => finding.title,
+        "at_label" => finding.at_label,
+        "detail" => finding.detail,
+        "help" => finding.help,
+        "provenance" => Atom.to_string(finding.provenance),
+        "confidence" => finding.confidence,
+        "related" =>
+          for %{file: file} = frame <- finding.related, file != nil do
+            %{
+              "label" => frame.label,
+              "file" => Argus.Report.relative(file, cwd),
+              "line" => frame.line,
+              "end_line" => frame.end_line
+            }
+          end
+      }
+    end
   end
 
   defp render(diagnostics) do
@@ -70,6 +112,10 @@ defmodule Argus.Report.GoldenTest do
   test "the JSON is its golden's, its keys in the schema's order", %{outputs: outputs} do
     check!("findings.json", outputs.json, &JSON.decode!/1)
     ReportShapes.assert_key_order!(outputs.json)
+  end
+
+  test "run_analyses on the graph finds what the JSON reports", %{outputs: outputs} do
+    assert Enum.sort(outputs.api) == outputs.json |> JSON.decode!() |> Enum.sort()
   end
 
   defp check!(file, actual, read) do
