@@ -104,14 +104,13 @@ holds_start(init, op) :-
 // (not what a spawn, task or agent runs), not through the logging and
 // telemetry APIs (side_call, calls.dl: their machinery waits on its own
 // servers, which call no process of the program's), and not after it
-// acknowledged its start (acked_edge). Walked backwards from the few
-// things a start can wait on: a supervisor call made before its own
-// function's ack, and the functions that read a socket without a timeout,
-// wait in a receive with no `after`, or enter a server loop.
-.init own_stack = SameProcessReachCut
-
-own_stack.cut(f, g) :- side_call(f, g).
-own_stack.cut(f, g) :- acked_edge(f, g).
+// acknowledged its start (acked_edge): OwnStackBeforeAck,
+// clientlib/init_phase.dl, the walk rpc_during_init takes. Walked
+// backwards from the few things a start can wait on: a supervisor call
+// made before its own function's ack, and the functions that read a
+// socket without a timeout, wait in a receive with no `after`, or enter a
+// server loop.
+.init own_stack = OwnStackBeforeAck
 
 own_stack.seed(g, site) :- sup_management_call(site, g, _, _, _), !start_acked(site, g).
 own_stack.seed(f, f) :- reads_socket_without_timeout(f).

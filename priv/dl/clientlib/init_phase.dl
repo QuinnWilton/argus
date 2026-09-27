@@ -65,10 +65,18 @@ before_ack.cut(f, g) :- side_call(f, g).
 // after its ack is not one).
 .decl rpc_during_init(init: symbol, site: symbol)
 
-.init init_rpc_reach = SameProcessReachCut
+// A walk back from what a start can wait on, over what a function runs
+// on its own stack before it acknowledges its start: calls that stay in
+// its process, not through the logging and telemetry APIs (side_call),
+// and not after its ack (acked_edge). Each instance seeds its own sites;
+// startup's own_stack is the other.
+.comp OwnStackBeforeAck : SameProcessReachCut {
+  cut(f, g) :- side_call(f, g).
+  cut(f, g) :- acked_edge(f, g).
+}
 
-init_rpc_reach.cut(f, g) :- side_call(f, g).
-init_rpc_reach.cut(f, g) :- acked_edge(f, g).
+.init init_rpc_reach = OwnStackBeforeAck
+
 init_rpc_reach.seed(g, site) :- rpc_call(site, g, _, _), !start_acked(site, g).
 
 rpc_during_init(init, site) :- init_function(_, init), init_rpc_reach.reaches(init, site).
