@@ -223,9 +223,10 @@ defmodule Argus.CLI do
     end
   end
 
+  # :escript.script_name/0 raises outside an escript.
   defp escript do
-    path = :escript.script_name()
-    if is_list(path) and File.regular?(path), do: List.to_string(path)
+    path = List.to_string(:escript.script_name())
+    if File.regular?(path), do: path
   rescue
     _ -> nil
   end
