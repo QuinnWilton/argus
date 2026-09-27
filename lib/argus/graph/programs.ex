@@ -33,7 +33,6 @@ defmodule Argus.Graph.Programs do
 
   alias Argus.Analysis.Catalog
   alias Argus.Souffle.Program
-  alias Roux.Blob
   alias Roux.Runtime
 
   @typedoc "A program the graph solves."
@@ -84,8 +83,31 @@ defmodule Argus.Graph.Programs do
   def tree_digests(root) do
     root = Path.expand(root)
 
+    # Each file's digest kept in the VM while its stamp holds: a session
+    # per API call reads argus's hundred programs' stamps, not their text.
     for file <- Path.wildcard(Path.join(root, "**/*.dl")), into: %{} do
-      {Path.relative_to(file, root), file |> File.read!() |> sha()}
+      digest = Roux.Stamp.memo({__MODULE__, :sha, file}, [file], fn -> sha(File.read!(file)) end)
+      {Path.relative_to(file, root), digest}
+    end
+  end
+
+  # A program's includes, walked once per VM for each content of its
+  # tree (every file's digest, the `dl_tree` input): an edit anywhere in
+  # the tree walks it again. Without the input, walked every time.
+  defp walk(path, nil), do: Program.program_files(path)
+
+  defp walk(path, digests) do
+    key = {__MODULE__, :walk, path, sha(:erlang.term_to_binary(digests, [:deterministic]))}
+    Roux.Stamp.memo(key, [], fn -> Program.program_files(path) end)
+  end
+
+  # A file's digest as the tree's input holds it, or read.
+  defp digest(tree, root, digests, file) do
+    key = if match?({:program, _}, tree), do: file, else: Path.relative_to(file, root)
+
+    case digests && Map.get(digests, key) do
+      digest when is_binary(digest) -> digest
+      _ -> file |> File.read!() |> sha()
     end
   end
 
@@ -100,13 +122,13 @@ defmodule Argus.Graph.Programs do
 
     with {:ok, path} <- rules_path(program) do
       tree = tree(program)
-      _tree = Runtime.input(db, :dl_tree, tree, default: nil)
+      digests = Runtime.input(db, :dl_tree, tree, default: nil)
       root = dir(tree)
 
       try do
         {:ok,
-         for {spelled, file} <- Program.program_files(path) do
-           {spelled, Path.relative_to(file, root), file |> File.read!() |> sha()}
+         for {spelled, file} <- walk(path, digests) do
+           {spelled, Path.relative_to(file, root), digest(tree, root, digests, file)}
          end}
       rescue
         error in File.Error -> {:error, {:unreadable, Path.relative_to(error.path, root)}}
@@ -118,21 +140,30 @@ defmodule Argus.Graph.Programs do
     with {:ok, files} <- Runtime.query(db, :program_files, program),
          {:ok, solver} <- solver(db),
          {:ok, path} <- rules_path(program) do
-      Blob.cached(db.blob, {__MODULE__, :io, files, solver.version}, fn ->
-        Argus.Souffle.ram_io(solver.bin, path)
-      end)
+      # Kept in the VM, and in the store for a fresh one.
+      Roux.Stamp.memo(
+        {__MODULE__, :io, files, solver.version},
+        [],
+        fn ->
+          Argus.Souffle.ram_io(solver.bin, path)
+        end, store: db.blob)
     end
   end
 
   defquery :program_digest, key: program do
-    with {:ok, _files} <- Runtime.query(db, :program_files, program),
+    with {:ok, files} <- Runtime.query(db, :program_files, program),
          {:ok, io} <- Runtime.query(db, :program_io, program),
          {:ok, solver} <- solver(db),
          {:ok, path} <- rules_path(program) do
       relations = io.inputs |> Enum.map(&elem(&1, 0)) |> Enum.uniq() |> Enum.sort()
 
       try do
-        declared = Program.declared_digest(path, relations)
+        # The files by their digests: a program read once per VM.
+        declared =
+          Roux.Stamp.memo({__MODULE__, :declared, files, relations}, [], fn ->
+            Program.declared_digest(path, relations)
+          end)
+
         {:ok, sha(:erlang.term_to_binary({declared, solver.version}, [:deterministic]))}
       rescue
         # A file of the program went missing since its files were read.
