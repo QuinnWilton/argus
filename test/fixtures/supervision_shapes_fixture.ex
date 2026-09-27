@@ -234,3 +234,82 @@ defmodule Argus.Test.Fixtures.SupervisionShapes do
     end
   end
 end
+
+defmodule Argus.Test.Fixtures.TeardownDeps do
+  @moduledoc false
+  # A transient Keeper and two permanent children that call it. Drainer
+  # calls it only from terminate/2, through a helper (thousand_island's
+  # ShutdownListener stopping its Listener): it does not keep running
+  # against a Keeper that is gone. User calls the same helper from
+  # handle_call/3 too, and does.
+
+  defmodule Keeper do
+    @moduledoc false
+    use GenServer, restart: :transient
+
+    def start_link(arg), do: GenServer.start_link(__MODULE__, arg, name: __MODULE__)
+    def drain, do: GenServer.call(__MODULE__, :drain)
+
+    @impl true
+    def init(arg), do: {:ok, arg}
+
+    @impl true
+    def handle_call(:drain, _from, state), do: {:reply, :ok, state}
+  end
+
+  defmodule Drainer do
+    @moduledoc false
+    use GenServer
+
+    def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
+
+    @impl true
+    def init(arg) do
+      Process.flag(:trap_exit, true)
+      {:ok, arg}
+    end
+
+    @impl true
+    def terminate(_reason, _state), do: drain_keeper()
+
+    defp drain_keeper, do: Keeper.drain()
+  end
+
+  defmodule User do
+    @moduledoc false
+    use GenServer
+
+    def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
+
+    @impl true
+    def init(arg) do
+      Process.flag(:trap_exit, true)
+      {:ok, arg}
+    end
+
+    @impl true
+    def handle_call(:flush, _from, state), do: {:reply, drain_keeper(), state}
+
+    @impl true
+    def terminate(_reason, _state), do: drain_keeper()
+
+    defp drain_keeper, do: Keeper.drain()
+  end
+
+  defmodule Sup do
+    @moduledoc false
+    use Supervisor
+
+    alias Argus.Test.Fixtures.TeardownDeps
+
+    def start_link(arg), do: Supervisor.start_link(__MODULE__, arg)
+
+    @impl true
+    def init(arg) do
+      Supervisor.init(
+        [{TeardownDeps.Keeper, arg}, {TeardownDeps.Drainer, arg}, {TeardownDeps.User, arg}],
+        strategy: :one_for_one
+      )
+    end
+  end
+end

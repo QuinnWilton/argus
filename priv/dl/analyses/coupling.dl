@@ -258,7 +258,46 @@ dependency_on_unrestarted_sibling(sup, child, sibling, restart, witness) :-
   restart_policy(sup, child, "permanent"),
   may_stay_down(sup, sibling, restart),
   depends_on(child, sibling, witness),
+  !teardown_only(witness),
   !only_own_instances(child, sibling).
+
+// The witness runs only as its process ends: it is a terminate/2, or
+// nothing reaches it but a terminate/2. A process whose sole use of a
+// sibling is in its own teardown does not keep running against it: it
+// is going away when it asks (thousand_island's ShutdownListener stops
+// its transient Listener from terminate/2, which is why the Listener is
+// transient; phoenix_pubsub's Tracker.ShutdownHandler drains its shards
+// the same way). The witness runs outside teardown when a root other
+// than terminate/2 reaches it: a function with no caller in view (a
+// callback, an exported API function, one only a dependency calls). A
+// closure is reached from where it is built (call_edge follows closure
+// construction), so one built in terminate/2 is teardown too. Known
+// limit: a function called only from a cycle of its own module's
+// functions that nothing enters is read as teardown.
+.decl teardown_only(witness: symbol)
+
+teardown_only(w) :-
+  sibling_witness(w),
+  !runs_outside_teardown(w).
+
+.decl sibling_witness(witness: symbol)
+
+sibling_witness(w) :-
+  restart_policy(sup, child, "permanent"),
+  may_stay_down(sup, sibling, _),
+  depends_on(child, sibling, w).
+
+.init teardown_reach = CallReach
+
+teardown_reach.seed(w, w) :- sibling_witness(w).
+
+.decl runs_outside_teardown(witness: symbol)
+
+runs_outside_teardown(w) :-
+  teardown_reach.reaches(root, w),
+  function_def(root, _, name, _, _),
+  name != "terminate",
+  !call_edge(_, root).
 
 // `sibling` is a child of sup under a restart policy that can leave it
 // dead (`restart`; restart_policy: its spec's, or a shorthand's own

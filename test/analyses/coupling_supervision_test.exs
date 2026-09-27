@@ -148,6 +148,24 @@ defmodule Argus.Analyses.CouplingSupervisionTest do
       assert site == "P:init/1#9"
     end
 
+    test "a sibling used only in terminate/2 is not a dependency; one used at run time is" do
+      skip_without_souffle()
+
+      alias Argus.Test.Fixtures.TeardownDeps, as: T
+
+      {:ok, r} = Memo.analyze([T.Sup, T.Keeper, T.Drainer, T.User], :coupling)
+
+      children =
+        for [_sup, child, sibling, "restart_policy", "transient" | _] <-
+              Map.get(r, "sibling_dependency", []),
+            uniq: true,
+            do: {child, sibling}
+
+      # Drainer reaches Keeper only from terminate/2, through a helper;
+      # User reaches the same helper from handle_call/3 as well.
+      assert children == [{inspect(T.User), inspect(T.Keeper)}]
+    end
+
     defp dependency_rows(facts, reason \\ "restart_policy") do
       assert {:ok, results} = Argus.Test.Memo.run_rules(facts, :coupling)
 

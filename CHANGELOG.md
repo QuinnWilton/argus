@@ -124,6 +124,16 @@ the same advice.
 **Changed.** The points-to stage's choice between the exact and the
 bounded program is `Argus.Souffle.Stages`.
 
+### Coupling: a sibling asked only in terminate/2 is not a dependency
+
+**Fixed.** "Permanent child depends on a transient sibling" read a call
+made only from the child's own terminate/2 as a dependency. A process
+that uses a sibling only as it ends does not keep running against it.
+A witness that is terminate/2, or that nothing but terminate/2 reaches,
+no longer counts (`teardown_only`). This quiets thousand_island's
+ShutdownListener (2 checkouts) and phoenix_pubsub's
+Tracker.ShutdownHandler.
+
 ### Failure: a discarded start_child result matters only under a cap (schema 152)
 
 **Fixed.** Schema 152. "start_child result ignored" reported every
