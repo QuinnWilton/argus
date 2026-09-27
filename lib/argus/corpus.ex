@@ -20,7 +20,18 @@ defmodule Argus.Corpus do
   never compiles again. Nothing is added to the project's dependency
   set: argus runs over its `ebin` from this VM.
 
-  Each checkout keeps a store beside it, `.argus-facts` (`Argus.Cache`):
+  On the query graph (the default), each checkout keeps its graph in a
+  manifest beside it, `.argus/manifest-<worktree>`, one per argus
+  worktree (`worktree/0`: the code that computed a manifest's entries is
+  that worktree's), its facts and solves in the shared blob store
+  (`Argus.Graph.store/0`). A worktree with no manifest for a checkout
+  starts from the newest another worktree kept there: roux drops the
+  entries of every query whose code differs, and the rest hold. A warm
+  run executes nothing but its reads; after an edit to one extractor,
+  every module's facts run that extractor alone.
+
+  On the batch backend (`ARGUS_BACKEND=batch`), each checkout keeps a
+  store beside it, `.argus-facts` (`Argus.Cache`):
   every producer's facts as a shard and every solve, keyed by content
   (`analyze/2`). A warm run extracts nothing and solves nothing; after
   an edit to one extractor only that extractor's shard is extracted
@@ -163,8 +174,8 @@ defmodule Argus.Corpus do
   blob store (`Argus.Graph.store/0`); `ARGUS_VERIFY_BACKEND=1` on both,
   and fails unless they agree (`Argus.Run.both/2`).
   """
-  @spec analyze(pair(), :pre | :fix) :: {:ok, Argus.Findings.t()} | {:error, term()}
-  def analyze(pair, side) do
+  @spec analyze(pair(), :pre | :fix, keyword()) :: {:ok, Argus.Findings.t()} | {:error, term()}
+  def analyze(pair, side, opts \\ []) do
     with %{} = co <- checkout(pair, side) || {:error, "no #{side} side for #{pair.issue}"},
          {:ok, beams} <- ensure(pair, side) do
       store = store(co)
@@ -173,7 +184,7 @@ defmodule Argus.Corpus do
         Argus.Run.both(
           fn
             :batch -> Argus.run_analyses(beams, analyses: :all, cache: store)
-            :graph -> Argus.run_analyses(beams, analyses: :all, backend: :graph)
+            :graph -> Argus.run_analyses(beams, [analyses: :all] ++ graph_opts(co, opts))
           end,
           {:corpus, co.name}
         )
@@ -181,6 +192,74 @@ defmodule Argus.Corpus do
         if Argus.Cache.enabled?(), do: prune_facts(store)
       end
     end
+  end
+
+  # The graph's options for a checkout: its manifest, and the code
+  # directories' stamps when the caller read them for many checkouts.
+  # Under `ARGUS_NO_CACHE` nothing is kept.
+  defp graph_opts(co, opts) do
+    kept =
+      if Argus.Cache.enabled?(),
+        do: [manifest: seed_manifest(manifest(co))] ++ Keyword.take(opts, [:stamps]),
+        else: []
+
+    [backend: :graph] ++ kept
+  end
+
+  @doc """
+  The manifest this worktree keeps a checkout's graph in:
+  `<checkout>/.argus/manifest-<worktree/0>`.
+  """
+  @spec manifest(checkout()) :: Path.t()
+  def manifest(%{dir: dir}), do: Path.join([dir, ".argus", "manifest-" <> worktree()])
+
+  @doc """
+  This argus worktree, as a manifest's name says it: the first 16 hex
+  digits of the SHA-256 of the directory it was built from.
+  """
+  @spec worktree() :: String.t()
+  def worktree do
+    root = Path.expand("../..", __DIR__)
+    :sha256 |> :crypto.hash(root) |> Base.encode16(case: :lower) |> binary_part(0, 16)
+  end
+
+  @doc """
+  `manifest`, seeded when absent from the newest manifest another
+  worktree kept beside it (a copy, which this worktree then keeps as its
+  own); returns `manifest`.
+  """
+  @spec seed_manifest(Path.t()) :: Path.t()
+  def seed_manifest(manifest) do
+    dir = Path.dirname(manifest)
+
+    unless File.exists?(manifest) do
+      siblings =
+        for name <- ls(dir),
+            String.starts_with?(name, "manifest-"),
+            path = Path.join(dir, name),
+            path != manifest,
+            {:ok, %File.Stat{type: :regular, mtime: mtime}} <- [File.stat(path, time: :posix)],
+            do: {mtime, path}
+
+      case Enum.max_by(siblings, &elem(&1, 0), fn -> nil end) do
+        nil ->
+          :ok
+
+        {_mtime, newest} ->
+          # Under a name of its own, then renamed: a worktree beside
+          # this one seeding the same checkout never reads half a copy.
+          staging = "#{manifest}.#{:os.getpid()}.#{System.unique_integer([:positive])}"
+
+          with :ok <- File.cp(newest, staging),
+               :ok <- File.rename(staging, manifest) do
+            :ok
+          else
+            _ -> File.rm(staging)
+          end
+      end
+    end
+
+    manifest
   end
 
   @doc "A checkout's store (`Argus.Cache`): `<checkout>/.argus-facts`."
@@ -242,12 +321,16 @@ defmodule Argus.Corpus do
         ) :: [{checkout(), result}]
         when result: term()
   def analyze_all(checkouts, reduce \\ & &1) do
+    # Every checkout reads its callees' specs from this VM's code path:
+    # its directories are stamped once for them all.
+    opts = [stamps: Argus.Graph.Environment.stamps(Argus.Graph.Environment.code_index())]
+
     # Unordered, then sorted back: a large tree finishing late holds up
     # no other checkout's slot.
     checkouts
     |> Enum.with_index()
     |> Task.async_stream(
-      fn {{co, pair, side}, index} -> {index, co, reduce.(analyze(pair, side))} end,
+      fn {{co, pair, side}, index} -> {index, co, reduce.(analyze(pair, side, opts))} end,
       max_concurrency: jobs(),
       ordered: false,
       timeout: :infinity
