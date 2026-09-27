@@ -296,6 +296,24 @@ defmodule Argus.Purity.Effects do
   # a transaction was "network I/O inside a Repo transaction". `:timer`'s
   # unit conversions are arithmetic.
   @pure_functions MapSet.new([
+                    # :crypto is random only where it draws randomness
+                    # (strong_rand_bytes, rand_*): a hash, a MAC, a key
+                    # derivation or a cipher with a given key and IV is a
+                    # function of its arguments. hackney's SSL options key,
+                    # a sha256 of the options, read as a minted value.
+                    {":crypto", "hash"},
+                    {":crypto", "hash_init"},
+                    {":crypto", "hash_update"},
+                    {":crypto", "hash_final"},
+                    {":crypto", "mac"},
+                    {":crypto", "mac_init"},
+                    {":crypto", "mac_update"},
+                    {":crypto", "mac_final"},
+                    {":crypto", "macN"},
+                    {":crypto", "pbkdf2_hmac"},
+                    {":crypto", "crypto_one_time"},
+                    {":crypto", "crypto_one_time_aead"},
+                    {":crypto", "exor"},
                     # :timer arms and cancels timers, and converts units:
                     # `:timer.seconds(30)` is arithmetic (akkoma's
                     # expiry check read as a process write inside a
