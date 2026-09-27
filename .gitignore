@@ -25,3 +25,6 @@ argus-*.tar
 # Dialyzer PLT cache.
 /priv/plts/
 
+
+# The argus escript (`mix escript.build`).
+/argus

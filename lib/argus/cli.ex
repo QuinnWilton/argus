@@ -187,7 +187,12 @@ defmodule Argus.CLI do
 
   defp drive(project, config, options, cwd) do
     stale = Argus.Project.stale(project)
-    result = Argus.Driver.run(config, project: project, force: options.force)
+    identity = identity()
+    moved? = identity_moved?(project, identity)
+
+    result = Argus.Driver.run(config, project: project, force: options.force or moved?)
+
+    if moved?, do: keep_identity(project, identity)
 
     notices =
       stale_notice(stale, project) ++ Notice.from_result(result, config, cwd)
@@ -198,6 +203,45 @@ defmodule Argus.CLI do
     exception ->
       error(3, "the run failed: " <> Exception.format_banner(:error, exception, __STACKTRACE__))
   end
+
+  # The escript's code, named by the digest of the escript itself: what
+  # its manifest was computed by. A manifest another build of argus wrote
+  # is not read at all (the run is cold), whatever the graph's own code
+  # versions say — code inside an archive has no stamp of its own to
+  # check them by. Outside an escript (`mix argus`, a test) there is
+  # none, and the graph's versions alone decide.
+  defp identity do
+    case escript() do
+      nil ->
+        nil
+
+      path ->
+        case File.read(path) do
+          {:ok, bytes} -> :crypto.hash(:sha256, bytes) |> Base.encode16(case: :lower)
+          {:error, _} -> nil
+        end
+    end
+  end
+
+  defp escript do
+    path = :escript.script_name()
+    if is_list(path) and File.regular?(path), do: List.to_string(path)
+  rescue
+    _ -> nil
+  end
+
+  defp identity_moved?(_project, nil), do: false
+
+  defp identity_moved?(project, identity) do
+    File.read(identity_file(project)) != {:ok, identity}
+  end
+
+  defp keep_identity(project, identity) do
+    File.mkdir_p!(project.state_dir)
+    File.write!(identity_file(project), identity)
+  end
+
+  defp identity_file(project), do: Path.join(project.state_dir, "escript")
 
   defp stale_notice([], _project), do: []
   defp stale_notice(stale, project), do: [Notice.stale(stale, project.build)]

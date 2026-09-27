@@ -17,6 +17,9 @@ ExUnit.after_suite(fn _result -> Argus.Test.Memo.prune() end)
 # on request (`mix test --include cache_verify`), not on every edit. The
 # graph's incremental≡batch gate (`@tag :parity`) solves every analysis a
 # dozen times over: CI runs it, and so does a change to the graph
-# (`mix test --include parity`).
+# (`mix test --include parity`). The built escript (`@tag :escript`) and
+# the real rebar3 and gleam (`:rebar3`, `:gleam`) run in CI's escript job
+# and on request: `mix test --include escript --include rebar3 --include
+# gleam`.
 exclude = if Argus.Cache.enabled?(), do: [:cache_verify], else: [:cache, :cache_verify]
-ExUnit.start(exclude: [:parity | exclude])
+ExUnit.start(exclude: [:parity, :escript, :rebar3, :gleam | exclude])

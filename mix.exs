@@ -23,6 +23,7 @@ defmodule Argus.MixProject do
         &(&1 in ["test/corpus/pairs.exs", "test/argus/analysis_inputs.exs"])
       ],
       deps: deps(),
+      escript: escript(),
       dialyzer: dialyzer(),
       # The test fixtures deliberately call into applications argus does not
       # depend on (they are what the analyses detect).
@@ -47,7 +48,7 @@ defmodule Argus.MixProject do
   # keyed on the dependencies on the code path, so a tally in another
   # environment would extract every checkout a second time.
   def cli do
-    [preferred_envs: ["argus.corpus": :test]]
+    [preferred_envs: ["argus.corpus": :test, "escript.build": :prod]]
   end
 
   def application do
@@ -93,6 +94,14 @@ defmodule Argus.MixProject do
   # The race paper's examples are Erlang, and are kept in the paper's words.
   defp erlc_paths(:test), do: ["test/fixtures/erl"]
   defp erlc_paths(_), do: []
+
+  # The `argus` escript (`Argus.CLI`): argus over a rebar3, Gleam or
+  # erlang.mk project, or bare ebins, with Elixir inside it. Built in
+  # :prod (`mix escript.build`), so the dev and test dependencies stay
+  # out; the Datalog rules travel in its code (`Argus.Dl.Embedded`).
+  defp escript do
+    [main_module: Argus.CLI, name: "argus", app: nil]
+  end
 
   # Hex knows this package as `panoptes` (Argus Panoptes; `argus` was
   # taken); the modules keep the `Argus` namespace.
