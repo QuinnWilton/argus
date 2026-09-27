@@ -124,6 +124,19 @@ the same advice.
 **Changed.** The points-to stage's choice between the exact and the
 bounded program is `Argus.Souffle.Stages`.
 
+### Trapping exits: one reading, at a point (schema 153)
+
+**Changed.** Schema 153. `trap_exit` gains its call's `id` first
+(`trap_exit(id, func, mod)`), and `untrap_exit(id, func, mod)` records a
+literal `Process.flag(:trap_exit, false)`. clientlib/trapping.dl holds
+the one reading of "the process traps exits": `trapping_at(func, site)`,
+the flag is set when `site` runs (earlier in its function, in a callee
+called earlier, or before the function was entered), and
+`server_traps(mod)` / `module_traps(func, mod)`, the server traps while
+its callbacks run. Both are MAY words (a trap on one path counts). A
+trap a clear follows in the same function no longer makes the server
+trap (moved from process_kind.dl).
+
 ### Coupling: a sibling asked only in terminate/2 is not a dependency
 
 **Fixed.** "Permanent child depends on a transient sibling" read a call

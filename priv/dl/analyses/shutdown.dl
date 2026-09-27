@@ -15,6 +15,8 @@
 .include "../clientlib/process_statem.dl"
 .include "../clientlib/signals.dl"
 .include "../clientlib/vocabulary.dl"
+.include "../clientlib/order.dl"
+.include "../clientlib/trapping.dl"
 .include "../clientlib/tooling.dl"
 
 // A finding in code only developers' tools or tests run steps down a
@@ -1096,7 +1098,7 @@ traps_in_own_loop(mod, trap) :-
 .decl trap_loop_candidate(func: symbol)
 
 trap_loop_candidate(func) :-
-  trap_exit(func, mod),
+  trap_exit(_, func, mod),
   !trap_on_process_stack(func),
   !statem_process(mod).
 

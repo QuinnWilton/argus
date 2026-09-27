@@ -22,6 +22,7 @@
 .include "../clientlib/test_code.dl"
 .include "../clientlib/vocabulary.dl"
 .include "../clientlib/order.dl"
+.include "../clientlib/trapping.dl"
 .include "../clientlib/timer_flush.dl"
 .include "../clientlib/live_view.dl"
 .include "../clientlib/runs.dl"

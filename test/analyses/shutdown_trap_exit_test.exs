@@ -66,6 +66,31 @@ defmodule Argus.Analyses.ShutdownTrapExitTest do
     end
   end
 
+  describe "a trap the process clears, or sets on one path" do
+    test "a trap init/1 clears before it returns leaves the server not trapping" do
+      skip_without_souffle()
+
+      results =
+        analyze([
+          Argus.Test.Fixtures.CleansUpAfterScopedTrap,
+          Argus.Test.Fixtures.CleansUpOnOptionTrap
+        ])
+
+      never_runs =
+        for [mod, _b, "never_runs" | _] <- Map.get(results, "cleanup_defect", []),
+            uniq: true,
+            do: mod
+
+      # Cleared: a supervisor's shutdown skips terminate/2, and no
+      # {:EXIT, ...} arrives for handle_info/2 to miss.
+      assert never_runs == ["Argus.Test.Fixtures.CleansUpAfterScopedTrap"]
+      assert exit_rows(results, "no_exit_clause") == []
+
+      # Set on one path: a trap any path sets counts, and terminate/2 runs.
+      refute "Argus.Test.Fixtures.CleansUpOnOptionTrap" in never_runs
+    end
+  end
+
   describe "unhandled_exit_signal: no_handler" do
     test "flags a raw :gen_server that traps exits with no handle_info" do
       skip_without_souffle()

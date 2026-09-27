@@ -16,7 +16,8 @@ defmodule Argus.Extractors.ErrorHandling do
   ## Emitted facts
 
   - `bare_rescue(id, func)` — catch-all rescue without filtering or reraising
-  - `trap_exit(func, mod)` — `Process.flag(:trap_exit, true)` call site
+  - `trap_exit(id, func, mod)` — `Process.flag(:trap_exit, true)` call site
+  - `untrap_exit(id, func, mod)` — `Process.flag(:trap_exit, false)` call site
   - `exit_call(id, func, target)` — explicit `Process.exit/2` or `:erlang.exit/1,2`
   - `call_result(id, func, callee, fate, raises, target)` — every call to a process
     or OTP API (and every `start_link`/`start`/`start_child`), with what
@@ -200,6 +201,7 @@ defmodule Argus.Extractors.ErrorHandling do
       :timer_dropped,
       :timer_tag,
       :trap_exit,
+      :untrap_exit,
       :try_call,
       :try_boundary,
       :try_wrapper_call,
@@ -2194,11 +2196,14 @@ defmodule Argus.Extractors.ErrorHandling do
       {:ok, :trap_exit} ->
         case resolve_register(ctx.instrs, ctx.idx, {:x, 1}) do
           {:ok, true} ->
-            add_fact(facts, :trap_exit, [ctx.func_id, mod_str])
+            add_fact(facts, :trap_exit, [InstrId.mint(ctx.func_id, ctx.idx), ctx.func_id, mod_str])
 
           {:ok, false} ->
-            # Explicit Process.flag(:trap_exit, false) — not imprecision.
-            facts
+            add_fact(facts, :untrap_exit, [
+              InstrId.mint(ctx.func_id, ctx.idx),
+              ctx.func_id,
+              mod_str
+            ])
 
           _ ->
             track_imprecision(facts, ctx, :trap_exit_unresolved, :trap_exit, :skipped)

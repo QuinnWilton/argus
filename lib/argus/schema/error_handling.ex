@@ -553,10 +553,31 @@ defmodule Argus.Schema.ErrorHandling do
         name: :trap_exit,
         layer: 2,
         fields: [
+          {:id, :instr_id, "the call"},
           {:func, :symbol, "containing function ID"},
           {:mod, :symbol, "module name"}
         ],
-        doc: "Process.flag(:trap_exit, true) call site."
+        doc: """
+        A `Process.flag(:trap_exit, true)` (or `:erlang.process_flag/2`) \
+        call: from here on the calling process traps exits. The call is a \
+        `site_block` site, so a rule asks what runs after it \
+        (clientlib/trapping.dl). A flag the program computes has no row.
+        """
+      },
+      %{
+        name: :untrap_exit,
+        layer: 2,
+        fields: [
+          {:id, :instr_id, "the call"},
+          {:func, :symbol, "containing function ID"},
+          {:mod, :symbol, "module name"}
+        ],
+        doc: """
+        A `Process.flag(:trap_exit, false)` call: from here on the calling \
+        process no longer traps exits. A restore of a value an earlier \
+        call returned (`Process.flag(:trap_exit, old)`) is computed, and \
+        has no row.
+        """
       },
       %{
         name: :exit_call,

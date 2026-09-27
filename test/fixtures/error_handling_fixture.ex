@@ -220,6 +220,22 @@ defmodule Argus.Test.Fixtures.TrapExitModule do
   def handle_cast(_, state), do: {:noreply, state}
 end
 
+defmodule Argus.Test.Fixtures.TrapScopedModule do
+  @moduledoc false
+
+  # Traps around one call, then clears the flag: a literal false.
+  def with_trap(fun) do
+    Process.flag(:trap_exit, true)
+    result = fun.()
+    Process.flag(:trap_exit, false)
+    result
+  end
+
+  # Restores whatever the flag was: a computed value, neither a set nor a
+  # clear.
+  def restore(old), do: Process.flag(:trap_exit, old)
+end
+
 defmodule Argus.Test.Fixtures.ExitCaller do
   @moduledoc false
 
@@ -838,6 +854,55 @@ defmodule Argus.Test.Fixtures.CleansUpThroughHelperTrap do
 
   @impl true
   def terminate(_reason, file), do: File.close(file)
+end
+
+defmodule Argus.Test.Fixtures.CleansUpAfterScopedTrap do
+  @moduledoc """
+  A server whose init/1 traps exits only around a start, then clears the
+  flag: the server does not trap, so a supervisor's shutdown kills it
+  without running its terminate/2, and no {:EXIT, ...} arrives for its
+  handle_info/2 to miss.
+  """
+  use GenServer
+
+  def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
+
+  @impl true
+  def init(path) do
+    Process.flag(:trap_exit, true)
+    File.mkdir_p!(Path.dirname(path))
+    Process.flag(:trap_exit, false)
+    {:ok, path}
+  end
+
+  @impl true
+  def handle_info(:tick, path), do: {:noreply, path}
+
+  @impl true
+  def terminate(_reason, path), do: File.write!(path, "final")
+end
+
+defmodule Argus.Test.Fixtures.CleansUpOnOptionTrap do
+  @moduledoc """
+  A server whose init/1 traps exits when an option says so: on that path
+  a supervisor's shutdown runs its terminate/2, and a trap any path sets
+  counts.
+  """
+  use GenServer
+
+  def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
+
+  @impl true
+  def init({path, opts}) do
+    if Keyword.get(opts, :trap, false), do: Process.flag(:trap_exit, true)
+    {:ok, path}
+  end
+
+  @impl true
+  def handle_info({:EXIT, _pid, _reason}, path), do: {:noreply, path}
+
+  @impl true
+  def terminate(_reason, path), do: File.write!(path, "final")
 end
 
 # Probes of the retired "handle_info/2 has no catch-all" rule's runtime

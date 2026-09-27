@@ -309,8 +309,26 @@ defmodule Argus.Extractors.ErrorHandlingTest do
       rows = facts[:trap_exit]
       assert rows != []
 
-      mods = Enum.map(rows, fn [_, mod] -> mod end)
+      mods = Enum.map(rows, fn [_, _, mod] -> mod end)
       assert Enum.any?(mods, &String.contains?(&1, "TrapExitModule"))
+    end
+
+    test "names the call, so a rule can ask what runs after it" do
+      facts = ErrorHandling.extract(disassemble(Argus.Test.Fixtures.TrapExitModule))
+
+      assert [[id, func, _mod]] = facts[:trap_exit]
+      assert func =~ "init/1"
+      assert id =~ ~r/^#{Regex.escape(func)}#\d+$/
+    end
+
+    test "a literal false is a clear, a computed flag is neither" do
+      facts = ErrorHandling.extract(disassemble(Argus.Test.Fixtures.TrapScopedModule))
+
+      funcs = fn rel -> for [_id, func, _mod] <- Map.get(facts, rel, []), do: func end
+
+      assert Enum.any?(funcs.(:trap_exit), &(&1 =~ "with_trap/1"))
+      assert Enum.any?(funcs.(:untrap_exit), &(&1 =~ "with_trap/1"))
+      refute Enum.any?(funcs.(:trap_exit) ++ funcs.(:untrap_exit), &(&1 =~ "restore/1"))
     end
   end
 

@@ -17,6 +17,7 @@
 .include "../clientlib/vocabulary.dl"
 .include "../clientlib/global_reach.dl"
 .include "../clientlib/order.dl"
+.include "../clientlib/trapping.dl"
 .include "../clientlib/timer_flush.dl"
 .include "../clientlib/tooling.dl"
 
@@ -527,7 +528,7 @@ init_traps_exits(m) :- init_function(m, f), trap_reach.reaches(f).
 .init trap_reach = SameProcessReachSetCut
 
 trap_reach.cut(f, g) :- acked_edge(f, g).
-trap_reach.seed(t) :- trap_exit(t, _).
+trap_reach.seed(t) :- trap_exit(_, t, _).
 
 init_effect(mod, "receive", waiter, recv) :-
   endless_receive_during_init(mod, waiter, recv).

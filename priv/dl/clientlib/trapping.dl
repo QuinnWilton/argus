@@ -1,0 +1,234 @@
+// Whether a process traps exits, and from where on.
+//
+// `Process.flag(:trap_exit, true)` (trap_exit) turns the exit signals of
+// linked processes into `{:EXIT, from, reason}` messages, in the process
+// that makes the call, from the call on, until a
+// `Process.flag(:trap_exit, false)` (untrap_exit). Every rule that asks
+// "does this process trap" means one of two points:
+//
+// - trapping_at(func, site): the process is trapping when it runs `site`
+//   in `func` (a receive waiting on a linked peer's :EXIT, a linked
+//   task's start). The flag is set before the site: earlier in func, in
+//   a function func called earlier, or before func was entered (a caller
+//   set it before the call, or func is a callback of a server that traps).
+// - server_traps(mod), with its witness module_traps(func, mod): mod's
+//   server is trapping while its callbacks run, where a supervisor's
+//   shutdown and a linked peer's exit arrive at any time: some entry of
+//   the process (init/1, a callback) leaves the flag set.
+//
+// Both are MAY words: some path, and some caller, sets the flag. A trap
+// set on one branch (`if opts[:trap], do: ...`) counts, and a function
+// called both after a trap and without one is entered trapping. A rule
+// that reports on "not trapping" is quiet when any path traps.
+//
+// What they do not see:
+//
+// - A clear the program computes: `old = Process.flag(:trap_exit, true)`
+//   ... `Process.flag(:trap_exit, old)` restores a value, and only a
+//   literal `false` is a clear (untrap_exit). The trap stays set.
+// - A clear in another function than the set it undoes, or than the
+//   call leading to it: a behaviour that traps before a callback that
+//   clears (realtime's ReplicationConnection clears in init/1 what
+//   Postgrex's connect set) still traps.
+// - Order across processes' lifetimes: a server's callbacks run in any
+//   order, so a trap left set by one counts for every other (and for
+//   the next run of itself). Only init/1 is ordered before them: it is
+//   entered trapping only when its behaviour trapped first
+//   (behaviour_traps_exits, behaviours.dl: a supervisor_bridge).
+// - A trap in a function no process entry reaches (an API function
+//   that traps in its caller, a library function whose callers are not
+//   in the program) stays with the module holding it (module_traps'
+//   second clause), for want of a better owner.
+//
+// Requires imports.dl, otp.dl and order.dl (RunsAfter) before this file.
+
+// ── Where the flag is set, and cleared ──────────────────────────────
+
+// Functions whose own stack sets the flag somewhere (SameProcessReach):
+// the calls into them are where a caller sets it.
+.init trap_below = SameProcessReachSet
+
+trap_below.seed(f) :- trap_exit(_, f, _).
+
+// The order of every set and clear of the flag in its function, and of
+// every call into a function that may set it.
+.init trap_order = RunsAfter
+
+trap_order.asked(id) :- trap_exit(id, _, _).
+trap_order.asked(id) :- untrap_exit(id, _, _).
+trap_order.asked(id) :- call_instr(f, g, id), !runs_elsewhere(f, g), trap_below.reaches(g).
+
+// `func` sets the flag at `site`: a trap_exit call there, or a call to a
+// function that returns with the flag set (leaves_trapping). `witness`
+// holds the trap_exit call.
+.decl sets_trap_at(func: symbol, site: symbol, witness: symbol)
+
+sets_trap_at(f, id, f) :- trap_exit(id, f, _).
+
+sets_trap_at(f, id, w) :-
+  call_instr(f, g, id),
+  !runs_elsewhere(f, g),
+  leaves_trapping(g, w).
+
+// `func` returns with the flag set: it sets it (sets_trap_at) and no
+// clear runs after, or a closure or fun it runs in its own process does
+// (an edge with no call instruction, whose place in func is unknown).
+.decl leaves_trapping(func: symbol, witness: symbol)
+
+leaves_trapping(f, w) :- sets_trap_at(f, id, w), !cleared_after(id).
+
+leaves_trapping(f, w) :-
+  call_edge(f, g),
+  !call_instr(f, g, _),
+  !runs_elsewhere(f, g),
+  leaves_trapping(g, w).
+
+// A clear of the flag runs after `site` in its function.
+.decl cleared_after(site: symbol)
+
+cleared_after(s) :- untrap_exit(u, _, _), trap_order.runs_after(s, u).
+
+// A clear of the flag runs before `site` in its function.
+.decl cleared_before(site: symbol)
+
+cleared_before(s) :- untrap_exit(u, _, _), trap_order.runs_after(u, s).
+
+// A clear runs between the set at `set` and `site`.
+.decl cleared_between(set: symbol, site: symbol)
+
+cleared_between(t, s) :-
+  untrap_exit(u, _, _),
+  trap_order.runs_after(t, u),
+  trap_order.runs_after(u, s).
+
+// ── Is the process trapping at this point ───────────────────────────
+
+// The process is trapping exits when it runs `site` in `func`: its
+// function set the flag earlier (flag_set_before), or it was entered
+// trapping and has not cleared it since (entered_trapping).
+.decl trapping_at(func: symbol, site: symbol) inline
+
+trapping_at(f, s) :- flag_set_before(f, s).
+trapping_at(f, s) :- entered_trapping(f), !cleared_before(s).
+
+// `func` sets the flag before `site`, and nothing clears it between.
+.decl flag_set_before(func: symbol, site: symbol)
+
+flag_set_before(f, s) :-
+  sets_trap_at(f, t, _),
+  trap_order.runs_after(t, s),
+  !cleared_between(t, s).
+
+// `func` starts running with the flag set: a callback of a server that
+// traps (every entry but init/1, which runs first), init/1 under a
+// behaviour that traps before calling it, or a function its caller
+// calls, or hands as a fun to a call, after setting the flag.
+.decl entered_trapping(func: symbol)
+
+entered_trapping(e) :-
+  process_entry(mod, e),
+  !init_function(mod, e),
+  server_traps(mod).
+
+entered_trapping(i) :-
+  init_function(mod, i),
+  behaves_as(mod, b),
+  behaviour_traps_exits(b).
+
+entered_trapping(h) :-
+  call_instr(g, h, c),
+  !runs_elsewhere(g, h),
+  trapping_at(g, c).
+
+entered_trapping(h) :-
+  fun_handed(c, g, h, _),
+  !runs_elsewhere(g, h),
+  trapping_at(g, c).
+
+// A closure or fun handed nowhere the facts say runs where its maker is.
+entered_trapping(h) :-
+  entered_trapping(g),
+  call_edge(g, h),
+  !call_instr(g, h, _),
+  !fun_handed(_, g, h, _),
+  !runs_elsewhere(g, h).
+
+// ── Does the server trap while its callbacks run ────────────────────
+
+// mod's server traps exits while its callbacks run (module_traps).
+.decl server_traps(mod: symbol)
+
+server_traps(mod) :- module_traps(_, mod).
+
+// The module's own process traps exits, `func` the function holding the
+// trap_exit call: a process entry returns with the flag set
+// (leaves_trapping), where the trap is not in a closure the module only
+// hands to a process start (traps_elsewhere). gen_server2's multi_call
+// middleman and elixir-ls's OutputDevice Task trap in funs they spawn;
+// the flag is that process's, and the module's server still dies with
+// its supervisor's signal, and never receives an {:EXIT, ...} for the
+// fun's links.
+//
+// The flag is the process's that runs the function setting it, which is
+// not always the module holding it: a server whose init/1 calls a
+// helper module's function that traps is the process that traps
+// (postgrex's connect/1 trapping in DBConnection's connection process),
+// and the helper module runs no process of its own. A trap on a process
+// module's own stack (a process_entry reaching it, SameProcessReach) is
+// that module's; one no process entry reaches (an API function such as
+// a start_link that traps in its caller, a library function whose
+// callers are outside the program) stays with the module holding it.
+.decl module_traps(func: symbol, mod: symbol)
+
+module_traps(func, mod) :-
+  process_entry(mod, entry),
+  leaves_trapping(entry, func),
+  !traps_elsewhere(func).
+
+module_traps(func, mod) :-
+  trap_exit(id, func, mod),
+  !cleared_after(id),
+  !traps_elsewhere(func),
+  !trap_on_process_stack(func).
+
+// A behaviour whose own machinery traps exits before it calls the
+// module's init/1 (behaviour_traps_exits, behaviours.dl: a
+// supervisor_bridge): the module's process traps, init/1 the witness.
+module_traps(func, mod) :-
+  behaves_as(mod, b),
+  behaviour_traps_exits(b),
+  function_def(func, mod, "init", 1, _).
+
+// A trap_exit call some process entry reaches on its own stack, whether
+// or not the flag stays set: the trap is a server's, not a hand-rolled
+// loop's.
+.decl trap_on_process_stack(func: symbol)
+
+trap_on_process_stack(func) :-
+  process_entry(_, entry),
+  process_trap_reach.reaches(entry, func).
+
+.init process_trap_reach = SameProcessReach
+
+process_trap_reach.seed(func, func) :- trap_exit(_, func, _), !traps_elsewhere(func).
+
+// The trap_exit call is in a closure or fun handed to a process start
+// that the module never calls itself (runs_elsewhere).
+.decl traps_elsewhere(func: symbol)
+
+traps_elsewhere(func) :-
+  trap_exit(_, func, _),
+  runs_elsewhere(_, func),
+  !call_instr(_, func, _).
+
+// A module that traps exits and has a handle_info/2 whose clauses never
+// take an {:EXIT, ...}: the trapped exit arrives as a message nothing
+// matches. `witness` is the function that sets trap_exit. A gen_statem
+// hands {:EXIT, ...} to its state functions, not to handle_info/2.
+.decl trap_exit_without_exit_clause(mod: symbol, witness: symbol)
+
+trap_exit_without_exit_clause(mod, func) :-
+  module_traps(func, mod),
+  partial_handle_info(mod, h),
+  !takes_some_exits(h),
+  !statem_process(mod).
