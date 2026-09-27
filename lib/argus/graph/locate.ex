@@ -4,7 +4,8 @@ defmodule Argus.Graph.Locate do
   alone (`Argus.Located`).
 
     * `line_table(beam_key)` — a module's lines: each instruction's, and
-      each function's first (`Argus.Lines`), from its `line_info` rows.
+      each function's first, from its `line_info` rows (kept as they
+      are written, an instruction's line found in them when asked).
     * `declaration_line(beam_key)` — the line a module is declared on,
       for an anchor that names the module alone (line 1 is another
       module's in a file that defines several), read from the beam's
@@ -33,7 +34,9 @@ defmodule Argus.Graph.Locate do
   defquery :line_table,
     key: beam_key,
     store: :blob,
-    returns: {:ok, Argus.Lines.t()} | {:error, term()} do
+    returns:
+      {:ok, %{chunk: binary(), by_func: %{optional(String.t()) => pos_integer()}}}
+      | {:error, term()} do
     case Runtime.query(db, :module_facts, beam_key) do
       {:ok, %{pack: pack}} ->
         # Kept in the store's action cache by the pack and the code
@@ -41,12 +44,8 @@ defmodule Argus.Graph.Locate do
         # facts it found again reads the table back, not the pack.
         Roux.Blob.cached(db.blob, {__MODULE__, :line_table, table_code(), pack}, fn ->
           case Pack.read(db.blob, pack) do
-            {:ok, contents} ->
-              rows = contents |> Pack.chunk(:line_info) |> Argus.Tsv.decode()
-              {:ok, Argus.Lines.from_facts(%{line_info: rows})}
-
-            :miss ->
-              {:error, {:pack_missing, pack}}
+            {:ok, contents} -> {:ok, table(Pack.chunk(contents, :line_info))}
+            :miss -> {:error, {:pack_missing, pack}}
           end
         end)
 
@@ -56,7 +55,25 @@ defmodule Argus.Graph.Locate do
   end
 
   # The code a line table is made by: an edit to it makes tables anew.
-  defp table_code, do: for(module <- [Pack, Argus.Tsv, Argus.Lines], do: module.module_info(:md5))
+  defp table_code, do: for(module <- [__MODULE__, Pack, Argus.Tsv], do: module.module_info(:md5))
+
+  # A module's lines: its `line_info` rows as written (an instruction's
+  # line is found in them when a finding asks, `instr_line/2`), and each
+  # function's first line. Kept whole, a table was a map of every
+  # instruction, and reading one back cost more than every other part of
+  # a warm run's placing.
+  defp table(chunk) do
+    by_func =
+      chunk
+      |> Argus.Tsv.decode()
+      |> Enum.reduce(%{}, fn [id, line], acc ->
+        [func | _] = :binary.split(id, "#")
+        line = String.to_integer(line)
+        Map.update(acc, func, line, &min(&1, line))
+      end)
+
+    %{chunk: chunk, by_func: by_func}
+  end
 
   defquery :declaration_line, key: beam_key, returns: pos_integer() | nil do
     case Runtime.query(db, :module_beam, beam_key) do
@@ -147,8 +164,29 @@ defmodule Argus.Graph.Locate do
   # By the ids' own spelling (`Argus.InstrId`): a function named `nil`
   # is `nil/0` there, where interpolating the atom writes `/0`.
   defp instr_line(table, %InstrId{module: m, func: f, arity: a} = instr) do
-    Map.get(table.by_instr, InstrId.format(instr)) ||
+    row_line(table.chunk, InstrId.format(instr)) ||
       Map.get(table.by_func, InstrId.func_id(m, f, a))
+  end
+
+  # The line on the row of `id` (as the rows spell it, escaped), which
+  # starts the chunk or follows a newline.
+  defp row_line(chunk, id) do
+    row = Argus.Tsv.escape(id) <> "\t"
+
+    at =
+      if String.starts_with?(chunk, row),
+        do: 0,
+        else: with({start, _} <- :binary.match(chunk, "\n" <> row), do: start + 1)
+
+    case at do
+      :nomatch ->
+        nil
+
+      at ->
+        rest = binary_part(chunk, at + byte_size(row), byte_size(chunk) - at - byte_size(row))
+        [line | _] = :binary.split(rest, "\n")
+        String.to_integer(line)
+    end
   end
 
   defp mfa_line(_table, nil), do: nil
