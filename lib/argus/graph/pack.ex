@@ -59,7 +59,7 @@ defmodule Argus.Graph.Pack do
 
   # Moves every trace and every pack: bump it when what either holds, or
   # how one is named, changes.
-  @format "argus-pack-3"
+  @format "argus-pack-4"
 
   # How many of a module's traces a lookup weighs, most recent first.
   @candidates 3
@@ -155,6 +155,7 @@ defmodule Argus.Graph.Pack do
     store
     |> Trace.fetch(name)
     |> Enum.take(@candidates)
+    |> Enum.map(&%{&1 | value: expand(&1.value)})
     |> Enum.filter(&Blob.member?(store, &1.value.pack))
     |> Enum.reduce_while({%{trace: nil, missing: producers, base: nil}, observer}, fn trace,
                                                                                       {best,
@@ -205,6 +206,42 @@ defmodule Argus.Graph.Pack do
       :crypto.hash(:sha256, :erlang.term_to_binary({observed, base}, [:deterministic]))
 
     [{:codes, codes}, {:observed, Base.encode16(digest, case: :lower)}]
+  end
+
+  # A trace's value as it is kept: every producer observes much the same
+  # reads (the base's, which each extractor's rows rest on, and its own),
+  # so the observations are kept once, in a table, and each producer's
+  # (and the kept base's) as indexes into it — a twentieth of the bytes a
+  # lookup reads and decodes. `expand/1` gives the value back.
+  defp compact(value) do
+    table =
+      Enum.flat_map(value.producers, fn {_producer, entry} -> entry.observed end)
+      |> Kernel.++(if value.base, do: value.base.observed, else: [])
+      |> Enum.uniq()
+      |> Enum.sort()
+
+    index = table |> Enum.with_index() |> Map.new()
+    indexes = fn observed -> Enum.map(observed, &Map.fetch!(index, &1)) end
+
+    %{
+      value
+      | producers:
+          Map.new(value.producers, fn {p, e} -> {p, %{e | observed: indexes.(e.observed)}} end),
+        base: value.base && %{value.base | observed: indexes.(value.base.observed)}
+    }
+    |> Map.put(:observations, List.to_tuple(table))
+  end
+
+  defp expand(%{observations: table} = value) do
+    pairs = fn indexes -> Enum.map(indexes, &elem(table, &1)) end
+
+    %{
+      value
+      | producers:
+          Map.new(value.producers, fn {p, e} -> {p, %{e | observed: pairs.(e.observed)}} end),
+        base: value.base && %{value.base | observed: pairs.(value.base.observed)}
+    }
+    |> Map.delete(:observations)
   end
 
   defp base_digests(%{base: %{digest: digest}}), do: [digest]
@@ -269,7 +306,7 @@ defmodule Argus.Graph.Pack do
           producer_entries(old, producers, missing, codes, extraction, base_reads, observer)
 
         value = %{pack: digest, relations: relations, producers: entries, base: base_entry}
-        _ = Trace.put(store, name, trace_deps(codes, value), value)
+        _ = Trace.put(store, name, trace_deps(codes, value), compact(value))
       end
 
       Runtime.hold([digest | base_digests(%{base: base_entry})])
