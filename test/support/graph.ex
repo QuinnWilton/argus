@@ -95,7 +95,10 @@ defmodule Argus.Test.Graph do
   (a test that must see its solver run, not a solve kept from another
   test); `program:` another program's id; `specs_source:` where the
   specs of the modules the program calls are read from
-  (`Argus.Specs.Source`), the code path without one.
+  (`Argus.Specs.Source`), the code path without one; `stamps: true`
+  for each code directory's stamp (`app_code`), which a test that
+  rebuilds one sets itself: stamping the test VM's code path reads
+  thousands of files, too slow for every database a test makes.
   """
   @spec new_db(%{optional(module()) => String.t()}, keyword()) :: Roux.Database.t()
   def new_db(paths, opts \\ []) do
@@ -108,7 +111,8 @@ defmodule Argus.Test.Graph do
 
     session = Argus.Graph.open(store: store)
     db = session.db
-    _moved = Argus.Graph.set_environment(db, Keyword.take(opts, [:specs_source]))
+    env = [stamps: false] |> Keyword.merge(Keyword.take(opts, [:specs_source, :stamps]))
+    _moved = Argus.Graph.set_environment(db, env)
     program = Keyword.get(opts, :program, :test)
     :ok = Argus.Graph.set_priors(db, program, :off)
     sync!(db, paths, program)

@@ -65,7 +65,7 @@ defmodule Argus.Graph.SpecsSourceTest do
     ledger: ledger,
     telemetry: telemetry
   } do
-    db = Graph.new_db(%{ledger: ledger}, specs_source: source)
+    db = Graph.new_db(%{ledger: ledger}, specs_source: source, stamps: true)
     key = Path.expand(ledger)
 
     try do

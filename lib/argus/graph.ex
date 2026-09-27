@@ -157,7 +157,14 @@ defmodule Argus.Graph do
       path;
     * `:trees` — the Datalog trees besides argus's own (a custom
       program's directory);
-    * `:souffle_timeout` — milliseconds a solve may run.
+    * `:souffle_timeout` — milliseconds a solve may run;
+    * `:stamps` — false to leave each directory's stamp (`app_code`)
+      unset, default true. Stamping reads every beam's file status in
+      every directory the specs are read from (thousands, on a test
+      VM's code path); a stamp only tells a kept graph that a directory
+      was rebuilt since. A session never kept (no manifest), whose
+      queries all run afresh, has no use for it: what it finds in the
+      store it verifies through the files themselves (`Roux.Stamp`).
   """
   @spec set_environment(Roux.Database.t(), keyword()) :: boolean()
   def set_environment(db, opts \\ []) do
@@ -170,11 +177,16 @@ defmodule Argus.Graph do
       set(db, :specs_source, :all, source),
       set(db, :code_index, :all, index),
       set(db, :project_root, :all, Keyword.get_lazy(opts, :project_root, &File.cwd!/0))
-      | Enum.map(index, fn {dir, name} -> set(db, :app_code, name, Environment.app_code(dir)) end) ++
+      | stamps(db, index, Keyword.get(opts, :stamps, true)) ++
           Enum.map(trees, &set(db, :dl_tree, &1, Programs.tree_digests(&1)))
     ]
     |> Enum.any?()
   end
+
+  defp stamps(_db, _index, false), do: []
+
+  defp stamps(db, index, true),
+    do: Enum.map(index, fn {dir, name} -> set(db, :app_code, name, Environment.app_code(dir)) end)
 
   @doc """
   Sets the beams of `program`: each key's `beam` input from its file (or

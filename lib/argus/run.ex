@@ -236,10 +236,12 @@ defmodule Argus.Run do
 
         trees = for {:custom, path} <- analyses, do: Graph.Programs.tree({:custom, path})
 
+        # The session is closed as the call returns, never kept: no
+        # directory stamps (`Argus.Graph.set_environment/2`).
         _moved =
           Graph.set_environment(
             db,
-            [trees: trees] ++ Keyword.take(opts, [:souffle_bin, :souffle_timeout])
+            [trees: trees, stamps: false] ++ Keyword.take(opts, [:souffle_bin, :souffle_timeout])
           )
 
         :ok = Graph.set_priors(db, @program, priors(opts))
