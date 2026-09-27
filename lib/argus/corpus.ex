@@ -69,6 +69,8 @@ defmodule Argus.Corpus do
   tree records before it compiles.
   """
 
+  alias Argus.Graph.Environment
+
   @type pair :: %{
           required(:repo) => String.t(),
           required(:issue) => String.t(),
@@ -323,7 +325,7 @@ defmodule Argus.Corpus do
   def analyze_all(checkouts, reduce \\ & &1) do
     # Every checkout reads its callees' specs from this VM's code path:
     # its directories are stamped once for them all.
-    opts = [stamps: Argus.Graph.Environment.stamps(Argus.Graph.Environment.code_index())]
+    opts = [stamps: Environment.stamps(Environment.code_index())]
 
     # Unordered, then sorted back: a large tree finishing late holds up
     # no other checkout's slot.

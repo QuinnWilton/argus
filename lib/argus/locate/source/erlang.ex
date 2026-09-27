@@ -35,6 +35,8 @@ defmodule Argus.Locate.Source.Erlang do
   directive) or more than one could.
   """
 
+  alias Argus.Locate.Source
+
   @behaviour Argus.Locate.Source
 
   @openers [:"(", :"[", :"{", :"<<", :begin, :case, :if, :receive, :try, :maybe]
@@ -61,7 +63,7 @@ defmodule Argus.Locate.Source.Erlang do
   end
 
   defp runs(path) do
-    Argus.Locate.Source.read(path, :erlang_runs, fn ->
+    Source.read(path, :erlang_runs, fn ->
       case content(path) do
         {:ok, content} -> file_runs(String.split(content, "\n"))
         {:error, _} -> []
@@ -69,7 +71,7 @@ defmodule Argus.Locate.Source.Erlang do
     end)
   end
 
-  defp content(path), do: Argus.Locate.Source.read(path, :content, fn -> File.read(path) end)
+  defp content(path), do: Source.read(path, :content, fn -> File.read(path) end)
 
   # Each `-file(Name, Number).` directive's run: the physical line after
   # it, the number that line bears, and how many lines the run has (to
@@ -285,7 +287,7 @@ defmodule Argus.Locate.Source.Erlang do
   # ── Tokens ──────────────────────────────────────────────────────────
 
   defp tokens(path) do
-    Argus.Locate.Source.read(path, :erlang_tokens, fn ->
+    Source.read(path, :erlang_tokens, fn ->
       with {:ok, content} <- content(path),
            {:ok, tokens, _end} <- :erl_scan.string(String.to_charlist(content), {1, 1}) do
         {:ok, List.to_tuple(tokens)}
