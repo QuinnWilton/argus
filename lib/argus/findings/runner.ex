@@ -18,6 +18,7 @@ defmodule Argus.Findings.Runner do
   alias Argus.Findings
   alias Argus.Findings.Anchor
   alias Argus.Findings.Build
+  alias Argus.Findings.Degradation
   alias Argus.Souffle
 
   @severity_rank %{error: 0, warning: 1, info: 2}
@@ -117,7 +118,7 @@ defmodule Argus.Findings.Runner do
          collect(
            for mod <- requests, name = mod.name() do
              {:degraded,
-              %{analysis: name, reason: reason, detail: degradation_detail(name, reason)}}
+              %{analysis: name, reason: reason, detail: Degradation.detail(name, reason)}}
            end
          )}
 
@@ -215,7 +216,7 @@ defmodule Argus.Findings.Runner do
     name = mod.name()
 
     if Analysis.Extraction.reads_points_to?(name) do
-      [{:degraded, %{analysis: name, reason: reason, detail: degradation_detail(name, reason)}}]
+      [{:degraded, %{analysis: name, reason: reason, detail: Degradation.detail(name, reason)}}]
     else
       run_one(mod, source, :ok, opts)
     end
@@ -237,7 +238,7 @@ defmodule Argus.Findings.Runner do
             {:ran, %{analysis: name, duration_ms: duration_ms, finding_count: length(findings)},
              findings}
 
-          [ran | row_degradation(name, failures)]
+          [ran | Degradation.rows(name, failures)]
         rescue
           exception ->
             [
@@ -253,7 +254,7 @@ defmodule Argus.Findings.Runner do
         end
 
       {:error, reason} ->
-        [{:degraded, %{analysis: name, reason: reason, detail: degradation_detail(name, reason)}}]
+        [{:degraded, %{analysis: name, reason: reason, detail: Degradation.detail(name, reason)}}]
     end
   end
 
@@ -280,57 +281,6 @@ defmodule Argus.Findings.Runner do
     degraded = for {:degraded, note} <- outcomes, do: note
 
     %Findings{findings: findings, ran: ran, degraded: degraded}
-  end
-
-  defp row_degradation(_name, []), do: []
-
-  defp row_degradation(name, [first | _] = failures) do
-    [
-      {:degraded,
-       %{
-         analysis: name,
-         reason: {:finding_builder_crashed, first.exception},
-         detail:
-           "The #{name} analysis ran, but its finding builder crashed on " <>
-             "#{length(failures)} row(s), first a #{first.relation} row: " <>
-             "#{Exception.message(first.exception)}. Those rows are reported with " <>
-             "their raw columns; every other finding is as usual. This is a bug in Argus."
-       }}
-    ]
-  end
-
-  defp degradation_detail(name, :souffle_timeout) do
-    "The #{name} analysis timed out in Souffle and was skipped. " <>
-      "Raise :souffle_timeout to include it."
-  end
-
-  defp degradation_detail(name, {:souffle_error, exit_code, _output}) do
-    "The #{name} analysis failed: Souffle exited with status #{exit_code}."
-  end
-
-  defp degradation_detail(name, {:points_to, :souffle_timeout}) do
-    "The #{name} analysis did not run: the process points-to it reads " <>
-      "(priv/dl/points_to.dl) did not finish within :souffle_timeout. " <>
-      "Raise :souffle_timeout to include it."
-  end
-
-  defp degradation_detail(name, {:points_to, {:over_budget, over}}) do
-    reached =
-      Enum.map_join(over, ", ", fn {relation, rows, budget} ->
-        "#{relation} reached #{rows} rows, over #{budget}"
-      end)
-
-    "The #{name} analysis did not run: the process points-to it reads " <>
-      "(priv/dl/points_to.dl) outgrew its budget even bounded (#{reached})."
-  end
-
-  defp degradation_detail(name, {:points_to, reason}) do
-    "The #{name} analysis did not run: the process points-to it reads " <>
-      "(priv/dl/points_to.dl) could not be derived: #{inspect(reason)}."
-  end
-
-  defp degradation_detail(name, reason) do
-    "The #{name} analysis did not run: #{inspect(reason)}."
   end
 
   defp ensure_souffle(opts) do
