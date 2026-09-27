@@ -7,10 +7,10 @@ defmodule Argus.Souffle.Stages do
   Souffle stops a fixpoint at the budget however fast it runs, and each
   program writes `points_to_overflow`, the relations that reached it.
 
-  The batch runs (`Argus.Analysis.Extraction`, over a facts directory
-  or a store's facts) and the query graph (`Argus.Graph.Solve`, over the
-  blob store) each solve the programs their own way and hand that to
-  `points_to/4`, so the policy is written once.
+  A facts directory's derivation (`Argus.Analysis.Extraction`) and the
+  query graph (`Argus.Graph.Solve`, over the blob store) each solve the
+  programs their own way and hand that to `points_to/4`, so the policy
+  is written once.
   """
 
   require Logger

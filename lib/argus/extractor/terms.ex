@@ -15,10 +15,10 @@ defmodule Argus.Extractor.Terms do
   inspect cut the spelling short.
 
   Never a struct's own implementation, because a spelling must not depend
-  on which modules are loaded (scry's compiler has the analyzed code
-  loaded, a batch run does not), and an implementation that raises on
-  the struct's defaults (sequin's `CircularBuffer`) renders as a
-  multi-line `#Inspect.Error<...>`.
+  on which modules are loaded (a run inside the project's VM has the
+  analyzed code loaded, the escript does not), and an implementation
+  that raises on the struct's defaults (sequin's `CircularBuffer`)
+  renders as a multi-line `#Inspect.Error<...>`.
 
   A map prints its keys sorted: a VM iterates a small map with atom keys
   in atom-table order, which depends on which atoms that VM created

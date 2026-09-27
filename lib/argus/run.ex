@@ -85,8 +85,8 @@ defmodule Argus.Run do
   @doc """
   `Argus.Analysis.extract_facts/3` over the graph: a directory holding a
   file for every relation of the schema, each with the rows of the
-  producers `analyses` run, as the batch pipeline writes it (the same
-  rows, in an order of the graph's own; `line_info` included, the
+  producers `analyses` run, as `Argus.Pipeline.run/3` writes them (the
+  same rows, in an order of the graph's own; `line_info` included, the
   imprecision trace only for `:coverage`), stage 0's call graph, and —
   unless `points_to: :deferred`, and when an analysis reads it — the
   points-to stage, each a hard link into the store. The relations only
@@ -279,11 +279,11 @@ defmodule Argus.Run do
 
   # ── Facts directory ────────────────────────────────────────────────
 
-  # The directory the batch pipeline wrote for `analyses`: every
-  # relation of the schema, each holding the rows of the producers those
-  # analyses run (the base, the call-argument extractor and each one's
-  # extractors), `line_info` among them, the imprecision trace only for
-  # `:coverage`; of the relations only the in-process passes read
+  # The directory `analyses` read: every relation of the schema, each
+  # holding the rows of the producers those analyses run (the base, the
+  # call-argument extractor and each one's extractors), `line_info`
+  # among them, the imprecision trace only for `:coverage`; of the
+  # relations only the in-process passes read
   # (`Argus.Schema.in_process_only/0`), the ones a custom program among
   # the analyses reads, and no other.
   defp materialize(db, analyses, opts) do
@@ -340,9 +340,8 @@ defmodule Argus.Run do
     end
   end
 
-  # The producers the batch pipeline runs for `analyses`
-  # (`Argus.Analysis.Extraction`'s defaults): the base, the call-argument
-  # extractor every analysis reads through, and each built-in's own.
+  # The producers `analyses` read: the base, the call-argument extractor
+  # every analysis reads through, and each built-in's own.
   defp producers(analyses) do
     extractors =
       for {:ok, module} <- Enum.map(analyses, &analysis_module/1),

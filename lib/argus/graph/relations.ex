@@ -130,8 +130,8 @@ defmodule Argus.Graph.Relations do
   already depends on each relation's digest.
 
   `producers` narrows every file to those producers' rows (`:all`, the
-  default, for every producer's): a facts directory as the batch
-  pipeline writes one for some analyses.
+  default, for every producer's): a facts directory for some analyses
+  (`Argus.Run.extract_facts/3`).
   """
   @spec files(Roux.Database.t(), term(), [{atom(), String.t()}], :all | [atom()]) ::
           {:ok, %{atom() => Blob.digest()}} | {:error, term()}

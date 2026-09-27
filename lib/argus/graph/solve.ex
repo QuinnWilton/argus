@@ -24,10 +24,10 @@ defmodule Argus.Graph.Solve do
   A solve that fails — the solver's error or timeout, a stage it reads
   failing, an output the solver did not write — is a value, `{:error,
   reason}`, and a transient one: it is not kept in a manifest, and
-  neither is anything that read it, so the next run solves again. The
-  reasons are the batch run's (`Argus.Findings.run/2`): a failed call
-  graph degrades every analysis with the stage's reason, a failed
-  points-to stage the analyses reading it with `{:points_to, reason}`.
+  neither is anything that read it, so the next run solves again. A
+  failed call graph degrades every analysis with the stage's reason, a
+  failed points-to stage the analyses reading it with
+  `{:points_to, reason}` (`Argus.Findings.Degradation`).
   """
 
   use Roux.Query,
