@@ -46,11 +46,11 @@
 //
 // What points-to cannot see — a table handed over by a call it cannot
 // follow, `store.intern(state, b)` with `store` a module in a struct —
-// leaves an operation with no table (unknown_table). Two fallbacks name
-// it all the same: a table read out of a parameter's map is the module's
-// field (`%{forward: f, reverse: r}` is two fields), and a parameter
-// nothing in view fills, below a function outside callers call, is the
-// table those callers hand in.
+// leaves an operation with no table (may_touch_any_table). Two
+// fallbacks name it all the same: a table read out of a parameter's map
+// is the module's field (`%{forward: f, reverse: r}` is two fields), and
+// a parameter nothing in view fills, below a function outside callers
+// call, is the table those callers hand in.
 //
 // Prerequisites: imports.dl (library_face), otp.dl (staged_processes.dl,
 // process_entry) and vocabulary.dl (named_site).
@@ -78,11 +78,13 @@ site_name(n, name) :-
   name_at_param(f, p, name).
 
 // The table the :ets.new/2 at `site` makes: the named table of each name
-// it may give, or its own unnamed one.
+// it may give, or its own unnamed one. Options built at run time (no
+// ets_options_known) may name it, so such a site may make either.
 .decl site_table(site: symbol, kind: symbol, ident: symbol)
 
 site_table(n, "named", name) :- named_site(n), site_name(n, name).
 site_table(n, "new", n) :- ets_new(n, _, _), !named_site(n).
+site_table(n, "named", name) :- site_name(n, name), !named_site(n), !ets_options_known(n).
 
 // ── Tables through parameters ───────────────────────────────────────
 
@@ -227,12 +229,6 @@ ets_table(id, "field", cat(mod, " ", path)) :-
   !has_known_table(id),
   function_def(f, mod, _, _, _).
 
-// An operation no view names a table for: points-to could not follow its
-// operand, and neither fallback holds. A rule that must not miss the
-// table takes it to be any table; one that must not invent one, none.
-.decl unknown_table(id: symbol)
-
-unknown_table(id) :- ets_op(id, _, _, _, _), !ets_table(id, _, _).
 
 // ── Where a table is made ───────────────────────────────────────────
 
@@ -258,6 +254,24 @@ table_made_at("field", t, n) :-
 
 table_made_out_of_view("named", t) :- ets_table(_, "named", t), !table_made_at("named", t, _).
 table_made_out_of_view("handed_in", t) :- ets_table(_, "handed_in", t).
+
+// An operation that may touch any table: no view names its table
+// (points-to could not follow its operand, and neither fallback holds),
+// or only as a field or a handed-in table no site in view is known to
+// make, which may be the program's own (a server's table under a name it
+// keeps in its state, handed to its own API as a parameter or in a map).
+// A rule that must not miss the table takes it to be any table; one that
+// must not invent one, none.
+.decl may_touch_any_table(id: symbol)
+
+may_touch_any_table(id) :- ets_op(id, _, _, _, _), !names_a_table(id).
+
+// The operation names a table: a named one, which is its name whoever
+// makes it, or one a site in view makes.
+.decl names_a_table(id: symbol)
+
+names_a_table(id) :- ets_table(id, "named", _).
+names_a_table(id) :- ets_table(id, k, t), table_made_at(k, t, _).
 
 // ── Access ──────────────────────────────────────────────────────────
 

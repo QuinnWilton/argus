@@ -286,7 +286,8 @@ of table T, when all of these hold:
     whereis test that found it, and past an instruction that makes it on
     the reader's own path: its named `:ets.new/2`, or an ensure helper of
     the module. This is `ets_read_when_present`, widened.
-  - Its operand can name T (`read_misses`).
+  - It touches T (`reads_made_table`: the one table identity,
+    clientlib/tables.dl).
 
 What it subsumes and deletes:
 - The separate `!owner_reaches` and `!application_lifetime` negations

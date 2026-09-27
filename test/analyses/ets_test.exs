@@ -252,6 +252,62 @@ defmodule Argus.Analyses.EtsTest do
     end
   end
 
+  describe "on the one table identity" do
+    test "two unnamed tables made under one atom are two tables" do
+      skip_without_souffle()
+
+      modules = [Argus.Test.Fixtures.EtsTwinUnnamed, Argus.Test.Fixtures.EtsTwinUnnamedOther]
+      assert {:ok, results} = Memo.analyze(modules, :ets)
+
+      for relation <- ~w(ets_missing_read_concurrency ets_missing_write_concurrency
+                         ets_ordered_set_contention) do
+        assert Map.get(results, relation, []) == [], relation
+      end
+    end
+
+    test "an unnamed table handed by its reference to another module is shared with it" do
+      skip_without_souffle()
+
+      modules = [Argus.Test.Fixtures.EtsHandedQueue, Argus.Test.Fixtures.EtsHandedQueueReader]
+      assert {:ok, results} = Memo.analyze(modules, :ets)
+
+      for relation <- ~w(ets_missing_read_concurrency ets_missing_write_concurrency) do
+        assert [[":handed_queue", "Argus.Test.Fixtures.EtsHandedQueue", _]] =
+                 results[relation],
+               relation
+      end
+
+      assert [[":handed_queue", _, _, _]] = results["ets_ordered_set_contention"]
+    end
+
+    test "a removal of another table the server keeps does not remove the log's rows" do
+      skip_without_souffle()
+
+      assert {:ok, results} = Memo.analyze([Argus.Test.Fixtures.EtsGrowsBesideScratch], :ets)
+
+      assert [[":scratch_log", "Argus.Test.Fixtures.EtsGrowsBesideScratch", _]] =
+               results["ets_write_only_table"]
+    end
+
+    test "a removal of a table the callers hand in may be the log" do
+      skip_without_souffle()
+
+      assert {:ok, results} = Memo.analyze([Argus.Test.Fixtures.EtsGrowsBesideHanded], :ets)
+      assert Map.get(results, "ets_write_only_table", []) == []
+    end
+
+    test "a named table a helper makes under the name it is handed is read outside its owner" do
+      skip_without_souffle()
+
+      assert {:ok, results} = Memo.analyze([Argus.Test.Fixtures.EtsHelperNamedOwner], :ets)
+
+      assert [[":helper_acl", "Argus.Test.Fixtures.EtsHelperNamedOwner", reader, _, _]] =
+               results["ets_read_outside_owner"]
+
+      assert reader =~ "lookup/1"
+    end
+  end
+
   describe "ets_write_only_table" do
     test "a named table with inserts and no deletes is reported; bounded and warm caches are not" do
       skip_without_souffle()

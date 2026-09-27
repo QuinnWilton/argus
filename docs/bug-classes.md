@@ -2641,7 +2641,7 @@ Another process takes or deletes the row between the check and the act, and the 
 
 ## ets
 
-`ets` owns ETS table ownership, concurrency options and lifecycle: a table that dies with the process that owns it, a table read from callers' processes while its owner restarts, options that do not suit how the table is shared, a table that only grows, and an unnamed table held by a process. The read-then-write race on an ETS key and the other races on ETS rows (a row published before the row it points to, a row acted on after another process may have removed it) belong to `races`; a named table nothing uses belongs to `coverage` (`coverage_ets_unused`). Tables are known by the atom given to `:ets.new/2`, and a table whose name is computed at runtime takes part only where a rule says so.
+`ets` owns ETS table ownership, concurrency options and lifecycle: a table that dies with the process that owns it, a table read from callers' processes while its owner restarts, options that do not suit how the table is shared, a table that only grows, and an unnamed table held by a process. The read-then-write race on an ETS key and the other races on ETS rows (a row published before the row it points to, a row acted on after another process may have removed it) belong to `races`; a named table nothing uses belongs to `coverage` (`coverage_ets_unused`). Tables are the one identity of "A table and its identity" (tables.dl, the one races compares): a named table by its name, an unnamed one by its `:ets.new/2` site, followed through returns, fields and a server's state by points-to. A creation site is reported by the name its `:ets.new/2` gave, and one whose name is computed at runtime only where a rule says so.
 
 ### Table dies with its owner
 
@@ -2739,7 +2739,8 @@ restart (redix#338).
 
   Fixtures: `WhereisElsewhereOwner`; `Probe.R2.G5.WhereisClauses`, `WhereisNoted`, `S2c.Ets.WhereisInverted`, `WhereisOther`, `WhereisStored`; `Lifetime.EnsureReader`. The window between the question and the read is left. A table the reader makes is its own, and "dies with its owner" judges it.
 - A read through a table reference held in state or a variable, rather than a literal name passed through parameters, is not tied to T.
-- A read is joined to a table by the atom both are keyed by, and then asked whether its operand can name that table (`read_misses`): an atom reaches only a named table, a reference only the table the `:ets.new/2` that returned it made. A read whose operand is only literals (or a caller's literal through the read's parameter) is not paired with an unnamed table of its atom, and one whose operand is only references other `:ets.new/2` calls returned is paired only with those tables or, both possibly named, the one table the name holds. A table is unnamed only when its options were read whole (`ets_options_known`) and give no `:named_table`; options built at run time may name it: mnesia_schema's `?ets_first(schema)` beside the unnamed scratch table `do_read_disc_schema/2` makes, qlc_pt's `no_shadows/2` reading its own unnamed table under qlc's atom (3 rows, ETS rows round). An operand with any other answer (a parameter's field, another call's result, one the operand walk cannot follow) keeps the pair.
+- A read is joined to the table it touches by the one identity (`ets_table`, `table_made_at`): an atom reaches only a named table, a reference only the table the `:ets.new/2` that made it, wherever points-to follows it (a server's state, a helper's return, a map field). A read of the function's own parameter is its callers' read, where a caller's literal names the table. A site is unnamed only when its options were read whole (`ets_options_known`) and give no `:named_table`; options built at run time may name it: mnesia_schema's `?ets_first(schema)` beside the unnamed scratch table `do_read_disc_schema/2` makes, qlc_pt's `no_shadows/2` reading its own unnamed table under qlc's atom (3 rows, ETS rows round). A named site is known by the names it is given, through the parameters of its helper (ejabberd's `acl:create_tab/1`).
+- A table under a name computed at run time that no identity ties to its reads (`ets:new(table(T), ...)` over a list) is read by any read in the owner's module of a table no site in view is known to make (`may_touch_any_table`, or a name no site gives): only the owner's API can be tied to it. A read the facts say is a table made in view is not.
 - Whether the owner restarts at all is not asked; an owner that never comes back makes the window permanent, which the finding still describes. An owner that lives as long as its application (`application_lifetime`) has no reader that outlives it: the process an Application's start/2 runs in, and the supervisor that start/2 starts and no other supervisor in view does (`application_root`, the owner "ETS table dies with its owner" excuses): when it dies the application stops, nothing restarts it, and no read meets its table gone while the application runs. Asked of the owner's process, so a keeper the root supervisor spawns and a table one of its children makes are still reported. 20 rows over emqx, hackney and vernemq (ETS rows round). A process that outlives the application (a kernel process whose exit halts the node) or a keeper that cannot crash on its own is a prior candidate, not a structural fact.
 - One finding per owner module and reader function, anchored at the read, with the `:ets.new/2` as a related frame.
 
@@ -2779,7 +2780,7 @@ Restart-state round (2026-09-26), 19 evaluation sets and 26 live projects: 247 â
 `ets_missing_read_concurrency`
 Â· titles: "Table without read_concurrency" (`:info`)
 
-**Property.** Some table, known by its atom, is read (by any read operation) from functions of at least two different modules, and an `:ets.new/2` that creates it lacks `read_concurrency: true`; the finding sits at each such creation site. When many processes read the table at once they contend on its lock; for a read-heavy table shared across processes the option is close to free. A performance hint whose right setting depends on the access pattern.
+**Property.** Some table (the one identity: by its name, or by the `:ets.new/2` site whose reference points-to follows) is read (by any read operation) from functions of at least two different modules, and an `:ets.new/2` that creates it lacks `read_concurrency: true`; the finding sits at each such creation site. When many processes read the table at once they contend on its lock; for a read-heavy table shared across processes the option is close to free. A performance hint whose right setting depends on the access pattern.
 
 **Assumptions and limits.**
 - Two modules stand in for two concurrent processes: reads from two modules may all run in one process, and the common contended case, one module's read run by many processes, is not seen.
@@ -2797,7 +2798,7 @@ Restart-state round (2026-09-26), 19 evaluation sets and 26 live projects: 247 â
 `ets_missing_write_concurrency`
 Â· titles: "Table without write_concurrency" (`:info`)
 
-**Property.** Some table, known by its atom, is written from functions of at least two different modules (any write: `insert`, `insert_new`, `delete/2`, `take`, `delete_object`, `delete_all_objects`, `update_element`, `update_counter`, `select_delete`, `select_replace`, and the administrative `give_away`, `rename` and `setopts`), and an `:ets.new/2` that creates it sets neither `write_concurrency: true` nor `:auto`; the finding sits at each such creation site. Concurrent writers serialize on one lock; for a write-heavy table the option reduces contention at the cost of slightly costlier reads.
+**Property.** Some table (the one identity) is written from functions of at least two different modules (any write: `insert`, `insert_new`, `delete/2`, `take`, `delete_object`, `delete_all_objects`, `update_element`, `update_counter`, `select_delete`, `select_replace`, and the administrative `give_away`, `rename` and `setopts`), and an `:ets.new/2` that creates it sets neither `write_concurrency: true` nor `:auto`; the finding sits at each such creation site. Concurrent writers serialize on one lock; for a write-heavy table the option reduces contention at the cost of slightly costlier reads.
 
 **Assumptions and limits.**
 - Two modules stand in for two concurrent processes, as for the read hint.
@@ -2839,7 +2840,7 @@ Restart-state round (2026-09-26), 19 evaluation sets and 26 live projects: 247 â
 - An insert whose key is a literal (`ets_key`) into a set or ordered_set keyed on the first element overwrites the one row its key names, and is no growth (`overwrites_row`, rabbit_disk_monitor's settings): a bag or duplicate_bag keeps every insert, and a keypos other than 1 keys the table on another element, so both still count; a `{:keypos, 1}` spelled out is the default (vernemq's cluster-state table). Otherwise whether the inserted keys are bounded is not asked: a key that is a parameter every caller fills with a literal, or a bounded counter, is reported (encore fugue's `:fugue_config`; vernemq's metric tables; a prior candidate).
 - "Outside init" is by name: a function named `init` of any arity in any module counts as filling at start, so a table filled in some other module's `init` and then only read is quiet; inserts in `handle_continue/2` count as growth.
 - Inserts whose table the extractor cannot name (a reference it does not resolve), and rows made by `update_counter/4` with a default, are not counted, so such tables are missed.
-- A removal on any reference of unknown name in the owner's module is taken as possibly this table (the quiet direction). Unnamed tables are not considered.
+- A removal of this table, by the one identity, counts; so does a removal in the owner's module of a table no site in view is known to make (`may_touch_any_table`: none named, or a field or handed-in table), taken as possibly this table (the quiet direction). A removal of another table the facts name (a server's scratch table in its state) does not. Unnamed tables are not considered.
 
 **Fixtures.** Positive: `EtsGrowOnly`, `EtsSettingsBag`, `EtsSettingsKeypos2`. Quiet: `EtsBounded`, `EtsWarmCache`, `EtsSettings`, `EtsSettingsKeypos1` (test/fixtures/ets_fixture.ex). Asserted by test/analyses/ets_test.exs.
 
@@ -4994,7 +4995,9 @@ ETS rows round read each against its source and fixed the false shapes
 a structural fact decides. Each quieting keeps its adversarial neighbours as positive
 fixtures in test/soundness/ets_test.exs.
 
-- **A read's operand names its table** (ets.dl `read_misses`). Assumes
+- **A read's operand names its table** (ets.dl `read_misses`, since
+  replaced by the one table identity, `ets_table` and `table_made_at` in
+  clientlib/tables.dl, which the same fixtures pin). Assumes
   the runtime's identities: an atom reaches only the named table
   registered under it, a reference only the table its `:ets.new/2`
   made; an operand with an answer other than a literal or such a

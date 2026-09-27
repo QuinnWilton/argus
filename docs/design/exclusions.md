@@ -200,7 +200,9 @@ deletion together with a test of the property they rest on:
   which only a stdlib `enter_loop` reaches.
 - `ets`: `read_can_be`'s `!unnamed_site(id)` and `read_misses`'s
   `!read_operand_open(s)` (`resolve_table` names a read only when every
-  arm agrees).
+  arm agrees). Both went when ets.dl moved onto the one table identity
+  (clientlib/tables.dl): a read is joined to the tables it touches, and
+  no longer to an atom it then has to rule out.
 - `failure`: `rpc_wrapper`'s `!predicate_function(g)` (the extractor emits
   no `result_tested` for a `?` function), `names_a_process`'s
   `!match("[{].*", t)` (the target is never a tuple), and

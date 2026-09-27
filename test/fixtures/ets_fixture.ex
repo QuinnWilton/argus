@@ -473,3 +473,132 @@ defmodule Argus.Test.Fixtures.EtsPrivateAndPublicOwner do
     {:ok, private}
   end
 end
+
+# ── One table identity (clientlib/tables.dl) ────────────────────────
+
+defmodule Argus.Test.Fixtures.EtsTwinUnnamed do
+  @moduledoc """
+  An unnamed table made under an atom another module's unnamed table
+  shares (EtsTwinUnnamedOther): each module reads and writes its own, so
+  no table is shared across modules.
+  """
+  def count(key) do
+    table = :ets.new(:twin_counts, [:ordered_set, :public])
+    :ets.insert(table, {key, 1})
+    :ets.lookup(table, key)
+  end
+end
+
+defmodule Argus.Test.Fixtures.EtsTwinUnnamedOther do
+  @moduledoc "EtsTwinUnnamed's twin: another table under the same atom."
+  def count(key) do
+    table = :ets.new(:twin_counts, [:ordered_set, :public])
+    :ets.insert(table, {key, 1})
+    :ets.lookup(table, key)
+  end
+end
+
+defmodule Argus.Test.Fixtures.EtsHandedQueue do
+  @moduledoc """
+  Redix's command queue: an unnamed ordered_set a server makes and hands
+  by its reference to a module of its own, which reads and writes it too.
+  """
+  use GenServer
+
+  alias Argus.Test.Fixtures.EtsHandedQueueReader
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(_) do
+    table = :ets.new(:handed_queue, [:ordered_set, :public])
+    EtsHandedQueueReader.watch(table)
+    {:ok, table}
+  end
+
+  @impl true
+  def handle_call({:push, key}, _from, table) do
+    :ets.insert(table, {key, 1})
+    {:reply, :ets.lookup(table, key), table}
+  end
+end
+
+defmodule Argus.Test.Fixtures.EtsHandedQueueReader do
+  @moduledoc "Reads and writes the queue its server hands it."
+  def watch(table) do
+    :ets.insert(table, {:watched, 1})
+    :ets.lookup(table, :watched)
+  end
+end
+
+defmodule Argus.Test.Fixtures.EtsGrowsBesideScratch do
+  @moduledoc """
+  A named log that only grows, beside a scratch table the server keeps in
+  its state and clears: the scratch table's removal is of that table, not
+  of the log.
+  """
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(_) do
+    :ets.new(:scratch_log, [:named_table, :public, :bag])
+    {:ok, :ets.new(:scratch, [:set, :private])}
+  end
+
+  @impl true
+  def handle_cast({:log, entry}, scratch) do
+    :ets.insert(:scratch_log, {:entry, entry})
+    {:noreply, scratch}
+  end
+
+  def handle_cast({:forget, key}, scratch) do
+    :ets.delete(scratch, key)
+    {:noreply, scratch}
+  end
+end
+
+defmodule Argus.Test.Fixtures.EtsGrowsBesideHanded do
+  @moduledoc """
+  The same log, whose module also deletes from whatever table its callers
+  hand it: that table may be the log, and the log is taken to lose rows.
+  """
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(_) do
+    :ets.new(:handed_log, [:named_table, :public, :bag])
+    {:ok, nil}
+  end
+
+  @impl true
+  def handle_cast({:log, entry}, state) do
+    :ets.insert(:handed_log, {:entry, entry})
+    {:noreply, state}
+  end
+
+  def forget(table, key), do: :ets.delete(table, key)
+end
+
+defmodule Argus.Test.Fixtures.EtsHelperNamedOwner do
+  @moduledoc """
+  ejabberd's acl: the server makes its named table through a helper
+  handed the name, and its API reads the table in its callers' processes.
+  """
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(_) do
+    create_tab(:helper_acl)
+    {:ok, nil}
+  end
+
+  defp create_tab(name), do: :ets.new(name, [:named_table, :public, :set])
+
+  def lookup(key), do: :ets.lookup(:helper_acl, key)
+end
