@@ -49,7 +49,6 @@ defmodule Argus.Cache.CodeTest do
           Argus.Souffle,
           Argus.Souffle.Cache,
           Argus.Cache,
-          Argus.Cache.Facts,
           Argus.Analysis,
           Argus.Analysis.Sets,
           Argus.Analysis.Catalog,
