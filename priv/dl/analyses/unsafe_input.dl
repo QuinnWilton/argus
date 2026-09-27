@@ -44,6 +44,7 @@
 .include "../clientlib/callbacks.dl"
 .include "../clientlib/request_entry.dl"
 .include "../clientlib/runs_elsewhere.dl"
+.include "../clientlib/supervision.dl"
 .include "../clientlib/tooling.dl"
 
 // A finding in code only developers' tools or tests run steps down a
@@ -842,18 +843,13 @@ uncapped_supervisor(sup) :-
   sup != "dynamic",
   !supervisor_max_children(sup, _).
 
-// A request entry of `kind` reaches the function that starts the child.
+// A request entry of `kind` reaches the function that starts the child
+// (reaches_child_start, clientlib/supervision.dl).
 .decl started_by_request(via: symbol, kind: symbol)
 
 started_by_request(via, kind) :-
   request_entry(entry, kind),
-  start_reach.reaches(entry, via).
-
-// Backwards from the functions that start dynamic children, so only
-// their callers are explored.
-.init start_reach = CallReach
-
-start_reach.seed(via, via) :- dynamic_child(_, _, via).
+  reaches_child_start(entry, via).
 
 // The start keeps its child no longer than the request that made it: the
 // request's own process enumerates a task stream (stream_only), or the
@@ -903,7 +899,7 @@ detach_reach.seed(f, via) :-
   task_supervisor_start(_, via, op),
   task_supervisor_op(op, "stream"),
   runs_elsewhere(f, g),
-  start_reach.reaches(g, via).
+  reaches_child_start(g, via).
 
 .decl streams_detached(via: symbol)
 

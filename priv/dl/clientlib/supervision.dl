@@ -10,6 +10,7 @@
 //   boots_before(sup, earlier, later, earlier_pos, later_pos)
 //   child_restart(sup, pos, child, restart)
 //   dynamic_restart(sup, child, caller, restart)
+//   reaches_child_start(func, start)
 //   ends_with(dying, other)
 
 // ── Child subtree ─────────────────────────────────────────────────────
@@ -265,6 +266,17 @@ sup_management_call(id, func, api, op, target) :-
 child_creating_op("start_child").
 child_creating_op("async").
 child_creating_op("async_nolink").
+
+// `func` calls `start`, a function that starts a child under a supervisor
+// at run time (dynamic_child's start), itself or through any calls.
+// Walked backwards from the starts, so only their callers are explored.
+.decl reaches_child_start(func: symbol, start: symbol) inline
+
+reaches_child_start(f, start) :- child_start_reach.reaches(f, start).
+
+.init child_start_reach = CallReach
+
+child_start_reach.seed(start, start) :- dynamic_child(_, _, start).
 
 // Operations with no bound of their own: terminate_child, stop and
 // their relatives wait for a whole shutdown. start_child is bounded by

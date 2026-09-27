@@ -848,14 +848,11 @@ starts_children_under(mod, sup, start) :-
   sup != "dynamic",
   starter_process(mod, start).
 
-// An entry of `mod`'s process (process_entry) reaches `start`.
-.init start_reach = CallReach
-
-start_reach.seed(s, s) :- dynamic_child(_, _, s).
-
+// An entry of `mod`'s process (process_entry) reaches `start`
+// (reaches_child_start, clientlib/supervision.dl).
 .decl starter_process(mod: symbol, start: symbol)
 
-starter_process(mod, s) :- process_entry(mod, c), start_reach.reaches(c, s).
+starter_process(mod, s) :- process_entry(mod, c), reaches_child_start(c, s).
 
 // The start function lives outside the supervisor's module. One in it
 // (`Postgrex.TypeSupervisor.start_server/2`, `DBConnection.Task.run_child/4`)
