@@ -95,10 +95,12 @@ defmodule Argus.Pipeline do
           timeout: timeout(),
           trace_imprecision: boolean(),
           format: :raw | :typed | :interned,
-          symbols: Argus.Symbols.t()
+          symbols: Argus.Symbols.t(),
+          specs_source: Argus.Specs.Source.t()
         ]
 
   @type run_opts :: [
+          specs_source: Argus.Specs.Source.t(),
           concurrency: pos_integer(),
           extractors: [module()],
           timeout: timeout(),
@@ -247,7 +249,7 @@ defmodule Argus.Pipeline do
          {:ok, paths} <- Disassemble.resolve_paths(modules),
          {:ok, inputs} <- with_bases(paths, Keyword.get(opts, :bases), how) do
       writers = Map.new(dirs, fn {producer, dir} -> {producer, Writer.new(dir, written)} end)
-      memo = new_memo()
+      memo = new_memo(opts)
 
       # The names a module's base extraction errors give are read here,
       # whether or not the base's rows are written: for a module the run
@@ -379,7 +381,7 @@ defmodule Argus.Pipeline do
     opts = if format == :interned, do: opts, else: Keyword.delete(opts, :symbols)
 
     with {:ok, paths} <- Disassemble.resolve_paths(modules) do
-      memo = new_memo()
+      memo = new_memo(opts)
       shape = extract_shape(format, Keyword.get(opts, :symbols))
 
       merged =
@@ -458,7 +460,7 @@ defmodule Argus.Pipeline do
     end
 
     with {:ok, paths} <- Disassemble.resolve_paths(modules) do
-      memo = new_memo()
+      memo = new_memo(opts)
 
       try do
         paths
@@ -552,7 +554,7 @@ defmodule Argus.Pipeline do
     end
 
     with {:ok, [path]} <- Disassemble.resolve_paths([input]) do
-      memo = new_memo()
+      memo = new_memo(opts)
 
       try do
         [{path, kept}]
@@ -918,7 +920,20 @@ defmodule Argus.Pipeline do
   # waits on in turn, and the answer cannot change while the run reads
   # the same path. The caller owns the table and deletes it when the run
   # is done; the workers read and fill it.
-  defp new_memo, do: :ets.new(:argus_extraction_memo, [:set, :public, read_concurrency: true])
+  #
+  # With `specs_source:` (`Argus.Specs.Source`), the specs are read from a
+  # project's own ebins and the installed OTP rather than the code path:
+  # the memo carries the source to every worker.
+  defp new_memo(opts) do
+    memo = :ets.new(:argus_extraction_memo, [:set, :public, read_concurrency: true])
+
+    case Keyword.get(opts, :specs_source) do
+      nil -> :ok
+      %Argus.Specs.Source{} = source -> :ets.insert(memo, {:specs_source, source})
+    end
+
+    memo
+  end
 
   # `{value, errors}`: the step's result, or nil with the failure added to
   # `errors` as `{step, reason}`.

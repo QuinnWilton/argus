@@ -1,6 +1,6 @@
 -module(ledger).
 
--export([record/1, record_async/1, wait/0]).
+-export([record/1, record_async/1, wait/0, version/0]).
 
 record(Event) ->
     telemetry:execute([ledger, record], #{count => 1}, #{event => Event}),
@@ -17,3 +17,7 @@ wait() ->
         {done, Value} ->
             Value
     end.
+
+%% A function only the project's telemetry has.
+version() ->
+    telemetry:fixture_version().

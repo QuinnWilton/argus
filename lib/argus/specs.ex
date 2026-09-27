@@ -40,7 +40,10 @@ defmodule Argus.Specs do
   answer per module for the life of the VM, keyed by the file it was read
   from, so a recompiled dependency is read again; `installed/2` and
   `of_beam/2` answer from a table the caller keeps for one run instead,
-  which asks the code path about each module once. Results that depend on
+  which asks the code path about each module once — or, when the table
+  carries a source (`Argus.Specs.Source`, `Argus.Pipeline`'s
+  `specs_source:`), the project's own ebins and the installed OTP, and
+  never the code path. Results that depend on
   the code path depend on the installed OTP, Elixir and dependencies:
   `environment_digest/1` names them, for caches keyed on extraction
   output.
@@ -124,7 +127,7 @@ defmodule Argus.Specs do
     do: memoized(memo, {:specs, module}, fn -> stamped_installed(module, memo) end)
 
   defp stamped_installed(module, memo) do
-    stamp = stamp(module)
+    stamp = stamp(module, memo)
     key = {__MODULE__, :installed, module}
 
     case :persistent_term.get(key, nil) do
@@ -176,7 +179,7 @@ defmodule Argus.Specs do
       end
 
     types =
-      for {name_arity, {args, body}} <- stamped_types(module),
+      for {name_arity, {args, body}} <- stamped_types(module, nil),
           into: %{},
           do: {name_arity, {Enum.map(args, &unannotated/1), unannotated(body)}}
 
@@ -352,19 +355,21 @@ defmodule Argus.Specs do
   end
 
   defp read_installed(module, memo) do
-    case fetch(fn -> Code.Typespec.fetch_specs(module) end) do
-      {:ok, specs} -> reduce(specs, installed_types(module, memo), memo)
+    with {:ok, target} <- target(module, memo),
+         {:ok, specs} <- fetch(fn -> Code.Typespec.fetch_specs(target) end) do
+      reduce(specs, installed_types(module, memo), memo)
+    else
       :error -> :unknown
     end
   end
 
-  defp installed_types(module, nil), do: stamped_types(module)
+  defp installed_types(module, nil), do: stamped_types(module, nil)
 
   defp installed_types(module, memo),
-    do: memoized(memo, {:types, module}, fn -> stamped_types(module) end)
+    do: memoized(memo, {:types, module}, fn -> stamped_types(module, memo) end)
 
-  defp stamped_types(module) do
-    stamp = stamp(module)
+  defp stamped_types(module, memo) do
+    stamp = stamp(module, memo)
     key = {__MODULE__, :types, module}
 
     case :persistent_term.get(key, nil) do
@@ -372,15 +377,52 @@ defmodule Argus.Specs do
         types
 
       _stale_or_missing ->
-        types = local_types(module)
+        types =
+          case target(module, memo) do
+            {:ok, target} -> local_types(target)
+            :error -> %{}
+          end
+
         :persistent_term.put(key, {stamp, types})
         types
     end
   end
 
+  # What installed specs are read from: the module on the code path, or
+  # its beam from the run's source (`Argus.Specs.Source`, carried in the
+  # memo), which never looks at the code path.
+  defp target(module, memo) do
+    case source(memo) do
+      nil ->
+        {:ok, module}
+
+      source ->
+        case Argus.Specs.Source.read(source, module) do
+          {:ok, binary, _stamp} -> {:ok, binary}
+          :error -> :error
+        end
+    end
+  end
+
+  defp source(nil), do: nil
+
+  defp source(memo) do
+    case :ets.lookup(memo, :specs_source) do
+      [{:specs_source, source}] -> source
+      [] -> nil
+    end
+  end
+
   # Which file a module would be read from, and when it was written: a
   # memoized answer is reused only while both still hold.
-  defp stamp(module) do
+  defp stamp(module, memo) do
+    case source(memo) do
+      nil -> code_path_stamp(module)
+      source -> {:source, Argus.Specs.Source.stamp(source, module)}
+    end
+  end
+
+  defp code_path_stamp(module) do
     case :code.which(module) do
       path when is_list(path) ->
         case File.stat(path, time: :posix) do
