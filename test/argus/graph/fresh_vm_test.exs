@@ -160,7 +160,8 @@ defmodule Argus.Graph.FreshVmTest do
 
     try do
       {:ok, _} = Argus.Graph.Extraction.module_facts(db, Path.expand(path))
-      for {module} <- :ets.tab2list(table), do: module
+      # The event is VM-wide: other tests' graphs extract beside this one.
+      for {module} <- :ets.tab2list(table), module == :argus_fresh_vm_caller, do: module
     after
       :telemetry.detach(handler)
       Roux.Database.shutdown(db)
