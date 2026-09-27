@@ -91,14 +91,15 @@ defmodule Argus.Graph.Programs do
     end
   end
 
-  # A program's includes, walked once per VM for each content of its
-  # tree (every file's digest, the `dl_tree` input): an edit anywhere in
-  # the tree walks it again. Without the input, walked every time.
-  defp walk(path, nil), do: Program.program_files(path)
+  # A program's includes, walked once for each content of its tree
+  # (every file's digest, the `dl_tree` input), and kept in the VM and
+  # the store: an edit anywhere in the tree walks it again. Without the
+  # input, walked every time.
+  defp walk(_db, path, nil), do: Program.program_files(path)
 
-  defp walk(path, digests) do
+  defp walk(db, path, digests) do
     key = {__MODULE__, :walk, path, sha(:erlang.term_to_binary(digests, [:deterministic]))}
-    Roux.Stamp.memo(key, [], fn -> Program.program_files(path) end)
+    Roux.Stamp.memo(key, [], fn -> Program.program_files(path) end, store: db.blob)
   end
 
   # A file's digest as the tree's input holds it, or read.
@@ -127,7 +128,7 @@ defmodule Argus.Graph.Programs do
 
       try do
         {:ok,
-         for {spelled, file} <- walk(path, digests) do
+         for {spelled, file} <- walk(db, path, digests) do
            {spelled, Path.relative_to(file, root), digest(tree, root, digests, file)}
          end}
       rescue
@@ -162,9 +163,12 @@ defmodule Argus.Graph.Programs do
       try do
         # The files by their digests: a program read once per VM.
         declared =
-          Roux.Stamp.memo({__MODULE__, :declared, files, relations}, [], fn ->
-            Program.declared_digest(path, relations)
-          end)
+          Roux.Stamp.memo(
+            {__MODULE__, :declared, files, relations},
+            [],
+            fn -> Program.declared_digest(path, relations) end,
+            store: db.blob
+          )
 
         {:ok, sha(:erlang.term_to_binary({declared, solver.version}, [:deterministic]))}
       rescue
