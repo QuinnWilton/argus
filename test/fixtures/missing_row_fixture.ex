@@ -301,6 +301,108 @@ defmodule Argus.Test.Fixtures.MissingRow do
 
   # ── Which rows a remover can take ────────────────────────────────
 
+  defmodule WrongRescue do
+    @moduledoc "The count is inside a rescue of another exception: its miss still raises."
+    @table :wrong_rescue_buckets
+
+    def setup, do: :ets.new(@table, [:set, :named_table, :public])
+
+    def log(key) do
+      case :ets.lookup(@table, key) do
+        [] ->
+          :ets.insert(@table, {key, 0})
+          _ = :timer.apply_after(10, __MODULE__, :flush, [key])
+          :ok
+
+        [_existing] ->
+          :ets.update_counter(@table, key, {2, 1})
+      end
+    rescue
+      KeyError -> :ok
+    end
+
+    def flush(key), do: :ets.take(@table, key)
+  end
+
+  defmodule ReraisingRescue do
+    @moduledoc "The count is inside a rescue that logs the miss and raises it again."
+    @table :reraising_rescue_buckets
+
+    def setup, do: :ets.new(@table, [:set, :named_table, :public])
+
+    def log(key) do
+      case :ets.lookup(@table, key) do
+        [] ->
+          :ets.insert(@table, {key, 0})
+          _ = :timer.apply_after(10, __MODULE__, :flush, [key])
+          :ok
+
+        [_existing] ->
+          :ets.update_counter(@table, key, {2, 1})
+      end
+    rescue
+      e in ArgumentError ->
+        :telemetry.execute([:buckets, :miss], %{}, %{})
+        reraise e, __STACKTRACE__
+    end
+
+    def flush(key), do: :ets.take(@table, key)
+  end
+
+  defmodule ClosureCallerRescues do
+    @moduledoc "The pair is in a closure handed to Enum.each inside a rescue of the miss."
+    @table :closure_rescue_buckets
+
+    def setup, do: :ets.new(@table, [:set, :named_table, :public])
+
+    def log_all(keys) do
+      Enum.each(keys, fn key ->
+        case :ets.lookup(@table, key) do
+          [] ->
+            :ets.insert(@table, {key, 0})
+            _ = :timer.apply_after(10, __MODULE__, :flush, [key])
+            :ok
+
+          [_existing] ->
+            :ets.update_counter(@table, key, {2, 1})
+        end
+      end)
+    rescue
+      ArgumentError -> :ok
+    end
+
+    def flush(key), do: :ets.take(@table, key)
+  end
+
+  defmodule ClosureCallerUnguarded do
+    @moduledoc "The same closure, handed to Enum.each outside the rescue."
+    @table :closure_unguarded_buckets
+
+    def setup, do: :ets.new(@table, [:set, :named_table, :public])
+
+    def log_all(keys, payload) do
+      Enum.each(keys, fn key ->
+        case :ets.lookup(@table, key) do
+          [] ->
+            :ets.insert(@table, {key, 0})
+            _ = :timer.apply_after(10, __MODULE__, :flush, [key])
+            :ok
+
+          [_existing] ->
+            :ets.update_counter(@table, key, {2, 1})
+        end
+      end)
+
+      try do
+        :erlang.binary_to_term(payload)
+      rescue
+        _ -> :bad
+      end
+    end
+
+    def flush(key), do: :ets.take(@table, key)
+  end
+
   defmodule OwnRow do
     @moduledoc "Each process counts in its own row, keyed by self(), and removes only its own."
     @table :own_row_counts

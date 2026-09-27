@@ -21,6 +21,10 @@ defmodule Argus.Analyses.EtsMissingRowTest do
     Fixture.HelperRescue,
     Fixture.CallerRescues,
     Fixture.OneCallerRescues,
+    Fixture.WrongRescue,
+    Fixture.ReraisingRescue,
+    Fixture.ClosureCallerRescues,
+    Fixture.ClosureCallerUnguarded,
     Fixture.OwnRow,
     Fixture.OwnRowReaped,
     Fixture.SentinelRow,
@@ -107,6 +111,32 @@ defmodule Argus.Analyses.EtsMissingRowTest do
 
       assert [{"do_log/1", "named", ":one_caller_rescue_buckets", _, _, "flush/1"}] =
                missing(ctx, [Fixture.OneCallerRescues])
+    end
+
+    test "a rescue of another exception around the act does not take its miss", ctx do
+      skip_without_souffle()
+
+      assert [{"log/1", "named", ":wrong_rescue_buckets", "log/1", "log/1", "flush/1"}] =
+               missing(ctx, [Fixture.WrongRescue])
+    end
+
+    test "a rescue that raises the miss again does not take it", ctx do
+      skip_without_souffle()
+
+      assert [{"log/1", "named", ":reraising_rescue_buckets", "log/1", "log/1", "flush/1"}] =
+               missing(ctx, [Fixture.ReraisingRescue])
+    end
+
+    test "a closure handed to a call inside a rescue of the miss stays quiet", ctx do
+      skip_without_souffle()
+      assert missing(ctx, [Fixture.ClosureCallerRescues]) == []
+    end
+
+    test "the same closure handed to a call outside the rescue is reported", ctx do
+      skip_without_souffle()
+
+      assert [{_, "named", ":closure_unguarded_buckets", _, _, "flush/1"}] =
+               missing(ctx, [Fixture.ClosureCallerUnguarded])
     end
   end
 

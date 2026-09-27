@@ -256,8 +256,8 @@ than more; it errs loud when the same uncertainty can add a finding.
 
 ### Guarded and data-flow reach
 
-- **Names.** `ForwardGuardedCallReach`, `ForwardUnguardedSet`, `BackwardUnguarded`, `ParamReach`, `ParamReadsReach` (reach.dl components).
-- **Meaning.** The guarded forms walk only the calls no guard covers: the instance marks a call `guarded` (a try that takes the class in question), and an edge with no call instruction is held against the call its fun is handed to. shutdown walks terminate/2's paths no exit-catching try covers, races the path to an act that raises, failure what some entry reaches past no try of a class, mailbox the callers that leave a task uncollected. `ParamReach` steps from a function's parameter into the callee parameter a derived argument fills; `ParamReadsReach` also follows data-only reads and is wider on purpose.
+- **Names.** `ForwardUnguardedSet`, `BackwardUnguarded`, `ParamReach`, `ParamReadsReach` (reach.dl components); `Escape` (escape.dl).
+- **Meaning.** The guarded forms walk only the calls no guard covers: the instance marks a call `guarded` (a try that takes the class in question), and an edge with no call instruction is held against the call its fun is handed to. shutdown walks terminate/2's paths no exit-catching try covers, `Escape` the path to a site that raises (see "Whether a raise escapes"), failure what some entry reaches past no try of a class, mailbox the callers that leave a task uncollected. `ParamReach` steps from a function's parameter into the callee parameter a derived argument fills; `ParamReadsReach` also follows data-only reads and is wider on purpose.
 - **Direction.** An edge with no call instruction and no call it is handed to is open unless the instance seals it (loud); a fun handed to a process start is not followed (quiet).
 - **Used by.** failure, mailbox, races and shutdown (guarded forms); unsafe_input (data-flow forms).
 
@@ -428,6 +428,13 @@ than more; it errs loud when the same uncertainty can add a finding.
 - **Meaning.** One question at three granularities: does anything in f catch class c, does this try take c (a path through its handler establishes the class and returns without raising again), and is this call inside the protected region of a try that takes c (Erlang's `catch Expr` takes every class). The ArgumentError pair asks the same of the badarg a BIF raises on a missing table or a taken name.
 - **Direction.** The function-level forms count a handler around unrelated code (quiet); the site forms are the precise ones.
 - **Used by.** blocking, ets, failure, races and shutdown. ets, failure and races ask the site forms of a read or an act that raises.
+
+### Whether a raise escapes
+
+- **Names.** `raise_class`, `raise_tag`, `handler_takes`, `site_takes`, `takes_somewhere` (exceptions.dl); the `Escape` component's `escapes`, `escapes_through` and `rescued` (escape.dl).
+- **Meaning.** `escapes(site, func, raise)`: no handler that takes `raise` and goes on covers the raising site, nor any call on some path of calls from `func` (the function the rule reasons about) down to the site's function, and not every call to `func` is inside one. A raise is `"badarg"` (the ArgumentError a BIF raises), `"erpc"` (`{:erpc, reason}`) or a whole class; a handler takes it when a clause takes its class or names its tag and some path through the handler goes on (a rescue that only re-raises, or an `after`, takes nothing). A closure is held against the call it is handed to, on the path down and among the callers; a fun handed to a process start raises in that process.
+- **Direction.** The path is followed at most 16 calls deep (a site further down is rescued, quiet); an edge with no call to hold a try against is closed by a handler anywhere in its function (quiet); the callers are asked one level up, and only when the program shows them all (loud).
+- **Used by.** races (`ets_missing_row`).
 
 ### Effect categories
 
@@ -2562,7 +2569,7 @@ Tables are `ets_table` identities: a named table by its name, an unnamed one by 
 · titles: "ETS row acted on after another process may have removed it" (`:warning`)
 
 **Property.** Some function f in which a deciding read of table T at key K (`lookup`, `lookup_element`, `member`, `match`, `match_object`) decides, in f or through helpers and across modules, an operation on T at K that raises when the row is missing (`:ets.update_counter/3`, `:ets.lookup_element/3`), where:
-- no handler that takes ArgumentError covers the act, or a call on every path of calls from f down to it, nor every call to f (when f is private and never handed out as a fun);
+- the act's ArgumentError escapes (`escapes`, clientlib/escape.dl): no handler that takes it and goes on covers the act, or a call on every path of calls from f down to it, nor every call to f (when f is private and never handed out as a fun; a closure counts the call it is handed to);
 - T is readable by other processes: made where the program shows and not private, or a named table the program does not show being made; and
 - some operation that deletes rows of T (`take`, `delete`, `delete_object`, `select_delete`, `match_delete`, `delete_all_objects`, or deleting the table), at a key that can be K, can run while f is between the check and the act: f runs in more than one process, or the remover runs in a process that does not run f (a timer's `apply_after` counts as a process of its own).
 
@@ -2572,11 +2579,11 @@ Another process takes or deletes the row between the check and the act, and the 
 - A remover's key is asked only to rule it out: one removing `self()`'s row does not race a pair keyed by `self()`, nor a literal row, and a literal remover takes only that row, not another literal's nor the rows kept beside it under keys callers pass. A remover whose key the facts cannot equate, such as a flush keyed by what a timer was handed, counts.
 - A named table made out of view (by a dependency, or under a name from config) is taken as shared: nothing says it is private (2e1a812).
 - A named table and an `:ets.new/2` site cross every call unchanged; a table a module keeps under a field of its own crosses calls within the module.
-- The rescue walk follows calls at most 16 deep, and an act further down is taken as rescued; a closure or fun is asked of the call it is handed to, and one handed to a process start runs elsewhere.
+- The rescue walk follows calls at most 16 deep, and an act further down is taken as rescued; a closure or fun is asked of the call it is handed to, and one handed to a process start runs elsewhere. A rescue that only raises the miss again takes nothing.
 - A remover only a caller outside the program runs does not count when f runs in one process.
 - Quiet: an act with a default (`update_counter/4`, `lookup_element/4`), a rescued miss, and one process doing all of it.
 
-**Fixtures.** Positive: `MissingRow.Debounce` with `Debounce.Config`, `InlineTupleKey`, `NameFromConfig`, `UnrelatedRescue`, `OneCallerRescues`, `OwnRowReaped`, `SentinelRow` (`total/0`), `HelperAct`, `HelperCheck`, `CrossModuleAct` with `Counter` (test/fixtures/missing_row_fixture.ex). Quiet: `MissingRow.WithDefault`, `Rescued`, `OneOwner`, `HelperRescue`, `CallerRescues`, `OwnRow`, `SentinelRow` (`hit/1`). Asserted by test/analyses/ets_missing_row_test.exs; test/analyses/quiet_shapes_test.exs runs it over `OneOwner`.
+**Fixtures.** Positive: `MissingRow.Debounce` with `Debounce.Config`, `InlineTupleKey`, `NameFromConfig`, `UnrelatedRescue`, `OneCallerRescues`, `WrongRescue`, `ReraisingRescue`, `ClosureCallerUnguarded`, `OwnRowReaped`, `SentinelRow` (`total/0`), `HelperAct`, `HelperCheck`, `CrossModuleAct` with `Counter` (test/fixtures/missing_row_fixture.ex). Quiet: `MissingRow.WithDefault`, `Rescued`, `OneOwner`, `HelperRescue`, `CallerRescues`, `ClosureCallerRescues`, `OwnRow`, `SentinelRow` (`hit/1`). Asserted by test/analyses/ets_missing_row_test.exs; test/analyses/quiet_shapes_test.exs runs it over `OneOwner`.
 
 **Corpus.** Fix pairs: none. Present-only: `sequin@46ce4e1` (sequinstream/sequin, 46ce4e1, Sequin.DebouncedLogger).
 

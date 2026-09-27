@@ -40,6 +40,7 @@
 .include "../clientlib/tables.dl"
 .include "../clientlib/vocabulary.dl"
 .include "../clientlib/tooling.dl"
+.include "../clientlib/escape.dl"
 
 // A finding in code only developers' tools or tests run steps down a
 // level (clientlib/tooling.dl, Argus.Findings.Tooling).
@@ -1945,71 +1946,25 @@ table_kind_as("field", "module field").
 
 checks_row_exists(check) :- deciding_read(check, _).
 
-// An operation that raises when the row is missing, and nothing rescues
-// the raise: not a handler around the act, nor one around any call on
-// some path from `func`, where the check's result meets it, down to the
-// act, nor one around every call to `func`.
+// An operation that raises when the row is missing, and the raise
+// escapes (clientlib/escape.dl): no handler that takes the ArgumentError
+// covers the act, nor any call on some path from `func`, where the
+// check's result meets it, down to the act, nor every call to `func`.
 .decl fails_if_row_missing(act: symbol, func: symbol)
 
 fails_if_row_missing(act, func) :-
   missing.meets(func, _, act, _, _, _, _),
-  raises_unguarded(func, act),
-  !callers_rescue(func).
+  row_miss.escapes(act, func, "badarg").
 
-// ── Whether the raise is rescued ──
-//
 // Asked of the act's site and of the calls that lead to it, not of whole
 // functions: a `rescue` around unrelated code after the act does not
 // take the act's ArgumentError, and a handler around the call to a
-// helper does. The act is unguarded from `func` when some path of calls
-// from `func` that passes no such handler (clientlib/reach.dl's
-// ForwardGuardedCallReach) reaches the act's function, and nothing
-// around the act itself takes the error either. A closure or a fun
-// handed to a call is asked of the call it is handed to (fun_handed,
-// resolved_apply), and one handed to a process start runs elsewhere; an
-// edge that names no such call is followed unless its function has a
-// handler that takes the error somewhere, the function-wide answer.
-.init unguarded_path = ForwardGuardedCallReach
+// helper does.
+.init row_miss = Escape
 
-unguarded_path.root(f) :- missing.meets(f, _, _, _, _, _, _).
-unguarded_path.limit(16).
-unguarded_path.guarded(c) :- site_rescues_argument_error(c, _).
-unguarded_path.handed(f, g, id) :- fun_handed(id, f, g, _).
-unguarded_path.handed(f, g, id) :- resolved_apply(id, f, g).
-unguarded_path.sealed(f) :- rescues_argument_error(f).
-unguarded_path.elsewhere(c) :- starts_a_process(c).
-
-.decl raises_unguarded(func: symbol, act: symbol)
-
-raises_unguarded(f, a) :-
-  missing.meets(f, _, a, _, _, _, _),
-  raises_if_row_missing(a, f),
-  !site_rescues_argument_error(a, f).
-
-raises_unguarded(f, a) :-
-  missing.meets(f, _, a, _, _, _, _),
-  raises_if_row_missing(a, g),
-  unguarded_path.reaches(f, g, _, _),
-  !site_rescues_argument_error(a, g).
-
-// Every call to `func` is inside a handler that takes the error, and no
-// caller the program does not show can call it: not exported, not handed
-// out as a fun, and reached only through call sites. One unguarded caller
-// keeps the finding.
-.decl rescue_asked(func: symbol)
-
-rescue_asked(f) :- missing.meets(f, _, _, _, _, _, _).
-
-.decl called_unguarded(func: symbol)
-
-called_unguarded(f) :- rescue_asked(f), call_instr(h, f, c), !site_rescues_argument_error(c, h).
-called_unguarded(f) :- rescue_asked(f), api_export(f).
-called_unguarded(f) :- rescue_asked(f), fun_ref(_, f).
-called_unguarded(f) :- rescue_asked(f), call_edge(h, f), !call_instr(h, f, _).
-
-.decl callers_rescue(func: symbol)
-
-callers_rescue(f) :- rescue_asked(f), call_instr(_, f, _), !called_unguarded(f).
+row_miss.asked(act, g, f, "badarg") :-
+  missing.meets(f, _, act, _, _, _, _),
+  raises_if_row_missing(act, g).
 
 // The act's table is one another process can read. A named table the
 // program does not show being made — by a dependency, or under a name
