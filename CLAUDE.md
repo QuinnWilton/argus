@@ -356,8 +356,9 @@ bytecode's late step). Invariants:
   closure.
 - **The schema is read through its accessors, inside a query.** The
   `around:` hook (`Argus.Graph.Reads.around/2`) turns every schema entry
-  a query recorded, and every module whose specs extraction read off the
-  code path, into `schema_entry`/`installed_specs` edges. Never keep
+  a query recorded, and every module whose specs extraction read (from
+  the project's `Argus.Specs.Source`, or off the code path without
+  one), into `schema_entry`/`installed_specs` edges. Never keep
   what an accessor returned where another query could find it; never
   read the schema in a spawned process without handing its reads back
   (`Argus.Schema.Reads.record_all/1`).
@@ -372,7 +373,11 @@ bytecode's late step). Invariants:
   in the input → facts chain: durability propagates as the minimum.
 - **Rendering is driver work** from query values (`Argus.Located`), never
   a query's side effect; what only the source says (a fragment's line, a
-  block's end, the `{guard}` keyword) is the renderer's.
+  block's end, the `{guard}` keyword) is `Argus.Located.refine/1`'s,
+  which every report and `Argus.run_analyses/2` take alike.
+- **What the store keeps is read back by a fresh VM.** A trace names a
+  module outside the program by string, never by atom: the VM reading
+  it has not made that atom (`Argus.Graph.FreshVmTest`).
 - Without a solver nothing is solved: the driver demands no analysis,
   so no error memo reaches a manifest.
 - Beams are keyed by path; a beam's `hash` is the digest of it without
@@ -407,6 +412,10 @@ bytecode's late step). Invariants:
   (`Argus.Test.Graph.new_db(paths, store: :temporary)`,
   `Peer.start!(store: :own)`, or `ARGUS_CACHE_DIR` pointed at a fresh
   directory for the runs it makes).
+- `Argus.Test.Graph.new_db/2` stamps no code directory (`app_code`):
+  stamping the test VM's code path reads thousands of files. A test
+  about a rebuilt directory passes `stamps: true` or sets the stamp it
+  moves itself.
 - Mix-project tests check out `test/projects/depot` (or the umbrella)
   with `Argus.Test.Fixture` and run the real chain in a peer:
   - `Mix.Project.in_project/3` caches projects by app atom — one unique
