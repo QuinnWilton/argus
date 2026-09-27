@@ -15,8 +15,8 @@ defmodule Argus.Extractors.Specs do
   Specs are claims nothing verified, so the rules that read these rows use
   them to stay quiet (a callee whose spec is `true` has no failure to
   check) or to confirm, never to report on their own. The installed rows
-  depend on the code path the extraction runs with; a cache keyed on
-  extraction output folds in `Argus.Specs.environment_digest/1`.
+  depend on where the callee's specs are read from: the query graph
+  depends on each read (`Argus.Graph.Reads`'s `installed_specs`).
   """
 
   @behaviour Argus.Extractor

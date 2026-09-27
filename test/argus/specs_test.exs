@@ -112,11 +112,6 @@ defmodule Argus.SpecsTest do
     end
   end
 
-  test "the environment digest is stable within a VM" do
-    assert Specs.environment_digest() == Specs.environment_digest()
-    assert Specs.environment_digest() =~ ~r/^[0-9a-f]{64}$/
-  end
-
   describe "Argus.Extractors.Specs" do
     setup do
       {:ok, facts} = Argus.Pipeline.extract([Fixture], extractors: [Argus.Extractors.Specs])
