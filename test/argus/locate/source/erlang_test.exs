@@ -98,9 +98,11 @@ defmodule Argus.Locate.Source.ErlangTest do
     assert Erlang.block_end(path, 9, :guard) == nil
   end
 
-  test "an old-style catch expression is no try: fail closed", %{path: path} do
-    assert Erlang.guard_keyword(path, 40) == nil
+  test "an old-style catch expression guards its line, under its own keyword", %{path: path} do
+    assert Erlang.guard_keyword(path, 40) == "catch"
     assert Erlang.block_end(path, 40, :guard) == nil
+    # A try's own catch is no old-style one: its handler is not guarded.
+    assert Erlang.guard_keyword(path, 7) == nil
   end
 
   test "a receive runs to its end, after clause included", %{path: path} do

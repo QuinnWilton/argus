@@ -7,8 +7,9 @@ defmodule Argus.Locate.Source.Erlang do
 
   - `:guard` — the `catch` or `after` of the `try` whose body the anchor
     is in, to the last token before the `try`'s `end`. An anchor in the
-    `of` clauses or the handlers themselves is not guarded by them, nor
-    one under an old-style `catch Expr`: nil.
+    `of` clauses or the handlers themselves is not guarded by them: nil.
+    An old-style `catch Expr` on the anchor's line is a guard whose
+    keyword is `catch` and whose span is that line.
   - `:receive` — the `receive` on the anchor's line, to the last token
     before its `end` (its `after` clause included).
   - `:clause` — the function clause the anchor heads, to the `;` or `.`
@@ -118,11 +119,30 @@ defmodule Argus.Locate.Source.Erlang do
   @impl true
   @spec guard_keyword(String.t(), pos_integer()) :: String.t() | nil
   def guard_keyword(path, line) do
-    with {:ok, tokens} <- tokens(path),
-         {:ok, keyword, _end_at} <- guard(tokens, line) do
-      Atom.to_string(keyword)
+    with {:ok, tokens} <- tokens(path) do
+      case guard(tokens, line) do
+        {:ok, keyword, _end_at} -> Atom.to_string(keyword)
+        :error -> if old_style_catch?(tokens, line), do: "catch"
+      end
     else
       _ -> nil
+    end
+  end
+
+  # A `catch Expr` on the line: a `catch` that is no section of a try
+  # around it. It guards the expression it heads, so its keyword is
+  # known; the span stays the line's (`block_end/3` is nil for it).
+  defp old_style_catch?(tokens, line) do
+    Enum.any?(0..(tuple_size(tokens) - 1)//1, fn i ->
+      line_of(elem(tokens, i)) == line and kind(elem(tokens, i)) == :catch and
+        not try_section?(tokens, i)
+    end)
+  end
+
+  defp try_section?(tokens, at) do
+    case enclosing_try(tokens, at) do
+      {:ok, try_at} -> try_section(tokens, try_at + 1, [:catch, :after]) == {:ok, at}
+      :error -> false
     end
   end
 
