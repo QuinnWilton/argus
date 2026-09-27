@@ -25,6 +25,14 @@ the `Argus` namespace. `panoptes` is retired on Hex with a pointer here;
   compiler, `mix argus`, `argus:` configuration and the `rebar3_argus`
   plugin.
 
+### rebar3_argus 0.1.0 on Hex
+
+**Added.** The rebar3 plugin (`integrations/rebar3_argus`) is published
+to Hex as `rebar3_argus` 0.1.0, so `{plugins, [rebar3_argus]}` in
+`rebar.config` fetches it: `rebar3 hex publish` from its directory
+(`rebar3_hex` is its project plugin, the docs are edoc's, and the
+package carries the MIT license text).
+
 ### The fold: scry's query graph is argus's only backend
 
 scry, the analysis-only Mix compiler, is folded into argus, and its roux

@@ -72,8 +72,9 @@ usage, project or configuration error, 3 when the analyses could not run.
 A rebar3 project configures it with `{argus, [...]}` in `rebar.config`;
 the others with an `argus.config` of Erlang terms beside it.
 
-**rebar3**: the plugin in `integrations/rebar3_argus` runs the escript on
-the ebins rebar3 built, as `rebar3 argus` or after every compile:
+**rebar3**: the `rebar3_argus` plugin (on Hex; its source is
+`integrations/rebar3_argus`) runs the escript on the ebins rebar3
+built, as `rebar3 argus` or after every compile:
 
 ```erlang
 {plugins, [rebar3_argus]}.
