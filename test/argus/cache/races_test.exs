@@ -201,6 +201,9 @@ defmodule Argus.Cache.RacesTest do
 
     @solved %{"out" => [["a"]], "also" => [["b"]]}
 
+    # Through `solve_cache:`, which ARGUS_NO_CACHE turns off: without it
+    # nothing is kept to be pruned.
+    @tag :cache
     test "one pruned as a run reads it is solved again", %{tmp_dir: tmp} do
       {rules, facts_dir} = program!(tmp)
       solves = Path.join(tmp, "solves")
@@ -233,6 +236,9 @@ defmodule Argus.Cache.RacesTest do
       assert File.dir?(entry)
     end
 
+    # Through `solve_cache:`, which ARGUS_NO_CACHE turns off: without it
+    # nothing is kept to be pruned.
+    @tag :cache
     test "one missing an output its manifest names is solved again, never read short",
          %{tmp_dir: tmp} do
       {rules, facts_dir} = program!(tmp)
