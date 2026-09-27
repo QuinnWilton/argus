@@ -6,6 +6,51 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## 0.20.0-dev — unreleased
 
+### The fold: scry's query graph is argus's
+
+scry, the analysis-only Mix compiler, is folded into argus: its roux
+query graph is argus's second backend, and the batch pipeline stays the
+default while both are kept.
+
+**Added.** `Argus.Graph`, the query graph over roux 0.2: a beam's
+facts by its content and the code extracting it (one pack per module,
+kept in a `Roux.Blob` store with a verifying trace, so a fresh VM finds
+them again), each relation's digest a Merkle over the modules' own,
+each solve by the digests of what it reads (`Argus.Souffle.Solve`, the
+action cache), and each analysis's findings kept line-free and placed
+last (`Argus.Graph.Locate`). A schema read depends on the declaration
+it read (`schema_entry`), and a callee's specs on the directory they
+came from (`installed_specs`, through `Argus.Specs.Source` when the run
+has one); a code edit moves exactly the queries whose code closure it
+touches. The store is `ARGUS_CACHE_DIR`, else
+`$XDG_CACHE_HOME/argus/store`, else `~/.cache/argus/store`; under
+`ARGUS_NO_CACHE` it is a temporary one.
+
+**Added.** `backend: :graph` on `Argus.run_analyses/2`,
+`Argus.analyze/3` and `Argus.Analysis.extract_facts/3`. The answers are
+the batch backend's, except that each finding and related frame says
+where it is (`file`, `line`, `end_line`), refined by its source as
+every report is (`Argus.Located.refine/1`: the line a fragment names,
+the end of an open span, the keyword in place of `{guard}`); the batch
+backend leaves them nil. `Argus.Located` is a finding placed by its
+bytecode; `Argus.Driver` runs a project through the graph for every
+frontend and returns an `Argus.Driver.Result`. `Argus.Specs.interface_digest/2`
+is what reading a module's specs can give, as a digest.
+
+**Added.** The harnesses (`Argus.Test.Memo`, `Argus.Test.Batch`,
+`Argus.Corpus`) run on the backend `ARGUS_BACKEND` names (`batch`, the
+default, or `graph`); `ARGUS_VERIFY_BACKEND=1` runs every call on both
+and raises unless the answers are the same in normal form
+(`Argus.Run.normal_form/1`). `mix test --only parity` is the
+incremental-equals-batch gate over argus's own fixtures, and `:project`
+tags the peer and Mix-project tests. CI runs the suite on each backend.
+
+**Changed.** `Argus.Souffle.Cache` is `Argus.Souffle.Program` (the old
+names delegate); the points-to stage's choice between the exact and the
+bounded program is `Argus.Souffle.Stages`, which both backends call;
+schema reads are recorded by `Argus.Schema.Reads`
+(`Argus.Cache.Reads` delegates).
+
 ### Coupling: a cast made at a site of the once phase is a registration (schema 148)
 
 **Fixed.** "Coupled children under one_for_one" missed a registration a
