@@ -36,19 +36,27 @@ defmodule Argus.Graph.Locate do
     returns: {:ok, Argus.Lines.t()} | {:error, term()} do
     case Runtime.query(db, :module_facts, beam_key) do
       {:ok, %{pack: pack}} ->
-        case Pack.read(db.blob, pack) do
-          {:ok, contents} ->
-            rows = contents |> Pack.chunk(:line_info) |> Argus.Tsv.decode()
-            {:ok, Argus.Lines.from_facts(%{line_info: rows})}
+        # Kept in the store's action cache by the pack and the code
+        # that reads it: a session placing findings in a module whose
+        # facts it found again reads the table back, not the pack.
+        Roux.Blob.cached(db.blob, {__MODULE__, :line_table, table_code(), pack}, fn ->
+          case Pack.read(db.blob, pack) do
+            {:ok, contents} ->
+              rows = contents |> Pack.chunk(:line_info) |> Argus.Tsv.decode()
+              {:ok, Argus.Lines.from_facts(%{line_info: rows})}
 
-          :miss ->
-            {:error, {:pack_missing, pack}}
-        end
+            :miss ->
+              {:error, {:pack_missing, pack}}
+          end
+        end)
 
       {:error, _} = error ->
         error
     end
   end
+
+  # The code a line table is made by: an edit to it makes tables anew.
+  defp table_code, do: for(module <- [Pack, Argus.Tsv, Argus.Lines], do: module.module_info(:md5))
 
   defquery :declaration_line, key: beam_key, returns: pos_integer() | nil do
     case Runtime.query(db, :module_beam, beam_key) do
