@@ -127,7 +127,10 @@ defmodule Argus.Driver do
       _moved =
         Graph.set_environment(db,
           project_root: project.root,
-          specs_source: specs_source(project)
+          # The specs of the modules the program calls are read from
+          # the project's own ebins and the installed OTP, never from
+          # the VM's code path.
+          specs_source: Argus.Specs.Source.new(project)
         )
 
       solver? = Argus.Souffle.available?()
@@ -178,10 +181,4 @@ defmodule Argus.Driver do
         []
     end
   end
-
-  # The specs of the modules the program calls are read from the
-  # project's own ebins and the installed OTP, never from the VM's code
-  # path (`Argus.Specs.Source`).
-  defp specs_source(%Argus.Project{} = project), do: Argus.Specs.Source.new(project)
-  defp specs_source(_project), do: nil
 end
