@@ -10,9 +10,9 @@ defmodule Argus.Graph.Programs do
     * `program_files(program)` — the program's files, each by the name
       it is included by, its path under its tree and its content's
       digest (`Argus.Souffle.Program.program_files/1`): reads the tree's
-      `dl_tree` input, so any edit under it walks every program's
-      includes again, and only a program that includes the edited file
-      comes out different.
+      `dl_tree` input (`tree/1`), so any edit under it walks every
+      program's includes again, and only a program that includes the
+      edited file comes out different.
     * `program_io(program)` — what the program reads and writes, as
       Souffle resolves them (`Argus.Souffle.ram_io/2`), kept in the blob
       store's action cache by the program's files and the solver's
@@ -47,19 +47,40 @@ defmodule Argus.Graph.Programs do
   def rules_path({:custom, path}), do: {:ok, Path.expand(path)}
   def rules_path(analysis) when is_atom(analysis), do: Catalog.rules_path(analysis)
 
-  @doc """
-  The tree a program is read from: argus's `priv/dl` for its own, the
-  directory of a caller's file for a program of its own.
+  @typedoc """
+  What a program is read from, as the `dl_tree` input is keyed: the
+  directory of argus's own programs, or a caller's program file.
   """
-  @spec tree(program()) :: Path.t()
-  def tree({:custom, path}), do: path |> Path.expand() |> Path.dirname()
+  @type tree :: Path.t() | {:program, Path.t()}
+
+  @doc """
+  What a program is read from (`t:tree/0`): argus's `priv/dl` for its
+  own, and for a program of a caller's own, that program — its file and
+  every file it includes, never the directory it sits in, which may be
+  anywhere (a home directory, the system's temporary one).
+  """
+  @spec tree(program()) :: tree()
+  def tree({:custom, path}), do: {:program, Path.expand(path)}
   def tree(_builtin), do: Catalog.priv_dl("") |> Path.expand()
 
   @doc """
-  Each Datalog file under `root` and its content's digest: the
-  `dl_tree` input a frontend sets for every tree a program is read from.
+  The `dl_tree` input for a tree: each Datalog file under argus's
+  directory, or each file a caller's program includes (itself among
+  them), by its path relative to the directory and its content's
+  digest. A caller's file that cannot be read is named with the reason.
   """
-  @spec tree_digests(Path.t()) :: %{String.t() => String.t()}
+  @spec tree_digests(tree()) :: %{String.t() => String.t() | {:unreadable, term()}}
+  def tree_digests({:program, path}) do
+    Map.new(Program.program_files(path), fn {_spelled, file} ->
+      case File.read(file) do
+        {:ok, bytes} -> {file, sha(bytes)}
+        {:error, reason} -> {file, {:unreadable, reason}}
+      end
+    end)
+  rescue
+    error in File.Error -> %{error.path => {:unreadable, error.reason}}
+  end
+
   def tree_digests(root) do
     root = Path.expand(root)
 
@@ -68,14 +89,19 @@ defmodule Argus.Graph.Programs do
     end
   end
 
+  # The directory a program's files are named relative to.
+  defp dir({:program, path}), do: Path.dirname(path)
+  defp dir(root), do: root
+
   defquery :program_files, key: program do
     # Which file an analysis's program is: its module's to say.
     if is_atom(program) and program not in [:stage0, :points_to, :points_to_bounded],
       do: _ = Runtime.query(db, :analysis_code, program)
 
     with {:ok, path} <- rules_path(program) do
-      root = tree(program)
-      _tree = Runtime.input(db, :dl_tree, root, default: nil)
+      tree = tree(program)
+      _tree = Runtime.input(db, :dl_tree, tree, default: nil)
+      root = dir(tree)
 
       try do
         {:ok,
