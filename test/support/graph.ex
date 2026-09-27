@@ -1,7 +1,7 @@
 defmodule Argus.Test.Graph do
   @moduledoc """
   Drives `Argus.Graph` directly over a roux database, without Mix: the
-  harness for the incremental≡batch parity gate and for tests that need
+  harness for the incremental≡fresh parity gate and for tests that need
   to reach into the graph (a failing solver, a moved rule digest).
 
   The parity set is a subset of argus's own fixtures (`parity!/0`), as
@@ -159,12 +159,14 @@ defmodule Argus.Test.Graph do
   defp sorted(rows), do: Map.new(rows, fn {relation, rows} -> {relation, Enum.sort(rows)} end)
 
   @doc """
-  Each analysis's output rows the batch way: one argus extraction of
-  every beam, then each analysis's rules over it — `Argus.Findings.run/2`'s
-  path, the incremental graph's oracle.
+  Each analysis's output rows from a fresh run: one extraction of every
+  beam into a facts directory (`Argus.Analysis.extract_facts/3`, a
+  session of its own), then each analysis's rules over it
+  (`Argus.Analysis.run_rules/3`) — the path encore's bench takes, and
+  the incremental database's oracle.
   """
-  @spec batch(%{optional(module()) => String.t()}, [atom()]) :: %{optional(atom()) => term()}
-  def batch(paths, analyses) do
+  @spec fresh(%{optional(module()) => String.t()}, [atom()]) :: %{optional(atom()) => term()}
+  def fresh(paths, analyses) do
     {:ok, dir} = Argus.Analysis.extract_facts(Map.values(paths), analyses)
 
     try do

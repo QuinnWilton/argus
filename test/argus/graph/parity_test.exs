@@ -1,10 +1,10 @@
 defmodule Argus.Graph.ParityTest do
   @moduledoc """
   The honesty gate: every analysis's incremental solve over the roux
-  graph equals the batch run over the same beams — cold, and after each
-  edit in a sequence of removals and re-additions carried by ONE
-  database, so memos that outlive an edit are checked against a fresh
-  batch run of the program as it now stands.
+  graph equals a fresh run over the same beams (`Argus.Test.Graph.fresh/2`)
+  — cold, and after each edit in a sequence of removals and re-additions
+  carried by ONE database, so memos that outlive an edit are checked
+  against a fresh run of the program as it now stands.
 
   The edits are cross-module on purpose: each removed module is the
   other end of a relation some analysis joins across modules (a
@@ -23,7 +23,7 @@ defmodule Argus.Graph.ParityTest do
 
   alias Argus.Test.{Graph, Peer}
 
-  # A dozen batch runs of every analysis: out of the default run, in CI
+  # A dozen fresh runs of every analysis: out of the default run, in CI
   # and before any change to the shared layer (`mix test --include parity`).
   @moduletag :souffle
   @moduletag :parity
@@ -43,18 +43,18 @@ defmodule Argus.Graph.ParityTest do
     %{paths: Graph.parity!(), analyses: analyses, peer: Peer.start!()}
   end
 
-  defp assert_parity(db, paths, analyses, label, batch \\ nil) do
-    # The batch oracle runs beside the incremental solves: independent
+  defp assert_parity(db, paths, analyses, label, fresh \\ nil) do
+    # The fresh oracle runs beside the incremental solves: independent
     # work over the same beams.
-    oracle = if batch, do: nil, else: Task.async(fn -> Graph.batch(paths, analyses) end)
+    oracle = if fresh, do: nil, else: Task.async(fn -> Graph.fresh(paths, analyses) end)
     incremental = Graph.incremental(db, analyses)
-    batch = batch || Task.await(oracle, :infinity)
+    fresh = fresh || Task.await(oracle, :infinity)
 
     for analysis <- analyses do
       assert {:ok, _rows} = incremental[analysis], "#{label}: #{analysis} degraded"
 
-      assert incremental[analysis] == batch[analysis],
-             "#{label}: #{analysis} incremental ≠ batch"
+      assert incremental[analysis] == fresh[analysis],
+             "#{label}: #{analysis} incremental ≠ fresh"
     end
 
     incremental
@@ -62,7 +62,7 @@ defmodule Argus.Graph.ParityTest do
 
   defp row_count({:ok, outputs}), do: outputs |> Map.values() |> Enum.map(&length/1) |> Enum.sum()
 
-  test "incremental equals batch, cold and across cross-module edits", %{
+  test "incremental equals fresh, cold and across cross-module edits", %{
     paths: paths,
     analyses: analyses,
     peer: peer
@@ -94,7 +94,7 @@ defmodule Argus.Graph.ParityTest do
         # nothing incremental.
         assert removed != before, "removing #{inspect(module)} moved no analysis"
 
-        # The program is the cold one again, so the cold batch run is its
+        # The program is the cold one again, so the cold fresh run is its
         # oracle — and the incremental outputs must come back exactly.
         Graph.sync!(db, paths)
         readded = assert_parity(db, paths, analyses, "with #{inspect(module)} back", cold)

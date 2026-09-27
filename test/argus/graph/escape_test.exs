@@ -2,7 +2,7 @@ defmodule Argus.Graph.EscapeTest do
   @moduledoc """
   A name holding a tab or a newline is a field like any other: the
   relations it reaches are written escaped, as argus writes them, so the
-  solves read them and agree with a batch run.
+  solves read them and agree with a fresh run.
   """
 
   use ExUnit.Case, async: true
@@ -13,7 +13,9 @@ defmodule Argus.Graph.EscapeTest do
   @moduletag :tmp_dir
   @moduletag timeout: 300_000
 
-  test "a function named with a tab and a newline solves, and matches batch", %{tmp_dir: dir} do
+  test "a function named with a tab and a newline solves, and matches a fresh run", %{
+    tmp_dir: dir
+  } do
     source = Path.join(dir, "odd.ex")
 
     File.write!(source, ~S'''
@@ -44,7 +46,7 @@ defmodule Argus.Graph.EscapeTest do
       assert {:ok, _} = incremental[analysis]
     end
 
-    assert incremental == Graph.batch(paths, analyses)
+    assert incremental == Graph.fresh(paths, analyses)
 
     {:ok, %{outputs: %{"call_edge.facts" => digest}}} =
       Argus.Graph.Solve.stage(db, {:test, :stage0})

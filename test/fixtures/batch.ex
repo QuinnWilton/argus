@@ -21,10 +21,8 @@ defmodule Argus.Test.Batch do
   Run a batched module with it after adding a set or changing a rule
   its fixtures meet; a set that disagrees is solved on its own too.
 
-  Both solves go through the suite's store (`Argus.Test.Memo.backend_opts/1`),
-  on the backend `ARGUS_BACKEND` names (both, compared, under
-  `ARGUS_VERIFY_BACKEND`), so a run after an edit solves again only what
-  the edit invalidated.
+  Both solves go through the suite's blob store (`Argus.Graph.store/0`),
+  so a run after an edit solves again only what the edit invalidated.
   """
 
   @enforce_keys [:analysis, :modules, :owner, :result]
@@ -89,14 +87,8 @@ defmodule Argus.Test.Batch do
     named != [] and Enum.all?(named, &MapSet.member?(names, &1))
   end
 
-  # A set solved through the suite's store, on the backend
-  # `ARGUS_BACKEND` names (both, compared, under `ARGUS_VERIFY_BACKEND`).
-  defp solve_set(analysis, modules) do
-    Argus.Run.both(
-      &Argus.analyze(modules, analysis, Argus.Test.Memo.backend_opts(&1)),
-      {:batch, analysis, modules}
-    )
-  end
+  # A set solved through the suite's blob store.
+  defp solve_set(analysis, modules), do: Argus.analyze(modules, analysis)
 
   defp verify!(batch, set, sliced) do
     alone = solve_set(batch.analysis, set)

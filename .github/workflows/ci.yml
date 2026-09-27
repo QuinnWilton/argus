@@ -83,19 +83,13 @@ jobs:
         run: mix credo --strict
 
   test:
-    name: Test / ${{ matrix.backend }} backend / Elixir ${{ matrix.elixir }}
+    name: Test / Elixir ${{ matrix.elixir }}
     runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
       matrix:
         elixir: ["1.18.4", "1.19.4"]
         otp: ["28.3"]
-        # The batch backend is the default while both are kept; the
-        # graph's runs every harness (Argus.Test.Memo, Batch, Corpus) on
-        # the query graph instead.
-        backend: [batch, graph]
-    env:
-      ARGUS_BACKEND: ${{ matrix.backend }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -221,16 +215,10 @@ jobs:
       - name: Install dependencies
         run: mix deps.get
 
-      # The incremental≡batch gate over argus's own fixtures, cold and
-      # across cross-module edits; then every harness call run on both
-      # backends and compared (the corpus has its own run in `test`).
+      # The incremental≡fresh gate over argus's own fixtures, cold and
+      # across cross-module edits (the corpus has its own run in `test`).
       - name: Run the parity gate
         run: mix test --only parity
-
-      - name: Run every harness on both backends
-        run: mix test --exclude corpus
-        env:
-          ARGUS_VERIFY_BACKEND: "1"
 
   dialyzer:
     name: Dialyzer
