@@ -997,16 +997,8 @@ deferral_defect(mod, "init_timeout", site, to_string(ms)) :-
 .decl lock_during_init(init: symbol, lock: symbol)
 
 lock_during_init(init, lock) :-
-  is_init(init),
-  waits_for(init, lock),
+  global_call_during_init(init, lock),
   retries_until_locked(lock).
-
-// `func` waits while the :global call at `lock` runs: the call is on
-// func's own stack, entering only the clauses a literal first argument
-// matches, or in a task func awaits (global_path).
-.decl waits_for(func: symbol, lock: symbol) inline
-
-waits_for(func, lock) :- global_path(func, _, lock).
 
 // Each lock is reported with its node list as `dep`. A retry count the
 // bytecode does not show is assumed :infinity, the default the wrappers
@@ -1033,8 +1025,7 @@ blocks_on_peer(init, "init", nodes, "global_assumed", "", "", lock, op) :-
 .decl bounded_lock_during_init(init: symbol, lock: symbol)
 
 bounded_lock_during_init(init, lock) :-
-  is_init(init),
-  waits_for(init, lock),
+  global_call_during_init(init, lock),
   gives_up_after_retries(lock),
   waits_on_other_nodes(lock).
 

@@ -7,7 +7,8 @@
 // (a stalled start); the same site anywhere else is blocking's (a stalled
 // server). Both analyses read the walks here, so a site is init's finding
 // or blocking's, never both and never neither. global_reach.dl is the
-// :global half (global_path); this is the rpc half.
+// :global half (global_call_during_init); this is the rpc half
+// (rpc_during_init).
 //
 // The phase ends where init/1 acknowledges its start: a
 // `:proc_lib.init_ack/1,2`, after which the starter is released and what

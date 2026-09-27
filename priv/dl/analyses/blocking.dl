@@ -1414,16 +1414,14 @@ erlang_waits("system_flag").
 // A site init/1 runs — an rpc or a :global op, in init/1 or in anything
 // it calls on its own stack, or in a task it awaits — holds the
 // supervisor's start, and is startup's finding (blocks_on_peer, which
-// reads the same walks: rpc_during_init, clientlib/init_phase.dl, and
-// global_path, clientlib/global_reach.dl; startup's lock_during_init
-// asks `is_init(init), waits_for(init, lock)`, this second clause's walk
-// under its own names). Reported there, once. A helper init/1 shares
-// with handle_call/3 is then reported only as startup's: the start is
-// the worse wait.
+// reads the same words: rpc_during_init, clientlib/init_phase.dl, and
+// global_call_during_init, clientlib/global_reach.dl). Reported there,
+// once. A helper init/1 shares with handle_call/3 is then reported only
+// as startup's: the start is the worse wait.
 .decl during_init(site: symbol)
 
 during_init(site) :- rpc_during_init(_, site).
-during_init(site) :- global_path(f, _, site), is_init(f).
+during_init(site) :- global_call_during_init(_, site).
 
 // ── RPC in GenServer callback ────────────────────────────────────
 

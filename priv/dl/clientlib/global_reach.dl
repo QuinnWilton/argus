@@ -30,6 +30,14 @@
 
 .decl global_path(func: symbol, call: symbol, site: symbol)
 
+// `init` is init/1 of a process module and waits while the :global call
+// at `site` runs (global_path), so its supervisor's start waits on it:
+// the :global half of what init/1 holds, beside rpc_during_init
+// (init_phase.dl).
+.decl global_call_during_init(init: symbol, site: symbol) inline
+
+global_call_during_init(init, site) :- init_function(_, init), global_path(init, _, site).
+
 global_path(f, site, site) :- global_op(site, f, _, _, _), !start_acked(site, f).
 
 // A call f makes itself is on f's stack (runs_elsewhere holds only for
