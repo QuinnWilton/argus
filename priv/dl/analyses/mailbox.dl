@@ -1673,11 +1673,6 @@ timer_to_itself(m, f, id, msg) :- info_message(m, f, id, msg, "timer").
 
 runs_gen_server(m) :- gen_server_like(m), !statem_process(m).
 
-// Some clause of the handler compares :EXIT: it takes some exits.
-.decl takes_some_exits(handler: symbol) inline
-
-takes_some_exits(h) :- callback_tag(h, "handle_info", ":EXIT").
-
 // A message a server is sent, and where it comes from: `func` sends it
 // at `site`, to a server running `server`'s callbacks.
 .decl info_message(server: symbol, func: symbol, site: symbol, message: symbol, source: symbol)
