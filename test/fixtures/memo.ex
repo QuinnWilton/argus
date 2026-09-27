@@ -10,10 +10,10 @@ defmodule Argus.Test.Memo do
   and a call with options is always made afresh: an option is how a
   test asks for a solver, a deadline or a facts directory of its own.
 
-  Across runs, the calls without options go through the suite's store
-  (`store/0`, `Argus.Cache`): a fixture set's facts are extracted only
-  for the producers an edit invalidated, and a solve only when what it
-  reads changed. These are the tests of what a rule finds over a
+  Across runs, every call goes through the suite's blob store
+  (`Argus.Graph.store/0`, `_build/test/argus/store`): a fixture set's
+  facts are extracted only for the producers an edit invalidated, and a
+  solve only when what it reads changed. These are the tests of what a rule finds over a
   fixture — a function of the fixture's beams, the extractors' code,
   the rules and the solver, every one of them in the keys. A test of
   extraction or solving itself calls the pipeline or the solver
@@ -31,24 +31,6 @@ defmodule Argus.Test.Memo do
   def start do
     :ets.new(@table, [:named_table, :public, :set, read_concurrency: true])
     :ok
-  end
-
-  @doc """
-  The suite's store, `_build/test/argus-cache` (beside the beams it
-  keys on, so `mix clean` takes it too).
-  """
-  @spec store() :: Path.t()
-  def store, do: Path.join(Mix.Project.build_path(), "argus-cache")
-
-  @doc """
-  Prunes the suite's store at the end of a run (`Argus.Cache.prune/2`):
-  each producer's shards and each program's solves, per fixture set,
-  keep the three most recent, and a set no run has touched for a week
-  goes.
-  """
-  @spec prune() :: [Path.t()]
-  def prune do
-    if Argus.Cache.enabled?(), do: Argus.Cache.prune(store(), max_age: 7 * 24 * 60 * 60), else: []
   end
 
   @doc """

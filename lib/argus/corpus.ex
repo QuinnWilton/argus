@@ -165,7 +165,7 @@ defmodule Argus.Corpus do
   # directories' stamps when the caller read them for many checkouts.
   # Under `ARGUS_NO_CACHE` nothing is kept.
   defp graph_opts(co, opts) do
-    if Argus.Cache.enabled?(),
+    if Argus.Dirs.keep?(),
       do: [manifest: seed_manifest(manifest(co))] ++ Keyword.take(opts, [:stamps]),
       else: []
   end

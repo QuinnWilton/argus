@@ -103,7 +103,7 @@ defmodule Argus.Cache.Code do
     memo({:digest, producer, schema}, fn ->
       with {:ok, modules} <- closure(producer, schema: schema),
            {:ok, parts} <- module_parts(modules) do
-        {:ok, Argus.Cache.key(parts)}
+        {:ok, key(parts)}
       end
     end)
   end
@@ -231,5 +231,15 @@ defmodule Argus.Cache.Code do
       value ->
         value
     end
+  end
+
+  # SHA-256 of `parts`, each length-prefixed, as lowercase hex.
+  defp key(parts) do
+    parts
+    |> Enum.reduce(:crypto.hash_init(:sha256), fn part, hash ->
+      :crypto.hash_update(hash, <<byte_size(part)::64>> <> part)
+    end)
+    |> :crypto.hash_final()
+    |> Base.encode16(case: :lower)
   end
 end

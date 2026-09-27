@@ -82,7 +82,7 @@ defmodule Argus.Test.Graph do
   """
   @spec store() :: Roux.Blob.t()
   def store do
-    if Argus.Cache.enabled?(),
+    if Argus.Dirs.keep?(),
       do: Roux.Blob.open!(Path.join(Mix.Project.build_path(), "argus/store")),
       else: Roux.Blob.temporary()
   end

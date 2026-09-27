@@ -18,6 +18,14 @@ defmodule Argus.Dirs do
   it. Nothing else here makes it.
   """
 
+  @doc """
+  Whether anything outlives a run: false when `ARGUS_NO_CACHE` is set to
+  anything but `""`, `"0"` or `"false"`, and every run then uses a
+  temporary store of its own and keeps no manifest.
+  """
+  @spec keep?() :: boolean()
+  def keep?, do: System.get_env("ARGUS_NO_CACHE", "") in ["", "0", "false"]
+
   @doc "The blob store's directory (`Argus.Graph.store_root/0`)."
   @spec store() :: Path.t()
   def store, do: Argus.Graph.store_root()

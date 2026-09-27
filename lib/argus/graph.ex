@@ -130,7 +130,7 @@ defmodule Argus.Graph do
   """
   @spec store() :: Blob.t()
   def store do
-    if Argus.Cache.enabled?(), do: Blob.open!(store_root()), else: Blob.temporary()
+    if Argus.Dirs.keep?(), do: Blob.open!(store_root()), else: Blob.temporary()
   end
 
   @doc "The root of `store/0`'s store (see there)."
