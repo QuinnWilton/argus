@@ -434,7 +434,7 @@ than more; it errs loud when the same uncertainty can add a finding.
 - **Names.** `raise_class`, `raise_tag`, `handler_takes`, `site_takes`, `takes_somewhere` (exceptions.dl); the `Escape` component's `escapes`, `escapes_through` and `rescued` (escape.dl).
 - **Meaning.** `escapes(site, func, raise)`: no handler that takes `raise` and goes on covers the raising site, nor any call on some path of calls from `func` (the function the rule reasons about) down to the site's function, and not every call to `func` is inside one. A raise is `"badarg"` (the ArgumentError a BIF raises), `"erpc"` (`{:erpc, reason}`) or a whole class; a handler takes it when a clause takes its class or names its tag and some path through the handler goes on (a rescue that only re-raises, or an `after`, takes nothing). A closure is held against the call it is handed to, on the path down and among the callers; a fun handed to a process start raises in that process.
 - **Direction.** The path is followed at most 16 calls deep (a site further down is rescued, quiet); an edge with no call to hold a try against is closed by a handler anywhere in its function (quiet); the callers are asked one level up, and only when the program shows them all (loud).
-- **Used by.** races (`ets_missing_row`).
+- **Used by.** races (`ets_missing_row`, `ets_publish_order`).
 
 ### Effect categories
 
@@ -2546,18 +2546,18 @@ One finding per write, at its strongest kind, then at the read in the write's ow
 `ets_publish_order`
 · titles: "ETS row published before the row it points to" (`:warning`)
 
-**Property.** Some function f writes, on its own stack (its own inserts, or its callees' that run on the same stack, not code it hands to another process), a row of table A holding a value V past its key (`{name, id}`), and later in one trip through f, not merely around a loop, the row of a different table B keyed by V (`{id, name}`). Some read of A hands out what it found, and some function g reads B with an operation that raises on a missing row (`:ets.lookup_element/3`, `:ets.update_counter/3`) at a key that can hold V: made from a read of A, or from a source whose origin the program does not show (a parameter of an exported function or of one taken as a fun, a call nothing summarises). g has no handler that takes ArgumentError, B is readable by other processes, and g can run while f is between the two writes: f or g runs in more than one process, or g runs in a process that does not run f. A reader that finds V in A before B's row exists crashes with ArgumentError (badarg); the fix is the order, B's row first, then V, deleting the row a losing `insert_new` wrote.
+**Property.** Some function f writes, on its own stack (its own inserts, or its callees' that run on the same stack, not code it hands to another process), a row of table A holding a value V past its key (`{name, id}`), and later in one trip through f, not merely around a loop, the row of a different table B keyed by V (`{id, name}`). Some read of A hands out what it found, and some function g reads B with an operation that raises on a missing row (`:ets.lookup_element/3`, `:ets.update_counter/3`) at a key that can hold V: made from a read of A, or from a source whose origin the program does not show (a parameter of an exported function or of one taken as a fun, a call nothing summarises). g's ArgumentError escapes (`escapes`, clientlib/escape.dl: no handler that takes it and goes on covers the read, and not every call to g is inside one), B is readable by other processes, and g can run while f is between the two writes: f or g runs in more than one process, or g runs in a process that does not run f. A reader that finds V in A before B's row exists crashes with ArgumentError (badarg); the fix is the order, B's row first, then V, deleting the row a losing `insert_new` wrote.
 
 Tables are `ets_table` identities: a named table by its name, an unnamed one by the `:ets.new/2` site that made it (followed as process points-to follows a pid), and, only where neither is known, the module and map path a parameter's table is read under. The two tables must not possibly be one (then one row replaces another).
 
 **Assumptions and limits.**
 - A value that is a literal is known without reading A and publishes nothing.
 - Two calls to two other modules' writers, with no insert in f itself, are not ordered: which functions of another module insert is not known while f's module is extracted.
-- The reader's rescue is asked of the reader's whole function, not of the read.
+- The reader's rescue is asked of the read and of every call to the reader's function, one level up; a rescue around other code in the reader takes nothing.
 - Only inserts publish: removing B's row before V leaves A (the unpublishing twin) is not covered.
 - BEAM puts no call inside a loop body within one function, so the loop case has no fixture (5c40a43).
 
-**Fixtures.** Positive: `PublishOrder.MapFields`, `NamedTables`, `CountedById`, `LocalPair`, `SameFieldTwoMaps`, `HelperCompletes`, `KeyFromFirst` (test/fixtures/publish_order_fixture.ex). Quiet: `PublishOrder.ReverseFirst`, `LocalPairSafe`, `HelperFirst`, `KeyFromElsewhere`, `DefaultedReader`, `RescuedReader`, `PrivateTables`, `OwnerOnly`, `SameKey`. Asserted by test/analyses/ets_publish_order_test.exs; test/analyses/quiet_shapes_test.exs runs it over `ReverseFirst`, `LocalPairSafe`, `HelperFirst` and `KeyFromElsewhere`.
+**Fixtures.** Positive: `PublishOrder.MapFields`, `NamedTables`, `CountedById`, `LocalPair`, `SameFieldTwoMaps`, `HelperCompletes`, `KeyFromFirst`, `UnrelatedRescueReader`, `WrongRescueReader` (test/fixtures/publish_order_fixture.ex). Quiet: `PublishOrder.ReverseFirst`, `LocalPairSafe`, `HelperFirst`, `KeyFromElsewhere`, `DefaultedReader`, `RescuedReader`, `CallerRescuesReader`, `PrivateTables`, `OwnerOnly`, `SameKey`. Asserted by test/analyses/ets_publish_order_test.exs; test/analyses/quiet_shapes_test.exs runs it over `ReverseFirst`, `LocalPairSafe`, `HelperFirst` and `KeyFromElsewhere`.
 
 **Corpus.** None in pairs.exs. Argus reported the shape in its own `Argus.Symbols.ETS.intern/2` at 0bf9543, fixed in 6fc3a59.
 

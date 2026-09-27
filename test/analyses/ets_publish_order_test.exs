@@ -23,6 +23,9 @@ defmodule Argus.Analyses.EtsPublishOrderTest do
     P.KeyFromFirst,
     P.DefaultedReader,
     P.RescuedReader,
+    P.UnrelatedRescueReader,
+    P.WrongRescueReader,
+    P.CallerRescuesReader,
     P.PrivateTables,
     P.OwnerOnly,
     P.SameKey
@@ -116,6 +119,25 @@ defmodule Argus.Analyses.EtsPublishOrderTest do
     test "a reader with a default, or one that rescues the miss, stays quiet", ctx do
       skip_without_souffle()
       assert published(ctx, [P.DefaultedReader, P.RescuedReader]) == []
+    end
+
+    test "a reader that rescues only other code after the read is reported", ctx do
+      skip_without_souffle()
+
+      assert [{"register/2", ":peers_by_name", ":peers_by_id", _, _, "name_of/2"}] =
+               published(ctx, [P.UnrelatedRescueReader])
+    end
+
+    test "a reader that rescues another exception is reported", ctx do
+      skip_without_souffle()
+
+      assert [{"register/2", ":nodes_by_name", ":nodes_by_id", _, _, "name_of/1"}] =
+               published(ctx, [P.WrongRescueReader])
+    end
+
+    test "a private reader whose one caller rescues the miss stays quiet", ctx do
+      skip_without_souffle()
+      assert published(ctx, [P.CallerRescuesReader]) == []
     end
 
     test "private tables, and protected ones only their owner touches, stay quiet", ctx do

@@ -152,6 +152,75 @@ defmodule Argus.Test.Fixtures.PublishOrder do
     end
   end
 
+  defmodule UnrelatedRescueReader do
+    @moduledoc "The same order; the raising reader rescues only other code after the read."
+    def setup do
+      :ets.new(:peers_by_name, [:named_table, :public, :set])
+      :ets.new(:peers_by_id, [:named_table, :public, :set])
+    end
+
+    def register(name, id) do
+      :ets.insert(:peers_by_name, {name, id})
+      :ets.insert(:peers_by_id, {id, name})
+    end
+
+    def id_of(name), do: :ets.lookup(:peers_by_name, name)
+
+    def name_of(id, payload) do
+      name = :ets.lookup_element(:peers_by_id, id, 2)
+
+      try do
+        {name, :erlang.binary_to_term(payload)}
+      rescue
+        _ -> {name, nil}
+      end
+    end
+  end
+
+  defmodule WrongRescueReader do
+    @moduledoc "The same order; the raising reader rescues another exception."
+    def setup do
+      :ets.new(:nodes_by_name, [:named_table, :public, :set])
+      :ets.new(:nodes_by_id, [:named_table, :public, :set])
+    end
+
+    def register(name, id) do
+      :ets.insert(:nodes_by_name, {name, id})
+      :ets.insert(:nodes_by_id, {id, name})
+    end
+
+    def id_of(name), do: :ets.lookup(:nodes_by_name, name)
+
+    def name_of(id) do
+      :ets.lookup_element(:nodes_by_id, id, 2)
+    rescue
+      KeyError -> nil
+    end
+  end
+
+  defmodule CallerRescuesReader do
+    @moduledoc "The same order; the raising reader is private and its one caller rescues the miss."
+    def setup do
+      :ets.new(:links_by_name, [:named_table, :public, :set])
+      :ets.new(:links_by_id, [:named_table, :public, :set])
+    end
+
+    def register(name, id) do
+      :ets.insert(:links_by_name, {name, id})
+      :ets.insert(:links_by_id, {id, name})
+    end
+
+    def id_of(name), do: :ets.lookup(:links_by_name, name)
+
+    def name_of(id) do
+      lookup_name(id)
+    rescue
+      ArgumentError -> nil
+    end
+
+    defp lookup_name(id), do: :ets.lookup_element(:links_by_id, id, 2)
+  end
+
   defmodule PrivateTables do
     @moduledoc "The same order on private tables: no other process can read either."
     def setup do

@@ -1576,19 +1576,15 @@ ets_race_frame(w_at, "rival", w2, h) :-
 
 publish_order_race(writer, publish, complete, reader, reader_func) :-
   publishes_early(writer, publish, complete),
-  fails_if_row_missing_unless_function_rescues(reader, reader_func),
+  fails_if_row_missing(reader, reader_func),
   looks_up_row_of(reader, complete),
   finds_published_value(reader, publish),
   can_read_in_the_gap(writer, reader_func).
 
-// The reader raises when its key has no row, and its function rescues
-// no badarg anywhere: a reader that rescues it does not crash in the
-// gap. Coarser than the missing-row race's fails_if_row_missing, which
-// asks for a rescue only around the act and the calls that lead to it.
-.decl fails_if_row_missing_unless_function_rescues(reader: symbol, reader_func: symbol)
-
-fails_if_row_missing_unless_function_rescues(r, g) :- raises_if_row_missing(r, g), !rescues_argument_error(g).
-
+// The reader raises when its key has no row, and nothing rescues the
+// raise (fails_if_row_missing, asked from the reader's own function): a
+// reader that rescues it, or whose every caller does, does not crash in
+// the gap.
 // The reader reads a table the completing write writes, one another
 // process can read.
 .decl looks_up_row_of(reader: symbol, complete: symbol) inline
@@ -1757,7 +1753,7 @@ gap_reader(r, g, ak, a) :-
   publishes_early(_, w1, w2),
   ets_table(w1, ak, a),
   handed_out_from(ak, a),
-  fails_if_row_missing_unless_function_rescues(r, g),
+  fails_if_row_missing(r, g),
   looks_up_row_of(r, w2),
   ets_key(r, ks, _),
   ks != "literal".
@@ -1853,7 +1849,7 @@ key_may_come_from(r, tk, t) :-
 
 gap_read(writer, reader_func) :-
   publishes_early(writer, publish, complete),
-  fails_if_row_missing_unless_function_rescues(reader, reader_func),
+  fails_if_row_missing(reader, reader_func),
   looks_up_row_of(reader, complete),
   finds_published_value(reader, publish).
 
@@ -1948,13 +1944,18 @@ checks_row_exists(check) :- deciding_read(check, _).
 
 // An operation that raises when the row is missing, and the raise
 // escapes (clientlib/escape.dl): no handler that takes the ArgumentError
-// covers the act, nor any call on some path from `func`, where the
-// check's result meets it, down to the act, nor every call to `func`.
+// covers the act, nor any call on some path from `func` down to the act,
+// nor every call to `func`. `func` is where the check's result meets the
+// act, or, for a publish-order reader, the reader's own function.
 .decl fails_if_row_missing(act: symbol, func: symbol)
 
 fails_if_row_missing(act, func) :-
   missing.meets(func, _, act, _, _, _, _),
   row_miss.escapes(act, func, "badarg").
+
+fails_if_row_missing(reader, reader_func) :-
+  reads_completed_row(reader, reader_func),
+  row_miss.escapes(reader, reader_func, "badarg").
 
 // Asked of the act's site and of the calls that lead to it, not of whole
 // functions: a `rescue` around unrelated code after the act does not
@@ -1965,6 +1966,18 @@ fails_if_row_missing(act, func) :-
 row_miss.asked(act, g, f, "badarg") :-
   missing.meets(f, _, act, _, _, _, _),
   raises_if_row_missing(act, g).
+
+row_miss.asked(reader, g, g, "badarg") :- reads_completed_row(reader, g).
+
+// A read that raises on a missing row of a table an early publish
+// completes: the reader of a publish-order race, whose raise is asked
+// from its own function.
+.decl reads_completed_row(reader: symbol, reader_func: symbol)
+
+reads_completed_row(r, g) :-
+  publishes_early(_, _, complete),
+  raises_if_row_missing(r, g),
+  looks_up_row_of(r, complete).
 
 // The act's table is one another process can read. A named table the
 // program does not show being made — by a dependency, or under a name
