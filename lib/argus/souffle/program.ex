@@ -125,11 +125,48 @@ defmodule Argus.Souffle.Program do
 
         case declarations(content) do
           {:ok, blocks} -> {:declarations, spelled, blocks}
-          :error -> {:text, spelled, :crypto.hash(:sha256, content)}
+          :error -> {:text, spelled, :crypto.hash(:sha256, uncommented(content))}
         end
       end)
 
     {Enum.map(files, &elem(&1, 1)), parts}
+  end
+
+  @doc ~S"""
+  A program file's text as a solve reads it: without the lines that are
+  a line comment alone (after any indentation), and without blank lines
+  — what an edit to a rule's prose touches. Souffle's preprocessor drops
+  every such line, so a solve of the file writes what a solve of its
+  text as given writes.
+
+  A file that splices lines (a backslash ending a line, or the trigraph
+  for one) is its text as given: a comment or blank line after a splice
+  is part of the line before it. A comment line that opens or closes a
+  block comment is kept.
+
+      iex> Argus.Souffle.Program.uncommented("a(1).\n// why\n\n  // indented\nb(2).\n")
+      "a(1).\nb(2)."
+
+      iex> Argus.Souffle.Program.uncommented("a(1). \\\n// spliced\nb(2).")
+      "a(1). \\\n// spliced\nb(2)."
+  """
+  @spec uncommented(String.t()) :: String.t()
+  def uncommented(content) do
+    if String.contains?(content, ["\\\n", "\\\r", "??/"]) do
+      content
+    else
+      content
+      |> String.split("\n")
+      |> Enum.reject(&(String.trim(&1) == "" or dropped_comment?(&1)))
+      |> Enum.join("\n")
+    end
+  end
+
+  defp dropped_comment?(line) do
+    case String.trim_leading(line) do
+      "//" <> comment -> not String.contains?(comment, ["/*", "*/"])
+      _code -> false
+    end
   end
 
   @doc """

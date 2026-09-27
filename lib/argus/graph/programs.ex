@@ -146,7 +146,9 @@ defmodule Argus.Graph.Programs do
         [],
         fn ->
           Argus.Souffle.ram_io(solver.bin, path)
-        end, store: db.blob)
+        end,
+        store: db.blob
+      )
     end
   end
 

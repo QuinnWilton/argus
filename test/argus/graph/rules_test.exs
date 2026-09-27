@@ -80,9 +80,13 @@ defmodule Argus.Graph.RulesTest do
     :ok
   end
 
+  # A declaration nothing reads: the program's text moves (a comment
+  # would not: a key reads text without comment lines), and what it
+  # writes does not.
   defp edit!(root, file) do
     path = Path.join(root, file)
-    File.write!(path, File.read!(path) <> "\n// edited\n")
+    probe = "argus_edited_#{System.unique_integer([:positive])}"
+    File.write!(path, File.read!(path) <> "\n.decl #{probe}(x: symbol)\n")
   end
 
   defp solved(log), do: log |> QueryLog.executions(:solve) |> Enum.map(&elem(&1, 1))
