@@ -305,6 +305,13 @@ defmodule Argus.Analysis do
   @spec run(modules :: [atom() | String.t()], analysis(), keyword()) ::
           {:ok, result()} | {:error, term()}
   def run(modules, analysis, opts \\ []) do
+    case Keyword.pop(opts, :backend, :batch) do
+      {:batch, opts} -> run_batch(modules, analysis, opts)
+      {:graph, opts} -> Argus.Run.analyze(modules, analysis, opts)
+    end
+  end
+
+  defp run_batch(modules, analysis, opts) do
     with {:ok, rules_path} <- Catalog.rules_path(analysis) do
       case Extraction.cached_facts(modules, [analysis], opts) do
         {:ok, facts} -> run_cached(facts, analysis, rules_path, opts)

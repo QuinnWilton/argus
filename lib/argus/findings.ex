@@ -108,13 +108,16 @@ defmodule Argus.Findings do
   frame's line from the source as a finding's does (see `new/4`).
   """
   @type related :: %{
-          label: String.t(),
-          module: module() | nil,
-          mfa: mfa() | nil,
-          instr: InstrId.t() | nil,
-          to_instr: InstrId.t() | nil,
-          to_block: block() | nil,
-          at_source: String.t() | nil
+          required(:label) => String.t(),
+          required(:module) => module() | nil,
+          required(:mfa) => mfa() | nil,
+          required(:instr) => InstrId.t() | nil,
+          required(:to_instr) => InstrId.t() | nil,
+          required(:to_block) => block() | nil,
+          required(:at_source) => String.t() | nil,
+          optional(:file) => String.t() | nil,
+          optional(:line) => pos_integer() | nil,
+          optional(:end_line) => pos_integer() | nil
         }
 
   @typedoc """
@@ -155,22 +158,25 @@ defmodule Argus.Findings do
   then.
   """
   @type finding :: %{
-          analysis: atom(),
-          concern: atom(),
-          severity: severity(),
-          title: String.t(),
-          detail: String.t(),
-          module: module() | nil,
-          mfa: mfa() | nil,
-          instr: InstrId.t() | nil,
-          at_label: String.t() | nil,
-          at_source: String.t() | nil,
-          to_instr: InstrId.t() | nil,
-          to_block: block() | nil,
-          help: [String.t()],
-          related: [related()],
-          provenance: provenance(),
-          confidence: 0..1000 | nil
+          required(:analysis) => atom(),
+          required(:concern) => atom(),
+          required(:severity) => severity(),
+          required(:title) => String.t(),
+          required(:detail) => String.t(),
+          required(:module) => module() | nil,
+          required(:mfa) => mfa() | nil,
+          required(:instr) => InstrId.t() | nil,
+          required(:at_label) => String.t() | nil,
+          required(:at_source) => String.t() | nil,
+          required(:to_instr) => InstrId.t() | nil,
+          required(:to_block) => block() | nil,
+          required(:help) => [String.t()],
+          required(:related) => [related()],
+          required(:provenance) => provenance(),
+          required(:confidence) => 0..1000 | nil,
+          optional(:file) => String.t() | nil,
+          optional(:line) => pos_integer() | nil,
+          optional(:end_line) => pos_integer() | nil
         }
 
   @typedoc "Per-analysis run record for analyses that completed."
@@ -253,8 +259,12 @@ defmodule Argus.Findings do
   moduledoc for the degradation contract.
   """
   @spec run(modules :: [atom() | String.t()], keyword()) :: {:ok, t()} | {:error, term()}
-  def run(modules, opts \\ []) when is_list(modules) and is_list(opts),
-    do: Runner.run(modules, opts)
+  def run(modules, opts \\ []) when is_list(modules) and is_list(opts) do
+    case Keyword.pop(opts, :backend, :batch) do
+      {:batch, opts} -> Runner.run(modules, opts)
+      {:graph, opts} -> Argus.Run.run_analyses(modules, opts)
+    end
+  end
 
   @doc """
   The extraction errors recorded in a facts directory

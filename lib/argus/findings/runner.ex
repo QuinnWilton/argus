@@ -269,7 +269,7 @@ defmodule Argus.Findings.Runner do
     findings =
       outcomes
       |> Enum.flat_map(fn
-        {:ran, _entry, findings} -> findings
+        {:ran, _entry, findings} -> Enum.map(findings, &unplaced/1)
         {:degraded, _note} -> []
       end)
       |> Enum.sort_by(fn finding ->
@@ -281,6 +281,17 @@ defmodule Argus.Findings.Runner do
     degraded = for {:degraded, note} <- outcomes, do: note
 
     %Findings{findings: findings, ran: ran, degraded: degraded}
+  end
+
+  # The batch backend places no finding: its `file`, `line` and
+  # `end_line` are nil, and each related frame's (the graph's are placed,
+  # `Argus.Located`).
+  @nowhere %{file: nil, line: nil, end_line: nil}
+
+  defp unplaced(finding) do
+    finding
+    |> Map.merge(@nowhere)
+    |> Map.update(:related, [], fn frames -> Enum.map(frames, &Map.merge(&1, @nowhere)) end)
   end
 
   defp ensure_souffle(opts) do

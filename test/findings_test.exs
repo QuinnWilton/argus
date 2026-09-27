@@ -27,7 +27,12 @@ defmodule Argus.FindingsTest do
     :help,
     :related,
     :provenance,
-    :confidence
+    :confidence,
+    # Where it is: nil from the batch backend, placed by the graph's
+    # (`Argus.Located`).
+    :file,
+    :line,
+    :end_line
   ]
   @severities [:error, :warning, :info]
 
@@ -59,7 +64,18 @@ defmodule Argus.FindingsTest do
 
     Enum.each(finding.related, fn related ->
       assert Enum.sort(Map.keys(related)) ==
-               Enum.sort([:label, :module, :mfa, :instr, :to_instr, :to_block, :at_source])
+               Enum.sort([
+                 :label,
+                 :module,
+                 :mfa,
+                 :instr,
+                 :to_instr,
+                 :to_block,
+                 :at_source,
+                 :file,
+                 :line,
+                 :end_line
+               ])
 
       assert is_binary(related.label)
     end)

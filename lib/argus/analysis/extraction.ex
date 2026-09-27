@@ -82,6 +82,13 @@ defmodule Argus.Analysis.Extraction do
   @spec extract_facts(modules :: [atom() | String.t()], [Analysis.analysis()], keyword()) ::
           {:ok, Path.t()} | {:error, term()}
   def extract_facts(modules, analyses, opts \\ []) do
+    case Keyword.pop(opts, :backend, :batch) do
+      {:batch, opts} -> extract_batch(modules, analyses, opts)
+      {:graph, opts} -> Argus.Run.extract_facts(modules, analyses, opts)
+    end
+  end
+
+  defp extract_batch(modules, analyses, opts) do
     opts = pipeline_opts(analyses, opts)
     Argus.Priors.check!(opts)
 
