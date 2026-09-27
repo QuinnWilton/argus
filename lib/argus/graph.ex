@@ -152,17 +152,22 @@ defmodule Argus.Graph do
   ## Options
 
     * `:project_root` — default `File.cwd!/0`;
+    * `:specs_source` — where the specs of the modules the program calls
+      are read from (`Argus.Specs.Source`), default nil: the VM's code
+      path;
     * `:trees` — the Datalog trees besides argus's own (a custom
       program's directory);
     * `:souffle_timeout` — milliseconds a solve may run.
   """
   @spec set_environment(Roux.Database.t(), keyword()) :: boolean()
   def set_environment(db, opts \\ []) do
-    index = Environment.code_index()
+    source = Keyword.get(opts, :specs_source)
+    index = Environment.code_index(source)
     trees = Enum.uniq([Programs.tree(:stage0) | Keyword.get(opts, :trees, [])])
 
     [
       set(db, :solver, :all, Environment.solver(db.blob, opts)),
+      set(db, :specs_source, :all, source),
       set(db, :code_index, :all, index),
       set(db, :project_root, :all, Keyword.get_lazy(opts, :project_root, &File.cwd!/0))
       | Enum.map(index, fn {dir, name} -> set(db, :app_code, name, Environment.app_code(dir)) end) ++

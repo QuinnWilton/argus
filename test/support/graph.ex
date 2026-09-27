@@ -93,7 +93,9 @@ defmodule Argus.Test.Graph do
 
   Options: `store: :temporary` for a blob store of the database's own
   (a test that must see its solver run, not a solve kept from another
-  test); `program:` another program's id.
+  test); `program:` another program's id; `specs_source:` where the
+  specs of the modules the program calls are read from
+  (`Argus.Specs.Source`), the code path without one.
   """
   @spec new_db(%{optional(module()) => String.t()}, keyword()) :: Roux.Database.t()
   def new_db(paths, opts \\ []) do
@@ -106,7 +108,7 @@ defmodule Argus.Test.Graph do
 
     session = Argus.Graph.open(store: store)
     db = session.db
-    _moved = Argus.Graph.set_environment(db)
+    _moved = Argus.Graph.set_environment(db, Keyword.take(opts, [:specs_source]))
     program = Keyword.get(opts, :program, :test)
     :ok = Argus.Graph.set_priors(db, program, :off)
     sync!(db, paths, program)

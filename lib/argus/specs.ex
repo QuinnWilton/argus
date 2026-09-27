@@ -156,9 +156,10 @@ defmodule Argus.Specs do
   end
 
   @doc """
-  What reading `module`'s specs from the code path can give, as a
-  lowercase hex digest: its spec and type declarations as its beam
-  holds them, with their line annotations cleared — an edit that moves
+  What reading `module`'s specs from the code path (or from `source`,
+  `Argus.Specs.Source`) can give, as a lowercase hex digest: its spec
+  and type declarations as its beam holds them, with their line
+  annotations cleared — an edit that moves
   a line of `module` moves nothing a reader of its specs computes. A
   function of `module`'s own beam alone: a spec resolved through another
   module's type (`installed/1`) is that module's read too.
@@ -167,21 +168,39 @@ defmodule Argus.Specs do
   extractor read (`Argus.Pipeline`'s `installed`): the query graph
   keys that read on this (`Argus.Graph.Reads`'s `installed_specs`).
   """
-  @spec interface_digest(module()) :: String.t()
-  def interface_digest(module) when is_atom(module) do
-    specs =
-      case fetch(fn -> Code.Typespec.fetch_specs(module) end) do
-        {:ok, specs} ->
-          Enum.map(specs, fn {name_arity, clauses} ->
-            {name_arity, Enum.map(clauses, &unannotated/1)}
-          end)
+  @spec interface_digest(module(), Source.t() | nil) :: String.t()
+  def interface_digest(module, source \\ nil) when is_atom(module) do
+    # The module on the code path, or its beam from `source`.
+    target =
+      case source do
+        nil ->
+          {:ok, module}
 
-        :error ->
-          :none
+        source ->
+          case Source.read(source, module) do
+            {:ok, binary, _stamp} -> {:ok, binary}
+            :error -> :error
+          end
+      end
+
+    specs =
+      with {:ok, target} <- target,
+           {:ok, specs} <- fetch(fn -> Code.Typespec.fetch_specs(target) end) do
+        Enum.map(specs, fn {name_arity, clauses} ->
+          {name_arity, Enum.map(clauses, &unannotated/1)}
+        end)
+      else
+        _ -> :none
+      end
+
+    local =
+      case target do
+        {:ok, target} -> local_types(target)
+        :error -> %{}
       end
 
     types =
-      for {name_arity, {args, body}} <- stamped_types(module, nil),
+      for {name_arity, {args, body}} <- local,
           into: %{},
           do: {name_arity, {Enum.map(args, &unannotated/1), unannotated(body)}}
 

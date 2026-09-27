@@ -65,17 +65,23 @@ defmodule Argus.Graph.Environment do
   end
 
   @doc """
-  Each directory of the code path whose modules' specs are read from
-  it and are not the runtime's: `%{dir => name}`, a directory named by
-  itself.
+  Each directory the specs are read from and not the runtime's — the
+  source's (`Argus.Specs.Source`), or the code path's without one:
+  `%{dir => name}`, a directory named by itself.
   """
-  @spec code_index() :: %{optional(String.t()) => String.t()}
-  def code_index do
+  @spec code_index(Argus.Specs.Source.t() | nil) :: %{optional(String.t()) => String.t()}
+  def code_index(source \\ nil) do
     otp = List.to_string(:code.root_dir()) <> "/"
     elixir = (:elixir |> :code.lib_dir() |> List.to_string() |> Path.dirname()) <> "/"
 
-    for dir <- :code.get_path(),
-        dir = dir |> List.to_string() |> Path.expand(),
+    dirs =
+      case source do
+        nil -> Enum.map(:code.get_path(), &List.to_string/1)
+        %Argus.Specs.Source{index: index} -> index |> Map.values() |> Enum.map(&Path.dirname/1)
+      end
+
+    for dir <- Enum.uniq(dirs),
+        dir = Path.expand(dir),
         not String.starts_with?(dir, otp),
         not String.starts_with?(dir, elixir),
         "consolidated" not in Path.split(dir),

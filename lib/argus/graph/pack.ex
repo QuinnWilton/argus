@@ -195,7 +195,12 @@ defmodule Argus.Graph.Pack do
     {base, observer} =
       if base_missing?, do: {nil, observer}, else: kept_base(store, old, codes, observer)
 
+    # Where the specs are read from: the precise edges are each read's
+    # `installed_specs`, which reads the source itself.
+    source = Runtime.untracked(fn -> Runtime.input(db, :specs_source, :all, default: nil) end)
+
     opts = [
+      specs_source: source,
       producers: missing,
       base: base && base.binary,
       keep_base: not base_missing? and base == nil,

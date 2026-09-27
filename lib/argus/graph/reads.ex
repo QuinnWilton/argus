@@ -107,17 +107,17 @@ defmodule Argus.Graph.Reads do
     Argus.Cache.Reads.digest(read)
   end
 
-  # What reading `module`'s specs from the code path gives, as a digest,
-  # depending on the input that moves when its beam does. Where the
-  # module lives is the code path's: the index of its directories is an
-  # input, so a directory appearing or leaving is seen.
+  # What reading `module`'s specs gives, as a digest, depending on the
+  # input that moves when its beam does. Where the module lives is the
+  # specs source's to say (`Argus.Specs.Source`: the project's ebins and
+  # the installed OTP), or the code path's without one; both are
+  # inputs, so a module appearing or leaving is seen.
   defquery :installed_specs, key: module, returns: String.t() do
+    source = Runtime.input(db, :specs_source, :all, default: nil)
     index = Runtime.input(db, :code_index, :all, default: %{})
 
-    case :code.which(module) do
-      path when is_list(path) ->
-        path = List.to_string(path)
-
+    case where(module, source) do
+      {:path, path} ->
         case Runtime.input(db, :beam, path, default: nil) do
           nil ->
             case Map.fetch(index, Path.dirname(path)) do
@@ -129,24 +129,40 @@ defmodule Argus.Graph.Reads do
             :program
         end
 
-        interface(db, module, path)
+        interface(db, module, path, source)
 
-      :non_existing ->
+      :runtime ->
+        Argus.Specs.interface_digest(module, source)
+
+      :absent ->
         "absent"
+    end
+  end
 
-      _preloaded_or_in_memory ->
-        Argus.Specs.interface_digest(module)
+  defp where(module, nil) do
+    case :code.which(module) do
+      path when is_list(path) -> {:path, List.to_string(path)}
+      :non_existing -> :absent
+      _preloaded_or_in_memory -> :runtime
+    end
+  end
+
+  defp where(module, source) do
+    case Argus.Specs.Source.which(source, module) do
+      {:ok, :runtime} -> :runtime
+      {:ok, path} -> {:path, Path.expand(path)}
+      :error -> :absent
     end
   end
 
   # A module's interface digest, kept across VMs under the stamp of the
   # file it is read from: a fresh VM whose beams have not moved stats
   # them rather than decoding their debug info.
-  defp interface(db, module, path) do
+  defp interface(db, module, path, source) do
     Roux.Stamp.memo(
       {__MODULE__, :interface, module, path},
       [path],
-      fn -> Argus.Specs.interface_digest(module) end,
+      fn -> Argus.Specs.interface_digest(module, source) end,
       store: db.blob
     )
   end

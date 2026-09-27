@@ -13,9 +13,14 @@ defmodule Argus.Graph.Inputs do
       table sets an equal value, and advances nothing.
     * `project_root` (`:all`) — where a beam whose recorded source path
       belongs to another machine finds its source.
-    * `code_index` (`:all`) — each directory of the code path outside OTP
-      and Elixir, and what the specs read from there are named by
-      (`app_code`): `%{dir => name}`.
+    * `specs_source` (`:all`) — where the specs of the modules a program
+      calls are read from (`Argus.Specs.Source`: the project's own ebins
+      and the installed OTP), or nil for the VM's code path (an in-VM
+      caller analyzing the VM's own code).
+    * `code_index` (`:all`) — each directory the specs are read from
+      (the source's, or the code path's) outside OTP and Elixir, and
+      what the specs read from there are named by (`app_code`):
+      `%{dir => name}`.
     * `app_code` (a `code_index` name) — a digest of the stamps (size,
       modification time, inode) of every beam in that directory: it
       moves when a beam there is rebuilt, and a reader of a module's
@@ -41,6 +46,7 @@ defmodule Argus.Graph.Inputs do
   definput(:beam, durability: :medium)
   definput(:priors, durability: :medium)
   definput(:project_root, durability: :high)
+  definput(:specs_source, durability: :high)
   definput(:code_index, durability: :high)
   definput(:app_code, durability: :high)
   definput(:solver, durability: :high)
