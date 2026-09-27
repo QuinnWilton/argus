@@ -184,10 +184,12 @@ defmodule Argus.SouffleTest do
     test "is killed at the deadline, not left running", %{tmp_dir: tmp_dir} do
       {bin, pid_file} = sleeping_solver(tmp_dir)
 
+      # Long enough for the stand-in to start and write its pid on a
+      # loaded machine (a shell's start-up alone has taken 300 ms).
       assert {:error, :souffle_timeout} =
                Souffle.run(tmp_dir, Path.join(tmp_dir, "rules.dl"),
                  souffle_bin: bin,
-                 souffle_timeout: 300,
+                 souffle_timeout: 2_000,
                  output_dir: tmp_dir
                )
 
