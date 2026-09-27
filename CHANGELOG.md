@@ -4,7 +4,7 @@ All notable changes to Argus are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## 0.20.0-dev — unreleased
+## 0.20.0 — 2026-09-27
 
 ### The package is `argus_beam`
 
