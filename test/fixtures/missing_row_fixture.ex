@@ -187,6 +187,73 @@ defmodule Argus.Test.Fixtures.MissingRow do
     def bump(key), do: :ets.update_counter(:cross_module_buckets, key, {2, 1})
   end
 
+  # ── Tables the program's users hand in ───────────────────────────
+
+  defmodule HandedDebounce do
+    @moduledoc """
+    A debounced count on a table its callers hand in, whose first event
+    also drops the row when it is past its window: the delete, in a helper
+    the way in forwards the table to, is on the same handed-in table, and
+    a second caller's first event can drop the row between another's check
+    and count.
+    """
+    def log(table, key, stale?) do
+      case :ets.lookup(table, key) do
+        [] ->
+          :ets.insert(table, {key, 0})
+          if stale?, do: drop(table, key)
+          :ok
+
+        [_existing] ->
+          :ets.update_counter(table, key, {2, 1})
+      end
+    end
+
+    defp drop(table, key), do: :ets.delete(table, key)
+  end
+
+  defmodule HandedBesideNamed do
+    @moduledoc """
+    The count on a handed-in table, and a delete of a named table of the
+    module's own: two tables, whatever the callers hand in, as nothing in
+    view says the handed-in table is that one.
+    """
+    def log(table, key) do
+      case :ets.lookup(table, key) do
+        [] -> :ets.insert(table, {key, 0})
+        [_existing] -> :ets.update_counter(table, key, {2, 1})
+      end
+    end
+
+    def reset(key), do: :ets.delete(:handed_beside_named, key)
+  end
+
+  defmodule OwnPrivateTable do
+    @moduledoc """
+    HandedDebounce's count on a table the module makes :private and hands
+    its helper itself: filled in view, the parameter is that table, which
+    no other process reads.
+    """
+    def run(key, stale?) do
+      table = :ets.new(:own_private_debounce, [:private])
+      log(table, key, stale?)
+    end
+
+    defp log(table, key, stale?) do
+      case :ets.lookup(table, key) do
+        [] ->
+          :ets.insert(table, {key, 0})
+          if stale?, do: drop(table, key)
+          :ok
+
+        [_existing] ->
+          :ets.update_counter(table, key, {2, 1})
+      end
+    end
+
+    defp drop(table, key), do: :ets.delete(table, key)
+  end
+
   # ── Where the miss is rescued ────────────────────────────────────
 
   defmodule UnrelatedRescue do

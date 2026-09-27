@@ -1679,18 +1679,12 @@ hands_out(r) :- ets_op(r, _, _, "lookup", _), site_reads(_, _, "site", r).
 hands_out(r) :- ets_op(r, _, _, "lookup", _), call_arg_reads(_, _, _, "site", r).
 hands_out(r) :- ets_op(r, _, _, op, "read"), op != "lookup", op != "member", op != "info".
 
-// A table another process can read. A "field" table is the one its
-// operations were created with a name of (ets_op), not private.
-.decl readable_elsewhere(id: symbol, kind: symbol, ident: symbol)
+// A table the operation may touch that another process can read
+// (table_readable_elsewhere, clientlib/tables.dl: a "field" table's
+// sites are those of the name its operations were created with).
+.decl readable_elsewhere(id: symbol, kind: symbol, ident: symbol) inline
 
-readable_elsewhere(id, k, t) :- ets_table(id, k, t), k != "field", table_readable_elsewhere(k, t).
-
-readable_elsewhere(id, "field", t) :-
-  ets_table(id, "field", t),
-  ets_op(id, _, name, _, _),
-  name != "dynamic",
-  ets_new(n, _, name),
-  !ets_option(n, "access", "private").
+readable_elsewhere(id, k, t) :- ets_table(id, k, t), table_readable_elsewhere(k, t).
 
 // A reader that crashes on a missing row of a table an early publish
 // completes, with the table that publish writes: the readers and tables
@@ -1861,25 +1855,19 @@ table_of(op, tk, t) :- ets_table(op, tk, t).
 
 .init missing = CheckThenAct
 
-missing.check(read, func, lifted_kind, table, key_kind, key) :-
+// Each side names its table as clientlib/tables.dl knows it, as the
+// CheckThenAct source of its kind (table_source): a named table, a site
+// and a handed-in table are the same table in every function, a field
+// table within its module.
+missing.check(read, func, source, table, key_kind, key) :-
   deciding_read(read, func),
   table_and_key(read, table_kind, table, key_kind, key),
-  table_kind_as(table_kind, lifted_kind).
+  table_source(table_kind, source).
 
-missing.act(act, func, lifted_kind, table, key_kind, key) :-
+missing.act(act, func, source, table, key_kind, key) :-
   raises_if_row_missing(act, func),
   table_and_key(act, table_kind, table, key_kind, key),
-  table_kind_as(table_kind, lifted_kind).
-
-// A table's kind as CheckThenAct lifts it across calls: a named table and
-// an :ets.new/2 site are the same table in every function; a table a
-// module keeps under a field of its own is, within the module
-// (check_then_act.dl's global_identity and module_identity).
-.decl table_kind_as(table_kind: symbol, lifted_kind: symbol)
-
-table_kind_as("named", "named").
-table_kind_as("new", "new").
-table_kind_as("field", "module field").
+  table_source(table_kind, source).
 
 // The rule is written in the words below, one per line, each over a
 // whole table: a table is its kind and identity together (ets_table's
@@ -1928,20 +1916,17 @@ reads_completed_row(r, g) :-
   raises_if_row_missing(r, g),
   looks_up_row_of(r, complete).
 
-// The act's table is one another process can read. A named table the
-// program does not show being made — by a dependency, or under a name
-// that arrives at runtime (`:ets.new(name, ...)` in a function nothing
-// calls with a literal) — is taken to be shared: nothing says it is
-// private, and an update from a process that is not its owner needs it
-// public.
+// The act's table is one another process can read. A table the program
+// does not show being made (table_made_out_of_view: a named table a
+// dependency makes, or one under a name that arrives at runtime, as
+// `:ets.new(name, ...)` in a function nothing calls with a literal; or
+// one the program's users hand in) is taken to be shared: nothing says
+// it is private, and an update from a process that is not its owner
+// needs it public.
 .decl shared_table(act: symbol, table: EtsTable) inline
 
 shared_table(act, [tk, t]) :- readable_elsewhere(act, tk, t).
-shared_table(act, ["named", t]) :- ets_table(act, "named", t), !made_in_view("named", t).
-
-.decl made_in_view(kind: symbol, ident: symbol)
-
-made_in_view(k, t) :- site_table(_, k, t).
+shared_table(act, [tk, t]) :- ets_table(act, tk, t), table_made_out_of_view(tk, t).
 
 // An operation that deletes rows of the table: take, delete,
 // delete_object, select_delete, match_delete, or deleting them all.
@@ -2005,8 +1990,8 @@ keyed_apart(d, ks, k) :-
 .decl decides(func: symbol, check: symbol, use: symbol, row: EtsRow)
 
 decides(func, check, use, [[tk, t], ks, k]) :-
-  missing.meets(func, check, use, lifted_kind, t, ks, k),
-  table_kind_as(tk, lifted_kind).
+  missing.meets(func, check, use, source, t, ks, k),
+  table_source(tk, source).
 
 // The use's table is one other processes can reach.
 .decl on_shared_table(use: symbol) inline

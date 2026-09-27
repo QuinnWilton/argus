@@ -2572,20 +2572,20 @@ Tables are `ets_table` identities: a named table by its name, an unnamed one by 
 
 **Property.** Some function f in which a deciding read of table T at key K (`lookup`, `lookup_element`, `member`, `match`, `match_object`) decides, in f or through helpers and across modules, an operation on T at K that raises when the row is missing (`:ets.update_counter/3`, `:ets.lookup_element/3`), where:
 - the act's ArgumentError escapes (`escapes`, clientlib/escape.dl): no handler that takes it and goes on covers the act, or a call on every path of calls from f down to it, nor every call to f (when f is private and never handed out as a fun; a closure counts the call it is handed to);
-- T is readable by other processes: made where the program shows and not private, or a named table the program does not show being made; and
+- T is readable by other processes: made where the program shows and not private, or a table the program does not show being made (a named table made out of view, or one the program's users hand in); and
 - some operation that deletes rows of T (`take`, `delete`, `delete_object`, `select_delete`, `match_delete`, `delete_all_objects`, or deleting the table), at a key that can be K, can run while f is between the check and the act: f runs in more than one process, or the remover runs in a process that does not run f (a timer's `apply_after` counts as a process of its own).
 
 Another process takes or deletes the row between the check and the act, and the act raises ArgumentError (badarg) in a process that meant only to update the row (sequin's DebouncedLogger, whose timer flush takes the bucket its `log/4` counts into).
 
 **Assumptions and limits.**
 - A remover's key is asked only to rule it out: one removing `self()`'s row does not race a pair keyed by `self()`, nor a literal row, and a literal remover takes only that row, not another literal's nor the rows kept beside it under keys callers pass. A remover whose key the facts cannot equate, such as a flush keyed by what a timer was handed, counts.
-- A named table made out of view (by a dependency, or under a name from config) is taken as shared: nothing says it is private (2e1a812).
-- A named table and an `:ets.new/2` site cross every call unchanged; a table a module keeps under a field of its own crosses calls within the module.
+- A named table made out of view (by a dependency, or under a name from config) is taken as shared: nothing says it is private (2e1a812); so is a table the program's users hand to a way in, which a remover names only when the same way in forwards it (`EtsTable`'s `handed_in`).
+- Tables are the one identity of "A table and its identity": a named table, an `:ets.new/2` site and a handed-in table cross every call unchanged; a table a module keeps under a field of its own crosses calls within the module. Two kinds are never one table: a remover of a named table does not remove rows of a handed-in one.
 - The rescue walk follows calls at most 16 deep, and an act further down is taken as rescued; a closure or fun is asked of the call it is handed to, and one handed to a process start runs elsewhere. A rescue that only raises the miss again takes nothing.
 - A remover only a caller outside the program runs does not count when f runs in one process.
 - Quiet: an act with a default (`update_counter/4`, `lookup_element/4`), a rescued miss, and one process doing all of it.
 
-**Fixtures.** Positive: `MissingRow.Debounce` with `Debounce.Config`, `InlineTupleKey`, `NameFromConfig`, `UnrelatedRescue`, `OneCallerRescues`, `WrongRescue`, `ReraisingRescue`, `ClosureCallerUnguarded`, `OwnRowReaped`, `SentinelRow` (`total/0`), `HelperAct`, `HelperCheck`, `CrossModuleAct` with `Counter` (test/fixtures/missing_row_fixture.ex). Quiet: `MissingRow.WithDefault`, `Rescued`, `OneOwner`, `HelperRescue`, `CallerRescues`, `ClosureCallerRescues`, `OwnRow`, `SentinelRow` (`hit/1`). Asserted by test/analyses/ets_missing_row_test.exs; test/analyses/quiet_shapes_test.exs runs it over `OneOwner`.
+**Fixtures.** Positive: `MissingRow.Debounce` with `Debounce.Config`, `InlineTupleKey`, `NameFromConfig`, `UnrelatedRescue`, `OneCallerRescues`, `WrongRescue`, `ReraisingRescue`, `ClosureCallerUnguarded`, `OwnRowReaped`, `SentinelRow` (`total/0`), `HelperAct`, `HelperCheck`, `CrossModuleAct` with `Counter`, `HandedDebounce` (test/fixtures/missing_row_fixture.ex). Quiet: `MissingRow.WithDefault`, `Rescued`, `OneOwner`, `HelperRescue`, `CallerRescues`, `ClosureCallerRescues`, `OwnRow`, `SentinelRow` (`hit/1`), `HandedBesideNamed`, `OwnPrivateTable`. Asserted by test/analyses/ets_missing_row_test.exs; test/analyses/quiet_shapes_test.exs runs it over `OneOwner`.
 
 **Corpus.** Fix pairs: none. Present-only: `sequin@46ce4e1` (sequinstream/sequin, 46ce4e1, Sequin.DebouncedLogger).
 

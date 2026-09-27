@@ -80,7 +80,6 @@ liftable(s) :- call_arg_tuple(_, _, _, i, _, _), s = cat("element ", to_string(i
 
 global_identity("literal").
 global_identity("any").
-global_identity("named").
 global_identity("new").
 global_identity("handed_in").
 

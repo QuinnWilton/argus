@@ -31,7 +31,10 @@ defmodule Argus.Analyses.EtsMissingRowTest do
     Fixture.HelperAct,
     Fixture.HelperCheck,
     Fixture.CrossModuleAct,
-    Fixture.Counter
+    Fixture.Counter,
+    Fixture.HandedDebounce,
+    Fixture.HandedBesideNamed,
+    Fixture.OwnPrivateTable
   ]
 
   setup_all do
@@ -48,6 +51,28 @@ defmodule Argus.Analyses.EtsMissingRowTest do
     for [_mod, func, kind, table, check, act, remover] <- results["ets_missing_row"],
         uniq: true,
         do: {short(func), kind, table, short(check), short(act), short(remover)}
+  end
+
+  describe "ets_missing_row on a table the callers hand in" do
+    test "a removal below the same way in is on the same table", ctx do
+      skip_without_souffle()
+
+      assert [
+               {"log/3", "handed_in", "param 0 of " <> way_in, "log/3", "log/3", "drop/2"}
+             ] = missing(ctx, [Fixture.HandedDebounce])
+
+      assert way_in =~ "HandedDebounce:log/3"
+    end
+
+    test "a named table's removal is not a removal of a handed-in table", ctx do
+      skip_without_souffle()
+      assert missing(ctx, [Fixture.HandedBesideNamed]) == []
+    end
+
+    test "a parameter the program fills with its own private table is that table", ctx do
+      skip_without_souffle()
+      assert missing(ctx, [Fixture.OwnPrivateTable]) == []
+    end
   end
 
   describe "ets_missing_row" do
@@ -206,6 +231,22 @@ defmodule Argus.Analyses.EtsMissingRowTest do
       assert [%{label: "the read that decided the row was there"}, %{label: remover}] = f.related
       assert remover =~ "remove"
       assert Enum.any?(f.help, &(&1 =~ "update_counter/4"))
+    end
+
+    test "names a handed-in table by the way in and the argument it arrives in" do
+      row = [
+        "M",
+        "M:log/3",
+        "handed_in",
+        "param 0 of M:log/3",
+        "M:log/3#4",
+        "M:log/3#20",
+        "M:drop/2#3"
+      ]
+
+      f = Races.finding(:ets_missing_row, row)
+      assert f.detail =~ "the table callers pass M:log/3 as its first argument"
+      refute f.detail =~ "param 0"
     end
   end
 

@@ -616,6 +616,18 @@ defmodule Argus.Analyses.Races do
   # A "field" table is spelled with its module, which the prose has.
   defp describe_table("field", ident), do: "the table held under #{field_path(ident)}"
   defp describe_table("new", site), do: "the table made at #{site}"
+
+  # A handed-in table is spelled "param P of F" (clientlib/tables.dl): the
+  # table the program's users pass F there.
+  defp describe_table("handed_in", ident) do
+    with ["param", position, "of", way_in] <- String.split(ident, " ", parts: 4),
+         {n, ""} when n in 0..9 <- Integer.parse(position) do
+      "the table callers pass #{way_in} as its #{ordinal(n)} argument"
+    else
+      _ -> "the table callers hand in (#{ident})"
+    end
+  end
+
   defp describe_table(_named, name), do: name
 
   # A label sits beside the code, which shows the map the table is read
