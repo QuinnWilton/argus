@@ -183,6 +183,55 @@ defmodule Argus.Graph.RulesTest do
     end)
   end
 
+  # Sets a query's value as if it had just come out so, at a new
+  # revision: what a build with other code gives a query that reads that
+  # code as a value (`Argus.Graph.Code`).
+  defp came_out!(db, key, value) do
+    Roux.Revision.advance(db.revision, :high)
+    now = Roux.Revision.current(db.revision)
+    {:ok, entry} = Memo.get(db, key)
+
+    :ok =
+      Memo.put(db, key, %{
+        entry
+        | value: value,
+          hash: :erlang.phash2(value),
+          changed_at: now,
+          verified_at: now
+      })
+  end
+
+  test "an edit to one extractor re-runs that extractor alone, over each module's kept base",
+       %{paths: paths} = context do
+    in_graph(context, fn db, log, _root ->
+      {:ok, %{value: codes}} = Memo.get(db, {:producer_code, :all})
+      :ok = came_out!(db, {:producer_code, :all}, %{codes | Argus.Extractors.ETS => "edited"})
+
+      extracted = extracted(fn -> findings!(db) end)
+
+      assert length(QueryLog.executions(log, :module_facts)) == map_size(paths)
+      assert extracted |> Enum.map(&elem(&1, 1)) |> Enum.uniq() == [[Argus.Extractors.ETS]]
+      assert length(extracted) == map_size(paths)
+      # The same rows: nothing past them runs.
+      assert QueryLog.executions(log, :module_semantic) == []
+      assert solved(log) == []
+    end)
+  end
+
+  test "an edit to one analysis's code rebuilds its findings alone", context do
+    in_graph(context, fn db, log, _root ->
+      {:ok, %{value: {module, _digest}}} = Memo.get(db, {:analysis_code, :mailbox})
+      :ok = came_out!(db, {:analysis_code, :mailbox}, {module, "edited"})
+      findings!(db)
+
+      assert QueryLog.executions(log, :findings) == [{:test, :mailbox}]
+      # Its program's file is the same: nothing is solved again.
+      assert QueryLog.executions(log, :program_files) == [:mailbox]
+      assert solved(log) == []
+      assert QueryLog.executions(log, :module_facts) == []
+    end)
+  end
+
   test "an edit to the findings' prose rebuilds the findings, which cut off", context do
     in_graph(context, fn db, log, _root ->
       :ok = edit_code!(db, :findings)

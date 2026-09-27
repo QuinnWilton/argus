@@ -17,9 +17,11 @@ defmodule Argus.Graph.Extraction do
       drops them), so the `vsn` checksum, which moves with every edit,
       reaches none.
 
-  The code version of `module_facts` is the code every producer runs:
-  an extractor edit moves it for every module, and each finds every
-  other producer's pack by its trace and runs that extractor alone.
+  `module_facts` reads the code every producer runs as a value
+  (`Argus.Graph.Code`'s `producer_code`): an extractor edit moves it,
+  every module's facts run again, and each finds every other producer's
+  rows by its trace and runs that extractor alone. An edit to an
+  analysis that names no other extractor moves nothing here.
   """
 
   use Roux.Query,
@@ -52,14 +54,14 @@ defmodule Argus.Graph.Extraction do
 
   defquery :module_facts,
     key: beam_key,
-    code: {__MODULE__, :extractors, []},
     store: :blob,
     transient: &match?({:ok, %{lost: true}}, &1),
     returns: {:ok, Pack.t()} | {:error, term()} do
     case Runtime.query(db, :module_beam, beam_key) do
       {:ok, beam} ->
         module = Runtime.query(db, :module_name, beam_key)
-        Pack.extract(db, Frontend.read(beam), beam.hash, module, producers())
+        codes = Runtime.query(db, :producer_code, :all)
+        Pack.extract(db, Frontend.read(beam), beam.hash, module, codes)
 
       :external ->
         {:error, {:external, beam_key}}

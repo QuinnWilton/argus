@@ -64,6 +64,7 @@ defmodule Argus.Graph do
     Argus.Graph.Inputs,
     Argus.Graph.Frontend,
     Argus.Graph.Reads,
+    Argus.Graph.Code,
     Argus.Graph.Extraction,
     Argus.Graph.Relations,
     Argus.Graph.Programs,

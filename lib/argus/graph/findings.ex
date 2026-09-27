@@ -10,8 +10,10 @@ defmodule Argus.Graph.Findings do
       functions and instructions, never lines: an edit that only moves
       lines leaves them as they were, and nothing past them runs. Kept
       by digest (`store: :blob`): a warm run reads none it does not
-      place. Versioned by every built-in analysis's code, whose prose
-      and identity rules build them.
+      place. They read the analysis's code as a value
+      (`Argus.Graph.Code`'s `analysis_code`), whose prose and identity
+      rules build them: an edit to one analysis rebuilds its findings
+      alone.
     * `extraction_errors(program)` — each module extraction could not
       read at all (`step: "module"`), and each step it recorded as
       failing on a module (the `extraction_error` relation: an extractor
@@ -28,14 +30,16 @@ defmodule Argus.Graph.Findings do
 
   defquery :findings,
     key: {program, analysis},
-    code: {Argus.Analysis, :builtin_analysis_modules, []},
     store: :blob,
     transient: &match?({:error, _}, &1),
     returns: {:ok, [Argus.Findings.finding()], [Build.failure()]} | {:error, term()} do
     with {:ok, results} <- results(db, program, analysis),
-         {:ok, module} <- analysis_module(analysis) do
+         {module, _digest} <- Runtime.query(db, :analysis_code, analysis) do
       {findings, failures} = Build.build(module, results)
       {:ok, findings, failures}
+    else
+      :unknown -> {:error, {:unknown_analysis, analysis}}
+      {:error, _} = error -> error
     end
   end
 
@@ -51,13 +55,6 @@ defmodule Argus.Graph.Findings do
     with {:ok, outputs} <- Runtime.query(db, :solve, {program, analysis}),
          {:ok, rows} <- Solve.read_outputs(db, outputs, :csv) do
       {:ok, Argus.Analysis.filter_to_outputs(rows, analysis)}
-    end
-  end
-
-  defp analysis_module(analysis) do
-    case Argus.Analysis.fetch_module(analysis) do
-      {:ok, module} -> {:ok, module}
-      :error -> {:error, {:unknown_analysis, analysis}}
     end
   end
 

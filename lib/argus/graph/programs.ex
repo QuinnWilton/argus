@@ -68,6 +68,10 @@ defmodule Argus.Graph.Programs do
   end
 
   defquery :program_files, key: program do
+    # Which file an analysis's program is: its module's to say.
+    if is_atom(program) and program not in [:stage0, :points_to, :points_to_bounded],
+      do: _ = Runtime.query(db, :analysis_code, program)
+
     with {:ok, path} <- rules_path(program) do
       root = tree(program)
       _tree = Runtime.input(db, :dl_tree, root, default: nil)

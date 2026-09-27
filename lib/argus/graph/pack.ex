@@ -19,9 +19,8 @@ defmodule Argus.Graph.Pack do
 
   A module's pack is found again by a trace (`Roux.Blob.Trace`) named by
   the beam's digest and the options that shape its rows, which records
-  for each producer the digest of the code it ran (`Roux.Code.digest/2`
-  from `Argus.Pipeline` and the extractor, the schema's modules left
-  out) and what it read that its code does not name: each schema entry
+  for each producer the digest of the code it ran (`Argus.Graph.Code`'s
+  `producer_code`) and what it read that its code does not name: each schema entry
   it read, and — for a producer that reads specs from the code path —
   each module whose specs it read, with what each was. A producer's rows
   in the pack are used while its code digest is the one running and
@@ -79,20 +78,21 @@ defmodule Argus.Graph.Pack do
 
   @doc """
   The facts of the beam `input` (a path or the bytes, `hash` its
-  digest, `module` its name or nil) for `producers`, found or extracted:
-  `{:ok, facts}` or the pipeline's error for a beam it cannot read.
-  Called in the body of `module_facts`, whose edges the observations
-  and the recorded reads become.
+  digest, `module` its name or nil) for the producers of `codes` (each
+  producer and the digest of the code it runs, `:base` first), found or
+  extracted: `{:ok, facts}` or the pipeline's error for a beam it cannot
+  read. Called in the body of `module_facts`, whose edges the
+  observations and the recorded reads become.
   """
-  @spec extract(Roux.Database.t(), Path.t() | binary(), String.t(), module() | nil, [
-          Pipeline.producer()
-        ]) :: {:ok, t()} | {:error, term()}
-  def extract(db, input, hash, module, producers) do
+  @spec extract(Roux.Database.t(), Path.t() | binary(), String.t(), module() | nil, %{
+          Pipeline.producer() => term()
+        }) :: {:ok, t()} | {:error, term()}
+  def extract(db, input, hash, module, codes) do
     store = db.blob
+    producers = [:base | codes |> Map.keys() |> List.delete(:base) |> Enum.sort()]
     # A beam that cannot be read names its rows by its path.
     identity = if module, do: {:beam, hash}, else: {:beam, hash, path_of(input)}
     name = {:argus_module, @format, identity, shaping()}
-    codes = Map.new(producers, &{&1, code(&1, store)})
     observe = memo_observe(db)
 
     {kept, observe} = best(store, name, producers, codes, observe)
@@ -118,17 +118,6 @@ defmodule Argus.Graph.Pack do
   # (`Argus.Schema.in_process_only/0`) no program of argus's reads, and
   # they are most of the rows.
   defp shaping, do: {:except, Enum.sort(Argus.Schema.in_process_only()), :trace_imprecision}
-
-  # The code a producer runs: the base's from `Argus.Pipeline`, an
-  # extractor's from itself too (it reads what the base computes).
-  defp code(producer, store) do
-    roots = if producer == :base, do: [Pipeline], else: [Pipeline, producer]
-
-    case Roux.Code.digest(roots, exclude: &Reads.schema_module?/1, store: store) do
-      {:ok, digest} -> digest
-      {:error, reason} -> {:unversioned, reason}
-    end
-  end
 
   # Observing a read: through its query, each at most once per lookup.
   defp memo_observe(db) do
