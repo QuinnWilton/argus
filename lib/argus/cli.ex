@@ -334,6 +334,9 @@ defmodule Argus.CLI do
 
           0
 
+        {:error, %Roux.Blob.TrustError{} = trust} ->
+          error(3, Exception.message(trust))
+
         {:error, reason} ->
           error(3, "#{dir} is not a store argus can collect: #{inspect(reason)}")
       end

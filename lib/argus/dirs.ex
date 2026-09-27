@@ -11,13 +11,26 @@ defmodule Argus.Dirs do
 
   The Datalog rules an escript carries are unpacked under the store
   (`dl/0`), one directory per tree of rules (`Argus.Dl`).
+
+  The store's root is made by `Roux.Blob.open/1` alone (mode `0700`),
+  which refuses one another user could have written (`Roux.Blob.TrustError`):
+  what it holds is decoded as trusted, and so are the rules unpacked in
+  it. Nothing else here makes it.
   """
 
   @doc "The blob store's directory (`Argus.Graph.store_root/0`)."
   @spec store() :: Path.t()
   def store, do: Argus.Graph.store_root()
 
-  @doc "Where an escript unpacks the Datalog rules it carries."
+  @doc """
+  Where an escript unpacks the Datalog rules it carries: the store's
+  root opened first, so that it is made (and judged) as a store, never
+  by the unpack's `mkdir -p`. Raises `Roux.Blob.TrustError` for a root
+  another user could have written.
+  """
   @spec dl() :: Path.t()
-  def dl, do: Path.join(store(), "dl")
+  def dl do
+    %Roux.Blob{root: root} = Roux.Blob.open!(store())
+    Path.join(root, "dl")
+  end
 end

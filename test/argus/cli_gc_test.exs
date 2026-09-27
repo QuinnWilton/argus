@@ -1,7 +1,9 @@
 defmodule Argus.CLIGcTest do
   @moduledoc """
   `argus gc` collects the blob store the environment names, and the rule
-  trees other builds unpacked there.
+  trees other builds unpacked there; a store another user could have
+  written is refused, and the rules are never unpacked into a root the
+  store did not make.
   """
 
   # ARGUS_CACHE_DIR is VM-wide.
@@ -47,5 +49,26 @@ defmodule Argus.CLIGcTest do
     refute Roux.Blob.member?(blob, digest)
     refute File.exists?(old)
     assert File.dir?(current)
+  end
+
+  test "a store its group can write is refused, saying how to fix it", %{store: store} do
+    {:ok, _blob} = Roux.Blob.open(store)
+    File.chmod!(store, 0o775)
+
+    stderr =
+      capture_io(:stderr, fn ->
+        _stdout = capture_io(fn -> assert Argus.CLI.run(["gc"]) == 3 end)
+      end)
+
+    assert stderr =~ "refusing the blob store at #{store}"
+    assert stderr =~ "chmod go-w #{store}"
+  end
+
+  test "the rules' directory is under a store root the store made", %{store: store} do
+    refute File.exists?(store)
+    assert Argus.Dirs.dl() == Path.join(store, "dl")
+    assert %File.Stat{mode: mode} = File.stat!(store)
+    assert Bitwise.band(mode, 0o777) == 0o700
+    assert File.regular?(Path.join(store, "FORMAT"))
   end
 end

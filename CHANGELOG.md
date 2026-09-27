@@ -45,6 +45,18 @@ and raises unless the answers are the same in normal form
 incremental-equals-batch gate over argus's own fixtures, and `:project`
 tags the peer and Mix-project tests. CI runs the suite on each backend.
 
+**Changed.** The blob store is trusted as a manifest is: what it holds
+is decoded without refusing atoms a fresh VM has not made (roux 0.2),
+so it must be a store no other user could have written. Argus makes
+the store's root through `Roux.Blob` alone (mode `0700`), the escript's
+unpacked rules under it included (`Argus.Dirs.dl/0`), and a run refuses
+a root, or its `FORMAT`, owned by another user or writable by its
+group or by everyone, with `Roux.Blob.TrustError`. A store made earlier
+under a loose umask (`~/.cache/argus/store`, `$ARGUS_CACHE_DIR`) is
+refused until it is fixed: `chmod go-w <root> <root>/FORMAT`, or remove
+the store and let the next run make it again. `argus gc` exits 3 with
+the same advice.
+
 **Changed.** `Argus.Souffle.Cache` is `Argus.Souffle.Program` (the old
 names delegate); the points-to stage's choice between the exact and the
 bounded program is `Argus.Souffle.Stages`, which both backends call;
