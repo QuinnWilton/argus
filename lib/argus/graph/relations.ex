@@ -18,9 +18,9 @@ defmodule Argus.Graph.Relations do
   A relation's file is the concatenation of its modules' chunks, in the
   program's order, and never exists until a solve that is not kept
   needs it (`files/3`): then it is assembled in one pass over the
-  program's combined packs, put into the blob store once, and
-  remembered under its digest, so every later solve that needs the same
-  relation links it.
+  segments of the program's modules that hold it, put into the blob
+  store once, and remembered under its digest, so every later solve
+  that needs the same relation links it.
   """
 
   use Roux.Query,
@@ -180,10 +180,11 @@ defmodule Argus.Graph.Relations do
 
   defp facts_files(_db, _program, [], _producers), do: {:ok, %{}}
 
-  # One pass over the program's modules: each module's combined pack is
-  # read once, and its chunk of every missing relation appended to that
-  # relation's file, written in a scratch directory on the store's file
-  # system and moved into it.
+  # One pass over the program's modules: each module's segments that hold
+  # a missing relation are read once (`Argus.Graph.Pack.chunks/4`), and
+  # its chunk of every missing relation appended to that relation's file,
+  # written in a scratch directory on the store's file system and moved
+  # into it.
   defp facts_files(db, program, facts, producers) do
     store = db.blob
     relations = Enum.map(facts, &elem(&1, 0))
@@ -207,11 +208,9 @@ defmodule Argus.Graph.Relations do
           case Runtime.untracked(fn -> Runtime.query(db, :module_facts, key) end) do
             {:ok, %{pack: pack, relations: chunks}} ->
               if Enum.any?(Map.keys(chunks), &MapSet.member?(wanted, &1)) do
-                {:ok, contents} = read_pack!(store, pack)
+                chunks = chunks!(store, pack, relations, producers)
 
-                for relation <- relations,
-                    bytes = Pack.chunk(contents, relation, producers),
-                    bytes != "" do
+                for relation <- relations, bytes = Map.get(chunks, relation, ""), bytes != "" do
                   {_path, device} = Map.fetch!(devices, relation)
                   :ok = IO.binwrite(device, bytes)
                 end
@@ -234,10 +233,10 @@ defmodule Argus.Graph.Relations do
     end)
   end
 
-  defp read_pack!(store, pack) do
-    case Pack.read(store, pack) do
-      {:ok, contents} -> {:ok, contents}
-      :miss -> raise Roux.Blob.MissingError, store: store.root, digest: pack
+  defp chunks!(store, pack, relations, producers) do
+    case Pack.chunks(store, pack, relations, producers) do
+      {:ok, chunks} -> chunks
+      {:missing, digest} -> raise Roux.Blob.MissingError, store: store.root, digest: digest
     end
   end
 

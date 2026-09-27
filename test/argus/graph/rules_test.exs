@@ -223,22 +223,28 @@ defmodule Argus.Graph.RulesTest do
       extracted = extracted(fn -> findings!(db) end)
 
       assert length(QueryLog.executions(log, :module_facts)) == map_size(paths)
-      # Inside each module's facts, that producer alone ran; every other
-      # producer's rows came from the module's old pack.
+      # Inside each module's facts, that producer alone ran, over the base
+      # the cold run kept, never over the beam; every other producer's
+      # rows came from its segment.
       assert extracted |> Enum.map(&elem(&1, 1)) |> Enum.uniq() == [[Argus.Extractors.ETS]]
+      assert extracted |> Enum.map(&elem(&1, 2)) |> Enum.uniq() == [true]
       assert length(extracted) == map_size(paths)
       # The same rows: nothing past them runs.
       assert QueryLog.executions(log, :module_semantic) == []
       assert solved(log) == []
 
-      # The first extractor-only run kept each module's base; the next
-      # edit runs the extractor over it, never over the beam.
+      # The next edit too.
       again = "#{edited} again"
       :ok = came_out!(db, {:producer_code, :all}, %{codes | Argus.Extractors.ETS => again})
       extracted = extracted(fn -> findings!(db) end)
 
       assert extracted |> Enum.map(&elem(&1, 1)) |> Enum.uniq() == [[Argus.Extractors.ETS]]
       assert extracted |> Enum.map(&elem(&1, 2)) |> Enum.uniq() == [true]
+
+      # Undone, the edit finds the rows the code made before, and runs
+      # nothing.
+      :ok = came_out!(db, {:producer_code, :all}, %{codes | Argus.Extractors.ETS => edited})
+      assert extracted(fn -> findings!(db) end) == []
     end)
   end
 

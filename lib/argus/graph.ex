@@ -8,8 +8,8 @@ defmodule Argus.Graph do
 
       program(p) ─ beam(k) … [inputs: Argus.Graph.Inputs]
            │
-      module_facts(k)            per-module packs in the blob store,
-           │                     each producer's found by its trace
+      module_facts(k)            each producer's segment in the blob
+           │                     store, found by the module's trace
       module_semantic(k)         ── cutoff: line_info left out
            │
       program_relations(p)       a Merkle digest per relation, over the
@@ -48,10 +48,10 @@ defmodule Argus.Graph do
 
   ## Storage
 
-  Facts stay text: each module's rows are packs in a `Roux.Blob` store,
-  a relation's file is made only when a solve that is not kept needs it,
-  and a solve is kept in the store's action cache by the digests of
-  what it reads. A frontend opens a session over a store (`open/1`),
+  Facts stay text: each module's rows are one segment per producer in a
+  `Roux.Blob` store (`Argus.Graph.Pack`), a relation's file is made only
+  when a solve that is not kept needs it, and a solve is kept in the
+  store's action cache by the digests of what it reads. A frontend opens a session over a store (`open/1`),
   whose manifest keeps the graph between runs; a run without a manifest
   keeps nothing but the store.
   """

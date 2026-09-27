@@ -4,7 +4,8 @@ defmodule Argus.Graph.Extraction do
 
     * `module_facts(beam_key)` — the module's rows from every producer
       (`Argus.Pipeline`'s base and every extractor an analysis runs:
-      `producers/0`), as packs in the blob store (`Argus.Graph.Pack`),
+      `producers/0`), one segment per producer in the blob store
+      (`Argus.Graph.Pack`),
       with each relation's chunk digest; `{:error, reason}` for a beam
       the pipeline cannot read. Not kept in a manifest when the module
       was lost (it outlived the per-module timeout, or its worker
@@ -20,7 +21,8 @@ defmodule Argus.Graph.Extraction do
   `module_facts` reads the code every producer runs as a value
   (`Argus.Graph.Code`'s `producer_code`): an extractor edit moves it,
   every module's facts run again, and each finds every other producer's
-  rows by its trace and runs that extractor alone. An edit to an
+  rows by its trace and runs that extractor alone, over the module's
+  kept base, writing its own segment. An edit to an
   analysis that names no other extractor moves nothing here.
   """
 
