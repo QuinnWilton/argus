@@ -107,13 +107,21 @@ defmodule Argus.Graph.Pack do
 
     case kept do
       %{missing: [], trace: trace} ->
-        _ = Blob.touch(trace.path)
+        used(trace)
         Runtime.hold([trace.value.pack | base_digests(trace.value)])
         {:ok, facts(module, trace.value, false)}
 
       kept ->
         rebuild(db, name, input, module, producers, codes, kept, observe)
     end
+  end
+
+  # A trace found and used, marked so (its modification time) for the
+  # store's recency, as `Roux.Blob.Trace.find/4` marks one: at most once
+  # a refresh interval, so a warm run writes nothing.
+  defp used(%{path: path, mtime: mtime, refresh: refresh}) do
+    if System.os_time(:second) - mtime >= refresh, do: _ = Blob.touch(path)
+    :ok
   end
 
   defp path_of(input) when is_binary(input) do
