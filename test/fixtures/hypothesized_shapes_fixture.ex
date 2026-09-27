@@ -440,6 +440,130 @@ defmodule Argus.Test.Fixtures.Hypothesized do
     defp arm(interval), do: Process.send_after(self(), :tick, interval)
   end
 
+  defmodule TimerFlushBeforeCancel do
+    @moduledoc false
+    # The receive runs before the cancel: a :tick the timer delivers
+    # between the two is left behind for the re-armed timer's clause.
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+    @impl true
+    def init(interval), do: {:ok, %{interval: interval, timer: arm(interval)}}
+
+    @impl true
+    def handle_call({:set_interval, interval}, _from, state) do
+      receive do
+        :tick -> :ok
+      after
+        0 -> :ok
+      end
+
+      Process.cancel_timer(state.timer)
+      {:reply, :ok, %{state | interval: interval, timer: arm(interval)}}
+    end
+
+    @impl true
+    def handle_info(:tick, state), do: {:noreply, %{state | timer: arm(state.interval)}}
+
+    defp arm(interval), do: Process.send_after(self(), :tick, interval)
+  end
+
+  defmodule TimerFlushInOtherClause do
+    @moduledoc false
+    # The receive is in another clause of the function that cancels: the
+    # clause that cancels and re-arms never runs it.
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+    @impl true
+    def init(interval), do: {:ok, %{interval: interval, timer: arm(interval)}}
+
+    @impl true
+    def handle_call({:set_interval, interval}, _from, state) do
+      Process.cancel_timer(state.timer)
+      {:reply, :ok, %{state | interval: interval, timer: arm(interval)}}
+    end
+
+    def handle_call(:drain, _from, state) do
+      receive do
+        :tick -> :ok
+      after
+        0 -> :ok
+      end
+
+      {:reply, :ok, state}
+    end
+
+    @impl true
+    def handle_info(:tick, state), do: {:noreply, %{state | timer: arm(state.interval)}}
+
+    defp arm(interval), do: Process.send_after(self(), :tick, interval)
+  end
+
+  defmodule TimerFlushHelperBeforeCancel do
+    @moduledoc false
+    # The flush helper is called before the cancel, not after it.
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+    @impl true
+    def init(interval), do: {:ok, %{interval: interval, timer: arm(interval)}}
+
+    @impl true
+    def handle_call({:set_interval, interval}, _from, state) do
+      flush_tick()
+      Process.cancel_timer(state.timer)
+      {:reply, :ok, %{state | interval: interval, timer: arm(interval)}}
+    end
+
+    @impl true
+    def handle_info(:tick, state), do: {:noreply, %{state | timer: arm(state.interval)}}
+
+    defp flush_tick do
+      receive do
+        :tick -> :ok
+      after
+        0 -> :ok
+      end
+    end
+
+    defp arm(interval), do: Process.send_after(self(), :tick, interval)
+  end
+
+  defmodule TimerCancelHelperFlushBeforeCall do
+    @moduledoc false
+    # The ref is handed down to a cancel helper, and the caller flushes
+    # before it calls the helper, not after.
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+    @impl true
+    def init(interval), do: {:ok, %{interval: interval, timer: arm(interval)}}
+
+    @impl true
+    def handle_call({:set_interval, interval}, _from, state) do
+      receive do
+        :tick -> :ok
+      after
+        0 -> :ok
+      end
+
+      cancel(state.timer)
+      {:reply, :ok, %{state | interval: interval, timer: arm(interval)}}
+    end
+
+    @impl true
+    def handle_info(:tick, state), do: {:noreply, %{state | timer: arm(state.interval)}}
+
+    defp cancel(ref), do: Process.cancel_timer(ref)
+
+    defp arm(interval), do: Process.send_after(self(), :tick, interval)
+  end
+
   defmodule TwoTimers do
     @moduledoc false
     # Cancels the poll timer (armed once, in init) and arms the tick

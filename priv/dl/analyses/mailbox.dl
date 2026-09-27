@@ -22,6 +22,7 @@
 .include "../clientlib/test_code.dl"
 .include "../clientlib/vocabulary.dl"
 .include "../clientlib/timer_flush.dl"
+.include "../clientlib/order.dl"
 .include "../clientlib/live_view.dl"
 .include "../clientlib/runs.dl"
 .include "../clientlib/tooling.dl"
@@ -76,8 +77,9 @@
 // so a module with a heartbeat and a reconnect timer gets two verdicts.
 // The flush must name the armed message (recv_pattern), or match
 // anything, and be where the cancel is: in the function that cancels,
-// or one it calls (flushes_after_cancel). A receive for the message in
-// an unrelated function of the module is no flush.
+// or one a call after the cancel runs (flushes_after_cancel). A receive
+// for the message before the cancel, or in an unrelated function of the
+// module, is no flush.
 
 // The map key the ref armed in `a` ends up under.
 .decl timer_key(arm: symbol, key: symbol)
@@ -460,74 +462,114 @@ cancelled_on_the_way_out(cancel) :- timer_cancel(cancel, c, _, _, _), runs_only_
 takes_old_message(cancel, msg) :- flushes_after_cancel(cancel, msg).
 takes_old_message(cancel, msg) :- handles_that_message(cancel, msg).
 
-// A receive where the cancel is takes the message: by name, or a clause
+// A receive after the cancel takes the message: by name, or a clause
 // that matches anything (`after 0` with a wildcard, the cancel_timer
-// docs' blocking receive, Ostinato.Eager). Where the cancel is means the
-// function holding it, a caller that read the ref and handed it down to
-// a cancel helper, a caller of a helper that reads the field and cancels
-// it, or a function one of those calls in the same process (a
-// `flush_tick/0` helper). A receive for the message elsewhere in the
-// module runs on some other path: one handle_cast/2 waits in does not
-// flush the heartbeat handle_call/3 cancels, and used to silence it.
-// Whether the receive runs after the cancel inside the function is not
-// asked: the order needs the instruction-level CFG facts stage 0 keeps
-// out of the analyses' inputs.
+// docs' blocking receive, Ostinato.Eager). After the cancel means later
+// on a path through the function holding it (runs_after,
+// clientlib/order.dl), or in a function a call there runs in the same
+// process (a `flush_tick/0` helper); where a caller hands the ref down
+// to a cancel helper, or calls a helper that reads the field and cancels
+// it, it means after that call in the caller. A receive before the
+// cancel, in another clause of the function or elsewhere in the module
+// runs on some other path: one handle_cast/2 waits in does not flush the
+// heartbeat handle_call/3 cancels, and a receive the timer can fire
+// after leaves its message behind.
 .decl flushes_after_cancel(cancel: symbol, message: symbol)
 
-// The cancel's own function, or what it runs, flushes: every caller's
-// path passes it.
+// The cancel's own function flushes after it: every caller's path
+// passes it.
 flushes_after_cancel(cancel, msg) :-
-  timer_cancel(cancel, c, _, _, _),
-  flushes_in(c, msg).
+  timer_cancel(cancel, _, _, _, _),
+  flushes_after(cancel, msg).
 
 // The cancel is made on its callers' behalf (helper_cancel): flushed
-// only when every caller that is not on the way out flushes where it
-// calls. One caller's flush is not another's: a :pause that flushes
-// does not cover a :reset that re-arms without flushing (review 2,
-// item 19).
+// only when every call toward it, from a caller that is not on the way
+// out, is followed by a flush. One caller's flush is not another's: a
+// :pause that flushes does not cover a :reset that re-arms without
+// flushing (review 2, item 19).
 flushes_after_cancel(cancel, msg) :-
-  helper_cancel(cancel, g),
-  flushes_in(g, msg),
+  helper_cancel(cancel, _, site),
+  flushes_after(site, msg),
   !unflushed_caller(cancel, msg).
 
 .decl unflushed_caller(cancel: symbol, message: symbol)
 
 unflushed_caller(cancel, msg) :-
-  helper_cancel(cancel, g),
+  helper_cancel(cancel, g, site),
   !runs_only_on_the_way_out(g),
   armed_message(_, msg),
-  !flushes_in(g, msg).
+  !flushes_after(site, msg).
+
+// A receive that takes the message runs after the instruction `site`
+// (a cancel, or a call toward one): in its function, or in a function a
+// later call there runs in the same process.
+.decl flushes_after(site: symbol, message: symbol)
+
+flushes_after(site, msg) :-
+  after_cancel.runs_after(site, recv),
+  takes_message(recv, msg).
+
+flushes_after(site, msg) :-
+  after_cancel.runs_after(site, call),
+  calls_in_process(call, h),
+  flushes_in(h, msg).
+
+.init after_cancel = RunsAfter
+
+after_cancel.asked(cancel) :- timer_cancel(cancel, _, _, _, _).
+after_cancel.asked(site) :- helper_cancel(_, _, site).
+
+// The receive `recv` takes the message: a clause names it, or matches
+// anything.
+.decl takes_message(recv: symbol, message: symbol)
+
+takes_message(recv, msg) :- recv_pattern(recv, _, msg).
+
+takes_message(recv, msg) :-
+  recv_pattern(recv, _, "any"),
+  armed_message(_, msg).
+
+// The call at `call` runs `h` in the caller's process: a function of the
+// program called there, or a closure handed to it that is not run
+// elsewhere. A side path (side_call) is not the caller's flush.
+.decl calls_in_process(call: symbol, callee: symbol)
+
+calls_in_process(call, h) :-
+  call_instr(f, h, call),
+  !runs_elsewhere(f, h),
+  !side_call(f, h).
+
+calls_in_process(call, h) :-
+  fun_handed(call, f, h, _),
+  !runs_elsewhere(f, h),
+  !side_call(f, h).
 
 // `f`, or what it runs in its own process, has a receive that takes the
-// message: by name, or with a clause that matches anything.
+// message.
 .decl flushes_in(func: symbol, message: symbol)
 
-flushes_in(f, msg) :- flush_scope.reaches(f, g), recv_pattern(_, g, msg).
-
-flushes_in(f, msg) :-
-  flush_scope.reaches(f, g),
-  recv_pattern(_, g, "any"),
-  armed_message(_, msg).
+flushes_in(f, msg) :- flush_scope.reaches(f, g), recv_pattern(recv, g, _), takes_message(recv, msg).
 
 .init flush_scope = ForwardSameProcessReachCut
 
 flush_scope.cut(f, g) :- side_call(f, g).
-flush_scope.root(c, c) :- timer_cancel(_, c, _, _, _).
-flush_scope.root(g, g) :- helper_cancel(_, g).
+flush_scope.root(h, h) :- after_cancel.runs_after(_, call), calls_in_process(call, h).
 
-// A function that makes the cancel_timer `cancel` through a helper: it
-// hands the ref down (hands_down_ref), or it calls, in its process, a
-// function of its module that reads the field and cancels it
+// The call at `site` in `func` makes the cancel_timer `cancel` through a
+// helper: it hands the ref down (hands_down_ref), or it calls, in its
+// process, a function of its module that reads the field and cancels it
 // (helper_cancels_field, clientlib/timer_flush.dl: MongooseIM's
 // maybe_cancel_timer/2).
-.decl helper_cancel(cancel: symbol, func: symbol)
+.decl helper_cancel(cancel: symbol, func: symbol, site: symbol)
 
-helper_cancel(cancel, g) :- hands_down_ref(cancel, g).
-helper_cancel(cancel, g) :- helper_cancels_field(g, _, cancel, _).
+helper_cancel(cancel, g, site) :- hands_down_ref(cancel, g, site).
+helper_cancel(cancel, g, site) :- helper_cancels_field(g, site, cancel, _).
 
 // `func` passes the ref the cancel_timer `cancel` takes as a parameter,
-// read from its state or its own parameter (param_field's path).
-.decl hands_down_ref(cancel: symbol, func: symbol)
+// read from its state or its own parameter (param_field's path), at its
+// calls to the function taking it (`site`: every call to that function,
+// as the argument facts name no call).
+.decl hands_down_ref(cancel: symbol, func: symbol, site: symbol)
 .decl ref_param(cancel: symbol, func: symbol, pos: number)
 
 ref_param(cancel, c, pos) :- timer_cancel(cancel, c, "param", _, pos).
@@ -536,9 +578,10 @@ ref_param(cancel, g, gpos) :-
   ref_param(cancel, f, pos),
   call_arg_forward(g, f, pos, gpos).
 
-hands_down_ref(cancel, g) :-
+hands_down_ref(cancel, g, site) :-
   ref_param(cancel, f, pos),
-  (call_arg_field(g, f, pos, _) ; call_arg_forward(g, f, pos, _)).
+  (call_arg_field(g, f, pos, _) ; call_arg_forward(g, f, pos, _)),
+  call_instr(g, f, site).
 
 // ══ Tasks whose messages land unhandled ═════════════════════════════
 //

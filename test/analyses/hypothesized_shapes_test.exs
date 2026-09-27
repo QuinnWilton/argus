@@ -98,6 +98,10 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
           H.TimerFlushedElsewhere,
           H.TimerFlushInHelper,
           H.TimerCancelHelperFlushInCaller,
+          H.TimerFlushBeforeCancel,
+          H.TimerFlushInOtherClause,
+          H.TimerFlushHelperBeforeCancel,
+          H.TimerCancelHelperFlushBeforeCall,
           H.TimerWithRef,
           H.TimerForwarded,
           H.TimerHelper,
@@ -124,8 +128,13 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
       |> Enum.sort()
 
     assert reported == [
+             {"Argus.Test.Fixtures.Hypothesized.TimerCancelHelperFlushBeforeCall", ":timer",
+              ":tick"},
              {"Argus.Test.Fixtures.Hypothesized.TimerCancelNoFlush", ":timer", ":tick"},
              {"Argus.Test.Fixtures.Hypothesized.TimerCancelWrongFlush", ":timer", ":tick"},
+             {"Argus.Test.Fixtures.Hypothesized.TimerFlushBeforeCancel", ":timer", ":tick"},
+             {"Argus.Test.Fixtures.Hypothesized.TimerFlushHelperBeforeCancel", ":timer", ":tick"},
+             {"Argus.Test.Fixtures.Hypothesized.TimerFlushInOtherClause", ":timer", ":tick"},
              {"Argus.Test.Fixtures.Hypothesized.TimerFlushedElsewhere", ":timer", ":heartbeat"},
              {"Argus.Test.Fixtures.Hypothesized.TimerForwarded", ":timer", ":heartbeat"},
              {"Argus.Test.Fixtures.Hypothesized.TimerHelper", ":tick_ref", ":tick"},
