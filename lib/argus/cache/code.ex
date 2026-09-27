@@ -110,10 +110,15 @@ defmodule Argus.Cache.Code do
 
   @doc """
   Whether `module` is one of the schema's (`Argus.Schema` or a module
-  under it), which `schema: :recorded` leaves out of a closure.
+  under it, but `Argus.Schema.Reads`, which records and holds no
+  entry), which `schema: :recorded` leaves out of a closure.
   """
   @spec schema_module?(module()) :: boolean()
   def schema_module?(Argus.Schema), do: true
+
+  # The recorder is code: what it records is what every reader is keyed
+  # on, and a change to it moves them.
+  def schema_module?(Argus.Schema.Reads), do: false
 
   def schema_module?(module) when is_atom(module),
     do: String.starts_with?(Atom.to_string(module), "Elixir.Argus.Schema.")

@@ -15,7 +15,7 @@ defmodule Argus.Schema do
 
   The schema is data, read only through the functions of this module
   and of its concern modules, each of which records the entry it
-  returns (`Argus.Cache.Reads`): a producer's shard is keyed on the
+  returns (`Argus.Schema.Reads`): a producer's shard is keyed on the
   entries it read, not on this module's code (`Argus.Cache.Code`), so
   an edit to a relation no producer reads moves no shard. A new
   accessor records what it returns, as the others do —
@@ -24,7 +24,7 @@ defmodule Argus.Schema do
   caller needs: its prose is then no part of the key.
   """
 
-  alias Argus.Cache.Reads
+  alias Argus.Schema.Reads
 
   @typedoc """
   The semantic kind of a relation field.
@@ -118,7 +118,7 @@ defmodule Argus.Schema do
 
   @names Enum.map(@all_relations, & &1.name)
 
-  # Every accessor records the entry it returns (`Argus.Cache.Reads`):
+  # Every accessor records the entry it returns (`Argus.Schema.Reads`):
   # a producer's rows are keyed on the entries it read, not on this
   # module's code, and an accessor that returned schema data without
   # recording it would leave a stale shard in place after an edit to
@@ -283,10 +283,10 @@ defmodule Argus.Schema do
   def in_process_only, do: Reads.record("in_process_only", @in_process_only)
 
   @doc """
-  What `read` (`t:Argus.Cache.Reads.read/0`) names now: the answer the
+  What `read` (`t:Argus.Schema.Reads.read/0`) names now: the answer the
   accessor that recorded it gives today, asked again (and recorded
   again). How a store checks the reads a producer made
-  (`Argus.Cache.Reads.digest/1`); a read no accessor makes names
+  (`Argus.Schema.Reads.digest/1`); a read no accessor makes names
   `{:unknown_read, read}`.
 
   A read's relation name that is no atom in this VM names no relation:

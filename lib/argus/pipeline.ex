@@ -40,7 +40,7 @@ defmodule Argus.Pipeline do
   `{:error, reason}`.
   """
 
-  alias Argus.Cache.Reads
+  alias Argus.Schema.Reads
   alias Argus.Cfg
   alias Argus.Extractor.Facts
   alias Argus.Extractor.Helpers
@@ -69,7 +69,7 @@ defmodule Argus.Pipeline do
       rows were written (`Argus.Pipeline.Writer.digests/1`): what a
       store keys the solves reading them on, without reading them back.
     * `reads` — for `:base` and each extractor that ran, what its rows
-      depend on of the schema (`Argus.Cache.Reads`), sorted: the base's
+      depend on of the schema (`Argus.Schema.Reads`), sorted: the base's
       what computing the modules' bases read (and its own derivations,
       when its rows were asked for), an extractor's those and its own.
       Over bases read from `bases:`, what computed them is not among
@@ -85,7 +85,7 @@ defmodule Argus.Pipeline do
           required(:lost) => [String.t()],
           required(:installed) => [module()],
           optional(:digests) => %{producer() => %{String.t() => String.t()}},
-          optional(:reads) => %{producer() => [Argus.Cache.Reads.read()]},
+          optional(:reads) => %{producer() => [Argus.Schema.Reads.read()]},
           optional(:bases) => [binary() | nil]
         }
 
@@ -591,7 +591,7 @@ defmodule Argus.Pipeline do
   # to the async pool.
   #
   # `shape` takes the module's facts, its kept base and the schema
-  # reads (`Argus.Cache.Reads`) each producer's rows depend on. A module
+  # reads (`Argus.Schema.Reads`) each producer's rows depend on. A module
   # whose extraction raised past every step's own rescue is the base's
   # one `extraction_error` row, and depends on whatever was read before
   # the raise.

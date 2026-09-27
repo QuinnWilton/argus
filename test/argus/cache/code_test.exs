@@ -77,7 +77,7 @@ defmodule Argus.Cache.CodeTest do
     refute Enum.any?(recorded, &Code.schema_module?/1)
 
     # Walked through: what records their reads is code, and keyed.
-    assert Argus.Cache.Reads in recorded
+    assert Argus.Schema.Reads in recorded
 
     {:ok, extractor} = Code.closure(Argus.Extractors.ETS, schema: :recorded)
     refute Enum.any?(extractor, fn {mod, _beam} -> Code.schema_module?(mod) end)

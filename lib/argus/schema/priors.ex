@@ -16,7 +16,7 @@ defmodule Argus.Schema.Priors do
   @doc "The relations, in the order `Argus.Schema.all/0` lists them."
   @spec relations() :: [Argus.Schema.declaration()]
   def relations do
-    Argus.Cache.Reads.record("relations #{__MODULE__}", [
+    Argus.Schema.Reads.record("relations #{__MODULE__}", [
       %{
         name: :prior_reads,
         layer: 3,
