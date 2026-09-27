@@ -26,11 +26,66 @@ end
 [Souffle](https://souffle-lang.github.io/install) must be installed and
 available on your `PATH`.
 
-To run the analyses over a project, use [scry](https://github.com/QuinnWilton/scry),
-the Mix compiler built on this library: it runs them incrementally after
-every compile and reports findings as compiler diagnostics. This package
-is the engine — the extraction pipeline, the rules, and the in-VM API
-below.
+## Running it
+
+Every frontend runs the same analyses, incrementally, and renders the
+same findings the same way (pentiment frames, or JSON with `--format
+json`).
+
+**A Mix project**: the `:argus` compiler runs after every compile and
+reports findings as compiler diagnostics; `mix argus` runs once, credo
+style.
+
+```elixir
+def project do
+  [
+    compilers: Mix.compilers() ++ [:argus],
+    argus: [analyses: [:coupling, :mailbox], severity: [mailbox: :error]]
+  ]
+end
+```
+
+```sh
+mix argus                   # the configured analyses
+mix argus --all             # every analysis
+mix argus --list            # the analyses and the named sets
+mix argus --format json     # findings as JSON on stdout
+mix argus --fail-above 0    # fail when there are more findings than 0
+```
+
+**Anything else built for the BEAM** — a rebar3, Gleam or erlang.mk
+project, or a directory of ebins: the `argus` escript, which needs
+Erlang/OTP and souffle on `PATH` and never builds the project (it reads
+the beams the build left, and says which sources are newer).
+
+```sh
+mix escript.install hex panoptes       # or a release's `argus`, checked by its .sha256
+argus                                  # the project in the current directory
+argus path/to/project --all --format json
+argus --project beams --ebin path/to/ebin
+argus list | gc | version | help
+```
+
+It exits 0, 1 when there are more findings than `--fail-above`, 2 for a
+usage, project or configuration error, 3 when the analyses could not run.
+A rebar3 project configures it with `{argus, [...]}` in `rebar.config`;
+the others with an `argus.config` of Erlang terms beside it.
+
+**rebar3**: the plugin in `integrations/rebar3_argus` runs the escript on
+the ebins rebar3 built, as `rebar3 argus` or after every compile:
+
+```erlang
+{plugins, [rebar3_argus]}.
+{argus_plugin, [{version, "0.20.0"}]}.            % or {escript, Path}, or ARGUS_ESCRIPT
+{provider_hooks, [{post, [{compile, argus}]}]}.  % optional
+```
+
+Gleam findings point into the Erlang the Gleam build generated
+(`build/dev/erlang/<package>/_gleam_artefacts/*.erl`), at the lines the
+bytecode names.
+
+This package is also the engine — the extraction pipeline, the rules,
+and the in-VM API below.
 
 ## Approach
 
@@ -56,7 +111,7 @@ remediation hint.
 
 ## Analyses
 
-Argus ships 14 analyses, one per concern (`mix scry --list` prints the
+Argus ships 14 analyses, one per concern (`argus list` prints the
 same table). An analysis answers "what goes wrong"; the mechanism, the
 phase and the proximity to a request are columns on its relations, never
 separate analyses, so a defect has one owner.
@@ -92,7 +147,7 @@ is known of its precision; it ends with the consistency issues found
 across the concerns and the ranked classes argus does not yet catch.
 
 Named sets stand in for a list: `:all` (everything but `coverage`),
-`:default` (what scry runs unconfigured), `:security`, `:effects` and
+`:default` (what runs unconfigured), `:security`, `:effects` and
 `:otp`. `unsafe_input` and `exposure` are `:security`'s, not
 `:default`'s: a sink a request reaches is worth reading, but atom
 creation no request reaches is mostly library API doing what it is for. The names these replaced in 0.17 (`supervision`,

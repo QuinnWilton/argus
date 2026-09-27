@@ -1,6 +1,6 @@
 defmodule Argus.ReadmeTest do
   @moduledoc """
-  The README's analysis table is the one `mix scry --list` prints: each
+  The README's analysis table is the one `argus list` prints: each
   row is an analysis's `description/0`, so a concern that grows a rule
   cannot leave the table behind.
   """

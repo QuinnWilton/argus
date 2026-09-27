@@ -43,9 +43,33 @@ those frameworks need.
   it made outside it (`Reads`), and the
   sharded facts and the solves over them (`Facts`);
   `lib/argus/pipeline/shards.ex` joins producers' directories.
-- There is no CLI here: scry's Mix compiler is how the analyses are run
-  over a project; this package is the engine and the in-VM API
-  (`Argus.run_analyses/2`, `Argus.Findings.run/2`, `Argus.Pipeline.extract/2`).
+- The frontends: the `:argus` Mix compiler (`Mix.Tasks.Compile.Argus`),
+  `mix argus`, the `argus` escript (`Argus.CLI`, `CLI.Options` shared
+  with `mix argus`; `mix escript.build`) and the rebar3 plugin
+  (`integrations/rebar3_argus`, Erlang, which runs the escript). Each
+  finds its project through an `Argus.Project` adapter (Mix, rebar3,
+  Gleam, erlang.mk, bare beams: the program's and the dependencies'
+  ebins and a state directory; `Project.Scan` discovers the beams), its
+  configuration through `Argus.Config` (`Config.Source`: `argus:` in
+  mix.exs, `{argus, ...}` in rebar.config, `argus.config`), and renders
+  a driver run through `Argus.Report` (`build/3`, then `Report.Text`,
+  `Report.Json` or `Argus.Mix.Diagnostics`; what a reader should know
+  about the run is a `Report.Notice`). The source takes the last step of
+  a place (`Argus.Locate.Source`: Elixir, Erlang on tokens, opaque
+  otherwise). A project's ebins are never put on the code path: callee
+  specs come from `Argus.Specs.Source`. The escript carries `priv/dl`
+  in its code (`Argus.Dl.Embedded`, unpacked under the blob store);
+  `Argus.Dl.root/0` is where the rules are. The in-VM API is
+  `Argus.run_analyses/2`, `Argus.Findings.run/2` and
+  `Argus.Pipeline.extract/2`.
+- Rendering is pinned byte for byte: `Argus.Report.GoldenTest` (the
+  depot fixture) and `Argus.Report.ShapesTest` (every shape of a place,
+  `Argus.Test.ReportShapes`). A deliberate change records them again
+  (`ARGUS_RECORD_GOLDENS=1`) and the diff is the review. The non-Mix
+  fixture projects (`test/projects/{rebar3_app,gleam_app,erlang_mk_app}`)
+  are built without their tools (`Argus.Test.Projects`); the real tools,
+  the built escript and the plugin run under `--include rebar3 --include
+  gleam --include escript` (CI's escript job).
 
 ### Design principles
 
@@ -319,5 +343,7 @@ mix argus.corpus fetch   # Warm the closed-issue corpus cache; `tally` counts ti
 mix test --exclude corpus  # The suite without the corpus
 ARGUS_NO_CACHE=1 mix test  # Every store off: extract and solve afresh
 mix test --include cache_verify  # Also the perturbation checks of the cache keys (CI runs these)
+mix test --include escript --include rebar3 --include gleam  # The escript, the real tools, the plugin
+mix escript.build        # The argus escript (built in :prod)
 ARGUS_PROPERTIES=full mix test  # Slow properties at their full count
 ```
