@@ -158,6 +158,10 @@ defmodule Argus.Corpus do
   for the current code, and each solve is read back when what it reads
   is unchanged. Under `ARGUS_NO_CACHE` everything is extracted and
   solved afresh. The store is pruned afterwards (`prune_facts/2`).
+
+  `ARGUS_BACKEND=graph` runs it on the query graph instead, through its
+  blob store (`Argus.Graph.store/0`); `ARGUS_VERIFY_BACKEND=1` on both,
+  and fails unless they agree (`Argus.Run.both/2`).
   """
   @spec analyze(pair(), :pre | :fix) :: {:ok, Argus.Findings.t()} | {:error, term()}
   def analyze(pair, side) do
@@ -166,7 +170,13 @@ defmodule Argus.Corpus do
       store = store(co)
 
       try do
-        Argus.run_analyses(beams, analyses: :all, cache: store)
+        Argus.Run.both(
+          fn
+            :batch -> Argus.run_analyses(beams, analyses: :all, cache: store)
+            :graph -> Argus.run_analyses(beams, analyses: :all, backend: :graph)
+          end,
+          {:corpus, co.name}
+        )
       after
         if Argus.Cache.enabled?(), do: prune_facts(store)
       end

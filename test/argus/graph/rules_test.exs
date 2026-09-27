@@ -205,7 +205,10 @@ defmodule Argus.Graph.RulesTest do
        %{paths: paths} = context do
     in_graph(context, fn db, log, _root ->
       {:ok, %{value: codes}} = Memo.get(db, {:producer_code, :all})
-      :ok = came_out!(db, {:producer_code, :all}, %{codes | Argus.Extractors.ETS => "edited"})
+      # A digest no run has seen, or another run's trace for it would
+      # hold, in the suite's store.
+      edited = "edited #{System.unique_integer([:positive])} #{System.os_time()}"
+      :ok = came_out!(db, {:producer_code, :all}, %{codes | Argus.Extractors.ETS => edited})
 
       extracted = extracted(fn -> findings!(db) end)
 

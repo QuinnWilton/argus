@@ -139,18 +139,25 @@ defmodule Argus.Test.Memo do
     end
   end
 
-  @doc "`Argus.analyze(modules, analysis)`, once per run, through the suite's store."
+  @doc """
+  `Argus.analyze(modules, analysis)`, once per run, through the suite's
+  store, on the backend `ARGUS_BACKEND` names (`Argus.Run.both/2`: both,
+  compared, under `ARGUS_VERIFY_BACKEND`).
+  """
   @spec analyze([module() | String.t()], Argus.Analysis.analysis(), keyword()) ::
           {:ok, map()} | {:error, term()}
   def analyze(modules, analysis, opts \\ []) do
     once({:analyze, modules, analysis}, opts, fn ->
-      Argus.analyze(modules, analysis, with_store(opts))
+      on_backend({:analyze, analysis, modules}, opts, fn opts ->
+        Argus.analyze(modules, analysis, opts)
+      end)
     end)
   end
 
   @doc """
   `Argus.run_analyses(modules, opts)`, once per run for `analyses:`
-  alone, through the suite's store.
+  alone, through the suite's store, on the backend `ARGUS_BACKEND`
+  names (both, compared, under `ARGUS_VERIFY_BACKEND`).
   """
   @spec run_analyses([module() | String.t()], keyword()) ::
           {:ok, Argus.Findings.t()} | {:error, term()}
@@ -158,14 +165,27 @@ defmodule Argus.Test.Memo do
     {analyses, rest} = Keyword.pop(opts, :analyses, :all)
 
     once({:run_analyses, modules, analyses}, rest, fn ->
-      Argus.run_analyses(modules, [analyses: analyses] ++ with_store(rest))
+      on_backend({:run_analyses, analyses, modules}, rest, fn opts ->
+        Argus.run_analyses(modules, [analyses: analyses] ++ opts)
+      end)
     end)
   end
 
-  # A call without options of its own goes through the store; one with
-  # options is the test's to shape.
-  defp with_store([]), do: [cache: store()]
-  defp with_store(opts), do: opts
+  # A call without options of its own goes through the store of the
+  # backend the environment names, or both; one with options is the
+  # test's to shape, on the batch backend.
+  defp on_backend(label, [], call), do: Argus.Run.both(&call.(backend_opts(&1)), label)
+  defp on_backend(_label, opts, call), do: call.(opts)
+
+  @doc """
+  What a call without options of its own runs with on `backend`: the
+  suite's store (`store/0`) for the batch backend, the suite's blob
+  store (`Argus.Graph.store/0`, `_build/test/argus/store`) for the
+  graph's.
+  """
+  @spec backend_opts(:batch | :graph) :: keyword()
+  def backend_opts(:batch), do: [cache: store()]
+  def backend_opts(:graph), do: [backend: :graph]
 
   defp once(key, [], compute) do
     case lookup(key) do
