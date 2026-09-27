@@ -86,6 +86,19 @@ gives_up_after_retries(lock) :- bounded_lock(lock, _, _, _, _).
 
 waits_on_other_nodes(lock) :- global_op(lock, _, _, _, nodes), nodes != "local".
 
+// The :ets.new/2 at `site` makes a named table (named_table): its name,
+// not the tid, reaches it. Options are read only at :ets.new/2 sites
+// (Argus.Extractors.Ets), so the site is one.
+.decl named_site(site: symbol) inline
+
+named_site(site) :- ets_option(site, "named_table", "true").
+
+// The table made at `site` names a heir, which takes it over when its
+// owner exits.
+.decl has_heir(site: symbol) inline
+
+has_heir(site) :- ets_option(site, "heir", "true").
+
 // An ETS table created :public under a name: any process can write it.
 .decl public_table(name: symbol) inline
 

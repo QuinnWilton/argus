@@ -17,6 +17,7 @@
 .include "../clientlib/imports.dl"
 .include "../clientlib/otp.dl"
 .include "../clientlib/process_statem.dl"
+.include "../clientlib/vocabulary.dl"
 .include "../clientlib/tooling.dl"
 
 // A finding in code only developers' tools or tests run steps down a
@@ -251,12 +252,6 @@ table_dies_with_owner(table, owner, owner_mod, create) :-
   !restarted_by_supervisor(owner),
   !lives_with_application(owner).
 
-// The table made at `create` names a heir, which takes it over when its
-// owner exits.
-.decl has_heir(create: symbol) inline
-
-has_heir(create) :- ets_option(create, "heir", "true").
-
 // The table made at `create` is :private: no other process can read it,
 // so no reader meets it gone, and its rows are the owner's state, lost
 // with the process as its heap is (zotonic's mod_logging dedup table).
@@ -442,11 +437,6 @@ unnamed_table_in_server(table, owner_mod, create) :-
 .decl runs_as_server(owner: symbol)
 
 runs_as_server(p) :- process_root(_, p, mod, "server"), process_module(mod).
-
-// The :ets.new/2 at `create` makes a named table.
-.decl named_site(create: symbol) inline
-
-named_site(create) :- ets_option(create, "named_table", "true").
 
 .decl ets_unnamed_in_process(name: symbol, mod: symbol, site: symbol)
 .output ets_unnamed_in_process
@@ -900,7 +890,7 @@ computed_read(p, owner, reader, site, id) :-
   function_def(creator, owner, _, _, _),
   process_root(_, p, owner, "server"),
   owner_reaches(p, owner, creator),
-  !ets_option(id, "heir", "true"),
+  !has_heir(id),
   ets_op(site, reader, "dynamic", _, "read"),
   raising_read(site),
   function_def(reader, owner, _, _, _).

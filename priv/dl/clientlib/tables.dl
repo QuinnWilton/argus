@@ -34,7 +34,8 @@
 // fields. The fallback holds only where nothing better does, and only
 // within the module: it assumes a module means one table by one field.
 //
-// Prerequisites: imports.dl and otp.dl (staged_processes.dl).
+// Prerequisites: imports.dl, otp.dl (staged_processes.dl) and
+// vocabulary.dl (named_site).
 
 // ── Tables as objects ───────────────────────────────────────────────
 
@@ -43,10 +44,6 @@
 // hands on only where tables go: source_table, in staged_processes.dl.
 
 // ── Creation sites ──────────────────────────────────────────────────
-
-.decl named_site(site: symbol)
-
-named_site(n) :- ets_new(n, _, _), ets_option(n, "named_table", "true").
 
 // The names a site gives its table: spelled there, or arriving in the
 // parameter the name operand is read from.

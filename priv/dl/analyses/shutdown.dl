@@ -213,8 +213,8 @@ own_named_table(m, t) :-
   ets_new(n, i, t),
   t != "dynamic",
   ets_options_known(n),
-  ets_option(n, "named_table", "true"),
-  !ets_option(n, "heir", "true"),
+  named_site(n),
+  !has_heir(n),
   !passed_on(t).
 
 // Ownership or options the table's code can change after it is made.
