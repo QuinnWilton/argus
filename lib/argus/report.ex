@@ -1,102 +1,76 @@
 defmodule Argus.Report do
   @moduledoc """
-  Output formats for the standalone `mix scry` task.
+  What a run found, made ready to show: every frontend — the `:argus`
+  Mix compiler, `mix argus`, the `argus` escript and the rebar3 plugin,
+  which relays the escript — renders the same entries in the same order.
 
-  Text is the pentiment frames plus a summary line. JSON is the stable
-  machine schema — the structured finding fields, never the rendered
-  frames:
+  `build/3` takes each analysis's placed findings (`Argus.Located`, as
+  `Argus.Driver.Result` carries them) and
 
-      [
-        {
-          "analysis": "coupling",
-          "severity": "warning",
-          "file": "lib/my_app/application.ex",
-          "line": 12,
-          "end_line": null,
-          "title": "Coupled children under one_for_one",
-          "at_label": "supervision tree defined here",
-          "detail": "...",
-          "help": ["..."],
-          "provenance": "structural",
-          "confidence": null,
-          "related": [{"label": "coupling call", "file": "...", "line": 41, "end_line": null}]
-        }
-      ]
+    1. refines each place from its source (`Argus.Report.Entry`),
+       leaving out a finding outside the program;
+    2. leaves out the findings in a file the configuration ignores
+       (`ignore: [files: globs]`, matched against the path relative to
+       where the run was asked from): an ignored file's facts still feed
+       every cross-module analysis, so reports are suppressed, truth is
+       not;
+    3. applies the configuration's severity overrides;
+    4. sorts, most severe first, then by file, line, analysis and title;
+       findings no key tells apart stay in their analysis's order.
 
-  `provenance` is `"heuristic"` for a finding that rests on a prior
-  (argus's layer-3 relations, `priors:` in the config), and `confidence`
-  is then the prior's probability in thousandths; a structural finding's
-  is `null`. `end_line` closes a multi-line span, else `null`.
-
-  `title` names the class of the finding and never the instance: the
-  values that tell two findings of one class apart (the message, the
-  field, the table) are in `at_label`, the label of the finding's own
-  line (`null` when the finding has none), and in `detail`.
+  The entries then go to one of three renderers: `Argus.Report.Text`
+  (pentiment frames, the notices and a summary, on stderr),
+  `Argus.Report.Json` (the machine schema) or `Argus.Mix.Diagnostics`
+  (a compiler diagnostic per entry). What a reader should know about the
+  run itself — no solver, an analysis that degraded, a module extraction
+  could not read — is an `Argus.Report.Notice`, in one wording for every
+  frontend.
   """
+
+  alias Argus.Report.Entry
 
   @doc """
-  Prints resolved entries as pentiment frames with a trailing summary.
+  The entries to show for `located` (each analysis's placed findings, or
+  why it degraded: a degraded analysis has no entries, and a notice
+  says so) under `config`, with paths matched relative to `cwd`.
   """
-  @spec text([Argus.Mix.Diagnostics.rendered()]) :: :ok
-  def text(rendered) do
-    Argus.Mix.Diagnostics.print(rendered)
-    IO.puts(:stderr, summary(Enum.map(rendered, & &1.diagnostic)))
-    :ok
-  end
-
-  @doc """
-  Encodes resolved finding entries as JSON on stdout.
-  """
-  @spec json([map()], String.t()) :: :ok
-  def json(entries, cwd) do
-    entries
-    |> Enum.map(fn entry ->
-      %{
-        analysis: entry.code,
-        severity: entry.severity,
-        file: Argus.Mix.Diagnostics.relative(entry.file, cwd),
-        line: entry.line,
-        end_line: Map.get(entry, :end_line),
-        title: entry.title,
-        at_label: Map.get(entry, :at_label),
-        detail: entry.detail,
-        help: Map.get(entry, :help, []),
-        provenance: Map.get(entry, :provenance, :structural),
-        confidence: Map.get(entry, :confidence),
-        related:
-          for related <- Map.get(entry, :related, []) do
-            %{
-              label: related.label,
-              file: Argus.Mix.Diagnostics.relative(related.file, cwd),
-              line: related.line,
-              end_line: Map.get(related, :end_line)
-            }
-          end
-      }
-    end)
-    |> JSON.encode!()
-    |> IO.puts()
+  @spec build(
+          %{optional(atom()) => {:ok, [Argus.Located.t()]} | {:error, term()}},
+          Argus.Config.t(),
+          String.t()
+        ) :: [Entry.t()]
+  def build(located, %Argus.Config{} = config, cwd) when is_map(located) do
+    for {_analysis, {:ok, placed}} <- Enum.sort(located),
+        one <- placed,
+        %Entry{} = entry <- [Entry.from_located(one)],
+        not ignored_file?(entry.file, config, cwd) do
+      %{entry | severity: Map.get(config.severity, entry.analysis, entry.severity)}
+    end
+    |> Enum.sort_by(&{severity_rank(&1.severity), &1.file, &1.line, &1.analysis, &1.title})
   end
 
   @doc """
   The `N findings (x errors, y warnings, z infos)` summary line.
+
+      iex> Argus.Report.summary([])
+      "0 findings"
   """
-  @spec summary([Mix.Task.Compiler.Diagnostic.t()]) :: String.t()
+  @spec summary([Entry.t()]) :: String.t()
   def summary([]), do: "0 findings"
 
-  def summary(diagnostics) do
-    counts = Enum.frequencies_by(diagnostics, & &1.severity)
+  def summary(entries) do
+    counts = Enum.frequencies_by(entries, & &1.severity)
 
     breakdown =
       [
         part(counts[:error], "error"),
         part(counts[:warning], "warning"),
-        part(counts[:information], "info")
+        part(counts[:info], "info")
       ]
       |> Enum.reject(&is_nil/1)
       |> Enum.join(", ")
 
-    total = length(diagnostics)
+    total = length(entries)
     "#{total} finding#{plural(total)} (#{breakdown})"
   end
 
@@ -105,4 +79,55 @@ defmodule Argus.Report do
 
   defp plural(1), do: ""
   defp plural(_), do: "s"
+
+  @doc """
+  `path` relative to `cwd` when it lies under it, else as it is. macOS
+  spells a temporary directory both `/var/...` and `/private/var/...`
+  (the one a symlink to the other), and a recorded path may carry
+  either: both spellings are tried.
+  """
+  @spec relative(String.t(), String.t()) :: String.t()
+  def relative(path, cwd) do
+    case Path.relative_to(path, cwd) do
+      ^path ->
+        stripped = strip_private(path)
+
+        case Path.relative_to(stripped, strip_private(cwd)) do
+          ^stripped -> path
+          rel -> rel
+        end
+
+      rel ->
+        rel
+    end
+  end
+
+  defp strip_private("/private/" <> rest), do: "/" <> rest
+  defp strip_private(path), do: path
+
+  @doc "Where a severity ranks: `:error` first."
+  @spec severity_rank(Argus.Findings.severity()) :: 0..2
+  def severity_rank(:error), do: 0
+  def severity_rank(:warning), do: 1
+  def severity_rank(:info), do: 2
+
+  defp ignored_file?(file, config, cwd) do
+    rel = relative(file, cwd)
+    Enum.any?(config.ignore_files, &matches_glob?(rel, &1))
+  end
+
+  # Glob matching without touching the filesystem: the pattern the way
+  # Path.wildcard understands it, as a regex.
+  defp matches_glob?(path, glob) do
+    regex =
+      glob
+      |> Regex.escape()
+      |> String.replace("\\*\\*/", "(?:.*/)?")
+      |> String.replace("\\*\\*", ".*")
+      |> String.replace("\\*", "[^/]*")
+      |> String.replace("\\?", "[^/]")
+      |> then(&Regex.compile!("^" <> &1 <> "$"))
+
+    Regex.match?(regex, path)
+  end
 end

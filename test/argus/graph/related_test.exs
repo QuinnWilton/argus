@@ -66,10 +66,8 @@ defmodule Argus.Graph.RelatedTest do
   defp placed(db, analysis) do
     assert {:ok, _} = located = Argus.Graph.Locate.located(db, {:test, analysis})
 
-    Argus.Driver.Result.findings_by_file(%Argus.Driver.Result{
-      located: %{analysis => located},
-      notices: [],
-      changed?: false
-    })
+    %{analysis => located}
+    |> Argus.Report.build(Argus.Config.load([]), File.cwd!())
+    |> Enum.group_by(& &1.file)
   end
 end

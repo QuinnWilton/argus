@@ -43,7 +43,7 @@ defmodule Mix.Tasks.Compile.ArgusConfigTest do
 
   defp codes(diagnostics) do
     for %{message: message} <- diagnostics,
-        [_, code] <- [Regex.run(~r/^\[scry\.([a-z_]+)\]/, message)],
+        [_, code] <- [Regex.run(~r/^\[argus\.([a-z_]+)\]/, message)],
         do: code
   end
 
@@ -54,7 +54,7 @@ defmodule Mix.Tasks.Compile.ArgusConfigTest do
 
       in_project(peer, project, fn _log ->
         assert {:error, diagnostics} = compile!()
-        assert Enum.any?(diagnostics, &(&1.compiler_name == "scry"))
+        assert Enum.any?(diagnostics, &(&1.compiler_name == "argus"))
 
         # A warm rerun fails identically — CI can't be fooled by a warm
         # checkout.
@@ -71,7 +71,7 @@ defmodule Mix.Tasks.Compile.ArgusConfigTest do
         # fail_on: :error.
         assert {:error, diagnostics} = compile!()
 
-        unsafe = Enum.filter(diagnostics, &String.contains?(&1.message, "[scry.mailbox]"))
+        unsafe = Enum.filter(diagnostics, &String.contains?(&1.message, "[argus.mailbox]"))
 
         assert length(unsafe) == 2
         assert Enum.all?(unsafe, &(&1.severity == :error))
@@ -84,7 +84,7 @@ defmodule Mix.Tasks.Compile.ArgusConfigTest do
 
       in_project(peer, project, fn _log ->
         {_status, diagnostics} = compile!()
-        diags = Enum.filter(diagnostics, &(&1.compiler_name == "scry"))
+        diags = Enum.filter(diagnostics, &(&1.compiler_name == "argus"))
 
         # The coupling finding anchors in the ignored file: reports
         # suppressed. The mailbox findings (archive.ex) are
@@ -102,7 +102,7 @@ defmodule Mix.Tasks.Compile.ArgusConfigTest do
 
       in_project(peer, project, fn log ->
         {_status, diagnostics} = compile!()
-        diags = Enum.filter(diagnostics, &(&1.compiler_name == "scry"))
+        diags = Enum.filter(diagnostics, &(&1.compiler_name == "argus"))
 
         # No Archive extraction, so no task findings; the coupling
         # (Sonar's registration with Notifier, at Application's tree) is

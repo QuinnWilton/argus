@@ -38,7 +38,7 @@ defmodule Mix.Tasks.Compile.ArgusUmbrellaTest do
       # beams are not in app a's scan, so the same send across the app
       # boundary (line 27) is not a finding — include_deps: true is the
       # escape hatch.
-      assert [_one] = Regex.scan(~r/\[scry\.mailbox\]/, stderr)
+      assert [_one] = Regex.scan(~r/\[argus\.mailbox\]/, stderr)
       assert stderr =~ "╭─[lib/a.ex:8:5]"
 
       manifest = Path.join(copy, "_build/test/lib/a/.mix/compile.argus")

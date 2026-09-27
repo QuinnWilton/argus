@@ -1,0 +1,5 @@
+Shapes.Lost could not be extracted (bad chunk); the analyses ran without its facts, so findings that involve it may be missing
+Shapes.Worker lost all its facts in extraction (timeout); the analyses ran without them, so findings that involve it may be missing — the next run extracts it again
+Shapes.Other: the Argus.Extractors.ETS extraction step failed (badarg); the analyses ran on the rest of its facts, so findings that needed that step's may be missing
+Shapes.Worker is defined in more than one ebin; analyzing _build/a/ebin/Elixir.Shapes.Worker.beam and not _build/b/ebin/Elixir.Shapes.Worker.beam
+the effects analysis degraded and reported nothing: {:souffle, :effects, :timeout}

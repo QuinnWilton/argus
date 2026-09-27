@@ -26,14 +26,14 @@ defmodule Mix.Tasks.Compile.ArgusExtractionTest do
     %{peer: Peer.start!()}
   end
 
-  defp scry(diagnostics), do: Enum.filter(diagnostics, &(&1.compiler_name == "scry"))
+  defp scry(diagnostics), do: Enum.filter(diagnostics, &(&1.compiler_name == "argus"))
 
   defp partial(diagnostics) do
     diagnostics |> scry() |> Enum.filter(&(&1.message =~ "may be missing"))
   end
 
   defp findings(diagnostics) do
-    diagnostics |> scry() |> Enum.filter(&String.starts_with?(&1.message, "[scry."))
+    diagnostics |> scry() |> Enum.filter(&String.starts_with?(&1.message, "[argus."))
   end
 
   test "a module extraction timed out on is reported, and retried next run", %{peer: peer} do

@@ -57,7 +57,7 @@ defmodule Mix.Tasks.Compile.ArgusSouffleGateTest do
 
   defp codes(diagnostics) do
     for %{message: message} <- diagnostics,
-        [_, code] <- [Regex.run(~r/^\[scry\.([a-z_]+)\]/, message)],
+        [_, code] <- [Regex.run(~r/^\[argus\.([a-z_]+)\]/, message)],
         do: code
   end
 
@@ -91,7 +91,7 @@ defmodule Mix.Tasks.Compile.ArgusSouffleGateTest do
         without_souffle(fn ->
           assert {:ok, diagnostics} = compile!()
 
-          [notice] = Enum.filter(diagnostics, &(&1.compiler_name == "scry"))
+          [notice] = Enum.filter(diagnostics, &(&1.compiler_name == "argus"))
           assert notice.severity == :information
           assert notice.message =~ "souffle binary not found"
           assert QueryLog.executions(log, :solve) == []
@@ -103,7 +103,7 @@ defmodule Mix.Tasks.Compile.ArgusSouffleGateTest do
         # Souffle back on PATH: the solver input moves, analyses run, the
         # findings appear — the degraded run healed completely.
         assert {:ok, diagnostics} = compile!()
-        diags = Enum.filter(diagnostics, &(&1.compiler_name == "scry"))
+        diags = Enum.filter(diagnostics, &(&1.compiler_name == "argus"))
         assert length(diags) == 3
         assert QueryLog.executions(log, :solve) != []
       end)
@@ -161,7 +161,7 @@ defmodule Mix.Tasks.Compile.ArgusSouffleGateTest do
       in_project(peer, project, fn log ->
         with_failing_souffle("analyses/mailbox.dl", fn ->
           {:ok, diagnostics} = compile!()
-          diags = Enum.filter(diagnostics, &(&1.compiler_name == "scry"))
+          diags = Enum.filter(diagnostics, &(&1.compiler_name == "argus"))
 
           assert [degraded] = Enum.filter(diags, &(&1.message =~ "degraded"))
           assert degraded.message =~ "the mailbox analysis degraded"
@@ -175,7 +175,7 @@ defmodule Mix.Tasks.Compile.ArgusSouffleGateTest do
         # solves the analysis again instead of replaying the failure.
         QueryLog.reset(log)
         {_status, diagnostics} = compile!()
-        diags = Enum.filter(diagnostics, &(&1.compiler_name == "scry"))
+        diags = Enum.filter(diagnostics, &(&1.compiler_name == "argus"))
 
         assert Enum.sort(codes(diags)) == ["coupling", "mailbox", "mailbox"]
 
@@ -196,7 +196,7 @@ defmodule Mix.Tasks.Compile.ArgusSouffleGateTest do
       in_project(peer, project, fn log ->
         with_failing_souffle("stage0.dl", fn ->
           {:ok, diagnostics} = compile!()
-          diags = Enum.filter(diagnostics, &(&1.compiler_name == "scry"))
+          diags = Enum.filter(diagnostics, &(&1.compiler_name == "argus"))
 
           # Every analysis reading the call graph degrades with the
           # stage's own reason, as a batch run's does.
@@ -209,7 +209,7 @@ defmodule Mix.Tasks.Compile.ArgusSouffleGateTest do
 
         QueryLog.reset(log)
         {_status, diagnostics} = compile!()
-        diags = Enum.filter(diagnostics, &(&1.compiler_name == "scry"))
+        diags = Enum.filter(diagnostics, &(&1.compiler_name == "argus"))
         assert length(diags) == 3
         assert {:project, :stage0} in QueryLog.executions(log, :stage)
       end)
@@ -222,7 +222,7 @@ defmodule Mix.Tasks.Compile.ArgusSouffleGateTest do
         without_souffle(fn ->
           assert {:error, diagnostics} = compile!()
 
-          [notice] = Enum.filter(diagnostics, &(&1.compiler_name == "scry"))
+          [notice] = Enum.filter(diagnostics, &(&1.compiler_name == "argus"))
           assert notice.severity == :error
           assert notice.message =~ "souffle binary not found"
         end)

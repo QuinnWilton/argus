@@ -1,6 +1,7 @@
 defmodule Argus.Locate.Source.Elixir do
   @moduledoc """
-  The last step of an anchor, taken in the source.
+  The last step of an anchor, taken in Elixir source
+  (`Argus.Locate.Source`).
 
   A bytecode anchor stops at what the compiler kept. Every function an
   Ecto schema generates carries the `schema do` line, so a finding about
@@ -15,11 +16,14 @@ defmodule Argus.Locate.Source.Elixir do
   it is not that atom).
   """
 
+  @behaviour Argus.Locate.Source
+
   @identifier ~c"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_?!@:"
 
   @doc """
   The line of `fragment` at or after `line` in the file at `path`.
   """
+  @impl true
   @spec refine(String.t(), pos_integer(), String.t() | nil) :: pos_integer()
   def refine(_path, line, nil), do: line
 
@@ -59,6 +63,7 @@ defmodule Argus.Locate.Source.Elixir do
   back to the anchor line. Formatting is the evidence here, not
   bytecode; the scan is bounded and every mismatch fails closed.
   """
+  @impl true
   @spec block_end(String.t(), pos_integer(), :guard | :receive | :clause | :function | nil) ::
           pos_integer() | nil
   def block_end(_path, _line, nil), do: nil
@@ -87,6 +92,7 @@ defmodule Argus.Locate.Source.Elixir do
   catch, so a finding's prose says `{guard}` where the word goes and
   this is what fills it in.
   """
+  @impl true
   @spec guard_keyword(String.t(), pos_integer()) :: String.t() | nil
   def guard_keyword(path, line) do
     with {:ok, content} <- File.read(path),

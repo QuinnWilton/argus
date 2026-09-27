@@ -1,0 +1,68 @@
+warning application.ex:21 [argus.coupling] Coupled children under one_for_one
+warning[argus.coupling]: Coupled children under one_for_one
+   ╭─[lib/depot/application.ex:21:5]
+   │
+19 │ 
+20 │     opts = [strategy: :one_for_one, name: Depot.Supervisor]
+21 │     Supervisor.start_link(children, opts)
+   •     ──────────────────┬──────────────────
+   •                       ╰── supervision tree defined here
+22 │   end
+23 │ end
+   │
+   ├─[lib/depot/sonar.ex:36:5]
+   │
+34 │   def handle_continue(:register, state) do
+35 │     # Registration lives in the Notifier's state. Lost on Notifier restart.
+36 │     Notifier.listen(state.notifier, @channel)
+   •     ────────────────────┬────────────────────
+   •                         ╰── registers with the sibling here
+37 │     {:noreply, state}
+38 │   end
+   │
+   ├─[lib/depot/notifier.ex:30:3]
+   │
+28 │ 
+29 │   @impl true
+30 │   def handle_call({:listen, channel, pid}, _from, state) do
+   •   ────────────────────────────┬────────────────────────────
+   •                               ╰── kept here
+31 │     listeners = Map.update(state.listeners, channel, MapSet.new([pid]), &M…
+32 │     {:reply, :ok, %{state | listeners: listeners}}
+   │
+   ╰─────
+     note: Depot.Sonar registers with Depot.Notifier when it starts, and Depot.Notifier keeps it in its state. Both are children of the one_for_one supervisor Depot.Application, which restarts either alone. When Depot.Notifier restarts, its init/1 starts it afresh without what Depot.Sonar put there, and Depot.Sonar, which is not restarted with it, never registers again. When Depot.Sonar restarts, it registers a second time beside what its old process left.
+     help: put the pair under `rest_for_one` with `Depot.Notifier` started before `Depot.Sonar`, or under `one_for_all`: a `Depot.Notifier` restart then restarts `Depot.Sonar`, which registers again
+     help: or have `Depot.Sonar` monitor `Depot.Notifier` and register again when it goes down
+
+warning archive.ex:15 [argus.mailbox] Async task never awaited
+warning[argus.mailbox]: Async task never awaited
+   ╭─[lib/depot/archive.ex:15:5]
+   │
+13 │   @spec archive_async(map()) :: :ok
+14 │   def archive_async(job) do
+15 │     Task.async(fn -> write(job) end)
+   •     ───────────────┬────────────────
+   •                    ╰── task started here
+16 │     :ok
+17 │   end
+   │
+   ╰─────
+     note: Depot.Archive.archive_async/1 starts a task with Task.async (or async_nolink) but nothing awaits or yields it. Task.async links to the caller and always sends a result message: a crashing task takes the caller down, and completed results accumulate unread in the mailbox.
+     help: consume the result with `Task.await/2` (or `Task.yield/2` plus `Task.shutdown/1`), or use `Task.Supervisor.start_child/2` for fire-and-forget work
+
+information archive.ex:25 [argus.mailbox] Task.async in library code links to an unknown caller
+info[argus.mailbox]: Task.async in library code links to an unknown caller
+   ╭─[lib/depot/archive.ex:25:5]
+   │
+23 │   @spec archive_sync(map()) :: {:ok, term()}
+24 │   def archive_sync(job) do
+25 │     task = Task.async(fn -> write(job) end)
+   •     ───────────────────┬───────────────────
+   •                        ╰── linked task started in library code
+26 │     Task.await(task)
+27 │   end
+   │
+   ╰─────
+     note: Depot.Archive.archive_sync/1 is a plain function, not a process callback, so the task it starts with Task.async is linked to whichever process called it. A caller that traps exits then receives the task's exit as an {:EXIT, pid, :normal} message that Task.await never consumes, and a crashing task takes the caller down with it.
+     help: use `Task.async_stream/3` or `Task.Supervisor.async_nolink/2`, or document that callers must not trap exits

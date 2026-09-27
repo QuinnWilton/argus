@@ -33,8 +33,6 @@ defmodule Mix.Tasks.Compile.Argus do
 
   use Mix.Task.Compiler
 
-  alias Argus.Driver.Result
-
   # Mix runs a non-recursive compiler once at an umbrella's root, where
   # there is no app and no ebin to read. Recursive, it runs inside each
   # child that lists it, against that child's own beams.
@@ -55,9 +53,12 @@ defmodule Mix.Tasks.Compile.Argus do
     result =
       Argus.Driver.run(config, force: Keyword.get(opts, :force, false))
 
+    notices = Argus.Report.Notice.from_result(result, config, cwd)
+    entries = Argus.Report.build(result.located, config, cwd)
+
     rendered =
-      infrastructure(result, config) ++
-        Argus.Mix.Diagnostics.build(Result.findings_by_file(result), config, cwd)
+      Enum.map(notices, &Argus.Mix.Diagnostics.notice/1) ++
+        Argus.Mix.Diagnostics.build(entries, cwd)
 
     Argus.Mix.Diagnostics.print(rendered)
 
@@ -92,64 +93,9 @@ defmodule Mix.Tasks.Compile.Argus do
     end
   end
 
-  # ── infrastructure diagnostics ───────────────────────────────────────
-
-  defp infrastructure(result, config) do
-    souffle =
-      case {Result.souffle_missing?(result), config.souffle} do
-        {false, _} ->
-          []
-
-        {true, :warn} ->
-          [
-            Argus.Mix.Diagnostics.infrastructure(
-              :info,
-              "souffle binary not found on PATH; Datalog analyses skipped. " <>
-                "Install souffle (https://souffle-lang.github.io), or set " <>
-                "scry: [souffle: :require] to make this an error."
-            )
-          ]
-
-        {true, :require} ->
-          [
-            Argus.Mix.Diagnostics.infrastructure(
-              :error,
-              "souffle binary not found on PATH and scry is configured with " <>
-                "souffle: :require. Install souffle " <>
-                "(https://souffle-lang.github.io) to run the analyses."
-            )
-          ]
-      end
-
-    degraded =
-      for %{analysis: analysis, reason: reason} <- Result.degraded(result) do
-        Argus.Mix.Diagnostics.infrastructure(
-          :warning,
-          "the #{analysis} analysis degraded and reported nothing: #{inspect(reason)}"
-        )
-      end
-
-    partial =
-      for error <- Result.extraction_errors(result) do
-        Argus.Mix.Diagnostics.infrastructure(
-          :warning,
-          Argus.Mix.Diagnostics.extraction_error_message(error)
-        )
-      end
-
-    souffle ++ degraded ++ partial ++ Enum.map(Result.duplicates(result), &duplicate/1)
-  end
-
-  defp duplicate(%{module: module, used: used, shadowed: shadowed}) do
-    Argus.Mix.Diagnostics.infrastructure(
-      :warning,
-      Argus.Mix.Diagnostics.duplicate_message(module, used, shadowed)
-    )
-  end
-
   # ── status ───────────────────────────────────────────────────────────
 
-  defp status(diagnostics, result, config) do
+  defp status(diagnostics, %Argus.Driver.Result{} = result, config) do
     threshold = rank(config.fail_on)
     failing? = Enum.any?(diagnostics, &(rank(&1.severity) <= threshold))
 

@@ -43,7 +43,7 @@ defmodule Mix.Tasks.Compile.ArgusTest do
   end
 
   defp scry_diagnostics({_status, diagnostics}) do
-    Enum.filter(diagnostics, &(&1.compiler_name == "scry"))
+    Enum.filter(diagnostics, &(&1.compiler_name == "argus"))
   end
 
   defp counts_by_code(diagnostics) do
@@ -53,7 +53,7 @@ defmodule Mix.Tasks.Compile.ArgusTest do
   end
 
   defp code_of(%{message: message}) do
-    case Regex.run(~r/^\[scry\.([a-z_]+)\]/, message) do
+    case Regex.run(~r/^\[argus\.([a-z_]+)\]/, message) do
       [_, code] -> code
       nil -> :infrastructure
     end

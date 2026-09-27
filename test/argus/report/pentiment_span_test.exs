@@ -1,4 +1,4 @@
-defmodule Argus.Mix.DiagnosticsSpanTest do
+defmodule Argus.Report.PentimentSpanTest do
   @moduledoc """
   A finding or frame with an end line brackets the lines between; one
   without underlines its line.
@@ -27,12 +27,12 @@ defmodule Argus.Mix.DiagnosticsSpanTest do
   end
 
   test "the span is a bracket from the anchor to the end line", %{path: file, dir: dir} do
-    entry = %{
+    entry = %Argus.Report.Entry{
       file: file,
       line: 8,
       end_line: nil,
       severity: :info,
-      code: "failure",
+      analysis: :failure,
       title: "call/3 called bare where every other call site guards it",
       detail: "Guarded:bare/1 calls :gen_statem.call/3 outside a try.",
       at_label: "the one site that disagrees",
@@ -44,29 +44,28 @@ defmodule Argus.Mix.DiagnosticsSpanTest do
       confidence: nil
     }
 
-    [%{diagnostic: d}] =
-      Argus.Mix.Diagnostics.build(%{file => [entry]}, Argus.Config.load([]), dir)
+    details = Argus.Report.Pentiment.format(entry, dir)
 
-    assert d.details =~ "╰── guarded by this catch"
-    assert d.details =~ "the one site that disagrees"
+    assert details =~ "╰── guarded by this catch"
+    assert details =~ "the one site that disagrees"
     # Bracketed lines carry the bar; the tail sits under the last of them.
-    assert d.details =~
+    assert details =~
              ~r/4 │ │   catch\n 5 │ │     :exit, \{:timeout, _\} -> \{:error, :timeout\}\n   • ╰── guarded/
 
     # The bracket covers the catch clause, which a one-line frame never showed.
-    assert d.details =~ ":exit, {:timeout, _}"
+    assert details =~ ":exit, {:timeout, _}"
   end
 
   test "without an end line, or one no later than the start, the label is inline", %{
     path: file,
     dir: dir
   } do
-    entry = %{
+    entry = %Argus.Report.Entry{
       file: file,
       line: 3,
       end_line: 3,
       severity: :warning,
-      code: "blocking",
+      analysis: :blocking,
       title: "T",
       detail: "D.",
       at_label: "the call",
@@ -76,10 +75,9 @@ defmodule Argus.Mix.DiagnosticsSpanTest do
       confidence: nil
     }
 
-    [%{diagnostic: d}] =
-      Argus.Mix.Diagnostics.build(%{file => [entry]}, Argus.Config.load([]), dir)
+    details = Argus.Report.Pentiment.format(entry, dir)
 
-    refute d.details =~ "│ │"
-    assert d.details =~ "╰── the call"
+    refute details =~ "│ │"
+    assert details =~ "╰── the call"
   end
 end

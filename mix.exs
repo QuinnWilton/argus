@@ -14,10 +14,12 @@ defmodule Argus.MixProject do
       erlc_paths: erlc_paths(Mix.env()),
       # The fixture projects' sources live under test/projects but are
       # compiled by their own Mix projects, never loaded as tests; the
-      # corpus pairs and the pinned analysis inputs are data a test reads.
+      # report's sources are text a renderer reads; the corpus pairs and
+      # the pinned analysis inputs are data a test reads.
       test_ignore_filters: [
         &String.starts_with?(&1, "test/fixtures/"),
         &String.starts_with?(&1, "test/projects/"),
+        &String.starts_with?(&1, "test/argus/report/sources/"),
         &(&1 in ["test/corpus/pairs.exs", "test/argus/analysis_inputs.exs"])
       ],
       deps: deps(),

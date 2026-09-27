@@ -14,6 +14,7 @@
           ~r"/_build/",
           ~r"/deps/",
           ~r"/test/fixtures/",
+          ~r"/test/argus/report/sources/",
           ~r"/test/support/"
         ]
       },

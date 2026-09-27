@@ -100,7 +100,7 @@ defmodule Mix.Tasks.Argus do
   defp compile! do
     case Mix.Task.run("compile", ["--no-prune-code-paths", "--return-errors"]) do
       {:error, diagnostics} ->
-        if Enum.any?(diagnostics, &(&1.severity == :error and &1.compiler_name != "scry")) do
+        if Enum.any?(diagnostics, &(&1.severity == :error and &1.compiler_name != "argus")) do
           Mix.raise("scry: the project does not compile; fix the errors above first")
         end
 
@@ -118,35 +118,24 @@ defmodule Mix.Tasks.Argus do
 
     if Result.souffle_missing?(result) do
       Mix.raise(
-        "scry: souffle binary not found on PATH — install souffle " <>
+        "argus: souffle binary not found on PATH — install souffle " <>
           "(https://souffle-lang.github.io) to run the analyses"
       )
     end
 
-    report_degraded(Result.degraded(result))
-
-    Enum.each(Result.extraction_errors(result), fn error ->
-      Mix.shell().error("scry: " <> Argus.Mix.Diagnostics.extraction_error_message(error))
-    end)
-
-    Enum.each(Result.duplicates(result), fn %{module: module, used: used, shadowed: shadowed} ->
-      Mix.shell().error(
-        "scry: " <> Argus.Mix.Diagnostics.duplicate_message(module, used, shadowed)
-      )
-    end)
-
-    findings_by_file = Result.findings_by_file(result)
-    entries = Argus.Mix.Diagnostics.resolve(findings_by_file, config, cwd)
+    notices = Argus.Report.Notice.from_result(result, config, cwd)
+    entries = Argus.Report.build(result.located, config, cwd)
 
     case Keyword.get(opts, :format, "text") do
       "text" ->
-        Argus.Report.text(Argus.Mix.Diagnostics.build(findings_by_file, config, cwd))
+        Argus.Report.Text.print(entries, notices, cwd)
 
       "json" ->
-        Argus.Report.json(entries, cwd)
+        Enum.each(notices, &IO.puts(:stderr, Argus.Report.Text.notice(&1)))
+        Argus.Report.Json.print(entries, cwd)
 
       other ->
-        Mix.raise("scry: unknown --format #{inspect(other)}; expected text or json")
+        Mix.raise("argus: unknown --format #{inspect(other)}; expected text or json")
     end
 
     check_fail_above(entries, Keyword.get(opts, :fail_above))
@@ -184,14 +173,6 @@ defmodule Mix.Tasks.Argus do
       {:ok, value} -> %{config | include_deps: value}
       :error -> config
     end
-  end
-
-  defp report_degraded(degraded) do
-    Enum.each(degraded, fn %{analysis: analysis, reason: reason} ->
-      Mix.shell().error(
-        "scry: the #{analysis} analysis degraded and reported nothing: #{inspect(reason)}"
-      )
-    end)
   end
 
   defp check_fail_above(_entries, nil), do: :ok

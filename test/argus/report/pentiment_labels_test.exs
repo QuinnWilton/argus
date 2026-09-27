@@ -1,4 +1,4 @@
-defmodule Argus.Mix.DiagnosticsLabelsTest do
+defmodule Argus.Report.PentimentLabelsTest do
   @moduledoc """
   Labels on one span of one file render as one label: a call cycle's
   anchor and the frame for the edge it starts sit on the same call.
@@ -29,12 +29,12 @@ defmodule Argus.Mix.DiagnosticsLabelsTest do
   end
 
   defp entry(file, related) do
-    %{
+    %Argus.Report.Entry{
       file: file,
       line: 3,
       end_line: nil,
       severity: :error,
-      code: "blocking",
+      analysis: :blocking,
       title: "Synchronous call cycle",
       detail: "A and B synchronously call each other.",
       at_label: "one direction of the cycle",
@@ -45,12 +45,8 @@ defmodule Argus.Mix.DiagnosticsLabelsTest do
     }
   end
 
-  defp details(file, dir, related) do
-    [%{diagnostic: d}] =
-      Argus.Mix.Diagnostics.build(%{file => [entry(file, related)]}, Argus.Config.load([]), dir)
-
-    d.details
-  end
+  defp details(file, dir, related),
+    do: Argus.Report.Pentiment.format(entry(file, related), dir)
 
   test "a frame on the primary's span joins the primary label", %{path: file, dir: dir} do
     details =
@@ -74,21 +70,16 @@ defmodule Argus.Mix.DiagnosticsLabelsTest do
   end
 
   test "a frame on an unlabelled primary gives the primary its message", %{path: file, dir: dir} do
-    [%{diagnostic: d}] =
-      Argus.Mix.Diagnostics.build(
+    details =
+      Argus.Report.Pentiment.format(
         %{
-          file => [
-            %{
-              entry(file, [%{label: "the edge", file: file, line: 3, end_line: nil}])
-              | at_label: nil
-            }
-          ]
+          entry(file, [%{label: "the edge", file: file, line: 3, end_line: nil}])
+          | at_label: nil
         },
-        Argus.Config.load([]),
         dir
       )
 
-    assert length(Regex.scan(~r/─┬─/, d.details)) == 1
-    assert d.details =~ "╰── the edge"
+    assert length(Regex.scan(~r/─┬─/, details)) == 1
+    assert details =~ "╰── the edge"
   end
 end

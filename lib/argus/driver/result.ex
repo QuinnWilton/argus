@@ -27,8 +27,6 @@ defmodule Argus.Driver.Result do
       (a sound superset of their exact rows).
   """
 
-  alias Argus.Locate.Source
-
   @enforce_keys [:located, :notices, :changed?]
   defstruct [:located, :notices, :changed?]
 
@@ -62,82 +60,7 @@ defmodule Argus.Driver.Result do
         do: %{analysis: analysis, reason: reason}
   end
 
-  @doc "The extraction errors among the notices."
-  @spec extraction_errors(t()) :: [extraction_error()]
-  def extraction_errors(%__MODULE__{notices: notices}),
-    do: for({:extraction_error, error} <- notices, do: error)
-
-  @doc "The duplicate modules among the notices."
-  @spec duplicates(t()) :: [duplicate()]
-  def duplicates(%__MODULE__{notices: notices}),
-    do: for({:duplicate, duplicate} <- notices, do: duplicate)
-
   @doc "Whether the run found no solver."
   @spec souffle_missing?(t()) :: boolean()
   def souffle_missing?(%__MODULE__{notices: notices}), do: :souffle_missing in notices
-
-  @doc """
-  Every placed finding as the entries scry rendered, grouped by file: the
-  line refined from the source by the finding's `at_source`, the span
-  closed by its `to_block` where the bytecode left it open, `{guard}` in
-  its prose filled with the keyword the source shows, and its related
-  frames likewise; a finding or frame outside the program is left out.
-
-  The frontends render from these until `Argus.Report` builds from
-  `located` itself.
-  """
-  @spec findings_by_file(t()) :: %{optional(String.t()) => [map()]}
-  def findings_by_file(%__MODULE__{located: located}) do
-    for {_analysis, {:ok, placed}} <- located,
-        %Argus.Located{file: file} = one <- placed,
-        file != nil,
-        reduce: %{} do
-      acc -> Map.update(acc, file, [entry(one)], &(&1 ++ [entry(one)]))
-    end
-  end
-
-  defp entry(%Argus.Located{finding: finding, file: path} = located) do
-    line = Source.Elixir.refine(path, located.line, Map.get(finding, :at_source))
-    guard = guard_word(path, line, finding)
-
-    %{
-      file: path,
-      line: line,
-      end_line: located.end_line || Source.Elixir.block_end(path, line, finding[:to_block]),
-      severity: finding.severity,
-      code: Atom.to_string(finding.analysis),
-      title: fill_guard(finding.title, guard),
-      detail: fill_guard(finding.detail, guard),
-      at_label: fill_guard(Map.get(finding, :at_label), guard),
-      help: Enum.map(Map.get(finding, :help, []), &fill_guard(&1, guard)),
-      related: related(Map.get(finding, :related, []), located.related),
-      provenance: Map.get(finding, :provenance, :structural),
-      confidence: Map.get(finding, :confidence)
-    }
-  end
-
-  defp related(frames, places) do
-    for {frame, %{file: file} = place} <- Enum.zip(frames, places), file != nil do
-      line = Source.Elixir.refine(file, place.line, Map.get(frame, :at_source))
-
-      %{
-        label: fill_guard(Map.get(frame, :label, ""), guard_word(file, line, frame)),
-        file: file,
-        line: line,
-        end_line: place.end_line || Source.Elixir.block_end(file, line, frame[:to_block])
-      }
-    end
-  end
-
-  # The word for `{guard}` in a finding's prose: the keyword the source
-  # shows at the anchor when the finding sits in a guard, else the
-  # neutral one.
-  defp guard_word(path, line, anchored) do
-    if Map.get(anchored, :to_block) == :guard,
-      do: Source.Elixir.guard_keyword(path, line) || "handler",
-      else: "handler"
-  end
-
-  defp fill_guard(nil, _word), do: nil
-  defp fill_guard(text, word), do: String.replace(text, "{guard}", word)
 end

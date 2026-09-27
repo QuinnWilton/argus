@@ -53,8 +53,8 @@ defmodule Mix.Tasks.ArgusTest do
       assert QueryLog.executions(log, :module_extraction) == []
       assert QueryLog.executions(log, :souffle_solve) == []
 
-      assert output =~ "warning[scry.coupling]"
-      assert output =~ "warning[scry.mailbox]"
+      assert output =~ "warning[argus.coupling]"
+      assert output =~ "warning[argus.mailbox]"
       assert output =~ "3 findings (2 warnings, 1 info)"
     end)
   end
@@ -122,8 +122,8 @@ defmodule Mix.Tasks.ArgusTest do
           Mix.Task.rerun("argus", ["mailbox"])
         end)
 
-      assert output =~ "warning[scry.mailbox]"
-      refute output =~ "scry.coupling"
+      assert output =~ "warning[argus.mailbox]"
+      refute output =~ "argus.coupling"
       assert output =~ "2 findings (1 warning, 1 info)"
 
       assert_raise Argus.ConfigError, ~r/unknown analyses \[:nonsense\]/, fn ->

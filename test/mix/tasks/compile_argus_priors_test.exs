@@ -39,10 +39,10 @@ defmodule Mix.Tasks.Compile.ArgusPriorsTest do
   end
 
   defp entries(result),
-    do: result |> Result.findings_by_file() |> Map.values() |> List.flatten()
+    do: Argus.Report.build(result.located, Argus.Config.load([]), File.cwd!())
 
   defp keys(result),
-    do: result |> entries() |> Enum.map(&{&1.code, &1.title, &1.file, &1.line}) |> Enum.sort()
+    do: result |> entries() |> Enum.map(&{&1.analysis, &1.title, &1.file, &1.line}) |> Enum.sort()
 
   test "off by default, then on: a superset served from the cache and the manifest on the warm run",
        %{peer: peer} do
@@ -210,9 +210,9 @@ defmodule Mix.Tasks.Compile.ArgusPriorsTest do
       cwd = File.cwd!()
 
       [rendered] =
-        result
-        |> Result.findings_by_file()
-        |> Argus.Mix.Diagnostics.build(config, cwd)
+        result.located
+        |> Argus.Report.build(config, cwd)
+        |> Argus.Mix.Diagnostics.build(cwd)
         |> Enum.filter(&(&1.diagnostic.message =~ ":infinity timeout inside a call chain"))
 
       assert rendered.diagnostic.severity == :information
@@ -220,10 +220,9 @@ defmodule Mix.Tasks.Compile.ArgusPriorsTest do
 
       json =
         ExUnit.CaptureIO.capture_io(fn ->
-          result
-          |> Result.findings_by_file()
-          |> Argus.Mix.Diagnostics.resolve(config, cwd)
-          |> Argus.Report.json(cwd)
+          result.located
+          |> Argus.Report.build(config, cwd)
+          |> Argus.Report.Json.print(cwd)
         end)
 
       assert [%{"severity" => "info", "provenance" => "heuristic", "confidence" => 950}] =

@@ -1,0 +1,180 @@
+error[argus.startup]: Anchored at a beam
+  ╭─[_build/a/ebin/Elixir.Shapes.Lost.beam:1:1]
+    note: Anchored at a beam: the detail.
+
+error[argus.ets]: A field the schema names
+   ╭─[src/shapes.ex:8:5]
+   │
+ 5 │ 
+ 6 │   schema "jobs" do
+ 7 │     field(:api_key_count, :integer)
+   •     ───────────────┬───────────────
+   •                    ╰── its twin
+ 8 │     field(:api_key, :string)
+   •     ───────────┬────────────
+   •                ╰── the field
+ 9 │   end
+10 │ 
+   │
+   ╰─────
+     note: A field the schema names: the detail.
+
+error[argus.ets]: Twins
+   ╭─[src/shapes.ex:42:1]
+   │
+40 │ 
+41 │   def run(job), do: job.()
+42 │ 
+   • ┬
+   • ╰── first
+43 │   def guarded(fun) do
+44 │     fun.()
+   │
+   ╰─────
+     note: Twins: the detail.
+
+error[argus.ets]: Twins
+   ╭─[src/shapes.ex:42:1]
+   │
+40 │ 
+41 │   def run(job), do: job.()
+42 │ 
+   • ┬
+   • ╰── second
+43 │   def guarded(fun) do
+44 │     fun.()
+   │
+   ╰─────
+     note: Twins: the detail.
+
+warning[argus.coupling]: Coupled children under one_for_one
+   ╭─[src/shapes.ex:13:7]
+   │
+11 │   def fetch(url) do
+12 │     try do
+13 │       HTTP.get!(url)
+   •       ──────┬───────
+   •             ╰── supervision tree defined here; the same call
+14 │     rescue
+15 │       error in HTTP.Error ->
+   ⋮
+31 │   def handle_info(:tick, state) do
+32 │     schedule()
+33 │     {:noreply, state}
+   •     ────────┬────────
+   •             ╰── kept here
+34 │   end
+35 │ 
+   │
+   ├─[src/other.ex:4:5]
+   │
+ 2 │   # Never compiled: a second file for the frames a finding points into.
+ 3 │   def start(parent) do
+ 4 │     GenServer.start_link(__MODULE__, parent)
+   •     ───────────────────┬────────────────────
+   •                        ╰── registers with the sibling here
+ 5 │   end
+ 6 │ 
+   │
+   ╰─────
+     note: Coupled children under one_for_one: the detail.
+     help: put the pair under `rest_for_one`
+     help: or monitor the sibling
+
+warning[argus.mailbox]: A call whose rescue swallows the exit
+   ╭─[src/shapes.ex:13:7]
+   │
+11 │     def fetch(url) do
+12 │       try do
+13 │ │       HTTP.get!(url)
+14 │ │     rescue
+15 │ │       error in HTTP.Error ->
+16 │ │         Logger.error("failed: #{inspect(error)}")
+17 │ │         :error
+   • ╰── the rescue guards this call
+18 │       end
+19 │     end
+   ⋮  
+42 │   
+43 │     def guarded(fun) do
+44 │ │     fun.()
+45 │ │   catch
+46 │ │     :exit, reason -> {:error, reason}
+   • ╰── the catch here
+47 │     end
+48 │   end
+   │
+   ╰─────
+     note: The rescue clause takes every exit.
+     help: narrow the rescue
+
+warning[argus.mailbox]: Every clause of the callback
+   ╭─[src/shapes.ex:31:3]
+   │
+29 │       end
+30 │     
+31 │ │     def handle_info(:tick, state) do
+32 │ │       schedule()
+33 │ │       {:noreply, state}
+34 │ │     end
+35 │ │   
+36 │ │     # The data clause.
+37 │ │ │   def handle_info({:data, data}, state) do
+38 │ │ │     {:noreply, %{state | data: data}}
+   • ╰──── handled here
+   • │ ╰── one clause
+39 │       end
+40 │     
+   │
+   ╰─────
+     note: Every clause of the callback: the detail.
+
+warning[argus.mailbox]: A span the bytecode closed
+   ╭─[src/shapes.ex:43:3]
+   │
+41 │     def run(job), do: job.()
+42 │   
+43 │ │   def guarded(fun) do
+44 │ │     fun.()
+45 │ │   catch
+46 │ │     :exit, reason -> {:error, reason}
+   • ╰── from here
+47 │     end
+48 │   end
+   │
+   ╰─────
+     note: A span the bytecode closed: the detail.
+
+info[argus.startup]: A prior says this may block
+   ╭─[src/other.ex:8:5]
+   │
+ 6 │ 
+ 7 │   def init(parent) do
+ 8 │     send(parent, :ready)
+   •     ─────────┬──────────
+   •              ╰── 
+ 9 │     {:ok, parent}
+10 │   end
+   │
+   ╰─────
+     note: A prior says this may block: the detail.
+
+info[argus.mailbox]: A receive with no timeout
+   ╭─[src/shapes.ex:22:5]
+   │
+20 │   
+21 │     def wait do
+22 │ │     receive do
+23 │ │       {:done, value} ->
+24 │ │         value
+25 │ │ 
+26 │ │       :timeout ->
+27 │ │         nil
+   • ╰── waits here
+28 │       end
+29 │     end
+   │
+   ╰─────
+     note: A receive with no timeout: the detail.
+
+10 findings (4 errors, 4 warnings, 2 infos)
