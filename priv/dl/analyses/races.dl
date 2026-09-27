@@ -1977,7 +1977,7 @@ unguarded_path.guarded(c) :- site_rescues_argument_error(c, _).
 unguarded_path.handed(f, g, id) :- fun_handed(id, f, g, _).
 unguarded_path.handed(f, g, id) :- resolved_apply(id, f, g).
 unguarded_path.sealed(f) :- rescues_argument_error(f).
-unguarded_path.elsewhere(c) :- process_start(c, _, _, kind, _), kind != "server".
+unguarded_path.elsewhere(c) :- starts_a_process(c).
 
 .decl raises_unguarded(func: symbol, act: symbol)
 

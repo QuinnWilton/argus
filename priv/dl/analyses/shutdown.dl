@@ -429,7 +429,7 @@ wait_site(f, m, id) :-
 // terminate/2 catches. Only a fun no call is handed falls back to the
 // function-wide reading (catches_exit). A fun handed to a spawn or a
 // task's start runs in another process: its :noproc ends that process,
-// not terminate/2, so the path stops there (started_elsewhere,
+// not terminate/2, so the path stops there (starts_a_process,
 // runs_elsewhere). A fun enters its body holding no reason.
 .decl stop_path(terminate: symbol, func: symbol, pos: number, depth: number, first: symbol)
 
@@ -479,7 +479,7 @@ stop_fun_edge(f, pos, g) :-
   !call_instr(f, g, _),
   runs_holding(f, pos, call),
   !exit_guarded(call),
-  !started_elsewhere(call),
+  !starts_a_process(call),
   !runs_elsewhere(f, g).
 
 stop_fun_edge(f, pos, g) :-
@@ -489,11 +489,6 @@ stop_fun_edge(f, pos, g) :-
   !fun_site(f, g, _),
   !catches_exit(f),
   !runs_elsewhere(f, g).
-
-// The call starts a process that runs what it is handed.
-.decl started_elsewhere(call: symbol)
-
-started_elsewhere(call) :- process_start(call, _, _, kind, _), kind != "server".
 
 // On terminate/2's stop, `func` waits on `mod` at `site`: a wait site
 // that runs there with no exit-catching try around it, or, for a

@@ -48,6 +48,12 @@
 // No clause holds for an edge func calls itself (call_instr): a rule
 // that has the call's instruction in hand is on func's stack already and
 // need not ask.
+// The call at `call` starts a process (a spawn, a task, an agent: not a
+// server) that runs what it is handed, not the caller.
+.decl starts_a_process(call: symbol)
+
+starts_a_process(call) :- process_start(call, _, _, kind, _), kind != "server".
+
 .decl runs_elsewhere(func: symbol, callee: symbol)
 
 runs_elsewhere(f, g) :-
