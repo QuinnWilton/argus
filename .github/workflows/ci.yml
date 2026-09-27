@@ -9,12 +9,26 @@ on:
 env:
   MIX_ENV: test
 
+# argus depends on roux by path (`../roux`) until roux 0.2 is on Hex:
+# every job checks both out side by side and runs in argus's directory.
+defaults:
+  run:
+    working-directory: argus
+
 jobs:
   format:
     name: Format
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: argus
+
+      - uses: actions/checkout@v4
+        with:
+          repository: QuinnWilton/roux
+          ref: roux-0.2
+          path: roux
 
       - name: Set up Elixir
         uses: erlef/setup-beam@v1
@@ -25,8 +39,8 @@ jobs:
       - name: Restore dependencies cache
         uses: actions/cache@v4
         with:
-          path: deps
-          key: ${{ runner.os }}-mix-${{ hashFiles('**/mix.lock') }}
+          path: argus/deps
+          key: ${{ runner.os }}-mix-${{ hashFiles('argus/mix.lock') }}
           restore-keys: ${{ runner.os }}-mix-
 
       - name: Install dependencies
@@ -40,6 +54,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: argus
+
+      - uses: actions/checkout@v4
+        with:
+          repository: QuinnWilton/roux
+          ref: roux-0.2
+          path: roux
 
       - name: Set up Elixir
         uses: erlef/setup-beam@v1
@@ -50,8 +72,8 @@ jobs:
       - name: Restore dependencies cache
         uses: actions/cache@v4
         with:
-          path: deps
-          key: ${{ runner.os }}-mix-${{ hashFiles('**/mix.lock') }}
+          path: argus/deps
+          key: ${{ runner.os }}-mix-${{ hashFiles('argus/mix.lock') }}
           restore-keys: ${{ runner.os }}-mix-
 
       - name: Install dependencies
@@ -61,15 +83,29 @@ jobs:
         run: mix credo --strict
 
   test:
-    name: Test / Elixir ${{ matrix.elixir }}
+    name: Test / ${{ matrix.backend }} backend / Elixir ${{ matrix.elixir }}
     runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
       matrix:
         elixir: ["1.18.4", "1.19.4"]
         otp: ["28.3"]
+        # The batch backend is the default while both are kept; the
+        # graph's runs every harness (Argus.Test.Memo, Batch, Corpus) on
+        # the query graph instead.
+        backend: [batch, graph]
+    env:
+      ARGUS_BACKEND: ${{ matrix.backend }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: argus
+
+      - uses: actions/checkout@v4
+        with:
+          repository: QuinnWilton/roux
+          ref: roux-0.2
+          path: roux
 
       - name: Set up Elixir
         uses: erlef/setup-beam@v1
@@ -87,8 +123,8 @@ jobs:
       - name: Restore dependencies cache
         uses: actions/cache@v4
         with:
-          path: deps
-          key: ${{ runner.os }}-mix-${{ matrix.elixir }}-${{ hashFiles('**/mix.lock') }}
+          path: argus/deps
+          key: ${{ runner.os }}-mix-${{ matrix.elixir }}-${{ hashFiles('argus/mix.lock') }}
           restore-keys: ${{ runner.os }}-mix-${{ matrix.elixir }}-
 
       - name: Install dependencies
@@ -103,8 +139,98 @@ jobs:
         env:
           MIX_ENV: dev
 
+      # The peer and Mix-project tests (`:project`) run here too; they
+      # have a job of their own below only to be rerun alone.
       - name: Run tests
         run: mix test --include cache_verify
+
+  project:
+    name: Project tests (Mix compiler, driver, peers)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: argus
+
+      - uses: actions/checkout@v4
+        with:
+          repository: QuinnWilton/roux
+          ref: roux-0.2
+          path: roux
+
+      - name: Set up Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          elixir-version: "1.19.4"
+          otp-version: "28.3"
+
+      - name: Install Souffle
+        run: |
+          sudo wget https://souffle-lang.github.io/ppa/souffle-key.public -O /usr/share/keyrings/souffle-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/souffle-archive-keyring.gpg] https://souffle-lang.github.io/ppa/ubuntu/ stable main" | sudo tee /etc/apt/sources.list.d/souffle.list
+          sudo apt-get update
+          sudo apt-get install -y souffle
+
+      - name: Restore dependencies cache
+        uses: actions/cache@v4
+        with:
+          path: argus/deps
+          key: ${{ runner.os }}-mix-1.19.4-${{ hashFiles('argus/mix.lock') }}
+          restore-keys: ${{ runner.os }}-mix-1.19.4-
+
+      - name: Install dependencies
+        run: mix deps.get
+
+      - name: Run the project tests
+        run: mix test --only project
+
+  parity:
+    name: Parity (graph ≡ batch)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: argus
+
+      - uses: actions/checkout@v4
+        with:
+          repository: QuinnWilton/roux
+          ref: roux-0.2
+          path: roux
+
+      - name: Set up Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          elixir-version: "1.19.4"
+          otp-version: "28.3"
+
+      - name: Install Souffle
+        run: |
+          sudo wget https://souffle-lang.github.io/ppa/souffle-key.public -O /usr/share/keyrings/souffle-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/souffle-archive-keyring.gpg] https://souffle-lang.github.io/ppa/ubuntu/ stable main" | sudo tee /etc/apt/sources.list.d/souffle.list
+          sudo apt-get update
+          sudo apt-get install -y souffle
+
+      - name: Restore dependencies cache
+        uses: actions/cache@v4
+        with:
+          path: argus/deps
+          key: ${{ runner.os }}-mix-1.19.4-${{ hashFiles('argus/mix.lock') }}
+          restore-keys: ${{ runner.os }}-mix-1.19.4-
+
+      - name: Install dependencies
+        run: mix deps.get
+
+      # The incremental≡batch gate over argus's own fixtures, cold and
+      # across cross-module edits; then every harness call run on both
+      # backends and compared (the corpus has its own run in `test`).
+      - name: Run the parity gate
+        run: mix test --only parity
+
+      - name: Run every harness on both backends
+        run: mix test --exclude corpus
+        env:
+          ARGUS_VERIFY_BACKEND: "1"
 
   dialyzer:
     name: Dialyzer
@@ -113,6 +239,14 @@ jobs:
       MIX_ENV: dev
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: argus
+
+      - uses: actions/checkout@v4
+        with:
+          repository: QuinnWilton/roux
+          ref: roux-0.2
+          path: roux
 
       - name: Set up Elixir
         uses: erlef/setup-beam@v1
@@ -123,16 +257,16 @@ jobs:
       - name: Restore dependencies cache
         uses: actions/cache@v4
         with:
-          path: deps
-          key: ${{ runner.os }}-mix-${{ hashFiles('**/mix.lock') }}
+          path: argus/deps
+          key: ${{ runner.os }}-mix-${{ hashFiles('argus/mix.lock') }}
           restore-keys: ${{ runner.os }}-mix-
 
       - name: Restore PLT cache
         uses: actions/cache@v4
         id: plt-cache
         with:
-          path: priv/plts
-          key: ${{ runner.os }}-plt-${{ hashFiles('**/mix.lock') }}
+          path: argus/priv/plts
+          key: ${{ runner.os }}-plt-${{ hashFiles('argus/mix.lock') }}
           restore-keys: ${{ runner.os }}-plt-
 
       - name: Install dependencies
