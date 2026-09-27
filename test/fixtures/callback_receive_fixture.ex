@@ -513,4 +513,92 @@ defmodule Argus.Test.Fixtures.CallbackReceive do
       end
     end
   end
+
+  defmodule ClearsThenAwaitsExit do
+    @moduledoc """
+    A server that traps exits clears the flag, then links a worker and
+    waits for its :EXIT: at the wait the process is not trapping, and the
+    exit never comes as a message.
+    """
+    @behaviour GenServer
+
+    def init(arg) do
+      Process.flag(:trap_exit, true)
+      {:ok, arg}
+    end
+
+    def handle_call(:work, _from, arg) do
+      Process.flag(:trap_exit, false)
+      pid = spawn_link(fn -> exit({:done, arg}) end)
+
+      receive do
+        {:EXIT, ^pid, reason} -> {:reply, reason, arg}
+      end
+    end
+  end
+
+  defmodule TrapsOnlyAroundStart do
+    @moduledoc """
+    init/1 traps exits around a start, then clears the flag: the server
+    does not trap, and the :EXIT its callback waits for never comes.
+    """
+    @behaviour GenServer
+
+    def init(arg) do
+      Process.flag(:trap_exit, true)
+      result = :timer.sleep(arg)
+      Process.flag(:trap_exit, false)
+      {:ok, result}
+    end
+
+    def handle_call(:work, _from, arg) do
+      pid = spawn_link(fn -> exit({:done, arg}) end)
+
+      receive do
+        {:EXIT, ^pid, reason} -> {:reply, reason, arg}
+      end
+    end
+  end
+
+  defmodule TrapsInHelper do
+    @moduledoc """
+    init/1 traps exits through a helper it calls: the server traps, and
+    the linked worker's exit ends the wait.
+    """
+    @behaviour GenServer
+
+    def init(arg) do
+      trap_exits()
+      {:ok, arg}
+    end
+
+    def handle_call(:work, _from, arg) do
+      pid = spawn_link(fn -> exit({:done, arg}) end)
+
+      receive do
+        {:EXIT, ^pid, reason} -> {:reply, reason, arg}
+      end
+    end
+
+    defp trap_exits, do: Process.flag(:trap_exit, true)
+  end
+
+  defmodule TrapsBeforeWaitInCallback do
+    @moduledoc """
+    The callback sets the flag itself, before it links and waits: the
+    exit ends the wait though init/1 never traps.
+    """
+    @behaviour GenServer
+
+    def init(arg), do: {:ok, arg}
+
+    def handle_call(:work, _from, arg) do
+      Process.flag(:trap_exit, true)
+      pid = spawn_link(fn -> exit({:done, arg}) end)
+
+      receive do
+        {:EXIT, ^pid, reason} -> {:reply, reason, arg}
+      end
+    end
+  end
 end

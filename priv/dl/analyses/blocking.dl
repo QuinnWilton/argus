@@ -932,8 +932,8 @@ waits_with_timeout(receive, func) :- recv_start(receive, func, 0, _).
 // takes the :DOWN of a monitor (down_bounded, clientlib/receive.dl),
 // which the runtime delivers once the monitored process exits, or at
 // once if it was already gone; or the :EXIT of a linked peer in a
-// server that traps exits (trapped_exit_ends). Its other clauses can
-// only end it sooner.
+// process trapping exits when it waits (trapped_exit_ends). Its other
+// clauses can only end it sooner.
 .decl ends_when_peer_exits(receive: symbol, callback: symbol)
 
 ends_when_peer_exits(receive, callback) :-
@@ -942,16 +942,16 @@ ends_when_peer_exits(receive, callback) :-
   callback_reaches(callback, func, _).
 
 ends_when_peer_exits(receive, callback) :-
-  trapped_exit_ends(receive, func, mod),
-  callback_reaches(callback, func, _),
-  loop_entry(callback, mod, _).
+  trapped_exit_ends(receive, func),
+  callback_reaches(callback, func, _).
 
 // The receive takes the :EXIT of a process or port its function links to
-// (exit_pinned, clientlib/receive.dl), and `mod`'s server traps exits
-// (module_traps): the linked peer's exit ends the wait.
-.decl trapped_exit_ends(id: symbol, func: symbol, mod: symbol)
+// (exit_pinned, clientlib/receive.dl), and the process is trapping exits
+// when it waits (trapping_at, clientlib/trapping.dl): the linked peer's
+// exit ends the wait.
+.decl trapped_exit_ends(id: symbol, func: symbol)
 
-trapped_exit_ends(id, f, m) :- exit_pinned(id, f), module_traps(_, m).
+trapped_exit_ends(id, f) :- exit_pinned(id, f), trapping_at(f, id).
 
 // ── The cancel_timer flush idiom ─────────────────────────────────
 

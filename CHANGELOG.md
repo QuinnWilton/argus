@@ -137,6 +137,11 @@ its callbacks run. Both are MAY words (a trap on one path counts). A
 trap a clear follows in the same function no longer makes the server
 trap (moved from process_kind.dl).
 
+Blocking: a callback's wait on a linked peer's `:EXIT` is bounded ("down")
+only while the process traps exits at the receive (`trapping_at`), not
+whenever the module traps somewhere: a clear before the wait, or an
+init/1 that traps only around a start, leaves it blocking.
+
 ### Coupling: a sibling asked only in terminate/2 is not a dependency
 
 **Fixed.** "Permanent child depends on a transient sibling" read a call

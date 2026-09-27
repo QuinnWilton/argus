@@ -1210,7 +1210,7 @@ A synchronous wait that can last forever or nest: every finding is a process wai
 `receive_in_callback` · bounded=`true`, `down`
 · titles: "Receive inside an OTP callback" (`:info`: a timed receive, or one its peer's exit ends)
 
-**Property.** A `receive` runs on an OTP process's own stack, in a callback or one call away, and either has an `after` clause (`true`, `init/1` included) or has none but takes the `:DOWN` of a monitor its own function took (`down`, `init/1` excluded). It is not the cancel_timer flush at any bound. It cannot hang, or cannot outlast the monitored process, but it selectively consumes from the behaviour's mailbox: messages it does not match stay queued and are rescanned, system messages wait behind it, and a `down` wait holds the callback until the monitored process exits.
+**Property.** A `receive` runs on an OTP process's own stack, in a callback or one call away, and either has an `after` clause (`true`, `init/1` included) or has none but takes the `:DOWN` of a monitor its own function took, or the pinned `:EXIT` of a process its function links to while the process traps exits there (`trapping_at`, clientlib/trapping.dl) (`down`, `init/1` excluded). It is not the cancel_timer flush at any bound. It cannot hang, or cannot outlast the monitored process, but it selectively consumes from the behaviour's mailbox: messages it does not match stay queued and are rescanned, system messages wait behind it, and a `down` wait holds the callback until the monitored process exits.
 
 **Assumptions and limits.**
 - The facts carry whether a receive can block, not its timeout, so a one-millisecond wait and a one-hour wait read alike.

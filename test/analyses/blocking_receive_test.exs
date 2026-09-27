@@ -34,6 +34,10 @@ defmodule Argus.Analyses.BlockingReceiveTest do
     CallbackReceive.DemonitorsThenAwaits,
     CallbackReceive.AwaitsLinkedExit,
     CallbackReceive.AwaitsUntrappedExit,
+    CallbackReceive.ClearsThenAwaitsExit,
+    CallbackReceive.TrapsOnlyAroundStart,
+    CallbackReceive.TrapsInHelper,
+    CallbackReceive.TrapsBeforeWaitInCallback,
     CallbackReceive.WrappedServer,
     CallbackReceive.JoinsInClient,
     CallbackReceive.StatemStateReceive
@@ -223,7 +227,9 @@ defmodule Argus.Analyses.BlockingReceiveTest do
             {CallbackReceive.AwaitsDoneOrDown, "terminate/2"},
             {CallbackReceive.AwaitsReplyOrDown, "handle_call/3"},
             {CallbackReceive.AwaitsAnotherDown, "handle_call/3"},
-            {CallbackReceive.AwaitsLinkedExit, "handle_call/3"}
+            {CallbackReceive.AwaitsLinkedExit, "handle_call/3"},
+            {CallbackReceive.TrapsInHelper, "handle_call/3"},
+            {CallbackReceive.TrapsBeforeWaitInCallback, "handle_call/3"}
           ] do
         {blocking, bounded, down} = run_down(ctx, [mod])
 
@@ -246,13 +252,18 @@ defmodule Argus.Analyses.BlockingReceiveTest do
       assert timed != waited
     end
 
+    # An :EXIT ends the wait only while the process traps exits
+    # (trapping_at): a server that clears the flag before it waits, or
+    # whose init/1 traps only around a start, waits on nothing that comes.
     test "a pinned reason, a demonitor first or an untrapped :EXIT still blocks", ctx do
       skip_without_souffle()
 
       for mod <- [
             CallbackReceive.AwaitsNormalDown,
             CallbackReceive.DemonitorsThenAwaits,
-            CallbackReceive.AwaitsUntrappedExit
+            CallbackReceive.AwaitsUntrappedExit,
+            CallbackReceive.ClearsThenAwaitsExit,
+            CallbackReceive.TrapsOnlyAroundStart
           ] do
         {blocking, _bounded, down} = run_down(ctx, [mod])
 
