@@ -65,6 +65,20 @@ the blob store once a day (`Roux.Blob.maybe_gc/2`), line tables are
 kept in its action cache by pack, and a project's own ebins are not
 stamped.
 
+**Changed.** A program's key (`Argus.Souffle.Program.declared_digest/2`,
+which the graph keys every solve on) reads a text file without its lines
+that are a line comment alone and its blank lines, which Souffle's
+preprocessor drops (`Argus.Souffle.Program.uncommented/1`): an edit to a
+rule's prose solves nothing again. A file that splices lines is read
+whole, and a comment line holding a block comment's marker is kept.
+
+**Changed.** Refining findings by their sources reads each file once per
+report and per `run_analyses` call (`Argus.Locate.Source.within/1` and
+`read/3`, which the language rules read through), and an Erlang
+anchor's line and enclosing `try` are found without scanning the file
+from its start. `Argus.Graph.beam_input/2` takes a store to keep a beam's
+digest by its stamp; `set_program/3` keeps a program's digests whole.
+
 **Changed.** The blob store is trusted as a manifest is: what it holds
 is decoded without refusing atoms a fresh VM has not made (roux 0.2),
 so it must be a store no other user could have written. Argus makes

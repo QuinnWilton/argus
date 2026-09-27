@@ -382,6 +382,18 @@ bytecode's late step). Invariants:
 - **What the store keeps is read back by a fresh VM.** A trace names a
   module outside the program by string, never by atom: the VM reading
   it has not made that atom (`Argus.Graph.FreshVmTest`).
+- **A warm call costs stats, not reads.** Each module keeps at most
+  eight traces and a lookup reads the most recent (`Roux.Blob.Trace`
+  `keep:`/`limit:`); what a fresh VM would compute again from files
+  (beam digests, program walks and digests, line tables, declaration
+  lines, a preloaded module's specs) is kept by stamp or by content in
+  the VM and the store (`Roux.Stamp`, `Roux.Blob.cached/3`); store and
+  hot-path file I/O is raw, never queued behind the VM's file server.
+  A new per-call computation over files gets the same treatment, or
+  P1/P4 warm regresses.
+- **A comment is not an edit.** A program's key reads its text without
+  comment lines (`Argus.Souffle.Program.uncommented/1`); a test that
+  edits a rule to see a re-solve appends a declaration, not a comment.
 - Without a solver nothing is solved: the driver demands no analysis,
   so no error memo reaches a manifest.
 - Beams are keyed by path; a beam's `hash` is the digest of it without
