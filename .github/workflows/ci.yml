@@ -27,7 +27,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: QuinnWilton/roux
-          ref: roux-0.2
+          ref: main
           path: roux
 
       - name: Set up Elixir
@@ -60,7 +60,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: QuinnWilton/roux
-          ref: roux-0.2
+          ref: main
           path: roux
 
       - name: Set up Elixir
@@ -98,7 +98,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: QuinnWilton/roux
-          ref: roux-0.2
+          ref: main
           path: roux
 
       - name: Set up Elixir
@@ -149,7 +149,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: QuinnWilton/roux
-          ref: roux-0.2
+          ref: main
           path: roux
 
       - name: Set up Elixir
@@ -189,7 +189,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: QuinnWilton/roux
-          ref: roux-0.2
+          ref: main
           path: roux
 
       - name: Set up Elixir
@@ -233,7 +233,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: QuinnWilton/roux
-          ref: roux-0.2
+          ref: main
           path: roux
 
       - name: Set up Elixir
@@ -282,7 +282,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: QuinnWilton/roux
-          ref: roux-0.2
+          ref: main
           path: roux
 
       - name: Set up Elixir, rebar3 and Gleam
