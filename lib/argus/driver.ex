@@ -127,6 +127,8 @@ defmodule Argus.Driver do
       _moved =
         Graph.set_environment(db,
           project_root: project.root,
+          # Every beam there is an input (`discovered` and `ignored`).
+          own_ebins: Enum.map(project.apps, &elem(&1, 1)),
           # The specs of the modules the program calls are read from
           # the project's own ebins and the installed OTP, never from
           # the VM's code path.

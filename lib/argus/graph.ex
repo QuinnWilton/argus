@@ -158,18 +158,23 @@ defmodule Argus.Graph do
     * `:trees` — the Datalog trees besides argus's own (a custom
       program's directory);
     * `:souffle_timeout` — milliseconds a solve may run;
-    * `:stamps` — false to leave each directory's stamp (`app_code`)
-      unset, default true. Stamping reads every beam's file status in
-      every directory the specs are read from (thousands, on a test
-      VM's code path); a stamp only tells a kept graph that a directory
-      was rebuilt since. A session never kept (no manifest), whose
-      queries all run afresh, has no use for it: what it finds in the
-      store it verifies through the files themselves (`Roux.Stamp`).
+    * `:own_ebins` — the directories whose every beam is an input (a
+      project's own ebins): not stamped (`Environment.code_index/2`);
+    * `:stamps` — each directory's stamp (`app_code`): true (the
+      default) to read them, false to leave them unset, or the stamps
+      `Environment.stamps/1` read earlier over the same index, for a
+      caller opening many sessions in one VM. Stamping reads every
+      beam's file status in every directory the specs are read from
+      (thousands, on a test VM's code path); a stamp only tells a kept
+      graph that a directory was rebuilt since. A session never kept
+      (no manifest), whose queries all run afresh, has no use for it:
+      what it finds in the store it verifies through the files
+      themselves (`Roux.Stamp`).
   """
   @spec set_environment(Roux.Database.t(), keyword()) :: boolean()
   def set_environment(db, opts \\ []) do
     source = Keyword.get(opts, :specs_source)
-    index = Environment.code_index(source)
+    index = Environment.code_index(source, Keyword.get(opts, :own_ebins, []))
     trees = Enum.uniq([Programs.tree(:stage0) | Keyword.get(opts, :trees, [])])
 
     [
@@ -184,9 +189,14 @@ defmodule Argus.Graph do
   end
 
   defp stamps(_db, _index, false), do: []
+  defp stamps(db, index, true), do: stamps(db, index, Environment.stamps(index))
 
-  defp stamps(db, index, true),
-    do: Enum.map(index, fn {dir, name} -> set(db, :app_code, name, Environment.app_code(dir)) end)
+  defp stamps(db, index, %{} = stamps) do
+    for {dir, name} <- index do
+      stamp = Map.get_lazy(stamps, name, fn -> Environment.app_code(dir) end)
+      set(db, :app_code, name, stamp)
+    end
+  end
 
   @doc """
   Sets the beams of `program`: each key's `beam` input from its file (or

@@ -5,12 +5,16 @@ defmodule Argus.Graph.Environment do
 
     * `solver/2` — the solver on `PATH`, its version and the timeout a
       solve has; nil without one.
-    * `code_index/0` — each directory of the code path outside OTP and
-      Elixir (and the build's consolidated protocols), named by itself.
+    * `code_index/2` — each directory the specs are read from (the
+      specs source's, or the code path's) outside OTP and Elixir (and
+      the build's consolidated protocols), named by itself.
     * `app_code/1` — a directory's beams by their stamps: it moves when
       one is rebuilt, and whoever read a module's specs from there looks
       at them again (`Argus.Graph.Reads`'s `installed_specs`), which is
       cheap and comes out equal unless the specs changed.
+    * `stamps/1` — every directory's `app_code` of an index, read side
+      by side: a caller opening many sessions in one VM over the same
+      code (the corpus) reads them once and hands them to each.
   """
 
   alias Roux.Blob
@@ -68,11 +72,17 @@ defmodule Argus.Graph.Environment do
   Each directory the specs are read from and not the runtime's — the
   source's (`Argus.Specs.Source`), or the code path's without one:
   `%{dir => name}`, a directory named by itself.
+
+  `own` are the directories whose every beam is an input of the graph
+  (a project's own ebins, as a driver syncs them): a read of a module
+  there depends on its beam's input, and stamping them is wasted.
   """
-  @spec code_index(Argus.Specs.Source.t() | nil) :: %{optional(String.t()) => String.t()}
-  def code_index(source \\ nil) do
+  @spec code_index(Argus.Specs.Source.t() | nil, [Path.t()]) ::
+          %{optional(String.t()) => String.t()}
+  def code_index(source \\ nil, own \\ []) do
     otp = List.to_string(:code.root_dir()) <> "/"
     elixir = (:elixir |> :code.lib_dir() |> List.to_string() |> Path.dirname()) <> "/"
+    own = MapSet.new(own, &Path.expand/1)
 
     dirs =
       case source do
@@ -82,12 +92,29 @@ defmodule Argus.Graph.Environment do
 
     for dir <- Enum.uniq(dirs),
         dir = Path.expand(dir),
+        not MapSet.member?(own, dir),
         not String.starts_with?(dir, otp),
         not String.starts_with?(dir, elixir),
         "consolidated" not in Path.split(dir),
         File.dir?(dir),
         into: %{},
         do: {dir, dir}
+  end
+
+  @doc """
+  The `app_code/1` of every directory of `index` (`code_index/2`), by
+  its name, read side by side: stamping is file-status calls, and the
+  directories are independent.
+  """
+  @spec stamps(%{optional(String.t()) => String.t()}) :: %{optional(String.t()) => String.t()}
+  def stamps(index) do
+    index
+    |> Task.async_stream(fn {dir, name} -> {name, app_code(dir)} end,
+      max_concurrency: 2 * System.schedulers_online(),
+      ordered: false,
+      timeout: :infinity
+    )
+    |> Map.new(fn {:ok, stamp} -> stamp end)
   end
 
   @doc """
