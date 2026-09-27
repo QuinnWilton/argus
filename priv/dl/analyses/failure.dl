@@ -584,13 +584,48 @@ rpc_wrapped(caller, call, rpc, wrapper) :-
 
 // ══ Results discarded ═══════════════════════════════════════════════
 
-// A Task.Supervisor.start_child's result is dropped, so a start that
-// fails goes unnoticed.
+// A Task.Supervisor.start_child's result is dropped, and the start can
+// fail, so a failed start goes unnoticed.
 .decl discarded_task_start(func: symbol, start: symbol)
 
 discarded_task_start(func, start) :-
   starts_supervised_task(start, func),
+  start_may_fail(start),
   !start_result_checked(start).
+
+// A Task.Supervisor.start_child returns an error only as `{:error,
+// :max_children}`: a task's start cannot fail, and a supervisor that is
+// not running exits the caller instead of answering. So the start can
+// fail only when the supervisor it names may have a cap
+// (task_supervisor_cap: a literal one, or options the extractor cannot
+// read). A supervisor the start does not name (a pid, livebook's
+// RuntimeServer's `state.task_supervisor`; a `{name, node}`), or names
+// but the program does not start, may be any Task.Supervisor the program
+// starts: the start can fail when any of them may have a cap. When none
+// does, the start is quiet: the default is `:infinity`, and every
+// Task.Supervisor in view is read. Known limit: a supervisor the program
+// does not show (one a dependency starts, a library's caller's, one in a
+// child list read from config) is taken as uncapped.
+.decl start_may_fail(start: symbol)
+
+start_may_fail(start) :-
+  task_supervisor_start(start, _, "start_child", sup),
+  may_be_capped(sup).
+
+start_may_fail(start) :-
+  task_supervisor_start(start, _, "start_child", sup),
+  !started_in_view(sup),
+  may_be_capped(_).
+
+.decl may_be_capped(sup: symbol)
+
+may_be_capped(sup) :- task_supervisor_cap(sup, limit), limit != "infinity".
+
+// A Task.Supervisor the program starts under this name. "dynamic" names
+// none: the start does not name its supervisor.
+.decl started_in_view(sup: symbol)
+
+started_in_view(sup) :- task_supervisor_cap(sup, _), sup != "dynamic".
 
 unchecked_result(func, start, "Task.Supervisor.start_child", "") :-
   discarded_task_start(func, start).
@@ -828,6 +863,12 @@ returns_no_failure(c) :- callee_returns(c, "no_return").
 
 reported_elsewhere(site) :- unchecked_result(_, site, _, _).
 reported_elsewhere(site) :- start_result_owned(site).
+
+// A Task.Supervisor.start_child's result is unchecked_result's question,
+// which asks whether the start can fail: under no cap it answers only
+// {:ok, pid}, and a site dropping it hides nothing, whatever the other
+// sites do.
+reported_elsewhere(site) :- starts_supervised_task(site, _), !start_may_fail(site).
 
 // A discarded start result is startup.ignored_start_result's finding,
 // whatever the other sites do; the same site is not reported twice, by

@@ -11,7 +11,8 @@ defmodule Argus.Analyses.Failure do
     no `{:badrpc, _}` clause, or used as a `boolean` where the tuple is
     truthy (for `:erpc`, with no rescue for `{:erpc, :noconnection}`).
   - `unchecked_result(func, site, api, name)` — a result used without
-    its failure case: `Task.Supervisor.start_child` discarded, or a
+    its failure case: `Task.Supervisor.start_child` discarded where the
+    supervisor it names may have a `max_children` cap, or a
     `Process.whereis` of `name` used without its nil case.
   - `orphan_process(func, site, kind, target, callback)` — a process nothing
     supervises: a bare `spawn` nothing links to or monitors afterwards,
@@ -426,10 +427,11 @@ defmodule Argus.Analyses.Failure do
     Findings.new(
       :warning,
       "start_child result ignored",
-      "#{func} discards the result of Task.Supervisor.start_child. A " <>
-        "{:error, reason} return — supervisor at max_children, not yet " <>
-        "started, bad child spec — is silently ignored, so failed launches " <>
-        "look exactly like successful ones.",
+      "#{func} discards the result of Task.Supervisor.start_child, and " <>
+        "the supervisor it starts under may have a max_children cap. At the " <>
+        "cap the start answers {:error, :max_children} and no task runs; " <>
+        "the error is silently ignored, so failed launches look exactly " <>
+        "like successful ones.",
       at: Findings.at_instr(id),
       at_label: "start_child result discarded here",
       help: [

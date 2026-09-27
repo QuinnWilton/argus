@@ -262,21 +262,59 @@ defmodule Argus.Extractors.SupervisionTest do
   end
 
   describe "extract/1 — task_supervisor_start" do
-    test "each Task.Supervisor start says which call made it" do
+    test "each Task.Supervisor start says which call made it, and the supervisor it names" do
       starts = fn mod ->
         {:ok, data} = BeamSpy.BeamFile.disassemble(to_string(:code.which(mod)))
 
-        for [_id, func, op] <- Map.get(Supervision.extract(data), :task_supervisor_start, []),
-            do: {func |> String.split(":") |> List.last(), op}
+        for [_id, func, op, sup] <-
+              Map.get(Supervision.extract(data), :task_supervisor_start, []),
+            do: {func |> String.split(":") |> List.last(), op, sup}
       end
 
       assert starts.(Argus.Test.Fixtures.UnboundedChildren.TaskLive) == [
-               {"handle_event/3", "start_child"}
+               {"handle_event/3", "start_child",
+                inspect(Argus.Test.Fixtures.UnboundedChildren.TaskSup)}
              ]
 
-      assert starts.(Argus.Test.Fixtures.UnboundedChildren.StreamLive) == [
-               {"handle_event/3", "async_stream_nolink"}
+      assert [{"handle_event/3", "async_stream_nolink", _sup}] =
+               starts.(Argus.Test.Fixtures.UnboundedChildren.StreamLive)
+
+      alias Argus.Test.Fixtures.TaskCaps
+
+      # A PartitionSupervisor's via names the partition; a pid names none.
+      assert Enum.sort(starts.(TaskCaps.Starter)) == [
+               {"to_bounded/0", "start_child", inspect(TaskCaps.BoundedSup)},
+               {"to_capped_partition/0", "start_child", inspect(TaskCaps.CappedPartitions)},
+               {"to_open/0", "start_child", inspect(TaskCaps.OpenSup)},
+               {"to_partition/0", "start_child", inspect(TaskCaps.Partitions)},
+               {"to_pid/1", "start_child", "dynamic"},
+               {"to_sized/0", "start_child", inspect(TaskCaps.SizedSup)}
              ]
+    end
+  end
+
+  describe "extract/1 — task_supervisor_cap" do
+    alias Argus.Test.Fixtures.TaskCaps
+
+    defp caps(mod) do
+      {:ok, data} = BeamSpy.BeamFile.disassemble(to_string(:code.which(mod)))
+      data |> Supervision.extract() |> Map.get(:task_supervisor_cap, []) |> Enum.sort()
+    end
+
+    test "every Task.Supervisor a module starts, with its name and its max_children" do
+      # A literal cap, none, one from a call (unreadable), and the
+      # partitions of a PartitionSupervisor under its name.
+      assert caps(TaskCaps.App) == [
+               [inspect(TaskCaps.BoundedSup), "10"],
+               [inspect(TaskCaps.CappedPartitions), "2"],
+               [inspect(TaskCaps.OpenSup), "infinity"],
+               [inspect(TaskCaps.Partitions), "infinity"],
+               [inspect(TaskCaps.SizedSup), "dynamic"]
+             ]
+
+      # start_link/0 names none and states no cap.
+      assert caps(TaskCaps.RuntimeServer) == [["dynamic", "infinity"]]
+      assert caps(Argus.Test.Fixtures.UncheckedStartChild) == [["dynamic", "5"]]
     end
   end
 

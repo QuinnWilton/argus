@@ -42,6 +42,10 @@ defmodule Argus.Extractors.Supervision do
     `Supervisor.start_child/2` or `supervisor:start_child/2` adds with a
     spec it states; `own` for a shorthand's restart, which its module's
     child_spec/1 gives
+  - `task_supervisor_start(id, func, op, sup)` — a task started under a
+    Task.Supervisor, with the supervisor the call names
+  - `task_supervisor_cap(sup, limit)` — a Task.Supervisor the program
+    starts, with its registered name and its `max_children`
   - `named_process(mod, name)` — named process registration detected
   """
 
@@ -97,6 +101,7 @@ defmodule Argus.Extractors.Supervision do
       :supervisor_child_name,
       :supervisor_max_children,
       :supervisor_site,
+      :task_supervisor_cap,
       :task_supervisor_start
     ]
 
@@ -151,6 +156,7 @@ defmodule Argus.Extractors.Supervision do
     |> extract_child_spec_restart(mod_str, module_data.functions)
     |> extract_child_spec_type(mod_str, module_data.functions)
     |> extract_post_start_calls(mod_str, module_data)
+    |> extract_task_supervisor_caps(module_data.functions)
   end
 
   # The restart a module's own child_spec/1 declares — what a shorthand
@@ -342,7 +348,8 @@ defmodule Argus.Extractors.Supervision do
     |> add_fact(:task_supervisor_start, [
       InstrId.mint(ctx.func_id, ctx.idx),
       ctx.func_id,
-      to_string(fun)
+      to_string(fun),
+      task_supervisor_target(ctx.instrs, ctx.idx, functions)
     ])
   end
 
@@ -371,6 +378,175 @@ defmodule Argus.Extractors.Supervision do
   end
 
   defp handle_dynamic_start(facts, _ctx, _mfa, _self_sup, _functions), do: facts
+
+  # The Task.Supervisor a start names: a registered name, or the name of
+  # the PartitionSupervisor a `{:via, PartitionSupervisor, {name, key}}`
+  # routes through (nerves_hub_web's AnalyticsEventsProcessing), which is
+  # the name its Task.Supervisor partitions are started under
+  # (task_supervisor_cap). A pid, a `{name, node}` and a name the reader
+  # cannot read are "dynamic". Unlike dynamic_child's supervisor, a start
+  # in a supervisor module does not name that module: a Task.Supervisor
+  # is never a module of the program's own.
+  defp task_supervisor_target(instrs, idx, functions) do
+    case fueled_value(fn -> value(frame(instrs, functions), idx, {:x, 0}) end) do
+      {:via, PartitionSupervisor, {name, _key}} when is_atom(name) and name != nil ->
+        inspect(name)
+
+      name when is_atom(name) and name not in [nil, true, false, :dynamic] ->
+        inspect(name)
+
+      _ ->
+        "dynamic"
+    end
+  end
+
+  # ── Task.Supervisor caps ───────────────────────────────────────────
+  #
+  # Every Task.Supervisor the module's code starts, with the name it is
+  # registered under and its `max_children`: a child spec `{Task.Supervisor,
+  # opts}` (in a literal or built at run time, in a child list or
+  # anywhere), a PartitionSupervisor's `child_spec: Task.Supervisor` (or
+  # `{Task.Supervisor, opts}`), under the partition's name, and a
+  # `Task.Supervisor.start_link/0,1` or `child_spec/1` call. A start_child
+  # returns `{:error, :max_children}` only under a cap, so what a
+  # discarded result can hide turns on these rows. The limit is the
+  # literal cap, `infinity` when the options state none (the default) or
+  # state `:infinity`, and `dynamic` when the options, or the cap in them,
+  # cannot be read. The name is `dynamic` when the options state none or
+  # one the reader cannot read.
+  defp extract_task_supervisor_caps(facts, functions) do
+    Enum.reduce(functions, facts, fn
+      {:function, _name, _arity, _label, instrs}, acc ->
+        instrs
+        |> Enum.with_index()
+        |> Enum.reduce(acc, fn {instr, idx}, acc ->
+          instr
+          |> started_task_supervisors(instrs, idx, functions)
+          |> Enum.reduce(acc, fn {name, limit}, acc ->
+            add_fact(acc, :task_supervisor_cap, [name, limit])
+          end)
+        end)
+
+      _, acc ->
+        acc
+    end)
+  end
+
+  defp started_task_supervisors(instr, instrs, idx, functions) do
+    case match_remote_call(instr) do
+      {:ok, Task.Supervisor, :start_link, 0} ->
+        [task_supervisor_row([])]
+
+      {:ok, Task.Supervisor, fun, 1} when fun in [:start_link, :child_spec] ->
+        [task_supervisor_row(operand_value(instrs, idx, {:x, 0}, functions))]
+
+      _ ->
+        built_task_supervisors(instr, instrs, idx, functions) ++ literal_task_supervisors(instr)
+    end
+  end
+
+  # A spec tuple built at run time: `{Task.Supervisor, name: n,
+  # max_children: pool_size()}` (ztlp's QuerySupervisor).
+  defp built_task_supervisors(
+         {:put_tuple2, _dst, {:list, [{:atom, mod}, opts]}},
+         instrs,
+         idx,
+         functions
+       )
+       when mod in [Task.Supervisor, PartitionSupervisor],
+       do: task_supervisor_spec({mod, operand_value(instrs, idx, opts, functions)})
+
+  defp built_task_supervisors(_instr, _instrs, _idx, _functions), do: []
+
+  defp operand_value(instrs, idx, operand, functions),
+    do: fueled_value(fn -> value(frame(instrs, functions), idx, operand) end)
+
+  # The specs a literal operand holds, however deep: a child list the
+  # compiler folded into one literal.
+  defp literal_task_supervisors(instr) when is_tuple(instr) do
+    instr
+    |> Tuple.to_list()
+    |> Enum.flat_map(fn
+      {:literal, term} -> literal_specs(term)
+      {:list, operands} when is_list(operands) -> Enum.flat_map(operands, &literal_operand/1)
+      _ -> []
+    end)
+  end
+
+  defp literal_task_supervisors(_instr), do: []
+
+  defp literal_operand({:literal, term}), do: literal_specs(term)
+  defp literal_operand(_operand), do: []
+
+  defp literal_specs({mod, _opts} = spec) when mod in [Task.Supervisor, PartitionSupervisor],
+    do: task_supervisor_spec(spec)
+
+  defp literal_specs(%{start: {Task.Supervisor, :start_link, [opts]}}),
+    do: [task_supervisor_row(opts)]
+
+  defp literal_specs(term) when is_tuple(term),
+    do: term |> Tuple.to_list() |> Enum.flat_map(&literal_specs/1)
+
+  defp literal_specs([head | tail]), do: literal_specs(head) ++ literal_specs(tail)
+
+  defp literal_specs(term) when is_map(term),
+    do: term |> Map.values() |> Enum.flat_map(&literal_specs/1)
+
+  defp literal_specs(_term), do: []
+
+  # `{Task.Supervisor, opts}`, or a PartitionSupervisor whose partitions
+  # are Task.Supervisors: they are started under the partition's name,
+  # the one a `{:via, PartitionSupervisor, {name, key}}` start names.
+  defp task_supervisor_spec({Task.Supervisor, opts}) when is_list(opts),
+    do: [task_supervisor_row(opts)]
+
+  defp task_supervisor_spec({PartitionSupervisor, opts}) when is_list(opts) do
+    with true <- Terms.proper_list?(opts),
+         {:ok, child_spec} <- Keyword.fetch(Enum.filter(opts, &keyword_pair?/1), :child_spec),
+         {:ok, cap} <- partition_cap(child_spec) do
+      [{task_supervisor_name(opts), cap}]
+    else
+      _ -> []
+    end
+  end
+
+  defp task_supervisor_spec(_spec), do: []
+
+  defp partition_cap(Task.Supervisor), do: {:ok, "infinity"}
+
+  defp partition_cap({Task.Supervisor, opts}),
+    do: {:ok, opts |> task_supervisor_row() |> elem(1)}
+
+  defp partition_cap(_child_spec), do: :error
+
+  defp task_supervisor_row(opts), do: {task_supervisor_name(opts), task_supervisor_limit(opts)}
+
+  defp task_supervisor_name(opts) do
+    with true <- is_list(opts) and Terms.proper_list?(opts),
+         {:name, name} when is_atom(name) and name not in [nil, :dynamic] <-
+           List.keyfind(opts, :name, 0) do
+      inspect(name)
+    else
+      _ -> "dynamic"
+    end
+  end
+
+  # An element the reader cannot read may be the cap, so the limit is
+  # known only for a list it reads whole.
+  defp task_supervisor_limit(opts) do
+    cond do
+      not (is_list(opts) and Terms.proper_list?(opts)) -> "dynamic"
+      not Enum.all?(opts, &keyword_pair?/1) -> "dynamic"
+      true -> opts |> Keyword.get(:max_children, :infinity) |> limit_word()
+    end
+  end
+
+  defp keyword_pair?({key, _value}) when is_atom(key), do: true
+  defp keyword_pair?(_element), do: false
+
+  defp limit_word(:infinity), do: "infinity"
+  defp limit_word(n) when is_integer(n) and n >= 0, do: Integer.to_string(n)
+  defp limit_word(_value), do: "dynamic"
 
   # The restart a start_child's own spec states: a map's `:restart`, or
   # `:permanent` for a map with none (the supervisor's default, whatever

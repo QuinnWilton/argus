@@ -30,7 +30,8 @@ defmodule Argus.Exclusions.FailureTest do
     [F.WatchedStart.Unwatched],
     [F.WatchedStart.Monitored],
     [F.BareCover.Client],
-    [F.StartChildBelief.Mailer]
+    [F.StartChildBelief.Mailer],
+    [F.StartChildBelief.UncappedMailer]
   ]
 
   setup_all do
@@ -124,6 +125,12 @@ defmodule Argus.Exclusions.FailureTest do
 
       assert [["Excl.Failure.StartChildBelief.Mailer:notify/1", "Task.Supervisor.start_child"]] =
                rows(ctx, [F.StartChildBelief.Mailer], "unchecked_result", [:site, :name])
+    end
+
+    # failure.dl, reported_elsewhere: starts_supervised_task, !start_may_fail.
+    test "a dropped start_child result under no cap is neither rule's", ctx do
+      assert rows(ctx, [F.StartChildBelief.UncappedMailer], "inconsistent_handling", []) == []
+      assert rows(ctx, [F.StartChildBelief.UncappedMailer], "unchecked_result", []) == []
     end
   end
 end

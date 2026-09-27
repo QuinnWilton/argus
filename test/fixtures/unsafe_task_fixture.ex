@@ -48,6 +48,10 @@ end
 defmodule Argus.Test.Fixtures.UncheckedStartChild do
   @moduledoc false
 
+  # The supervisor the starts below are handed may be this capped one:
+  # each start can answer {:error, :max_children}.
+  def start_link, do: Task.Supervisor.start_link(max_children: 5)
+
   # Unchecked: start_child result is ignored.
   def start_unchecked(sup) do
     Task.Supervisor.start_child(sup, fn -> :background end)

@@ -222,6 +222,45 @@ defmodule Excl.Failure.StartChildBelief.Mailer do
   @moduledoc false
   @sup Excl.Failure.StartChildBelief.TaskSup
 
+  # The supervisor the starts name has a cap: a start can fail.
+  def child_spec(_arg), do: {Task.Supervisor, name: @sup, max_children: 100}
+
+  def welcome(user) do
+    case Task.Supervisor.start_child(@sup, fn -> deliver(user, :welcome) end) do
+      {:ok, _pid} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  def reset(user) do
+    case Task.Supervisor.start_child(@sup, fn -> deliver(user, :reset) end) do
+      {:ok, _pid} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  def receipt(user) do
+    case Task.Supervisor.start_child(@sup, fn -> deliver(user, :receipt) end) do
+      {:ok, _pid} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  def notify(user) do
+    Task.Supervisor.start_child(@sup, fn -> deliver(user, :notice) end)
+    :ok
+  end
+
+  defp deliver(user, kind), do: IO.puts("#{kind} -> #{user}")
+end
+
+defmodule Excl.Failure.StartChildBelief.UncappedMailer do
+  @moduledoc false
+  @sup Excl.Failure.StartChildBelief.UncappedSup
+
+  # No cap: no start can fail, and a dropped result hides nothing.
+  def child_spec(_arg), do: {Task.Supervisor, name: @sup}
+
   def welcome(user) do
     case Task.Supervisor.start_child(@sup, fn -> deliver(user, :welcome) end) do
       {:ok, _pid} -> :ok

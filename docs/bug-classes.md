@@ -2129,18 +2129,19 @@ An error path the code could have seen and did not take: an exception a catch-al
 `unchecked_result` · api=`Task.Supervisor.start_child`
 · titles: "start_child result ignored" (`:warning`)
 
-**Property.** Some call to `Task.Supervisor.start_child` in a function f that is not in tail position and after which f has no branch at all. An `{:error, reason}` return (the supervisor at `max_children`, not started yet, a bad child spec) is dropped, and a failed launch looks exactly like a successful one.
+**Property.** Some call to `Task.Supervisor.start_child` in a function f that is not in tail position and after which f has no branch at all, and the start can fail: the supervisor it names may have a `max_children` cap (`start_may_fail`). The one error a start returns, `{:error, :max_children}`, is dropped, and a failed launch looks exactly like a successful one. A task's start does not fail, and a supervisor that is not running exits the caller rather than answering, so under no cap the result is always `{:ok, pid}`.
 
 **Assumptions and limits.**
+- Which supervisor: `task_supervisor_start`'s `sup`, a registered name or a PartitionSupervisor's (`{:via, PartitionSupervisor, {name, key}}`), matched against `task_supervisor_cap`, every Task.Supervisor the program starts (a `{Task.Supervisor, opts}` spec, literal or built, a partition's `child_spec:`, `Task.Supervisor.start_link/0,1`, `child_spec/1`) with its cap: a literal one, `infinity`, or `dynamic` when the options or the cap cannot be read (ztlp's `max_children: worker_pool_size()`), which may be finite. A start that names no supervisor (a pid: livebook's RuntimeServer's `state.task_supervisor`, started by `Task.Supervisor.start_link()`; a `{name, node}`), or names one the program does not start, may be any of them: it is reported when any Task.Supervisor in view may have a cap, and quiet when none does. Known limit: a supervisor out of view (a dependency's, a library's caller's, one in a child list read from config) is taken as uncapped, the default.
 - "Checked" is a coarse proxy kept on purpose: any branch later in f counts, including one in an unrelated clause (false negatives).
 - Only `Task.Supervisor.start_child`. A discarded `DynamicSupervisor.start_child` or `Supervisor.start_child` is reported only by the result belief below, when the program's other sites match it, and a discarded `start_link`/`start` by startup.
 - A site this rule reports is not reported again by the result belief.
 
-**Fixtures.** Positive: `UncheckedStartChild` (`start_unchecked/1`) (test/fixtures/unsafe_task_fixture.ex). Quiet: `UncheckedStartChild` (`start_checked/1`, `start_tail/1`). Asserted in test/analyses/failure_start_child_test.exs.
+**Fixtures.** Positive: `UncheckedStartChild` (`start_unchecked/1`, beside a capped `start_link/0`) (test/fixtures/unsafe_task_fixture.ex); `TaskCaps.Starter`'s `to_bounded/0`, `to_sized/0`, `to_capped_partition/0` and `to_pid/1` beside `TaskCaps.App`, and `TaskCaps.RuntimeServer`'s starts beside `TaskCaps.App` (test/fixtures/task_caps_fixture.ex). Quiet: `UncheckedStartChild` (`start_checked/1`, `start_tail/1`); `TaskCaps.Starter`'s `to_open/0` and `to_partition/0`; `TaskCaps.RuntimeServer` alone (a pid and a name out of view, no cap in view). Asserted in test/analyses/failure_start_child_test.exs.
 
-**Corpus.** Fix pairs: `livebook@56ecd47` (livebook-dev/livebook, c70c4d9 → 56ecd47, `Livebook.Hubs`; the same commit fixes two more sites).
+**Corpus.** Fix pairs: None. `livebook@56ecd47` (c70c4d9 → 56ecd47, `Livebook.Hubs`) was one until the restart round: the fix matches `{:ok, _pid} =` on three starts under `Livebook.TaskSupervisor`, `{Task.Supervisor, name: Livebook.TaskSupervisor}` with no cap, which cannot fail; the pair is dropped.
 
-**Precision.** Not measured.
+**Precision.** The restart round judged all 14 rows over the corpus and live sets, before the cap was asked: one true, ztlp's `ZtlpNs.Server.handle_info/2` under `ZtlpNs.QuerySupervisor` (`max_children: worker_pool_size()`), kept. The 13 others start under a supervisor with no cap and are gone: livebook's five (`Livebook.TaskSupervisor`, and RuntimeServer's `Task.Supervisor.start_link()` by pid), nerves_hub_web's six (a `{:via, PartitionSupervisor, ...}` of plain Task.Supervisors, discarded with `_ =` on purpose), akkoma's `Pleroma.TaskSupervisor` and firezone's `Portal.Analytics.TaskSupervisor`.
 
 ### A whereis result used without its nil case
 
@@ -2214,6 +2215,7 @@ An error path the code could have seen and did not take: an exception a catch-al
 - Sites are bytecode call sites: compiler copies of one source line, and an Erlang macro's expansions, count once each (a known limit in the rule's comment).
 - A spec only quiets: a callee with no spec stays in. A callee outside the process APIs (`File.write`) is out of scope.
 - Test-support modules compiled into the build take part like the program's own code.
+- A `Task.Supervisor.start_child` site is "start_child result ignored"'s question: reported there when the start can fail, and quiet here when it cannot (the supervisor it names has no cap), since dropping `{:ok, pid}` hides nothing (`Excl.Failure.StartChildBelief.UncappedMailer`, test/exclusions/failure_test.exs).
 
 **Fixtures.** Positive: `Consistency.DeviantIgnore` (test/fixtures/consistency_fixture.ex); with `Consistency.WeakBelief` the population spans modules, seven against two. Quiet: `Consistency.WeakBelief`, `NoMajority`, `OutsideScope`, `TotalCallee`, `StartIgnored`, `TailReturns` (same file). Asserted in test/analyses/failure_consistency_test.exs.
 

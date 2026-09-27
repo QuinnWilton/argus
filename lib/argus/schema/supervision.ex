@@ -216,13 +216,42 @@ defmodule Argus.Schema.Supervision do
         fields: [
           {:id, :instr_id, "the call"},
           {:func, :func_id, "the function making it"},
-          {:op, :symbol, "start_child, async, async_nolink, async_stream or async_stream_nolink"}
+          {:op, :symbol, "start_child, async, async_nolink, async_stream or async_stream_nolink"},
+          {:sup, :symbol,
+           "the Task.Supervisor the call names: its registered name, a " <>
+             "PartitionSupervisor's name for a {:via, PartitionSupervisor, {name, key}}, " <>
+             "or 'dynamic' (a pid, a {name, node}, a name the reader cannot read)"}
         ],
         doc: """
         A task started under a Task.Supervisor, beside its `dynamic_child` \
         row (child `Task`), which does not say how: `async_stream` and \
         `async_stream_nolink` run at most `max_concurrency` tasks at a time \
-        for the process enumerating the stream, the others start one each.
+        for the process enumerating the stream, the others start one each. \
+        `sup` is matched against `task_supervisor_cap`'s names.
+        """
+      },
+      %{
+        name: :task_supervisor_cap,
+        layer: 2,
+        fields: [
+          {:sup, :symbol,
+           "the name it is registered under (a PartitionSupervisor's for its " <>
+             "partitions), or 'dynamic' when the options state none the reader reads"},
+          {:limit, :symbol,
+           "its max_children: the literal cap, 'infinity' when the options state " <>
+             "none or :infinity, 'dynamic' when the options or the cap cannot be read"}
+        ],
+        doc: """
+        A Task.Supervisor the program starts: a `{Task.Supervisor, opts}` \
+        child spec (a literal or one built at run time, in a child list or \
+        anywhere), a PartitionSupervisor's `child_spec: Task.Supervisor` or \
+        `{Task.Supervisor, opts}`, a `Task.Supervisor.start_link/0,1` or \
+        `child_spec/1` call. Every start is recorded, capped or not: \
+        `Task.Supervisor.start_child/2..5` returns an error only as \
+        `{:error, :max_children}`, under a cap (a supervisor that is not \
+        running exits the caller instead), so the rows say which starts \
+        can fail, and a start whose supervisor has no row is one the \
+        program does not show.
         """
       },
       %{

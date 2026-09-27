@@ -875,7 +875,7 @@ waits_for_child(via, child) :- dynamic_child(_, child, via), awaits_child_exit(v
 .decl stream_only(via: symbol, child: symbol)
 
 stream_only(via, "Task") :-
-  task_supervisor_start(_, via, op),
+  task_supervisor_start(_, via, op, _),
   task_supervisor_op(op, "stream"),
   !starts_tasks_otherwise(via),
   !streams_detached(via).
@@ -883,7 +883,7 @@ stream_only(via, "Task") :-
 .decl starts_tasks_otherwise(via: symbol)
 
 starts_tasks_otherwise(via) :-
-  task_supervisor_start(_, via, op),
+  task_supervisor_start(_, via, op, _),
   task_supervisor_op(op, "one").
 
 // A request reaches the streaming function through an edge off its own
@@ -896,7 +896,7 @@ starts_tasks_otherwise(via) :-
 .init detach_reach = CallReach
 
 detach_reach.seed(f, via) :-
-  task_supervisor_start(_, via, op),
+  task_supervisor_start(_, via, op, _),
   task_supervisor_op(op, "stream"),
   runs_elsewhere(f, g),
   reaches_child_start(g, via).
@@ -906,7 +906,7 @@ detach_reach.seed(f, via) :-
 streams_detached(via) :- request_entry(entry, _), detach_reach.reaches(entry, via).
 
 streams_detached(via) :-
-  task_supervisor_start(_, via, op),
+  task_supervisor_start(_, via, op, _),
   task_supervisor_op(op, "stream"),
   runs_elsewhere(via, _).
 

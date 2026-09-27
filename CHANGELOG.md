@@ -124,6 +124,26 @@ the same advice.
 **Changed.** The points-to stage's choice between the exact and the
 bounded program is `Argus.Souffle.Stages`.
 
+### Failure: a discarded start_child result matters only under a cap (schema 152)
+
+**Fixed.** Schema 152. "start_child result ignored" reported every
+unchecked `Task.Supervisor.start_child`, but a start returns an error
+only as `{:error, :max_children}`: a task's start does not fail, and a
+supervisor that is not running exits the caller. The rule now asks
+whether the supervisor the start names may have a cap. New relation
+`task_supervisor_cap(sup, limit)`: every Task.Supervisor the program
+starts (a `{Task.Supervisor, opts}` spec, literal or built, a
+PartitionSupervisor's `child_spec:`, `Task.Supervisor.start_link/0,1`,
+`child_spec/1`), by registered name, with its `max_children` (`infinity`,
+the literal cap, or `dynamic` when unreadable). `task_supervisor_start`
+gains a fourth field, `sup`: the name the start names (a
+PartitionSupervisor's for a via), or `dynamic`. A start that names no
+supervisor in view is reported when any Task.Supervisor in view may be
+capped. Findings: 13 of 14 rows gone (livebook, nerves_hub_web, akkoma,
+firezone: no cap), ztlp's kept (`max_children: worker_pool_size()`).
+The `livebook@56ecd47` corpus pair is dropped: its fix asserts `{:ok,
+_pid}` on starts that cannot fail.
+
 ### Supervision: one reading of the restart a child runs under (schema 151)
 
 **Fixed.** Schema 151. structure's ConsumerSupervisor rule and coupling's

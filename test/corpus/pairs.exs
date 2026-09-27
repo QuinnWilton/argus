@@ -622,16 +622,6 @@
     fix: "f5afde4bb41784e09069cdfc97b1307f53a6acc1",
     finding: {:coupling, "rest_for_one restarts the owner but not the processes it started"}
   },
-  # livebook: three Task.Supervisor.start_child results discarded; the
-  # fix matches them.
-  %{
-    repo: "livebook-dev/livebook",
-    issue: "livebook@56ecd47",
-    module: "Livebook.Hubs",
-    pre: "c70c4d9ff5ba63aa6136eebe22df578d8704398f",
-    fix: "56ecd4775f34f876fec940f07570ad19d6520404",
-    finding: {:failure, "start_child result ignored"}
-  },
   # finch: an async HTTP/1 request ran in a bare spawn that outlived its
   # caller; the fix links it.
   %{
