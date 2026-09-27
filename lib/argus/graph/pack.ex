@@ -278,7 +278,7 @@ defmodule Argus.Graph.Pack do
     %{
       variants: Map.new(value.variants, fn {p, variants} -> {p, Enum.map(variants, indexes)} end),
       bases: Enum.map(value.bases, indexes),
-      current: value.current && Map.delete(value.current, :chosen),
+      current: value.current,
       observations: List.to_tuple(table)
     }
   end
