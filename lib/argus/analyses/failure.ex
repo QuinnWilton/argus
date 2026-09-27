@@ -540,7 +540,10 @@ defmodule Argus.Analyses.Failure do
           do: [],
           else: [Findings.related("the rpc the wrapper makes", Findings.at_instr(site))]
         ),
-      help: [fix]
+      help: [
+        fix,
+        "or use :erpc.call, which raises the undef instead of returning `{:badrpc, _}`"
+      ]
     )
   end
 
