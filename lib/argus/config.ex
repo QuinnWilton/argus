@@ -54,10 +54,11 @@ defmodule Argus.Config do
   Every key, at every level, is validated: an invalid entry raises
   `Argus.ConfigError` naming where it is (in its source's own syntax),
   what was expected, and the valid name it most resembles. A finding's
-  relation written where its analysis goes (`:registry_race`, or
-  `:call_cycle`, one of the names argus retired in 0.17 and dropped in
-  0.20) names the analysis that reports it. Configuration under scry's
-  name (`scry:`, or the `:scry` compiler) raises with the rename.
+  relation written where its analysis goes (`:registry_race`) names the
+  analysis that reports it, and a name argus retired in 0.17 and
+  stopped reading in 0.20 (`:sync_call_in_init`, `:supervision`) names
+  the concerns its findings went to. Configuration under scry's name
+  (`scry:`, or the `:scry` compiler) raises with the rename.
   """
 
   alias Argus.ConfigError
@@ -273,18 +274,84 @@ defmodule Argus.Config do
     end
   end
 
-  # An unknown name is most often a typo of a concern or a set, or the
-  # name of a finding written where its analysis goes: an output relation
-  # (`:registry_race`), which is also what many of the names argus
-  # retired in 0.17 became (`:call_cycle`). The relation's owner is the
-  # name that was meant.
+  # The names argus retired in 0.17 (and stopped reading in 0.20), each
+  # with the concerns its findings went to, as the alias table removed
+  # then (632b69ba, `Argus.Analysis.aliases/0`) sent each entry.
+  @retired %{
+    atom_safety: [:unsafe_input],
+    request_surface: [:unsafe_input],
+    unbounded_dynamic_children: [:unsafe_input],
+    secret_exposure: [:exposure],
+    tls_verification: [:exposure],
+    purity: [:effects],
+    transaction_safety: [:effects],
+    timeout_chain: [:blocking],
+    call_cycle: [:blocking],
+    process_bottleneck: [:blocking],
+    callback_receive: [:blocking],
+    one_for_one_coupling: [:coupling],
+    sync_call_in_init: [:startup],
+    deferred_startup_deadlock: [:blocking, :startup],
+    shutdown_safety: [:shutdown],
+    supervision: [:coupling, :structure, :startup, :shutdown],
+    distributed: [:blocking, :structure, :startup, :failure],
+    unlinked_spawn: [:failure],
+    process_registry: [:structure, :failure],
+    error_handling: [:blocking, :startup, :shutdown, :failure, :mailbox],
+    unsafe_task: [:failure, :mailbox],
+    monitor_leak: [:shutdown, :mailbox],
+    message_contract: [:mailbox],
+    reply_contract: [:mailbox],
+    gen_statem: [:mailbox, :state_machine]
+  }
+
+  @doc false
+  # The retired names and their concerns, for the tests.
+  @spec retired() :: %{atom() => [atom()]}
+  def retired, do: @retired
+
+  # An unknown name is most often a typo of a concern or a set, the name
+  # of a finding written where its analysis goes (an output relation,
+  # `:registry_race`, whose owner is the name that was meant), or a name
+  # argus retired in 0.17 (whose concerns are).
   @spec unknown_name!(ConfigError.context(), [atom()], term(), String.t(), [atom()]) ::
           no_return()
   defp unknown_name!(ctx, key, name, expected, known) do
     candidates = selectable(known)
+    owner = relation_owner(name)
 
-    case {ConfigError.closest(name, candidates), relation_owner(name)} do
-      {nil, {relation, owner}} ->
+    case {ConfigError.closest(name, candidates), owner, Map.fetch(@retired, name)} do
+      {_closest, {^name, owner}, retired} ->
+        fail(
+          ctx,
+          key,
+          name,
+          expected <>
+            "; #{show(ctx, name)} is a finding of the #{show(ctx, owner)} analysis, " <>
+            "did you mean #{show(ctx, owner)}?" <> retired_too(ctx, name, owner, retired)
+        )
+
+      {_closest, _owner, {:ok, [concern]}} ->
+        fail(
+          ctx,
+          key,
+          name,
+          expected <>
+            "; argus retired #{show(ctx, name)} in 0.17, and its findings are the " <>
+            "#{show(ctx, concern)} analysis's: did you mean #{show(ctx, concern)}?"
+        )
+
+      {_closest, _owner, {:ok, concerns}} ->
+        fail(
+          ctx,
+          key,
+          name,
+          expected <>
+            "; argus retired #{show(ctx, name)} in 0.17, and its findings are reported by " <>
+            "the #{Enum.map_join(concerns, ", ", &show(ctx, &1))} analyses: name those instead"
+        )
+
+      {nil, {relation, owner}, :error} ->
         fail(
           ctx,
           key,
@@ -294,10 +361,20 @@ defmodule Argus.Config do
             "did you mean #{show(ctx, owner)}?"
         )
 
-      _ ->
+      {_closest, _owner, :error} ->
         fail(ctx, key, name, expected, candidates)
     end
   end
+
+  # A finding's relation whose name argus also retired as an analysis's
+  # (`:monitor_leak`, a relation of `:mailbox` since 0.20): what the
+  # retired name reported went to other concerns as well.
+  defp retired_too(ctx, name, owner, {:ok, concerns}) when concerns != [owner] do
+    " (argus retired #{show(ctx, name)} as an analysis in 0.17; its findings then went to " <>
+      "the #{Enum.map_join(concerns, ", ", &show(ctx, &1))} analyses)"
+  end
+
+  defp retired_too(_ctx, _name, _owner, _retired), do: ""
 
   # The output relation `name` is, or most resembles, with its analysis.
   defp relation_owner(name) when is_atom(name) do

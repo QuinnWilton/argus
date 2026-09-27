@@ -37,10 +37,39 @@ defmodule Argus.ConfigTest do
     assert e.message =~ ":call_cycle is a finding of the :blocking analysis"
   end
 
-  test "a name argus retired is unknown" do
+  test "a name argus retired is unknown, and names the concerns its findings went to" do
     e = assert_raise(Argus.ConfigError, fn -> Config.load(analyses: [:unsafe_task]) end)
     assert e.message =~ "unknown analyses [:unsafe_task]"
-    refute e.message =~ "is a finding of"
+    assert e.message =~ "argus retired :unsafe_task in 0.17"
+    assert e.message =~ "reported by the :failure, :mailbox analyses"
+
+    e = assert_raise(Argus.ConfigError, fn -> Config.load(analyses: [:sync_call_in_init]) end)
+    assert hint(e) =~ "did you mean :startup?"
+    refute hint(e) =~ ":blocking"
+  end
+
+  # What an error says past the list of names it accepts.
+  defp hint(%Argus.ConfigError{message: message}) do
+    [_, hint] = String.split(message, "or a set: [", parts: 2)
+    [_sets, hint] = String.split(hint, "]", parts: 2)
+    hint
+  end
+
+  test "every retired name names each of its concerns, and only them" do
+    concerns = Argus.Analysis.builtin_analyses()
+
+    for {name, retired_to} <- Config.retired() do
+      assert Enum.all?(retired_to, &(&1 in concerns)), "#{name}: #{inspect(retired_to)}"
+
+      for key <- [:analyses, :severity] do
+        raw = if key == :analyses, do: [analyses: [name]], else: [severity: [{name, :error}]]
+        e = assert_raise(Argus.ConfigError, fn -> Config.load(raw) end)
+        named = for concern <- concerns, hint(e) =~ inspect(concern), do: concern
+
+        assert Enum.sort(named -- [name]) == Enum.sort(retired_to),
+               "#{name} under #{key}: #{e.message}"
+      end
+    end
   end
 
   test "an unknown analysis fails with the concerns and the sets" do
