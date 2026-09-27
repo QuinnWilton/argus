@@ -255,19 +255,10 @@ keeping_basis("handed", "inferred").
 .decl dependency_on_unrestarted_sibling(sup: symbol, child: symbol, sibling: symbol, restart: symbol, witness: symbol)
 
 dependency_on_unrestarted_sibling(sup, child, sibling, restart, witness) :-
-  permanent_child(sup, child),
+  listed_as_permanent(sup, child),
   may_stay_down(sup, sibling, restart),
   depends_on(child, sibling, witness),
   !only_own_instances(child, sibling).
-
-// `child` is a child of sup whose spec says :permanent, as the extractor
-// reads it: a shorthand spec reads as :permanent whatever the module's
-// child_spec/1 says (child_restart, supervision.dl, would say otherwise).
-.decl permanent_child(sup: symbol, child: symbol)
-
-permanent_child(sup, child) :-
-  supervisor(sup, _),
-  supervisor_child(sup, _, child, "permanent", _).
 
 // `sibling` is a child of sup under a restart policy that can leave it
 // dead (`restart`).

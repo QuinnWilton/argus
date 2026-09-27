@@ -125,12 +125,6 @@ permanent_consumer_template(sup, child) :-
 
 is_consumer_supervisor(mod) :- behaves_as(mod, "ConsumerSupervisor").
 
-// A spec in sup's child list restarts `child` whatever its exit reason:
-// it says :permanent, or states no restart and takes that default.
-.decl listed_as_permanent(sup: symbol, child: symbol) inline
-
-listed_as_permanent(sup, child) :- supervisor_child(sup, _, child, "permanent", _).
-
 consumer_supervisor_permanent_child(sup, child, sup_site) :-
   permanent_consumer_template(sup, child),
   supervisor_site(sup, sup_site).

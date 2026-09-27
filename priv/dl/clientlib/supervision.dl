@@ -9,6 +9,7 @@
 //   starts_before(sup, earlier, later, earlier_pos, later_pos)
 //   boots_before(sup, earlier, later, earlier_pos, later_pos)
 //   child_restart(sup, pos, child, restart)
+//   listed_as_permanent(sup, child)
 //   dynamic_restart(sup, child, caller, restart)
 //   reaches_child_start(func, start)
 //   ends_with(dying, other)
@@ -68,6 +69,13 @@ child_restart(sup, pos, child, restart) :-
   supervisor_child(sup, pos, child, restart, _),
   supervisor_child_form(sup, pos, "shorthand"),
   !child_spec_restart(child, _).
+
+// A spec in sup's child list says :permanent, as the extractor reads it:
+// a shorthand spec reads as :permanent, the default, whatever the
+// module's child_spec/1 says (child_restart, above, reads that instead).
+.decl listed_as_permanent(sup: symbol, child: symbol) inline
+
+listed_as_permanent(sup, child) :- supervisor_child(sup, _, child, "permanent", _).
 
 // A DynamicSupervisor.start_child gives its child the restart of the spec
 // it hands over: a map's (`:permanent` when it states none, whatever the
