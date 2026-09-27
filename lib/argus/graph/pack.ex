@@ -22,7 +22,9 @@ defmodule Argus.Graph.Pack do
   for each producer the digest of the code it ran (`Argus.Graph.Code`'s
   `producer_code`) and what it read that its code does not name: each schema entry
   it read, and — for a producer that reads specs from the code path —
-  each module whose specs it read, with what each was. A producer's rows
+  each module whose specs it read (by its name, a string: a trace is
+  read back only when every atom in it exists, and a callee outside
+  the program is one a fresh VM has not made), with what each was. A producer's rows
   in the pack are used while its code digest is the one running and
   every one of those still is what it was, each observed through its
   query (`Argus.Graph.Reads`), so the module's `module_facts` depends on
@@ -57,7 +59,7 @@ defmodule Argus.Graph.Pack do
 
   # Moves every trace and every pack: bump it when what either holds, or
   # how one is named, changes.
-  @format "argus-pack-2"
+  @format "argus-pack-3"
 
   # How many of a module's traces a lookup weighs, most recent first.
   @candidates 3
@@ -133,7 +135,7 @@ defmodule Argus.Graph.Pack do
         value =
           case dep do
             {:schema, read} -> Reads.schema_entry(db, read)
-            {:installed, module} -> Reads.installed_specs(db, module)
+            {:installed, name} -> Reads.installed_specs(db, String.to_atom(name))
           end
 
         {value, %{observer | seen: Map.put(seen, dep, value)}}
@@ -261,8 +263,12 @@ defmodule Argus.Graph.Pack do
         installed =
           if Argus.Cache.Code.reads_installed?(producer), do: extraction.installed, else: []
 
+        # A callee by its name: a fresh VM decodes a trace only when
+        # every atom in it exists (`Roux.Blob.decode/1`), and a callee
+        # outside the program is an atom nothing there has made yet.
         deps =
-          Enum.map(schema, &{:schema, &1}) ++ Enum.map(Enum.sort(installed), &{:installed, &1})
+          Enum.map(schema, &{:schema, &1}) ++
+            Enum.map(Enum.sort(installed), &{:installed, Atom.to_string(&1)})
 
         {observed, observer} =
           Enum.map_reduce(deps, observer, fn dep, observer ->
