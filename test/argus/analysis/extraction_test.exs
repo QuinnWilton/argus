@@ -30,7 +30,9 @@ defmodule Argus.Analysis.ExtractionTest do
          %{tmp_dir: store} do
       modules = [Argus.Test.Fixtures.EtsBounded, Argus.Test.Fixtures.MissingRow, :gen_server]
 
-      assert {:ok, afresh} = Extraction.extract_facts(modules, [:startup, :races])
+      # The batch backend's store, against a batch extraction without it.
+      afresh_opts = [backend: :batch]
+      assert {:ok, afresh} = Extraction.extract_facts(modules, [:startup, :races], afresh_opts)
       assert {:ok, cold} = Extraction.extract_facts(modules, [:startup, :races], cache: store)
       assert {:ok, warm} = Extraction.extract_facts(modules, [:startup, :races], cache: store)
 

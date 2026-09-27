@@ -45,6 +45,24 @@ and raises unless the answers are the same in normal form
 incremental-equals-batch gate over argus's own fixtures, and `:project`
 tags the peer and Mix-project tests. CI runs the suite on each backend.
 
+**Changed.** The query graph is the default backend of
+`Argus.run_analyses/2`, `Argus.analyze/3` and
+`Argus.Analysis.extract_facts/3`, and of the test harnesses
+(`ARGUS_BACKEND=batch` for the batch one). A call that passes an option
+only the batch backend reads (`:facts_dir`, `:cache`, `:solve_cache`,
+`:extractors`, `:relations`) still runs on it, as does `backend:
+:batch` (`Argus.Run.backend/1`). The graph's findings carry their
+`file`, `line` and `end_line`; the facts directory `extract_facts/3`
+returns holds every producer's rows, whichever analyses were named,
+and a relation's rows in their own order. A call may keep its graph
+in a manifest (`manifest:`); the corpus keeps one per checkout and
+argus worktree (`<checkout>/.argus/manifest-<worktree>`), seeded from
+the newest another worktree kept. A custom program's input is its own
+include closure, never the directory it sits in. The driver collects
+the blob store once a day (`Roux.Blob.maybe_gc/2`), line tables are
+kept in its action cache by pack, and a project's own ebins are not
+stamped.
+
 **Changed.** The blob store is trusted as a manifest is: what it holds
 is decoded without refusing atoms a fresh VM has not made (roux 0.2),
 so it must be a store no other user could have written. Argus makes

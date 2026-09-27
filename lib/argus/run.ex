@@ -1,7 +1,8 @@
 defmodule Argus.Run do
   @moduledoc """
   `Argus.run_analyses/2`, `Argus.analyze/3` and `Argus.Analysis.extract_facts/3`
-  over the query graph (`Argus.Graph`): what they do with `backend: :graph`.
+  over the query graph (`Argus.Graph`), their default backend
+  (`backend/1`).
 
   Each call opens a session of its own over the blob store
   (`Argus.Graph.store/0`, or `store:`), sets the modules as one program
@@ -99,21 +100,59 @@ defmodule Argus.Run do
     in_session(modules, analyses, opts, fn db -> materialize(db, analyses, opts) end)
   end
 
-  # ── Backends, as the environment picks them ────────────────────────
+  # ── Backends ────────────────────────────────────────────────────────
+
+  # What only the batch backend reads: the facts directory it writes and
+  # the stores it keeps facts and solves in, and the producers it runs.
+  @batch_only [:facts_dir, :cache, :solve_cache, :extractors, :relations]
+
+  @doc """
+  The backend a call of `Argus.run_analyses/2`, `Argus.analyze/3` or
+  `Argus.Analysis.extract_facts/3` runs on, and its options without
+  `:backend`: the one `backend:` names; else, while the batch backend
+  is kept, the batch backend for a call that shapes what only it has
+  (`:facts_dir`, `:cache`, `:solve_cache`, `:extractors`, `:relations`:
+  the graph extracts every producer once, keeps it in the blob store,
+  and would ignore them); else the query graph.
+
+      iex> Argus.Run.backend(analyses: [:mailbox])
+      {:graph, [analyses: [:mailbox]]}
+
+      iex> Argus.Run.backend(cache: "store")
+      {:batch, [cache: "store"]}
+
+      iex> Argus.Run.backend(backend: :batch)
+      {:batch, []}
+  """
+  @spec backend(keyword()) :: {:batch | :graph, keyword()}
+  def backend(opts) when is_list(opts) do
+    case Keyword.pop(opts, :backend) do
+      {nil, opts} ->
+        if Enum.any?(@batch_only, &Keyword.has_key?(opts, &1)),
+          do: {:batch, opts},
+          else: {:graph, opts}
+
+      {backend, opts} when backend in [:batch, :graph] ->
+        {backend, opts}
+
+      {other, _opts} ->
+        raise ArgumentError, "backend: must be :graph or :batch, got: #{inspect(other)}"
+    end
+  end
 
   @doc """
   The backend the environment asks the harnesses to run
   (`Argus.Test.Memo`, `Argus.Test.Batch`, `Argus.Corpus`):
-  `ARGUS_BACKEND=graph` or `batch` (the default).
+  `ARGUS_BACKEND=graph` (the default) or `batch`.
   """
   @spec env_backend() :: :batch | :graph
   def env_backend do
     case System.get_env("ARGUS_BACKEND") do
-      value when value in [nil, "", "batch"] ->
-        :batch
-
-      "graph" ->
+      value when value in [nil, "", "graph"] ->
         :graph
+
+      "batch" ->
+        :batch
 
       other ->
         raise ArgumentError, "ARGUS_BACKEND must be graph or batch, got: #{inspect(other)}"

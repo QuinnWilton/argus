@@ -124,8 +124,11 @@ defmodule Argus.Analysis.PointsToBudgetTest do
     do:
       not Enum.any?(Analysis.points_to_relations(), &File.exists?(Path.join(dir, &1 <> ".facts")))
 
+  # Sorted: a relation is a set, and the backends write its rows in
+  # orders of their own.
   defp rows(dir, relation),
-    do: dir |> Path.join(relation <> ".facts") |> File.read!() |> Argus.Tsv.decode()
+    do:
+      dir |> Path.join(relation <> ".facts") |> File.read!() |> Argus.Tsv.decode() |> Enum.sort()
 
   test "a program within the budget runs the exact stage", %{tmp_dir: tmp} do
     dir = merged_heap!(Path.join(tmp, "within"), @within)

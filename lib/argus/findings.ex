@@ -221,6 +221,16 @@ defmodule Argus.Findings do
   `modules` is a list of module atoms or paths to `.beam` files, exactly
   as `Argus.analyze/3` accepts.
 
+  ## Backends
+
+  A run is made on the query graph (`Argus.Run`, `backend: :graph`, the
+  default): each finding and related frame then says where it is
+  (`file`, `line`, `end_line`), refined by its source as every report
+  is. `backend: :batch` runs the batch pipeline, which leaves them nil;
+  a call passing an option only it reads (`:facts_dir`, `:cache`,
+  `:solve_cache`, `:extractors`, `:relations`) runs on it too
+  (`Argus.Run.backend/1`). Both answer the same findings otherwise.
+
   ## Options
 
   - `:analyses` — a named set or a list of analysis names (default
@@ -260,7 +270,7 @@ defmodule Argus.Findings do
   """
   @spec run(modules :: [atom() | String.t()], keyword()) :: {:ok, t()} | {:error, term()}
   def run(modules, opts \\ []) when is_list(modules) and is_list(opts) do
-    case Keyword.pop(opts, :backend, :batch) do
+    case Argus.Run.backend(opts) do
       {:batch, opts} -> Runner.run(modules, opts)
       {:graph, opts} -> Argus.Run.run_analyses(modules, opts)
     end

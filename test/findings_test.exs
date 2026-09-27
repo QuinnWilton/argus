@@ -317,11 +317,15 @@ defmodule Argus.FindingsTest do
                Memo.run_analyses([:lists], analyses: [])
     end
 
+    # The batch backend's: it runs every solve. The graph reads a solve
+    # it kept back without running it; a failing solver degrades its
+    # analyses there too (`Mix.Tasks.Compile.ArgusSouffleGateTest`).
     test "a failing analysis degrades with a note while the result still returns" do
       skip_without_souffle()
 
       assert {:ok, result} =
                Memo.run_analyses([Fixtures.UnlinkedSpawner],
+                 backend: :batch,
                  analyses: [:failure],
                  souffle_timeout: 1
                )
@@ -329,10 +333,11 @@ defmodule Argus.FindingsTest do
       assert result.findings == []
       assert result.ran == []
 
-      assert [%{analysis: :failure, reason: :souffle_timeout, detail: detail}] =
-               result.degraded
-
-      assert detail =~ "timed out"
+      # Its own solve, or the points-to stage it reads, whichever the
+      # solver reached first (a stage derived earlier in this VM is kept).
+      assert [%{analysis: :failure, reason: reason, detail: detail}] = result.degraded
+      assert reason in [:souffle_timeout, {:points_to, :souffle_timeout}]
+      assert detail =~ "timed out" or detail =~ "did not finish within :souffle_timeout"
     end
 
     test "extraction failure is a whole-call error" do

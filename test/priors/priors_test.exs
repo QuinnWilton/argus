@@ -137,7 +137,8 @@ defmodule Argus.PriorsTest do
     store = Path.join(dir, "store")
     opts = [analyses: [:exposure]] ++ priors(Path.join(dir, "answers"))
 
-    assert {:ok, afresh} = Argus.Findings.run(@mods, opts)
+    # The batch backend's store (`cache:`), against a batch run without it.
+    assert {:ok, afresh} = Argus.Findings.run(@mods, [backend: :batch] ++ opts)
     assert {:ok, cold} = Argus.Findings.run(@mods, [cache: store] ++ opts)
     assert {:ok, warm} = Argus.Findings.run(@mods, [cache: store] ++ opts)
 

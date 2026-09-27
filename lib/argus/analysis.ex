@@ -305,7 +305,7 @@ defmodule Argus.Analysis do
   @spec run(modules :: [atom() | String.t()], analysis(), keyword()) ::
           {:ok, result()} | {:error, term()}
   def run(modules, analysis, opts \\ []) do
-    case Keyword.pop(opts, :backend, :batch) do
+    case Argus.Run.backend(opts) do
       {:batch, opts} -> run_batch(modules, analysis, opts)
       {:graph, opts} -> Argus.Run.analyze(modules, analysis, opts)
     end

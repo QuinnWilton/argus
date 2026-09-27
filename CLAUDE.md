@@ -49,8 +49,9 @@ those frameworks need.
   manifest, the beams synced with `Roux.Sources`, the analyses
   demanded), returning `Argus.Driver.Result` (`Argus.Located` findings
   and notices); `lib/argus/run.ex` — `run_analyses/2`, `analyze/3` and
-  `extract_facts/3` on the graph (`backend: :graph`; the batch backend
-  is still the default); `lib/mix/tasks/compile.argus.ex` — the `:argus`
+  `extract_facts/3` on the graph (the default; `backend: :batch`, or an
+  option only the batch backend reads, runs the batch pipeline until it
+  goes: `Argus.Run.backend/1`); `lib/mix/tasks/compile.argus.ex` — the `:argus`
   Mix compiler, and `mix argus`.
 - The frontends: the `:argus` Mix compiler (`Mix.Tasks.Compile.Argus`),
   `mix argus`, the `argus` escript (`Argus.CLI`, `CLI.Options` shared
@@ -159,9 +160,12 @@ those frameworks need.
   rule's finding is present at the commit before the fix and absent at
   the fix. `Argus.CorpusTest` runs it as part of `mix test`, cloning and
   compiling each tree once into `ARGUS_CORPUS_DIR` (default
-  `~/.cache/argus/corpus`) and analyzing it through a store beside it
-  (`<checkout>/.argus-facts`, see "Caches" below) — in any worktree of
-  the same commit. `mix test --exclude corpus` skips it,
+  `~/.cache/argus/corpus`) and analyzing it on the graph, its graph kept
+  in a manifest beside it per argus worktree
+  (`<checkout>/.argus/manifest-<worktree>`, seeded from the newest
+  another worktree kept) over the shared blob store; on the batch
+  backend, through a store beside it (`<checkout>/.argus-facts`, see
+  "Caches" below). `mix test --exclude corpus` skips it,
   `ARGUS_CORPUS_ONLY=redix#334` narrows it, `ARGUS_CORPUS_JOBS` sets how
   many checkouts are analyzed at once (default 4), `mix argus.corpus
   fetch` warms the cache and `mix argus.corpus tally` counts every title
@@ -394,7 +398,8 @@ bytecode's late step). Invariants:
   batch, cold and across cross-module edits. `ARGUS_VERIFY_BACKEND=1`
   runs every harness call (`Argus.Test.Memo`, `Argus.Test.Batch`,
   `Argus.Corpus`) on both backends and fails unless they agree;
-  `ARGUS_BACKEND=graph` runs them on the graph alone.
+  `ARGUS_BACKEND=batch` runs them on the batch backend alone (the graph
+  is the default).
 - Recompute sets are asserted with `Roux.QueryLog` (one database's
   events, or `:all` for a Mix compiler that opens its own). A code edit
   is simulated by registering a query again under another code version;
@@ -459,6 +464,6 @@ mix test --include escript --include rebar3 --include gleam  # The escript, the 
 mix escript.build        # The argus escript (built in :prod)
 mix test --include parity  # Also the graph ≡ batch gate over argus's own fixtures
 ARGUS_VERIFY_BACKEND=1 mix test --exclude corpus  # Every harness call on both backends, compared
-ARGUS_BACKEND=graph mix test  # The harnesses on the query graph
+ARGUS_BACKEND=batch mix test  # The harnesses on the batch backend (the graph is the default)
 ARGUS_PROPERTIES=full mix test  # Slow properties at their full count
 ```

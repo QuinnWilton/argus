@@ -173,7 +173,7 @@ defmodule Argus.Test.Memo do
 
   # A call without options of its own goes through the store of the
   # backend the environment names, or both; one with options is the
-  # test's to shape, on the batch backend.
+  # test's to shape, on the backend they pick (`Argus.Run.backend/1`).
   defp on_backend(label, [], call), do: Argus.Run.both(&call.(backend_opts(&1)), label)
   defp on_backend(_label, opts, call), do: call.(opts)
 
@@ -184,7 +184,7 @@ defmodule Argus.Test.Memo do
   graph's.
   """
   @spec backend_opts(:batch | :graph) :: keyword()
-  def backend_opts(:batch), do: [cache: store()]
+  def backend_opts(:batch), do: [backend: :batch, cache: store()]
   def backend_opts(:graph), do: [backend: :graph]
 
   defp once(key, [], compute) do
