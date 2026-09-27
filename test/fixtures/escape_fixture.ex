@@ -141,6 +141,28 @@ defmodule Argus.Test.Fixtures.Escape do
     end
   end
 
+  defmodule WrapperRescues do
+    @moduledoc false
+    def root(t), do: guard(fn -> :ets.update_counter(t, :k, 1) end)
+
+    defp guard(fun) do
+      fun.()
+    rescue
+      ArgumentError -> 0
+    end
+  end
+
+  defmodule WrapperReraises do
+    @moduledoc false
+    def root(t), do: guard(fn -> :ets.update_counter(t, :k, 1) end)
+
+    defp guard(fun) do
+      fun.()
+    rescue
+      e -> reraise e, __STACKTRACE__
+    end
+  end
+
   defmodule ErpcCaught do
     @moduledoc false
     def root(node) do

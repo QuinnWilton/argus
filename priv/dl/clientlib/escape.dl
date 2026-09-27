@@ -24,7 +24,9 @@
 // along calls no handler of the raise covers. An edge with no call
 // instruction (a closure, a fun reference, a resolved apply) is held
 // against the call it is handed to (fun_handed, resolved_apply): a try
-// around `Enum.each(xs, fn ... end)` covers the closure. An edge that
+// around `Enum.each(xs, fn ... end)` covers the closure, and so does a
+// callee with a handler of the raise somewhere (a rescuing wrapper,
+// `guard(fn -> ... end)`, asked of the wrapper as a whole). An edge that
 // names no such call is followed unless its function has a handler that
 // takes the raise somewhere (takes_somewhere), the function-wide answer,
 // which errs quiet. An edge into what another process runs (a spawn, a
@@ -73,6 +75,20 @@
   handed(f, g, id) :- fun_handed(id, f, g, _).
   handed(f, g, id) :- resolved_apply(id, f, g).
 
+  // The call at `call` in `func`, handed a fun, runs it under a handler
+  // of `raise`: the call is inside one, or its callee has one somewhere
+  // (a rescuing wrapper, `guard(fn -> ... end)`: the function-wide
+  // answer, since the facts do not say where the callee runs the fun).
+  .decl runs_handed_guarded(call: symbol, func: symbol, raise: symbol)
+
+  runs_handed_guarded(c, f, r) :- raise_asked(r), handed(f, _, c), site_takes(c, f, r).
+
+  runs_handed_guarded(c, f, r) :-
+    raise_asked(r),
+    handed(f, _, c),
+    call_instr(f, t, c),
+    takes_somewhere(t, r).
+
   // f's edge to g with no call instruction, open for `raise`: some call
   // that runs it in f's process is unguarded, or it names none and f
   // takes the raise nowhere.
@@ -82,7 +98,7 @@
     raise_asked(r),
     handed(f, g, call),
     !call_instr(f, g, _),
-    !site_takes(call, f, r),
+    !runs_handed_guarded(call, f, r),
     !starts_a_process(call),
     !runs_elsewhere(f, g).
 
@@ -122,7 +138,7 @@
   called_unguarded(f, r) :- root(f, r), call_instr(h, f, c), !site_takes(c, h, r).
   called_unguarded(f, r) :- root(f, r), api_export(f).
   called_unguarded(f, r) :- root(f, r), fun_ref(_, f).
-  called_unguarded(f, r) :- root(f, r), handed(h, f, c), !site_takes(c, h, r).
+  called_unguarded(f, r) :- root(f, r), handed(h, f, c), !runs_handed_guarded(c, h, r).
   called_unguarded(f, r) :- root(f, r), handed(_, f, c), starts_a_process(c).
   called_unguarded(f, r) :- root(f, r), call_edge(h, f), runs_elsewhere(h, f).
 

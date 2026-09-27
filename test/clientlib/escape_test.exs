@@ -24,6 +24,8 @@ defmodule Argus.Clientlib.EscapeTest do
     Escape.OneCallerUnguarded,
     Escape.ClosureInTry,
     Escape.ClosureOutsideTry,
+    Escape.WrapperRescues,
+    Escape.WrapperReraises,
     Escape.ErpcCaught,
     Escape.ErpcCaughtAsExit
   ]
@@ -88,62 +90,78 @@ defmodule Argus.Clientlib.EscapeTest do
   end
 
   describe "a handler around the raising call" do
-    test("no handler: the raise escapes", ctx, do: assert(escapes?(ctx, "Bare")))
-    test("a rescue of the raise takes it", ctx, do: refute(escapes?(ctx, "Rescued")))
-    test("a rescue of every error takes it", ctx, do: refute(escapes?(ctx, "RescuesEveryError")))
+    test "no handler: the raise escapes", ctx do
+      assert escapes?(ctx, "Bare")
+    end
 
-    test("a rescue around other code in the function takes nothing of it", ctx,
-      do: assert(escapes?(ctx, "UnrelatedRescue"))
-    )
+    test "a rescue of the raise takes it", ctx do
+      refute escapes?(ctx, "Rescued")
+    end
 
-    test("a rescue of another exception takes nothing of it", ctx,
-      do: assert(escapes?(ctx, "WrongClass"))
-    )
+    test "a rescue of every error takes it", ctx do
+      refute escapes?(ctx, "RescuesEveryError")
+    end
 
-    test("a catch of another class takes nothing of it", ctx,
-      do: assert(escapes?(ctx, "CatchesExit"))
-    )
+    test "a rescue around other code in the function takes nothing of it", ctx do
+      assert escapes?(ctx, "UnrelatedRescue")
+    end
 
-    test("a rescue that re-raises takes nothing of it", ctx,
-      do: assert(escapes?(ctx, "Reraises"))
-    )
+    test "a rescue of another exception takes nothing of it", ctx do
+      assert escapes?(ctx, "WrongClass")
+    end
+
+    test "a catch of another class takes nothing of it", ctx do
+      assert escapes?(ctx, "CatchesExit")
+    end
+
+    test "a rescue that re-raises takes nothing of it", ctx do
+      assert escapes?(ctx, "Reraises")
+    end
   end
 
   describe "a handler on the path down" do
-    test("a rescue around the call into the helper takes it", ctx,
-      do: refute(escapes?(ctx, "HelperRescue"))
-    )
+    test "a rescue around the call into the helper takes it", ctx do
+      refute escapes?(ctx, "HelperRescue")
+    end
 
-    test("a rescue elsewhere, the helper called outside it", ctx,
-      do: assert(escapes?(ctx, "HelperUnguarded"))
-    )
+    test "a rescue elsewhere, the helper called outside it", ctx do
+      assert escapes?(ctx, "HelperUnguarded")
+    end
 
-    test("a rescue around the call a closure is handed to takes it", ctx,
-      do: refute(escapes?(ctx, "ClosureInTry"))
-    )
+    test "a rescue around the call a closure is handed to takes it", ctx do
+      refute escapes?(ctx, "ClosureInTry")
+    end
 
-    test("a closure handed to a call outside the rescue", ctx,
-      do: assert(escapes?(ctx, "ClosureOutsideTry"))
-    )
+    test "a closure handed to a call outside the rescue", ctx do
+      assert escapes?(ctx, "ClosureOutsideTry")
+    end
+
+    test "a closure handed to a function that runs it under a rescue", ctx do
+      refute escapes?(ctx, "WrapperRescues")
+    end
+
+    test "a closure handed to a function whose rescue raises again", ctx do
+      assert escapes?(ctx, "WrapperReraises")
+    end
   end
 
   describe "the callers" do
-    test("every call to a private function inside a rescue takes it", ctx,
-      do: refute(escapes?(ctx, "CallerRescues"))
-    )
+    test "every call to a private function inside a rescue takes it", ctx do
+      refute escapes?(ctx, "CallerRescues")
+    end
 
-    test("one unguarded caller keeps it escaping", ctx,
-      do: assert(escapes?(ctx, "OneCallerUnguarded"))
-    )
+    test "one unguarded caller keeps it escaping", ctx do
+      assert escapes?(ctx, "OneCallerUnguarded")
+    end
   end
 
   describe "other raises" do
-    test("a catch of the :erpc error takes an erpc raise", ctx,
-      do: refute(escapes?(ctx, "ErpcCaught", "erpc"))
-    )
+    test "a catch of the :erpc error takes an erpc raise", ctx do
+      refute escapes?(ctx, "ErpcCaught", "erpc")
+    end
 
-    test("a catch of exits takes nothing of an erpc raise", ctx,
-      do: assert(escapes?(ctx, "ErpcCaughtAsExit", "erpc"))
-    )
+    test "a catch of exits takes nothing of an erpc raise", ctx do
+      assert escapes?(ctx, "ErpcCaughtAsExit", "erpc")
+    end
   end
 end
