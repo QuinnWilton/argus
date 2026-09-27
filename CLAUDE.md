@@ -43,6 +43,15 @@ those frameworks need.
   it made outside it (`Reads`), and the
   sharded facts and the solves over them (`Facts`);
   `lib/argus/pipeline/shards.ex` joins producers' directories.
+- `lib/argus/graph.ex` and `graph/` — the query graph on roux
+  (see "The query graph" below); `lib/argus/driver.ex` — the run every
+  frontend makes over a project (a `Roux.Session` over the project's
+  manifest, the beams synced with `Roux.Sources`, the analyses
+  demanded), returning `Argus.Driver.Result` (`Argus.Located` findings
+  and notices); `lib/argus/run.ex` — `run_analyses/2`, `analyze/3` and
+  `extract_facts/3` on the graph (`backend: :graph`; the batch backend
+  is still the default); `lib/mix/tasks/compile.argus.ex` — the `:argus`
+  Mix compiler, and `mix argus`.
 - The frontends: the `:argus` Mix compiler (`Mix.Tasks.Compile.Argus`),
   `mix argus`, the `argus` escript (`Argus.CLI`, `CLI.Options` shared
   with `mix argus`; `mix escript.build`) and the rebar3 plugin
@@ -323,6 +332,100 @@ names one with `cache:` on `Argus.run_analyses/2`, `Argus.analyze/3` or
 - Slow properties check a sample; `ARGUS_PROPERTIES=full` runs their
   full count (before a release, or after changing what they cover).
 
+## The query graph
+
+`Argus.Graph` is argus as a roux query graph (the moduledoc draws it):
+per-module extraction (`module_facts`, packs of text in a `Roux.Blob`
+store found again by one verifying trace per module), the first cutoff
+seam (`module_semantic`, without `line_info`), a Merkle digest per
+relation over the program's modules (`program_relations`, one
+`Runtime.parallel` fan-out), the two stages (the second and third
+seams), one solve per analysis (`Argus.Souffle.Solve`, kept in the
+store's action cache), line-free `findings`, and `located` (the
+bytecode's late step). Invariants:
+
+- **Code identity is inferred, never declared.** Each query's code
+  version is the digest of what its role module's import table reaches
+  (`use Roux.Query, code: ...`), the schema's modules left out. What is
+  reached by name — the extractors, the analyses — is read as a value
+  (`Argus.Graph.Code`: `producer_code`, `analysis_code`), so an
+  extractor edit re-runs that extractor alone on each module and an edit
+  to one analysis rebuilds its findings alone. A new dynamic dispatch
+  gets a value there or a declared root; `Argus.Graph.CodeClosureTest`
+  runs every query with call counting and fails on code outside its
+  closure.
+- **The schema is read through its accessors, inside a query.** The
+  `around:` hook (`Argus.Graph.Reads.around/2`) turns every schema entry
+  a query recorded, and every module whose specs extraction read off the
+  code path, into `schema_entry`/`installed_specs` edges. Never keep
+  what an accessor returned where another query could find it; never
+  read the schema in a spawned process without handing its reads back
+  (`Argus.Schema.Reads.record_all/1`).
+- **Query values must survive `term_to_binary`**, and never name a pid
+  or a table: a manifest keeps them. A value naming blobs holds them
+  (`Roux.Runtime.hold/1`), and a large one is kept by digest
+  (`store: :blob`); a stage output whose entry vanished is derived again
+  when a solve needs it (a vanished entry is a miss, never an error).
+- **Failures are transient.** A failed solve or stage, and a module
+  lost to the per-module timeout, is `transient:`: neither it nor what
+  read it is kept, so the next run tries again. Never `:low` anywhere
+  in the input → facts chain: durability propagates as the minimum.
+- **Rendering is driver work** from query values (`Argus.Located`), never
+  a query's side effect; what only the source says (a fragment's line, a
+  block's end, the `{guard}` keyword) is the renderer's.
+- Without a solver nothing is solved: the driver demands no analysis,
+  so no error memo reaches a manifest.
+- Beams are keyed by path; a beam's `hash` is the digest of it without
+  `ExCk` and `Docs` (`Roux.Code.canonical_beam/1`), so a recompile that
+  only refreshed Elixir's type checker table moves nothing. The sync
+  never trusts a stat stamp younger than two seconds (a fast
+  edit-compile-edit can rewrite a beam in the same second with the same
+  size): do not "simplify" that away.
+
+### Testing the graph and the Mix compiler
+
+- `mix test --include parity` before touching the graph: every analysis
+  over argus's own fixtures (`Argus.Test.Graph.parity!/0`), graph ≡
+  batch, cold and across cross-module edits. `ARGUS_VERIFY_BACKEND=1`
+  runs every harness call (`Argus.Test.Memo`, `Argus.Test.Batch`,
+  `Argus.Corpus`) on both backends and fails unless they agree;
+  `ARGUS_BACKEND=graph` runs them on the graph alone.
+- Recompute sets are asserted with `Roux.QueryLog` (one database's
+  events, or `:all` for a Mix compiler that opens its own). A code edit
+  is simulated by registering a query again under another code version;
+  a rule edit by editing a copy of `priv/dl` (`:dl_root`, in a peer).
+- Tests that drive VM-wide state (the Mix project stack and the working
+  directory, `PATH` and other env vars, application env, telemetry
+  handlers, the code path, loaded modules, compiler options) run in a
+  peer: `use Argus.Test.Peer` keeps the module's bytecode, and
+  `Peer.run(peer, fn -> ... end)` runs its closures there, assertions
+  and all. Inside a peer, compute temp paths inside the closure and
+  return plain data. Peer and Mix-project tests are tagged `:project`.
+- The suite and its peers keep the graph's blob store under
+  `_build/test/argus/store` (`ARGUS_CACHE_DIR`); a test that must see
+  its solver or extractors run gives itself a store of its own
+  (`Argus.Test.Graph.new_db(paths, store: :temporary)`,
+  `Peer.start!(store: :own)`, or `ARGUS_CACHE_DIR` pointed at a fresh
+  directory for the runs it makes).
+- Mix-project tests check out `test/projects/depot` (or the umbrella)
+  with `Argus.Test.Fixture` and run the real chain in a peer:
+  - `Mix.Project.in_project/3` caches projects by app atom — one unique
+    app atom per distinct config;
+  - drive it with `Mix.Task.clear()` and `Mix.Task.run("compile",
+    ["--return-errors", "--no-prune-code-paths"])`: without the clear,
+    nested compile tasks stay marked as run; without `--return-errors`
+    an `:error` status exits the VM; without `--no-prune-code-paths`
+    the test VM's own applications are pruned off the code path;
+  - back-to-back edits within one posix second are invisible to
+    `:elixir`'s staleness check: write, then `File.touch!` forward (the
+    tests' `edit!/2`);
+  - diagnostic paths are realpath'd (`/private/var` on macOS while the
+    checkout says `/var`).
+- Unload a module a test compiled with `:code.purge/1`, `:code.delete/1`
+  and `:code.purge/1` again, never `purge(m) && delete(m)`: `purge`
+  answers false for a module with no old code, and the module stays
+  loaded, where `:code.which/1` finds it for the next test.
+
 ## Commit message style
 
 ```
@@ -345,5 +448,8 @@ ARGUS_NO_CACHE=1 mix test  # Every store off: extract and solve afresh
 mix test --include cache_verify  # Also the perturbation checks of the cache keys (CI runs these)
 mix test --include escript --include rebar3 --include gleam  # The escript, the real tools, the plugin
 mix escript.build        # The argus escript (built in :prod)
+mix test --include parity  # Also the graph ≡ batch gate over argus's own fixtures
+ARGUS_VERIFY_BACKEND=1 mix test --exclude corpus  # Every harness call on both backends, compared
+ARGUS_BACKEND=graph mix test  # The harnesses on the query graph
 ARGUS_PROPERTIES=full mix test  # Slow properties at their full count
 ```
