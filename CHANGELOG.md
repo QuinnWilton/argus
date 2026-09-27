@@ -124,6 +124,25 @@ the same advice.
 **Changed.** The points-to stage's choice between the exact and the
 bounded program is `Argus.Souffle.Stages`.
 
+### One ETS table identity (clientlib/tables.dl)
+
+**Changed.** races and ets name a table one way: `EtsTable = [kind,
+ident]`, a named table by its name, an unnamed one by its `:ets.new/2`
+site (followed by points-to), and as fallbacks a module's map field or a
+table the program's users hand to a way in (`handed_in`, "param P of
+F", now a kind of `ets_table` for every races rule). The read-then-write
+race no longer names an unnamed table by its creation atom ("by_name"),
+and ets.dl no longer joins on the atom: two unnamed tables made under one
+atom are two tables; a table a helper returns, or a server keeps in its
+state or hands to another module, is the table its `:ets.new/2` made; a
+named table made by a helper handed its name is that name's.
+vocabulary.dl's `public_table` is gone (`table_public`). The
+points-to stage stages `coarse_table`, the tables a bounded stage
+resolved coarsely, which name no table (`Argus.Analysis.points_to_relations/0`
+lists it). ets.dl's `table_held` is `may_hold_table`, failure.dl's
+`table_owner` `always_holds_table`, races' `held_table`
+`mints_every_row`.
+
 ### Trapping exits: one reading, at a point (schema 153)
 
 **Changed.** Schema 153. `trap_exit` gains its call's `id` first

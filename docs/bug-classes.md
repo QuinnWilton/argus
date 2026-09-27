@@ -453,10 +453,11 @@ than more; it errs loud when the same uncertainty can add a finding.
 
 ### A table and its identity
 
-- **Names.** `ets_table`, `site_table`, `table_readable_elsewhere`, `public_table`, `source_table` (tables.dl, vocabulary.dl, points_to.dl).
-- **Meaning.** A table is known the way the runtime knows it: a named table by its name (`named`), an unnamed one by the `:ets.new/2` site that made it (`new`), whose reference process points-to follows like a pid. `ets_table(op, kind, ident)` is the set of tables an operation may touch: a name spelled there, a literal a caller passes, what points-to finds, and as a fallback the map field of a parameter it was read under (`field`, meaningful within the module only). `table_readable_elsewhere` is a table made in view and not private; `public_table` a named :public one.
-- **Direction.** An operation points-to cannot follow has no table and takes part in no pair (quiet).
-- **Used by.** races. ets, coverage and failure key tables by the name `ets_new` records instead.
+- **Names.** `EtsTable`, `ets_table`, `site_table`, `param_table`, `table_made_at`, `table_made_out_of_view`, `table_private`, `table_readable_elsewhere`, `table_public`, `may_touch_any_table`, `table_source` (tables.dl); `source_table`, `coarse_table` (points_to.dl).
+- **Meaning.** A table is a kind and an identity within it (`EtsTable = [kind, ident]`), known the way the runtime knows it: a named table by its name (`named`), an unnamed one by the `:ets.new/2` site that made it (`new`), whose reference process points-to follows like a pid; as fallbacks, the map path of a parameter it is read under (`field`, `"<module> <path>"`) and a parameter nothing in view fills below a way in outside callers call (`handed_in`, `"param P of F"`, named by the way in, so every function F forwards it to names the same table). `ets_table(op, kind, ident)` is the set of tables an operation (or a creation site) may touch: a name spelled there, what its parameter holds (`param_table`: a caller's literal, a caller's reference, the users' table), what points-to finds. A site whose options are built at run time may make a named table too. `table_made_at` is where a table is made (a field table: where the name its operations carry is made); `table_made_out_of_view` a named table no site in view makes, or a handed-in one; `table_readable_elsewhere` made in view and not private; `table_public` made `:public`. `may_touch_any_table(op)`: no table named, or only a field or handed-in one no site is known to make. `table_source` is a kind as a CheckThenAct source (a named table is a literal, its name).
+- **Sameness.** Two references are one table when kind and identity are equal; two kinds never are, though at run time a field or handed-in table may be a named or new one. A rule that needs two references to be one table is quiet there; one that needs a table's removals, give-aways or reads to be all of them takes `may_touch_any_table` as any.
+- **Direction.** An operation points-to cannot follow, and none of whose fallbacks holds, has no table and takes part in no pair (quiet). An operand that joins a table in view with one the facts cannot follow is taken to be the table in view (loud: ejabberd_config's `get_tmp_config()` arm). A table a bounded points-to stage resolves coarsely (`coarse_table`) names no table: its answers are a superset.
+- **Used by.** races (every ETS rule) and ets. Mnesia records are named by the table's name alone (`MnesiaRecord`), a table of another namespace. coverage and failure key tables by the name `ets_new` records.
 
 ### Check-then-act
 
@@ -4526,20 +4527,20 @@ under `priv/dl/` unless they say otherwise.
    twice, for ETS and for Mnesia, in races.dl.
    *Resolved.* `OnePerWrite` (check_then_act.dl), instantiated for ETS
    and Mnesia.
-10. **A table no view names.** races names a table a caller hands in by
-    its parameter (`param N`); failure drops a site with no known target;
-    ets.dl joins on the `:ets.new/2` atom with `name != "dynamic"` and
-    does not use tables.dl's identities at all, so two unnamed tables
-    made with one atom are one table there.
-    *Justified.* Each view errs quiet for its own question: races names a
-    caller's table by its parameter because a pair needs a key to meet
-    on; failure drops a site with no known target because a belief pooled
-    across unknown targets judged unrelated tables (364e74b). ets.dl's
-    ownership rules now report one finding per `:ets.new` site. *Left:*
-    ets.dl's concurrency hints and grow-only rule still join unnamed
-    tables made with one atom as one table; moving them onto tables.dl's
-    identities (the points-to identities races reads) is a rewrite of
-    those rules.
+10. **A table no view names.** races named a table a caller hands in by
+    its meeting function's parameter, and its read-then-write rule named
+    every other table by the atom ets_op records; failure drops a site
+    with no known target; ets.dl joined on the `:ets.new/2` atom with
+    `name != "dynamic"`, so two unnamed tables made with one atom were
+    one table there.
+    *Resolved* (rulestyle/tables). races and ets.dl share one identity,
+    `EtsTable` (tables.dl, "A table and its identity"): a handed-in table
+    is its kind (named by the way in), every races rule and every ets.dl
+    join reads `ets_table`, and a table no view names is
+    `may_touch_any_table`, which each rule takes as any table or none by
+    its direction. *Left:* failure (`always_holds_table`, `removes_row`)
+    and coverage still key tables by the `:ets.new/2` atom; failure drops
+    a site with no known target on purpose (364e74b).
 11. **Removing an ETS row.** Five lists with different members:
     clientlib `removal_api` (effects.dl, no `delete_all_objects`), ets.dl
     `ets_removal_op`, races' `removal` (no `match_delete`) and
@@ -4557,11 +4558,13 @@ under `priv/dl/` unless they say otherwise.
     `fails_on_missing_table`, stricter on purpose (a select's or a
     match's spec can raise on its own), and says so.
 13. **A table another process can touch.** Three readings in races.dl
-    alone: vocabulary.dl's `public_table` (explicitly `:public`, by name;
-    ets_check_act), `readable_elsewhere` (not private, by identity;
-    publish order), `shared_table` (also any named table out of view;
-    missing row). The three ETS race rules disagree about one table.
-    *Justified.* Three questions: `public_table` (another process can
+    alone: `table_public` (explicitly `:public`; ets_check_act, which
+    also takes a handed-in table), `readable_elsewhere` (not private;
+    publish order), `shared_table` (also a table made out of view, named
+    or handed in; missing row), all over tables.dl's one identity since
+    rulestyle/tables. The three ETS race rules ask different questions of
+    one table.
+    *Justified.* Three questions: `table_public` (another process can
     write the row: an act of ets_check_act is another writer's, so
     `:public`), `readable_elsewhere` (another process can read it:
     publish order's reader only reads) and `shared_table` (a row may go
