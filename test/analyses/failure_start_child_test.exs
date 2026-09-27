@@ -34,6 +34,13 @@ defmodule Argus.Analyses.FailureStartChildTest do
 
       # start_tail is a tail call — result propagated, should NOT be flagged.
       refute Enum.any?(funcs, &String.contains?(&1, "start_tail"))
+
+      # A branch later in the function, in another clause, does not run
+      # after the start: the result is still dropped.
+      assert Enum.any?(funcs, &String.contains?(&1, "start_then_other_clause"))
+
+      # A match in the start's own clause runs after it.
+      refute Enum.any?(funcs, &String.contains?(&1, "start_matched_in_clause"))
     end
   end
 end

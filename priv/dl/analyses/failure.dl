@@ -18,6 +18,7 @@
 .include "../clientlib/remote_pids.dl"
 .include "../clientlib/rpc_targets.dl"
 .include "../clientlib/tooling.dl"
+.include "../clientlib/order.dl"
 
 // A finding in code only developers' tools or tests run steps down a
 // level (clientlib/tooling.dl, Argus.Findings.Tooling).
@@ -601,31 +602,23 @@ starts_supervised_task(start, func) :-
   remote_call(start, func, "Task.Supervisor", "start_child", _).
 
 // The start's result is checked: in tail position (propagated to the
-// caller), or followed by a branch in the same function (pattern-matched).
+// caller), or a branch runs after it (runs_after, clientlib/order.dl):
+// on a path from the start, not merely at a later index, which a branch
+// in another clause of the function has too. Still a proxy for "the
+// result was pattern-matched": the branch need not read the result.
 .decl start_result_checked(start: symbol)
 
 start_result_checked(start) :-
   starts_supervised_task(start, _),
   tail_call(start).
 
-// `call_followed_by_branch` is emitted by the extractor and holds exactly
-// what the two `instruction` joins used to compute: this call has some
-// branch later in its function. Asking Datalog to compare two instruction
-// INDEXES meant joining `instruction` — 343k rows on a 531-module project,
-// rewritten whenever any function body changes — to answer a yes/no
-// question, and it made unsafe_task the last analysis reading that
-// relation and by far the most expensive one.
-//
-// The predicate is as coarse as it ever was: a branch anywhere later in
-// the function counts, including one in an unrelated clause, so this is a
-// weak proxy for "the result was pattern-matched". That weakness is
-// preserved on purpose — moving where it is computed must not change what
-// it computes. Sharpening it (asking whether the call's result register is
-// actually inspected, which the extractor helpers can do) changes findings
-// and belongs in its own commit.
 start_result_checked(start) :-
-  starts_supervised_task(start, _),
-  call_followed_by_branch(start).
+  after_start.runs_after(start, test),
+  site_block(test, "branch", _, _).
+
+.init after_start = RunsAfter
+
+after_start.asked(start) :- starts_supervised_task(start, _).
 
 // A Process.whereis of a literal name is used without testing for nil,
 // and no try around the use takes how a nil pid fails there.

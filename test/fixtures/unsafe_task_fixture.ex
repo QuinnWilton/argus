@@ -66,6 +66,23 @@ defmodule Argus.Test.Fixtures.UncheckedStartChild do
   def start_tail(sup) do
     Task.Supervisor.start_child(sup, fn -> :background end)
   end
+
+  # Unchecked: the start's clause matches nothing after it; the branch
+  # is in the next clause, later in the function but never after it.
+  def start_then_other_clause(sup, :fire) do
+    Task.Supervisor.start_child(sup, fn -> :background end)
+    :ok
+  end
+
+  def start_then_other_clause(_sup, {:ok, pid}) when is_pid(pid), do: :ok
+
+  # Checked: the result is matched in the start's own clause.
+  def start_matched_in_clause(sup, :fire) do
+    {:ok, _pid} = Task.Supervisor.start_child(sup, fn -> :background end)
+    :ok
+  end
+
+  def start_matched_in_clause(_sup, _other), do: :ok
 end
 
 defmodule Argus.Test.Fixtures.SupervisedFireAndForget do
