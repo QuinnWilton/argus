@@ -368,8 +368,19 @@ defmodule Argus.Graph.Pack do
   order; empty when the module has none.
   """
   @spec chunk(pack(), atom()) :: binary()
-  def chunk(pack, relation) do
-    IO.iodata_to_binary(for {_producer, relations} <- pack, do: Map.get(relations, relation, ""))
+  def chunk(pack, relation), do: chunk(pack, relation, :all)
+
+  @doc """
+  A relation's chunk of a pack from `producers` alone (`:all` for every
+  producer's), in producer order.
+  """
+  @spec chunk(pack(), atom(), :all | [Pipeline.producer()]) :: binary()
+  def chunk(pack, relation, producers) do
+    IO.iodata_to_binary(
+      for {producer, relations} <- pack,
+          producers == :all or producer in producers,
+          do: Map.get(relations, relation, "")
+    )
   end
 
   @doc "A pack, read back: `{:ok, pack}` or `:miss`."

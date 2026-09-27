@@ -53,8 +53,10 @@ only the batch backend reads (`:facts_dir`, `:cache`, `:solve_cache`,
 `:extractors`, `:relations`) still runs on it, as does `backend:
 :batch` (`Argus.Run.backend/1`). The graph's findings carry their
 `file`, `line` and `end_line`; the facts directory `extract_facts/3`
-returns holds every producer's rows, whichever analyses were named,
-and a relation's rows in their own order. A call may keep its graph
+returns holds the rows the batch pipeline's does (the producers the
+named analyses run, `line_info` included), in an order of the graph's
+own, and leaves empty the relations only a pipeline process reads (a
+custom program that reads one names `backend: :batch`). A call may keep its graph
 in a manifest (`manifest:`); the corpus keeps one per checkout and
 argus worktree (`<checkout>/.argus/manifest-<worktree>`), seeded from
 the newest another worktree kept. A custom program's input is its own

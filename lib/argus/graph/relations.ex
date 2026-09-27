@@ -78,38 +78,62 @@ defmodule Argus.Graph.Relations do
   defp sha(text), do: :sha256 |> :crypto.hash(text) |> Base.encode16(case: :lower)
 
   @doc """
+  The digest of the program's `line_info`, which no relation digest
+  covers (`module_semantic` leaves it out: a line that moves moves
+  nothing a solve reads): a Merkle of its modules' chunk digests, as
+  `relation/2`'s, for a facts directory made whole
+  (`Argus.Run.extract_facts/3`). Reads the graph without edges.
+  """
+  @spec line_info(Roux.Database.t(), term()) :: String.t()
+  def line_info(db, program) do
+    keys = Runtime.untracked(fn -> Runtime.input(db, :program, program, default: []) end)
+
+    digests =
+      for key <- keys,
+          {:ok, %{relations: %{line_info: digest}}} <-
+            [Runtime.untracked(fn -> Runtime.query(db, :module_facts, key) end)],
+          do: digest
+
+    if digests == [], do: @empty, else: merkle(digests)
+  end
+
+  @doc """
   The blob store entries holding `relations`' files for `program`: each
   relation (with the digest `relation/2` gave it) to the digest of its
   file's content. Remembered by the relation's digest; the ones not
   remembered are assembled together, in one pass over the program's
   modules. Reads the graph without edges: called by a solve that
   already depends on each relation's digest.
+
+  `producers` narrows every file to those producers' rows (`:all`, the
+  default, for every producer's): a facts directory as the batch
+  pipeline writes one for some analyses.
   """
-  @spec files(Roux.Database.t(), term(), [{atom(), String.t()}]) ::
+  @spec files(Roux.Database.t(), term(), [{atom(), String.t()}], :all | [atom()]) ::
           {:ok, %{atom() => Blob.digest()}} | {:error, term()}
-  def files(db, program, relations) do
+  def files(db, program, relations, producers \\ :all) do
     store = db.blob
 
     {known, missing} =
       Enum.reduce(relations, {%{}, []}, fn {relation, digest}, {known, missing} ->
-        case remembered(store, digest) do
+        case remembered(store, digest, producers) do
           {:ok, file} -> {Map.put(known, relation, file), missing}
           :miss -> {known, [{relation, digest} | missing]}
         end
       end)
 
-    with {:ok, made} <- assemble(db, program, Enum.reverse(missing)) do
+    with {:ok, made} <- assemble(db, program, Enum.reverse(missing), producers) do
       {:ok, Map.merge(known, made)}
     end
   end
 
-  defp remembered(store, @empty) do
+  defp remembered(store, @empty, _producers) do
     {:ok, digest} = Blob.put(store, "")
     {:ok, digest}
   end
 
-  defp remembered(store, digest) do
-    with {:ok, file} <- Blob.recall(store, {__MODULE__, digest}),
+  defp remembered(store, digest, producers) do
+    with {:ok, file} <- Blob.recall(store, remember_key(digest, producers)),
          true <- Blob.member?(store, file) do
       {:ok, file}
     else
@@ -117,18 +141,23 @@ defmodule Argus.Graph.Relations do
     end
   end
 
-  defp assemble(_db, _program, []), do: {:ok, %{}}
+  defp remember_key(digest, :all), do: {__MODULE__, digest}
+  defp remember_key(digest, producers), do: {__MODULE__, digest, Enum.sort(producers)}
 
-  defp assemble(db, program, missing) do
+  defp assemble(_db, _program, [], _producers), do: {:ok, %{}}
+
+  defp assemble(db, program, missing, producers) do
     store = db.blob
     {priors, facts} = Enum.split_with(missing, fn {_r, digest} -> prior_digest?(digest) end)
 
     with {:ok, from_priors} <- priors_files(db, program, priors),
-         {:ok, from_facts} <- facts_files(db, program, facts) do
+         {:ok, from_facts} <- facts_files(db, program, facts, producers) do
       made = Map.merge(from_priors, from_facts)
 
       for {relation, digest} <- missing,
-          do: _ = Blob.remember(store, {__MODULE__, digest}, Map.fetch!(made, relation))
+          do:
+            _ =
+              Blob.remember(store, remember_key(digest, producers), Map.fetch!(made, relation))
 
       {:ok, made}
     end
@@ -149,13 +178,13 @@ defmodule Argus.Graph.Relations do
     end)
   end
 
-  defp facts_files(_db, _program, []), do: {:ok, %{}}
+  defp facts_files(_db, _program, [], _producers), do: {:ok, %{}}
 
   # One pass over the program's modules: each module's combined pack is
   # read once, and its chunk of every missing relation appended to that
   # relation's file, written in a scratch directory on the store's file
   # system and moved into it.
-  defp facts_files(db, program, facts) do
+  defp facts_files(db, program, facts, producers) do
     store = db.blob
     relations = Enum.map(facts, &elem(&1, 0))
     wanted = MapSet.new(relations)
@@ -180,7 +209,9 @@ defmodule Argus.Graph.Relations do
               if Enum.any?(Map.keys(chunks), &MapSet.member?(wanted, &1)) do
                 {:ok, contents} = read_pack!(store, pack)
 
-                for relation <- relations, bytes = Pack.chunk(contents, relation), bytes != "" do
+                for relation <- relations,
+                    bytes = Pack.chunk(contents, relation, producers),
+                    bytes != "" do
                   {_path, device} = Map.fetch!(devices, relation)
                   :ok = IO.binwrite(device, bytes)
                 end

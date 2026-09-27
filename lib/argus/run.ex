@@ -87,10 +87,16 @@ defmodule Argus.Run do
 
   @doc """
   `Argus.Analysis.extract_facts/3` over the graph: a directory holding a
-  file for every relation of the schema (empty when it has no rows),
-  stage 0's call graph, and — unless `points_to: :deferred`, and when an
-  analysis reads it — the points-to stage, each a hard link into the
-  store. The caller removes it (and its parent) as any other.
+  file for every relation of the schema, each with the rows of the
+  producers `analyses` run, as the batch pipeline writes it (the same
+  rows, in an order of the graph's own; `line_info` included, the
+  imprecision trace only for `:coverage`), stage 0's call graph, and —
+  unless `points_to: :deferred`, and when an analysis reads it — the
+  points-to stage, each a hard link into the store. The relations only
+  a pipeline process reads (`Argus.Schema.in_process_only/0`) are empty:
+  the graph keeps none, so a custom program reading one runs on the
+  batch backend (`backend: :batch`). The caller removes the directory
+  (and its parent) as any other.
   """
   @spec extract_facts([atom() | String.t()], [Analysis.analysis()], keyword()) ::
           {:ok, Path.t()} | {:error, term()}
@@ -402,21 +408,55 @@ defmodule Argus.Run do
 
   # ── Facts directory ────────────────────────────────────────────────
 
+  # The directory the batch pipeline writes for `analyses`: every
+  # relation of the schema, each holding the rows of the producers those
+  # analyses run (the base, the call-argument extractor and each one's
+  # extractors), `line_info` among them, the imprecision trace only for
+  # `:coverage`; the relations only a process of the pipeline reads
+  # (`Argus.Schema.in_process_only/0`) are empty, as the graph keeps none.
   defp materialize(db, analyses, opts) do
     extracted = Argus.Schema.names() -- Argus.Schema.in_process_only()
-    relations = for r <- extracted, do: {r, Graph.Relations.relation(db, {@program, r})}
+    traced? = :coverage in analyses
+
+    {relations, empty} =
+      Enum.reduce(extracted, {[], Argus.Schema.in_process_only()}, fn
+        :imprecision, {relations, empty} when not traced? ->
+          {relations, [:imprecision | empty]}
+
+        :line_info, {relations, empty} ->
+          {[{:line_info, Graph.Relations.line_info(db, @program)} | relations], empty}
+
+        relation, {relations, empty} ->
+          {[{relation, Graph.Relations.relation(db, {@program, relation})} | relations], empty}
+      end)
 
     with {:ok, work} <- work_dir(),
          dir = Path.join(work, "facts"),
          :ok <- File.mkdir_p(dir),
-         {:ok, files} <- Graph.Relations.files(db, @program, relations),
+         {:ok, files} <-
+           Graph.Relations.files(db, @program, Enum.reverse(relations), producers(analyses)),
          :ok <- link_all(db, files, dir),
-         :ok <- empty_files(Argus.Schema.in_process_only(), dir),
+         :ok <- empty_files(empty, dir),
          :ok <- stage(db, :stage0, dir),
          :ok <- points_to(db, analyses, dir, opts) do
       {:ok, dir}
     end
   end
+
+  # The producers the batch pipeline runs for `analyses`
+  # (`Argus.Analysis.Extraction`'s defaults): the base, the call-argument
+  # extractor every analysis reads through, and each built-in's own.
+  defp producers(analyses) do
+    extractors =
+      for {:ok, module} <- Enum.map(analyses, &analysis_module/1),
+          extractor <- module.extractors(),
+          do: extractor
+
+    Enum.uniq([:base, Argus.Extractors.CallArgs | extractors])
+  end
+
+  defp analysis_module({:custom, _path}), do: :error
+  defp analysis_module(name), do: Analysis.Catalog.fetch(name)
 
   defp link_all(db, files, dir) do
     Enum.reduce_while(files, :ok, fn {relation, digest}, :ok ->
