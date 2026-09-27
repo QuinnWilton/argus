@@ -5,11 +5,12 @@ defmodule Argus.Run do
 
   Each call opens a session of its own over the blob store
   (`Argus.Graph.store/0`, or `store:`), sets the modules as one program
-  (`:batch`), demands what it answers and closes it: no manifest is
-  kept, and the store is what the next call finds again — each module's
-  facts by its content and the code extracting it, each solve by the
-  digests of what it reads. Under `ARGUS_NO_CACHE` the store is a
-  temporary one, removed when the call returns.
+  (`:batch`), demands what it answers and closes it: without a
+  `manifest:` nothing is kept but the store, which is what the next
+  call finds again — each module's facts by its content and the code
+  extracting it, each solve by the digests of what it reads. Under
+  `ARGUS_NO_CACHE` the store is a temporary one, removed when the call
+  returns.
 
   The answers are the batch backend's (`Argus.Findings.run/2`), relation
   for relation and finding for finding, except that each finding and
@@ -25,6 +26,15 @@ defmodule Argus.Run do
   `:souffle_timeout`, `:concurrency`, `:priors`, `:priors_opts`):
 
     * `:store` — the blob store: a `Roux.Blob`, or the root of one.
+    * `:manifest` — where the graph is kept between calls: the call
+      restores it, and keeps it there after (`Roux.Session`). A beam
+      whose file has not moved is not read again, and only what an edit
+      reached runs. Without one (the default) nothing is kept but the
+      store.
+    * `:stamps` — the code directories' stamps
+      (`Argus.Graph.set_environment/2`): read when the call keeps a
+      manifest, unless given (`Argus.Graph.Environment.stamps/1`, read
+      once for many calls in one VM).
 
   The options that shape the batch backend's facts directory or its
   stores (`:facts_dir`, `:cache`, `:solve_cache`, `:extractors`,
@@ -225,27 +235,43 @@ defmodule Argus.Run do
   defp differences(a, b), do: [batch: a, graph: b]
 
   # A session over the modules as the program, with the environment and
-  # the priors set; `fun` runs with its database.
+  # the priors set; `fun` runs with its database. With a manifest the
+  # session is restored from it and kept in it after `fun`.
   defp in_session(modules, analyses, opts, fun) do
     with {:ok, beams} <- Disassemble.resolve_paths(modules) do
-      session = Graph.open(store: Keyword.get(opts, :store))
+      manifest = Keyword.get(opts, :manifest)
+      session = Graph.open(store: Keyword.get(opts, :store), manifest: manifest)
 
       try do
         db = session.db
-        _keys = Graph.set_program(db, @program, beams)
+
+        meta =
+          if manifest do
+            {_keys, meta} = Graph.sync_program(db, @program, beams, session.sources)
+            meta
+          else
+            _keys = Graph.set_program(db, @program, beams)
+            %{}
+          end
 
         trees = for {:custom, path} <- analyses, do: Graph.Programs.tree({:custom, path})
 
-        # The session is closed as the call returns, never kept: no
-        # directory stamps (`Argus.Graph.set_environment/2`).
+        # A session never kept has no use for the code directories'
+        # stamps (`Argus.Graph.set_environment/2`); a kept one reads
+        # them, unless the caller read them already.
+        stamps = Keyword.get(opts, :stamps, manifest != nil)
+
         _moved =
           Graph.set_environment(
             db,
-            [trees: trees, stamps: false] ++ Keyword.take(opts, [:souffle_bin, :souffle_timeout])
+            [trees: trees, stamps: stamps] ++
+              Keyword.take(opts, [:souffle_bin, :souffle_timeout])
           )
 
         :ok = Graph.set_priors(db, @program, priors(opts))
-        fun.(db)
+        answer = fun.(db)
+        {_status, _session} = Roux.Session.commit(session, meta)
+        answer
       after
         Roux.Session.close(session)
       end

@@ -219,6 +219,40 @@ defmodule Argus.Graph do
   end
 
   @doc """
+  Sets the beams of `program` as a kept session does (`Roux.Sources.sync/5`
+  against the sources `sources` its manifest holds): a beam file whose
+  stamp has not moved is not read again, and one gone since is removed.
+  A beam held in memory is set as `set_program/3` sets it. Returns the
+  program's sorted keys and the sources' metadata to commit.
+  """
+  @spec sync_program(Roux.Database.t(), term(), [Path.t() | binary()], map()) ::
+          {[term()], map()}
+  def sync_program(db, program, beams, sources) do
+    {data, paths} = Enum.split_with(beams, &match?(<<"FOR1", _::binary>>, &1))
+    files = Map.new(paths, fn path -> {Path.expand(path), Path.expand(path)} end)
+
+    %{meta: meta} =
+      Roux.Sources.sync(db, :beam, files, sources,
+        hash: &hash/1,
+        value: fn %{hash: hash} -> %{hash: hash} end
+      )
+
+    in_memory =
+      for beam <- data do
+        {key, value} = beam_input(beam)
+        :ok = Input.set(db, :beam, key, value)
+        key
+      end
+
+    # A beam gone between the caller's listing and the sync is not in
+    # the program.
+    keys = files |> Map.keys() |> Enum.filter(&Map.has_key?(meta, &1))
+    keys = Enum.sort(Enum.uniq(keys ++ in_memory))
+    :ok = Input.set(db, :program, program, keys)
+    {keys, meta}
+  end
+
+  @doc """
   A beam's key and its `beam` input: `{path, %{hash: digest}}` for a
   file, `{{:data, digest}, %{hash: digest, data: bytes}}` for bytes.
   The digest is of the beam without the chunks extraction never reads
