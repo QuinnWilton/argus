@@ -23,7 +23,7 @@ defmodule Argus.Graph.InProcessTest do
     path = Path.join(tmp, "steps.dl")
 
     File.write!(path, """
-    .include "#{Path.join(:code.priv_dir(:panoptes), "dl/base.dl")}"
+    .include "#{Path.join(:code.priv_dir(:argus_beam), "dl/base.dl")}"
 
     .decl op(id: symbol, func: symbol, idx: number, op: symbol)
     .output op

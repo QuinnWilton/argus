@@ -90,7 +90,7 @@ defmodule Argus.Pipeline.DeterminismTest do
     try do
       :ok = :peer.call(peer, :code, :add_pathsa, [:code.get_path()])
       :ok = :peer.call(peer, :lists, :foreach, [&String.to_atom/1, atoms], 60_000)
-      {:ok, _} = :peer.call(peer, :application, :ensure_all_started, [:panoptes])
+      {:ok, _} = :peer.call(peer, :application, :ensure_all_started, [:argus_beam])
 
       {:ok, facts} =
         :peer.call(peer, Pipeline, :extract, [paths, [extractors: extractors]], 300_000)

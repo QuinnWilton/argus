@@ -102,7 +102,7 @@ defmodule Argus.ClientlibTest do
     # the same facts as the analyses derive it.
     :ok = Argus.Analysis.derive_points_to(facts)
 
-    lib = Path.join(:code.priv_dir(:panoptes), "dl/clientlib")
+    lib = Path.join(:code.priv_dir(:argus_beam), "dl/clientlib")
     program = Path.join(dir, "vocabulary.dl")
 
     File.write!(

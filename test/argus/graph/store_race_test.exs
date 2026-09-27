@@ -20,7 +20,7 @@ defmodule Argus.Graph.StoreRaceTest do
     unless Argus.Souffle.available?(), do: flunk("souffle not installed")
 
     fixtures =
-      for module <- Application.spec(:panoptes, :modules),
+      for module <- Application.spec(:argus_beam, :modules),
           String.starts_with?(Atom.to_string(module), "Elixir.Argus.Test.Fixtures."),
           do: module
 

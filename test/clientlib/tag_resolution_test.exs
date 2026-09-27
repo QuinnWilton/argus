@@ -10,7 +10,7 @@ defmodule Argus.Clientlib.TagResolutionTest do
     unless Souffle.available?(), do: flunk("souffle not installed")
   end
 
-  defp priv_dl, do: Path.join(:code.priv_dir(:panoptes), "dl")
+  defp priv_dl, do: Path.join(:code.priv_dir(:argus_beam), "dl")
 
   defp solve(tmp_dir, modules, outputs) do
     facts_dir = Path.join(tmp_dir, "facts")

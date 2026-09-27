@@ -27,7 +27,7 @@ defmodule Argus.Graph.Identity.SchemaPerturbationTest do
   # modules for shapes they do not have: the check reaches only the paths
   # the modules exercise.
   @modules for(
-             mod <- Application.spec(:panoptes, :modules),
+             mod <- Application.spec(:argus_beam, :modules),
              String.starts_with?(Atom.to_string(mod), "Elixir.Argus.Test.Fixtures."),
              do: mod
            )
@@ -203,7 +203,7 @@ defmodule Argus.Graph.Identity.SchemaPerturbationTest do
 
     try do
       true = :peer.call(peer, :code, :set_path, [:code.get_path()])
-      {:ok, _} = :peer.call(peer, :application, :ensure_all_started, [:panoptes])
+      {:ok, _} = :peer.call(peer, :application, :ensure_all_started, [:argus_beam])
       fun.(peer)
     after
       :peer.stop(peer)
@@ -264,7 +264,7 @@ defmodule Argus.Graph.Identity.SchemaPerturbationTest do
   end
 
   defp concerns do
-    for mod <- Application.spec(:panoptes, :modules),
+    for mod <- Application.spec(:argus_beam, :modules),
         Argus.Graph.Reads.schema_module?(mod),
         Code.ensure_loaded?(mod),
         function_exported?(mod, :relations, 0),

@@ -16,7 +16,7 @@ defmodule Argus.DlDeclarationsTest do
 
   alias Argus.{Analysis, Schema, Souffle}
 
-  defp priv_dl, do: Path.join(:code.priv_dir(:panoptes), "dl")
+  defp priv_dl, do: Path.join(:code.priv_dir(:argus_beam), "dl")
 
   describe "generated declaration files" do
     test "base.dl matches Argus.Schema.layer_1/0" do

@@ -51,7 +51,7 @@ defmodule Mix.Tasks.Compile.ArgusExtractionTest do
       System.put_env("ARGUS_CACHE_DIR", Path.join(copy, ".store"))
 
       # Every module outlives a 0 ms budget: all of them lose their facts.
-      Application.put_env(:panoptes, :extraction_timeout, 0)
+      Application.put_env(:argus_beam, :extraction_timeout, 0)
 
       try do
         {_status, diagnostics} = Fixture.compile!()
@@ -62,7 +62,7 @@ defmodule Mix.Tasks.Compile.ArgusExtractionTest do
         assert Enum.all?(lost, &(&1.message =~ "lost all its facts in extraction"))
         assert Enum.all?(lost, &(&1.message =~ "did not finish within 0 ms"))
       after
-        Application.delete_env(:panoptes, :extraction_timeout)
+        Application.delete_env(:argus_beam, :extraction_timeout)
       end
 
       # Nothing was edited, and the budget is back: the failed modules are

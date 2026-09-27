@@ -2,9 +2,10 @@
 
 ## Project overview
 
-Argus (hex package `panoptes`; the modules keep the `Argus` namespace) is a
-BEAM program analysis framework: it disassembles compiled `.beam`
-files, extracts Datalog facts from the bytecode, and evaluates them with
+Argus (hex package and OTP application `argus_beam`, renamed from
+`panoptes` at 0.20; the modules keep the `Argus` namespace) is a BEAM
+program analysis framework: it disassembles compiled `.beam` files,
+extracts Datalog facts from the bytecode, and evaluates them with
 Souffle. Inspired by Doop (JVM), cclyzer++ (LLVM IR) and Gigahorse (EVM), but
 the BEAM's register-based instruction set lets it skip the IR-lifting step
 those frameworks need.

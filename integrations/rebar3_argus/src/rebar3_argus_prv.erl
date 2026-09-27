@@ -231,7 +231,7 @@ format_error({exit, Status}) ->
 format_error(not_found) ->
     "the argus escript was not found: set {argus_plugin, [{escript, Path}]} or "
     "{argus_plugin, [{version, V}]} in rebar.config, set ARGUS_ESCRIPT, or install it "
-    "(mix escript.install hex panoptes)";
+    "(mix escript.install hex argus_beam)";
 format_error({no_escript, Path}) ->
     io_lib:format("the argus escript ~ts is not a file", [Path]);
 format_error({download, Url, Reason}) ->

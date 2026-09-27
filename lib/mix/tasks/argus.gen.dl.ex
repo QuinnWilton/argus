@@ -83,7 +83,7 @@ defmodule Mix.Tasks.Argus.Gen.Dl do
   # ambiguous for a task whose whole job is keeping a checked-in file
   # truthful. Regenerating only makes sense in argus's own tree.
   defp target_path(filename) do
-    unless Mix.Project.config()[:app] == :panoptes do
+    unless Mix.Project.config()[:app] == :argus_beam do
       Mix.raise(
         "mix argus.gen.dl regenerates argus's own checked-in declarations and " <>
           "must be run from the argus project, not from a project that depends on it."

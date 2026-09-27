@@ -6,7 +6,7 @@ defmodule Argus.MixProject do
 
   def project do
     [
-      app: :panoptes,
+      app: :argus_beam,
       version: @version,
       elixir: "~> 1.18",
       start_permanent: Mix.env() == :prod,
@@ -34,7 +34,7 @@ defmodule Argus.MixProject do
       package: package(),
       source_url: @source_url,
       homepage_url: @source_url,
-      name: "Panoptes",
+      name: "Argus",
       docs: docs(),
 
       # Test
@@ -103,11 +103,11 @@ defmodule Argus.MixProject do
     [main_module: Argus.CLI, name: "argus", app: nil]
   end
 
-  # Hex knows this package as `panoptes` (Argus Panoptes; `argus` was
-  # taken); the modules keep the `Argus` namespace.
+  # Hex knows this package as `argus_beam` (`argus` was taken; it was
+  # `panoptes` until 0.20); the modules keep the `Argus` namespace.
   defp package do
     [
-      name: "panoptes",
+      name: "argus_beam",
       licenses: ["MIT"],
       links: %{"GitHub" => @source_url},
       files: ~w(lib priv/dl mix.exs README.md LICENSE CHANGELOG.md .formatter.exs)

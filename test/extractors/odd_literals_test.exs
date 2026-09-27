@@ -17,7 +17,7 @@ defmodule Argus.Extractors.OddLiteralsTest do
 
   # Every shipped extractor, declared by an analysis or not.
   defp extractors do
-    for mod <- Application.spec(:panoptes, :modules),
+    for mod <- Application.spec(:argus_beam, :modules),
         String.starts_with?(Atom.to_string(mod), "Elixir.Argus.Extractors."),
         Code.ensure_loaded?(mod),
         function_exported?(mod, :extract, 1),

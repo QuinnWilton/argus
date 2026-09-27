@@ -83,7 +83,7 @@ defmodule Argus.Test.Peer do
   # fingerprint hashes every beam of a non-OTP application on the code
   # path, once per VM, and a peer is a fresh VM.
   defp code_path do
-    [:panoptes, :mix, :ex_unit, :logger]
+    [:argus_beam, :mix, :ex_unit, :logger]
     |> applications([])
     |> Enum.flat_map(fn app ->
       case :code.lib_dir(app) do

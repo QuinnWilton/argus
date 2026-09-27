@@ -28,7 +28,7 @@ defmodule Argus.Graph.Identity.DeclaredDigestTest do
 
   setup_all do
     modules =
-      for mod <- Application.spec(:panoptes, :modules),
+      for mod <- Application.spec(:argus_beam, :modules),
           String.starts_with?(Atom.to_string(mod), "Elixir.Argus.Test.Fixtures."),
           do: mod
 
@@ -36,7 +36,7 @@ defmodule Argus.Graph.Identity.DeclaredDigestTest do
     {:ok, facts} = Argus.Analysis.extract_facts(modules, analyses ++ [:coverage])
     on_exit(fn -> File.rm_rf!(Path.dirname(facts)) end)
 
-    dl = Path.join(:code.priv_dir(:panoptes), "dl")
+    dl = Path.join(:code.priv_dir(:argus_beam), "dl")
 
     programs =
       [

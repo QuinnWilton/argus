@@ -18,7 +18,7 @@ defmodule Argus.FindingHeadsTest do
 
   alias Argus.Analysis
 
-  @dl_root Path.join(:code.priv_dir(:panoptes), "dl")
+  @dl_root Path.join(:code.priv_dir(:argus_beam), "dl")
 
   # Placeholder values a free column takes, all at once per attempt: a
   # builder that needs a number, an instruction ID or an empty site

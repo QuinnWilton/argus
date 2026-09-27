@@ -27,7 +27,7 @@ defmodule Argus.Project.Mix do
     else
       {:error,
        "#{root} is a Mix project: run `mix argus` in it " <>
-         "(with {:panoptes, ...} among its dependencies)"}
+         "(with {:argus_beam, ...} among its dependencies)"}
     end
   end
 

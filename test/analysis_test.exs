@@ -103,7 +103,7 @@ defmodule Argus.AnalysisTest do
     end
 
     test "each module references an existing rules file" do
-      priv_dl = Path.join(:code.priv_dir(:panoptes), "dl")
+      priv_dl = Path.join(:code.priv_dir(:argus_beam), "dl")
 
       for mod <- Analysis.builtin_analysis_modules() do
         path = Path.join(priv_dl, mod.rules_file())
@@ -150,7 +150,7 @@ defmodule Argus.AnalysisTest do
       rules_path = Path.join(tmp, "argus_custom_test.dl")
 
       File.write!(rules_path, """
-      .include "#{Path.join(:code.priv_dir(:panoptes), "dl/base.dl")}"
+      .include "#{Path.join(:code.priv_dir(:argus_beam), "dl/base.dl")}"
 
       .decl exported_function(func: symbol)
       .output exported_function

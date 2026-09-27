@@ -85,7 +85,7 @@ defmodule Argus.DlComponentsTest do
         "other\tN\tother\t0\t1\n"
     )
 
-    reach = Path.join(:code.priv_dir(:panoptes), "dl/clientlib/reach.dl")
+    reach = Path.join(:code.priv_dir(:argus_beam), "dl/clientlib/reach.dl")
     File.cp!(reach, Path.join(dir, "reach.dl"))
     program = Path.join(dir, "components.dl")
     File.write!(program, @program)

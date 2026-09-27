@@ -23,7 +23,7 @@ defmodule Argus.Clientlib.PervasiveTest do
     on_exit(fn -> File.rm_rf!(dir) end)
     facts_dir = Path.join(dir, "facts")
 
-    {:ok, modules} = :application.get_key(:panoptes, :modules)
+    {:ok, modules} = :application.get_key(:argus_beam, :modules)
 
     fixtures =
       modules

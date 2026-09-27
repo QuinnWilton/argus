@@ -15,7 +15,7 @@ defmodule Argus.Clientlib.OrderTest do
 
   @moduletag :tmp_dir
 
-  defp priv_dl, do: Path.join(:code.priv_dir(:panoptes), "dl")
+  defp priv_dl, do: Path.join(:code.priv_dir(:argus_beam), "dl")
 
   # Every call and receive is asked about (a branch is never asked of),
   # so the rows are the whole relation.

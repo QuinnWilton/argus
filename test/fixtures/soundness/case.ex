@@ -34,7 +34,7 @@ defmodule Argus.Test.Soundness.Case do
   @doc "The modules compiled from a fixture file under test/fixtures/soundness."
   @spec modules(String.t()) :: [module()]
   def modules(file) do
-    {:ok, mods} = :application.get_key(:panoptes, :modules)
+    {:ok, mods} = :application.get_key(:argus_beam, :modules)
 
     mods
     |> Enum.filter(fn m ->

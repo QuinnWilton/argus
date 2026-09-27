@@ -135,7 +135,7 @@ defmodule Argus.CLI do
 
   defp mix_project(root) do
     "#{root} is a Mix project: run `mix argus` in it " <>
-      "(with {:panoptes, ...} among its dependencies), which compiles it first"
+      "(with {:argus_beam, ...} among its dependencies), which compiles it first"
   end
 
   defp load(kind, root, options) do
@@ -376,8 +376,8 @@ defmodule Argus.CLI do
   @doc "argus's version, the runtime's, and the solver's."
   @spec version() :: String.t()
   def version do
-    _ = Application.load(:panoptes)
-    vsn = Application.spec(:panoptes, :vsn) || ~c"unknown"
+    _ = Application.load(:argus_beam)
+    vsn = Application.spec(:argus_beam, :vsn) || ~c"unknown"
 
     souffle =
       case Argus.Souffle.executable() do

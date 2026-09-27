@@ -23,7 +23,7 @@ defmodule Argus.Graph.Identity.SchemaReadsTest do
   # The modules every query's code version leaves out: exactly those
   # whose every export this checks.
   defp schema_modules do
-    for mod <- Application.spec(:panoptes, :modules),
+    for mod <- Application.spec(:argus_beam, :modules),
         Argus.Graph.Reads.schema_module?(mod),
         do: mod
   end

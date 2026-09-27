@@ -53,7 +53,7 @@ defmodule Argus.Test.Graph do
   # fixture is loaded to be asked.
   defp find_parity do
     suffixes = Enum.map(@parity_sources, &("/test/fixtures/" <> &1))
-    ebin = :panoptes |> :code.lib_dir() |> List.to_string() |> Path.join("ebin")
+    ebin = :argus_beam |> :code.lib_dir() |> List.to_string() |> Path.join("ebin")
 
     paths =
       for beam <- Path.wildcard(Path.join(ebin, "*.beam")),

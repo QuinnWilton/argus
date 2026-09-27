@@ -120,7 +120,7 @@ defmodule Argus.Graph.CodeClosureTest do
   # dependencies' (roux, beam_spy, ctf, pentiment, telemetry).
   defp watched do
     argus =
-      for module <- Application.spec(:panoptes, :modules),
+      for module <- Application.spec(:argus_beam, :modules),
           name = Atom.to_string(module),
           String.starts_with?(name, "Elixir.Argus."),
           not String.starts_with?(name, "Elixir.Argus.Test."),
@@ -137,7 +137,7 @@ defmodule Argus.Graph.CodeClosureTest do
   defp allowed do
     {:ok, hook} = Roux.Code.closure([Argus.Graph.Reads])
 
-    Application.spec(:panoptes, :modules)
+    Application.spec(:argus_beam, :modules)
     |> Enum.filter(&Reads.schema_module?/1)
     |> Enum.concat([Argus.Graph.Reads | Enum.map(hook, &elem(&1, 0))])
     |> Enum.concat(Argus.Graph.modules())

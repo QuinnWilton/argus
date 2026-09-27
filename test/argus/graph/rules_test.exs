@@ -55,7 +55,7 @@ defmodule Argus.Graph.RulesTest do
     Peer.run(peer, fn ->
       root = Path.join(System.tmp_dir!(), "argus_dl_#{System.unique_integer([:positive])}")
       File.cp_r!(Argus.Analysis.Catalog.priv_dl(""), root)
-      Application.put_env(:panoptes, :dl_root, root)
+      Application.put_env(:argus_beam, :dl_root, root)
 
       try do
         db = Graph.new_db(Graph.use_parity!(paths), opts)
@@ -70,7 +70,7 @@ defmodule Argus.Graph.RulesTest do
           Roux.Database.shutdown(db)
         end
       after
-        Application.delete_env(:panoptes, :dl_root)
+        Application.delete_env(:argus_beam, :dl_root)
         File.rm_rf!(root)
       end
     end)

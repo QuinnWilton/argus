@@ -3,7 +3,7 @@ defmodule Argus.Analysis.Catalog do
   The built-in analyses: which modules implement `Argus.Analysis`, how
   to find one by name, what it declares, and where its rules live.
 
-  Discovery reads the `:panoptes` application's module list, keeping the
+  Discovery reads the `:argus_beam` application's module list, keeping the
   modules that export the behaviour's required callbacks, sorted by
   name. Nothing is cached: every lookup reads the module list again.
 
@@ -118,17 +118,20 @@ defmodule Argus.Analysis.Catalog do
   # :code.add_paths/1) never does. Loading is cheap, idempotent, and does
   # not start anything, so do it on demand rather than crash.
   defp argus_modules do
-    case :application.get_key(:panoptes, :modules) do
+    case :application.get_key(:argus_beam, :modules) do
       {:ok, modules} ->
         modules
 
       :undefined ->
-        case :application.load(:panoptes) do
-          ok when ok in [:ok, {:error, {:already_loaded, :panoptes}}] -> :ok
-          {:error, reason} -> raise "could not load the :panoptes application: #{inspect(reason)}"
+        case :application.load(:argus_beam) do
+          ok when ok in [:ok, {:error, {:already_loaded, :argus_beam}}] ->
+            :ok
+
+          {:error, reason} ->
+            raise "could not load the :argus_beam application: #{inspect(reason)}"
         end
 
-        {:ok, modules} = :application.get_key(:panoptes, :modules)
+        {:ok, modules} = :application.get_key(:argus_beam, :modules)
         modules
     end
   end

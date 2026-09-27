@@ -23,7 +23,7 @@ defmodule Argus.Dl do
   """
   @spec root() :: Path.t()
   def root do
-    case Application.get_env(:panoptes, :dl_root) do
+    case Application.get_env(:argus_beam, :dl_root) do
       nil -> shipped()
       root -> root
     end
@@ -53,7 +53,7 @@ defmodule Argus.Dl do
   # The application's own priv/dl, when it is a directory on disk that
   # holds the rules (it is not inside an escript's archive).
   defp priv_root do
-    with dir when is_list(dir) <- :code.priv_dir(:panoptes),
+    with dir when is_list(dir) <- :code.priv_dir(:argus_beam),
          root = Path.join(List.to_string(dir), "dl"),
          true <- File.regular?(Path.join(root, "base.dl")) do
       root

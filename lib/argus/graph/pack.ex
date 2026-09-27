@@ -329,7 +329,7 @@ defmodule Argus.Graph.Pack do
     ]
 
     opts =
-      case Application.get_env(:panoptes, :extraction_timeout) do
+      case Application.get_env(:argus_beam, :extraction_timeout) do
         nil -> opts
         ms -> Keyword.put(opts, :timeout, ms)
       end

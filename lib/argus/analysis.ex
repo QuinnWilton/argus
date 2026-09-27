@@ -38,7 +38,7 @@ defmodule Argus.Analysis do
   The code behind these lives in three modules, each delegated to from
   here: `Argus.Analysis.Sets` (concerns, sets and how a selection
   resolves), `Argus.Analysis.Catalog` (discovering the built-in modules
-  from the `:panoptes` application's module list, and their rules
+  from the `:argus_beam` application's module list, and their rules
   paths) and `Argus.Analysis.Extraction` (the facts directory: the
   pipeline, stage 0, priors).
 
@@ -88,7 +88,7 @@ defmodule Argus.Analysis do
   Without `finding/2`, each row is a generic `:info` finding carrying the
   relation's `doc` and the row's columns.
 
-  The built-ins are the modules of the `:panoptes` application, so a
+  The built-ins are the modules of the `:argus_beam` application, so a
   module defined elsewhere is not selectable by name. Solve its program
   with `run/3` and `{:custom, "path/to/unused.dl"}`, then turn the rows
   into findings with `Argus.Findings.build(MyApp.Analyses.Unused,

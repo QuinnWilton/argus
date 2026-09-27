@@ -144,7 +144,9 @@ defmodule Argus.Graph.SpecsTest do
 
     paths = Map.put(paths, @argus_caller, Path.join(ebin, "#{@argus_caller}.beam"))
     db = Graph.new_db(paths)
-    argus = :panoptes |> :code.lib_dir() |> List.to_string() |> Path.join("ebin") |> Path.expand()
+
+    argus =
+      :argus_beam |> :code.lib_dir() |> List.to_string() |> Path.join("ebin") |> Path.expand()
 
     try do
       for key <- Map.values(paths), do: {:ok, _} = Extraction.module_facts(db, key)

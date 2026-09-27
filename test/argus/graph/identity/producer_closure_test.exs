@@ -32,7 +32,7 @@ defmodule Argus.Graph.Identity.ProducerClosureTest do
   alias Argus.Graph.Reads
 
   @beams for(
-           mod <- Application.spec(:panoptes, :modules),
+           mod <- Application.spec(:argus_beam, :modules),
            String.starts_with?(Atom.to_string(mod), "Elixir.Argus.Test.Fixtures."),
            do: mod
          )
@@ -64,7 +64,7 @@ defmodule Argus.Graph.Identity.ProducerClosureTest do
   @measure ~S"""
   # The code, not the fixtures it reads.
   mods =
-    for app <- [:panoptes, :beam_spy, :ctf],
+    for app <- [:argus_beam, :beam_spy, :ctf],
         mod <- Application.spec(app, :modules) || [],
         not String.starts_with?(Atom.to_string(mod), ["Elixir.Argus.Test.", "Elixir.Inspect."]),
         do: mod
@@ -119,7 +119,7 @@ defmodule Argus.Graph.Identity.ProducerClosureTest do
     executed =
       try do
         :ok = :peer.call(peer, :code, :add_pathsa, [:code.get_path()])
-        {:ok, _} = :peer.call(peer, :application, :ensure_all_started, [:panoptes])
+        {:ok, _} = :peer.call(peer, :application, :ensure_all_started, [:argus_beam])
         binding = [beams: paths, producers: producers]
         {executed, _} = :peer.call(peer, Elixir.Code, :eval_string, [@measure, binding], 300_000)
         executed

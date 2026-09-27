@@ -29,7 +29,7 @@ defmodule Argus.Souffle.UncommentedTest do
     tmp_dir: tmp
   } do
     dl = Path.join(tmp, "dl")
-    File.cp_r!(Path.join(:code.priv_dir(:panoptes), "dl"), dl)
+    File.cp_r!(Path.join(:code.priv_dir(:argus_beam), "dl"), dl)
     programs = Path.wildcard(Path.join(dl, "analyses/*.dl")) ++ [Path.join(dl, "stage0.dl")]
     before = Map.new(programs, &{&1, Program.declared_digest(&1, :all)})
 
@@ -46,7 +46,7 @@ defmodule Argus.Souffle.UncommentedTest do
 
     # The solver agrees: the same outputs over the fixtures' facts.
     unless Argus.Souffle.available?(), do: flunk("souffle not installed")
-    shipped = Path.join(:code.priv_dir(:panoptes), "dl")
+    shipped = Path.join(:code.priv_dir(:argus_beam), "dl")
     modules = [Argus.Test.Fixtures.EtsBounded, Argus.Test.Fixtures.MissingRow, :gen_server]
     analyses = [:races, :mailbox, :startup]
     {:ok, facts} = Argus.Analysis.extract_facts(modules, analyses)

@@ -6,6 +6,25 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## 0.20.0-dev — unreleased
 
+### The package is `argus_beam`
+
+**Breaking.** The Hex package and the OTP application are renamed
+`panoptes` → `argus_beam` (`argus` is taken on Hex); the modules keep
+the `Argus` namespace. `panoptes` is retired on Hex with a pointer here;
+0.13.0 is its last release there. What a caller changes:
+
+- The dependency `{:panoptes, ...}` (from Hex, or a git tag of 0.14 to
+  0.19) becomes `{:argus_beam, "~> 0.20"}`.
+- Anything that names the application names `:argus_beam`:
+  `Application.spec(:panoptes, :vsn)` becomes
+  `Application.spec(:argus_beam, :vsn)`, and so do
+  `:code.priv_dir(:panoptes)`, `Application.app_dir(:panoptes, ...)`
+  and the application environment (`config :argus_beam, ...`).
+- The escript installs with `mix escript.install hex argus_beam`; it is
+  still `argus`, and so is everything else a user types: the `:argus`
+  compiler, `mix argus`, `argus:` configuration and the `rebar3_argus`
+  plugin.
+
 ### The fold: scry's query graph is argus's only backend
 
 scry, the analysis-only Mix compiler, is folded into argus, and its roux

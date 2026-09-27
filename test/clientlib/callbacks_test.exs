@@ -10,7 +10,7 @@ defmodule Argus.Clientlib.CallbacksTest do
     unless Souffle.available?(), do: flunk("souffle not installed")
   end
 
-  defp priv_dl, do: Path.join(:code.priv_dir(:panoptes), "dl")
+  defp priv_dl, do: Path.join(:code.priv_dir(:argus_beam), "dl")
 
   describe "callbacks.dl" do
     @tag :tmp_dir

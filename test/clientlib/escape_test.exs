@@ -30,7 +30,7 @@ defmodule Argus.Clientlib.EscapeTest do
     Escape.ErpcCaughtAsExit
   ]
 
-  defp priv_dl, do: Path.join(:code.priv_dir(:panoptes), "dl")
+  defp priv_dl, do: Path.join(:code.priv_dir(:argus_beam), "dl")
 
   setup_all do
     unless Souffle.available?(), do: flunk("souffle not installed")

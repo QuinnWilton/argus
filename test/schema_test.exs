@@ -5,7 +5,7 @@ defmodule Argus.SchemaTest do
 
   describe "the concern modules" do
     defp concerns do
-      for mod <- Application.spec(:panoptes, :modules),
+      for mod <- Application.spec(:argus_beam, :modules),
           String.starts_with?(Atom.to_string(mod), "Elixir.Argus.Schema."),
           Code.ensure_loaded?(mod),
           function_exported?(mod, :relations, 0),

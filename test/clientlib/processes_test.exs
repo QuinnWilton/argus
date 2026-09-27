@@ -60,7 +60,7 @@ defmodule Argus.Clientlib.ProcessesTest do
     PidFlow.Nested
   ]
 
-  defp priv_dl, do: Path.join(:code.priv_dir(:panoptes), "dl")
+  defp priv_dl, do: Path.join(:code.priv_dir(:argus_beam), "dl")
 
   # The relations of processes.dl the points-to stage does not stage.
   @internal ~w(param_pts returns_pts self_pid statem_data_pts)

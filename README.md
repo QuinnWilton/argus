@@ -1,12 +1,13 @@
-# Panoptes
+# Argus
 
 [![CI](https://github.com/QuinnWilton/argus/actions/workflows/ci.yml/badge.svg)](https://github.com/QuinnWilton/argus/actions/workflows/ci.yml)
-[![Hex.pm](https://img.shields.io/hexpm/v/panoptes.svg)](https://hex.pm/packages/panoptes)
-[![Docs](https://img.shields.io/badge/docs-hexdocs-blue.svg)](https://hexdocs.pm/panoptes)
+[![Hex.pm](https://img.shields.io/hexpm/v/argus_beam.svg)](https://hex.pm/packages/argus_beam)
+[![Docs](https://img.shields.io/badge/docs-hexdocs-blue.svg)](https://hexdocs.pm/argus_beam)
 
-Whole-program BEAM analysis for subtle OTP and supervision bugs. The
-package is `panoptes` — Argus Panoptes, the hundred-eyed watchman — and
-its modules are `Argus.*`.
+Whole-program BEAM analysis for subtle OTP and supervision bugs, named
+for Argus Panoptes, the hundred-eyed watchman. The package is
+`argus_beam` on Hex (`argus` is taken; it was `panoptes` until 0.20),
+and its modules are `Argus.*`.
 
 Argus disassembles compiled `.beam` files, extracts facts from the bytecode,
 and evaluates [Souffle](https://souffle-lang.github.io/) Datalog rules to
@@ -18,7 +19,7 @@ deadlocks, leaked tasks, ETS misuse, atom-table exhaustion, and more.
 ```elixir
 def deps do
   [
-    {:panoptes, "~> 0.20"}
+    {:argus_beam, "~> 0.20"}
   ]
 end
 ```
@@ -59,7 +60,7 @@ Erlang/OTP and souffle on `PATH` and never builds the project (it reads
 the beams the build left, and says which sources are newer).
 
 ```sh
-mix escript.install hex panoptes       # or a release's `argus`, checked by its .sha256
+mix escript.install hex argus_beam     # or a release's `argus`, checked by its .sha256
 argus                                  # the project in the current directory
 argus path/to/project --all --format json
 argus --project beams --ebin path/to/ebin

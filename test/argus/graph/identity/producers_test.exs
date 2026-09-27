@@ -24,7 +24,7 @@ defmodule Argus.Graph.Identity.ProducersTest do
   # is one in twenty by a portable hash of the name, so adding a fixture
   # does not move the others in or out.
   @modules for(
-             mod <- Application.spec(:panoptes, :modules),
+             mod <- Application.spec(:argus_beam, :modules),
              String.starts_with?(Atom.to_string(mod), "Elixir.Argus.Test.Fixtures."),
              :erlang.phash2(mod, 20) == 0,
              do: mod
