@@ -78,6 +78,10 @@ defmodule Argus.Project.DriverTest do
     # gleam@dynamic's nil/0 extracts (its ID once came out malformed).
     assert result.notices == []
 
+    # gleam_app@@main (Gleam's own entry point, with a catch-all of its
+    # own) is not the project's code.
+    refute Enum.any?(entries, &String.contains?(&1.file, "@@main"))
+
     artefact = "build/dev/erlang/gleam_app/_gleam_artefacts/gleam_app@worker.erl"
     assert [spawned] = Enum.filter(entries, &(&1.title == "Unlinked process spawned"))
     assert at(spawned, root) == {artefact, 26}

@@ -110,6 +110,11 @@ defmodule Argus.ProjectTest do
       assert project.deps == [gleam_stdlib: Path.join(erlang, "gleam_stdlib/ebin")]
       assert project.state_dir == Path.join(root, "build/argus")
       assert project.build == "gleam build"
+
+      # Gleam's own entry point is watched, never analyzed.
+      scan = Argus.Project.Scan.scan(Argus.Config.load([]), project)
+      assert Map.keys(scan.ignored) == [:gleam_app@@main]
+      assert :gleam_app@worker in Map.keys(scan.modules)
     end
 
     test "a Gleam module is stale by its path's module name", %{tmp_dir: dir} do

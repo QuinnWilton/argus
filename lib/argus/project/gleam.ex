@@ -5,6 +5,10 @@ defmodule Argus.Project.Gleam do
   `gleam.toml` names, its dependencies every other package there, the
   state `build/argus`.
 
+  The `<package>@@main` module a Gleam build writes to run the package
+  (`gleam run`'s entry point) is its own code, not the project's: it is
+  watched, never analyzed.
+
   A documented limit: a Gleam module's beam records the Erlang source
   the compiler generated (`build/dev/erlang/<package>/_gleam_artefacts/
   <module>.erl`, the module named `package@module`), so findings point
@@ -38,7 +42,8 @@ defmodule Argus.Project.Gleam do
            deps: deps,
            state_dir: Keyword.get(opts, :state_dir) || Path.join([root, "build", "argus"]),
            build: "gleam build",
-           sources: for({^package, ebin} <- apps, do: {Path.join(root, "src"), ebin, :gleam})
+           sources: for({^package, ebin} <- apps, do: {Path.join(root, "src"), ebin, :gleam}),
+           generated: [~r/@@main$/]
          }}
       end
     end

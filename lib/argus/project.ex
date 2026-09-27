@@ -30,7 +30,7 @@ defmodule Argus.Project do
   """
 
   @enforce_keys [:kind, :root, :apps, :deps, :state_dir]
-  defstruct [:kind, :root, :apps, :deps, :state_dir, build: nil, sources: []]
+  defstruct [:kind, :root, :apps, :deps, :state_dir, build: nil, sources: [], generated: []]
 
   @typedoc "A build tool argus knows."
   @type kind :: :mix | :rebar3 | :gleam | :erlang_mk | :beams
@@ -42,7 +42,9 @@ defmodule Argus.Project do
   A project. Paths are absolute. `build` is the command that builds it
   (nil when argus does not know one); `sources` pairs each of the
   program's source directories with its ebin and its language, for
-  `stale/1`.
+  `stale/1`; `generated` matches the modules the build tool writes
+  itself (Gleam's `<package>@@main`), which are watched but never
+  analyzed, as `ignore: [modules: ...]` would leave them.
   """
   @type t :: %__MODULE__{
           kind: kind(),
@@ -51,7 +53,8 @@ defmodule Argus.Project do
           deps: [ebin()],
           state_dir: Path.t(),
           build: String.t() | nil,
-          sources: [{Path.t(), Path.t(), :erlang | :gleam}]
+          sources: [{Path.t(), Path.t(), :erlang | :gleam}],
+          generated: [Regex.t()]
         }
 
   @typedoc """

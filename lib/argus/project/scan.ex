@@ -44,17 +44,21 @@ defmodule Argus.Project.Scan do
 
   @doc """
   Discovers the beams to analyze: `module => beam_path` over the
-  project's program (`Argus.Project` `apps`) and, with `include_deps`,
-  its dependencies, plus the ignored modules, every module more than one
-  ebin defines, and the applications whose ebins were read.
+  project's program (`Argus.Project` `apps`; the current Mix project's by
+  default) and, with `include_deps`,
+  its dependencies, plus the ignored modules (the configuration's, and
+  the ones the build tool generates), every module more than one ebin
+  defines, and the applications whose ebins were read.
   """
   @spec scan(Argus.Config.t(), Argus.Project.t()) :: project_scan()
+  def scan(config, project \\ Argus.Project.Mix.current())
+
   def scan(%Argus.Config{} = config, %Argus.Project{} = project) do
     ebins = if config.include_deps, do: project.apps ++ project.deps, else: project.apps
 
     ebins
     |> Enum.map(&elem(&1, 1))
-    |> discover(config.ignore_modules)
+    |> discover(config.ignore_modules ++ project.generated)
     |> Map.put(:apps, ebins |> Enum.map(&elem(&1, 0)) |> Enum.uniq())
   end
 
