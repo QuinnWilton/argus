@@ -46,6 +46,11 @@ defmodule Argus.Analyses.EtsCheckActTest do
     C.HandedCounters,
     C.HandedCountersFixed,
     C.FetchedTable,
+    C.TwoTablesOneName,
+    C.NamedThroughHelper,
+    C.ProtectedThroughHelper,
+    C.EnsuredCache,
+    C.EnsuredTwoCaches,
     C.WindowCounters,
     C.GvarAccessors,
     C.GvarUsers,
@@ -438,6 +443,36 @@ defmodule Argus.Analyses.EtsCheckActTest do
     test "an unnamed public table handed to a helper by its reference", ctx do
       skip_without_souffle()
       assert [{"count/2", ":unnamed_counts", "1"} | _] = races(ctx, [C.UnnamedTable])
+    end
+
+    test "two unnamed tables made under one atom are two tables", ctx do
+      skip_without_souffle()
+      assert races(ctx, [C.TwoTablesOneName]) == []
+    end
+  end
+
+  describe "ets_check_act on the one table identity" do
+    test "a named table a helper makes is public by the helper's options", ctx do
+      skip_without_souffle()
+
+      assert [{"put_if_absent/2", ":helper_named", "0"}] =
+               races(ctx, [C.NamedThroughHelper])
+    end
+
+    test "the same table made :protected by the helper has one writer", ctx do
+      skip_without_souffle()
+      assert races(ctx, [C.ProtectedThroughHelper]) == []
+    end
+
+    test "a table a helper returns is the table its :ets.new/2 makes", ctx do
+      skip_without_souffle()
+
+      assert [{"put_if_absent/2", ":ensured_cache", "0"}] = races(ctx, [C.EnsuredCache])
+    end
+
+    test "two tables two helpers return are two tables", ctx do
+      skip_without_souffle()
+      assert races(ctx, [C.EnsuredTwoCaches]) == []
     end
   end
 

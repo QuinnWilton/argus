@@ -99,9 +99,3 @@ named_site(site) :- ets_option(site, "named_table", "true").
 
 has_heir(site) :- ets_option(site, "heir", "true").
 
-// An ETS table created :public under a name: any process can write it.
-.decl public_table(name: symbol) inline
-
-public_table(name) :-
-  ets_new(id, _, name),
-  ets_option(id, "access", "public").

@@ -887,6 +887,123 @@ defmodule Argus.Test.Fixtures.CheckThenAct do
     end
   end
 
+  defmodule TwoTablesOneName do
+    @moduledoc """
+    Two unnamed public tables made under one atom: the read of one decides
+    a write of the other. An unnamed table is its :ets.new/2 site, not the
+    atom it was given, so the two are not one row's table.
+    """
+    def copy(key) do
+      seen = :ets.new(:twice_named, [:public])
+      totals = :ets.new(:twice_named, [:public])
+
+      case :ets.lookup(seen, key) do
+        [] -> :ets.insert(totals, {key, 1})
+        [{^key, n}] -> :ets.insert(totals, {key, n + 1})
+      end
+    end
+  end
+
+  defmodule NamedThroughHelper do
+    @moduledoc """
+    hackney_ssl's key memo: the named table is made by a helper handed its
+    name, so its options are the helper's :ets.new/2 site's, under the name
+    the caller passes. The table is public, and the API reads a key and
+    inserts it when absent.
+    """
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+    @impl true
+    def init(state) do
+      ensure_table(:helper_named)
+      {:ok, state}
+    end
+
+    defp ensure_table(name), do: :ets.new(name, [:named_table, :public, :set])
+
+    def put_if_absent(key, value) do
+      case :ets.lookup(:helper_named, key) do
+        [] -> :ets.insert(:helper_named, {key, value})
+        _ -> false
+      end
+    end
+  end
+
+  defmodule ProtectedThroughHelper do
+    @moduledoc "NamedThroughHelper's table made :protected: one writer, its owner."
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+    @impl true
+    def init(state) do
+      ensure_table(:helper_protected)
+      {:ok, state}
+    end
+
+    defp ensure_table(name), do: :ets.new(name, [:named_table, :protected, :set])
+
+    def put_if_absent(key, value) do
+      case :ets.lookup(:helper_protected, key) do
+        [] -> :ets.insert(:helper_protected, {key, value})
+        _ -> false
+      end
+    end
+  end
+
+  defmodule EnsuredCache do
+    @moduledoc """
+    blockster's PromoQA rate limit: the table is what a helper returns, the
+    named public table it makes when `:ets.whereis/1` finds none. Points-to
+    follows the helper's return to the :ets.new/2, so the read and the write
+    touch that one table.
+    """
+    def put_if_absent(key, value) do
+      table = table()
+
+      case :ets.lookup(table, key) do
+        [] -> :ets.insert(table, {key, value})
+        _ -> false
+      end
+    end
+
+    defp table do
+      case :ets.whereis(:ensured_cache) do
+        :undefined -> :ets.new(:ensured_cache, [:named_table, :public, :set])
+        ref -> ref
+      end
+    end
+  end
+
+  defmodule EnsuredTwoCaches do
+    @moduledoc """
+    EnsuredCache's shape with two tables, each returned by a helper of its
+    own: the read of one decides a write of the other, two tables.
+    """
+    def copy_if_absent(key, value) do
+      case :ets.lookup(seen(), key) do
+        [] -> :ets.insert(totals(), {key, value})
+        _ -> false
+      end
+    end
+
+    defp seen do
+      case :ets.whereis(:ensured_seen) do
+        :undefined -> :ets.new(:ensured_seen, [:named_table, :public, :set])
+        ref -> ref
+      end
+    end
+
+    defp totals do
+      case :ets.whereis(:ensured_totals) do
+        :undefined -> :ets.new(:ensured_totals, [:named_table, :public, :set])
+        ref -> ref
+      end
+    end
+  end
+
   defmodule DifferentKeys do
     @moduledoc "The read and the write name different keys."
     use GenServer

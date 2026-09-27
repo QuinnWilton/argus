@@ -16,7 +16,7 @@
 // exists (ets_publish_order).
 //
 // Which table an ETS operation touches is clientlib/tables.dl's
-// ets_table, for the rules that ask across functions and modules.
+// ets_table, the one identity (EtsTable) every rule below compares.
 //
 // The check-then-act rules are CheckThenAct instances
 // (clientlib/check_then_act.dl), which says where a check's result meets
@@ -308,11 +308,23 @@ plain_write_op("delete").
 plain_write_op("delete_object").
 plain_write_op("update_element").
 
-// The table in the operation's own function's terms.
+// The table in the operation's own function's terms: the parameter it
+// is handed, which CheckThenAct renames at each call, so a helper called
+// with two tables pairs each call's own; or else the tables it may touch
+// (clientlib/tables.dl), each as its kind's source (table_source).
 .decl ets_table_ident(id: symbol, ts: symbol, t: symbol)
 
-ets_table_ident(id, "literal", name) :- ets_op(id, _, name, _, _), name != "dynamic".
 ets_table_ident(id, "param", to_string(p)) :- ets_op(id, _, "dynamic", _, _), ets_op_param(id, p).
+
+ets_table_ident(id, ts, t) :-
+  ets_op(id, _, _, _, _),
+  !handed_table(id),
+  ets_table(id, k, t),
+  table_source(k, ts).
+
+.decl handed_table(id: symbol)
+
+handed_table(id) :- ets_op(id, _, "dynamic", _, _), ets_op_param(id, _).
 
 rows.check(read, func, table_kind, table, key_kind, key) :-
   deciding_read(read, func),
@@ -424,62 +436,30 @@ reported_at(f, op, c) :- accessor_call(f, op, c).
 reported_at(f, op, op) :- rows.meets(f, op, _, _, _, _, _), !accessor_call(f, op, _).
 reported_at(f, op, op) :- rows.meets(f, _, op, _, _, _, _), !accessor_call(f, op, _).
 
-// The table a parameter holds where a pair meets on it: a name a caller
-// passes there, or the reference :ets.new returned in a caller, through
-// any forwarding. Asked only for the parameters a pair meets on.
-.decl pair_param_needed(func: symbol, pos: symbol)
-
-pair_param_needed(f, p) :- rows.meets(f, _, _, "param", p, _, _).
-pair_param_needed(f, p) :- records.meets(f, _, _, "param", p, _, _).
-
-pair_param_needed(c, to_string(m)) :-
-  pair_param_needed(f, p),
-  call_arg_forward(c, f, n, m),
-  p = to_string(n).
-
-.decl table_at_param(func: symbol, pos: symbol, name: symbol)
-
-table_at_param(f, p, name) :-
-  pair_param_needed(f, p),
-  call_arg(_, f, n, name),
-  name != "dynamic",
-  p = to_string(n).
-
-table_at_param(f, p, name) :-
-  pair_param_needed(f, p),
-  ets_tid_arg(_, f, n, name),
-  p = to_string(n).
-
-table_at_param(f, p, name) :-
-  pair_param_needed(f, p),
-  call_arg_forward(c, f, n, m),
-  p = to_string(n),
-  table_at_param(c, to_string(m), name).
-
 // In `func`, the read's result decides whether the write runs, or feeds
 // what it stores, on one row (CheckThenAct's meets, followed across
-// calls). The row's table is known by its name ("by_name": the atom it
-// was created under, or the name an unnamed table was created with,
-// through the parameters it is passed in) or, when the program's users
-// hand it in, by the function and the parameter it arrives in
-// ("handed_in", below).
+// calls). The row's table is the one identity (EtsTable,
+// clientlib/tables.dl) of what the pair meets on in func: a table named
+// the same in every function, or func's parameter, which holds what its
+// callers pass (param_table: a name, a reference made in a caller, or
+// the table the program's users hand in, below).
 .decl decides_write(func: symbol, read: symbol, write: symbol, row: EtsRow)
 
-decides_write(f, r, w, [["by_name", name], ks, k]) :- rows.meets(f, r, w, "literal", name, ks, k).
+decides_write(f, r, w, [table, ks, k]) :-
+  rows.meets(f, r, w, ts, t, ks, k),
+  table_in(f, ts, t, table).
 
-decides_write(f, r, w, [["by_name", name], ks, k]) :-
-  rows.meets(f, r, w, "param", p, ks, k),
-  table_at_param(f, p, name).
+// The table a pair meets on in `func`, from how func's terms name it.
+.decl table_in(func: symbol, source: symbol, ident: symbol, table: EtsTable)
 
-decides_write(f, r, w, [["handed_in", name], ks, k]) :-
-  rows.meets(f, r, w, "param", p, ks, k),
-  open_table(f, p, name).
+table_in(f, ts, t, [k, t]) :- rows.meets(f, _, _, ts, t, _, _), table_source(k, ts).
+table_in(f, "param", p, [k, t]) :- rows.meets(f, _, _, "param", p, _, _), param_table(f, p, k, t).
 
-// The same pairs, by the table's name and the key alone: what the
-// rivals and the harms below are asked of.
-.decl reads_then_writes(func: symbol, read: symbol, write: symbol, name: symbol, key: symbol)
+// The same pairs, by the table and the key alone: what the rivals and
+// the harms below are asked of.
+.decl reads_then_writes(func: symbol, read: symbol, write: symbol, table: EtsTable, key: symbol)
 
-reads_then_writes(f, r, w, name, k) :- decides_write(f, r, w, [[_, name], _, k]).
+reads_then_writes(f, r, w, table, k) :- decides_write(f, r, w, [table, _, k]).
 
 // ── A table the program's users hand in ──
 //
@@ -487,49 +467,14 @@ reads_then_writes(f, r, w, name, k) :- decides_write(f, r, w, [[_, name], _, k])
 // of its own, up to an exported function of a module the rest of the
 // program does not call into — holds whatever table the program's users
 // pass: Hammer's `hit(table, key, ...)`, which `use Hammer` calls with
-// the user's own table. Nothing in view names it, so it is named by the
-// function and the parameter it arrives in, and is one table only within
-// that function. Where it was made, and with which options, is out of
-// view; what is in view is that the function writes it from every
-// caller's process, which a protected or private table refuses in all
-// but its owner's. A function more than one process runs is reported on
-// it as on a public table (ets_check_act); one process's is not, since
-// no other writer of a table nothing names can be found: its only rival
-// is the pair itself, in a second process.
-.decl pair_param_filled(func: symbol, pos: symbol)
-
-pair_param_filled(f, p) :- pair_param_needed(f, p), call_arg(_, f, n, _), p = to_string(n).
-pair_param_filled(f, p) :- pair_param_needed(f, p), ets_tid_arg(_, f, n, _), p = to_string(n).
-
-pair_param_filled(f, p) :-
-  pair_param_needed(f, p),
-  call_arg_forward(c, f, n, m),
-  p = to_string(n),
-  pair_param_filled(c, to_string(m)).
-
-// The parameter reaches the function from a caller outside the program:
-// the function is such a caller's way in (library_face,
-// clientlib/ways_in.dl: exported, in a module no other module of the
-// program calls; and not a callback the runtime calls with what the
-// program's own init returned), or is handed it by one.
-.decl table_from_outside(func: symbol, pos: symbol)
-
-table_from_outside(f, p) :-
-  pair_param_needed(f, p),
-  library_face(f),
-  !process_entry(_, f).
-
-table_from_outside(f, p) :-
-  pair_param_needed(f, p),
-  call_arg_forward(c, f, n, m),
-  p = to_string(n),
-  table_from_outside(c, to_string(m)).
-
-.decl open_table(func: symbol, pos: symbol, name: symbol)
-
-open_table(f, p, cat("param ", p, " of ", f)) :-
-  table_from_outside(f, p),
-  !pair_param_filled(f, p).
+// the user's own table (clientlib/tables.dl's "handed_in" table, named
+// by that way in and its parameter). Where it was made, and with which
+// options, is out of view; what is in view is that the function writes
+// it from every caller's process, which a protected or private table
+// refuses in all but its owner's. A function more than one process runs
+// is reported on it as on a public table (ets_check_act); one process's
+// is not, since the only other writers of a table nothing names are the
+// functions its way in forwards it to.
 
 runs.seed(f) :- reads_then_writes(f, _, _, _, _).
 
@@ -557,33 +502,19 @@ runs.seed(f) :- reads_then_writes(f, _, _, _, _).
 // key they pass". A write that mints its key where it makes the row
 // (a reference, a monitor, a unique integer or a random value) makes a
 // row no one could have read before: it is no rival of any pair.
-.decl rival_table(name: symbol)
+.decl rival_table(table: EtsTable)
 
-rival_table(name) :- reads_then_writes(_, _, _, name, _).
+rival_table(table) :- reads_then_writes(_, _, _, table, _).
 
-// The table a write or a counter bump touches, by name.
-.decl ets_op_table(id: symbol, name: symbol)
+// The tables a write or a counter bump may touch (clientlib/tables.dl).
+.decl ets_op_table(id: symbol, table: EtsTable)
 
-ets_op_table(id, name) :- ets_op(id, _, name, _, _), name != "dynamic".
-
-ets_op_table(id, name) :-
-  ets_op(id, f, "dynamic", _, _),
-  ets_op_param(id, p),
-  table_at_param(f, to_string(p), name).
-
-ets_op_table(id, name) :-
-  ets_op(id, f, "dynamic", _, _),
-  ets_op_param(id, p),
-  open_table(f, to_string(p), name).
-
-pair_param_needed(f, to_string(p)) :-
-  ets_op(id, f, "dynamic", _, "write"),
-  ets_op_param(id, p).
+ets_op_table(id, [k, t]) :- ets_table(id, k, t), ets_op(id, _, _, _, _).
 
 // A write of a table some pair touches, in the function holding it.
-.decl table_write(write: symbol, func: symbol, name: symbol)
+.decl table_write(write: symbol, func: symbol, table: EtsTable)
 
-table_write(w, g, name) :- ets_op(w, g, _, _, "write"), ets_op_table(w, name), rival_table(name).
+table_write(w, g, table) :- ets_op(w, g, _, _, "write"), ets_op_table(w, table), rival_table(table).
 
 // The key a write names, made in the write's own function. A key made
 // by a call that mints it is "minted": no other key equals it.
@@ -596,50 +527,50 @@ write_key(w, ks, k) :- table_write(w, _, _), op_key(w, ks, k), !minted_key(w).
 // objects, deleting the table) touches any row.
 write_key(w, "any", "") :- table_write(w, _, _), !op_key(w, _, _).
 
-// rival_write(w, h, name, ks, k): calling `h` may make write `w` of
-// table `name`, at the row h names (ks, k).
-.decl rival_write(write: symbol, func: symbol, name: symbol, key_kind: symbol, key: symbol)
+// rival_write(w, h, table, ks, k): calling `h` may make write `w` of
+// `table`, at the row h names (ks, k).
+.decl rival_write(write: symbol, func: symbol, table: EtsTable, key_kind: symbol, key: symbol)
 
-rival_write(w, g, name, ks, k) :- table_write(w, g, name), write_key(w, ks, k), ks != "param".
+rival_write(w, g, table, ks, k) :- table_write(w, g, table), write_key(w, ks, k), ks != "param".
 
 // A parameter key, carried up to every caller that fills it.
-.decl param_write(write: symbol, func: symbol, name: symbol, pos: symbol)
+.decl param_write(write: symbol, func: symbol, table: EtsTable, pos: symbol)
 
-param_write(w, g, name, q) :- table_write(w, g, name), write_key(w, "param", q).
+param_write(w, g, table, q) :- table_write(w, g, table), write_key(w, "param", q).
 
-param_write(w, h, name, to_string(p)) :-
-  param_write(w, g, name, q),
+param_write(w, h, table, to_string(p)) :-
+  param_write(w, g, table, q),
   call_arg_forward(h, g, n, p),
   q = to_string(n).
 
-rival_write(w, h, name, "literal", v) :-
-  param_write(w, g, name, q),
+rival_write(w, h, table, "literal", v) :-
+  param_write(w, g, table, q),
   call_arg(h, g, n, v),
   v != "dynamic",
   q = to_string(n).
 
 // A tuple the caller builds: `add({tab, :where_to_write}, v)`.
-rival_write(w, h, name, "tuple", "") :-
-  param_write(w, g, name, q),
+rival_write(w, h, table, "tuple", "") :-
+  param_write(w, g, table, q),
   call_arg_tuple(h, g, n, _, _, _),
   q = to_string(n).
 
 // Anything else a caller computes is a key the facts cannot name.
-rival_write(w, h, name, "dynamic", "") :-
-  param_write(w, g, name, q),
+rival_write(w, h, table, "dynamic", "") :-
+  param_write(w, g, table, q),
   call_arg(h, g, n, "dynamic"),
   q = to_string(n).
 
-rival_write(w, h, name, "element", "") :-
-  param_write(w, g, name, q),
+rival_write(w, h, table, "element", "") :-
+  param_write(w, g, table, q),
   call_arg_element(h, g, n, _, _),
   q = to_string(n).
 
 // A function callers outside the program call writes whatever key they
 // pass; so does one whose parameter no call in view fills (a closure
 // handed to Enum.each, a function applied or taken as a fun).
-rival_write(w, g, name, "param", q) :- param_write(w, g, name, q), outside_entry(g).
-rival_write(w, g, name, "param", q) :- param_write(w, g, name, q), !param_filled(g, q).
+rival_write(w, g, table, "param", q) :- param_write(w, g, table, q), outside_entry(g).
+rival_write(w, g, table, "param", q) :- param_write(w, g, table, q), !param_filled(g, q).
 
 .decl param_filled(func: symbol, pos: symbol)
 
@@ -706,12 +637,10 @@ computed_in_view("element").
 computed_in_view(ks) :- rival_write(_, _, _, ks, _), match("element [0-9]+", ks).
 
 // The key a pair meets on, in the meeting function's terms, and the
-// table it is on by name.
-.decl pair_key(func: symbol, name: symbol, key_kind: symbol, key: symbol)
+// table it is on.
+.decl pair_key(func: symbol, table: EtsTable, key_kind: symbol, key: symbol)
 
-pair_key(f, name, ks, k) :- rows.meets(f, _, _, "literal", name, ks, k).
-pair_key(f, name, ks, k) :- rows.meets(f, _, _, "param", p, ks, k), table_at_param(f, p, name).
-pair_key(f, name, ks, k) :- rows.meets(f, _, _, "param", p, ks, k), open_table(f, p, name).
+pair_key(f, table, ks, k) :- decides_write(f, _, _, [table, ks, k]).
 
 .decl pair_key_of(func: symbol, read: symbol, write: symbol, key_kind: symbol, key: symbol)
 
@@ -745,16 +674,16 @@ writes_after_start(g) :- runs.spawned(_, _, r), writer_walk.reaches(r, g).
 .decl concurrent(func: symbol, rival_func: symbol, rival_write: symbol)
 
 concurrent(f, h, w2) :-
-  reads_then_writes(f, _, _, name, _),
+  reads_then_writes(f, _, _, table, _),
   !runs.single_process(f),
-  rival_write(w2, h, name, _, _),
+  rival_write(w2, h, table, _, _),
   writes_after_start(h).
 
 concurrent(f, h, w2) :-
-  reads_then_writes(f, _, _, name, _),
+  reads_then_writes(f, _, _, table, _),
   runs.single_process(f),
   runs.entry_reaches(m, f),
-  rival_write(w2, h, name, _, _),
+  rival_write(w2, h, table, _, _),
   table_write(w2, g, _),
   runs.runs_beside_up(m, f, h, g).
 
@@ -776,9 +705,9 @@ rival(f, r, w, w, f) :-
   !held_row(w).
 
 rival(f, r, w, w2, h) :-
-  reads_then_writes(f, r, w, name, _),
+  reads_then_writes(f, r, w, table, _),
   pair_key_of(f, r, w, ks, k),
-  rival_write(w2, h, name, ks2, k2),
+  rival_write(w2, h, table, ks2, k2),
   w2 != w,
   !keys_apart(ks, k, ks2, k2),
   concurrent(f, h, w2).
@@ -792,19 +721,19 @@ rival(f, r, w, w2, h) :-
 // process runs it too (concurrent): set_count/1, called by the owner's
 // increment and by a resetter's timer.
 rival(f, r, w, w, h) :-
-  reads_then_writes(f, r, w, name, _),
+  reads_then_writes(f, r, w, table, _),
   runs.single_process(f),
   pair_key_of(f, r, w, ks, k),
-  rival_write(w, h, name, ks2, k2),
+  rival_write(w, h, table, ks2, k2),
   h != f,
   !keys_apart(ks, k, ks2, k2),
   concurrent(f, h, w).
 
 rival(f, r, w, w, h) :-
-  reads_then_writes(f, r, w, name, _),
+  reads_then_writes(f, r, w, table, _),
   !runs.single_process(f),
   pair_key_of(f, r, w, ks, k),
-  rival_write(w, h, name, ks2, k2),
+  rival_write(w, h, table, ks2, k2),
   !writer_walk.reaches(f, h),
   !writer_walk.reaches(h, f),
   !keys_apart(ks, k, ks2, k2),
@@ -1138,12 +1067,12 @@ decides_more(f, r, w) :-
   effect_decided(g, kind, src).
 
 decides_more(f, r, w) :-
-  reads_then_writes(f, r, w, name, _),
+  reads_then_writes(f, r, w, table, _),
   pair_path(f, r, g),
   rows.carries(g, kind, src, r, _, _, _, _),
   site_depends(s, g, kind, src),
   s != w,
-  other_state_write(s, name).
+  other_state_write(s, table).
 
 decides_more(f, r, w) :- reads_then_writes(f, r, w, _, _), row_sends.sends(f, r).
 
@@ -1158,10 +1087,15 @@ decides_more(f, r, w) :- reads_then_writes(f, r, w, _, _), row_sends.sends(f, r)
 // the miss, and is how the copy is made, not more.
 decides_more(f, r, w) :-
   decision_hands(f, r, w, h),
-  reads_then_writes(f, r, w, name, _),
+  reads_then_writes(f, r, w, table, _),
   decision_reach.reaches(h, k),
-  changes_state_in(k, name2),
-  name2 != name.
+  changes_table(k, table2),
+  table2 != table.
+
+decides_more(f, r, w) :-
+  decision_hands(f, r, w, h),
+  decision_reach.reaches(h, k),
+  changes_other_state(k).
 
 // The helpers a pair's decision hands a value that carries the read, on
 // the pair's path, by data (call_arg_reads).
@@ -1179,28 +1113,32 @@ decision_hands(f, r, w, h) :-
 decision_reach.root(h, h) :- decision_hands(_, _, _, h).
 decision_reach.cut(f, g) :- side_call(f, g).
 
-// changes_state_in(func, name): func writes the ETS table `name`, or
-// changes something else a process or the outside world acts on ("*"):
-// another store, a registration, a message, a call or cast to a peer, a
-// runtime write of a process, a port, a file, the network or a node
-// (Argus.Extractors.Dependence's effect_decided, whatever decides it).
-.decl changes_state_in(func: symbol, name: symbol)
+// changes_table(func, table): func writes the ETS table `table`.
+.decl changes_table(func: symbol, table: EtsTable)
 
-changes_state_in(k, name) :- ets_op(s, k, _, _, "write"), ets_op_table(s, name).
-changes_state_in(k, "*") :- shared_write(s), !ets_op(s, _, _, _, _), (mnesia_op(s, k, _, _, _, _, _, _) ; creating_op(s, k, _, _, _, _) ; name_release(s, k, _, _, _)).
-changes_state_in(k, "*") :- delivers_message(k).
+changes_table(k, table) :- ets_op(s, k, _, _, "write"), ets_op_table(s, table).
 
-changes_state_in(k, "*") :-
+// changes_other_state(func): func changes something else a process or
+// the outside world acts on: another store, a registration, a message, a
+// call or cast to a peer, a runtime write of a process, a port, a file,
+// the network or a node (Argus.Extractors.Dependence's effect_decided,
+// whatever decides it).
+.decl changes_other_state(func: symbol)
+
+changes_other_state(k) :- shared_write(s), !ets_op(s, _, _, _, _), (mnesia_op(s, k, _, _, _, _, _, _) ; creating_op(s, k, _, _, _, _) ; name_release(s, k, _, _, _)).
+changes_other_state(k) :- delivers_message(k).
+
+changes_other_state(k) :-
   impure_call(_, k, _, category, "write"),
   (category = "io" ; category = "process" ; category = "port" ; category = "node" ; category = "network" ; category = "code_loading").
 
 // A write of shared state other than the pair's table: the same table's
 // other writes under the decision are the race's own (its other branch,
 // or a later write of it), not more.
-.decl other_state_write(site: symbol, name: symbol)
+.decl other_state_write(site: symbol, table: EtsTable)
 
-other_state_write(s, name) :- rival_table(name), ets_op(s, _, _, _, "write"), ets_op_table(s, name2), name2 != name.
-other_state_write(s, name) :- rival_table(name), shared_write(s), !ets_op(s, _, _, _, _).
+other_state_write(s, table) :- rival_table(table), ets_op(s, _, _, _, "write"), ets_op_table(s, table2), table2 != table.
+other_state_write(s, table) :- rival_table(table), shared_write(s), !ets_op(s, _, _, _, _).
 
 .decl shared_write(site: symbol)
 
@@ -1413,11 +1351,11 @@ held_row(w) :-
 .type RivalWrite = [write: symbol, func: symbol]
 
 // The row's table is one any process can write: created :public
-// (public_table, clientlib/vocabulary.dl), or handed in by the program's
+// (table_public, clientlib/tables.dl), or handed in by the program's
 // users, which the function writes from every caller's process (above).
 .decl on_public_table(row: EtsRow)
 
-on_public_table([["by_name", t], ks, k]) :- decides_write(_, _, _, [["by_name", t], ks, k]), public_table(t).
+on_public_table([[tk, t], ks, k]) :- decides_write(_, _, _, [[tk, t], ks, k]), table_public(tk, t).
 on_public_table([["handed_in", t], ks, k]) :- decides_write(_, _, _, [["handed_in", t], ks, k]).
 
 // Another process's write can land on the pair's row between the read
@@ -1449,21 +1387,32 @@ read_then_write_race(func, read, write, row, harm) :-
 // calls to the accessors holding them.
 .decl ets_race(mod: symbol, func: symbol, name: symbol, key: symbol, read: symbol, write: symbol, kind: symbol)
 
-ets_race(mod, func, table, key, read_at, write_at, harm) :-
-  read_then_write_race(func, read, write, [["by_name", table], _, key], harm),
+ets_race(mod, func, name, key, read_at, write_at, harm) :-
+  read_then_write_race(func, read, write, [table, _, key], harm),
+  table_shown_as(func, table, name),
   reported_at(func, read, read_at),
   reported_at(func, write, write_at),
   in_module(func, mod).
 
-// On a table the program's users hand in, the table is spelled by the
-// parameter it arrives in, counted from 0 as a key's is ("param 0"):
-// nothing names it.
-ets_race(mod, func, cat("param ", p), key, read_at, write_at, harm) :-
-  read_then_write_race(func, read, write, [["handed_in", table], _, key], harm),
-  open_table(func, p, table),
-  reported_at(func, read, read_at),
-  reported_at(func, write, write_at),
-  in_module(func, mod).
+// How a finding spells its table: a named table by its name, an unnamed
+// one by the name its :ets.new/2 gave it, a field table by the names its
+// sites gave it, and a table the program's users hand in by the
+// parameter of `func` it arrives in, counted from 0 as a key's is
+// ("param 0"): nothing names it.
+.decl table_shown_as(func: symbol, table: EtsTable, name: symbol)
+
+table_shown_as(f, ["named", t], t) :- decides_write(f, _, _, [["named", t], _, _]).
+
+table_shown_as(f, [tk, t], name) :-
+  decides_write(f, _, _, [[tk, t], _, _]),
+  tk != "named",
+  tk != "handed_in",
+  table_made_at(tk, t, n),
+  ets_new(n, _, name).
+
+table_shown_as(f, ["handed_in", t], cat("param ", p)) :-
+  decides_write(f, _, _, [["handed_in", t], _, _]),
+  param_table(f, p, "handed_in", t).
 
 // How much an interleaving costs, strongest first: the finding is
 // reported at its strongest harm.
@@ -2141,7 +2090,10 @@ dirty_read_then_write_race(func, read, write, [table, key], harm) :-
   !serialized_by_lock(func, table),
   harms_record(func, read, write, harm).
 
-// A record: a Mnesia table, by name, and a key of it.
+// A record: a Mnesia table, by name, and a key of it. A Mnesia table is
+// not an EtsTable: it has a name and nothing else (no reference to
+// follow, no unnamed kind), one name the whole cluster shares, and an
+// ETS table of the same name is another table.
 .type MnesiaRecord = [table: symbol, key: symbol]
 
 // In `func`, the dirty read's result decides whether the dirty write
@@ -2178,8 +2130,34 @@ dirty_write_op("dirty_delete_object").
 .decl reads_then_writes_record(func: symbol, read: symbol, write: symbol, table: symbol, key: symbol)
 
 reads_then_writes_record(f, r, w, t, k) :- records.meets(f, r, w, "literal", t, _, k).
-reads_then_writes_record(f, r, w, t, k) :- records.meets(f, r, w, "param", p, _, k), table_at_param(f, p, t).
+reads_then_writes_record(f, r, w, t, k) :- records.meets(f, r, w, "param", p, _, k), record_table_at_param(f, p, t).
 reads_then_writes_record(f, r, w, t, k) :- records.meets(f, r, w, "element 0", p, _, k), table_at_record(f, p, t).
+
+// The Mnesia table a parameter holds where a pair meets on it or a
+// write writes it: a name a caller passes there, through any
+// forwarding.
+.decl record_table_needed(func: symbol, pos: symbol)
+
+record_table_needed(f, p) :- records.meets(f, _, _, "param", p, _, _).
+
+record_table_needed(c, to_string(m)) :-
+  record_table_needed(f, p),
+  call_arg_forward(c, f, n, m),
+  p = to_string(n).
+
+.decl record_table_at_param(func: symbol, pos: symbol, name: symbol)
+
+record_table_at_param(f, p, name) :-
+  record_table_needed(f, p),
+  call_arg(_, f, n, name),
+  name != "dynamic",
+  p = to_string(n).
+
+record_table_at_param(f, p, name) :-
+  record_table_needed(f, p),
+  call_arg_forward(c, f, n, m),
+  p = to_string(n),
+  record_table_at_param(c, to_string(m), name).
 
 // A record handed in whole names its table in its first element: the
 // callers' tuples say which (elvengard_ecs's insert_new(record), called
@@ -2273,7 +2251,7 @@ mnesia_write_table(w, f, t) :- mnesia_op(w, f, _, "write", "literal", t, _, _).
 
 mnesia_write_table(w, f, t) :-
   mnesia_op(w, f, _, "write", "param", p, _, _),
-  table_at_param(f, p, t).
+  record_table_at_param(f, p, t).
 
 mnesia_write_table(w, f, t) :-
   mnesia_op(w, f, _, "write", "element 0", p, _, _),
@@ -2289,7 +2267,7 @@ record_param_needed(f, p) :- mnesia_op(_, f, _, "write", "element 0", p, _, _).
 record_made.read(r) :- mnesia_op(r, _, _, "read", _, _, _, _).
 record_made.write(w, h) :- mnesia_write_table(w, h, _), mnesia_op(w, _, op, _, _, _, _, _), (op = "dirty_write" ; op = "write").
 
-pair_param_needed(f, p) :- mnesia_op(_, f, _, "write", "param", p, _, _).
+record_table_needed(f, p) :- mnesia_op(_, f, _, "write", "param", p, _, _).
 
 // A pair another process can interleave: the race but for its harm,
 // what the harms below are asked of.

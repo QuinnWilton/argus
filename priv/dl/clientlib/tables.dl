@@ -93,6 +93,7 @@ site_table(n, "new", n) :- ets_new(n, _, _), !named_site(n).
 
 table_param_needed(f, p) :- ets_table_path(id, "param", p, ""), ets_op(id, f, _, _, _).
 table_param_needed(f, p) :- ets_table_path(id, "param", p, ""), ets_new(id, f, _).
+table_param_needed(f, to_string(p)) :- ets_op_param(id, p), ets_op(id, f, _, _, _).
 
 table_param_needed(c, to_string(m)) :-
   table_param_needed(f, p),
@@ -193,6 +194,11 @@ known_table(id, k, t) :-
   ets_op(id, f, _, _, _),
   ets_table_path(id, "param", p, ""),
   param_table(f, p, k, t).
+
+known_table(id, k, t) :-
+  ets_op(id, f, _, _, _),
+  ets_op_param(id, p),
+  param_table(f, to_string(p), k, t).
 
 // The table the operand may be, by points-to.
 known_table(id, k, t) :-
