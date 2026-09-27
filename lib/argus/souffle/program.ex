@@ -41,15 +41,7 @@ defmodule Argus.Souffle.Program do
   # every solve of every corpus checkout asks. One anywhere else — a
   # test's, a caller's own — is read on every call, so an edit is seen
   # at once.
-  defp shipped?(path) do
-    case :code.priv_dir(:panoptes) do
-      dir when is_list(dir) ->
-        String.starts_with?(path, Path.join(List.to_string(dir), "dl") <> "/")
-
-      _ ->
-        false
-    end
-  end
+  defp shipped?(path), do: String.starts_with?(path, Argus.Dl.shipped() <> "/")
 
   defp compute_program_digest(path) do
     files = program_files(path)

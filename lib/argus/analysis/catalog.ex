@@ -91,17 +91,12 @@ defmodule Argus.Analysis.Catalog do
   end
 
   @doc """
-  A file under the Datalog tree: the shipped `priv/dl/`, or the
-  directory the `:dl_root` application variable names (a copy a test
-  edits a rule in, in a VM of its own).
+  A file under the Datalog tree (`Argus.Dl.root/0`): the shipped rules,
+  or the directory the `:dl_root` application variable names (a copy a
+  test edits a rule in, in a VM of its own).
   """
   @spec priv_dl(String.t()) :: Path.t()
-  def priv_dl(filename) do
-    case Application.get_env(:panoptes, :dl_root) do
-      nil -> Path.join(:code.priv_dir(:panoptes), "dl/#{filename}")
-      root -> Path.join(root, filename)
-    end
-  end
+  def priv_dl(filename), do: Argus.Dl.path(filename)
 
   # The :modules key only exists once the application is *loaded* — which
   # plain code-path embedding (escripts, sandbox VMs that only call
