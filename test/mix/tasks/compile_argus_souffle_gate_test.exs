@@ -18,8 +18,10 @@ defmodule Mix.Tasks.Compile.ArgusSouffleGateTest do
   # The two analyses with findings on the fixture; both read stage 0.
   @quick [analyses: [:coupling, :mailbox]]
 
+  # A store of the peer's own: a solve kept by another test would not
+  # run the failing solver at all.
   setup_all do
-    %{peer: Peer.start!()}
+    %{peer: Peer.start!(store: :own)}
   end
 
   # Each scenario needs its own app atom: in_project caches project
@@ -35,7 +37,21 @@ defmodule Mix.Tasks.Compile.ArgusSouffleGateTest do
     {copy, app}
   end
 
-  defp in_project(peer, {copy, app}, fun), do: Fixture.in_peer(peer, copy, app, fun)
+  # Each scenario with a blob store of its own, for all its runs: the
+  # same fixture's solves, kept by another scenario's run, would not run
+  # the failing solver at all.
+  defp in_project(peer, {copy, app}, fun) do
+    Fixture.in_peer(peer, copy, app, fn log ->
+      store = System.get_env("ARGUS_CACHE_DIR")
+      System.put_env("ARGUS_CACHE_DIR", Path.join(copy, ".store"))
+
+      try do
+        fun.(log)
+      after
+        System.put_env("ARGUS_CACHE_DIR", store)
+      end
+    end)
+  end
 
   defp compile!, do: Fixture.compile!()
 
@@ -78,22 +94,18 @@ defmodule Mix.Tasks.Compile.ArgusSouffleGateTest do
           [notice] = Enum.filter(diagnostics, &(&1.compiler_name == "scry"))
           assert notice.severity == :information
           assert notice.message =~ "souffle binary not found"
-          assert QueryLog.executions(log, :souffle_solve) == []
+          assert QueryLog.executions(log, :solve) == []
         end)
 
         # No solve memo — not even an error one — reached the manifest.
-        {:ok, manifest} = Manifest.load(Path.join(Mix.Project.manifest_path(), "compile.scry"))
+        refute Enum.any?(manifest_keys(), &match?({:solve, _}, &1))
 
-        refute Enum.any?(Manifest.memo_entries(manifest), fn {key, _entry} ->
-                 match?({:souffle_solve, _}, key)
-               end)
-
-        # Souffle back on PATH: the fingerprint moves, analyses run, the
+        # Souffle back on PATH: the solver input moves, analyses run, the
         # findings appear — the degraded run healed completely.
         assert {:ok, diagnostics} = compile!()
         diags = Enum.filter(diagnostics, &(&1.compiler_name == "scry"))
         assert length(diags) == 3
-        assert QueryLog.executions(log, :souffle_solve) != []
+        assert QueryLog.executions(log, :solve) != []
       end)
     end
 
@@ -126,16 +138,20 @@ defmodule Mix.Tasks.Compile.ArgusSouffleGateTest do
         fun.()
       after
         System.put_env("PATH", original)
-        File.rm_rf!(dir)
       end
     end
 
-    defp manifest_errors do
-      {:ok, manifest} = Manifest.load(Path.join(Mix.Project.manifest_path(), "compile.scry"))
+    defp manifest_entries do
+      {:ok, manifest} = Manifest.load(Argus.Driver.manifest_file())
+      Manifest.memo_entries(manifest, Argus.Graph.store())
+    end
 
-      for {key, entry} <- Manifest.memo_entries(manifest),
-          match?({:error, _}, entry.value),
-          do: key
+    defp manifest_keys, do: Enum.map(manifest_entries(), &elem(&1, 0))
+
+    # An entry kept by digest in another store reads as missing here: no
+    # error is, being transient.
+    defp manifest_errors do
+      for {key, %{value: {:error, _}}} <- manifest_entries(), do: key
     end
 
     @tag :souffle
@@ -163,13 +179,13 @@ defmodule Mix.Tasks.Compile.ArgusSouffleGateTest do
 
         assert Enum.sort(codes(diags)) == ["coupling", "mailbox", "mailbox"]
 
-        assert QueryLog.executions(log, :souffle_solve) == [:mailbox]
-        assert QueryLog.executions(log, :module_extraction) == []
+        assert QueryLog.executions(log, :solve) == [{:project, :mailbox}]
+        assert QueryLog.executions(log, :module_facts) == []
 
         # And that success is persisted: a third run is a noop.
         QueryLog.reset(log)
         assert {:noop, _} = compile!()
-        assert QueryLog.executions(log, :souffle_solve) == []
+        assert QueryLog.executions(log, :solve) == []
       end)
     end
 
@@ -182,9 +198,11 @@ defmodule Mix.Tasks.Compile.ArgusSouffleGateTest do
           {:ok, diagnostics} = compile!()
           diags = Enum.filter(diagnostics, &(&1.compiler_name == "scry"))
 
+          # Every analysis reading the call graph degrades with the
+          # stage's own reason, as a batch run's does.
           degraded = Enum.filter(diags, &(&1.message =~ "degraded"))
-          assert degraded != []
-          assert Enum.all?(degraded, &(&1.message =~ ":stage0"))
+          assert length(degraded) == 2
+          assert Enum.all?(degraded, &(&1.message =~ "injected failure"))
         end)
 
         assert manifest_errors() == []
@@ -193,7 +211,7 @@ defmodule Mix.Tasks.Compile.ArgusSouffleGateTest do
         {_status, diagnostics} = compile!()
         diags = Enum.filter(diagnostics, &(&1.compiler_name == "scry"))
         assert length(diags) == 3
-        assert QueryLog.executions(log, :stage0_facts) == [:all]
+        assert {:project, :stage0} in QueryLog.executions(log, :stage)
       end)
     end
 

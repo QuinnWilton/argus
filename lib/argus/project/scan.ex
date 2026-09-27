@@ -10,32 +10,9 @@ defmodule Argus.Project.Scan do
   (`Argus.Graph` tracks those callers through the `:ignored_beam`
   input).
 
-  `sync/3` diffs the scan against the previous run's source metadata and
-  updates the roux inputs: an mtime+size match skips the file without
-  reading it (mix-grade staleness, same trade as the Elixir compiler);
-  anything else is read and content-hashed, and `Input.set`'s equality
-  cutoff absorbs recompiled-but-identical beams. Modules whose beams are
-  gone are GC'd out of the input space.
+  The driver syncs what a scan found into the graph's inputs itself
+  (`Roux.Sources.sync/5`, `Argus.Driver`).
   """
-
-  alias Roux.Database
-  alias Roux.GC
-  alias Roux.Input
-
-  @typedoc "Per-beam manifest metadata: the mtime+size prefilter plus a content hash."
-  @type meta :: %{mtime: integer(), size: non_neg_integer(), hash: binary()}
-
-  @typedoc """
-  The result of syncing a scan into the database. `ignored_moved?` when
-  an ignored module's beam changed, appeared or left — nothing to
-  extract for it, but callers that read its specs are out of date.
-  """
-  @type sync_result :: %{
-          sources: %{optional(String.t()) => meta()},
-          changed: [module()],
-          removed: [module()],
-          ignored_moved?: boolean()
-        }
 
   @typedoc """
   A module found in more than one ebin: the beam analyzed, and the ones
@@ -121,126 +98,6 @@ defmodule Argus.Project.Scan do
       ignored: skipped |> Enum.reverse() |> Map.new(),
       duplicates: duplicates
     }
-  end
-
-  @doc """
-  Syncs a scan into the database inputs, diffing against the prior run's
-  source metadata (the manifest's `sources` map). Returns the fresh
-  metadata to persist, plus which modules changed or disappeared.
-
-  `ignored` (`module => beam_path`) are the modules the scan left out of
-  analysis; their beams are hashed the same way into the `:ignored_beam`
-  input and their metadata persisted with the rest, but they are never
-  in the module set nor among the changed.
-  """
-  @spec sync(
-          Database.t(),
-          %{optional(module()) => String.t()},
-          %{optional(String.t()) => meta()},
-          %{optional(module()) => String.t()}
-        ) :: sync_result()
-  def sync(%Database{} = db, discovered, prior_sources, ignored \\ %{}) do
-    now = System.os_time(:second)
-
-    {sources, changed, gone} = sync_all(db, :beam_meta, discovered, prior_sources, now, %{})
-
-    # A beam deleted between the glob and here — a concurrent compile
-    # pruning it — is simply not part of the project this run.
-    present = Map.drop(discovered, gone)
-    removed = mark_removed(db, :beam_meta, present)
-
-    module_set = present |> Map.keys() |> Enum.sort()
-    :ok = Input.set(db, :module_set, :all, module_set)
-
-    {sources, ignored_changed, ignored_gone} =
-      sync_all(db, :ignored_beam, ignored, prior_sources, now, sources)
-
-    ignored_removed = mark_removed(db, :ignored_beam, Map.drop(ignored, ignored_gone))
-
-    %{
-      sources: sources,
-      changed: Enum.sort(changed),
-      removed: removed,
-      ignored_moved?: ignored_changed != [] or ignored_removed != []
-    }
-  end
-
-  defp sync_all(db, input, modules, prior_sources, now, sources) do
-    Enum.reduce(modules, {sources, [], []}, fn {module, path}, {sources, changed, gone} ->
-      case sync_one(db, input, module, path, Map.get(prior_sources, path), now) do
-        {:unchanged, meta} -> {Map.put(sources, path, meta), changed, gone}
-        {:changed, meta} -> {Map.put(sources, path, meta), [module | changed], gone}
-        :gone -> {sources, changed, [module | gone]}
-      end
-    end)
-  end
-
-  defp sync_one(db, input, module, path, prior, now) do
-    case File.stat(path, time: :posix) do
-      {:ok, %File.Stat{mtime: mtime, size: size}} ->
-        sync_present(db, input, module, path, prior, now, mtime, size)
-
-      {:error, _} ->
-        :gone
-    end
-  end
-
-  defp sync_present(db, input, module, path, prior, now, mtime, size) do
-    case prior do
-      %{mtime: ^mtime, size: ^size} when mtime < now - 1 ->
-        # The prefilter: an untouched file is never read. Files written
-        # within the last second are exempt — mtime has one-second
-        # granularity, and scry runs moments after :elixir, so a
-        # fast edit-compile-edit-compile sequence can rewrite a beam in
-        # the same second with the same size. Recent files get
-        # content-hashed; on a warm noop nothing is recent and nothing
-        # is read.
-        #
-        # The metadata is keyed by path, not by input: a module that just
-        # moved in or out of the ignore list has metadata but no value
-        # under the input it now belongs to, and is read.
-        if Input.exists?(db, input, module),
-          do: {:unchanged, prior},
-          else: read_and_set(db, input, module, path, mtime, size)
-
-      _ ->
-        read_and_set(db, input, module, path, mtime, size)
-    end
-  end
-
-  defp read_and_set(db, input, module, path, mtime, size) do
-    case File.read(path) do
-      {:ok, raw} -> hash_and_set(db, input, module, path, mtime, size, raw)
-      {:error, _} -> :gone
-    end
-  end
-
-  defp hash_and_set(db, input, module, path, mtime, size, raw) do
-    # Hashed in canonical form: a dependent module Elixir rewrote only to
-    # refresh its ExCk chunk must not read as a changed input.
-    hash = raw |> Argus.Graph.Beam.canonical() |> :erlang.md5()
-    meta = %{mtime: mtime, size: size, hash: hash}
-
-    # Equal hash means a touch or a byte-identical recompile: the input
-    # value is unchanged, so Input.set's cutoff advances nothing and the
-    # run stays a noop. Compared against the input, not the metadata, so
-    # a module new to this input counts as changed.
-    value = %{path: path, hash: hash}
-    changed? = Input.fetch(db, input, module) != {:ok, value}
-    :ok = Input.set(db, input, module, value)
-
-    if changed?, do: {:changed, meta}, else: {:unchanged, meta}
-  end
-
-  defp mark_removed(db, input, discovered) do
-    removed =
-      for module <- Input.keys(db, input),
-          not Map.has_key?(discovered, module) do
-        :ok = GC.mark_input_removed(db, input, module)
-        module
-      end
-
-    Enum.sort(removed)
   end
 
   # basename → module. `String.to_atom`, not `to_existing_atom`: the

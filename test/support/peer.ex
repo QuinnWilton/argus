@@ -6,8 +6,7 @@ defmodule Argus.Test.Peer do
   true` beside each other instead of one at a time.
 
   Each peer is its own OS process, started from this VM's code path, with
-  Mix started in the `:test` env and its own `TMPDIR` (so its scratch
-  root, and whatever it prunes, is its own). A test module that
+  Mix started in the `:test` env and its own `TMPDIR`. A test module that
   `use`s this module can run its own closures there: the module's
   bytecode is kept when it compiles and loaded into the peer on first
   use, so `run/2` takes an ordinary `fn`, assertions and all. An
@@ -34,12 +33,23 @@ defmodule Argus.Test.Peer do
   @doc """
   Starts a peer linked to the calling process and returns it. Call it
   from `setup_all` (one peer per module) or `setup` (one per test).
+
+  The peer's graph runs keep their facts and solves in the suite's blob
+  store (`ARGUS_CACHE_DIR`, as this VM's), unless `store: :own` gives it
+  one of its own, removed with it: for a test that must see its solver
+  run rather than a solve kept by another.
   """
-  @spec start!() :: pid()
-  def start! do
+  @spec start!(keyword()) :: pid()
+  def start!(opts \\ []) do
     tmp = Path.join(System.tmp_dir!(), "argus_peer_#{System.unique_integer([:positive])}")
     File.rm_rf!(tmp)
     File.mkdir_p!(tmp)
+
+    store =
+      case Keyword.get(opts, :store) do
+        :own -> Path.join(tmp, "store")
+        nil -> Argus.Graph.store_root()
+      end
 
     # No scheduler busy-waiting: a peer mostly waits on souffle, and a
     # dozen of them spinning at once take the CPU the solves need.
@@ -51,7 +61,10 @@ defmodule Argus.Test.Peer do
       :peer.start_link(%{
         connection: :standard_io,
         args: args,
-        env: [{~c"TMPDIR", String.to_charlist(tmp <> "/")}],
+        env: [
+          {~c"TMPDIR", String.to_charlist(tmp <> "/")},
+          {~c"ARGUS_CACHE_DIR", String.to_charlist(store)}
+        ],
         wait_boot: 60_000
       })
 

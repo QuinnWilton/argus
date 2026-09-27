@@ -114,11 +114,7 @@ defmodule Mix.Tasks.Argus do
     cwd = File.cwd!()
 
     result =
-      Argus.Driver.run(config,
-        manifest: Argus.Driver.manifest_file(),
-        cache: Argus.Driver.cache_dir(),
-        force: Keyword.get(opts, :force, false)
-      )
+      Argus.Driver.run(config, force: Keyword.get(opts, :force, false))
 
     if Result.souffle_missing?(result) do
       Mix.raise(

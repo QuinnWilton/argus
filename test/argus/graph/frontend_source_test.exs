@@ -1,12 +1,13 @@
 defmodule Argus.Graph.FrontendSourceTest do
   @moduledoc """
-  Where a module's diagnostics anchor when the compiler's recorded
-  source path is not on this machine.
+  Where a module's findings anchor when the compiler's recorded source
+  path is not on this machine (`Argus.Graph.Frontend`'s `module_source`).
   """
 
   use ExUnit.Case, async: true
 
-  alias Roux.{Database, Input, Runtime}
+  alias Argus.Graph.Frontend
+  alias Roux.Input
 
   @moduletag :tmp_dir
 
@@ -27,21 +28,19 @@ defmodule Argus.Graph.FrontendSourceTest do
     beam_path = Path.join(ebin, "#{module}.beam")
     File.write!(beam_path, beam)
 
-    db = Database.new()
-    :ok = Roux.Lang.register_module(db, Argus.Graph.Frontend)
-    :ok = Input.set(db, :module_set, :all, [module])
-    :ok = Input.set(db, :beam_meta, module, %{path: beam_path, hash: :erlang.phash2(beam)})
-    :ok = Input.set(db, :project_root, :all, dir)
+    session = Argus.Graph.open(store: Roux.Blob.temporary())
+    on_exit(fn -> Roux.Blob.destroy(session.blob) end)
+    [key] = Argus.Graph.set_program(session.db, :test, [beam_path])
+    :ok = Input.set(session.db, :project_root, :all, dir)
 
-    %{db: db, module: module, beam_path: beam_path, root: dir}
+    %{db: session.db, key: key, beam_path: beam_path, root: dir}
   end
 
   test "the recorded path's tail under the project root is the source", ctx do
     File.mkdir_p!(Path.join(ctx.root, "lib"))
     File.write!(Path.join([ctx.root, "lib", "relocated.ex"]), @src)
 
-    assert Runtime.query(ctx.db, :module_source, ctx.module) ==
-             Path.join([ctx.root, "lib", "relocated.ex"])
+    assert Frontend.module_source(ctx.db, ctx.key) == Path.join([ctx.root, "lib", "relocated.ex"])
   end
 
   test "the longest existing tail wins, as an umbrella member's does", ctx do
@@ -50,11 +49,11 @@ defmodule Argus.Graph.FrontendSourceTest do
     File.mkdir_p!(Path.join(ctx.root, "lib"))
     File.write!(Path.join([ctx.root, "lib", "relocated.ex"]), @src)
 
-    assert Runtime.query(ctx.db, :module_source, ctx.module) ==
+    assert Frontend.module_source(ctx.db, ctx.key) ==
              Path.join([ctx.root, "checkout", "lib", "relocated.ex"])
   end
 
   test "nothing under the root: the beam itself", ctx do
-    assert Runtime.query(ctx.db, :module_source, ctx.module) == ctx.beam_path
+    assert Frontend.module_source(ctx.db, ctx.key) == ctx.beam_path
   end
 end

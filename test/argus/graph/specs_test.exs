@@ -1,15 +1,17 @@
 defmodule Argus.Graph.SpecsTest do
   @moduledoc """
   A module's extraction carries the specs of the remote functions it
-  calls, read off the code path (`spec_return(_, _, "installed")`). When
-  the callee is one of the project's own modules, those rows describe
-  another module's beam, so the caller's memo must not outlive the
-  callee: removing the callee re-extracts its callers, and a fresh batch
-  extraction of what remains is what the graph then holds. A callee kept
-  out of analysis by `ignore: [modules: ...]` is still on the code path:
-  changing its spec re-extracts its callers too. So is argus, whose
-  beams the environment digest leaves out: a caller of argus's code
-  re-extracts when argus's code moves, and no other module does.
+  calls, read off the code path (`spec_return(_, _, "installed")`), and
+  depends on each module whose specs it read (`installed_specs`,
+  `Argus.Graph.Reads`). When the callee is one of the project's own
+  modules, those rows describe another module's beam, so the caller's
+  facts must not outlive the callee: removing the callee re-extracts
+  its callers, and a fresh extraction of what remains is what the graph
+  then holds. A callee kept out of analysis by `ignore: [modules: ...]`
+  is still on the code path: changing its spec re-extracts its callers
+  too. A directory of the code path whose beams were rebuilt with no
+  spec changed (argus's own, for a program that calls argus)
+  re-extracts nothing.
   """
 
   # The probe's ebin goes on the code path, and its modules are loaded
@@ -21,9 +23,9 @@ defmodule Argus.Graph.SpecsTest do
 
   @moduletag :tmp_dir
 
-  @callee ScrySpecProbe.Callee
-  @caller ScrySpecProbe.Caller
-  @argus_caller ScrySpecProbe.ArgusCaller
+  @callee ArgusSpecProbe.Callee
+  @caller ArgusSpecProbe.Caller
+  @argus_caller ArgusSpecProbe.ArgusCaller
 
   setup %{tmp_dir: dir} do
     ebin = Path.join(dir, "ebin")
@@ -38,12 +40,12 @@ defmodule Argus.Graph.SpecsTest do
       Code.delete_path(ebin)
 
       for module <- [@callee, @caller, @argus_caller],
-          do: :code.purge(module) && :code.delete(module)
+          do: unload(module)
     end)
 
     paths = %{
-      @callee => Path.join(ebin, "Elixir.ScrySpecProbe.Callee.beam"),
-      @caller => Path.join(ebin, "Elixir.ScrySpecProbe.Caller.beam")
+      @callee => Path.join(ebin, "Elixir.ArgusSpecProbe.Callee.beam"),
+      @caller => Path.join(ebin, "Elixir.ArgusSpecProbe.Caller.beam")
     }
 
     %{paths: paths}
@@ -75,7 +77,7 @@ defmodule Argus.Graph.SpecsTest do
         {:ok, modules, _warnings} =
           Kernel.ParallelCompiler.compile_to_path([source], ebin, return_diagnostics: true)
 
-        for module <- modules, do: :code.purge(module) && :code.delete(module)
+        for module <- modules, do: unload(module)
       end)
     after
       Code.compiler_options(previous)
@@ -88,10 +90,12 @@ defmodule Argus.Graph.SpecsTest do
         do: row
   end
 
+  defp spec_return(db), do: Argus.Graph.Relations.rows(db, :test, :spec_return)
+
   test "removing a callee drops the specs its callers read from it", %{paths: paths} do
     db = Graph.new_db(paths)
 
-    assert installed_about_callee(Argus.Graph.relation_facts(db, :spec_return)) != []
+    assert installed_about_callee(spec_return(db)) != []
 
     # The callee leaves the project and the code path.
     File.rm!(paths[@callee])
@@ -106,28 +110,26 @@ defmodule Argus.Graph.SpecsTest do
     assert installed_about_callee(Map.get(fresh, :spec_return, [])) == []
 
     # ...and neither does the graph.
-    assert installed_about_callee(Argus.Graph.relation_facts(db, :spec_return)) == []
+    assert installed_about_callee(spec_return(db)) == []
   end
 
   test "an ignored callee's spec change reaches its callers", %{paths: paths, tmp_dir: dir} do
     # Analyzed: the caller. Watched, not analyzed: the callee, as the
-    # scanner leaves a module the `ignore` config matches.
-    caller = Map.take(paths, [@caller])
-    ignored = Map.take(paths, [@callee])
-    db = Graph.new_db(caller)
-    %{sources: sources} = Argus.Project.Scan.sync(db, caller, %{}, ignored)
+    # driver syncs a module the `ignore` config matches: its beam is an
+    # input, and it is in no program.
+    db = Graph.new_db(Map.take(paths, [@caller]))
+    watch!(db, paths[@callee])
 
-    assert shapes_about_callee(Argus.Graph.relation_facts(db, :spec_return)) ==
-             ["constant", "total"]
+    assert shapes_about_callee(spec_return(db)) == ["constant", "total"]
 
-    # The callee's spec changes; the scanner sees a new beam.
+    # The callee's spec changes; its beam input moves.
     compile_probe!(dir, Path.dirname(paths[@callee]), ":ok | {:error, term()}")
-    %{ignored_moved?: true} = Argus.Project.Scan.sync(db, caller, sources, ignored)
+    watch!(db, paths[@callee])
 
-    assert shapes_about_callee(Argus.Graph.relation_facts(db, :spec_return)) == ["can_fail"]
+    assert shapes_about_callee(spec_return(db)) == ["can_fail"]
   end
 
-  test "a caller of argus re-extracts when argus's code moves, and no other module does", %{
+  test "a rebuilt directory with no spec changed re-extracts nothing", %{
     paths: paths,
     tmp_dir: dir
   } do
@@ -141,27 +143,31 @@ defmodule Argus.Graph.SpecsTest do
 
     paths = Map.put(paths, @argus_caller, Path.join(ebin, "#{@argus_caller}.beam"))
     db = Graph.new_db(paths)
+    argus = :panoptes |> :code.lib_dir() |> List.to_string() |> Path.join("ebin") |> Path.expand()
 
     try do
-      for module <- Map.keys(paths), do: {:ok, _} = Argus.Graph.module_extraction(db, module)
+      for key <- Map.values(paths), do: {:ok, _} = Argus.Graph.Extraction.module_facts(db, key)
 
       # The specs of `Argus.Schema.version/0` were read off the code
-      # path, where the environment digest does not look.
-      assert argus_code_read?(db, @argus_caller)
-      refute argus_code_read?(db, @caller)
-      refute argus_code_read?(db, @callee)
+      # path, from argus's own directory.
+      assert read_specs?(db, paths[@argus_caller], Argus.Schema)
+      refute read_specs?(db, paths[@caller], Argus.Schema)
 
       # This module runs after every async one: the log sees this graph
       # alone.
-      log = QueryLog.start(:all)
+      log = QueryLog.start(db)
 
       try do
-        :ok = Roux.Input.set(db, :argus_code, :all, "argus edited")
+        :ok = Roux.Input.set(db, :app_code, argus, "argus rebuilt")
 
-        for module <- Map.keys(paths),
-            do: {:ok, _} = Argus.Graph.module_extraction(db, module)
+        for key <- Map.values(paths),
+            do: {:ok, _} = Argus.Graph.Extraction.module_facts(db, key)
 
-        assert QueryLog.executions(log, :module_extraction) == [@argus_caller]
+        assert :installed_specs
+               |> then(&QueryLog.executions(log, &1))
+               |> Enum.member?(Argus.Schema)
+
+        assert QueryLog.executions(log, :module_facts) == []
       after
         QueryLog.stop(log)
       end
@@ -170,12 +176,26 @@ defmodule Argus.Graph.SpecsTest do
     end
   end
 
-  defp argus_code_read?(db, module) do
-    {:ok, deps} = Roux.Memo.dependencies(db, {:module_extraction, module})
-    {:input, :argus_code, :all} in deps
+  defp watch!(db, path) do
+    {key, value} = Argus.Graph.beam_input(path)
+    :ok = Roux.Input.set(db, :beam, key, value)
+  end
+
+  defp read_specs?(db, key, module) do
+    {:ok, deps} = Roux.Memo.dependencies(db, {:module_facts, key})
+    {:installed_specs, module} in deps
   end
 
   defp shapes_about_callee(rows) do
     rows |> installed_about_callee() |> Enum.map(&Enum.at(&1, 1)) |> Enum.sort()
+  end
+
+  # Out of the VM whether or not it has old code: `:code.purge/1` answers
+  # false for a module with none, and a `&&` after it would leave the
+  # module loaded, where `:code.which/1` finds it for the next test.
+  defp unload(module) do
+    :code.purge(module)
+    :code.delete(module)
+    :code.purge(module)
   end
 end

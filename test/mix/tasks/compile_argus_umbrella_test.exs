@@ -41,9 +41,9 @@ defmodule Mix.Tasks.Compile.ArgusUmbrellaTest do
       assert [_one] = Regex.scan(~r/\[scry\.mailbox\]/, stderr)
       assert stderr =~ "╭─[lib/a.ex:8:5]"
 
-      manifest = Path.join(copy, "_build/test/lib/a/.mix/compile.scry")
+      manifest = Path.join(copy, "_build/test/lib/a/.mix/compile.argus")
       assert File.exists?(manifest)
-      refute File.exists?(Path.join(copy, "_build/test/lib/b/.mix/compile.scry"))
+      refute File.exists?(Path.join(copy, "_build/test/lib/b/.mix/compile.argus"))
     end)
   end
 end

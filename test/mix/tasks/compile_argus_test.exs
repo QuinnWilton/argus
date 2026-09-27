@@ -100,12 +100,12 @@ defmodule Mix.Tasks.Compile.ArgusTest do
       assert first_coupling.details =~ "kept here"
 
       # Extraction ran for every fixture module.
-      modules = QueryLog.executions(log, :module_extraction)
+      modules = QueryLog.executions(log, :module_facts)
       assert length(modules) == length(Path.wildcard(Path.join(copy, "lib/**/*.ex")))
 
-      manifest = Path.join(Mix.Project.manifest_path(), "compile.scry")
+      manifest = Path.join(Mix.Project.manifest_path(), "compile.argus")
       assert File.exists?(manifest)
-      assert File.exists?(Path.join(Mix.Project.manifest_path(), "compile.scry.diagnostics"))
+      assert File.exists?(Path.join(Mix.Project.manifest_path(), "compile.argus.diagnostics"))
 
       # ── warm noop ───────────────────────────────────────────────────
       QueryLog.reset(log)
@@ -115,8 +115,8 @@ defmodule Mix.Tasks.Compile.ArgusTest do
       # Prior findings re-emit from memo hits: same diagnostics, zero
       # extraction, zero solves.
       assert counts_by_code(diags) == %{"coupling" => 1, "mailbox" => 2}
-      assert QueryLog.executions(log, :module_extraction) == []
-      assert QueryLog.executions(log, :souffle_solve) == []
+      assert QueryLog.executions(log, :module_facts) == []
+      assert QueryLog.executions(log, :solve) == []
 
       # The persisted diagnostics callback serves the same list.
       assert Mix.Tasks.Compile.Argus.diagnostics() != []
@@ -134,8 +134,9 @@ defmodule Mix.Tasks.Compile.ArgusTest do
       result = compile!()
       diags = scry_diagnostics(result)
 
-      assert QueryLog.executions(log, :module_extraction) == [Depot.Application]
-      assert QueryLog.executions(log, :souffle_solve) == []
+      assert [extracted] = QueryLog.executions(log, :module_facts)
+      assert String.ends_with?(extracted, "/Elixir.Depot.Application.beam")
+      assert QueryLog.executions(log, :solve) == []
 
       coupling = Enum.filter(diags, &(code_of(&1) == "coupling"))
       assert [%{position: line_after} | _] = coupling
@@ -157,7 +158,7 @@ defmodule Mix.Tasks.Compile.ArgusTest do
       diags = scry_diagnostics(result)
 
       assert counts_by_code(diags) == %{"mailbox" => 2}
-      assert :coupling in QueryLog.executions(log, :souffle_solve)
+      assert {:project, :coupling} in QueryLog.executions(log, :solve)
 
       # ── deleted file ────────────────────────────────────────────────
       # Removing the module with the leaked task prunes its beam; the
@@ -174,13 +175,13 @@ defmodule Mix.Tasks.Compile.ArgusTest do
       result = compile!()
 
       assert scry_diagnostics(result) == []
-      assert :mailbox in QueryLog.executions(log, :souffle_solve)
+      assert {:project, :mailbox} in QueryLog.executions(log, :solve)
 
       # And a further run is a clean noop.
       QueryLog.reset(log)
       result = compile!()
-      assert QueryLog.executions(log, :module_extraction) == []
-      assert QueryLog.executions(log, :souffle_solve) == []
+      assert QueryLog.executions(log, :module_facts) == []
+      assert QueryLog.executions(log, :solve) == []
       assert scry_diagnostics(result) == []
     end)
   end

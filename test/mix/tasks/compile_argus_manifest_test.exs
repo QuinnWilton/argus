@@ -1,9 +1,10 @@
 defmodule Mix.Tasks.Compile.ArgusManifestTest do
   @moduledoc """
-  What a warm run trusts between runs, through the real chain: the
-  environment fingerprint an edit leaves alone, argus's code digests an
-  argus edit moves, the beam prefilter a touch passes, and the manifest
-  a corrupt write falls back from.
+  What a warm run trusts between runs, through the real chain: a warm
+  run that executes nothing, the code versions an argus build moves, the
+  schema entries a module read, the beam prefilter a touch passes, a
+  manifest naming a query this graph does not define, and the manifest a
+  corrupt write falls back from.
 
   In this module's peer (`Argus.Test.Peer`): the Mix project stack, the
   working directory, the code path and telemetry are VM-wide.
@@ -65,44 +66,36 @@ defmodule Mix.Tasks.Compile.ArgusManifestTest do
     end
   end
 
-  # The environment digest is memoized per code path; a directory nobody
-  # reads, put on the path for the call, makes it compute afresh — as the
-  # next `mix compile`, a new VM, would.
-  defp fresh_env(apps) do
-    dir = Path.join(System.tmp_dir!(), "scry_env_#{System.unique_integer([:positive])}")
-    File.mkdir_p!(dir)
-    Code.append_path(dir)
+  # The keys the query log saw `query` execute on.
+  defp ran(log, query), do: QueryLog.executions(log, query)
 
-    try do
-      Argus.Graph.Environment.env(apps)
-    after
-      Code.delete_path(dir)
-      File.rm_rf!(dir)
-    end
-  end
-
-  test "an edit to the project leaves the environment fingerprint where it was", %{
+  test "a warm run executes nothing, and an edit re-extracts only its modules", %{
     peer: peer,
     copy: copy
   } do
     Fixture.checkout!(copy, @quick, :depot_quick)
 
-    Fixture.in_peer(peer, copy, :depot_quick, fn _log ->
+    Fixture.in_peer(peer, copy, :depot_quick, fn log ->
       compile!()
-      %{apps: apps} = Argus.Project.Scan.scan(Argus.Config.load())
-      assert apps == [:depot_quick]
-      before = fresh_env(apps)
-      unwatched = fresh_env([])
+
+      QueryLog.reset(log)
+      assert {:noop, _} = compile!()
+      assert QueryLog.by_query(log, :execution) == %{}
+      assert Enum.sort(QueryLog.hits(log, :located)) == [project: :coupling, project: :mailbox]
 
       queue = Path.join(copy, "lib/depot/queue.ex")
       edit!(queue, File.read!(queue) <> "\ndefmodule Depot.Extra, do: def(one, do: 1)\n")
+
+      QueryLog.reset(log)
       compile!()
 
-      # The project's beams moved (so a digest over them would), but the
-      # scan tracks each of them itself: re-extracting every module on
-      # every edit is what excluding them prevents.
-      assert fresh_env([]) != unwatched
-      assert fresh_env(apps) == before
+      # Queue's beam is rewritten with its code unchanged: equal once the
+      # chunks extraction never reads are left out, so only the new
+      # module is extracted.
+      assert log |> ran(:module_facts) |> Enum.map(&Path.basename/1) ==
+               ["Elixir.Depot.Extra.beam"]
+
+      assert ran(log, :program_relations) == [:project]
     end)
   end
 
@@ -110,123 +103,155 @@ defmodule Mix.Tasks.Compile.ArgusManifestTest do
   # it restores; returns what `fun` does.
   defp rewrite!(fun) do
     manifest = Argus.Driver.manifest_file()
-    {:ok, data} = Manifest.load(manifest)
-    db = Roux.Database.new()
+    session = Argus.Graph.open(manifest: manifest)
 
     try do
-      :ok = Roux.Lang.register_module(db, Argus.Graph.Frontend)
-      :ok = Roux.Lang.register_module(db, Argus.Graph)
-      :ok = Manifest.restore(db, data)
-      result = fun.(db)
-      :ok = Manifest.write(db, data.sources, manifest)
+      result = fun.(session.db)
+      :ok = Manifest.write(session.db, session.sources, manifest)
       result
     after
-      Roux.Database.shutdown(db)
+      Roux.Session.close(session)
     end
   end
 
-  # As if the last run had seen other argus code: `input` holds what it
-  # recorded of it.
-  defp argus_edited_since!(input) do
-    rewrite!(&(:ok = Roux.Input.set(&1, input, :all, "before the edit")))
+  # As if the last run had computed `query`'s entries with other code: a
+  # build of argus with an edit to the code the query runs.
+  defp code_edited_since!(query) do
+    rewrite!(fn db ->
+      Roux.Memo.reduce_entries(db, :ok, fn
+        {{^query, _key} = key, entry}, :ok ->
+          Roux.Memo.put(db, key, %{entry | code_version: "old"})
+
+        _other, :ok ->
+          :ok
+      end)
+    end)
   end
 
-  test "an edit to argus's producers re-extracts every module, and solves nothing it left",
+  # The producers extraction ran, per module, while `fun` runs.
+  defp extracted(fun) do
+    table = :ets.new(:extracted, [:public, :bag])
+    handler = {__MODULE__, make_ref()}
+
+    :telemetry.attach(
+      handler,
+      [:argus, :graph, :extract],
+      &__MODULE__.record_extraction/4,
+      table
+    )
+
+    try do
+      result = fun.()
+      {result, :ets.tab2list(table)}
+    after
+      :telemetry.detach(handler)
+    end
+  end
+
+  @doc false
+  def record_extraction(_event, _measurements, meta, table),
+    do: :ets.insert(table, {meta.module, meta.producers})
+
+  test "an edit to the producers' code re-runs every module, extracts nothing, solves nothing",
        %{peer: peer, copy: copy} do
     Fixture.checkout!(copy, @quick, :depot_quick)
 
     Fixture.in_peer(peer, copy, :depot_quick, fn log ->
       cold = compile!()
       %{modules: modules} = Argus.Project.Scan.scan(Argus.Config.load())
-      argus_edited_since!(:extraction_code)
+      code_edited_since!(:module_facts)
 
       QueryLog.reset(log)
-      warm = compile!()
+      {warm, extracted} = extracted(&compile!/0)
 
-      assert QueryLog.executions(log, :module_extraction) == modules |> Map.keys() |> Enum.sort()
+      assert length(ran(log, :module_facts)) == map_size(modules)
+      # Every producer's rows found by the module's trace.
+      assert extracted == []
 
       # The same rows: nothing above them runs.
-      assert QueryLog.executions(log, :module_semantic_facts) == []
-      assert QueryLog.executions(log, :souffle_solve) == []
-      assert QueryLog.executions(log, :findings) == []
+      assert ran(log, :module_semantic) == []
+      assert ran(log, :solve) == []
+      assert ran(log, :findings) == []
       assert counts_by_code(scry_diagnostics(warm)) == counts_by_code(scry_diagnostics(cold))
     end)
   end
 
-  test "an argus edit outside its producers rebuilds the findings, and extracts nothing",
+  test "an edit to the findings' prose rebuilds the findings, and nothing else runs",
        %{peer: peer, copy: copy} do
     Fixture.checkout!(copy, @quick, :depot_quick)
 
     Fixture.in_peer(peer, copy, :depot_quick, fn log ->
       cold = compile!()
-      argus_edited_since!(:argus_code)
+      code_edited_since!(:findings)
 
       QueryLog.reset(log)
       warm = compile!()
 
-      assert QueryLog.executions(log, :findings) == [:coupling, :mailbox]
-      assert QueryLog.executions(log, :module_extraction) == []
-      assert QueryLog.executions(log, :souffle_solve) == []
-
-      # No schema entry moved: nothing was extracted ahead of the graph.
-      assert QueryLog.hits(log, :program_relation_facts) == []
+      assert ran(log, :findings) == [project: :coupling, project: :mailbox]
+      assert QueryLog.cutoffs(log, :findings) == ran(log, :findings)
+      assert ran(log, :located) == []
+      assert ran(log, :module_facts) == []
+      assert ran(log, :solve) == []
       assert counts_by_code(scry_diagnostics(warm)) == counts_by_code(scry_diagnostics(cold))
     end)
   end
 
-  test "a schema entry that moved re-extracts the modules that read it, ahead of the graph",
+  test "a schema entry that moved re-runs the modules that read it, and extracts nothing",
        %{peer: peer, copy: copy} do
     Fixture.checkout!(copy, @quick, :depot_quick)
 
     Fixture.in_peer(peer, copy, :depot_quick, fn log ->
       cold = compile!()
       %{modules: modules} = Argus.Project.Scan.scan(Argus.Config.load())
-      read = {:schema_read, "columns supervisor"}
+      keys = for {_module, path} <- modules, do: Path.expand(path)
 
-      # As if `supervisor` had other columns when the last run extracted:
-      # its entry's digest then, and argus's code then.
-      readers =
-        Enum.sort(
-          rewrite!(fn db ->
-            {:ok, entry} = Roux.Memo.get(db, read)
+      # As if a relation had other columns when the last run extracted:
+      # its entry's digest then, computed by the schema's code then. One
+      # some modules read and others do not.
+      {read, readers} =
+        rewrite!(fn db ->
+          reads =
+            for key <- keys,
+                {:ok, dependencies} = Roux.Memo.dependencies(db, {:module_facts, key}),
+                {:schema_entry, _} = read <- dependencies,
+                do: {read, key}
 
-            :ok =
-              Roux.Memo.put(db, read, %{entry | value: "before", hash: :erlang.phash2("before")})
+          {read, _} =
+            reads
+            |> Enum.group_by(&elem(&1, 0))
+            |> Enum.find(fn {_read, by} -> length(by) < length(keys) end)
 
-            :ok = Roux.Input.set(db, :argus_code, :all, "before the edit")
+          {:ok, entry} = Roux.Memo.get(db, read)
 
-            for module <- Map.keys(modules),
-                {:ok, dependencies} = Roux.Memo.dependencies(db, {:module_extraction, module}),
-                read in dependencies,
-                do: module
-          end)
-        )
+          :ok =
+            Roux.Memo.put(db, read, %{
+              entry
+              | value: "before",
+                hash: :erlang.phash2("before"),
+                code_version: "old"
+            })
 
-      # The tree's modules, not every module.
+          {read, for({^read, key} <- reads, uniq: true, do: key)}
+        end)
+
+      assert {:schema_entry, _} = read
+
+      # Some modules, not every module.
       assert readers != []
       assert length(readers) < map_size(modules)
 
       QueryLog.reset(log)
-      warm = compile!()
+      {warm, extracted} = extracted(&compile!/0)
 
-      assert QueryLog.executions(log, :module_extraction) == readers
-      assert QueryLog.executions(log, :module_semantic_facts) == []
-      assert QueryLog.executions(log, :souffle_solve) == []
-
-      # Extracted before the graph asked for them: the runner took the
-      # merged relations itself, where the extractions waited.
-      assert QueryLog.hits(log, :program_relation_facts) == [:all]
+      assert ran(log, :module_facts) == Enum.sort(readers)
+      assert extracted == []
+      assert ran(log, :module_semantic) == []
+      assert ran(log, :solve) == []
       assert counts_by_code(scry_diagnostics(warm)) == counts_by_code(scry_diagnostics(cold))
     end)
   end
 
-  defp memo_keys(query) do
-    {:ok, data} = Manifest.load(Argus.Driver.manifest_file())
-
-    for {{^query, key}, _entry} <- Manifest.memo_entries(data), do: key
-  end
-
-  test "a manifest another graph layout wrote is dropped, and the run is cold", %{
+  test "a manifest naming a query this graph does not define is read as far as it holds", %{
     peer: peer,
     copy: copy
   } do
@@ -235,113 +260,65 @@ defmodule Mix.Tasks.Compile.ArgusManifestTest do
     Fixture.in_peer(peer, copy, :depot_quick, fn log ->
       cold = compile!()
       %{modules: modules} = Argus.Project.Scan.scan(Argus.Config.load())
-      modules = modules |> Map.keys() |> Enum.sort()
 
-      # As a scry that memoized extraction per argus producer left it:
-      # each module's rows under `producer_extraction`, a query this
-      # graph does not define, which its semantic digest depends on; a
-      # fingerprint of another shape; no layout. Validating a semantic
-      # digest would run that query.
+      # As a graph that kept each module's rows under a query this one
+      # does not define left it: every module's semantic digest depends
+      # on an entry of `producer_extraction`. Restoring drops that
+      # query's entries, and validating a digest finds its dependency
+      # gone: stale, and computed again.
       rewrite!(fn db ->
-        for module <- modules do
-          producer = {:producer_extraction, {module, :base}}
-          {:ok, extraction} = Roux.Memo.get(db, {:module_extraction, module})
-          :ok = Roux.Memo.put(db, producer, extraction)
-          :ok = Roux.Memo.delete(db, {:module_extraction, module})
-
-          {:ok, semantic} = Roux.Memo.get(db, {:module_semantic_facts, module})
-
-          :ok =
-            Roux.Memo.put(db, {:module_semantic_facts, module}, %{
-              semantic
-              | dependencies: [producer]
-            })
+        for {_module, path} <- modules do
+          key = Path.expand(path)
+          producer = {:producer_extraction, {key, :base}}
+          {:ok, facts} = Roux.Memo.get(db, {:module_facts, key})
+          :ok = Roux.Memo.put(db, producer, facts)
+          {:ok, semantic} = Roux.Memo.get(db, {:module_semantic, key})
+          :ok = Roux.Memo.put(db, {:module_semantic, key}, %{semantic | dependencies: [producer]})
         end
 
-        :ok = Roux.Input.set(db, :env_fingerprint, :all, %{elixir: "an older shape"})
-        :ok = Roux.Memo.delete(db, {:input, :graph_layout, :all})
+        # And a :high input the next run sets back, so validation walks
+        # every edge rather than skipping them on durability.
+        :ok = Roux.Input.set(db, :project_root, :all, "/elsewhere")
       end)
 
       QueryLog.reset(log)
       warm = compile!()
 
-      # Cold, and right: every module extracted, every analysis solved.
-      assert QueryLog.executions(log, :module_extraction) == modules
-      assert QueryLog.executions(log, :souffle_solve) == [:coupling, :mailbox]
+      assert length(ran(log, :module_semantic)) == map_size(modules)
       assert counts_by_code(scry_diagnostics(warm)) == counts_by_code(scry_diagnostics(cold))
 
-      # What it wrote holds nothing of the other layout, and is read back.
-      assert memo_keys(:producer_extraction) == []
+      # What it wrote holds nothing of the other query, and is read back.
+      {:ok, data} = Manifest.load(Argus.Driver.manifest_file())
+
+      refute Enum.any?(
+               Manifest.memo_entries(data, Argus.Graph.store()),
+               &match?({{:producer_extraction, _}, _}, &1)
+             )
+
       QueryLog.reset(log)
       assert {:noop, _} = compile!()
-      assert QueryLog.executions(log, :module_extraction) == []
+      assert QueryLog.by_query(log, :execution) == %{}
     end)
   end
 
-  test "argus keeps hashes and programs beside the manifest; --force drops them", %{
-    copy: copy
-  } do
+  test "--force starts cold; clean removes the state", %{peer: peer, copy: copy} do
     Fixture.checkout!(copy, @quick, :depot_quick)
-    # A VM that has hashed nothing, as `mix compile` starts: one that has
-    # keeps the hashes in memory and writes none.
-    peer = Peer.start!()
 
-    Fixture.in_peer(peer, copy, :depot_quick, fn _log ->
+    Fixture.in_peer(peer, copy, :depot_quick, fn log ->
       compile!()
+      %{modules: modules} = Argus.Project.Scan.scan(Argus.Config.load())
 
-      # Scry's own dependencies are on the code path, outside OTP and
-      # Elixir: their hashes are what the store keeps.
-      ebins = Path.join(Argus.Driver.cache_dir(), "ebins")
-      assert File.ls!(ebins) != []
-
-      stale = Path.join(ebins, "stale-" <> String.duplicate("0", 64))
-      File.write!(stale, "")
-
-      # And what each program loads, which a warm run would start the
-      # solver to ask.
-      programs = Path.join(Argus.Driver.cache_dir(), "programs")
-      assert Enum.any?(File.ls!(programs), &String.starts_with?(&1, "stage0-"))
-      asked = Path.join(programs, "asked-" <> String.duplicate("0", 64))
-      File.write!(asked, "")
+      QueryLog.reset(log)
 
       {{status, _diagnostics}, _stderr} =
         with_io(:stderr, fn -> Mix.Task.rerun("compile.argus", ["--force"]) end)
 
       assert status in [:ok, :noop]
-      refute File.exists?(stale)
-      refute File.exists?(asked)
+      assert length(ran(log, :module_facts)) == map_size(modules)
+      assert Enum.all?(Mix.Tasks.Compile.Argus.manifests(), &File.exists?/1)
 
       Mix.Tasks.Compile.Argus.clean()
-      refute File.exists?(Argus.Driver.cache_dir())
-    end)
-  end
-
-  test "a warm run validates the merged relations without serving them", %{
-    peer: peer,
-    copy: copy
-  } do
-    Fixture.checkout!(copy, @quick, :depot_quick)
-
-    Fixture.in_peer(peer, copy, :depot_quick, fn log ->
-      compile!()
-      queue = Path.join(copy, "lib/depot/queue.ex")
-
-      # Nothing extracted ahead of the graph waits for the runner, so the
-      # program's relations stay in the memo table: served, they would be
-      # copied onto the runner's heap for nothing.
-      QueryLog.reset(log)
-      compile!()
-      assert QueryLog.hits(log, :program_relation_facts) == []
-      assert QueryLog.executions(log, :program_relation_facts) == []
-      assert QueryLog.hits(log, :located) == [:coupling, :mailbox]
-
-      # An edit prewarms its module, and the runner takes the relations
-      # first, where the extraction waits.
-      edit!(queue, File.read!(queue) <> "\ndefmodule Depot.Extra, do: def(one, do: 1)\n")
-      QueryLog.reset(log)
-      compile!()
-      assert QueryLog.executions(log, :program_relation_facts) == [:all]
-      assert Depot.Extra in QueryLog.executions(log, :module_extraction)
+      refute Enum.any?(Mix.Tasks.Compile.Argus.manifests(), &File.exists?/1)
     end)
   end
 
@@ -351,16 +328,16 @@ defmodule Mix.Tasks.Compile.ArgusManifestTest do
     Fixture.in_peer(peer, copy, :depot_quick, fn log ->
       compile!()
 
-      # Touch a beam directly (mtime moves, content identical): the
-      # scanner re-reads and re-hashes that one file, the input value
-      # compares equal, and nothing downstream executes.
+      # Touch a beam directly (mtime moves, content identical): the sync
+      # re-reads and re-hashes that one file, the input value compares
+      # equal, and nothing downstream executes.
       beam = Path.join(Mix.Project.compile_path(), "Elixir.Depot.Queue.beam")
       File.touch!(beam, System.os_time(:second) + 5)
 
       QueryLog.reset(log)
       compile!()
-      assert QueryLog.executions(log, :module_extraction) == []
-      assert QueryLog.executions(log, :souffle_solve) == []
+      assert ran(log, :module_facts) == []
+      assert ran(log, :solve) == []
     end)
   end
 
@@ -371,8 +348,7 @@ defmodule Mix.Tasks.Compile.ArgusManifestTest do
       result = compile!()
       assert counts_by_code(scry_diagnostics(result)) != %{}
 
-      manifest = Path.join(Mix.Project.manifest_path(), "compile.scry")
-      File.write!(manifest, "not a manifest")
+      File.write!(Argus.Driver.manifest_file(), "not a manifest")
 
       QueryLog.reset(log)
       result = compile!()
@@ -381,7 +357,7 @@ defmodule Mix.Tasks.Compile.ArgusManifestTest do
       assert counts_by_code(scry_diagnostics(result)) ==
                %{"coupling" => 1, "mailbox" => 2}
 
-      assert QueryLog.executions(log, :module_extraction) != []
+      assert ran(log, :module_facts) != []
     end)
   end
 end

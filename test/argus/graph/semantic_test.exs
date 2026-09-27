@@ -1,8 +1,8 @@
 defmodule Argus.Graph.SemanticTest do
   @moduledoc """
-  `module_semantic_facts` is the early-cutoff seam: a digest of what a
-  module contributes to the program's relations, equal across edits that
-  move only lines or the vsn checksum.
+  `module_semantic` is the early-cutoff seam: what a module contributes
+  to the program's relations, equal across edits that move only lines
+  or the vsn checksum.
   """
 
   use ExUnit.Case, async: true
@@ -15,7 +15,7 @@ defmodule Argus.Graph.SemanticTest do
   # line numbers are ours to choose.
   defp beam!(dir, vsn, line) do
     forms = [
-      {:attribute, 1, :module, :scry_semantic_probe},
+      {:attribute, 1, :module, :argus_semantic_probe},
       {:attribute, 1, :vsn, vsn},
       {:attribute, 1, :export, [{:f, 1}]},
       {:function, line, :f, 1,
@@ -25,21 +25,28 @@ defmodule Argus.Graph.SemanticTest do
        ]}
     ]
 
-    {:ok, :scry_semantic_probe, beam} = :compile.forms(forms, [:debug_info])
+    {:ok, :argus_semantic_probe, beam} = :compile.forms(forms, [:debug_info])
     File.mkdir_p!(dir)
-    path = Path.join(dir, "scry_semantic_probe.beam")
+    path = Path.join(dir, "argus_semantic_probe.beam")
     File.write!(path, beam)
-    %{scry_semantic_probe: path}
+    {path, %{argus_semantic_probe: path}}
   end
 
   defp semantic(dir, vsn, line) do
-    db = Graph.new_db(beam!(dir, vsn, line))
-    Argus.Graph.module_semantic_facts(db, :scry_semantic_probe)
+    {path, paths} = beam!(dir, vsn, line)
+    db = Graph.new_db(paths)
+
+    {Argus.Graph.Extraction.module_semantic(db, path),
+     Argus.Graph.Extraction.module_facts(db, path)}
   end
 
-  test "a digest, equal across a line shift and a vsn change", %{tmp_dir: dir} do
-    assert {:ok, <<_::128>> = digest} = semantic(Path.join(dir, "a"), [1], 3)
-    assert semantic(Path.join(dir, "b"), [1], 30) == {:ok, digest}
-    assert semantic(Path.join(dir, "c"), [2], 3) == {:ok, digest}
+  test "equal across a line shift and a vsn change; the facts are not", %{tmp_dir: dir} do
+    assert {{:ok, semantic}, {:ok, facts}} = semantic(Path.join(dir, "a"), [1], 3)
+    refute Map.has_key?(semantic, :line_info)
+    assert Map.has_key?(facts.relations, :line_info)
+
+    assert {{:ok, ^semantic}, {:ok, shifted}} = semantic(Path.join(dir, "b"), [1], 30)
+    refute shifted.relations == facts.relations
+    assert {{:ok, ^semantic}, {:ok, _}} = semantic(Path.join(dir, "c"), [2], 3)
   end
 end

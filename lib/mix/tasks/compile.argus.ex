@@ -40,7 +40,7 @@ defmodule Mix.Tasks.Compile.Argus do
   # child that lists it, against that child's own beams.
   @recursive true
 
-  @sidecar "compile.scry.diagnostics"
+  @sidecar "compile.argus.diagnostics"
 
   @impl Mix.Task.Compiler
   def run(args) do
@@ -53,11 +53,7 @@ defmodule Mix.Tasks.Compile.Argus do
     cwd = File.cwd!()
 
     result =
-      Argus.Driver.run(config,
-        manifest: manifest_file(),
-        cache: Argus.Driver.cache_dir(),
-        force: Keyword.get(opts, :force, false)
-      )
+      Argus.Driver.run(config, force: Keyword.get(opts, :force, false))
 
     rendered =
       infrastructure(result, config) ++
@@ -72,12 +68,16 @@ defmodule Mix.Tasks.Compile.Argus do
   end
 
   @impl Mix.Task.Compiler
-  def manifests, do: [manifest_file()]
+  def manifests, do: Argus.Driver.state_files()
 
   @impl Mix.Task.Compiler
   def clean do
-    File.rm(manifest_file())
+    Enum.each(Argus.Driver.state_files(), &File.rm/1)
     File.rm(sidecar_file())
+
+    # What scry kept here before the fold, which nothing reads now.
+    File.rm(Path.join(Mix.Project.manifest_path(), "compile.scry"))
+    File.rm(Path.join(Mix.Project.manifest_path(), "compile.scry.diagnostics"))
     File.rm_rf(Argus.Driver.cache_dir())
     :ok
   end
@@ -177,6 +177,5 @@ defmodule Mix.Tasks.Compile.Argus do
     ArgumentError -> :error
   end
 
-  defp manifest_file, do: Argus.Driver.manifest_file()
   defp sidecar_file, do: Path.join(Mix.Project.manifest_path(), @sidecar)
 end

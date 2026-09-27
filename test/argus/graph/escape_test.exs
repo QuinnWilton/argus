@@ -17,7 +17,7 @@ defmodule Argus.Graph.EscapeTest do
     source = Path.join(dir, "odd.ex")
 
     File.write!(source, ~S'''
-    defmodule ScryEscapeProbe do
+    defmodule ArgusEscapeProbe do
       def unquote(:"tab\there")(), do: unquote(:"new\nline")()
       def unquote(:"new\nline")(), do: GenServer.call(__MODULE__, :ping)
       def caller, do: unquote(:"tab\there")()
@@ -32,7 +32,7 @@ defmodule Argus.Graph.EscapeTest do
         Kernel.ParallelCompiler.compile_to_path([source], ebin, return_diagnostics: true)
     end)
 
-    paths = %{ScryEscapeProbe => Path.join(ebin, "Elixir.ScryEscapeProbe.beam")}
+    paths = %{ArgusEscapeProbe => Path.join(ebin, "Elixir.ArgusEscapeProbe.beam")}
     db = Graph.new_db(paths)
 
     # Both read function_def; blocking reads the call graph stage 0
@@ -46,12 +46,11 @@ defmodule Argus.Graph.EscapeTest do
 
     assert incremental == Graph.batch(paths, analyses)
 
-    {:ok, stage0} = Argus.Graph.stage0_facts(db, :all)
+    {:ok, %{outputs: %{"call_edge.facts" => digest}}} =
+      Argus.Graph.Solve.stage(db, {:test, :stage0})
 
-    names =
-      stage0.call_edge
-      |> Enum.flat_map(&Tuple.to_list/1)
-      |> Enum.map(&Argus.Symbols.resolve(Argus.Graph.Symbols.for_db(db), &1))
+    {:ok, rows} = Argus.Souffle.Solve.rows(db.blob, "call_edge.facts", digest)
+    names = List.flatten(rows)
 
     assert Enum.any?(names, &String.contains?(&1, "tab\there"))
   end

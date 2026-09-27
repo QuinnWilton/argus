@@ -1,35 +1,40 @@
 defmodule Argus.Graph.PriorsTest do
   @moduledoc """
-  A prior relation is the `:prior_rows` input, and a consumer that demands
-  the graph without setting it — planchette's LSP, encore's adapters —
-  gets the empty relation, not an error.
+  A prior relation is the `priors` input's text, and a consumer that
+  demands the graph without setting it gets the empty relation, not an
+  error: the meaning of priors off.
   """
 
   use ExUnit.Case, async: true
 
-  alias Roux.{Database, Input}
-
-  # The database is linked to the test process and goes with it; an
-  # on_exit shutdown would run after it is already gone.
-  setup do
-    db = Database.new()
-    :ok = Roux.Lang.register_module(db, Argus.Graph.Frontend)
-    :ok = Roux.Lang.register_module(db, Argus.Graph)
-    %{db: db}
-  end
+  alias Argus.Graph.{Priors, Relations}
+  alias Argus.Test.Graph
+  alias Roux.Input
 
   test "the layer-3 relations are the prior relations" do
-    assert Argus.Graph.prior_relations() == Enum.map(Argus.Schema.layer_3(), & &1.name)
-    assert :prior_sensitive in Argus.Graph.prior_relations()
+    assert Priors.relations() == Enum.map(Argus.Schema.layer_3(), & &1.name)
+    assert :prior_sensitive in Priors.relations()
   end
 
-  test "unset, a prior relation reads as empty; set later, the read follows", %{db: db} do
-    assert Argus.Graph.relation_rows(db, :prior_sensitive) == []
+  test "unset, a prior relation reads as empty; set later, the read follows" do
+    db = Graph.new_db(%{}, program: :unset)
+    Enum.each(Priors.relations(), &Input.delete(db, :priors, {:unset, &1}))
 
-    :ok = Input.set(db, :prior_rows, :prior_sensitive, [{1, 2, 3, 4, 5, 950}])
-    assert Argus.Graph.relation_rows(db, :prior_sensitive) == [{1, 2, 3, 4, 5, 950}]
+    assert Relations.rows(db, :unset, :prior_sensitive) == []
 
-    :ok = Input.set(db, :prior_rows, :prior_sensitive, [])
-    assert Argus.Graph.relation_rows(db, :prior_sensitive) == []
+    row = ["Mod:f/1", "sensitive", "name", "0", "x", "950"]
+
+    :ok =
+      Input.set(
+        db,
+        :priors,
+        {:unset, :prior_sensitive},
+        IO.iodata_to_binary(Argus.Tsv.encode([row]))
+      )
+
+    assert Relations.rows(db, :unset, :prior_sensitive) == [row]
+
+    :ok = Priors.sync(db, :unset, :off)
+    assert Relations.rows(db, :unset, :prior_sensitive) == []
   end
 end

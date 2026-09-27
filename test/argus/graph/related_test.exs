@@ -64,7 +64,7 @@ defmodule Argus.Graph.RelatedTest do
   # The analysis's findings placed and refined from the source, as a
   # frontend renders them.
   defp placed(db, analysis) do
-    assert {:ok, _} = located = Argus.Graph.located(db, analysis)
+    assert {:ok, _} = located = Argus.Graph.Locate.located(db, {:test, analysis})
 
     Argus.Driver.Result.findings_by_file(%Argus.Driver.Result{
       located: %{analysis => located},

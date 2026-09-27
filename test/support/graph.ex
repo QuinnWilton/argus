@@ -76,71 +76,81 @@ defmodule Argus.Test.Graph do
   def use_parity!(paths), do: paths
 
   @doc """
-  A database with both layers registered and the driver's inputs set
-  the way `Argus.Driver` sets them, over `paths`.
-
-  Options: `rules: false` and `argus: false` leave the rules digests and
-  argus's code digests (`:extraction_code`, `:argus_code`) unset, as
-  planchette does.
+  The suite's blob store, `_build/test/argus/store` (beside the beams,
+  so `mix clean` takes it too), or a temporary one under
+  `ARGUS_NO_CACHE`.
   """
-  @spec new_db(%{optional(module()) => String.t()}, keyword()) :: Database.t()
+  @spec store() :: Roux.Blob.t()
+  def store do
+    if Argus.Cache.enabled?(),
+      do: Roux.Blob.open!(Path.join(Mix.Project.build_path(), "argus/store")),
+      else: Roux.Blob.temporary()
+  end
+
+  @doc """
+  A database over the graph (`Argus.Graph`) with the environment set
+  and `paths` as the program `:test`, priors off.
+
+  Options: `store: :temporary` for a blob store of the database's own
+  (a test that must see its solver run, not a solve kept from another
+  test); `program:` another program's id.
+  """
+  @spec new_db(%{optional(module()) => String.t()}, keyword()) :: Roux.Database.t()
   def new_db(paths, opts \\ []) do
-    db = Database.new()
-    :ok = Roux.Lang.register_module(db, Argus.Graph.Frontend)
-    :ok = Roux.Lang.register_module(db, Argus.Graph)
-    :ok = Input.set(db, :env_fingerprint, :all, Keyword.get(opts, :fingerprint, %{test: 1}))
-    :ok = Input.set(db, :project_root, :all, File.cwd!())
+    store =
+      case Keyword.get(opts, :store) do
+        :temporary -> Roux.Blob.temporary()
+        nil -> store()
+        store -> store
+      end
 
-    # A frontend may leave the rules digests unset (planchette does).
-    if Keyword.get(opts, :rules, true) do
-      {:ok, all} = Argus.Analysis.set(:all)
-
-      for {key, digest} <- Argus.Graph.Environment.rules(all),
-          do: :ok = Input.set(db, :rules_digest, key, digest)
-    end
-
-    # And argus's code (planchette does).
-    if Keyword.get(opts, :argus, true) do
-      :ok = Input.set(db, :extraction_code, :all, Argus.Graph.Environment.extraction_code())
-      :ok = Input.set(db, :argus_code, :all, Argus.Graph.Environment.argus_code())
-    end
-
-    Enum.each(Argus.Graph.prior_relations(), &(:ok = Input.set(db, :prior_rows, &1, [])))
-    sync!(db, paths)
+    session = Argus.Graph.open(store: store)
+    db = session.db
+    _moved = Argus.Graph.set_environment(db)
+    program = Keyword.get(opts, :program, :test)
+    :ok = Argus.Graph.set_priors(db, program, :off)
+    sync!(db, paths, program)
     db
   end
 
   @doc """
-  Brings the database's beam inputs in line with `paths`: new and
-  changed beams set, missing ones marked removed.
+  Brings the program's beams in line with `paths`: each beam's input
+  set, the program's keys, and the beams no longer in it removed.
   """
-  @spec sync!(Database.t(), %{optional(module()) => String.t()}) :: :ok
-  def sync!(db, paths) do
-    for {module, path} <- paths do
-      canonical = path |> File.read!() |> Argus.Graph.Beam.canonical()
-      :ok = Input.set(db, :beam_meta, module, %{path: path, hash: :erlang.md5(canonical)})
+  @spec sync!(Roux.Database.t(), %{optional(module()) => String.t()}, term()) :: :ok
+  def sync!(db, paths, program \\ :test) do
+    keys = Argus.Graph.set_program(db, program, Map.values(paths))
+
+    for key <- Input.keys(db, :beam), key not in keys do
+      :ok = GC.mark_input_removed(db, :beam, key)
     end
 
-    for module <- Input.keys(db, :beam_meta), not Map.has_key?(paths, module) do
-      :ok = GC.mark_input_removed(db, :beam_meta, module)
-    end
-
-    :ok = Input.set(db, :module_set, :all, paths |> Map.keys() |> Enum.sort())
+    :ok
   end
 
   @doc """
-  Each analysis's solved output rows from the incremental graph.
+  Each analysis's solved output rows from the graph, each relation's
+  sorted: `{:ok, rows}` or why it degraded.
   """
-  @spec incremental(Database.t(), [atom()]) :: %{optional(atom()) => term()}
-  def incremental(db, analyses) do
-    # As the runner demands them: the merged relations first, here, then
-    # the solves side by side — they share everything upstream.
-    _relations = Argus.Graph.program_relation_facts(db, :all)
-
+  @spec incremental(Database.t(), [atom()], term()) :: %{optional(atom()) => term()}
+  def incremental(db, analyses, program \\ :test) do
     analyses
-    |> Task.async_stream(&{&1, Argus.Graph.souffle_solve(db, &1)}, timeout: :infinity)
+    |> Task.async_stream(
+      fn analysis ->
+        result =
+          case Argus.Graph.Findings.results(db, program, analysis) do
+            {:ok, rows} -> {:ok, sorted(rows)}
+            error -> error
+          end
+
+        {analysis, result}
+      end,
+      timeout: :infinity
+    )
     |> Map.new(fn {:ok, entry} -> entry end)
   end
+
+  defp sorted(rows), do: Map.new(rows, fn {relation, rows} -> {relation, Enum.sort(rows)} end)
 
   @doc """
   Each analysis's output rows the batch way: one argus extraction of
@@ -158,10 +168,7 @@ defmodule Argus.Test.Graph do
           result =
             case Argus.Analysis.run_rules(dir, analysis) do
               {:ok, rows} ->
-                {:ok,
-                 rows
-                 |> Argus.Analysis.filter_to_outputs(analysis)
-                 |> Map.new(fn {relation, rows} -> {relation, Enum.sort(rows)} end)}
+                {:ok, rows |> Argus.Analysis.filter_to_outputs(analysis) |> sorted()}
 
               {:error, _} = error ->
                 error

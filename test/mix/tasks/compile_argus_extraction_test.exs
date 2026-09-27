@@ -45,8 +45,13 @@ defmodule Mix.Tasks.Compile.ArgusExtractionTest do
       )
 
     Fixture.in_peer(peer, copy, :depot_timeout, fn log ->
+      # A store of its own: another test's traces of the same beams would
+      # extract nothing at all.
+      store = System.get_env("ARGUS_CACHE_DIR")
+      System.put_env("ARGUS_CACHE_DIR", Path.join(copy, ".store"))
+
       # Every module outlives a 0 ms budget: all of them lose their facts.
-      Application.put_env(:scry, :extraction_timeout, 0)
+      Application.put_env(:panoptes, :extraction_timeout, 0)
 
       try do
         {_status, diagnostics} = Fixture.compile!()
@@ -57,7 +62,7 @@ defmodule Mix.Tasks.Compile.ArgusExtractionTest do
         assert Enum.all?(lost, &(&1.message =~ "lost all its facts in extraction"))
         assert Enum.all?(lost, &(&1.message =~ "did not finish within 0 ms"))
       after
-        Application.delete_env(:scry, :extraction_timeout)
+        Application.delete_env(:panoptes, :extraction_timeout)
       end
 
       # Nothing was edited, and the budget is back: the failed modules are
@@ -67,12 +72,13 @@ defmodule Mix.Tasks.Compile.ArgusExtractionTest do
 
       assert partial(diagnostics) == []
       assert length(findings(diagnostics)) == 3
-      assert length(QueryLog.executions(log, :module_extraction)) == 5
+      assert length(QueryLog.executions(log, :module_facts)) == 5
 
       # And with nothing left to retry, the next run is a noop again.
       QueryLog.reset(log)
       assert {:noop, _} = Fixture.compile!()
-      assert QueryLog.executions(log, :module_extraction) == []
+      assert QueryLog.executions(log, :module_facts) == []
+      System.put_env("ARGUS_CACHE_DIR", store)
     end)
   end
 

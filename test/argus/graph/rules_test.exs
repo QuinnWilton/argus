@@ -1,13 +1,23 @@
 defmodule Argus.Graph.RulesTest do
   @moduledoc """
-  What a warm graph does when the argus it runs moves without any beam
-  moving: a rule edit re-solves exactly the analyses whose programs it
-  touched and re-extracts nothing; an edit to the code argus's producers
-  run re-extracts every module, and solves only where the rows moved;
-  a schema entry that moved re-extracts the modules that read it; any
-  other argus edit rebuilds the findings and extracts nothing; a
-  runtime change re-extracts and re-solves everything.
+  What a warm graph runs again when argus moves and no beam does — the
+  recompute sets of the plan's incrementality table:
 
+    * a rule edit solves again only the programs that include the file
+      (`dl_tree` → `program_files`), and extracts nothing;
+    * a stage's rule edit derives the stage again, and nothing reading
+      it runs when its outputs come out the same;
+    * an edit to the code the producers run re-runs every module's
+      `module_facts`, which finds every producer's rows by its trace:
+      nothing is extracted, and nothing is solved;
+    * a schema entry that moved re-runs exactly the modules that read it;
+    * an edit to the findings' prose rebuilds each analysis's findings,
+      which come out the same (cutoff), and nothing past them runs;
+    * a `:high` input that moves reaches only what reads it.
+
+  A code edit is simulated by registering a query again under another
+  code version, as a new build would (`Roux.Database.register_query/3`);
+  a rule edit by editing a copy of argus's Datalog tree (`:dl_root`).
   The query log's telemetry handlers are VM-wide, so the graphs run in
   this module's peer (`Argus.Test.Peer`).
   """
@@ -16,9 +26,8 @@ defmodule Argus.Graph.RulesTest do
   @moduletag :project
   use Argus.Test.Peer
 
-  alias Roux.{Input, Memo}
   alias Argus.Test.{Graph, Peer}
-  alias Roux.QueryLog
+  alias Roux.{Input, Memo, QueryLog}
 
   @moduletag :souffle
   @moduletag timeout: 300_000
@@ -29,209 +38,205 @@ defmodule Argus.Graph.RulesTest do
     %{paths: Graph.parity!(), peer: Peer.start!()}
   end
 
-  # Runs `fun` in the peer over a graph of the parity fixture with a query
-  # log attached; `fun` takes both. A warm graph is solved cold first and
-  # the log reset after, so it sees only what `fun` makes happen.
-  defp in_graph(%{peer: peer, paths: paths}, opts, fun) do
+  # Runs `fun` in the peer over a graph of the parity fixture solved
+  # cold, with a copy of argus's Datalog tree to edit and a query log
+  # attached, reset: it sees only what `fun` makes happen. `fun` takes the
+  # database, the log, and the tree's root.
+  defp in_graph(%{peer: peer, paths: paths}, fun) do
     Peer.run(peer, fn ->
-      Graph.use_parity!(paths)
-      db = Graph.new_db(paths, Keyword.take(opts, [:rules, :argus]))
-      log = QueryLog.start(:all)
+      root = Path.join(System.tmp_dir!(), "argus_dl_#{System.unique_integer([:positive])}")
+      File.cp_r!(Argus.Analysis.Catalog.priv_dl(""), root)
+      Application.put_env(:panoptes, :dl_root, root)
 
       try do
-        if opts[:warm], do: Graph.incremental(db, @analyses)
+        db = Graph.new_db(Graph.use_parity!(paths))
+        log = QueryLog.start(db)
+        findings!(db)
         QueryLog.reset(log)
-        fun.(db, log)
+
+        try do
+          fun.(db, log, root)
+        after
+          QueryLog.stop(log)
+          Roux.Database.shutdown(db)
+        end
       after
-        QueryLog.stop(log)
-        Roux.Database.shutdown(db)
+        Application.delete_env(:panoptes, :dl_root)
+        File.rm_rf!(root)
       end
     end)
   end
 
   defp findings!(db) do
-    for analysis <- @analyses, do: {:ok, _} = Argus.Graph.findings(db, analysis)
+    for analysis <- @analyses,
+        do: {:ok, _} = Argus.Graph.Locate.located(db, {:test, analysis})
+
     :ok
   end
 
+  defp edit!(root, file) do
+    path = Path.join(root, file)
+    File.write!(path, File.read!(path) <> "\n// edited\n")
+  end
+
+  defp solved(log), do: log |> QueryLog.executions(:solve) |> Enum.map(&elem(&1, 1))
+  defp staged(log), do: log |> QueryLog.executions(:stage) |> Enum.map(&elem(&1, 1))
+
+  # Registers a query again under another code version: what a build
+  # with an edit to the code it runs gives it.
+  defp edit_code!(db, name) do
+    definition = Roux.Database.query_definition(db, name)
+    Roux.Database.register_query(db, name, %{definition | code_version: "edited"})
+  end
+
+  # The producers extraction ran, per module, while `fun` runs.
+  defp extracted(fun) do
+    table = :ets.new(:extracted, [:public, :bag])
+    handler = {__MODULE__, make_ref()}
+
+    :telemetry.attach(
+      handler,
+      [:argus, :graph, :extract],
+      fn _event, _measurements, meta, table ->
+        :ets.insert(table, {meta.module, meta.producers})
+      end,
+      table
+    )
+
+    try do
+      fun.()
+      :ets.tab2list(table)
+    after
+      :telemetry.detach(handler)
+    end
+  end
+
   test "a rule edit re-solves only the analysis it touched", context do
-    in_graph(context, [warm: true], fn db, log ->
-      :ok = Input.set(db, :rules_digest, :mailbox, "mailbox.dl edited")
-      Graph.incremental(db, @analyses)
-
-      assert QueryLog.executions(log, :souffle_solve) == [:mailbox]
-      assert QueryLog.executions(log, :module_extraction) == []
-      assert QueryLog.executions(log, :stage0_facts) == []
-    end)
-  end
-
-  test "a stage-0 rule edit re-derives the call graph, not the facts", context do
-    in_graph(context, [warm: true], fn db, log ->
-      :ok = Input.set(db, :rules_digest, :stage0, "stage0.dl edited")
-      Graph.incremental(db, @analyses)
-
-      assert QueryLog.executions(log, :stage0_facts) == [:all]
-      assert QueryLog.executions(log, :module_extraction) == []
-    end)
-  end
-
-  test "a points-to rule edit re-derives the stage, not the call graph", context do
-    in_graph(context, [warm: true], fn db, log ->
-      :ok = Input.set(db, :rules_digest, :points_to, "points_to.dl edited")
-      Graph.incremental(db, @analyses)
-
-      assert QueryLog.executions(log, :points_to_facts) == [:all]
-      assert QueryLog.executions(log, :stage0_facts) == []
-      # The same rows staged again: nothing reading them re-solves.
-      assert QueryLog.executions(log, :souffle_solve) == []
-      assert QueryLog.executions(log, :module_extraction) == []
-    end)
-  end
-
-  test "an edit to the bounded points-to program re-derives the stage, as one to the exact one",
-       context do
-    # The stage runs the bounded program in the exact one's place when
-    # the exact fixpoint outgrows its budget: keyed on the exact program
-    # alone, an edit to the bounded one served what it no longer stages.
-    in_graph(context, [warm: true], fn db, log ->
-      :ok = Input.set(db, :rules_digest, :points_to_bounded, "points_to_bounded.dl edited")
-      Graph.incremental(db, @analyses)
-
-      assert QueryLog.executions(log, :points_to_facts) == [:all]
-      assert QueryLog.executions(log, :stage0_facts) == []
-      assert QueryLog.executions(log, :souffle_solve) == []
-      assert QueryLog.executions(log, :module_extraction) == []
-    end)
-  end
-
-  test "an edit to argus's producers re-extracts every module, and solves nothing it left",
-       %{paths: paths} = context do
-    in_graph(context, [warm: true], fn db, log ->
-      findings!(db)
-      :ok = Input.set(db, :extraction_code, :all, "an extractor edited")
-      QueryLog.reset(log)
-
-      Graph.incremental(db, @analyses)
+    in_graph(context, fn db, log, root ->
+      edit!(root, "analyses/mailbox.dl")
+      _moved = Argus.Graph.set_environment(db)
       findings!(db)
 
-      assert length(QueryLog.executions(log, :module_extraction)) == map_size(paths)
+      assert solved(log) == [:mailbox]
+      assert staged(log) == []
+      assert QueryLog.executions(log, :module_facts) == []
 
-      # The same rows: every module's facts, and every solve reading
-      # them, validate without executing. The relations' text is argus's
-      # encoding, which that code writes: digested again, and equal.
-      assert QueryLog.executions(log, :module_semantic_facts) == []
-      assert QueryLog.executions(log, :relation_digest) != []
-      assert QueryLog.executions(log, :stage0_facts) == []
-      assert QueryLog.executions(log, :souffle_solve) == []
-
-      # Nothing else of argus's moved: the findings stand.
+      # The same rows: the solve comes back the same and cuts off, and
+      # the findings never run.
+      assert QueryLog.cutoffs(log, :solve) == [{:test, :mailbox}]
       assert QueryLog.executions(log, :findings) == []
     end)
   end
 
-  test "an argus edit outside its producers rebuilds the findings, and extracts nothing",
-       context do
-    # A finding's prose, or a relation added to the schema: no entry of
-    # the schema read so far moved (and no program loads the new
-    # relation, so no rules digest moves: `Argus.Graph.EnvironmentTest`).
-    in_graph(context, [warm: true], fn db, log ->
-      findings!(db)
-      :ok = Input.set(db, :argus_code, :all, "a finding's prose edited")
-      QueryLog.reset(log)
-
-      Graph.incremental(db, @analyses)
+  test "a stage-0 rule edit re-derives the call graph, not the facts", context do
+    in_graph(context, fn db, log, root ->
+      edit!(root, "stage0.dl")
+      _moved = Argus.Graph.set_environment(db)
       findings!(db)
 
-      assert Enum.sort(QueryLog.executions(log, :findings)) == @analyses
-      assert QueryLog.executions(log, :module_extraction) == []
-      assert QueryLog.executions(log, :relation_digest) == []
-      assert QueryLog.executions(log, :analysis_input_relations) == []
-      assert QueryLog.executions(log, :stage0_facts) == []
-      assert QueryLog.executions(log, :points_to_facts) == []
-      assert QueryLog.executions(log, :souffle_solve) == []
-
-      # Each schema entry read so far was digested again, and came out
-      # the same.
-      assert [_ | _] = digested = QueryLog.executions(log, :schema_read)
-      assert QueryLog.cutoffs(log, :schema_read) == digested
+      assert staged(log) == [:stage0]
+      assert QueryLog.executions(log, :module_facts) == []
+      # The same call graph: nothing reading it solves again.
+      assert solved(log) == []
     end)
   end
 
-  test "a schema entry that moved re-extracts the modules that read it, and re-solves its loaders",
-       %{paths: paths} = context do
-    in_graph(context, [warm: true], fn db, log ->
+  test "a points-to rule edit re-derives the stage, not the call graph", context do
+    in_graph(context, fn db, log, root ->
+      edit!(root, "points_to.dl")
+      _moved = Argus.Graph.set_environment(db)
       findings!(db)
-      read = {:schema_read, "columns supervisor"}
+
+      assert staged(log) == [:points_to]
+      assert solved(log) == []
+      assert QueryLog.executions(log, :module_facts) == []
+    end)
+  end
+
+  test "an edit to the bounded points-to program re-derives nothing while the exact one fits",
+       context do
+    # The stage reads the bounded program only when the exact fixpoint
+    # outgrows its budget, a function of the facts: when the facts move
+    # so that it does, the stage runs again and reads it then.
+    in_graph(context, fn db, log, root ->
+      edit!(root, "points_to_bounded.dl")
+      _moved = Argus.Graph.set_environment(db)
+      findings!(db)
+
+      assert staged(log) == []
+      assert solved(log) == []
+    end)
+  end
+
+  test "an edit to the producers' code re-runs every module, extracts nothing, solves nothing",
+       %{paths: paths} = context do
+    in_graph(context, fn db, log, _root ->
+      extracted = extracted(fn -> edit_code!(db, :module_facts) && findings!(db) end)
+
+      assert length(QueryLog.executions(log, :module_facts)) == map_size(paths)
+      # Every producer's rows found by its trace, every module's facts
+      # the same: nothing past them runs.
+      assert extracted == []
+      assert QueryLog.executions(log, :module_semantic) == []
+      assert staged(log) == []
+      assert solved(log) == []
+    end)
+  end
+
+  test "an edit to the findings' prose rebuilds the findings, which cut off", context do
+    in_graph(context, fn db, log, _root ->
+      :ok = edit_code!(db, :findings)
+      findings!(db)
+
+      assert Enum.sort(QueryLog.executions(log, :findings)) == for(a <- @analyses, do: {:test, a})
+      assert QueryLog.cutoffs(log, :findings) == QueryLog.executions(log, :findings)
+      assert QueryLog.executions(log, :located) == []
+      assert QueryLog.executions(log, :module_facts) == []
+      assert solved(log) == []
+    end)
+  end
+
+  test "a schema entry that moved re-runs the modules that read it, and extracts nothing",
+       %{paths: paths} = context do
+    in_graph(context, fn db, log, _root ->
+      read = {:schema_entry, "columns spawn_call"}
 
       readers =
-        for module <- Map.keys(paths),
-            {:ok, dependencies} = Memo.dependencies(db, {:module_extraction, module}),
+        for key <- Map.values(paths),
+            {:ok, dependencies} = Memo.dependencies(db, {:module_facts, key}),
             read in dependencies,
-            do: module
+            do: key
 
       # Some of the modules, not all: the ones whose rows it holds.
       assert readers != []
       assert length(readers) < map_size(paths)
 
-      # As if `supervisor` had other columns when these memos were made:
-      # its entry's digest then, argus's code then, and the rules digest
-      # of the one program here that loads it, whose declaration moved.
+      # As if `spawn_call` had other columns when these memos were made:
+      # its entry's digest then, and an argus build since.
       {:ok, entry} = Memo.get(db, read)
       :ok = Memo.put(db, read, %{entry | value: "before", hash: :erlang.phash2("before")})
-      :ok = Input.set(db, :argus_code, :all, "supervisor's columns edited")
-      :ok = Input.set(db, :rules_digest, :coupling, "supervisor's declaration edited")
-      QueryLog.reset(log)
+      :ok = edit_code!(db, :schema_entry)
 
-      Graph.incremental(db, @analyses)
-      findings!(db)
+      extracted = extracted(fn -> findings!(db) end)
 
-      assert QueryLog.executions(log, :module_extraction) == Enum.sort(readers)
-
-      # The same rows: nothing above them runs, and only the program
-      # that loads the relation solves again.
-      assert QueryLog.executions(log, :module_semantic_facts) == []
-      assert QueryLog.executions(log, :souffle_solve) == [:coupling]
+      assert QueryLog.executions(log, :module_facts) == Enum.sort(readers)
+      # The traces recorded the entry as it is: every producer's rows hold.
+      assert extracted == []
+      assert solved(log) == []
     end)
   end
 
-  test "a runtime change re-extracts every module and re-solves every analysis",
-       %{paths: paths} = context do
-    in_graph(context, [warm: true], fn db, log ->
-      :ok = Input.set(db, :env_fingerprint, :all, %{test: 2})
-      Graph.incremental(db, @analyses)
-
-      assert length(QueryLog.executions(log, :module_extraction)) == map_size(paths)
-      assert Enum.sort(QueryLog.executions(log, :souffle_solve)) == @analyses
-    end)
-  end
-
-  test "without argus's digests, a revision that moves nothing extracts nothing", context do
-    # A frontend that never sets them (planchette's).
-    in_graph(context, [argus: false, warm: true], fn db, log ->
-      findings!(db)
-      # A :high input moves, so validation walks every edge instead of
-      # skipping it on durability; none of them moved.
+  test "a :high input that moves reaches only what reads it", context do
+    in_graph(context, fn db, log, _root ->
+      # The project root: read by every module's source, which is where it was.
       :ok = Input.set(db, :project_root, :all, "/elsewhere")
-      QueryLog.reset(log)
-
-      Graph.incremental(db, @analyses)
       findings!(db)
 
-      assert QueryLog.executions(log, :module_extraction) == []
-      assert QueryLog.executions(log, :relation_digest) == []
+      assert QueryLog.executions(log, :module_facts) == []
+      assert staged(log) == []
+      assert solved(log) == []
       assert QueryLog.executions(log, :findings) == []
-    end)
-  end
-
-  test "without rules digests, a revision that moves nothing solves nothing", context do
-    # A frontend that never sets the digests (planchette's).
-    in_graph(context, [rules: false, warm: true], fn db, log ->
-      # A :high input moves, so validation walks every solve's edges
-      # instead of skipping them on durability; none of them moved.
-      :ok = Input.set(db, :project_root, :all, "/elsewhere")
-      Graph.incremental(db, @analyses)
-
-      assert QueryLog.executions(log, :souffle_solve) == []
+      assert QueryLog.executions(log, :located) == []
     end)
   end
 end

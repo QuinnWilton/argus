@@ -1,3 +1,9 @@
+# The graph backend's blob store is the suite's, beside the beams it
+# keeps facts of (`mix clean` takes it too), never the machine's: every
+# graph run here, and in every peer (`Argus.Test.Peer`), keeps its facts
+# and solves there.
+System.put_env("ARGUS_CACHE_DIR", Path.join(Mix.Project.build_path(), "argus/store"))
+
 # Answers to the same solve are shared across the run, and kept across
 # runs in the suite's store (`Argus.Test.Memo`), pruned when it ends.
 Argus.Test.Memo.start()

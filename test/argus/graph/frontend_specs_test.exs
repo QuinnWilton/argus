@@ -1,9 +1,11 @@
 defmodule Argus.Graph.FrontendSpecsTest do
   @moduledoc """
-  The removed-callee spec tracking over a frontend shaped like
-  planchette's: no `:module_set` input, only the contract's queries. A
-  caller that read a project callee's specs off the code path is
-  extracted again when the callee leaves the frontend's `:module_map`.
+  The removed-callee spec tracking over a frontend of its own, shaped
+  like planchette's: the contract's queries answered from inputs of its
+  own (`Argus.Graph.open/1`'s `frontend:`). A caller that read a project
+  callee's specs off the code path is extracted again when the callee
+  leaves, as long as the frontend sets the `beam` input of each beam it
+  puts on the code path.
   """
 
   # The probe's ebin goes on the code path, and its modules are loaded
@@ -14,34 +16,36 @@ defmodule Argus.Graph.FrontendSpecsTest do
 
   @moduletag :tmp_dir
 
-  @callee ScryFrontendSpecProbe.Callee
-  @caller ScryFrontendSpecProbe.Caller
+  @callee ArgusFrontendSpecProbe.Callee
+  @caller ArgusFrontendSpecProbe.Caller
 
   defmodule MapFrontend do
     @moduledoc false
-    # Per-module beam paths, and the analyzed modules as a list: removing
-    # a module moves the map without touching another module's beam.
+    # Beams by module, and the analyzed modules as a list: removing a
+    # module moves the list without touching another module's beam.
     use Roux.Query
 
     alias Roux.Runtime
 
     definput(:probe_beam, durability: :medium)
-    definput(:probe_modules, durability: :medium)
-    definput(:env_fingerprint, durability: :high)
 
-    defquery :module_beam, key: module, returns: {:ok, binary()} | :external do
-      case Runtime.input(db, :probe_beam, module) do
+    defquery :module_beam, key: module do
+      case Runtime.input(db, :probe_beam, module, default: nil) do
         nil -> :external
-        path -> {:ok, File.read!(path)}
+        path -> {:ok, %{path: path, hash: Argus.Graph.hash(File.read!(path))}}
       end
     end
 
-    defquery :module_map, key: :all, returns: %{optional(module()) => String.t()} do
-      Map.new(Runtime.input!(db, :probe_modules, :all), &{&1, "#{inspect(&1)}.ex"})
+    defquery :module_name, key: module do
+      module
     end
 
-    defquery :file_of, key: module, returns: String.t() | :external do
-      Map.get(Runtime.query(db, :module_map, :all), module, :external)
+    defquery :module_source, key: module do
+      "#{inspect(module)}.ex"
+    end
+
+    defquery :program_modules, key: program do
+      db |> Runtime.input(:program, program, default: []) |> Map.new(&{&1, &1})
     end
   end
 
@@ -77,19 +81,24 @@ defmodule Argus.Graph.FrontendSpecsTest do
 
     on_exit(fn ->
       Code.delete_path(ebin)
-      for module <- [@callee, @caller], do: :code.purge(module) && :code.delete(module)
+      for module <- [@callee, @caller], do: unload(module)
     end)
 
-    db = Roux.Database.new()
-    :ok = Roux.Lang.register_module(db, MapFrontend)
-    :ok = Roux.Lang.register_module(db, Argus.Graph)
-    :ok = Input.set(db, :env_fingerprint, :all, %{test: 1})
+    session = Argus.Graph.open(frontend: MapFrontend, store: Roux.Blob.temporary())
+    db = session.db
+    _moved = Argus.Graph.set_environment(db)
+    :ok = Argus.Graph.set_priors(db, :test, :off)
 
     for module <- [@callee, @caller] do
-      :ok = Input.set(db, :probe_beam, module, Path.join(ebin, "#{module}.beam"))
+      path = Path.join(ebin, "#{module}.beam")
+      :ok = Input.set(db, :probe_beam, module, path)
+      # The contract: each beam put on the code path is a `beam` input.
+      {key, value} = Argus.Graph.beam_input(path)
+      :ok = Input.set(db, :beam, key, value)
     end
 
-    :ok = Input.set(db, :probe_modules, :all, [@callee, @caller])
+    :ok = Input.set(db, :program, :test, [@callee, @caller])
+    on_exit(fn -> Roux.Blob.destroy(session.blob) end)
 
     %{db: db, ebin: ebin}
   end
@@ -100,17 +109,30 @@ defmodule Argus.Graph.FrontendSpecsTest do
         do: row
   end
 
-  test "a callee leaving the module map re-extracts its callers", %{db: db, ebin: ebin} do
-    assert installed_about_callee(Argus.Graph.relation_facts(db, :spec_return)) != []
+  test "a callee leaving the program re-extracts its callers", %{db: db, ebin: ebin} do
+    assert installed_about_callee(spec_return(db)) != []
 
     # The callee leaves the project and the code path; the caller's beam
     # is untouched.
-    File.rm!(Path.join(ebin, "#{@callee}.beam"))
+    path = Path.join(ebin, "#{@callee}.beam")
+    File.rm!(path)
     :code.purge(@callee)
     :code.delete(@callee)
     :ok = Roux.GC.mark_input_removed(db, :probe_beam, @callee)
-    :ok = Input.set(db, :probe_modules, :all, [@caller])
+    :ok = Roux.GC.mark_input_removed(db, :beam, Path.expand(path))
+    :ok = Input.set(db, :program, :test, [@caller])
 
-    assert installed_about_callee(Argus.Graph.relation_facts(db, :spec_return)) == []
+    assert installed_about_callee(spec_return(db)) == []
+  end
+
+  defp spec_return(db), do: Argus.Graph.Relations.rows(db, :test, :spec_return)
+
+  # Out of the VM whether or not it has old code: `:code.purge/1` answers
+  # false for a module with none, and a `&&` after it would leave the
+  # module loaded, where `:code.which/1` finds it for the next test.
+  defp unload(module) do
+    :code.purge(module)
+    :code.delete(module)
+    :code.purge(module)
   end
 end

@@ -2,7 +2,6 @@ defmodule Argus.Project.ScanTest do
   use ExUnit.Case, async: true
 
   alias Argus.Project.Scan
-  alias Roux.Input
 
   @moduletag :tmp_dir
 
@@ -35,80 +34,6 @@ defmodule Argus.Project.ScanTest do
 
       scan = Scan.discover([Path.join(dir, "a"), Path.join(dir, "b")], [~r/^Gen\./])
       assert scan == %{modules: %{}, ignored: %{Gen.Thing => first}, duplicates: []}
-    end
-  end
-
-  describe "sync/3" do
-    setup do
-      db = Roux.Database.new()
-      :ok = Roux.Lang.register_module(db, Argus.Graph.Frontend)
-      :ok = Roux.Lang.register_module(db, Argus.Graph)
-      %{db: db}
-    end
-
-    test "a beam that vanished after discovery is skipped, not a crash", %{db: db, tmp_dir: dir} do
-      kept = beam!(dir, Elixir.Kept)
-      gone = Path.join(dir, "Elixir.Gone.beam")
-
-      result = Scan.sync(db, %{Kept => kept, Gone => gone}, %{})
-
-      assert Map.keys(result.sources) == [kept]
-      assert result.changed == [Kept]
-      assert Input.get(db, :module_set, :all) == [Kept]
-    end
-
-    test "an ignored module is watched in its own input, never analyzed", %{db: db, tmp_dir: dir} do
-      kept = beam!(dir, Elixir.Kept)
-      gen = beam!(dir, Elixir.Gen, "v1")
-
-      result = Scan.sync(db, %{Kept => kept}, %{}, %{Gen => gen})
-
-      assert result.changed == [Kept]
-      assert result.ignored_moved?
-      assert Input.get(db, :module_set, :all) == [Kept]
-      assert %{path: ^gen} = Input.get(db, :ignored_beam, Gen)
-      refute Input.exists?(db, :beam_meta, Gen)
-      assert Map.has_key?(result.sources, gen)
-
-      File.write!(gen, "v2")
-      result = Scan.sync(db, %{Kept => kept}, result.sources, %{Gen => gen})
-      assert result.changed == []
-      assert result.ignored_moved?
-
-      result = Scan.sync(db, %{Kept => kept}, result.sources, %{})
-      assert result.ignored_moved?
-      refute Input.exists?(db, :ignored_beam, Gen)
-    end
-
-    test "a module moving onto or off the ignore list is read under its new input",
-         %{db: db, tmp_dir: dir} do
-      path = beam!(dir, Elixir.Moving)
-      # Old enough for the mtime+size prefilter to trust the metadata.
-      File.touch!(path, System.os_time(:second) - 60)
-
-      analyzed = Scan.sync(db, %{Moving => path}, %{})
-      assert Input.exists?(db, :beam_meta, Moving)
-
-      ignored = Scan.sync(db, %{}, analyzed.sources, %{Moving => path})
-      assert ignored.removed == [Moving]
-      assert %{path: ^path} = Input.get(db, :ignored_beam, Moving)
-
-      back = Scan.sync(db, %{Moving => path}, ignored.sources, %{})
-      assert back.changed == [Moving]
-      assert %{path: ^path} = Input.get(db, :beam_meta, Moving)
-      refute Input.exists?(db, :ignored_beam, Moving)
-    end
-
-    test "a vanished beam that was there before is removed", %{db: db, tmp_dir: dir} do
-      kept = beam!(dir, Elixir.Kept)
-      later = beam!(dir, Elixir.Later)
-      Scan.sync(db, %{Kept => kept, Later => later}, %{})
-
-      File.rm!(later)
-      result = Scan.sync(db, %{Kept => kept, Later => later}, %{})
-
-      assert result.removed == [Later]
-      assert Input.get(db, :module_set, :all) == [Kept]
     end
   end
 end
