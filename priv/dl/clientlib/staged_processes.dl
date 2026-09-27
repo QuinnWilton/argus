@@ -63,6 +63,11 @@
 .decl source_table(func: symbol, src_kind: symbol, src: symbol, table: symbol)
 .input source_table
 
+// The tables a bounded stage resolved coarsely: their source_table rows
+// are a superset (points_to.dl).
+.decl coarse_table(table: symbol)
+.input coarse_table
+
 // ── Derived here, over the staged rows ─────────────────────────────
 
 // Everything that goes to a process: a call, cast or send; signals.dl

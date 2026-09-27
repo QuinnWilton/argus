@@ -202,10 +202,13 @@ known_table(id, k, t) :-
   ets_op_param(id, p),
   param_table(f, to_string(p), k, t).
 
-// The table the operand may be, by points-to.
+// The table the operand may be, by points-to. A table a bounded stage
+// resolved coarsely (coarse_table) is a superset's answer, not an
+// identity: an operand only it answers names no table.
 known_table(id, k, t) :-
   table_use(id, f, sk, s),
   source_table(f, sk, s, x),
+  !coarse_table(x),
   table_alloc(n, _, x),
   site_table(n, k, t).
 

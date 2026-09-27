@@ -148,3 +148,13 @@ source_table(f, sk, s, t) :-
   table_alloc(_, _, t).
 
 .output source_table(filename="source_table.facts")
+
+// The tables the bounded stage resolved coarsely (pervasive leaves): its
+// source_table rows for them are a superset, which a rule that needs
+// the table an operation surely names must not take as one (tables.dl).
+// None in the exact stage.
+.decl coarse_table(table: symbol)
+
+coarse_table(t) :- pervasive(t), table_alloc(_, _, t).
+
+.output coarse_table(filename="coarse_table.facts")
