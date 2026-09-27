@@ -55,16 +55,15 @@ defmodule Argus.Lines do
     end
   end
 
+  # One pass: each instruction's line, and each function's least (the
+  # function of `"Mod:func/arity#idx"` is what precedes the first `#`).
   defp build(rows) do
-    by_instr = Map.new(rows, fn [id, line] -> {id, String.to_integer(line)} end)
-
-    by_func =
-      rows
-      |> Enum.group_by(
-        fn [id, _line] -> id |> String.split("#", parts: 2) |> hd() end,
-        fn [_id, line] -> String.to_integer(line) end
-      )
-      |> Map.new(fn {func, lines} -> {func, Enum.min(lines)} end)
+    {by_instr, by_func} =
+      Enum.reduce(rows, {%{}, %{}}, fn [id, line], {by_instr, by_func} ->
+        line = String.to_integer(line)
+        [func | _] = :binary.split(id, "#")
+        {Map.put(by_instr, id, line), Map.update(by_func, func, line, &min(&1, line))}
+      end)
 
     %{by_instr: by_instr, by_func: by_func}
   end

@@ -52,15 +52,20 @@ defmodule Argus.Tsv do
   def decode(""), do: []
 
   def decode(content) when is_binary(content) do
-    lines = String.split(content, "\n")
+    # `:binary.split/3` rather than `String.split/2`, which reads its
+    # options on every call: a program's line_info is hundreds of
+    # thousands of lines.
+    lines = :binary.split(content, "\n", [:global])
     lines = if List.last(lines) == "", do: Enum.drop(lines, -1), else: lines
 
     # Nearly every file holds no backslash at all, and then there is
     # nothing to undo in any of its fields.
     if :binary.match(content, "\\") == :nomatch do
-      Enum.map(lines, &String.split(&1, "\t"))
+      Enum.map(lines, &:binary.split(&1, "\t", [:global]))
     else
-      Enum.map(lines, fn line -> line |> String.split("\t") |> Enum.map(&unescape/1) end)
+      Enum.map(lines, fn line ->
+        line |> :binary.split("\t", [:global]) |> Enum.map(&unescape/1)
+      end)
     end
   end
 
