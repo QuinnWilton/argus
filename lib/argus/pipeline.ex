@@ -492,6 +492,94 @@ defmodule Argus.Pipeline do
     end
   end
 
+  @typedoc """
+  What `extract_module/2` made of one module:
+
+    * `status` — `:ok`, or `:lost` when the module outlived the
+      per-module timeout or its worker exited: its facts are then its
+      one `extraction_error` row, the base's, and they depend on the
+      machine's load as much as on the code;
+    * `facts` — each producer's rows as `Argus.Pipeline.Writer.encode/2`
+      encodes them (per relation, the bytes of its lines), for the
+      producers asked for, `:base` too when the module was lost;
+    * `reads` — what each producer's rows depend on of the schema
+      (`t:shard_info/0`'s `reads`), for the producers asked for;
+    * `installed` — the modules whose specs were read from the code path;
+    * `base` — the module's base, kept (`Argus.Pipeline.Base`), when
+      `keep_base: true` asked and it was computed; else nil.
+  """
+  @type module_extraction :: %{
+          status: :ok | :lost,
+          facts: %{producer() => %{atom() => binary()}},
+          reads: %{producer() => [Argus.Schema.Reads.read()]},
+          installed: [module()],
+          base: binary() | nil
+        }
+
+  @doc """
+  Extracts one module, for the producers named, as `run_shards/3` would
+  write their rows: what an incremental consumer keeps per module and
+  producer (`Argus.Graph.Extraction`).
+
+  `producers` names the producers whose rows come back; `:base` is
+  computed whether or not it is named, since every extractor reads what
+  it computes — unless `base:` hands in one kept from an earlier run,
+  which the extractors then run over (only when `:base` is not named:
+  the base's own rows are the emitter's, which no kept base holds).
+  `keep_base: true` returns the base computed, for a later run.
+  `relations:`, `trace_imprecision:` and `timeout:` mean what they do
+  for `run/3`.
+
+  Returns `{:ok, extraction}` (`t:module_extraction/0`), or
+  `{:error, reason}` when the input cannot be read at all.
+  """
+  @spec extract_module(Disassemble.module_input(), keyword()) ::
+          {:ok, module_extraction()} | {:error, term()}
+  def extract_module(input, opts) do
+    producers = opts |> Keyword.fetch!(:producers) |> Enum.uniq()
+    selected = MapSet.new(producers)
+    extractors = for producer <- producers, producer != :base, do: producer
+    written = Writer.written(Keyword.get(opts, :relations, :all))
+    how = %{base: MapSet.member?(selected, :base), keep: Keyword.get(opts, :keep_base, false)}
+    kept = if how.base, do: nil, else: Keyword.get(opts, :base)
+    opts = opts |> Keyword.put(:extractors, extractors) |> Keyword.put(:concurrency, 1)
+
+    # Every producer's rows, encoded in the worker; a lost module's are
+    # the base's error row, whether or not the base was asked for.
+    shape = fn produced, kept_base, reads ->
+      encoded = Map.new(produced, fn {p, facts} -> {p, Writer.encode(facts, written)} end)
+      {encoded, kept_base, reads}
+    end
+
+    with {:ok, [path]} <- Disassemble.resolve_paths([input]) do
+      memo = new_memo()
+
+      try do
+        [{path, kept}]
+        |> extract_stream(opts, memo, how, shape)
+        |> Enum.to_list()
+        |> case do
+          [{status, {encoded, kept_base, reads}}] when status in [:ok, :lost] ->
+            asked = if status == :lost, do: [:base | producers], else: producers
+
+            {:ok,
+             %{
+               status: status,
+               facts: Map.new(Enum.uniq(asked), &{&1, Map.get(encoded, &1, %{})}),
+               reads: Map.new(producers, &{&1, Map.get(reads, &1, [])}),
+               installed: installed_reads(memo),
+               base: kept_base
+             }}
+
+          [{:error, reason}] ->
+            {:error, reason}
+        end
+      after
+        :ets.delete(memo)
+      end
+    end
+  end
+
   # A module's facts as `Writer` writes them: the relations with rows,
   # each in the order it lands in the file (extraction prepends).
   defp in_file_order(facts) do
