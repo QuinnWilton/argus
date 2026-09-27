@@ -61,8 +61,14 @@ defmodule Argus.Graph.Pack do
   # how one is named, changes.
   @format "argus-pack-4"
 
-  # How many of a module's traces a lookup weighs, most recent first.
+  # How many of a module's traces a lookup weighs, most recently used
+  # first: only those are read.
   @candidates 3
+
+  # How many a module keeps, the most recently used: one per code and
+  # per what its producers observed (another VM's code path, an edit
+  # undone), the rest pruned as a new one is kept.
+  @kept 8
 
   @typedoc """
   A module's facts: its name, its pack's digest, each relation's chunk
@@ -153,8 +159,7 @@ defmodule Argus.Graph.Pack do
   # does not: `%{trace: trace | nil, missing: producers, base: kept}`.
   defp best(store, name, producers, codes, observer) do
     store
-    |> Trace.fetch(name)
-    |> Enum.take(@candidates)
+    |> Trace.fetch(name, limit: @candidates)
     |> Enum.map(&%{&1 | value: expand(&1.value)})
     |> Enum.filter(&Blob.member?(store, &1.value.pack))
     |> Enum.reduce_while({%{trace: nil, missing: producers, base: nil}, observer}, fn trace,
@@ -306,7 +311,7 @@ defmodule Argus.Graph.Pack do
           producer_entries(old, producers, missing, codes, extraction, base_reads, observer)
 
         value = %{pack: digest, relations: relations, producers: entries, base: base_entry}
-        _ = Trace.put(store, name, trace_deps(codes, value), compact(value))
+        _ = Trace.put(store, name, trace_deps(codes, value), compact(value), keep: @kept)
       end
 
       Runtime.hold([digest | base_digests(%{base: base_entry})])
