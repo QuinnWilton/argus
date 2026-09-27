@@ -99,7 +99,6 @@ defmodule Argus.Analysis do
   alias Argus.Analysis.Catalog
   alias Argus.Analysis.Extraction
   alias Argus.Analysis.Sets
-  alias Argus.Cache.Facts
   alias Argus.Souffle
 
   # Behaviour callbacks.
@@ -240,13 +239,17 @@ defmodule Argus.Analysis do
   # ── Extraction (Argus.Analysis.Extraction) ──────────────────────────
 
   @doc """
-  Extracts facts from the given modules once, for one or more analyses:
-  see `Argus.Analysis.Extraction.extract_facts/3`. The directory feeds
-  `run_rules/3` for each of the analyses without re-extraction.
+  Extracts facts from the given modules once, for one or more analyses,
+  into a directory of their own (`Argus.Run.extract_facts/3`): every
+  relation the analyses' producers write, stage 0's call graph, and the
+  points-to stage when one of them reads it. The directory feeds
+  `run_rules/3` for each of the analyses without re-extraction; the
+  caller removes it (and its parent) when done.
   """
   @spec extract_facts(modules :: [atom() | String.t()], [analysis()], keyword()) ::
           {:ok, Path.t()} | {:error, term()}
-  defdelegate extract_facts(modules, analyses, opts \\ []), to: Extraction
+  def extract_facts(modules, analyses, opts \\ []),
+    do: Argus.Run.extract_facts(modules, analyses, opts)
 
   @doc """
   Derives the stage-0 relations (the shared call graph) into an existing
@@ -288,64 +291,18 @@ defmodule Argus.Analysis do
   # ── Solving ─────────────────────────────────────────────────────────
 
   @doc """
-  Runs an analysis against the given modules.
+  Runs an analysis against the given modules, on the query graph
+  (`Argus.Run.analyze/3`).
 
   Returns `{:ok, results}` where results is a map of relation name to
   list of rows. Each row is a list of strings.
 
-  ## Options
-
-  - `:concurrency` — number of parallel extraction workers (default: schedulers)
-  - `:extractors` — list of domain extractor modules to run
-  - `:souffle_bin` — path to souffle binary (default: auto-detect)
-  - `:cache` — a store (`Argus.Cache`) the facts and every solve are
-    kept in and read back from: after an edit, only the producers and
-    solves it invalidated run again (`extract_facts/3`)
+  Takes `Argus.Findings.run/2`'s options but `:analyses`; the batch
+  pipeline's went with it in 0.20 and raise (`Argus.Run.check_options!/1`).
   """
   @spec run(modules :: [atom() | String.t()], analysis(), keyword()) ::
           {:ok, result()} | {:error, term()}
-  def run(modules, analysis, opts \\ []) do
-    case Argus.Run.backend(opts) do
-      {:batch, opts} -> run_batch(modules, analysis, opts)
-      {:graph, opts} -> Argus.Run.analyze(modules, analysis, opts)
-    end
-  end
-
-  defp run_batch(modules, analysis, opts) do
-    with {:ok, rules_path} <- Catalog.rules_path(analysis) do
-      case Extraction.cached_facts(modules, [analysis], opts) do
-        {:ok, facts} -> run_cached(facts, analysis, rules_path, opts)
-        :uncached -> run_afresh(modules, analysis, rules_path, opts)
-        {:error, _} = error -> error
-      end
-    end
-  end
-
-  defp run_afresh(modules, analysis, rules_path, opts) do
-    with {:ok, facts_dir} <- extract_facts(modules, [analysis], opts) do
-      try do
-        with {:ok, results} <- Souffle.run(facts_dir, rules_path, opts) do
-          {:ok, filter_to_outputs(results, analysis)}
-        end
-      after
-        File.rm_rf(Path.dirname(facts_dir))
-      end
-    end
-  end
-
-  # Through a store: the solve is read back when what it reads is
-  # unchanged, and no facts directory is made unless it is not.
-  defp run_cached(facts, analysis, rules_path, opts) do
-    case Facts.solve(facts, rules_path, opts) do
-      {:ok, results, solved} ->
-        Facts.release(solved)
-        {:ok, filter_to_outputs(results, analysis)}
-
-      {:error, _} = error ->
-        Facts.release(facts)
-        error
-    end
-  end
+  def run(modules, analysis, opts \\ []), do: Argus.Run.analyze(modules, analysis, opts)
 
   @doc """
   The relations an analysis actually reads, as Souffle resolves them.

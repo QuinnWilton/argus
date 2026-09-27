@@ -248,7 +248,7 @@ defmodule Argus.Analysis.PointsToBudgetTest do
         for name <- ~w(SafeCall UserA UserB TargetA TargetB), do: Module.concat(PidFlow, name)
 
       extract = fn bin ->
-        {:ok, dir} = Analysis.extract_facts(modules, [:startup], cache: store, souffle_bin: bin)
+        {:ok, dir} = Analysis.extract_facts(modules, [:startup], store: store, souffle_bin: bin)
 
         try do
           {rows(dir, "points_to_mode"), rows(dir, "process_call")}

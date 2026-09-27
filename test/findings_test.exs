@@ -317,17 +317,18 @@ defmodule Argus.FindingsTest do
                Memo.run_analyses([:lists], analyses: [])
     end
 
-    # The batch backend's: it runs every solve. The graph reads a solve
-    # it kept back without running it; a failing solver degrades its
-    # analyses there too (`Mix.Tasks.Compile.ArgusSouffleGateTest`).
+    # A store of its own: a solve another run kept would be read back
+    # rather than run against the deadline.
     test "a failing analysis degrades with a note while the result still returns" do
       skip_without_souffle()
+      store = Path.join(System.tmp_dir!(), "argus-degrade-#{System.unique_integer([:positive])}")
+      on_exit(fn -> File.rm_rf(store) end)
 
       assert {:ok, result} =
                Memo.run_analyses([Fixtures.UnlinkedSpawner],
-                 backend: :batch,
                  analyses: [:failure],
-                 souffle_timeout: 1
+                 souffle_timeout: 1,
+                 store: store
                )
 
       assert result.findings == []

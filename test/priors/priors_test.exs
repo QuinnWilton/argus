@@ -44,10 +44,10 @@ defmodule Argus.PriorsTest do
     unless Souffle.available?(), do: flunk("souffle not installed")
   end
 
-  # The fixtures' facts and the solves come from the suite's store; the
-  # priors are asked every run, which is what these tests test.
-  defp through_store(opts, analyses),
-    do: opts |> Keyword.put(:analyses, analyses) |> Keyword.put(:cache, Argus.Test.Memo.store())
+  # The fixtures' facts and the solves come from the suite's blob store
+  # (`Argus.Graph.store/0`); the priors are asked every run, which is
+  # what these tests test.
+  defp through_store(opts, analyses), do: Keyword.put(opts, :analyses, analyses)
 
   defp run(opts) do
     assert {:ok, %Argus.Findings{degraded: []} = r} =
@@ -134,13 +134,13 @@ defmodule Argus.PriorsTest do
   test "through a store, priors are asked every run and the findings are a fresh run's",
        %{tmp_dir: dir} do
     skip_without_souffle()
-    store = Path.join(dir, "store")
     opts = [analyses: [:exposure]] ++ priors(Path.join(dir, "answers"))
+    kept = [store: Path.join(dir, "store")]
 
-    # The batch backend's store (`cache:`), against a batch run without it.
-    assert {:ok, afresh} = Argus.Findings.run(@mods, [backend: :batch] ++ opts)
-    assert {:ok, cold} = Argus.Findings.run(@mods, [cache: store] ++ opts)
-    assert {:ok, warm} = Argus.Findings.run(@mods, [cache: store] ++ opts)
+    # A store of its own for the fresh run; the kept one twice.
+    assert {:ok, afresh} = Argus.Findings.run(@mods, [store: Path.join(dir, "fresh")] ++ opts)
+    assert {:ok, cold} = Argus.Findings.run(@mods, kept ++ opts)
+    assert {:ok, warm} = Argus.Findings.run(@mods, kept ++ opts)
 
     for run <- [cold, warm], do: assert(run.findings == afresh.findings)
     assert Enum.any?(afresh.findings, &(&1.provenance == :heuristic))

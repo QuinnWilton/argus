@@ -32,10 +32,6 @@ defmodule Argus.CorpusStoreTest do
     Path.join(root, Path.basename(dir))
   end
 
-  defp entries(store) do
-    for kind <- ~w(shards solves), name <- File.ls!(Path.join(store, kind)), do: {kind, name}
-  end
-
   setup do
     before = System.get_env("ARGUS_CORPUS_DIR")
     System.put_env("ARGUS_CORPUS_DIR", root())
@@ -115,29 +111,5 @@ defmodule Argus.CorpusStoreTest do
       File.rm!(older)
       File.rm!(newer)
     end)
-  end
-
-  test "on the batch backend, a checkout is analyzed through its store, and a second analysis runs nothing again" do
-    unless Argus.Souffle.available?(), do: flunk("souffle not installed")
-
-    pair = @pair
-    dir = fake_checkout!(root(), pair)
-    store = Corpus.store(Corpus.checkout(pair, :pre))
-    assert store == Path.join(dir, ".argus-facts")
-
-    on_backend(:batch, fn -> batch_twice(pair, store) end)
-  end
-
-  defp batch_twice(pair, store) do
-    assert {:ok, first} = Corpus.analyze(pair, :pre)
-    kept = entries(store)
-    assert Enum.count(kept, &(elem(&1, 0) == "solves")) > 1
-
-    assert {:ok, again} = Corpus.analyze(pair, :pre)
-    assert again.findings == first.findings
-    assert entries(store) == kept
-
-    # Pruning leaves what a run touched within the hour.
-    assert Corpus.prune_facts(store) == []
   end
 end

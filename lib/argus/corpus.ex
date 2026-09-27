@@ -205,7 +205,7 @@ defmodule Argus.Corpus do
         do: [manifest: seed_manifest(manifest(co))] ++ Keyword.take(opts, [:stamps]),
         else: []
 
-    [backend: :graph] ++ kept
+    kept
   end
 
   @doc """

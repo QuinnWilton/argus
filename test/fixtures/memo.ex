@@ -184,8 +184,8 @@ defmodule Argus.Test.Memo do
   graph's.
   """
   @spec backend_opts(:batch | :graph) :: keyword()
-  def backend_opts(:batch), do: [backend: :batch, cache: store()]
-  def backend_opts(:graph), do: [backend: :graph]
+  def backend_opts(:batch), do: raise(ArgumentError, "argus has no batch backend since 0.20")
+  def backend_opts(:graph), do: []
 
   defp once(key, [], compute) do
     case lookup(key) do

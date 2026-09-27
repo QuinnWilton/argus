@@ -2,29 +2,21 @@ defmodule Argus.RunTest do
   use ExUnit.Case, async: true
 
   doctest Argus.Run
-
-  test "an unknown backend is an argument error naming it" do
-    assert_raise ArgumentError, ~r/:nope/, fn -> Argus.Run.backend(backend: :nope) end
-  end
-
-  test "an option only the batch backend reads picks it, unless a backend is named" do
-    for option <- [:facts_dir, :cache, :solve_cache, :extractors, :relations] do
-      assert {:batch, _} = Argus.Run.backend([{option, :x}])
-      assert {:graph, [{^option, :x}]} = Argus.Run.backend([{option, :x}, backend: :graph])
-    end
-  end
 end
 
 defmodule Argus.RunFactsTest do
   @moduledoc """
-  `Argus.Analysis.extract_facts/3` writes the same directory on both
-  backends: the same files, each holding the same rows (a relation is a
-  set: the backends write rows in orders of their own), `line_info`
-  among them, and the imprecision trace only for `:coverage`.
+  `Argus.Analysis.extract_facts/3` writes, in every file of a relation
+  the producers extract, the rows `Argus.Pipeline.extract/2` gives for
+  the producers the analyses run (the base, the call-argument extractor
+  and each analysis's own): `line_info` among them, the imprecision
+  trace only for `:coverage`. A relation is a set: rows are compared
+  sorted.
   """
 
   use ExUnit.Case, async: true
 
+  alias Argus.Analysis
   alias Argus.Test.Fixtures.PidFlow
 
   @modules [Argus.Test.Fixtures.EtsBounded, Argus.Test.Fixtures.MissingRow, :gen_server] ++
@@ -33,36 +25,51 @@ defmodule Argus.RunFactsTest do
                do: Module.concat(PidFlow, name)
              )
 
-  defp rows(dir) do
-    for name <- File.ls!(dir), String.ends_with?(name, ".facts"), into: %{} do
-      rows = dir |> Path.join(name) |> File.read!() |> String.split("\n", trim: true)
-      {name, Enum.sort(rows)}
+  defp file_rows(dir, relation) do
+    case File.read(Path.join(dir, "#{relation}.facts")) do
+      {:ok, content} -> content |> Argus.Tsv.decode() |> Enum.sort()
+      {:error, reason} -> flunk("#{relation}.facts: #{inspect(reason)}")
     end
   end
 
-  defp extracted(analyses, backend) do
-    {:ok, dir} = Argus.Analysis.extract_facts(@modules, analyses, backend: backend)
-
-    try do
-      rows(dir)
-    after
-      File.rm_rf!(Path.dirname(dir))
-    end
+  defp extractors(analyses) do
+    for(
+      {:ok, module} <- Enum.map(analyses, &Analysis.fetch_module/1),
+      e <- module.extractors(),
+      do: e
+    )
+    |> then(&Enum.uniq([Argus.Extractors.CallArgs | &1]))
   end
 
   for analyses <- [[:startup, :races], [:coverage], [:mailbox, :ets, :effects]] do
-    test "for #{inspect(analyses)}, the same rows in every file on both backends" do
+    test "for #{inspect(analyses)}, every file holds the pipeline's rows" do
       unless Argus.Souffle.available?(), do: flunk("souffle not installed")
+      analyses = unquote(analyses)
 
-      batch = extracted(unquote(analyses), :batch)
-      graph = extracted(unquote(analyses), :graph)
+      {:ok, dir} = Analysis.extract_facts(@modules, analyses)
 
-      assert Map.keys(graph) == Map.keys(batch)
-      assert graph["line_info.facts"] != []
-      assert graph["imprecision.facts"] != [] == :coverage in unquote(analyses)
+      {:ok, facts} =
+        Argus.Pipeline.extract(@modules,
+          extractors: extractors(analyses),
+          trace_imprecision: :coverage in analyses
+        )
 
-      differing = for {file, rows} <- batch, graph[file] != rows, do: file
-      assert differing == []
+      try do
+        derived = Analysis.stage0_relations() ++ Analysis.points_to_relations()
+
+        differing =
+          for relation <- Argus.Schema.names() -- Argus.Schema.in_process_only(),
+              Atom.to_string(relation) not in derived,
+              expected = facts |> Map.get(relation, []) |> Enum.sort(),
+              file_rows(dir, relation) != expected,
+              do: relation
+
+        assert differing == []
+        assert file_rows(dir, :line_info) != []
+        assert file_rows(dir, :imprecision) != [] == :coverage in analyses
+      after
+        File.rm_rf!(Path.dirname(dir))
+      end
     end
   end
 end

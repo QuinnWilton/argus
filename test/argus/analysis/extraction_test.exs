@@ -1,12 +1,13 @@
 defmodule Argus.Analysis.ExtractionTest do
   use ExUnit.Case, async: true
 
+  alias Argus.Analysis
   alias Argus.Analysis.Extraction
 
   @moduletag :tmp_dir
 
   test "an extraction is staged: stage 0 is in the directory it returns" do
-    assert {:ok, facts_dir} = Extraction.extract_facts([:lists], [:startup])
+    assert {:ok, facts_dir} = Analysis.extract_facts([:lists], [:startup])
 
     try do
       for relation <- ~w(call_edge call_site unconditional_call_edge call_tag fun_handed_to) do
@@ -20,56 +21,14 @@ defmodule Argus.Analysis.ExtractionTest do
   describe "through a store" do
     @describetag :cache
 
-    defp contents(dir) do
-      for name <- dir |> File.ls!() |> Enum.sort(), into: %{} do
-        {name, File.read!(Path.join(dir, name))}
-      end
-    end
-
-    test "the directory is the one extracted afresh, staged, and read-only links",
-         %{tmp_dir: store} do
+    test "the directory is read-only links into the store", %{tmp_dir: store} do
       modules = [Argus.Test.Fixtures.EtsBounded, Argus.Test.Fixtures.MissingRow, :gen_server]
-
-      # The batch backend's store, against a batch extraction without it.
-      afresh_opts = [backend: :batch]
-      assert {:ok, afresh} = Extraction.extract_facts(modules, [:startup, :races], afresh_opts)
-      assert {:ok, cold} = Extraction.extract_facts(modules, [:startup, :races], cache: store)
-      assert {:ok, warm} = Extraction.extract_facts(modules, [:startup, :races], cache: store)
+      assert {:ok, dir} = Analysis.extract_facts(modules, [:startup, :races], store: store)
 
       try do
-        assert contents(cold) == contents(afresh)
-        assert contents(warm) == contents(afresh)
-
-        linked = Path.join(warm, "call_arg.facts")
+        linked = Path.join(dir, "call_arg.facts")
         assert File.stat!(linked).links > 1
         assert File.stat!(linked).access == :read
-      after
-        for dir <- [afresh, cold, warm], do: File.rm_rf!(Path.dirname(dir))
-      end
-
-      # Removing a directory as a caller does leaves the store whole.
-      assert store |> Path.join("work") |> File.ls!() == []
-    end
-  end
-
-  describe "through a store, an extractor compiled in memory" do
-    @describetag :cache
-
-    test "is extracted afresh: no key can name its code", %{tmp_dir: store} do
-      [{extractor, _beam}] =
-        Code.compile_string("""
-        defmodule Argus.Analysis.ExtractionTest.InMemory do
-          def relations, do: [:http_route]
-          def extract(_data), do: %{http_route: [["M", "GET", "/", "M", "f", "0"]]}
-        end
-        """)
-
-      opts = [extractors: [extractor], cache: store]
-      assert {:ok, dir} = Extraction.extract_facts([:lists], [:structure], opts)
-
-      try do
-        assert File.read!(Path.join(dir, "http_route.facts")) =~ "GET"
-        refute File.exists?(Path.join(store, "shards"))
       after
         File.rm_rf!(Path.dirname(dir))
       end
@@ -78,11 +37,11 @@ defmodule Argus.Analysis.ExtractionTest do
 
   describe "the points-to stage" do
     test "is derived when an analysis reads it, and only then" do
-      assert {:ok, reads} = Extraction.extract_facts([:lists], [:startup])
-      assert {:ok, reads_not} = Extraction.extract_facts([:lists], [:effects])
+      assert {:ok, reads} = Analysis.extract_facts([:lists], [:startup])
+      assert {:ok, reads_not} = Analysis.extract_facts([:lists], [:effects])
 
       assert {:ok, deferred} =
-               Extraction.extract_facts([:lists], [:startup], points_to: :deferred)
+               Analysis.extract_facts([:lists], [:startup], points_to: :deferred)
 
       try do
         staged = &File.exists?(Path.join(&1, "#{&2}.facts"))

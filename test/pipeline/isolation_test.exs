@@ -144,25 +144,4 @@ defmodule Argus.Pipeline.IsolationTest do
       assert step == inspect(Raises)
     end
   end
-
-  describe "Argus.Findings.run/2" do
-    test "reports them beside the findings", %{beams: [fast | _]} do
-      unless Argus.Souffle.available?(), do: flunk("souffle not installed")
-
-      assert {:ok, %Argus.Findings{degraded: [], extraction_errors: errors}} =
-               Argus.Findings.run([fast], analyses: [:structure], extractors: [Raises])
-
-      assert [
-               %{
-                 module: Argus.Pipeline.IsolationTest.Fast,
-                 source: "Argus.Pipeline.IsolationTest.Fast",
-                 step: step,
-                 reason: reason
-               }
-             ] = errors
-
-      assert step == inspect(Raises)
-      assert reason =~ "an extractor bug"
-    end
-  end
 end

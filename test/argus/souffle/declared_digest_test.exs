@@ -31,8 +31,7 @@ defmodule Argus.Souffle.DeclaredDigestTest do
           do: mod
 
     {:ok, analyses} = Argus.Analysis.set(:all)
-    opts = [cache: Argus.Test.Memo.store()]
-    {:ok, facts} = Argus.Analysis.extract_facts(modules, analyses ++ [:coverage], opts)
+    {:ok, facts} = Argus.Analysis.extract_facts(modules, analyses ++ [:coverage])
     on_exit(fn -> File.rm_rf!(Path.dirname(facts)) end)
 
     dl = Path.join(:code.priv_dir(:panoptes), "dl")

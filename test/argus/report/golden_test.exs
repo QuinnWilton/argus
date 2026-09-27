@@ -53,7 +53,7 @@ defmodule Argus.Report.GoldenTest do
         beams = Path.wildcard(Path.join(Mix.Project.compile_path(), "*.beam"))
 
         {:ok, found} =
-          Argus.run_analyses(beams, analyses: Argus.Config.all_analyses(), backend: :graph)
+          Argus.run_analyses(beams, analyses: Argus.Config.all_analyses())
 
         %{
           text: text,

@@ -1,8 +1,7 @@
 defmodule Argus.Run do
   @moduledoc """
   `Argus.run_analyses/2`, `Argus.analyze/3` and `Argus.Analysis.extract_facts/3`
-  over the query graph (`Argus.Graph`), their default backend
-  (`backend/1`).
+  over the query graph (`Argus.Graph`).
 
   Each call opens a session of its own over the blob store
   (`Argus.Graph.store/0`, or `store:`), sets the modules as one program
@@ -13,18 +12,16 @@ defmodule Argus.Run do
   `ARGUS_NO_CACHE` the store is a temporary one, removed when the call
   returns.
 
-  The answers are the batch backend's (`Argus.Findings.run/2`), relation
-  for relation and finding for finding, except that each finding and
-  related frame also says where it is (`file`, `line`, `end_line`:
-  `Argus.Located`), which the batch backend leaves nil, and that the
-  source has refined it as every frontend's report does
-  (`Argus.Located.refine/1`): the line a fragment names, the end of an
-  open span, and the keyword in place of `{guard}` in the prose.
+  Each finding and related frame says where it is (`file`, `line`,
+  `end_line`: `Argus.Located`), refined by its source as every
+  frontend's report is (`Argus.Located.refine/1`): the line a fragment
+  names, the end of an open span, and the keyword in place of `{guard}`
+  in the prose.
 
   ## Options
 
-  Besides what the batch backend takes (`:analyses`, `:souffle_bin`,
-  `:souffle_timeout`, `:concurrency`, `:priors`, `:priors_opts`):
+  Besides `:analyses`, `:souffle_bin`, `:souffle_timeout`,
+  `:concurrency`, `:priors` and `:priors_opts` (`Argus.Findings.run/2`):
 
     * `:store` — the blob store: a `Roux.Blob`, or the root of one.
     * `:manifest` — where the graph is kept between calls: the call
@@ -37,10 +34,8 @@ defmodule Argus.Run do
       manifest, unless given (`Argus.Graph.Environment.stamps/1`, read
       once for many calls in one VM).
 
-  The options that shape the batch backend's facts directory or its
-  stores (`:facts_dir`, `:cache`, `:solve_cache`, `:extractors`,
-  `:relations`) mean nothing here and are ignored: the graph extracts
-  every producer once, for every analysis, and keeps what it made.
+  The batch pipeline's options went with it in 0.20: each raises,
+  naming what replaces it (`check_options!/1`).
   """
 
   alias Argus.Analysis
@@ -57,6 +52,7 @@ defmodule Argus.Run do
   @doc "`Argus.run_analyses/2` over the graph."
   @spec run_analyses([atom() | String.t()], keyword()) :: {:ok, Findings.t()} | {:error, term()}
   def run_analyses(modules, opts) do
+    check_options!(opts)
     Argus.Priors.check!(opts)
     {selection, opts} = Keyword.pop(opts, :analyses, :all)
 
@@ -76,6 +72,7 @@ defmodule Argus.Run do
   @spec analyze([atom() | String.t()], Analysis.analysis(), keyword()) ::
           {:ok, Analysis.result()} | {:error, term()}
   def analyze(modules, analysis, opts) do
+    check_options!(opts)
     Argus.Priors.check!(opts)
 
     with {:ok, _path} <- Analysis.Catalog.rules_path(analysis) do
@@ -94,55 +91,52 @@ defmodule Argus.Run do
   unless `points_to: :deferred`, and when an analysis reads it — the
   points-to stage, each a hard link into the store. The relations only
   a pipeline process reads (`Argus.Schema.in_process_only/0`) are empty:
-  the graph keeps none, so a custom program reading one runs on the
-  batch backend (`backend: :batch`). The caller removes the directory
-  (and its parent) as any other.
+  the graph keeps none. The caller removes the directory (and its
+  parent) as any other.
   """
   @spec extract_facts([atom() | String.t()], [Analysis.analysis()], keyword()) ::
           {:ok, Path.t()} | {:error, term()}
   def extract_facts(modules, analyses, opts) do
+    check_options!(opts)
     Argus.Priors.check!(opts)
 
     in_session(modules, analyses, opts, fn db -> materialize(db, analyses, opts) end)
   end
 
-  # ── Backends ────────────────────────────────────────────────────────
+  # ── Options ─────────────────────────────────────────────────────────
 
-  # What only the batch backend reads: the facts directory it writes and
-  # the stores it keeps facts and solves in, and the producers it runs.
-  @batch_only [:facts_dir, :cache, :solve_cache, :extractors, :relations]
+  # What the batch pipeline took, gone with it in 0.20, and what a
+  # caller does instead.
+  @gone [
+    backend: "argus has one backend since 0.20, the query graph: drop `backend:`",
+    facts_dir:
+      "a facts directory is no longer read back: write one with " <>
+        "Argus.Analysis.extract_facts/3 (or by hand) and solve it with Argus.Analysis.run_rules/3",
+    cache:
+      "facts and solves are kept in the blob store: `store:` names one (a Roux.Blob, or " <>
+        "its root), and `manifest:` keeps the graph between calls",
+    solve_cache: "solves are kept in the blob store's action cache: `store:` names one",
+    extractors:
+      "every built-in extractor runs, once for every analysis: for another extractor's " <>
+        "rows, extract with Argus.Pipeline.extract/2 and solve with Argus.Analysis.run_rules/3",
+    relations:
+      "a solve reads every relation its program reads: for a facts directory, use " <>
+        "Argus.Analysis.extract_facts/3"
+  ]
 
   @doc """
-  The backend a call of `Argus.run_analyses/2`, `Argus.analyze/3` or
-  `Argus.Analysis.extract_facts/3` runs on, and its options without
-  `:backend`: the one `backend:` names; else, while the batch backend
-  is kept, the batch backend for a call that shapes what only it has
-  (`:facts_dir`, `:cache`, `:solve_cache`, `:extractors`, `:relations`:
-  the graph extracts every producer once, keeps it in the blob store,
-  and would ignore them); else the query graph.
+  Raises `ArgumentError` for an option the batch pipeline took and 0.20
+  removed with it (`:backend`, `:facts_dir`, `:cache`, `:solve_cache`,
+  `:extractors`, `:relations`), naming what replaces it.
 
-      iex> Argus.Run.backend(analyses: [:mailbox])
-      {:graph, [analyses: [:mailbox]]}
-
-      iex> Argus.Run.backend(cache: "store")
-      {:batch, [cache: "store"]}
-
-      iex> Argus.Run.backend(backend: :batch)
-      {:batch, []}
+      iex> Argus.Run.check_options!(analyses: [:mailbox], store: "store")
+      :ok
   """
-  @spec backend(keyword()) :: {:batch | :graph, keyword()}
-  def backend(opts) when is_list(opts) do
-    case Keyword.pop(opts, :backend) do
-      {nil, opts} ->
-        if Enum.any?(@batch_only, &Keyword.has_key?(opts, &1)),
-          do: {:batch, opts},
-          else: {:graph, opts}
-
-      {backend, opts} when backend in [:batch, :graph] ->
-        {backend, opts}
-
-      {other, _opts} ->
-        raise ArgumentError, "backend: must be :graph or :batch, got: #{inspect(other)}"
+  @spec check_options!(keyword()) :: :ok
+  def check_options!(opts) when is_list(opts) do
+    case Enum.find(opts, fn {key, _value} -> Keyword.has_key?(@gone, key) end) do
+      nil -> :ok
+      {key, _value} -> raise ArgumentError, "#{inspect(key)}: " <> Keyword.fetch!(@gone, key)
     end
   end
 

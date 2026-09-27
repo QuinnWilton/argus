@@ -49,7 +49,7 @@ defmodule Argus.Souffle.UncommentedTest do
     shipped = Path.join(:code.priv_dir(:panoptes), "dl")
     modules = [Argus.Test.Fixtures.EtsBounded, Argus.Test.Fixtures.MissingRow, :gen_server]
     analyses = [:races, :mailbox, :startup]
-    {:ok, facts} = Argus.Analysis.extract_facts(modules, analyses, backend: :batch)
+    {:ok, facts} = Argus.Analysis.extract_facts(modules, analyses)
 
     try do
       for analysis <- analyses do

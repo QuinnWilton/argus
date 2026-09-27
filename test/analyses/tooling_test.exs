@@ -52,10 +52,7 @@ defmodule Argus.Analyses.ToolingTest do
 
   # Code execution each module's export reaches, by module.
   defp findings(opts) do
-    opts =
-      opts
-      |> Keyword.put(:analyses, [:unsafe_input])
-      |> Keyword.put(:cache, Memo.store())
+    opts = Keyword.put(opts, :analyses, [:unsafe_input])
 
     assert {:ok, %Findings{degraded: []} = r} = Findings.run(@mods, opts)
 

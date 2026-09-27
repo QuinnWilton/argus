@@ -2,9 +2,9 @@ defmodule Argus.Findings do
   @moduledoc """
   Findings: what an analysis reports, and how they are made.
 
-  `run/2` (exposed as `Argus.run_analyses/2`) extracts facts once,
-  evaluates each selected analysis's Datalog rules against the shared
-  facts directory, and turns every output-relation row into a finding: a
+  `run/2` (exposed as `Argus.run_analyses/2`) runs the selected
+  analyses over the query graph (`Argus.Run`), and turns every
+  output-relation row into a finding: a
   severity, a title and a detail, help lines saying what to change, and
   the most precise anchor the row allows — an instruction, else a
   function, else a module (`t:anchor/0`). A finding may carry related
@@ -34,7 +34,6 @@ defmodule Argus.Findings do
   identity it applies.
 
   The code lives in submodules, delegated to from here:
-  `Argus.Findings.Runner` (running a selection),
   `Argus.Findings.Build` (rows to findings), `Argus.Findings.Rows`
   (which rows are one finding), `Argus.Findings.Evidence` (evidence
   rows as frames), `Argus.Findings.Anchor` and `Argus.Findings.Names`.
@@ -74,7 +73,6 @@ defmodule Argus.Findings do
   alias Argus.Findings.Build
   alias Argus.Findings.Names
   alias Argus.Findings.Rows
-  alias Argus.Findings.Runner
   alias Argus.InstrId
 
   defstruct findings: [], ran: [], degraded: [], extraction_errors: []
@@ -213,79 +211,72 @@ defmodule Argus.Findings do
   @severities [:error, :warning, :info]
   @blocks [:guard, :receive, :clause, :function]
 
-  # ── Running (Argus.Findings.Runner) ────────────────────────────────
+  # ── Running (Argus.Run) ────────────────────────────────────────────
 
   @doc """
   Runs analyses against the given modules and returns structured findings.
 
   `modules` is a list of module atoms or paths to `.beam` files, exactly
-  as `Argus.analyze/3` accepts.
-
-  ## Backends
-
-  A run is made on the query graph (`Argus.Run`, `backend: :graph`, the
-  default): each finding and related frame then says where it is
+  as `Argus.analyze/3` accepts. The run is made on the query graph
+  (`Argus.Run`): each finding and related frame says where it is
   (`file`, `line`, `end_line`), refined by its source as every report
-  is. `backend: :batch` runs the batch pipeline, which leaves them nil;
-  a call passing an option only it reads (`:facts_dir`, `:cache`,
-  `:solve_cache`, `:extractors`, `:relations`) runs on it too
-  (`Argus.Run.backend/1`). Both answer the same findings otherwise.
+  is.
 
   ## Options
 
   - `:analyses` — a named set or a list of analysis names (default
     `:all`). The sets are `Argus.Analysis.sets/0`'s: `:all` (every
     built-in analysis except `:coverage`, which measures the extractor
-    pipeline rather than the analyzed code), `:default` (what scry runs
-    unconfigured), `:security`, `:effects` and `:otp`. A name is a
-    concern (`:startup`, `:mailbox`, ...); an unknown name is
+    pipeline rather than the analyzed code), `:default` (what the
+    frontends run unconfigured), `:security`, `:effects` and `:otp`. A
+    name is a concern (`:startup`, `:mailbox`, ...); an unknown name is
     `{:error, {:unknown_analysis, name}}`, anything else
     `{:error, {:invalid_analyses, value}}`.
-  - `:facts_dir` — a directory `Argus.Analysis.extract_facts/3` already
-    wrote for these modules, to evaluate without extracting again. The
-    caller owns it; without this option the run extracts into a
-    temporary directory and removes it afterwards. One without
-    `extraction_error.facts`, which every extraction writes, is
-    `{:error, %Argus.MissingRelationError{}}`.
-  - `:solve_cache` — a directory of kept solves (`Argus.Souffle.Cache`):
-    a solve whose program, solver and input files have not moved since
-    it was kept is read back rather than run, the points-to stage
-    included. Keyed by the content of what each program reads, so one
-    directory serves any facts. Off by default.
-  - `:cache` — a store (`Argus.Cache`) the facts and every solve are
-    kept in and read back from: each producer's facts are extracted
-    only when missing (`Argus.Cache.Facts`), each solve is keyed on the
-    content of what it reads, and a run whose solves are all kept makes
-    no facts directory at all. After an edit, only what it invalidated
-    runs again. Priors are asked every run, as without a store.
-    Ignored with `:facts_dir` and under `ARGUS_NO_CACHE`.
-  - `:concurrency` — parallel Souffle solves (default: the scheduler
-    count, capped at 4; each solve holds its own copy of the call graph's
-    closure). Extraction always runs at scheduler width.
-  - All other `Argus.Analysis.run/3` options (`:extractors`,
-    `:souffle_bin`, `:souffle_timeout`, ...) pass through.
+  - `:store` — the blob store the facts and solves are kept in (a
+    `Roux.Blob`, or its root; default `Argus.Graph.store/0`): a run
+    extracts only what no earlier run kept for the same code, and
+    solves only what no earlier run solved over the same inputs.
+  - `:manifest` — where the graph is kept between calls: a call after
+    an edit runs only what the edit reached (`Argus.Run`).
+  - `:concurrency` — analyses placed side by side (default: the
+    scheduler count, capped at 4).
+  - `:souffle_bin`, `:souffle_timeout` — the solver, and how long a
+    solve may run.
+  - `:priors`, `:priors_opts` — the layer-3 priors (`Argus.Priors`).
+
+  The batch pipeline's options went with it in 0.20 (`:facts_dir`,
+  `:cache`, `:solve_cache`, `:extractors`, `:relations`, `:backend`):
+  each raises `ArgumentError`, naming what replaces it
+  (`Argus.Run.check_options!/1`).
 
   Returns `{:ok, %Argus.Findings{}}` or `{:error, reason}` — see the
   moduledoc for the degradation contract.
   """
   @spec run(modules :: [atom() | String.t()], keyword()) :: {:ok, t()} | {:error, term()}
-  def run(modules, opts \\ []) when is_list(modules) and is_list(opts) do
-    case Argus.Run.backend(opts) do
-      {:batch, opts} -> Runner.run(modules, opts)
-      {:graph, opts} -> Argus.Run.run_analyses(modules, opts)
-    end
-  end
+  def run(modules, opts \\ []) when is_list(modules) and is_list(opts),
+    do: Argus.Run.run_analyses(modules, opts)
 
   @doc """
   The extraction errors recorded in a facts directory
-  (`Argus.Analysis.extract_facts/3` writes them as `extraction_error`):
-  the base steps' first, then each extractor's in turn, each in module
-  order (`Argus.Pipeline`'s producers). Every extraction writes the
-  file, empty when nothing failed: a directory without it raises
-  `Argus.MissingRelationError` (`Argus.Findings.Runner.extraction_errors/1`).
+  (`Argus.Analysis.extract_facts/3` writes them as `extraction_error`),
+  in the order they were written. A directory without the file raises
+  `Argus.MissingRelationError`: every extraction writes it, empty when
+  nothing failed.
   """
   @spec extraction_errors(Path.t()) :: [extraction_error()]
-  defdelegate extraction_errors(facts_dir), to: Runner
+  def extraction_errors(facts_dir) do
+    path = Path.join(facts_dir, "extraction_error.facts")
+
+    case File.read(path) do
+      {:ok, content} ->
+        for [mod, step, reason] <- Argus.Tsv.decode(content) do
+          %{module: Anchor.module_atom(mod), source: mod, step: step, reason: reason}
+        end
+
+      {:error, reason} ->
+        raise Argus.MissingRelationError, relation: "extraction_error", path: path, reason: reason
+    end
+  end
 
   # ── Building (Argus.Findings.Build, Rows, Evidence) ─────────────────
 

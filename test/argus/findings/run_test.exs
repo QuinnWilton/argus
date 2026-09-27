@@ -1,19 +1,18 @@
-defmodule Argus.Findings.RunnerTest do
+defmodule Argus.Findings.RunTest do
   use ExUnit.Case, async: true
 
   alias Argus.Findings
-  alias Argus.Findings.Runner
 
   @moduletag :tmp_dir
 
   test "an empty selection runs nothing and extracts nothing" do
     assert {:ok, %Findings{findings: [], ran: [], degraded: [], extraction_errors: []}} =
-             Runner.run([:fake_module_never_read], analyses: [])
+             Findings.run([:fake_module_never_read], analyses: [])
   end
 
   test "a selection that does not resolve is an error before anything runs" do
-    assert {:error, {:unknown_analysis, :nope}} = Runner.run([:lists], analyses: [:nope])
-    assert {:error, {:invalid_analyses, "all"}} = Runner.run([:lists], analyses: "all")
+    assert {:error, {:unknown_analysis, :nope}} = Findings.run([:lists], analyses: [:nope])
+    assert {:error, {:invalid_analyses, "all"}} = Findings.run([:lists], analyses: "all")
   end
 
   # A solver that fails the points-to stage and runs everything else.
@@ -36,10 +35,13 @@ defmodule Argus.Findings.RunnerTest do
   # The stage's failure is a warning as well as the degradation.
   @tag :capture_log
   test "a failed points-to stage degrades only the analyses that read it", %{tmp_dir: dir} do
+    # A store of its own: a stage kept by another run would not run
+    # the failing solver at all.
     assert {:ok, %Findings{ran: ran, degraded: degraded}} =
-             Runner.run([:lists],
+             Findings.run([:lists],
                analyses: [:startup, :effects],
-               souffle_bin: failing_points_to!(dir)
+               souffle_bin: failing_points_to!(dir),
+               store: Path.join(dir, "store")
              )
 
     assert [%{analysis: :effects}] = ran
@@ -58,7 +60,7 @@ defmodule Argus.Findings.RunnerTest do
         "Foo.Bar\tArgus.Extractors.Ets\tboom\n/tmp/x.beam\tpipeline\tunreadable\n"
       )
 
-      assert Runner.extraction_errors(dir) == [
+      assert Findings.extraction_errors(dir) == [
                %{
                  module: Foo.Bar,
                  source: "Foo.Bar",
@@ -67,8 +69,6 @@ defmodule Argus.Findings.RunnerTest do
                },
                %{module: nil, source: "/tmp/x.beam", step: "pipeline", reason: "unreadable"}
              ]
-
-      assert Findings.extraction_errors(dir) == Runner.extraction_errors(dir)
     end
 
     test "a directory without the file is not an extraction's, and raises naming it",
@@ -76,20 +76,34 @@ defmodule Argus.Findings.RunnerTest do
       path = Path.join(dir, "extraction_error.facts")
 
       assert_raise Argus.MissingRelationError, ~r/extraction_error relation's file/, fn ->
-        Runner.extraction_errors(dir)
+        Findings.extraction_errors(dir)
       end
 
       error = catch_error(Findings.extraction_errors(dir))
       assert %Argus.MissingRelationError{relation: "extraction_error", path: ^path} = error
     end
+  end
 
-    test "a run over a handed-in directory without the file is an error, not no errors" do
-      {:ok, facts} = Argus.Analysis.extract_facts([:lists], [:effects])
-      on_exit(fn -> File.rm_rf!(Path.dirname(facts)) end)
-      File.rm!(Path.join(facts, "extraction_error.facts"))
-
-      assert {:error, %Argus.MissingRelationError{relation: "extraction_error"}} =
-               Runner.run([:lists], analyses: [:effects], facts_dir: facts)
+  describe "the batch pipeline's options" do
+    test "each raises, naming what replaces it" do
+      for {option, value, says} <- [
+            {:backend, :batch, "one backend"},
+            {:facts_dir, "/tmp/facts", "run_rules"},
+            {:cache, "/tmp/store", "store:"},
+            {:solve_cache, "/tmp/solves", "store:"},
+            {:extractors, [Argus.Extractors.OTP], "Argus.Pipeline.extract/2"},
+            {:relations, :all, "extract_facts"}
+          ] do
+        for call <- [
+              fn -> Findings.run([:lists], [{option, value}]) end,
+              fn -> Argus.analyze([:lists], :effects, [{option, value}]) end,
+              fn -> Argus.Analysis.extract_facts([:lists], [:effects], [{option, value}]) end
+            ] do
+          error = assert_raise ArgumentError, call
+          assert error.message =~ inspect(option)
+          assert error.message =~ says
+        end
+      end
     end
   end
 end
