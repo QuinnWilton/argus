@@ -47,15 +47,18 @@ defmodule Argus.Graph.RulesTest do
   # Runs `fun` in the peer over a graph of the parity fixture solved
   # cold, with a copy of argus's Datalog tree to edit and a query log
   # attached, reset: it sees only what `fun` makes happen. `fun` takes the
-  # database, the log, and the tree's root.
-  defp in_graph(%{peer: peer, paths: paths}, fun) do
+  # database, the log, and the tree's root. The database takes the
+  # context's `db_opts` (`Argus.Test.Graph.new_db/2`).
+  defp in_graph(%{peer: peer, paths: paths} = context, fun) do
+    opts = Map.get(context, :db_opts, [])
+
     Peer.run(peer, fn ->
       root = Path.join(System.tmp_dir!(), "argus_dl_#{System.unique_integer([:positive])}")
       File.cp_r!(Argus.Analysis.Catalog.priv_dl(""), root)
       Application.put_env(:panoptes, :dl_root, root)
 
       try do
-        db = Graph.new_db(Graph.use_parity!(paths))
+        db = Graph.new_db(Graph.use_parity!(paths), opts)
         log = QueryLog.start(db)
         findings!(db)
         QueryLog.reset(log)
@@ -211,12 +214,15 @@ defmodule Argus.Graph.RulesTest do
       })
   end
 
+  # The code digests these edits make up are no build's: in the suite's
+  # store, the variants and bases they keep would push out the real ones
+  # each module's trace keeps (four of each producer's, two bases), and a
+  # later run would extract again what it had. They run over a store of
+  # their own.
   test "an edit to one extractor re-runs that extractor alone, over each module's kept base",
        %{paths: paths} = context do
-    in_graph(context, fn db, log, _root ->
+    in_graph(Map.put(context, :db_opts, store: :temporary), fn db, log, _root ->
       {:ok, %{value: codes}} = Memo.get(db, {:producer_code, :all})
-      # A digest no run has seen, or another run's trace for it would
-      # hold, in the suite's store.
       edited = "edited #{System.unique_integer([:positive])} #{System.os_time()}"
       :ok = came_out!(db, {:producer_code, :all}, %{codes | Argus.Extractors.ETS => edited})
 
@@ -250,7 +256,7 @@ defmodule Argus.Graph.RulesTest do
 
   test "an edit to code every producer runs re-extracts every module, and solves nothing",
        %{paths: paths} = context do
-    in_graph(context, fn db, log, _root ->
+    in_graph(Map.put(context, :db_opts, store: :temporary), fn db, log, _root ->
       {:ok, %{value: codes}} = Memo.get(db, {:producer_code, :all})
       # As an edit to `Argus.Pipeline` or to code it reaches moves every
       # producer's digest: digests no run has seen.
