@@ -69,7 +69,11 @@ defmodule Argus.Test.Peer do
       })
 
     :ok = call(peer, __MODULE__, :boot, [Code.compiler_options()])
-    ExUnit.Callbacks.on_exit(fn -> File.rm_rf(tmp) end)
+    # Removed by `rm`, not `File.rm_rf/1`: that goes through the VM's
+    # file server, which every test's `File` call queues behind, and a
+    # peer's scratch of fact directories outlasted the callback's timeout
+    # under a full suite's load.
+    ExUnit.Callbacks.on_exit(fn -> System.cmd("rm", ["-rf", tmp]) end)
     peer
   end
 
