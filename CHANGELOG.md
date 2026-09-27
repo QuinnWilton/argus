@@ -85,7 +85,8 @@ their options are removed.
   gone (`ARGUS_VERIFY_BATCH` still solves each batched set alone), and
   the `:cache_verify` tag is `:identity_verify`.
 
-**Added.** A dependency on roux `~> 0.2` (from Hex). `Argus.Graph`,
+**Added.** A dependency on roux `~> 0.2.1` (from Hex; 0.2.0 could serve
+one build's extracted facts as another's, D32). `Argus.Graph`,
 the query graph over roux 0.2: a beam's facts by its content and the
 code extracting it, each relation's digest a Merkle over the modules'
 own, each solve by the digests of what it reads (`Argus.Souffle.Solve`,
