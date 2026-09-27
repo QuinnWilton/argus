@@ -219,11 +219,69 @@ defmodule Argus.Souffle do
   end
 
   defp resolve_inputs(bin, rules_path) do
-    args = ["--show=transformed-ram", rules_path]
+    with {:ok, output} <- transformed_ram(bin, rules_path) do
+      {:ok, parse_ram_inputs(output)}
+    end
+  end
 
-    case System.cmd(bin, args, stderr_to_stdout: false) do
-      {output, 0} -> {:ok, parse_ram_inputs(output)}
+  defp transformed_ram(bin, rules_path) do
+    case System.cmd(bin, ["--show=transformed-ram", rules_path], stderr_to_stdout: false) do
+      {output, 0} -> {:ok, output}
       {output, code} -> {:error, {:souffle_error, code, output}}
+    end
+  end
+
+  @doc """
+  What a program reads and writes, as Souffle resolves them from the
+  transformed RAM (see `input_relations/2`), asked of `bin` every call:
+  `{:ok, %{inputs: [{relation, file}], outputs: [{relation, file}]}}`,
+  each file named as the program opens it (`<relation>.facts` for an
+  input and `<relation>.csv` for an output, unless the program names
+  another). An output to the terminal is no file and is not listed.
+  """
+  @spec ram_io(String.t(), Path.t()) ::
+          {:ok, %{inputs: [{String.t(), String.t()}], outputs: [{String.t(), String.t()}]}}
+          | {:error, term()}
+  def ram_io(bin, rules_path) do
+    with {:ok, output} <- transformed_ram(bin, Path.expand(rules_path)) do
+      {:ok, %{inputs: parse_ram_inputs(output), outputs: parse_ram_outputs(output)}}
+    end
+  end
+
+  defp parse_ram_outputs(output) do
+    ~r/IO\s+([a-zA-Z_][a-zA-Z0-9_]*)\s+\((?<attrs>[^)]*)\)/
+    |> Regex.scan(output, capture: :all)
+    |> Enum.filter(fn [_full, _name, attrs] ->
+      attrs =~ ~s(operation="output") and attrs =~ ~s(IO="file")
+    end)
+    |> Enum.map(fn [_full, name, attrs] ->
+      case Regex.run(~r/filename="([^"]*)"/, attrs) do
+        [_, file] -> {name, Path.basename(file)}
+        nil -> {name, name <> ".csv"}
+      end
+    end)
+    |> Enum.uniq()
+    |> Enum.sort()
+  end
+
+  @doc "How long a solve may run when `:souffle_timeout` does not say: five minutes."
+  @spec default_timeout() :: pos_integer()
+  def default_timeout, do: @default_souffle_timeout
+
+  @doc """
+  Runs `bin` over the facts in `facts_dir` with the program at
+  `rules_path`, writing its outputs into `output_dir`, which must
+  exist: `:ok`, or `{:error, {:souffle_error, status, output}}`, or
+  `{:error, :souffle_timeout}` when it did not finish within `timeout`
+  (the solver is stopped). The outputs are left for the caller to read.
+  """
+  @spec execute_into(String.t(), Path.t(), Path.t(), Path.t(), timeout()) ::
+          :ok | {:error, term()}
+  def execute_into(bin, facts_dir, rules_path, output_dir, timeout) do
+    case execute(bin, ["-F", facts_dir, "-D", output_dir, rules_path], timeout) do
+      {:ok, {_output, 0}} -> :ok
+      {:ok, {output, exit_code}} -> {:error, {:souffle_error, exit_code, output}}
+      :timeout -> {:error, :souffle_timeout}
     end
   end
 
