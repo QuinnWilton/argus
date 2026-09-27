@@ -10,6 +10,12 @@ defmodule Argus.Graph.RulesTest do
     * an edit to the code the producers run re-runs every module's
       `module_facts`, which finds every producer's rows by its trace:
       nothing is extracted, and nothing is solved;
+    * an edit to one extractor runs that extractor alone in each
+      module's facts, over its kept base, the others' rows taken from
+      the old pack; nothing is solved when the rows come out the same;
+    * an edit to code every producer runs (`Argus.Pipeline`, and what
+      it reaches) extracts every module again, and solves nothing when
+      the rows come out the same;
     * a schema entry that moved re-runs exactly the modules that read it;
     * an edit to the findings' prose rebuilds each analysis's findings,
       which come out the same (cutoff), and nothing past them runs;
@@ -98,7 +104,7 @@ defmodule Argus.Graph.RulesTest do
       handler,
       [:argus, :graph, :extract],
       fn _event, _measurements, meta, table ->
-        :ets.insert(table, {meta.module, meta.producers})
+        :ets.insert(table, {meta.module, meta.producers, meta.kept_base})
       end,
       table
     )
@@ -213,10 +219,44 @@ defmodule Argus.Graph.RulesTest do
       extracted = extracted(fn -> findings!(db) end)
 
       assert length(QueryLog.executions(log, :module_facts)) == map_size(paths)
+      # Inside each module's facts, that producer alone ran; every other
+      # producer's rows came from the module's old pack.
       assert extracted |> Enum.map(&elem(&1, 1)) |> Enum.uniq() == [[Argus.Extractors.ETS]]
       assert length(extracted) == map_size(paths)
       # The same rows: nothing past them runs.
       assert QueryLog.executions(log, :module_semantic) == []
+      assert solved(log) == []
+
+      # The first extractor-only run kept each module's base; the next
+      # edit runs the extractor over it, never over the beam.
+      again = "#{edited} again"
+      :ok = came_out!(db, {:producer_code, :all}, %{codes | Argus.Extractors.ETS => again})
+      extracted = extracted(fn -> findings!(db) end)
+
+      assert extracted |> Enum.map(&elem(&1, 1)) |> Enum.uniq() == [[Argus.Extractors.ETS]]
+      assert extracted |> Enum.map(&elem(&1, 2)) |> Enum.uniq() == [true]
+    end)
+  end
+
+  test "an edit to code every producer runs re-extracts every module, and solves nothing",
+       %{paths: paths} = context do
+    in_graph(context, fn db, log, _root ->
+      {:ok, %{value: codes}} = Memo.get(db, {:producer_code, :all})
+      # As an edit to `Argus.Pipeline` or to code it reaches moves every
+      # producer's digest: digests no run has seen.
+      run = "#{System.unique_integer([:positive])} #{System.os_time()}"
+      :ok = came_out!(db, {:producer_code, :all}, Map.new(codes, &{elem(&1, 0), "edited #{run}"}))
+
+      extracted = extracted(fn -> findings!(db) end)
+
+      assert length(QueryLog.executions(log, :module_facts)) == map_size(paths)
+      # Every producer ran on every module, from the beam.
+      assert length(extracted) == map_size(paths)
+      assert extracted |> Enum.map(&length(elem(&1, 1))) |> Enum.uniq() == [map_size(codes)]
+      assert extracted |> Enum.map(&elem(&1, 2)) |> Enum.uniq() == [false]
+      # The same rows, the same packs: nothing past them runs.
+      assert QueryLog.executions(log, :module_semantic) == []
+      assert staged(log) == []
       assert solved(log) == []
     end)
   end
