@@ -148,23 +148,38 @@ defmodule Argus.Graph.Pack do
     end
   end
 
-  defp holds?(observer, observed) do
-    Enum.reduce_while(observed, {true, observer}, fn {dep, value}, {true, observer} ->
+  # Whether every observation still is what it was: `observed` is a
+  # kept value's indexes into its table, or the pairs themselves.
+  defp holds?(observer, observed, table \\ nil) do
+    Enum.reduce_while(observed, {true, observer}, fn index_or_pair, {true, observer} ->
+      {dep, value} = if table, do: elem(table, index_or_pair), else: index_or_pair
       {now, observer} = observe(observer, dep)
       if now === value, do: {:cont, {true, observer}}, else: {:halt, {false, observer}}
     end)
   end
 
   # The trace that keeps the most producers' rows, and which producers it
-  # does not: `%{trace: trace | nil, missing: producers, base: kept}`.
+  # does not: `%{trace: trace | nil, missing: producers, base: kept}`,
+  # the trace's value as kept (`compact/1`). The most recently used is
+  # read first, and alone when it holds, as it does on a warm run.
   defp best(store, name, producers, codes, observer) do
-    store
-    |> Trace.fetch(name, limit: @candidates)
-    |> Enum.map(&%{&1 | value: expand(&1.value)})
+    none = %{trace: nil, missing: producers, base: nil}
+
+    case weigh(Trace.fetch(store, name, limit: 1), store, producers, codes, {none, observer}) do
+      {%{missing: []}, _observer} = found ->
+        found
+
+      {_best, observer} ->
+        store
+        |> Trace.fetch(name, limit: @candidates)
+        |> weigh(store, producers, codes, {none, observer})
+    end
+  end
+
+  defp weigh(traces, store, producers, codes, acc) do
+    traces
     |> Enum.filter(&Blob.member?(store, &1.value.pack))
-    |> Enum.reduce_while({%{trace: nil, missing: producers, base: nil}, observer}, fn trace,
-                                                                                      {best,
-                                                                                       observer} ->
+    |> Enum.reduce_while(acc, fn trace, {best, observer} ->
       {missing, observer} = stale(trace.value, producers, codes, observer)
       candidate = %{trace: trace, missing: missing, base: nil}
       best = if rank(candidate) < rank(best), do: candidate, else: best
@@ -179,12 +194,13 @@ defmodule Argus.Graph.Pack do
   defp rank(%{trace: trace, missing: missing}),
     do: {length(missing), if(Map.get(trace.value, :base), do: 0, else: 1)}
 
-  # The producers whose rows in the trace's pack no longer hold.
+  # The producers whose rows in the trace's pack no longer hold (its
+  # value as kept, `compact/1`).
   defp stale(value, producers, codes, observer) do
     Enum.reduce(producers, {[], observer}, fn producer, {missing, observer} ->
       case Map.fetch(value.producers, producer) do
         {:ok, %{code: code, observed: observed}} when code == :erlang.map_get(producer, codes) ->
-          case holds?(observer, observed) do
+          case holds?(observer, observed, value.observations) do
             {true, observer} -> {missing, observer}
             {false, observer} -> {missing ++ [producer], observer}
           end
@@ -257,7 +273,7 @@ defmodule Argus.Graph.Pack do
   # ones'.
   defp rebuild(db, name, input, module, producers, codes, kept, observer) do
     store = db.blob
-    old = if kept.trace, do: kept.trace.value
+    old = if kept.trace, do: expand(kept.trace.value)
     missing = kept.missing
     base_missing? = :base in missing
 
