@@ -28,11 +28,12 @@
 // whatever the caller passes there (call_arg, call_arg_forward,
 // call_arg_field, call_arg_element), and an element of one the same
 // element of what the caller passes (call_arg_forward, call_arg_tuple).
-// A literal, a named ETS table and the :ets.new/2 site of an unnamed one
-// cross unchanged (global_identity), and a table a module keeps under a
-// field of its own crosses within the module (module_identity). A key
-// read from a map field, a local or a dynamic value does not cross, and
-// the pair goes quiet rather than guess.
+// A literal (a named ETS table among them), the :ets.new/2 site of an
+// unnamed table and a handed-in table cross unchanged (global_identity),
+// and a table a module keeps under a field of its own crosses within the
+// module (module_identity). A key read from a map field, a local or a
+// dynamic value does not cross, and the pair goes quiet rather than
+// guess.
 //
 // Calls through a closure's captured variables are not followed: CallArgs
 // says nothing about a make_fun3 environment. An unknown higher-order call
@@ -70,15 +71,18 @@ liftable(s) :- call_arg_element(_, _, _, _, i), s = cat("element ", to_string(i)
 liftable(s) :- call_arg_tuple(_, _, _, i, _, _), s = cat("element ", to_string(i)).
 
 // An identity that names the same thing wherever it is spelled, and so
-// crosses every call unchanged: a literal, `any`, a named ETS table
-// ("named" and its name) or the :ets.new/2 site that made an unnamed one
-// ("new" and the site).
+// crosses every call unchanged: a literal (a named ETS table is its
+// name), `any`, the :ets.new/2 site that made an unnamed table ("new"
+// and the site) or a table the program's users hand in ("handed_in" and
+// the way in's parameter). clientlib/tables.dl's table_source says which
+// source each table kind is.
 .decl global_identity(source: symbol)
 
 global_identity("literal").
 global_identity("any").
 global_identity("named").
 global_identity("new").
+global_identity("handed_in").
 
 // One that names the same thing throughout its module and nowhere else:
 // a table a module keeps under a map field of its own ("module field"

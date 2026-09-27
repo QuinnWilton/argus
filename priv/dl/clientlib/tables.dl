@@ -1,4 +1,5 @@
-// Which ETS tables an operation may touch.
+// Which ETS tables an operation may touch, in the one identity every
+// analysis that asks "the same table?" shares.
 //
 // A table is known the way the runtime knows it. A named table is its
 // name, the same table wherever the name is spelled. An unnamed table is
@@ -6,16 +7,37 @@
 // it is an allocation site, and where the reference goes is the question
 // process points-to already answers for pids (processes.dl: a `table`
 // source, through parameters, returns, map and tuple fields, a server's
-// state, a closure's environment and a spawned function's arguments). So
+// state, a closure's environment and a spawned function's arguments).
 //
-//   ets_table(id, "named", ":name")  — a named table;
-//   ets_table(id, "new", site)       — the unnamed table made at `site`;
+// ── A table's identity ──────────────────────────────────────────────
 //
-// for an operation `id` (or an :ets.new site, as the table it makes). An
-// operand is a set of tables, not one: `cfg.table || @default` is
-// whatever the field holds or the default, and both are answers.
+// A table is a kind and an identity within that kind (EtsTable):
 //
-// A name reaches an operation spelled at it, as one arm of a join
+//   ["named", ":name"]               a table registered under a name;
+//   ["new", site]                    the unnamed table made at `site`;
+//   ["field", "<module> <path>"]     a table a module reads out of a
+//                                    parameter's map, where nothing
+//                                    better is known;
+//   ["handed_in", "param P of F"]    a table the program's users hand to
+//                                    parameter P of F, a way in.
+//
+// Two references are the same table when kind and identity are equal.
+// A name and a site are the same table everywhere; a field table is one
+// within its module, and a handed-in table within what F forwards it to,
+// since that is all the identity knows of them. Two kinds are never one
+// table, though at run time a field or handed-in table may be a named or
+// a new one: nothing in view says which, and a rule that needs two
+// references to be one table goes quiet.
+//
+// Relations spell a table as two columns, `kind` and `ident`, so that a
+// CheckThenAct instance can lift it (table_source); a rule that holds a
+// table as one value uses EtsTable.
+//
+// ── How an operation reaches its table ──────────────────────────────
+//
+// An operand is a set of tables, not one: `cfg.table || @default` is
+// whatever the field holds or the default, and both are answers. A name
+// reaches an operation spelled at it, as one arm of a join
 // (ets_table_path's literal answers), or through the parameters callers
 // pass it in (call_arg, forwarded). Names are atoms and the points-to
 // analysis follows references, not atoms, so a name kept in a field or a
@@ -24,18 +46,16 @@
 //
 // What points-to cannot see — a table handed over by a call it cannot
 // follow, `store.intern(state, b)` with `store` a module in a struct —
-// leaves an operation with no table. For a table read out of a
-// parameter's map there is one fallback, spelled
+// leaves an operation with no table (unknown_table). Two fallbacks name
+// it all the same: a table read out of a parameter's map is the module's
+// field (`%{forward: f, reverse: r}` is two fields), and a parameter
+// nothing in view fills, below a function outside callers call, is the
+// table those callers hand in.
 //
-//   ets_table(id, "field", "<module> <path>")
-//
-// the path of map keys it is read under: two unnamed tables a module
-// hands itself in one map, `%{forward: f, reverse: r}`, are its two
-// fields. The fallback holds only where nothing better does, and only
-// within the module: it assumes a module means one table by one field.
-//
-// Prerequisites: imports.dl, otp.dl (staged_processes.dl) and
-// vocabulary.dl (named_site).
+// Prerequisites: imports.dl (library_face), otp.dl (staged_processes.dl,
+// process_entry) and vocabulary.dl (named_site).
+
+.type EtsTable = [kind: symbol, ident: symbol]
 
 // ── Tables as objects ───────────────────────────────────────────────
 
@@ -57,20 +77,25 @@ site_name(n, name) :-
   ets_table_path(n, "param", p, ""),
   name_at_param(f, p, name).
 
+// The table the :ets.new/2 at `site` makes: the named table of each name
+// it may give, or its own unnamed one.
 .decl site_table(site: symbol, kind: symbol, ident: symbol)
 
 site_table(n, "named", name) :- named_site(n), site_name(n, name).
 site_table(n, "new", n) :- ets_new(n, _, _), !named_site(n).
 
-// ── Names through parameters ────────────────────────────────────────
+// ── Tables through parameters ───────────────────────────────────────
 
-.decl name_param_needed(func: symbol, pos: symbol)
+// The parameters whose tables are asked about: an operation's or a
+// creation site's operand, and every caller's parameter that forwards
+// into one. An analysis that asks about another parameter adds it here.
+.decl table_param_needed(func: symbol, pos: symbol)
 
-name_param_needed(f, p) :- ets_table_path(id, "param", p, ""), ets_op(id, f, _, _, _).
-name_param_needed(f, p) :- ets_table_path(id, "param", p, ""), ets_new(id, f, _).
+table_param_needed(f, p) :- ets_table_path(id, "param", p, ""), ets_op(id, f, _, _, _).
+table_param_needed(f, p) :- ets_table_path(id, "param", p, ""), ets_new(id, f, _).
 
-name_param_needed(c, to_string(m)) :-
-  name_param_needed(f, p),
+table_param_needed(c, to_string(m)) :-
+  table_param_needed(f, p),
   call_arg_forward(c, f, n, m),
   p = to_string(n).
 
@@ -79,16 +104,80 @@ name_param_needed(c, to_string(m)) :-
 .decl name_at_param(func: symbol, pos: symbol, name: symbol)
 
 name_at_param(f, p, name) :-
-  name_param_needed(f, p),
+  table_param_needed(f, p),
   call_arg(_, f, n, name),
   name != "dynamic",
   p = to_string(n).
 
 name_at_param(f, p, name) :-
-  name_param_needed(f, p),
+  table_param_needed(f, p),
   call_arg_forward(c, f, n, m),
   p = to_string(n),
   name_at_param(c, to_string(m), name).
+
+// The :ets.new/2 site whose reference a caller passes the parameter: the
+// caller made it (ets_tid_arg records the name it was made with, and the
+// caller's :ets.new/2 of that name is the site), directly or forwarded.
+.decl tid_at_param(func: symbol, pos: symbol, site: symbol)
+
+tid_at_param(f, p, n) :-
+  table_param_needed(f, p),
+  ets_tid_arg(c, f, k, name),
+  p = to_string(k),
+  ets_new(n, c, name).
+
+tid_at_param(f, p, n) :-
+  table_param_needed(f, p),
+  call_arg_forward(c, f, k, m),
+  p = to_string(k),
+  tid_at_param(c, to_string(m), n).
+
+// Some call in view fills the parameter, on some chain of forwarding
+// callers, with a value of its own (a literal, a reference, anything
+// computed).
+.decl table_filled_in_view(func: symbol, pos: symbol)
+
+table_filled_in_view(f, p) :- table_param_needed(f, p), call_arg(_, f, n, _), p = to_string(n).
+table_filled_in_view(f, p) :- table_param_needed(f, p), ets_tid_arg(_, f, n, _), p = to_string(n).
+
+table_filled_in_view(f, p) :-
+  table_param_needed(f, p),
+  call_arg_forward(c, f, n, m),
+  p = to_string(n),
+  table_filled_in_view(c, to_string(m)).
+
+// The parameter holds what callers outside the program pass to parameter
+// `way_in_pos` of `way_in`: a way in for them (library_face, ways_in.dl:
+// exported, in a module no other module of the program calls; not a
+// callback the runtime calls with what the program's own init
+// returned), forwarding it down to `func`.
+.decl param_from_outside(func: symbol, pos: symbol, way_in: symbol, way_in_pos: symbol)
+
+param_from_outside(f, p, f, p) :-
+  table_param_needed(f, p),
+  library_face(f),
+  !process_entry(_, f).
+
+param_from_outside(f, p, w, q) :-
+  table_param_needed(f, p),
+  call_arg_forward(c, f, n, m),
+  p = to_string(n),
+  param_from_outside(c, to_string(m), w, q).
+
+// The tables a parameter may hold: a named table whose name a caller
+// passes, the table a caller made and passes the reference of, or, when
+// the parameter arrives from outside the program and no call in view
+// fills it, the table the program's users hand in (Hammer's `hit(table,
+// key, ...)`, which `use Hammer` calls with the user's own table). Where
+// a handed-in table was made, and with which options, is out of view.
+.decl param_table(func: symbol, pos: symbol, kind: symbol, ident: symbol)
+
+param_table(f, p, "named", name) :- name_at_param(f, p, name).
+param_table(f, p, k, t) :- tid_at_param(f, p, n), site_table(n, k, t).
+
+param_table(f, p, "handed_in", cat("param ", q, " of ", w)) :-
+  param_from_outside(f, p, w, q),
+  !table_filled_in_view(f, p).
 
 // ── Operations ──────────────────────────────────────────────────────
 
@@ -99,11 +188,11 @@ known_table(id, "named", name) :-
   ets_op(id, _, _, _, _),
   ets_table_path(id, "literal", name, "").
 
-// A name a caller passes.
-known_table(id, "named", name) :-
+// What the parameter holds.
+known_table(id, k, t) :-
   ets_op(id, f, _, _, _),
   ets_table_path(id, "param", p, ""),
-  name_at_param(f, p, name).
+  param_table(f, p, k, t).
 
 // The table the operand may be, by points-to.
 known_table(id, k, t) :-
@@ -115,6 +204,7 @@ known_table(id, k, t) :-
 // A creation site is the table it makes.
 known_table(n, k, t) :- site_table(n, k, t).
 
+// The tables operation (or creation site) `id` may touch.
 .decl ets_table(id: symbol, kind: symbol, ident: symbol)
 
 ets_table(id, k, t) :- known_table(id, k, t).
@@ -131,15 +221,67 @@ ets_table(id, "field", cat(mod, " ", path)) :-
   !has_known_table(id),
   function_def(f, mod, _, _, _).
 
+// An operation no view names a table for: points-to could not follow its
+// operand, and neither fallback holds. A rule that must not miss the
+// table takes it to be any table; one that must not invent one, none.
+.decl unknown_table(id: symbol)
+
+unknown_table(id) :- ets_op(id, _, _, _, _), !ets_table(id, _, _).
+
+// ── Where a table is made ───────────────────────────────────────────
+
+// The :ets.new/2 sites that may make the table. A named or unnamed
+// table's are its own; a field table's are the sites of the name its
+// operations were created with (ets_op's table column, which the
+// extractor follows through a map's fields where points-to does not). A
+// handed-in table is made out of view.
+.decl table_made_at(kind: symbol, ident: symbol, site: symbol)
+
+table_made_at(k, t, n) :- site_table(n, k, t).
+
+table_made_at("field", t, n) :-
+  ets_table(id, "field", t),
+  ets_op(id, _, name, _, _),
+  name != "dynamic",
+  ets_new(n, _, name).
+
+// A table the program does not show being made: a named table only a
+// dependency or a name that arrives at run time makes, or a handed-in
+// one. Nothing says it is private.
+.decl table_made_out_of_view(kind: symbol, ident: symbol)
+
+table_made_out_of_view("named", t) :- ets_table(_, "named", t), !table_made_at("named", t, _).
+table_made_out_of_view("handed_in", t) :- ets_table(_, "handed_in", t).
+
 // ── Access ──────────────────────────────────────────────────────────
 
-// A table another process can read: made somewhere the program shows, and
-// not private. A "field" table is the one its module creates under the
-// name the operation resolved to, as before identity by site.
+// A table some site makes :private, readable by its owner alone.
 .decl table_private(kind: symbol, ident: symbol)
 
-table_private(k, t) :- site_table(n, k, t), ets_option(n, "access", "private").
+table_private(k, t) :- table_made_at(k, t, n), ets_option(n, "access", "private").
 
+// A table another process can read: made somewhere the program shows,
+// and not private.
 .decl table_readable_elsewhere(kind: symbol, ident: symbol)
 
-table_readable_elsewhere(k, t) :- site_table(_, k, t), !table_private(k, t).
+table_readable_elsewhere(k, t) :- table_made_at(k, t, _), !table_private(k, t).
+
+// A table some site makes :public: any process can write it.
+.decl table_public(kind: symbol, ident: symbol)
+
+table_public(k, t) :- table_made_at(k, t, n), ets_option(n, "access", "public").
+
+// ── Tables across calls ─────────────────────────────────────────────
+
+// A table's kind as a CheckThenAct source (check_then_act.dl): a named
+// table is its name, a literal that crosses every call unchanged, as a
+// caller's literal argument does; a site and a handed-in table cross
+// every call too (global_identity); a field table crosses within its
+// module ("module field", module_identity). CheckThenAct's own "field"
+// is a key read from a map, which crosses nothing.
+.decl table_source(kind: symbol, source: symbol)
+
+table_source("named", "literal").
+table_source("new", "new").
+table_source("field", "module field").
+table_source("handed_in", "handed_in").

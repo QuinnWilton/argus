@@ -427,31 +427,31 @@ reported_at(f, op, op) :- rows.meets(f, _, op, _, _, _, _), !accessor_call(f, op
 // The table a parameter holds where a pair meets on it: a name a caller
 // passes there, or the reference :ets.new returned in a caller, through
 // any forwarding. Asked only for the parameters a pair meets on.
-.decl table_param_needed(func: symbol, pos: symbol)
+.decl pair_param_needed(func: symbol, pos: symbol)
 
-table_param_needed(f, p) :- rows.meets(f, _, _, "param", p, _, _).
-table_param_needed(f, p) :- records.meets(f, _, _, "param", p, _, _).
+pair_param_needed(f, p) :- rows.meets(f, _, _, "param", p, _, _).
+pair_param_needed(f, p) :- records.meets(f, _, _, "param", p, _, _).
 
-table_param_needed(c, to_string(m)) :-
-  table_param_needed(f, p),
+pair_param_needed(c, to_string(m)) :-
+  pair_param_needed(f, p),
   call_arg_forward(c, f, n, m),
   p = to_string(n).
 
 .decl table_at_param(func: symbol, pos: symbol, name: symbol)
 
 table_at_param(f, p, name) :-
-  table_param_needed(f, p),
+  pair_param_needed(f, p),
   call_arg(_, f, n, name),
   name != "dynamic",
   p = to_string(n).
 
 table_at_param(f, p, name) :-
-  table_param_needed(f, p),
+  pair_param_needed(f, p),
   ets_tid_arg(_, f, n, name),
   p = to_string(n).
 
 table_at_param(f, p, name) :-
-  table_param_needed(f, p),
+  pair_param_needed(f, p),
   call_arg_forward(c, f, n, m),
   p = to_string(n),
   table_at_param(c, to_string(m), name).
@@ -496,16 +496,16 @@ reads_then_writes(f, r, w, name, k) :- decides_write(f, r, w, [[_, name], _, k])
 // it as on a public table (ets_check_act); one process's is not, since
 // no other writer of a table nothing names can be found: its only rival
 // is the pair itself, in a second process.
-.decl table_filled_in_view(func: symbol, pos: symbol)
+.decl pair_param_filled(func: symbol, pos: symbol)
 
-table_filled_in_view(f, p) :- table_param_needed(f, p), call_arg(_, f, n, _), p = to_string(n).
-table_filled_in_view(f, p) :- table_param_needed(f, p), ets_tid_arg(_, f, n, _), p = to_string(n).
+pair_param_filled(f, p) :- pair_param_needed(f, p), call_arg(_, f, n, _), p = to_string(n).
+pair_param_filled(f, p) :- pair_param_needed(f, p), ets_tid_arg(_, f, n, _), p = to_string(n).
 
-table_filled_in_view(f, p) :-
-  table_param_needed(f, p),
+pair_param_filled(f, p) :-
+  pair_param_needed(f, p),
   call_arg_forward(c, f, n, m),
   p = to_string(n),
-  table_filled_in_view(c, to_string(m)).
+  pair_param_filled(c, to_string(m)).
 
 // The parameter reaches the function from a caller outside the program:
 // the function is such a caller's way in (library_face,
@@ -515,12 +515,12 @@ table_filled_in_view(f, p) :-
 .decl table_from_outside(func: symbol, pos: symbol)
 
 table_from_outside(f, p) :-
-  table_param_needed(f, p),
+  pair_param_needed(f, p),
   library_face(f),
   !process_entry(_, f).
 
 table_from_outside(f, p) :-
-  table_param_needed(f, p),
+  pair_param_needed(f, p),
   call_arg_forward(c, f, n, m),
   p = to_string(n),
   table_from_outside(c, to_string(m)).
@@ -529,7 +529,7 @@ table_from_outside(f, p) :-
 
 open_table(f, p, cat("param ", p, " of ", f)) :-
   table_from_outside(f, p),
-  !table_filled_in_view(f, p).
+  !pair_param_filled(f, p).
 
 runs.seed(f) :- reads_then_writes(f, _, _, _, _).
 
@@ -576,7 +576,7 @@ ets_op_table(id, name) :-
   ets_op_param(id, p),
   open_table(f, to_string(p), name).
 
-table_param_needed(f, to_string(p)) :-
+pair_param_needed(f, to_string(p)) :-
   ets_op(id, f, "dynamic", _, "write"),
   ets_op_param(id, p).
 
@@ -1934,8 +1934,8 @@ table_kind_as("field", "module field").
 
 // The rule is written in the words below, one per line, each over a
 // whole table: a table is its kind and identity together (ets_table's
-// two columns), so no line has to spell the kind.
-.type EtsTable = [kind: symbol, ident: symbol]
+// two columns: EtsTable, clientlib/tables.dl), so no line has to spell
+// the kind.
 
 // A read that decides whether a row is there.
 .decl checks_row_exists(check: symbol) inline
@@ -2289,7 +2289,7 @@ record_param_needed(f, p) :- mnesia_op(_, f, _, "write", "element 0", p, _, _).
 record_made.read(r) :- mnesia_op(r, _, _, "read", _, _, _, _).
 record_made.write(w, h) :- mnesia_write_table(w, h, _), mnesia_op(w, _, op, _, _, _, _, _), (op = "dirty_write" ; op = "write").
 
-table_param_needed(f, p) :- mnesia_op(_, f, _, "write", "param", p, _, _).
+pair_param_needed(f, p) :- mnesia_op(_, f, _, "write", "param", p, _, _).
 
 // A pair another process can interleave: the race but for its harm,
 // what the harms below are asked of.
