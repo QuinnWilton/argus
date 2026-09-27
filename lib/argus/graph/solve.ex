@@ -121,18 +121,12 @@ defmodule Argus.Graph.Solve do
   end
 
   # A relation of the program's facts. One no argus module names holds
-  # no fact, and is empty; one the graph does not extract (an in-process
-  # relation, which no program of argus's reads) fails the solve rather
-  # than reading as empty.
+  # no fact, and is empty; an in-process one is extracted for the
+  # program that reads it (`Argus.Graph.Relations`).
   defp relation_input(db, program, name) do
     case existing_atom(name) do
-      nil ->
-        {:ok, {:relation, name, "empty"}}
-
-      relation ->
-        if relation in Argus.Schema.in_process_only(),
-          do: {:error, {:not_extracted, name}},
-          else: {:ok, {:relation, relation, Runtime.query(db, :relation, {program, relation})}}
+      nil -> {:ok, {:relation, name, "empty"}}
+      relation -> {:ok, {:relation, relation, Runtime.query(db, :relation, {program, relation})}}
     end
   end
 

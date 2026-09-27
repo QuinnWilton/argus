@@ -17,6 +17,14 @@ defmodule Argus.Graph.Extraction do
       relation carries a module's attributes (`Argus.Pipeline.Emit`
       drops them), so the `vsn` checksum, which moves with every edit,
       reaches none.
+    * `module_in_process(beam_key)` — the base's rows of the relations
+      only the in-process passes read (`Argus.Schema.in_process_only/0`),
+      which `module_facts` leaves out: no program of argus's reads them,
+      and they are most of a module's rows. A program of the caller's
+      own that reads one demands them (`Argus.Graph.Relations`), and
+      they are extracted then, in packs of their own
+      (`Argus.Graph.Pack`'s `:in_process`), keyed on the base's code
+      alone (`base_code`).
 
   `module_facts` reads the code every producer runs as a value
   (`Argus.Graph.Code`'s `producer_code`): an extractor edit moves it,
@@ -68,6 +76,28 @@ defmodule Argus.Graph.Extraction do
       :external ->
         {:error, {:external, beam_key}}
     end
+  end
+
+  defquery :module_in_process,
+    key: beam_key,
+    store: :blob,
+    transient: &match?({:ok, %{lost: true}}, &1),
+    returns: {:ok, Pack.t()} | {:error, term()} do
+    case Runtime.query(db, :module_beam, beam_key) do
+      {:ok, beam} ->
+        module = Runtime.query(db, :module_name, beam_key)
+        codes = %{base: Runtime.query(db, :base_code, :all)}
+        Pack.extract(db, Frontend.read(beam), beam.hash, module, codes, :in_process)
+
+      :external ->
+        {:error, {:external, beam_key}}
+    end
+  end
+
+  # The base's code digest alone: an extractor edit moves
+  # `producer_code`, and this comes out equal.
+  defquery :base_code, key: :all do
+    db |> Runtime.query(:producer_code, :all) |> Map.fetch!(:base)
   end
 
   defquery :module_semantic,

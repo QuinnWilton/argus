@@ -126,10 +126,10 @@ defmodule Argus.Pipeline do
   Every schema relation gets a file (Souffle fails on a missing `.input`
   file), but `relations:` limits which ones receive rows — the ones
   named, or with `{:except, names}` every one but those: the rest stay
-  empty. `Argus.Analysis.extract_facts/3` uses it to leave out the
-  relations that exist only for the in-process control-flow and dataflow
-  passes (`Argus.Schema.in_process_only/0`), which no Souffle program
-  reads and which are most of the fact volume.
+  empty. The query graph uses it to keep apart the relations that exist
+  only for the in-process control-flow and dataflow passes
+  (`Argus.Schema.in_process_only/0`), which no program of argus's reads
+  and which are most of the fact volume.
 
   Each module's rows are written as its extraction completes, module by
   module in input order (see "Producers" above); an extractor named

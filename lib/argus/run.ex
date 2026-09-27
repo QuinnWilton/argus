@@ -90,9 +90,12 @@ defmodule Argus.Run do
   imprecision trace only for `:coverage`), stage 0's call graph, and —
   unless `points_to: :deferred`, and when an analysis reads it — the
   points-to stage, each a hard link into the store. The relations only
-  a pipeline process reads (`Argus.Schema.in_process_only/0`) are empty:
-  the graph keeps none. The caller removes the directory (and its
-  parent) as any other.
+  the in-process passes read (`Argus.Schema.in_process_only/0`) have a
+  file only when a `{:custom, path}` program among `analyses` reads
+  them, holding the base's rows (the graph extracts them for it): a
+  program reading one over a directory made for other analyses fails
+  on the missing file, never solving over an empty relation. The
+  caller removes the directory (and its parent) as any other.
   """
   @spec extract_facts([atom() | String.t()], [Analysis.analysis()], keyword()) ::
           {:ok, Path.t()} | {:error, term()}
@@ -276,18 +279,25 @@ defmodule Argus.Run do
 
   # ── Facts directory ────────────────────────────────────────────────
 
-  # The directory the batch pipeline writes for `analyses`: every
+  # The directory the batch pipeline wrote for `analyses`: every
   # relation of the schema, each holding the rows of the producers those
   # analyses run (the base, the call-argument extractor and each one's
   # extractors), `line_info` among them, the imprecision trace only for
-  # `:coverage`; the relations only a process of the pipeline reads
-  # (`Argus.Schema.in_process_only/0`) are empty, as the graph keeps none.
+  # `:coverage`; of the relations only the in-process passes read
+  # (`Argus.Schema.in_process_only/0`), the ones a custom program among
+  # the analyses reads, and no other.
   defp materialize(db, analyses, opts) do
-    extracted = Argus.Schema.names() -- Argus.Schema.in_process_only()
+    in_process = Argus.Schema.in_process_only()
     traced? = :coverage in analyses
 
+    with {:ok, read} <- in_process_read(analyses, in_process, opts) do
+      materialize(db, analyses, opts, (Argus.Schema.names() -- in_process) ++ read, traced?)
+    end
+  end
+
+  defp materialize(db, analyses, opts, extracted, traced?) do
     {relations, empty} =
-      Enum.reduce(extracted, {[], Argus.Schema.in_process_only()}, fn
+      Enum.reduce(extracted, {[], []}, fn
         :imprecision, {relations, empty} when not traced? ->
           {relations, [:imprecision | empty]}
 
@@ -308,6 +318,25 @@ defmodule Argus.Run do
          :ok <- stage(db, :stage0, dir),
          :ok <- points_to(db, analyses, dir, opts) do
       {:ok, dir}
+    end
+  end
+
+  # The in-process relations the custom programs among `analyses` read,
+  # as the solver resolves each program's inputs.
+  defp in_process_read(analyses, in_process, opts) do
+    for({:custom, path} <- analyses, do: path)
+    |> Enum.reduce_while({:ok, []}, fn path, {:ok, read} ->
+      case Argus.Souffle.input_relations(path, Keyword.take(opts, [:souffle_bin])) do
+        {:ok, names} ->
+          {:cont, {:ok, read ++ Enum.filter(in_process, &(Atom.to_string(&1) in names))}}
+
+        {:error, _} = error ->
+          {:halt, error}
+      end
+    end)
+    |> case do
+      {:ok, read} -> {:ok, read |> Enum.uniq() |> Enum.sort()}
+      error -> error
     end
   end
 

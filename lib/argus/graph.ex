@@ -14,6 +14,9 @@ defmodule Argus.Graph do
            │
       program_relations(p)       a Merkle digest per relation, over the
            │                     program's modules as one fan-out
+           │                     (program_in_process(p) over each
+           │                     module_in_process(k): the in-process
+           │                     relations, for a program that reads one)
       relation({p, r})           ── cutoff: per relation
            │
       stage({p, :stage0})  ─ stage_output({p, :stage0, f})    ── cutoff

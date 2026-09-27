@@ -101,13 +101,15 @@ defmodule Argus.Schema do
   @layer_2_relations Enum.filter(@all_relations, &(&1.layer == 2))
   @layer_3_relations Enum.filter(@all_relations, &(&1.layer == 3))
 
-  # Layer-1 relations no Souffle program reads. They exist for the
+  # Layer-1 relations no program of argus's reads. They exist for the
   # in-process passes over a module's typed facts — `Argus.Cfg`,
   # `Argus.Dataflow`, the extractors' walks, gloss's alignment — and are
   # the bulk of the fact volume (instruction, next, def and use alone are
-  # more than half of it on a large project). `Argus.Analysis.extract_facts/3`
-  # leaves them out of the directory it stages; `Argus.InProcessRelationsTest`
-  # fails if a rule starts reading one.
+  # more than half of it on a large project). The query graph extracts
+  # them only for a program of a caller's own that reads one
+  # (`module_in_process`), and `Argus.Analysis.extract_facts/3` writes
+  # them only for such a program; `Argus.InProcessRelationsTest` fails if
+  # a rule of argus's starts reading one.
   @in_process_only for %{in_process: true, name: name} <- @declared, do: name
 
   @relations_by_name Map.new(@all_relations, fn r -> {r.name, r} end)
@@ -277,7 +279,9 @@ defmodule Argus.Schema do
   def names, do: Reads.record("names", @names)
 
   @doc """
-  Relations that only the in-process passes read; no Souffle program does.
+  Relations that only the in-process passes read; no program of argus's
+  does. The query graph extracts them for a program of a caller's own
+  that reads one (`Argus.Graph.Extraction`'s `module_in_process`).
   """
   @spec in_process_only() :: [atom()]
   def in_process_only, do: Reads.record("in_process_only", @in_process_only)

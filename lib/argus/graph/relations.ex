@@ -9,6 +9,10 @@ defmodule Argus.Graph.Relations do
       program's order. The modules' facts are brought up to date as one
       fan-out (`Roux.Runtime.parallel/3`), extracted side by side on a
       cold run and validated side by side on a warm one.
+    * `program_in_process(program)` — the same for the relations only
+      the in-process passes read (`Argus.Schema.in_process_only/0`),
+      over each module's `module_in_process`: demanded only by a
+      program that reads one of them, a caller's own.
     * `relation({program, relation})` — one relation's digest, the grain
       a solve's inputs are named at: a relation an edit did not touch
       comes out equal here, and nothing that reads it runs. A layer-3
@@ -34,17 +38,27 @@ defmodule Argus.Graph.Relations do
   @empty "empty"
 
   defquery :program_relations, key: program, returns: %{optional(atom()) => String.t()} do
+    merkles(db, program, :module_semantic)
+  end
+
+  defquery :program_in_process, key: program, returns: %{optional(atom()) => String.t()} do
+    db
+    |> merkles(program, :module_in_process)
+    |> Map.new(fn {relation, digest} -> {relation, "in-process:" <> digest} end)
+  end
+
+  # Each relation's Merkle digest over the modules' own, as `query` gives
+  # them, in the program's order: one fan-out over its modules.
+  defp merkles(db, program, query) do
     keys = Runtime.input(db, :program, program, default: [])
 
-    semantic =
-      Runtime.parallel(db, Enum.map(keys, &{:module_semantic, &1}),
-        max_concurrency: System.schedulers_online()
-      )
-
-    semantic
+    db
+    |> Runtime.parallel(Enum.map(keys, &{query, &1}), max_concurrency: System.schedulers_online())
     |> Enum.reduce(%{}, fn
-      {:ok, relations}, acc ->
-        Enum.reduce(relations, acc, fn {relation, digest}, acc ->
+      {:ok, found}, acc ->
+        found
+        |> module_digests(query)
+        |> Enum.reduce(acc, fn {relation, digest}, acc ->
           Map.update(acc, relation, [digest], &[digest | &1])
         end)
 
@@ -54,14 +68,24 @@ defmodule Argus.Graph.Relations do
     |> Map.new(fn {relation, digests} -> {relation, merkle(Enum.reverse(digests))} end)
   end
 
+  defp module_digests(relations, :module_semantic), do: relations
+  defp module_digests(%{relations: relations}, :module_in_process), do: relations
+
   defquery :relation, key: {program, relation}, returns: String.t() do
-    if prior?(relation) do
-      text = Runtime.input(db, :priors, {program, relation}, default: "")
-      if text == "", do: @empty, else: "priors:" <> sha(text)
-    else
-      db |> Runtime.query(:program_relations, program) |> Map.get(relation, @empty)
+    cond do
+      prior?(relation) ->
+        text = Runtime.input(db, :priors, {program, relation}, default: "")
+        if text == "", do: @empty, else: "priors:" <> sha(text)
+
+      in_process?(relation) ->
+        db |> Runtime.query(:program_in_process, program) |> Map.get(relation, @empty)
+
+      true ->
+        db |> Runtime.query(:program_relations, program) |> Map.get(relation, @empty)
     end
   end
+
+  defp in_process?(relation), do: relation in Argus.Schema.in_process_only()
 
   # Whether `relation` is a prior, reading that relation's entry alone:
   # the whole of layer 3 moves with any prior's prose.
@@ -150,9 +174,14 @@ defmodule Argus.Graph.Relations do
     store = db.blob
     {priors, facts} = Enum.split_with(missing, fn {_r, digest} -> prior_digest?(digest) end)
 
+    {in_process, facts} =
+      Enum.split_with(facts, fn {_r, digest} -> in_process_digest?(digest) end)
+
     with {:ok, from_priors} <- priors_files(db, program, priors),
-         {:ok, from_facts} <- facts_files(db, program, facts, producers) do
-      made = Map.merge(from_priors, from_facts)
+         {:ok, from_facts} <- facts_files(db, program, facts, producers, :module_facts),
+         {:ok, from_in_process} <-
+           facts_files(db, program, in_process, producers, :module_in_process) do
+      made = from_priors |> Map.merge(from_facts) |> Map.merge(from_in_process)
 
       for {relation, digest} <- missing,
           do:
@@ -166,6 +195,9 @@ defmodule Argus.Graph.Relations do
   defp prior_digest?("priors:" <> _), do: true
   defp prior_digest?(_digest), do: false
 
+  defp in_process_digest?("in-process:" <> _), do: true
+  defp in_process_digest?(_digest), do: false
+
   defp priors_files(db, program, priors) do
     Enum.reduce_while(priors, {:ok, %{}}, fn {relation, _digest}, {:ok, acc} ->
       text =
@@ -178,14 +210,14 @@ defmodule Argus.Graph.Relations do
     end)
   end
 
-  defp facts_files(_db, _program, [], _producers), do: {:ok, %{}}
+  defp facts_files(_db, _program, [], _producers, _query), do: {:ok, %{}}
 
   # One pass over the program's modules: each module's segments that hold
   # a missing relation are read once (`Argus.Graph.Pack.chunks/4`), and
   # its chunk of every missing relation appended to that relation's file,
   # written in a scratch directory on the store's file system and moved
   # into it.
-  defp facts_files(db, program, facts, producers) do
+  defp facts_files(db, program, facts, producers, query) do
     store = db.blob
     relations = Enum.map(facts, &elem(&1, 0))
     wanted = MapSet.new(relations)
@@ -205,7 +237,7 @@ defmodule Argus.Graph.Relations do
 
       try do
         Enum.each(keys, fn key ->
-          case Runtime.untracked(fn -> Runtime.query(db, :module_facts, key) end) do
+          case Runtime.untracked(fn -> Runtime.query(db, query, key) end) do
             {:ok, %{pack: pack, relations: chunks}} ->
               if Enum.any?(Map.keys(chunks), &MapSet.member?(wanted, &1)) do
                 chunks = chunks!(store, pack, relations, producers)
