@@ -148,6 +148,15 @@ table its maker keeps in its dictionary and hands to no other process,
 which tables.dl reads as private to it (`kept_by_its_process`), whatever
 its options.
 
+clientlib/dictionary.dl orders the dictionary: `key_set_before(func,
+key, site)` (a put earlier in func, or in a callee called earlier, with
+no erase between) and `skips_default(func, op, table)`: from a function
+that set the key first, an operation naming a table only as the key's
+default does not touch it. The read-then-write race asks it of both
+operations: ejabberd_config's validate/1, which puts a private table
+under `ejabberd_options` before its set_option calls, no longer reports
+a race on the public `:ejabberd_options`.
+
 ### One ETS table identity (clientlib/tables.dl)
 
 **Changed.** races and ets name a table one way: `EtsTable = [kind,

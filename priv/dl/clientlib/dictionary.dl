@@ -1,0 +1,180 @@
+// The process dictionary, in order: whether a key is set when a site
+// runs, and the table an operation names only while it is not.
+//
+// `put(key, value)` sets a key of the running process's dictionary from
+// the call on, until an `erase(key)` (or `erase/0`, or an erase of a key
+// not known). What a read of the key may answer is process points-to's
+// (processes.dl's `dict` source); whether the key is set at all is a
+// question of order, asked here:
+//
+// - key_set_before(func, key, site): func sets the key before `site`
+//   (earlier in func, or in a function func called earlier), and nothing
+//   erases it between.
+// - skips_default(func, op, table): the ETS operation `op` names `table`
+//   only as the default of a dictionary key it reads
+//   (`case get(key) of undefined -> table; t -> t end`,
+//   ets_table_default), and func sets the key before every call through
+//   which it reaches op. Run from func, op touches whatever the key
+//   holds, not that table: ejabberd_config's validate/1 makes a private
+//   table and puts it under `ejabberd_options` before its set_option/2
+//   calls, which then write the private table, never :ejabberd_options.
+//
+// Both are MAY words: a put on some path before the site counts (a put
+// in one branch of an `if` too), and a rule that is quiet on them is
+// quiet when any path sets the key. What they do not see:
+//
+// - A key set before func was entered (a caller's put): func's own
+//   puts alone count, so a helper run with the key set names its
+//   default as ever, and a rule stays as loud as it was.
+// - A put through a closure or `apply`, and a key computed at run time.
+// - An operand that names the same table another way too (the default
+//   literal also spelled in a caller, and passed in): the default arm
+//   alone is set aside.
+//
+// Requires imports.dl, otp.dl (runs_elsewhere), order.dl (RunsAfter) and
+// tables.dl (EtsTable) before this file.
+
+// ── Where a key is set, and erased ──────────────────────────────────
+
+// Functions whose own stack puts, or erases, a key (SameProcessReach):
+// the calls into them are where a caller does.
+.init key_put_below = SameProcessReach
+
+key_put_below.seed(f, k) :- dict_op(_, f, "put", k), k != "dynamic".
+
+.init key_erase_below = SameProcessReach
+
+key_erase_below.seed(f, k) :- dict_op(_, f, "erase", k).
+
+// The order of every put and erase, and of every call into a function
+// that may make one.
+.init key_order = RunsAfter
+
+key_order.asked(id) :- dict_op(id, _, "put", _).
+key_order.asked(id) :- dict_op(id, _, "erase", _).
+key_order.asked(id) :- call_instr(f, g, id), !runs_elsewhere(f, g), key_put_below.reaches(g, _).
+key_order.asked(id) :- call_instr(f, g, id), !runs_elsewhere(f, g), key_erase_below.reaches(g, _).
+
+// `func` sets `key` at `site`: a put there, or a call to a function that
+// returns with the key set.
+.decl sets_key_at(func: symbol, site: symbol, key: symbol)
+
+sets_key_at(f, id, k) :- dict_op(id, f, "put", k), k != "dynamic".
+
+sets_key_at(f, id, k) :-
+  call_instr(f, g, id),
+  !runs_elsewhere(f, g),
+  leaves_key_set(g, k).
+
+// `func` returns with `key` set: it sets it, and nothing erases it after.
+.decl leaves_key_set(func: symbol, key: symbol)
+
+leaves_key_set(f, k) :- sets_key_at(f, s, k), !erased_after(s, k).
+
+// `func` may erase `key` at `site`: an erase of it or of a key not known
+// there, or a call into a function whose stack makes one.
+.decl erases_key_at(func: symbol, site: symbol, key: symbol)
+
+erases_key_at(f, id, k) :- dict_op(id, f, "erase", e), erases_key(e, k).
+
+erases_key_at(f, id, k) :-
+  call_instr(f, g, id),
+  !runs_elsewhere(f, g),
+  key_erase_below.reaches(g, e),
+  erases_key(e, k).
+
+// An erase of `erased` may erase `key`: the key itself, or a key not
+// known (`erase/0`, an erase of a computed key).
+.decl erases_key(erased: symbol, key: symbol)
+
+erases_key(k, k) :- dict_op(_, _, "put", k), k != "dynamic".
+erases_key("dynamic", k) :- dict_op(_, _, "put", k), k != "dynamic".
+
+// An erase of `key` runs after `site` in its function.
+.decl erased_after(site: symbol, key: symbol)
+
+erased_after(s, k) :- erases_key_at(_, e, k), key_order.runs_after(s, e).
+
+// ── Is the key set at this point ────────────────────────────────────
+
+// `func` sets `key` before `site`, and nothing erases it between.
+.decl key_set_before(func: symbol, key: symbol, site: symbol)
+
+key_set_before(f, k, s) :-
+  sets_key_at(f, t, k),
+  key_order.runs_after(t, s),
+  !erased_between(f, t, s, k).
+
+.decl erased_between(func: symbol, set: symbol, site: symbol, key: symbol)
+
+erased_between(f, t, s, k) :-
+  sets_key_at(f, t, k),
+  erases_key_at(_, e, k),
+  key_order.runs_after(t, e),
+  key_order.runs_after(e, s).
+
+// ── A table named only while a key is unset ─────────────────────────
+
+// `op` names the literal table `name` only while the dictionary holds
+// nothing under `key`: the default of a read of it, directly or through
+// the function whose answer the operand tests.
+.decl default_of_key(op: symbol, name: symbol, key: symbol)
+
+default_of_key(op, name, k) :-
+  ets_table_default(op, name, site),
+  dict_op(site, _, "get", k),
+  k != "dynamic".
+
+default_of_key(op, name, k) :-
+  ets_table_default(op, name, site),
+  call_instr(_, g, site),
+  answers_with_key(g, k).
+
+// `func` returns what the dictionary holds under `key`: a read of it, or
+// a callee's answer that is one.
+.decl answers_with_key(func: symbol, key: symbol)
+
+answers_with_key(g, k) :- pid_return(g, "dict", k).
+answers_with_key(g, k) :- pid_return(g, "result", c), call_instr(g, h, c), answers_with_key(h, k).
+
+// The functions whose stack reaches such an operation.
+.init default_reach = SameProcessReach
+
+default_reach.seed(f, op) :- default_of_key(op, _, _), ets_op(op, f, _, _, _).
+
+// `func` reaches `op` through the call at `site`, or holds it (`site` is
+// op itself).
+.decl reaches_default_at(func: symbol, op: symbol, site: symbol)
+
+reaches_default_at(f, op, c) :-
+  call_instr(f, g, c),
+  !runs_elsewhere(f, g),
+  default_reach.reaches(g, op).
+
+reaches_default_at(f, op, op) :- default_of_key(op, _, _), ets_op(op, f, _, _, _).
+
+// `func` may reach `op` with `key` unset: through a call no put of the
+// key comes before, or along an edge with no call instruction (a closure
+// it runs, whose place in func is not known).
+.decl unset_on_the_way(func: symbol, op: symbol, key: symbol)
+
+unset_on_the_way(f, op, k) :-
+  default_of_key(op, _, k),
+  reaches_default_at(f, op, c),
+  !key_set_before(f, k, c).
+
+unset_on_the_way(f, op, k) :-
+  default_of_key(op, _, k),
+  call_edge(f, g),
+  !call_instr(f, g, _),
+  !runs_elsewhere(f, g),
+  default_reach.reaches(g, op).
+
+// Run from `func`, `op` does not touch `table`: the table is only the
+// default of a key func has set on every way to op.
+.decl skips_default(func: symbol, op: symbol, table: EtsTable)
+
+skips_default(f, op, ["named", name]) :-
+  default_of_key(op, name, k),
+  reaches_default_at(f, op, _),
+  !unset_on_the_way(f, op, k).

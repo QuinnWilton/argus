@@ -59,6 +59,7 @@ defmodule Argus.Analyses.EtsCheckActTest do
     C.CounterAccessors,
     C.CounterAccessorChain,
     C.AccessorThroughHelper,
+    D.TmpOptions,
     D.CallerTable,
     D.SharedCallerTable
   ]
@@ -455,6 +456,16 @@ defmodule Argus.Analyses.EtsCheckActTest do
   end
 
   describe "ets_check_act through the process dictionary" do
+    test "a table named only while a key is unset is not touched where the key was set", ctx do
+      skip_without_souffle()
+      # validate/1 puts its private table under the key first: its read and
+      # write touch that table. reload/1 sets nothing, and abort/1 erases
+      # the key again before the pair: both touch the public options table,
+      # and the pair's one finding is at one of them.
+      assert [{func, ":dict_options", ":hosts"}] = Enum.uniq(races(ctx, [D.TmpOptions]))
+      assert func in ["abort/1", "reload/1"]
+    end
+
     test "a table its maker keeps in its dictionary is its own", ctx do
       skip_without_souffle()
       assert races(ctx, [D.CallerTable]) == []

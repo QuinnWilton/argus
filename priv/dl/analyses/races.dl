@@ -38,6 +38,8 @@
 .include "../clientlib/check_then_act.dl"
 .include "../clientlib/specs.dl"
 .include "../clientlib/tables.dl"
+.include "../clientlib/order.dl"
+.include "../clientlib/dictionary.dl"
 .include "../clientlib/vocabulary.dl"
 .include "../clientlib/tooling.dl"
 .include "../clientlib/escape.dl"
@@ -442,12 +444,17 @@ reported_at(f, op, op) :- rows.meets(f, _, op, _, _, _, _), !accessor_call(f, op
 // clientlib/tables.dl) of what the pair meets on in func: a table named
 // the same in every function, or func's parameter, which holds what its
 // callers pass (param_table: a name, a reference made in a caller, or
-// the table the program's users hand in, below).
+// the table the program's users hand in, below). A table either
+// operation names only as a dictionary key's default, where func has set
+// the key first, is not one it touches from func (skips_default,
+// clientlib/dictionary.dl).
 .decl decides_write(func: symbol, read: symbol, write: symbol, row: EtsRow)
 
 decides_write(f, r, w, [table, ks, k]) :-
   rows.meets(f, r, w, ts, t, ks, k),
-  table_in(f, ts, t, table).
+  table_in(f, ts, t, table),
+  !skips_default(f, r, table),
+  !skips_default(f, w, table).
 
 // The table a pair meets on in `func`, from how func's terms name it.
 .decl table_in(func: symbol, source: symbol, ident: symbol, table: EtsTable)
