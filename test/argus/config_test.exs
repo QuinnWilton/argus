@@ -60,7 +60,7 @@ defmodule Argus.ConfigTest do
       assert e.key == [:severity, :mailbx]
       assert e.message =~ "severity names unknown analysis :mailbx"
       assert e.message =~ "did you mean :mailbox?"
-      assert e.message =~ ":scry → :severity → :mailbx"
+      assert e.message =~ ":argus → :severity → :mailbx"
     end
 
     test "a severity keyed by a set applies to every member; later entries win" do
@@ -158,6 +158,119 @@ defmodule Argus.ConfigTest do
     test "live with an oracle of one's own needs no key" do
       assert %{mode: :live, opts: [oracle: Argus.Test.PriorOracle]} =
                Config.load(priors: [mode: :live, oracle: Argus.Test.PriorOracle]).priors
+    end
+  end
+
+  describe "Erlang terms" do
+    @describetag :tmp_dir
+
+    test "rebar.config's {argus, [...]} is read, strings as charlists", %{tmp_dir: dir} do
+      path = Path.join(dir, "rebar.config")
+
+      File.write!(path, """
+      {erl_opts, [debug_info]}.
+      {argus, [
+          {analyses, [coupling, mailbox]},
+          {severity, [{mailbox, error}]},
+          {ignore, [{modules, [my_gen, "^my_app_gen_"]}, {files, ["src/legacy/**"]}]},
+          {priors, [{mode, cached_only}, {cassette, "priors.jsonl"}]}
+      ]}.
+      {argus_plugin, [{escript, "/usr/local/bin/argus"}]}.
+      """)
+
+      {raw, origin} = Argus.Config.Source.rebar3(path)
+      config = Config.load(raw, origin)
+
+      assert config.analyses == [:coupling, :mailbox]
+      assert config.severity == %{mailbox: :error}
+      assert [:my_gen, %Regex{source: "^my_app_gen_"}] = config.ignore_modules
+      assert config.ignore_files == ["src/legacy/**"]
+      assert config.priors == %{mode: :cached_only, opts: [cassette: "priors.jsonl"]}
+    end
+
+    test "a rebar.config naming no argus configuration is the defaults", %{tmp_dir: dir} do
+      path = Path.join(dir, "rebar.config")
+      File.write!(path, "{erl_opts, [debug_info]}.\n")
+
+      {raw, origin} = Argus.Config.Source.rebar3(path)
+      assert Config.load(raw, origin) == Config.load([])
+    end
+
+    test "an error is spelled in Erlang and names the file", %{tmp_dir: dir} do
+      path = Path.join(dir, "rebar.config")
+      File.write!(path, "{argus, [{severity, [{mailbx, error}]}]}.\n")
+
+      {raw, origin} = Argus.Config.Source.rebar3(path)
+      e = assert_raise Argus.ConfigError, fn -> Config.load(raw, origin) end
+
+      assert e.message =~ "severity names unknown analysis mailbx"
+      assert e.message =~ "did you mean mailbox?"
+      assert e.message =~ "at: argus → severity → mailbx (in rebar.config)"
+    end
+
+    test "a plugin key under {argus, ...} points at {argus_plugin, ...}", %{tmp_dir: dir} do
+      path = Path.join(dir, "rebar.config")
+      File.write!(path, ~s({argus, [{escript, "/bin/argus"}]}.\n))
+
+      {raw, origin} = Argus.Config.Source.rebar3(path)
+      e = assert_raise Argus.ConfigError, fn -> Config.load(raw, origin) end
+      assert e.message =~ "the rebar3 plugin's own keys go under {argus_plugin, [...]}"
+    end
+
+    test "argus.config holds a list, or one tuple per key", %{tmp_dir: dir} do
+      list = Path.join(dir, "list.config")
+      File.write!(list, "[{analyses, [mailbox]}, {fail_on, warning}].\n")
+
+      tuples = Path.join(dir, "tuples.config")
+      File.write!(tuples, "{analyses, [mailbox]}.\n{fail_on, warning}.\n")
+
+      for path <- [list, tuples] do
+        {raw, origin} = Argus.Config.Source.file(path)
+        config = Config.load(raw, origin)
+        assert {config.analyses, config.fail_on} == {[:mailbox], :warning}
+      end
+    end
+
+    test "a file that does not parse fails naming it and the line", %{tmp_dir: dir} do
+      path = Path.join(dir, "argus.config")
+      File.write!(path, "{analyses, [mailbox]}\n")
+
+      e = assert_raise Argus.ConfigError, fn -> Argus.Config.Source.file(path) end
+      assert e.message =~ "argus.config cannot be read as a configuration: line"
+    end
+
+    test "a string that is not a regex fails as one", %{tmp_dir: dir} do
+      path = Path.join(dir, "argus.config")
+      File.write!(path, ~s({ignore, [{modules, ["(unclosed"]}]}.\n))
+
+      {raw, origin} = Argus.Config.Source.file(path)
+      e = assert_raise Argus.ConfigError, fn -> Config.load(raw, origin) end
+      assert e.message =~ ~s(ignore modules: "(unclosed" is not a regex)
+    end
+  end
+
+  describe "scry's name" do
+    test "a scry: key raises with the rename" do
+      e =
+        assert_raise Argus.ConfigError, fn ->
+          Argus.Config.Source.mix(scry: [analyses: [:mailbox]])
+        end
+
+      assert e.message =~ "scry has moved into argus: rename scry: to argus:"
+    end
+
+    test "the :scry compiler raises with the rename" do
+      e =
+        assert_raise Argus.ConfigError, fn ->
+          Argus.Config.Source.mix(compilers: [:elixir, :app, :scry], argus: [])
+        end
+
+      assert e.message =~ "rename the :scry compiler to the :argus compiler"
+    end
+
+    test "argus: is read" do
+      assert {[analyses: [:mailbox]], {:mix, _}} =
+               Argus.Config.Source.mix(compilers: [:argus], argus: [analyses: [:mailbox]])
     end
   end
 end

@@ -36,18 +36,18 @@ defmodule Argus.Test.Fixture do
   @doc """
   Copies the fixture into `dest` (wiped first) and returns `dest`.
 
-  `scry_config` is rendered into the fixture's `scry:` project keyword.
+  `config` is rendered into the fixture's `argus:` project keyword.
   `app` must be UNIQUE per distinct config in one test VM:
   `Mix.Project.in_project/3` caches loaded projects by app atom, so two
   fixtures sharing an app name silently share the first one's config.
   """
   @spec checkout!(Path.t(), keyword(), atom()) :: Path.t()
-  def checkout!(dest, scry_config \\ [], app \\ :depot) do
+  def checkout!(dest, config \\ [], app \\ :depot) do
     unload!()
     File.rm_rf!(dest)
     File.mkdir_p!(dest)
     File.cp_r!(Path.join(@fixture, "lib"), Path.join(dest, "lib"))
-    write_mix_exs!(dest, scry_config, app)
+    write_mix_exs!(dest, config, app)
     dest
   end
 
@@ -56,8 +56,8 @@ defmodule Argus.Test.Fixture do
   its console output captured: `Mix.Task.clear/0` re-enables the nested
   compile tasks between runs, `--return-errors` keeps an `:error` status
   from exiting the VM, and `--no-prune-code-paths` keeps this test VM's
-  own apps (scry and its deps) loadable inside the fixture — a real
-  project gets that for free from its scry dependency.
+  own apps (argus and its deps) loadable inside the fixture — a real
+  project gets that for free from its argus dependency.
 
   The rendered frames go to stderr; the diagnostics come back in the
   result, which is what tests assert on. `compile_io!/0` returns the
@@ -128,11 +128,11 @@ defmodule Argus.Test.Fixture do
   end
 
   @doc """
-  Rewrites the fixture's mix.exs with a different `scry:` config
+  Rewrites the fixture's mix.exs with a different `argus:` config
   (between runs of an already-checked-out fixture).
   """
   @spec write_mix_exs!(Path.t(), keyword(), atom()) :: :ok
-  def write_mix_exs!(dest, scry_config, app \\ :depot) do
+  def write_mix_exs!(dest, config, app \\ :depot) do
     File.write!(Path.join(dest, "mix.exs"), """
     defmodule #{Macro.camelize(to_string(app))}.MixProject do
       use Mix.Project
@@ -144,7 +144,7 @@ defmodule Argus.Test.Fixture do
           elixir: "~> 1.18",
           start_permanent: false,
           compilers: Mix.compilers() ++ [:argus],
-          scry: #{inspect(scry_config, limit: :infinity)},
+          argus: #{inspect(config, limit: :infinity)},
           deps: []
         ]
       end

@@ -8,12 +8,12 @@ defmodule Mix.Tasks.Compile.Argus do
   compiler diagnostics with pentiment-rendered frames.
 
       def project do
-        [compilers: Mix.compilers() ++ [:scry], ...]
+        [compilers: Mix.compilers() ++ [:argus], ...]
       end
 
-  Because scry runs last, its `:error` status can never block another
+  Because argus runs last, its `:error` status can never block another
   compiler — only the overall exit status. And because Mix halts the
-  compiler chain on `:error`, scry only ever sees the ebin of a
+  compiler chain on `:error`, argus only ever sees the ebin of a
   *successful* compile.
 
   Cross-VM incrementality comes from `Roux.Lang.Manifest`: extraction
@@ -24,11 +24,12 @@ defmodule Mix.Tasks.Compile.Argus do
   including `:noop` runs, matching the Elixir compiler's
   `--all-warnings` behavior.
 
-  Configuration lives under the `scry:` project key — see `Argus.Config`.
-  Status: findings are warnings by default and never fail the build;
-  `fail_on: :warning` promotes any finding to a build failure (CI), and
-  `souffle: :require` makes a missing solver an error instead of a
-  notice.
+  Configuration lives under the `argus:` project key — see
+  `Argus.Config` (a `scry:` key, or the `:scry` compiler, raises with the
+  rename). A finding's severity is its analysis's unless the
+  configuration overrides it; a finding at or above `fail_on` (`:error`
+  by default; `:warning` for CI) fails the build, and `souffle:
+  :require` makes a missing solver an error instead of a notice.
   """
 
   use Mix.Task.Compiler

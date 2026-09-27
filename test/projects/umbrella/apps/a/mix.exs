@@ -11,7 +11,7 @@ defmodule A.MixProject do
       deps_path: "../../deps",
       lockfile: "../../mix.lock",
       compilers: Mix.compilers() ++ [:argus],
-      scry: [analyses: [:mailbox]],
+      argus: [analyses: [:mailbox]],
       deps: [{:b, in_umbrella: true}]
     ]
   end

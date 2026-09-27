@@ -1,7 +1,7 @@
 defmodule Mix.Tasks.Compile.ArgusConfigTest do
   @moduledoc """
   The config surface, each scenario against its own fixture checkout
-  (the `scry:` keyword is rendered into the fixture's mix.exs), in this
+  (the `argus:` keyword is rendered into the fixture's mix.exs), in this
   module's peer (`Argus.Test.Peer`): the Mix project stack, the working
   directory and telemetry are VM-wide.
   """
@@ -25,7 +25,7 @@ defmodule Mix.Tasks.Compile.ArgusConfigTest do
 
   # Each scenario needs its own app atom: in_project caches project
   # config by app name, so a shared :depot would pin the first
-  # scenario's scry: config for every later one.
+  # scenario's argus: config for every later one.
   defp checkout!(scry_config, app) do
     copy =
       Fixture.checkout!(

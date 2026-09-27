@@ -1,11 +1,22 @@
 defmodule Argus.Config do
   @moduledoc """
-  The `scry:` project configuration, validated loudly.
+  A project's argus configuration, validated loudly, wherever it was
+  written.
+
+  One validator (`load/2`) reads every source (`Argus.Config.Source`):
+
+  | Project | Where |
+  |---|---|
+  | Mix | `argus:` in `mix.exs`'s `project/0` |
+  | rebar3 | `{argus, [...]}` in `rebar.config` (consulted, never evaluated) |
+  | Gleam, erlang.mk, bare beams | `argus.config`, a file of Erlang terms |
+
+  In Elixir:
 
       def project do
         [
-          compilers: Mix.compilers() ++ [:scry],
-          scry: [
+          compilers: Mix.compilers() ++ [:argus],
+          argus: [
             analyses: [:coupling, :mailbox],
             severity: [mailbox: :error],
             ignore: [modules: [~r/^MyApp\\.Gen/], files: ["lib/legacy/**"]],
@@ -16,22 +27,40 @@ defmodule Argus.Config do
         ]
       end
 
-  Every key is optional. `analyses` defaults to the shared layer's
-  curated quiet set (`Argus.Graph.default_analyses/0`, argus's
-  `:default` set); analysis names are validated against the argus
-  registry so a typo aborts the compile instead of silently analyzing
+  In Erlang terms (`rebar.config`, or `argus.config` without the outer
+  tuple — a list, or one `{Key, Value}` term per key):
+
+      {argus, [
+          {analyses, [coupling, mailbox]},
+          {severity, [{mailbox, error}]},
+          {ignore, [{modules, [my_gen, "^my_app_gen_"]}, {files, ["src/legacy/**"]}]}
+      ]}.
+
+  Every key is optional. `analyses` defaults to argus's `:default` set
+  (`Argus.Graph.default_analyses/0`); a name is validated against the
+  registry, so a typo stops the run instead of silently analyzing
   nothing. A named set (`:all`, `:default`, `:otp`, `:security`,
   `:effects`) stands for its members. Findings report under their
-  concern's code (`[scry.mailbox]`).
+  analysis's code (`[argus.mailbox]`).
 
-  Severity overrides are keyed the same way: a concern or a set (each
-  member takes the severity); later entries win. Every key, at every
-  level, is validated: an invalid entry raises `Argus.ConfigError` naming
-  where it is, what was expected, and the valid name it most resembles.
-  A finding's relation written where its analysis goes (`:registry_race`,
-  or `:call_cycle`, one of the names argus retired in 0.17 and dropped in
-  0.20) names the analysis that reports it.
+  Severity overrides are keyed the same way: an analysis or a set (each
+  member takes the severity); later entries win. `ignore: [modules: ...]`
+  takes module names and regexes (in Erlang terms, a string is a regex),
+  matched against a module's name (`MyApp.Gen`, `my_app_gen`) — ignored
+  modules are never extracted; `ignore: [files: ...]` takes globs over
+  the paths findings are reported at — the findings in those files are
+  left out, while their facts still feed every analysis.
+
+  Every key, at every level, is validated: an invalid entry raises
+  `Argus.ConfigError` naming where it is (in its source's own syntax),
+  what was expected, and the valid name it most resembles. A finding's
+  relation written where its analysis goes (`:registry_race`, or
+  `:call_cycle`, one of the names argus retired in 0.17 and dropped in
+  0.20) names the analysis that reports it. Configuration under scry's
+  name (`scry:`, or the `:scry` compiler) raises with the rename.
   """
+
+  alias Argus.ConfigError
 
   @enforce_keys [
     :analyses,
@@ -43,16 +72,7 @@ defmodule Argus.Config do
     :souffle,
     :priors
   ]
-  defstruct [
-    :analyses,
-    :severity,
-    :ignore_modules,
-    :ignore_files,
-    :include_deps,
-    :fail_on,
-    :souffle,
-    :priors
-  ]
+  defstruct @enforce_keys
 
   @typedoc """
   `priors:` — `:off` (default), `:cached_only` or `:live`, or a keyword
@@ -73,63 +93,105 @@ defmodule Argus.Config do
           priors: priors()
         }
 
+  @typedoc """
+  Where a configuration was written: a keyword handed in (`:inline`),
+  the command line (`:cli`), a Mix project (its `mix.exs`), a
+  `rebar.config`, or an `argus.config` of Erlang terms. It decides how
+  an error spells the entry it points at.
+  """
+  @type origin :: :inline | :cli | {:mix, Path.t()} | {:rebar3, Path.t()} | {:file, Path.t()}
+
   @severities [:error, :warning, :info]
   @keys [:analyses, :severity, :ignore, :include_deps, :fail_on, :souffle, :priors]
   @ignore_keys [:modules, :files]
 
+  # Keys the rebar3 plugin reads from `{argus_plugin, [...]}`: written
+  # under `{argus, [...]}`, they are in the wrong tuple.
+  @plugin_keys [:escript, :version]
+
   @doc """
-  Loads and validates the current project's `scry:` keyword.
+  Loads and validates the current Mix project's `argus:` keyword
+  (`Argus.Config.Source.mix/0`).
   """
   @spec load() :: t()
   def load do
-    load(Mix.Project.config()[:scry] || [])
+    {raw, origin} = Argus.Config.Source.mix()
+    load(raw, origin)
   end
 
   @doc """
-  Validates a raw `scry:` keyword list into a config. Raises
+  Validates a raw configuration — a keyword list, or its Erlang-term
+  spelling (a proplist, strings as charlists) — into a config. Raises
   `Argus.ConfigError` naming the offending entry, what was expected
   there, and the closest valid name when it looks like a typo.
   """
-  @spec load(keyword()) :: t()
-  def load(raw) do
-    raw = keyword!([], raw, "config must be a keyword list")
-    unknown_keys!([], raw, @keys)
+  @spec load(keyword() | term(), origin()) :: t()
+  def load(raw, origin \\ :inline) do
+    ctx = ConfigError.context(origin)
+    raw = keyword!(ctx, [], raw, "config must be a keyword list")
+    unknown_keys!(ctx, [], raw, @keys)
 
-    ignore = keyword!([:ignore], Keyword.get(raw, :ignore, []), "ignore must be a keyword list")
-    unknown_keys!([:ignore], ignore, @ignore_keys)
+    ignore =
+      keyword!(ctx, [:ignore], Keyword.get(raw, :ignore, []), "ignore must be a keyword list")
+
+    unknown_keys!(ctx, [:ignore], ignore, @ignore_keys)
 
     %__MODULE__{
-      analyses: analyses!(Keyword.get(raw, :analyses, Argus.Graph.default_analyses())),
-      severity: severity!(Keyword.get(raw, :severity, [])),
-      ignore_modules: ignore_modules!(Keyword.get(ignore, :modules, [])),
-      ignore_files: ignore_files!(Keyword.get(ignore, :files, [])),
-      include_deps: boolean!(:include_deps, Keyword.get(raw, :include_deps, false)),
-      fail_on: enum!([:fail_on], Keyword.get(raw, :fail_on, :error), [:error, :warning]),
-      souffle: enum!([:souffle], Keyword.get(raw, :souffle, :warn), [:warn, :require]),
-      priors: priors!(Keyword.get(raw, :priors, :off))
+      analyses: analyses!(ctx, Keyword.get(raw, :analyses, Argus.Graph.default_analyses())),
+      severity: severity!(ctx, Keyword.get(raw, :severity, [])),
+      ignore_modules: ignore_modules!(ctx, Keyword.get(ignore, :modules, [])),
+      ignore_files: ignore_files!(ctx, Keyword.get(ignore, :files, [])),
+      include_deps: boolean!(ctx, :include_deps, Keyword.get(raw, :include_deps, false)),
+      fail_on: enum!(ctx, [:fail_on], Keyword.get(raw, :fail_on, :error), [:error, :warning]),
+      souffle: enum!(ctx, [:souffle], Keyword.get(raw, :souffle, :warn), [:warn, :require]),
+      priors: priors!(ctx, Keyword.get(raw, :priors, :off))
     }
   end
 
-  defp keyword!(key, value, expected) do
-    if Keyword.keyword?(value),
-      do: value,
-      else: fail(key, value, "#{expected}, got: #{inspect(value)}")
+  @doc """
+  The analyses `names` select — concerns and sets, validated as
+  `analyses:` is — for a caller that names them apart from the rest of
+  the configuration (the command line).
+  """
+  @spec analyses([atom()], origin()) :: [atom()]
+  def analyses(names, origin \\ :cli), do: analyses!(ConfigError.context(origin), names)
+
+  @doc "Every analysis argus can run, sorted: `--all`."
+  @spec all_analyses() :: [atom()]
+  def all_analyses do
+    Argus.Analysis.builtin_analysis_modules()
+    |> Enum.reject(&(&1.name() == :coverage))
+    |> Enum.map(& &1.name())
+    |> Enum.sort()
   end
 
-  defp unknown_keys!(key, keyword, known) do
+  defp keyword!(ctx, key, value, expected) do
+    if Keyword.keyword?(value),
+      do: value,
+      else: fail(ctx, key, value, "#{expected}, got: #{show(ctx, value)}")
+  end
+
+  defp unknown_keys!(ctx, key, keyword, known) do
     case Enum.find(Keyword.keys(keyword), &(&1 not in known)) do
       nil ->
         :ok
 
       unknown ->
         fail(
+          ctx,
           key ++ [unknown],
           unknown,
-          "unknown #{describe(key)}key #{inspect(unknown)}; known: #{inspect(known)}",
+          "unknown #{describe(key)}key #{show(ctx, unknown)}; known: #{show(ctx, known)}" <>
+            plugin_hint(ctx, key, unknown),
           known
         )
     end
   end
+
+  defp plugin_hint(%{origin: {:rebar3, _}}, [], key) when key in @plugin_keys,
+    do: "; the rebar3 plugin's own keys go under {argus_plugin, [...]}"
+
+  defp plugin_hint(_ctx, _key, _unknown), do: ""
 
   defp describe([]), do: ""
   defp describe(key), do: Enum.map_join(key, " ", &to_string/1) <> " "
@@ -137,39 +199,40 @@ defmodule Argus.Config do
   @prior_modes [:off, :cached_only, :live]
   @prior_opts [:cassette, :cache_dir, :model, :oracle, :oracle_opts, :batch_size, :concurrency]
 
-  defp priors!(mode) when mode in @prior_modes, do: priors!(mode: mode)
+  defp priors!(ctx, mode) when mode in @prior_modes, do: priors!(ctx, mode: mode)
 
-  defp priors!(raw) when is_list(raw) do
-    raw = keyword!([:priors], raw, "priors must be a mode or a keyword with mode:")
-    mode = enum!([:priors, :mode], Keyword.get(raw, :mode, :off), @prior_modes)
+  defp priors!(ctx, raw) when is_list(raw) do
+    raw = keyword!(ctx, [:priors], raw, "priors must be a mode or a keyword with mode:")
+    mode = enum!(ctx, [:priors, :mode], Keyword.get(raw, :mode, :off), @prior_modes)
     opts = Keyword.delete(raw, :mode)
-    unknown_keys!([:priors], opts, @prior_opts)
+    unknown_keys!(ctx, [:priors], opts, @prior_opts)
 
-    cassette = Keyword.get(opts, :cassette)
+    opts =
+      Enum.map(opts, fn
+        {key, value} when key in [:cassette, :cache_dir, :model] and value != nil ->
+          {key, string!(ctx, [:priors, key], value, "priors #{key} must be a string")}
 
-    if mode != :off and not is_nil(cassette) and not is_binary(cassette) do
-      fail(
-        [:priors, :cassette],
-        cassette,
-        "priors cassette must be a path, got: #{inspect(cassette)}"
-      )
-    end
+        other ->
+          other
+      end)
 
     # A run that cannot ask fails at configuration, not after extraction.
     Argus.Priors.check!(priors: mode, priors_opts: Keyword.drop(opts, [:cassette]))
     %{mode: mode, opts: opts}
   end
 
-  defp priors!(other) do
+  defp priors!(ctx, other) do
     fail(
+      ctx,
       [:priors],
       other,
-      "priors must be :off, :cached_only, :live or a keyword with mode:, got: #{inspect(other)}",
+      "priors must be #{show(ctx, :off)}, #{show(ctx, :cached_only)}, #{show(ctx, :live)} " <>
+        "or a keyword with mode:, got: #{show(ctx, other)}",
       @prior_modes
     )
   end
 
-  defp analyses!(names) when is_list(names) do
+  defp analyses!(ctx, names) when is_list(names) do
     known = known_analyses()
 
     case Enum.find(names, &(not (is_atom(&1) and resolvable?(&1, known)))) do
@@ -180,17 +243,19 @@ defmodule Argus.Config do
         unknowns = Enum.reject(names, &(is_atom(&1) and resolvable?(&1, known)))
 
         unknown_name!(
+          ctx,
           [:analyses],
           unknown,
-          "unknown analyses #{inspect(unknowns)}; available: #{inspect(Enum.sort(known))}, " <>
-            "or a set: #{inspect(Enum.sort(Map.keys(Argus.Analysis.sets())))}",
+          "unknown analyses #{show(ctx, unknowns)}; available: #{show(ctx, Enum.sort(known))}, " <>
+            "or a set: #{show(ctx, Enum.sort(Map.keys(Argus.Analysis.sets())))}",
           known
         )
     end
   end
 
-  defp analyses!(other),
-    do: fail([:analyses], other, "analyses must be a list of atoms, got: #{inspect(other)}")
+  defp analyses!(ctx, other),
+    do:
+      fail(ctx, [:analyses], other, "analyses must be a list of atoms, got: #{show(ctx, other)}")
 
   defp known_analyses, do: Enum.map(Argus.Analysis.builtin_analysis_modules(), & &1.name())
 
@@ -213,22 +278,24 @@ defmodule Argus.Config do
   # (`:registry_race`), which is also what many of the names argus
   # retired in 0.17 became (`:call_cycle`). The relation's owner is the
   # name that was meant.
-  @spec unknown_name!([atom()], term(), String.t(), [atom()]) :: no_return()
-  defp unknown_name!(key, name, expected, known) do
+  @spec unknown_name!(ConfigError.context(), [atom()], term(), String.t(), [atom()]) ::
+          no_return()
+  defp unknown_name!(ctx, key, name, expected, known) do
     candidates = selectable(known)
 
-    case {Argus.ConfigError.closest(name, candidates), relation_owner(name)} do
+    case {ConfigError.closest(name, candidates), relation_owner(name)} do
       {nil, {relation, owner}} ->
         fail(
+          ctx,
           key,
           name,
           expected <>
-            "; #{inspect(relation)} is a finding of the #{inspect(owner)} analysis, " <>
-            "did you mean #{inspect(owner)}?"
+            "; #{show(ctx, relation)} is a finding of the #{show(ctx, owner)} analysis, " <>
+            "did you mean #{show(ctx, owner)}?"
         )
 
       _ ->
-        fail(key, name, expected, candidates)
+        fail(ctx, key, name, expected, candidates)
     end
   end
 
@@ -243,7 +310,7 @@ defmodule Argus.Config do
     relation =
       if Map.has_key?(owners, name),
         do: name,
-        else: Argus.ConfigError.closest(name, Map.keys(owners))
+        else: ConfigError.closest(name, Map.keys(owners))
 
     if relation, do: {relation, Map.fetch!(owners, relation)}
   end
@@ -253,28 +320,30 @@ defmodule Argus.Config do
   # Keys name what `analyses:` accepts: a concern or a set (every member
   # takes the severity). Later entries win, so `[default: :warning, mailbox:
   # :error]` raises one concern above the rest of its set.
-  defp severity!(pairs) when is_list(pairs) do
+  defp severity!(ctx, pairs) when is_list(pairs) do
     known = known_analyses()
 
-    [:severity]
-    |> keyword!(pairs, "severity must be a keyword list")
+    ctx
+    |> keyword!([:severity], pairs, "severity must be a keyword list")
     |> Enum.flat_map(fn {analysis, severity} ->
       unless severity in @severities do
         fail(
+          ctx,
           [:severity, analysis],
           severity,
-          "severity must be one of #{inspect(@severities)}, got: #{inspect(severity)}",
+          "severity must be one of #{show(ctx, @severities)}, got: #{show(ctx, severity)}",
           @severities
         )
       end
 
       unless resolvable?(analysis, known) do
         unknown_name!(
+          ctx,
           [:severity, analysis],
           analysis,
-          "severity names unknown analysis #{inspect(analysis)}; available: " <>
-            "#{inspect(Enum.sort(known))}, or a set: " <>
-            "#{inspect(Enum.sort(Map.keys(Argus.Analysis.sets())))}",
+          "severity names unknown analysis #{show(ctx, analysis)}; available: " <>
+            "#{show(ctx, Enum.sort(known))}, or a set: " <>
+            "#{show(ctx, Enum.sort(Map.keys(Argus.Analysis.sets())))}",
           known
         )
       end
@@ -284,73 +353,95 @@ defmodule Argus.Config do
     |> Map.new()
   end
 
-  defp severity!(other),
-    do: fail([:severity], other, "severity must be a keyword list, got: #{inspect(other)}")
+  defp severity!(ctx, other),
+    do: fail(ctx, [:severity], other, "severity must be a keyword list, got: #{show(ctx, other)}")
 
-  defp ignore_modules!(patterns) when is_list(patterns) do
-    Enum.each(patterns, fn
-      %Regex{} ->
-        :ok
+  defp ignore_modules!(ctx, patterns) when is_list(patterns) do
+    Enum.map(patterns, fn
+      %Regex{} = regex ->
+        regex
 
       atom when is_atom(atom) ->
-        :ok
+        atom
 
       other ->
-        fail(
-          [:ignore, :modules],
-          other,
-          "ignore modules must be regexes or module atoms, got: #{inspect(other)}"
-        )
-    end)
+        source =
+          string!(
+            ctx,
+            [:ignore, :modules],
+            other,
+            "ignore modules must be regexes, strings (a regex's source) or module atoms"
+          )
 
-    patterns
+        case Regex.compile(source) do
+          {:ok, regex} ->
+            regex
+
+          {:error, {reason, at}} ->
+            fail(
+              ctx,
+              [:ignore, :modules],
+              other,
+              "ignore modules: #{show(ctx, other)} is not a regex: #{reason} at #{at}"
+            )
+        end
+    end)
   end
 
-  defp ignore_modules!(other),
-    do: fail([:ignore, :modules], other, "ignore modules must be a list, got: #{inspect(other)}")
+  defp ignore_modules!(ctx, other),
+    do:
+      fail(
+        ctx,
+        [:ignore, :modules],
+        other,
+        "ignore modules must be a list, got: #{show(ctx, other)}"
+      )
 
-  defp ignore_files!(globs) when is_list(globs) do
-    Enum.each(globs, fn
-      glob when is_binary(glob) ->
-        :ok
-
-      other ->
-        fail(
-          [:ignore, :files],
-          other,
-          "ignore files must be glob strings, got: #{inspect(other)}"
-        )
-    end)
-
-    globs
+  defp ignore_files!(ctx, globs) when is_list(globs) do
+    Enum.map(globs, &string!(ctx, [:ignore, :files], &1, "ignore files must be glob strings"))
   end
 
-  defp ignore_files!(other),
-    do: fail([:ignore, :files], other, "ignore files must be a list, got: #{inspect(other)}")
+  defp ignore_files!(ctx, other),
+    do:
+      fail(ctx, [:ignore, :files], other, "ignore files must be a list, got: #{show(ctx, other)}")
 
-  defp boolean!(_key, value) when is_boolean(value), do: value
+  # A string, as Elixir writes one or as Erlang does (a charlist).
+  defp string!(_ctx, _key, value, _expected) when is_binary(value), do: value
 
-  defp boolean!(key, value),
-    do: fail([key], value, "#{key} must be a boolean, got: #{inspect(value)}")
+  defp string!(ctx, key, value, expected) do
+    if is_list(value) and value != [] and :io_lib.printable_unicode_list(value) do
+      List.to_string(value)
+    else
+      fail(ctx, key, value, "#{expected}, got: #{show(ctx, value)}")
+    end
+  end
 
-  defp enum!(key, value, allowed) do
+  defp boolean!(_ctx, _key, value) when is_boolean(value), do: value
+
+  defp boolean!(ctx, key, value),
+    do: fail(ctx, [key], value, "#{key} must be a boolean, got: #{show(ctx, value)}")
+
+  defp enum!(ctx, key, value, allowed) do
     if value in allowed do
       value
     else
       fail(
+        ctx,
         key,
         value,
-        "#{Enum.join(key, " ")} must be one of #{inspect(allowed)}, got: #{inspect(value)}",
+        "#{Enum.join(key, " ")} must be one of #{show(ctx, allowed)}, got: #{show(ctx, value)}",
         allowed
       )
     end
   end
 
-  @spec fail([atom()], term(), String.t()) :: no_return()
-  defp fail(key, value, expected), do: fail(key, value, expected, [])
+  defp show(ctx, term), do: ConfigError.show(ctx, term)
 
-  @spec fail([atom()], term(), String.t(), [atom()]) :: no_return()
-  defp fail(key, value, expected, candidates) do
-    raise Argus.ConfigError.new(key, value, expected, candidates)
+  @spec fail(ConfigError.context(), [atom()], term(), String.t()) :: no_return()
+  defp fail(ctx, key, value, expected), do: fail(ctx, key, value, expected, [])
+
+  @spec fail(ConfigError.context(), [atom()], term(), String.t(), [atom()]) :: no_return()
+  defp fail(ctx, key, value, expected, candidates) do
+    raise ConfigError.new(key, value, expected, candidates, ctx.origin)
   end
 end

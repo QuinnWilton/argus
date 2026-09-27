@@ -1,6 +1,6 @@
 defmodule Mix.Tasks.Compile.ArgusPriorsTest do
   @moduledoc """
-  Priors through scry: the classifier's rows as an input, off by default,
+  Priors through the graph: the classifier's rows as an input, off by default,
   asked once and then served from the cache and the manifest. In this
   module's peer (`Argus.Test.Peer`): the Mix project stack and the
   working directory are VM-wide.

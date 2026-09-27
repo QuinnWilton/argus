@@ -108,11 +108,13 @@ defmodule Argus.Project.Scan do
     path |> Path.basename(".beam") |> String.to_atom()
   end
 
+  # A regex matches a module by its name as Elixir spells it
+  # (`MyApp.Gen`, `:my_gen`) or as Erlang does (`my_gen`).
   defp ignored_module?(module, patterns) do
-    name = inspect(module)
+    names = Enum.uniq([inspect(module), Atom.to_string(module)])
 
     Enum.any?(patterns, fn
-      %Regex{} = regex -> Regex.match?(regex, name)
+      %Regex{} = regex -> Enum.any?(names, &Regex.match?(regex, &1))
       atom when is_atom(atom) -> atom == module
     end)
   end

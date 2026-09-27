@@ -146,7 +146,7 @@ defmodule Mix.Tasks.ArgusTest do
 
   describe "the compile it runs first" do
     # Own checkouts with their own app atoms: in_project caches project
-    # config by app name, and these need a scry: config of their own.
+    # config by app name, and these need an argus: config of their own.
     test "a finding that fails the compiler's fail_on is reported, not fatal", %{peer: peer} do
       app = :depot_task_error
 
