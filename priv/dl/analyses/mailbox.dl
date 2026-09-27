@@ -1856,14 +1856,7 @@ info_message(m, g, r, msg, "late") :- late_wait(r, g, msg), runs_in_server(m, g)
 // call graph does not follow.) A handler that names no :EXIT
 // at all is shutdown's finding (unhandled_exit_signal "no_exit_clause");
 // this judges one that takes some exits (it compares :EXIT) and not
-// others.
-.decl link_site(id: symbol, func: symbol)
-
-link_site(id, f) :- spawn_call(id, f, _, _, _, "spawn_link", _, _, _, _).
-link_site(id, f) :- remote_call(id, f, ":erlang", "link", 1).
-link_site(id, f) :- remote_call(id, f, "Process", "link", 1).
-link_site(id, f) :- port_opened(id, f).
-link_site(id, f) :- call_site(id, f, _, "start_link", _).
+// others. The links are link_site's (clientlib/receive.dl).
 
 info_message(m, f, id, "{:EXIT, …}", "exit") :-
   link_site(id, f),

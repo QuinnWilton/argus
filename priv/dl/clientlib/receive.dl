@@ -83,16 +83,22 @@ down_bounded(id) :- recv_signal(id, _, "down").
 
 exit_pinned(id, f) :- recv_signal(id, f, "exit"), links_in(f).
 
-// The function makes a link its receive can be told of: a spawn_link, a
-// link, a port (linked to the process that opens it), a start_link.
+// The call at `site` in `func` links func's process to another, whose
+// exit then reaches it as a signal: a spawn_link, a link, a port opened
+// (linked to the process that opens it), a start_link.
+.decl link_site(site: symbol, func: symbol)
+
+link_site(id, f) :- spawn_call(id, f, _, _, _, "spawn_link", _, _, _, _).
+link_site(id, f) :- remote_call(id, f, ":erlang", "link", 1).
+link_site(id, f) :- remote_call(id, f, "Process", "link", 1).
+link_site(id, f) :- remote_call(id, f, ":erlang", "open_port", 2).
+link_site(id, f) :- remote_call(id, f, "Port", "open", 2).
+link_site(id, f) :- call_site(id, f, _, "start_link", _).
+
+// The function makes a link its receive can be told of (link_site).
 .decl links_in(func: symbol)
 
-links_in(f) :- spawn_call(_, f, _, _, _, "spawn_link", _, _, _, _).
-links_in(f) :- remote_call(_, f, ":erlang", "link", 1).
-links_in(f) :- remote_call(_, f, "Process", "link", 1).
-links_in(f) :- remote_call(_, f, ":erlang", "open_port", 2).
-links_in(f) :- remote_call(_, f, "Port", "open", 2).
-links_in(f) :- call_site(_, f, _, "start_link", _).
+links_in(f) :- link_site(_, f).
 
 // ── A monitor released before its function returns ──────────────────
 //
