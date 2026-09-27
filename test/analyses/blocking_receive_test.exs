@@ -21,6 +21,7 @@ defmodule Argus.Analyses.BlockingReceiveTest do
     CallbackReceive.TimerFlush,
     CallbackReceive.TimerFlushArmed,
     CallbackReceive.TimerFlushAfterZero,
+    CallbackReceive.PollThenCancel,
     CallbackReceive.CancelThenBoundedWait,
     CallbackReceive.CancelThenWait,
     CallbackReceive.PlainProcess,
@@ -171,6 +172,14 @@ defmodule Argus.Analyses.BlockingReceiveTest do
       {blocking, bounded} = run(ctx, [CallbackReceive.TimerFlushAfterZero])
       assert blocking == []
       assert bounded == [], "flagged `receive :tick -> :ok after 0 -> :ok end` after a cancel"
+    end
+
+    test "a zero-timeout receive before the cancel is no flush of it", ctx do
+      skip_without_souffle()
+      {blocking, bounded} = run(ctx, [CallbackReceive.PollThenCancel])
+      assert blocking == []
+      assert [[_id, func, _cb, "GenServer", "direct"]] = bounded
+      assert func =~ "PollThenCancel:handle_cast/2"
     end
 
     test "a bounded receive after a cancel that waits for something else is still reported",

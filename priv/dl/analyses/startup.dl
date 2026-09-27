@@ -16,6 +16,7 @@
 .include "../clientlib/resolved_calls.dl"
 .include "../clientlib/vocabulary.dl"
 .include "../clientlib/global_reach.dl"
+.include "../clientlib/order.dl"
 .include "../clientlib/timer_flush.dl"
 .include "../clientlib/tooling.dl"
 

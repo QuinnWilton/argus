@@ -172,8 +172,13 @@ defmodule Argus.Exclusions.BlockingTest do
     test "a flush that also takes a linked port's :EXIT in a trapping server", ctx do
       refute Enum.any?(receives(ctx, [B.FlushWithExit.Command]), &match?({_, _, "down"}, &1))
 
+      # The outer receive, waiting 5 s for the port's exit status, runs
+      # before the cancel: a bounded wait in the callback, no flush.
       assert receives(ctx, [B.WaitWithExit.Command]) ==
-               [{"handle_call/3", "handle_call/3", "down"}]
+               [
+                 {"handle_call/3", "handle_call/3", "true"},
+                 {"handle_call/3", "handle_call/3", "down"}
+               ]
     end
 
     # timer_flush.dl, waits_for_other: !timer_message_unknown(mod).

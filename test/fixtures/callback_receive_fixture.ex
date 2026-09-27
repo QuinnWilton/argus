@@ -158,6 +158,28 @@ defmodule Argus.Test.Fixtures.CallbackReceive do
     end
   end
 
+  defmodule PollThenCancel do
+    @moduledoc """
+    Takes a delivered :tick with `after 0`, then cancels the timer: the
+    receive runs before the cancel, so it is no flush of it, and a
+    bounded receive in a callback like any other.
+    """
+    @behaviour GenServer
+
+    def init(arg), do: {:ok, %{ref: Process.send_after(self(), :tick, 10), arg: arg}}
+
+    def handle_cast(:reset, %{ref: ref} = state) do
+      receive do
+        :tick -> :ok
+      after
+        0 -> :ok
+      end
+
+      Process.cancel_timer(ref)
+      {:noreply, %{state | ref: Process.send_after(self(), :tick, 10)}}
+    end
+  end
+
   defmodule CancelThenBoundedWait do
     @moduledoc """
     Cancels its :tick timer, then waits (with a bound) for a :reply no

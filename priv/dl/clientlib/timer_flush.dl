@@ -19,8 +19,8 @@
 // too, waits forever when the cancel succeeded and the message never
 // comes.
 //
-// flush_poll(recv): a receive with an `after`, in a function that cancels
-// a timer, that can take the timer's message — `receive :tick -> :ok
+// flush_poll(recv): a receive with an `after`, run after a cancel_timer
+// in its function (runs_after, order.dl), that can take the timer's message — `receive :tick -> :ok
 // after 0 -> :ok end`, the form the cancel_timer docs give. It cannot
 // hang whichever way the cancel went, and takes exactly the message the
 // function means to drop.
@@ -47,10 +47,12 @@ armed_literal(id, a, t, lit) :-
   timer_arm(id, a, t, "param", pos, _),
   resolved_arg(a, pos, lit).
 
-.decl cancels_timer(func: symbol)
+// The cancel_timer call at `cancel` (Process.cancel_timer/1,2 inline to
+// it).
+.decl cancels_timer(cancel: symbol)
 
-cancels_timer(func) :-
-  remote_call(_, func, ":erlang", "cancel_timer", _).
+cancels_timer(cancel) :-
+  remote_call(cancel, _, ":erlang", "cancel_timer", _).
 
 .decl timer_message(mod: symbol, message: symbol)
 
@@ -98,12 +100,16 @@ flush_receive(id) :-
 .decl flush_poll(recv: symbol)
 
 flush_poll(id) :-
-  recv_start(id, func, 0, _),
-  cancels_timer(func),
+  recv_start(id, _, 0, _),
+  after_cancel_timer.runs_after(_, id),
   !waits_for_other(id).
 
-// Prerequisites: include clientlib/imports.dl and otp.dl (for
-// resolved_arg) before this file.
+.init after_cancel_timer = RunsAfter
+
+after_cancel_timer.asked(cancel) :- cancels_timer(cancel).
+
+// Prerequisites: include clientlib/imports.dl, otp.dl (for
+// resolved_arg) and order.dl (RunsAfter) before this file.
 
 // ── A helper cancels the field ───────────────────────────────────────
 //
