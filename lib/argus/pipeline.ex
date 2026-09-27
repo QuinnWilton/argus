@@ -40,13 +40,13 @@ defmodule Argus.Pipeline do
   `{:error, reason}`.
   """
 
-  alias Argus.Schema.Reads
   alias Argus.Cfg
   alias Argus.Extractor.Facts
   alias Argus.Extractor.Helpers
   alias Argus.Instr.Reaching
   alias Argus.InstrId
   alias Argus.Pipeline.{Base, Disassemble, Emit, Shards, Writer}
+  alias Argus.Schema.Reads
 
   @typedoc """
   Who emits a row: `:base` (the emitter and the derivations every

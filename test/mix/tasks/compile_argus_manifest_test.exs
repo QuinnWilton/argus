@@ -16,8 +16,10 @@ defmodule Mix.Tasks.Compile.ArgusManifestTest do
 
   import ExUnit.CaptureIO, only: [with_io: 2]
 
-  alias Roux.Lang.Manifest
+  alias Argus.Project.Scan
   alias Argus.Test.{Fixture, Peer}
+  alias Mix.Tasks.Compile.Argus, as: CompileArgus
+  alias Roux.Lang.Manifest
   alias Roux.QueryLog
 
   @moduletag timeout: 300_000
@@ -158,7 +160,7 @@ defmodule Mix.Tasks.Compile.ArgusManifestTest do
 
     Fixture.in_peer(peer, copy, :depot_quick, fn log ->
       cold = compile!()
-      %{modules: modules} = Argus.Project.Scan.scan(Argus.Config.load())
+      %{modules: modules} = Scan.scan(Argus.Config.load())
       code_edited_since!(:module_facts)
 
       QueryLog.reset(log)
@@ -202,7 +204,7 @@ defmodule Mix.Tasks.Compile.ArgusManifestTest do
 
     Fixture.in_peer(peer, copy, :depot_quick, fn log ->
       cold = compile!()
-      %{modules: modules} = Argus.Project.Scan.scan(Argus.Config.load())
+      %{modules: modules} = Scan.scan(Argus.Config.load())
       keys = for {_module, path} <- modules, do: Path.expand(path)
 
       # As if a relation had other columns when the last run extracted:
@@ -259,7 +261,7 @@ defmodule Mix.Tasks.Compile.ArgusManifestTest do
 
     Fixture.in_peer(peer, copy, :depot_quick, fn log ->
       cold = compile!()
-      %{modules: modules} = Argus.Project.Scan.scan(Argus.Config.load())
+      %{modules: modules} = Scan.scan(Argus.Config.load())
 
       # As a graph that kept each module's rows under a query this one
       # does not define left it: every module's semantic digest depends
@@ -306,7 +308,7 @@ defmodule Mix.Tasks.Compile.ArgusManifestTest do
 
     Fixture.in_peer(peer, copy, :depot_quick, fn log ->
       compile!()
-      %{modules: modules} = Argus.Project.Scan.scan(Argus.Config.load())
+      %{modules: modules} = Scan.scan(Argus.Config.load())
 
       QueryLog.reset(log)
 
@@ -315,10 +317,10 @@ defmodule Mix.Tasks.Compile.ArgusManifestTest do
 
       assert status in [:ok, :noop]
       assert length(ran(log, :module_facts)) == map_size(modules)
-      assert Enum.all?(Mix.Tasks.Compile.Argus.manifests(), &File.exists?/1)
+      assert Enum.all?(CompileArgus.manifests(), &File.exists?/1)
 
-      Mix.Tasks.Compile.Argus.clean()
-      refute Enum.any?(Mix.Tasks.Compile.Argus.manifests(), &File.exists?/1)
+      CompileArgus.clean()
+      refute Enum.any?(CompileArgus.manifests(), &File.exists?/1)
     end)
   end
 

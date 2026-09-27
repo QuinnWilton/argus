@@ -32,6 +32,7 @@ defmodule Argus.Graph.Programs do
     around: {Argus.Graph.Reads, :around}
 
   alias Argus.Analysis.Catalog
+  alias Argus.Souffle.Program
   alias Roux.Blob
   alias Roux.Runtime
 
@@ -78,7 +79,7 @@ defmodule Argus.Graph.Programs do
 
       try do
         {:ok,
-         for {spelled, file} <- Argus.Souffle.Program.program_files(path) do
+         for {spelled, file} <- Program.program_files(path) do
            {spelled, Path.relative_to(file, root), file |> File.read!() |> sha()}
          end}
       rescue
@@ -105,7 +106,7 @@ defmodule Argus.Graph.Programs do
       relations = io.inputs |> Enum.map(&elem(&1, 0)) |> Enum.uniq() |> Enum.sort()
 
       try do
-        declared = Argus.Souffle.Program.declared_digest(path, relations)
+        declared = Program.declared_digest(path, relations)
         {:ok, sha(:erlang.term_to_binary({declared, solver.version}, [:deterministic]))}
       rescue
         # A file of the program went missing since its files were read.

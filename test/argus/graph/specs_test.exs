@@ -18,6 +18,7 @@ defmodule Argus.Graph.SpecsTest do
   # and purged: VM-wide.
   use ExUnit.Case, async: false
 
+  alias Argus.Graph.Extraction
   alias Argus.Test.Graph
   alias Roux.QueryLog
 
@@ -146,7 +147,7 @@ defmodule Argus.Graph.SpecsTest do
     argus = :panoptes |> :code.lib_dir() |> List.to_string() |> Path.join("ebin") |> Path.expand()
 
     try do
-      for key <- Map.values(paths), do: {:ok, _} = Argus.Graph.Extraction.module_facts(db, key)
+      for key <- Map.values(paths), do: {:ok, _} = Extraction.module_facts(db, key)
 
       # The specs of `Argus.Schema.version/0` were read off the code
       # path, from argus's own directory.
@@ -161,7 +162,7 @@ defmodule Argus.Graph.SpecsTest do
         :ok = Roux.Input.set(db, :app_code, argus, "argus rebuilt")
 
         for key <- Map.values(paths),
-            do: {:ok, _} = Argus.Graph.Extraction.module_facts(db, key)
+            do: {:ok, _} = Extraction.module_facts(db, key)
 
         assert :installed_specs
                |> then(&QueryLog.executions(log, &1))

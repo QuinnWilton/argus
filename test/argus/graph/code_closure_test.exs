@@ -33,6 +33,7 @@ defmodule Argus.Graph.CodeClosureTest do
   @moduletag :project
   use Argus.Test.Peer
 
+  alias Argus.Graph.Reads
   alias Argus.Test.{Graph, Peer}
 
   @moduletag :souffle
@@ -137,7 +138,7 @@ defmodule Argus.Graph.CodeClosureTest do
     {:ok, hook} = Roux.Code.closure([Argus.Graph.Reads])
 
     Application.spec(:panoptes, :modules)
-    |> Enum.filter(&Argus.Graph.Reads.schema_module?/1)
+    |> Enum.filter(&Reads.schema_module?/1)
     |> Enum.concat([Argus.Graph.Reads | Enum.map(hook, &elem(&1, 0))])
     |> Enum.concat(Argus.Graph.modules())
     |> MapSet.new()
@@ -158,7 +159,7 @@ defmodule Argus.Graph.CodeClosureTest do
     if roots == [] do
       MapSet.new()
     else
-      {:ok, modules} = Roux.Code.closure(roots, exclude: &Argus.Graph.Reads.schema_module?/1)
+      {:ok, modules} = Roux.Code.closure(roots, exclude: &Reads.schema_module?/1)
       MapSet.new(modules, &elem(&1, 0))
     end
   end
@@ -200,7 +201,7 @@ defmodule Argus.Graph.CodeClosureTest do
       end
 
     {:ok, modules} =
-      Roux.Code.closure([module | roots], exclude: &Argus.Graph.Reads.schema_module?/1)
+      Roux.Code.closure([module | roots], exclude: &Reads.schema_module?/1)
 
     MapSet.new(modules, &elem(&1, 0))
   end

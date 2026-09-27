@@ -24,9 +24,10 @@ defmodule Argus.Graph.Code do
       it. An edit to one analysis moves only its own.
   """
 
-  use Roux.Query, code: [exclude: &Argus.Graph.Reads.schema_module?/1]
-
   alias Argus.Graph.Extraction
+  alias Argus.Graph.Reads
+
+  use Roux.Query, code: [exclude: &Reads.schema_module?/1]
 
   @doc false
   # Every module whose code these queries digest: the analyses, and the
@@ -51,7 +52,7 @@ defmodule Argus.Graph.Code do
   # Code with no object code to read (compiled in memory) is named only
   # within the VM that loaded it: its digest never matches another VM's.
   defp digest(roots, db) do
-    case Roux.Code.digest(roots, exclude: &Argus.Graph.Reads.schema_module?/1, store: db.blob) do
+    case Roux.Code.digest(roots, exclude: &Reads.schema_module?/1, store: db.blob) do
       {:ok, digest} -> digest
       {:error, reason} -> {:unversioned, reason, vm_token()}
     end

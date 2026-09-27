@@ -9,8 +9,8 @@ defmodule Mix.Tasks.Compile.ArgusSouffleGateTest do
   @moduletag :project
   use Argus.Test.Peer
 
-  alias Roux.Lang.Manifest
   alias Argus.Test.{Fixture, Peer}
+  alias Roux.Lang.Manifest
   alias Roux.QueryLog
 
   @moduletag timeout: 300_000

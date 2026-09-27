@@ -7,6 +7,7 @@ defmodule Argus.Graph.SemanticTest do
 
   use ExUnit.Case, async: true
 
+  alias Argus.Graph.Extraction
   alias Argus.Test.Graph
 
   @moduletag :tmp_dir
@@ -36,8 +37,7 @@ defmodule Argus.Graph.SemanticTest do
     {path, paths} = beam!(dir, vsn, line)
     db = Graph.new_db(paths)
 
-    {Argus.Graph.Extraction.module_semantic(db, path),
-     Argus.Graph.Extraction.module_facts(db, path)}
+    {Extraction.module_semantic(db, path), Extraction.module_facts(db, path)}
   end
 
   test "equal across a line shift and a vsn change; the facts are not", %{tmp_dir: dir} do
