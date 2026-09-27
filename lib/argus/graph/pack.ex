@@ -161,10 +161,17 @@ defmodule Argus.Graph.Pack do
                                                                                        observer} ->
       {missing, observer} = stale(trace.value, producers, codes, observer)
       candidate = %{trace: trace, missing: missing, base: nil}
-      best = if length(missing) < length(best.missing), do: candidate, else: best
+      best = if rank(candidate) < rank(best), do: candidate, else: best
       if missing == [], do: {:halt, {best, observer}}, else: {:cont, {best, observer}}
     end)
   end
+
+  # Fewer producers to run first; between two that leave the same
+  # number, the one that kept a base the producers can run over.
+  defp rank(%{trace: nil, missing: missing}), do: {length(missing), 1}
+
+  defp rank(%{trace: trace, missing: missing}),
+    do: {length(missing), if(Map.get(trace.value, :base), do: 0, else: 1)}
 
   # The producers whose rows in the trace's pack no longer hold.
   defp stale(value, producers, codes, observer) do
@@ -180,6 +187,24 @@ defmodule Argus.Graph.Pack do
           {missing ++ [producer], observer}
       end
     end)
+  end
+
+  # What names a trace among a module's others: the code it was made by
+  # and what its producers observed. Two VMs whose code paths differ
+  # (a test VM and its peer) observe other specs of one callee: each
+  # keeps a trace of its own beside the other's, and finds it again,
+  # rather than each replacing the other's in turn.
+  defp trace_deps(codes, value) do
+    observed =
+      for {producer, %{observed: observed}} <- Enum.sort(value.producers),
+          do: {producer, observed}
+
+    base = if value.base, do: value.base.observed, else: []
+
+    digest =
+      :crypto.hash(:sha256, :erlang.term_to_binary({observed, base}, [:deterministic]))
+
+    [{:codes, codes}, {:observed, Base.encode16(digest, case: :lower)}]
   end
 
   defp base_digests(%{base: %{digest: digest}}), do: [digest]
@@ -244,7 +269,7 @@ defmodule Argus.Graph.Pack do
           producer_entries(old, producers, missing, codes, extraction, base_reads, observer)
 
         value = %{pack: digest, relations: relations, producers: entries, base: base_entry}
-        _ = Trace.put(store, name, [{:codes, codes}], value)
+        _ = Trace.put(store, name, trace_deps(codes, value), value)
       end
 
       Runtime.hold([digest | base_digests(%{base: base_entry})])
