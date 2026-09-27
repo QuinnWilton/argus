@@ -147,6 +147,7 @@ defmodule Argus.Driver do
         end
 
       {status, _session} = Roux.Session.commit(session, meta)
+      _ = collect(session.blob)
 
       %Result{
         located: located,
@@ -183,4 +184,13 @@ defmodule Argus.Driver do
         []
     end
   end
+
+  # The store, collected when a day has passed since its last collection
+  # and no other run is collecting it (`Roux.Blob.maybe_gc/2`): what no
+  # manifest retains, untouched for a day, and traces and kept solves
+  # unused for a week. Every frontend runs here, so a store in use is
+  # collected by the runs that use it; a temporary one goes as it
+  # closes.
+  defp collect(%Roux.Blob{temporary?: true}), do: :skipped
+  defp collect(%Roux.Blob{} = store), do: Roux.Blob.maybe_gc(store)
 end

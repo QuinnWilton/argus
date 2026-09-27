@@ -8,7 +8,12 @@ System.put_env("ARGUS_CACHE_DIR", Path.join(Mix.Project.build_path(), "argus/sto
 # runs in the suite's store (`Argus.Test.Memo`), pruned when it ends.
 Argus.Test.Memo.start()
 Argus.Test.Memo.warm_programs()
-ExUnit.after_suite(fn _result -> Argus.Test.Memo.prune() end)
+
+ExUnit.after_suite(fn _result ->
+  Argus.Test.Memo.prune()
+  # The graph's store, as a driver run collects it: once a day.
+  if Argus.Cache.enabled?(), do: Roux.Blob.maybe_gc(Argus.Graph.store())
+end)
 
 # A test of a store itself (`@tag :cache`) has nothing to test when
 # ARGUS_NO_CACHE turns the stores off. The perturbation checks of what a
