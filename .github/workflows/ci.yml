@@ -107,6 +107,22 @@ jobs:
         env:
           MIX_ENV: dev
 
+      # What the suite built and solved, kept for the next run of this
+      # matrix entry: the compiled dependencies and fixtures, and the
+      # suite's blob store (_build/test/argus/store), whose entries are
+      # named by their content and by the code and rules that made them:
+      # a restored store serves only what this commit would compute, and
+      # a rule or code edit misses where it should. A new cache per run,
+      # the newest restored; the store is collected down to this run's
+      # entries before it is saved. _build/dev is not kept: the compile
+      # above checks every file for warnings.
+      - name: Restore the test build and store
+        uses: actions/cache/restore@v4
+        with:
+          path: _build/test
+          key: ${{ runner.os }}-test-build-${{ matrix.elixir }}-${{ matrix.otp }}-${{ hashFiles('mix.lock') }}-${{ github.run_id }}
+          restore-keys: ${{ runner.os }}-test-build-${{ matrix.elixir }}-${{ matrix.otp }}-${{ hashFiles('mix.lock') }}-
+
       # The peer and Mix-project tests (`:project`) run here too; they
       # have a job of their own below only to be rerun alone. The corpus
       # runs nightly, in corpus.yml: cold, it compiles every tree it
@@ -121,6 +137,22 @@ jobs:
         run: mix test --include identity_verify --exclude corpus --max-cases "$(nproc)"
         env:
           ARGUS_TEST_TIMINGS: "25"
+
+      # Down to the entries this run used: a collection keeps whatever
+      # was used within the store's window (two hours), however short a
+      # grace and keep it is given.
+      - name: Collect the test store
+        if: ${{ !cancelled() }}
+        run: >-
+          mix run -e 'IO.inspect(Roux.Blob.gc(Roux.Blob.open!("_build/test/argus/store"),
+          grace: 0, keep: 0), label: "test store")'
+
+      - name: Save the test build and store
+        if: ${{ !cancelled() }}
+        uses: actions/cache/save@v4
+        with:
+          path: _build/test
+          key: ${{ runner.os }}-test-build-${{ matrix.elixir }}-${{ matrix.otp }}-${{ hashFiles('mix.lock') }}-${{ github.run_id }}
 
   project:
     name: Project tests (Mix compiler, driver, peers)
@@ -151,10 +183,32 @@ jobs:
       - name: Install dependencies
         run: mix deps.get
 
+      # As the test job keeps its build and store, under a name of its
+      # own: these tests fill the store with the fixture projects'.
+      - name: Restore the test build and store
+        uses: actions/cache/restore@v4
+        with:
+          path: _build/test
+          key: ${{ runner.os }}-project-build-${{ hashFiles('mix.lock') }}-${{ github.run_id }}
+          restore-keys: ${{ runner.os }}-project-build-${{ hashFiles('mix.lock') }}-
+
       - name: Run the project tests
         run: mix test --only project
         env:
           ARGUS_TEST_TIMINGS: "15"
+
+      - name: Collect the test store
+        if: ${{ !cancelled() }}
+        run: >-
+          mix run -e 'IO.inspect(Roux.Blob.gc(Roux.Blob.open!("_build/test/argus/store"),
+          grace: 0, keep: 0), label: "test store")'
+
+      - name: Save the test build and store
+        if: ${{ !cancelled() }}
+        uses: actions/cache/save@v4
+        with:
+          path: _build/test
+          key: ${{ runner.os }}-project-build-${{ hashFiles('mix.lock') }}-${{ github.run_id }}
 
   parity:
     name: Parity (graph ≡ batch)
