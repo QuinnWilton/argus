@@ -35,9 +35,10 @@ defmodule Argus.CLIGcTest do
   test "an unretained entry past its grace goes; another build's rules go", %{store: store} do
     {:ok, blob} = Roux.Blob.open(store)
     {:ok, digest} = Roux.Blob.put(blob, "an entry nothing retains")
-    # Past the store's refresh interval (an hour), which a collection's
-    # grace is never shorter than.
-    File.touch!(Roux.Blob.path(blob, digest), System.os_time(:second) - 2 * 60 * 60)
+    # Past the store's window (twice its refresh interval), which a
+    # collection's grace is never shorter than.
+    past = System.os_time(:second) - Roux.Blob.window(blob) - 60
+    File.touch!(Roux.Blob.path(blob, digest), past)
 
     old = Path.join([store, "dl", String.duplicate("0", 64)])
     File.mkdir_p!(old)

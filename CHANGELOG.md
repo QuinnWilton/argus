@@ -8,6 +8,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- roux `~> 0.2.3` (was `~> 0.2.1`): 0.2.2 fixes five races in the blob
+  store, each a spurious miss under concurrent use (a trace pruned while
+  in use, one missing while it was replaced, a trace a collection put
+  back naming a blob it swept), and 0.2.3 records each of a query's
+  dependencies once and keeps a code digest in every store a VM serves
+  it for. A lookup whose variants of a module's rows hold now marks the
+  trace used with `Roux.Blob.Trace.mark_used/1`, and a trace a
+  collection removed since the lookup read it is a miss: the module is
+  extracted again rather than handed a pack whose segments may be
+  going (`Argus.Graph.Pack`).
+
 - Elixir `~> 1.19` is now required (was `~> 1.18`), as for roux; OTP 28
   remains required. CI tests Elixir 1.19.4 only.
 

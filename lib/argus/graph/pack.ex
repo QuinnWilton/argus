@@ -50,7 +50,10 @@ defmodule Argus.Graph.Pack do
   The trace also names the pack of each producer's newest variant, and
   the module's relation digests with it: a lookup that finds them all
   holding reads the trace, one small file, and nothing else. The blobs
-  a trace names stay in the store while it is used (`Roux.Blob.gc/2`).
+  a trace names stay in the store while it is used (`Roux.Blob.gc/2`):
+  a lookup whose variants hold marks it used
+  (`Roux.Blob.Trace.mark_used/1`), and one a collection removed since it
+  was read is a miss, every producer run again.
 
   ## Kept bases
 
@@ -151,15 +154,14 @@ defmodule Argus.Graph.Pack do
     name = {:argus_module, @format, identity, shaping(kind)}
     trace = fetch(store, name)
     {chosen, missing, observer} = choose(trace, producers, codes, memo_observe(db))
+    {trace, chosen, missing} = use(trace, chosen, missing, producers)
 
     case {missing, trace && trace.value.current} do
       {[], %{} = current} when chosen == current.chosen ->
-        used(trace)
         hold(producers, chosen, head_base(trace), current.pack)
         {:ok, facts(module, current, false)}
 
       {[], _current} ->
-        used(trace)
         {current, _chosen} = pack(store, producers, chosen)
         hold(producers, chosen, head_base(trace), current.pack)
         {:ok, facts(module, current, false)}
@@ -202,12 +204,19 @@ defmodule Argus.Graph.Pack do
     end
   end
 
-  # A trace found and used, marked so (its modification time) for the
-  # store's recency, as `Roux.Blob.Trace.find/4` marks one: at most once
-  # a refresh interval, so a warm run writes nothing.
-  defp used(%{path: path, mtime: mtime, refresh: refresh}) do
-    if System.os_time(:second) - mtime >= refresh, do: _ = Blob.touch(path)
-    :ok
+  # A trace whose variants are chosen, marked used (its modification
+  # time) for the store's recency, as `Roux.Blob.Trace.find/4` marks one:
+  # at most once a refresh interval, so a warm run writes nothing. One
+  # removed since it was read is a miss, every producer run again: a
+  # collection may be taking the segments its variants name.
+  defp use(nil, chosen, missing, _producers), do: {nil, chosen, missing}
+  defp use(trace, chosen, missing, _producers) when chosen == %{}, do: {trace, chosen, missing}
+
+  defp use(trace, chosen, missing, producers) do
+    case Trace.mark_used(trace) do
+      :ok -> {trace, chosen, missing}
+      :gone -> {nil, %{}, producers}
+    end
   end
 
   # Each producer's variant that holds, and the producers none does: a
