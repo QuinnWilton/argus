@@ -62,6 +62,17 @@ defmodule Argus.Graph.Pack do
   A module that was lost (it outlived the per-module timeout, or its
   worker exited) keeps no trace: its rows depend on the machine's load.
 
+  ## A blob the store lost
+
+  A lookup trusts the blobs its trace names without a look, and a kept
+  entry the blobs its value names: a warm run reads no segment it does
+  not assemble a relation from. One may still be gone (collected while
+  a run used it, or removed by hand). Reading a module's chunks through
+  the graph (`read_chunks/6`) then extracts the module again, as a cold
+  run does, and puts the blobs back under the digests the pack names —
+  the same beam under the same code makes the same bytes — so the run
+  goes on and every later one finds them (`restore/3`).
+
   ## Telemetry
 
   `[:argus, :graph, :extract]` is emitted each time producers run over a
@@ -314,25 +325,12 @@ defmodule Argus.Graph.Pack do
         do: {nil, observer},
         else: kept_base(store, trace, codes, observer)
 
-    # Where the specs are read from: the precise edges are each read's
-    # `installed_specs`, which reads the source itself.
-    source =
-      Runtime.untracked(fn -> Runtime.input(run.db, :specs_source, :all, default: nil) end)
-
-    opts = [
-      specs_source: source,
-      producers: missing,
-      base: base && base.binary,
-      keep_base: base == nil and run.kind == :extracted,
-      relations: relations(run.kind),
-      trace_imprecision: true
-    ]
-
     opts =
-      case Application.get_env(:argus_beam, :extraction_timeout) do
-        nil -> opts
-        ms -> Keyword.put(opts, :timeout, ms)
-      end
+      extraction_opts(run.db, run.kind,
+        producers: missing,
+        base: base && base.binary,
+        keep_base: base == nil and run.kind == :extracted
+      )
 
     :telemetry.execute([:argus, :graph, :extract], %{producers: length(missing)}, %{
       module: run.module,
@@ -366,6 +364,21 @@ defmodule Argus.Graph.Pack do
         hold(producers, chosen, base_entry, current.pack)
         {:ok, facts(run.module, current, false)}
       end
+    end
+  end
+
+  # What `Argus.Pipeline.extract_module/2` is asked for a module of
+  # `kind`: `opts`, and the relations the kind holds, imprecision traced,
+  # the specs read from where the graph's input says (the precise edges
+  # are each read's `installed_specs`, which reads the source itself),
+  # and the configured per-module timeout.
+  defp extraction_opts(db, kind, opts) do
+    source = Runtime.untracked(fn -> Runtime.input(db, :specs_source, :all, default: nil) end)
+    opts = [specs_source: source, relations: relations(kind), trace_imprecision: true] ++ opts
+
+    case Application.get_env(:argus_beam, :extraction_timeout) do
+      nil -> opts
+      ms -> Keyword.put(opts, :timeout, ms)
     end
   end
 
@@ -564,6 +577,115 @@ defmodule Argus.Graph.Pack do
         missing ->
           missing
       end
+    end
+  end
+
+  @doc """
+  `chunks/4` of the module `beam_key`, whose facts `query` keeps
+  (`:module_facts` or `:module_in_process`) under `pack`, read from
+  `db`'s store: when the store no longer has a blob the pack names (a
+  segment collected while a trace still named it), the module is
+  extracted again (`restore/3`) and the chunks read from what that puts
+  back. `{:error, {:facts_lost, beam_key, digest, reason}}` when they
+  cannot be.
+
+  Reads the graph without edges: the caller depends on `query`'s entry
+  already, and that entry on what made the pack.
+  """
+  @spec read_chunks(
+          Roux.Database.t(),
+          :module_facts | :module_in_process,
+          term(),
+          Blob.digest(),
+          [atom()],
+          :all | [Pipeline.producer()]
+        ) :: {:ok, %{atom() => binary()}} | {:error, term()}
+  def read_chunks(db, query, beam_key, pack, relations, producers \\ :all) do
+    with {:missing, digest} <- chunks(db.blob, pack, relations, producers) do
+      restored =
+        with :ok <- restore(db, {query, beam_key}, pack),
+             {:missing, digest} <- chunks(db.blob, pack, relations, producers) do
+          {:error, {:blob_missing, digest}}
+        end
+
+      case restored do
+        {:ok, chunks} -> {:ok, chunks}
+        {:error, reason} -> {:error, {:facts_lost, beam_key, digest, reason}}
+      end
+    end
+  end
+
+  @doc """
+  Puts back the blobs of `pack` the store lost, by extracting the module
+  `beam_key` again: every producer `query` keeps rows of, as a cold run
+  does, each segment put again and the pack with them. The same beam
+  under the same code makes the same bytes (extraction is
+  deterministic), so they come back under the digests `pack` names:
+  `:ok`; `{:error, {:not_reproduced, made}}` when the extraction made
+  another pack, or the extraction's error.
+
+  Emits `[:argus, :graph, :extract]` as any extraction does. Reads the
+  graph without edges and records no read of the schema: the entry
+  whose value names `pack` depends on what made it already.
+  """
+  @spec restore(
+          Roux.Database.t(),
+          {:module_facts | :module_in_process, term()},
+          Blob.digest()
+        ) :: :ok | {:error, term()}
+  def restore(db, {query, beam_key}, pack) do
+    {result, _reads} =
+      Argus.Schema.Reads.isolated(fn ->
+        Runtime.untracked(fn ->
+          case Runtime.query(db, :module_beam, beam_key) do
+            {:ok, beam} -> restore(db, query, beam_key, beam, pack)
+            :external -> {:error, {:external, beam_key}}
+          end
+        end)
+      end)
+
+    result
+  end
+
+  defp restore(db, query, beam_key, beam, pack) do
+    store = db.blob
+    module = Runtime.query(db, :module_name, beam_key)
+
+    {kind, codes} =
+      case query do
+        :module_facts -> {:extracted, Runtime.query(db, :producer_code, :all)}
+        :module_in_process -> {:in_process, %{base: Runtime.query(db, :base_code, :all)}}
+      end
+
+    producers = producers(kind, codes)
+
+    :telemetry.execute([:argus, :graph, :extract], %{producers: length(producers)}, %{
+      module: module,
+      producers: producers,
+      kept_base: false
+    })
+
+    opts = extraction_opts(db, kind, producers: producers, keep_base: false)
+
+    case Pipeline.extract_module(Argus.Graph.Frontend.read(beam), opts) do
+      {:ok, %{status: :ok} = extraction} ->
+        chosen =
+          Map.new(producers, fn producer ->
+            encoded = Map.get(extraction.facts, producer, %{})
+            {:ok, variant} = variant(store, producer, codes, encoded, [])
+            {producer, variant}
+          end)
+
+        case pack(store, producers, chosen) do
+          {%{pack: ^pack}, _chosen} -> :ok
+          {%{pack: made}, _chosen} -> {:error, {:not_reproduced, made}}
+        end
+
+      {:ok, %{status: :lost}} ->
+        {:error, :lost}
+
+      {:error, _} = error ->
+        error
     end
   end
 

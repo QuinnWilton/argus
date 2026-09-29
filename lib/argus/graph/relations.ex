@@ -213,8 +213,9 @@ defmodule Argus.Graph.Relations do
   defp facts_files(_db, _program, [], _producers, _query), do: {:ok, %{}}
 
   # One pass over the program's modules: each module's segments that hold
-  # a missing relation are read once (`Argus.Graph.Pack.chunks/4`), and
-  # its chunk of every missing relation appended to that relation's file,
+  # a missing relation are read once (`Argus.Graph.Pack.read_chunks/6`,
+  # which extracts a module again whose segment the store lost), and its
+  # chunk of every missing relation appended to that relation's file,
   # written in a scratch directory on the store's file system and moved
   # into it.
   defp facts_files(db, program, facts, producers, query) do
@@ -235,40 +236,47 @@ defmodule Argus.Graph.Relations do
           {relation, {path, device}}
         end)
 
-      try do
-        Enum.each(keys, fn key ->
-          case Runtime.untracked(fn -> Runtime.query(db, query, key) end) do
-            {:ok, %{pack: pack, relations: chunks}} ->
-              if Enum.any?(Map.keys(chunks), &MapSet.member?(wanted, &1)) do
-                chunks = chunks!(store, pack, relations, producers)
+      written =
+        try do
+          Enum.reduce_while(keys, :ok, fn key, :ok ->
+            case Runtime.untracked(fn -> Runtime.query(db, query, key) end) do
+              {:ok, %{pack: pack, relations: chunks}} ->
+                if Enum.any?(Map.keys(chunks), &MapSet.member?(wanted, &1)),
+                  do: append(db, {query, key}, pack, {relations, producers}, devices),
+                  else: {:cont, :ok}
 
-                for relation <- relations, bytes = Map.get(chunks, relation, ""), bytes != "" do
-                  {_path, device} = Map.fetch!(devices, relation)
-                  :ok = IO.binwrite(device, bytes)
-                end
-              end
+              {:error, _} ->
+                {:cont, :ok}
+            end
+          end)
+        after
+          Enum.each(devices, fn {_relation, {_path, device}} -> File.close(device) end)
+        end
 
-            {:error, _} ->
-              :ok
+      with :ok <- written do
+        Enum.reduce_while(devices, {:ok, %{}}, fn {relation, {path, _device}}, {:ok, acc} ->
+          case Blob.adopt(store, path) do
+            {:ok, file} -> {:cont, {:ok, Map.put(acc, relation, file)}}
+            {:error, reason} -> {:halt, {:error, {:relation_write_failed, relation, reason}}}
           end
         end)
-      after
-        Enum.each(devices, fn {_relation, {_path, device}} -> File.close(device) end)
       end
-
-      Enum.reduce_while(devices, {:ok, %{}}, fn {relation, {path, _device}}, {:ok, acc} ->
-        case Blob.adopt(store, path) do
-          {:ok, file} -> {:cont, {:ok, Map.put(acc, relation, file)}}
-          {:error, reason} -> {:halt, {:error, {:relation_write_failed, relation, reason}}}
-        end
-      end)
     end)
   end
 
-  defp chunks!(store, pack, relations, producers) do
-    case Pack.chunks(store, pack, relations, producers) do
-      {:ok, chunks} -> chunks
-      {:missing, digest} -> raise Roux.Blob.MissingError, store: store.root, digest: digest
+  # One module's chunk of each relation, appended to the relation's file.
+  defp append(db, {query, key}, pack, {relations, producers}, devices) do
+    case Pack.read_chunks(db, query, key, pack, relations, producers) do
+      {:ok, chunks} ->
+        for relation <- relations, bytes = Map.get(chunks, relation, ""), bytes != "" do
+          {_path, device} = Map.fetch!(devices, relation)
+          :ok = IO.binwrite(device, bytes)
+        end
+
+        {:cont, :ok}
+
+      {:error, _} = error ->
+        {:halt, error}
     end
   end
 

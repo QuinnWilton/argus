@@ -43,9 +43,9 @@ defmodule Argus.Graph.Locate do
         # that reads it: a session placing findings in a module whose
         # facts it found again reads the table back, not the pack.
         Roux.Blob.cached(db.blob, {__MODULE__, :line_table, table_code(), pack}, fn ->
-          case Pack.chunks(db.blob, pack, [:line_info]) do
+          case Pack.read_chunks(db, :module_facts, beam_key, pack, [:line_info]) do
             {:ok, chunks} -> {:ok, table(Map.get(chunks, :line_info, ""))}
-            {:missing, digest} -> {:error, {:pack_missing, digest}}
+            {:error, _} = error -> error
           end
         end)
 

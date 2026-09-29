@@ -18,6 +18,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   whatever order the solver wrote them in. Souffle writes a relation in
   the order it numbered its symbols, and that moved between Souffle 2.4
   and 2.5 over the same facts.
+- A segment the blob store lost while a module's trace, or a kept
+  entry, still named it (collected by a run that raced another, or
+  removed by hand) no longer fails the run with `Roux.Blob.MissingError`
+  on every run that assembles a relation from it: the module is
+  extracted again and the blobs put back under the digests they had
+  (`Argus.Graph.Pack.read_chunks/6`). Placing findings in such a module
+  extracts it again likewise, where it gave up the module's lines.
 
 ## 0.20.0 — 2026-09-27
 
