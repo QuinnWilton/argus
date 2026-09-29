@@ -84,15 +84,49 @@ defmodule Argus.Soundness.UnreadTest do
     end
   end
 
-  describe "a supervisor's options the extractor knows in part" do
+  describe "a trap_exit flag the extractor cannot read" do
+    test "may trap: no finding that the process never traps; no flag, false or a spawned flag still do" do
+      found =
+        for {_, "Cleanup in terminate/2 of a process that never traps exits", {mod, _, _}} <-
+              fired(
+                [U.Traps.NoFlag, U.Traps.FalseFlag, U.Traps.SpawnedFlag, U.Traps.UnreadFlag],
+                :shutdown
+              ),
+            do: mod
+
+      assert Enum.sort(found) == [U.Traps.FalseFlag, U.Traps.NoFlag, U.Traps.SpawnedFlag]
+    end
+  end
+
+  describe "options the extractor knows in part" do
     setup do
       {:ok, facts} =
         Pipeline.extract(
-          [U.FlagsMapSup, U.Caps.MergedOpts, U.Caps.HelperOpts],
-          extractors: [Argus.Extractors.Supervision]
+          [U.PartialStarts, U.PartialTables, U.FlagsMapSup, U.Caps.MergedOpts, U.Caps.HelperOpts],
+          extractors: [
+            Argus.Extractors.ProcessRegistry,
+            Argus.Extractors.ETS,
+            Argus.Extractors.Supervision
+          ]
         )
 
       %{facts: facts}
+    end
+
+    test "a start's name may be in options known in part; none in options read whole", %{
+      facts: facts
+    } do
+      starts =
+        for [_id, func, _api, _scope, source, _key] <- facts[:creating_op], do: {func, source}
+
+      assert {inspect(U.PartialStarts) <> ":start_link/1", "dynamic"} in starts
+      refute Enum.any?(starts, fn {func, _} -> func =~ "start_unnamed" end)
+    end
+
+    test "a table's options known in part are not known whole", %{facts: facts} do
+      known = for [id] <- facts[:ets_options_known], do: id
+      assert Enum.any?(known, &(&1 =~ "PartialTables:whole/0"))
+      refute Enum.any?(known, &(&1 =~ "PartialTables:partial/1"))
     end
 
     test "a cap in options merged from the argument is unknown; none in a helper's options", %{

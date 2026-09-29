@@ -199,6 +199,26 @@ module_traps(func, mod) :-
   behaviour_traps_exits(b),
   function_def(func, mod, "init", 1, _).
 
+// The module's process may trap exits: it does (server_traps), or one of
+// its entries reaches, on its own stack, a `Process.flag(:trap_exit,
+// value)` whose value the extractor could not read (trap_flag_unread).
+// One in a fun the module hands to a process start is that process's. A rule
+// that reports a process that does NOT trap (a terminate/2 its
+// supervisor's shutdown skips) asks this: an unread value may set the
+// flag, and is never the default, false (issue #4). A rule that reports
+// on a process that traps asks server_traps.
+.decl may_trap(mod: symbol)
+
+may_trap(mod) :- server_traps(mod).
+
+may_trap(mod) :-
+  process_entry(mod, entry),
+  unread_trap_reach.reaches(entry).
+
+.init unread_trap_reach = SameProcessReachSet
+
+unread_trap_reach.seed(func) :- trap_flag_unread(_, func, _).
+
 // A trap_exit call some process entry reaches on its own stack, whether
 // or not the flag stays set: the trap is a server's, not a hand-rolled
 // loop's.

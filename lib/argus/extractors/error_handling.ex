@@ -18,6 +18,8 @@ defmodule Argus.Extractors.ErrorHandling do
   - `bare_rescue(id, func)` — catch-all rescue without filtering or reraising
   - `trap_exit(id, func, mod)` — `Process.flag(:trap_exit, true)` call site
   - `untrap_exit(id, func, mod)` — `Process.flag(:trap_exit, false)` call site
+  - `trap_flag_unread(id, func, mod)` — a `Process.flag(:trap_exit, value)`
+    whose value the extractor cannot read: it may set the flag or clear it
   - `exit_call(id, func, target)` — explicit `Process.exit/2` or `:erlang.exit/1,2`
   - `call_result(id, func, callee, fate, raises, target)` — every call to a process
     or OTP API (and every `start_link`/`start`/`start_child`), with what
@@ -210,6 +212,7 @@ defmodule Argus.Extractors.ErrorHandling do
       :timer_dropped,
       :timer_tag,
       :trap_exit,
+      :trap_flag_unread,
       :untrap_exit,
       :try_call,
       :try_boundary,
@@ -2233,8 +2236,16 @@ defmodule Argus.Extractors.ErrorHandling do
               mod_str
             ])
 
+          # A value the reader cannot read may set the flag or clear it:
+          # unknown, never the default, false (issue #4).
           _ ->
-            track_imprecision(facts, ctx, :trap_exit_unresolved, :trap_exit, :skipped)
+            facts
+            |> track_imprecision(ctx, :trap_exit_unresolved, :trap_exit, :skipped)
+            |> add_fact(:trap_flag_unread, [
+              InstrId.mint(ctx.func_id, ctx.idx),
+              ctx.func_id,
+              mod_str
+            ])
         end
 
       _ ->

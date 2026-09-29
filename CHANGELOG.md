@@ -85,6 +85,27 @@ calls.dl's and global_reach.dl's clause-aware entry compares a literal
 first argument with a tag's type. Readers of positional columns see one
 new relation, a new column and new tag spellings.
 
+### An unread value is unknown, never the default, beyond supervision (schema 158)
+
+**Fixed.** The same conflation as issue #4's, in the other extractors
+that read an option:
+- `trap_flag_unread(id, func, mod)` is new: a `Process.flag(:trap_exit,
+  value)` whose value the extractor cannot read. clientlib/trapping.dl's
+  `may_trap` counts it on the process's own stack, and shutdown's
+  "Cleanup in terminate/2 of a process that never traps exits" and
+  "terminate/2 does work a supervisor shutdown will skip" ask it: an
+  unread flag is not the default, false. A flag in a fun the process
+  spawns is that process's.
+- `ets_options_known` needs the options known whole: a list known only
+  in part (`[:named_table | opts]`) may hold an heir or an access option
+  in the part the extractor cannot read. An unread `keypos` is
+  `dynamic`, not the first element.
+- A GenServer start whose options are known only in part may be named:
+  process_registry records the start under a name it cannot read, where
+  it read as unnamed.
+
+Readers of positional columns see one new relation.
+
 ### An unread value is unknown, never the default (schema 157)
 
 **Fixed.** "Permanent child stops itself and is restarted" was reported

@@ -601,7 +601,25 @@ defmodule Argus.Schema.ErrorHandling do
         A `Process.flag(:trap_exit, false)` call: from here on the calling \
         process no longer traps exits. A restore of a value an earlier \
         call returned (`Process.flag(:trap_exit, old)`) is computed, and \
-        has no row.
+        has no row (`trap_flag_unread`).
+        """
+      },
+      %{
+        name: :trap_flag_unread,
+        layer: 2,
+        fields: [
+          {:id, :instr_id, "the call"},
+          {:func, :symbol, "containing function ID"},
+          {:mod, :symbol, "module name"}
+        ],
+        doc: """
+        A `Process.flag(:trap_exit, value)` whose value the extractor \
+        cannot read (`opts[:trap_exit]`, a restore of an earlier call's \
+        answer): the process may trap exits from here on, or may not. A \
+        rule that reports a process that does not trap asks \
+        `may_trap` (clientlib/trapping.dl), which this makes true; it is \
+        no trap for a rule that reports one (issue #4: an unread value is \
+        never the default).
         """
       },
       %{

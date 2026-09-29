@@ -42,7 +42,11 @@ defmodule Argus.Schema.OwnedResources do
         whole (a literal list, through moves): every option it gives has an \
         `ets_option` row, so one with none, `named_table` among them, is not \
         given. No row when the list is built at run time (a parameter, the \
-        configuration), where any option may be.
+        configuration), where any option may be, nor when it is known only \
+        in part (`[:named_table | opts]`: the options it shows have rows, \
+        and an option it does not show may be in the part the extractor \
+        cannot read; issue #4). A `keypos` it cannot read is `dynamic`, not \
+        the default first element.
         """
       },
       %{

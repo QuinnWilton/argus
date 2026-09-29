@@ -66,6 +66,7 @@ defmodule Argus.Extractors.ETS do
   alias Argus.Extractor.CallSites
   alias Argus.Extractor.Helpers
   alias Argus.Extractor.Identity
+  alias Argus.Extractor.Terms
   alias Argus.Instr
   alias Argus.Instr.Reaching
   alias Argus.InstrId
@@ -984,16 +985,27 @@ defmodule Argus.Extractors.ETS do
   # option it gives, and that the list was read whole, so a rule may take
   # an option it does not give as absent. A list built at run time gives
   # no rows at all, and any option may be in it (imprecision is tracked).
+  # A list the reader knows only in part (`[:named_table | opts]`, whose
+  # unknown tail it reads as one `:dynamic` element) gives the options it
+  # shows and is not known whole: an option it does not show may be in
+  # the part it cannot read (issue #4: an unreadable value is never the
+  # default).
   defp options(facts, id, ctx) do
     case resolve_register(ctx.instrs, ctx.idx, {:x, 1}) do
       {:ok, opts} when is_list(opts) ->
         facts
-        |> add_fact(:ets_options_known, [id])
+        |> known_whole(id, opts)
         |> emit_options(id, opts)
 
       _ ->
         track_imprecision(facts, ctx, :ets_options_unresolved, :ets_option, :unresolvable)
     end
+  end
+
+  defp known_whole(facts, id, opts) do
+    if Terms.proper_list?(opts) and not Terms.value_contains?(opts, &(&1 == :dynamic)),
+      do: add_fact(facts, :ets_options_known, [id]),
+      else: facts
   end
 
   # Emit ets_option facts from a parsed options list.
@@ -1024,6 +1036,10 @@ defmodule Argus.Extractors.ETS do
   # table keys by its second (`keypos: 2`), past the record's tag.
   defp parse_option({:keypos, pos}) when is_integer(pos) and pos >= 1,
     do: {"keypos", Integer.to_string(pos)}
+
+  # A keypos the reader cannot read keys by an element it does not know,
+  # not by the default first.
+  defp parse_option({:keypos, _pos}), do: {"keypos", "dynamic"}
 
   # Heir setting.
   defp parse_option({:heir, _pid, _data}), do: {"heir", "true"}

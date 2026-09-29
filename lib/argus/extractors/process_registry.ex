@@ -46,6 +46,7 @@ defmodule Argus.Extractors.ProcessRegistry do
   @behaviour Argus.Extractor
 
   alias Argus.Extractor.Dispatch
+  alias Argus.Extractor.Terms
   alias Argus.Extractors.PidFlow
   alias Argus.Instr
   alias Argus.InstrId
@@ -626,8 +627,18 @@ defmodule Argus.Extractors.ProcessRegistry do
     case resolve_register(ctx.instrs, ctx.idx, opts_reg) do
       {:ok, opts} when is_list(opts) ->
         case Keyword.get(opts, :name) do
+          # No `name:` in options read whole: an unnamed start. In options
+          # the reader knows only in part (`[name: n] ++ opts`, `[:x | opts]`,
+          # whose unknown tail it reads as a `:dynamic` element) a name may
+          # be in the part it cannot read: unknown, not unnamed (issue #4).
           nil ->
-            facts
+            if Terms.value_contains?(opts, &(&1 == :dynamic)) do
+              facts
+              |> track_imprecision(ctx, :gen_server_start_name, :process_register, :dynamic)
+              |> emit_dynamic_named_start(ctx, method, opts_reg)
+            else
+              facts
+            end
 
           # The options list resolved, but the name VALUE inside it is the
           # placeholder — `name: opts[:name]` and friends. Inspecting it

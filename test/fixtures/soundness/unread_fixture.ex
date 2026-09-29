@@ -229,6 +229,110 @@ defmodule Argus.Test.Soundness.Unread.CapsLive do
   def render(assigns), do: assigns
 end
 
+# ── A trap_exit flag the extractor cannot read ───────────────────────────
+
+# Servers whose terminate/2 deletes their row of a table others share: a
+# cleanup a supervisor's shutdown skips unless the server traps exits.
+defmodule Argus.Test.Soundness.Unread.Traps.NoFlag do
+  @moduledoc "Must fire: no flag."
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(opts) do
+    {:ok, opts}
+  end
+
+  @impl true
+  def terminate(_reason, _state) do
+    :ets.delete(:unread_shared_registry, self())
+    :ok
+  end
+end
+
+defmodule Argus.Test.Soundness.Unread.Traps.FalseFlag do
+  @moduledoc "Must fire: a literal false."
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(opts) do
+    Process.flag(:trap_exit, false)
+    {:ok, opts}
+  end
+
+  @impl true
+  def terminate(_reason, _state) do
+    :ets.delete(:unread_shared_registry, self())
+    :ok
+  end
+end
+
+defmodule Argus.Test.Soundness.Unread.Traps.SpawnedFlag do
+  @moduledoc "Must fire: the unread flag is a spawned process's, not the server's."
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(opts) do
+    spawn(fn -> Process.flag(:trap_exit, Keyword.get(opts, :trap, false)) end)
+    {:ok, opts}
+  end
+
+  @impl true
+  def terminate(_reason, _state) do
+    :ets.delete(:unread_shared_registry, self())
+    :ok
+  end
+end
+
+defmodule Argus.Test.Soundness.Unread.Traps.UnreadFlag do
+  @moduledoc "Quiet: a flag the extractor cannot read, on the server's own stack."
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(opts) do
+    Process.flag(:trap_exit, Keyword.get(opts, :trap, false))
+    {:ok, opts}
+  end
+
+  @impl true
+  def terminate(_reason, _state) do
+    :ets.delete(:unread_shared_registry, self())
+    :ok
+  end
+end
+
+# ── Start options the extractor knows in part ────────────────────────────
+
+defmodule Argus.Test.Soundness.Unread.PartialStarts do
+  @moduledoc false
+  use GenServer
+
+  # A name may be in the options a caller hands: the start is not known
+  # to be unnamed.
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts, [debug: []] ++ opts)
+
+  # Options read whole with no name: unnamed.
+  def start_unnamed(arg), do: GenServer.start_link(__MODULE__, arg, debug: [])
+
+  @impl true
+  def init(arg), do: {:ok, arg}
+end
+
+defmodule Argus.Test.Soundness.Unread.PartialTables do
+  @moduledoc false
+  # A table whose options the extractor reads whole, and one it knows
+  # only in part: the second may have an heir in the part it cannot read.
+  def whole, do: :ets.new(:unread_whole, [:named_table, :public])
+  def partial(opts), do: :ets.new(:unread_partial, [:named_table | opts])
+end
+
 # ── An Erlang flags map with no strategy ─────────────────────────────────
 
 defmodule Argus.Test.Soundness.Unread.FlagsMapSup do

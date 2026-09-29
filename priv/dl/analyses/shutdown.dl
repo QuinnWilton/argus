@@ -119,12 +119,13 @@ terminate_reach.limit(2).
 
 // A terminate/2 callback does cleanup, and its process doesn't trap
 // exits: a supervisor's shutdown kills the process without running it.
+// A process that may trap (an unread flag, may_trap) is not shown not to.
 .decl skipped_cleanup(mod: symbol, terminate: symbol, cleanup: symbol)
 
 skipped_cleanup(mod, terminate, cleanup) :-
   terminate_callback(terminate, mod, _),
   does_cleanup(terminate, cleanup),
-  !server_traps(mod).
+  !may_trap(mod).
 
 // terminate/2 does cleanup at `write`: a write on the path a supervisor
 // stop takes whose effect outlasts the process, not one the runtime
@@ -262,7 +263,7 @@ cleanup_defect(mod, behaviour, "never_runs", category, api, via) :-
 unclear_cleanup(mod, terminate, work) :-
   terminate_callback(terminate, mod, _),
   does_unclassified_work(terminate, work),
-  !server_traps(mod),
+  !may_trap(mod),
   !terminate_does_cleanup(mod).
 
 // terminate/2 makes the call at `work` on the path a supervisor stop
