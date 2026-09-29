@@ -545,7 +545,13 @@ gate_reopened(s, f, k) :-
   state_gate(s, f, k, v),
   function_def(f, m, _, _, _),
   state_setter(m, c),
-  (state_return(c, _, k, v) ; state_return(c, _, k, "dynamic")).
+  state_return(c, _, k, v).
+
+gate_reopened(s, f, k) :-
+  state_gate(s, f, k, _),
+  function_def(f, m, _, _, _),
+  state_setter(m, c),
+  state_return(c, _, k, "dynamic").
 
 .decl gated_once_site(site: symbol, func: symbol)
 

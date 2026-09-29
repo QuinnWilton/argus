@@ -267,13 +267,17 @@ module_identity("module field").
 
   // Identities agree when both are known and equal, or either is any. Use positive
   // comparisons so recursive rules need no negation.
+  .decl agrees(s: symbol, v: symbol, s2: symbol, v2: symbol) inline
+
+  agrees(s, v, s, v) :- s != "dynamic".
+  agrees(s, _v, s2, _v2) :- either_any(s, s2).
 
   .decl met(f: symbol, c: symbol, a: symbol, rs: symbol, r: symbol, ks: symbol, k: symbol)
 
   met(f, c, a, rs, r, ks, k) :-
     joined(f, c, a, rs, r, ks, k, rs2, r2, ks2, k2),
-    (rs = rs2, r = r2, rs != "dynamic" ; either_any(rs, rs2)),
-    (ks = ks2, k = k2, ks != "dynamic" ; either_any(ks, ks2)).
+    agrees(rs, r, rs2, r2),
+    agrees(ks, k, ks2, k2).
 
   // Lift both identities together through callers until they agree or can no longer be
   // substituted from parameters.
@@ -295,8 +299,8 @@ module_identity("module field").
 
   met(h, c, a, xs, x, ys, y) :-
     lifted(h, c, a, xs, x, ys, y, xs2, x2, ys2, y2),
-    (xs = xs2, x = x2, xs != "dynamic" ; either_any(xs, xs2)),
-    (ys = ys2, y = y2, ys != "dynamic" ; either_any(ys, ys2)).
+    agrees(xs, x, xs2, x2),
+    agrees(ys, y, ys2, y2).
 
   deferred(h, c, a, xs, x, ys, y, xs2, x2, ys2, y2) :-
     lifted(h, c, a, xs, x, ys, y, xs2, x2, ys2, y2),

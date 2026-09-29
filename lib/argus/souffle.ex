@@ -2,10 +2,9 @@ defmodule Argus.Souffle do
   @moduledoc """
   Souffle execution via shell-out to the `souffle` command-line tool.
 
-  Invokes `souffle -F <facts_dir> -D <output_dir> <rules.dl>` and parses
+  Invokes `souffle --wno=all -F <facts_dir> -D <output_dir> <rules.dl>` and parses
   the tab-separated output files back into lists of string rows.
-
-
+  `--no-warn` still emits singleton warnings in Souffle 2.4 and 2.5.
   """
 
   alias Argus.Souffle.Program
@@ -148,7 +147,9 @@ defmodule Argus.Souffle do
   end
 
   defp transformed_ram(bin, rules_path) do
-    case System.cmd(bin, ["--show=transformed-ram", rules_path], stderr_to_stdout: false) do
+    case System.cmd(bin, ["--show=transformed-ram", "--wno=all", rules_path],
+           stderr_to_stdout: false
+         ) do
       {output, 0} -> {:ok, output}
       {output, code} -> {:error, {:souffle_error, code, output}}
     end
@@ -201,7 +202,7 @@ defmodule Argus.Souffle do
   @spec execute_into(String.t(), Path.t(), Path.t(), Path.t(), timeout()) ::
           :ok | {:error, term()}
   def execute_into(bin, facts_dir, rules_path, output_dir, timeout) do
-    case execute(bin, ["-F", facts_dir, "-D", output_dir, rules_path], timeout) do
+    case execute(bin, ["-F", facts_dir, "-D", output_dir, "--wno=all", rules_path], timeout) do
       {:ok, {_output, 0}} -> :ok
       {:ok, {output, exit_code}} -> {:error, {:souffle_error, exit_code, output}}
       :timeout -> {:error, :souffle_timeout}
@@ -327,6 +328,7 @@ defmodule Argus.Souffle do
       facts_dir,
       "-D",
       output_dir,
+      "--wno=all",
       rules_path
     ]
 

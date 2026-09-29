@@ -31,7 +31,7 @@
 .decl runs_holding(func: symbol, pos: number, id: symbol) inline
 
 runs_holding(f, pos, id) :- shutdown_runs(id, f, pos).
-runs_holding(f, pos, id) :- !shutdown_chooses(f, pos).
+runs_holding(f, pos, _id) :- !shutdown_chooses(f, pos).
 
 // The call at id forwards the reason from func's parameter pos to callee argument arg.
 // Use -1 if it does not forward the reason.

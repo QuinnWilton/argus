@@ -378,7 +378,7 @@ endless_receive_during_init(mod, waiter, recv) :-
   init_function(mod, init),
   holds_start(init, waiter),
   receives_without_timeout(waiter, recv),
-  !ends_with_peer(mod, recv).
+  !ends_with_peer(recv).
 
 // An untimed startup receive ends only on a reply or peer exit. A live but unresponsive
 // peer can block startup indefinitely.
@@ -388,7 +388,7 @@ receive_until_peer_exits_during_init(mod, waiter, recv) :-
   init_function(mod, init),
   holds_start(init, waiter),
   receives_without_timeout(waiter, recv),
-  ends_with_peer(mod, recv).
+  ends_with_peer(recv).
 
 // An unbounded receive before the function's acknowledgement, excluding confirmed timer
 // flushes. Post-ack waits belong to the running server; pre-ack enter_loop has its own
@@ -402,10 +402,10 @@ receives_without_timeout(f, id) :-
 
 // The receive accepts its monitored peer's DOWN or, while trapping exits, its linked
 // peer's EXIT.
-.decl ends_with_peer(mod: symbol, recv: symbol) inline
+.decl ends_with_peer(recv: symbol) inline
 
-ends_with_peer(mod, recv) :- down_bounded(recv).
-ends_with_peer(mod, recv) :- ends_with_linked_exit(recv).
+ends_with_peer(recv) :- down_bounded(recv).
+ends_with_peer(recv) :- ends_with_linked_exit(recv).
 
 // A pinned linked-peer :EXIT bounds the receive only when exit trapping is active at
 // the wait, accounting for preceding sets and clears.

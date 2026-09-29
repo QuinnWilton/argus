@@ -104,14 +104,25 @@ start_error_handled(f) :- returns_call(g, f), start_error_handled(g).
 
 loser_taken(f, a) :-
   names.meets(f, _, a, _, _, _, _),
+  name_act(a, _, api),
+  api != "unregister",
+  start_error_handled(f).
+
+loser_taken(f, a) :-
+  names.meets(f, _, a, _, _, _, _),
   name_act(a, g, api),
   api != "unregister",
-  (start_error_handled(f) ; start_error_handled(g)).
+  start_error_handled(g).
+
+loser_taken(f, a) :-
+  names.meets(f, _, a, _, _, _, _),
+  name_act(a, _, "unregister"),
+  rescues_argument_error(f).
 
 loser_taken(f, a) :-
   names.meets(f, _, a, _, _, _, _),
   name_act(a, g, "unregister"),
-  (rescues_argument_error(f) ; rescues_argument_error(g)).
+  rescues_argument_error(g).
 
 // A named start whose failure is a returned value may be safe when that result is
 // ignored all the way back to the check: either winner leaves the name registered.
@@ -1399,9 +1410,19 @@ publishes_early(f, w1, w2) :-
   ets_table(w2, _, _),
   insert_at(f, a1, w1),
   value_in(f, a1, w1, _, vs, v),
-  key_in(f, a1, w1, ks, k),
+  key_in(f, a1, w1, ks, _),
   key_in(f, _, w2, vs, v),
-  (vs != ks ; v != k).
+  vs != ks.
+
+publishes_early(f, w1, w2) :-
+  publish_candidate(f, w1, w2),
+  ets_table(w1, _, _),
+  ets_table(w2, _, _),
+  insert_at(f, a1, w1),
+  value_in(f, a1, w1, _, vs, v),
+  key_in(f, a1, w1, _, k),
+  key_in(f, _, w2, vs, v),
+  v != k.
 
 // Reads that raise on a missing row. Exclude default-taking lookup_element/4 and
 // update_counter/4, and update_element, which returns false.

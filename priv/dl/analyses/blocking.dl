@@ -532,8 +532,17 @@ calls_back(b, a, w) :-
 calls_back(b, a, w) :-
   process_dep(a, b, w, "start"),
   reaches_sync_request(w, b, request),
-  clause_dep(b, clause, a, _),
-  (request = clause ; clause = "any" ; request = "any").
+  clause_dep(b, request, a, _).
+
+calls_back(b, a, w) :-
+  process_dep(a, b, w, "start"),
+  reaches_sync_request(w, b, _),
+  clause_dep(b, "any", a, _).
+
+calls_back(b, a, w) :-
+  process_dep(a, b, w, "start"),
+  reaches_sync_request(w, b, "any"),
+  clause_dep(b, _, a, _).
 
 // Process a waits on process b at w, either during normal operation or during startup
 // when the start can participate in a cycle.

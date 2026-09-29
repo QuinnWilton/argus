@@ -5,6 +5,47 @@ defmodule Argus.SouffleOutputTest do
 
   @moduletag :tmp_dir
 
+  test "solves and program inspection suppress compiler warnings", %{tmp_dir: dir} do
+    unless Souffle.available?(), do: flunk("souffle not installed")
+
+    program = Path.join(dir, "warning.dl")
+
+    # The unused y deliberately produces a warning in both Souffle 2.4 and 2.5.
+    File.write!(program, """
+    .decl source(x: number, y: number)
+    source(1, 2).
+    .decl out(x: number)
+    .output out
+    out(x) :- source(x, y).
+    """)
+
+    {diagnostics, 0} =
+      System.cmd(Souffle.executable(), ["--warn=all", "-D", dir, program], stderr_to_stdout: true)
+
+    assert diagnostics =~ "Variable y only occurs once"
+
+    # Capture the subprocess's stderr without changing the VM's shared IO devices.
+    bin = Path.join(dir, "souffle")
+    File.ln_s!(Souffle.executable(), Path.join(dir, "real-souffle"))
+
+    File.write!(bin, ~S"""
+    #!/bin/sh
+    exec "$(dirname "$0")/real-souffle" "$@" 2>"$(dirname "$0")/diagnostics"
+    """)
+
+    File.chmod!(bin, 0o755)
+    captured = Path.join(dir, "diagnostics")
+
+    assert {:ok, %{"out" => [["1"]]}} = Souffle.run(dir, program, souffle_bin: bin)
+    assert File.read!(captured) == ""
+
+    assert :ok = Souffle.execute_into(bin, dir, program, dir, 10_000)
+    assert File.read!(captured) == ""
+
+    assert {:ok, %{outputs: [{"out", "out.csv"}]}} = Souffle.ram_io(bin, program)
+    assert File.read!(captured) == ""
+  end
+
   # A merged relation fills a column that does not apply with the empty
   # symbol, and that column may be first or last: the reader must keep
   # every tab-separated field, edge rows included.

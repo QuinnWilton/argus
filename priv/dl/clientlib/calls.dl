@@ -629,7 +629,15 @@ site_request(f, id, m, tag) :-
   literal_entry(f, g, a),
   site_request(g, s, m, tag),
   site_clause(g, s, c),
-  (c = a ; c = "any" ; clause_event(g, c, a, _)).
+  (c = a ; clause_event(g, c, a, _)).
+
+site_request(f, id, m, tag) :-
+  site_demand(f),
+  call_instr(f, g, id),
+  !side_call(f, g),
+  literal_entry(f, g, _),
+  site_request(g, s, m, tag),
+  site_clause(g, s, "any").
 
 site_request(f, id, m, tag) :-
   site_demand(f),

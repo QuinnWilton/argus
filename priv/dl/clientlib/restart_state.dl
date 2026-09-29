@@ -155,4 +155,9 @@ holds_in(a, b, g, tag, how, x) :-
   once_request(a, b, kind, tag, g),
   request_handler(b, kind, h),
   kept(b, h, ctag, how, x),
-  (ctag = tag ; ctag = "*" ; tag = "any").
+  (ctag = tag ; ctag = "*").
+
+holds_in(a, b, g, "any", how, x) :-
+  once_request(a, b, kind, "any", g),
+  request_handler(b, kind, h),
+  kept(b, h, _, how, x).

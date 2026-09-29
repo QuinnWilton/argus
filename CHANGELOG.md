@@ -7,6 +7,8 @@ which a change appeared; older names and APIs may have changed since then.
 
 ### Fixed
 
+- Silence Souffle warnings during analysis and fix singleton-variable warnings
+  in the shipped rules. A separate compile check keeps warnings visible in CI.
 - Follow process starts through wrappers when checking monitor lifetimes.
   Monitoring a process the caller just started no longer looks like a repeated
   monitor leak. A wrapper must return the start's result on every path.

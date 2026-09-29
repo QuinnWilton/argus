@@ -102,11 +102,18 @@ process_root(f, cat("behaviour ", m), m, "behaviour") :-
 .decl own_start(root: symbol, mod: symbol)
 
 own_start(g, m) :-
-  process_start(id, s, p, kind, g),
+  process_start(id, s, _, kind, g),
   kind != "server",
   start_function(s, m),
   function_def(g, m, _, _, _),
-  (pid_return(s, "obj", id) ; pid_return(s, "proc", p)).
+  pid_return(s, "obj", id).
+
+own_start(g, m) :-
+  process_start(_, s, p, kind, g),
+  kind != "server",
+  start_function(s, m),
+  function_def(g, m, _, _, _),
+  pid_return(s, "proc", p).
 
 own_start(g, m) :-
   process_start(_, s, _, kind, g),

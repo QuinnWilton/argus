@@ -2314,7 +2314,12 @@ cancels_before(e, c, key) :-
 arms_when_empty(e, c, key) :-
   second_arm(_, _, e, c, g, _),
   loop_keeps_ref_under(_, _, _, key),
-  (field_nil_test(g, key) ; field_nil_test(e, key)).
+  field_nil_test(g, key).
+
+arms_when_empty(e, c, key) :-
+  second_arm(_, _, e, c, _, _),
+  loop_keeps_ref_under(_, _, _, key),
+  field_nil_test(e, key).
 
 
 // Registrations during static rendering
@@ -2455,4 +2460,3 @@ state_param(g, k) :- state_param(f, j), call_arg_forward(f, g, k, j).
 .decl state_decided(site: symbol)
 
 state_decided(s) :- param_decided(s, f, k), state_param(f, k).
-
