@@ -15,6 +15,12 @@ defmodule Argus.Souffle.UncommentedTest do
 
   @moduletag :tmp_dir
 
+  # Six solves no store can keep (`Argus.Souffle.run/3`, a program each
+  # side of the edit), races.dl over :gen_server among them: seconds on
+  # a fast machine, and cold on every run, a cached store or not. On a
+  # four-core CI runner beside the suite they ran past the default minute.
+  @moduletag timeout: 300_000
+
   test "a comment line that opens or closes a block comment is kept" do
     for text <- ["a(1).\n// opens /*\nb(2).", "a(1).\n// closes */\nb(2)."] do
       assert Program.uncommented(text) == Enum.join(String.split(text, "\n"), "\n")
