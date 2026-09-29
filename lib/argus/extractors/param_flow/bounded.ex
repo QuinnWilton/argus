@@ -10,7 +10,8 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
   guard (`when dir in ["backwards", "forwards"]`, which compiles to
   `is_eq_exact` tests), a `case` arm, or a membership test against a list
   the program wrote — `if bin in @allowed`, `:lists.member(bin, [...])`,
-  `Enum.member?(@allowed, bin)` — on the branch where it holds. The value
+  `Enum.member?(@allowed, bin)`, or `Enum.__in__/2` from Elixir 1.20 —
+  on the branch where it holds. The value
   is then one of a bounded set however it was derived, and a sink's
   argument that is is not unbounded input.
 
@@ -160,10 +161,13 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
               ])
 
   # The membership tests: {module, function, arity} => {element position,
-  # list position}.
+  # list position}. Elixir compiles `x in list` over a list known only at
+  # run time to Enum.member?/2 up to 1.19, and to Enum.__in__/2, the
+  # element first, from 1.20.
   @members %{
     {:lists, :member, 2} => {0, 1},
-    {Enum, :member?, 2} => {1, 0}
+    {Enum, :member?, 2} => {1, 0},
+    {Enum, :__in__, 2} => {0, 1}
   }
 
   @doc """

@@ -85,9 +85,10 @@ defmodule Argus.Extractor.ClauseCallTest do
     test "a re-arm on the clause's one path is always; one on a branch is not" do
       # The badmap raise the compiler puts after `state.interval` is no
       # completion.
-      assert {":erlang", "send_after", ":reload"} in always(T.ReloadLoop)
+      # Process.send_after/3, which Elixir up to 1.19 inlines to :erlang's.
+      assert Enum.any?(always(T.ReloadLoop), &match?({_, "send_after", ":reload"}, &1))
 
-      refute Enum.any?(always(T.RetryLoop), &match?({":erlang", "send_after", _}, &1))
+      refute Enum.any?(always(T.RetryLoop), &match?({_, "send_after", _}, &1))
     end
 
     # The local functions the always-sites of `mod`'s handle_info/2 call.

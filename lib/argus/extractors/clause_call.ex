@@ -175,8 +175,11 @@ defmodule Argus.Extractors.ClauseCall do
   end
 
   # What a site does, for telling sites of one clause apart: the message
-  # a timer or a send carries, else the function it calls.
+  # a timer or a send carries, else the function it calls. Elixir up to
+  # 1.19 inlines Process.send_after/3,4 to :erlang's; 1.20 calls it.
   @message_register %{
+    {Process, :send_after, 3} => 1,
+    {Process, :send_after, 4} => 1,
     {:erlang, :send_after, 3} => 2,
     {:erlang, :send_after, 4} => 2,
     {:erlang, :start_timer, 3} => 2,

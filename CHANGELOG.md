@@ -39,6 +39,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `get_record_field`, `get_record_elements` and `put_record`. OTP 29's
   own libraries test for native records, so their reads, writes and
   fail edges were missing from the facts.
+- What Elixir 1.20 compiles to is read as what 1.19 did: `x in list`
+  over a list known only at run time calls `Enum.__in__/2`, the element
+  first, which bounds a sink's argument as `Enum.member?/2` does (the
+  unsafe_input allowlists); and `Process.send_after/3,4`, which 1.20 no
+  longer inlines to `:erlang.send_after`, tells a clause's timer sites
+  apart by the message each carries.
 - An analysis's rows come back sorted (`Argus.analyze/3`,
   `Argus.Souffle.run/3`, and the rows findings are built from),
   whatever order the solver wrote them in. Souffle writes a relation in

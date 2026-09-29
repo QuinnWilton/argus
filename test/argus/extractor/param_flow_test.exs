@@ -113,6 +113,20 @@ defmodule Argus.Extractor.ParamFlowTest do
                Enum.filter(bounded(facts, "BodyAllowlist:handle_event/3"), &(&1 == {0, ""}))
     end
 
+    # Elixir 1.20 compiles `x in list` to Enum.__in__/2, the element
+    # first; 1.19 to Enum.member?/2, the list first.
+    test "a value Enum.__in__/2 finds in a list parameter is bounded by it" do
+      {:ok, facts} = Argus.Pipeline.extract([:param_flow_enum_in], extractors: [ParamFlow])
+
+      assert bounded(facts, "param_flow_enum_in:safe_to_atom/2") == [{0, "1"}]
+
+      assert [
+               ":param_flow_enum_in:handle_event/3",
+               ":param_flow_enum_in:safe_to_atom/2",
+               "1"
+             ] in facts.call_arg_allowlist
+    end
+
     test "a value found in a list parameter is bounded by that parameter", %{taint: facts} do
       assert bounded(facts, "Allow:safe_to_atom/2") == [{0, "1"}]
 
