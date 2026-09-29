@@ -220,10 +220,12 @@ The `side_call` atoms that no dataset exercises (they rest on the side
 modules having no client API and taking no `:global` lock) are counted
 with the patch they read, below.
 
-The monitor-leak round, merged after the census was taken, adds the
-first pattern again: `mailbox.dl`'s third `monitor_clause` rule asks
-`!runs_elsewhere(h, g)` beside `call_instr(h, g, c)`. It is left to that
-rewrite.
+The monitor-leak round, merged after the census was taken, added the
+first pattern again: `mailbox.dl`'s third `monitor_clause` rule asked
+`!runs_elsewhere(h, g)` beside `call_instr(h, g, c)`. Issue #3's
+follow-up removed `monitor_clause`: the record is where the monitor's
+ref or pid is kept (`monitor_kept`), followed through the functions that
+hand it back.
 
 ## Exclusions no dataset exercises
 

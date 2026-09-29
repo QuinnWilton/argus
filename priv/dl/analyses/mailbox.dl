@@ -1069,86 +1069,90 @@ throws_ref_away(s) :- monitor_ref_dropped(s, _).
 
 // ── "ended": the server drops its record, and keeps the monitor ─────
 //
-// The clause of a callback that runs again in which the monitor is
-// taken: the callback's own clause for its own sites, or the clause
-// whose call leads, on the callback's stack, to the monitoring function.
-// A clause that runs once (once_clause, runs.dl) is not one.
-.init toward_monitor = SameProcessReach
-
-toward_monitor.seed(f, f) :- monitor_call(_, f, _).
-
-.decl monitor_clause(site: symbol, callback: symbol, tag: symbol)
-
-monitor_clause(s, f, tag) :-
-  monitor_call(s, f, _),
-  again_root(f, _),
-  clause_call(s, f, tag),
-  !once_clause(f, tag).
-
-monitor_clause(s, f, "*") :-
-  monitor_call(s, f, _),
-  again_root(f, _),
-  !clause_call(s, f, _).
-
-monitor_clause(s, h, tag) :-
-  monitor_call(s, f, _),
-  again_root(h, _),
-  call_instr(h, g, c),
-  clause_call(c, h, tag),
-  !once_clause(h, tag),
-  !runs_elsewhere(h, g),
-  toward_monitor.reaches(g, f).
-
-monitor_clause(s, h, tag) :-
-  monitor_call(s, f, _),
-  again_root(h, _),
-  fun_handed(c, h, g, _),
-  clause_call(c, h, tag),
-  !once_clause(h, tag),
-  !runs_elsewhere(h, g),
-  toward_monitor.reaches(g, f).
-
-// What the run records of the monitored process: a field of the state
-// the clause returns (returned_update, by the clause's tag; the whole
-// state, `*`, where a map is the state), a field a helper that monitors
-// returns, a table the clause or that helper writes. The record is read
-// by where it is kept, not by its key: a field or a table, of the
-// monitoring module.
+// What the run records of the monitored process: where the monitoring
+// function keeps the monitor's ref, or the pid it monitors
+// (monitor_kept, the Monitor extractor, over Argus.Extractor.StateFields):
+// a field of the state it returns whose value is made of the ref, or made
+// whole of the pid (`%{state | subs: Map.put(subs, pid, ref)}`,
+// `Data#data{receiver = {Pid, Ref}}`), or a table an ETS call handed
+// such a value writes. A function that hands back what holds it
+// (`ra_monitors:add/3`'s map, a helper's `{:ok, ref}`) records it where
+// its callers keep that answer, through as many helpers as return it
+// (returns_from), in the field made of the call (returned_field_from).
+// The record is read by where it is kept, a field or a table of a module,
+// not by its key. A field the monitoring clause sets to anything else (a
+// backoff, a counter, a buffer it resets) is no record of the monitor:
+// until issue #3's follow-up every field the clause returned was, and a
+// reset of an unrelated field read as the drop.
 .decl monitor_record(site: symbol, mod: symbol, record: symbol)
 
 monitor_record(s, m, k) :-
-  monitor_clause(s, h, tag),
-  function_def(h, m, _, _, _),
-  returned_update(h, k, _, tag).
+  monitor_kept(s, f, "field", k),
+  function_def(f, m, _, _, _).
+
+monitor_record(s, m, cat("table ", t)) :-
+  monitor_kept(s, f, "table", x),
+  ets_op(x, f, t, _, "write"),
+  function_def(f, m, _, _, _).
 
 monitor_record(s, m, k) :-
-  monitor_call(s, f, _),
-  !again_root(f, _),
-  function_def(f, m, _, _, _),
-  returned_update(f, k, _, _),
-  k != "*".
+  kept_through(s, g, piece),
+  answered_at(h, g, c),
+  returned_field_from(h, k, c, how),
+  keeps_piece(piece, how),
+  function_def(h, m, _, _, _).
 
-monitor_record(s, m, cat("table ", t)) :-
-  monitor_clause(s, h, tag),
-  function_def(h, m, _, _, _),
-  ets_op(x, h, t, _, "write"),
-  clause_call(x, h, tag).
+// `func` hands back what holds the monitor at `site`'s ref or pid, in
+// element `piece` of the tuple it returns (`"{1}"`: global_group's sync
+// fold answers `{Nodes, Monitors}`) or anywhere (`""`): the monitoring
+// function itself, or a function that returns what a call to one
+// answered (where in its answer, it does not say).
+.decl kept_through(site: symbol, func: symbol, piece: symbol)
 
-monitor_record(s, m, cat("table ", t)) :-
-  monitor_call(s, f, _),
-  !again_root(f, _),
-  function_def(f, m, _, _, _),
-  ets_op(_, f, t, _, "write").
+kept_through(s, f, p) :- monitor_kept(s, f, "returned", p).
+
+kept_through(s, h, "") :-
+  kept_through(s, g, _),
+  answered_at(h, g, c),
+  returns_from(h, c).
+
+// A field that holds `how` of a call's answer (returned_field_from) keeps
+// what the answer holds in `piece`: the whole answer, a term a call built
+// from it, the element that holds it; not another element. Where the
+// answer holds it is not known (""), any way of holding the answer keeps
+// it but another piece of an element.
+.decl keeps_piece(piece: symbol, how: symbol) inline
+
+keeps_piece(p, how) :- how = "whole", p = p.
+keeps_piece(p, how) :- how = "argument", p = p.
+keeps_piece(p, how) :- p != "", how = p.
+keeps_piece(p, how) :- p = "", how != "part".
+
+// The call at `site`, in `func`, answers what `callee` hands back: a call
+// of it, or a call it is handed to as a fun (`lists:foldl/3` over a fun
+// that monitors, global_group's sync), whose answer is made of what the
+// fun returns.
+.decl answered_at(func: symbol, callee: symbol, site: symbol)
+
+answered_at(h, g, c) :- call_instr(h, g, c).
+answered_at(h, g, c) :- fun_handed(c, h, g, _).
 
 // Where a clause of a callback that runs again drops records of `record`
 // (`func`, the callback or the helper its clause calls), while the
 // process they name may live: a clause other than a :DOWN one removes an
 // entry (removal_api, effect_model.dl) and returns the field it removed
-// from, or deletes rows of the table; or any clause empties the field,
-// :DOWN clauses included (eventstore's AdvisoryLocks resets every lock
-// when its connection's :DOWN comes, and the owners' monitors stay). The
-// removal a :DOWN clause makes is that monitor's own end: its process is
-// gone.
+// from — the field whose value is the removal's answer, or a piece of it
+// (returned_field_from, not `argument`: not a field another call's answer
+// is made from it, `assign(socket, :cache, Map.delete(cache, k))`), in the
+// clause or in a helper it calls — or deletes rows of the table;
+// or any clause empties the field, :DOWN clauses included (eventstore's
+// AdvisoryLocks resets every lock when its connection's :DOWN comes, and
+// the owners' monitors stay). The removal a :DOWN clause makes is that
+// monitor's own end: its process is gone. A removal from another field
+// the clause also returns is no drop of this one. A field set to another
+// literal (`nil`, `undefined`) is not read as a drop: a field that holds
+// one ref beside the record (Postgrex.Notifications' pending `ref`) is
+// reset so, and so is one the clause released first.
 .decl record_drop(mod: symbol, record: symbol, func: symbol, callback: symbol, tag: symbol)
 
 record_drop(m, k, h, h, tag) :-
@@ -1159,7 +1163,8 @@ record_drop(m, k, h, h, tag) :-
   removal_api(rm, op),
   clause_call(x, h, tag),
   !down_clause(h, tag),
-  returned_update(h, k, _, tag).
+  returned_field_from(h, k, x, how),
+  how != "argument".
 
 record_drop(m, k, g, h, tag) :-
   monitor_record(_, m, k),
@@ -1170,9 +1175,10 @@ record_drop(m, k, g, h, tag) :-
   clause_call(c, h, tag),
   !down_clause(h, tag),
   function_def(g, m, _, _, _),
-  remote_call(_, g, rm, op, _),
+  remote_call(y, g, rm, op, _),
   removal_api(rm, op),
-  returned_update(g, k, _, _).
+  returned_field_from(g, k, y, how),
+  how != "argument".
 
 record_drop(m, k, h, h, tag) :-
   monitor_record(_, m, k),

@@ -163,6 +163,46 @@ defmodule Argus.Soundness.MonitorsTest do
       assert_fires([M.StateFunctionUnwatch], @ended, {M.StateFunctionUnwatch, :ready, 3})
     end
 
+    test "a reset of the field that holds the ref, beside a field it does not" do
+      assert_fires([M.ResetsItsRecord], @ended, {M.ResetsItsRecord, :handle_call, 3})
+    end
+
+    test "a removal from the field that holds the pid, the ref thrown away" do
+      assert_fires([M.RemovesFromItsRecord], @ended, {M.RemovesFromItsRecord, :handle_call, 3})
+    end
+
+    test "a gen_statem's removal from the map that holds the ref" do
+      assert_fires([M.StatemDropsOwnerMon], @ended, {M.StatemDropsOwnerMon, :handle_event, 4})
+    end
+
+    test "a reset of the map a helper that monitors handed back" do
+      assert_fires(
+        [M.ResetsHelperKeptMap, Argus.Test.Fixtures.MonitorLeak.Monitors],
+        @ended,
+        {Argus.Test.Fixtures.MonitorLeak.Monitors, :add, 3}
+      )
+    end
+
+    test "a reset of what two layers of helpers handed back, taken out of an {:ok, map}" do
+      assert_fires(
+        [M.ResetsTwoLayersDown, M.Registry, Argus.Test.Fixtures.MonitorLeak.Monitors],
+        @ended,
+        {Argus.Test.Fixtures.MonitorLeak.Monitors, :add, 3}
+      )
+    end
+
+    test "a reset of the element of a fold's answer that holds the refs" do
+      assert_fires(
+        [M.FoldResetsChecks],
+        @ended,
+        {M.FoldResetsChecks, :"-handle_call/3-fun-0-", 2}
+      )
+    end
+
+    test "a delete of the table that holds the ref, beside one that does not" do
+      assert_fires([M.DeletesItsTable], @ended, {M.DeletesItsTable, :handle_call, 3})
+    end
+
     test "a drop that demonitors is the release" do
       refute Enum.any?(
                fired([M.DropAndDemonitor], :mailbox),

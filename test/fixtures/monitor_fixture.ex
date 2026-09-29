@@ -1104,4 +1104,241 @@ defmodule Argus.Test.Fixtures.MonitorLeak do
     def handle_event(:info, {:DOWN, _ref, :process, pid, _}, _state, data),
       do: {:keep_state, %{data | subs: Map.delete(data.subs, pid)}}
   end
+
+  # The record a monitor leaves is the field (or table) that holds its ref
+  # or its pid, not every field the monitoring clause returns: a reset of
+  # another field is no drop of it. Each is quiet; its neighbour in
+  # test/fixtures/soundness/monitors_fixture.ex drops the record itself.
+
+  defmodule ResetsAnotherField do
+    @moduledoc """
+    Records each watcher's ref under `subs`, and logs when requests came
+    in `log`; a flush empties the log. The watcher's own `:DOWN` forgets
+    it.
+    """
+    use GenServer
+
+    @impl true
+    def init(_), do: {:ok, %{subs: %{}, log: []}}
+
+    @impl true
+    def handle_call({:watch, pid}, _from, state) do
+      ref = Process.monitor(pid)
+      log = [System.monotonic_time() | state.log]
+      {:reply, :ok, %{state | subs: Map.put(state.subs, ref, pid), log: log}}
+    end
+
+    @impl true
+    def handle_cast(:flush, state), do: {:noreply, %{state | log: []}}
+
+    @impl true
+    def handle_info({:DOWN, ref, :process, _pid, _}, state),
+      do: {:noreply, %{state | subs: Map.delete(state.subs, ref)}}
+  end
+
+  defmodule RemovesFromAnotherField do
+    @moduledoc """
+    Records each watcher's ref under `subs`, and when each name was last
+    asked for under `names`; a cast removes an entry from `names`, and
+    returns `subs` as it was.
+    """
+    use GenServer
+
+    @impl true
+    def init(_), do: {:ok, %{subs: %{}, names: %{}}}
+
+    @impl true
+    def handle_call({:watch, pid, name}, _from, state) do
+      ref = Process.monitor(pid)
+      names = Map.put(state.names, name, System.monotonic_time())
+      {:reply, :ok, %{state | subs: Map.put(state.subs, ref, pid), names: names}}
+    end
+
+    @impl true
+    def handle_cast({:rename, name}, state),
+      do: {:noreply, %{state | names: Map.delete(state.names, name), subs: state.subs}}
+
+    @impl true
+    def handle_info({:DOWN, ref, :process, _pid, _}, state),
+      do: {:noreply, %{state | subs: Map.delete(state.subs, ref)}}
+  end
+
+  defmodule OwnerBesideBuffers do
+    @moduledoc """
+    hackney's connection: a request monitors the process it streams to and
+    keeps it and the ref in `owner` and `owner_mon`; other events reset
+    the stream buffers. The owner's `:DOWN` ends the connection.
+    """
+    @behaviour :gen_statem
+
+    @impl true
+    def callback_mode, do: :handle_event_function
+
+    @impl true
+    def init(owner),
+      do: {:ok, :connected, %{owner: owner, owner_mon: nil, streams: %{}, buffer: []}}
+
+    @impl true
+    def handle_event({:call, from}, {:request, stream_to}, :connected, data) do
+      data = %{data | owner: stream_to, owner_mon: Process.monitor(stream_to), buffer: []}
+      {:keep_state, data, [{:reply, from, :ok}]}
+    end
+
+    def handle_event(:info, {:stream_reset, id}, :connected, data),
+      do: {:keep_state, %{data | streams: Map.delete(data.streams, id), buffer: []}}
+
+    def handle_event(:info, {:DOWN, ref, :process, _pid, _}, _state, %{owner_mon: ref} = data),
+      do: {:stop, :normal, data}
+  end
+
+  defmodule Monitors do
+    @moduledoc """
+    ra's `ra_monitors`: `add/3` monitors a process once and hands back the
+    map that keeps it; `remove/2` demonitors.
+    """
+    def add(pid, component, monitors) do
+      case monitors do
+        %{^pid => {ref, components}} ->
+          Map.put(monitors, pid, {ref, Map.put(components, component, :ok)})
+
+        _ ->
+          Map.put(monitors, pid, {Process.monitor(pid), %{component => :ok}})
+      end
+    end
+
+    def remove(pid, monitors) do
+      case Map.pop(monitors, pid) do
+        {{ref, _components}, rest} ->
+          Process.demonitor(ref)
+          rest
+
+        {nil, rest} ->
+          rest
+      end
+    end
+  end
+
+  defmodule KeepsMonitorsResetsNotifies do
+    @moduledoc """
+    ra's server: registers a process through `Monitors.add/3` and keeps
+    the map in `monitors`, beside the notifications it owes in
+    `notifies`; entering leadership empties `notifies`, and `unregister`
+    goes through `Monitors.remove/2`.
+    """
+    use GenServer
+
+    alias Argus.Test.Fixtures.MonitorLeak.Monitors
+
+    @impl true
+    def init(_), do: {:ok, %{monitors: %{}, notifies: %{}}}
+
+    @impl true
+    def handle_call({:register, pid, correlation}, _from, state) do
+      monitors = Monitors.add(pid, :machine, state.monitors)
+      notifies = Map.put(state.notifies, correlation, [])
+      {:reply, :ok, %{state | monitors: monitors, notifies: notifies}}
+    end
+
+    def handle_call({:unregister, pid}, _from, state),
+      do: {:reply, :ok, %{state | monitors: Monitors.remove(pid, state.monitors)}}
+
+    @impl true
+    def handle_cast(:lead, state), do: {:noreply, %{state | notifies: %{}}}
+
+    @impl true
+    def handle_info({:DOWN, _ref, :process, pid, _}, state),
+      do: {:noreply, %{state | monitors: Map.delete(state.monitors, pid)}}
+  end
+
+  defmodule WritesAnotherTable do
+    @moduledoc """
+    Keeps each watcher's ref in `:watchers_by_ref` and counts watches in
+    `:watch_stats`; a cast clears the stats. The watcher's own `:DOWN`
+    deletes its row.
+    """
+    use GenServer
+
+    @impl true
+    def init(_) do
+      :ets.new(:watchers_by_ref, [:named_table, :public])
+      :ets.new(:watch_stats, [:named_table, :public])
+      {:ok, nil}
+    end
+
+    @impl true
+    def handle_call({:watch, pid}, _from, state) do
+      ref = Process.monitor(pid)
+      :ets.insert(:watchers_by_ref, {ref, pid})
+      :ets.insert(:watch_stats, {:watches, System.monotonic_time()})
+      {:reply, :ok, state}
+    end
+
+    @impl true
+    def handle_cast(:reset_stats, state) do
+      :ets.delete_all_objects(:watch_stats)
+      {:noreply, state}
+    end
+
+    @impl true
+    def handle_info({:DOWN, ref, :process, _pid, _}, state) do
+      :ets.delete(:watchers_by_ref, ref)
+      {:noreply, state}
+    end
+  end
+
+  defmodule KeepsAnotherPieceOfTheMessage do
+    @moduledoc """
+    Monitors the pid a request names and keeps its ref in `subs`; the
+    request's `name` goes to `names`, which a cast prunes. The pid's
+    record is `subs`, not a field made of another piece of the message.
+    """
+    use GenServer
+
+    @impl true
+    def init(_), do: {:ok, %{subs: %{}, names: []}}
+
+    @impl true
+    def handle_call({:watch, pid, name}, _from, state) do
+      ref = Process.monitor(pid)
+      {:reply, :ok, %{state | subs: Map.put(state.subs, ref, pid), names: [name | state.names]}}
+    end
+
+    @impl true
+    def handle_cast({:forget, name}, state),
+      do: {:noreply, %{state | names: List.delete(state.names, name)}}
+
+    @impl true
+    def handle_info({:DOWN, ref, :process, _pid, _}, state),
+      do: {:noreply, %{state | subs: Map.delete(state.subs, ref)}}
+  end
+
+  defmodule FoldKeepsNodesAndChecks do
+    @moduledoc """
+    global_group's sync: a fold monitors each peer and answers `{nodes,
+    checks}`, the refs in `checks`; a cast empties `nodes`, which holds
+    no monitor. Each peer's `:DOWN` forgets its check.
+    """
+    use GenServer
+
+    @impl true
+    def init(_), do: {:ok, %{nodes: %{}, checks: %{}}}
+
+    @impl true
+    def handle_call({:sync, peers}, _from, state) do
+      {nodes, checks} =
+        Enum.reduce(peers, {%{}, %{}}, fn peer, {nodes, checks} ->
+          ref = Process.monitor(peer)
+          {Map.put(nodes, node(peer), :syncing), Map.put(checks, ref, peer)}
+        end)
+
+      {:reply, :ok, %{state | nodes: nodes, checks: checks}}
+    end
+
+    @impl true
+    def handle_cast(:forget_nodes, state), do: {:noreply, %{state | nodes: %{}}}
+
+    @impl true
+    def handle_info({:DOWN, ref, :process, _pid, _}, state),
+      do: {:noreply, %{state | checks: Map.delete(state.checks, ref)}}
+  end
 end

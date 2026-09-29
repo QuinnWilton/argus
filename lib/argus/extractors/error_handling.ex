@@ -92,6 +92,12 @@ defmodule Argus.Extractors.ErrorHandling do
   - `rpc_result(id, func, handling)` — how the result of an :rpc/:erpc
     call is treated: `badrpc`, `boolean`, `case`, `matched`, `returned`
     or `other`
+  - `returned_field_from(func, key, site, how)` — a return of `func` sets
+    the field `key` to a value made of the call at `site`'s answer, and
+    how (`Argus.Extractor.StateFields`: whole, one element, another
+    piece, or only through another call's arguments); `returns_from(func,
+    site)` — what `func` hands back is made of that answer. Which field
+    holds what a call made
   - `answers_call(func, site, depth)` — every way `func` returns a value
     hands back what one of its calls answered, passed through
     (`Argus.Extractor.Answers`): the must-reading of a wrapper, all or
@@ -109,6 +115,7 @@ defmodule Argus.Extractors.ErrorHandling do
   alias Argus.Extractor.Identity
   alias Argus.Extractor.Resolve
   alias Argus.Extractor.Runtime
+  alias Argus.Extractor.StateFields
   alias Argus.Extractors.CallbackTag.MessageClauses
   alias Argus.Extractors.ErrorHandling.Boundary
   alias Argus.Extractors.ErrorHandling.CatchClauses
@@ -208,6 +215,8 @@ defmodule Argus.Extractors.ErrorHandling do
       :timer_store,
       :field_nil_test,
       :returned_update,
+      :returned_field_from,
+      :returns_from,
       :field_value_test,
       :timer_dropped,
       :timer_tag,
@@ -875,6 +884,7 @@ defmodule Argus.Extractors.ErrorHandling do
         |> emit_answers(func_id, instrs)
         |> emit_nil_tests(func_id, instrs)
         |> emit_returned_updates(func_id, instrs, {name, arity} in events)
+        |> emit_returns_from(func_id, instrs)
         |> emit_value_tests(func_id, instrs)
       end
     end)
@@ -932,21 +942,34 @@ defmodule Argus.Extractors.ErrorHandling do
   defp emit_returned_updates(facts, func_id, instrs, event?) do
     returns =
       for {:return, idx} <- Enum.with_index(instrs),
-          updates = returned_updates(instrs, idx),
-          updates != [],
-          do: {idx, updates}
+          fields = StateFields.returned_fields(instrs, idx),
+          fields != [],
+          do: {idx, fields}
 
     tags = if returns == [], do: %{}, else: Dispatch.clause_tags(instrs, event?)
 
+    facts =
+      returns
+      |> Enum.flat_map(fn {idx, fields} ->
+        clauses = return_clauses(Map.get(tags, idx))
+        for {key, value, _loc} <- fields, tag <- clauses, do: {key, value, tag}
+      end)
+      |> Enum.uniq()
+      |> Enum.sort()
+      |> Enum.reduce(facts, fn {key, value, tag}, acc ->
+        add_fact(acc, :returned_update, [func_id, key, value, tag])
+      end)
+
     returns
-    |> Enum.flat_map(fn {idx, updates} ->
-      clauses = return_clauses(Map.get(tags, idx))
-      for {key, value} <- updates, tag <- clauses, do: {key, value, tag}
+    |> Enum.flat_map(fn {_idx, fields} ->
+      for {key, _value, {at, operand}} <- fields,
+          {site, how} <- StateFields.calls(instrs, StateFields.made_of(instrs, at, operand)),
+          do: {key, site, how}
     end)
     |> Enum.uniq()
     |> Enum.sort()
-    |> Enum.reduce(facts, fn {key, value, tag}, acc ->
-      add_fact(acc, :returned_update, [func_id, key, value, tag])
+    |> Enum.reduce(facts, fn {key, site, how}, acc ->
+      add_fact(acc, :returned_field_from, [func_id, key, InstrId.mint(func_id, site), how])
     end)
   end
 
@@ -956,141 +979,23 @@ defmodule Argus.Extractors.ErrorHandling do
     if MapSet.member?(set, :any), do: ["*"], else: Enum.sort(set)
   end
 
-  defp returned_updates(instrs, idx) do
-    instrs
-    |> Resolve.writers(idx, {:x, 0})
-    |> Enum.flat_map(fn
-      {:param, _k} ->
-        []
-
-      at ->
-        case Reaching.at(instrs, at) do
-          {:put_tuple2, _dst, {:list, [head | _] = elements}} ->
-            size = length(elements)
-
-            elements
-            |> Enum.with_index()
-            |> Enum.flat_map(fn {element, i} ->
-              element_updates(instrs, at, element, state_slot?(head, size, i))
-            end)
-
-          {:move, {:literal, term}, _dst} when is_tuple(term) and tuple_size(term) > 0 ->
-            head = {:atom, elem(term, 0)}
-
-            term
-            |> Tuple.to_list()
-            |> Enum.with_index()
-            |> Enum.flat_map(fn {element, i} ->
-              literal_state(element, state_slot?(head, tuple_size(term), i))
-            end)
-
-          {:move, {:literal, term}, _dst} ->
-            literal_state(term, false)
-
-          instr ->
-            state_updates(instr, false)
-        end
-    end)
-  end
-
-  # What an element of a returned tuple sets. In the state slot (`whole`)
-  # a value that is the parameter the callback was given sets nothing, and
-  # one whose fields cannot be read sets the whole state.
-  defp element_updates(instrs, at, element, whole) do
-    case Instr.register(element) do
-      {kind, _} = reg when kind in [:x, :y] ->
-        Enum.flat_map(Resolve.writers(instrs, at, reg), fn
-          {:param, _k} -> []
-          w -> written_state(Reaching.at(instrs, w), whole)
-        end)
-
-      {:literal, term} ->
-        literal_state(term, whole)
-
-      _ ->
-        []
-    end
-  end
-
-  defp written_state({:move, {:literal, term}, _dst}, whole), do: literal_state(term, whole)
-
-  defp written_state(instr, whole) do
-    case state_updates(instr, whole) do
-      [] when whole -> [{"*", "dynamic"}]
-      pairs -> pairs
-    end
-  end
-
-  # Where a callback's return holds the state it hands back, built whole
-  # there (a record the compiler makes afresh, `{noreply, {state, none}}`
-  # when the record has one field), so a record in that slot is read field
-  # by field: after `ok` or `noreply`, after the reply in `{reply, R, S}`,
-  # the last of a `stop`, and a gen_statem's data. Elsewhere a tuple with
-  # an atom first is as likely a `{continue, x}` as a record, and is not
-  # read.
-  defp state_slot?({:atom, tag}, _size, 1) when tag in [:ok, :noreply, :keep_state], do: true
-  defp state_slot?({:atom, tag}, _size, 2) when tag in [:reply, :next_state], do: true
-  defp state_slot?({:atom, :stop}, size, i) when size in [3, 4] and i == size - 1, do: true
-  defp state_slot?(_head, _size, _i), do: false
-
-  defp state_updates({op, _fail, _src, _dst, _live, {:list, pairs}}, _whole)
-       when op in [:put_map_assoc, :put_map_exact] do
-    pairs
-    |> Enum.chunk_every(2)
-    |> Enum.flat_map(fn
-      [{:atom, key}, value] -> [{inspect(key), literal_value(value)}]
-      _ -> []
-    end)
-  end
-
-  # Positions are 1-based in the instruction, 0-based in the key.
-  defp state_updates({:update_record, _hint, _size, _src, _dst, {:list, updates}}, _whole) do
-    updates
-    |> Enum.chunk_every(2)
-    |> Enum.flat_map(fn
-      [{:integer, pos}, value] -> [{"{#{pos - 1}}", literal_value(value)}]
-      [pos, value] when is_integer(pos) -> [{"{#{pos - 1}}", literal_value(value)}]
-      _ -> []
-    end)
-  end
-
-  defp state_updates({:put_tuple2, _dst, {:list, [{:atom, _tag} | fields]}}, true) do
-    fields
-    |> Enum.with_index(1)
-    |> Enum.map(fn {value, pos} -> {"{#{pos}}", literal_value(value)} end)
-  end
-
-  defp state_updates(_instr, _whole), do: []
-
-  defp literal_state(map, _whole) when is_map(map) do
-    map
-    |> Map.to_list()
-    |> Enum.filter(fn {key, _value} -> is_atom(key) end)
-    |> Enum.map(fn {key, value} -> {inspect(key), spell(value)} end)
-  end
-
-  defp literal_state(tuple, true) when is_tuple(tuple) and tuple_size(tuple) > 0 do
-    if is_atom(elem(tuple, 0)) do
-      tuple
-      |> Tuple.to_list()
-      |> tl()
-      |> Enum.with_index(1)
-      |> Enum.map(fn {value, pos} -> {"{#{pos}}", spell(value)} end)
-    else
-      [{"*", spell(tuple)}]
-    end
-  end
-
-  # A whole state that is a literal of no fields (a counter's `0`, a
-  # `nil`): the state it sets.
-  defp literal_state(term, true), do: [{"*", spell(term)}]
-  defp literal_state(_term, _whole), do: []
-
   defp literal_value(nil), do: "[]"
   defp literal_value({:atom, atom}), do: inspect(atom)
   defp literal_value({:integer, n}), do: Integer.to_string(n)
   defp literal_value({:literal, term}), do: spell(term)
   defp literal_value(_register), do: "dynamic"
+
+  # The calls whose answers what the function hands back is made of
+  # (StateFields.returned_made_of/1): the chain a value takes through the
+  # helpers that return it, whole or inside a term.
+  defp emit_returns_from(facts, func_id, instrs) do
+    instrs
+    |> StateFields.returned_made_of()
+    |> then(&StateFields.calls(instrs, &1))
+    |> Enum.reduce(facts, fn {site, _how}, acc ->
+      add_fact(acc, :returns_from, [func_id, InstrId.mint(func_id, site)])
+    end)
+  end
 
   defp nil_tested(instrs, idx, {:test, op, _fail, [a, b]})
        when op in [:is_eq_exact, :is_ne_exact, :is_eq, :is_ne] do

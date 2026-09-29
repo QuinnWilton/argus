@@ -85,6 +85,35 @@ calls.dl's and global_reach.dl's clause-aware entry compares a literal
 first argument with a tag's type. Readers of positional columns see one
 new relation, a new column and new tag spellings.
 
+### A monitor's record is where its ref or pid is kept (schema 159)
+
+**Fixed.** "Entry dropped while its process stays monitored" took for
+the record of a monitor every field the monitoring clause returned,
+every table it wrote, and, for a helper several calls down, every field
+of every clause that reaches it: a reset of a buffer or a counter beside
+the record read as its drop. hackney's connection (`do_request_async/9`,
+`track_h2_stream/4`), ra's server (`ra_monitors:add/3`), ejabberd's s2s
+and firezone's channels were reported. And a removal anywhere in a
+clause read as a drop of every field the clause returned.
+
+**Changed.** Schema 159. `Argus.Extractor.StateFields` reads the fields
+a return sets (what `returned_update` reads, moved out of the
+error_handling extractor) and what a value is made of: the writes it is
+built from, whole, in part (through a projection, by the tuple element
+taken out) or through another call's arguments; a BIF other than a
+projection holds none of its operands. New relations:
+`returned_field_from(func, key, site, how)` (a returned field is made of
+a call's answer, and how), `returns_from(func, site)` (what a function
+hands back is made of a call's answer), and `monitor_kept(id, func,
+kind, where)` (the Monitor extractor: the field, the ETS call, or the
+returned element that holds a monitor's ref, or its pid, in the part of
+the function the monitor's run reaches). mailbox's `monitor_record` is
+built from `monitor_kept`, followed through the functions that hand it
+back (`kept_through`, by call or by a fun handed to a call such as
+`lists:foldl/3`), and a removal drops the field whose value is its
+answer. `monitor_clause` is gone. Readers of positional columns see
+three new relations.
+
 ### An unread value is unknown, never the default, beyond supervision (schema 158)
 
 **Fixed.** The same conflation as issue #4's, in the other extractors

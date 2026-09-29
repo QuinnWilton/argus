@@ -78,6 +78,33 @@ defmodule Argus.Schema.Monitors do
         """
       },
       %{
+        name: :monitor_kept,
+        layer: 2,
+        fields: [
+          {:id, :symbol, "the monitor call site"},
+          {:func, :symbol, "the monitoring function"},
+          {:kind, :symbol, "'field' | 'table' | 'returned'"},
+          {:where, :symbol,
+           "the field's key, the table write's site, or for returned the element " <>
+             "of the returned tuple that holds it ({i}), '' for anywhere"}
+        ],
+        doc: """
+        Where the monitoring function keeps what the monitor at `id` is \
+        about: its ref, or the pid it monitors. `field`: a return sets \
+        the field `where` (as `returned_update` spells it) to a value made \
+        of the ref, or made whole of the pid (`%{state | subs: \
+        Map.put(subs, pid, ref)}`, `Data#data{owner = Pid}`). `table`: \
+        the ETS call at `where` is handed such a value (`:ets.insert(t, \
+        {ref, pid})`). `returned`: what the function hands back is made of \
+        it (`ra_monitors:add/3`'s map), in element `where` of a tuple \
+        a return builds (`{nodes, monitors}`) or anywhere (`''`), and a \
+        caller keeps it where it keeps that answer, or that element \
+        (`returns_from`, `returned_field_from`). A field \
+        made of another value of the message the pid came in is not the \
+        pid's (`Argus.Extractor.StateFields`: made whole, not in part).
+        """
+      },
+      %{
         name: :awaits_child_exit,
         layer: 2,
         fields: [{:func, :symbol, "the function"}],

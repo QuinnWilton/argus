@@ -221,6 +221,29 @@ defmodule Argus.Analyses.MailboxMonitorTest do
     end
   end
 
+  describe "the record is where the monitor's ref or pid is kept" do
+    for mod <- [
+          M.ResetsAnotherField,
+          M.RemovesFromAnotherField,
+          M.OwnerBesideBuffers,
+          M.KeepsMonitorsResetsNotifies,
+          M.WritesAnotherTable,
+          M.KeepsAnotherPieceOfTheMessage,
+          M.FoldKeepsNodesAndChecks
+        ] do
+      test "#{inspect(mod)}: a drop of another field or table is no drop of the record" do
+        skip_without_souffle()
+
+        # hackney's connection and ra's server (the monitor follow-up to
+        # issue #3): a field the monitoring clause sets beside its record
+        # is not the record.
+        modules = [unquote(mod), M.Monitors]
+        assert {:ok, r} = Memo.analyze(modules, :mailbox)
+        refute Enum.any?(Map.get(r, "monitor_leak", []), &match?([_, _, _, "ended"], &1))
+      end
+    end
+  end
+
   describe "a gen_statem's clauses, by the event's type and content" do
     test "what one :internal clause records is not what another resets" do
       skip_without_souffle()

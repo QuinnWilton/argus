@@ -137,6 +137,36 @@ defmodule Argus.Extractors.MonitorTest do
     end
   end
 
+  describe "monitor_kept" do
+    defp kept(mod) do
+      rows = for [_id, _f, kind, where] <- extract(mod)[:monitor_kept] || [], do: {kind, where}
+      Enum.sort(rows)
+    end
+
+    # A callback's `{:reply, :ok, state}` holds the state in element 2.
+    test "the field made of the ref, not a field beside it" do
+      assert kept(M.ResetsAnotherField) == [{"field", ":subs"}, {"returned", "{2}"}]
+      assert kept(M.RemovesFromAnotherField) == [{"field", ":subs"}, {"returned", "{2}"}]
+    end
+
+    test "the field the pid itself goes to, not another piece of its message" do
+      assert kept(M.KeepsAnotherPieceOfTheMessage) == [{"field", ":subs"}, {"returned", "{2}"}]
+
+      assert kept(Argus.Test.Soundness.Monitors.RemovesFromItsRecord) ==
+               [{"field", ":subs"}, {"returned", "{2}"}]
+    end
+
+    test "the ETS call handed the ref, not another table's" do
+      assert [{"table", site}] = kept(M.WritesAnotherTable)
+      assert site =~ "WritesAnotherTable:handle_call/3#"
+    end
+
+    test "what a helper hands back, and the element of a fold's answer that holds it" do
+      assert kept(M.Monitors) == [{"returned", ""}]
+      assert kept(M.FoldKeepsNodesAndChecks) == [{"returned", "{1}"}]
+    end
+  end
+
   describe "recv_takes_down" do
     test "a receive with a clause whose head fixes the tag to :DOWN" do
       assert [[_, func]] = extract(M.Leaks)[:recv_takes_down]

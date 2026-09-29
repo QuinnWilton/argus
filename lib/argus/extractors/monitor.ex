@@ -40,6 +40,11 @@ defmodule Argus.Extractors.Monitor do
     `clientlib/answers.dl`'s and the rules'. The pid of `{:error,
     {:already_started, pid}}` is an element of an element: a path that
     monitors it leaves the site without rows
+  - `monitor_kept(id, func, kind, where)` — where the monitoring function
+    keeps the monitor's ref or the pid it monitors: a field of the state
+    it returns (`field`, the key), an ETS call's argument (`table`, the
+    call), or what it hands back (`returned`), each made of the ref, or
+    made whole of the pid (`Argus.Extractor.StateFields`)
   - `awaits_child_exit(func)` — every start `func` makes is followed, on
     every path to its return, by a wait for the `:DOWN` of a monitor
     taken after the start (Livebook's `UniqueTask.run/2`): what it starts
@@ -133,9 +138,11 @@ defmodule Argus.Extractors.Monitor do
   alias Argus.Extractor.Answers
   alias Argus.Extractor.Dispatch
   alias Argus.Extractor.Resolve
+  alias Argus.Extractor.StateFields
   alias Argus.Extractors.Monitor.ExitSignal
   alias Argus.Extractors.Monitor.Flush
   alias Argus.Instr
+  alias Argus.Instr.Reaching
   alias Argus.InstrId
 
   import Argus.Extractor.Helpers,
@@ -162,6 +169,7 @@ defmodule Argus.Extractors.Monitor do
       :monitor_ref_dropped,
       :monitor_released_after,
       :monitor_answer,
+      :monitor_kept,
       :monitor_type,
       :recv_down,
       :recv_flush,
@@ -413,9 +421,106 @@ defmodule Argus.Extractors.Monitor do
         ])
       end)
 
+    facts = emit_kept(facts, ctx, id, pid_reg)
+
     if ref_lost?(module_data, ctx),
       do: add_fact(facts, :monitor_ref_dropped, [id, ctx.func_id]),
       else: facts
+  end
+
+  # ── Where the monitoring function keeps what the monitor is about ──
+  #
+  # The ref the monitor answered, or the pid it was handed: a field of the
+  # state a return hands back whose value is made of the ref (whole or a
+  # piece: `Map.put(subs, pid, ref)`, `{pid, ref}`), or made whole of the
+  # pid (the same value, held in the field or a term the field is; not
+  # another piece of the message the pid came in); an ETS call handed such
+  # a value; and what the function hands back, which its callers keep
+  # (`Argus.Extractor.StateFields`). A field the clause sets to anything
+  # else is no record of the monitor, however near.
+  defp emit_kept(facts, ctx, id, pid_reg) do
+    instrs = ctx.instrs
+    pid = instrs |> Resolve.writers(ctx.idx, register(pid_reg)) |> MapSet.new()
+
+    holds? = fn made ->
+      StateFields.made_of?(made, ctx.idx) or not MapSet.disjoint?(made.whole, pid) or
+        not MapSet.disjoint?(made.arg, pid)
+    end
+
+    # The returns and ETS calls the monitoring run reaches: a clause that
+    # shares a destructuring with this one reads the same register for
+    # another piece of its message.
+    after_it = StateFields.reachable_from(instrs, ctx.idx)
+    indexed = instrs |> Enum.with_index() |> Enum.filter(fn {_, i} -> i in after_it end)
+
+    fields =
+      for {:return, r} <- indexed,
+          {key, _value, {at, operand}} <- StateFields.returned_fields(instrs, r),
+          holds?.(StateFields.made_of(instrs, at, operand)),
+          uniq: true,
+          do: {"field", key}
+
+    tables =
+      for {instr, i} <- indexed,
+          ets_call?(instr),
+          Enum.any?(Instr.uses(instr), &holds?.(StateFields.made_of(instrs, i, &1))),
+          do: {"table", InstrId.mint(ctx.func_id, i)}
+
+    returned = returned_pieces(instrs, after_it, holds?)
+
+    (fields ++ tables ++ returned)
+    |> Enum.sort()
+    |> Enum.reduce(facts, fn {kind, where}, acc ->
+      add_fact(acc, :monitor_kept, [id, ctx.func_id, kind, where])
+    end)
+  end
+
+  # Where what the function hands back holds it: in element `i` of a
+  # tuple a return builds (`{Nacc, Macc#{N => M}}`, global_group's sync
+  # fold; `{:ok, ref}`), `"{i}"`, so a caller that keeps another element
+  # keeps no record of it; anywhere else in what it hands back, `""`.
+  defp returned_pieces(instrs, after_it, holds?) do
+    instrs
+    |> Enum.with_index()
+    |> Enum.filter(fn {_instr, i} -> i in after_it end)
+    |> Enum.flat_map(fn
+      {:return, r} ->
+        instrs
+        |> Resolve.writers(r, {:x, 0})
+        |> Enum.flat_map(&pieces_at(instrs, r, &1, holds?))
+
+      {instr, i} ->
+        if Instr.tail_call?(instr) and
+             holds?.(StateFields.returned_made_of(instrs, MapSet.new([i]))),
+           do: [{"returned", ""}],
+           else: []
+    end)
+    |> Enum.uniq()
+  end
+
+  defp pieces_at(instrs, r, {:param, _k}, holds?), do: whole_return(instrs, r, holds?)
+
+  defp pieces_at(instrs, r, w, holds?) do
+    case Reaching.at(instrs, w) do
+      {:put_tuple2, _dst, {:list, elements}} ->
+        for {element, i} <- Enum.with_index(elements),
+            holds?.(StateFields.made_of(instrs, w, element)),
+            do: {"returned", "{#{i}}"}
+
+      _ ->
+        whole_return(instrs, r, holds?)
+    end
+  end
+
+  defp whole_return(instrs, r, holds?) do
+    if holds?.(StateFields.made_of(instrs, r, {:x, 0})), do: [{"returned", ""}], else: []
+  end
+
+  defp ets_call?(instr) do
+    case match_remote_call(instr) do
+      {:ok, :ets, _fun, _arity} -> true
+      _ -> false
+    end
   end
 
   # A call named like a start: `start*`, `spawn*`, or `open` (a client

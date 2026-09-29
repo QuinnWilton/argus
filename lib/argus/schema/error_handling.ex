@@ -476,6 +476,50 @@ defmodule Argus.Schema.ErrorHandling do
         """
       },
       %{
+        name: :returned_field_from,
+        layer: 2,
+        fields: [
+          {:func, :symbol, "the function"},
+          {:key, :symbol, "a field a return sets, as returned_update spells it"},
+          {:site, :symbol, "a call whose answer the field's value is made of"},
+          {:how, :symbol,
+           "'whole': the answer, or a term that holds it; '{i}': its element i; " <>
+             "'part': another piece of it; 'argument': only through another call's arguments"}
+        ],
+        doc: """
+        A return of `func` sets the field `key` (as `returned_update` \
+        spells it) to a value made of what the call at `site` answered: \
+        the answer itself, held in a term the field is (`%{state | subs: \
+        Map.put(subs, pid, ref)}` is made of `Map.put/3`'s answer and, \
+        through its arguments, of the monitor that answered `ref`), or a \
+        piece of it (`whole`; `{i}`, its element `i`, taken out by a \
+        `get_tuple_element`; `part`, a deeper piece), or only through \
+        another call's arguments \
+        (`argument`: `assign(socket, :cache, Map.delete(cache, k))` holds \
+        what `assign/3` answered, not the removal's answer). A local \
+        call's answer is its callee's returns' (`returns_from`). Which \
+        field holds what a call made \
+        (`Argus.Extractor.StateFields`): what a server records of a \
+        monitor, and which field a removal drops from.
+        """
+      },
+      %{
+        name: :returns_from,
+        layer: 2,
+        fields: [
+          {:func, :symbol, "the function"},
+          {:site, :symbol, "a call in it whose answer what it returns is made of"}
+        ],
+        doc: """
+        What `func` hands back is made of what the call at `site` answered, \
+        whole or in part: a `return` of a value built from it, or a tail \
+        call (and, for one into another module, its arguments). The chain \
+        a value takes through the helpers that return it \
+        (`Argus.Extractor.StateFields`); `returned_field_from` is where a \
+        caller keeps it.
+        """
+      },
+      %{
         name: :returns_call,
         layer: 2,
         fields: [

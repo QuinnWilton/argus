@@ -139,12 +139,18 @@ one late message, the mailbox's to take, not a monitor left live.
   receive with a `:DOWN` clause, `recv_takes_down`). A way out keeps the
   monitor: the wait timed out, or the answer came first. The next run
   asks the same process again.
-- **ended**: the run records T in P, in a field of the state the
-  monitoring clause returns (`returned_update`) or a row of a table it
-  writes (`ets_op`). A clause of a callback that runs again drops that
-  record, while T may live, without releasing the monitor:
+- **ended**: the run records T in P, where it keeps the monitor's ref or
+  T's pid (`monitor_kept`, over `Argus.Extractor.StateFields`): a field
+  of the state it returns whose value is made of the ref, or made whole
+  of the pid; a row a table write it makes is handed such a value; or,
+  through the functions that hand back what holds it, the field a
+  caller keeps their answer in (by the element of a returned tuple that
+  holds it). A field the monitoring clause sets to anything else is no
+  record. A clause of a callback that runs again drops that record,
+  while T may live, without releasing the monitor:
   - a clause other than a `:DOWN` one removes an entry and returns the
-    field it removed from, or deletes rows of the table;
+    field it removed from (the field whose value is the removal's
+    answer), or deletes rows of the table;
   - or any clause empties the field, `:DOWN` clauses included
     (AdvisoryLocks resets every lock on its connection's `:DOWN`).
 
@@ -170,7 +176,15 @@ the code does not show it (the rubric's evidence clause).
   it is reported: a caller that catches keeps the monitor.
 - The record is read by where it is kept (a field, a table of the module),
   not by its key: a drop of one field entry ties to every monitor whose
-  clause writes that field. A clause is a callback's by its message's
+  ref or pid that field holds. Until issue #3's follow-up it was every
+  field and table the monitoring clause wrote (hackney's connection
+  buffers, ra's notifications, other modules' clauses reaching a helper
+  that monitors); the eval sets lost 11 rows to the change, 10 false and
+  one true (below). A field set to a scalar literal is not a drop:
+  global_group's sync keeps its refs in `config_check` and three clauses
+  reset it to `undefined` without a demonitor, a true leak this misses
+  (Postgrex.Notifications resets a pending `ref` it also keeps in its
+  listeners the same way, and would be reported with it). A clause is a callback's by its message's
   tag, and a gen_statem's by its event's type and content together
   (`clause_event`, issue #3): what the `:internal :connect` clause
   records is not what an `:internal {:received, _}` clause resets, and an
@@ -341,3 +355,21 @@ What is left false, 80 rows:
   module that declares no behaviour, a special process's shutdown);
 - 3: unreachable or test-only;
 - 1: a target already dead.
+
+### The record, since issue #3's follow-up
+
+The record became where the monitor's ref or pid is kept. Over the 44
+evaluation sets, 11 `ended` rows went and none came:
+- 10 false: hackney's `do_request_async/9` and `track_h2_stream/4`
+  (buffers and stream maps reset beside the owner's monitor), ra's
+  `ra_monitors:add/3` (a notification map emptied on leadership),
+  ejabberd's `new_connection_int/7` (fields of other modules' clauses that
+  reach it), firezone's four channel registrations and presence tracks
+  (other assigns removed from the socket), OTP `global`'s `insert_lock/4`
+  and `insert_global_name/6` (fields of the calling clause; the lock and
+  name tables they do keep are released with a demonitor).
+- 1 true: OTP `global_group`'s sync. Its row was reported for a drop of
+  `nodes`, which holds no monitor; the refs are in `config_check`, which
+  three clauses reset to `undefined` without a demonitor. The record is
+  now `config_check` (through the fold's answer, by the element that
+  holds the refs), and a reset to a scalar literal is not a drop.
