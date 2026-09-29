@@ -104,16 +104,38 @@ or application-specific timer protocol.
 
 `monitor_leak` · **warning** for `wait` and `ended`; **info** for `dropped`
 
-The same process can be monitored again before an earlier monitor is released:
+A process can monitor the same target again while an earlier monitor remains live.
+The site must be reachable in [repeated execution](../design/analysis-model.md#startup-and-repeated-execution),
+the target must not be proven freshly started, and some returning path must leave
+the monitor live. A discarded reference alone does not establish repetition.
 
-- `wait`: a wait returns while its monitor remains live.
-- `ended`: bookkeeping is removed while the target and monitor may remain alive.
-- `dropped`: repeated code discards the reference, leaving no way to demonitor it.
+| Kind | How another monitor can accumulate |
+|---|---|
+| `wait` | A timeout, reply or other return ends a wait without releasing the monitor. A caller that catches a timeout exception can also keep the monitor alive. |
+| `ended` | A callback removes stored bookkeeping while the target may still live, allowing another registration. |
+| `dropped` | Repeated work discards the reference without a recognized state guard. Repetition of the same target remains a protocol assumption. |
 
-Freshly started targets, once-only sites and releases covering every return path
-are excluded. Whether an external caller actually repeats a registration can remain
-unknown, especially for `dropped`. See [monitor lifetimes](../design/monitor-leaks.md).
-A queued stale DOWN is a message-handling issue, distinct from a live monitor leak.
+A release consumes the matching DOWN or demonitors the reference. Helper releases
+must cover every path; releases by callers count only when every caller releases it.
+Demonitor without flush releases the live monitor but can leave a queued DOWN.
+That stale message is a separate mailbox issue.
+
+For `ended`, the removed record must derive from the monitor reference or target PID.
+If registration checks a store for that PID, only removal from that store permits
+reacquisition. Clearing an unrelated index does not. A scalar reset must lose the
+last usable reference, or lose the PID record after the reference was discarded.
+Removing the dead target's record in a DOWN handler is normally safe; clearing other
+live targets' records is not.
+
+Freshness must hold for every return origin. A get-or-start API that can return an
+existing PID is not a fresh start. Once-only sites and complete releases are excluded.
+
+Store matching is mostly by field or table, so it can conflate different monitors.
+Unsupported nested fields, updates and return shapes can hide retention or release.
+A guarded caller does not establish that every caller is guarded, and the model does
+not fully distinguish clearing another monitor's record in a DOWN clause. External
+entry points also need judgment: a short-lived request process may safely leave
+monitors active until it exits, and a protocol may prevent repeated registration.
 
 ## Task lifecycle defects
 
@@ -162,10 +184,8 @@ outside the modeled patterns can be missed.
 A repeated callback subscribes on each run without a recognized unsubscribe or
 once-only/state guard. Multiple subscriptions can deliver duplicate broadcasts.
 The rule follows same-process helpers but does not prove that every unsubscribe
-matches the topic and path of the subscribe. See the [execution-phase model](../design/runs.md).
+matches the topic and path of the subscribe. See the [execution-phase model](../design/analysis-model.md#startup-and-repeated-execution).
 
 ## Implementation
 
 [Rules](https://github.com/QuinnWilton/argus/blob/main/priv/dl/analyses/mailbox.dl) · [Output schema and finding builder](https://github.com/QuinnWilton/argus/blob/main/lib/argus/analyses/mailbox.ex).
-
-Regression cases live in [test/analyses](https://github.com/QuinnWilton/argus/blob/main/test/analyses) and [test/soundness](https://github.com/QuinnWilton/argus/blob/main/test/soundness).

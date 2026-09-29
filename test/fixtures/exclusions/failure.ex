@@ -1,6 +1,5 @@
-# Shapes the failure analysis keeps quiet through an exclusion no
-# evaluation program exercises (census 2026-09-26); see
-# `test/exclusions/failure_test.exs` and docs/design/exclusions.md.
+# Cases for failure exclusions and nearby defects that must remain reported.
+# Asserted by test/exclusions/failure_test.exs.
 
 # Leader cleanup over a :global name whose holder is usually on another
 # node, probing the pid through a helper. Process.alive?/1 raises

@@ -1,6 +1,6 @@
 # The races harm-witness model's soundness programs
-# (docs/design/races.md): the census's four counter-examples, and for each
-# narrowing the model makes, the nearest real bugs it must still report.
+# (docs/analyses/races.md#interference-model): the census's four counter-examples, and
+# for each narrowing the model makes, the nearest real bugs it must still report.
 # test/soundness/races_test.exs lists them, one test each.
 
 # ── The census's counter-examples ─────────────────────────────────────

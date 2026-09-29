@@ -12,11 +12,10 @@ defmodule Argus.Soundness.MailboxTest do
   alias Argus.Test.Soundness.Census.Mailbox, as: C
   alias Argus.Test.Soundness.Mailbox, as: M
 
-  # The monitor-leak model (docs/design/monitor-leaks.md) reports these
-  # review-2 shapes as a wait that returns with its monitor live and, with
-  # the ref thrown away, as a monitor taken again with nothing to release
-  # it: test/soundness/monitors_test.exs holds each narrowing's
-  # neighbours.
+  # The monitor-leak model (docs/analyses/mailbox.md#repeated-live-monitors) reports
+  # these review-2 shapes as a wait that returns with its monitor live and, with the ref
+  # thrown away, as a monitor taken again with nothing to release it:
+  # test/soundness/monitors_test.exs holds each narrowing's neighbours.
   @ref_dropped "Monitor taken again with its ref thrown away"
   @wait "Monitor left live each time a wait returns"
 
@@ -396,7 +395,7 @@ defmodule Argus.Soundness.MailboxTest do
            )
   end
 
-  # The exclusion census's mailbox holes (docs/design/exclusions.md), over
+  # Suppression counterexamples for mailbox, over
   # one fixture set (test/fixtures/soundness/mailbox_census.ex).
   @census [
     C.TickRefresher,

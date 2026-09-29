@@ -113,11 +113,9 @@ does not check a drain flag. New demand can fetch again. The check looks for lit
 state-field writes and tests; it does not execute the producer protocol. Stop new
 fetches explicitly while allowing in-flight work to finish.
 
-See [restart and reader lifetimes](../design/restart-state.md) for the shared
+See [reader lifetimes](ets.md#reads-during-an-owners-restart) for the shared
 supervision assumptions.
 
 ## Implementation
 
 [Rules](https://github.com/QuinnWilton/argus/blob/main/priv/dl/analyses/shutdown.dl) · [Output schema and finding builder](https://github.com/QuinnWilton/argus/blob/main/lib/argus/analyses/shutdown.ex).
-
-Regression cases live in [test/analyses](https://github.com/QuinnWilton/argus/blob/main/test/analyses) and [test/soundness](https://github.com/QuinnWilton/argus/blob/main/test/soundness).

@@ -667,7 +667,7 @@ task_owner(owner, mod) :-
 //
 // Report sites that can reacquire a monitor for the same process while a prior monitor
 // remains live (`again_code`). One-time monitors and tracked relationships released on
-// :DOWN are excluded. See docs/design/monitor-leaks.md.
+// :DOWN are excluded. See docs/analyses/mailbox.md#repeated-live-monitors.
 // `how = wait`: a receive can finish without releasing the monitor.
 // `how = ended`: a server removes the relationship record while leaving the monitor
 // active.

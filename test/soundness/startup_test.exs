@@ -125,7 +125,7 @@ defmodule Argus.Soundness.StartupTest do
     end
   end
 
-  # The exclusion census's startup holes (docs/design/exclusions.md), over
+  # Suppression counterexamples for startup, over
   # one fixture set (test/fixtures/soundness/startup_census.ex).
   @census [
     C.Config,

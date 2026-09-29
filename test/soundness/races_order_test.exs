@@ -1,11 +1,10 @@
 defmodule Argus.Soundness.RacesOrderTest do
   @moduledoc """
   The orderings the races model reads between processes
-  (docs/design/races.md, "Which processes run a function"): a write
-  another process makes is a rival only when it can land while the
-  pair's process runs the pair. Every program is solved alone; each
-  ordering has its quiet program and the nearest real bugs it must still
-  report.
+  (docs/analyses/races.md#concurrent-execution): a write another process makes is a
+  rival only when it can land while the pair's process runs the pair. Every program is
+  solved alone; each ordering has its quiet program and the nearest real bugs it must
+  still report.
   """
   use ExUnit.Case, async: true
 

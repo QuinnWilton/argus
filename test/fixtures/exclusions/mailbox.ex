@@ -1,7 +1,5 @@
-# Shapes the mailbox analysis keeps quiet, or keeps reported, through an
-# exclusion no evaluation program exercises (census 2026-09-26); see
-# `test/exclusions/mailbox_test.exs` and docs/design/exclusions.md. The
-# last two shapes are real bugs an exclusion used to hide.
+# Cases for mailbox exclusions and nearby defects that must remain reported.
+# Asserted by test/exclusions/mailbox_test.exs.
 
 # terminate/2 bounds a drain with a local timer, then cancels it. The
 # process is going away: a :drain_deadline the timer delivered before

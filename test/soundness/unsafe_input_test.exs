@@ -156,7 +156,7 @@ defmodule Argus.Soundness.UnsafeInputTest do
     assert severity(sev, "G6.RanchAtom", :handle_info, @atom_export) == :warning
   end
 
-  # The exclusion census's unsafe_input holes (docs/design/exclusions.md),
+  # Suppression counterexamples for unsafe-input,
   # over one fixture set (test/fixtures/soundness/unsafe_input_census.ex
   # and the census_* modules of test/fixtures/erl).
   @census [

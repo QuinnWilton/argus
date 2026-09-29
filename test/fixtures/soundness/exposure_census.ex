@@ -1,7 +1,6 @@
 defmodule Argus.Test.Soundness.Census.Exposure do
   @moduledoc """
-  The exclusion census's exposure hole (docs/design/exclusions.md,
-  "Soundness surprises") and its adversarial neighbours: a module that
+  Suppression counterexamples and nearby variants: a module that
   names :verify_peer anywhere was credited with offering the choice, and
   its hard-coded :verify_none connects went unreported. Asserted by
   test/soundness/exposure_test.exs.

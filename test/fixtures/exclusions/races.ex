@@ -1,6 +1,5 @@
-# Shapes the races analysis keeps quiet, or keeps reported, through an
-# exclusion no evaluation program exercises (census 2026-09-26); see
-# `test/exclusions/races_test.exs` and docs/design/exclusions.md.
+# Cases for races exclusions and nearby defects that must remain reported.
+# Asserted by test/exclusions/races_test.exs.
 
 # A log sink two servers start lazily under one name. The start sits in
 # a helper that returns its result, and ensure/1 reads that result

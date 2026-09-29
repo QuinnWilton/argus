@@ -3,12 +3,11 @@ defmodule Argus.Extractors.StateGate do
   Where a server's handler runs only while a field of its state says it
   has not yet, and what the server's returns set that field to.
 
-  `def handle_info(:registered, %{registered: false} = state)` arms its
-  loop and returns `%{state | registered: true}`: the arm runs only while
-  the field holds `false`, and the clause's own return sets it to `true`.
-  When no return of the server's callbacks sets it back, the arm runs at
-  most once per incarnation of the process (clientlib/runs.dl's
-  `gated_once_site`, docs/design/runs.md).
+  `def handle_info(:registered, %{registered: false} = state)` arms its loop and returns
+  `%{state | registered: true}`: the arm runs only while the field holds `false`, and
+  the clause's own return sets it to `true`. When no return of the server's callbacks
+  sets it back, the arm runs at most once per incarnation of the process
+  (clientlib/runs.dl's `gated_once_site`, docs/design/analysis-model.md#once-by-state).
 
   Read in the callbacks of a GenServer's loop: handle_call/3,
   handle_cast/2, handle_info/2 and handle_continue/2, whose last argument

@@ -63,5 +63,3 @@ compensation protocol. Logging and ordinary reads are not rollback defects here.
 ## Implementation
 
 [Rules](https://github.com/QuinnWilton/argus/blob/main/priv/dl/analyses/effects.dl) · [Output schema and finding builder](https://github.com/QuinnWilton/argus/blob/main/lib/argus/analyses/effects.ex).
-
-Regression cases live in [test/analyses](https://github.com/QuinnWilton/argus/blob/main/test/analyses) and [test/soundness](https://github.com/QuinnWilton/argus/blob/main/test/soundness).

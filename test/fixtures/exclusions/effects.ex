@@ -1,6 +1,5 @@
-# Shapes the effects analysis keeps quiet through an exclusion no
-# evaluation program exercises (census 2026-09-26); see
-# `test/exclusions/effects_test.exs` and docs/design/exclusions.md.
+# Cases for effects exclusions and nearby defects that must remain reported.
+# Asserted by test/exclusions/effects_test.exs.
 
 # Each shape has a repo of its own, so the two are disjoint programs.
 defmodule Excl.Effects.CapturedBody.Repo do

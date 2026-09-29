@@ -1,10 +1,8 @@
 defmodule Argus.Exclusions.ShutdownTest do
   @moduledoc """
-  Exclusions of the shutdown analysis that no evaluation program
-  exercises (census 2026-09-26). Each test pins what one negated atom
-  keeps quiet, beside a twin the analysis does report, or a finding an
-  atom keeps. The census is docs/design/exclusions.md; the fixtures are
-  in test/fixtures/exclusions/shutdown.ex.
+  Regression cases for shutdown exclusions. Suppressed cases have a reported
+  twin or supporting row so missing extraction cannot make the check pass.
+  Fixtures: test/fixtures/exclusions/shutdown.ex.
   """
   use ExUnit.Case, async: true
 

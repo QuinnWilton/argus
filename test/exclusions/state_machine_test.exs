@@ -1,10 +1,8 @@
 defmodule Argus.Exclusions.StateMachineTest do
   @moduledoc """
-  Exclusions of the state_machine analysis that no evaluation program
-  exercises (census 2026-09-26). Each test pins what one negated atom
-  keeps quiet, beside a twin the analysis does report or the row the
-  same fixture does produce. The census is docs/design/exclusions.md;
-  the fixtures are test/fixtures/erl/excl_state_machine_*.erl.
+  Regression cases for state-machine exclusions. Suppressed cases have a reported
+  twin or supporting row so missing extraction cannot make the check pass.
+  Fixtures: test/fixtures/erl/excl_state_machine_*.erl.
   """
   use ExUnit.Case, async: true
 

@@ -1,5 +1,5 @@
-# Adversarial neighbours of each narrowing of the once/again split
-# (clientlib/runs.dl, docs/design/runs.md) and of the gen_statem
+# Adversarial neighbours of each narrowing of the once/again split (clientlib/runs.dl,
+# docs/design/analysis-model.md#startup-and-repeated-execution) and of the gen_statem
 # extractor's readings of a machine's states.
 #
 # A clause is once code only when every message that can enter it is

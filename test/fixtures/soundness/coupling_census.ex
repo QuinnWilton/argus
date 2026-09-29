@@ -1,7 +1,6 @@
 defmodule Argus.Test.Soundness.Census.Coupling do
   @moduledoc """
-  The exclusion census's coupling hole (docs/design/exclusions.md,
-  "Soundness surprises") and its adversarial neighbours: "Two restart
+  Suppression counterexamples and nearby variants: "Two restart
   authorities for the same child" read the child module's own
   child_spec/1 restart, not the spec the start hands the supervisor. A
   map spec does not call child_spec/1: with no `:restart` the child is

@@ -72,22 +72,86 @@ tag. Unknown tags may enter every handler clause. Clause facts refine which call
 or returns belong to a message, but do not reconstruct the entire process protocol.
 Runtime message shapes, such as DOWN and timer tuples, have dedicated helpers.
 
-## Startup, repetition and lifetimes
+## Startup and repeated execution
 
-Initialization holds a start until it returns or acknowledges it. Post-ack work and
-detached work can still race startup without blocking the start itself.
+`priv/dl/clientlib/runs.dl` distinguishes startup-caused work from repeated work.
+Coupling uses startup work to find registrations that a peer's restart loses;
+mailbox analyses use repeated work to find accumulating monitors and subscriptions.
 
-The [execution-phase model](runs.md) distinguishes startup-caused work, repeating
-work and state-gated sites. A helper can belong to both phases. The
-[restart-state model](restart-state.md) uses supervision order and retained state to
-reason about independent restarts and readers that outlive table owners.
+Initialization holds the start until it returns or acknowledges it. Post-ack and
+detached work can still race startup without holding the start. "Once" means bounded
+by one incarnation's startup, not necessarily one execution: startup can send one
+message per item. A helper reached from both startup and a repeated handler belongs
+to both phases.
+
+### Once-only clauses
+
+The model connects callback clauses to self-sends, casts, one-shot timers, monitor
+and task DOWN messages, idle timeouts, continuation returns, LiveView async results,
+gen_statem internal events and direct same-module calls. Same-name delegates carrying
+the whole message retain its process and message identity.
+
+A clause is once-only when its producers are confined to startup or other once-only
+clauses, no outside producer can enter it, and production does not cycle back to it.
+At least one known tag producer is required. Request callbacks, receive loops,
+selected external exports, outside sends, broadcasts and intervals can cause repetition.
+A timer handler that re-arms itself therefore remains repeated. The implementation
+propagates repetition through cycles before deriving once-only clauses.
+
+`once_code` and `once_step` describe startup work and its evidence anchor;
+`again_code` describes repeated work. `once_clause` classifies a callback clause,
+while `once_clause_site` requires every clause containing the site to be once-only.
+`once_site` also accepts a proven state gate. For coupling, `once_code` includes the
+initial continuation chain even if later events reuse it; this does not make the
+whole continuation safe to exclude from repetition checks.
+
+### Once by state
+
+Repeated messages can reach an operation only once when it closes its own state gate:
+
+```elixir
+def handle_info(:registered, %{registered: false} = state) do
+  schedule_check()
+  {:noreply, %{state | registered: true}}
+end
+```
+
+`gated_once_site` requires every path to test the incoming field against known atoms,
+every completing path to return a state outside those values or end the process,
+and no handler or code_change return to reopen the gate or return an unknown value.
+Direct program calls to the handler with separately constructed state defeat the proof.
+
+The StateGate extractor follows supported map/record fields and local returned
+helpers. A try handler can keep the gate open; a thrown callback result does not
+necessarily end the process. Repeated reachability cuts a helper edge only when
+every call through it is gated.
+
+### Execution-phase limits
+
+Dynamic outside sends and computed library callbacks can be missed. Protocol-level
+one-time messages from another process are generally treated as repeatable. gen_statem
+event type/content do not fully identify the target state; LiveView async facts lack
+sites and can be attributed to every clause in a function.
+
+State gates do not cover every nested field, membership test, message-derived value
+or callback return. Deeper thrown returns can escape the model, and external state
+replacement such as sys.replace_state is not modeled as reopening a gate. Existing
+`state_decided` filters are broader than the positive gate proof.
+
+## Restart lifetimes
+
+Surviving processes can lose registrations or table access when a peer restarts.
+The [coupling guide](../analyses/coupling.md#restart-isolation)
+explains retained registrations; the [ETS guide](../analyses/ets.md#reads-during-an-owners-restart)
+explains readers that outlive table owners. Both depend on process identity and the
+actual supervision path, not just the module containing a call.
 
 ## Shared values and effects
 
 `EtsTable` identifies tables by name, allocation site, or module field when stronger
 identity is unavailable. `CheckThenAct` carries resource/key identities through
 callers and relates a check to the act it controls or supplies. The
-[race model](races.md) adds competing processes and concrete harm.
+[race analysis](../analyses/races.md#interference-model) adds competing processes and concrete harm.
 
 The effect model distinguishes known reads/writes, pure operations and unknown
 calls. Exception helpers track whether a handler covers the relevant site, accepts
@@ -107,6 +171,6 @@ priors identify their heuristic provenance. Structural tooling/test classificati
 can also lower severity without removing the finding.
 
 Use [coverage findings](../analyses/coverage.md) to inspect unresolved facts, and
-[suppression guidance](exclusions.md) when a proposed exclusion relies on an assumption.
+[suppression guidance](rule-style.md#suppressions) when a proposed exclusion relies on an assumption.
 The comments beside each clientlib relation are the reference for its precise columns
 and supported shapes.

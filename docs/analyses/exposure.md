@@ -63,5 +63,3 @@ The finding does not by itself prove that the runtime default is insecure.
 ## Implementation
 
 [Rules](https://github.com/QuinnWilton/argus/blob/main/priv/dl/analyses/exposure.dl) · [Output schema and finding builder](https://github.com/QuinnWilton/argus/blob/main/lib/argus/analyses/exposure.ex).
-
-Regression cases live in [test/analyses](https://github.com/QuinnWilton/argus/blob/main/test/analyses) and [test/soundness](https://github.com/QuinnWilton/argus/blob/main/test/soundness).

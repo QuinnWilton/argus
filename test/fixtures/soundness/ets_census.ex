@@ -1,7 +1,6 @@
 defmodule Argus.Test.Soundness.Census.Ets do
   @moduledoc """
-  The exclusion census's ETS holes (docs/design/exclusions.md, "Soundness
-  surprises") and their adversarial neighbours: each program is the real
+  Suppression counterexamples and nearby variants: each program is the real
   bug an exclusion or a coarse fact hid. Asserted by
   test/soundness/ets_test.exs.
   """

@@ -1,8 +1,8 @@
 defmodule Argus.Soundness.MonitorsTest do
   @moduledoc """
-  The monitor-leak model's narrowings (docs/design/monitor-leaks.md),
-  each with the adversarial shapes it must not excuse: every program is
-  solved alone and must keep its finding (`Argus.Test.Soundness`).
+  The monitor-leak model's narrowings (docs/analyses/mailbox.md#repeated-live-monitors),
+  each with the adversarial shapes it must not excuse: every program is solved alone and
+  must keep its finding (`Argus.Test.Soundness`).
 
   A monitor piles up when code that runs again takes it (the run
   repeats), on a process the run did not start (it can meet that process

@@ -1,6 +1,5 @@
-# Shapes the structure analysis keeps quiet through an exclusion no
-# evaluation program exercises (census 2026-09-26); see
-# `test/exclusions/structure_test.exs` and docs/design/exclusions.md.
+# Cases for structure exclusions and nearby defects that must remain reported.
+# Asserted by test/exclusions/structure_test.exs.
 
 # A supervisor that can be switched off: its child_spec/1 says
 # `type: :supervisor` when it starts the tree, and hands back an

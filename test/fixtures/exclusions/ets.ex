@@ -1,6 +1,5 @@
-# Shapes the ets analysis keeps quiet (or keeps reported) through an
-# exclusion no evaluation program exercises (census 2026-09-26); see
-# `test/exclusions/ets_test.exs` and docs/design/exclusions.md.
+# Cases for ets exclusions and nearby defects that must remain reported.
+# Asserted by test/exclusions/ets_test.exs.
 
 # The server hands its cache to a keeper process it spawns and names
 # itself the table's heir: when the keeper exits, the table comes back

@@ -1,7 +1,6 @@
 defmodule Argus.Test.Soundness.Census.Mailbox do
   @moduledoc """
-  The exclusion census's mailbox holes (docs/design/exclusions.md,
-  "Soundness surprises") and their adversarial neighbours. Asserted by
+  Suppression counterexamples and nearby variants. Asserted by
   test/soundness/mailbox_test.exs.
   """
 end

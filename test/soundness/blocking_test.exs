@@ -47,7 +47,7 @@ defmodule Argus.Soundness.BlockingTest do
     for mfa <- @quiet, do: refute(Enum.any?(found, &(elem(&1, 2) == mfa)), inspect(mfa))
   end
 
-  # The exclusion census's blocking holes (docs/design/exclusions.md), over
+  # Suppression counterexamples for blocking, over
   # one fixture set (test/fixtures/soundness/blocking_census.ex).
   @census [
     C.Ring3A,

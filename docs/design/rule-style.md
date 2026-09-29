@@ -1,4 +1,4 @@
-# Writing readable rules
+# Writing and changing rules
 
 [Bug-class catalog](../bug-classes.md) · [Shared model](analysis-model.md)
 
@@ -51,6 +51,30 @@ does not narrate each join, repeat the identifier, or promise more precision tha
 the rules provide. Keep an example when it distinguishes easily confused shapes,
 such as nested exit reasons or timer-message tuples.
 
+## Suppressions
+
+Distinguish a condition required by the defect's definition, a heuristic that a
+pattern is safe, and a filter that removes duplicate evidence. A negated atom can
+serve any of these purposes. State what the condition establishes and which
+assumptions it relies on.
+
+Require evidence for the operation being suppressed: release this reference, guard
+this table before use, wait for this child's exit, or handle this exception on the
+required paths. A similar operation elsewhere in the module is insufficient.
+Unknown options, owners and callers are not evidence of safe defaults or exclusivity.
+
+Keep a safe case and the nearest defect each suppression must still report. Useful
+counterexamples use the wrong reference, check after use, protect only one branch,
+add a writer, reopen a gate or return an existing PID from a supposed fresh start.
+`test/exclusions/` and `test/soundness/` retain these cases.
+
+Evaluate changes at the output: added helper rows can be removed by another filter
+or affect only evidence. Removing one condition can show where it matters in a
+dataset; no changed rows do not prove it redundant for every program. Exercise the
+priors, points-to modes and optional analyses the condition depends on. Keep measured
+counts with the change that produced them, and document specific assumptions beside
+the affected finding or shared model.
+
 ## Refactors and behaviour changes
 
 A rule refactor preserves every finding field, including identity, severity, source
@@ -60,7 +84,7 @@ for the code being changed; do not rely on a machine-specific scratch harness pa
 If a rewrite intentionally changes which programs are reported, describe the changed
 condition and its counterexamples. Keep that behaviour change distinguishable from
 mechanical restructuring. Update the affected catalog entry and shared model, and
-follow the [suppression guidance](exclusions.md) for any new exclusion.
+keep a counterexample for any new suppression.
 
 Documentation-only edits need no rule changes. When schema documentation changes,
 refresh its generated declarations so the source and generated comments agree.

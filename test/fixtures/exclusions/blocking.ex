@@ -1,6 +1,5 @@
-# Shapes the blocking analysis keeps quiet, or keeps reported, through
-# an exclusion no evaluation program exercises (census 2026-09-26); see
-# `test/exclusions/blocking_test.exs` and docs/design/exclusions.md.
+# Cases for blocking exclusions and nearby defects that must remain reported.
+# Asserted by test/exclusions/blocking_test.exs.
 
 # Five servers. Gateway's :quote request reaches Ledger by two paths:
 # through Pricing's :price (a static call by name) and through

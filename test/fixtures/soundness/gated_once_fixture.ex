@@ -1,6 +1,6 @@
-# Adversarial neighbours of each narrowing of "once by the state"
-# (clientlib/runs.dl's gated_once_site, Argus.Extractors.StateGate,
-# docs/design/runs.md).
+# Adversarial neighbours of each narrowing of "once by the state" (clientlib/runs.dl's
+# gated_once_site, Argus.Extractors.StateGate,
+# docs/design/analysis-model.md#once-by-state).
 #
 # A GenServer handler's site runs at most once per incarnation when a
 # test of a field of the state lets it run only for some atoms, every way

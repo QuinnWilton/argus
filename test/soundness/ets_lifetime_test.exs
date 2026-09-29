@@ -1,8 +1,9 @@
 defmodule Argus.Soundness.EtsLifetimeTest do
   @moduledoc """
-  "ETS table read while its owner may be restarting" is reported where a
-  reader outlives the table's owner (ets.dl's reader_outlives,
-  docs/design/restart-state.md) and the read can meet the table gone.
+  "ETS table read while its owner may be restarting" is reported where a reader outlives
+  the table's owner (ets.dl's reader_outlives,
+  docs/analyses/ets.md#reads-during-an-owners-restart) and the read can meet the table
+  gone.
 
   The restatement narrows the class in two ways. Each narrowing has
   adversarial shapes of the nearest real bug that must still fire:

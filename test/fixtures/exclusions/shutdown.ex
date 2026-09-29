@@ -1,6 +1,5 @@
-# Shapes the shutdown analysis keeps quiet, or keeps reported, through
-# an exclusion no evaluation program exercises (census 2026-09-26); see
-# `test/exclusions/shutdown_test.exs` and docs/design/exclusions.md.
+# Cases for shutdown exclusions and nearby defects that must remain reported.
+# Asserted by test/exclusions/shutdown_test.exs.
 
 # A watchman tells the event manager it is stopping, from terminate/2.
 # The manager is a later sibling, already gone on shutdown, so the

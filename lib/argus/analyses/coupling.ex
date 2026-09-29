@@ -12,7 +12,7 @@ defmodule Argus.Analyses.Coupling do
     stale. `reason` is `restart_isolation` (two branches of a
     `one_for_one` supervisor, the caller's once code registering
     something the sibling keeps: `detail` says how it keeps it,
-    clientlib/restart_state.dl and docs/design/restart-state.md),
+    clientlib/restart_state.dl and docs/analyses/coupling.md#restart-isolation),
     `restart_policy` (a permanent child depends on a transient or
     temporary sibling that may never come back; `detail` is that policy)
     or `cached_pid` (`init/1` looks the sibling up by name under

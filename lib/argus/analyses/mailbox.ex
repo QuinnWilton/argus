@@ -18,7 +18,7 @@ defmodule Argus.Analyses.Mailbox do
     again takes again before the one before it is released: a `wait`
     that returns with it live, a record the server drops while it keeps
     the monitor (`ended`), a ref thrown away by a run that does not ask
-    its state first (`dropped`). See `docs/design/monitor-leaks.md`.
+    its state first (`dropped`). See `docs/analyses/mailbox.md#repeated-live-monitors`.
   - `timer_cancel_without_flush(mod, cancel, arm, key, message,
     cancel_site, arm_site)` — a
     cancelled timer's message may already be queued and is not told

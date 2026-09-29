@@ -1,9 +1,9 @@
 defmodule Argus.Soundness.GatedOnceTest do
   @moduledoc """
-  "Once by the state" (clientlib/runs.dl's gated_once_site,
-  Argus.Extractors.StateGate, docs/design/runs.md), with the adversarial
-  shapes each of its conditions must not excuse: every program is solved
-  alone and must keep its finding (`Argus.Test.Soundness`).
+  "Once by the state" (clientlib/runs.dl's gated_once_site, Argus.Extractors.StateGate,
+  docs/design/analysis-model.md#once-by-state), with the adversarial shapes each of its
+  conditions must not excuse: every program is solved alone and must keep its finding
+  (`Argus.Test.Soundness`).
 
   A GenServer handler's site runs at most once per incarnation when a
   test of a field of the state lets it run only for some atoms, every way

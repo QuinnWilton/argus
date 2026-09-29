@@ -1,9 +1,9 @@
 defmodule Lifetime do
   @moduledoc """
-  Readers that do and do not outlive the owner of the table they read
-  (ets.dl's reader_outlives, supervision.dl's ends_with,
-  docs/design/restart-state.md), and reads the reader makes safe by
-  making the table on its way (ets_read_when_present). Asserted by
+  Readers that do and do not outlive the owner of the table they read (ets.dl's
+  reader_outlives, supervision.dl's ends_with,
+  docs/analyses/ets.md#reads-during-an-owners-restart), and reads the reader makes safe
+  by making the table on its way (ets_read_when_present). Asserted by
   test/soundness/ets_lifetime_test.exs.
   """
 

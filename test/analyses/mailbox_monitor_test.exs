@@ -1,10 +1,10 @@
 defmodule Argus.Analyses.MailboxMonitorTest do
   @moduledoc """
-  `monitor_leak`: a monitor that code which runs again takes again before
-  the one before it is released (docs/design/monitor-leaks.md). Each
-  describe block is one part of the model: the run repeats, the process
-  is one it can meet again, the run does not release it, and one of the
-  three witnesses shows the monitor before is still live.
+  `monitor_leak`: a monitor that code which runs again takes again before the one before
+  it is released (docs/analyses/mailbox.md#repeated-live-monitors). Each describe block
+  is one part of the model: the run repeats, the process is one it can meet again, the
+  run does not release it, and one of the three witnesses shows the monitor before is
+  still live.
   """
   use ExUnit.Case, async: true
 

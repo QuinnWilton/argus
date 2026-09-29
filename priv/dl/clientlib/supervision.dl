@@ -217,7 +217,8 @@ application_root(sup) :-
 // `ends_with(dying, other)` follows supervisor subtree teardown and
 // one_for_all/rest_for_one sibling restarts. A failure contained by a nested supervisor
 // does not end outer siblings. Restart-intensity escalation is not modeled;
-// application-wide lifetime uses application_root. See docs/design/restart-state.md.
+// application-wide lifetime uses application_root. See
+// docs/analyses/ets.md#reads-during-an-owners-restart.
 .decl ends_with(dying: symbol, other: symbol)
 
 ends_with(d, o) :- supervisor(d, _), child_subtree(d, _, o), o != d.

@@ -1,6 +1,5 @@
-# Shapes the coupling analysis keeps quiet through an exclusion no
-# evaluation program exercises (census 2026-09-26); see
-# `test/exclusions/coupling_test.exs` and docs/design/exclusions.md.
+# Cases for coupling exclusions and nearby defects that must remain reported.
+# Asserted by test/exclusions/coupling_test.exs.
 
 # A hub that links each subscriber from its own subscribe handler. A
 # crash of either side takes the other down with it, so both restart

@@ -1,8 +1,7 @@
-# The races model's ordering programs (docs/design/races.md, "Which
-# processes run a function"): a write another process makes is a rival
-# only when it can land while the pair's process runs the pair. Each
-# ordering the model reads has a quiet program and the nearest real bugs
-# it must still report. test/soundness/races_order_test.exs lists them.
+# The races model's ordering programs (docs/analyses/races.md#concurrent-execution): a
+# write another process makes is a rival only when it can land while the pair's process
+# runs the pair. Each ordering the model reads has a quiet program and the nearest real
+# bugs it must still report. test/soundness/races_order_test.exs lists them.
 
 # ── Startup order: what a process writes only while it starts ─────────
 

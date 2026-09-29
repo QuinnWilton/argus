@@ -1,7 +1,6 @@
 defmodule Argus.Test.Soundness.Census.Blocking do
   @moduledoc """
-  The exclusion census's blocking holes (docs/design/exclusions.md,
-  "Soundness surprises") and their adversarial neighbours. Asserted by
+  Suppression counterexamples and nearby variants. Asserted by
   test/soundness/blocking_test.exs.
   """
 end

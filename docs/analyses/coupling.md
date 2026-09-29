@@ -5,24 +5,39 @@
 These findings compare supervision policy with dependencies between processes.
 The important question is what survives when one process restarts alone.
 
-## State shared across independently restarted children
+## Restart isolation
 
 `sibling_dependency` with `reason=restart_isolation` · **warning**; **info** for inferred retention
 
-Under `one_for_one`, one child's startup phase registers something in another
-child's process. The receiver retains an ETS row, monitor or link, dictionary entry,
-or state change. If the receiver restarts alone, that registration disappears and
-the surviving caller does not repeat startup. If the caller restarts alone, it may
-leave an old registration behind.
+Under `one_for_one`, one child's [startup phase](../design/analysis-model.md#startup-and-repeated-execution)
+registers something in another branch's process. If the receiver restarts alone,
+that registration disappears while the caller continues running. If the caller
+restarts alone, it can leave the old incarnation's registration behind.
 
-The rule excludes linked pairs, privately started instances and requests repeated
-on each use. Retention passed to unknown external code is marked `handed` and
-inferred. Unknown request tags can match unrelated writing clauses.
+`holds_in` records what the receiver retains:
 
-Inspect whether the receiver rebuilds its state or the caller re-registers through
-another protocol. If their lifetimes must be coupled, order them under an appropriate
-restart strategy. The [restart-state model](../design/restart-state.md) describes
-what the analysis can establish.
+| Kind | Retained state |
+|---|---|
+| `table` | An ETS row. |
+| `monitor` | A monitor or link. |
+| `dict` | A process-dictionary entry. |
+| `state` | A state change beyond the value initialization establishes. |
+| `handed` | A request passed to unknown external code that may retain it; inferred evidence. |
+
+Read-only requests and resets to initial field values do not establish retention.
+Recognized links and dependencies exclusively on privately started instances are
+excluded. The finding identifies the tree, startup request and retaining operation.
+Cached PIDs are the reverse dependency: the caller retains the receiver's identity.
+
+Inspect whether the receiver restores its state or the caller re-registers through
+a recovery protocol; the analysis cannot prove either. If their lifetimes must be
+coupled, use an appropriate restart strategy.
+
+Unknown request tags can match unrelated writing clauses, and module-based matching
+can conflate instances. Registrations made only by repeated handlers, sends to
+handle_info, gen_statem requests, direct writes to another process's table, detached
+registrations and some library registries are outside this model. This finding
+covers `one_for_one` isolation; other restart policies can have analogous defects.
 
 ## A dependency with a shorter restart policy
 
@@ -74,5 +89,3 @@ unknown child identities and task children can be missed.
 ## Implementation
 
 [Rules](https://github.com/QuinnWilton/argus/blob/main/priv/dl/analyses/coupling.dl) · [Output schema and finding builder](https://github.com/QuinnWilton/argus/blob/main/lib/argus/analyses/coupling.ex).
-
-Regression cases live in [test/analyses](https://github.com/QuinnWilton/argus/blob/main/test/analyses) and [test/soundness](https://github.com/QuinnWilton/argus/blob/main/test/soundness).

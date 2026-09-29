@@ -30,7 +30,7 @@ defmodule Argus.Soundness.ExposureTest do
         do: assert(severity(sev, "Adv.Tls.Quiet", fun, "TLS") == nil, "#{fun}")
   end
 
-  # The exclusion census's exposure hole (docs/design/exclusions.md): a
+  # Suppression counterexample: a
   # client connect whose own literal options turn verification off has no
   # choice, whatever else the module offers.
   test "a hard-coded :verify_none connect beside a :verify_peer is an error (census)" do

@@ -1,7 +1,6 @@
 defmodule Argus.Test.Soundness.Census.UnsafeInput do
   @moduledoc """
-  The exclusion census's unsafe_input hole (docs/design/exclusions.md,
-  "Soundness surprises") and its adversarial neighbours: a protocol's
+  Suppression counterexamples and nearby variants: a protocol's
   implementation was never a way in, though the program's own protocol
   relays its users' data to each one. Asserted by
   test/soundness/unsafe_input_test.exs.

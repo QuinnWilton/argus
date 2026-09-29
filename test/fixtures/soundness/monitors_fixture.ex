@@ -1,6 +1,6 @@
 # Adversarial neighbours of each narrowing of the monitor-leak model
-# (docs/design/monitor-leaks.md): a shape the narrowing must not excuse,
-# which still takes a monitor again before the last one is released.
+# (docs/analyses/mailbox.md#repeated-live-monitors): a shape the narrowing must not
+# excuse, which still takes a monitor again before the last one is released.
 # test/soundness/monitors_test.exs asserts the finding each must keep.
 
 # ── The run repeats (again_code) ─────────────────────────────────────

@@ -16,7 +16,7 @@
 
 // ══ A registration a sibling's restart loses ═══════════════════════
 //
-// docs/design/restart-state.md is the model.
+// docs/analyses/coupling.md#restart-isolation is the model.
 
 // A one_for_one sibling registers during startup. If the registration holder restarts
 // alone, it loses the registration and the surviving sibling does not register again.

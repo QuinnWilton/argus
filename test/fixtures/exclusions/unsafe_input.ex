@@ -1,7 +1,5 @@
-# Shapes the unsafe_input analysis keeps quiet, or keeps reported,
-# through an exclusion no evaluation program exercises (census
-# 2026-09-26); see `test/exclusions/unsafe_input_test.exs` and
-# docs/design/exclusions.md.
+# Cases for unsafe-input exclusions and nearby defects that must remain reported.
+# Asserted by test/exclusions/unsafe_input_test.exs.
 
 # The `after` block of a try runs on both the normal and the exception
 # path, and the compiler emits it twice: two :os.cmd calls on one line,

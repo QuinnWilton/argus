@@ -1,7 +1,6 @@
 defmodule Argus.Test.Soundness.Census.Shutdown do
   @moduledoc """
-  The exclusion census's shutdown hole (docs/design/exclusions.md,
-  "Soundness surprises") and its adversarial neighbours: "Server
+  Suppression counterexamples and nearby variants: "Server
   terminates a process it still monitors" was excused by any demonitor
   anywhere in the module, and did not tie the killed process to the
   monitored one. Asserted by test/soundness/shutdown_test.exs.

@@ -76,7 +76,7 @@ defmodule Argus.Soundness.FailureTest do
     for mfa <- @quiet, do: refute(Enum.any?(found, &(elem(&1, 2) == mfa)), inspect(mfa))
   end
 
-  # The exclusion census's failure hole (docs/design/exclusions.md): an
+  # Suppression counterexample: an
   # Elixir truthiness test of an rpc's answer, and a predicate returning a
   # wrapper's.
   describe "census hole: an rpc answer used as a boolean" do

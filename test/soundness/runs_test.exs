@@ -1,9 +1,9 @@
 defmodule Argus.Soundness.RunsTest do
   @moduledoc """
   The once/again split's narrowings (clientlib/runs.dl,
-  docs/design/runs.md), each with the adversarial shapes it must not
-  excuse: every program is solved alone and must keep its finding
-  (`Argus.Test.Soundness`).
+  docs/design/analysis-model.md#startup-and-repeated-execution), each with the
+  adversarial shapes it must not excuse: every program is solved alone and must keep its
+  finding (`Argus.Test.Soundness`).
 
   A clause of a callback runs once per incarnation only when every
   message that can enter it is made by its process's once code: init/1,

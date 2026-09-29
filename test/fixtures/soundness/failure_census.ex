@@ -1,7 +1,6 @@
 defmodule Argus.Test.Soundness.Census.Failure do
   @moduledoc """
-  The exclusion census's failure hole (docs/design/exclusions.md,
-  "Soundness surprises") and its adversarial neighbours: an Elixir `if`
+  Suppression counterexamples and nearby variants: an Elixir `if`
   over an rpc's answer compiles to a select over false and nil, which was
   read as a match, never as a boolean; and a predicate returning a
   wrapper's rpc answer was nobody's to report. A node that is gone answers

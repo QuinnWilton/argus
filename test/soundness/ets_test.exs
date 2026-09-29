@@ -196,7 +196,7 @@ defmodule Argus.Soundness.EtsTest do
     assert created =~ "Rows.Ets.OptionNamed:init/1#"
   end
 
-  # The exclusion census's ETS holes (docs/design/exclusions.md), over one
+  # Suppression counterexamples for ETS, over one
   # fixture set (test/fixtures/soundness/ets_census.ex).
   @census [
     Census.Ets.TempOwner,

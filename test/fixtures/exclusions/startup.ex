@@ -1,7 +1,5 @@
-# Shapes the startup analysis keeps quiet, or reads as conditional,
-# through an exclusion no evaluation program exercises (census
-# 2026-09-26); see `test/exclusions/startup_test.exs` and
-# docs/design/exclusions.md.
+# Cases for startup exclusions and nearby defects that must remain reported.
+# Asserted by test/exclusions/startup_test.exs.
 
 # A worker registers with a registry whose pid it is handed, only when
 # one is configured: the call (attributed to WorkerRegistry by its tag,

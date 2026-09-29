@@ -1,9 +1,9 @@
 defmodule Argus.Soundness.CouplingTest do
   @moduledoc """
-  "Coupled children under one_for_one" is reported for what a sibling's
-  restart loses (clientlib/restart_state.dl, docs/design/restart-state.md):
-  a registration a child makes once, when it starts, that its sibling
-  keeps. It is not reported for a call made on each use.
+  "Coupled children under one_for_one" is reported for what a sibling's restart loses
+  (clientlib/restart_state.dl, docs/analyses/coupling.md#restart-isolation): a
+  registration a child makes once, when it starts, that its sibling keeps. It is not
+  reported for a call made on each use.
 
   The model narrows the class in two ways. Each narrowing has adversarial
   shapes of the nearest real bug that must still fire:
@@ -267,7 +267,7 @@ defmodule Argus.Soundness.CouplingTest do
     |> Kernel.+(1)
   end
 
-  # The exclusion census's coupling hole (docs/design/exclusions.md): the
+  # Suppression counterexample: the
   # restart a DynamicSupervisor start gives its child is the spec's it
   # hands over (clientlib/supervision.dl's dynamic_restart), not the
   # module's own child_spec/1's, which a map spec never calls.

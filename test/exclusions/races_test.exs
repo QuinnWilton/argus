@@ -1,12 +1,8 @@
 defmodule Argus.Exclusions.RacesTest do
   @moduledoc """
-  Exclusions of the races analysis that no evaluation program exercises
-  (census 2026-09-26). Each test pins what one negated atom keeps quiet
-  or how it labels a race, beside a twin the analysis does report or the
-  row the same fixture does produce, so it cannot pass on a fixture the
-  analysis does not read as the test assumes; five pin a real race an
-  atom keeps reported. The census is docs/design/exclusions.md; the
-  fixtures are in test/fixtures/exclusions/races.ex.
+  Regression cases for races exclusions. Suppressed cases have a reported
+  twin or supporting row so missing extraction cannot make the check pass.
+  Fixtures: test/fixtures/exclusions/races.ex.
   """
   use ExUnit.Case, async: true
 

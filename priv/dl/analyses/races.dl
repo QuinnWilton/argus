@@ -3,7 +3,8 @@
 // harmful result that no serial ordering produces.
 // `CheckThenAct` follows dependent checks and acts across functions. `EtsTable`
 // provides shared table identity. One `RunsConcurrently` instance classifies the
-// processes running all candidate pairs and writes. See docs/design/races.md and
+// processes running all candidate pairs and writes. See
+// docs/analyses/races.md#interference-model and
 // Christakis and Sagonas, PADL 2010.
 
 .include "../clientlib/imports.dl"

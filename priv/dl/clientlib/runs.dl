@@ -1,6 +1,6 @@
 // Classify code by execution frequency within a process incarnation. Used for
 // restart-state loss, repeated monitors, timers, and subscriptions. See
-// docs/design/runs.md.
+// docs/design/analysis-model.md#startup-and-repeated-execution.
 // A clause is once-only when all its message producers are startup or other once-only
 // code. Unknown, external, cyclic, or repeated producers make it repeatable. Once means
 // bounded by startup work, possibly once per startup item or monitor.

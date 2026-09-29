@@ -1,7 +1,6 @@
 defmodule Argus.Test.Soundness.Census.Startup do
   @moduledoc """
-  The exclusion census's startup holes (docs/design/exclusions.md,
-  "Soundness surprises") and their adversarial neighbours: two trees were
+  Suppression counterexamples and nearby variants: two trees were
   taken as running for each other by being two, and a task init/1 awaits
   was not its wait. Asserted by test/soundness/startup_test.exs.
   """

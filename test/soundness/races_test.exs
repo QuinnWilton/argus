@@ -1,8 +1,8 @@
 defmodule Argus.Soundness.RacesTest do
   @moduledoc """
-  The races harm-witness model's narrowings (docs/design/races.md), each
-  with the real bugs it must still report: every program is solved alone
-  and must keep its finding (`Argus.Test.Soundness`).
+  The races harm-witness model's narrowings (docs/analyses/races.md#interference-model),
+  each with the real bugs it must still report: every program is solved alone and must
+  keep its finding (`Argus.Test.Soundness`).
 
   A check-then-act pair is a race when a rival write can land on its row
   between the read and the write — the pair itself in a second process,

@@ -62,19 +62,12 @@ A suppression should have a concrete reason: the reference is released, the tabl
 exists on every relevant path, the peer is known ready, or the operation is serialized.
 An unrelated guard elsewhere in the module is not enough.
 
-## Design reference
+## Contributor reference
 
-| Guide | Purpose |
-|---|---|
-| [Shared analysis model](design/analysis-model.md) | Facts, call/process reachability, identity and uncertainty. |
-| [Startup and repeated execution](design/runs.md) | Once-only clauses, repeated work and state gates. |
-| [State across restarts](design/restart-state.md) | Retained registrations and readers that outlive table owners. |
-| [Monitor lifetimes](design/monitor-leaks.md) | Repeated live monitors and release proofs. |
-| [Race detection](design/races.md) | Check/act pairs, rivals, harm and ordering. |
-| [Suppressions](design/exclusions.md) | Assumptions and counterexamples behind exclusions. |
-| [Rule style](design/rule-style.md) | Naming, comments and the separation of detection from reporting. |
+- [Shared analysis model](design/analysis-model.md): facts, call/process reachability,
+  startup and repeated execution, identity and uncertainty.
+- [Writing and changing rules](design/rule-style.md): detection, reporting, comments,
+  suppressions and behaviour changes.
 
-Keep this reference about current behaviour. Regression fixtures and corpus pairs
-remain in the test tree; historical audits, precision tallies, retired rules and
-completed investigations remain in Git history. When a rule changes, update the
-affected entry's meaning and limits instead of appending another review log.
+Model details specific to an analysis live beside its findings above. Relation
+columns and supported shapes are documented in the schema and clientlib source.

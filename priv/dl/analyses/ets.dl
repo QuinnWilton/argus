@@ -449,7 +449,7 @@ ets_write_only_table(name, mod, site) :-
 // the missing-table error.
 // Exclude the owner, processes ended with it by supervision, and owners whose lifetime
 // is the application's. Readers outside visible process roots may outlive the owner.
-// See docs/design/restart-state.md.
+// See docs/analyses/ets.md#reads-during-an-owners-restart.
 
 // A reader outlives the table's owner. After the owner exits, reads raise ArgumentError
 // until restart recreates the table.

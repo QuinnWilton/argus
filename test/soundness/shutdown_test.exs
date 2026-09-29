@@ -46,7 +46,7 @@ defmodule Argus.Soundness.ShutdownTest do
     end
   end
 
-  # The exclusion census's shutdown hole (docs/design/exclusions.md): a
+  # Suppression counterexample: a
   # demonitor anywhere in the module excused every kill of a monitored
   # process. The kill is tied to the monitored process (points-to), and
   # only a demonitor on the kill's own way releases it.

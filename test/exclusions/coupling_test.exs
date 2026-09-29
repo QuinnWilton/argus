@@ -1,11 +1,8 @@
 defmodule Argus.Exclusions.CouplingTest do
   @moduledoc """
-  Exclusions of the coupling analysis that no evaluation program
-  exercises (census 2026-09-26). Each test pins what one negated atom
-  keeps quiet, beside a twin the analysis does report, so it cannot pass
-  on a fixture the analysis does not read as the test assumes. The
-  census is docs/design/exclusions.md; the fixtures are in
-  test/fixtures/exclusions/coupling.ex.
+  Regression cases for coupling exclusions. Suppressed cases have a reported
+  twin or supporting row so missing extraction cannot make the check pass.
+  Fixtures: test/fixtures/exclusions/coupling.ex.
   """
   use ExUnit.Case, async: true
 

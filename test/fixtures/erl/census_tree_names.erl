@@ -1,4 +1,4 @@
-%% The exclusion census's hole (docs/design/exclusions.md): names each
+%% Suppression counterexample: names each
 %% node of a caller's tree after its parent (a, a.b, a.b.c), as a library
 %% registering one process per node would. Every level is an atom made of
 %% the atom the level above minted, so a caller's deep tree of one

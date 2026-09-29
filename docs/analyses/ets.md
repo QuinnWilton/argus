@@ -23,15 +23,36 @@ policies must not be treated as guarantees of recovery.
 
 `ets_read_outside_owner` · **info**
 
-A reader can survive the table's owner and make a read that raises while the table
-is absent. Recreating the table on restart leaves a window; it does not make those
-reads safe. Readers that end with the owner, recognized presence/creation guards
-and handlers for the error are excluded.
+A table without a known heir disappears with its owner, but a surviving reader can
+make a read that raises while the table is absent. Recreating it on restart leaves
+a window. Inspect whether the owner can stop, whether the reader should retry, and
+whether table loss should be a normal result.
 
-Inspect whether the owner can actually stop, whether the caller should retry, and
-whether table loss should be a normal result. Restart escalation, trapped links,
-mutually exclusive modules and runtime-created names limit the lifetime model.
-See [reader lifetimes](../design/restart-state.md#readers-that-outlive-a-table-owner).
+`may_hold_table` identifies possible owners; `reader_outlives` considers every
+process that can run the read. An owner calling a helper does not prove that no other
+process calls it. External library callers can also be readers.
+
+Readers are treated as ending with the owner when they are the same process, the
+owner has application-wide lifetime, the reader is in the owner's supervised
+subtree, or a recognized `one_for_all`/`rest_for_one` relationship stops them together.
+A linked spawn can inherit that lifetime. A nested owner is different from a direct
+child: restarting it alone need not stop the sibling branch.
+
+Handled reads and recognized presence or creation guards are excluded. The guard or
+ensure must establish the same table's presence before the read on every required
+path; a check for another table or on one branch is insufficient. `ets.info` does not
+raise for a missing table.
+
+The lifetime model has several limits:
+
+- Restart-intensity escalation can stop readers the model treats as surviving.
+- A process trapping exits can survive a linked owner the model assumes ends with it.
+- A supposed keeper may crash; the facts do not prove that its exit halts the node.
+- Deployment alternatives can appear to run together when configuration selects one.
+- Runtime-created names and unresolved table identities can hide accesses.
+
+These assumptions make this an informational finding. Check the actual owner,
+reader and supervision path before changing lifetime policy.
 
 ## Concurrency options
 
@@ -82,5 +103,3 @@ ownership-transfer protocol.
 ## Implementation
 
 [Rules](https://github.com/QuinnWilton/argus/blob/main/priv/dl/analyses/ets.dl) · [Output schema and finding builder](https://github.com/QuinnWilton/argus/blob/main/lib/argus/analyses/ets.ex).
-
-Regression cases live in [test/analyses](https://github.com/QuinnWilton/argus/blob/main/test/analyses) and [test/soundness](https://github.com/QuinnWilton/argus/blob/main/test/soundness).

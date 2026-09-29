@@ -1,7 +1,8 @@
 defmodule Argus.Test.Fixtures.Restart do
   @moduledoc """
   Registrations a sibling's restart loses (clientlib/restart_state.dl,
-  docs/design/restart-state.md), asserted by test/soundness/coupling_test.exs.
+  docs/analyses/coupling.md#restart-isolation), asserted by
+  test/soundness/coupling_test.exs.
 
   Each supervisor starts a keeper and a child that registers something
   with it when it starts, under `:one_for_one`. The keepers keep it in a
