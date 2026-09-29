@@ -174,10 +174,10 @@ those frameworks need.
   across the trees — the noise check after a rule changes. The tally
   runs in `MIX_ENV=test` and shares the gate's store; `argus gc`
   (`mix argus gc`) collects it. A new rule comes with a pair. A pair
-  naming an `otp:` or `elixir:` this machine has no asdf install of is
-  skipped until its trees are compiled here (`Corpus.unbuildable/1`); CI
-  runs the corpus in a job of its own, apart from the suite it would
-  otherwise starve of cores.
+  this machine cannot check is skipped, and the gate prints why: its
+  trees need an `otp:` or `elixir:` with no asdf install here and are
+  not compiled yet (`Corpus.unbuildable/1`), or its repository cannot
+  be fetched and they are not checked out (`Corpus.unfetchable/1`).
 - Tests solve through `Argus.Test.Memo` (`analyze/3`, `run_analyses/2`,
   `run_rules/2` over hand-built facts, `compile_beams/1` for modules a
   test compiles): the same modules and analysis are solved once per run

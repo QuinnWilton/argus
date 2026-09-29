@@ -28,9 +28,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A corpus pair naming an `otp:` or `elixir:` with no asdf install on
   the machine is no longer compiled on the running toolchain, which
   failed on what the pair pins its toolchain for: `mix argus.corpus
-  fetch` answers an error naming what to install, and the gate skips
-  the pair (`Argus.Corpus.unbuildable/1`), until its trees are compiled
-  there.
+  fetch` reports it skipped, naming what to install, and the gate skips
+  it (`Argus.Corpus.unbuildable/1`), until its trees are compiled there.
+- A corpus pair whose repository cannot be fetched (gone, private, or
+  no network) is skipped likewise where its trees are not checked out
+  (`Argus.Corpus.unfetchable/1`), and still checked where they are; the
+  gate prints each pair it skips, and why. Git never waits on a
+  terminal for credentials. A pair's `repo:` may be a git URL.
 
 ## 0.20.0 — 2026-09-27
 

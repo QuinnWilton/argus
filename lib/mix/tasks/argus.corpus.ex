@@ -10,7 +10,10 @@ defmodule Mix.Tasks.Argus.Corpus do
       mix argus.corpus tally --title "owner may be restarting"   # the rows behind one title
 
   `fetch` is what `Argus.CorpusTest` does lazily; running it first keeps
-  the test run itself short. `tally` is the noise check after a rule
+  the test run itself short. A pair this machine cannot build (a
+  toolchain it has no asdf install of, a repository that cannot be
+  fetched) is reported skipped, with the reason (`Argus.Corpus`, "What
+  a machine cannot check"). `tally` is the noise check after a rule
   changes: which titles fire, how often, and on what. It analyzes each
   checkout once, `ARGUS_CORPUS_JOBS` at a time (`Argus.Corpus.jobs/0`),
   and its output does not depend on which finishes first.
@@ -51,6 +54,7 @@ defmodule Mix.Tasks.Argus.Corpus do
 
       case Corpus.ensure(pair, side) do
         {:ok, beams} -> Mix.shell().info("#{co.name}: #{length(beams)} beams")
+        {:skip, why} -> Mix.shell().info("#{co.name}: skipped, #{why}")
         {:error, why} -> Mix.shell().error("#{co.name}: #{why}")
       end
     end
@@ -69,6 +73,10 @@ defmodule Mix.Tasks.Argus.Corpus do
       |> Enum.flat_map(fn
         {co, {:ok, rows}} ->
           for {a, t, mfa} <- rows, do: {a, t, co.name, mfa}
+
+        {co, {:skip, why}} ->
+          Mix.shell().info("#{co.name}: skipped, #{why}")
+          []
 
         {co, {:error, why}} ->
           Mix.shell().error("#{co.name}: #{format_error(why)}")
@@ -104,7 +112,7 @@ defmodule Mix.Tasks.Argus.Corpus do
     {:ok, rows}
   end
 
-  defp rows({:error, _} = error, _filter), do: error
+  defp rows(failed, _filter), do: failed
 
   defp format_error(why) when is_binary(why), do: why
   defp format_error(why), do: inspect(why)

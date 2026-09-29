@@ -11,10 +11,12 @@ defmodule Argus.CorpusTest do
   once, up to `ARGUS_CORPUS_JOBS` at a time (default 4, at most the
   scheduler count), before the pairs are checked. Narrow a run with
   `ARGUS_CORPUS_ONLY=redix#334,oban` (substrings of the issue name), or
-  leave the corpus out with `mix test --exclude corpus`. A pair whose
-  tree this machine cannot build — it names an Erlang or Elixir with no
-  asdf install here, and a side is not compiled yet — is skipped, the
-  reason naming what to install (`Argus.Corpus.unbuildable/1`).
+  leave the corpus out with `mix test --exclude corpus`. A pair this
+  machine cannot check is skipped, with the reason: a tree not compiled
+  here needs an Erlang or Elixir with no asdf install
+  (`Argus.Corpus.unbuildable/1`), or a tree not checked out here comes
+  from a repository that cannot be fetched (`Argus.Corpus.unfetchable/1`,
+  asked of the network only when the corpus runs).
   """
 
   use ExUnit.Case, async: true
@@ -29,22 +31,41 @@ defmodule Argus.CorpusTest do
            s -> s |> String.split(",", trim: true) |> Enum.map(&String.trim/1)
          end)
 
-  # Why each pair is not checked here, by its issue, or false.
-  @skipped Map.new(Corpus.pairs(), fn pair ->
-             reason =
-               cond do
-                 @only != nil and not Enum.any?(@only, &String.contains?(pair.issue, &1)) ->
-                   "not in ARGUS_CORPUS_ONLY"
+  # Whether this run checks the corpus at all: its repositories are asked
+  # whether they can be fetched only then.
+  @runs (
+          config = ExUnit.configuration()
 
-                 reason = Corpus.unbuildable(pair) ->
-                   reason
+          ExUnit.Filters.eval(config[:include], config[:exclude], %{corpus: true, test: true}, []) ==
+            :ok
+        )
 
-                 true ->
-                   false
-               end
+  # Why each pair is not checked here, by its issue, or false. The
+  # repositories are asked side by side.
+  @skipped Corpus.pairs()
+           |> Task.async_stream(
+             fn pair ->
+               reason =
+                 cond do
+                   @only != nil and not Enum.any?(@only, &String.contains?(pair.issue, &1)) ->
+                     "not in ARGUS_CORPUS_ONLY"
 
-             {pair.issue, reason}
-           end)
+                   reason = Corpus.unbuildable(pair) ->
+                     reason
+
+                   reason = @runs && Corpus.unfetchable(pair) ->
+                     reason
+
+                   true ->
+                     false
+                 end
+
+               {pair.issue, reason}
+             end,
+             max_concurrency: 8,
+             timeout: :infinity
+           )
+           |> Map.new(fn {:ok, skipped} -> skipped end)
 
   @selected Enum.filter(Corpus.pairs(), &(Map.fetch!(@skipped, &1.issue) == false))
 
@@ -53,6 +74,20 @@ defmodule Argus.CorpusTest do
   # findings of a large tree are megabytes of prose that would otherwise
   # be copied into every test's context.
   setup_all do
+    # ExUnit reports a skip without its reason: the ones this machine
+    # decided are said once, before the pairs run.
+    unchecked =
+      for {_issue, reason} <- Enum.sort(@skipped),
+          reason not in [false, "not in ARGUS_CORPUS_ONLY"],
+          do: "  #{reason}"
+
+    if unchecked != [] do
+      IO.puts(
+        :stderr,
+        "\nCorpus pairs this machine cannot check (skipped):\n" <> Enum.join(unchecked, "\n")
+      )
+    end
+
     if Argus.Souffle.available?() do
       results =
         @selected
@@ -75,6 +110,7 @@ defmodule Argus.CorpusTest do
   end
 
   defp slim({:error, _} = error), do: error
+  defp slim({:skip, _} = skip), do: skip
 
   # The error names the step (clone, deps.get, compile) and carries the
   # tail of its output; a pattern-match failure would truncate it.
@@ -84,6 +120,8 @@ defmodule Argus.CorpusTest do
     case Map.fetch(results, name) do
       {:ok, {:ok, findings}} -> findings
       {:ok, {:error, why}} -> flunk("#{pair.issue} #{side}: #{why}")
+      # Unchecked when the test was compiled, and no longer checkable.
+      {:ok, {:skip, why}} -> flunk("#{pair.issue} #{side}: #{why}")
       :error -> flunk("#{pair.issue} #{side}: #{name} was not analyzed")
     end
   end

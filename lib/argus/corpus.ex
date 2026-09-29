@@ -42,9 +42,17 @@ defmodule Argus.Corpus do
   version, whose asdf install's `bin` leads the compile's `PATH` (a
   locked Erlang dependency that no longer builds on OTP 28, like an old
   rabbit_common's `'street-address'` macro). The two go together: an
-  Elixir built for OTP 28 does not load on 27. A machine without those
-  installs cannot build the tree (`unbuildable/1`): a checkout it has not
-  compiled yet is an error naming them, and the gate skips the pair.
+  Elixir built for OTP 28 does not load on 27.
+
+  ## What a machine cannot check
+
+  A pair this machine cannot build is skipped, with the reason, by the
+  gate and by `mix argus.corpus fetch` (`ensure/2` answers `{:skip,
+  reason}`), and checked wherever it can be: its trees need an Erlang or
+  Elixir without an asdf install here and one is not compiled yet
+  (`unbuildable/1`), or its repository cannot be fetched (gone, private,
+  or no network) and a tree is not checked out yet (`unfetchable/1`: a
+  repository whose trees survive only in a cache still runs there).
 
   A monorepo that builds many apps from its root names the one analyzed
   with `app:`, and the variables its build reads with `env:` (EMQX
@@ -60,6 +68,9 @@ defmodule Argus.Corpus do
 
   alias Argus.Graph.Environment
 
+  @typedoc """
+  A closed-issue pair: `repo` is `owner/name` on GitHub, or a git URL.
+  """
   @type pair :: %{
           required(:repo) => String.t(),
           required(:issue) => String.t(),
@@ -132,10 +143,13 @@ defmodule Argus.Corpus do
   @doc """
   Clones (if absent) and compiles (if not yet marked) one checkout.
 
-  Returns the `.beam` files of the project's own application, or an
-  error naming the step that failed and its log.
+  Returns the `.beam` files of the project's own application;
+  `{:skip, reason}` when this machine cannot build the tree (see "What a
+  machine cannot check"); or an error naming the step that failed and
+  its log.
   """
-  @spec ensure(pair(), :pre | :fix) :: {:ok, [Path.t()]} | {:error, String.t()}
+  @spec ensure(pair(), :pre | :fix) ::
+          {:ok, [Path.t()]} | {:skip, String.t()} | {:error, String.t()}
   def ensure(pair, side) do
     with %{} = co <- checkout(pair, side) || {:error, "no #{side} side for #{pair.issue}"},
          :ok <- buildable(pair, co),
@@ -177,8 +191,84 @@ defmodule Argus.Corpus do
       missing ->
         if File.exists?(marker(co)),
           do: :ok,
-          else: {:error, "#{co.name} needs #{Enum.join(missing, " and ")}"}
+          else: {:skip, "#{co.name} needs #{Enum.join(missing, " and ")}"}
     end
+  end
+
+  @doc """
+  Why `pair`'s repository cannot be fetched here, or nil: a side is not
+  checked out yet, and `git ls-remote` of the repository fails (it is
+  gone or private, or there is no network). Asks the repository's host
+  on every call, and nothing when every side is checked out.
+  """
+  @spec unfetchable(pair()) :: String.t() | nil
+  def unfetchable(pair) do
+    missing? =
+      Enum.any?([:pre, :fix], fn side ->
+        case checkout(pair, side) do
+          nil -> false
+          co -> not File.dir?(co.dir)
+        end
+      end)
+
+    with true <- missing?,
+         {:error, why} <- reachable(url(pair)) do
+      "#{pair.issue}: #{unfetched(pair, why)}"
+    else
+      _ -> nil
+    end
+  end
+
+  # Whether `url` answers: a stalled transfer gives up, and a host asking
+  # for credentials (GitHub, for a repository that is gone or private)
+  # is refused rather than prompted for, as a terminal would be.
+  defp reachable(url) do
+    task =
+      Task.async(fn ->
+        run(
+          [
+            "git",
+            "-c",
+            "http.lowSpeedLimit=1",
+            "-c",
+            "http.lowSpeedTime=30",
+            "ls-remote",
+            url,
+            "HEAD"
+          ],
+          File.cwd!(),
+          git_env(),
+          "ls-remote #{url}"
+        )
+      end)
+
+    case Task.yield(task, 60_000) || Task.shutdown(task, :brutal_kill) do
+      {:ok, result} -> result
+      nil -> {:error, "ls-remote #{url} timed out after 60 s"}
+    end
+  end
+
+  defp unfetched(pair, why),
+    do: "#{pair.repo} cannot be fetched, and is not checked out here (#{git_reason(why)})"
+
+  # The line of a failed git step's output that says why: its first
+  # `fatal:` line, else its first line past the step's own.
+  defp git_reason(why) do
+    lines =
+      why
+      |> String.split("\n")
+      |> Enum.drop(1)
+      |> Enum.map(&String.trim/1)
+      |> Enum.reject(&(&1 == ""))
+
+    Enum.find(lines, List.first(lines, why), &String.starts_with?(&1, "fatal:"))
+  end
+
+  # Git never waits on a terminal for credentials.
+  defp git_env, do: [{"GIT_TERMINAL_PROMPT", "0"}]
+
+  defp url(%{repo: repo}) do
+    if String.contains?(repo, "://"), do: repo, else: "https://github.com/#{repo}.git"
   end
 
   # Each asdf install the pair names that this machine does not have,
@@ -203,7 +293,8 @@ defmodule Argus.Corpus do
   `opts` may carry the code directories' `stamps:`, read once for many
   checkouts (`analyze_all/2`).
   """
-  @spec analyze(pair(), :pre | :fix, keyword()) :: {:ok, Argus.Findings.t()} | {:error, term()}
+  @spec analyze(pair(), :pre | :fix, keyword()) ::
+          {:ok, Argus.Findings.t()} | {:skip, String.t()} | {:error, term()}
   def analyze(pair, side, opts \\ []) do
     with %{} = co <- checkout(pair, side) || {:error, "no #{side} side for #{pair.issue}"},
          {:ok, beams} <- ensure(pair, side) do
@@ -327,7 +418,7 @@ defmodule Argus.Corpus do
   """
   @spec analyze_all(
           [{checkout(), pair(), :pre | :fix}],
-          ({:ok, Argus.Findings.t()} | {:error, term()} -> result)
+          ({:ok, Argus.Findings.t()} | {:skip, String.t()} | {:error, term()} -> result)
         ) :: [{checkout(), result}]
         when result: term()
   def analyze_all(checkouts, reduce \\ & &1) do
@@ -391,9 +482,15 @@ defmodule Argus.Corpus do
         :ok
       else
         File.mkdir_p!(root())
-        url = "https://github.com/#{pair.repo}.git"
 
-        with :ok <- run(["git", "clone", "-q", url, dir], root(), [], "clone #{pair.repo}"),
+        # A clone that fails leaves no directory: the tree is not here.
+        fetched =
+          case run(["git", "clone", "-q", url(pair), dir], root(), git_env(), "clone") do
+            :ok -> :ok
+            {:error, why} -> {:skip, "#{co.name}: #{unfetched(pair, why)}"}
+          end
+
+        with :ok <- fetched,
              :ok <- run(["git", "checkout", "-q", sha], dir, [], "checkout #{sha}") do
           relax_elixir_requirement(co.project)
         end
