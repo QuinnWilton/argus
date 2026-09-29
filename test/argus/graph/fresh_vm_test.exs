@@ -24,6 +24,12 @@ defmodule Argus.Graph.FreshVmTest do
   @moduletag :project
   @moduletag :tmp_dir
 
+  # As every other peer-driven graph test's: a fresh VM computes each
+  # query's code version from the beams, as its store (this test's own)
+  # keeps no digest a run of this VM made. Five seconds of CPU on a fast
+  # machine, past ExUnit's default minute on a loaded four-core runner.
+  @moduletag timeout: 300_000
+
   # A caller of `callee:go/0`, which nothing defines, compiled from forms.
   defp caller!(dir, callee) do
     forms = [

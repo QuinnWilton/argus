@@ -53,6 +53,10 @@ defmodule Argus.Pipeline.DeterminismTest do
     URI
   ]
 
+  # Two fresh VMs, each loading the pipeline and extracting with every
+  # extractor: under a second on a fast machine, and minutes on a runner
+  # whose cores the rest of the suite holds.
+  @tag timeout: 300_000
   test "two VMs whose atom tables were seeded in opposite orders extract the same facts" do
     paths = Enum.map(@beams, &to_string(:code.which(&1)))
 
@@ -72,7 +76,7 @@ defmodule Argus.Pipeline.DeterminismTest do
     [forward, backward] =
       [atoms, Enum.reverse(atoms)]
       |> Enum.map(&Task.async(fn -> extract_in_peer(paths, &1, extractors) end))
-      |> Task.await_many(300_000)
+      |> Task.await_many(:infinity)
 
     assert Map.keys(forward) == Map.keys(backward)
 
@@ -88,16 +92,20 @@ defmodule Argus.Pipeline.DeterminismTest do
     {:ok, peer, _node} = :peer.start_link(%{connection: :standard_io})
 
     try do
-      :ok = :peer.call(peer, :code, :add_pathsa, [:code.get_path()])
-      :ok = :peer.call(peer, :lists, :foreach, [&String.to_atom/1, atoms], 60_000)
-      {:ok, _} = :peer.call(peer, :application, :ensure_all_started, [:argus_beam])
-
-      {:ok, facts} =
-        :peer.call(peer, Pipeline, :extract, [paths, [extractors: extractors]], 300_000)
-
+      :ok = call(peer, :code, :add_pathsa, [:code.get_path()])
+      :ok = call(peer, :lists, :foreach, [&String.to_atom/1, atoms])
+      {:ok, _} = call(peer, :application, :ensure_all_started, [:argus_beam])
+      {:ok, facts} = call(peer, Pipeline, :extract, [paths, [extractors: extractors]])
       facts
     after
       :peer.stop(peer)
     end
   end
+
+  # Bounded by the test's timeout, not the call's: `:peer.call/4`'s five
+  # seconds is less than starting argus's applications took in a peer on
+  # a CI runner the corpus was compiling on, though the start does no
+  # work of argus's own (it has no application callback).
+  defp call(peer, module, function, args),
+    do: :peer.call(peer, module, function, args, :infinity)
 end
