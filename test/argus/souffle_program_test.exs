@@ -63,8 +63,11 @@ defmodule Argus.Souffle.ProgramTest do
 
   describe "version/1" do
     test "is what the solver says, once per VM for each binary", %{tmp_dir: tmp} do
+      # A stub that prints its arguments: not a link to echo, which
+      # coreutils' echo answers `--version` with its own.
       bin = Path.join(tmp, "souffle")
-      File.ln_s!("/bin/echo", bin)
+      File.write!(bin, "#!/bin/sh\nprintf '%s\\n' \"$*\"\n")
+      File.chmod!(bin, 0o755)
 
       assert Souffle.version(bin) == "--version\n"
       assert Souffle.version(bin) == Souffle.version(bin)
