@@ -28,4 +28,13 @@ end)
 # and on request: `mix test --include escript --include rebar3 --include
 # gleam`.
 exclude = if Argus.Dirs.keep?(), do: [:identity_verify], else: [:cache, :identity_verify]
-ExUnit.start(exclude: [:parity, :escript, :rebar3, :gleam | exclude])
+
+# `ARGUS_TEST_TIMINGS=N` prints the N slowest tests as they ran beside the
+# others (`Argus.Test.Timings`), as CI's log does: `mix test --slowest`
+# measures another run, one test at a time with no timeout.
+formatters =
+  if System.get_env("ARGUS_TEST_TIMINGS"),
+    do: [ExUnit.CLIFormatter, Argus.Test.Timings],
+    else: [ExUnit.CLIFormatter]
+
+ExUnit.start(exclude: [:parity, :escript, :rebar3, :gleam | exclude], formatters: formatters)

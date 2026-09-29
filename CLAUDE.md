@@ -471,4 +471,5 @@ mix escript.build        # The argus escript (built in :prod)
 mix test --include parity  # Also the incremental ≡ fresh gate over argus's own fixtures
 mix argus gc             # Collect the blob store now (runs collect it daily)
 ARGUS_PROPERTIES=full mix test  # Slow properties at their full count
+ARGUS_TEST_TIMINGS=25 mix test  # The 25 slowest tests as they ran beside the others (`--slowest` runs one at a time, no timeouts)
 ```
