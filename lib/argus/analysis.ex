@@ -295,7 +295,7 @@ defmodule Argus.Analysis do
   (`Argus.Run.analyze/3`).
 
   Returns `{:ok, results}` where results is a map of relation name to
-  list of rows. Each row is a list of strings.
+  list of rows, sorted. Each row is a list of strings.
 
   Takes `Argus.Findings.run/2`'s options but `:analyses`; the batch
   pipeline's went with it in 0.20 and raise (`Argus.Run.check_options!/1`).

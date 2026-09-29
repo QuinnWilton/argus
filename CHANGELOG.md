@@ -11,6 +11,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Elixir `~> 1.19` is now required (was `~> 1.18`), as for roux; OTP 28
   remains required. CI tests Elixir 1.19.4 only.
 
+### Fixed
+
+- An analysis's rows come back sorted (`Argus.analyze/3`,
+  `Argus.Souffle.run/3`, and the rows findings are built from),
+  whatever order the solver wrote them in. Souffle writes a relation in
+  the order it numbered its symbols, and that moved between Souffle 2.4
+  and 2.5 over the same facts.
+
 ## 0.20.0 — 2026-09-27
 
 ### The package is `argus_beam`

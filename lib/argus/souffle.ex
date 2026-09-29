@@ -17,7 +17,7 @@ defmodule Argus.Souffle do
 
   @doc """
   Runs Souffle against `facts_dir` using `rules_path` and returns the
-  derived relations.
+  derived relations, each relation's rows sorted (`decode_output/1`).
 
   ## Options
 
@@ -425,6 +425,18 @@ defmodule Argus.Souffle do
     end
   end
 
+  @doc """
+  The rows of one output file Souffle wrote, sorted.
+
+  Souffle writes a relation in the order of its symbols' numbers, which
+  is the order it met them in, and where it meets them first moves with
+  its version: Souffle 2.4 and 2.5 write one relation's rows in
+  different orders over the same facts. Sorted, an analysis's rows are
+  a function of its input alone.
+  """
+  @spec decode_output(binary()) :: [[String.t()]]
+  def decode_output(content), do: content |> Argus.Tsv.decode() |> Enum.sort()
+
   # The relations a solve wrote into a directory of its own: every
   # `.csv` there. Souffle writes a file for each relation the program
   # outputs, empty when it has no rows, and nothing else writes into the
@@ -442,7 +454,7 @@ defmodule Argus.Souffle do
             # Never trimmed: a symbol column may be empty, and trimming
             # the file would eat the tab that carries an empty last column
             # of the last row (or first column of the first).
-            {:cont, {:ok, Map.put(acc, relation, Argus.Tsv.decode(content))}}
+            {:cont, {:ok, Map.put(acc, relation, decode_output(content))}}
 
           {:error, reason} ->
             {:halt, {:error, {:read_failed, path, reason}}}

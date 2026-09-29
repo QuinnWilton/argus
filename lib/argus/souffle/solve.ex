@@ -152,16 +152,16 @@ defmodule Argus.Souffle.Solve do
   end
 
   @doc """
-  The rows of an output a solve kept, by its digest
-  (`Argus.Tsv.decode/1`), or an `Argus.MissingRelationError` naming it
-  when the store no longer holds it.
+  The rows of an output a solve kept, by its digest, sorted
+  (`Argus.Souffle.decode_output/1`), or an `Argus.MissingRelationError`
+  naming it when the store no longer holds it.
   """
   @spec rows(Blob.t(), String.t(), Blob.digest()) ::
           {:ok, [[String.t()]]} | {:error, Argus.MissingRelationError.t()}
   def rows(%Blob{} = store, file, digest) do
     case Blob.get(store, digest) do
       {:ok, content} ->
-        {:ok, Argus.Tsv.decode(content)}
+        {:ok, Argus.Souffle.decode_output(content)}
 
       :miss ->
         {:error,
