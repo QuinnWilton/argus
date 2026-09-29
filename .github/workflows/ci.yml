@@ -111,8 +111,16 @@ jobs:
       # have a job of their own below only to be rerun alone. The corpus
       # runs nightly, in corpus.yml: cold, it compiles every tree it
       # checks.
+      #
+      # One test module per core, not ExUnit's two: a cold solve and an
+      # extraction each hold a core, and a test module solves and
+      # extracts in parallel on its own, so twice the cores left each test
+      # half of one. The 25 slowest tests are printed as they ran
+      # (`Argus.Test.Timings`), beside the others.
       - name: Run tests
-        run: mix test --include identity_verify --exclude corpus
+        run: mix test --include identity_verify --exclude corpus --max-cases "$(nproc)"
+        env:
+          ARGUS_TEST_TIMINGS: "25"
 
   project:
     name: Project tests (Mix compiler, driver, peers)
@@ -145,6 +153,8 @@ jobs:
 
       - name: Run the project tests
         run: mix test --only project
+        env:
+          ARGUS_TEST_TIMINGS: "15"
 
   parity:
     name: Parity (graph ≡ batch)
