@@ -414,6 +414,29 @@ defmodule Argus.Schema.Callbacks do
         """
       },
       %{
+        name: :acquired_if_absent,
+        layer: 2,
+        fields: [
+          {:site, :symbol, "a call (or send)"},
+          {:func, :symbol, "the function holding it"},
+          {:pos, :number, "the parameter whose field the store is, -1 for a named table"},
+          {:store, :symbol, "the field, as returned_update spells it, or `table :name`"},
+          {:arg, :number, "which of the site's arguments is the key the test asked about"}
+        ],
+        doc: """
+        The call at `site` runs only where a membership test or a lookup \
+        found `store` lacking the key, and the key is the site's argument \
+        `arg`: `case :maps.is_key(pid, state.monitors) of false -> \
+        monitor(pid)`, `unless MapSet.member?(s.subs, t), do: \
+        subscribe(t)`, `[] = :ets.lookup(:owners, pid)` before a link. \
+        The walk that fixes the ask's answer at absent reaches the site, \
+        and the walk that fixes it at present does not \
+        (`Argus.Extractors.StateGate.Absent`). An acquisition asked so \
+        is not taken again while the store holds its key: what lets it \
+        run again is that store losing the key.
+        """
+      },
+      %{
         name: :state_return,
         layer: 2,
         fields: [

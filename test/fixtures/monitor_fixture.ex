@@ -1341,4 +1341,83 @@ defmodule Argus.Test.Fixtures.MonitorLeak do
     def handle_info({:DOWN, ref, :process, _pid, _}, state),
       do: {:noreply, %{state | checks: Map.delete(state.checks, ref)}}
   end
+
+  # What lets a monitor be taken again is the store its run asks before it
+  # monitors, when it asks one. Each is quiet; its neighbour in
+  # test/fixtures/soundness/monitors_fixture.ex drops the store asked.
+
+  defmodule AsksWatched do
+    @moduledoc """
+    Monitors a watcher only where `watched` lacks it, keeping the ref in
+    `refs` and the pid in `watched` and under its name in `names`; a
+    rename removes the name and keeps the monitor. The next watch of the
+    same pid finds it in `watched`.
+    """
+    use GenServer
+
+    @impl true
+    def init(_), do: {:ok, %{watched: MapSet.new(), refs: %{}, names: %{}}}
+
+    @impl true
+    def handle_call({:watch, name, pid}, _from, state) do
+      state =
+        if MapSet.member?(state.watched, pid) do
+          state
+        else
+          ref = Process.monitor(pid)
+          %{state | watched: MapSet.put(state.watched, pid), refs: Map.put(state.refs, ref, pid)}
+        end
+
+      {:reply, :ok, %{state | names: Map.put(state.names, name, pid)}}
+    end
+
+    @impl true
+    def handle_cast({:rename, name}, state),
+      do: {:noreply, %{state | names: Map.delete(state.names, name)}}
+
+    @impl true
+    def handle_info({:DOWN, ref, :process, pid, _}, state) do
+      {:noreply,
+       %{state | watched: MapSet.delete(state.watched, pid), refs: Map.delete(state.refs, ref)}}
+    end
+  end
+
+  defmodule AsksItsTable do
+    @moduledoc """
+    Monitors an owner only where `:ask_owners` has no row for it, and
+    writes the ref there; the owner's name goes to `:ask_names`, which a
+    cast prunes. The next claim of the same pid finds its row.
+    """
+    use GenServer
+
+    @impl true
+    def init(_) do
+      :ets.new(:ask_owners, [:named_table, :public])
+      :ets.new(:ask_names, [:named_table, :public])
+      {:ok, nil}
+    end
+
+    @impl true
+    def handle_call({:claim, name, pid}, _from, state) do
+      case :ets.lookup(:ask_owners, pid) do
+        [] -> :ets.insert(:ask_owners, {pid, Process.monitor(pid)})
+        _ -> :ok
+      end
+
+      :ets.insert(:ask_names, {name, pid})
+      {:reply, :ok, state}
+    end
+
+    @impl true
+    def handle_cast({:forget, name}, state) do
+      :ets.delete(:ask_names, name)
+      {:noreply, state}
+    end
+
+    @impl true
+    def handle_info({:DOWN, _ref, :process, pid, _}, state) do
+      :ets.delete(:ask_owners, pid)
+      {:noreply, state}
+    end
+  end
 end

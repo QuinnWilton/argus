@@ -114,6 +114,25 @@ back (`kept_through`, by call or by a fun handed to a call such as
 answer. `monitor_clause` is gone. Readers of positional columns see
 three new relations.
 
+### A monitor asked for first is taken again only when the store asked loses it (schema 160)
+
+**Fixed.** "Entry dropped while its process stays monitored" was
+reported for hackney_pool's `register_h2`/`register_h3`, which monitor a
+connection only where `pid_monitors` lacks it: a checkout that removes
+the connection from `h2_connections` (which records the pid too) read as
+the drop, though the next registration asks `pid_monitors`, still finds
+the pid, and takes no second monitor.
+
+**Added.** Schema 160. `acquired_if_absent(site, func, pos, store, arg)`
+(the StateGate extractor, `Argus.Extractors.StateGate.Absent`): the call
+at `site` runs only where a membership test or a lookup found `store` (a
+field of parameter `pos`, or `table :name` at -1) lacking the key, and
+the key is the site's argument `arg` (`case maps:is_key(Pid, Mons) of
+false -> monitor(process, Pid)`, `MapSet.member?/2`, `:ets.lookup/2`
+answering `[]`). mailbox's `ended` witness counts, for a monitor asked
+so, the drop of the store asked alone (`consulted_store`, a record or
+not); for a monitor asked nothing, the drop of any record, as before.
+
 ### An unread value is unknown, never the default, beyond supervision (schema 158)
 
 **Fixed.** The same conflation as issue #4's, in the other extractors

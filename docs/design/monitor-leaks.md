@@ -146,8 +146,15 @@ one late message, the mailbox's to take, not a monitor left live.
   through the functions that hand back what holds it, the field a
   caller keeps their answer in (by the element of a returned tuple that
   holds it). A field the monitoring clause sets to anything else is no
-  record. A clause of a callback that runs again drops that record,
-  while T may live, without releasing the monitor:
+  record. What lets the run monitor T
+  again is the store it asks first: a run that monitors only where a
+  store of P lacks T (`acquired_if_absent`, `Argus.Extractors.StateGate`:
+  `case maps:is_key(Pid, Mons) of false -> monitor(process, Pid)`, a
+  `MapSet.member?/2`, an `:ets.lookup/2` answering `[]`) is taken again
+  on T only once that store loses it, so that store is the one whose drop
+  counts (a record or not); a run that asks none, any record. A clause
+  of a callback that runs again drops that store, while T may live,
+  without releasing the monitor:
   - a clause other than a `:DOWN` one removes an entry and returns the
     field it removed from (the field whose value is the removal's
     answer), or deletes rows of the table;
@@ -373,3 +380,27 @@ evaluation sets, 11 `ended` rows went and none came:
   three clauses reset to `undefined` without a demonitor. The record is
   now `config_check` (through the fold's answer, by the element that
   holds the refs), and a reset to a scalar literal is not a drop.
+
+### The store asked
+
+hackney_pool's `register_h2`/`register_h3` monitor a connection only
+where `pid_monitors` lacks it, and record the pid in `h2_connections`
+too; a checkout that finds the connection dead removes it from
+`h2_connections` and keeps the monitor. The next registration asks
+`pid_monitors`, which still holds the pid, and monitors nothing: both
+rows were false. The ask is read by the StateGate extractor
+(`acquired_if_absent`): a membership test or a lookup of a key in a
+field of a parameter or a named table, whose absent answer is the only
+one that reaches the call, and whose key is the call's argument (for a
+monitor, the process it names). A monitor asked so counts the drop of
+that store alone; an ask about another key, or one after the monitor,
+asks nothing.
+
+Over the 44 evaluation sets: 2 rows went (hackney_pool's
+`handle_cast/2` twice, false) and none came.
+
+Known gaps, the quiet direction:
+- A record set in one arm of a `case` and returned through a later
+  update is not read (StateFields reads the update the return makes).
+- A monitor inside a helper whose call is asked is not read as asked: the
+  helper may be called unasked elsewhere.

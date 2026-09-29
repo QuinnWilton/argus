@@ -244,6 +244,23 @@ defmodule Argus.Analyses.MailboxMonitorTest do
     end
   end
 
+  describe "what lets the monitor be taken again" do
+    for mods <- [
+          [M.AsksWatched],
+          [M.AsksItsTable],
+          [:mon_asks_pool]
+        ] do
+      test "#{inspect(mods)}: no drop of the store asked" do
+        skip_without_souffle()
+
+        # hackney_pool's register_h2 asks `pid_monitors` before it
+        # monitors, and a checkout drops the pid from `h2_connections`.
+        assert {:ok, r} = Memo.analyze(unquote(mods), :mailbox)
+        refute Enum.any?(Map.get(r, "monitor_leak", []), &match?([_, _, _, "ended"], &1))
+      end
+    end
+  end
+
   describe "a gen_statem's clauses, by the event's type and content" do
     test "what one :internal clause records is not what another resets" do
       skip_without_souffle()

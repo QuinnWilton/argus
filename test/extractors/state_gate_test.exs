@@ -138,6 +138,37 @@ defmodule Argus.Extractors.StateGateTest do
     end
   end
 
+  # The acquired_if_absent rows at the module's one monitor: {parameter,
+  # store, argument}.
+  defp asked_at_monitor(mod) do
+    {data, facts} = facts(mod)
+    [site] = monitor_sites(data)
+
+    for [^site, _func, pos, store, arg] <- Map.get(facts, :acquired_if_absent, []),
+        do: {pos, store, arg}
+  end
+
+  describe "acquired_if_absent" do
+    test "a monitor taken where the store asked lacks the pid it monitors" do
+      # hackney_pool's register_h2: `case maps:is_key(Pid, Mons) of false
+      # -> monitor(process, Pid)`, `monitors` the record's position 2.
+      assert asked_at_monitor(:mon_asks_pool) == [{"1", "{2}", "1"}]
+
+      assert asked_at_monitor(Argus.Test.Fixtures.MonitorLeak.AsksWatched) ==
+               [{"2", ":watched", "1"}]
+    end
+
+    test "an ETS lookup answering [] asks the named table" do
+      assert asked_at_monitor(Argus.Test.Fixtures.MonitorLeak.AsksItsTable) ==
+               [{"-1", "table :ask_owners", "1"}]
+    end
+
+    test "an ask about another key, or after the monitor, gates nothing" do
+      assert asked_at_monitor(Argus.Test.Soundness.Monitors.AsksAnotherKey) == []
+      assert asked_at_monitor(Argus.Test.Soundness.Monitors.AsksAfterMonitoring) == []
+    end
+  end
+
   describe "state_excluded" do
     test "a clause after the one for the start's value does not run while the field holds it" do
       trie = RacesOrder.Trie

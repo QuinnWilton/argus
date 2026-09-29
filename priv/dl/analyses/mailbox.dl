@@ -1137,6 +1137,50 @@ keeps_piece(p, how) :- p = "", how != "part".
 answered_at(h, g, c) :- call_instr(h, g, c).
 answered_at(h, g, c) :- fun_handed(c, h, g, _).
 
+// What lets the monitor at `site` be taken again on a process it already
+// monitors. A run that monitors only where a store of the server lacks
+// the process (acquired_if_absent, the StateGate extractor: `case
+// maps:is_key(Pid, PidMonitors) of false -> monitor(process, Pid)`,
+// `unless MapSet.member?(s.watched, pid)`, `[] = :ets.lookup(:owners,
+// pid)`) is not taken again while that store holds the process: what
+// lets it run again for the process is that store losing it. A drop of
+// another record leaves the next registration asking the store, which
+// answers that the process is monitored (hackney_pool's register_h2 asks
+// `pid_monitors`; a checkout that removes the connection from
+// `h2_connections`, which records the pid too, takes no second monitor).
+// A run that asks no store takes the monitor whenever the process is
+// named, and a drop of any record is what lets it be named again.
+//
+// `monitor_asks(site, mod, store)`: the monitor at `site` is taken only
+// where `store` (a field of the state, or `table :name`) lacks the
+// process it monitors.
+.decl monitor_asks(site: symbol, mod: symbol, store: symbol)
+
+monitor_asks(s, m, k) :-
+  monitored_arg(s, f, j),
+  acquired_if_absent(s, f, _, k, j),
+  function_def(f, m, _, _, _).
+
+// The argument of the monitor call that names the process:
+// `:erlang.monitor/2,3`'s second (Process.monitor/1 compiles to it),
+// `Process.monitor/1,2`'s first.
+.decl monitored_arg(site: symbol, func: symbol, arg: number)
+
+monitored_arg(s, f, 1) :- monitor_call(s, f, _), remote_call(s, f, ":erlang", "monitor", _).
+monitored_arg(s, f, 0) :- monitor_call(s, f, _), remote_call(s, f, "Process", "monitor", _).
+
+.decl asks_before_monitoring(site: symbol)
+
+asks_before_monitoring(s) :- monitor_asks(s, _, _).
+
+// The stores whose drop lets the monitor at `site` be taken again on the
+// process it named: the store its run asks, when it asks one (a record
+// of it or not); every record, when it asks none.
+.decl consulted_store(site: symbol, mod: symbol, store: symbol)
+
+consulted_store(s, m, k) :- monitor_asks(s, m, k).
+consulted_store(s, m, k) :- monitor_record(s, m, k), !asks_before_monitoring(s).
+
 // Where a clause of a callback that runs again drops records of `record`
 // (`func`, the callback or the helper its clause calls), while the
 // process they name may live: a clause other than a :DOWN one removes an
@@ -1156,7 +1200,7 @@ answered_at(h, g, c) :- fun_handed(c, h, g, _).
 .decl record_drop(mod: symbol, record: symbol, func: symbol, callback: symbol, tag: symbol)
 
 record_drop(m, k, h, h, tag) :-
-  monitor_record(_, m, k),
+  consulted_store(_, m, k),
   again_root(h, _),
   function_def(h, m, _, _, _),
   remote_call(x, h, rm, op, _),
@@ -1167,7 +1211,7 @@ record_drop(m, k, h, h, tag) :-
   how != "argument".
 
 record_drop(m, k, g, h, tag) :-
-  monitor_record(_, m, k),
+  consulted_store(_, m, k),
   k != "*",
   again_root(h, _),
   function_def(h, m, _, _, _),
@@ -1181,14 +1225,14 @@ record_drop(m, k, g, h, tag) :-
   how != "argument".
 
 record_drop(m, k, h, h, tag) :-
-  monitor_record(_, m, k),
+  consulted_store(_, m, k),
   again_root(h, _),
   function_def(h, m, _, _, _),
   returned_update(h, k, v, tag),
   emptied(v).
 
 record_drop(m, cat("table ", t), h, h, tag) :-
-  monitor_record(_, m, cat("table ", t)),
+  consulted_store(_, m, cat("table ", t)),
   again_root(h, _),
   function_def(h, m, _, _, _),
   ets_op(x, h, t, op, _),
@@ -1197,7 +1241,7 @@ record_drop(m, cat("table ", t), h, h, tag) :-
   !down_clause(h, tag).
 
 record_drop(m, cat("table ", t), g, h, tag) :-
-  monitor_record(_, m, cat("table ", t)),
+  consulted_store(_, m, cat("table ", t)),
   again_root(h, _),
   function_def(h, m, _, _, _),
   call_instr(h, g, c),
@@ -1251,20 +1295,20 @@ clause_releases(h, tag) :-
   clause_call(c, h, tag),
   release_reach.reaches(g).
 
-// `func` drops the record the monitor at `monitor` keeps, while its
+// `func` drops a store the monitor at `monitor` consults, while its
 // process may live, and neither it nor its clause releases the monitor:
 // a helper a callback's clause calls, or the callback itself.
 .decl drops_record_of(func: symbol, monitor: symbol)
 
 drops_record_of(g, s) :-
-  monitor_record(s, m, k),
+  consulted_store(s, m, k),
   record_drop(m, k, g, h, tag),
   !clause_releases(h, tag),
   !release_reach.reaches(g),
   g != h.
 
 drops_record_of(h, s) :-
-  monitor_record(s, m, k),
+  consulted_store(s, m, k),
   record_drop(m, k, h, h, tag),
   !clause_releases(h, tag).
 

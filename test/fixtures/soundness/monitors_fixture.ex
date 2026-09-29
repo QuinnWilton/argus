@@ -520,6 +520,154 @@ defmodule Argus.Test.Soundness.Monitors.FoldResetsChecks do
   def handle_cast(:reset, state), do: {:noreply, %{state | checks: %{}}}
 end
 
+# ── ended: the store the run asks ─────────────────────────────────────
+#
+# The neighbours of the quiet shapes at the end of
+# test/fixtures/monitor_fixture.ex (and test/fixtures/erl/mon_asks_pool.erl):
+# the store the monitoring run asks is the one dropped, or the ask is not
+# about the process or does not gate the monitor.
+
+defmodule Argus.Test.Soundness.Monitors.AsksWatchedDrops do
+  @moduledoc """
+  Monitors a watcher only where `watched` lacks it; an unwatch removes it
+  from `watched` without a demonitor, and the next watch of the same pid
+  monitors it again.
+  """
+  use GenServer
+
+  @impl true
+  def init(_), do: {:ok, %{watched: MapSet.new(), refs: %{}}}
+
+  @impl true
+  def handle_call({:watch, pid}, _from, state) do
+    if MapSet.member?(state.watched, pid) do
+      {:reply, :ok, state}
+    else
+      ref = Process.monitor(pid)
+
+      {:reply, :ok,
+       %{state | watched: MapSet.put(state.watched, pid), refs: Map.put(state.refs, ref, pid)}}
+    end
+  end
+
+  @impl true
+  def handle_cast({:unwatch, pid}, state),
+    do: {:noreply, %{state | watched: MapSet.delete(state.watched, pid)}}
+end
+
+defmodule Argus.Test.Soundness.Monitors.AsksAnotherKey do
+  @moduledoc """
+  Asks `monitors` about the connection's name, though `monitors` is
+  keyed by pid: the ask is never about the process, and every
+  registration monitors it again. A checkout removes the pid from
+  `conns` without a demonitor.
+  """
+  use GenServer
+
+  @impl true
+  def init(_), do: {:ok, %{conns: %{}, monitors: %{}}}
+
+  @impl true
+  def handle_cast({:register, name, pid}, state) do
+    monitors =
+      if Map.has_key?(state.monitors, name),
+        do: state.monitors,
+        else: Map.put(state.monitors, pid, Process.monitor(pid))
+
+    {:noreply, %{state | conns: Map.put(state.conns, name, pid), monitors: monitors}}
+  end
+
+  @impl true
+  def handle_call({:checkout, name}, _from, state),
+    do: {:reply, :ok, %{state | conns: Map.delete(state.conns, name)}}
+end
+
+defmodule Argus.Test.Soundness.Monitors.AsksAfterMonitoring do
+  @moduledoc """
+  Monitors first and asks `monitors` after: the ask gates only the write,
+  and every registration takes a monitor. A checkout removes the pid from
+  `conns` without a demonitor.
+  """
+  use GenServer
+
+  @impl true
+  def init(_), do: {:ok, %{conns: %{}, monitors: %{}}}
+
+  @impl true
+  def handle_cast({:register, name, pid}, state) do
+    ref = Process.monitor(pid)
+
+    monitors =
+      if Map.has_key?(state.monitors, pid),
+        do: state.monitors,
+        else: Map.put(state.monitors, pid, ref)
+
+    {:noreply, %{state | conns: Map.put(state.conns, name, pid), monitors: monitors}}
+  end
+
+  @impl true
+  def handle_call({:checkout, name}, _from, state),
+    do: {:reply, :ok, %{state | conns: Map.delete(state.conns, name)}}
+end
+
+defmodule Argus.Test.Soundness.Monitors.AsksStoreFilledElsewhere do
+  @moduledoc """
+  Monitors a peer only where `greeted` lacks it, and keeps the ref in
+  `refs`; `greeted` is filled by a hello and emptied of a peer by a bye,
+  without a demonitor: after the bye, the next watch monitors it again.
+  """
+  use GenServer
+
+  @impl true
+  def init(_), do: {:ok, %{greeted: MapSet.new(), refs: %{}}}
+
+  @impl true
+  def handle_call({:watch, pid}, _from, state) do
+    if MapSet.member?(state.greeted, pid) do
+      {:reply, :ok, state}
+    else
+      {:reply, :ok, %{state | refs: Map.put(state.refs, Process.monitor(pid), pid)}}
+    end
+  end
+
+  @impl true
+  def handle_cast({:hello, pid}, state),
+    do: {:noreply, %{state | greeted: MapSet.put(state.greeted, pid)}}
+
+  def handle_cast({:bye, pid}, state),
+    do: {:noreply, %{state | greeted: MapSet.delete(state.greeted, pid)}}
+end
+
+defmodule Argus.Test.Soundness.Monitors.AsksItsTableDrops do
+  @moduledoc """
+  AsksItsTable's neighbour: the cast deletes the owner's row from
+  `:ask_drop_owners`, the table the claim asks, without a demonitor.
+  """
+  use GenServer
+
+  @impl true
+  def init(_) do
+    :ets.new(:ask_drop_owners, [:named_table, :public])
+    {:ok, nil}
+  end
+
+  @impl true
+  def handle_call({:claim, pid}, _from, state) do
+    case :ets.lookup(:ask_drop_owners, pid) do
+      [] -> :ets.insert(:ask_drop_owners, {pid, Process.monitor(pid)})
+      _ -> :ok
+    end
+
+    {:reply, :ok, state}
+  end
+
+  @impl true
+  def handle_cast({:forget, pid}, state) do
+    :ets.delete(:ask_drop_owners, pid)
+    {:noreply, state}
+  end
+end
+
 # ── Released by the run (monitor_released, collected_by_callers) ─────
 
 defmodule Argus.Test.Soundness.Monitors.PlainDemonitor do

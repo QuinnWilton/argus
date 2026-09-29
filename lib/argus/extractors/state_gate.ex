@@ -50,6 +50,14 @@ defmodule Argus.Extractors.StateGate do
     `handle_info(ev, %{status: :init} = s)` queues the event and the
     next clause serves it: the serving call is excluded while the status
     is `:init`, whatever else admits it.
+  - `acquired_if_absent(site, func, pos, store, arg)` — the call (or
+    send) at `site` runs only where a membership test or a lookup found
+    its store lacking the key, and the key is the site's argument `arg`:
+    `case :maps.is_key(pid, state.monitors) of false -> monitor(pid)`.
+    The store is a field of `func`'s parameter `pos` (spelled as
+    `returned_update` spells a field) or a named table (`pos` -1, `table
+    :name`). Read in every function
+    (`Argus.Extractors.StateGate.Absent`).
   - `state_return(func, clause, key, value)` — a way the callback
     completes, in the clause of its first argument's tag `clause` (`*`
     where no tag is established on the way), hands back a state whose
@@ -65,6 +73,7 @@ defmodule Argus.Extractors.StateGate do
 
   alias Argus.Extractor.Dispatch
   alias Argus.Extractor.Resolve
+  alias Argus.Extractors.StateGate.Absent
   alias Argus.Instr
   alias Argus.Instr.Reaching
   alias Argus.InstrId
@@ -173,7 +182,8 @@ defmodule Argus.Extractors.StateGate do
   ]
 
   @impl true
-  def relations, do: [:state_gate, :gate_closed, :state_excluded, :state_return]
+  def relations,
+    do: [:state_gate, :gate_closed, :state_excluded, :state_return, :acquired_if_absent]
 
   @impl true
   @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()
@@ -203,6 +213,8 @@ defmodule Argus.Extractors.StateGate do
     facts = Enum.reduce(gates, %{}, &emit_gate(ctx, &1, &2))
     facts = Enum.reduce(exclusions, facts, &emit_excluded(ctx, &1, &2))
 
+    facts = emit_absent(facts, mod, functions)
+
     for {{name, arity} = fa, pos} <- Enum.sort(@setting),
         Map.has_key?(bodies, fa),
         key <- keys,
@@ -219,6 +231,24 @@ defmodule Argus.Extractors.StateGate do
   end
 
   def extract(_module_data), do: %{}
+
+  # Every function's sites taken only when a store lacks their key
+  # (`Argus.Extractors.StateGate.Absent`).
+  defp emit_absent(facts, mod, functions) do
+    for {:function, name, arity, _entry, instrs} <- functions,
+        func_id = Normalize.func_id(mod, name, arity),
+        {site, pos, store, arg} <- Absent.rows(instrs, arity),
+        reduce: facts do
+      acc ->
+        add_fact(acc, :acquired_if_absent, [
+          InstrId.mint(func_id, site),
+          func_id,
+          Integer.to_string(pos),
+          store,
+          Integer.to_string(arg)
+        ])
+    end
+  end
 
   defp emit_gate(ctx, %{fa: {name, arity}} = gate, facts) do
     func_id = Normalize.func_id(ctx.mod, name, arity)
@@ -381,7 +411,15 @@ defmodule Argus.Extractors.StateGate do
   # The field of the state (parameter `pos` as the callback was handed
   # it) the operand holds on every path: `[key]`, or `[]` when some write
   # of it is anything else.
-  defp field_read(instrs, idx, operand, pos) do
+  @doc """
+  The field of the state (parameter `pos` as the function was handed it)
+  the operand holds at `idx` on every path: `[key]` (`{:map, key}` or
+  `{:record, i}`), or `[]` when some write of it is anything else.
+  """
+  @spec field_read([Instr.instr()], non_neg_integer(), term(), non_neg_integer()) :: [
+          {:map, atom()} | {:record, non_neg_integer()}
+        ]
+  def field_read(instrs, idx, operand, pos) do
     case Instr.register(operand) do
       {kind, _} = reg when kind in [:x, :y] ->
         keys =
@@ -966,8 +1004,10 @@ defmodule Argus.Extractors.StateGate do
 
   # ── Spelling ─────────────────────────────────────────────────────────
 
-  defp spell_key({:map, key}), do: inspect(key)
-  defp spell_key({:record, i}), do: "{#{i}}"
+  @doc "A field as `returned_update` spells it: a map key inspected, a record position `{i}`."
+  @spec spell_key({:map, atom()} | {:record, non_neg_integer()}) :: String.t()
+  def spell_key({:map, key}), do: inspect(key)
+  def spell_key({:record, i}), do: "{#{i}}"
 
   defp spell_out({:set, value}) when is_atom(value), do: [inspect(value)]
   defp spell_out({:set, _value}), do: ["nonatom"]

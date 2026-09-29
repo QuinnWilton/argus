@@ -211,6 +211,37 @@ defmodule Argus.Soundness.MonitorsTest do
     end
   end
 
+  # A monitoring run that asks a store before it monitors is taken again
+  # on the same process only once that store loses it. The quiet shapes
+  # are at the end of test/fixtures/monitor_fixture.ex and in
+  # test/fixtures/erl/mon_asks_pool.erl.
+  describe "ended: the store the run asks" do
+    test "a removal from the store asked, beside a record the ask does not read" do
+      assert_fires([:mon_asks_pool_drops], @ended, {:mon_asks_pool_drops, :handle_cast, 2})
+      assert_fires([M.AsksWatchedDrops], @ended, {M.AsksWatchedDrops, :handle_call, 3})
+    end
+
+    test "a delete from the table asked" do
+      assert_fires([M.AsksItsTableDrops], @ended, {M.AsksItsTableDrops, :handle_call, 3})
+    end
+
+    test "an ask about another key is no ask about the process" do
+      assert_fires([M.AsksAnotherKey], @ended, {M.AsksAnotherKey, :handle_cast, 2})
+    end
+
+    test "an ask after the monitor gates nothing" do
+      assert_fires([M.AsksAfterMonitoring], @ended, {M.AsksAfterMonitoring, :handle_cast, 2})
+    end
+
+    test "a drop of the store asked, though it holds no ref" do
+      assert_fires(
+        [M.AsksStoreFilledElsewhere],
+        @ended,
+        {M.AsksStoreFilledElsewhere, :handle_call, 3}
+      )
+    end
+  end
+
   # "runs again from here" names the callbacks the finding's own walk
   # comes from. A handle_continue/2 clause init/1 continues to calls the
   # helper once (once_site, runs.dl), so it is no such callback, though
