@@ -107,7 +107,8 @@ defmodule Argus.Analyses.MailboxTaskTest do
 
       leaked = leaked(results)
 
-      # TaskFactory returns the task in tail position — not a leak.
+      # TaskFactory returns the task in tail position, or on every way out
+      # after other work — not a leak.
       refute Enum.any?(leaked, fn [func, _id] ->
                String.contains?(func, "TaskFactory")
              end)

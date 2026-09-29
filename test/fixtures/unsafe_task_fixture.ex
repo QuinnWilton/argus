@@ -108,6 +108,15 @@ defmodule Argus.Test.Fixtures.TaskFactory do
   def async(sup, fun) do
     Task.Supervisor.async_nolink(sup, fun)
   end
+
+  # The same factory, with work between the start and the return: every
+  # way out hands back the task (answers_call), so it is still the
+  # caller's to await.
+  def async_counted(counter, fun) do
+    task = Task.async(fun)
+    :counters.add(counter, 1, 1)
+    task
+  end
 end
 
 # Phoenix.LiveView is a stub (test/fixtures/behaviour_stubs.ex): it is

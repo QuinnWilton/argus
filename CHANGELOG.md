@@ -48,6 +48,15 @@ its base through `instance` (a pid a caller keeps from a wrapper is the
 instance `start <site>`, not the start's base). Readers of positional
 columns see one new relation and one renamed and widened.
 
+### A task factory hands the task back on every way out
+
+**Fixed.** "Async task never awaited" read a function as a task factory
+only when the start was its tail call, so `task = Task.async(fun);
+log(task); task` was reported. mailbox's `returns_task` also takes a
+function whose every way out hands back the task (`answers_call`); one
+that hands it back on some ways only, beside another task it drops, or
+by its pid is still reported.
+
 ## 0.20.1 — 2026-09-29
 
 ### Changed

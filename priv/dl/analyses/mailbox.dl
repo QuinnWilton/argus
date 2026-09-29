@@ -630,14 +630,21 @@ collects_a_task(func) :- await_reach.reaches(func).
 
 await_reach.seed(func) :- remote_call(_, func, "Task", w, _), task_collect(w).
 
-// The task started at `start` is the function's tail call: the function
-// returns the task struct to its caller, which is responsible for
-// awaiting it. The function is a factory, not a leak.
+// The task started at `start` is what the function hands back: its tail
+// call, or what every way it returns hands back (answers_call, the
+// must-reading of a wrapper: `task = Task.async(fun); log(task); task`).
+// Its caller is responsible for awaiting it. The function is a factory,
+// not a leak. A task handed back on one way out and dropped on another,
+// or a field of it (its pid), is not.
 .decl returns_task(func: symbol, start: symbol)
 
 returns_task(func, start) :-
   starts_linked_task(func, start),
   tail_call(start).
+
+returns_task(func, start) :-
+  starts_linked_task(func, start),
+  answers_call(func, start, 0).
 
 // A mailbox callback takes the reply of the task started at `func`:
 // - a handle_info/2 clause headed by a reference (`{ref, result} when

@@ -266,3 +266,25 @@ defmodule Argus.Test.Soundness.Mailbox.EnvelopeCast3 do
   @impl true
   def handle_info(:tick, state), do: {:noreply, state}
 end
+
+defmodule Argus.Test.Soundness.Mailbox.TaskFactories do
+  @moduledoc false
+  # Functions that start a linked task and do not hand it back on every
+  # way out: its reply is never awaited, and each call leaves one in the
+  # caller's mailbox (or crashes it with the task).
+
+  # Handed back on one way out, dropped on the other.
+  def maybe(fun, keep?) do
+    task = Task.async(fun)
+    if keep?, do: task, else: :dropped
+  end
+
+  # Two tasks, one handed back: the first is nobody's.
+  def two(first, second) do
+    _ = Task.async(first)
+    Task.async(second)
+  end
+
+  # The task's pid handed back, not the task: nothing can await it.
+  def pid_only(fun), do: Task.async(fun).pid
+end

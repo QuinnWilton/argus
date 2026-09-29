@@ -435,6 +435,22 @@ defmodule Argus.Soundness.MailboxTest do
     end
   end
 
+  # A task a function hands back is its caller's to await, on every way
+  # out (answers_call); one it hands back on some ways only, beside
+  # another, or by its pid, is nobody's.
+  describe "a task factory hands back the task on every way out" do
+    @never "Async task never awaited"
+
+    for fun <- [:maybe, :two, :pid_only] do
+      test "#{fun}: the task is not what every way out hands back" do
+        assert Enum.any?(
+                 fired([M.TaskFactories], :mailbox),
+                 &match?({_, @never, {M.TaskFactories, unquote(fun), _}}, &1)
+               )
+      end
+    end
+  end
+
   # census: self-tag
   # A self-sent tag was excused once its function also cast elsewhere.
   describe "census hole: a self-sent tag beside a cast to another server" do
