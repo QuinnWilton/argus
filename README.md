@@ -120,8 +120,8 @@ Each analysis covers one concern. The ones marked ✓ run by default.
 - `:otp`: everything outside `:security` and `:effects`.
 
 `severity:` changes the severity of an analysis or a set. The
-[bug-class catalog](docs/bug-classes.md) describes each class of bug in
-detail.
+[bug-class catalog](docs/bug-classes.md) explains the findings, their limits,
+and the shared analysis models.
 
 ## License
 

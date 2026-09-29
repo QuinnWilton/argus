@@ -118,7 +118,11 @@ defmodule Argus.MixProject do
       main: "readme",
       source_ref: "v#{@version}",
       source_url: @source_url,
-      extras: ["README.md", "docs/bug-classes.md", "CHANGELOG.md"],
+      extras:
+        ["README.md", "docs/bug-classes.md", "CHANGELOG.md"] ++
+          Enum.map(Path.wildcard("docs/{analyses,design}/*.md"), fn path ->
+            {path, filename: String.replace(Path.rootname(path), "/", "-")}
+          end),
       assets: %{"images" => "images"},
       # Old entries name functions later removed or made private; they
       # render as plain code, which is right for a changelog.

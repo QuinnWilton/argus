@@ -1,81 +1,66 @@
-# How a rule reads
+# Writing readable rules
 
-A rule is read by people who know the bug and not Argus. Each analysis
-states every bug it finds as one short rule in the words of the bug, and
-keeps how each word is computed out of that rule.
+[Bug-class catalog](../bug-classes.md) · [Shared model](analysis-model.md)
+
+A detection rule should explain the defect to someone who understands the bug but
+has not learned Argus's extractor internals. Keep reporting, detection and supporting
+mechanics separate.
 
 ## Three layers
 
-1. **The report** (`.output`): the relation `lib/argus/analyses/*.ex`
-   reads. It joins a detection relation with what a finding needs to be
-   shown: the module, a function to anchor on, a table's kind. Its name
-   and columns are an ABI (scry, planchette, the findings builder, the
-   corpus), so a refactor never changes them. It holds no detection
-   logic: every row of the detection relation is reported, and nothing
-   else is.
+1. **Report relation.** The `.output` consumed by `lib/argus/analyses/*.ex`. It adds
+   names, locations and evidence needed to display a detected defect. Its name,
+   columns and identity are an interface to builders and downstream consumers.
+2. **Detection relation.** A short statement of the defect, using domain concepts.
+3. **Supporting relations.** Extractor joins, value identity, reachability,
+   comparisons and precision filters that implement those concepts.
 
-2. **The detection rule**: named for the bug, as a noun
-   (`missing_row_race`, `lock_during_init`). Its body is the bug, one
-   idea per line, in the order you would say it:
+For example, a missing-row race can read:
 
-   ```prolog
-   // A check decides a row is there, a use that fails when the row is
-   // missing relies on it, and another process can remove the row in
-   // between.
-   missing_row_race(func, check, use, remove, row) :-
-     checks_row_exists(check),
-     decides(func, check, use, row),
-     fails_if_row_missing(use, func),
-     on_shared_table(use),
-     removes_row(remove, row),
-     runs_in_another_process(remove, func).
-   ```
+```prolog
+// Another process can remove the row between the presence check and a use
+// that raises when the row is absent.
+missing_row_race(func, check, use, remove, row) :-
+  checks_row_exists(check),
+  decides(func, check, use, row),
+  fails_if_row_missing(use, func),
+  on_shared_table(use),
+  removes_row(remove, row),
+  runs_in_another_process(remove, func).
+```
 
-   - Three to seven lines. More means an idea is split across lines or
-     the rule is two bugs.
-   - Every atom is a word of the bug's domain, defined below the rule or
-     in `clientlib/`. No extractor facts (`ets_op`, `call_instr`,
-     `remote_call`), no component internals (`missing.meets`), no
-     arithmetic, no string comparisons on kinds.
-   - A negation reads as a sentence too (`!server_traps(mod)`,
-     `!rescued(use, func)`), never an implementation detail.
-   - Variables are named for what they are (`check`, `use`, `remove`,
-     `row`), not `a`, `d`, `w2`. A variable the detection needs but a
-     reader might not expect (the `func` where two sites meet) keeps a
-     comment saying why it is there.
-   - One comment above the rule: the bug in a sentence. The same
-     sentence can go on a slide.
+Each line contributes one part of the argument. If a detection rule needs many
+extractor details or unrelated conditions, give those concepts supporting relations.
+Do not add an abstraction solely to meet a line-count target.
 
-3. **The words**: each atom of the detection rule is a relation with a
-   comment saying what it means in one sentence, then its assumptions and
-   soundness limits. This is where extractor facts, components, key
-   comparisons and precision filters live. A word used by two analyses
-   moves to `clientlib/` under one name.
+## Names and comments
 
-## Naming
+- Use names that state the property: fails_if_row_missing, runs_in_another_process.
+  Put the subject first and name variables for their role.
+- Use nouns for entities and detected defects, such as EtsRow or missing_row_race.
+- Reuse a shared concept from clientlib when it means the same thing. Keep distinct
+  concepts separate, especially possible versus guaranteed properties.
+- Souffle relation names cannot be overloaded by arity; choose an unambiguous name.
+- Start a comment with what the relation means. Add only the assumptions, unknown
+  cases or implementation reason a reader needs to use it correctly.
+- Put historical examples, measurements and discarded approaches in the change
+  record. Do not make readers reconstruct current behaviour from a sequence of fixes.
 
-- Predicates read as verb phrases with their subject first:
-  `fails_if_row_missing(use, func)`, `runs_in_another_process(remove, func)`,
-  `retries_until_locked(lock)`.
-- Kinds of thing are nouns: `removal(write)`, `EtsRow`.
-- One word per concept across the analyses (docs/bug-classes.md's
-  vocabulary). If two analyses mean the same thing by different words,
-  pick one.
-- Soufflé has no overloading: a new word may not reuse a name at another
-  arity. Rename the older relation to what it means instead.
+A useful comment explains why a condition exists or what a result guarantees. It
+does not narrate each join, repeat the identifier, or promise more precision than
+the rules provide. Keep an example when it distinguishes easily confused shapes,
+such as nested exit reasons or timer-message tuples.
 
-## A refactor changes no finding
+## Refactors and behaviour changes
 
-Moving a rule into this shape is a refactor, and must leave every finding
-identical, field for field:
+A rule refactor preserves every finding field, including identity, severity, source
+anchors and evidence. Use the relevant fixture, soundness and corpus comparisons
+for the code being changed; do not rely on a machine-specific scratch harness path.
 
-- `mix test` passes (fixtures and corpus);
-- the identity harness (`/Users/quinn/dev/wt/rulestyle/identity.exs` over
-  the corpus, `identity_live.exs` over the live projects) shows no diff
-  against main.
+If a rewrite intentionally changes which programs are reported, describe the changed
+condition and its counterexamples. Keep that behaviour change distinguishable from
+mechanical restructuring. Update the affected catalog entry and shared model, and
+follow the [suppression guidance](exclusions.md) for any new exclusion.
 
-When the clearer rule is also more precise (a condition that was asked of
-the whole function can now be asked of the one row), say so in the commit
-message. If the harness still shows no diff, the tightening can land with
-the refactor. If it moves findings, it is its own commit after the
-refactor, with the findings it moves listed and argued.
+Documentation-only edits need no rule changes. When schema documentation changes,
+refresh its generated declarations so the source and generated comments agree.
