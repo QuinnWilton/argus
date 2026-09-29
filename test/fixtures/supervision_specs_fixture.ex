@@ -461,3 +461,211 @@ defmodule Argus.Test.Fixtures.ChildSpecs.RestartSup do
     )
   end
 end
+
+# Issue #4: a restart a child_spec/1 reads off its argument. The repro is
+# verbatim below; `Repro` is this namespace's (Argus.Test.Fixtures.Issue4.Repro).
+defmodule Argus.Test.Fixtures.Issue4 do
+  @moduledoc false
+
+  defmodule Repro.Worker do
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+    def child_spec(opts) do
+      %{
+        id: __MODULE__,
+        start: {__MODULE__, :start_link, [opts]},
+        restart: Keyword.get(opts, :restart, :transient)
+      }
+    end
+
+    @impl true
+    def init(opts), do: {:ok, opts}
+
+    @impl true
+    def handle_cast(:stop, state), do: {:stop, :normal, state}
+  end
+
+  defmodule Repro.Supervisor do
+    use DynamicSupervisor
+
+    def start_link, do: DynamicSupervisor.start_link(__MODULE__, [])
+
+    def start_child(supervisor) do
+      DynamicSupervisor.start_child(supervisor, {Repro.Worker, []})
+    end
+
+    @impl true
+    def init([]), do: DynamicSupervisor.init(strategy: :one_for_one)
+  end
+end
+
+# The neighbours of issue #4's repro: each child stops with :normal, and
+# its restart is shown permanent, shown otherwise, or unknown.
+defmodule Argus.Test.Fixtures.Issue4.Stoppers.ExplicitPermanent do
+  @moduledoc false
+  # A literal `restart: :permanent`.
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  def child_spec(opts),
+    do: %{id: __MODULE__, start: {__MODULE__, :start_link, [opts]}, restart: :permanent}
+
+  @impl true
+  def init(opts), do: {:ok, opts}
+
+  @impl true
+  def handle_cast(:stop, state), do: {:stop, :normal, state}
+end
+
+defmodule Argus.Test.Fixtures.Issue4.Stoppers.NoRestartKey do
+  @moduledoc false
+  # A map that states no restart: OTP's default, permanent.
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  def child_spec(opts), do: %{id: __MODULE__, start: {__MODULE__, :start_link, [opts]}}
+
+  @impl true
+  def init(opts), do: {:ok, opts}
+
+  @impl true
+  def handle_cast(:stop, state), do: {:stop, :normal, state}
+end
+
+defmodule Argus.Test.Fixtures.Issue4.Stoppers.PermanentDefault do
+  @moduledoc false
+  # The option read off the argument, `:permanent` by default.
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  def child_spec(opts),
+    do: %{
+      id: __MODULE__,
+      start: {__MODULE__, :start_link, [opts]},
+      restart: Keyword.get(opts, :restart, :permanent)
+    }
+
+  @impl true
+  def init(opts), do: {:ok, opts}
+
+  @impl true
+  def handle_cast(:stop, state), do: {:stop, :normal, state}
+end
+
+defmodule Argus.Test.Fixtures.Issue4.Stoppers.TransientDefault do
+  @moduledoc false
+  # The option read off the argument, `:transient` by default (the repro's).
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  def child_spec(opts),
+    do: %{
+      id: __MODULE__,
+      start: {__MODULE__, :start_link, [opts]},
+      restart: Keyword.get(opts, :restart, :transient)
+    }
+
+  @impl true
+  def init(opts), do: {:ok, opts}
+
+  @impl true
+  def handle_cast(:stop, state), do: {:stop, :normal, state}
+end
+
+defmodule Argus.Test.Fixtures.Issue4.Stoppers.UnreadRestart do
+  @moduledoc false
+  # A restart the extractor cannot read: `||` joins two values.
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  def child_spec(opts),
+    do: %{
+      id: __MODULE__,
+      start: {__MODULE__, :start_link, [opts]},
+      restart: opts[:restart] || :transient
+    }
+
+  @impl true
+  def init(opts), do: {:ok, opts}
+
+  @impl true
+  def handle_cast(:stop, state), do: {:stop, :normal, state}
+end
+
+defmodule Argus.Test.Fixtures.Issue4.Starter do
+  @moduledoc false
+  use DynamicSupervisor
+
+  alias Argus.Test.Fixtures.Issue4.Stoppers
+
+  def start_link, do: DynamicSupervisor.start_link(__MODULE__, [], name: __MODULE__)
+
+  # A literal `restart: :permanent` in the child_spec/1.
+  def explicit, do: DynamicSupervisor.start_child(__MODULE__, {Stoppers.ExplicitPermanent, []})
+
+  # A map with no :restart: OTP's default, permanent.
+  def no_key, do: DynamicSupervisor.start_child(__MODULE__, {Stoppers.NoRestartKey, []})
+
+  # The option read with a :permanent default, the argument without it.
+  def permanent_default,
+    do: DynamicSupervisor.start_child(__MODULE__, {Stoppers.PermanentDefault, []})
+
+  # The transient default, overridden by the argument this start passes.
+  def overridden,
+    do:
+      DynamicSupervisor.start_child(__MODULE__, {Stoppers.TransientDefault, restart: :permanent})
+
+  # Quiet: the transient default, and an argument the extractor cannot
+  # read (any restart), and a restart it cannot read (`||`).
+  def defaulted(name),
+    do: DynamicSupervisor.start_child(__MODULE__, {Stoppers.TransientDefault, name: name})
+
+  def handed(opts),
+    do: DynamicSupervisor.start_child(__MODULE__, {Stoppers.TransientDefault, opts})
+
+  def unread, do: DynamicSupervisor.start_child(__MODULE__, {Stoppers.UnreadRestart, []})
+
+  @impl true
+  def init([]), do: DynamicSupervisor.init(strategy: :one_for_one)
+end
+
+defmodule Argus.Test.Fixtures.Issue4.ListSup do
+  @moduledoc false
+  # The same options in a child list: permanent where the start passes it,
+  # transient by the default where it passes none.
+  use Supervisor
+
+  alias Argus.Test.Fixtures.Issue4.Stoppers
+
+  def start_link(arg), do: Supervisor.start_link(__MODULE__, arg)
+
+  @impl true
+  def init(_arg) do
+    Supervisor.init(
+      [
+        {Stoppers.TransientDefault, restart: :permanent},
+        {Stoppers.PermanentDefault, restart: :transient}
+      ],
+      strategy: :one_for_one
+    )
+  end
+end
+
+defmodule Argus.Test.Fixtures.ChildSpecs.TaskStarter do
+  @moduledoc false
+  # Livebook's runtimes: a Task shorthand started under a DynamicSupervisor
+  # is a dynamic child, of module Task, whatever the fun it runs.
+  def watch(parent),
+    do:
+      DynamicSupervisor.start_child(
+        Argus.Test.Fixtures.ChildSpecs.Pool,
+        {Task, fn -> send(parent, :up) end}
+      )
+end

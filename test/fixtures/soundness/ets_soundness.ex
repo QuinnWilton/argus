@@ -378,6 +378,11 @@ defmodule S2c.Ets.GaugesServer do
 end
 
 defmodule S2c.Own.AgentStart do
+  # The child_spec/1 the supervisor's shorthand calls: a map with no
+  # :restart, permanent. Without one the supervisor could not start it,
+  # and since issue #4 its restart would be unknown, not the default.
+  def child_spec(arg), do: %{id: __MODULE__, start: {__MODULE__, :start_link, [arg]}}
+
   def start_link(_),
     do: Agent.start_link(fn -> :ets.new(:s2c_own_agent, [:named_table, :public]) end)
 end

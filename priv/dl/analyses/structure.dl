@@ -48,8 +48,8 @@ supervisor_registered_as_worker(sup, child, position) :-
 
 own_spec_registered_as_worker(child, sup, via) :-
   is_supervisor(child),
-  own_spec_says_worker(child),
-  started_by_own_spec(child, sup, via).
+  started_by_own_spec(child, sup, via, at),
+  own_spec_says_worker(child, sup, at).
 
 // The module declares the Supervisor behaviour (behaves_as, so Erlang's
 // -behaviour(supervisor) counts).
@@ -79,28 +79,32 @@ spec_says_worker(sup, position, child) :-
   supervisor_child_form(sup, position, "explicit"),
   child != sup.
 
-// The module's own child_spec/1 returns a map with no `:type`, a worker
-// by the supervisor's default (child_spec_type), and none of its returns
-// says `:supervisor`: a child_spec/1 whose returns disagree is not
-// judged.
-.decl own_spec_says_worker(child: symbol)
+// The module's own child_spec/1, handed the start's argument
+// (own_field, supervision.dl), says `worker`: a map with no `:type`, a
+// worker by the supervisor's default, or a type option the argument
+// holds or defaults; and nothing else it may say is `:supervisor` or
+// unread. A child_spec/1 whose returns disagree, or whose type the
+// extractor could not read, is not judged.
+.decl own_spec_says_worker(child: symbol, sup: symbol, at: symbol)
 
-own_spec_says_worker(child) :-
-  child_spec_type(child, "worker"),
-  !child_spec_type(child, "supervisor").
+own_spec_says_worker(child, sup, at) :-
+  own_field(sup, child, at, "type", "worker"),
+  !own_field(sup, child, at, "type", "supervisor"),
+  !own_field(sup, child, at, "type", "dynamic").
 
-// sup starts `child` by the child's own child_spec/1: a shorthand in its
-// child list (`{Mod, args}`, a bare `Mod`), a spec of the parent's own
-// module aside, or a DynamicSupervisor.start_child/2 of one, `via` the
-// function that makes that call ("" for a child list).
-.decl started_by_own_spec(child: symbol, sup: symbol, via: symbol)
+// sup starts `child` by the child's own child_spec/1 at the start `at`:
+// a shorthand in its child list (`{Mod, args}`, a bare `Mod`; `at` its
+// position), a spec of the parent's own module aside, or a
+// DynamicSupervisor.start_child/2 of one, `via` the function that makes
+// that call ("" for a child list).
+.decl started_by_own_spec(child: symbol, sup: symbol, via: symbol, at: symbol)
 
-started_by_own_spec(child, sup, "") :-
+started_by_own_spec(child, sup, "", to_string(position)) :-
   supervisor_child(sup, position, child, _, _),
   supervisor_child_form(sup, position, "shorthand"),
   child != sup.
 
-started_by_own_spec(child, sup, via) :- dynamic_child(sup, child, via).
+started_by_own_spec(child, sup, via, via) :- dynamic_child(sup, child, via).
 
 // ── ConsumerSupervisor children that never finish ────────────────────
 //

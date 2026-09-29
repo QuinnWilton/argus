@@ -47,10 +47,19 @@ defmodule Argus.Schema.Supervision do
           {:sup, :symbol, "supervisor module"},
           {:position, :number, "child start order"},
           {:child_mod, :symbol, "child module"},
-          {:restart, :symbol, "restart type (permanent/transient/temporary)"},
+          {:restart, :symbol,
+           "restart the spec states (permanent/transient/temporary, permanent for a map " <>
+             "with none), 'own' for a shorthand, whose module's child_spec/1 gives it, " <>
+             "'dynamic' when the reader cannot tell"},
           {:type, :symbol, "child type (worker/supervisor)"}
         ],
-        doc: "Child specification within a supervisor."
+        doc: """
+        Child specification within a supervisor. A shorthand (`{Mod, arg}`, \
+        a bare `Mod`, `Mod.child_spec(arg)`) states no restart: its restart \
+        is `own`, the one `Mod.child_spec(arg)` answers \
+        (`child_spec_restart`, `child_spec_option` over the start's \
+        `shorthand_arg`), unless `Supervisor.child_spec/2` overrides it.
+        """
       },
       %{
         name: :supervisor_children_open,
@@ -116,9 +125,41 @@ defmodule Argus.Schema.Supervision do
         layer: 2,
         fields: [
           {:mod, :symbol, "module"},
-          {:restart, :symbol, "restart its child_spec/1 declares (permanent/transient/temporary)"}
+          {:restart, :symbol,
+           "restart its child_spec/1 states (permanent/transient/temporary, permanent " <>
+             "for a spec that states none), 'dynamic' when the reader cannot read it"}
         ],
-        doc: "The restart type a module's own child_spec/1 gives a shorthand {Mod, args} spec."
+        doc: """
+        The restart a module's own child_spec/1 gives a shorthand `{Mod, \
+        arg}` start: the one each spec it answers states, `permanent` for \
+        a map with no `:restart` (the supervisor's default: an absent key), \
+        `dynamic` for one the reader cannot read (a value from a call, \
+        `opts[:restart] || :transient`, a map over a base it cannot know, \
+        another module's child_spec/1 it hands on) — never the default \
+        (issue #4). A restart read off the argument is a \
+        `child_spec_option` row instead. No row when the module has no \
+        child_spec/1 in view.
+        """
+      },
+      %{
+        name: :child_spec_option,
+        layer: 2,
+        fields: [
+          {:mod, :symbol, "module"},
+          {:field, :symbol, "the spec field it gives (restart, type)"},
+          {:key, :symbol, "the option key it reads off child_spec/1's argument"},
+          {:default, :symbol,
+           "the value when the argument does not hold the key, 'dynamic' unread"}
+        ],
+        doc: """
+        The module's child_spec/1 gives a spec field from its argument: \
+        `restart: Keyword.get(opts, :restart, :transient)` (Map.get/3, \
+        `opts[:restart]`, whose default is nil) is `child_spec_option(mod, \
+        "restart", "restart", "transient")`. A shorthand start's field is \
+        then the option its argument holds (`shorthand_option`), or the \
+        default where its argument is options without the key \
+        (`shorthand_arg` `options`), and unknown otherwise.
+        """
       },
       %{
         name: :child_spec_type,
@@ -162,6 +203,41 @@ defmodule Argus.Schema.Supervision do
         """
       },
       %{
+        name: :shorthand_arg,
+        layer: 2,
+        fields: [
+          {:sup, :symbol, "supervisor, as the start's own row names it"},
+          {:child_mod, :symbol, "child module"},
+          {:at, :symbol,
+           "the start: its position in the child list, or the function that calls start_child"},
+          {:shape, :symbol,
+           "'options' when the argument is options every key of which is known, else 'dynamic'"}
+        ],
+        doc: """
+        A shorthand start (`{Mod, arg}`, a bare `Mod` (`arg` is `[]`), \
+        `Mod.child_spec(arg)`) in a child list (`supervisor_child`, `at` \
+        its position), a `DynamicSupervisor.start_child` (`dynamic_child`) \
+        or a `Supervisor.start_child` (`added_child`, `at` the calling \
+        function), and what its argument is: `options`, a keyword list or \
+        a map with atom keys the reader knows whole (`[]` among them), \
+        whose options are `shorthand_option` rows and whose other keys are \
+        absent; or `dynamic`, one that may hold any key. What \
+        `child_spec_option` reads a field from.
+        """
+      },
+      %{
+        name: :shorthand_option,
+        layer: 2,
+        fields: [
+          {:sup, :symbol, "supervisor, as shorthand_arg's"},
+          {:child_mod, :symbol, "child module, as shorthand_arg's"},
+          {:at, :symbol, "the start, as shorthand_arg's"},
+          {:key, :symbol, "an option key the argument holds"},
+          {:value, :symbol, "its value: an atom or an integer, 'dynamic' unread"}
+        ],
+        doc: "An option a shorthand start's `options` argument holds (`shorthand_arg`)."
+      },
+      %{
         name: :dynamic_child_restart,
         layer: 2,
         fields: [
@@ -169,8 +245,8 @@ defmodule Argus.Schema.Supervision do
           {:child_mod, :symbol, "child module, as dynamic_child's"},
           {:caller_func, :symbol, "function that calls start_child, as dynamic_child's"},
           {:restart, :symbol,
-           "restart the start_child's own spec states (permanent/transient/temporary), " <>
-             "'dynamic' when the spec's restart could not be read"}
+           "restart the start_child's own spec states (permanent/transient/temporary, " <>
+             "permanent for a map with none), 'dynamic' when the spec's restart could not be read"}
         ],
         doc: """
         The restart a `DynamicSupervisor.start_child/2`'s own spec states \
@@ -180,7 +256,8 @@ defmodule Argus.Schema.Supervision do
         not apply), or `Supervisor.child_spec/2`'s overrides (redix \
         e67e61a: `Supervisor.child_spec({Redix, opts}, restart: \
         :temporary)`). No row for a shorthand, whose restart its own \
-        child_spec/1 gives (`child_spec_restart`); \
+        child_spec/1 gives (`child_spec_restart`, `child_spec_option` over \
+        the start's `shorthand_arg`); \
         `clientlib/supervision.dl`'s `dynamic_restart` reads both.
         """
       },
@@ -259,13 +336,16 @@ defmodule Argus.Schema.Supervision do
         layer: 2,
         fields: [
           {:sup, :symbol, "the DynamicSupervisor module"},
-          {:limit, :symbol, "the configured cap"}
+          {:limit, :symbol, "the configured cap, 'dynamic' when the options may set one"}
         ],
         doc: """
-        A `max_children` cap read from `DynamicSupervisor.init/1`'s literal \
-        options. Present ONLY when a finite cap is set: the behaviour defaults \
-        to `:infinity`, so absence is the common case and the interesting one, \
-        and consumers ask about it by negation.
+        A `max_children` cap read from `DynamicSupervisor.init/1`'s \
+        options. Present when a finite cap is set, or may be: `dynamic` for \
+        options the extractor cannot read whole (a parameter, a tail or an \
+        element it cannot know), where a cap is unknown rather than the \
+        default (issue #4). The behaviour defaults to `:infinity`, so \
+        absence — options read whole that state none — is the common case \
+        and the interesting one, and consumers ask about it by negation.
         """
       },
       %{

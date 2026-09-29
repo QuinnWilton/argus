@@ -829,13 +829,15 @@ unbounded_children_from_request(sup, child, via, kind) :-
 starts_child(via, sup, child) :- dynamic_child(sup, child, via).
 
 // A supervisor with no finite max_children. `supervisor_max_children` is
-// emitted only when a finite cap is set, so absence is the question. A
-// supervisor held as a pid ("dynamic") has no init/1 to read the cap
-// from; process points-to does not follow start_child's supervisor
-// argument, which is not a pid use. A supervisor whose init/1 could not
-// be read emits no cap either, which counts as uncapped — the
-// conservative direction for a resource bound, and the one that matches
-// the default.
+// emitted when a finite cap is set, or may be ("dynamic": init/1's
+// options could not be read whole, so a cap is unknown rather than the
+// default; issue #4), so absence is the question. A supervisor held as a
+// pid ("dynamic") has no init/1 to read the cap from; process points-to
+// does not follow start_child's supervisor argument, which is not a pid
+// use. A supervisor whose options are nowhere in view (an inline
+// `{DynamicSupervisor, name: n}` spec, one a dependency starts) has no
+// row either, and counts as uncapped: the default, which the extractor
+// does not read there.
 .decl uncapped_supervisor(sup: symbol)
 
 uncapped_supervisor(sup) :-

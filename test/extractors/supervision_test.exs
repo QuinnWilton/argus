@@ -612,10 +612,11 @@ defmodule Argus.Extractors.SupervisionTest do
     end
 
     test "Enum.reject(&is_nil/1) keeps a list closed; another predicate opens it" do
+      # Shorthands: their restart is their own child_spec/1's (`own`).
       assert tree(Specs.RejectSup) ==
                {[
-                  {inspect(Specs.RejectedOwner), "permanent", "worker"},
-                  {"Registry", "permanent", "worker"}
+                  {inspect(Specs.RejectedOwner), "own", "worker"},
+                  {"Registry", "own", "worker"}
                 ], false}
 
       assert {_children, true} = tree(Specs.PredicateSup)
@@ -777,6 +778,69 @@ defmodule Argus.Extractors.SupervisionTest do
             do: {pos, form}
 
       assert Enum.sort(forms) == [{"0", "explicit"}, {"1", "explicit"}]
+    end
+  end
+
+  describe "extract/1 — what a shorthand hands its child_spec/1 (issue #4)" do
+    alias Argus.Test.Fixtures.Issue4
+
+    defp issue4(mod) do
+      {:ok, data} = BeamSpy.BeamFile.disassemble(to_string(:code.which(mod)))
+      Supervision.extract(data)
+    end
+
+    test "a restart read off the argument is an option with its default, not a restart row" do
+      facts = issue4(Issue4.Repro.Worker)
+
+      assert facts[:child_spec_option] == [
+               [inspect(Issue4.Repro.Worker), "restart", "restart", "transient"]
+             ]
+
+      refute Map.has_key?(facts, :child_spec_restart)
+    end
+
+    test "a map that states no restart is permanent; one the reader cannot read is dynamic" do
+      assert issue4(Issue4.Stoppers.NoRestartKey)[:child_spec_restart] == [
+               [inspect(Issue4.Stoppers.NoRestartKey), "permanent"]
+             ]
+
+      assert issue4(Issue4.Stoppers.UnreadRestart)[:child_spec_restart] == [
+               [inspect(Issue4.Stoppers.UnreadRestart), "dynamic"]
+             ]
+    end
+
+    test "each shorthand start records its argument's options" do
+      facts = issue4(Issue4.Starter)
+      at = fn fun -> inspect(Issue4.Starter) <> ":" <> fun end
+
+      args = for [_sup, _child, where, shape] <- facts[:shorthand_arg], do: {where, shape}
+      assert {at.("overridden/0"), "options"} in args
+      assert {at.("handed/1"), "dynamic"} in args
+
+      options =
+        for [_sup, _child, where, key, value] <- facts[:shorthand_option], do: {where, key, value}
+
+      assert {at.("overridden/0"), "restart", "permanent"} in options
+      assert {at.("defaulted/1"), "name", "dynamic"} in options
+    end
+
+    test "a shorthand of a behaviour's own module is a dynamic child of that module" do
+      facts = issue4(Argus.Test.Fixtures.ChildSpecs.TaskStarter)
+      assert [[_sup, "Task", _via]] = facts[:dynamic_child]
+    end
+
+    test "a shorthand in a child list is `own`, with its argument's options at its position" do
+      facts = issue4(Issue4.ListSup)
+
+      assert Enum.sort(
+               for [_, pos, _, restart, _] <- facts[:supervisor_child], do: {pos, restart}
+             ) ==
+               [{"0", "own"}, {"1", "own"}]
+
+      assert Enum.sort(
+               for [_, _, pos, key, value] <- facts[:shorthand_option], do: {pos, key, value}
+             ) ==
+               [{"0", "restart", "permanent"}, {"1", "restart", "transient"}]
     end
   end
 end

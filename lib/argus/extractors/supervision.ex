@@ -80,6 +80,10 @@ defmodule Argus.Extractors.Supervision do
   @restarts [:permanent, :transient, :temporary]
   @child_types [:worker, :supervisor]
 
+  # A value the reader cannot know, inside a term it rebuilds. Not an atom,
+  # so no clause below takes it for a module, a restart or a type.
+  @unknown {:unknown_value}
+
   # Behaviour modules a start function names when the child's own module
   # is among its arguments (`{gen_server, start_link, [{local, n}, Mod,
   # Args, Opts]}`).
@@ -89,11 +93,14 @@ defmodule Argus.Extractors.Supervision do
   def relations,
     do: [
       :added_child,
+      :child_spec_option,
       :child_spec_restart,
       :child_spec_type,
       :post_start_call,
       :dynamic_child,
       :dynamic_child_restart,
+      :shorthand_arg,
+      :shorthand_option,
       :supervisor,
       :supervisor_child,
       :supervisor_children_open,
@@ -153,80 +160,81 @@ defmodule Argus.Extractors.Supervision do
     # and per-tenant systems often spawn workers from non-supervisor code.
     base_facts
     |> extract_dynamic_children(mod, behaviours, module_data)
-    |> extract_child_spec_restart(mod_str, module_data.functions)
-    |> extract_child_spec_type(mod_str, module_data.functions)
+    |> extract_child_spec_fields(mod_str, module_data.functions)
     |> extract_post_start_calls(mod_str, module_data)
     |> extract_task_supervisor_caps(module_data.functions)
   end
 
-  # The restart a module's own child_spec/1 declares — what a shorthand
-  # `{Mod, args}` spec resolves to. `use GenServer, restart: :temporary`
-  # puts it in the generated function's literal map.
-  defp extract_child_spec_restart(facts, mod_str, functions) do
-    case find_function(functions, :child_spec, 1) do
-      nil ->
-        facts
-
-      instrs ->
-        instrs
-        |> Enum.flat_map(fn
-          # A literal spec map: `%{id: .., start: .., restart: :temporary}`.
-          {:move, {:literal, %{restart: restart}}, _} when is_atom(restart) ->
-            [restart]
-
-          # The overrides `use GenServer, restart: :temporary` passes to
-          # Supervisor.child_spec/2.
-          {:move, {:literal, overrides}, _} when is_list(overrides) ->
-            case Keyword.keyword?(overrides) and Keyword.get(overrides, :restart) do
-              restart when is_atom(restart) and not is_nil(restart) and restart != false ->
-                [restart]
-
-              _ ->
-                []
-            end
-
-          {op, _, _, _, _, {:list, pairs}} when op in [:put_map_assoc, :put_map_exact] ->
-            case extract_map_atom(pairs, :restart, nil) do
-              nil -> []
-              restart -> [restart]
-            end
-
-          _ ->
-            []
-        end)
-        |> Enum.uniq()
-        |> Enum.reduce(facts, fn restart, acc ->
-          add_fact(acc, :child_spec_restart, [mod_str, to_string(restart)])
-        end)
-    end
-  end
-
-  # The type a module's own child_spec/1 states for the child a shorthand
-  # names: a spec's `:type`, or a worker by the supervisor's default for a
-  # map it writes with none (supavisor 6b77121: TenantSupervisor, a `use
-  # Supervisor` module whose hand-written child_spec/1 left the type out).
-  # `use Supervisor` generates one that says `:supervisor`, `use
-  # GenServer` one that says nothing, so a worker. What child_spec/1
-  # hands back is read as a child list's element is; another module's
-  # child_spec/1 it calls states nothing here.
-  defp extract_child_spec_type(facts, mod_str, functions) do
+  # What a module's own child_spec/1 answers, which a shorthand start
+  # (`{Mod, arg}`, a bare `Mod`, `Mod.child_spec(arg)`) runs under: each
+  # return read as a child list's element is (a map, `use GenServer`'s
+  # `Supervisor.child_spec(default, overrides)`, a helper's), in a
+  # symbolic frame, so a field it reads off its own argument stays the
+  # option it is.
+  #
+  # - `child_spec_restart(mod, restart)`: the restart it states, `:permanent`
+  #   for a map with none (the supervisor's default: an absent key), and
+  #   `dynamic` for one the reader cannot read (a value from a call, `opts[:restart]
+  #   || :transient`, a map over a base it cannot know) or a spec of another
+  #   module's (`DynamicSupervisor.child_spec(opts)`: its child_spec/1 is not
+  #   read here); a restart read off the argument is a child_spec_option
+  #   row instead. Before issue #4 an unreadable restart left no row, and
+  #   the rules took no row for the default: `restart: Keyword.get(opts,
+  #   :restart, :transient)` was permanent.
+  # - `child_spec_type(mod, type)`: the type it states, `worker` for a map
+  #   with none; a spec of another module's states nothing, and no row is
+  #   written (`use Supervisor` states `supervisor`).
+  # - `child_spec_option(mod, field, key, default)`: the field is
+  #   `Keyword.get(arg, key, default)` of its argument (Map.get/3,
+  #   `arg[key]` too): the start's option when its argument holds the key,
+  #   the default when the argument is options without it
+  #   (shorthand_option, shorthand_arg).
+  defp extract_child_spec_fields(facts, mod_str, functions) do
     case find_function(functions, :child_spec, 1) do
       nil ->
         facts
 
       body ->
-        frame = frame(body, functions)
+        frame = symbolic_frame(body, functions)
 
         fn -> returns(frame, &element_at/3, &element_written/3) end
         |> fueled()
         |> Enum.flat_map(fn
-          {:ok, specs} -> for {_mod, _restart, type, _name, :explicit} <- specs, do: word(type)
-          :error -> []
+          {:ok, specs} -> Enum.flat_map(specs, &own_spec_fields/1)
+          :error -> [{:restart, ["dynamic"]}]
         end)
         |> Enum.uniq()
-        |> Enum.reduce(facts, &add_fact(&2, :child_spec_type, [mod_str, &1]))
+        |> Enum.sort()
+        |> Enum.reduce(facts, &add_spec_field(&2, mod_str, &1))
     end
   end
+
+  defp add_spec_field(facts, mod_str, {:restart, row}),
+    do: add_fact(facts, :child_spec_restart, [mod_str | row])
+
+  defp add_spec_field(facts, mod_str, {:type, row}),
+    do: add_fact(facts, :child_spec_type, [mod_str | row])
+
+  defp add_spec_field(facts, mod_str, {:option, row}),
+    do: add_fact(facts, :child_spec_option, [mod_str | row])
+
+  # A spec of another module's (the shorthand of another, a delegation to
+  # its child_spec/1) is that module's to state.
+  defp own_spec_fields({_mod, {:own, _args}, _type, _name, _form}),
+    do: [{:restart, ["dynamic"]}]
+
+  defp own_spec_fields({_mod, restart, type, _name, form}) do
+    spec_field(:restart, restart, @restarts) ++
+      if(form == :explicit, do: spec_field(:type, type, @child_types), else: [])
+  end
+
+  # A field read off the argument is the start's: the option row says
+  # how, and the field's own relation has no row for this return.
+  defp spec_field(field, {:arg_option, 0, key, default}, _allowed),
+    do: [{:option, [Atom.to_string(field), Atom.to_string(key), option_word(default)]}]
+
+  defp spec_field(field, value, allowed),
+    do: [{field, [if(value in allowed, do: word(value), else: "dynamic")]}]
 
   # Every call made after a Supervisor.start_link in the same function:
   # the tree is running, so whatever these calls set up, a child may
@@ -329,6 +337,7 @@ defmodule Argus.Extractors.Supervision do
       |> track_dynamic(sup, ctx, :dynamic_supervisor_parent, :dynamic_child)
       |> add_fact(:dynamic_child, [sup, child, ctx.func_id])
       |> dynamic_child_restart(sup, child, ctx.func_id, restart)
+      |> shorthand_arg(sup, child, ctx.func_id, restart)
     end
   end
 
@@ -367,10 +376,18 @@ defmodule Argus.Extractors.Supervision do
   defp handle_dynamic_start(facts, ctx, {api, :start_child, 2}, self_sup, functions)
        when api in [Supervisor, :supervisor] do
     case fueled_value(fn -> element_operand(frame(ctx.instrs, functions), ctx.idx, {:x, 1}) end) do
-      {:ok, [{mod, restart, type, _name, form}]} when mod not in [GenServer, Agent, Task] ->
+      {:ok, [{mod, restart, type, _name, _form}]} when mod not in [GenServer, Agent, Task] ->
         sup = resolve_start_child_sup(ctx.instrs, ctx.idx, self_sup, functions)
-        restart = if form == :shorthand and restart == :permanent, do: :own, else: restart
-        add_fact(facts, :added_child, [sup, inspect(mod), word(restart), word(type), ctx.func_id])
+
+        facts
+        |> add_fact(:added_child, [
+          sup,
+          inspect(mod),
+          restart_word(restart),
+          word(type),
+          ctx.func_id
+        ])
+        |> shorthand_arg(sup, inspect(mod), ctx.func_id, restart)
 
       _ ->
         facts
@@ -556,7 +573,7 @@ defmodule Argus.Extractors.Supervision do
   # `dynamic` when the spec's restart could not be read. A shorthand
   # states none (`:own`): its child_spec/1's is the child's
   # (`child_spec_restart`), which the rules read.
-  defp dynamic_child_restart(facts, _sup, _child, _func, :own), do: facts
+  defp dynamic_child_restart(facts, _sup, _child, _func, {:own, _args}), do: facts
 
   defp dynamic_child_restart(facts, sup, child, func, restart),
     do: add_fact(facts, :dynamic_child_restart, [sup, child, func, word(restart)])
@@ -582,38 +599,29 @@ defmodule Argus.Extractors.Supervision do
   #   - A bare module atom: `DynamicSupervisor.start_child(sup, MyWorker)`
   #   - A 2-tuple: `DynamicSupervisor.start_child(sup, {MyWorker, args})`
   #   - A child spec map: `%{id: _, start: {MyWorker, :start_link, [args]}}`
-  # We try each shape; failure is "dynamic". A spec the literal shapes do
-  # not cover — one a helper builds from its parameters, a
-  # `Mod.child_spec/1` call, `Supervisor.child_spec/2` overrides, a map
-  # over a runtime value — is read as a child list's element is; one it
-  # cannot read is "dynamic". The restart is the spec's; a shorthand's is
-  # `:own`, its module's child_spec/1's (the reader writes a shorthand's
-  # restart as the default `:permanent`, and one another value is an
-  # override's, `Supervisor.child_spec({Mod, arg}, restart: :temporary)`).
+  # and one a helper builds from its parameters, a `Mod.child_spec/1`
+  # call, `Supervisor.child_spec/2` overrides, a map over a runtime value:
+  # each is read as a child list's element is, the one reader of a spec
+  # (a map over a base the reader cannot know states any restart; before
+  # issue #4 a separate reading took it for the default). One it cannot
+  # read is "dynamic". The restart is the spec's; a shorthand's is its
+  # module's child_spec/1's, handed the shorthand's argument
+  # (`{:own, args}`).
+  #
+  # A shorthand of a behaviour's own module is that module's child
+  # (`{Task, fun}` starts a Task, `Task.child_spec/1`'s); a spec written
+  # out whose start is a behaviour's start function with no module among
+  # its arguments names no process module.
   defp resolve_dynamic_child(instrs, idx, functions) do
-    case resolve_register(instrs, idx, {:x, 1}) do
-      {:ok, mod} when is_atom(mod) and mod != :dynamic ->
-        {if(module_atom?(mod), do: inspect(mod), else: "dynamic"), :own}
+    case fueled_value(fn -> element_operand(frame(instrs, functions), idx, {:x, 1}) end) do
+      {:ok, [{mod, restart, _type, _name, :shorthand}]} ->
+        {inspect(mod), restart}
 
-      {:ok, {mod, _args}} when is_atom(mod) and mod != :dynamic ->
-        {if(module_atom?(mod), do: inspect(mod), else: "dynamic"), :own}
-
-      {:ok, %{start: {mod, _, _}} = spec} when is_atom(mod) and mod != :dynamic ->
-        {inspect(mod), Map.get(spec, :restart, :permanent)}
+      {:ok, [{mod, restart, _type, _name, _form}]} when mod not in [GenServer, Agent, Task] ->
+        {inspect(mod), restart}
 
       _ ->
-        case fueled_value(fn -> element_operand(frame(instrs, functions), idx, {:x, 1}) end) do
-          {:ok, [{mod, :permanent, _type, _name, :shorthand}]}
-          when mod not in [GenServer, Agent, Task] ->
-            {inspect(mod), :own}
-
-          {:ok, [{mod, restart, _type, _name, _form}]}
-          when mod not in [GenServer, Agent, Task] ->
-            {inspect(mod), restart}
-
-          _ ->
-            {"dynamic", :own}
-        end
+        {"dynamic", own(@unknown)}
     end
   end
 
@@ -738,7 +746,7 @@ defmodule Argus.Extractors.Supervision do
     {strategy, site, max_children} =
       case find_function(module_data.functions, :init, 1) do
         nil -> {:one_for_one, "dynamic", nil}
-        instrs -> detect_dynamic_strategy(mod_str, instrs)
+        instrs -> detect_dynamic_strategy(mod_str, instrs, module_data.functions)
       end
 
     %{}
@@ -753,9 +761,87 @@ defmodule Argus.Extractors.Supervision do
   defp word(value) when is_atom(value) or is_integer(value), do: to_string(value)
   defp word(_value), do: "dynamic"
 
-  # Emitted only when a cap is actually set, so consumers ask about it by
-  # negation. `DynamicSupervisor` defaults to `:infinity`, and the default is
-  # what every project in the corpus uses — recording "unbounded" explicitly
+  # ── What a shorthand hands its module's child_spec/1 ────────────────
+  #
+  # A shorthand start (`{Mod, arg}`, a bare `Mod`, `Mod.child_spec(arg)`)
+  # runs under what `Mod.child_spec(arg)` answers, and a child_spec/1 may
+  # read its fields from the argument (`restart: Keyword.get(opts,
+  # :restart, :transient)`, child_spec_option). So each shorthand start
+  # records its argument's options: `shorthand_arg(sup, child, at,
+  # shape)` says whether the argument is options every key of which the
+  # reader knows (`options`: a keyword list, or a map with atom keys, `[]`
+  # among them) or not (`dynamic`), and `shorthand_option(sup, child, at,
+  # key, value)` is each option, its value's word (`dynamic` where the
+  # reader cannot tell it). A key an `options` argument does not hold is
+  # absent, and takes the child_spec/1's default; an argument the reader
+  # cannot read holds any key. `at` is the start: the position in the
+  # child list, or the function that calls start_child.
+  defp shorthand_arg(facts, sup, child, at, {:own, args}) do
+    case shorthand_options(args) do
+      {:ok, options} ->
+        options
+        |> Enum.reduce(add_fact(facts, :shorthand_arg, [sup, child, at, "options"]), fn
+          {key, value}, acc -> add_fact(acc, :shorthand_option, [sup, child, at, key, value])
+        end)
+
+      :error ->
+        add_fact(facts, :shorthand_arg, [sup, child, at, "dynamic"])
+    end
+  end
+
+  defp shorthand_arg(facts, _sup, _child, _at, _restart), do: facts
+
+  defp shorthand_options(args) when is_list(args) do
+    if Terms.proper_list?(args) and Enum.all?(args, &option_pair?/1),
+      do: {:ok, options(args)},
+      else: :error
+  end
+
+  # A map, a struct among them (not Enumerable: read its pairs).
+  defp shorthand_options(args) when is_map(args) do
+    pairs = Map.to_list(args)
+    if Enum.all?(pairs, &option_pair?/1), do: {:ok, options(pairs)}, else: :error
+  end
+
+  defp shorthand_options(_args), do: :error
+
+  defp option_pair?({key, _value}) when is_atom(key), do: key not in [nil, :dynamic]
+  defp option_pair?(_element), do: false
+
+  # Each key once, with the value the first pair gives it (what
+  # Keyword.get/3 answers), sorted.
+  defp options(pairs) do
+    pairs
+    |> Enum.uniq_by(&elem(&1, 0))
+    |> Enum.map(fn {key, value} -> {Atom.to_string(key), option_word(value)} end)
+    |> Enum.sort()
+  end
+
+  defp option_word(value) when is_atom(value) and value not in [nil, :dynamic], do: word(value)
+  defp option_word(value) when is_integer(value), do: word(value)
+  defp option_word(_value), do: "dynamic"
+
+  # A restart as a row spells it: `own` for a shorthand's, whose module's
+  # child_spec/1 gives it.
+  defp restart_word({:own, _args}), do: "own"
+  defp restart_word(restart), do: word(restart)
+
+  # The cap DynamicSupervisor.init/1's options state: the literal, nil
+  # when options known whole state none (the default, `:infinity`), and
+  # unknown when the options, or the cap in them, are not known whole — a
+  # tail or an element the reader cannot know may hold a cap (issue #4:
+  # an unreadable value is never the default).
+  defp max_children(opts) do
+    case lookup(opts, :max_children, nil) do
+      cap when is_integer(cap) or cap in [nil, :infinity] -> cap
+      _unread -> @unknown
+    end
+  end
+
+  # Emitted only when a cap is set, or may be (`dynamic`: options the
+  # reader cannot read whole), so consumers ask about it by negation.
+  # `DynamicSupervisor` defaults to `:infinity`, and the default is what
+  # every project in the corpus uses — recording "unbounded" explicitly
   # would be a row per supervisor saying nothing.
   defp emit_max_children(facts, _mod_str, nil), do: facts
   defp emit_max_children(facts, _mod_str, :infinity), do: facts
@@ -767,21 +853,15 @@ defmodule Argus.Extractors.Supervision do
   # `DynamicSupervisor.init(strategy: :one_for_one, ...)`. Resolve that
   # options list; fall back to :one_for_one (the only strategy the behaviour
   # accepts) when it can't be read.
-  defp detect_dynamic_strategy(mod_str, instrs) do
+  defp detect_dynamic_strategy(mod_str, instrs, functions) do
     strategy_idx =
       instrs
       |> Enum.with_index()
       |> Enum.find_value(fn {instr, idx} ->
         case match_remote_call(instr) do
           {:ok, DynamicSupervisor, :init, 1} ->
-            case resolve_register(instrs, idx, {:x, 0}) do
-              {:ok, opts} when is_list(opts) ->
-                {Keyword.get(opts, :strategy, :one_for_one), idx,
-                 Keyword.get(opts, :max_children)}
-
-              _ ->
-                {:one_for_one, idx, nil}
-            end
+            opts = fueled_value(fn -> value(frame(instrs, functions), idx, {:x, 0}) end)
+            {:one_for_one, idx, max_children(opts)}
 
           _ ->
             nil
@@ -845,10 +925,11 @@ defmodule Argus.Extractors.Supervision do
           mod_str,
           to_string(idx),
           inspect(child_mod),
-          word(restart),
+          restart_word(restart),
           word(type)
         ])
         |> add_fact(:supervisor_child_form, [mod_str, to_string(idx), to_string(form)])
+        |> shorthand_arg(mod_str, inspect(child_mod), to_string(idx), restart)
 
       # A registered `:name` rides alongside the child at the same position,
       # so a name-keyed `start_child` can later anchor to this exact child.
@@ -894,16 +975,19 @@ defmodule Argus.Extractors.Supervision do
   # children as before.
   @frame_depth 3
 
-  # A value the reader cannot know, inside a term it rebuilds. Not an atom,
-  # so no clause below takes it for a module, a restart or a type.
-  @unknown {:unknown_value}
-
   # What the reader reads a body with: the function's instructions, the
   # module's functions, how deep it may still enter a callee, and, when
   # it entered this body from a call, the caller's frame and the call's
   # index, where the parameters' values are read.
   defp frame(body, functions),
-    do: %{body: body, functions: functions, depth: @frame_depth, caller: nil}
+    do: %{body: body, functions: functions, depth: @frame_depth, caller: nil, symbolic: false}
+
+  # A frame for a function whose argument comes from elsewhere (a module's
+  # own child_spec/1, which every shorthand start calls with its own
+  # argument): an option it reads off its parameter is kept as the
+  # option, `{:arg_option, position, key, default}`, where a plain frame
+  # knows nothing of it.
+  defp symbolic_frame(body, functions), do: %{frame(body, functions) | symbolic: true}
 
   defp enter(frame, body, call_idx),
     do: %{frame | body: body, depth: frame.depth - 1, caller: {frame, call_idx}}
@@ -1210,23 +1294,24 @@ defmodule Argus.Extractors.Supervision do
       :none ->
         case match_remote_call(instr) do
           {:ok, Supervisor, :child_spec, 2} -> overridden(frame, at)
-          {:ok, mod, :child_spec, 1} -> own_child_spec(mod)
+          {:ok, mod, :child_spec, 1} -> own_child_spec(frame, at, mod)
           _ -> :error
         end
     end
   end
 
   # `Mod.child_spec(arg)` is what the `{Mod, arg}` shorthand calls: the
-  # same child, read the same way.
-  defp own_child_spec(mod) do
+  # same child, read the same way, handed the same argument.
+  defp own_child_spec(frame, at, mod) do
     if module_atom?(mod),
-      do: {:ok, [{mod, :permanent, :worker, nil, :shorthand}]},
+      do: {:ok, [{mod, own(value(frame, at, {:x, 0})), :worker, nil, :shorthand}]},
       else: :error
   end
 
   # Supervisor.child_spec/2 overrides a spec's fields: the module is its
   # first argument's, the restart and the type the overrides' when they
-  # state them. Overrides the reader cannot read may state any restart.
+  # state them. Overrides the reader cannot read may state any restart
+  # and any type: both are unknown, not the spec's.
   defp overridden(frame, at) do
     with {:ok, specs} <- element_operand(frame, at, {:x, 0}) do
       overrides = value(frame, at, {:x, 1})
@@ -1247,9 +1332,15 @@ defmodule Argus.Extractors.Supervision do
 
       {mod, restart, type, name, form}
     else
-      {mod, @unknown, type, name, form}
+      {mod, @unknown, @unknown, name, :explicit}
     end
   end
+
+  # A shorthand states no restart: its module's own child_spec/1 gives it,
+  # handed the argument the shorthand carries (`@unknown` where the reader
+  # cannot tell it), which a child_spec/1 may read its restart from
+  # (`Keyword.get(opts, :restart, :transient)`).
+  defp own(args), do: {:own, args}
 
   defp spec_or_error([]), do: :error
   defp spec_or_error(specs), do: {:ok, specs}
@@ -1349,6 +1440,15 @@ defmodule Argus.Extractors.Supervision do
               _ -> @unknown
             end
 
+          {:ok, getter, :get, arity} when getter in [Keyword, Map, Access] and arity in [2, 3] ->
+            option_value(frame, at, arity)
+
+          {:ok, Keyword, op, arity} when {op, arity} in [merge: 2, put: 3, put_new: 3] ->
+            options_update(frame, at, op, :keyword)
+
+          {:ok, Map, op, arity} when {op, arity} in [merge: 2, put: 3, put_new: 3] ->
+            options_update(frame, at, op, :map)
+
           {:ok, _mod, _fun, _arity} ->
             @unknown
 
@@ -1364,6 +1464,103 @@ defmodule Argus.Extractors.Supervision do
       term -> term
     end
   end
+
+  # ── Options, with their defaults ────────────────────────────────────
+  #
+  # `Keyword.get(opts, key, default)` (and Map.get/3, Access.get/3, which
+  # `opts[key]` compiles to; the /2 forms default to nil): the option when
+  # the options the reader rebuilds hold the key, the default when they
+  # are known whole and do not, and unknown otherwise — an options list
+  # with an element or a tail the reader cannot know, a map over a base
+  # it cannot know, may hold the key. An unreadable value is never the
+  # default: only an absent key is (issue #4). In a symbolic frame, options
+  # that are the function's own parameter are the caller's
+  # (`{:arg_option, position, key, default}`). `opts[key] || default`
+  # joins two values on two paths, and is unknown.
+  defp option_value(frame, at, arity) do
+    key = value(frame, at, {:x, 1})
+    default = if arity == 3, do: value(frame, at, {:x, 2}), else: nil
+
+    cond do
+      not option_key?(key) ->
+        @unknown
+
+      (k = symbolic_param(frame, at, {:x, 0})) != nil ->
+        {:arg_option, k, key, default}
+
+      true ->
+        lookup(value(frame, at, {:x, 0}), key, default)
+    end
+  end
+
+  defp option_key?(key), do: is_atom(key) and key not in [nil, :dynamic]
+
+  # The position of the frame's own parameter `reg` holds at `at`, in a
+  # symbolic frame entered from no call.
+  defp symbolic_param(%{symbolic: true, caller: nil, body: body}, at, reg) do
+    Resolve.trace(body, at, reg, nil, fn
+      {:param, k}, _follow -> k
+      _writer, _follow -> nil
+    end)
+  end
+
+  defp symbolic_param(_frame, _at, _reg), do: nil
+
+  # A key's value in options the reader rebuilt: the first pair's, before
+  # anything it cannot know; the default when the options are known whole
+  # and hold no such pair.
+  defp lookup(opts, key, default) when is_list(opts) do
+    Enum.reduce_while(opts, {:absent, opts}, fn
+      {^key, value}, _acc -> {:halt, {:found, value}}
+      {k, _value}, acc when is_atom(k) and k != :dynamic -> {:cont, acc}
+      _unknown, _acc -> {:halt, :unknown}
+    end)
+    |> case do
+      {:found, value} -> value
+      {:absent, opts} -> if Terms.proper_list?(opts), do: default, else: @unknown
+      :unknown -> @unknown
+    end
+  end
+
+  defp lookup(opts, key, default) when is_map(opts) do
+    case Map.fetch(opts, key) do
+      {:ok, value} -> value
+      :error -> if Map.has_key?(opts, @unknown), do: @unknown, else: default
+    end
+  end
+
+  defp lookup(_opts, _key, _default), do: @unknown
+
+  # Keyword.merge/2, put/3 and put_new/3 (and Map's) over options the
+  # reader knows whole: what they answer; anything else is unknown (a
+  # default merged under options it cannot read may be overridden).
+  defp options_update(frame, at, op, kind) do
+    base = value(frame, at, {:x, 0})
+
+    args =
+      case op do
+        :merge -> [value(frame, at, {:x, 1})]
+        _ -> [value(frame, at, {:x, 1}), value(frame, at, {:x, 2})]
+      end
+
+    if Enum.all?([base | args_options(op, args)], &known_options?(&1, kind)) and
+         (op == :merge or option_key?(hd(args))) do
+      apply(if(kind == :keyword, do: Keyword, else: Map), op, [base | args])
+    else
+      @unknown
+    end
+  end
+
+  defp args_options(:merge, [other]), do: [other]
+  defp args_options(_op, _args), do: []
+
+  defp known_options?(opts, :keyword),
+    do: is_list(opts) and Terms.proper_list?(opts) and Enum.all?(opts, &option_pair?/1)
+
+  defp known_options?(opts, :map),
+    do:
+      is_map(opts) and not Map.has_key?(opts, @unknown) and
+        Enum.all?(Map.to_list(opts), &option_pair?/1)
 
   # What `Resolve` makes of the register, when it knows all of it: it
   # interprets the writers the reader leaves alone (a tuple element, a
@@ -1632,7 +1829,11 @@ defmodule Argus.Extractors.Supervision do
     end)
   end
 
-  defp extract_strategy_from_flags(flags) when is_map(flags), do: Map.get(flags, :strategy)
+  # A flags map that states no strategy takes OTP's default, one_for_one:
+  # an absent key (a literal map is known whole).
+  defp extract_strategy_from_flags(flags) when is_map(flags),
+    do: Map.get(flags, :strategy, :one_for_one)
+
   defp extract_strategy_from_flags({strategy, _intensity, _period}), do: strategy
   defp extract_strategy_from_flags(_), do: nil
 
@@ -1882,7 +2083,7 @@ defmodule Argus.Extractors.Supervision do
     # Elixir modules only, as for tuples: a lowercase atom at the head of
     # a runtime-built list is a tag, not an Erlang child.
     if String.starts_with?(Atom.to_string(mod), "Elixir."),
-      do: [{mod, :permanent, :worker, nil, :shorthand}],
+      do: [{mod, own([]), :worker, nil, :shorthand}],
       else: []
   end
 
@@ -1972,14 +2173,6 @@ defmodule Argus.Extractors.Supervision do
   defp map_start_module(mod) when is_atom(mod) and mod != nil, do: mod
   defp map_start_module(_start), do: nil
 
-  # Extract an atom value from a flat pair list, with a default.
-  defp extract_map_atom(pairs, key, default) do
-    case find_map_pair(pairs, key) do
-      {:atom, val} -> val
-      _ -> default
-    end
-  end
-
   defp extract_child_from_literal(list) when is_list(list) do
     list |> list_elements() |> Enum.flat_map(&extract_single_child_spec/1)
   end
@@ -2031,8 +2224,23 @@ defmodule Argus.Extractors.Supervision do
     end
   end
 
+  # OTP's tuple form whose restart or type is a value the reader cannot
+  # know (`{Id, {M, F, A}, Restart, 5000, worker, [M]}` with Restart a
+  # parameter): still an explicit spec of the start's module, its unread
+  # field unknown — not a shorthand taking the default (issue #4).
+  defp extract_single_child_spec({_id, {mod, _fun, args}, restart, _shutdown, type, modules})
+       when is_atom(mod) and mod not in [nil, :dynamic] and
+              (restart in @restarts or restart == @unknown) and
+              (type in @child_types or type == @unknown) and
+              (restart == @unknown or type == @unknown) do
+    case spec_module(modules, mod, args) do
+      nil -> []
+      child -> [{child, restart, type, nil, :explicit}]
+    end
+  end
+
   defp extract_single_child_spec({mod, args}) when is_atom(mod) do
-    if module_name?(mod), do: [{mod, :permanent, :worker, child_name(args), :shorthand}], else: []
+    if module_name?(mod), do: [{mod, own(args), :worker, child_name(args), :shorthand}], else: []
   end
 
   defp extract_single_child_spec(%{start: {mod, _, _}} = spec) when is_atom(mod),
@@ -2043,7 +2251,7 @@ defmodule Argus.Extractors.Supervision do
     # never spells a child spec that way, so a lowercase atom here is a
     # tag in some other literal list, not a module.
     if String.starts_with?(Atom.to_string(mod), "Elixir."),
-      do: [{mod, :permanent, :worker, nil, :shorthand}],
+      do: [{mod, own([]), :worker, nil, :shorthand}],
       else: []
   end
 
@@ -2058,7 +2266,7 @@ defmodule Argus.Extractors.Supervision do
   # the spec is left out rather than read as the wrapper.
   defp spec_module(modules, mod, args) do
     cond do
-      not is_list(modules) and modules != :dynamic -> nil
+      not is_list(modules) and modules not in [:dynamic, @unknown] -> nil
       is_list(modules) and not Terms.proper_list?(modules) -> nil
       is_list(modules) and (:dynamic in modules or not Enum.all?(modules, &is_atom/1)) -> nil
       match?([m] when is_atom(m) and m not in [nil, true, false], modules) -> hd(modules)
@@ -2160,7 +2368,10 @@ defmodule Argus.Extractors.Supervision do
       # a `{:via, Registry, _}` registration is still recoverable by tracing
       # the opts through its construction to the via call.
       [{:atom, mod} | _] ->
-        [{mod, :permanent, :worker, via_child_name(elements, instrs, idx, functions), :shorthand}]
+        [
+          {mod, own(@unknown), :worker, via_child_name(elements, instrs, idx, functions),
+           :shorthand}
+        ]
 
       [] ->
         case defaulted_module(elements, instrs, idx) do
@@ -2169,7 +2380,7 @@ defmodule Argus.Extractors.Supervision do
 
           mod ->
             [
-              {mod, :permanent, :worker, via_child_name(elements, instrs, idx, functions),
+              {mod, own(@unknown), :worker, via_child_name(elements, instrs, idx, functions),
                :shorthand}
             ]
         end

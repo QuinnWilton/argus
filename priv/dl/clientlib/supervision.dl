@@ -52,17 +52,20 @@ child_subtree(sup, branch, descendant) :-
 // `child`, however the child joined it: listed in its init/1
 // (child_restart), started by a DynamicSupervisor.start_child
 // (dynamic_restart) or added by a Supervisor.start_child (added_restart).
-// Each reads it the same way: the spec as written wins when it states a
-// restart; a shorthand (`{Mod, args}`, a bare `Mod`, a `Mod.child_spec(args)`
-// call) states none, and its module's own child_spec/1 gives it
-// (child_spec_restart: `use GenServer, restart: :temporary`, logflare's
-// ClickHouse Provisioner's hand-written map); a module whose child_spec/1
-// states none either runs under OTP's default, :permanent. A spec whose
-// restart the extractor could not read ("dynamic") has no row: it is
-// neither shown permanent nor shown to leave the child down. A
+// Each reads it the same way: the spec as written when it states a
+// restart (a map's, `permanent` for a map that states none, an
+// override's); a shorthand (`{Mod, arg}`, a bare `Mod`, a
+// `Mod.child_spec(arg)` call) states none (`own`), and its module's own
+// child_spec/1, handed the shorthand's argument, gives it (own_restart).
+// A restart is known only by positive evidence: one the extractor could
+// not read ("dynamic"), a child_spec/1 that does not state one it can
+// read, a module whose child_spec/1 is not in view, and an option the
+// start's argument may or may not hold give no row — neither permanent,
+// OTP's default for an absent key, nor anything else (issue #4: `restart:
+// Keyword.get(opts, :restart, :transient)` was taken for permanent). A
 // Task.Supervisor's task (child `Task`) is not a module's, and its
-// restart, the start's option, is not read: it has no row either.
-// Every rule asking whether a supervisor restarts a child reads this.
+// restart, the start's option, is not read: it has no row either. Every
+// rule asking whether a supervisor restarts a child reads this.
 .decl restart_policy(sup: symbol, child: symbol, restart: symbol)
 
 restart_policy(sup, child, restart) :- child_restart(sup, _, child, restart), known_restart(restart).
@@ -75,46 +78,28 @@ known_restart("permanent").
 known_restart("transient").
 known_restart("temporary").
 
-// The restart of the child at `pos` in sup's child list. supervisor_child's
-// restart is what the extractor read: a spec's own (a map's, `:permanent`
-// when the map states none: a map does not call the module's child_spec/1;
-// OTP's tuple form's), and for a shorthand the default, :permanent, or
-// another value when `Supervisor.child_spec({Mod, arg}, restart:
-// :temporary)` overrides it. A shorthand read as :permanent takes its
-// module's child_spec/1's restart when that states one. Known limit: an
-// override of `restart: :permanent` itself reads as the default, and a
-// shorthand whose `type:` alone is overridden reads as explicit
-// (supervisor_child_form is the type's form), so its module's restart is
-// not consulted there; the corpus has neither.
+// The restart of the child at `pos` in sup's child list: the one its
+// spec states (supervisor_child's restart: a map's, `permanent` for a map
+// that states none, OTP's tuple form's, a `Supervisor.child_spec/2`
+// override's), or a shorthand's own (`own`).
 .decl child_restart(sup: symbol, pos: number, child: symbol, restart: symbol)
 
 child_restart(sup, pos, child, restart) :-
   supervisor_child(sup, pos, child, restart, _),
-  supervisor_child_form(sup, pos, "explicit").
+  restart != "own".
 
 child_restart(sup, pos, child, restart) :-
-  supervisor_child(sup, pos, child, restart, _),
-  supervisor_child_form(sup, pos, "shorthand"),
-  restart != "permanent".
-
-child_restart(sup, pos, child, restart) :-
-  supervisor_child(sup, pos, child, "permanent", _),
-  supervisor_child_form(sup, pos, "shorthand"),
-  child_spec_restart(child, restart).
-
-child_restart(sup, pos, child, "permanent") :-
-  supervisor_child(sup, pos, child, "permanent", _),
-  supervisor_child_form(sup, pos, "shorthand"),
-  !child_spec_restart(child, _).
+  supervisor_child(sup, pos, child, "own", _),
+  own_restart(sup, child, to_string(pos), restart).
 
 // A DynamicSupervisor.start_child gives its child the restart of the spec
-// it hands over: a map's (`:permanent` when it states none, whatever the
-// module's child_spec/1 says), an override's, or for a shorthand (`Mod`,
-// `{Mod, arg}`, which states none: dynamic_child_restart has no row) the
-// module's own child_spec/1's, `:permanent` when that states none either.
-// A Task.Supervisor start is a dynamic_child too, of child `Task`, and
-// has no spec: its restart is the start's `:restart` option, :temporary
-// by default, and has no row here.
+// it hands over: a map's (`permanent` when it states none, whatever the
+// module's child_spec/1 says: the map does not call it), an override's,
+// or for a shorthand (`Mod`, `{Mod, arg}`, which states none:
+// dynamic_child_restart has no row) the module's own. A Task.Supervisor
+// start is a dynamic_child too, of child `Task`, and has no spec: its
+// restart is the start's `:restart` option, :temporary by default, and
+// has no row here.
 .decl dynamic_restart(sup: symbol, child: symbol, caller: symbol, restart: symbol)
 
 dynamic_restart(sup, child, f, restart) :- dynamic_child_restart(sup, child, f, restart).
@@ -123,28 +108,54 @@ dynamic_restart(sup, child, f, restart) :-
   dynamic_child(sup, child, f),
   child != "Task",
   !dynamic_child_restart(sup, child, f, _),
-  child_spec_restart(child, restart).
-
-dynamic_restart(sup, child, f, "permanent") :-
-  dynamic_child(sup, child, f),
-  child != "Task",
-  !dynamic_child_restart(sup, child, f, _),
-  !child_spec_restart(child, _).
+  own_restart(sup, child, f, restart).
 
 // A Supervisor.start_child's child runs under the restart its spec
-// states; a shorthand's (`own`) is its module's child_spec/1's, and
-// :permanent when that states none.
+// states; a shorthand's (`own`) is its module's own.
 .decl added_restart(sup: symbol, child: symbol, caller: symbol, restart: symbol)
 
 added_restart(sup, child, f, restart) :- added_child(sup, child, restart, _, f), restart != "own".
 
 added_restart(sup, child, f, restart) :-
   added_child(sup, child, "own", _, f),
+  own_restart(sup, child, f, restart).
+
+// The restart the shorthand start `at` (a position in sup's child list,
+// or the function that calls start_child) gets from child's own
+// child_spec/1 (own_field).
+.decl own_restart(sup: symbol, child: symbol, at: symbol, restart: symbol)
+
+own_restart(sup, child, at, restart) :- own_field(sup, child, at, "restart", restart).
+
+// A field (`restart`, `type`) the shorthand start `at` gets from child's
+// own child_spec/1: the one it states (child_spec_restart,
+// child_spec_type: a literal, the supervisor's default for a map that
+// states none, "dynamic" for one the extractor could not read, which a
+// reader leaves out), or the option of the start's argument it reads
+// (child_spec_option, `Keyword.get(opts, :restart, :transient)`): the
+// argument's option (shorthand_option), or the default where the
+// argument is options that do not hold the key (shorthand_arg "options":
+// `{Repro.Worker, []}`). An argument the extractor could not read may
+// hold any option, and gives no row. One reading for every field.
+.decl own_field(sup: symbol, child: symbol, at: symbol, field: symbol, value: symbol)
+
+own_field(sup, child, at, "restart", restart) :-
+  shorthand_arg(sup, child, at, _),
   child_spec_restart(child, restart).
 
-added_restart(sup, child, f, "permanent") :-
-  added_child(sup, child, "own", _, f),
-  !child_spec_restart(child, _).
+own_field(sup, child, at, "type", type) :-
+  shorthand_arg(sup, child, at, _),
+  child_spec_type(child, type).
+
+own_field(sup, child, at, field, value) :-
+  shorthand_arg(sup, child, at, "options"),
+  child_spec_option(child, field, key, _),
+  shorthand_option(sup, child, at, key, value).
+
+own_field(sup, child, at, field, default) :-
+  shorthand_arg(sup, child, at, "options"),
+  child_spec_option(child, field, key, default),
+  !shorthand_option(sup, child, at, key, _).
 
 // ── Start order ───────────────────────────────────────────────────────
 //

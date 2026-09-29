@@ -50,5 +50,48 @@ defmodule Argus.Analyses.ShutdownSupervisionTest do
       assert for([_sup, child | _] <- results["permanent_child_stops_normally"], do: child) ==
                [inspect(Specs.PermanentStopper)]
     end
+
+    # Issue #4: a restart the extractor cannot read, or a default a start's
+    # argument may override, is unknown; a permanent child is shown to be
+    # one.
+    test "the issue's repro: Keyword.get(opts, :restart, :transient) under {Repro.Worker, []}" do
+      skip_without_souffle()
+
+      alias Argus.Test.Fixtures.Issue4.Repro
+
+      assert {:ok, results} = Memo.analyze([Repro.Worker, Repro.Supervisor], :shutdown)
+      assert Map.get(results, "permanent_child_stops_normally", []) == []
+    end
+
+    test "a restart shown permanent is reported; one unknown or transient is not" do
+      skip_without_souffle()
+
+      alias Argus.Test.Fixtures.Issue4.{ListSup, Starter, Stoppers}
+
+      modules = [
+        Starter,
+        ListSup,
+        Stoppers.ExplicitPermanent,
+        Stoppers.NoRestartKey,
+        Stoppers.PermanentDefault,
+        Stoppers.TransientDefault,
+        Stoppers.UnreadRestart
+      ]
+
+      assert {:ok, results} = Memo.analyze(modules, :shutdown)
+
+      reported =
+        for [sup, child | _] <- results["permanent_child_stops_normally"],
+            uniq: true,
+            do: {sup, child |> String.split(".") |> List.last()}
+
+      assert Enum.sort(reported) == [
+               {inspect(ListSup), "TransientDefault"},
+               {inspect(Starter), "ExplicitPermanent"},
+               {inspect(Starter), "NoRestartKey"},
+               {inspect(Starter), "PermanentDefault"},
+               {inspect(Starter), "TransientDefault"}
+             ]
+    end
   end
 end

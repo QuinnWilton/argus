@@ -85,6 +85,61 @@ calls.dl's and global_reach.dl's clause-aware entry compares a literal
 first argument with a tag's type. Readers of positional columns see one
 new relation, a new column and new tag spellings.
 
+### An unread value is unknown, never the default (schema 157)
+
+**Fixed.** "Permanent child stops itself and is restarted" was reported
+for a DynamicSupervisor child whose `child_spec/1` says `restart:
+Keyword.get(opts, :restart, :transient)` and whose only start passes
+`{Repro.Worker, []}` (issue #4). The extractor read only a literal
+restart, left no row for one it could not read, and the rules took no
+row for OTP's default: an unreadable restart was an absent one,
+`:permanent`.
+
+**Changed.** Schema 157. One reading of a child spec's fields, for
+restart and type alike. A module's `child_spec/1` is read through the
+spec reader, in a frame where an option read off its own argument stays
+the option: `child_spec_restart` (and `child_spec_type`) is the value
+each returned spec states, `permanent` for a map with no `:restart`, and
+`dynamic` for one it cannot read (a value from a call, `opts[:restart] ||
+:transient`, a map over a base it cannot know, another module's
+`child_spec/1` it hands on); `child_spec_option(mod, field, key,
+default)` is a field `Keyword.get/Map.get/Access.get` reads off the
+argument. Every shorthand start (in a child list, a
+`DynamicSupervisor.start_child`, a `Supervisor.start_child`) is now
+`own` in `supervisor_child`'s restart column, as `added_child`'s was,
+and records its argument (`shorthand_arg`: `options` known whole, or
+`dynamic`) and its options (`shorthand_option`). clientlib/supervision.dl's
+`own_field` gives a shorthand start the field its module's `child_spec/1`
+gives handed that argument: the one it states, or the start's option,
+or the default where the argument is options without the key; an
+argument or a value the extractor cannot read gives no row, and
+`restart_policy` needs positive evidence. The spec reader evaluates
+`Keyword.get/2,3`, `Map.get/2,3`, `Access.get/2,3`, and `Keyword`'s and
+`Map`'s `merge/2`, `put/3` and `put_new/3` over options it knows whole
+(unknown otherwise), `resolve_dynamic_child` reads every start_child
+spec through it (a map over a base it cannot know was taken for one with
+no `:restart`), `Supervisor.child_spec/2` overrides it cannot read leave
+the type unknown too, and OTP's tuple form with a computed restart or
+type is an explicit spec with that field unknown, where it read as a
+shorthand under the default. coupling's `starts_supervised_again` asks
+a known restart; structure's "Supervisor registered as a worker" judges
+each shorthand start by its `own_field` type. The known limit of an
+override of `restart:` or of `type:` alone over a shorthand is gone.
+
+The same conflation elsewhere in the supervision extractor, fixed the
+same way:
+- `supervisor_max_children` is `dynamic` for DynamicSupervisor.init/1
+  options the extractor cannot read whole (read through the spec reader,
+  so a helper's literal options are read): unsafe_input's "Dynamic
+  supervisor starts children without limit" no longer takes them for the
+  `:infinity` default.
+- An Erlang supervisor flags map with no `strategy` is one_for_one,
+  OTP's default for an absent key, where it read as unknown.
+
+Readers of positional columns see three new relations
+(`child_spec_option`, `shorthand_arg`, `shorthand_option`) and new
+values (`own`, `dynamic`).
+
 ## 0.20.1 — 2026-09-29
 
 ### Changed

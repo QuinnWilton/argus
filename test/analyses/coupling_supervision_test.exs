@@ -90,9 +90,14 @@ defmodule Argus.Analyses.CouplingSupervisionTest do
     # runs under is its module's own child_spec/1's when that states one.
     defp shorthand_facts(own_restarts) do
       %{
-        base_facts("permanent")
-        | supervisor_child_form: [["Sup", "0", "shorthand"], ["Sup", "1", "shorthand"]]
+        base_facts("own")
+        | supervisor_child: [
+            ["Sup", "0", "P", "own", "worker"],
+            ["Sup", "1", "S", "own", "worker"]
+          ],
+          supervisor_child_form: [["Sup", "0", "shorthand"], ["Sup", "1", "shorthand"]]
       }
+      |> Map.put(:shorthand_arg, [["Sup", "P", "0", "options"], ["Sup", "S", "1", "options"]])
       |> Map.put(:child_spec_restart, own_restarts)
     end
 
@@ -100,9 +105,10 @@ defmodule Argus.Analyses.CouplingSupervisionTest do
       skip_without_souffle()
 
       # `use GenServer, restart: :temporary` on S: the shorthand listing
-      # it states nothing, and S is never restarted.
+      # it states nothing, and S is never restarted. P's own child_spec/1
+      # states no restart (`use GenServer`): permanent, read as such.
       assert [["Sup", "P", "S", "restart_policy", "temporary", _site, _witness, _ | _]] =
-               dependency_rows(shorthand_facts([["S", "temporary"]]))
+               dependency_rows(shorthand_facts([["P", "permanent"], ["S", "temporary"]]))
     end
 
     test "a shorthand child whose own child_spec/1 says :temporary is not the permanent one" do
@@ -112,6 +118,16 @@ defmodule Argus.Analyses.CouplingSupervisionTest do
       # rather than running against a sibling that is gone.
       assert dependency_rows(shorthand_facts([["P", "temporary"], ["S", "temporary"]])) == []
       assert dependency_rows(shorthand_facts([])) == []
+    end
+
+    test "a shorthand child whose own restart is unread is neither permanent nor down" do
+      skip_without_souffle()
+
+      # Issue #4: a restart the extractor could not read is unknown, not
+      # OTP's default: P is not shown permanent, and S not shown to stay
+      # down.
+      assert dependency_rows(shorthand_facts([["P", "dynamic"], ["S", "temporary"]])) == []
+      assert dependency_rows(shorthand_facts([["S", "dynamic"]])) == []
     end
 
     test "a registration through a pid is anchored at the call that makes it" do

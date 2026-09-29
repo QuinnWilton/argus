@@ -618,6 +618,7 @@ down_handler(mod, handler) :-
 starts_supervised_again(handler, sup, child) :-
   module_reach.reaches(handler, start),
   dynamic_restart(sup, child, start, restart),
+  known_restart(restart),
   restart != "temporary".
 
 .decl dual_restart_authority(mod: symbol, sup: symbol, child: symbol, via: symbol, start_site: symbol, monitor_site: symbol, handler: symbol)
