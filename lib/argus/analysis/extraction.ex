@@ -20,7 +20,6 @@ defmodule Argus.Analysis.Extraction do
   their rules paths and relation lists here.
   """
 
-  require Logger
 
   alias Argus.Analysis
   alias Argus.Analysis.Catalog

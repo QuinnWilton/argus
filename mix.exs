@@ -27,7 +27,7 @@ defmodule Argus.MixProject do
       dialyzer: dialyzer(),
       # The test fixtures deliberately call into applications argus does not
       # depend on (they are what the analyses detect).
-      xref: [exclude: [:ssl, :mnesia, :telemetry, Plug.Crypto]],
+      elixirc_options: [no_warn_undefined: [:ssl, :mnesia, :telemetry, Plug.Crypto]],
       description:
         "Whole-program BEAM analysis via Souffle Datalog: supervision, GenServer " <>
           "and OTP bug detectors over compiled beams (the Argus modules).",

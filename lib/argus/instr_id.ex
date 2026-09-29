@@ -215,8 +215,8 @@ defmodule Argus.InstrId do
   # `:` (neither holds one); the function is everything after that `:`.
   defp split_module(":\"" <> quoted = mod_func) do
     with {:ok, length} <- closing_quote(quoted, 0),
-         module_size = 2 + length,
-         <<module::binary-size(module_size), ":", func::binary>> <- mod_func do
+         true <- byte_size(mod_func) > 2 + length,
+         {module, ":" <> func} <- :erlang.split_binary(mod_func, 2 + length) do
       {:ok, module, func}
     else
       _ -> :error

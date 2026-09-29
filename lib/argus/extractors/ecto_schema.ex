@@ -175,7 +175,6 @@ defmodule Argus.Extractors.EctoSchema do
 
   # An improper list is no list of fields.
   defp schema_values(value) when is_list(value), do: list_elements(value)
-  defp schema_values(value), do: List.wrap(value)
 
   # A key's clause is a literal moved into {x,0} and returned. Anything
   # else — a computed value, a call — yields nothing rather than a guess;
