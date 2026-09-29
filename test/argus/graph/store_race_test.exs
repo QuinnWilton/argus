@@ -6,9 +6,14 @@ defmodule Argus.Graph.StoreRaceTest do
   others put the same entries: a store that replaced an entry already
   there (a rename onto it) hid it from a concurrent link on APFS, and
   solves failed with `{:input_failed, file, :enoent}` at random.
+
+  Not async: its eight runs of five analyses start up to 32 solves at
+  once, by design, and beside the suite on a four-core CI runner they
+  held every core long enough for tests on ExUnit's default minute to
+  run out of it. After the async tests, it has the machine to itself.
   """
 
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   @moduletag :cache
   @moduletag :tmp_dir
