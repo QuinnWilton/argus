@@ -119,6 +119,7 @@ defmodule Argus.MixProject do
       source_ref: "v#{@version}",
       source_url: @source_url,
       extras: ["README.md", "docs/bug-classes.md", "CHANGELOG.md"],
+      assets: %{"images" => "images"},
       # Old entries name functions later removed or made private; they
       # render as plain code, which is right for a changelog.
       skip_undefined_reference_warnings_on: ["CHANGELOG.md"]
