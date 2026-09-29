@@ -177,7 +177,9 @@ those frameworks need.
   this machine cannot check is skipped, and the gate prints why: its
   trees need an `otp:` or `elixir:` with no asdf install here and are
   not compiled yet (`Corpus.unbuildable/1`), or its repository cannot
-  be fetched and they are not checked out (`Corpus.unfetchable/1`).
+  be fetched and they are not checked out (`Corpus.unfetchable/1`). CI
+  runs the corpus nightly and on request (`corpus.yml`), not per push:
+  cold, it compiles every tree for over an hour.
 - Tests solve through `Argus.Test.Memo` (`analyze/3`, `run_analyses/2`,
   `run_rules/2` over hand-built facts, `compile_beams/1` for modules a
   test compiles): the same modules and analysis are solved once per run

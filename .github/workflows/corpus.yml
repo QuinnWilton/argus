@@ -1,0 +1,50 @@
+name: Corpus
+
+# The closed-issue corpus (`Argus.CorpusTest`): each pair's trees cloned
+# and compiled at the commit before a fix and at the fix, then analyzed.
+# Nightly and on request rather than on every push: cold, it compiles
+# every tree, for well over an hour, and CI's test job covers a push.
+# A pair this runner cannot check is skipped, and the reasons printed
+# before the pairs run: a tree that needs an Erlang or Elixir with no
+# asdf install here (`Argus.Corpus.unbuildable/1`), or one whose
+# repository cannot be fetched (`Argus.Corpus.unfetchable/1`).
+on:
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+
+env:
+  MIX_ENV: test
+
+jobs:
+  corpus:
+    name: Corpus (closed-issue pairs)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          elixir-version: "1.19.4"
+          otp-version: "28.3"
+
+      - name: Install Souffle
+        run: |
+          sudo wget https://souffle-lang.github.io/ppa/souffle-key.public -O /usr/share/keyrings/souffle-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/souffle-archive-keyring.gpg] https://souffle-lang.github.io/ppa/ubuntu/ stable main" | sudo tee /etc/apt/sources.list.d/souffle.list
+          sudo apt-get update
+          sudo apt-get install -y souffle
+
+      - name: Restore dependencies cache
+        uses: actions/cache@v4
+        with:
+          path: deps
+          key: ${{ runner.os }}-mix-1.19.4-${{ hashFiles('mix.lock') }}
+          restore-keys: ${{ runner.os }}-mix-1.19.4-
+
+      - name: Install dependencies
+        run: mix deps.get
+
+      - name: Run the corpus
+        run: mix test --only corpus
