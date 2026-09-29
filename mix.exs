@@ -118,7 +118,10 @@ defmodule Argus.MixProject do
       main: "readme",
       source_ref: "v#{@version}",
       source_url: @source_url,
-      extras: ["README.md", "docs/bug-classes.md", "CHANGELOG.md"]
+      extras: ["README.md", "docs/bug-classes.md", "CHANGELOG.md"],
+      # Old entries name functions later removed or made private; they
+      # render as plain code, which is right for a changelog.
+      skip_undefined_reference_warnings_on: ["CHANGELOG.md"]
     ]
   end
 
