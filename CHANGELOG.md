@@ -33,6 +33,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and none could fail a clause head (a catch-all rescue around a guarded
   call went unreported) — on OTP 29 every function, on OTP 28 each
   module's first.
+- OTP 29's native-record instructions are read (`Argus.Instr`): the
+  record tests, which name their subject bare (`{:test, :is_record,
+  fail, src}`, and with the module and name it asks for),
+  `get_record_field`, `get_record_elements` and `put_record`. OTP 29's
+  own libraries test for native records, so their reads, writes and
+  fail edges were missing from the facts.
 - An analysis's rows come back sorted (`Argus.analyze/3`,
   `Argus.Souffle.run/3`, and the rows findings are built from),
   whatever order the solver wrote them in. Souffle writes a relation in

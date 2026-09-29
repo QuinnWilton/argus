@@ -530,6 +530,13 @@ defmodule Argus.Pipeline.EmitTest do
       assert [[_id, "3", "0"]] = facts[:branch]
     end
 
+    test "a call before a loop_rec, or an OTP 29 record test, is followed by a branch" do
+      for test <- [{:loop_rec, {:f, 3}, {:x, 0}}, {:test, :is_record, {:f, 3}, {:x, 0}}] do
+        facts = emit_func([{:call_ext, 0, {:extfunc, :erlang, :self, 0}}, test, :return])
+        assert [["TestMod:test_func/0#0"]] = facts[:call_followed_by_branch], inspect(test)
+      end
+    end
+
     test "emits select_branch for select_val" do
       facts =
         emit_func([

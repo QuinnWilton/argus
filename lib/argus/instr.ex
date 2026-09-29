@@ -4,9 +4,11 @@ defmodule Argus.Instr do
   it: the one reading of the instruction set, which the emitter's `def`,
   `use` and `next` facts are made from.
 
-  Instructions are taken as `:beam_disasm` prints them on OTP 28 — raw,
-  with typed registers (`{:tr, reg, type}`), or after
-  `Argus.Pipeline.Normalize` has stripped them; both read the same.
+  Instructions are taken as `:beam_disasm` prints them on OTP 28 and 29
+  — raw, with typed registers (`{:tr, reg, type}`), or after
+  `Argus.Pipeline.Normalize` has stripped them; both read the same. OTP
+  29 adds the native-record instructions (`-record #name{...}`), which
+  no OTP or Elixir module compiles to yet.
 
   ## Semantics
 
@@ -291,6 +293,17 @@ defmodule Argus.Instr do
     {regs(dsts), regs([src | keys]), fail(fail), :next}
   end
 
+  # OTP 29's native records read and build as maps do: pairs alternate
+  # field name and destination (or value). A build with no source (`nil`)
+  # makes a record afresh.
+  defp semantics({:get_record_elements, fail, src, {:list, pairs}}) do
+    {keys, dsts} = unzip_pairs(pairs)
+    {regs(dsts), regs([src | keys]), fail(fail), :next}
+  end
+
+  defp semantics({:put_record, fail, _id, src, dst, {:list, pairs}}),
+    do: {regs([dst]), regs([src | pairs]), fail(fail), :next}
+
   # Funs. A label-targeted make_fun3 names the fun's code, not a branch.
   defp semantics({:make_fun3, _target, _index, _uniq, dst, {:list, env}}),
     do: {regs([dst]), regs(env), [], :next}
@@ -298,6 +311,22 @@ defmodule Argus.Instr do
   # Tests. Four shapes: operands in a list; a source and a field list
   # (has_map_fields); a live count before the list; a live count and a
   # destination after it (bs_start_match3, bs_get_integer2, ...).
+  # OTP 29's native-record tests name their subject bare, not in a list:
+  # is it any native record, is it this module's record of this name, may
+  # this code read its fields. get_record_field is a guard read spelled
+  # as a test, writing the field's value.
+  defp semantics({:test, :is_record, fail, src}) when not is_list(src),
+    do: {[], regs([src]), fail(fail), :next}
+
+  defp semantics({:test, :is_record, fail, src, _module, _name}),
+    do: {[], regs([src]), fail(fail), :next}
+
+  defp semantics({:test, :is_record_accessible, fail, src, _scope}),
+    do: {[], regs([src]), fail(fail), :next}
+
+  defp semantics({:test, :get_record_field, fail, src, _id, _field, dst}),
+    do: {regs([dst]), regs([src]), fail(fail), :next}
+
   defp semantics({:test, name, fail, args}) when name in @writing_tests and is_list(args) do
     {operands, [dst]} = Enum.split(args, -1)
     {regs([dst]), regs(operands), fail(fail), :next}

@@ -173,7 +173,7 @@ defmodule Argus.Pipeline.Emit do
   defp branch_instruction?({:test, _name, {:f, _fail}, args}) when is_list(args), do: true
   defp branch_instruction?({:test, _name, {:f, _fail}, _live, args}) when is_list(args), do: true
   defp branch_instruction?({:loop_rec, {:f, _fail}, _dst}), do: true
-  defp branch_instruction?(_), do: false
+  defp branch_instruction?(instr), do: record_test?(instr)
 
   # Calls proper, local and remote. BIFs are deliberately excluded: they
   # would multiply the relation by an order of magnitude to serve rules that
@@ -431,6 +431,12 @@ defmodule Argus.Pipeline.Emit do
   defp emit_specific(facts, id, {:bs_create_bin, fail, _alloc, _live, _unit, _dst, _segs}),
     do: maybe_branch(facts, id, fail)
 
+  defp emit_specific(facts, id, {:get_record_elements, fail, _src, _pairs}),
+    do: maybe_branch(facts, id, fail)
+
+  defp emit_specific(facts, id, {:put_record, fail, _id, _src, _dst, _pairs}),
+    do: maybe_branch(facts, id, fail)
+
   # Jump.
   defp emit_specific(facts, id, {:jump, {:f, target}}) do
     add_fact(facts, :jump, [id, to_string(target)])
@@ -480,6 +486,13 @@ defmodule Argus.Pipeline.Emit do
     add_fact(facts, :branch, [id, to_string(fail), "0"])
   end
 
+  # OTP 29's native-record tests (`Argus.Instr`), which name their
+  # subject bare: the fail label is where every test's is.
+  defp emit_specific(facts, id, test)
+       when is_tuple(test) and tuple_size(test) >= 4 and elem(test, 0) == :test do
+    if record_test?(test), do: maybe_branch(facts, id, elem(test, 2)), else: facts
+  end
+
   # Receive. The loop's control flow is real control flow: loop_rec falls
   # through on a message and branches to its fail label (the wait block) on an
   # empty mailbox; loop_rec_end and wait transfer back to the loop label; and
@@ -520,6 +533,14 @@ defmodule Argus.Pipeline.Emit do
   # (`{:f, 0}`, `:nofail`, bs_start_match4's `{:atom, :no_fail}`).
   defp fail_label({:f, label}) when is_integer(label), do: to_string(label)
   defp fail_label(_no_label), do: "0"
+
+  # A test of OTP 29's native records, in the shapes its disassembler
+  # prints (`Argus.Instr`): a subject named bare, and what it asks after.
+  defp record_test?({:test, :is_record, {:f, _}, src}), do: not is_list(src)
+  defp record_test?({:test, :is_record, {:f, _}, _src, _module, _name}), do: true
+  defp record_test?({:test, :is_record_accessible, {:f, _}, _src, _scope}), do: true
+  defp record_test?({:test, :get_record_field, {:f, _}, _src, _id, _field, _dst}), do: true
+  defp record_test?(_instr), do: false
 
   defp maybe_branch(facts, id, {:f, fail}) when is_integer(fail) and fail != 0,
     do: add_fact(facts, :branch, [id, to_string(fail), "0"])

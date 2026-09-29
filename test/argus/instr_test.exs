@@ -131,6 +131,85 @@ defmodule Argus.InstrTest do
     end
   end
 
+  describe "OTP 29's native records" do
+    # As OTP 29.1's beam_disasm prints a module declaring
+    # `-record #point{x = 0, y = 0}.`: tests that name their subject bare,
+    # a field read spelled as a test, and the map-shaped reads and builds.
+    @function {:function, :get, 1, 4,
+               [
+                 {:label, 3},
+                 {:line, [{:location, ~c"nrec.erl", 5}]},
+                 {:func_info, {:atom, :nrec}, {:atom, :get}, 1},
+                 {:label, 4},
+                 {:test, :is_record, {:f, 3}, {:x, 0}},
+                 {:test, :is_record, {:f, 3}, {:tr, {:x, 0}, {:t_record, nil, %{}}},
+                  {:atom, :nrec}, {:atom, :point}},
+                 {:get_record_elements, {:f, 3}, {:x, 0},
+                  {:list, [{:atom, :y}, {:x, 2}, {:atom, :x}, {:x, 1}]}},
+                 {:test, :get_record_field, {:f, 5}, {:x, 0}, {:atom, :point}, {:atom, :x},
+                  {:x, 3}},
+                 {:test, :is_record_accessible, {:f, 5}, {:x, 3}, {:atom, :local}},
+                 {:put_record, {:f, 0}, {:atom, :point}, {:x, 0}, {:x, 0},
+                  {:list, [{:atom, :x}, {:x, 1}]}},
+                 :return,
+                 {:label, 5},
+                 {:badrecord, {:x, 0}}
+               ]}
+
+    test "each is known, with what it reads, writes and where it fails to" do
+      {:function, _, _, _, code} = @function
+
+      for {instr, defs, uses, targets} <- [
+            {Enum.at(code, 4), [], [x: 0], [3]},
+            {Enum.at(code, 5), [], [x: 0], [3]},
+            {Enum.at(code, 6), [x: 2, x: 1], [x: 0], [3]},
+            {Enum.at(code, 7), [x: 3], [x: 0], [5]},
+            {Enum.at(code, 8), [], [x: 3], [5]},
+            {Enum.at(code, 9), [x: 0], [x: 0, x: 1], []}
+          ] do
+        assert Instr.known?(instr), inspect(instr)
+
+        assert {Instr.defs(instr), Instr.uses(instr), Instr.targets(instr)} ==
+                 {defs, uses, targets}
+
+        assert Instr.falls_through?(instr)
+      end
+
+      # A build from nothing reads no record.
+      assert Instr.uses({:put_record, {:f, 0}, {:atom, :point}, nil, {:x, 0}, {:list, []}}) == []
+    end
+
+    test "the emitter records the fail edges Instr names, and each marker's line" do
+      facts = Emit.emit_module(:nrec, [{:get, 1, 4}], [], [], [@function])
+
+      for {id, instr} <- Normalize.normalize_function(:nrec, @function) do
+        assert labels(facts, id) == Enum.sort(Instr.targets(instr)), inspect(instr)
+      end
+
+      assert [":nrec:get/1#1", "5"] in facts[:line_info]
+    end
+
+    @tag skip: System.otp_release() < "29" && "native records need OTP 29"
+    test "a module compiled with them has no instruction Instr cannot read" do
+      {:ok, :instr_native_record_probe, bin} =
+        """
+        -module(instr_native_record_probe).
+        -export([new/1, get/1, upd/2, fld/1, any/1]).
+        -record #point{x = 0, y = 0}.
+        new(X) -> #point{x = X}.
+        get(#point{x = X, y = Y}) -> {X, Y}.
+        upd(P, X) -> P#point{x = X}.
+        fld(P) -> P#point.x.
+        any(#_{}) -> yes;
+        any(_) -> no.
+        """
+        |> erlang_module_forms()
+        |> :compile.forms([:binary])
+
+      assert unknown_in(bin) == MapSet.new()
+    end
+  end
+
   describe "carry/2" do
     test "a value follows its copies and leaves the registers written over it" do
       assert Instr.carry({:move, {:x, 0}, {:y, 1}}, x: 0) == [x: 0, y: 1]
@@ -249,8 +328,11 @@ defmodule Argus.InstrTest do
     end
   end
 
-  defp erlang_forms(body) do
-    ("-module(instr_debug_probe).\n-export([f/1]).\n" <> body)
+  defp erlang_forms(body),
+    do: erlang_module_forms("-module(instr_debug_probe).\n-export([f/1]).\n" <> body)
+
+  defp erlang_module_forms(source) do
+    source
     |> String.to_charlist()
     |> :erl_scan.string()
     |> then(fn {:ok, tokens, _end} -> tokens end)
