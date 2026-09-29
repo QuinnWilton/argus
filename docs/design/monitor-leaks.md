@@ -105,13 +105,22 @@ moves to runs.dl beside it. A helper that `init/1` and a handler share is
 both.
 
 **It can meet T again** (`!starts_its_target(s)`). T is not, on every
-path, a process f itself started. `monitor_started` (the Monitor
-extractor) names the start whose answer the pid is: the pid itself, or
-the one in its `{:ok, pid}`, read straight from the answer. A start's
-`{:error, {:already_started, pid}}` is not a fresh process, and on that
-path the start is not the origin. The start must be one the process facts
-know (`process_start`), or a library's (`:gun.open`). A function of the
-program named like a start may look a process up (review 2, item 25).
+path, a process f itself started. `monitor_answer` (the Monitor
+extractor, `Argus.Extractor.Answers`) names the calls whose answer the
+pid is on every path: the pid itself, or the one in its `{:ok, pid}`. A
+start's `{:error, {:already_started, pid}}` is not a fresh process: its
+pid is an element of an element, and a path that monitors it leaves the
+site without an answer. Each call is followed through the program's
+wrappers (`call_origin`, clientlib/answers.dl: a function every way out
+of which hands back one of its calls' answers, in any module, to any
+depth; issue #3's `Tortoise.TransmitterSupervisor.start_transmitter/1`
+over `DynamicSupervisor.start_child/2`) to calls outside the program,
+and every one of those origins must start a process: a start the
+process facts know (`process_start`), or a library's call named like a
+start (`:gun.open`). A function of the program that looks a process up
+on some way out (review 2, item 25), re-wraps an already-started pid,
+hands back a parameter or answers a reply answers nothing, and T is not
+taken as new.
 
 **The run does not release it** (`!released_by_run(s, f)`). Some way out
 of f keeps the monitor live. A way out releases it when it:
@@ -185,8 +194,11 @@ the code does not show it (the rubric's evidence clause).
   `post_init/3` clause: ra inserts `:internal` events on its way through
   three states, and the event type alone does not tell them apart.
 - **A start the facts do not know.** A process a program function starts
-  (a room, an outbound connection) is taken as one the site can meet
-  again.
+  and does not hand back whole on every way out (a room it registers and
+  then answers from a lookup, an outbound connection behind a function
+  that also reuses one) is taken as one the site can meet again. One
+  handed back on every way out, through any number of the program's
+  functions, is the start's (answers.dl).
 - **A monitoring process that ends.** A per-job or per-request process
   whose every end stops it holds its monitors for its own short life.
 - **Stale `:DOWN`s.** A `:DOWN` that arrives after the wait gave up, into
@@ -220,7 +232,8 @@ helper handed the ref now release the monitor.
 
 Added:
 - runs.dl's `again_code`.
-- The facts `recv_takes_down`, `monitor_started`, and `param_decided` of
+- The facts `recv_takes_down`, `monitor_started` (since issue #3,
+  `monitor_answer` over clientlib/answers.dl), and `param_decided` of
   monitor sites.
 - `monitor_ref_dropped` through a ref every return answers.
 - The helpers that release a ref they are handed.
@@ -255,7 +268,9 @@ test/soundness/monitors_test.exs that it must not excuse:
   event handler, a spawned receive loop;
 - it can meet T again: a start beside a monitor of the caller, a named
   start that answers the running process, a worker another callback
-  started;
+  started; and through a wrapper, one that looks the process up first,
+  one that re-wraps the already-started pid, one that hands back its
+  parameter, a function named like a start that answers a reply;
 - released by the run: a demonitor on the answer path only, a demonitor
   of the other monitor, a helper that releases on one way out;
 - dropped: a test of the request, a clause that reaches the same helper

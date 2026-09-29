@@ -17,8 +17,7 @@ defmodule Argus.Schema.Monitors do
         fields: [
           {:id, :symbol, "the call site"},
           {:func, :symbol, "the monitoring function"},
-          {:target, :symbol,
-           "the monitored name, 'started_child' when the pid came from a supervisor start, or 'dynamic'"}
+          {:target, :symbol, "the monitored name when literal, or 'dynamic'"}
         ],
         doc: """
         A `Process.monitor/1` or `:erlang.monitor/2`. Once it returns, a \
@@ -56,21 +55,25 @@ defmodule Argus.Schema.Monitors do
         """
       },
       %{
-        name: :monitor_started,
+        name: :monitor_answer,
         layer: 2,
         fields: [
           {:id, :symbol, "the monitor call site"},
           {:func, :symbol, "the monitoring function"},
-          {:start, :symbol, "the start call whose answer the pid is"}
+          {:call, :symbol, "a call whose answer the pid may be"},
+          {:depth, :number, "0: the pid is the answer itself; 1: the pid of its `{:ok, pid}`"}
         ],
         doc: """
-        The pid monitored at this site is, on every path, what the call at \
-        `start` answered: a call to another module named like a start \
-        (`start*`, `spawn*`, `open`), whose answer is the pid or an \
-        `{:ok, pid}` the pid is read straight out of. A start's \
-        `{:error, {:already_started, pid}}` names a process others hold, \
-        and a local function named like a start may look one up: on such \
-        a path the start is not the pid's origin, and there is no row \
+        The pid monitored at this site is, on every path, what one of the \
+        calls its rows name answered, `depth` payloads down \
+        (`Argus.Extractor.Answers`): the answer, or the element after its \
+        tag. All or nothing: a site with rows has one for every call the \
+        pid may come from. Any call, of the program or not: whether it \
+        answers a process it started, by itself or through the program's \
+        wrappers, is clientlib/answers.dl's (`call_origin`) and the rules'. \
+        A start's `{:error, {:already_started, pid}}` names a process \
+        others hold, its pid an element of an element: a path that \
+        monitors it leaves the site without rows \
         (`Argus.Extractors.Monitor`).
         """
       },

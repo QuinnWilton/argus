@@ -26,6 +26,7 @@
 .include "../clientlib/timer_flush.dl"
 .include "../clientlib/live_view.dl"
 .include "../clientlib/runs.dl"
+.include "../clientlib/answers.dl"
 .include "../clientlib/tooling.dl"
 
 // A finding in code only developers' tools or tests run steps down a
@@ -898,21 +899,57 @@ monitor_taken_again(s) :-
 
 // A process the monitoring function starts itself is new on every run,
 // and this monitor is the only one on it: its :DOWN ends both. The pid
-// is, on every path, what a start in the function answered
-// (monitor_started: the pid, or the one in its `{:ok, pid}`, never the
-// `{:error, {:already_started, pid}}` of a process others hold), and the
-// start is one the process facts know (process_start: exq's worker and
-// the Task it starts for the job) or a library's (`:gun.open`). A pid a
-// function of the program answers is not taken as new: a lookup-or-start
-// wrapper hands back a process others hold (review 2, item 25).
+// is, on every path, what one of the function's calls answered
+// (monitor_answer: the pid, or the one in its `{:ok, pid}`, never the
+// `{:error, {:already_started, pid}}` of a process others hold), and
+// every origin of those answers, directly or through the program's
+// wrappers (call_origin, clientlib/answers.dl: `{:ok, pid} =
+// Mod.start_transmitter(opts)` over a DynamicSupervisor.start_child),
+// starts a process: a start the process facts know (process_start: exq's
+// worker and the Task it starts for the job) or a library's call named
+// like a start (`:gun.open`, `DynamicSupervisor.start_child`). A wrapper
+// that looks a process up on some path answers nothing, and its pid is
+// not taken as new (review 2, item 25).
 .decl starts_its_target(site: symbol)
 
-starts_its_target(s) :- monitor_started(s, f, c), process_start(c, f, _, _, _).
+starts_its_target(s) :- monitor_answer(s, _, _, _), !target_maybe_old(s).
 
-starts_its_target(s) :-
-  monitor_started(s, f, c),
-  remote_call(c, f, m, _, _),
-  !program_module(m).
+answer_demand(c, f) :- monitor_answer(_, f, c, _).
+
+// Some value the pid at `site` may be is not a process the run started:
+// an origin that starts none, too deep a payload, or a call whose
+// answers are not all known.
+.decl target_maybe_old(site: symbol)
+
+target_maybe_old(s) :- monitor_answer(s, _, c, _), call_opaque(c).
+
+target_maybe_old(s) :-
+  monitor_answer(s, _, c, k),
+  call_origin(c, _, j),
+  k + j > 1.
+
+target_maybe_old(s) :-
+  monitor_answer(s, _, c, _),
+  call_origin(c, o, _),
+  !starts_process(o).
+
+// The call at `site` starts a process and answers it.
+.decl starts_process(site: symbol)
+
+starts_process(o) :- process_start(o, _, _, _, _).
+
+starts_process(o) :-
+  remote_call(o, _, m, name, _),
+  !program_module(m),
+  start_named(name).
+
+// A function named like a start: `start*`, `spawn*`, or a client
+// library's `open` (`:gun.open`).
+.decl start_named(name: symbol) inline
+
+start_named(name) :- match("start.*", name).
+start_named(name) :- match("spawn.*", name).
+start_named(name) :- name = "open".
 
 // Released by the run: every path from the monitor to its function's
 // return takes the :DOWN or demonitors the ref (monitor_released,

@@ -199,6 +199,26 @@ defmodule Argus.Analyses.MailboxMonitorTest do
       refute named?(reported(ctx.servers), "MonitorsOwnWorker")
       refute named?(reported(ctx.servers), "MonitorsHandedWorker")
     end
+
+    test "a worker a start answered through the program's wrappers is new each time" do
+      skip_without_souffle()
+
+      # Issue #3: Tortoise's connection starts its transmitter through
+      # another module's default-argument wrapper; a private wrapper, a
+      # case that passes {:ok, pid} on, two layers and a bare pid are the
+      # same start's answer (clientlib/answers.dl).
+      wrapped = [
+        M.Transmitters,
+        M.Transmitter,
+        M.ConnectsThroughWrapper,
+        M.StartsThroughLocalWrapper,
+        M.Starters,
+        M.StartsThroughLayers
+      ]
+
+      assert {:ok, r} = Memo.analyze(wrapped, :mailbox)
+      assert Map.get(r, "monitor_leak", []) == []
+    end
   end
 
   describe "released by the caller" do

@@ -114,26 +114,26 @@ defmodule Argus.Extractors.MonitorTest do
     end
   end
 
-  describe "monitor_started" do
-    test "a pid a start of another module answered, in its {:ok, pid}" do
-      assert [[_, func, start]] = extract(M.MonitorsOwnWorker)[:monitor_started]
+  describe "monitor_answer" do
+    test "a pid a start answered, in its {:ok, pid}: one payload down" do
+      assert [[_, func, call, "1"]] = extract(M.MonitorsOwnWorker)[:monitor_answer]
       assert func =~ "handle_cast/2"
-      assert start =~ "MonitorsOwnWorker:handle_cast/2#"
+      assert call =~ "MonitorsOwnWorker:handle_cast/2#"
     end
 
-    test "the pid of an already-started answer is none" do
+    test "the pid of an already-started answer is none, and so is a parameter" do
       # Either branch's pid is the answer's: the {:ok, pid} one's is fresh,
-      # the {:error, {:already_started, pid}} one's is not, so the paths
-      # disagree.
-      refute Map.has_key?(extract(Argus.Test.Soundness.Monitors.StartOrFind), :monitor_started)
-      refute Map.has_key?(extract(M.DropsRef), :monitor_started)
+      # the {:error, {:already_started, pid}} one's is an element of an
+      # element, so the site has no rows at all.
+      refute Map.has_key?(extract(Argus.Test.Soundness.Monitors.StartOrFind), :monitor_answer)
+      refute Map.has_key?(extract(M.DropsRef), :monitor_answer)
     end
 
-    test "a start of another module is named, and the rules decide whose it is" do
-      # Sessions.start_session/1 is the program's own: the rules do not take
-      # it as a start (it may look the session up), only the call site.
-      assert [[_, _, start]] = extract(Argus.Test.Soundness.Mailbox.Tracker)[:monitor_started]
-      assert start =~ "Tracker:handle_call/3#"
+    test "a call to a function of the program is named, and the rules decide what it answers" do
+      # Sessions.start_session/1 finds the running session on one path:
+      # clientlib/answers.dl reads it as answering nothing, not the site.
+      assert [[_, _, call, "1"]] = extract(Argus.Test.Soundness.Mailbox.Tracker)[:monitor_answer]
+      assert call =~ "Tracker:handle_call/3#"
     end
   end
 
@@ -275,9 +275,11 @@ defmodule Argus.Extractors.MonitorTest do
       assert rows(:monitor_ref_dropped, "monitor_then_receive/1") == [[]]
     end
 
-    test "a pid is a started child only when every path to the monitor started it" do
-      assert rows(:monitor_call, "monitor_started/2") == [["started_child"]]
-      assert rows(:monitor_call, "monitor_either/3") == [["dynamic"]]
+    test "a pid has answers only when every path to the monitor holds one" do
+      # Both arms start the child: one row per start, each one payload down.
+      assert [[_, "1"], [_, "1"]] = rows(:monitor_answer, "monitor_started/2")
+      # The parameter on one arm: no rows.
+      assert rows(:monitor_answer, "monitor_either/3") == []
     end
   end
 end

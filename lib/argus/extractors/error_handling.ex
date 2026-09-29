@@ -90,11 +90,17 @@ defmodule Argus.Extractors.ErrorHandling do
   - `rpc_result(id, func, handling)` — how the result of an :rpc/:erpc
     call is treated: `badrpc`, `boolean`, `case`, `matched`, `returned`
     or `other`
+  - `answers_call(func, site, depth)` — every way `func` returns a value
+    hands back what one of its calls answered, passed through
+    (`Argus.Extractor.Answers`): the must-reading of a wrapper, all or
+    nothing per function, which `clientlib/answers.dl` chains through the
+    program; `returns_call` is the may-reading
   """
 
   @behaviour Argus.Extractor
 
   alias Argus.Cfg.Walk
+  alias Argus.Extractor.Answers
   alias Argus.Extractor.CallSites
   alias Argus.Extractor.Dispatch
   alias Argus.Extractor.Helpers
@@ -190,6 +196,7 @@ defmodule Argus.Extractors.ErrorHandling do
       :recv_shape,
       :result_tested,
       :returns_call,
+      :answers_call,
       :rpc_result,
       :start_timer_arm,
       :timer_arm,
@@ -861,6 +868,7 @@ defmodule Argus.Extractors.ErrorHandling do
         acc
         |> emit_stores(mod, func_id, instrs)
         |> emit_returns(mod, func_id, instrs)
+        |> emit_answers(func_id, instrs)
         |> emit_nil_tests(func_id, instrs)
         |> emit_returned_updates(func_id, instrs)
         |> emit_value_tests(func_id, instrs)
@@ -1504,6 +1512,18 @@ defmodule Argus.Extractors.ErrorHandling do
         :none ->
           acc
       end
+    end)
+  end
+
+  # The calls whose answers every return of the function hands back,
+  # passed through (`Argus.Extractor.Answers`): the must-reading of a
+  # wrapper, which returns_call reads as may. All or nothing: rows only
+  # when every return is one of them.
+  defp emit_answers(facts, func_id, instrs) do
+    instrs
+    |> Answers.function_answers()
+    |> Enum.reduce(facts, fn {site, depth}, acc ->
+      add_fact(acc, :answers_call, [func_id, InstrId.mint(func_id, site), to_string(depth)])
     end)
   end
 

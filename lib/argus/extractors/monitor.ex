@@ -25,17 +25,21 @@ defmodule Argus.Extractors.Monitor do
   ## Emitted facts
 
   - `monitor_call(id, func, target)` — a monitor is established; `target`
-    is the monitored name when literal, `"started_child"` when the pid is
-    the result of a supervisor start (directly or through a local
-    wrapper), else `"dynamic"`
+    is the monitored name when literal, else `"dynamic"`
   - `monitor_type(id, type)` — the kind of monitor taken at `id`:
     `process`, `port` or `time_offset` when literal (Process.monitor/1
     is `process`), else `dynamic`
   - `monitor_ref_dropped(id, func)` — the reference that monitor returned
     is discarded at the call site, so nothing can ever demonitor it
-  - `monitor_started(id, func, start)` — the monitored pid is, on every
-    path, the one the start call at `start` (to another module) answered:
-    a process the function itself started (below)
+  - `monitor_answer(id, func, call, depth)` — the monitored pid is, on
+    every path, what one of the calls the rows name answered, `depth`
+    payloads down (`Argus.Extractor.Answers`: 0 the answer itself, 1 the
+    pid of its `{:ok, pid}`); all or nothing, so a site with rows has one
+    per call it may be. Any call: whether it answers a process it
+    started, by itself or through the program's wrappers, is
+    `clientlib/answers.dl`'s and the rules'. The pid of `{:error,
+    {:already_started, pid}}` is an element of an element: a path that
+    monitors it leaves the site without rows
   - `awaits_child_exit(func)` — every start `func` makes is followed, on
     every path to its return, by a wait for the `:DOWN` of a monitor
     taken after the start (Livebook's `UniqueTask.run/2`): what it starts
@@ -126,6 +130,7 @@ defmodule Argus.Extractors.Monitor do
   @behaviour Argus.Extractor
 
   alias Argus.Cfg.Walk
+  alias Argus.Extractor.Answers
   alias Argus.Extractor.Dispatch
   alias Argus.Extractor.Resolve
   alias Argus.Extractors.Monitor.ExitSignal
@@ -156,7 +161,7 @@ defmodule Argus.Extractors.Monitor do
       :monitor_call,
       :monitor_ref_dropped,
       :monitor_released_after,
-      :monitor_started,
+      :monitor_answer,
       :monitor_type,
       :recv_down,
       :recv_flush,
@@ -387,76 +392,30 @@ defmodule Argus.Extractors.Monitor do
   defp emit_monitor_type(facts, ctx, type),
     do: add_fact(facts, :monitor_type, [InstrId.mint(ctx.func_id, ctx.idx), type])
 
-  # The target column: the monitored name when it is a literal, `"started_child"`
-  # when the pid came back from a supervisor start (directly, or through a
-  # local wrapper that performs one), else "dynamic".
+  # The target column: the monitored name when it is a literal, else
+  # "dynamic". Whether the pid is one a start answered is the rules':
+  # monitor_answer names the call it came from, and clientlib/answers.dl
+  # follows that call through the program's wrappers to its origin.
   defp monitor(facts, ctx, pid_reg, module_data) do
     id = InstrId.mint(ctx.func_id, ctx.idx)
-
-    target =
-      if started_child?(ctx.instrs, ctx.idx, pid_reg, module_data),
-        do: "started_child",
-        else: resolve_atom(ctx.instrs, ctx.idx, pid_reg)
-
+    target = resolve_atom(ctx.instrs, ctx.idx, pid_reg)
     facts = add_fact(facts, :monitor_call, [id, ctx.func_id, target])
 
     facts =
-      case started_by(ctx.instrs, ctx.idx, pid_reg) do
-        nil ->
-          facts
-
-        start ->
-          add_fact(facts, :monitor_started, [id, ctx.func_id, InstrId.mint(ctx.func_id, start)])
-      end
+      ctx.instrs
+      |> Answers.answered(ctx.idx, register(pid_reg))
+      |> Enum.reduce(facts, fn {call, depth}, acc ->
+        add_fact(acc, :monitor_answer, [
+          id,
+          ctx.func_id,
+          InstrId.mint(ctx.func_id, call),
+          to_string(depth)
+        ])
+      end)
 
     if ref_lost?(module_data, ctx),
       do: add_fact(facts, :monitor_ref_dropped, [id, ctx.func_id]),
       else: facts
-  end
-
-  # ── A process the monitoring function starts ─────────────────────
-  #
-  # The start whose answer the monitored pid is, on every path: the pid a
-  # call to another module named like a start answered (`spawn*`), or
-  # the element after `:ok` of the `{:ok, pid}` it answered, read straight
-  # from the answer. A start's `{:error, {:already_started, pid}}` names a
-  # process others hold: its pid is an element of an element, and on that
-  # path the start is not the origin. A local function named like a start
-  # is not one either: a lookup-or-start wrapper answers a running process
-  # (review 2, item 25). Which calls to other modules count is the rules'
-  # (a start the process facts know, or one outside the program).
-  defp started_by(instrs, idx, reg) do
-    Resolve.trace(instrs, idx, register(reg), nil, fn
-      {:param, _position}, _follow ->
-        nil
-
-      {writer, {:get_tuple_element, src, 1, _dst}}, _follow ->
-        start_answered(instrs, writer, src)
-
-      {writer, instr}, _follow ->
-        if remote_start?(instr), do: writer
-    end)
-  end
-
-  defp start_answered(instrs, at, src) do
-    Resolve.trace(instrs, at, register(src), nil, fn
-      {:param, _position}, _follow -> nil
-      {writer, instr}, _follow -> if remote_start?(instr), do: writer
-    end)
-  end
-
-  defp remote_start?(instr) do
-    case match_remote_call(instr) do
-      {:ok, _mod, name, _arity} -> start_name?(name)
-      :none -> false
-    end
-  end
-
-  defp start_name?(name) do
-    case Atom.to_string(name) do
-      "open" -> true
-      text -> String.starts_with?(text, "start") or String.starts_with?(text, "spawn")
-    end
   end
 
   # A call named like a start: `start*`, `spawn*`, or `open` (a client
@@ -640,65 +599,6 @@ defmodule Argus.Extractors.Monitor do
   end
 
   @x0 {:x, 0}
-
-  @start_apis [
-    {DynamicSupervisor, :start_child, 2},
-    {Supervisor, :start_child, 2},
-    {Task.Supervisor, :start_child, 2},
-    {Task.Supervisor, :start_child, 3}
-  ]
-
-  # Whether the monitored pid is the result of a supervisor start: walk
-  # back from the call to the write that produced the register (through
-  # moves, tuple projections — `{:ok, pid} = ...` — and swaps) and see
-  # whether it is a start API, or a local function that performs one.
-  defp started_child?(instrs, idx, reg, module_data) do
-    case pid_origin(instrs, idx, reg) do
-      nil -> false
-      mfa -> start_api?(mfa, module_data, [])
-    end
-  end
-
-  # The call the pid came back from, through copies and tuple
-  # projections (`{:ok, pid} = ...`), agreed on by every path to `idx`.
-  defp pid_origin(instrs, idx, reg) do
-    Resolve.trace(instrs, idx, reg, nil, fn
-      {at, {:get_tuple_element, src, _index, _dst}}, follow -> follow.(at, src)
-      {_at, {:call, _arity, {m, f, a}}}, _follow -> {m, f, a}
-      {_at, {:call_ext, _arity, {:extfunc, m, f, a}}}, _follow -> {m, f, a}
-      _writer, _follow -> nil
-    end)
-  end
-
-  defp start_api?(mfa, _module_data, _seen) when mfa in @start_apis, do: true
-
-  defp start_api?({mod, f, a}, %{module: mod, functions: functions} = module_data, seen) do
-    if {f, a} in seen or length(seen) > 3 do
-      false
-    else
-      seen = [{f, a} | seen]
-
-      case Enum.find(functions, &match?({:function, ^f, ^a, _, _}, &1)) do
-        nil ->
-          false
-
-        {:function, _, _, _, instrs} ->
-          Enum.any?(instrs, fn instr ->
-            case instr do
-              {:call_ext, _, {:extfunc, m, g, b}} -> {m, g, b} in @start_apis
-              {:call_ext_only, _, {:extfunc, m, g, b}} -> {m, g, b} in @start_apis
-              {:call_ext_last, _, {:extfunc, m, g, b}, _} -> {m, g, b} in @start_apis
-              {:call, _, {^mod, g, b}} -> start_api?({mod, g, b}, module_data, seen)
-              {:call_only, _, {^mod, g, b}} -> start_api?({mod, g, b}, module_data, seen)
-              {:call_last, _, {^mod, g, b}, _} -> start_api?({mod, g, b}, module_data, seen)
-              _ -> false
-            end
-          end)
-      end
-    end
-  end
-
-  defp start_api?(_mfa, _module_data, _seen), do: false
 
   # Walks forward from the call along every path. Each instruction either
   # reads {x,0} (the ref is kept, and the answer is no), writes it without

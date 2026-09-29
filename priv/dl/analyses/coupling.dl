@@ -16,6 +16,7 @@
 .include "../clientlib/process_statem.dl"
 .include "../clientlib/tooling.dl"
 .include "../clientlib/restart_state.dl"
+.include "../clientlib/answers.dl"
 
 // A finding in code only developers' tools or tests run steps down a
 // level (clientlib/tooling.dl, Argus.Findings.Tooling).
@@ -564,17 +565,42 @@ starts_and_monitors(mod, sup, child, via) :-
   module_reach.reaches(via, monitor),
   monitors_started_child(_, monitor).
 
-// A monitor of a pid a supervisor's start_child returned: named so by
-// the extractor, or a pid it could not name that the points-to analysis
-// follows to a process a DynamicSupervisor.start_child started.
+// A monitor of a pid a supervisor's start_child returned: on every path,
+// directly or through the program's wrappers (monitor_answer and
+// call_origin, clientlib/answers.dl: redix's start_connection/7 hands
+// back DynamicSupervisor.start_child's answer), or a pid the points-to
+// analysis follows to a process a DynamicSupervisor.start_child may have
+// started.
 .decl monitors_started_child(id: symbol, func: symbol)
 
-monitors_started_child(id, func) :- monitor_call(id, func, "started_child").
+monitors_started_child(id, func) :-
+  monitor_answer(id, func, _, _),
+  !monitors_other(id).
+
+answer_demand(c, f) :- monitor_answer(_, f, c, _).
+
+// The pid monitored at `id` may be something other than a child a
+// supervisor's start_child started.
+.decl monitors_other(id: symbol)
+
+monitors_other(id) :- monitor_answer(id, _, c, _), call_opaque(c).
+monitors_other(id) :- monitor_answer(id, _, c, k), call_origin(c, _, j), k + j > 1.
+
+monitors_other(id) :-
+  monitor_answer(id, _, c, _),
+  call_origin(c, o, _),
+  !supervisor_start_child(o).
+
+// A supervisor's start_child, which answers the child it started.
+.decl supervisor_start_child(site: symbol)
+
+supervisor_start_child(o) :- call_site(o, _, "DynamicSupervisor", "start_child", _).
+supervisor_start_child(o) :- call_site(o, _, "Supervisor", "start_child", _).
 
 monitors_started_child(id, func) :-
-  monitor_call(id, func, "dynamic"),
   signal_target(id, func, "monitor", pid),
-  process_start(start, _, pid, _, _),
+  instance(pid, base),
+  process_start(start, _, base, _, _),
   call_site(start, _, "DynamicSupervisor", "start_child", _).
 
 // A function of mod that handles a :DOWN message (matches_down).

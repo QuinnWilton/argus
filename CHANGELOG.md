@@ -4,6 +4,50 @@ All notable changes to Argus are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### What a call answers, through the program's wrappers (schema 155)
+
+**Fixed.** "Entry dropped while its process stays monitored" was
+reported for a process the monitoring code had just started, when the
+start went through a function of the program (issue #3, Tortoise's
+connection: `{:ok, pid} =
+Tortoise.TransmitterSupervisor.start_transmitter(opts)` over
+`DynamicSupervisor.start_child/2`, then `Process.monitor(pid)` and a
+`:DOWN` clause that clears it). The "a process the run started" excuse
+read only a start called directly, by name.
+
+**Added.** Schema 155. One reading of a wrapper, for every rule that
+asks what a call answered. `answers_call(func, site, depth)` (the
+error_handling extractor, `Argus.Extractor.Answers`): every way `func`
+returns a value hands back what one of its calls answered — the answer
+itself (a tail call, a default-argument wrapper), its payload (`{:ok,
+pid} = start(); pid`, `depth` 1) or the payload re-wrapped (`{:ok, pid} =
+start(); {:ok, pid}`, a `case` that passes `{:ok, pid}` and `{:error,
+reason}` on); all or nothing, so one return of a lookup, a literal, a
+parameter or the pid of `{:error, {:already_started, pid}}` leaves the
+function without rows. clientlib/answers.dl follows it through the
+program, in any module and to any depth (`wrapper_answer`,
+`answer_opaque`), and a rule asks it of the calls it seeds in
+`answer_demand` (`call_origin`, `call_opaque`). It is the must-reading
+`returns_call` (one module, may) and points-to's `fresh_return` (may)
+are not.
+
+**Changed.** Schema 155. `monitor_started(id, func, start)` is
+`monitor_answer(id, func, call, depth)`: every call whose answer the
+monitored pid may be, on every path, whatever it is named (all or
+nothing per site); which of them start a process is the rules'.
+`monitor_call`'s target is no longer `started_child` (the extractor's
+own scan of local wrappers is gone): the monitored name when literal,
+else `dynamic`. mailbox's `starts_its_target` asks that every origin of
+the pid, through the program's wrappers, starts a process (a
+`process_start`, or a library's call named like a start); coupling's
+`monitors_started_child` asks that every origin is a supervisor's
+`start_child`, and its points-to clause joins the monitored process to
+its base through `instance` (a pid a caller keeps from a wrapper is the
+instance `start <site>`, not the start's base). Readers of positional
+columns see one new relation and one renamed and widened.
+
 ## 0.20.1 — 2026-09-29
 
 ### Changed

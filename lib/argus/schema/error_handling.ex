@@ -490,6 +490,31 @@ defmodule Argus.Schema.ErrorHandling do
         """
       },
       %{
+        name: :answers_call,
+        layer: 2,
+        fields: [
+          {:func, :symbol, "the function"},
+          {:site, :symbol, "a call in it whose answer a return hands back"},
+          {:depth, :number,
+           "0: the answer itself, or its payload re-wrapped under a literal tag; " <>
+             "1: the answer's payload (the pid of an `{:ok, pid}`)"}
+        ],
+        doc: """
+        Every way `func` returns a value hands back what one of the calls \
+        its rows name answered: a tail call (a default-argument wrapper), \
+        or a return of such a call's result, of its payload (`{:ok, pid} = \
+        start(); pid`) or of the payload re-wrapped (`{:ok, pid} = \
+        start(); {:ok, pid}`, a `case` that passes `{:ok, pid}` and \
+        `{:error, reason}` on). All or nothing: one return of anything \
+        else (a lookup, a literal, a parameter, a deeper element such as \
+        the pid of `{:error, {:already_started, pid}}`) and the function \
+        has no row; a path that raises is not asked. The must-reading of \
+        a wrapper, where `returns_call` is the may-reading; \
+        `clientlib/answers.dl` chains it through the program \
+        (`Argus.Extractor.Answers`).
+        """
+      },
+      %{
         name: :recv_pattern,
         layer: 2,
         fields: [

@@ -874,4 +874,167 @@ defmodule Argus.Test.Fixtures.MonitorLeak do
     def handle_info({:DOWN, _ref, :process, pid, _}, state),
       do: {:noreply, Map.delete(state, pid)}
   end
+
+  # A process a start answered through the program's own functions is as
+  # new as one the monitoring function starts itself (issue #3, Tortoise's
+  # connection): a wrapper that hands back the start's answer on every way
+  # out, however many layers and in whichever module.
+
+  defmodule Transmitters do
+    @moduledoc """
+    Tortoise's TransmitterSupervisor: a DynamicSupervisor whose
+    `start_transmitter/2` (with its default-argument `start_transmitter/1`)
+    hands back `DynamicSupervisor.start_child/2`'s answer.
+    """
+    use DynamicSupervisor
+
+    def start_link(arg), do: DynamicSupervisor.start_link(__MODULE__, arg, name: __MODULE__)
+
+    def start_transmitter(sup \\ __MODULE__, opts) do
+      opts = Keyword.put(opts, :parent, self())
+
+      spec =
+        {Argus.Test.Fixtures.MonitorLeak.Transmitter, Keyword.take(opts, [:transport, :parent])}
+
+      DynamicSupervisor.start_child(sup, spec)
+    end
+
+    @impl true
+    def init(_arg), do: DynamicSupervisor.init(strategy: :one_for_one)
+  end
+
+  defmodule Transmitter do
+    @moduledoc false
+    use GenServer, restart: :temporary
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+    @impl true
+    def init(opts), do: {:ok, opts}
+  end
+
+  defmodule ConnectsThroughWrapper do
+    @moduledoc """
+    Tortoise's Connection (issue #3): each `:connect` starts a transmitter
+    through `Transmitters.start_transmitter/1`, monitors it and keeps `{pid,
+    ref}`; the `:DOWN` of that pid and ref clears it and connects again,
+    and other `:internal` clauses reset fields of their own. One monitor per
+    transmitter, which its `:DOWN` ends.
+    """
+    @behaviour :gen_statem
+
+    def start_link(opts), do: :gen_statem.start_link(__MODULE__, opts, [])
+
+    @impl true
+    def callback_mode, do: :handle_event_function
+
+    @impl true
+    def init(opts) do
+      data = %{opts: opts, receiver: nil, pending: %{}, backoff: 0}
+      {:ok, :connecting, data, [{:next_event, :internal, :connect}]}
+    end
+
+    @impl true
+    def handle_event(:info, {:incoming, package}, _state, _data) when is_binary(package),
+      do: {:keep_state_and_data, [{:next_event, :internal, {:received, package}}]}
+
+    def handle_event(:internal, {:received, _package}, :connected, data),
+      do: {:keep_state, %{data | pending: %{}}}
+
+    def handle_event(:internal, :connect, :connecting, data) do
+      transport = Keyword.get(data.opts, :transport)
+
+      {:ok, t_pid} =
+        Argus.Test.Fixtures.MonitorLeak.Transmitters.start_transmitter(
+          parent: self(),
+          transport: transport
+        )
+
+      data = %{data | receiver: {t_pid, Process.monitor(t_pid)}}
+      {timeout, data} = Map.get_and_update(data, :backoff, &{&1, &1 + 1})
+      {:keep_state, data, [{:state_timeout, timeout, :attempt_connection}]}
+    end
+
+    def handle_event(:state_timeout, :attempt_connection, :connecting, data),
+      do: {:next_state, :connected, data}
+
+    def handle_event(
+          :info,
+          {:DOWN, receiver_ref, :process, receiver_pid, _reason},
+          state,
+          %{receiver: {receiver_pid, receiver_ref}} = data
+        )
+        when state in [:connected, :connecting] do
+      {:next_state, :connecting, %{data | receiver: nil}, [{:next_event, :internal, :connect}]}
+    end
+  end
+
+  defmodule StartsThroughLocalWrapper do
+    @moduledoc """
+    A private wrapper that tail-calls a start, and a server that monitors
+    what it answers and throws the ref away: the process is new on every run.
+    """
+    use GenServer
+
+    @impl true
+    def init(sup), do: {:ok, sup}
+
+    @impl true
+    def handle_call(:work, _from, sup) do
+      {:ok, pid} = start_worker(sup)
+      Process.monitor(pid)
+      {:reply, :ok, sup}
+    end
+
+    defp start_worker(sup),
+      do: DynamicSupervisor.start_child(sup, Argus.Test.Fixtures.MonitorLeak.Transmitter)
+  end
+
+  defmodule Starters do
+    @moduledoc """
+    Wrappers that pass a start's answer on: through a `case` that rebuilds
+    `{:ok, pid}` and `{:error, reason}`, one layer over another, and one
+    that hands back the bare pid.
+    """
+    def start_passing(sup) do
+      case start_raw(sup) do
+        {:ok, pid} -> {:ok, pid}
+        {:error, reason} -> {:error, reason}
+      end
+    end
+
+    def start_bare(arg) do
+      {:ok, pid} = GenServer.start_link(Argus.Test.Fixtures.MonitorLeak.Transmitter, arg)
+      pid
+    end
+
+    defp start_raw(sup),
+      do: DynamicSupervisor.start_child(sup, Argus.Test.Fixtures.MonitorLeak.Transmitter)
+  end
+
+  defmodule StartsThroughLayers do
+    @moduledoc """
+    Monitors what two layers of another module's wrappers answered, and a
+    bare pid a third hands back: both new on every run.
+    """
+    use GenServer
+
+    alias Argus.Test.Fixtures.MonitorLeak.Starters
+
+    @impl true
+    def init(sup), do: {:ok, sup}
+
+    @impl true
+    def handle_call(:work, _from, sup) do
+      {:ok, pid} = Starters.start_passing(sup)
+      Process.monitor(pid)
+      {:reply, :ok, sup}
+    end
+
+    def handle_call(:bare, _from, sup) do
+      pid = Starters.start_bare(sup)
+      Process.monitor(pid)
+      {:reply, :ok, sup}
+    end
+  end
 end

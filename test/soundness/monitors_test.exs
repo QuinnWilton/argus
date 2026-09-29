@@ -65,6 +65,40 @@ defmodule Argus.Soundness.MonitorsTest do
     end
   end
 
+  describe "the process is one the run can meet again: a wrapper excuses only a start's answer" do
+    test "a wrapper that looks the process up first" do
+      assert_fires(
+        [M.MonitorsLookupWrapper, M.Wrappers, M.Room],
+        @dropped,
+        {M.MonitorsLookupWrapper, :handle_call, 3}
+      )
+    end
+
+    test "a wrapper that re-wraps the already-started pid as {:ok, pid}" do
+      assert_fires(
+        [M.MonitorsAlreadyStartedWrapper, M.Wrappers, M.Room],
+        @dropped,
+        {M.MonitorsAlreadyStartedWrapper, :handle_call, 3}
+      )
+    end
+
+    test "a wrapper that hands back its parameter on one clause" do
+      assert_fires(
+        [M.MonitorsParameterWrapper, M.Wrappers, M.Room],
+        @dropped,
+        {M.MonitorsParameterWrapper, :handle_call, 3}
+      )
+    end
+
+    test "a function named like a start that answers another server's reply" do
+      assert_fires(
+        [M.MonitorsReplyWrapper, M.Wrappers, M.Room],
+        @dropped,
+        {M.MonitorsReplyWrapper, :handle_call, 3}
+      )
+    end
+  end
+
   describe "released by the run: a release on some way out does not excuse" do
     test "a demonitor on the answer path only" do
       assert_fires([M.DemonitorOnOnePath], @wait, {M.DemonitorOnOnePath, :ask, 1})

@@ -139,6 +139,108 @@ defmodule Argus.Test.Soundness.Monitors.MonitorsStoredWorker do
   end
 end
 
+# ── It can meet T again: a wrapper that answers anything but a start ──
+#
+# A wrapper's answer is a new process only when every way out of it hands
+# back a start's answer (clientlib/answers.dl). Each of these hands back a
+# process others hold on some way out, and the monitor piles up there.
+
+defmodule Argus.Test.Soundness.Monitors.Wrappers do
+  @moduledoc """
+  Wrappers named and shaped like starts that answer a running process on
+  one way out: a lookup first, an already-started pid re-wrapped, a
+  parameter, a reply.
+  """
+  def ensure(registry, sup, key) do
+    case Registry.lookup(registry, key) do
+      [{pid, _}] -> {:ok, pid}
+      [] -> DynamicSupervisor.start_child(sup, {Argus.Test.Soundness.Monitors.Room, key})
+    end
+  end
+
+  def start_or_existing(sup, key) do
+    case DynamicSupervisor.start_child(sup, {Argus.Test.Soundness.Monitors.Room, key}) do
+      {:ok, pid} -> {:ok, pid}
+      {:error, {:already_started, pid}} -> {:ok, pid}
+    end
+  end
+
+  def start_unless_running(nil, sup),
+    do: DynamicSupervisor.start_child(sup, Argus.Test.Soundness.Monitors.Room)
+
+  def start_unless_running(pid, _sup), do: {:ok, pid}
+
+  def start_session(registry, user), do: GenServer.call(registry, {:session, user})
+end
+
+defmodule Argus.Test.Soundness.Monitors.MonitorsLookupWrapper do
+  @moduledoc "Monitors what a lookup-first wrapper answers, on every call."
+  use GenServer
+
+  alias Argus.Test.Soundness.Monitors.Wrappers
+
+  @impl true
+  def init(state), do: {:ok, state}
+
+  @impl true
+  def handle_call({:join, key}, _from, {registry, sup} = state) do
+    {:ok, pid} = Wrappers.ensure(registry, sup, key)
+    Process.monitor(pid)
+    {:reply, :ok, state}
+  end
+end
+
+defmodule Argus.Test.Soundness.Monitors.MonitorsAlreadyStartedWrapper do
+  @moduledoc "Monitors what a wrapper answers, the already-started pid re-wrapped as {:ok, pid}."
+  use GenServer
+
+  alias Argus.Test.Soundness.Monitors.Wrappers
+
+  @impl true
+  def init(sup), do: {:ok, sup}
+
+  @impl true
+  def handle_call({:join, key}, _from, sup) do
+    {:ok, pid} = Wrappers.start_or_existing(sup, key)
+    Process.monitor(pid)
+    {:reply, :ok, sup}
+  end
+end
+
+defmodule Argus.Test.Soundness.Monitors.MonitorsParameterWrapper do
+  @moduledoc "Monitors what a wrapper answers, which is its parameter when a pid is passed."
+  use GenServer
+
+  alias Argus.Test.Soundness.Monitors.Wrappers
+
+  @impl true
+  def init(sup), do: {:ok, sup}
+
+  @impl true
+  def handle_call({:join, known}, _from, sup) do
+    {:ok, pid} = Wrappers.start_unless_running(known, sup)
+    Process.monitor(pid)
+    {:reply, :ok, sup}
+  end
+end
+
+defmodule Argus.Test.Soundness.Monitors.MonitorsReplyWrapper do
+  @moduledoc "Monitors what a function named like a start answers: another server's reply."
+  use GenServer
+
+  alias Argus.Test.Soundness.Monitors.Wrappers
+
+  @impl true
+  def init(registry), do: {:ok, registry}
+
+  @impl true
+  def handle_call({:join, user}, _from, registry) do
+    {:ok, pid} = Wrappers.start_session(registry, user)
+    Process.monitor(pid)
+    {:reply, :ok, registry}
+  end
+end
+
 # ── Released by the run (monitor_released, collected_by_callers) ─────
 
 defmodule Argus.Test.Soundness.Monitors.PlainDemonitor do
