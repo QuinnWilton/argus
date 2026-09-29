@@ -23,6 +23,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   rows and a `try`'s line, param_flow's sink lines, error_handling's
   catch spans and log regions, and the Ecto extractor's test for a
   schema compiled without lines.
+- A function's `func_info` label is found past the line marker before
+  it (`Argus.Extractor.Dispatch.func_info_label/1`, which error_handling's
+  boundary rule now reads too). OTP 29's disassembler lays every
+  function out `label, line, func_info`, as OTP 28's does a module's
+  first function only (the rest `line, label, func_info`). Read as the
+  instruction just before `func_info`, those functions had no clause
+  failure label: none was total (a catch-all callback read as partial),
+  and none could fail a clause head (a catch-all rescue around a guarded
+  call went unreported) — on OTP 29 every function, on OTP 28 each
+  module's first.
 - An analysis's rows come back sorted (`Argus.analyze/3`,
   `Argus.Souffle.run/3`, and the rows findings are built from),
   whatever order the solver wrote them in. Souffle writes a relation in

@@ -27,6 +27,7 @@ defmodule Argus.Extractors.ErrorHandling.Boundary do
   the line.
   """
 
+  alias Argus.Extractor.Dispatch
   alias Argus.Extractor.Helpers
   alias Argus.Pipeline.Disassemble
   alias Argus.Purity.Effects
@@ -202,18 +203,14 @@ defmodule Argus.Extractors.ErrorHandling.Boundary do
       not clause_can_fail?(instrs)
   end
 
-  # The label of the function's `func_info` (the one just before it) is
-  # the target of a clause head that does not match.
+  # The label of the function's `func_info` is the target of a clause
+  # head that does not match.
   defp clause_can_fail?(instrs) do
-    case clause_error_label(instrs) do
+    case Dispatch.func_info_label(instrs) do
       nil -> false
       label -> Enum.any?(instrs, &(label in Argus.Instr.targets(&1)))
     end
   end
-
-  defp clause_error_label([{:label, label}, {:func_info, _, _, _} | _rest]), do: label
-  defp clause_error_label([_instr | rest]), do: clause_error_label(rest)
-  defp clause_error_label([]), do: nil
 
   # A boundary call as a tail call too: a wrapper's body is often one.
   defp boundary_op?(instr) do

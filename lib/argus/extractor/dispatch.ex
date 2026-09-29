@@ -12,13 +12,27 @@ defmodule Argus.Extractor.Dispatch do
 
   alias Argus.Instr
 
-  @doc "The label of the function's `func_info` instruction, or `nil`."
+  @doc """
+  The label of the function's `func_info` instruction, or `nil`: the
+  label before it, past the line marker between them. OTP 29's
+  `beam_disasm` lays a function out `label, line, func_info`, as the
+  compiler does; OTP 28's does that for a module's first function only,
+  and `line, label, func_info` for the rest.
+  """
   @spec func_info_label([tuple()]) :: non_neg_integer() | nil
   def func_info_label(instrs) do
-    case Enum.find_index(instrs, &match?({:func_info, _, _, _}, &1)) do
-      nil -> nil
-      0 -> nil
-      idx -> with {:label, l} <- Enum.at(instrs, idx - 1), do: l, else: (_ -> nil)
+    {prefix, rest} = Enum.split_while(instrs, &(not match?({:func_info, _, _, _}, &1)))
+
+    if rest == [] do
+      nil
+    else
+      prefix
+      |> Enum.reverse()
+      |> Enum.drop_while(&match?({:line, _}, &1))
+      |> case do
+        [{:label, l} | _] -> l
+        _ -> nil
+      end
     end
   end
 
