@@ -1158,7 +1158,7 @@ record_drop(m, k, h, h, tag) :-
   remote_call(x, h, rm, op, _),
   removal_api(rm, op),
   clause_call(x, h, tag),
-  tag != ":DOWN",
+  !down_clause(h, tag),
   returned_update(h, k, _, tag).
 
 record_drop(m, k, g, h, tag) :-
@@ -1168,7 +1168,7 @@ record_drop(m, k, g, h, tag) :-
   function_def(h, m, _, _, _),
   call_instr(h, g, c),
   clause_call(c, h, tag),
-  tag != ":DOWN",
+  !down_clause(h, tag),
   function_def(g, m, _, _, _),
   remote_call(_, g, rm, op, _),
   removal_api(rm, op),
@@ -1188,7 +1188,7 @@ record_drop(m, cat("table ", t), h, h, tag) :-
   ets_op(x, h, t, op, _),
   ets_removal_op(op),
   clause_call(x, h, tag),
-  tag != ":DOWN".
+  !down_clause(h, tag).
 
 record_drop(m, cat("table ", t), g, h, tag) :-
   monitor_record(_, m, cat("table ", t)),
@@ -1196,10 +1196,17 @@ record_drop(m, cat("table ", t), g, h, tag) :-
   function_def(h, m, _, _, _),
   call_instr(h, g, c),
   clause_call(c, h, tag),
-  tag != ":DOWN",
+  !down_clause(h, tag),
   function_def(g, m, _, _, _),
   ets_op(_, g, t, op, _),
   ets_removal_op(op).
+
+// A clause for a monitor's :DOWN: a handler's `:DOWN` clause, or a
+// gen_statem's for `:info` events of content `:DOWN` (clause_event).
+.decl down_clause(func: symbol, tag: symbol)
+
+down_clause(h, ":DOWN") :- clause_call(_, h, ":DOWN").
+down_clause(h, t) :- clause_event(h, t, ":info", ":DOWN").
 
 // A field set to an empty collection: every record in it goes.
 .decl emptied(value: symbol)

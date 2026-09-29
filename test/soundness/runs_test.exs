@@ -122,6 +122,19 @@ defmodule Argus.Soundness.RunsTest do
     test "quiet: an event only init/1 inserts" do
       refute_fires([R.InsertOnce], R.InsertOnce)
     end
+
+    # A clause is told by its event's content too (issue #3).
+    test "quiet: an event only init/1 inserts, beside one a cast inserts for another clause" do
+      refute_fires([R.InsertOnceBesideAnother], R.InsertOnceBesideAnother)
+    end
+
+    test "an event of a content a cast is handed" do
+      assert_fires([R.InsertAnyContent], {R.InsertAnyContent, :handle_event, 4})
+    end
+
+    test "a clause for any content, which a cast's event of another content enters" do
+      assert_fires([R.InsertIntoAnyContent], {R.InsertIntoAnyContent, :handle_event, 4})
+    end
   end
 
   describe "the :timeout clause runs once only when once code alone arms the idle timeout" do

@@ -435,14 +435,17 @@ The extractor also reads `statem_insert` (inserted events).
   in the clause for a message init/1 sends, which a reconnect sends again,
   is made again on the next reconnect but not after the peer's restart,
   and it is not reported. The restart-state model already left this out.
-- **Which state an inserted event enters.** A gen_statem's `:internal`
-  clauses are told apart by the event type alone. ra inserts `internal`
-  events on its way from `post_init` through `recover` to `recovered`,
-  each from the clause before. By type alone, `post_init`'s clause is
-  entered by its own insert, so it runs again. To tell them apart, the
-  model needs the state each insert's return enters. ra's computed
-  targets (`next_state(NextState, ...)` from `ra_server`'s results) could
-  name any state. ra's `do_init/1` monitor row stays.
+- **Which state an inserted event enters.** A gen_statem's clauses are
+  told apart by the event's type and content together (issue #3:
+  `:internal :connect` is not `:internal {:received, _}`), but not by the
+  state. ra inserts `internal` events on its way from `post_init`
+  through `recover` to `recovered`, each from the clause before, and the
+  clauses differ by the state they are in; by type and content,
+  `post_init`'s clause is entered by its own insert, so it runs again. To
+  tell them apart, the model needs the state each insert's return
+  enters. ra's computed targets (`next_state(NextState, ...)` from
+  `ra_server`'s results) could name any state. ra's `do_init/1` monitor
+  row stays.
 - **A retry chain's exit.** A clause that re-sends itself until something
   is ready, and then arms the loop once (blockster's `:wait_for_mnesia`),
   is a cycle, and runs again.

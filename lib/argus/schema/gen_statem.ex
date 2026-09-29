@@ -37,8 +37,12 @@ defmodule Argus.Schema.GenStatem do
         fields: [
           {:id, :symbol, "where the action tuple is built or held"},
           {:func, :symbol, "the function holding it"},
-          {:clause, :symbol, "the tag of func's first argument on the paths to it, `*` for none"},
-          {:type, :symbol, "the inserted event's type as a clause head tells it, `*` unspelled"}
+          {:clause, :symbol,
+           "the tag of func's clause on the paths to it (clause_call's spelling), `*` for none"},
+          {:type, :symbol, "the inserted event's type as a clause head tells it, `*` unspelled"},
+          {:content, :symbol,
+           "the inserted event's content as a clause head tells it (its atom, or a tuple's), " <>
+             "`*` unspelled"}
         ],
         doc: """
         A `{:next_event, type, content}` action in a function of a \
@@ -47,8 +51,10 @@ defmodule Argus.Schema.GenStatem do
         Read where the tuple is built or where a literal holds it \
         (`[{:next_event, :internal, :go}]`), whether or not it is returned. \
         `{:call, from}` is spelled by its tag, `:call`; a type the function \
-        does not spell (a parameter) is `*`. One row per clause of `func`, \
-        by its first argument's tag (`Argus.Extractor.Dispatch.argument_tags/2`). \
+        does not spell (a parameter) is `*`, and so is a content it does \
+        not. One row per clause of `func`, by its first argument's tag \
+        (`Argus.Extractor.Dispatch.argument_tags/2`), or, in an event \
+        function, its event's type and content (`event_tags/3`). \
         What enters a gen_statem's `:internal` clauses, for \
         `clientlib/runs.dl`'s once clauses.
         """

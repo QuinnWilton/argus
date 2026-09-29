@@ -111,6 +111,7 @@ defmodule Argus.Extractors.ErrorHandling do
   alias Argus.Extractors.ErrorHandling.Boundary
   alias Argus.Extractors.ErrorHandling.CatchClauses
   alias Argus.Extractors.ErrorHandling.ClauseHead
+  alias Argus.Extractors.GenStatem
   alias Argus.Instr
   alias Argus.Instr.Reaching
   alias Argus.InstrId
@@ -237,7 +238,7 @@ defmodule Argus.Extractors.ErrorHandling do
     rescues =
       rescues
       |> emit_self_sends(mod, module_data.functions)
-      |> emit_timer_flows(mod, module_data.functions)
+      |> emit_timer_flows(mod, module_data.functions, event_functions(module_data))
       |> emit_cancel_clauses(module_data)
       |> emit_try_coverage(module_data)
       |> emit_boundary_functions(module_data)
@@ -857,7 +858,7 @@ defmodule Argus.Extractors.ErrorHandling do
   # function is as much the process's as one in a named function (a
   # `for` in terminate/2 that waits for each monitor's :DOWN compiles
   # its body into one), so recv_pattern is read in every function.
-  defp emit_timer_flows(facts, mod, functions) do
+  defp emit_timer_flows(facts, mod, functions, events) do
     Enum.reduce(functions, facts, fn {:function, name, arity, _entry, instrs}, acc ->
       func_id = InstrId.func_id(mod, name, arity)
       acc = emit_recv_patterns(acc, func_id, instrs)
@@ -870,7 +871,7 @@ defmodule Argus.Extractors.ErrorHandling do
         |> emit_returns(mod, func_id, instrs)
         |> emit_answers(func_id, instrs)
         |> emit_nil_tests(func_id, instrs)
-        |> emit_returned_updates(func_id, instrs)
+        |> emit_returned_updates(func_id, instrs, {name, arity} in events)
         |> emit_value_tests(func_id, instrs)
       end
     end)
@@ -921,15 +922,18 @@ defmodule Argus.Extractors.ErrorHandling do
   # first argument was established to be (Dispatch.argument_tags/2, as
   # clause_call reads a call's), `*` for a return every clause shares:
   # `handle_call({:add, h}, ...)` sets what `handle_call(:get, ...)` does
+  # not. A gen_statem's event function is told apart by its event's type
+  # and content together (Dispatch.event_tags/3): its `:internal
+  # :connect` clause sets what its `:internal {:received, _}` one does
   # not.
-  defp emit_returned_updates(facts, func_id, instrs) do
+  defp emit_returned_updates(facts, func_id, instrs, event?) do
     returns =
       for {:return, idx} <- Enum.with_index(instrs),
           updates = returned_updates(instrs, idx),
           updates != [],
           do: {idx, updates}
 
-    tags = if returns == [], do: %{}, else: Dispatch.argument_tags(instrs, {:x, 0})
+    tags = if returns == [], do: %{}, else: Dispatch.clause_tags(instrs, event?)
 
     returns
     |> Enum.flat_map(fn {idx, updates} ->
@@ -1514,6 +1518,9 @@ defmodule Argus.Extractors.ErrorHandling do
       end
     end)
   end
+
+  # A gen_statem's event functions, `{name, arity}`.
+  defp event_functions(module_data), do: GenStatem.event_functions(module_data)
 
   # The calls whose answers every return of the function hands back,
   # passed through (`Argus.Extractor.Answers`): the must-reading of a

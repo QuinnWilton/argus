@@ -661,7 +661,20 @@ literal_first(f, g, a) :-
   !call_arg(f, g, 0, "dynamic"),
   !forwards_untagged(f, g),
   call_instr(f, g, id),
-  clause_call(id, f, a).
+  clause_call(id, f, a),
+  !clause_event(f, a, _, _).
+
+// A gen_statem event function's clause is told by its event's type and
+// content (clause_event); its first argument, the one forwarded, is the
+// type.
+literal_first(f, g, a) :-
+  call_arg_forward(f, g, 0, 0),
+  !call_arg_forward_other(f, g),
+  !call_arg(f, g, 0, "dynamic"),
+  !forwards_untagged(f, g),
+  call_instr(f, g, id),
+  clause_call(id, f, t),
+  clause_event(f, t, a, _).
 
 literal_first(f, g, a) :-
   call_arg_forward(f, g, 0, 0),
@@ -719,7 +732,7 @@ site_request(f, id, m, tag) :-
   literal_entry(f, g, a),
   site_request(g, s, m, tag),
   site_clause(g, s, c),
-  (c = a ; c = "any").
+  (c = a ; c = "any" ; clause_event(g, c, a, _)).
 
 site_request(f, id, m, tag) :-
   site_demand(f),

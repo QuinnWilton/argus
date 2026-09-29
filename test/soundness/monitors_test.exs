@@ -147,6 +147,22 @@ defmodule Argus.Soundness.MonitorsTest do
       assert_fires([M.TableDeleteOnCast], @ended, {M.TableDeleteOnCast, :handle_call, 3})
     end
 
+    test "a drop in a gen_statem clause of the same type and another content" do
+      assert_fires([M.StatemUnwatchDrops], @ended, {M.StatemUnwatchDrops, :handle_event, 4})
+    end
+
+    test "a reset in another :internal clause of a gen_statem" do
+      assert_fires([M.StatemInternalReset], @ended, {M.StatemInternalReset, :handle_event, 4})
+    end
+
+    test "a reset in a gen_statem's :DOWN clause for another monitor" do
+      assert_fires([M.StatemOtherDownResets], @ended, {M.StatemOtherDownResets, :handle_event, 4})
+    end
+
+    test "a drop in another clause of a state function" do
+      assert_fires([M.StateFunctionUnwatch], @ended, {M.StateFunctionUnwatch, :ready, 3})
+    end
+
     test "a drop that demonitors is the release" do
       refute Enum.any?(
                fired([M.DropAndDemonitor], :mailbox),

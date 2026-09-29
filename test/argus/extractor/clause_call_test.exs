@@ -157,4 +157,30 @@ defmodule Argus.Extractor.ClauseCallTest do
              end)
     end
   end
+
+  describe "a gen_statem's event function" do
+    # Issue #3: its clauses are picked by the event's type and content
+    # together, so `:internal :connect` is not `:internal {:received, _}`.
+    setup do
+      mod = Argus.Test.Fixtures.MonitorLeak.ConnectsThroughWrapper
+      {:ok, facts} = Argus.Pipeline.extract([mod], extractors: [ClauseCall])
+      %{facts: facts}
+    end
+
+    test "a call's tag names the event's type and content", %{facts: facts} do
+      tags =
+        for [_id, func, tag] <- facts[:clause_call], func =~ "handle_event/4", uniq: true, do: tag
+
+      assert ":internal :connect" in tags
+      refute ":internal" in tags
+    end
+
+    test "clause_event splits each two-part tag", %{facts: facts} do
+      events = for [_func, tag, type, content] <- facts[:clause_event], do: {tag, type, content}
+
+      assert {":internal :connect", ":internal", ":connect"} in events
+      assert {":internal :received", ":internal", ":received"} in events
+      assert {":info :DOWN", ":info", ":DOWN"} in events
+    end
+  end
 end

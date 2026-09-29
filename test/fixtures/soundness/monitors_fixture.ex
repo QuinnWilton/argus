@@ -241,6 +241,107 @@ defmodule Argus.Test.Soundness.Monitors.MonitorsReplyWrapper do
   end
 end
 
+# ── ended, in a gen_statem: clauses told by type and content ──────────
+#
+# The record is read by where it is kept (a field), and a clause by its
+# event's type and content: a drop in another clause of the same type,
+# in another content, still drops it.
+
+defmodule Argus.Test.Soundness.Monitors.StatemUnwatchDrops do
+  @moduledoc """
+  A cast `{:watch, pid}` monitors and records the subscriber; a cast
+  `{:unwatch, pid}` drops it without a demonitor.
+  """
+  @behaviour :gen_statem
+
+  @impl true
+  def callback_mode, do: :handle_event_function
+
+  @impl true
+  def init(_), do: {:ok, :ready, %{subs: %{}}}
+
+  @impl true
+  def handle_event(:cast, {:watch, pid}, _state, data),
+    do: {:keep_state, %{data | subs: Map.put(data.subs, pid, Process.monitor(pid))}}
+
+  def handle_event(:cast, {:unwatch, pid}, _state, data),
+    do: {:keep_state, %{data | subs: Map.delete(data.subs, pid)}}
+
+  def handle_event(:info, {:DOWN, _ref, :process, pid, _}, _state, data),
+    do: {:keep_state, %{data | subs: Map.delete(data.subs, pid)}}
+end
+
+defmodule Argus.Test.Soundness.Monitors.StatemInternalReset do
+  @moduledoc """
+  An `:internal` `{:register, pid}` a cast inserts monitors and records
+  the process; an `:internal` `:reset` another cast inserts empties the
+  record, and the monitors stay.
+  """
+  @behaviour :gen_statem
+
+  @impl true
+  def callback_mode, do: :handle_event_function
+
+  @impl true
+  def init(_), do: {:ok, :ready, %{subs: %{}}}
+
+  @impl true
+  def handle_event(:cast, {:register, pid}, _state, _data),
+    do: {:keep_state_and_data, [{:next_event, :internal, {:register, pid}}]}
+
+  def handle_event(:cast, :reset, _state, _data),
+    do: {:keep_state_and_data, [{:next_event, :internal, :reset}]}
+
+  def handle_event(:internal, {:register, pid}, _state, data),
+    do: {:keep_state, %{data | subs: Map.put(data.subs, pid, Process.monitor(pid))}}
+
+  def handle_event(:internal, :reset, _state, data), do: {:keep_state, %{data | subs: %{}}}
+end
+
+defmodule Argus.Test.Soundness.Monitors.StatemOtherDownResets do
+  @moduledoc """
+  The `:DOWN` of the connection's monitor resets every subscriber, whose
+  monitors stay (eventstore's AdvisoryLocks, in a gen_statem): a `:DOWN`
+  clause's reset of another monitor's record is a drop.
+  """
+  @behaviour :gen_statem
+
+  @impl true
+  def callback_mode, do: :handle_event_function
+
+  @impl true
+  def init(conn), do: {:ok, :ready, %{conn: Process.monitor(conn), subs: %{}}}
+
+  @impl true
+  def handle_event(:cast, {:watch, pid}, _state, data),
+    do: {:keep_state, %{data | subs: Map.put(data.subs, pid, Process.monitor(pid))}}
+
+  def handle_event(:info, {:DOWN, ref, :process, _pid, _}, _state, %{conn: ref} = data),
+    do: {:keep_state, %{data | subs: %{}}}
+end
+
+defmodule Argus.Test.Soundness.Monitors.StateFunctionUnwatch do
+  @moduledoc """
+  The `{:unwatch, pid}` shape in state functions: a call to `ready/3`
+  monitors and records, a cast to it drops without a demonitor.
+  """
+  @behaviour :gen_statem
+
+  @impl true
+  def callback_mode, do: :state_functions
+
+  @impl true
+  def init(_), do: {:ok, :ready, %{subs: %{}}}
+
+  def ready({:call, from}, {:watch, pid}, data) do
+    subs = Map.put(data.subs, pid, Process.monitor(pid))
+    {:keep_state, %{data | subs: subs}, [{:reply, from, :ok}]}
+  end
+
+  def ready(:cast, {:unwatch, pid}, data),
+    do: {:keep_state, %{data | subs: Map.delete(data.subs, pid)}}
+end
+
 # ── Released by the run (monitor_released, collected_by_callers) ─────
 
 defmodule Argus.Test.Soundness.Monitors.PlainDemonitor do

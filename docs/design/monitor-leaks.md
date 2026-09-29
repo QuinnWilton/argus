@@ -170,7 +170,11 @@ the code does not show it (the rubric's evidence clause).
   it is reported: a caller that catches keeps the monitor.
 - The record is read by where it is kept (a field, a table of the module),
   not by its key: a drop of one field entry ties to every monitor whose
-  clause writes that field.
+  clause writes that field. A clause is a callback's by its message's
+  tag, and a gen_statem's by its event's type and content together
+  (`clause_event`, issue #3): what the `:internal :connect` clause
+  records is not what an `:internal {:received, _}` clause resets, and an
+  `:info` clause whose content is `:DOWN` is a `:DOWN` clause.
 - A function nothing in the program calls is called again from outside.
 
 ### What it deliberately does not claim
@@ -192,7 +196,8 @@ the code does not show it (the rubric's evidence clause).
   (Livebook's `RuntimeServer` `:attach` sets the owner the message names,
   which may be nil), runs again as far as the code shows. So does ra's
   `post_init/3` clause: ra inserts `:internal` events on its way through
-  three states, and the event type alone does not tell them apart.
+  three states, and the event's type and content do not tell them apart
+  (the state would).
 - **A start the facts do not know.** A process a program function starts
   and does not hand back whole on every way out (a room it registers and
   then answers from a lookup, an outbound connection behind a function

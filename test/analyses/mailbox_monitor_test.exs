@@ -221,6 +221,24 @@ defmodule Argus.Analyses.MailboxMonitorTest do
     end
   end
 
+  describe "a gen_statem's clauses, by the event's type and content" do
+    test "what one :internal clause records is not what another resets" do
+      skip_without_souffle()
+
+      # Issue #3's second half: keyed by the event type alone, the pending
+      # map another :internal clause resets was the receiver's record.
+      assert {:ok, r} = Memo.analyze([M.StatemReceiverFromOpts], :mailbox)
+      assert Map.get(r, "monitor_leak", []) == []
+    end
+
+    test "an :info clause whose content is :DOWN is the monitor's own end" do
+      skip_without_souffle()
+
+      assert {:ok, r} = Memo.analyze([M.StatemForgetsOnDown], :mailbox)
+      assert Map.get(r, "monitor_leak", []) == []
+    end
+  end
+
   describe "released by the caller" do
     test "the supervisor shutdown shape is not reported", ctx do
       skip_without_souffle()

@@ -1037,4 +1037,71 @@ defmodule Argus.Test.Fixtures.MonitorLeak do
       {:reply, :ok, sup}
     end
   end
+
+  # A gen_statem's clauses are picked by the event's type and content
+  # together (issue #3): what one `:internal` clause records is not what
+  # another `:internal` clause resets, and an `:info` clause whose content
+  # is `:DOWN` is a :DOWN clause.
+
+  defmodule StatemReceiverFromOpts do
+    @moduledoc """
+    Monitors the receiver its options name on each `:connect` and keeps
+    `{pid, ref}`; another `:internal` clause resets the pending map, and
+    the receiver's own `:DOWN` clears it. Nothing drops the receiver
+    while it lives.
+    """
+    @behaviour :gen_statem
+
+    @impl true
+    def callback_mode, do: :handle_event_function
+
+    @impl true
+    def init(opts),
+      do:
+        {:ok, :connecting, %{opts: opts, receiver: nil, pending: %{}},
+         [{:next_event, :internal, :connect}]}
+
+    @impl true
+    def handle_event(:internal, :connect, :connecting, data) do
+      pid = Keyword.fetch!(data.opts, :receiver)
+      {:keep_state, %{data | receiver: {pid, Process.monitor(pid)}}}
+    end
+
+    def handle_event(:internal, {:received, _package}, _state, data),
+      do: {:keep_state, %{data | pending: %{}}}
+
+    def handle_event(:info, {:incoming, package}, _state, _data),
+      do: {:keep_state_and_data, [{:next_event, :internal, {:received, package}}]}
+
+    def handle_event(
+          :info,
+          {:DOWN, ref, :process, pid, _},
+          _state,
+          %{receiver: {pid, ref}} = data
+        ),
+        do:
+          {:next_state, :connecting, %{data | receiver: nil},
+           [{:next_event, :internal, :connect}]}
+  end
+
+  defmodule StatemForgetsOnDown do
+    @moduledoc """
+    Watches each subscriber a cast names and forgets it in its `:DOWN`
+    clause: the removal is that monitor's own end.
+    """
+    @behaviour :gen_statem
+
+    @impl true
+    def callback_mode, do: :handle_event_function
+
+    @impl true
+    def init(_), do: {:ok, :ready, %{subs: %{}}}
+
+    @impl true
+    def handle_event(:cast, {:watch, pid}, _state, data),
+      do: {:keep_state, %{data | subs: Map.put(data.subs, pid, Process.monitor(pid))}}
+
+    def handle_event(:info, {:DOWN, _ref, :process, pid, _}, _state, data),
+      do: {:keep_state, %{data | subs: Map.delete(data.subs, pid)}}
+  end
 end

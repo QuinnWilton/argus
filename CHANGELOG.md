@@ -57,6 +57,34 @@ function whose every way out hands back the task (`answers_call`); one
 that hands it back on some ways only, beside another task it drops, or
 by its pid is still reported.
 
+### A gen_statem's clauses, by the event's type and content (schema 156)
+
+**Fixed.** A gen_statem's event function (`handle_event/4`, a state
+function) takes its event in two arguments, and every rule that relates
+sites of one clause keyed the clause by the first alone, the event type:
+all of a machine's `:internal` clauses were one clause, and so were its
+`:info` ones. "Entry dropped while its process stays monitored" joined
+the field the `:internal :connect` clause records with the one another
+`:internal` clause resets (issue #3's second half), and read an `:info`
+clause for a `:DOWN` as no `:DOWN` clause, so its removal of the dead
+process was a drop.
+
+**Changed.** Schema 156. `Argus.Extractor.Dispatch.event_tags/3`
+carries the type and the content along one walk; a gen_statem event
+function's (`Argus.Extractors.GenStatem.event_functions/1`) tags in
+`clause_call`, `returned_update` and `statem_insert`'s `clause` are
+`"<type> <content>"` (`":internal :connect"`, `":info :DOWN"`), the bare
+type where a path fixes no content. `clause_event(func, tag, type,
+content)` is new and splits them. `statem_insert` gains a `content`
+column. runs.dl's once clauses are per content: an `:internal` event
+only once code inserts runs once beside one code that runs again
+inserts for another clause; an insert whose content is not spelled
+enters every `:internal` clause, and a clause for any content takes
+every `:internal` event. mailbox's record drops ask `down_clause`;
+calls.dl's and global_reach.dl's clause-aware entry compares a literal
+first argument with a tag's type. Readers of positional columns see one
+new relation, a new column and new tag spellings.
+
 ## 0.20.1 — 2026-09-29
 
 ### Changed

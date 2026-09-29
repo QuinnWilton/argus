@@ -435,9 +435,71 @@ defmodule Argus.Extractor.Dispatch do
           non_neg_integer() => MapSet.t(String.t() | :any)
         }
   def argument_tags(instrs, register) do
+    instrs
+    |> channel_tags([register])
+    |> Map.new(fn {idx, set} -> {idx, MapSet.new(set, fn [tag] -> tag || :any end)} end)
+  end
+
+  @doc """
+  `argument_tags/2` for a callback handed its message in two arguments:
+  a gen_statem's event function, `handle_event(type, content, state,
+  data)` or `state(type, content, data)`, whose clauses gen_statem picks
+  by the event type and the content together. Each instruction's tags
+  name both, as `"<type> <content>"` (`":internal :connect"`, `":info
+  :DOWN"`); a path that establishes the type alone spells the bare type
+  (`":internal"`: a clause that takes any content), and one that
+  establishes no type spells `:any`. Both arguments are carried along one
+  walk, so a tag names a pair some path establishes, never a type from
+  one path joined with a content from another.
+
+  Keyed by type alone, every `:internal` clause of a machine was one
+  clause, and a rule relating two sites of one clause (what the clause
+  that monitors records, what another drops) joined clauses the content
+  tells apart (issue #3).
+  """
+  @spec event_tags([tuple()], {:x, non_neg_integer()}, {:x, non_neg_integer()}) :: %{
+          non_neg_integer() => MapSet.t(String.t() | :any)
+        }
+  def event_tags(instrs, type_register, content_register) do
+    instrs
+    |> channel_tags([type_register, content_register])
+    |> Map.new(fn {idx, set} -> {idx, MapSet.new(set, &event_tag/1)} end)
+  end
+
+  @doc """
+  The tags of a clause function's instructions: `event_tags/3` over its
+  first two arguments for a gen_statem event function (`event?`),
+  `argument_tags/2` over its first otherwise.
+  """
+  @spec clause_tags([tuple()], boolean()) :: %{non_neg_integer() => MapSet.t(String.t() | :any)}
+  def clause_tags(instrs, true), do: event_tags(instrs, {:x, 0}, {:x, 1})
+  def clause_tags(instrs, false), do: argument_tags(instrs, {:x, 0})
+
+  defp event_tag([nil, _content]), do: :any
+  defp event_tag([type, nil]), do: type
+  defp event_tag([type, content]), do: type <> " " <> content
+
+  @doc """
+  The two parts of an event tag `event_tags/3` spells, or nil for a tag
+  that names one argument.
+  """
+  @spec split_event_tag(String.t()) :: {String.t(), String.t()} | nil
+  def split_event_tag(tag) do
+    case String.split(tag, " ", parts: 2) do
+      [type, content] -> {type, content}
+      [_one] -> nil
+    end
+  end
+
+  # The walk behind both: the arguments in `registers`, each a channel
+  # carrying the registers that hold it and its tag, walked together. For
+  # each instruction index, the tuples of tags (nil where a channel has
+  # established none) some path reaches it with.
+  defp channel_tags(instrs, registers) do
     tuple = List.to_tuple(instrs)
     labels = labels(instrs)
-    start = %{idx: entry_index(instrs), msg: [register], tag_regs: [], tag: nil}
+    chans = Enum.map(registers, &%{msg: [&1], tag_regs: [], tag: nil})
+    start = %{idx: entry_index(instrs), chans: chans}
     # `seen` is a map, not a MapSet: dialyzer loses the MapSet's opacity
     # through the recursion.
     walk_tags([start], tuple, labels, %{}, %{})
@@ -446,13 +508,13 @@ defmodule Argus.Extractor.Dispatch do
   defp walk_tags([], _tuple, _labels, _seen, acc), do: acc
 
   defp walk_tags([state | rest], tuple, labels, seen, acc) do
-    key = {state.idx, state.msg, state.tag_regs, state.tag}
+    key = {state.idx, state.chans}
 
     if state.idx >= tuple_size(tuple) or Map.has_key?(seen, key) do
       walk_tags(rest, tuple, labels, seen, acc)
     else
-      tag = state.tag || :any
-      acc = Map.update(acc, state.idx, MapSet.new([tag]), &MapSet.put(&1, tag))
+      tags = Enum.map(state.chans, & &1.tag)
+      acc = Map.update(acc, state.idx, MapSet.new([tags]), &MapSet.put(&1, tags))
       next = tag_step(elem(tuple, state.idx), state, labels)
       walk_tags(next ++ rest, tuple, labels, Map.put(seen, key, true), acc)
     end
@@ -465,9 +527,9 @@ defmodule Argus.Extractor.Dispatch do
       nil ->
         generic_tag_step(instr, state, labels)
 
-      atom ->
-        equal = narrow(state, atom)
-        other = if state.tag == atom, do: nil, else: advance(state, instr)
+      {k, atom} ->
+        equal = narrow(state, k, atom)
+        other = if chan_tag(state, k) == atom, do: nil, else: advance(state, instr)
 
         {on_pass, on_fail} = if op == :is_eq_exact, do: {equal, other}, else: {other, equal}
 
@@ -482,46 +544,57 @@ defmodule Argus.Extractor.Dispatch do
          labels
        )
        when is_atom(atom) do
-    if held?(src, state.msg) do
-      pass = narrow(state, inspect(atom))
+    case holding(state, src, [:msg]) do
+      nil ->
+        generic_tag_step(instr, state, labels)
 
-      List.wrap(pass && %{pass | idx: state.idx + 1}) ++
-        List.wrap(goto(advance(state, instr), fail, labels))
-    else
-      generic_tag_step(instr, state, labels)
+      k ->
+        pass = narrow(state, k, inspect(atom))
+
+        List.wrap(pass && %{pass | idx: state.idx + 1}) ++
+          List.wrap(goto(advance(state, instr), fail, labels))
     end
   end
 
   defp tag_step({:select_val, src, {:f, fail}, {:list, pairs}} = instr, state, labels) do
-    if held?(src, state.msg) or held?(src, state.tag_regs) do
-      arms =
-        pairs
-        |> Enum.chunk_every(2)
-        |> Enum.flat_map(fn
-          [{:atom, atom}, {:f, l}] when is_atom(atom) ->
-            List.wrap(goto(narrow(state, inspect(atom)), l, labels))
+    case holding(state, src, [:msg, :tag_regs]) do
+      nil ->
+        generic_tag_step(instr, state, labels)
 
-          [_value, {:f, l}] ->
-            List.wrap(goto(advance(state, instr), l, labels))
+      k ->
+        arms =
+          pairs
+          |> Enum.chunk_every(2)
+          |> Enum.flat_map(fn
+            [{:atom, atom}, {:f, l}] when is_atom(atom) ->
+              List.wrap(goto(narrow(state, k, inspect(atom)), l, labels))
 
-          _malformed ->
-            []
-        end)
+            [_value, {:f, l}] ->
+              List.wrap(goto(advance(state, instr), l, labels))
 
-      arms ++ List.wrap(goto(advance(state, instr), fail, labels))
-    else
-      generic_tag_step(instr, state, labels)
+            _malformed ->
+              []
+          end)
+
+        arms ++ List.wrap(goto(advance(state, instr), fail, labels))
     end
   end
 
   defp tag_step({:get_tuple_element, src, 0, dst} = instr, state, _labels) do
     next = advance(state, instr)
 
-    if held?(src, state.msg),
-      do: [
-        %{next | idx: state.idx + 1, tag_regs: Enum.sort(Enum.uniq([reg(dst) | next.tag_regs]))}
-      ],
-      else: [%{next | idx: state.idx + 1}]
+    case holding(state, src, [:msg]) do
+      nil ->
+        [%{next | idx: state.idx + 1}]
+
+      k ->
+        chans =
+          List.update_at(next.chans, k, fn chan ->
+            %{chan | tag_regs: Enum.sort(Enum.uniq([reg(dst) | chan.tag_regs]))}
+          end)
+
+        [%{next | idx: state.idx + 1, chans: chans}]
+    end
   end
 
   defp tag_step(instr, state, labels), do: generic_tag_step(instr, state, labels)
@@ -733,31 +806,60 @@ defmodule Argus.Extractor.Dispatch do
 
   defp literal_equal?(_operand, _value), do: :unknown
 
-  # The atom a test compares a request (or its tag) register against.
+  # The channel whose argument (or its tag) a test compares, and the atom
+  # it compares it against: the first channel holding either operand.
   defp compared_tag(state, a, b) do
-    cond do
-      held?(a, state.msg) or held?(a, state.tag_regs) -> atom_operand(b)
-      held?(b, state.msg) or held?(b, state.tag_regs) -> atom_operand(a)
-      true -> nil
+    state.chans
+    |> Enum.with_index()
+    |> Enum.find_value(fn {chan, k} ->
+      cond do
+        held?(a, chan.msg) or held?(a, chan.tag_regs) -> {k, atom_operand(b)}
+        held?(b, chan.msg) or held?(b, chan.tag_regs) -> {k, atom_operand(a)}
+        true -> nil
+      end
+    end)
+    |> case do
+      {_k, nil} -> nil
+      found -> found
     end
   end
+
+  # The first channel one of whose register sets (`keys`) holds `src`.
+  defp holding(state, src, keys) do
+    state.chans
+    |> Enum.with_index()
+    |> Enum.find_value(fn {chan, k} ->
+      if Enum.any?(keys, &held?(src, Map.fetch!(chan, &1))), do: k
+    end)
+  end
+
+  defp chan_tag(state, k), do: Enum.at(state.chans, k).tag
 
   defp atom_operand({:atom, atom}) when is_atom(atom), do: inspect(atom)
   defp atom_operand(_operand), do: nil
 
-  # The state once the tag is `atom`, or nil when the path already
+  # The state once channel k's tag is `atom`, or nil when the path already
   # established another: that edge cannot be taken.
-  defp narrow(%{tag: nil} = state, atom), do: %{state | tag: atom}
-  defp narrow(%{tag: atom} = state, atom), do: state
-  defp narrow(_state, _atom), do: nil
+  defp narrow(state, k, atom) do
+    case chan_tag(state, k) do
+      nil -> %{state | chans: List.update_at(state.chans, k, &%{&1 | tag: atom})}
+      ^atom -> state
+      _other -> nil
+    end
+  end
 
-  # The registers holding the request and its tag after `instr`.
+  # The registers holding each argument and its tag after `instr`.
   defp advance(state, instr) do
-    %{
-      state
-      | msg: instr |> Instr.carry(state.msg) |> Enum.sort(),
-        tag_regs: instr |> Instr.carry(state.tag_regs) |> Enum.sort()
-    }
+    chans =
+      Enum.map(state.chans, fn chan ->
+        %{
+          chan
+          | msg: instr |> Instr.carry(chan.msg) |> Enum.sort(),
+            tag_regs: instr |> Instr.carry(chan.tag_regs) |> Enum.sort()
+        }
+      end)
+
+    %{state | chans: chans}
   end
 
   defp goto(nil, _label, _labels), do: nil

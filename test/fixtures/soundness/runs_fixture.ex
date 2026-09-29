@@ -428,6 +428,80 @@ defmodule Argus.Test.Soundness.Runs.InsertOnce do
   def handle_event(:cast, :ping, _state, data), do: {:keep_state, data}
 end
 
+defmodule Argus.Test.Soundness.Runs.InsertOnceBesideAnother do
+  @moduledoc """
+  Quiet: only init/1 inserts the `:internal` `:watch`; a cast inserts an
+  `:internal` `:poll`, which another clause takes. A clause is told by its
+  event's content as well as its type (issue #3), so the `:watch` clause
+  runs once.
+  """
+  @behaviour :gen_statem
+
+  @impl true
+  def callback_mode, do: :handle_event_function
+
+  @impl true
+  def init(_), do: {:ok, :idle, %{}, [{:next_event, :internal, :watch}]}
+
+  @impl true
+  def handle_event(:internal, :watch, _state, data) do
+    Process.monitor(Process.whereis(:runs_upstream))
+    {:keep_state, data}
+  end
+
+  def handle_event(:internal, :poll, _state, data), do: {:keep_state, data}
+
+  def handle_event(:cast, :poke, _state, data),
+    do: {:keep_state, data, [{:next_event, :internal, :poll}]}
+end
+
+defmodule Argus.Test.Soundness.Runs.InsertAnyContent do
+  @moduledoc """
+  init/1 inserts the `:internal` `:watch`, and a cast inserts an
+  `:internal` event of the content it is handed: any `:internal` clause,
+  the `:watch` one among them, from code that runs again.
+  """
+  @behaviour :gen_statem
+
+  @impl true
+  def callback_mode, do: :handle_event_function
+
+  @impl true
+  def init(_), do: {:ok, :idle, %{}, [{:next_event, :internal, :watch}]}
+
+  @impl true
+  def handle_event(:internal, :watch, _state, data) do
+    Process.monitor(Process.whereis(:runs_upstream))
+    {:keep_state, data}
+  end
+
+  def handle_event(:cast, {:redo, event}, _state, data),
+    do: {:keep_state, data, [{:next_event, :internal, event}]}
+end
+
+defmodule Argus.Test.Soundness.Runs.InsertIntoAnyContent do
+  @moduledoc """
+  The monitoring clause takes `:internal` events of any content; init/1
+  inserts one and a cast inserts a `:poll`, which it takes too.
+  """
+  @behaviour :gen_statem
+
+  @impl true
+  def callback_mode, do: :handle_event_function
+
+  @impl true
+  def init(_), do: {:ok, :idle, %{}, [{:next_event, :internal, :watch}]}
+
+  @impl true
+  def handle_event(:internal, _any, _state, data) do
+    Process.monitor(Process.whereis(:runs_upstream))
+    {:keep_state, data}
+  end
+
+  def handle_event(:cast, :poke, _state, data),
+    do: {:keep_state, data, [{:next_event, :internal, :poll}]}
+end
+
 # ── The idle timeout's clause, by the returns that arm it ──────────────
 
 defmodule Argus.Test.Soundness.Runs.TimeoutAgain do

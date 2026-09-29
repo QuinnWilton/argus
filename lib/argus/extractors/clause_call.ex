@@ -18,7 +18,15 @@ defmodule Argus.Extractors.ClauseCall do
     inspected); one row per tag some path to it establishes. A call some
     path reaches without establishing one has no row: it runs whatever
     the argument is. Erlang's `!` (the `send` instruction) is asked as a
-    call is.
+    call is. A gen_statem's event function (`handle_event/4`, a state
+    function) takes its event in two arguments, and gen_statem picks its
+    clause by both: its tag is `"<type> <content>"` (`":internal
+    :connect"`, `":info :DOWN"`), or the bare type where the path fixes
+    no content (`Argus.Extractor.Dispatch.event_tags/3`).
+  - `clause_event(func, tag, type, content)` — `tag`, one of the event
+    function `func`'s two-part tags, names the event type `type` and the
+    content `content`: how a rule asks a tag's type (`:internal`) or its
+    content (a `:DOWN`).
   - `info_clause_always(id, func, tag)` — in a `handle_info/2`, the call
     (or send) at `id` runs on every path the clause for the atom `tag`
     takes to a return that goes on: every `return` or tail call the
@@ -38,6 +46,7 @@ defmodule Argus.Extractors.ClauseCall do
   alias Argus.Extractor.Dispatch
   alias Argus.Extractor.Helpers
   alias Argus.Extractor.Resolve
+  alias Argus.Extractors.GenStatem
   alias Argus.Instr
   alias Argus.InstrId
   alias Argus.Pipeline.Normalize
@@ -45,12 +54,13 @@ defmodule Argus.Extractors.ClauseCall do
   import Argus.Extractor.Facts, only: [add_fact: 3]
 
   @impl true
-  def relations, do: [:clause_call, :info_clause_always]
+  def relations, do: [:clause_call, :clause_event, :info_clause_always]
 
   @impl true
   @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()
   def extract(module_data) do
     ending = {Map.get(module_data, :module), ending_functions(module_data)}
+    events = event_functions(module_data)
 
     module_data
     |> CallSites.for_module()
@@ -58,11 +68,46 @@ defmodule Argus.Extractors.ClauseCall do
     |> Enum.group_by(& &1.func_id)
     |> Enum.sort_by(&elem(&1, 0))
     |> Enum.reduce(%{}, fn {func_id, [%{instrs: instrs} | _] = sites}, acc ->
-      if dispatches_on_first?(instrs),
-        do: emit(acc, func_id, instrs, Enum.sort_by(sites, & &1.idx), ending),
-        else: acc
+      if dispatches_on_first?(instrs) do
+        tags = Dispatch.clause_tags(instrs, func_id in events)
+        emit(acc, func_id, instrs, Enum.sort_by(sites, & &1.idx), tags, ending)
+      else
+        acc
+      end
     end)
+    |> emit_events(module_data, events)
   end
+
+  # A gen_statem's event functions, by function id: their clauses are
+  # picked by the event's type and content together
+  # (`Argus.Extractors.GenStatem.event_functions/1`).
+  defp event_functions(%{module: mod} = module_data) do
+    for {name, arity} <- GenStatem.event_functions(module_data),
+        do: Normalize.func_id(mod, name, arity)
+  end
+
+  defp event_functions(_module_data), do: []
+
+  # Every two-part tag an event function's clauses spell, with its parts:
+  # how a rule asks a tag's event type or content (`:DOWN` under `:info`).
+  defp emit_events(facts, %{module: mod, functions: functions}, events) do
+    for {:function, name, arity, _entry, instrs} <- functions,
+        func_id = Normalize.func_id(mod, name, arity),
+        func_id in events,
+        dispatches_on_first?(instrs),
+        tag <-
+          instrs
+          |> Dispatch.clause_tags(true)
+          |> Map.values()
+          |> Enum.reduce(MapSet.new(), &MapSet.union/2)
+          |> Enum.sort(),
+        {type, content} <- List.wrap(tag != :any && Dispatch.split_event_tag(tag)),
+        reduce: facts do
+      acc -> add_fact(acc, :clause_event, [func_id, tag, type, content])
+    end
+  end
+
+  defp emit_events(facts, _module_data, _events), do: facts
 
   # The functions of the module every completion of which stops the
   # process or hands it to handle_continue/2: the clauses of a `with`'s
@@ -108,9 +153,7 @@ defmodule Argus.Extractors.ClauseCall do
 
   defp send_sites(_module_data), do: []
 
-  defp emit(facts, func_id, instrs, sites, ending) do
-    tags = Dispatch.argument_tags(instrs, {:x, 0})
-
+  defp emit(facts, func_id, instrs, sites, tags, ending) do
     facts =
       for site <- sites,
           set = Map.get(tags, site.idx, MapSet.new([:any])),

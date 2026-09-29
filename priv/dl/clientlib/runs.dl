@@ -77,8 +77,10 @@
 // handle_info/2 ("info") and handle_cast/2 ("cast") by the message,
 // handle_continue/2 ("continue") by the continue term, a LiveView's
 // handle_async/3 ("async") by the task's name, and a gen_statem's state
-// function or handle_event/4 ("internal") by the event type, of which
-// only :internal is asked: its other clauses take events from outside.
+// function or handle_event/4 ("internal") by the event's type and
+// content together (`:internal :connect`, clause_event), of which only
+// :internal events are asked: its other clauses take events from
+// outside.
 .decl clause_callback(mod: symbol, func: symbol, kind: symbol)
 
 clause_callback(m, h, "info") :-
@@ -115,9 +117,20 @@ clause_fn(m, g, k) :- hands_on(m, _, g, _, k).
 
 hands_on(m, h, g, c, k) :-
   clause_fn(m, h, k),
+  k != "internal",
   call_instr(h, g, c),
   !runs_elsewhere(h, g),
   call_arg_forward(h, g, 0, 0),
+  function_def(h, _, n, a, _),
+  function_def(g, _, n, a, _).
+
+// A gen_statem's event is its first two arguments: both handed on.
+hands_on(m, h, g, c, "internal") :-
+  clause_fn(m, h, "internal"),
+  call_instr(h, g, c),
+  !runs_elsewhere(h, g),
+  call_arg_forward(h, g, 0, 0),
+  call_arg_forward(h, g, 1, 1),
   function_def(h, _, n, a, _),
   function_def(g, _, n, a, _).
 
@@ -127,9 +140,16 @@ hands_on(m, h, g, c, k) :-
 
 clause_node(m, h, k, t) :- clause_fn(m, h, k), k != "internal", message_site_clause(_, h, t).
 
+// A gen_statem's clause for :internal events: of one content
+// (`:internal :connect`, clause_event), or of any (`:internal`).
 clause_node(m, h, "internal", ":internal") :-
   clause_fn(m, h, "internal"),
   message_site_clause(_, h, ":internal").
+
+clause_node(m, h, "internal", t) :-
+  clause_fn(m, h, "internal"),
+  message_site_clause(_, h, t),
+  clause_event(h, t, ":internal", _).
 
 .decl node_tag(kind: symbol, tag: symbol)
 
@@ -143,7 +163,7 @@ node_tag(k, t) :- clause_node(_, _, k, t).
 message_site_clause(s, h, t) :- clause_call(s, h, t).
 message_site_clause(s, h, t) :- continue_return(s, h, t, _), t != "*".
 message_site_clause(s, h, t) :- timeout_return(s, h, t), t != "*".
-message_site_clause(s, h, t) :- statem_insert(s, h, t, _), t != "*".
+message_site_clause(s, h, t) :- statem_insert(s, h, t, _, _), t != "*".
 
 // ── What makes a process a message of its own ────────────────────────
 //
@@ -237,10 +257,21 @@ self_message(id, f, "cast", "*") :-
 self_message(id, f, "continue", t) :- continue_return(id, f, _, t).
 
 // An event a gen_statem inserts: :internal, or any type where the
-// function does not spell it (ra's `{next_event, EvtType, Evt}`).
-self_message(id, f, "internal", ":internal") :-
-  statem_insert(id, f, _, t),
-  (t = ":internal" ; t = "*").
+// function does not spell it (ra's `{next_event, EvtType, Evt}`), by its
+// content (`:internal :connect`), or of any content where the function
+// does not spell that.
+self_message(id, f, "internal", t) :-
+  statem_insert(id, f, _, ":internal", c),
+  c != "*",
+  t = cat(":internal ", c).
+
+self_message(id, f, "internal", ":internal") :- statem_insert(id, f, _, ":internal", "*").
+self_message(id, f, "internal", ":internal") :- statem_insert(id, f, _, "*", _).
+
+// The :internal events an insert spells the content of.
+.decl internal_event(tag: symbol)
+
+internal_event(cat(":internal ", c)) :- statem_insert(_, _, _, ":internal", c), c != "*".
 
 // A LiveView's start_async/3,4 (Phoenix.LiveView.Async's, under the
 // macro): its result enters handle_async/3's clause for the name, in the
@@ -506,6 +537,19 @@ opaque_stack(m) :- again_whole(r, m), opaque_reach.reaches(r).
 enters(a, b, m, h, t) :- clause_node(m, h, k, t), produced(a, b, m, k, t).
 enters(a, b, m, h, t) :- clause_node(m, h, k, t), produced(a, b, m, k, "*").
 
+// An :internal event whose content its producer does not spell may be
+// any :internal clause's; a clause for :internal events of any content
+// takes every one.
+enters(a, b, m, h, t) :-
+  clause_node(m, h, "internal", t),
+  clause_event(h, t, ":internal", _),
+  produced(a, b, m, "internal", ":internal").
+
+enters(a, b, m, h, ":internal") :-
+  clause_node(m, h, "internal", ":internal"),
+  produced(a, b, m, "internal", p),
+  internal_event(p).
+
 enters("again", "*", m, h, t) :-
   clause_node(m, h, k, t),
   (produced("again", "*", "*", k, t) ; produced("again", "*", "*", k, "*")),
@@ -517,6 +561,16 @@ enters("again", "*", m, h, t) :-
 .decl entered(mod: symbol, func: symbol, tag: symbol)
 
 entered(m, h, t) :- clause_node(m, h, k, t), produced(_, _, m, k, t).
+
+entered(m, h, t) :-
+  clause_node(m, h, "internal", t),
+  clause_event(h, t, ":internal", _),
+  produced(_, _, m, "internal", ":internal").
+
+entered(m, h, ":internal") :-
+  clause_node(m, h, "internal", ":internal"),
+  produced(_, _, m, "internal", p),
+  internal_event(p).
 
 // A clause that runs again in mod's process: another process may make
 // what it takes, or code that runs again, a part of a clause function

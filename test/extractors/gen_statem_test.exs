@@ -261,26 +261,44 @@ defmodule Argus.Extractors.GenStatemTest do
     alias Argus.Test.Soundness.Runs
 
     defp inserts(mod) do
-      for [_id, func, clause, type] <-
+      for [_id, func, clause, type, content] <-
             Map.get(GenStatem.extract(disassemble(mod)), :statem_insert, []) do
-        {func |> String.split(":") |> List.last(), clause, type}
+        {func |> String.split(":") |> List.last(), clause, type, content}
       end
       |> Enum.sort()
     end
 
     test "an internal event init/1 and a cast clause insert, by their clauses" do
+      # handle_event/4's clause is its event's type and content.
       assert inserts(Runs.InsertAgain) == [
-               {"handle_event/4", ":cast", ":internal"},
-               {"init/1", "*", ":internal"}
+               {"handle_event/4", ":cast :rewatch", ":internal", ":watch"},
+               {"init/1", "*", ":internal", ":watch"}
              ]
     end
 
     test "an event of a type the function does not spell is any type" do
-      assert {"handle_event/4", ":cast", "*"} in inserts(Runs.InsertAnyType)
+      assert {"handle_event/4", ":cast :redo", "*", ":watch"} in inserts(Runs.InsertAnyType)
     end
 
     test "a helper's literal action list" do
-      assert {"watch/0", "*", ":internal"} in inserts(Runs.InsertShared)
+      assert {"watch/0", "*", ":internal", ":watch"} in inserts(Runs.InsertShared)
+    end
+  end
+
+  describe "event_functions/1" do
+    alias Argus.Test.Soundness.Runs
+
+    test "handle_event/4 of a handle_event_function machine" do
+      assert GenStatem.event_functions(disassemble(Runs.InsertAgain)) == [{:handle_event, 4}]
+    end
+
+    test "the state functions of a state_functions machine" do
+      assert Enum.sort(GenStatem.event_functions(disassemble(Argus.Test.Fixtures.SimpleStatem))) ==
+               [{:idle, 3}, {:running, 3}]
+    end
+
+    test "a module that is no gen_statem has none" do
+      assert GenStatem.event_functions(disassemble(Argus.Test.Soundness.Monitors.Room)) == []
     end
   end
 

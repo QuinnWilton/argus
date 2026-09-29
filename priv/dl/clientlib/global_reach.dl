@@ -58,7 +58,7 @@ global_path(f, id, site) :-
   literal_first(f, g, a),
   global_path(g, s, site),
   clause_of(g, s, c),
-  (c = a ; c = "any").
+  (c = a ; c = "any" ; clause_event(g, c, a, _)).
 
 global_path(f, "", site) :-
   call_edge(f, g),

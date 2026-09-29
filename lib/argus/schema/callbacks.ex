@@ -164,7 +164,29 @@ defmodule Argus.Schema.Callbacks do
         handle_call/3 a request enters, and the clause of a guarded \
         dispatcher (`route(:local, n)`) a literal argument enters, so the \
         `:echo` clause that closes a cycle does not stand for the `:answer` \
-        clause beside it.
+        clause beside it. A gen_statem's event function (`handle_event/4`, \
+        a state function) is handed its event in two arguments and picks a \
+        clause by both: its tag is `"<type> <content>"` (`":internal \
+        :connect"`, `":info :DOWN"`), the bare type where a path fixes no \
+        content (`clause_event` splits it; \
+        `Argus.Extractor.Dispatch.event_tags/3`).
+        """
+      },
+      %{
+        name: :clause_event,
+        layer: 2,
+        fields: [
+          {:func, :symbol, "a gen_statem event function"},
+          {:tag, :symbol, "one of its two-part clause tags"},
+          {:type, :symbol, "the tag's event type, inspected (`:internal`, `:info`, `:call`)"},
+          {:content, :symbol, "the tag's content, inspected (`:connect`, `:DOWN`)"}
+        ],
+        doc: """
+        A two-part tag of a gen_statem event function's clauses, the tag \
+        `clause_call`, `returned_update` and `statem_insert` spell for the \
+        clause of events of `type` whose content is `content` (an atom, or \
+        a tuple headed by it). How a rule asks what event a clause takes: \
+        a `:DOWN` under `:info`, any `:internal` event.
         """
       },
       %{

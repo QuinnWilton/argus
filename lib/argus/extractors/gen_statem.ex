@@ -43,9 +43,14 @@ defmodule Argus.Extractors.GenStatem do
     what a call returns (a tail call, a call's result, a throw): the local
     callee, or `dynamic`
   - `statem_timeout(mod, state, type, value)` — timeout set per state
-  - `statem_insert(id, func, clause, type)` — a `{:next_event, type, content}`
-    action built at `id`: an event the machine inserts ahead of its
-    mailbox, which only such an action can make of type `:internal`
+  - `statem_insert(id, func, clause, type, content)` — a `{:next_event,
+    type, content}` action built at `id`: an event the machine inserts
+    ahead of its mailbox, which only such an action can make of type
+    `:internal`
+  - `event_functions/1` names the functions gen_statem hands an event
+    (`handle_event/4`, the state functions), whose clauses
+    `Argus.Extractor.Dispatch.event_tags/3` tells apart by the event's
+    type and content together
   """
 
   @behaviour Argus.Extractor
@@ -117,6 +122,43 @@ defmodule Argus.Extractors.GenStatem do
     end
   end
 
+  @doc """
+  The functions of `module_data`'s module gen_statem hands an event, as
+  `{name, arity}` pairs: its `handle_event/4` under `:handle_event_function`,
+  its state functions under `:state_functions` (the ones this extractor
+  registers as states), none for a module that is no gen_statem or whose
+  callback mode it cannot read. Their clauses are picked by the event's
+  type and content together, which `Argus.Extractor.Dispatch.event_tags/3`
+  reads where `argument_tags/2` reads a callback's one message argument.
+  """
+  @spec event_functions(Argus.Extractor.module_data()) :: [{atom(), arity()}]
+  def event_functions(module_data) do
+    behaviours = get_behaviours(module_data.attributes) ++ GenStarts.own_behaviours(module_data)
+
+    if :gen_statem in behaviours or GenStateMachine in behaviours do
+      mod = module_data.module
+      functions = module_data.functions
+
+      case detect_callback_mode(functions) do
+        :state_functions ->
+          exports = export_set(module_data)
+          locally_called = locally_called_set(mod, functions)
+
+          for {:function, name, arity, _entry, _instrs} <-
+                state_functions(module_data, exports, locally_called),
+              do: {name, arity}
+
+        :handle_event_function ->
+          if find_function(functions, :handle_event, 4), do: [{:handle_event, 4}], else: []
+
+        :unknown ->
+          []
+      end
+    else
+      []
+    end
+  end
+
   defp extract_statem(mod, module_data) do
     mod_str = inspect(mod)
     functions = module_data.functions
@@ -133,7 +175,7 @@ defmodule Argus.Extractors.GenStatem do
     facts =
       facts
       |> extract_initial_states(mod_str, functions)
-      |> extract_inserts(mod, functions)
+      |> extract_inserts(mod, functions, event_functions(module_data))
 
     case callback_mode do
       :state_functions ->
@@ -205,35 +247,39 @@ defmodule Argus.Extractors.GenStatem do
   # is not asked, so one built for another use counts too. `type` is the
   # event type as a clause head tells it, `{:call, from}` by its tag
   # (`:call`), and `*` when the function does not spell it (a parameter:
-  # ra's `{next_event, EvtType, Evt}`). The clause is the tag the
-  # function's first argument was established to be on the paths to the
-  # tuple (`Dispatch.argument_tags/2`), `*` where none was.
-  defp extract_inserts(facts, mod, functions) do
+  # ra's `{next_event, EvtType, Evt}`), and `content` the content's atom,
+  # or the atom a tuple content is headed by, `*` where it spells none.
+  # The clause is the tag the function's first argument was established to
+  # be on the paths to the tuple (`Dispatch.argument_tags/2`; for an event
+  # function, its event's type and content, `Dispatch.event_tags/3`), `*`
+  # where none was.
+  defp extract_inserts(facts, mod, functions, events) do
     Enum.reduce(functions, facts, fn {:function, name, arity, _entry, instrs}, acc ->
       inserts =
         instrs
         |> Enum.with_index()
         |> Enum.flat_map(fn {instr, idx} ->
-          for type <- inserted_types(instrs, idx, instr), do: {idx, type}
+          for event <- inserted_events(instrs, idx, instr), do: {idx, event}
         end)
 
-      emit_inserts(acc, Normalize.func_id(mod, name, arity), instrs, inserts)
+      event? = {name, arity} in events
+      emit_inserts(acc, Normalize.func_id(mod, name, arity), instrs, inserts, event?)
     end)
   end
 
-  defp emit_inserts(facts, _func_id, _instrs, []), do: facts
+  defp emit_inserts(facts, _func_id, _instrs, [], _event?), do: facts
 
-  defp emit_inserts(facts, func_id, instrs, inserts) do
-    tags = Dispatch.argument_tags(instrs, {:x, 0})
+  defp emit_inserts(facts, func_id, instrs, inserts, event?) do
+    tags = Dispatch.clause_tags(instrs, event?)
 
     inserts
-    |> Enum.flat_map(fn {idx, type} ->
-      for clause <- insert_clauses(Map.get(tags, idx)), do: {idx, clause, type}
+    |> Enum.flat_map(fn {idx, {type, content}} ->
+      for clause <- insert_clauses(Map.get(tags, idx)), do: {idx, clause, type, content}
     end)
     |> Enum.uniq()
     |> Enum.sort()
-    |> Enum.reduce(facts, fn {idx, clause, type}, acc ->
-      add_fact(acc, :statem_insert, [InstrId.mint(func_id, idx), func_id, clause, type])
+    |> Enum.reduce(facts, fn {idx, clause, type, content}, acc ->
+      add_fact(acc, :statem_insert, [InstrId.mint(func_id, idx), func_id, clause, type, content])
     end)
   end
 
@@ -243,18 +289,18 @@ defmodule Argus.Extractors.GenStatem do
     if MapSet.member?(set, :any), do: ["*"], else: Enum.sort(set)
   end
 
-  defp inserted_types(
+  defp inserted_events(
          instrs,
          idx,
-         {:put_tuple2, _dst, {:list, [{:atom, :next_event}, type, _content]}}
+         {:put_tuple2, _dst, {:list, [{:atom, :next_event}, type, content]}}
        ),
-       do: [event_type(instrs, idx, type)]
+       do: [{event_type(instrs, idx, type), event_type(instrs, idx, content)}]
 
-  defp inserted_types(_instrs, _idx, instr) when is_tuple(instr) do
+  defp inserted_events(_instrs, _idx, instr) when is_tuple(instr) do
     instr |> Tuple.to_list() |> Enum.flat_map(&operand_inserts/1)
   end
 
-  defp inserted_types(_instrs, _idx, _instr), do: []
+  defp inserted_events(_instrs, _idx, _instr), do: []
 
   # The literals an operand holds: itself, or the elements of a list
   # operand (`put_tuple2`'s and `put_list`'s).
@@ -262,7 +308,8 @@ defmodule Argus.Extractors.GenStatem do
   defp operand_inserts({:list, elements}), do: Enum.flat_map(elements, &operand_inserts/1)
   defp operand_inserts(_operand), do: []
 
-  defp literal_inserts({:next_event, type, _content}), do: [literal_event_type(type)]
+  defp literal_inserts({:next_event, type, content}),
+    do: [{literal_event_type(type), literal_event_type(content)}]
 
   defp literal_inserts(list) when is_list(list) do
     list |> list_elements() |> Enum.flat_map(&literal_inserts/1)
@@ -502,19 +549,22 @@ defmodule Argus.Extractors.GenStatem do
   #
   # Together these cut the corpus's gen_statem findings from 108 (all
   # false) to the genuine dead-state cases.
+  defp state_functions(module_data, exports, locally_called) do
+    acting = action_returning(module_data.module, module_data.functions)
+
+    Enum.filter(module_data.functions, fn {:function, name, arity, _entry, _instrs} ->
+      arity == 3 and
+        MapSet.member?(exports, {name, arity}) and
+        not MapSet.member?(@non_state_callbacks, name) and
+        not MapSet.member?(locally_called, {name, arity}) and
+        MapSet.member?(acting, {name, arity})
+    end)
+  end
+
   defp extract_state_functions(facts, mod, module_data, exports, locally_called) do
     mod_str = inspect(mod)
     functions = module_data.functions
-    acting = action_returning(mod, functions)
-
-    state_funs =
-      Enum.filter(functions, fn {:function, name, arity, _entry, _instrs} ->
-        arity == 3 and
-          MapSet.member?(exports, {name, arity}) and
-          not MapSet.member?(@non_state_callbacks, name) and
-          not MapSet.member?(locally_called, {name, arity}) and
-          MapSet.member?(acting, {name, arity})
-      end)
+    state_funs = state_functions(module_data, exports, locally_called)
 
     # Register all states. In state_functions mode the state IS a
     # function — its ID is the natural site.
