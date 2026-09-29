@@ -118,8 +118,11 @@ defmodule Argus.Graph.Identity.ProducerClosureTest do
 
     executed =
       try do
-        :ok = :peer.call(peer, :code, :add_pathsa, [:code.get_path()])
-        {:ok, _} = :peer.call(peer, :application, :ensure_all_started, [:argus_beam])
+        # Bounded by the test's timeout, not `:peer.call/4`'s five
+        # seconds, which starting the applications outlasted on a loaded
+        # machine.
+        :ok = :peer.call(peer, :code, :add_pathsa, [:code.get_path()], :infinity)
+        {:ok, _} = :peer.call(peer, :application, :ensure_all_started, [:argus_beam], :infinity)
         binding = [beams: paths, producers: producers]
         {executed, _} = :peer.call(peer, Elixir.Code, :eval_string, [@measure, binding], 300_000)
         executed

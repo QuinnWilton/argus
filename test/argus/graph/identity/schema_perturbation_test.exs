@@ -202,8 +202,11 @@ defmodule Argus.Graph.Identity.SchemaPerturbationTest do
     {:ok, peer, _node} = :peer.start_link(%{connection: :standard_io})
 
     try do
-      true = :peer.call(peer, :code, :set_path, [:code.get_path()])
-      {:ok, _} = :peer.call(peer, :application, :ensure_all_started, [:argus_beam])
+      # Bounded by the test's timeout: `:peer.call/4`'s five seconds is
+      # less than starting argus's applications took in a peer on a loaded
+      # machine, though the start does no work of argus's own.
+      true = :peer.call(peer, :code, :set_path, [:code.get_path()], :infinity)
+      {:ok, _} = :peer.call(peer, :application, :ensure_all_started, [:argus_beam], :infinity)
       fun.(peer)
     after
       :peer.stop(peer)
