@@ -61,13 +61,17 @@ jobs:
         run: mix credo --strict
 
   test:
-    name: Test / Elixir ${{ matrix.elixir }}
+    name: Test / Elixir ${{ matrix.elixir }} / OTP ${{ matrix.otp }}
     runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
       matrix:
-        elixir: ["1.19.4"]
-        otp: ["28.3"]
+        # OTP 29 needs Elixir 1.20: Elixir 1.19 has no OTP 29 build.
+        include:
+          - elixir: "1.19.4"
+            otp: "28.3"
+          - elixir: "1.20.4"
+            otp: "29.1"
     steps:
       - uses: actions/checkout@v4
 
@@ -88,8 +92,8 @@ jobs:
         uses: actions/cache@v4
         with:
           path: deps
-          key: ${{ runner.os }}-mix-${{ matrix.elixir }}-${{ hashFiles('mix.lock') }}
-          restore-keys: ${{ runner.os }}-mix-${{ matrix.elixir }}-
+          key: ${{ runner.os }}-mix-${{ matrix.elixir }}-${{ matrix.otp }}-${{ hashFiles('mix.lock') }}
+          restore-keys: ${{ runner.os }}-mix-${{ matrix.elixir }}-${{ matrix.otp }}-
 
       - name: Install dependencies
         run: mix deps.get
