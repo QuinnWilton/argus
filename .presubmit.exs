@@ -5,5 +5,8 @@
   Presubmit.Rules.Mix,
   # The changelog is written at release time, under the version heading.
   {Presubmit.Rules.Changelog, warn: [:api_changes_logged]},
-  {Presubmit.Rules.Message, subject: ~r/^\[[a-z_-]+\] [a-z0-9]/, max_subject_length: 72}
+  # `[tag] text`: the text is free, since it often opens with a proper noun, a version or a
+  # flag. A long subject is worth a look, not a refused commit.
+  {Presubmit.Rules.Message,
+   subject: ~r/^\[[a-z0-9_.\/-]+\] \S/, max_subject_length: 72, warn: [:subject_length]}
 ]
