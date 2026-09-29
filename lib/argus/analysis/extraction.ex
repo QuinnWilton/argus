@@ -20,7 +20,6 @@ defmodule Argus.Analysis.Extraction do
   their rules paths and relation lists here.
   """
 
-
   alias Argus.Analysis
   alias Argus.Analysis.Catalog
   alias Argus.Souffle

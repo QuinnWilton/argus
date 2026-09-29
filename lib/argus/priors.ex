@@ -36,7 +36,6 @@ defmodule Argus.Priors do
   admitted each is in the module's own docs.
   """
 
-
   alias Argus.Priors.{Driver, Jev}
 
   @type mode :: :off | :cached_only | :live
