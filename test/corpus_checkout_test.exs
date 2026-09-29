@@ -57,6 +57,21 @@ defmodule Argus.CorpusCheckoutTest do
     assert {"ASDF_ERLANG_VERSION", "27.3.3"} in env
   end
 
+  test "a tree that names no toolchain is buildable anywhere" do
+    assert Corpus.unbuildable(@pair) == nil
+  end
+
+  test "a tree not compiled here, whose toolchain is not installed, names what installs it" do
+    pair = Map.merge(@pair, %{otp: "0.0.0-absent", elixir: "0.0.0-absent-otp-0"})
+
+    assert Corpus.unbuildable(pair) ==
+             "firezone#1 needs Erlang/OTP 0.0.0-absent (`asdf install erlang 0.0.0-absent`)" <>
+               " and Elixir 0.0.0-absent-otp-0 (`asdf install elixir 0.0.0-absent-otp-0`)"
+
+    assert {:error, "firezone-0123456 needs Erlang/OTP 0.0.0-absent" <> _} =
+             Corpus.ensure(pair, :pre)
+  end
+
   test "a pair's env overrides the clean environment, MIX_ENV included" do
     env = Corpus.compile_env(Map.put(@pair, :env, %{"MIX_ENV" => "prod", "PROFILE" => "p"}))
 

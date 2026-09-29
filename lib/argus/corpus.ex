@@ -42,7 +42,9 @@ defmodule Argus.Corpus do
   version, whose asdf install's `bin` leads the compile's `PATH` (a
   locked Erlang dependency that no longer builds on OTP 28, like an old
   rabbit_common's `'street-address'` macro). The two go together: an
-  Elixir built for OTP 28 does not load on 27.
+  Elixir built for OTP 28 does not load on 27. A machine without those
+  installs cannot build the tree (`unbuildable/1`): a checkout it has not
+  compiled yet is an error naming them, and the gate skips the pair.
 
   A monorepo that builds many apps from its root names the one analyzed
   with `app:`, and the variables its build reads with `env:` (EMQX
@@ -136,11 +138,59 @@ defmodule Argus.Corpus do
   @spec ensure(pair(), :pre | :fix) :: {:ok, [Path.t()]} | {:error, String.t()}
   def ensure(pair, side) do
     with %{} = co <- checkout(pair, side) || {:error, "no #{side} side for #{pair.issue}"},
+         :ok <- buildable(pair, co),
          :ok <- clone(pair, co),
          :ok <- compile(pair, co) do
       beams(co)
     end
   end
+
+  @doc """
+  Why this machine cannot build `pair`, or nil: a side it has not
+  compiled yet, and an `otp:` or `elixir:` version the pair names that
+  has no asdf install here. Compiled on the running toolchain instead, a
+  tree fails on what the pair names its toolchain for, or builds as
+  another tree than the one the pair was verified on.
+  """
+  @spec unbuildable(pair()) :: String.t() | nil
+  def unbuildable(pair) do
+    uncompiled? =
+      Enum.any?([:pre, :fix], fn side ->
+        case checkout(pair, side) do
+          nil -> false
+          co -> not File.exists?(marker(co))
+        end
+      end)
+
+    case missing_toolchain(pair) do
+      [] -> nil
+      _missing when not uncompiled? -> nil
+      missing -> "#{pair.issue} needs #{Enum.join(missing, " and ")}"
+    end
+  end
+
+  defp buildable(pair, co) do
+    case missing_toolchain(pair) do
+      [] ->
+        :ok
+
+      missing ->
+        if File.exists?(marker(co)),
+          do: :ok,
+          else: {:error, "#{co.name} needs #{Enum.join(missing, " and ")}"}
+    end
+  end
+
+  # Each asdf install the pair names that this machine does not have,
+  # with what installs it.
+  defp missing_toolchain(pair) do
+    for {key, plugin, name} <- [{:otp, "erlang", "Erlang/OTP"}, {:elixir, "elixir", "Elixir"}],
+        version = Map.get(pair, key),
+        not File.dir?(asdf_install(plugin, version)),
+        do: "#{name} #{version} (`asdf install #{plugin} #{version}`)"
+  end
+
+  defp asdf_install(plugin, version), do: Path.expand("~/.asdf/installs/#{plugin}/#{version}")
 
   @doc """
   Runs every analysis over one side of a pair; the findings as
@@ -378,8 +428,12 @@ defmodule Argus.Corpus do
     :ok
   end
 
-  defp compile(pair, %{dir: dir, sha: sha} = co) do
-    marker = Path.join(dir, ".argus-compiled-#{String.slice(sha, 0, 7)}")
+  # What records that a checkout compiled.
+  defp marker(%{dir: dir, sha: sha}),
+    do: Path.join(dir, ".argus-compiled-#{String.slice(sha, 0, 7)}")
+
+  defp compile(pair, co) do
+    marker = marker(co)
 
     if File.exists?(marker) do
       :ok
@@ -421,9 +475,9 @@ defmodule Argus.Corpus do
     base = [{"MIX_ENV", "dev"}, {"MIX_BUILD_PATH", nil}, {"MIX_DEPS_PATH", nil}, {"MIX_EXS", nil}]
 
     bins =
-      for {key, dir} <- [elixir: "elixir", otp: "erlang"],
+      for {key, plugin} <- [elixir: "elixir", otp: "erlang"],
           version = Map.get(pair, key),
-          do: Path.expand("~/.asdf/installs/#{dir}/#{version}/bin")
+          do: Path.join(asdf_install(plugin, version), "bin")
 
     # The Elixir's own MIX_HOME: an archive built for one OTP does not
     # load on another, and the parent's MIX_HOME is its own Elixir's.
@@ -433,7 +487,7 @@ defmodule Argus.Corpus do
           base
 
         version ->
-          home = Path.expand("~/.asdf/installs/elixir/#{version}/.mix")
+          home = Path.join(asdf_install("elixir", version), ".mix")
           [{"ASDF_ELIXIR_VERSION", version}, {"MIX_HOME", home}, {"MIX_ARCHIVES", nil} | base]
       end
 

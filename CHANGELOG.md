@@ -25,6 +25,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   extracted again and the blobs put back under the digests they had
   (`Argus.Graph.Pack.read_chunks/6`). Placing findings in such a module
   extracts it again likewise, where it gave up the module's lines.
+- A corpus pair naming an `otp:` or `elixir:` with no asdf install on
+  the machine is no longer compiled on the running toolchain, which
+  failed on what the pair pins its toolchain for: `mix argus.corpus
+  fetch` answers an error naming what to install, and the gate skips
+  the pair (`Argus.Corpus.unbuildable/1`), until its trees are compiled
+  there.
 
 ## 0.20.0 — 2026-09-27
 

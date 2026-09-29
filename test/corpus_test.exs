@@ -11,7 +11,10 @@ defmodule Argus.CorpusTest do
   once, up to `ARGUS_CORPUS_JOBS` at a time (default 4, at most the
   scheduler count), before the pairs are checked. Narrow a run with
   `ARGUS_CORPUS_ONLY=redix#334,oban` (substrings of the issue name), or
-  leave the corpus out with `mix test --exclude corpus`.
+  leave the corpus out with `mix test --exclude corpus`. A pair whose
+  tree this machine cannot build — it names an Erlang or Elixir with no
+  asdf install here, and a side is not compiled yet — is skipped, the
+  reason naming what to install (`Argus.Corpus.unbuildable/1`).
   """
 
   use ExUnit.Case, async: true
@@ -26,9 +29,24 @@ defmodule Argus.CorpusTest do
            s -> s |> String.split(",", trim: true) |> Enum.map(&String.trim/1)
          end)
 
-  @selected Enum.filter(Corpus.pairs(), fn pair ->
-              @only == nil or Enum.any?(@only, &String.contains?(pair.issue, &1))
-            end)
+  # Why each pair is not checked here, by its issue, or false.
+  @skipped Map.new(Corpus.pairs(), fn pair ->
+             reason =
+               cond do
+                 @only != nil and not Enum.any?(@only, &String.contains?(pair.issue, &1)) ->
+                   "not in ARGUS_CORPUS_ONLY"
+
+                 reason = Corpus.unbuildable(pair) ->
+                   reason
+
+                 true ->
+                   false
+               end
+
+             {pair.issue, reason}
+           end)
+
+  @selected Enum.filter(Corpus.pairs(), &(Map.fetch!(@skipped, &1.issue) == false))
 
   # One analysis per checkout, however many pairs share it, through
   # `Corpus.analyze_all/2`. Only what the tests read is kept — the
@@ -84,9 +102,8 @@ defmodule Argus.CorpusTest do
       if Map.has_key?(pair, :fix), do: "present at pre, absent at fix", else: "present at pre"
 
     @pair pair
-    selected? = pair in @selected
 
-    @tag skip: if(selected?, do: false, else: "not in ARGUS_CORPUS_ONLY")
+    @tag skip: Map.fetch!(@skipped, pair.issue)
     test "#{pair.issue}: #{analysis} / #{title} — #{sides}", %{results: results} do
       skip_without_souffle()
       pair = @pair
