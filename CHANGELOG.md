@@ -4,6 +4,13 @@ All notable changes to Argus are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Changed
+
+- Elixir `~> 1.19` is now required (was `~> 1.18`), as for roux; OTP 28
+  remains required. CI tests Elixir 1.19.4 only.
+
 ## 0.20.0 — 2026-09-27
 
 ### The package is `argus_beam`
