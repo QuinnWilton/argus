@@ -1,11 +1,7 @@
 defmodule Argus.Schema.CallValues do
   @moduledoc """
-  What flows into and out of a call: the arguments a site passes
-  (literal, forwarded, read from a field, derived from a parameter),
-  what becomes of a result, the keys and names shared-state operations
-  use, and what specs claim a callee returns.
-
-  Layer 2 of `Argus.Schema`, which reads the relations from here.
+  Layer-2 facts for call arguments, result usage, shared-state keys and names, and \
+  return specifications. Exposed through `Argus.Schema`.
   """
 
   @doc "The relations, in the order `Argus.Schema.all/0` lists them."
@@ -15,11 +11,8 @@ defmodule Argus.Schema.CallValues do
       %{
         name: :call_arg,
         layer: 2,
-        # Deliberately NOT keyed by call-site instruction ID. That column
-        # renumbered whenever anything earlier in the function changed, so
-        # call_arg churned on every body edit — while no rule ever bound it
-        # (every use wildcarded position 1). The rules ask which FUNCTION
-        # passes which argument, which is stable.
+        # Keyed by caller rather than instruction ID: consumers need argument values per
+        # function, and body edits can renumber call sites.
         fields: [
           {:caller, :symbol, "calling function ID"},
           {:callee, :symbol, "callee function ID (mod:func/arity)"},
@@ -28,12 +21,9 @@ defmodule Argus.Schema.CallValues do
            "resolved value: a literal atom, binary or integer as key identities spell it, or 'dynamic'"}
         ],
         doc: """
-        Resolved argument value at a call site. Enables interprocedural \
-        constant propagation: `resolved_arg` in `clientlib/calls.dl` traces \
-        literal values from call sites through forwarding chains to resolve \
-        `sync_call`/`async_cast` targets the extractors couldn't resolve \
-        statically. Forwarded parameters are NOT values here \
-        — they are their own relation, `call_arg_forward`.
+        A resolved call argument. `resolved_arg` in `clientlib/calls.dl` propagates \
+        literals through wrappers to resolve call and cast targets. Forwarded parameters \
+        use `call_arg_forward` instead.
         """
       },
       %{
@@ -47,13 +37,10 @@ defmodule Argus.Schema.CallValues do
            "0-based position of the caller's parameter the argument is derived from"}
         ],
         doc: """
-        At some call site in the caller, the argument is data-dependent on \
-        one of the caller's parameters: destructured out of it, built into a \
-        tuple or a binary with it, or returned by a call known to hand its \
-        argument's data through. A superset of call_arg_forward (identity is a \
-        dependence). A closure built with make_fun3 counts as a call whose \
-        trailing parameters are the captured environment. Function-level, so \
-        a body edit that keeps the flow does not move it.
+        A call argument derived from a caller parameter, including destructuring, \
+        construction, and known data-preserving calls. Includes `call_arg_forward`. For \
+        `make_fun3`, captured variables are trailing arguments. Function-level, so \
+        unchanged flows survive body edits.
         """
       },
       %{
@@ -66,10 +53,8 @@ defmodule Argus.Schema.CallValues do
           {:key, :symbol, "the inspected map key the argument was read from"}
         ],
         doc: """
-        The argument at `arg_pos` was read from a map under a literal key in \
-        the caller (`start_timer(ms, state.ref)`): which piece of the \
-        caller's state a helper is handed. Only emitted where call_arg says \
-        'dynamic'.
+        A call argument read from a literal map key in the caller, such as `state.ref`. \
+        Emitted only when `call_arg` reports `dynamic`.
         """
       },
       %{
@@ -83,11 +68,9 @@ defmodule Argus.Schema.CallValues do
           {:index, :number, "the element's position in that tuple (0-based)"}
         ],
         doc: """
-        The argument at `arg_pos` is element `index` of the caller's own \
-        parameter (`elem(record, 1)`, a `get_tuple_element` or the \
-        `element/2` BIF): what a helper that names the value by its own \
-        parameter is handed, in the caller's terms. Only emitted where \
-        call_arg says 'dynamic'.
+        A call argument taken from element `index` of a caller parameter. Covers tuple \
+        extraction instructions and `element/2`. Emitted only when `call_arg` reports \
+        `dynamic`.
         """
       },
       %{
@@ -102,11 +85,9 @@ defmodule Argus.Schema.CallValues do
           {:value, :symbol, "the element, in the vocabulary of key_identity"}
         ],
         doc: """
-        The argument at `arg_pos` is a tuple the caller builds, and its \
-        element `index` is `(source, value)` in the caller's terms: a \
-        record's table (element 0) and key (element 1), an ETS object's \
-        key. A callee that names the element by its parameter is handed \
-        this. Elements the caller cannot name are not emitted.
+        Element `index` of a tuple argument constructed by the caller, expressed as \
+        `(source, value)` in `key_identity` vocabulary. Identifies record tables and \
+        keys or ETS object keys. Unresolved elements are omitted.
         """
       },
       %{
@@ -121,11 +102,9 @@ defmodule Argus.Schema.CallValues do
           {:target, :symbol, "the function the three name, `Mod:fun/arity`"}
         ],
         doc: """
-        A call into a function of the program is handed, at positions `pos`, \
-        `pos + 1` and `pos + 2`, a literal module, a literal function name \
-        and a list whose length is known on every path: an MFA, named as \
-        function_def names a function. What a wrapper around an rpc \
-        (rpc_mfa_param) runs, keyed on the site a finding points at.
+        A literal module and function plus a list of known length, passed at consecutive \
+        positions starting at `pos`. Identifies an MFA in `function_def` format for \
+        RPC-wrapper resolution, anchored to the call site.
         """
       },
       %{
@@ -137,10 +116,8 @@ defmodule Argus.Schema.CallValues do
           {:arg_pos, :number, "0-based argument position"}
         ],
         doc: """
-        A call passes the literal `:infinity` as an argument, at any \
-        position — call_arg stops at the fourth, and a timeout is often \
-        the fifth. A wrapper whose timeout defaults to :infinity compiles \
-        to a clause that calls the full arity with it.
+        A literal `:infinity` argument at any position. Complements `call_arg`, which \
+        records only the first four positions and can miss timeout arguments.
         """
       },
       %{
@@ -153,18 +130,9 @@ defmodule Argus.Schema.CallValues do
           {:fwd_pos, :number, "0-based position of the caller's own parameter being forwarded"}
         ],
         doc: """
-        A call site passes one of the caller's own parameters straight through \
-        as an argument — the forwarding step interprocedural constant \
-        propagation walks backwards.
-
-        Split out of `call_arg`, where it used to be encoded in the value \
-        column as the string `"arg:N"` and decoded in Datalog with \
-        `to_number(substr(...))`. `to_number` is a PARTIAL functor: it aborts \
-        on input that is not numeric. The guard that kept non-forwarding values \
-        away from it was a sibling conjunct, and Souffle does not promise \
-        conjunct order — the default schedule happened to be safe, but the \
-        magic-set transform reordered and aborted with `to_number("mic")`. A \
-        structured column cannot be scheduled into a crash.
+        A caller parameter passed unchanged to a callee argument. Used for \
+        interprocedural constant propagation. Positions are numeric columns to avoid \
+        partial string functors, which can abort when Souffle reorders conjuncts.
         """
       },
       %{
@@ -181,12 +149,10 @@ defmodule Argus.Schema.CallValues do
           {:target, :symbol, "the first argument, inspected, when it is a literal; else empty"}
         ],
         doc: """
-        A call to a process or OTP API, or to anything that starts a process, \
-        with what became of its result, the class it raises when it fails \
-        (what a try must take to guard it: try_covers and catch_class), and \
-        what it acts on when a literal says. One row per site, so a \
-        rule can count how the other sites of the same callee (on the same \
-        target) behave and report the one that disagrees.
+        A process or OTP API call's result usage, failure class, and literal target when \
+        known. One row per site supports comparison with other calls to the same callee \
+        and target. `try_covers` and `catch_class` determine whether the failure is \
+        handled.
         """
       },
       %{
@@ -202,9 +168,8 @@ defmodule Argus.Schema.CallValues do
           {:key, :symbol, "the name claimed; empty when the source is dynamic"}
         ],
         doc: """
-        A call that claims a name or starts a process: a registration, a \
-        named start, a via-registered start, or start_child, whose name hides \
-        in the child spec.
+        A call that registers a name or starts a process, including via registration and \
+        `start_child` with a name in its child spec.
         """
       },
       %{
@@ -217,9 +182,8 @@ defmodule Argus.Schema.CallValues do
            "the key: an inspected literal, a parameter index, a map key, or the instruction that made it"}
         ],
         doc: """
-        What identifies the key operand of an ETS operation; for insert and \
-        insert_new, the first element of the object. Two operations agreeing \
-        on source and key touch the same row.
+        The identity of an ETS key operand; for `insert` and `insert_new`, the object's \
+        first element. Matching `source` and `key` values identify the same row.
         """
       },
       %{
@@ -234,12 +198,10 @@ defmodule Argus.Schema.CallValues do
            "the map keys read from the root, joined by \".\"; empty for the root itself"}
         ],
         doc: """
-        Where the table operand of an ETS operation was read from: a root and \
-        the map keys read from it (Resolve.access_path/4). Two tables handed \
-        to a function in one map, `%{forward: f, reverse: r}`, are two paths \
-        under one root where ets_op knows both by the name they were created \
-        with. Absent when the operand's writers disagree; a table named by a \
-        join (`cfg.table || @default`) is to have one row per arm.
+        An ETS table operand's root and map access path (`Resolve.access_path/4`). \
+        Distinguishes tables stored under different keys of one map. Conflicting writers \
+        have no row; a fallback expression such as `cfg.table || @default` has a path \
+        for each arm.
         """
       },
       %{
@@ -251,12 +213,9 @@ defmodule Argus.Schema.CallValues do
           {:site, :instr_id, "the call whose answer was tested"}
         ],
         doc: """
-        The table operand of the ETS operation at `id` is the literal `name` \
-        only where a test found what the call at `site` returned unset \
-        (`undefined`, `nil` or `false`), and that answer otherwise: \
-        `case get_tmp_config() do undefined -> :options; t -> t end`, or \
-        `Process.get(:tab) || :options`. The literal is one of the operand's \
-        ets_table_path rows.
+        An ETS table operand that defaults to literal `name` when the call at `site` \
+        returns `undefined`, `nil`, or `false`; otherwise it uses that call's result. \
+        The literal also appears in `ets_table_path`.
         """
       },
       %{
@@ -270,11 +229,9 @@ defmodule Argus.Schema.CallValues do
           {:name, :symbol, "the name :ets.new/2 was given, inspected"}
         ],
         doc: """
-        At some call in the caller, or in the environment of a closure it \
-        builds, the argument is the table reference :ets.new/2 returned in the \
-        caller. An unnamed table is known by the name it was created with, so \
-        an operation on the parameter joins ets_new like a named one. \
-        Function-level, like call_arg.
+        A call or closure capture receiving a table reference returned by `:ets.new/2` \
+        in the caller. Unnamed tables use their creation name so parameter-based \
+        operations can join `ets_new`. Function-level, like `call_arg`.
         """
       },
       %{
@@ -287,10 +244,9 @@ defmodule Argus.Schema.CallValues do
           {:value, :symbol, "as ets_key spells its key"}
         ],
         doc: """
-        What identifies an element past the key of the object an insert or \
-        insert_new writes, in ets_key's vocabulary: a row holding a value \
-        another table is keyed by joins that table's key on it. An element \
-        nothing identifies has no row.
+        An identifiable non-key element written by ETS `insert` or `insert_new`, using \
+        `ets_key` vocabulary. Supports joins where one table stores another table's key. \
+        Unresolved elements are omitted.
         """
       },
       %{
@@ -302,12 +258,9 @@ defmodule Argus.Schema.CallValues do
           {:then, :instr_id, "an effect control reaches from it without closing a loop"}
         ],
         doc: """
-        Two effects of one function in order within one trip through it: \
-        inserts, and the calls a callee's inserts hide behind. An edge into a \
-        block that dominates its source is a loop's back edge and is not \
-        followed, so a loop body's writes are ordered as each iteration makes \
-        them, not both ways. At least one of the two is an insert or a call \
-        to a function of the same module that inserts.
+        Two ordered effects within one function iteration. At least one is an insert or \
+        a same-module call that inserts. Excludes loop back edges so writes in a loop \
+        are ordered within an iteration, not in both directions.
         """
       },
       %{
@@ -321,9 +274,8 @@ defmodule Argus.Schema.CallValues do
           {:value, :symbol, "as ets_key spells its key"}
         ],
         doc: """
-        What identifies an argument of the call, in ets_key's vocabulary: a \
-        callee's insert keyed by its parameter is keyed, in the caller, by \
-        what the caller passes there.
+        A call argument's identity in `ets_key` vocabulary. Translates a callee's \
+        parameter-based insert key into the caller's terms.
         """
       },
       %{
@@ -342,10 +294,9 @@ defmodule Argus.Schema.CallValues do
            "the key: an inspected literal, a parameter index, a map key, or the instruction that made it"}
         ],
         doc: """
-        A Mnesia dirty operation, outside any transaction's serialization, \
-        with the table and key it touches. The one-argument forms carry both \
-        in a tuple: {table, key}, or a record whose first element is its \
-        table and whose second is its key.
+        A Mnesia dirty operation's table and key, outside transaction serialization. \
+        Single-argument forms derive both from `{table, key}` or the first two record \
+        elements.
         """
       },
       %{
@@ -357,10 +308,9 @@ defmodule Argus.Schema.CallValues do
           {:then, :instr_id, "a Mnesia write that can run after it"}
         ],
         doc: """
-        Two Mnesia writes of one function, `then` reachable from `first` \
-        within one trip through it (`Argus.Extractors.Mnesia`; a loop's \
-        back edge is not followed). Two writes ordered neither way are on \
-        paths that exclude each other: an upsert's two branches.
+        Two Mnesia writes ordered within one function iteration, excluding loop back \
+        edges (`Argus.Extractors.Mnesia`). Writes ordered in neither direction lie on \
+        mutually exclusive paths.
         """
       },
       %{
@@ -377,11 +327,9 @@ defmodule Argus.Schema.CallValues do
           {:checked, :symbol, "checked | unchecked: is the result tested against nil before use"}
         ],
         doc: """
-        A process name looked up — Process.whereis/1, :erlang.whereis/1, \
-        Registry.lookup/2 — with what identifies the name, so a creating op \
-        on the same name can be joined to it, and whether the result is \
-        tested against nil (or []) before use. Process.registered/0 and \
-        :erlang.registered/0 look up every name at once: source any.
+        A process-name lookup, its name identity, and whether the result is checked for \
+        `nil` or `[]` before use. Joins creating operations on the same name. \
+        `Process.registered/0` and `:erlang.registered/0` use source `any`.
         """
       },
       %{
@@ -396,12 +344,9 @@ defmodule Argus.Schema.CallValues do
            "error | exit | none | any: how that use fails when the result is nil"}
         ],
         doc: """
-        How the first use of an unchecked whereis result fails when the \
-        name is not registered: a send or a BIF on the pid raises an error \
-        (badarg), a call to it exits (`:noproc`), a cast drops the message \
-        without failing (none), and anything else — handing it to a \
-        function — is not known (any). A handler that takes the nil case \
-        must take that class.
+        The failure class of the first use of an unchecked `whereis` result: `error` for \
+        sends or BIFs, `exit` for calls, `none` for casts, and `any` when unknown. A \
+        handler must catch this class to cover an unregistered name.
         """
       },
       %{
@@ -414,17 +359,12 @@ defmodule Argus.Schema.CallValues do
            "analyzed | installed: read from the analyzed beam, or from the code path"}
         ],
         doc: """
-        What a function's `@spec` claims it returns, normalized (`Argus.Specs`): \
-        `can_fail` when the return type names {:error, _}, :error, nil, false, \
-        :undefined or {:EXIT, _}; `total` when it is known and names none of \
-        them; `constant` when it is one literal atom (and so also total); \
-        `no_return`; `returns_pid`. A function may have several shapes, \
-        and one with no row is unknown — no spec, a `term()` return, a module \
-        shipped without specs (:mnesia) — never "cannot fail". Rows come from \
-        the analyzed module's own beam for its functions, and from the code \
-        path for the remote functions it calls; clientlib/specs.dl prefers the \
-        first. A spec is an unverified claim: rules use these rows only to \
-        suppress or confirm a finding, never to report one on their own.
+        Normalized return claims from `@spec` (`Argus.Specs`): `can_fail`, `total`, \
+        `constant`, `no_return`, or `returns_pid`. Failure values include `{:error, _}`, \
+        `:error`, `nil`, `false`, `:undefined`, and `{:EXIT, _}`. A function may have \
+        several shapes; no row means unknown. Specs come from analyzed BEAMs or the code \
+        path, with `clientlib/specs.dl` preferring analyzed definitions. Rules use these \
+        unverified claims only to confirm or suppress findings.
         """
       },
       %{
@@ -437,15 +377,10 @@ defmodule Argus.Schema.CallValues do
              "file name; or yecc"}
         ],
         doc: """
-        A function another module's macro wrote into this one — `use Ecto.Repo` \
-        defines `stop/1` in the repo — read from the `context:` Elixir records \
-        in each definition's debug-info metadata, or its `generated: true` \
-        marker (`generated`). In an Erlang module, a function the abstract \
-        code places under a `-file` attribute naming an OTP header \
-        (`yeccpre.hrl`, `leexinc.hrl`, an installed application's include), \
-        by that header's name; without abstract code, a yecc parser's \
-        `yecc*` functions (`yecc`). Its call sites are the library's, not \
-        the program's.
+        A function generated by a macro, a `generated: true` marker, or an OTP header. \
+        Elixir uses definition metadata; Erlang uses abstract-code file attributes, \
+        falling back to `yecc*` names for parsers without abstract code. The origin \
+        identifies library-generated call sites.
         """
       },
       %{
@@ -453,13 +388,9 @@ defmodule Argus.Schema.CallValues do
         layer: 2,
         fields: [{:func, :func_id, "function ID (mod:func/arity)"}],
         doc: """
-        Every clause of `func` was written by another module's macro, or \
-        marked `generated: true`, or an OTP header or yecc defined it \
-        (`Argus.Extractors.Generated`): the module wrote none of it. `macro_generated` reads the definition's \
-        metadata, which is its first clause's, and so names a function \
-        whose first clause a `use` injected ahead of the module's own; \
-        this reads each clause's. `use Cachex.Warmer`'s handle_info/2 is \
-        one.
+        A function whose every clause is generated by a macro, generation marker, OTP \
+        header, or yecc (`Argus.Extractors.Generated`). Unlike `macro_generated`, checks \
+        all clauses rather than the first clause's metadata.
         """
       },
       %{
@@ -472,12 +403,9 @@ defmodule Argus.Schema.CallValues do
              "or from a test/ directory within a lib/)"}
         ],
         doc: """
-        A module only developers' tools or tests run, as its name or the \
-        path compile_info records says (`Argus.Extractors.Tooling`): a Mix \
-        task or the helpers Mix tasks share, a project's test support compiled \
-        into a dev build, the test helpers a library ships in its own lib/. \
-        Every analysis steps a finding there down (clientlib/tooling.dl); \
-        the tooling prior asks about the modules this leaves undecided.
+        A module identified as developer tooling or test support by its name or compile \
+        path (`Argus.Extractors.Tooling`). `clientlib/tooling.dl` lowers finding \
+        severity there; the tooling prior classifies unresolved modules.
         """
       },
       %{
@@ -492,10 +420,8 @@ defmodule Argus.Schema.CallValues do
            "the name: an inspected literal, a parameter index, a map key, or the instruction that made it"}
         ],
         doc: """
-        A registered name given up — Process.unregister/1, \
-        :erlang.unregister/1 — which raises when the name is no longer \
-        registered: a lookup that decides it is stale once the process exits \
-        or another process unregisters first.
+        A `Process.unregister/1` or `:erlang.unregister/1` call. Raises if the name is \
+        already unregistered, including when a preceding lookup becomes stale.
         """
       },
       %{
@@ -509,10 +435,9 @@ defmodule Argus.Schema.CallValues do
            "0-based position of the function's parameter the argument is derived from"}
         ],
         doc: """
-        call_arg_derived at a sink site — atom creation, deserialization, code \
-        execution — keyed on the site because the finding anchors there. \
-        Together with call_arg_derived it lets a rule chain a request entry's \
-        parameter to the sink's argument: a proven flow rather than a call path.
+        Parameter-derived data at an atom-creation, deserialization, or code-execution \
+        sink, keyed by site. Chains with `call_arg_derived` to establish data flow from \
+        request parameters.
         """
       },
       %{
@@ -528,19 +453,13 @@ defmodule Argus.Schema.CallValues do
              "of the function's list parameter the bound needs to be a literal list"}
         ],
         doc: """
-        On every path to the sink, its argument is one of a set the program \
-        wrote, at most 1,024 values: compared equal to a literal (a clause \
-        head, a guard's `in`, a case arm), found in a literal list (`x in \
-        @allowed`, `:lists.member/2`, `Enum.member?/2`) on the branch where it \
-        holds, an integer between two close ends, or a value made of such \
-        values, their counts multiplied (Argus.Extractors.ParamFlow.Bounded). \
-        A membership test against a list the function takes as a parameter \
-        bounds it only where the callers pass a literal list \
-        (call_arg_allowlist): `list_param` names that parameter. At an atom \
-        sink, an argument made of atoms that exist (an `is_atom/1` test, an \
-        atom's name) is `list_param` "atoms": a bound only where no outside \
-        party chose those atoms (sink_arg_chosen) and the site's own atoms do \
-        not come back to it.
+        A sink argument restricted on every path to at most 1,024 values, through \
+        literal tests, allowlists, bounded integers, or combinations of bounded values \
+        (`Argus.Extractors.ParamFlow.Bounded`). Combined bounds multiply. A list \
+        parameter is a bound only when callers pass literal lists \
+        (`call_arg_allowlist`). At atom sinks, `list_param` value `atoms` means \
+        existing-atom input; this is bounded only if outsiders cannot choose the atoms \
+        and newly created atoms cannot feed back.
         """
       },
       %{
@@ -552,12 +471,9 @@ defmodule Argus.Schema.CallValues do
           {:arg_pos, :number, "0-based argument position at the sink"}
         ],
         doc: """
-        The sink's argument is made of an atom an existing-atom lookup \
-        returned in its function (`String.to_existing_atom/1`, \
-        `:erlang.binary_to_existing_atom/1,2`, `List.to_existing_atom/1`): \
-        one of the atoms that exist, chosen by whoever named it. An atom made \
-        of it is new, and names the next lookup's choice: no atoms-of-atoms \
-        bound holds.
+        A sink argument derived from an existing-atom lookup in the same function. \
+        Caller-selected existing atoms can produce new atoms that later lookups select, \
+        so this does not establish a bound on atom creation.
         """
       },
       %{
@@ -569,10 +485,8 @@ defmodule Argus.Schema.CallValues do
           {:arg_pos, :number, "0-based argument position at the call site"}
         ],
         doc: """
-        At some call site in the caller, the argument is made of an atom an \
-        existing-atom lookup returned there (sink_arg_chosen's question, one \
-        call up): chained with call_arg_derived, whether a caller's chosen \
-        atom reaches a sink's argument.
+        A call argument derived from an existing-atom lookup in the caller. Chains with \
+        `call_arg_derived` to detect caller-selected atoms reaching a sink.
         """
       },
       %{
@@ -584,9 +498,8 @@ defmodule Argus.Schema.CallValues do
           {:first, :instr_id, "the earliest sink call of the same API on the same source line"}
         ],
         doc: """
-        A sink call the compiler duplicated: another call of the same API \
-        in the same function sits on the same source line, earlier. A body \
-        two clause heads share is compiled once per head.
+        A sink call with an earlier call to the same API on the same source line in the \
+        same function. Identifies compiler duplication of a body shared by clause heads.
         """
       },
       %{
@@ -598,9 +511,9 @@ defmodule Argus.Schema.CallValues do
           {:arg_pos, :number, "0-based argument position"}
         ],
         doc: """
-        Every call the caller makes to the callee passes a literal list at \
-        the position (a module attribute is one once compiled). \
-        Function-level: one call passing anything else, and there is no row.
+        Every call from caller to callee passes a literal list at this position. \
+        Compiled module attributes count as literals. Any nonliteral argument at that \
+        position removes the function-level row.
         """
       }
     ])

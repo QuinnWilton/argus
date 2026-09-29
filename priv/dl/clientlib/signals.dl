@@ -1,13 +1,6 @@
-// Which process an exit signal, a monitor or a link goes to. The
-// points-to stage resolves every signal alongside the calls (a helper
-// that monitors or kills its parameter is resolved at each caller, like
-// a helper that calls it) and stages them apart, as process_signal, so
-// an analysis that asks only about calls does not read every signal in
-// the program. Here they rejoin the calls and the uses they come from,
-// as they were before the stage split them off.
-//
-// Prerequisites: include clientlib/imports.dl and clientlib/otp.dl
-// (which brings staged_processes.dl) before this file.
+// Signal targets resolved by the points-to stage, including caller-specific helper
+// parameters. Rejoin staged process_signal with call/use views here so call-only
+// consumers need not read signals. Requires imports.dl and otp.dl.
 
 pid_use(id, f, kind, sk, s) :- pid_signal(id, f, kind, sk, s).
 

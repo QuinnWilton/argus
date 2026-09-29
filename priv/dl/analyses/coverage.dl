@@ -1,51 +1,32 @@
-// Coverage and precision meta-analysis.
-//
-// Measures where the extractor pipeline either fell back to a dynamic
-// placeholder (active instrumentation) or recognized a BEAM/OTP shape
-// but couldn't recover its detail (passive shape-gap queries). Together
-// these surface the "recall-side" gaps: places where a smarter extractor
-// could produce more concrete facts.
-//
-// The active side flows through the :imprecision fact relation (only
-// populated when the pipeline runs with trace_imprecision: true, which
-// Argus.Analysis sets automatically for this analysis). The passive side
-// is derived from the existing Layer 2 fact base — no extractor changes
-// required, which means adding a new shape-gap rule is a pure .dl edit.
-//
-// Output is intentionally raw events plus shape-level counts; aggregation
-// into category histograms happens in the consumer so diff tools can
-// slice the data however they want.
+// Extraction coverage and precision gaps. Active `imprecision` rows record fallbacks
+// and skipped facts; this analysis enables tracing automatically. Passive queries
+// detect unresolved details in existing Layer-2 facts. Outputs contain raw events and
+// shape counts; consumers build category histograms.
 
 .include "../clientlib/imports.dl"
 .include "../clientlib/otp.dl"
 .include "../clientlib/process_statem.dl"
 
-// ── Active instrumentation passthrough ──────────────────────────────
+// Raw imprecision events
 //
-// Expose the raw imprecision events so the consumer can aggregate them
-// however it wants (by category, by function, by relation, etc.).
-// No Datalog aggregation is done here — keeping the rule trivial makes
-// it easy to extend without rewriting the schema.
+// Pass events through without aggregation so consumers can group by category, function,
+// or relation.
 
 .decl imprecision_event(category: symbol, func: symbol, relation: symbol, reason: symbol)
 .output imprecision_event
 
 imprecision_event(c, f, r, why) :- imprecision(c, f, r, why).
 
-// ── Passive shape-gap queries ───────────────────────────────────────
-//
-// Each gap is a detection rule named for what it reports (a place the
-// extractors recognised and could not fill in), and a report under the
-// coverage_ name the consumers read.
+// Coverage gaps. Each detection rule identifies a recognized shape the extractor could
+// not resolve; its coverage_ relation exposes the report.
 
 // ── A supervisor with no known children ─────────────────────────────
 
 .decl coverage_supervisor_no_children(sup: symbol)
 .output coverage_supervisor_no_children
 
-// A supervisor Argus recognised has no child it could extract: init/1
-// builds the children at run time (Enum.map, a comprehension), or the
-// extractor does not know the spec's shape.
+// A recognized supervisor has no extracted children, typically because it builds its
+// child list dynamically or uses an unsupported spec shape.
 .decl supervisor_without_known_children(sup: symbol)
 
 supervisor_without_known_children(sup) :-
@@ -59,9 +40,8 @@ coverage_supervisor_no_children(sup) :- supervisor_without_known_children(sup).
 
 recognised_supervisor(sup) :- supervisor(sup, _).
 
-// The extractor found a child of `sup`: one in its child list
-// (supervisor_child), one it starts dynamically (dynamic_child), or one a
-// start_child of a spec adds (added_child).
+// An extracted child of sup: static (supervisor_child), dynamic (dynamic_child), or
+// added through start_child (added_child).
 .decl has_known_child(sup: symbol)
 
 has_known_child(sup) :- supervisor_child(sup, _, _, _, _).
@@ -93,16 +73,14 @@ receives_known_traffic(mod) :- sync_call(_, mod).
 receives_known_traffic(mod) :- async_cast(_, mod).
 receives_known_traffic(mod) :- reached_by_pid(mod).
 
-// Traffic process points-to follows to a module's process, through the
-// pid a start returned or a lookup found: the extractor's target is
-// "dynamic" for it.
+// Traffic with a dynamic extractor target that points-to analysis resolves through a
+// started or looked-up PID.
 .decl reached_by_pid(mod: symbol)
 
 reached_by_pid(m) :- call_target(_, _, p), server_process(p, m).
 
-// A supervisor starts the module, as a static child, a dynamic child or
-// one added by start_child: it is definitively reachable even when its
-// callers are not seen.
+// A statically, dynamically, or explicitly added supervised child is reachable even
+// without visible callers.
 .decl started_by_supervisor(mod: symbol)
 
 started_by_supervisor(mod) :- supervisor_child(_, _, mod, _, _).
@@ -114,9 +92,8 @@ started_by_supervisor(mod) :- added_child(_, mod, _, _, _).
 .decl coverage_ets_unused(name: symbol)
 .output coverage_ets_unused
 
-// An ETS table is made under a literal name, and no operation Argus read
-// names it or may reach it by reference: most often every access went
-// through a reference the extractor could not name.
+// A table has a literal creation name but no identified accesses by name or reference.
+// This can indicate unresolved reference-based access.
 .decl named_table_without_known_use(name: symbol)
 
 named_table_without_known_use(name) :-
@@ -126,9 +103,8 @@ named_table_without_known_use(name) :-
 
 coverage_ets_unused(name) :- named_table_without_known_use(name).
 
-// An :ets.new/2 makes a table under a literal name. "dynamic" is no one
-// name: joining on it, every project with any dynamic ETS access would
-// report every statically named table.
+// Table creation with a literal name. Exclude "dynamic", which denotes an unknown name
+// and must not join unrelated tables.
 .decl makes_named_table(name: symbol) inline
 
 makes_named_table(name) :- ets_new(_, _, name), name != "dynamic".
@@ -138,11 +114,9 @@ makes_named_table(name) :- ets_new(_, _, name), name != "dynamic".
 
 used_by_name(name) :- ets_op(_, _, name, _, _).
 
-// A module that makes the named table does any ETS operation, even
-// through a reference: when a module makes one named table and also
-// reaches ETS through a tid parameter, those operations almost certainly
-// are that table's, and the name-based join just can't see the
-// connection.
+// A module creating the named table also performs ETS operations, possibly through
+// unresolved references. Treat these as evidence that a name-only join may be missing
+// accesses.
 .decl maker_uses_ets(name: symbol)
 
 maker_uses_ets(name) :-
@@ -157,8 +131,7 @@ maker_uses_ets(name) :-
 .decl coverage_named_process_unreachable(name: symbol, mod: symbol)
 .output coverage_named_process_unreachable
 
-// A process of `mod` is registered under a literal name, and no call or
-// cast Argus resolved reaches it, by the name or through a pid.
+// A literally named process has no resolved calls or casts, either by name or PID.
 .decl named_process_without_known_traffic(name: symbol, mod: symbol)
 
 named_process_without_known_traffic(name, mod) :-
@@ -175,9 +148,8 @@ coverage_named_process_unreachable(name, mod) :-
 
 registers_literal_name(mod, name) :- named_process(mod, name), name != "dynamic".
 
-// A sync_call or async_cast names the process's registered name, or a
-// call reaches it through a pid (a whereis, the start's result) that
-// process points-to follows to the name.
+// Traffic reaches the registered name directly or through a PID resolved by points-to
+// analysis.
 .decl name_receives_known_traffic(name: symbol)
 
 name_receives_known_traffic(name) :- sync_call(_, name).

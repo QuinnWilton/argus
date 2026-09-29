@@ -1,19 +1,9 @@
-// The OTP vocabulary, in one include.
-//
-//   .include "../clientlib/imports.dl"
-//   .include "../clientlib/otp.dl"
-//
-// Provides behaviours.dl (behaves_as, process_behaviour), callbacks.dl
-// (otp_callback, init_function, handler_function, ...),
-// staged_processes.dl (process_call, call_site_target, instance,
-// named_pid: which process a pid can be, as the points-to stage derived
-// it; sends.dl and signals.dl add send_target and signal_target),
-// runs_elsewhere.dl, calls.dl (sync_dep, reaches_sync_dep,
-// stateful_module_dep, ...), supervision.dl (child_subtree,
-// starts_before) and init_phase.dl (where init/1's phase ends, and the
-// walks startup and blocking share of it). An analysis that needs only the behaviour table may
-// include behaviours.dl alone; one that includes this file must not
-// include it again.
+// Shared OTP vocabulary. Include after imports.dl.
+// Provides canonical behaviours and callbacks, staged process targets, execution
+// boundaries, call dependencies, supervision order, and init-phase reach. sends.dl and
+// signals.dl add their target views separately.
+// Include behaviours.dl alone when only the behaviour table is needed; do not include
+// it again alongside otp.dl.
 .include "behaviours.dl"
 .include "callbacks.dl"
 .include "staged_processes.dl"

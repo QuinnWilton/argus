@@ -1,37 +1,18 @@
-// Who waits on whom.
-//
-// Requires imports.dl, behaviours.dl, callbacks.dl, staged_processes.dl
-// and runs_elsewhere.dl (otp.dl includes all of them).
-// Reads the extracted sync_call / sync_call_site / async_cast /
-// async_cast_site / sync_call_timeout / call_arg / call_arg_forward facts and answers one question in a few shapes: does this function, or
-// this module, synchronously depend on that module's process.
-//
-// Provides:
-//   resolved_arg(func, arg_pos, value)          + sync_call/async_cast rows
-//   genserver_sync_api(func, mod) / genserver_async_api(func, mod)
-//   sync_dep(func, mod) / async_dep(func, mod)               — direct
-//   reaches_sync_dep(func, mod) / reaches_async_dep(func, mod) — transitive
-//   sync_request_at(func, site, mod, tag) / reaches_sync_request(func, mod, tag)
-//     — the same waits, with the request's tag
-//   async_request_at(func, site, mod, tag) — the casts, with theirs
-//   site_request(func, site, mod, tag) — per call site of a function a
-//     consumer names in site_demand, entering callees by their literal
-//     first argument
-//   sync_dep_timeout(func, mod, timeout_ms) / reaches_sync_dep_timeout
-//   module_reaches(from_mod, to_mod, witness)  — to_mod a supervised module
-//   stateful_module_dep(from_mod, to_mod, witness)
-//
-// resolved_calls.dl adds the self-directed rows to sync_dep for analyses
-// that accept the value-flow relations in their input set.
+// Process call and cast dependencies.
+// Requires imports, behaviours, callbacks, staged_processes, and runs_elsewhere
+// (included by otp.dl).
+// Provides argument resolution; client API classification; direct and transitive
+// sync/async dependencies; request tags and call sites; timeout-qualified dependencies;
+// and module-level dependencies with witnesses. Seed `site_demand` for clause-sensitive
+// `site_request` results.
+// resolved_calls.dl adds self-directed dependencies for consumers accepting value-flow
+// inputs.
 
-// ── Interprocedural constant propagation ──────────────────────────────
+// Constant propagation
 //
-// A literal argument to a callee is known at the callee; a callee that
-// forwards a parameter onward has that parameter's value known too. The
-// forwarded position is a number column: `to_number`/`substr` are partial
-// functors that abort the whole program when Souffle's magic-set
-// transform reorders a guard past them, which
-// test/argus/dl_declarations_test.exs forbids statically.
+// Propagate literal arguments through forwarded numeric parameter positions. Avoid
+// partial to_number/substr functors: Souffle may reorder guards past them.
+// dl_declarations_test enforces this.
 .decl resolved_arg(func: symbol, arg_pos: number, value: symbol)
 
 resolved_arg(callee, pos, val) :-
@@ -42,20 +23,12 @@ resolved_arg(callee, callee_pos, val) :-
   call_arg_forward(forwarder, callee, callee_pos, fwd_param),
   resolved_arg(forwarder, fwd_param, val).
 
-// ── A literal target handed to a wrapper ──────────────────────────────
+// Wrapper target parameters
 //
-// `def flush(server), do: GenServer.call(server, :flush)` called as
-// `flush(Cache)`: the caller waits on Cache, at its call into the
-// wrapper. The literal is not resolved in the wrapper, whose parameter
-// is every target any caller hands it: resolved there, each caller of
-// the wrapper reached every caller's target, and two thin modules over
-// one server's API (`def flush, do: Buffer.flush(__MODULE__)`, in each)
-// called each other. So the wrapper is a summary, "parameter `pos`
-// becomes a peer call's target", lifted to the caller that passes the
-// literal — as processes.dl lifts a pid handed to a helper
-// (targets_param). The wrapper's own call keeps the target the extractor
-// gave it, "dynamic". A gen_statem's call or cast is as much a peer call
-// (peer_call, peer_cast below).
+// Summarize which parameter becomes a call or cast target, then resolve literals at
+// each caller. Resolving all callers' values inside the wrapper would incorrectly mix
+// their targets. The wrapper's own unresolved target remains dynamic. Includes
+// GenServer and gen_statem APIs.
 .decl target_param(func: symbol, pos: number, kind: symbol)
 
 target_param(f, p, "call") :- call_arg_forward(f, callee, 0, p), peer_call(callee).
@@ -84,12 +57,11 @@ named_target_site(f, id, kind, t) :-
   target_param(g, k, kind),
   call_instr(f, g, id).
 
-// ── Client API ─────────────────────────────────────────────────────────
+// Client APIs
 //
-// An exported function of a GenServer module that makes (or reaches, in
-// the same module) a sync call is that server's client API: calling it
-// is waiting on the server, whether or not the target resolved.
-// The callee strings of a synchronous call to a peer process.
+// An exported GenServer-module function making a direct or same-module reachable sync
+// call may be a client API even with an unresolved target. The following table names
+// synchronous peer-call APIs.
 .decl peer_call(callee: symbol)
 
 peer_call("GenServer:call/2").
@@ -130,9 +102,8 @@ genserver_async_api(func, mod) :-
   async_cast(func, _),
   !casts_other_server(func, mod).
 
-// A function of `mod` whose call (cast) process points-to resolves to
-// another module's server is a proxy: its callers wait on that server,
-// not on `mod`'s, whatever module the function sits in.
+// A function calling another module's server is a proxy. Its callers depend on that
+// server, not on the module containing the proxy.
 .decl calls_other_server(func: symbol, mod: symbol)
 
 calls_other_server(func, mod) :-
@@ -149,21 +120,12 @@ casts_other_server(func, mod) :-
   function_def(func, mod, _, _, _),
   other != mod.
 
-// ── Logging and telemetry are side paths ──────────────────────────────
+// Logging and telemetry boundaries
 //
-// A call into the logging or telemetry API hands an event to handlers
-// the runtime dispatches by value — a handler module named in the
-// logger's config, a fun kept in telemetry's table — so the call graph
-// reaches none of them: what it reaches is the API's own machinery. That
-// machinery waits only on its own servers (logger_server when a handler
-// crashes and is removed, a handler's logger_olp in sync mode, the
-// handler table on :telemetry.attach), which answer from their own state
-// and call no process of the program's. A server that logs from a
-// callback is not waiting on a peer that can wait on it, so no wait is
-// propagated over the edge from a function outside these modules into
-// one: OTP's global, supervisor and mnesia servers log from handle_call,
-// and each was a chain, an :infinity hop and a cycle through
-// :logger_server and :logger_olp.
+// Do not propagate application peer waits through logging/telemetry API entries. The
+// visible machinery waits on its own servers; configured handlers are dispatched by
+// runtime values and absent from this call graph. Propagating those internal waits
+// would create spurious application chains and cycles.
 .decl side_api(mod: symbol)
 
 side_api(":logger").
@@ -180,18 +142,11 @@ side_call(f, g) :-
   function_def(f, fm, _, _, _),
   !side_api(fm).
 
-// ── Dependencies ───────────────────────────────────────────────────────
+// Dependencies
 //
-// sync_dep(f, m): f itself waits on m's process — a resolved sync call,
-// or a call into m's client API. reaches_sync_dep adds every function f
-// can reach. Eleven analyses used to derive one of these two by hand,
-// with four or five clauses each and no two alike.
-//
-// A target spelled "dynamic" or as a via name ("via:Registry",
-// imports.dl) names no module: a via names the registry, not the server
-// behind it. Every clause here that reads a spelled target leaves both
-// out; such a call is unresolved (unresolved_target) and reaches a
-// module only by points-to or by its tag (tag_resolved_site).
+// `sync_dep(f, m)` is a direct wait on m or its client API; `reaches_sync_dep` adds
+// reachable waits. Dynamic and via-name strings do not identify server modules. Resolve
+// them through points-to or message tags instead.
 .decl sync_dep(func: symbol, mod: symbol)
 
 sync_dep(f, m) :-
@@ -207,18 +162,14 @@ sync_dep(f, m) :-
   function_def(f, fm, _, _, _),
   fm != m.
 
-// A call whose target is a pid (sync_call says "dynamic") that the
-// points-to analysis follows back to a server started with m's
-// callbacks (processes.dl): f's own call, or a helper's that f hands
-// the pid to, which is f's dependency rather than the helper's.
+// Points-to resolves a pid-targeted call to m's server. Parameter-based helper calls
+// belong to the caller supplying the pid, not the shared helper.
 sync_dep(f, m) :-
   process_call(f, _, _, "call", p),
   server_process(p, m).
 
-// The instruction in `func` that makes it depend synchronously on
-// `mod`: the GenServer.call itself, or the call into mod's own
-// synchronous API. A spelled target leaves out the dynamic and via
-// ones, as sync_dep's.
+// The instruction creating a synchronous dependency on mod: GenServer.call or a call to
+// mod's client API. Literal-target matching excludes dynamic and via targets.
 .decl sync_site(func: symbol, mod: symbol, id: symbol)
 
 sync_site(f, m, id) :-
@@ -264,18 +215,11 @@ async_dep(f, m) :-
   process_call(f, _, _, "cast", p),
   server_process(p, m).
 
-// ── Resolution by message tag ──────────────────────────────────────────
+// Target inference from message tags
 //
-// Most calls target a pid or a name held in state, which the extractor
-// reports as "dynamic": on horde that hid a deadlock cycle whose every
-// edge was such a call. The message tag is the other half of the
-// contract — a `{:update_child_pid, ...}` can only be answered by a
-// handle_call that discriminates on `:update_child_pid`. When exactly
-// one GenServer module in the program does, the call is attributed to
-// it. callback_tag over-approximates (every atom compared in the body),
-// which only ever adds handlers, so ambiguity suppresses attribution
-// rather than inventing it. The own module's tags are the self-directed
-// case in resolved_calls.dl and are excluded here.
+// Attribute an unresolved call when exactly one eligible server handles its tag.
+// `callback_tag` over-approximates handlers, so extra matches create ambiguity and
+// suppress attribution. Same-module cases are handled by resolved_calls.dl.
 .decl unresolved_target(target: symbol)
 
 unresolved_target("dynamic").
@@ -299,9 +243,8 @@ tag_handler_count(kind, tag, n) :-
   tag_handler(_, kind, tag),
   n = count : { tag_handler(_, kind, tag) }.
 
-// Tags too generic to name a server: every second GenServer answers
-// `:get` or `:stop`, and a program that happens to have one such
-// handler in the analyzed set says nothing about who a pid is.
+// Generic tags such as :get and :stop cannot identify a server, even if only one
+// matching handler is visible.
 .decl generic_tag(tag: symbol)
 
 generic_tag(":get").
@@ -326,12 +269,8 @@ generic_tag(":ok").
 
 info_tag(tag) :- callback_tag(_, "handle_info", tag).
 
-// Evidence from the caller's own module: it calls into the handler's
-// module statically somewhere (its start_link, its API), which is what a
-// module that holds that server's pid in its state looks like. Among
-// several handlers of a tag, the one the caller's module refers to wins.
-// Read from the staged call graph, not remote_call: the latter is a
-// stage-0 ingredient no analysis reads directly.
+// A static reference from the caller's module helps choose among servers handling the
+// same tag. Read the staged call graph; analyses do not depend directly on remote_call.
 .decl module_refers(mod: symbol, other: symbol)
 
 module_refers(mod, other) :-
@@ -352,10 +291,8 @@ referred_handler_count(fm, kind, tag, n) :-
   referred_handler(fm, kind, tag, _),
   n = count : { referred_handler(fm, kind, tag, _) }.
 
-// The call at `id` in `func` is attributed to `mod` by its tag — unless
-// process points-to resolved that very call: its target is the answer,
-// not the tag's guess (the two can disagree), and a hop it proves is not
-// an inferred one.
+// Use tag inference only if points-to did not resolve this site. A concrete target
+// overrides a conflicting tag guess and is not marked inferred.
 .decl tag_resolved_site(id: symbol, func: symbol, kind: symbol, mod: symbol)
 
 .decl pointsto_resolved(id: symbol, func: symbol, kind: symbol)
@@ -375,9 +312,8 @@ tag_resolved_site(id, func, kind, mod) :-
   fm != mod,
   !pointsto_resolved(id, func, kind).
 
-// By uniqueness: one handler in the whole program, for a tag specific
-// enough to name it. With one handler, evidence can point nowhere else:
-// a caller's module that refers to it is the clause above's.
+// Infer the target from a sufficiently specific tag with exactly one handler in the
+// program.
 tag_resolved_site(id, func, kind, mod) :-
   call_tag(id, func, kind, tag),
   tag_handler(mod, kind, tag),
@@ -422,21 +358,10 @@ async_dep(f, m) :-
 
 .decl reaches_sync_dep(func: symbol, mod: symbol)
 
-// A wait is the waiting process's: the dependency is not propagated
-// over the edge into what a spawn, task or agent runs (runs_elsewhere,
-// runs_elsewhere.dl) — init/1 does not wait on what the task it starts
-// calls. The closure itself, a function of the same module, still
-// holds it, so module-level dependencies are unchanged. A task the
-// function awaits is the exception (awaits_task: `Task.async(fn -> ...
-// end) |> Task.await()`): the function waits for it, and so for what it
-// waits on — an init/1 that awaits a task calling a later sibling holds
-// its start on that sibling all the same.
-//
-// Propagated backwards over call_edge from the functions that hold the
-// dependency, never through the full call closure: the result is bounded
-// by functions × dependency modules, where call_reachable is quadratic
-// in the call graph (17M rows against 100k edges on one corpus project).
-// Every transitive relation in this file is derived the same way.
+// Propagate waits only across same-process calls, plus tasks the caller awaits.
+// Detached work retains its own dependency but does not block its starter. Traverse
+// backward from dependency holders, bounding results by functions × target modules
+// rather than full call-graph closure.
 reaches_sync_dep(f, m) :- sync_dep(f, m).
 
 reaches_sync_dep(f, m) :-
@@ -447,14 +372,11 @@ reaches_sync_dep(f, m) :-
 
 reaches_sync_dep(f, m) :- awaits_task(f, _, g), reaches_sync_dep(g, m).
 
-// ── Which request ──────────────────────────────────────────────────────
+// Request tags
 //
-// The same waits, with the request they make: the tag the message
-// carries (call_tag — the atom, or the first element of the tuple), or
-// "any" where it carries none the program can see. A chain through a
-// server follows the clause the request enters, so a request is what a
-// hop is made of; reaches_sync_request(f, m, _) holds exactly where
-// reaches_sync_dep(f, m) does.
+// Attach each wait's atom or tuple-head tag, using `any` when unknown. This supports
+// clause-specific call chains. `reaches_sync_request` covers the same dependencies as
+// `reaches_sync_dep`.
 
 // The tag of the sync call at `id`, "any" when its message has none.
 .decl sent_tag(id: symbol, func: symbol, tag: symbol)
@@ -462,11 +384,9 @@ reaches_sync_dep(f, m) :- awaits_task(f, _, g), reaches_sync_dep(g, m).
 sent_tag(id, f, tag) :- sync_call_site(id, f, _, _), call_tag(id, f, "call", tag).
 sent_tag(id, f, "any") :- sync_call_site(id, f, _, _), !call_tag(id, f, "call", _).
 
-// `func` itself waits on `mod` with a request tagged `tag`, at `site`
-// ("" when the wait has no site of func's: a literal target handed to a
-// wrapper). One clause per sync_dep clause that has a site;
-// resolved_calls.dl adds the self-directed one. A spelled target leaves
-// out the dynamic and via ones, as sync_dep's.
+// A direct wait with its request tag and site. Use an empty site for site-less wrapper
+// edges. Dynamic/via targets require resolution; resolved_calls.dl adds self-directed
+// cases.
 .decl sync_request_at(func: symbol, site: symbol, mod: symbol, tag: symbol)
 
 sync_request_at(f, id, m, tag) :-
@@ -476,9 +396,8 @@ sync_request_at(f, id, m, tag) :-
   !match("via:.*", m),
   sent_tag(id, f, tag).
 
-// A call the facts place with no site of f's own, and no wrapper call
-// that names its literal target, is f's with an empty site; one they
-// place is the clause above's.
+// Use an empty site when facts identify the call but no local instruction or
+// literal-target wrapper anchors it.
 sync_request_at(f, "", m, "any") :-
   sync_call(f, m),
   m != "dynamic",
@@ -493,9 +412,8 @@ sync_request_at(f, id, m, "any") :-
   m != ":dynamic",
   !match("via:.*", m).
 
-// A call points-to resolves: tagged as its site's message is, or "any"
-// (every clause) when the site is not one sync_call_site describes and
-// no tag of it is read.
+// A points-to-resolved call carries its message tag, or "any" when no sync_call_site
+// tag is available.
 sync_request_at(f, anchor, m, tag) :-
   process_call(f, anchor, site, "call", p),
   server_process(p, m),
@@ -518,12 +436,9 @@ sync_request_at(f, id, m, tag) :-
 cast_sent_tag(id, f, tag) :- async_cast_site(id, f, _), call_tag(id, f, "cast", tag).
 cast_sent_tag(id, f, "any") :- async_cast_site(id, f, _), !call_tag(id, f, "cast", _).
 
-// `func` itself casts to `mod`'s process with a message tagged `tag`, at
-// `site`: sync_request_at's twin, one clause per async_dep clause that
-// has a site ("" when the cast has no site of func's), each pairing a
-// cast's target with its own tag. A cast through mod's client API is the
-// API function's own. A spelled target leaves out the dynamic and via
-// ones, as async_dep's.
+// A cast's target and message tag at its own site. Use an empty site when func has no
+// corresponding instruction. Client-API casts belong to the API function; dynamic and
+// via-name targets need resolution.
 .decl async_request_at(func: symbol, site: symbol, mod: symbol, tag: symbol)
 
 async_request_at(f, id, m, tag) :-
@@ -533,9 +448,8 @@ async_request_at(f, id, m, tag) :-
   !match("via:.*", m),
   cast_sent_tag(id, f, tag).
 
-// A cast the facts place with no site of f's own (gen_event's notify),
-// and no wrapper call that names its literal target, is f's with an
-// empty site.
+// Use an empty site for casts with no local instruction or literal-target wrapper, such
+// as gen_event notifications.
 async_request_at(f, "", m, "any") :-
   async_cast(f, m),
   m != "dynamic",
@@ -568,8 +482,8 @@ async_request_at(f, id, m, tag) :-
   unresolved_target(t),
   call_tag(id, f, "cast", tag).
 
-// The requests a server's client API function makes: the tags it sends,
-// "any" for a call of its with none or when the call is a callee's.
+// Request tags sent by a server's client API. Use "any" when a call has no known tag or
+// occurs in a callee.
 .decl api_request_tag(func: symbol, tag: symbol)
 
 api_request_tag(g, tag) :- genserver_sync_api(g, _), call_tag(_, g, "call", tag).
@@ -597,8 +511,8 @@ sync_request_known(f, m, tag) :-
 
 sync_request_seen(f, m) :- sync_request_known(f, m, _).
 
-// Every sync_dep has a request: "any" for one no clause above names, so
-// a dependency this file learns to make later is never lost here.
+// Give every sync_dep a request classification. Unclassified dependencies default to
+// "any".
 .decl sync_request(func: symbol, mod: symbol, tag: symbol)
 
 sync_request(f, m, tag) :- sync_request_known(f, m, tag).
@@ -616,28 +530,17 @@ reaches_sync_request(f, m, tag) :-
 
 reaches_sync_request(f, m, tag) :- awaits_task(f, _, g), reaches_sync_request(g, m, tag).
 
-// ── Which request, per call site ──────────────────────────────────────
+// Clause-sensitive request sites
 //
-// site_request(f, site, m, tag): the call at `site` in `f` leads to a
-// wait on m's process with a request tagged `tag` ("" for a hop with no
-// call instruction of f's: a closure, a fun handed on, a literal target
-// given to a wrapper). Asked of the functions a consumer seeds
-// site_demand with, and of every callee they enter with a literal first
-// argument: `Router.route(:local, n)` enters only route/2's :local clause
-// (clause_call), so what the :remote clause waits on is not the caller's
-// wait — the guarded dispatcher a call graph by function merges into
-// one. A callee entered any other way is taken whole, as
-// reaches_sync_request takes it.
+// Seed `site_demand(f)` to obtain calls in f leading to tagged waits. Literal first
+// arguments restrict callees to matching or unrestricted clauses; other entries use
+// full function reach. Empty sites represent edges without a call instruction,
+// including some fun or wrapper-target edges.
 .decl site_demand(func: symbol)
 
-// Every call `f` makes to `g` passes the literal atom `value` first (one
-// row per atom when the calls differ): the call enters only g's clauses
-// for that atom and the clauses that take any value (clause_call says
-// which clause a site belongs to). An argument forwarded from f's own
-// parameters, a computed value or a tuple enters every clause. The one
-// test the clause-aware walks share: site_request below and
-// global_reach.dl's global_path. Not narrowed to a demand: a walk that
-// negates it cannot depend on the walk.
+// Every call from f to g passes a known literal atom first; emit each possible atom.
+// Forwarded, computed, or tuple arguments normally prevent narrowing. Shared by request
+// and global-lock walks. Compute independently of demand because those walks negate it.
 .decl literal_first(func: symbol, callee: symbol, value: symbol)
 
 literal_first(f, g, a) :-
@@ -646,15 +549,9 @@ literal_first(f, g, a) :-
   !call_arg(f, g, 0, "dynamic"),
   !call_arg_forward(f, g, 0, _).
 
-// f hands g its own first argument, from clauses that each took a
-// literal one: `handle_cast(:rebuild, s) -> handle_info(:rebuild, s)`
-// compiles to a call that forwards x0 unchanged, and the literal is the
-// tag of the clause the call sits in (clause_call). The value g gets has
-// that tag (an atom, or a tuple headed by it), so g's clauses for other
-// tags cannot take it — the same abstraction site_clause reads g's side
-// with. Every call of f to g must sit in such a clause, and forward
-// nothing else first: a call from a clause that takes any argument enters
-// every clause of g.
+// Also narrow when every f-to-g call forwards f's first argument from a clause with a
+// known tag. The tag may identify an atom or tuple head. Any unrestricted clause or
+// different forwarding source prevents narrowing.
 literal_first(f, g, a) :-
   call_arg_forward(f, g, 0, 0),
   !call_arg_forward_other(f, g),
@@ -690,8 +587,8 @@ literal_first(f, g, a) :-
 
 call_arg_forward_other(f, g) :- call_arg_forward(f, g, 0, k), k != 0.
 
-// A call of f to g that sits in no clause of f with a literal first
-// argument, or in one whose tag is not an atom's.
+// A call from f to g without a containing clause tagged by a literal atom first
+// argument.
 .decl forwards_untagged(func: symbol, callee: symbol)
 
 forwards_untagged(f, g) :-
@@ -743,14 +640,9 @@ site_request(f, id, m, tag) :-
   fm != m,
   api_request_tag(g, tag).
 
-// A closure or fun reference f hands to a call runs inside that call
-// (fun_handed): the edge into it has no call instruction of its own, and
-// the call it is handed to is its site. exq's Manager.Server waits on
-// its Stats server inside `Redis.rescue_timeout(fn -> ... end)`, brod's
-// group subscriber inside `lists:foreach(fun(T) -> ... end, Ts)`. An edge
-// with neither (a fun built into a term and called later) has no site.
-// Either is f's wait only while it stays on f's stack: not what a spawn,
-// task or agent runs (runs_elsewhere).
+// A passed closure or fun reference uses its receiving call as the site (`fun_handed`).
+// A stored fun with no receiving call has no site. Only same-process execution
+// contributes to f's wait.
 site_request(f, id, m, tag) :-
   site_demand(f),
   call_edge(f, g),
@@ -792,11 +684,8 @@ site_request(f, "", m, tag) :-
 site_clause(f, id, tag) :- site_request(f, id, _, _), clause_call(id, f, tag).
 site_clause(f, id, "any") :- site_request(f, id, _, _), !clause_call(id, f, _).
 
-// The one-way counterpart of reaches_sync_dep, over the same edges: a
-// cast is the casting process's, so the dependency is not propagated
-// over the edge into what a spawn, task or agent runs (runs_elsewhere) —
-// a cast a task init/1 starts makes is the task's, made whenever the
-// task gets to it, not while init/1 runs — nor over a side path.
+// Propagate async dependencies over the same process boundaries as sync dependencies,
+// excluding detached work and side APIs. A detached task's cast is its own, not init's.
 .decl reaches_async_dep(func: symbol, mod: symbol)
 
 reaches_async_dep(f, m) :- async_dep(f, m).
@@ -807,11 +696,8 @@ reaches_async_dep(f, m) :-
   !side_call(f, g),
   reaches_async_dep(g, m).
 
-// With the timeout the waiting call carries: -1 is :infinity, 0 unknown.
-// Through a client API function the timeout is the wrapper's, whose own
-// target is usually the pid it was handed ("dynamic" below); where
-// points-to resolves that pid, the process_call clause gives the same
-// call's timeout against the server it reaches.
+// Dependency timeout: -1 means infinity and 0 unknown. Preserve the waiting wrapper's
+// timeout and pair points-to targets with that same call site.
 .decl sync_dep_timeout(func: symbol, mod: symbol, timeout_ms: number)
 
 // A spelled target, as sync_dep's (a via or dynamic one names no module).
@@ -848,24 +734,20 @@ sync_dep_timeout(f, m, ms) :-
 
 reaches_sync_dep_timeout(f, m, ms) :- sync_dep_timeout(f, m, ms).
 
-// A wait is the waiting process's: a timeout reached only in what a
-// spawn, task or agent runs is not f's (runs_elsewhere), as in
-// reaches_sync_dep.
+// Attribute waits only to the executing process. Timeouts reached solely in detached
+// tasks, spawns or agents do not belong to f.
 reaches_sync_dep_timeout(f, m, ms) :-
   call_edge(f, g),
   !runs_elsewhere(f, g),
   !side_call(f, g),
   reaches_sync_dep_timeout(g, m, ms).
 
-// ── A process of one's own ─────────────────────────────────────────────
+// Private process dependencies
 //
-// `func` depends on `mod` only through processes it keeps for itself:
-// every call or cast of func's that process points-to follows to a
-// process of mod's goes to a private instance (private_process — a
-// `{:ok, conn} = Conn.start_link()` kept in the state), none to one a
-// supervisor starts or a name shares, and func names no process of mod
-// literally. The rules about siblings ask this: a supervisor restarting
-// its Conn child does not touch the Conn a sibling started for itself.
+// Every resolved call/cast to mod uses a private instance, none uses a supervised or
+// registered shared instance, and no literal target names mod. Sibling restart rules
+// exclude these dependencies because restarting a shared child does not replace the
+// caller's private process.
 .decl private_dep(func: symbol, mod: symbol)
 
 private_dep(f, m) :-
@@ -928,10 +810,8 @@ module_reaches(from_mod, to_mod, caller) :-
   reaches_module(caller, to_mod),
   from_mod != to_mod.
 
-// `func` reaches (through at least one call) a function of `mod` that
-// makes a sync call. A function whose call points-to resolves to another
-// module's server (calls_other_server) is a proxy, not a sync caller of
-// its own module.
+// A transitive call reaches mod's synchronous client API. Exclude proxies whose calls
+// resolve to another module's server (calls_other_server).
 .decl reaches_sync_caller_in(func: symbol, mod: symbol)
 
 reaches_sync_caller_in(f, m) :-
@@ -952,14 +832,10 @@ module_sync_dep(from_mod, to_mod, f) :-
   reaches_sync_dep(f, to_mod),
   from_mod != to_mod.
 
-// from_mod depends on to_mod's process — a sync or async dependency,
-// resolved or through the callee module's own unresolved client calls (a
-// facade like Oban.Notifier delegating by dynamic dispatch has no
-// resolved target, but the module as a whole manages process state).
-// `witness` is a function in from_mod the dependency flows through. What
-// coupling's restart_policy asks: a sibling that never comes back fails
-// every call, one made on each use too. What a restart loses is another
-// question (clientlib/restart_state.dl).
+// A module's sync or async process dependency, resolved or inferred from the target
+// module's unresolved client API. `witness` identifies the caller function. Used for
+// restart-policy coupling; stored relationships lost on restart are tracked separately
+// in restart_state.dl.
 .decl stateful_module_dep(from_mod: symbol, to_mod: symbol, witness: symbol)
 
 stateful_module_dep(from_mod, to_mod, f) :- module_sync_dep(from_mod, to_mod, f).

@@ -1,34 +1,10 @@
-// Check, then act: a read of shared state decides a write of the same
-// thing, and another process can write it between the two (Christakis
-// and Sagonas, PADL 2010). Three stores, one shape:
-//
-// - registry_race: a lookup of a process name decides a start,
-//   registration or unregistration of the name;
-// - ets_check_act: an ETS read decides or feeds a plain write of the
-//   same key on a public table;
-// - ets_missing_row: an ETS read decides a row is there and an act that
-//   raises without it follows, while another process can remove the row;
-// - mnesia_check_act: a dirty read decides or feeds a dirty write of
-//   the same record.
-//
-// And one that is not check-then-act but shares the stores: a value
-// published in one ETS table before the row another table keys by it
-// exists (ets_publish_order).
-//
-// Which table an ETS operation touches is clientlib/tables.dl's
-// ets_table, the one identity (EtsTable) every rule below compares.
-//
-// The check-then-act rules are CheckThenAct instances
-// (clientlib/check_then_act.dl), which says where a check's result meets
-// an act that depends on it, across functions. A pair is a race when a
-// rival can land on its row between the check and the act, and what the
-// two do to the row together is a harm no serial order leaves: a lost
-// update, a clobbered count, a stale fill, a delete of a row made again,
-// a claim, a take, a decision that does more (docs/design/races.md).
-// Which processes run a function — the pair's, a rival's — is one
-// RunsConcurrently instance for all of them, seeded with every meeting
-// and every write the rules ask about: what a function's callers are
-// does not depend on which store it touches.
+// Check-then-act races on process names, ETS rows, and Mnesia records, plus ETS
+// publication-order races. A finding requires a conflicting concurrent operation and a
+// harmful result that no serial ordering produces.
+// `CheckThenAct` follows dependent checks and acts across functions. `EtsTable`
+// provides shared table identity. One `RunsConcurrently` instance classifies the
+// processes running all candidate pairs and writes. See docs/design/races.md and
+// Christakis and Sagonas, PADL 2010.
 
 .include "../clientlib/imports.dl"
 .include "../clientlib/otp.dl"
@@ -50,35 +26,19 @@
 
 .init runs = RunsConcurrently
 
-// ── Lookup, then start ───────────────────────────────────────────
+// Lookup followed by a name claim or release
 //
-// `case whereis(name) do nil -> start(name)` asks whether a name is
-// taken and claims it when the answer is no, and nothing holds the name
-// between the two: a second caller that asks in the same window gets
-// the same answer, and one of the two starts loses. Christakis and
-// Sagonas found this shape on the process registry in 2010 and Dialyzer
-// reported it until OTP 25; the Elixir spellings are Registry.lookup
-// before start_child, and whereis before register or a named start.
-// Deciding on Process.registered/0 is the same race on every name at
-// once, and Dialyzer's second registry warning was the release: whereis,
-// then unregister, which raises when the process exited or another
-// caller unregistered first.
-//
-// The lookup and the act may sit in different functions and meet where
-// the lookup's result is born or returned to (clientlib/check_then_act.dl).
-// They name the same thing when they agree on registry, source and key; a
-// start_child hides its name in the child spec, so any lookup that is
-// tested against nil and decides it counts. The race is not a bug when
-// the loser's outcome is taken — {:error, {:already_started, pid}}
-// compared where the pair meets, where the act is, or in a caller; an
-// ArgumentError from register/2 or unregister/1 rescued — or when only
-// one process ever runs the function where they meet.
+// Two callers can both observe an unused name before either starts or registers it. An
+// unregister can also race with process exit or another unregister. Follow check/act
+// dependence across functions and match registry, source, and key. For start_child's
+// hidden name, accept a deciding nil check.
+// Suppress when the losing result or exception is handled, or when no competing process
+// can run the pair.
 
 .init names = CheckThenAct
 
-// A lookup finds a name free and decides a claim of it, another process
-// can claim the name in between, and nothing takes the loser's outcome.
-// `func` is where the lookup's answer meets the claim.
+// A lookup observes a free name and controls a claim, but another process can claim it
+// first. The losing outcome is unhandled. `func` is their meeting point.
 .decl lookup_then_claim_race(func: symbol, lookup: symbol, claim: symbol, name: ProcessName)
 
 lookup_then_claim_race(func, lookup, claim, name) :-
@@ -87,14 +47,12 @@ lookup_then_claim_race(func, lookup, claim, name) :-
   !loser_taken(func, claim),
   !loser_dropped(func, claim).
 
-// A name as the lookup and the claim agree on it: its key, and where the
-// key comes from (a literal, the caller's argument, ...).
+// A process name's key and source, such as a literal or caller parameter, shared by the
+// lookup and claim.
 .type ProcessName = [key_source: symbol, key: symbol]
 
-// In `func`, whether the lookup finds the name free decides the claim of
-// it (CheckThenAct's meets, followed across calls). A start_child hides
-// its name in the child spec, so for it only a lookup whose answer is
-// tested against nil counts.
+// The lookup's absence result controls the claim, possibly across helpers. For
+// start_child's hidden name, require an explicit nil check.
 .decl decides_claim(func: symbol, lookup: symbol, claim: symbol, name: ProcessName)
 
 decides_claim(f, c, a, [ks, k]) :-
@@ -131,10 +89,8 @@ names.act(a, f, "literal", "", ks, k) :- name_release(a, f, _, ks, k).
 name_act(a, f, api) :- creating_op(a, f, api, _, _, _).
 name_act(a, f, api) :- name_release(a, f, api, _, _).
 
-// A loser is handled where its start's error is compared, or its :badarg
-// rescued (rescues_argument_error, in exceptions.dl: `case catch
-// register(N, self()) of true -> ...; _ -> exit({already_started, ...})`
-// in inet_gethost_native), here or in a function its result returns to.
+// The losing start result is compared, or its badarg is caught, at the meeting function
+// or a caller receiving the result.
 .decl start_error_handled(func: symbol)
 
 start_error_handled(f) :- start_error_compared(f, _).
@@ -156,18 +112,10 @@ loser_taken(f, a) :-
   name_act(a, g, "unregister"),
   (rescues_argument_error(f) ; rescues_argument_error(g)).
 
-// The loser's answer is a value — the start's spec can fail:
-// {:error, {:already_started, pid}} — and nothing reads it on its way
-// back to where the lookup decided: the start's result is not used
-// where it is made, and every function that returns it on is one whose
-// result nothing in the program uses, the meeting function not among
-// them. Whichever start won, the name is registered, and what follows
-// goes by the name (ssh_dbg:switch/2 → start/1, which drops
-// start_server/0's gen_server:start). Only a named start: a start_child
-// hides its name in the child spec, and an unnamed child's "loser" is a
-// second process; a Registry.register loser is a process left
-// unregistered. A start that raises for the loser (register/2,
-// start_supervised!) is not this shape either.
+// A named start whose failure is a returned value may be safe when that result is
+// ignored all the way back to the check: either winner leaves the name registered.
+// Require unused results along every forwarding step. Exclude start_child,
+// Registry.register, and raising APIs, whose losing outcomes have different effects.
 .decl act_callee(act: symbol, callee: symbol)
 
 act_callee(a, cat(m, ":", n, "/", to_string(ar))) :-
@@ -211,16 +159,11 @@ returned_and_used(a) :- act_returned_by(a, g), result_used(g).
 
 runs.seed(f) :- names.meets(f, _, _, _, _, _, _).
 
-// ── Who else can claim the name ──
+// Competing name operations
 //
-// The race needs a second claimant in the window: the function where the
-// pair meets runs in more than one process, so two of its callers can
-// both see the name free; or it runs in one, and another process claims
-// the same name — two servers that each start the same cache on first
-// use, each with its own copy of the check. A claim of the same name is
-// a start, registration or unregistration naming it as a literal, in the
-// same registry, where it is made or where a caller hands a claiming
-// helper the literal.
+// A rival may be another execution of the pair or a separate process claiming the same
+// literal name in the same registry. Resolve names at the operation or at callers
+// passing literals into helpers.
 .decl claims_name(act: symbol, func: symbol, scope: symbol, key: symbol)
 
 claims_name(a, g, scope, k) :- creating_op(a, g, api, scope, "literal", k), api != "start_child".
@@ -250,10 +193,8 @@ other_claimant(f, a) :-
   a2 != a,
   runs.beside_single_process(f, g).
 
-// Another process can claim the name while `func` is between the lookup
-// and the claim: `func` runs in more than one process, so two of its
-// callers can both see the name free, or another process claims the
-// same literal name (other_claimant).
+// A rival can claim the name: another execution of this multi-process function, or a
+// separate process claiming the same literal name.
 .decl claimed_by_another_process(claim: symbol, func: symbol)
 
 claimed_by_another_process(a, f) :- names.meets(f, _, a, _, _, _, _), !runs.single_process(f).
@@ -268,26 +209,12 @@ registry_race(mod, func, lookup_api, create_api, key_source, key, lookup, claim)
   name_act(claim, _, create_api),
   function_def(func, mod, _, _, _).
 
-// ── Read, then write ─────────────────────────────────────────────
+// ETS read followed by a write
 //
-// `case :ets.lookup(t, k) do [] -> :ets.insert(t, {k, v})` decides on a
-// row that another process can write between the read and the write
-// (Christakis and Sagonas, 2010, on ETS). The pair touches one key of a
-// public table — a protected table has one writer — and is a race when a
-// rival write can land on that row between the two (below: the pair
-// itself in a second process, or another write in a process other than
-// the pair's) and the harm it leaves has a witness (below). A cache that
-// serializes its read-then-write in its own process is not raced by an
-// exported clear/0 no caller in the program calls, when the program
-// calls the cache's other functions. insert_new, update_counter and
-// select_replace are the atomic forms and the fix.
-//
-// The read and the write may sit in different functions
-// (clientlib/check_then_act.dl), and the table may arrive as a
-// parameter: by name, or as the reference :ets.new returned in some
-// caller — the paper's own example builds an unnamed public table and
-// hands it to a closure that spawned processes run — or from the
-// program's users, when no caller in view fills it.
+// Require one public-table key, a concurrent rival write, and a harm witness. Protected
+// tables have one writer. Follow checks, writes, and table parameters across functions,
+// including unnamed allocations and externally supplied tables. Atomic alternatives
+// include insert_new, update_counter, and select_replace.
 
 .init rows = CheckThenAct
 
@@ -297,9 +224,8 @@ deciding_read_op("lookup").
 deciding_read_op("lookup_element").
 deciding_read_op("member").
 
-// A match on the key decides as a lookup does. A select's match spec
-// nests its head in a list, and is left out: its key is not extracted,
-// as a dynamic key is not.
+// Key matches act as lookups. Exclude select match specifications and dynamic keys
+// because their keys are not extracted.
 deciding_read_op("match").
 deciding_read_op("match_object").
 
@@ -310,10 +236,8 @@ plain_write_op("delete").
 plain_write_op("delete_object").
 plain_write_op("update_element").
 
-// The table in the operation's own function's terms: the parameter it
-// is handed, which CheckThenAct renames at each call, so a helper called
-// with two tables pairs each call's own; or else the tables it may touch
-// (clientlib/tables.dl), each as its kind's source (table_source).
+// Represent the operation's table as its local parameter or possible EtsTable
+// identities. Translate parameters at each call to preserve caller-specific tables.
 .decl ets_table_ident(id: symbol, ts: symbol, t: symbol)
 
 ets_table_ident(id, "param", to_string(p)) :- ets_op(id, _, "dynamic", _, _), ets_op_param(id, p).
@@ -352,10 +276,8 @@ plain_write(w, f) :- ets_op(w, f, _, op, "write"), plain_write_op(op).
 local_table_and_key(op, ts, t, ks, k) :- ets_table_ident(op, ts, t), op_key(op, ks, k).
 table_and_key(op, tk, t, ks, k) :- ets_table(op, tk, t), op_key(op, ks, k).
 
-// An operation's key. The extractor takes an inserted object's key from
-// its first element (ets_key); on a table made with `keypos: N`, N > 1 —
-// an Erlang or Elixir record's, keyed past the record's tag — it is
-// element N - 1 (ets_value).
+// Use the inserted object's first element as key unless a known custom keypos selects
+// element N - 1, supplied by ets_value.
 .decl op_key(op: symbol, key_kind: symbol, key: symbol)
 
 op_key(op, ks, k) :- ets_key(op, ks, k), !keyed_past_zero(op, _).
@@ -375,23 +297,12 @@ keyed_past_zero(op, v) :-
   ets_option(n, "keypos", v),
   v != "1".
 
-// ── A pair through an accessor ──
+// ETS accessors
 //
-// A function whose body is one ETS operation on a named table, and no
-// other shared-state operation — mnesia_lib:set/2 is `?ets_insert(
-// mnesia_gvar, {Var, Val})`, read_counter/1 one lookup_element — is an
-// accessor: its operation is its callers', made at the call. A pair with
-// an accessor's operation is reported where the meeting function calls
-// the accessor; when it reaches the accessor only through other calls,
-// the pair stands all the same and is reported at the operation itself.
-// A key an accessor is handed is a key like any other: `put(:count,
-// get(:count) + 1)`, or the same through `count/0` and `set_count/1`
-// that name the row themselves, is the read-modify-write it would be
-// written inline, and is judged as one (below). What keeps mnesia_lib's
-// `val(mnesia_status)` in one helper and `set(mnesia_status, stopping)`
-// in another quiet is that the write stores a constant no racer read,
-// which no other writer of that row makes stale: the witnesses, not the
-// accessor.
+// A function containing one ETS operation on a named table and no other shared-state
+// operation acts as an accessor. Anchor at the meeting function's direct accessor call,
+// otherwise at the operation. Accessors retain normal key and harm checks; writing a
+// constant without a conflicting rival is not a race.
 .decl ets_accessor(func: symbol, op: symbol, key_kind: symbol)
 
 ets_accessor(g, w, "param") :- lone_ets_op(g, w), op_key(w, ks, _), ks != "literal", ks != "dynamic".
@@ -438,16 +349,9 @@ reported_at(f, op, c) :- accessor_call(f, op, c).
 reported_at(f, op, op) :- rows.meets(f, op, _, _, _, _, _), !accessor_call(f, op, _).
 reported_at(f, op, op) :- rows.meets(f, _, op, _, _, _, _), !accessor_call(f, op, _).
 
-// In `func`, the read's result decides whether the write runs, or feeds
-// what it stores, on one row (CheckThenAct's meets, followed across
-// calls). The row's table is the one identity (EtsTable,
-// clientlib/tables.dl) of what the pair meets on in func: a table named
-// the same in every function, or func's parameter, which holds what its
-// callers pass (param_table: a name, a reference made in a caller, or
-// the table the program's users hand in, below). A table either
-// operation names only as a dictionary key's default, where func has set
-// the key first, is not one it touches from func (skips_default,
-// clientlib/dictionary.dl).
+// The read controls or supplies the write on one row in `func`. Use shared `EtsTable`
+// identity or the table supplied through func's parameter. Exclude dictionary fallback
+// tables when func has already set the dictionary key (`skips_default`).
 .decl decides_write(func: symbol, read: symbol, write: symbol, row: EtsRow)
 
 decides_write(f, r, w, [table, ks, k]) :-
@@ -468,47 +372,22 @@ table_in(f, "param", p, [k, t]) :- rows.meets(f, _, _, "param", p, _, _), param_
 
 reads_then_writes(f, r, w, table, k) :- decides_write(f, r, w, [table, _, k]).
 
-// ── A table the program's users hand in ──
+// Externally supplied tables
 //
-// A parameter no caller in view fills — every call passes on a parameter
-// of its own, up to an exported function of a module the rest of the
-// program does not call into — holds whatever table the program's users
-// pass: Hammer's `hit(table, key, ...)`, which `use Hammer` calls with
-// the user's own table (clientlib/tables.dl's "handed_in" table, named
-// by that way in and its parameter). Where it was made, and with which
-// options, is out of view; what is in view is that the function writes
-// it from every caller's process, which a protected or private table
-// refuses in all but its owner's. A function more than one process runs
-// is reported on it as on a public table (ets_check_act); one process's
-// is not, since the only other writers of a table nothing names are the
-// functions its way in forwards it to.
+// A table parameter forwarded from an external library entry has unknown allocation
+// options. Treat it like a public table when multiple processes run the writer:
+// protected/private tables would reject non-owner writes. A single-process pair has no
+// assumed external rival; only visible forwarded uses can name this table.
 
 runs.seed(f) :- reads_then_writes(f, _, _, _, _).
 
-// ── What can land between the read and the write ───────────────────
+// Rival writes
 //
-// A pair is a race when a write can land on its row between the read and
-// the write — a rival — and what the rival and the pair's write do to
-// the row together cannot happen one after the other: a harm (the next
-// section). A rival is
-//
-// - the pair itself, run by a second process: the function where the
-//   pair meets runs in more than one process (RunsConcurrently); or
-// - another write of the table at a key that can be the pair's, in a
-//   function that runs, after its process has started, in a process
-//   other than the pair's (runs_beside_up): another entry's once it is
-//   up, a request's, a caller's outside the program, or any at all when
-//   the pair's own function runs in more than one.
-//
-// A write is seen where its key is named. A write whose key is its
-// function's parameter is its callers' write, at the key each passes:
-// `set(:count, n)` writes the `:count` row wherever it is called, and
-// mnesia_lib's set/2, called with a hundred keys, is a hundred writes,
-// each at its own row, each in the process of the function that names
-// it. Only a function callers outside the program call writes "whatever
-// key they pass". A write that mints its key where it makes the row
-// (a reference, a monitor, a unique integer or a random value) makes a
-// row no one could have read before: it is no rival of any pair.
+// A rival is another execution of the pair or a same-row write in a different running
+// process. Resolve parameter keys at callers; only external entries retain
+// arbitrary-key writes. Newly minted keys cannot collide with previously read rows and
+// are excluded. A rival alone is insufficient; the next section requires a harm
+// witness.
 .decl rival_table(table: EtsTable)
 
 rival_table(table) :- reads_then_writes(_, _, _, table, _).
@@ -523,8 +402,8 @@ ets_op_table(id, [k, t]) :- ets_table(id, k, t), ets_op(id, _, _, _, _).
 
 table_write(w, g, table) :- ets_op(w, g, _, _, "write"), ets_op_table(w, table), rival_table(table).
 
-// The key a write names, made in the write's own function. A key made
-// by a call that mints it is "minted": no other key equals it.
+// The write's locally constructed key. A "minted" key is freshly generated and cannot
+// equal another independently generated key.
 .decl write_key(write: symbol, key_kind: symbol, key: symbol)
 
 write_key(w, "minted", w) :- table_write(w, _, _), minted_key(w).
@@ -573,9 +452,8 @@ rival_write(w, h, table, "element", "") :-
   call_arg_element(h, g, n, _, _),
   q = to_string(n).
 
-// A function callers outside the program call writes whatever key they
-// pass; so does one whose parameter no call in view fills (a closure
-// handed to Enum.each, a function applied or taken as a fun).
+// External callers may supply any key. The same applies to parameters with no visible
+// caller, including passed closures and dynamically applied functions.
 rival_write(w, g, table, "param", q) :- param_write(w, g, table, q), outside_entry(g).
 rival_write(w, g, table, "param", q) :- param_write(w, g, table, q), !param_filled(g, q).
 
@@ -584,23 +462,15 @@ rival_write(w, g, table, "param", q) :- param_write(w, g, table, q), !param_fill
 param_filled(g, to_string(n)) :- param_write(_, g, _, _), call_arg(_, g, n, _).
 param_filled(g, to_string(n)) :- param_write(_, g, _, _), call_arg_forward(_, g, n, _).
 
-// A caller outside the program (RunsConcurrently's outside_caller,
-// clientlib/concurrency.dl): an exported function of a module no other
-// module of the program calls, that the runtime does not call in a
-// process of its own.
+// An externally callable library export, excluding runtime callbacks. See
+// outside_caller in concurrency.dl.
 .decl outside_entry(func: symbol)
 
 outside_entry(g) :- runs.outside_caller(g).
 
-// Two keys that can never name one row: two different literals; a
-// tuple and a literal that is no tuple; a process's own row (self())
-// and a literal, or another process's own row; a minted key and any
-// other. A literal row and a row keyed by what the program computes are
-// taken to be two rows, whichever side is the pair's: a `:__hits__`
-// counter or a seeded `{:schema_version, 1}` kept beside the rows callers
-// name, mnesia_lib's `mnesia_status` beside the `{Tab, where_to_write}`
-// keys its callers build (an assumption: a computed key that happens to
-// equal the literal is not seen).
+// Keys treated as disjoint: distinct literals, incompatible tuple shapes, process-owned
+// self() rows, and minted keys. Literal keys are also assumed distinct from computed
+// keys; collisions where computation reproduces a literal are a known blind spot.
 .decl keys_apart(ks: symbol, k: symbol, ks2: symbol, k2: symbol)
 
 keys_apart(ks, k, "literal", k2) :- pair_key(_, _, ks, k), ks = "literal", rival_write(_, _, _, "literal", k2), k != k2.
@@ -631,10 +501,8 @@ keys_apart("literal", k, ks2, k2) :-
   rival_write(_, _, _, ks2, k2),
   computed_in_view(ks2).
 
-// A key the program computes where it calls the write: a value made in
-// the function (`dynamic`, `local`), read from a map field, or an element
-// of a parameter. What a caller outside the program passes, or a
-// parameter no call in view fills, is any key.
+// Computed keys include local/dynamic values, map fields, and parameter elements.
+// External or unfilled parameters may name any key.
 .decl computed_in_view(key_kind: symbol)
 
 computed_in_view("dynamic").
@@ -655,13 +523,10 @@ pair_key_of(f, r, w, ks, k) :- reads_then_writes(f, r, w, _, _), rows.meets(f, r
 
 runs.seed(h) :- rival_write(_, h, _, _, _).
 
-// A function that runs once its process is up: reached from a root that
-// is no start callback — another callback, a spawned process's body, a
-// request, a caller outside the program. A write only an init/1 or an
-// Application's start/2 makes runs while its own process starts, which
-// an ordered supervisor start runs before it starts the pair's process
-// (an assumption: a later sibling's init/1, or a restart of the writer
-// alone, re-runs it while the pair runs, and is not seen).
+// A function reached after process startup from callbacks, spawned bodies, requests, or
+// external callers. Init-only writes are assumed ordered before the pair's process
+// starts. Known limit: later-sibling initialization and isolated restarts can overlap
+// the pair but are not modeled here.
 .init writer_walk = SameProcessReach
 
 writer_walk.seed(h, h) :- rival_write(_, h, _, _, _).
@@ -673,11 +538,9 @@ writes_after_start(g) :- outside_entry(c), writer_walk.reaches(c, g).
 writes_after_start(g) :- request_entry(e, _), writer_walk.reaches(e, g).
 writes_after_start(g) :- runs.spawned(_, _, r), writer_walk.reaches(r, g).
 
-// The write w2, made by calling `h`, can land while the pair in `f` is
-// between its read and its write: in any process when f runs in more
-// than one, else in a process other than the one f runs in, once it is
-// up (runs_beside_up, clientlib/concurrency.dl) and not handed off: the
-// write is made in its own function, wherever its key is named.
+// A rival write can overlap the pair when its function runs concurrently after startup
+// and no handoff orders it. Attribute execution to the writing function, even when the
+// key is named by a caller.
 .decl concurrent(func: symbol, rival_func: symbol, rival_write: symbol)
 
 concurrent(f, h, w2) :-
@@ -696,12 +559,9 @@ concurrent(f, h, w2) :-
 
 runs.seed(g) :- table_write(_, g, _).
 
-// rival(f, r, w, w2, h): the write w2, made by calling h, can land on
-// the row of the pair (r, w) meeting in f, between the read and the
-// write. The pair's own write is its rival when f runs in more than one
-// process and two of them can be at one row: not a row keyed by the
-// process's own pid (each is at its own), nor one only its holder writes
-// (below).
+// A write `w2` through `h` may occur between pair `(r, w)` in `f` on the same row. The
+// pair can rival itself when multiple processes run it, except for self()-keyed or
+// exclusively held rows.
 .decl rival(func: symbol, read: symbol, write: symbol, rival_write: symbol, rival_func: symbol)
 
 rival(f, r, w, w, f) :-
@@ -719,14 +579,10 @@ rival(f, r, w, w2, h) :-
   !keys_apart(ks, k, ks2, k2),
   concurrent(f, h, w2).
 
-// The pair's own write, made at another call: an accessor's insert
-// another function hands a key of its own. A function that runs the
-// pair's function makes the pair's write as the pair, and so does one
-// the pair's function runs when the pair itself runs in more than one
-// process: that second process is the rule above. One the pair's
-// function runs, in a pair of one process, is a rival where another
-// process runs it too (concurrent): set_count/1, called by the owner's
-// increment and by a resetter's timer.
+// The pair's write may also be called independently, such as an accessor used by both
+// an incrementer and a resetter. Calls merely executing the pair are not separate
+// rivals. A helper used by a single-process pair counts if another process also runs
+// it.
 rival(f, r, w, w, h) :-
   reads_then_writes(f, r, w, table, _),
   runs.single_process(f),
@@ -748,58 +604,22 @@ rival(f, r, w, w, h) :-
 
 writer_walk.seed(f, f) :- reads_then_writes(f, _, _, _, _).
 
-// ── Harm ─────────────────────────────────────────────────────────────
-//
-// What a rival and the pair's write do to the row together, when the
-// rival lands between the pair's read and its write. It is a harm when
-// no order of the two, one after the other, ends the same way:
-//
-// - lost_update: the write stores what the read returned, or a value
-//   made of it (PairCarries, this pair's read on this pair's path), and a
-//   rival changes the row: the write puts back the value it read plus its
-//   own change, and the rival's is lost (two callers each add one to the
-//   count they read). A rival that removes the row loses to a write that
-//   makes it again, but not to an update_element, which finds no row. A
-//   delete stores nothing: a key it takes from the row it found (a pinned
-//   match's element) is the row's, not a value made of it;
-// - clobber: a write of a value of its own lands on a row a rival counts
-//   in (update_counter, a write-back, an `:atomics` array the row holds):
-//   Hammer's first insert over the bucket another hit already counted;
-// - stale_fill: the write stores a value a call or another store made
-//   (a refill, cache-aside) and a rival removes the row or writes it with
-//   a value of its own in between: the fill computed before the rival
-//   lands after it, and the stale value stays (a cache refilled after
-//   its invalidation);
-// - state_delete: the write deletes the row on what the row holds (its
-//   owner, its expiry), and a rival makes the row again with a value of
-//   its own, or counts in it, in between: the delete takes the row the
-//   rival just made (a lock's next owner, a fresh ban count), which the
-//   decision, made on the old row, would not have taken. A delete made on
-//   the row's presence alone ends as the rival's write then the delete
-//   would; a row a refill makes is a cached copy, and losing it is a miss;
-// - claim: a write that makes the row on a read that found none, whose
-//   decision leaves the function as a verdict, not as the row (what the
-//   function returns depends on the read by control alone): both racers
-//   are told they won;
-// - take: a delete whose decision leaves the function, and the function
-//   hands out what the row held: both racers take the one row (a
-//   callback run twice);
-// - decides_more: the decision also sends, calls a peer, makes an
-//   outside effect or another shared write, here or one call down: both
-//   racers do it;
-// - guarded: the decision compares a field of the row with the value the
-//   write stores (`[{^k, cur}] when cur < new`): both pass, and the older
-//   can land last;
-// - minted: the write stores a value minted per call (a random token, a
-//   unique integer, a ref) that the function hands out: each racer hands
-//   out its own, and only one is stored.
-//
-// The first four need a rival that changes the row; the last five need a
-// rival that makes the same decision: the pair itself in a second
-// process, or another pair's write (guarded: any rival). No witness, no
-// race: two racers that write the same default, a refill every racer
-// computes alike with nothing to make it stale, a delete that deletes
-// twice, a marker set twice.
+// Harm witnesses
+// - lost_update: writing back read-derived data overwrites a rival's change. A deletion
+// conflicts only if the act can recreate the row.
+// - clobber: an independent value overwrites a row a rival has counted in.
+// - stale_fill: a computed refill lands after a rival invalidates or replaces its
+// source value.
+// - state_delete: a decision based on row contents deletes a rival's replacement.
+// Presence-only deletes and discarded cache copies do not qualify.
+// - claim: both callers receive a successful claim verdict.
+// - take: both callers receive the removed row's value.
+// - decides_more: the check also triggers another shared write or external effect.
+// - guarded: a row-value comparison permits writes that can land in the wrong order.
+// - minted: callers receive distinct new values but only one remains stored.
+// The first four require a row-changing rival. The remaining cases require a rival
+// making the same decision, except `guarded`, which accepts any rival. Without a harm
+// witness, duplicate default writes, refills, deletes, and markers are not reported.
 .init ets_carried = PairCarries
 
 ets_carried.pair(f, r, w) :- reads_then_writes(f, r, w, _, _).
@@ -830,10 +650,8 @@ removal(w) :- ets_op(w, _, _, op, "write"), ets_removal_op(op).
 
 changes_row(w) :- ets_op(w, _, _, op, "write"), op != "insert_new".
 
-// A write that counts in the row, as `func` makes it: update_counter; a
-// write of a value made of a read (MadeOfRead: any read, by any caller's
-// path); a row that holds an :atomics or :counters array, which each
-// racer makes of its own and the other's counts into are lost with it.
+// Counting writes include update_counter, read-derived write-backs, and replacement of
+// rows holding atomics/counters arrays whose accumulated counts would be lost.
 .init ets_made = MadeOfRead
 
 ets_made.read(r) :- ets_op(r, _, _, _, "read").
@@ -845,10 +663,8 @@ counts_in(w, h) :- rival_write(w, h, _, _, _), ets_op(w, _, _, "update_counter",
 counts_in(w, h) :- rival_write(w, h, _, _, _), stores_counters(w).
 counts_in(w, h) :- rival_write(w, h, _, _, _), rival_value(w, h, k, s), rival_made.made(h, k, s).
 
-// The value a rival write stores, in the terms of the function that
-// names its key: its own function's, or, carried up the calls its key is
-// lifted through, each caller's (`set_count(v)` hands put/2 its own
-// parameter; incr/0 hands set_count/1 `count() + 1`).
+// Translate a rival's stored value into the function naming its key, through the same
+// lifted caller chain used for the key.
 .decl rival_value(write: symbol, func: symbol, kind: symbol, src: symbol)
 
 rival_value(w, g, k, s) :- table_write(w, g, _), value_write(w), site_reads(w, g, k, s).
@@ -876,8 +692,8 @@ stores_counters(w) :-
   remote_call(made, _, m, "new", 2),
   (m = ":atomics" ; m = ":counters").
 
-// A write made by a call, or by a read of some other store (Mnesia, the
-// registry): a refill. Any other value is the writer's own.
+// A refill obtains its value from a call or another store, such as Mnesia or a
+// registry. Other values are local to the writer.
 .decl fill_source(kind: symbol, src: symbol)
 
 fill_source("call", g) :- site_reads(_, _, "call", g).
@@ -885,10 +701,8 @@ fill_source("call", g) :- call_arg_reads(_, _, _, "call", g).
 fill_source("site", r) :- site_reads(_, _, "site", r), !ets_op(r, _, _, _, _).
 fill_source("site", r) :- call_arg_reads(_, _, _, "site", r), !ets_op(r, _, _, _, _).
 
-// A cached copy: a write that is some pair's fill, a value a call or
-// another store made, written on a read that found the row missing or
-// stale (PairCarries' fills). A row any other write makes is state of its
-// own — a start's pid, a caller's value, a count — whose loss is a loss.
+// A refill row is a cached value computed on a miss or stale read. Other writes
+// establish independent state, such as a pid, caller value, or count.
 .decl refill_row(write: symbol)
 
 refill_row(w) :- ets_carried.fills(_, _, w).
@@ -913,8 +727,8 @@ invalidates(w, h) :- counts_in(w, h).
 decides_too(f, r, w, w, f) :- rival(f, r, w, w, f).
 decides_too(f, r, w, w2, h) :- rival(f, r, w, w2, h), rows.meets(_, _, w2, _, _, _, _).
 
-// A call that mints its value: a random API, a unique integer or a ref,
-// or a project function that makes one or returns what one made.
+// Fresh values come from random APIs, unique integers, references, or project wrappers
+// returning them.
 .decl unique_api(api: symbol)
 
 unique_api("System.unique_integer/0").
@@ -954,12 +768,8 @@ result_leaves(h) :- rows.act(_, h, _, _, _, _), call_decided(_, _, "call", h).
 result_leaves(h) :- rows.act(_, h, _, _, _, _), call_arg_depends(_, _, _, "call", h).
 result_leaves(h) :- rows.act(_, h, _, _, _, _), returns_depends(_, "call", h).
 
-// The decision a pair makes leaves the function: returned — by the
-// function the pair meets in, or by a caller that returns that result on
-// — to a caller that branches on it, or to callers the program does not
-// show (an exported function). A spec that says the function returns a
-// single value (`@spec record_failure(term, atom) :: :ok`) says the
-// result carries no decision.
+// The pair's decision escapes through a returned result to a branching caller or an
+// external export. A constant-return spec rules out a returned decision.
 .decl decision_returned(meet: symbol, func: symbol, check: symbol)
 
 decision_returned(f, f, c) :-
@@ -983,32 +793,25 @@ decision_escapes(f, c) :-
   api_export(g),
   !callee_returns(g, "constant").
 
-// A verdict: the decision escapes, and where the pair meets the function
-// answers with no value made of the read — `[] -> insert(k, :taken);
-// :ok; _ -> {:error, :taken}` — rather than with the row (a get-or-
-// create, a cache-aside's value).
+// A verdict escapes when the function returns a control-selected result without
+// read-derived data. Returning a row or cached value alone is not a claim.
 .decl verdict_escapes(func: symbol, check: symbol)
 
 verdict_escapes(f, c) :-
   decision_escapes(f, c),
   !ets_carried.answers(f, c).
 
-// The functions on a pair's own path from its read up to where it meets:
-// the meeting function, and the helpers below it that return the read's
-// value up to it (CheckThenAct's carried_through). What the decision
-// looks at, compares, sends or writes besides is asked of these alone:
-// an accessor's lookup that ten functions share is ten pairs, each with
-// a decision of its own.
+// Inspect additional decisions and effects only along this pair's returned-read path to
+// its meeting function. Shared accessors can belong to separate pairs with different
+// decisions.
 .decl pair_path(meet: symbol, check: symbol, func: symbol)
 
 pair_path(f, c, f) :- reads_then_writes(f, c, _, _, _).
 pair_path(f, c, g) :- reads_then_writes(f, c, _, _, _), rows.carried_through(f, c, g).
 
-// The read's decision looks at what the row holds, past its key: a test
-// of element 1 on, where the read's value is carried on the pair's path,
-// or in a helper it is handed to (field_decides). Whether a row is
-// there, and whether its key is the one asked for, say nothing of what
-// it holds.
+// The decision tests row contents beyond the key, directly or through a helper.
+// Presence checks and key comparisons alone do not establish a content-dependent
+// decision.
 .decl tests_row_fields(meet: symbol, read: symbol)
 
 tests_row_fields(f, r) :-
@@ -1025,10 +828,8 @@ tests_row_fields(f, r) :-
   q = to_string(n),
   pos >= 1.
 
-// A guard on what the row holds: the decision compares a field past the
-// key with a value the write then stores (field_compared), where the
-// read's value is carried on the pair's path or in a helper it is handed
-// to.
+// A guard compares a non-key row field with the value later stored, along this pair's
+// data path or in a receiving helper.
 .decl guards_row(meet: symbol, read: symbol, write: symbol)
 
 guards_row(f, r, w) :-
@@ -1062,9 +863,8 @@ guards_row(f, r, w) :-
   rows.act(w, h, _, _, _, _),
   site_reads(w, h, ok, os).
 
-// The read's decision runs more than the write, on the pair's path: a
-// send or an outside effect (effect_decided), or a write of some other
-// shared state; or it hands a message on one call down (DecisionSends).
+// The read controls additional effects beyond the paired write: sends, external
+// effects, other shared-state writes, or messages passed through one helper.
 .decl decides_more(meet: symbol, read: symbol, write: symbol)
 
 decides_more(f, r, w) :-
@@ -1083,15 +883,9 @@ decides_more(f, r, w) :-
 
 decides_more(f, r, w) :- reads_then_writes(f, r, w, _, _), row_sends.sends(f, r).
 
-// Or it hands a value the read decides or is made into to a helper that
-// changes other state on its own stack, however far down: ejabberd's
-// stop_module_keep_config/2 hands the registrations its lookup found to
-// del_registrations/3, whose closure removes each hook from the hooks'
-// tables, and both racers remove them; blockster's weekly movers, found
-// not yet written today, hand the article's parameters to the generator,
-// and both racers generate it. A helper the decision only calls, handing
-// it nothing of the read, is not asked: a refill's fetch runs because of
-// the miss, and is how the copy is made, not more.
+// Also count a helper receiving read-derived or read-controlled data and changing other
+// state on its same-process stack. A helper merely called after a miss, without
+// receiving that data, may only compute the refill and does not qualify.
 decides_more(f, r, w) :-
   decision_hands(f, r, w, h),
   reads_then_writes(f, r, w, table, _),
@@ -1125,11 +919,8 @@ decision_reach.cut(f, g) :- side_call(f, g).
 
 changes_table(k, table) :- ets_op(s, k, _, _, "write"), ets_op_table(s, table).
 
-// changes_other_state(func): func changes something else a process or
-// the outside world acts on: another store, a registration, a message, a
-// call or cast to a peer, a runtime write of a process, a port, a file,
-// the network or a node (Argus.Extractors.Dependence's effect_decided,
-// whatever decides it).
+// Other state changes include shared stores, registration, sends, peer calls/casts, and
+// external runtime writes to processes, ports, files, networks, or nodes.
 .decl changes_other_state(func: symbol)
 
 changes_other_state(k) :- shared_write(s), !ets_op(s, _, _, _, _), (mnesia_op(s, k, _, _, _, _, _, _) ; creating_op(s, k, _, _, _, _) ; name_release(s, k, _, _, _)).
@@ -1139,9 +930,8 @@ changes_other_state(k) :-
   impure_call(_, k, _, category, "write"),
   (category = "io" ; category = "process" ; category = "port" ; category = "node" ; category = "network" ; category = "code_loading").
 
-// A write of shared state other than the pair's table: the same table's
-// other writes under the decision are the race's own (its other branch,
-// or a later write of it), not more.
+// A decision-controlled write to another shared store. Further writes to the pair's own
+// table belong to the same race.
 .decl other_state_write(site: symbol, table: EtsTable)
 
 other_state_write(s, table) :- rival_table(table), ets_op(s, _, _, _, "write"), ets_op_table(s, table2), table2 != table.
@@ -1160,21 +950,16 @@ shared_write(s) :- name_release(s, _, _, _, _).
 
 row_sends.carried(f, g, kind, src, r) :- pair_path(f, r, g), rows.carries(g, kind, src, r, _, _, _, _).
 
-// A rival other than the pair's own write in the pair's own function:
-// another write, or the pair's write made at another call (an accessor's
-// insert another function hands a key of its own).
+// A rival is a different write or a separate invocation of the paired write, possibly
+// with a caller-supplied key.
 .decl other_site(func: symbol, write: symbol, rival_write: symbol, rival_func: symbol)
 
 other_site(f, w, w2, h) :- rival(f, _, w, w2, h), w2 != w.
 other_site(f, w, w, h) :- rival(f, _, w, w, h), h != f.
 
-// A refill whose source can change between the read of it and the write
-// of the copy: a read of another store, or a call whose answer is not
-// known to be a function of its arguments (it reads a process, a table,
-// the process dictionary, a file or the node, or calls code the effect
-// model has no word for — an Ecto query). A refill that is a pure
-// function of the key (`load(k) = {:loaded, k}`) writes the same copy
-// whenever it runs, and cannot be stale.
+// A refill from a mutable store or a call not known to depend only on its arguments.
+// Pure key-derived values cannot become stale between computation and insertion;
+// unknown effects remain potentially changing sources.
 .decl fills_from_source(func: symbol, read: symbol, write: symbol)
 
 fills_from_source(f, r, w) :- ets_carried.fresh_used(f, r, w, kind, src), changing_source(kind, src).
@@ -1212,8 +997,8 @@ state_reader(g) :- mnesia_op(_, g, _, "read", _, _, _, _).
 state_reader(g) :- local_call(_, g, h, _), state_reader(h).
 state_reader(g) :- remote_call(_, g, m, n, a), h = cat(m, ":", n, "/", to_string(a)), function_def(h, _, _, _, _), state_reader(h).
 
-// ets_harm_by(f, r, w, kind, w2, h): the rival w2, made by calling h,
-// witnesses the harm `kind` of the pair (r, w) meeting in f.
+// ets_harm_by(f, r, w, kind, w2, h): rival write w2 through h witnesses harm kind for
+// read/write pair (r, w), meeting in f.
 .decl ets_harm_by(func: symbol, read: symbol, write: symbol, kind: symbol, rival_write: symbol, rival_func: symbol)
 
 ets_harm_by(f, r, w, "lost_update", w2, h) :-
@@ -1235,9 +1020,8 @@ ets_harm_by(f, r, w, "clobber", w2, h) :-
   other_site(f, w, w2, h),
   counts_in(w2, h).
 
-// A row that holds a counter array is counted in through the array, and
-// each racer inserts an array of its own: the other racer's counts go
-// with the array its insert replaced (Hammer's atomic buckets).
+// Competing inserts create separate counter arrays. Replacing one array with another
+// loses counts accumulated in the replaced array.
 ets_harm_by(f, r, w, "clobber", w, f) :- stores_counters(w), rival(f, r, w, w, f).
 
 ets_harm_by(f, r, w, "stale_fill", w2, h) :-
@@ -1284,9 +1068,8 @@ ets_harm_by(f, r, w, "decides_more", w2, h) :-
   decides_more(f, r, w),
   decides_too(f, r, w, w2, h).
 
-// A guard over a refilled row orders copies of one source: which copy
-// lands last matters only when the source changed, the stale fill's
-// witness.
+// Competing refills copy the same source. Their order matters only when that source
+// changes, providing evidence of a stale fill.
 ets_harm_by(f, r, w, "guarded", w2, h) :-
   guards_row(f, r, w),
   !ets_carried.fills(f, r, w),
@@ -1294,21 +1077,12 @@ ets_harm_by(f, r, w, "guarded", w2, h) :-
 
 ets_harm_by(f, r, w, "minted", w, f) :- mint_handed_out(w), rival(f, r, w, w, f).
 
-// ── Rows only their holder writes ────────────────────────────────
+// Rows addressed by minted keys
 //
-// A row whose key is minted where the row is made — a reference
-// (make_ref, a monitor) or a unique integer — can be found only by whoever
-// the key is handed to. When every write that can make a row of the
-// table mints its key so, and the pair's act makes no row (an
-// update_element, a delete), the row the pair reads was made for a holder
-// of its key, and the pair running in many processes is many holders at
-// their own rows: it is not its own rival. Postgrex.Parameters is the
-// shape: the owner inserts `{Process.monitor(pid), params}` with
-// insert_new and replies the reference to the connection that asked, the
-// connection updates its row with update_element, and the owner deletes
-// the row when the connection goes down. Where a key goes once it is
-// minted the facts do not say, so a program that hands one minted key to
-// several processes is not seen.
+// If every row-creating write mints a reference or unique integer key, and the pair
+// only updates or deletes existing rows, assume each holder operates on its own row.
+// The pair is then not its own rival. Known limit: facts do not track sharing one
+// minted key among several processes.
 .decl minting_call(mod: symbol, func: symbol, arity: number)
 
 minting_call(":erlang", "make_ref", 0).
@@ -1327,24 +1101,22 @@ minted_key(w) :-
   remote_call(made, _, m, n, a),
   minting_call(m, n, a).
 
-// A table whose rows are made at minted keys and at no other: some write
-// mints, and none that makes a row keys it by what it is given or
-// computes.
+// The table's row-creating writes all use freshly minted keys. Require at least one
+// such write and no other key source.
 .decl mints_rows(kind: symbol, table: symbol)
 .decl names_rows(kind: symbol, table: symbol)
 
 mints_rows(k, t) :- ets_table(w, k, t), minted_key(w).
 names_rows(k, t) :- ets_table(w, k, t), makes_row(w), !minted_key(w).
 
-// Every row the table gets is made at a minted key: rows only their
-// minter can name, not a process that holds the table (ets.dl's
-// may_hold_table, failure.dl's always_holds_table).
+// Every row uses a minted key, so only its creator can name it. Holding the table alone
+// does not establish access to a specific row.
 .decl mints_every_row(kind: symbol, table: symbol)
 
 mints_every_row(k, t) :- mints_rows(k, t), !names_rows(k, t).
 
-// The pair's write may touch a table some row of which is made at a key
-// it is given or computes (held_row asks the opposite).
+// The table may contain rows keyed by supplied or computed values. held_row tests the
+// opposite case.
 .decl on_table_not_all_minted(write: symbol)
 
 on_table_not_all_minted(w) :- reads_then_writes(_, _, w, _, _), ets_table(w, k, t), !mints_every_row(k, t).
@@ -1361,31 +1133,27 @@ held_row(w) :-
 // function that names its key (rival, above).
 .type RivalWrite = [write: symbol, func: symbol]
 
-// The row's table is one any process can write: created :public
-// (table_public, clientlib/tables.dl), or handed in by the program's
-// users, which the function writes from every caller's process (above).
+// The table is public or supplied by external callers, allowing writes from multiple
+// caller processes.
 .decl on_public_table(row: EtsRow)
 
 on_public_table([[tk, t], ks, k]) :- decides_write(_, _, _, [[tk, t], ks, k]), table_public(tk, t).
 on_public_table([["handed_in", t], ks, k]) :- decides_write(_, _, _, [["handed_in", t], ks, k]).
 
-// Another process's write can land on the pair's row between the read
-// and the write (rival, above: the pair itself in a second process, or
-// another write at a key that can be the pair's).
+// A competing process can write the same row between the paired read and write, either
+// by running the pair again or executing another write.
 .decl lands_between(rival: RivalWrite, read: symbol, write: symbol, func: symbol) inline
 
 lands_between([w2, h], r, w, f) :- rival(f, r, w, w2, h).
 
-// What the rival and the pair's write do to the row together is a harm
-// no order of the two, one after the other, leaves (ets_harm_by, above):
-// every harm is witnessed by a rival that lands between.
+// The rival's interleaving causes harm that neither serial ordering produces.
+// ets_harm_by supplies the witness.
 .decl harms(rival: RivalWrite, read: symbol, write: symbol, func: symbol, harm: symbol) inline
 
 harms([w2, h], r, w, f, k) :- ets_harm_by(f, r, w, k, w2, h).
 
-// A read decides or feeds a write of the same row, on a table any
-// process can write, and another process's write that lands between the
-// two leaves a harm. `func` is where the read's result reaches the write.
+// A read controls or feeds a same-row write on shared writable storage, and an
+// intervening rival causes harm. `func` is where read and write meet.
 .decl read_then_write_race(func: symbol, read: symbol, write: symbol, row: EtsRow, harm: symbol)
 
 read_then_write_race(func, read, write, row, harm) :-
@@ -1405,11 +1173,8 @@ ets_race(mod, func, name, key, read_at, write_at, harm) :-
   reported_at(func, write, write_at),
   in_module(func, mod).
 
-// How a finding spells its table: a named table by its name, an unnamed
-// one by the name its :ets.new/2 gave it, a field table by the names its
-// sites gave it, and a table the program's users hand in by the
-// parameter of `func` it arrives in, counted from 0 as a key's is
-// ("param 0"): nothing names it.
+// Display tables by registered name, allocation name, field-site names, or the
+// receiving zero-based parameter for externally supplied tables.
 .decl table_shown_as(func: symbol, table: EtsTable, name: symbol)
 
 table_shown_as(f, ["named", t], t) :- decides_write(f, _, _, [["named", t], _, _]).
@@ -1439,15 +1204,9 @@ ets_harm_rank("minted", 6).
 ets_harm_rank("decides_more", 7).
 ets_harm_rank("stale_fill", 8).
 
-// One finding per write (OnePerWrite, clientlib/check_then_act.dl), at
-// the sites it is reported at: of the pairs a write is in, the strongest
-// harm, then the least read, then the least function where they meet;
-// the others are frames. A write the same read decides in the same
-// function, later than another, is the same race's other branch
-// (add_lsort/2's three set/2 calls): a frame of the first.
-// The race's writes are grouped by the read and the function alone: a
-// read whose decision makes two writes in one function is one race,
-// whatever each write alone would cost, reported at its strongest.
+// Report one finding per write, choosing strongest harm, then least read and meeting
+// function (`OnePerWrite`). Group writes decided by the same read in one function as
+// branches of one race; keep the strongest finding and attach other sites as evidence.
 .decl ets_best_rank(func: symbol, read: symbol, write: symbol, rank: number)
 
 ets_best_rank(f, r, w, n) :-
@@ -1470,9 +1229,8 @@ ets_check_act(mod, f, t, key, r, w, k) :-
   ets_race(mod, f, t, key, r, w2, k),
   same_race(f, w, w2).
 
-// A reported write and the same race's later writes (its also_writes
-// frames): the finding carries the strongest harm among them, where it is
-// anchored at the first.
+// Group later writes with the reported write. Anchor at the first write and report the
+// strongest harm across the group.
 .decl same_race(func: symbol, write: symbol, other: symbol)
 
 same_race(f, w, w) :- ets_writes.reported(f, _, w, _).
@@ -1484,10 +1242,8 @@ race_rank(f, r, w, n) :-
   ets_writes.reported(f, r, w, _),
   n = min m : { same_race(f, w, w2), ets_best_rank(f, r, w2, m) }.
 
-// The same race's later writes ("also_writes"), the other reads that
-// decide or feed the write ("read"), and the rival writes that witness
-// its harm ("rival": another process's write the pair's write undoes,
-// or that undoes it), each with the function it is reported from.
+// Related race sites: additional writes, other deciding/feeding reads, and conflicting
+// rival writes, each with its reporting function.
 .decl ets_race_frame(write: symbol, role: symbol, site: symbol, func: symbol)
 .output ets_race_frame
 
@@ -1505,33 +1261,17 @@ ets_race_frame(w_at, "rival", w2, h) :-
   ets_harm_by(f, r, w, k, w2, h),
   other_site(f, w, w2, h).
 
-// ── Published before it is complete ──────────────────────────────
+// Premature publication
 //
-// Two tables that map each way — names to ids, ids back to names — and a
-// function that writes both: first a row of A holding a value V
-// (`{name, id}`), then B's row keyed by V (`{id, name}`). Once the first
-// write lands, V can be found: another process that takes V out of A and
-// reads B at it before the second write lands finds no row. That is a
-// lost update in no sense — both writes happen — but the reader that
-// raises on a missing row (lookup_element/3, update_counter/3) crashes
-// with badarg in the window. The fix is the order: write B first, then
-// publish V in A, and when publishing can lose (insert_new), delete the B
-// row it wrote.
-//
-// The two writes may be the function's own or its callees': a function
-// runs an insert where it makes it or at the call whose callee, on the
-// same stack, makes it (insert_at), and each is read in the function's
-// terms — a callee's key in its parameter is the argument the call
-// passes (ets_call_arg). They are in order when the second is reached
-// from the first within one trip through the function (ets_effect_order:
-// a loop's back edge does not order a pair both ways). Nothing here needs
-// V's name: the writes join on V's identity (ets_value against ets_key),
-// the tables on what clientlib/tables.dl says each operation may touch.
+// A writer publishes value V in table A before creating the row keyed by V in B. A
+// concurrent reader can obtain V from A and fail on B's missing row. Write B before
+// publishing V; a losing insert_new publication may require cleanup.
+// Resolve writes through same-process helpers and translate parameter keys into caller
+// terms. `ets_effect_order` orders them within one iteration. Join value/key identities
+// and `EtsTable` identities without requiring a literal V.
 
-// A writer publishes a value in one row before it writes the row keyed
-// by that value, and a reader in another process that finds the value
-// looks up the missing row in the gap and crashes. `reader_func` is the
-// reader's function, whose processes are asked about.
+// A writer publishes a value before its keyed row exists, and a concurrent reader can
+// fail in that gap. reader_func supplies the reader's process context.
 .decl publish_order_race(writer: symbol, publish: symbol, complete: symbol, reader: symbol, reader_func: symbol)
 
 publish_order_race(writer, publish, complete, reader, reader_func) :-
@@ -1541,12 +1281,8 @@ publish_order_race(writer, publish, complete, reader, reader_func) :-
   finds_published_value(reader, publish),
   can_read_in_the_gap(writer, reader_func).
 
-// The reader raises when its key has no row, and nothing rescues the
-// raise (fails_if_row_missing, asked from the reader's own function): a
-// reader that rescues it, or whose every caller does, does not crash in
-// the gap.
-// The reader reads a table the completing write writes, one another
-// process can read.
+// The reader targets the completing write's shared table and can leak a missing-row
+// exception. A matching local or all-caller rescue suppresses the crash.
 .decl looks_up_row_of(reader: symbol, complete: symbol) inline
 
 looks_up_row_of(r, w2) :- readable_elsewhere(w2, bk, b), ets_table(r, bk, b).
@@ -1565,11 +1301,8 @@ finds_published_value(r, w1) :-
 
 handed_out_from(ak, a) :- ets_op(ra, _, _, _, "read"), ets_table(ra, ak, a), hands_out(ra).
 
-// A call that runs its callee on the caller's stack.
-// A call into a function the program defines is a call site of the
-// caller's (stage 0's call_site, call_instr), and runs_elsewhere never
-// holds for an edge its caller calls: every such call runs on the
-// caller's stack.
+// An explicit call instruction runs the callee on its caller's stack. runs_elsewhere
+// applies only to execution edges lacking that direct call.
 .decl same_stack_site(site: symbol, caller: symbol, callee: symbol)
 
 same_stack_site(c, f, g) :- local_call(c, f, g, _).
@@ -1641,8 +1374,8 @@ value_in(f, c, w, pos, s, v) :-
   value_in(g, _, w, pos, "param", p),
   ets_call_arg(c, g, p, s, v).
 
-// W1 writes V into A's row, W2 then writes B's row keyed by V. A value
-// that is a literal is known without reading A.
+// W1 stores V in table A; W2 stores a row keyed by V in table B. Literal V needs no
+// read from A.
 .decl publish_candidate(func: symbol, publish: symbol, complete: symbol)
 
 publish_candidate(f, w1, w2) :-
@@ -1654,11 +1387,9 @@ publish_candidate(f, w1, w2) :-
   vs != "literal",
   key_in(f, a2, w2, vs, v).
 
-// The two writes are two rows: the completing row is keyed by V, the
-// value the first row holds past its key, and V is not that row's own
-// key (`{name, id}` then `{id, name}`), whether they share one table
-// (a map that goes both ways) or sit in two. A write of `{k, k}` then
-// `{k, ...}` is one row written twice.
+// Require two distinct rows: V is a non-key value in the published row and the
+// completing row's key. The tables may be the same. Rewriting one key twice is not
+// publication.
 .decl publishes_early(func: symbol, publish: symbol, complete: symbol)
 
 publishes_early(f, w1, w2) :-
@@ -1671,10 +1402,8 @@ publishes_early(f, w1, w2) :-
   key_in(f, _, w2, vs, v),
   (vs != ks ; v != k).
 
-// A read that raises when the key has no row (ets.dl's
-// raises_if_table_missing asks of a missing table). lookup_element/4 and
-// update_counter/4 take a default and do not; update_element answers
-// false.
+// Reads that raise on a missing row. Exclude default-taking lookup_element/4 and
+// update_counter/4, and update_element, which returns false.
 .decl raises_if_row_missing(r: symbol, func: symbol)
 
 raises_if_row_missing(r, g) :-
@@ -1690,17 +1419,14 @@ hands_out(r) :- ets_op(r, _, _, "lookup", _), site_reads(_, _, "site", r).
 hands_out(r) :- ets_op(r, _, _, "lookup", _), call_arg_reads(_, _, _, "site", r).
 hands_out(r) :- ets_op(r, _, _, op, "read"), op != "lookup", op != "member", op != "info".
 
-// A table the operation may touch that another process can read
-// (table_readable_elsewhere, clientlib/tables.dl: a "field" table's
-// sites are those of the name its operations were created with).
+// The operation may access a table readable by another process.
+// table_readable_elsewhere resolves field tables through their extracted names.
 .decl readable_elsewhere(id: symbol, kind: symbol, ident: symbol) inline
 
 readable_elsewhere(id, k, t) :- ets_table(id, k, t), table_readable_elsewhere(k, t).
 
-// A reader that crashes on a missing row of a table an early publish
-// completes, with the table that publish writes: the readers and tables
-// whose keys are asked about below. A literal key is no value read from
-// anywhere.
+// Candidate readers raise on missing rows in a completing table. Exclude literal keys,
+// which cannot have been obtained from the published value.
 .decl gap_reader(reader: symbol, reader_func: symbol, published_kind: symbol, published: symbol)
 
 gap_reader(r, g, ak, a) :-
@@ -1712,13 +1438,10 @@ gap_reader(r, g, ak, a) :-
   ets_key(r, ks, _),
   ks != "literal".
 
-// ── Where the reader's key comes from ──
+// Reader key provenance
 //
-// The reader must be able to hold V: its key made from a read of A, or
-// from something the program cannot see the origin of — a parameter of a
-// function outside callers can reach (exported, or taken as a fun), a
-// call nothing summarises. A key the program shows is made from other
-// things does not read A's values.
+// The key must derive from the published table or an unknown external parameter/call
+// result. Keys known to come from unrelated sources cannot hold its published values.
 .decl key_needed(func: symbol, kind: symbol, src: symbol)
 
 key_needed(g, "param", p) :- gap_reader(r, g, _, _), ets_key(r, "param", p).
@@ -1763,12 +1486,9 @@ open_source(g, "call", h) :- key_needed(g, "call", h), !returns_depends(h, _, _)
 open_source(g, k, s) :- key_needed(g, "param", p), call_arg_reads(c, g, n, k, s), p = to_string(n), open_source(c, k, s).
 open_source(g, "call", h) :- key_needed(g, "call", h), returns_depends(h, k, s), open_source(h, k, s).
 
-// A key whose origin the program does not show can hold V when the
-// reader reads another table than the one V is published in: every key
-// of that table is a value like V. In a table that holds both rows (a
-// map that goes both ways), such a key may as well be the published
-// row's own, whose row is written first: there the reader must take V
-// from the table.
+// An unknown-origin key may be the published value when it reads a different table. If
+// both mappings share one table, require evidence that the reader extracted V there;
+// otherwise it might be reading the already-published row itself.
 .decl key_may_come_from(r: symbol, tk: symbol, t: symbol)
 
 key_may_come_from(r, tk, t) :-
@@ -1810,8 +1530,8 @@ gap_read(writer, reader_func) :-
 runs.seed(f) :- gap_read(f, _).
 runs.seed(g) :- gap_read(_, g).
 
-// The reader can run while the writer is between the two writes: in
-// more than one process, or in a process other than the writer's.
+// The reader can run between the writes, either through concurrent instances or in a
+// process distinct from the writer.
 .decl can_read_in_the_gap(writer: symbol, reader_func: symbol)
 
 can_read_in_the_gap(f, g) :- gap_read(f, g), !runs.single_process(f).
@@ -1821,9 +1541,8 @@ can_read_in_the_gap(f, g) :-
   gap_read(f, g),
   runs.beside_single_process(f, g).
 
-// A table is spelled by its identity's kind and the identity: "named" and
-// the name, "new" and the :ets.new/2 site, or "field" and the module and
-// the path it is kept under.
+// Table identity is its kind plus name, allocation site, or module and field path for
+// "named", "new", or "field", respectively.
 .decl ets_publish_order(mod: symbol, func: symbol, published_kind: symbol, published_in: symbol, completed_kind: symbol, completed_in: symbol, publish: symbol, complete: symbol, reader: symbol)
 .output ets_publish_order
 
@@ -1838,38 +1557,19 @@ ets_publish_order(mod, writer, pub_kind, pub_table, row_kind, row_table, publish
 
 table_of(op, tk, t) :- ets_table(op, tk, t).
 
-// ── Read, then a row that may be gone ────────────────────────────
+// Rows removed between check and use
 //
-// `case :ets.lookup(t, k) do [_] -> :ets.update_counter(t, k, {2, 1})`
-// decides that the row is there and acts on it with an operation that
-// raises when it is not (update_counter/3, lookup_element/3). No write of
-// the key is lost — the act's own failure is the bug: another process
-// that takes or deletes the row between the two leaves the act a missing
-// key, and the process that only meant to count crashes with badarg.
-// sequin's DebouncedLogger counts repeats of a log line this way while a
-// timer's flush, in a process of its own, takes the row.
-//
-// The pair is CheckThenAct's (clientlib/check_then_act.dl): a deciding
-// read and a raising act on one table and key, in one function or across
-// the functions the read's result reaches. The row's remover is any
-// operation that deletes rows of that table — take, delete, a
-// delete_object, select_delete or match_delete, or deleting the table —
-// in a function that can run while the pair's function is between the
-// two. The key is asked of the remover only to rule it out: a flush keyed
-// by the arguments a timer was handed is not a key the facts can equate
-// to the check's, so a remover counts unless its key can never be the
-// pair's. A process's own row (keyed by self()) is removed by the
-// process that owns it, and one removing self()'s row in another process
-// removes that process's; a literal key names a row of its own, other
-// than a different literal's and than the rows kept beside it under keys
-// callers pass (a `:__total__` next to the keyed counts).
+// A read establishes row presence, then an operation such as update_counter/3 or
+// lookup_element/3 raises if the row disappears. Follow the pair across functions with
+// `CheckThenAct`. A concurrent take, row deletion, bulk deletion, or table deletion can
+// be the remover.
+// Unknown remover keys may match; exclude only keys considered disjoint, including
+// another process's self() row and distinct literal/computed-key classes.
 
 .init missing = CheckThenAct
 
-// Each side names its table as clientlib/tables.dl knows it, as the
-// CheckThenAct source of its kind (table_source): a named table, a site
-// and a handed-in table are the same table in every function, a field
-// table within its module.
+// Use table_source identities on both sides. Names, allocation sites and handed-in
+// tables retain identity across functions; fields retain it within their module.
 missing.check(read, func, source, table, key_kind, key) :-
   deciding_read(read, func),
   table_and_key(read, table_kind, table, key_kind, key),
@@ -1880,21 +1580,16 @@ missing.act(act, func, source, table, key_kind, key) :-
   table_and_key(act, table_kind, table, key_kind, key),
   table_source(table_kind, source).
 
-// The rule is written in the words below, one per line, each over a
-// whole table: a table is its kind and identity together (ets_table's
-// two columns: EtsTable, clientlib/tables.dl), so no line has to spell
-// the kind.
+// Express the rule through whole-table helper relations. Each table carries both
+// EtsTable identity columns, keeping kind handling inside the helpers.
 
 // A read that decides whether a row is there.
 .decl checks_row_exists(check: symbol) inline
 
 checks_row_exists(check) :- deciding_read(check, _).
 
-// An operation that raises when the row is missing, and the raise
-// escapes (clientlib/escape.dl): no handler that takes the ArgumentError
-// covers the act, nor any call on some path from `func` down to the act,
-// nor every call to `func`. `func` is where the check's result meets the
-// act, or, for a publish-order reader, the reader's own function.
+// A missing-row exception can escape through the act and its call path (`Escape`).
+// Check from the pair's meeting function, or the publication reader itself.
 .decl fails_if_row_missing(act: symbol, func: symbol)
 
 fails_if_row_missing(act, func) :-
@@ -1905,10 +1600,8 @@ fails_if_row_missing(reader, reader_func) :-
   reads_completed_row(reader, reader_func),
   row_miss.escapes(reader, reader_func, "badarg").
 
-// Asked of the act's site and of the calls that lead to it, not of whole
-// functions: a `rescue` around unrelated code after the act does not
-// take the act's ArgumentError, and a handler around the call to a
-// helper does.
+// Check handlers at the act and intervening call sites. An unrelated rescue elsewhere
+// in a function does not cover the act.
 .init row_miss = Escape
 
 row_miss.asked(act, g, f, "badarg") :-
@@ -1917,9 +1610,8 @@ row_miss.asked(act, g, f, "badarg") :-
 
 row_miss.asked(reader, g, g, "badarg") :- reads_completed_row(reader, g).
 
-// A read that raises on a missing row of a table an early publish
-// completes: the reader of a publish-order race, whose raise is asked
-// from its own function.
+// A publication-order race reader: a read that raises on a missing row in a table
+// completed after early publication.
 .decl reads_completed_row(reader: symbol, reader_func: symbol)
 
 reads_completed_row(r, g) :-
@@ -1927,13 +1619,9 @@ reads_completed_row(r, g) :-
   raises_if_row_missing(r, g),
   looks_up_row_of(r, complete).
 
-// The act's table is one another process can read. A table the program
-// does not show being made (table_made_out_of_view: a named table a
-// dependency makes, or one under a name that arrives at runtime, as
-// `:ets.new(name, ...)` in a function nothing calls with a literal; or
-// one the program's users hand in) is taken to be shared: nothing says
-// it is private, and an update from a process that is not its owner
-// needs it public.
+// A table accessible from another process. Tables created outside the facts, under
+// unresolved names, or supplied externally are assumed shared; no visible allocation
+// proves them private.
 .decl shared_table(act: symbol, table: EtsTable) inline
 
 shared_table(act, [tk, t]) :- readable_elsewhere(act, tk, t).
@@ -1992,8 +1680,7 @@ keyed_apart(d, ks, k) :-
   ks != "self",
   ks != "any".
 
-// A row: a table and one key of it, as CheckThenAct lifts the key
-// (key_kind names what the key is: a literal, the caller's argument, ...).
+// A row is a table plus a key, represented using CheckThenAct's key kind and value.
 .type EtsRow = [table: EtsTable, key_kind: symbol, key: symbol]
 
 // In `func`, the check's result decides whether the use runs, on one row
@@ -2016,11 +1703,8 @@ removes_row(remove, [table, ks, k]) :-
   removes_rows(remove, table),
   !keyed_apart(remove, ks, k).
 
-// The removal runs in a process other than the one running `func`: `func`
-// runs in more than one process, or the removal runs beside it
-// (beside_single_process, clientlib/concurrency.dl). Nothing orders two
-// processes, so another process can always run between the check and the
-// use.
+// The removal may run in another process: the pair is multi-process, or a separate
+// process reaches the remover. Without ordering, it can occur between check and use.
 .decl runs_in_another_process(remove: symbol, func: symbol)
 
 runs_in_another_process(d, f) :-
@@ -2034,8 +1718,8 @@ runs_in_another_process(d, f) :-
   remover_in(d, h),
   runs.beside_single_process(f, h).
 
-// A check decides a row is there, a use that fails when the row is missing
-// relies on it, and another process can remove the row in between.
+// A presence check guards an operation requiring the row, but another process can
+// remove it between check and use.
 .decl missing_row_race(func: symbol, check: symbol, use: symbol, remove: symbol, row: EtsRow)
 
 missing_row_race(func, check, use, remove, row) :-
@@ -2053,31 +1737,17 @@ ets_missing_row(mod, func, table_kind, table, check, use, remove) :-
   missing_row_race(func, check, use, remove, [[table_kind, table], _, _]),
   in_module(func, mod).
 
-// ── Dirty read, then dirty write ─────────────────────────────────
+// Mnesia dirty check-then-act
 //
-// Mnesia serializes what runs inside a transaction; its dirty operations
-// bypass that, and a dirty_read whose result decides or feeds a
-// dirty_write of the same record is the read-modify-write another process
-// can interleave. The paper's instance is the snmp agent's time-stamp
-// counter: read, add one, write back. A Mnesia table is shared by every
-// process on every node, so no access mode excuses it; one process that
-// is the table's only writer does. :mnesia.transaction/1 and
-// dirty_update_counter are the fixes.
-//
-// Known limit: "one process" is one per node. A server registered under
-// a local name runs once on each node, and a table replicated to several
-// nodes (ram_copies or disc_copies on more than one) is written by each
-// node's owner, so the excuse is unsound there. It is kept: whether a
-// table is replicated is create_table's copies lists, which are almost
-// always computed at runtime (`[node() | Node.list()]`, config) and which
-// the facts do not show, and honouring the excuse only for a :global or
-// :via owner would report every locally registered owner on a
-// single-node deployment, the common case.
+// Dirty operations bypass transaction serialization. Require a dependent read/write
+// pair and a competing writer; transactions or dirty_update_counter can provide
+// atomicity. A sole writer is exempt.
+// Known limit: sole-process classification is per node. Replicated tables may have one
+// such writer on each node, but runtime replica lists are unavailable, so this
+// exemption can miss distributed races.
 
-// A dirty read decides or feeds a dirty write of the same record,
-// another process can write the table between the two, no cluster lock
-// every writer takes serializes them, and what the interleaving costs
-// has a witness. `func` is where the read's result reaches the write.
+// A dirty same-record pair with a concurrent writer, no shared cluster-lock proof, and
+// a harm witness. func is the pair's meeting function.
 .decl dirty_read_then_write_race(func: symbol, read: symbol, write: symbol, record: MnesiaRecord, harm: symbol)
 
 dirty_read_then_write_race(func, read, write, [table, key], harm) :-
@@ -2086,10 +1756,8 @@ dirty_read_then_write_race(func, read, write, [table, key], harm) :-
   !serialized_by_lock(func, table),
   harms_record(func, read, write, harm).
 
-// A record: a Mnesia table, by name, and a key of it. A Mnesia table is
-// not an EtsTable: it has a name and nothing else (no reference to
-// follow, no unnamed kind), one name the whole cluster shares, and an
-// ETS table of the same name is another table.
+// A Mnesia record uses a cluster-wide table name and key. Mnesia and ETS identities
+// remain separate even when their table names match.
 .type MnesiaRecord = [table: symbol, key: symbol]
 
 // In `func`, the dirty read's result decides whether the dirty write
@@ -2114,9 +1782,8 @@ records.act(write, func, table_kind, table, key_kind, key) :-
   mnesia_op(write, func, op, "write", table_kind, table, key_kind, key),
   dirty_write_op(op).
 
-// The dirty writes, the acts. A transaction's writes and
-// dirty_update_counter write the table too (the other writer, and what
-// writes a table back), but are not the race's act.
+// Dirty writes are candidate acts. Transactional writes and dirty_update_counter may
+// compete or restore table contents, but are not candidate acts.
 .decl dirty_write_op(op: symbol)
 
 dirty_write_op("dirty_write").
@@ -2129,9 +1796,8 @@ reads_then_writes_record(f, r, w, t, k) :- records.meets(f, r, w, "literal", t, 
 reads_then_writes_record(f, r, w, t, k) :- records.meets(f, r, w, "param", p, _, k), record_table_at_param(f, p, t).
 reads_then_writes_record(f, r, w, t, k) :- records.meets(f, r, w, "element 0", p, _, k), table_at_record(f, p, t).
 
-// The Mnesia table a parameter holds where a pair meets on it or a
-// write writes it: a name a caller passes there, through any
-// forwarding.
+// Resolve a table parameter at a check/act meeting point or write, following names
+// through forwarding callers.
 .decl record_table_needed(func: symbol, pos: symbol)
 
 record_table_needed(f, p) :- records.meets(f, _, _, "param", p, _, _).
@@ -2155,9 +1821,8 @@ record_table_at_param(f, p, name) :-
   p = to_string(n),
   record_table_at_param(c, to_string(m), name).
 
-// A record handed in whole names its table in its first element: the
-// callers' tuples say which (elvengard_ecs's insert_new(record), called
-// with `entity(id: id, ...)`), through any parameter that forwards it.
+// A whole record's first tuple element names its Mnesia table. Resolve that element
+// through forwarding callers.
 .decl record_param_needed(func: symbol, pos: symbol)
 
 record_param_needed(f, p) :- records.meets(f, _, _, "element 0", p, _, _).
@@ -2182,9 +1847,8 @@ table_at_record(f, p, t) :-
 runs.seed(f) :- reads_then_writes_record(f, _, _, _, _).
 runs.seed(f) :- mnesia_op(_, f, _, "write", _, _, _, _).
 
-// Another process can write the table while `func` is between the read
-// and the write: `func` runs in more than one process, or it runs in one
-// and a writer of the table runs beside it.
+// Another process can write between the pair's read and write, either by running func
+// concurrently or through a separate table writer.
 .decl written_by_another_process(table: symbol, func: symbol)
 
 written_by_another_process(t, f) :-
@@ -2196,16 +1860,12 @@ written_by_another_process(t, f) :-
   mnesia_write_table(_, g, t),
   runs.beside_single_process(f, g).
 
-// ── A cluster lock every writer takes ──
+// External cluster locks
 //
-// Dirty operations skip Mnesia's locks, not an external mutex: a pair in
-// a closure `:global.trans/2` runs, on a table every writer writes under
-// such a closure too, is serialized. A closure is taken to run under the
-// lock when the function that builds it calls :global.trans (the facts
-// do not say which closure a call is handed), and so is a private
-// function only such closures call. The lock's identity is not compared:
-// writers under different locks are taken as serialized, so the rule
-// stays quiet where it cannot tell.
+// Treat dirty writes as serialized when every writer runs under a global.trans closure
+// or an exclusively called private helper. Assumptions: any closure built by a function
+// calling global.trans may be its body, and different lock identities are not
+// distinguished. Both can suppress real races.
 .decl locked_closure(func: symbol)
 
 locked_closure(c) :- global_op(_, f, "trans", _, _), closure_def(f, c).
@@ -2235,12 +1895,8 @@ serialized_by_lock(f, t) :-
   under_lock(f),
   !unlocked_writer(t).
 
-// The table a Mnesia write touches, by name: spelled there, named by
-// what callers pass the parameter it arrives in, or the first element of
-// the record callers build and hand it (`defp save(rec), do:
-// :mnesia.dirty_write(rec)`). A transaction's write and the atomic
-// counter are writes too: a dirty read-modify-write takes no lock, and
-// either can land between its read and its write.
+// Resolve Mnesia write tables from literals, caller parameters, or record element 0.
+// Transactional writes and atomic counters are also rivals to unlocked dirty pairs.
 .decl mnesia_write_table(write: symbol, func: symbol, table: symbol)
 
 mnesia_write_table(w, f, t) :- mnesia_op(w, f, _, "write", "literal", t, _, _).
@@ -2255,9 +1911,8 @@ mnesia_write_table(w, f, t) :-
 
 record_param_needed(f, p) :- mnesia_op(_, f, _, "write", "element 0", p, _, _).
 
-// A dirty write that stores what a read of Mnesia returned, or a value
-// made of it, by any caller's path (MadeOfRead, clientlib/check_then_act.dl):
-// a writer that writes the table back, the Mnesia twin of counting in it.
+// A dirty write stores a value derived from a Mnesia read along some caller path. See
+// MadeOfRead.
 .init record_made = MadeOfRead
 
 record_made.read(r) :- mnesia_op(r, _, _, "read", _, _, _, _).
@@ -2279,16 +1934,11 @@ racing_record_pair(f, r, w) :-
 
 dirty_op(site, op) :- mnesia_op(site, _, op, _, _, _, _, _).
 
-// ── What another writer does to the record ──
+// Mnesia rivals
 //
-// The ETS rule's rivals (above), for records: a write of the table, in a
-// transaction or dirty, that can land on the pair's record between the
-// read and the write, in a process other than the pair's (or any, when
-// the pair runs in more than one), after its own process has started.
-// Two writes name different records when both keys are literals that
-// differ, or when one is minted where it is written (a random token, a
-// fresh reference or unique integer): a record no one could have read
-// before. A key a parameter carries is any record.
+// A dirty or transactional write can rival the pair after its process starts, if it
+// runs in another process or the pair itself runs concurrently. Distinct literal keys
+// and newly minted keys are disjoint; parameter keys may identify any record.
 .decl record_rival(func: symbol, read: symbol, write: symbol, rival_write: symbol, rival_func: symbol)
 
 record_rival(f, r, w, w2, g) :-
@@ -2326,9 +1976,8 @@ records_apart(w, w2) :-
   mnesia_op(w2, _, _, _, _, _, "local", made),
   minted_value(made).
 
-// A value no other equals: made by a call that mints it (a reference, a
-// monitor, a unique integer, a random value), or by a project function
-// that returns one.
+// A freshly generated reference, monitor, unique integer or random value, including one
+// returned through a project wrapper.
 .decl minted_value(site: symbol)
 
 minted_value(made) :- remote_call(made, _, m, n, a), minting_call(m, n, a).
@@ -2348,10 +1997,8 @@ record_removes(w) :-
   mnesia_op(w, _, op, "write", _, _, _, _),
   (op = "dirty_delete" ; op = "delete" ; op = "dirty_delete_object" ; op = "delete_object").
 
-// A writer that stores a record of its own: not a cached copy, which is
-// some pair's fill of a value a call or another store made on a read that
-// found the record missing (PairCarries' fills, as the ETS rule's
-// refill_row).
+// A writer creates independent record state rather than a cached refill computed from a
+// call or another store after a miss.
 .decl record_makes_own(write: symbol)
 
 record_makes_own(w) :-
@@ -2359,61 +2006,21 @@ record_makes_own(w) :-
   (op = "dirty_write" ; op = "write"),
   !record_carried.fills(_, _, w).
 
-// ── Which race a pair is ──
-//
-// Every pair above is a read deciding or feeding a dirty write another
-// process can interleave. It is a race when what the interleaving costs
-// has a witness, and the finding says which (`kind`):
-//
-// - unique: a search — a secondary index, a match spec, a pattern whose
-//   key is `:_` (`searches`) — finds nothing, and a new record is
-//   written: blockster's referral earnings, deduplicated by an index read
-//   of the commitment hash and stored under a fresh UUID. Two racers both
-//   find nothing and both insert, under keys of their own: the duplicate
-//   the search was there to prevent, which no retry of either write
-//   undoes;
-// - lost_update: the write stores a value made of what this pair's read
-//   returned (PairCarries): each racer adds to the count it read, and one
-//   addition vanishes;
-// - guarded: the decision compares a field of the record with the value
-//   the write stores (ztlp's serial check): both pass, and the older can
-//   land last;
-// - claim: the write's decision leaves the function as a verdict, not as
-//   the record (what the function returns depends on the read by control
-//   alone): both racers are told they won (elvengard_ecs's insert_new).
-//   A get-or-create that answers with the record, an upsert that returns
-//   what it wrote, and a cache-aside that returns its value answer with
-//   data, and are no claims;
-// - delete: the read decides a dirty delete, and something makes the
-//   interleaving cost more than deleting twice: the decision looks at
-//   what the record holds and a rival writes the record back, counts in
-//   it, or makes it again with a record of its own (a lease another
-//   process took over: the delete takes the new owner's record), or the
-//   decision also sends, or hands out the record it removes (both racers
-//   take it). A dirty_delete_object deletes only the record it read, and
-//   loses only to the last two;
-// - decides_more: the read's decision runs more than the write — a send,
-//   an outside effect, another write on the same path (`record_decides_
-//   more`): an idempotency marker whose decision also records a charge,
-//   and both racers mark and charge;
-// - fill: the write stores a record computed afresh, not made of the
-//   read, and a rival removes the record, writes it with a record of its
-//   own or counts in it between the two: the fill computed before the
-//   rival lands after it (a stale cache fill), weaker than a lost update.
-//
-// No witness, no race: a dirty delete of an expired nonce nothing
-// recreates, an ensure-default both racers write alike.
-//
-// A finding is one per write: the pairs a write is in, reported at the
-// one whose kind is the strongest, then the one whose read sits in the
-// write's own function — the read that decides the write where it is,
-// not a read further up that a fresh read nearer the write shadows —
-// then the least read. The other reads, the other writes of the same
-// race and, for a pair that runs in one process, the writer outside it
-// are related frames (mnesia_race_frame). A fill whose read also decides
-// a stronger race on another write is that race's other branch, and a
-// write in the same function, decided by the same read in the same way,
-// is the same race's other branch too: one finding, at the earliest.
+// Mnesia harm and finding selection
+// - unique: concurrent non-key searches find nothing and insert duplicate logical
+// records under separate keys.
+// - lost_update: read-derived writes overwrite a rival's change.
+// - guarded: a value comparison permits writes that can land out of order.
+// - claim: both callers receive a success verdict; returning record data alone is not a
+// claim.
+// - delete: deletion removes a rival's replacement, returns the same removed value
+// twice, or repeats an external effect. delete_object only has the latter two hazards.
+// - decides_more: the read also controls another write, send, or external effect.
+// - fill: a fresh refill overwrites an intervening removal or change.
+// Require a harm witness. Choose one finding per write by strongest kind, then prefer a
+// read local to the write, then the least read. Combine branches decided by the same
+// read and attach other reads, writes, and external rivals as `mnesia_race_frame`
+// evidence.
 
 // A read that finds records by something other than their key.
 .decl searches(read: symbol)
@@ -2470,8 +2077,8 @@ record_sends.carried(f, g, kind, src, r) :-
 
 record_decision_sends(f, r) :- record_sends.sends(f, r).
 
-// A guard on what the record holds: a field past the table and the key
-// (element 2 on) compared with a value the write stores.
+// A guard compares record data, starting at element 2 after the table and key, against
+// a value stored by the write.
 .decl guards_record(meet: symbol, read: symbol, write: symbol)
 
 guards_record(f, r, w) :-
@@ -2494,12 +2101,8 @@ guards_record(f, r, w) :-
   call_arg_reads(g, h, n, ok, os),
   q = to_string(n).
 
-// Another dirty write in the write's own function on a path that
-// excludes this one: the upsert's other branch (`[] -> insert; [r] ->
-// update r`), which the read chooses between. That the decision makes
-// one of two writes is not a decision that does more than write. A
-// second write the same path also makes — a marker, then the charge it
-// guards — is.
+// Mutually exclusive dirty writes are alternative branches, not additional effects.
+// Another write on the same path, such as a charge after a marker, does count.
 .decl other_branch(site: symbol, write: symbol)
 
 other_branch(s, w) :-
@@ -2517,10 +2120,8 @@ exclusive_writes(w1, w2) :-
   !mnesia_write_order(h, w1, w2),
   !mnesia_write_order(h, w2, w1).
 
-// The decision the read makes where it meets the write runs more than
-// the write: a send, an outside effect, another write on the same path —
-// a marker whose decision also records a charge. Both racers find no
-// marker, both mark, and both charge. Asked where the pair meets.
+// The pair's decision also sends, performs an external effect, or makes another
+// same-path write. Evaluate at the meeting function to identify duplicated work.
 .decl decides_more_here(func: symbol, read: symbol, write: symbol)
 
 decides_more_here(f, r, w) :-
@@ -2573,11 +2174,8 @@ record_race_kind(f, r, w, "fill") :-
   record_rival(f, r, w, w2, _),
   (record_counts_in(w2) ; record_removes(w2) ; record_makes_own(w2)).
 
-// A delete of the record by its key, made on what the record holds,
-// loses to a rival that writes the record back, counts in it, or makes it
-// again with a record of its own: the delete takes a record its decision
-// never saw. Made on the record's presence alone, it ends as the rival's
-// write then the delete would.
+// A content-dependent keyed delete can remove a rival's replacement or updated record.
+// A presence-only delete has the same result as a serial write followed by deletion.
 record_race_kind(f, r, w, "delete") :-
   racing_record_pair(f, r, w),
   mnesia_op(w, _, "dirty_delete", _, _, _, _, _),
@@ -2630,20 +2228,16 @@ kind_rank("delete", 3).
 kind_rank("decides_more", 4).
 kind_rank("fill", 5).
 
-// A read's weaker pairs where it meets its writes are branches of its
-// strongest race there: the `[] -> insert` beside the `[r] -> write back
-// r + 1` of one counter is one race, reported where it loses the most.
-// Per meeting function: a get/1 helper two functions share decides a
-// write-back in one and a delete in the other, two races.
+// Group weaker branches under the strongest race for each read and meeting function.
+// Shared reads used by different meeting functions remain separate races.
 .decl read_rank(func: symbol, read: symbol, rank: number)
 
 read_rank(f, r, n) :-
   dirty_read_then_write_race(f, r, _, _, _),
   n = min m : { dirty_read_then_write_race(f, r, _, _, k), kind_rank(k, m) }.
 
-// A write its own function reads before, and decides on, is judged by
-// that read: a read further up is not the one the write acts on, unless
-// it is also the value the local pair writes back (a frame, then).
+// Prefer the read local to the write over a farther caller's read. Retain the outer
+// read as evidence if its data is also written back.
 .decl read_in_own_function(write: symbol)
 
 read_in_own_function(w) :- reads_then_writes_record(h, _, w, _, _), records.act(w, h, _, _, _, _).
@@ -2680,11 +2274,8 @@ mnesia_check_act(mod, func, table, key, read, write, op, harm) :-
   dirty_op(write, op),
   in_module(func, mod).
 
-// ── What else the finding points at ──
-//
-// `role`: "also_writes", a later write of the same race; "other_writer",
-// for a pair that runs in one process, a write of the table outside that
-// process; "read", another read that decides or feeds the write.
+// Related Mnesia evidence: later writes (`also_writes`), external rivals to
+// single-process pairs (`other_writer`), and other deciding or feeding reads (`read`).
 .decl mnesia_race_frame(write: symbol, role: symbol, site: symbol, func: symbol)
 .output mnesia_race_frame
 

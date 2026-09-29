@@ -1,9 +1,7 @@
 defmodule Argus.Schema.Dependence do
   @moduledoc """
-  What decides or feeds a call, a shared-state operation or a return
-  (`Argus.Extractors.Dependence`).
-
-  Layer 2 of `Argus.Schema`, which reads the relations from here.
+  Layer-2 data and control dependencies for calls, shared-state operations, and returns \
+  (`Argus.Extractors.Dependence`). Exposed through `Argus.Schema`.
   """
 
   @doc "The relations, in the order `Argus.Schema.all/0` lists them."
@@ -22,10 +20,9 @@ defmodule Argus.Schema.Dependence do
            "the parameter's position, the callee's function ID, or the shared-state operation's instruction ID"}
         ],
         doc: """
-        The operation runs only because of a test on the source, or is handed \
-        a value made from it (Argus.Extractors.Dependence). A site source is \
-        another shared-state operation's result: the check a check-then-act \
-        acts on.
+        An operation controlled by a test on the source or receiving data derived from \
+        it. A site source is another shared-state operation's result, such as the check \
+        in a check-then-act sequence.
         """
       },
       %{
@@ -38,9 +35,8 @@ defmodule Argus.Schema.Dependence do
           {:source, :symbol, "as site_depends"}
         ],
         doc: """
-        Some call to the callee runs only because of a test on the source: \
-        everything the callee does is decided by it. Building a closure \
-        counts as a call to it. Function-level.
+        A call controlled by a test on the source. Closure construction counts as a \
+        call. Function-level.
         """
       },
       %{
@@ -55,9 +51,9 @@ defmodule Argus.Schema.Dependence do
           {:source, :symbol, "as site_depends"}
         ],
         doc: """
-        At some call to the callee, the argument depends on the source: made \
-        from it, or computed under a test on it. Unlike call_arg_derived, \
-        control counts, and the sources include call results. Function-level.
+        A call argument dependent on the source through data or control flow. Unlike \
+        `call_arg_derived`, includes control dependence and call-result sources. \
+        Function-level.
         """
       },
       %{
@@ -69,9 +65,7 @@ defmodule Argus.Schema.Dependence do
           {:source, :symbol, "as site_depends"}
         ],
         doc: """
-        What the function returns depends on the source: a lookup helper \
-        returns its site, a wrapper the call it makes, an identity function \
-        its parameter.
+        A return value dependent on the source, such as a parameter or call result.
         """
       },
       %{
@@ -83,10 +77,8 @@ defmodule Argus.Schema.Dependence do
           {:source, :symbol, "as site_depends"}
         ],
         doc: """
-        returns_depends by data alone: the returned value is made from the \
-        source, not merely chosen under a test on it. A getter that answers \
-        what a lookup found returns the lookup; one that answers :ok or an \
-        error on what it found returns neither.
+        The data-only subset of `returns_depends`: the return contains data from the \
+        source. Returning a status selected by a test on the source does not qualify.
         """
       },
       %{
@@ -99,10 +91,9 @@ defmodule Argus.Schema.Dependence do
           {:source, :symbol, "as site_depends"}
         ],
         doc: """
-        site_depends by data alone: the operation's arguments are made from \
-        the source, not merely computed under a test on it. An insert whose \
-        object carries what a lookup returned writes the read back; one that \
-        only runs because of the lookup writes something else.
+        The data-only subset of `site_depends`: operation arguments contain data from \
+        the source. Running an operation because of a test on the source does not \
+        qualify.
         """
       },
       %{
@@ -116,10 +107,9 @@ defmodule Argus.Schema.Dependence do
           {:source, :symbol, "as site_depends"}
         ],
         doc: """
-        What the sink's argument is made of, by data alone \
-        (Argus.Extractors.Dependence): the runtime's calls on the way carry \
-        their arguments through, so `String.to_atom(Macro.underscore(name))` \
-        is made of `name`, which sink_arg_derived's propagators do not say.
+        A sink argument's data sources (`Argus.Extractors.Dependence`). Follows data \
+        through runtime calls beyond the propagators recognized by `sink_arg_derived`, \
+        such as `Macro.underscore/1` before atom creation.
         """
       },
       %{
@@ -133,8 +123,8 @@ defmodule Argus.Schema.Dependence do
           {:source, :symbol, "as site_depends"}
         ],
         doc: """
-        call_arg_depends by data alone, for calls (not closures): the argument \
-        is made from the source. Function-level.
+        The data-only subset of `call_arg_depends`, for calls but not closures. \
+        Function-level.
         """
       },
       %{
@@ -148,12 +138,9 @@ defmodule Argus.Schema.Dependence do
            "the tuple element tested, from 0: an ETS row's key is 0, a Mnesia record's 1"}
         ],
         doc: """
-        A test in the function decides on element `pos` of a tuple the source \
-        holds, or on something made from it: `[{^k, cur}] when cur >= serial` \
-        tests element 1 of the lookup's row. A test of the source's shape \
-        alone — whether a lookup found a row — is not one; comparing the \
-        row's key is one at the key's position. An `:ets.lookup_element/3` \
-        answer is element 1 of its row. Function-level.
+        A test on tuple element `pos` of the source, or data derived from that element. \
+        Shape-only tests do not count. Key comparisons use the key position; \
+        `:ets.lookup_element/3` results use position 1. Function-level.
         """
       },
       %{
@@ -168,12 +155,8 @@ defmodule Argus.Schema.Dependence do
           {:other_source, :symbol, "as site_depends"}
         ],
         doc: """
-        A test in the function compares element `pos` of a tuple the source \
-        holds with a value made from the other source, by data alone: \
-        `[{^k, cur}] when cur >= serial` compares element 1 of the lookup's \
-        row with parameter 1, and element 0 with parameter 0. A comparison \
-        with a value nothing in the facts names (a clock read) has no row. \
-        Function-level.
+        A comparison between tuple element `pos` of one source and data derived from \
+        another. Comparisons with untracked values have no row. Function-level.
         """
       },
       %{
@@ -185,10 +168,10 @@ defmodule Argus.Schema.Dependence do
           {:source, :symbol, "as site_depends"}
         ],
         doc: """
-        A message send, or a call into the runtime that changes something \
-        outside the function (Argus.Purity.Effects: a process, a port, a \
-        file, the network, a node; not logging), runs only because of a test \
-        on the source. Project calls are call_decided's. Function-level.
+        A send or external runtime effect controlled by a test on the source. Includes \
+        process, port, file, network, and node effects classified by \
+        `Argus.Purity.Effects`; excludes logging. Project calls use `call_decided`. \
+        Function-level.
         """
       }
     ])

@@ -1,8 +1,6 @@
-// Shared call_edge derivation rules.
-//
-// Include this file after declaring `.decl call_edge(caller: symbol, callee: symbol)`.
-// Requires base.dl relations: remote_call, bif_call, local_call, function_def,
-// closure_def, fun_ref, resolved_apply. NOT instruction — see below.
+// Shared call_edge rules. Declare call_edge(caller: symbol, callee: symbol) first.
+// Requires remote_call, bif_call, local_call, function_def, closure_def, fun_ref and
+// resolved_apply from base.dl.
 
 // Remote call: caller function -> "mod:func/arity" string.
 call_edge(caller_func, callee) :-
@@ -19,34 +17,18 @@ call_edge(caller_func, target) :-
   local_call(_, caller_func, target, _),
   function_def(target, _, _, _, _).
 
-// Each of the three rules above used to recover its caller by joining
-// `instruction(id, caller_func, _, _)`. That made `instruction` — 343k rows
-// on a 531-module project, and rewritten whenever any function body changes,
-// because an instruction ID is a raw per-function offset — an input to stage
-// 0, and therefore to every analysis downstream of the call graph.
-//
-// The call relations now carry `caller` directly. Stage 0's inputs are the
-// relations that describe what a function CALLS, so its input set is now as
-// stable as its output, which is what this file's docstring always claimed
-// for the output alone.
+// Call relations carry their caller directly. Avoid joining positional `instruction`
+// rows so call-graph inputs remain stable across unrelated body edits.
 
-// Closure construction is treated as a static call edge so that a walk over
-// call_edge (clientlib/reach.dl) follows execution into closures passed to
-// higher-order callees like Enum.map, :telemetry.span, Task.async, and
-// Phoenix.PubSub callbacks. The Elixir compiler lifts closure bodies into
-// top-level functions and references them via make_fun3, so they show up
-// here as concrete function IDs.
+// Closure construction adds a possible execution edge to the lifted closure function.
+// This lets call reachability include bodies passed to higher-order APIs.
 call_edge(parent, child) :- closure_def(parent, child).
 
-// A fun value the function hands to a call without calling it —
-// `&URI.parse/1` handed to Enum.map — is an edge for the same reason: what
-// the fun is handed to may call it. Without it the graph stopped at
-// Enum.map. Like a closure edge, the same-process walks set it
-// aside (reach.dl's SameProcess variants); a function that also calls the
-// target has no fun_ref row, so that call's edge stays.
+// A fun reference passed to another call adds a possible execution edge. Same-process
+// walks can exclude it when execution is deferred or detached. Direct calls retain
+// their own edges and need no fun_ref row.
 call_edge(f, g) :- fun_ref(f, g).
 
-// An apply whose target resolves is a call to it: the compiler leaves an
-// apply only where it could not see the target, which the values reaching
-// the apply may still name (`@handlers.mod`, a closure handed to apply/2).
+// Treat a resolved apply target as a call edge, even when the compiler could not
+// identify the target statically.
 call_edge(f, g) :- resolved_apply(_, f, g).

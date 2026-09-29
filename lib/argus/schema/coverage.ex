@@ -1,10 +1,7 @@
 defmodule Argus.Schema.Coverage do
   @moduledoc """
-  Coverage instrumentation: where an extractor fell back to "dynamic".
-  Populated only when the active analysis run has imprecision tracking
-  enabled (the `coverage` analysis).
-
-  Layer 2 of `Argus.Schema`, which reads the relations from here.
+  Layer-2 extraction-coverage facts, exposed through `Argus.Schema`. Populated only when \
+  imprecision tracing is enabled by the `coverage` analysis.
   """
 
   @doc "The relations, in the order `Argus.Schema.all/0` lists them."
@@ -22,15 +19,10 @@ defmodule Argus.Schema.Coverage do
           {:reason, :symbol, "why imprecision: dynamic | unresolvable | skipped | missing"}
         ],
         doc: """
-        Tracks every fallback to a "dynamic" placeholder or an outright \
-        skipped fact emission. Populated only when imprecision tracing is \
-        enabled for the current pipeline run — the `coverage` analysis turns \
-        it on, every other analysis runs with tracing off and produces no \
-        rows in this relation.
-
-        The `category` vocabulary is documented in `lib/argus/extractor/helpers.ex` \
-        and is treated as a versioned API: changes are noted in CHANGELOG so \
-        coverage diff tooling can keep stable keys.
+        An extractor fallback to `dynamic` or a skipped fact. Emitted only with \
+        imprecision tracing, enabled by the `coverage` analysis. The versioned \
+        `category` vocabulary is documented in `lib/argus/extractor/helpers.ex`; changes \
+        are recorded in CHANGELOG for coverage-diff consumers.
         """
       }
     ])

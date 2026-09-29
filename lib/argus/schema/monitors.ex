@@ -1,10 +1,7 @@
 defmodule Argus.Schema.Monitors do
   @moduledoc """
-  Monitors: where one is taken, whether its reference is kept, the
-  `:DOWN` messages a callback or a receive matches, and how one is
-  removed.
-
-  Layer 2 of `Argus.Schema`, which reads the relations from here.
+  Layer-2 monitor facts: monitored targets, reference storage, `:DOWN` handlers, and \
+  demonitoring. Exposed through `Argus.Schema`.
   """
 
   @doc "The relations, in the order `Argus.Schema.all/0` lists them."
@@ -20,9 +17,8 @@ defmodule Argus.Schema.Monitors do
           {:target, :symbol, "the monitored name when literal, or 'dynamic'"}
         ],
         doc: """
-        A `Process.monitor/1` or `:erlang.monitor/2`. Once it returns, a \
-        `{:DOWN, ref, :process, object, reason}` arrives unless cancelled — so \
-        a process that monitors is a process that receives `:DOWN`.
+        A `Process.monitor/1` or `:erlang.monitor/2` call. Unless cancelled, a process \
+        monitor delivers `{:DOWN, ref, :process, object, reason}` when its target exits.
         """
       },
       %{
@@ -33,11 +29,9 @@ defmodule Argus.Schema.Monitors do
           {:type, :symbol, "'process' | 'port' | 'time_offset', or 'dynamic'"}
         ],
         doc: """
-        What the monitor at `id` watches, and so what it sends: a process's \
-        or a port's `{:DOWN, ref, type, object, reason}` (`Process.monitor/1` \
-        is a process's), or, for `:time_offset`, a clock service's \
-        `{:CHANGE, …}`. `dynamic` when `:erlang.monitor/2`'s type is not a \
-        literal.
+        The monitor's target type and resulting message: process or port monitors send \
+        `:DOWN`; `:time_offset` sends `:CHANGE`. Unresolved type arguments use \
+        `dynamic`.
         """
       },
       %{
@@ -48,10 +42,8 @@ defmodule Argus.Schema.Monitors do
           {:func, :symbol, "the monitoring function"}
         ],
         doc: """
-        The reference `Process.monitor/1` returned at this site is discarded: \
-        the next thing to happen to the result register is a write that does \
-        not read it. Nothing can ever demonitor this monitor; it ends only \
-        when the monitored process does.
+        A monitor reference overwritten before its first read. The program cannot \
+        demonitor using that reference.
         """
       },
       %{
@@ -64,17 +56,11 @@ defmodule Argus.Schema.Monitors do
           {:depth, :number, "0: the pid is the answer itself; 1: the pid of its `{:ok, pid}`"}
         ],
         doc: """
-        The pid monitored at this site is, on every path, what one of the \
-        calls its rows name answered, `depth` payloads down \
-        (`Argus.Extractor.Answers`): the answer, or the element after its \
-        tag. All or nothing: a site with rows has one for every call the \
-        pid may come from. Any call, of the program or not: whether it \
-        answers a process it started, by itself or through the program's \
-        wrappers, is clientlib/answers.dl's (`call_origin`) and the rules'. \
-        A start's `{:error, {:already_started, pid}}` names a process \
-        others hold, its pid an element of an element: a path that \
-        monitors it leaves the site without rows \
-        (`Argus.Extractors.Monitor`).
+        Every possible call result supplying the monitored pid, at payload `depth` \
+        (`Argus.Extractor.Answers`). Rows are all-or-nothing across paths. \
+        `clientlib/answers.dl` determines whether the calls start processes. Deeper \
+        nested pids, such as `{:error, {:already_started, pid}}`, leave the site without \
+        rows.
         """
       },
       %{
@@ -90,21 +76,11 @@ defmodule Argus.Schema.Monitors do
           {:holds, :symbol, "'ref' when made of the ref, 'pid' when made whole of the pid alone"}
         ],
         doc: """
-        Where the monitoring function keeps what the monitor at `id` is \
-        about: its ref, or the pid it monitors. `field`: a return sets \
-        the field `where` (as `returned_update` spells it) to a value made \
-        of the ref, or made whole of the pid (`%{state | subs: \
-        Map.put(subs, pid, ref)}`, `Data#data{owner = Pid}`). `table`: \
-        the ETS call at `where` is handed such a value (`:ets.insert(t, \
-        {ref, pid})`). `returned`: what the function hands back is made of \
-        it (`ra_monitors:add/3`'s map), in element `where` of a tuple \
-        a return builds (`{nodes, monitors}`) or anywhere (`''`), and a \
-        caller keeps it where it keeps that answer, or that element \
-        (`returns_from`, `returned_field_from`). A field \
-        made of another value of the message the pid came in is not the \
-        pid's (`Argus.Extractor.StateFields`: made whole, not in part). \
-        `holds` tells the record a demonitor needs (`ref`, the pid beside \
-        it or not) from one that only names the process (`pid`).
+        Where a monitor reference or monitored pid is stored: a returned state `field`, \
+        an ETS operation (`table`), or a returned value (`returned`, optionally a tuple \
+        element). `holds` distinguishes a stored reference from a pid-only record. Pid \
+        storage requires the whole pid, not another part of its source message. \
+        `returns_from` and `returned_field_from` trace storage through helpers.
         """
       },
       %{
@@ -112,14 +88,10 @@ defmodule Argus.Schema.Monitors do
         layer: 2,
         fields: [{:func, :symbol, "the function"}],
         doc: """
-        Every start `func` makes (a call named `start*` or `spawn*`) is \
-        followed, on every path to its return, by a receive clause that \
-        takes the `:DOWN` of any monitor, or of a monitor the function takes \
-        after that start: what it starts lives no longer than the call \
-        (Livebook's `UniqueTask.run/2`). The clause, not the receive: one for \
-        the child's answer, or a timed receive's `after`, leaves the child \
-        alive on its path. A path that raises is not asked \
-        (`Argus.Extractors.Monitor`).
+        Every start or spawn is followed on every returning path by a receive clause \
+        accepting its monitor's `:DOWN`, or any monitor's `:DOWN`. Other receive clauses \
+        and timeout arms do not qualify; raising paths are excluded. Establishes that \
+        started children cannot outlive the call.
         """
       },
       %{
@@ -127,10 +99,8 @@ defmodule Argus.Schema.Monitors do
         layer: 2,
         fields: [{:func, :symbol, "a function whose clause heads compare an argument to :DOWN"}],
         doc: """
-        The function handles (part of) a :DOWN message: an argument register, \
-        or one projected from it, is compared to :DOWN in a clause head. \
-        Emitted for every function rather than only named callbacks, because \
-        a gen_statem funnels :info events through private helpers.
+        A function matching `:DOWN` in an argument or projected value. Includes private \
+        helpers as well as callbacks.
         """
       },
       %{
@@ -142,14 +112,10 @@ defmodule Argus.Schema.Monitors do
           {:monitor, :symbol, "the monitor call whose :DOWN a clause takes"}
         ],
         doc: """
-        A receive with a clause that takes the `:DOWN` of a monitor its own \
-        function took: the pattern is `{:DOWN, ^ref, ...}` with `ref`, on every \
-        path, the reference that monitor call returned, and nothing else in \
-        the clause can refuse that message (a pin on the object, a reason, \
-        a guard). No path from the monitor to the receive demonitors. The \
-        runtime delivers that `:DOWN` once the process exits, or at once if \
-        it was already gone, so the receive cannot outlast the monitored \
-        process; its other clauses can only end it sooner.
+        A receive clause accepting every reason for `:DOWN` from a monitor created in \
+        the same function. The pinned reference must come from that monitor on every \
+        path, with no intervening demonitor. Other restrictions on the message \
+        disqualify it. The receive cannot outlast the monitored process.
         """
       },
       %{
@@ -161,18 +127,11 @@ defmodule Argus.Schema.Monitors do
           {:signal, :symbol, "'down' | 'exit'"}
         ],
         doc: """
-        A receive with a clause that takes the exit signal of the process \
-        a pinned register names, whatever the reason it exits with \
-        (`Argus.Extractors.Monitor.ExitSignal`): a `:DOWN` whose ref the \
-        clause pins (`"down"`; the tag may be a monitor's own, \
-        `{alias, ^ref, :process, _, _}`) or an `:EXIT` whose sender it \
-        pins (`"exit"`). Unlike recv_down, the pinned value may come from \
-        anywhere: a parameter, a `spawn_monitor`'s pair, a port the \
-        function opened. The receive ends no later than that process, \
-        while the monitor or the link is in place: a `:DOWN` is not one \
-        where some path from the function's entry to the receive \
-        demonitors (it may have cancelled that very monitor). A clause \
-        that tests the reason, or pins nothing, is not one.
+        A receive clause accepting every exit reason for a pinned monitor reference \
+        (`down`, including custom tags) or sender (`exit`). The pinned value may come \
+        from outside the function. A possible preceding demonitor excludes `down` rows. \
+        The receive is bounded by the target's lifetime while the monitor or link \
+        remains active.
         """
       },
       %{
@@ -183,11 +142,9 @@ defmodule Argus.Schema.Monitors do
           {:func, :symbol, "the function"}
         ],
         doc: """
-        A receive with a clause that can take a trapped exit, \
-        `{:EXIT, pid, reason}`: its head fixes the message's tag to `:EXIT`, \
-        or fixes none (a catch-all, a variable, a test of another element). \
-        A clause whose head fixes another tag, or matches an atom, cannot. \
-        The arity is not read (`Argus.Extractors.Monitor`).
+        A receive clause that may accept a trapped exit: its head fixes tag `:EXIT` or \
+        leaves the tag unrestricted. Atom patterns and other fixed tags are excluded. \
+        Tuple arity is not checked.
         """
       },
       %{
@@ -199,13 +156,10 @@ defmodule Argus.Schema.Monitors do
           {:cancel, :symbol, "the cancel_timer call whose false result it runs under"}
         ],
         doc: """
-        A receive that runs only where the `cancel_timer` call at `cancel`, \
-        earlier in the function, returned `false` \
-        (`Argus.Extractors.Monitor.Flush`): the timer had already fired, \
-        and its message is in the mailbox. Every path from the function's \
-        entry to the receive passes the test of that result against \
-        `false`, and leaves it by the `false` edge. A cancel whose result \
-        is not tested is not one: when it succeeds, the message never comes.
+        A receive reached only after the earlier `cancel_timer` at `cancel` returns \
+        `false`. Every path must take that result's false branch. An unchecked \
+        cancellation does not qualify because a successful cancellation prevents message \
+        delivery.
         """
       },
       %{
@@ -217,11 +171,9 @@ defmodule Argus.Schema.Monitors do
           {:flush, :symbol, "'flush' | 'no_flush'"}
         ],
         doc: """
-        A `Process.demonitor/1,2`. `flush` records whether `[:flush]` was \
-        passed, which is the difference between cancelling a future message and \
-        removing one already in the mailbox. Unreadable options are recorded as \
-        `no_flush`, the direction that keeps a finding rather than discharging \
-        one on a guess.
+        A demonitor call and whether `[:flush]` is present. Flushing removes an already \
+        queued `:DOWN`; cancellation alone does not. Unresolved options use `no_flush` \
+        so they cannot suppress a finding.
         """
       },
       %{
@@ -232,21 +184,11 @@ defmodule Argus.Schema.Monitors do
           {:call, :symbol, "a call in it that returns"}
         ],
         doc: """
-        Every path in `func` from the call at `call` to its return releases \
-        the monitor that call took: a receive's `{:DOWN, ...}` clause that \
-        takes any monitor's, or the one whose ref the call returned (the \
-        clause, not the receive: another clause, or a timed receive's \
-        `after`, leaves with the monitor live); a `Process.demonitor/1,2` \
-        of that ref, with `[:flush]` or without (without it a `:DOWN` \
-        already sent stays queued, which is the mailbox's to take, not a \
-        monitor left live); or a call to a function of the module that \
-        takes one on every path to its return (a receive loop's end, a \
-        path that never enters its receive, taken on trust). A monitor the \
-        callee left live is the caller's to collect: OTP's old supervisor \
-        shutdown monitors each child, looks once (`after 0`) for an exit \
-        already queued, and returns, and its caller then waits for every \
-        child's :DOWN. A path that raises is not asked; a wait in a \
-        closure or another module is not seen.
+        Every returning path after `call` releases its monitor by consuming the matching \
+        `:DOWN`, demonitoring its reference, or calling a same-module helper recognized \
+        as collecting on every return. Other receive clauses and timeout arms leave the \
+        monitor live. Demonitoring need not flush; queued messages are checked \
+        separately. Raising paths, closures, and cross-module waits are excluded.
         """
       },
       %{
@@ -257,11 +199,8 @@ defmodule Argus.Schema.Monitors do
           {:func, :symbol, "the function"}
         ],
         doc: """
-        A receive with a clause whose head fixes the message's tag to \
-        `:DOWN`, whatever it asks of the ref, the object or the reason: the \
-        function waits for a monitor's end within its own call \
-        (`Argus.Extractors.Monitor`). A clause that fixes no tag (a \
-        catch-all) is not one.
+        A receive clause with fixed tag `:DOWN`, regardless of restrictions on \
+        reference, object, or reason. Catch-alls do not qualify.
         """
       }
     ])

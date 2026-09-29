@@ -1,67 +1,19 @@
-// What a restart loses: state one process keeps for another.
-//
-// A supervisor restarts a child by running its start again, and the new
-// process begins from what its init/1 makes. Whatever another process
-// put into the old one — a hook it registered, a subscription, a monitor
-// the old process took of it, a row its handler wrote, a field its state
-// kept — is gone, and nothing puts it back unless the process that put it
-// there does so again. A process does so again when its own code that
-// made the request runs again; code that runs once per incarnation
-// (once_code, runs.dl: init/1, a Channel's join/3, a LiveView's mount/3,
-// and a clause their messages enter — a handle_continue/2 init/1
-// continues to, a cast init/1 makes to itself) may not, until that
-// process restarts too. A request made from code that runs again (a handler, a client
-// function called per use) is made again on its next use, and a caller
-// that names its peer on every call re-resolves it: neither holds
-// anything across the peer's restart.
-//
-// `holds_in(a, b, site_func, tag, how, store)`: module a's once code
-// makes, in site_func (on a's own stack: the same process, no side
-// path), a request tagged `tag` of b's process, and b's handler for it
-// keeps something: `how` is
-//   "table"   — it writes an ETS row (ets_op of kind write);
-//   "monitor" — it monitors or links a process (pid_signal);
-//   "state"   — the state it returns sets a field to a value its init/1
-//               does not start that field at, or replaces the whole state
-//               with one its fields do not spell (returned_update);
-//   "dict"    — it writes its process dictionary;
-//   "handed"  — it hands the request to code outside the program the
-//               effect model does not know, which may keep it (a
-//               library's process b started, as jackalope's
-//               TortoiseClient hands a subscription to Tortoise).
-// `store` is the instruction or function that keeps it.
-//
-// The handler is the clause the request enters: handle_call/3 for a
-// call, handle_cast/2 for a cast, by the request's tag where the clause
-// head tells it apart (clause_call), every clause where it does not or
-// the tag is unknown ("any"). What the clause keeps is asked of its own
-// sites and of the helpers its calls enter in b's module, on b's stack.
-// A state update is asked of the clause the return is in
-// (returned_update's tag) and of the helpers a clause returns through.
-//
-// Direction. Loud where b's keeping cannot be seen: code outside the
-// program counts as keeping, and a handler whose clauses the extractor
-// cannot tell apart is taken whole. Quiet where the request cannot be
-// seen: a send (b's handle_info/2), a gen_statem's call or cast, a
-// request made in a process the once code spawns, and a registration a
-// once code writes into b's table directly rather than through b's API
-// are not asked; nor is b's own rebuilding of what it kept (an init/1
-// that reads it back from disk or Mnesia), nor a's re-registering on a
-// schedule of its own. Those are the priors' (docs/bug-classes.md).
-//
-// Requires otp.dl (callbacks.dl, calls.dl, supervision.dl) and
-// effect_model.dl (structural_call). Once code (once_code) is runs.dl's
-// word, shared with mailbox's monitors.
+// State lost when a peer restarts. A once-phase request may create a relationship the
+// caller does not re-establish after the keeper restarts. Per-use calls and repeated
+// name resolution do not retain that relationship.
+// `holds_in(a, b, site_func, tag, how, store)` links a's startup request to storage in
+// b: ETS table, monitor/link, changed callback state, process dictionary, or unknown
+// external code (`handed`). `store` identifies the keeping operation.
+// Follow the entered call/cast clause and same-module, same-process helpers. Unknown
+// tags admit every clause; unknown external code may retain the request.
+// Not tracked: info sends, gen_statem requests, detached startup work, direct writes
+// into the peer's tables, keeper reconstruction from durable storage, or independent
+// re-registration schedules.
+// Requires otp.dl and effect_model.dl; includes runs.dl for once-phase classification.
 .include "runs.dl"
 
-// ── Requests the once code makes ─────────────────────────────────────
-//
-// `once_request(a, b, kind, tag, func)`: a's once code, in func, calls
-// ("call") or casts to ("cast") b's process with a request tagged `tag`
-// ("any" where it carries none the program sees). A call and a cast are
-// read in one vocabulary (calls.dl): sync_request_at and
-// async_request_at pair each request's target with its own site's tag.
-// A request of a's own process is not one a restart of another can lose.
+// A call or cast from a's once code to b, with the site's request tag or `any`. Pair
+// target and tag through calls.dl. Exclude requests to a's own process.
 .decl once_request(a: symbol, b: symbol, kind: symbol, tag: symbol, func: symbol)
 
 once_request(a, b, "call", tag, g) :-
@@ -74,15 +26,9 @@ once_request(a, b, "cast", tag, g) :-
   async_request_at(g, _, b, tag),
   a != b.
 
-// A request through b's own client API when the server is an argument
-// or a name the extractor cannot read: `def listen(server, channel), do:
-// GenServer.call(server, {:listen, channel, self()})`, eusapia's
-// Notifier, whose listener names the server it was configured with. The
-// request is b's by the tag of the same site: b's own handler takes it
-// (the self-directed call of resolved_calls.dl, which the chains read;
-// this program does not include it, and a cast has no such row
-// anywhere). A proxy's client function sends another server's tag,
-// which its own handler does not take, and resolves to nothing.
+// For an unresolved client-wrapper target, attribute the request to b when b's own
+// handler accepts that site's tag. Proxies using only another server's tag remain
+// unresolved. This handles call and cast sites without including resolved_calls.dl.
 once_request(a, b, "call", tag, g) :-
   once_code(a, g),
   sync_call_site(id, g, t, _),
@@ -103,13 +49,9 @@ once_request(a, b, "cast", tag, g) :-
   callback_tag(h, "handle_cast", tag),
   a != b.
 
-// A call or a cast a handler of a's makes at a site of its once phase
-// (once_phase_site, runs.dl): in a handle_continue/2 clause init/1
-// continues to, a handle_info/2 clause for a message a's start sends, or
-// behind a gate on the state its run closes. The handler is no once code
-// as a function, so the request is asked of the site: a cast there is as
-// much the start's own request as a call (`GenServer.cast(Keeper, {:join,
-// self()})` in the handle_continue/2 init/1 continues to).
+// A call or cast made at a once-phase handler site, including startup continuations,
+// startup-message clauses, and closed state gates. The whole handler may repeat, so
+// classify the site rather than the function.
 once_request(a, b, "call", tag, h) :-
   once_phase_site(a, h, id),
   child_subtree(_, _, a),
@@ -171,9 +113,8 @@ kept(b, h, "*", how, x) :-
   handler_reach.reaches(c, g),
   keeps_site(x, g, how).
 
-// The state a handler returns, by the clause its return is in: of the
-// handler itself, or of a helper a clause returns through (the helper's
-// own rows are for every clause of the helper).
+// Returned handler state by clause, including state returned through helpers. A
+// helper's return facts apply to all its clauses.
 kept(b, h, tag, "state", h) :-
   request_handler(b, _, h),
   returned_update(h, k, v, tag),
@@ -197,10 +138,9 @@ kept(b, h, "*", "state", g) :-
   returned_update(g, k, v, _),
   !initial_field(b, k, v).
 
-// The value init/1 starts a field of b's state at: a field the handler
-// sets back to it (ejabberd_access_permissions' `invalidate` puts its
-// cached definitions back to `none`) loses nothing when init/1 sets it so
-// again. `*` is a whole state of no fields (a counter's `0`).
+// Initial values of fields in b's state. Resetting a field to its init/1 value loses no
+// additional state on restart. `*` represents a whole state without fields, such as a
+// counter initialized to 0.
 .decl initial_field(mod: symbol, key: symbol, value: symbol)
 
 initial_field(b, k, v) :-

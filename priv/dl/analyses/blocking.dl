@@ -1,12 +1,5 @@
-// A synchronous wait that can last forever or nest.
-//
-// Every one of these is a process waiting on another: a chain of
-// handle_call hops whose per-hop timeouts compose unpredictably, two
-// modules waiting on each other, a server that serializes too many
-// callers, a receive on an OTP process's own stack, a remote call with
-// no deadline, a cluster-wide lock, a peer call whose catch lets the
-// peer's shutdown crash the caller. The mechanism (GenServer.call, rpc,
-// :global, receive) is a column or a relation; the concern is the wait.
+// Synchronous waits: nested call chains, cycles, callback receives, unbounded RPC and
+// socket calls, global locks, and incomplete handling of peer shutdown.
 
 .include "../clientlib/imports.dl"
 .include "../clientlib/otp.dl"
@@ -24,33 +17,18 @@
 // level (clientlib/tooling.dl, Argus.Findings.Tooling).
 .output tooling
 
-// ══ The outputs ═════════════════════════════════════════════════════
-//
-// `call_chain(from, to, kind, depth, inferred, caller_ms, downstream_ms,
-//   peer, permille, site)`
-//   — synchronous hops through callbacks: "chain" (a request into
-//   `from` traverses `depth` handle_call hops to `to`; `inferred` is
-//   "tag" when a hop was attributed by message tag), "cast" (a
-//   handle_cast that makes a synchronous call, at `site`: the call in
-//   handle_cast/2 that waits, or that enters the helper that does; ""
-//   when no call instruction carries it), "budget" (the caller's
-//   `caller_ms` timeout is shorter than the callee's own `downstream_ms`).
-// `unbounded_wait(func, site, kind, api, detail, nodes)` — a wait with no
-//   deadline: ":infinity" on a hop that itself serves callers
-//   ("infinity"; `func` is the handle_call, `api` the target), a remote
-//   call with the default infinity timeout ("rpc"), a remote call inside
-//   a callback ("rpc_in_callback"), a :global lock with retries
-//   ("global"; `detail` is the retries, `nodes` whose agreement it waits
-//   on: "cluster", "local" or "unknown"; empty for the other kinds), a
-//   socket call with no timeout on a callback's stack ("socket"; `api`
-//   the call, `detail` the server whose callback runs it).
-// `receive_in_callback(id, func, callback, behaviour, proximity, bounded)`
-//   — a receive on an OTP process's own stack, `bounded` "false" when
-//   it has no after clause and can hang, "true" when it has one, "down"
-//   when it has none but takes the :DOWN of a monitor its function took.
-//   With priors on, a "cast" chain and an "infinity" wait carry `peer`
-//   ("local") and `permille` when the model is sure the server called
-//   answers every call from inside the node (below); else "" and 0.
+// Outputs:
+// `call_chain`: request chains (`chain`), synchronous waits from casts (`cast`), or
+// caller timeouts shorter than downstream timeouts (`budget`). Includes depth, timeout
+// values, call site, and `tag` for inferred targets.
+// `unbounded_wait`: an infinity call hop, RPC, RPC in a callback, global lock, or
+// socket wait. Global rows include retries and node scope; socket rows identify the API
+// and server.
+// `receive_in_callback`: a receive on an OTP callback's stack. `bounded` is `false`
+// without an after clause, `true` with one, or `down` when a monitor's :DOWN bounds the
+// wait.
+// With priors enabled, cast and infinity findings may include `peer = local` and
+// confidence in `permille` when the target is classified as answering locally.
 .decl call_chain(from: symbol, to: symbol, kind: symbol, depth: number, inferred: symbol, caller_ms: number, downstream_ms: number, peer: symbol, permille: number, site: symbol)
 .output call_chain
 
@@ -64,24 +42,12 @@
 .decl receive_in_callback(id: symbol, func: symbol, callback: symbol, behaviour: symbol, proximity: symbol, bounded: symbol)
 .output receive_in_callback
 
-// ══ Call chains through handle_call ═════════════════════════════════
+// Call chains through handle_call
 //
-// A chain is made of requests, not modules: a request enters one clause
-// of the server's handle_call/3 (clause_call says which calls each
-// clause makes), and that clause's own synchronous calls are the next
-// hops. Fugue's Countersubject answers :invert by calling Answer with
-// :answer, whose clause calls Subject — a chain of two — while Answer's
-// :echo clause calls Countersubject back, closing a cycle the :answer
-// request never enters. Tracked by module, that cycle swallowed the
-// chain beside it.
-//
-// Where a clause is unknown (a body that dispatches through a helper, a
-// catch-all) the node is (mod, "any"), which every request to the module
-// enters; where a request's tag is unknown (a message built at runtime)
-// it is "any", which enters every clause. With both unknown throughout,
-// this is the module-granular chain the rule used to compute, less the
-// hops a handler reaches only through a clause of a guarded dispatcher
-// its literal argument never enters (site_request, clientlib/calls.dl).
+// Track (module, request clause) so a cycle in one clause does not hide a chain through
+// another. `clause_call` identifies the next synchronous hops. Unknown clauses accept
+// every request; unknown request tags enter every clause. `site_request` also filters
+// guarded dispatchers by their literal arguments.
 
 // The requests a handle_call/3's calls make, per call site and clause
 // (clientlib/calls.dl's site_request, site_clause).
@@ -97,21 +63,12 @@ clause_dep(mod, clause, to, request) :-
   site_clause(h, id, clause),
   mod != to.
 
-// NOTE deliberately no `stateful_module_dep` clause here. It was
-// `handle_call_function(from_mod, _), stateful_module_dep(from_mod,
-// to_mod, _)` — an existence check that (a) never tied the dependency to
-// the handle_call (the dep could flow from init/1 or a cast handler),
-// (b) inherited stateful_module_dep's module-level heuristic (reaching a
-// PURE function like an ETS-read `Config.get/2` counts as calling the
-// Config server, because the module has a GenServer.call *somewhere*),
-// and (c) pulled async_cast edges into a "synchronous" chain. On a
-// 15-project corpus this clause produced every one of the analysis's 29
-// false positives (0 came from it that were real); the genuine chains
-// all derive from the genserver_sync_api rules above.
+// Do not derive chains from `stateful_module_dep`: it can describe init or cast work,
+// include asynchronous edges, and infer server dependencies from unrelated functions in
+// a module. Chains require synchronous calls reached by handle_call.
 
-// A request tagged `request` to `mod` enters its clause `clause`: the one
-// for that tag, or one serving any request; a request whose tag is
-// unknown enters every clause.
+// Map request tags to matching handler clauses, including catch-alls. An unknown
+// request tag may enter every clause.
 .decl requested(mod: symbol, request: symbol)
 
 requested(to, request) :- clause_dep(_, _, to, request).
@@ -134,12 +91,9 @@ request_chain(from, clause, to, 1) :-
   clause_dep(from, clause, to, _),
   gen_server_like(to).
 
-// Recursive case: through the clause the request enters in an
-// intermediate server. A clause on a cycle of requests is not passed
-// through: every length around the cycle was once a chain of its own,
-// and a server that can wait on itself is call_cycle's finding. Only the
-// shortest chain from a clause to a server is kept — the one the finding
-// reports — so no path is enumerated at every length up to the bound.
+// Extend through the clause entered in the next server. Stop at request cycles, which
+// `call_cycle` reports separately. Keep only the shortest chain from a clause to each
+// server.
 request_chain(from, clause, to, d + 1) :-
   clause_dep(from, clause, mid, request),
   enters(mid, request, mid_clause),
@@ -177,9 +131,8 @@ waits_through_chain(from, to, d1) <= waits_through_chain(from, to, d2) :- d2 <= 
 
 // ── Output: timeout chain risk ───────────────────────────────────────
 
-// A request into `from`'s handle_call/3 waits on a server whose own
-// handle_call/3 waits on another, on to `to`: the first caller's timeout
-// has to cover every hop after its own.
+// A chain of synchronous calls from `from` to `to`. The first caller's timeout must
+// cover all subsequent waits.
 .decl nested_call_chain(from: symbol, to: symbol, depth: number)
 
 nested_call_chain(from, to, depth) :-
@@ -191,9 +144,8 @@ nested_call_chain(from, to, depth) :-
 
 passes_through_another_server(depth) :- depth >= 2.
 
-// A hop that exists only by tag attribution, and the chains that cross
-// one: an inferred hop is the first thing to doubt in a long chain.
-// The calls of h that reach `to` through a tag-attributed hop.
+// Call chains containing a hop inferred from tag attribution. These inferred hops are
+// weaker evidence than directly resolved calls.
 .decl handler_inferred(h: symbol, site: symbol, to: symbol)
 
 handler_inferred(h, id, to) :-
@@ -202,10 +154,8 @@ handler_inferred(h, id, to) :-
   sync_call_site(id, h, t, _),
   unresolved_target(t).
 
-// A call h makes itself runs on h's stack: runs_elsewhere holds only for
-// an edge h does not call. An edge h has no call of (a closure it builds)
-// is on h's stack unless it leads off it (runs_elsewhere: a closure a
-// spawn runs, a fun h only registers).
+// Direct call instructions run on h's stack. Site-less closure/fun edges do too unless
+// `runs_elsewhere` identifies detached or deferred execution.
 handler_inferred(h, id, to) :-
   handle_call_function(_, h),
   call_instr(h, g, id),
@@ -245,11 +195,8 @@ request_chain_inferred(from, clause, to) :-
 
 timeout_chain_inferred(from, to) :- request_chain_inferred(from, _, to).
 
-// Where a chain starts: the call in from's handle_call/3 that makes the
-// first hop of a shortest chain to `to` — a request into `mid` whose
-// clause is `depth - 1` hops from `to`. handle_call/3 compiles every
-// clause into one function, so the function's head is some other
-// request's clause. The finding keeps the earliest (the relation's key).
+// The first call in handle_call on a shortest chain to `to`. Anchor at the call site
+// rather than the shared function head; the relation key selects the earliest site.
 .decl chain_site(from: symbol, to: symbol, site: symbol)
 
 chain_site(from, to, id) :-
@@ -264,9 +211,8 @@ chain_site(from, to, id) :-
   request_chain(mid, mid_clause, to, dm),
   d = dm + 1.
 
-// A chain anchors at from's call that starts it; one whose first hop is
-// no call instruction of from's (a closure it hands on) anchors at the
-// function, and only then.
+// Anchor a chain at the call instruction that starts it. If the first edge has no
+// instruction, such as a passed closure, anchor at the function.
 .decl chain_at(from: symbol, to: symbol, site: symbol)
 
 chain_at(from, to, id) :- chain_site(from, to, id).
@@ -289,9 +235,8 @@ chain_found(from, to, "chain", depth, "static", 0, 0, site) :-
 
 // ── Output: blocking cast handler ────────────────────────────────────
 
-// A handle_cast/2 waits for another server's reply: the caster chose a
-// cast so as not to wait, and the server it cast to waits instead,
-// reading none of its mailbox until the reply comes.
+// handle_cast/2 makes a synchronous call. Although the sender does not wait, the
+// receiving server cannot process its mailbox until the call returns.
 .decl blocking_cast_handler(mod: symbol, handler: symbol, to: symbol)
 
 blocking_cast_handler(mod, handler, to) :-
@@ -310,27 +255,16 @@ handles_casts(mod, h) :- handle_cast_function(mod, h).
 
 waits_on_server(h, to) :- handler_dep(_, "handle_cast", to, "call", h).
 
-// Some way from the handler to the wait enters each callee through a
-// clause its literal argument can select (site_request, which reads the
-// clause each call enters, as the chains do; reaches_sync_dep, which
-// handler_dep reads, does not). A handler whose every way to the wait
-// passes a clause it cannot select waits on nothing: zotonic's
-// mod_acl_user_groups casts itself `rebuild` and hands it on to
-// handle_info(rebuild, s), whose other clauses are the ones that call
-// z_dispatcher.
+// The handler can reach this wait through clauses selected by its literal arguments.
+// Uses `site_request`; `reaches_sync_dep` does not distinguish dispatcher clauses.
 .decl requests_through_a_clause_it_enters(handler: symbol, to: symbol) inline
 
 requests_through_a_clause_it_enters(h, to) :- site_request(h, _, to, _).
 
 site_demand(h) :- handle_cast_function(_, h).
 
-// Anchored at the call that waits: handle_cast/2 compiles every clause
-// into one function, and the clause making the call is not the first
-// (exq's Manager.Server calls Redis in its :cleanup_host_stats clause,
-// thirteen lines below the head). The site is the call in handle_cast/2
-// on the way to the wait (site_request, clientlib/calls.dl): the
-// GenServer.call itself, or the call into the helper that makes it. One
-// finding per target, at the earliest such call (the relation's key).
+// The call in handle_cast that waits or enters a waiting helper. Report once per target
+// at the earliest such site, rather than at the shared function head.
 .decl cast_call_site(mod: symbol, to: symbol, site: symbol)
 
 cast_call_site(mod, to, id) :-
@@ -359,9 +293,8 @@ handle_call_waits_on(mod, to, ms) :-
 
 // ── Output: timeout insufficient ───────────────────────────────────
 
-// A handle_call/3 gives a server less time to answer than that server's
-// own handle_call/3 gives the server it calls: the callee may wait
-// longer, legitimately, than its caller is willing to.
+// The caller's timeout is shorter than its callee's outgoing call timeout. The callee
+// may still be waiting legitimately when the caller times out.
 .decl insufficient_timeout(caller: symbol, callee: symbol, caller_ms: number, callee_ms: number)
 
 insufficient_timeout(caller, callee, caller_ms, callee_ms) :-
@@ -369,13 +302,9 @@ insufficient_timeout(caller, callee, caller_ms, callee_ms) :-
   handle_call_waits_on(callee, _, callee_ms),
   runs_out_before(caller_ms, callee_ms).
 
-// Both timeouts are finite and in the bytecode (not :infinity, -1, nor
-// unknown, 0), and the first is the shorter. Equality is deliberately
-// not flagged: the extractor encodes the GenServer.call default as 5000,
-// so equal budgets almost always mean "both sides use the default" — the
-// universal configuration, not a misconfiguration. The boundary case is
-// real (equal budgets leave the callee no slack) but flagging it would
-// mark nearly every two-hop chain in real code as an error.
+// The caller's known finite timeout is strictly shorter than the callee's. Exclude
+// infinity (-1), unknown (0), and equal timeouts. Equality commonly represents two
+// default 5-second budgets, so it is not reported.
 .decl runs_out_before(caller_ms: number, callee_ms: number) inline
 
 runs_out_before(caller_ms, callee_ms) :-
@@ -407,13 +336,10 @@ wait_found(cat(caller, ":handle_call/3"), site, "infinity", server, "", "") :-
   infinite_wait_in_chain(caller, server),
   timed_wait(caller, server, -1, site).
 
-// Where a handle_call/3 makes a wait with a given timeout (-1 for
-// :infinity): the call itself (or the tag-attributed call on a pid it
-// holds, or the call points-to resolves), or the call into the helper or
-// client API that makes it. handle_call/3 compiles every clause into one
-// function, and the clause that waits is rarely the first. Empty when the
-// wait has no call of the handler's own (a closure it hands on), and the
-// finding falls back to the function.
+// The handler call site for a timed wait, including helper/API calls and targets
+// resolved by tags or points-to. Uses -1 for infinity. An empty site means the wait
+// occurs in a closure without a handler call anchor; findings fall back to the
+// function.
 .decl timed_wait_site(mod: symbol, target: symbol, ms: number, site: symbol)
 
 timed_wait_site(mod, t, ms, id) :-
@@ -450,44 +376,31 @@ timed_wait(mod, t, ms, "") :-
   handle_call_waits_on(mod, t, ms),
   !timed_wait_site(mod, t, ms, _).
 
-// ── A server that answers at once ──────────────────────────────────────
+// Servers that answer without adding a wait
 //
-// A handle_call/3 that answers from what its process holds: it replies
-// in its return, not later ({:noreply, …}, defers_reply), and what it
-// runs in its own module has no receive without `after`, no call it
-// cannot see (a fun, an apply, another module's function handed as a
-// fun), and no call out of its module that answers_in_time does not
-// vouch for — the rpc rule's vocabulary of calls that return at once.
-// Asked of the servers an :infinity hop reaches (infinity_target): one
-// whose handle_call/3 answers at once ends the chain, and nothing
-// downstream of it can hang the caller (Phoenix's CodeReloader stops its
-// own Proxy, whose :stop clause only replies). A server can still be slow because
-// it is busy with another request, or stuck in another callback; the
-// hop does not add a wait of its own to the chain. startup's
-// `handler_blocks` is the dual, and differs on purpose: it reports, so
-// it holds only of a handler's wait that provably has no bound; this
-// word suppresses, so it holds only of an answer that provably comes at
-// once.
+// For infinity targets, prove that handle_call replies immediately, does not defer, and
+// reaches no unbounded receive, opaque call, or unvetted external call. Same-module
+// helpers are checked too. This suppresses the extra-wait finding; the server may still
+// be busy or blocked in another callback. Unlike startup's `handler_blocks`,
+// suppression requires proof that no unbounded wait is added.
 .decl infinity_target(mod: symbol)
 
 infinity_target(m) :- handle_call_waits_forever_on(_, m).
 
-// What holds the handler up: its own stack in its module, and a task it
-// waits for; not a closure it hands to a process that runs apart.
+// Work that blocks the handler: its same-module stack and tasks it awaits. Exclude
+// detached closures.
 .init answer_reach = ForwardIntraModuleHoldingReach
 
 answer_reach.root(h, h) :- infinity_target(m), handle_call_function(m, h).
 
-// The handle_call/3 may wait before it answers: a receive with no
-// `after`, a reply it defers, a call it cannot see, or a call out of its
-// module that does not answer in time.
+// The handler may delay its reply through an untimed receive, deferred reply,
+// unresolved call, or external call that cannot answer promptly.
 .decl may_wait_to_answer(handler: symbol)
 
 may_wait_to_answer(h) :- answer_reach.reaches(h, f), recv_start(_, f, 1, _).
 
-// A handler that returns {:noreply, …} answers later, from another
-// callback, when some other message comes — or never: the hop waits on
-// that, not on the handler.
+// Returning {:noreply, …} defers the reply to a later callback. The caller waits for
+// that reply, which may never arrive.
 may_wait_to_answer(h) :- infinity_target(m), defers_reply(m, h, _).
 may_wait_to_answer(h) :- answer_reach.reaches(h, f), dynamic_call(_, f, kind), unseen_call(kind).
 
@@ -507,27 +420,17 @@ may_wait_to_answer(h) :-
 
 answers_straight_away(m) :- infinity_target(m), handle_call_function(m, h), !may_wait_to_answer(h).
 
-// ══ Mutual synchronous dependency ═══════════════════════════════════
-// `phase` is "call" for processes that synchronously call each other
-// round a cycle, "continue" when two do so from handle_continue/2: both
-// return from init, the supervisor proceeds, and neither ever reads its
-// mailbox. "self" is a process calling itself (mod_a = mod_b).
+// Synchronous wait cycles
 //
-// A cycle of waits deadlocks at any length: A's handle_call waits on B,
-// B's on C, C's on A, which is still waiting on B. A cycle is reported
-// once, from its least module `a` (mod_a) and the module `b` it calls
-// (mod_b): witness_a is a's wait on b, and witness_b the wait that
-// closes the cycle back into a — b's own for a cycle of two, the last
-// module's round a longer one (the related "return path"). Its every
-// edge is a frame of call_cycle_path.
+// `phase` is `call`, `continue` for mutual startup continuations, or `self`. Report
+// each cycle from its least module `mod_a` and the next module `mod_b`. `witness_a`
+// starts the cycle; `witness_b` closes it, possibly from a later module in a longer
+// cycle. `call_cycle_path` supplies the edges.
 .decl call_cycle(mod_a: symbol, mod_b: symbol, witness_a: symbol, witness_b: symbol, phase: symbol, site_a: symbol, site_b: symbol)
 .output call_cycle
 
-// Servers wait on each other round a ring, each from its own process:
-// every wait is for a reply the next server sends only once its own wait
-// ends, so none ends. `a` is the ring's least module, from which it is
-// found once; `z` is the module whose wait closes the ring (b itself for
-// a ring of two).
+// A cycle of waits made by the servers' own processes. `a` is the least module and `z`
+// closes the cycle; for two servers, `z` is `b`.
 .decl wait_cycle(a: symbol, b: symbol, first_wait: symbol, closing_wait: symbol)
 
 wait_cycle(a, b, first_wait, closing_wait) :-
@@ -540,11 +443,9 @@ call_cycle(a, b, first_wait, closing_wait, "call", site_a, site_z) :-
   sync_site_or_empty(first_wait, b, site_a),
   sync_site_or_empty(closing_wait, a, site_z).
 
-// A ring through a's process whose least module is a: b, which a waits
-// on, reaches z through modules after a (b itself for a ring of two),
-// and z waits on a. Walked from each module's waits on later ones only,
-// so a ring is found once, from its least module, and none is
-// enumerated path by path.
+// A cycle starting at least module `a`: its peer `b` reaches `z` through later modules,
+// and `z` waits on `a`. Restricting traversal to later modules avoids duplicate cycle
+// starts and path enumeration.
 .decl ring_closes_at(a: symbol, b: symbol, z: symbol)
 
 ring_closes_at(a, b, z) :- waits_through_later(a, b, z), process_waits_on(z, a, _).
@@ -560,29 +461,17 @@ waits_through_later(a, b, z) :-
   process_waits_on(y, z, _),
   a < z.
 
-// ── Which process waits ──────────────────────────────────────────────
+// Identify the waiting process
 //
-// A deadlock is two processes each waiting on the other's mailbox, and
-// module_sync_dep(a, b, w) says only that a function of a's waits on
-// b's process: a function runs in whichever process calls it. A
-// client function of a's (`def produce(recs), do: Batcher.produce(...)`,
-// klife's Producer) runs in its caller, and a module with no process of
-// its own (Plausible's `def flush, do: WriteBuffer.flush(__MODULE__)`)
-// never waits as itself. So a direction of a cycle is a wait a's own
-// process makes: a witness that runs on its stack, entered at one of
-// a's callbacks — or in a task it awaits, which holds it just the same.
-//
-// Asked only of the dependencies on a cycle of modules, a pair that
-// depend on each other both ways or a longer ring, backwards from their
-// witnesses.
+// A module dependency alone does not prove that module's process waits: exported client
+// functions run in their callers. For cycle candidates, trace each witness back to a
+// callback on the module's own stack, including tasks it awaits.
 .decl cycle_candidate(a: symbol, b: symbol)
 
 cycle_candidate(a, b) :- module_sync_dep(a, b, _), sync_reach(b, a).
 
-// A module's synchronous dependencies, closed: whose process a's code
-// waits on, directly or through the servers it waits on. Asked of the
-// modules that wait on some other and are waited on (the only ones a
-// cycle can pass through).
+// Transitive module-level wait dependencies, limited to modules that both wait and are
+// waited on, since only those can participate in cycles.
 .decl sync_link(a: symbol, b: symbol)
 
 sync_link(a, b) :- module_sync_dep(a, b, _), module_sync_dep(b, _, _), module_sync_dep(_, a, _).
@@ -598,10 +487,8 @@ sync_reach(a, c) :- sync_reach(a, b), sync_link(b, c).
 
 holds.seed(w, w) :- cycle_candidate(a, b), module_sync_dep(a, b, w).
 
-// Where `mod`'s process starts running its code (process_entry): its
-// startup ("start": init/1, or a channel's join/3, which the channel
-// server runs in the channel's process before it is joined), or once it
-// runs ("run"): the other entries.
+// Classify process entries as startup ("start": init/1 or a channel's join/3) or normal
+// operation ("run": other callbacks).
 .decl process_code(mod: symbol, func: symbol, phase: symbol)
 
 .decl start_code(mod: symbol, func: symbol)
@@ -621,27 +508,13 @@ process_dep(a, b, w, phase) :-
   process_code(a, e, phase),
   holds.reaches(e, w).
 
-// ── A wait made on the way up ────────────────────────────────────────
+// Waits during startup
 //
-// A process that waits on a peer only while it starts, and has no name,
-// is reachable during its start by the pid it hands out alone: a
-// starter's start_link has not returned it, and no registry holds it. A
-// peer that learns the pid from the call it is answering, and answers
-// before calling back, cannot close the cycle — the start is over by
-// then. Phoenix LiveView's upload channel registers with the LiveView
-// from join/3, handing it `self()`; the LiveView replies at once and
-// calls the channel only later, through the pid it kept.
-//
-// The wait counts when the process can be named while it starts (a
-// registered name, or a call to it by name, anywhere), or when the
-// peer's handle_call clause the request enters calls it back: the
-// start deadlocks on its own request. A peer whose request handling the
-// program cannot see (no handle_call/3 of its) is taken to call back.
-//
-// Known limit: a peer that holds the start's request unanswered (a
-// `{:noreply, _}` without a reply) and calls the starting process from
-// another callback deadlocks too; the reply is not followed, and that
-// wait is not reported.
+// An unnamed starting process has not yet returned its pid to its starter. Count its
+// wait only if it can already be addressed by name or the peer's entered request clause
+// calls it back. Unseen peer handlers are assumed able to call back.
+// Known limit: a peer may defer the reply and call back from another callback; reply
+// flow is not tracked, so that deadlock can be missed.
 .decl nameable(mod: symbol)
 
 nameable(m) :- named_process(m, _).
@@ -662,18 +535,16 @@ calls_back(b, a, w) :-
   clause_dep(b, clause, a, _),
   (request = clause ; clause = "any" ; request = "any").
 
-// a's process waits on b's at `w`, one direction of a cycle: a wait it
-// makes once it runs, or on its way up where the start can be caught in
-// it.
+// Process a waits on process b at w, either during normal operation or during startup
+// when the start can participate in a cycle.
 .decl process_waits_on(a: symbol, b: symbol, w: symbol)
 
 process_waits_on(a, b, w) :- process_dep(a, b, w, "run").
 process_waits_on(a, b, w) :- process_dep(a, b, w, "start"), nameable(a).
 process_waits_on(a, b, w) :- calls_back(b, a, w).
 
-// Two servers wait on each other from handle_continue/2: both have
-// returned from init/1, so their supervisor goes on, and neither reads
-// its mailbox again. Found once, from the lesser module.
+// Two servers wait on each other from handle_continue/2 after both have initialized.
+// Neither processes its mailbox. Report once, ordered by module.
 .decl continue_cycle(a: symbol, b: symbol, a_wait: symbol, b_wait: symbol)
 
 continue_cycle(a, b, a_wait, b_wait) :-
@@ -697,11 +568,9 @@ call_cycle(a, b, a_wait, b_wait, "continue", site_a, site_b) :-
   continue_wait(a, b, site_a),
   continue_wait(b, a, site_b).
 
-// A server calls itself synchronously — through self(), self() handed to
-// a helper, or, from its callback, a name only its own module's
-// processes hold (self_call, processes.dl): gen exits with :calling_self
-// rather than wait forever for a reply only the caller could send. A
-// cycle of one, which the rings of two modules or more cannot see.
+// A synchronous self-call through self(), a helper parameter, or a name held only by
+// this module's processes. The gen API exits with `:calling_self`. These one-process
+// cycles are separate from multi-module rings.
 .decl call_to_self(func: symbol, call: symbol)
 
 call_to_self(func, call) :- self_call(func, call).
@@ -710,12 +579,8 @@ call_cycle(m, m, func, func, "self", call, call) :-
   call_to_self(func, call),
   function_def(func, m, _, _, _).
 
-// The call in a witness that makes its side of the dependency: the call
-// itself when the witness makes it; its call to the other module's client
-// API when that function makes it (nerves_hub_link's Extensions calls
-// `Socket.push_extensions_message/2` from a comprehension's closure, and
-// the frame pointed at the closure's first line); empty when some other
-// callee does.
+// The witness's own call or call into the target's client API. Empty when another
+// callee makes the dependency and no site in the witness identifies it.
 .decl sync_site_or_empty(func: symbol, mod: symbol, site: symbol)
 
 sync_site_or_empty(f, m, id) :- sync_site(f, m, id).
@@ -739,12 +604,9 @@ calls_into(f, m) :-
   call_instr(f, g, _),
   function_def(g, m, _, _, _).
 
-// The edges of a cycle: evidence attached to the call_cycle finding for
-// (mod_a, mod_b), one related frame per edge. One row per witness —
-// the frames are deduplicated on (mod_a, mod_b, from_mod, to_mod).
-// `how` is "tag" when the edge exists only because a dynamic-target call
-// was attributed by its message tag, "static" when the callee is named:
-// an inferred edge is the first thing to doubt in a surprising cycle.
+// Evidence edges for a `call_cycle` finding. Frames are deduplicated by cycle and
+// module pair. `how = tag` marks a target inferred from the message tag; `static` marks
+// a named callee.
 .decl call_cycle_path(mod_a: symbol, mod_b: symbol, from_mod: symbol, to_mod: symbol, witness: symbol, how: symbol, site: symbol)
 .output call_cycle_path
 
@@ -758,8 +620,8 @@ call_cycle_path(a, b, from_mod, to_mod, witness, "static", site) :-
   !reaches_tag_dep(witness, to_mod),
   sync_site_or_empty(witness, to_mod, site).
 
-// The edges of the cycles a call_cycle names: its first, a → b, and each
-// wait on the way from b back to a among modules after a.
+// Edges in a call_cycle: a → b, then the path back to a through modules ordered after
+// a.
 .decl ring_edge(a: symbol, b: symbol, from_mod: symbol, to_mod: symbol, witness: symbol)
 
 ring_edge(a, b, a, b, w) :- wait_cycle(a, b, _, _), process_waits_on(a, b, w).
@@ -818,9 +680,8 @@ sync_call_fan_in(target_mod, cnt) :- serialization_bottleneck(target_mod, cnt).
 
 // ── Bottleneck callers ──────────────────────────────────────────────────
 
-// The callers of each bottleneck: evidence attached to the fan-in
-// finding, one related frame per caller module: one row per witness,
-// frames deduplicated on (caller_mod, target_mod).
+// Caller evidence for a fan-in finding. Keep one row per witness; deduplicate displayed
+// frames by (caller_mod, target_mod).
 .decl bottleneck_caller(caller_mod: symbol, target_mod: symbol, witness: symbol)
 .output bottleneck_caller
 
@@ -828,10 +689,8 @@ bottleneck_caller(caller_mod, target_mod, witness) :-
   module_sync_dep(caller_mod, target_mod, witness),
   serialization_bottleneck(target_mod, _).
 
-// ══ A receive on an OTP process's own stack ═════════════════════════
-//
-// An edge into what another process runs, or into a fun only kept for
-// later (runs_elsewhere), leaves the callback's stack.
+// Receives on an OTP callback's own stack. Exclude edges into detached or deferred
+// functions (runs_elsewhere).
 .decl same_process_edge(caller: symbol, callee: symbol)
 
 same_process_edge(caller, callee) :-
@@ -839,22 +698,16 @@ same_process_edge(caller, callee) :-
   !runs_elsewhere(caller, callee),
   !side_call(caller, callee).
 
-// An entry of a process that runs a behaviour's loop over its own
-// mailbox (process_entry: its callbacks, init/1, terminate/2, a
-// gen_statem's state functions), with the behaviour: a declared loop
-// behaviour, or the one a server the table does not list declares
-// (unlisted_server, callbacks.dl).
+// A process entry and its loop behaviour, including callbacks, init, terminate, statem
+// states, and inferred unlisted servers.
 .decl loop_entry(entry: symbol, mod: symbol, behaviour: symbol)
 
 loop_entry(e, m, b) :- process_entry(m, e), behaves_as(m, b), process_behaviour(b, "loop").
 loop_entry(e, m, b) :- process_entry(m, e), unlisted_server(m), behaves_as(m, b).
 
-// What an entry runs on its own stack, and how far: itself ("direct"),
-// or a function it calls in its own process ("helper"). One call deep on
-// purpose: a callback that calls a peer reaches gen's own timed receive
-// two calls down, and every server that makes a call would be reported
-// for it where OTP is in the program; the deeper waits are the
-// synchronous-call rules'.
+// Same-process reach from a callback: the callback itself (`direct`) or one helper call
+// (`helper`). The one-hop limit avoids reporting OTP's internal receives behind peer
+// calls, which synchronous-call rules already cover.
 .decl callback_reaches(entry: symbol, func: symbol, proximity: symbol)
 
 callback_reaches(entry, entry, "direct") :- loop_entry(entry, _, _).
@@ -865,12 +718,8 @@ callback_reaches(entry, callee, "helper") :-
 
 // ── Findings ─────────────────────────────────────────────────────
 
-// A receive with no `after` runs on an OTP process's own stack, and
-// nothing is sure to end it: if its message never comes the process
-// hangs, and its supervisor can only brutal-kill it. A blocking receive
-// init/1 reaches is startup's finding (unbounded_effect_in_init,
-// "receive" or "down"): it holds the supervisor's start, and is reported
-// there once.
+// An unbounded receive on an OTP callback's stack with no guaranteed completion
+// message. Init receives are reported by startup's `unbounded_effect_in_init` instead.
 .decl hanging_receive(receive: symbol, func: symbol, callback: symbol, proximity: symbol)
 
 hanging_receive(receive, func, callback, proximity) :-
@@ -884,12 +733,9 @@ receive_in_callback(receive, func, callback, behaviour, proximity, "false") :-
   hanging_receive(receive, func, callback, proximity),
   loop_entry(callback, _, behaviour).
 
-// A receive with no `after` on an OTP process's own stack that its
-// peer's exit ends: it cannot hang, but it holds the callback for as
-// long as that process lives. A terminate/2 that stops a process and
-// waits for it to go (Broadway's Topology and Terminator) is one.
-// Reported as a bounded receive, "down"; init/1's is startup's, as
-// above.
+// A callback receive without an after clause that ends when its peer exits. Reported
+// with bound `down`; it can hold the callback for the peer's lifetime. Init receives
+// are reported by startup.
 .decl receive_until_peer_exits(receive: symbol, func: symbol, callback: symbol, proximity: symbol)
 
 receive_until_peer_exits(receive, func, callback, proximity) :-
@@ -903,9 +749,8 @@ receive_in_callback(receive, func, callback, behaviour, proximity, "down") :-
   receive_until_peer_exits(receive, func, callback, proximity),
   loop_entry(callback, _, behaviour).
 
-// A receive with an `after` on an OTP process's own stack: it cannot
-// hang, but it still takes from the behaviour's mailbox and re-scans
-// its queue.
+// A timed receive on an OTP callback's stack has a bounded wait but still consumes and
+// re-scans the behaviour's mailbox.
 .decl timed_receive_in_callback(receive: symbol, func: symbol, callback: symbol, proximity: symbol)
 
 timed_receive_in_callback(receive, func, callback, proximity) :-
@@ -928,12 +773,9 @@ waits_without_timeout(receive, func) :- recv_start(receive, func, 1, _).
 
 waits_with_timeout(receive, func) :- recv_start(receive, func, 0, _).
 
-// The receive ends no later than its peer, as `callback` runs it: it
-// takes the :DOWN of a monitor (down_bounded, clientlib/receive.dl),
-// which the runtime delivers once the monitored process exits, or at
-// once if it was already gone; or the :EXIT of a linked peer in a
-// process trapping exits when it waits (trapped_exit_ends). Its other
-// clauses can only end it sooner.
+// The receive accepts a monitor's :DOWN, or a linked peer's :EXIT while the callback
+// traps exits. Its wait ends no later than that peer's lifetime; other clauses may end
+// it sooner.
 .decl ends_when_peer_exits(receive: symbol, callback: symbol)
 
 ends_when_peer_exits(receive, callback) :-
@@ -945,10 +787,8 @@ ends_when_peer_exits(receive, callback) :-
   trapped_exit_ends(receive, func),
   callback_reaches(callback, func, _).
 
-// The receive takes the :EXIT of a process or port its function links to
-// (exit_pinned, clientlib/receive.dl), and the process is trapping exits
-// when it waits (trapping_at, clientlib/trapping.dl): the linked peer's
-// exit ends the wait.
+// A receive pinned to a linked process or port's EXIT while trapping exits. The linked
+// peer's exit ends the wait; see exit_pinned and trapping_at.
 .decl trapped_exit_ends(id: symbol, func: symbol)
 
 trapped_exit_ends(id, f) :- exit_pinned(id, f), trapping_at(f, id).
@@ -962,42 +802,22 @@ trapped_exit_ends(id, f) :- exit_pinned(id, f), trapping_at(f, id).
 
 takes_fired_timer_message(receive) :- flush_receive(receive).
 
-// A receive with an `after` that takes the message of a timer its
-// function cancels (flush_poll): `receive :tick -> :ok after 0 -> :ok
-// end` after a cancel is the form the cancel_timer docs give for taking
-// a timer's message that was already delivered, and it takes exactly the
-// message the callback means to drop. The facts carry whether a receive
-// can block, not its timeout, so a bounded flush is exempt at any bound;
-// a bounded receive cannot hang, and this one takes the timer's message.
+// A bounded receive flushing a cancelled timer's message (`flush_poll`). Exempt at any
+// timeout because facts distinguish bounded from unbounded receives but do not retain
+// the timeout value.
 .decl polls_cancelled_timer(receive: symbol) inline
 
 polls_cancelled_timer(receive) :- flush_poll(receive).
 
-// ══ A socket call with no timeout on an OTP process's own stack ══════
+// Socket waits on an OTP callback's stack
 //
-// The socket twin of a receive with no `after`. `:gen_tcp.recv/2`,
-// `:ssl.recv/2`, `:ssl.connect/2,3` (host, port and options),
-// `:ssl.handshake/1` and `:ssl.handshake/2` with options wait with
-// :infinity, and so does any of them given `:infinity`, literally or
-// through a parameter a caller fills; `:gen_tcp.connect/3` waits until
-// the operating system gives up on the connect, minutes on Linux. Made
-// from a callback, it holds the process: callers wait out their own
-// timeouts, a gen_statem's timeouts cannot fire, and a peer that stops
-// answering holds the process for as long as it likes (supavisor's
-// ClientHandler, a client stalled mid-handshake; kafka_ex's client, a
-// black-holed broker's connect behind every produce).
-//
-// Every OTP callback but init/1 counts, on its own stack
-// (SameProcessReach: a fun that runs elsewhere is not the callback's
-// wait). A recv init/1 reaches is startup's (unbounded_effect_in_init,
-// "recv"), reported there once; startup asks of a connect only whether
-// it can be retried, so a connect is judged here wherever it runs. A
-// process that is not an OTP behaviour's (a reader loop a spawn runs) is
-// made to wait, and is not judged.
+// Detect socket calls with infinity timeouts, including forwarded literals, and
+// connects bounded only by the operating system. Same-process traversal excludes
+// detached work. Init receives belong to startup; connects are checked here even during
+// init. Non-OTP reader processes are excluded.
 
-// A socket call with no timeout runs on an OTP server's own stack, in a
-// callback other than init/1: a peer that stops answering holds the
-// server for as long as it likes.
+// An unbounded socket call on a server callback's stack, excluding init/1. An
+// unresponsive peer can block the server indefinitely.
 .decl socket_wait_in_callback(site: symbol, func: symbol, api: symbol, server: symbol)
 
 socket_wait_in_callback(site, func, api, server) :-
@@ -1008,10 +828,8 @@ socket_wait_in_callback(site, func, api, server) :-
 wait_found(func, site, "socket", api, server, "") :-
   socket_wait_in_callback(site, func, api, server).
 
-// The socket call at `site` in `func` waits with :infinity: its arity
-// leaves the timeout out, it is given :infinity, or its timeout is a
-// parameter `holder` (func itself, or a caller up the chain) fills with
-// :infinity.
+// An infinite socket timeout: omitted, explicitly :infinity, or supplied as :infinity
+// by a forwarding caller (`holder`).
 .decl waits_on_socket_forever(site: symbol, func: symbol, api: symbol, holder: symbol)
 
 waits_on_socket_forever(id, f, api, f) :- socket_wait(id, f, api, "infinity", _).
@@ -1042,9 +860,8 @@ socket_reach.cut(f, g) :- side_call(f, g).
 
 socket_reach.seed(h, h) :- waits_on_socket_forever(_, _, _, h).
 
-// `holder` runs on the stack of one of `server`'s OTP callbacks other
-// than init/1 (socket_reach: a fun that runs elsewhere is not the
-// callback's wait).
+// `holder` runs on `server`'s callback stack outside init/1. socket_reach excludes
+// detached functions.
 .decl runs_in_callback_of(holder: symbol, server: symbol) inline
 
 runs_in_callback_of(h, m) :-
@@ -1073,14 +890,9 @@ recv_during_init(id) :-
 
 // ── RPC without timeout ──────────────────────────────────────────
 
-// A remote call with no deadline, to a function that can wait: it hangs
-// for as long as a connected peer does not answer. A peer that goes away
-// is not forever: erpc (under :rpc.call since OTP 23) monitors it, and
-// once net_ticktime notices, about a minute by default, :rpc.call
-// returns {:badrpc, :nodedown} and :erpc.call raises
-// {:erpc, :noconnection}. An rpc init/1 reaches is startup's finding
-// (blocks_on_peer, "remote"): the same site, with the supervisor's start
-// held on it, reported there once.
+// An RPC without a deadline whose target may wait. A connected, unresponsive peer can
+// block it indefinitely; disconnection is detected through node monitoring. Init RPCs
+// are reported by startup's `blocks_on_peer` instead.
 .decl rpc_without_timeout(func: symbol, call: symbol, variant: symbol)
 
 rpc_without_timeout(func, call, variant) :-
@@ -1090,10 +902,8 @@ rpc_without_timeout(func, call, variant) :-
   !bounds_its_wait(call),
   !during_init(call).
 
-// `call` is the rpc call instruction; one row per site — finding
-// builders dedupe on (func, variant). `detail` is "caller" when the
-// timeout is a parameter a caller passes as :infinity
-// (rpc_infinity_caller names them), empty otherwise.
+// One row per RPC instruction `call`; findings deduplicate by (func, variant). `detail`
+// is "caller" for a forwarded :infinity timeout, otherwise empty.
 wait_found(func, call, "rpc", variant, "", "") :-
   rpc_without_timeout(func, call, variant),
   rpc_call(call, _, _, -1).
@@ -1107,21 +917,16 @@ wait_found(func, call, "rpc", variant, "caller", "") :-
 
 makes_rpc(f, call, variant) :- rpc_call(call, f, variant, _).
 
-// The variants whose arity leaves the timeout out wait for :infinity,
-// as does an explicit :infinity; so does a timeout the function takes
-// as a parameter that a caller passes as :infinity.
+// An RPC waits indefinitely when its timeout is omitted, explicitly :infinity, or
+// passed as :infinity through a parameter.
 .decl no_timeout(call: symbol) inline
 
 no_timeout(call) :- rpc_call(call, _, _, -1).
 no_timeout(call) :- rpc_infinity_caller(_, call, _).
 
-// A wrapper's `timeout \\ :infinity` compiles to remote/4 calling
-// remote/5 with :infinity, and the rpc in remote/5 reads its timeout
-// from the parameter: unknown at the site ("0"), infinity for every call
-// through remote/4. `caller` is the function that passes it. Only a
-// literal :infinity at the call is followed, not one forwarded through
-// a further parameter: call_arg_forward stops at the fourth argument,
-// where a timeout is seldom.
+// A wrapper call passing literal :infinity into the RPC timeout parameter. `caller`
+// names the supplying function. Further parameter forwarding is not followed because
+// `call_arg_forward` stops at the fourth argument, often before the timeout.
 .decl rpc_infinity_caller(func: symbol, call: symbol, caller: symbol)
 .output rpc_infinity_caller
 
@@ -1130,20 +935,10 @@ rpc_infinity_caller(func, call, caller) :-
   rpc_timeout_param(call, p),
   infinity_arg(caller, func, p).
 
-// A remote function that answers without waiting on anything: a BIF,
-// an ETS or persistent_term read or write, a clock, a signal. On a
-// connected peer it returns; a peer that goes away is noticed within
-// net_ticktime. What the call can wait on forever is the callee, and
-// this one does not wait. `rpc.call(n, Process, :alive?, [pid])` needs
-// no deadline. Vetted one by one: an `:ets` operation on a key (a
-// lookup, an insert, a delete, a counter, a step to the next key) and
-// `:code.is_loaded` (an ETS read since OTP 26) take no lock another
-// process holds; `:ets.delete/1` frees a whole table and tab2list copies
-// one, in time proportional to the table and waiting on no process.
-// `:ets.select`, `match` and the folds are left out: a match spec over a
-// large table can run long. An exit signal or a send is queued and
-// returns. A target left off the list is still reported, the direction
-// that stays loud about a real wait.
+// An RPC target vetted to return without waiting on another process, such as selected
+// BIFs, ETS operations, persistent_term operations, clocks, and signals. Whole-table
+// work can still take time. Select, match, and folds are excluded; unlisted targets
+// remain reportable. Node monitoring bounds waits caused by disconnection.
 .decl answers_at_once(call: symbol)
 
 answers_at_once(call) :-
@@ -1225,13 +1020,9 @@ quick_api("Application", "fetch_env").
 quick_api("Application", "fetch_env!").
 quick_api(":application", "get_env").
 
-// A remote function that waits, but with a deadline of its own, so the
-// rpc answers within it (with the function's exit, as {:badrpc, _} or
-// an :erpc exception). :application.which_applications/0 calls the
-// application controller with gen_server's default five seconds, which
-// a controller busy starting an application runs out; `/1` waits as long
-// as its argument says, and rpc_arity tells the two apart.
-// Application.started_applications/0 is the same call.
+// An RPC target with its own finite deadline. For example,
+// `:application.which_applications/0` uses the default GenServer timeout; `/1` uses its
+// argument. `rpc_arity` distinguishes them.
 .decl bounds_its_wait(call: symbol)
 
 bounds_its_wait(call) :-
@@ -1245,9 +1036,8 @@ bounds_its_wait(call) :-
 self_bounded_api(":application", "which_applications", 0).
 self_bounded_api("Application", "started_applications", 0).
 
-// A file's metadata: the node's file server asks the OS and answers. It
-// is a kernel process no program process can keep from answering; what
-// it waits on is the disk.
+// File metadata requests wait on the kernel file server and disk, without depending on
+// a program-owned process.
 .decl answers_from_os(mod: symbol, fun: symbol)
 
 answers_from_os("File", "stat").
@@ -1264,18 +1054,12 @@ answers_from_os(":filelib", "is_dir").
 answers_from_os(":filelib", "is_regular").
 answers_from_os(":filelib", "file_size").
 
-// ── A closure the rpc runs ───────────────────────────────────────────
+// Closures run by RPC
 //
-// `:erpc.call(node, fn -> File.stat!(path).size end)` runs a closure,
-// and a closure runs on the peer only where the same version of its
-// module is loaded: anywhere else the call fails at once with badfun.
-// So what it runs is the code analyzed here — the closure's body and the
-// functions it calls in its own module — and it is judged by that code.
-// A remote function named by M and F is not: the peer runs whatever it
-// has loaded under that name (lesson 1's `Cache.get/1`, a pure function
-// here, may be anything there), and only the vetted OTP and Elixir
-// functions above answer for it. An external fun (`&Mod.f/0`) is called
-// by name too, and is not a closure.
+// A closure requires the same module version on the peer, so its local body and
+// same-module callees can be checked here. Named targets and external funs run the
+// peer's installed code; only the vetted runtime APIs above establish their wait
+// behavior.
 .decl rpc_closure(call: symbol, closure: symbol)
 
 rpc_closure(call, g) :-
@@ -1289,14 +1073,9 @@ rpc_closure(call, g) :-
 
 rpc_fun.root(call, g) :- rpc_closure(call, g).
 
-// The closure can wait when something it runs can: a receive with no
-// `after`, a fun it cannot see (a call through a fun value, an apply, a
-// function of another module handed as a fun), or a call out of its
-// module that no list above says answers — which includes another
-// module of this program, run by name as a named rpc target is. A call
-// or an rpc with a finite timeout of its own answers in time. Not seen:
-// a fun the closure captured and hands to Enum, whose call looks like
-// Enum's own.
+// The RPC closure may wait if it reaches an unbounded receive, opaque call, or unvetted
+// call outside its module. Calls with finite deadlines are bounded. Known limit:
+// captured funs passed to Enum may appear only as Enum calls.
 .decl fun_waits(call: symbol)
 
 fun_waits(call) :- rpc_fun.reaches(call, f), recv_start(_, f, 1, _).
@@ -1313,18 +1092,16 @@ fun_waits(call) :-
   out_call(f, id, _, _, _),
   !answers_in_time(id).
 
-// The dynamic_call kinds the emitter records: a call through a fun
-// value, an apply. The effect model adds `dot_dispatch` for `x.field`'s
-// helper when it runs, which answers_in_time reads as the call it is;
-// the answer must not turn on which extractors ran.
+// Opaque dynamic-call kinds emitted for fun calls and apply. Treat effect-model
+// dot_dispatch as its classified call instead, so results do not depend on which
+// extractors ran.
 .decl unseen_call(kind: symbol)
 
 unseen_call("call_fun").
 unseen_call("apply").
 
-// The calls out of its module a function makes, for the functions two
-// walks ask about: what an rpc's closure runs, and what a server's
-// handle_call/3 runs (answers_straight_away).
+// Outgoing calls to other modules, restricted to functions reached by an RPC closure or
+// a server's handle_call/3.
 .decl asked_about(func: symbol)
 
 asked_about(f) :- rpc_fun.reaches(_, f).
@@ -1344,14 +1121,12 @@ answers_in_time(id) :- out_call(_, id, mod, fun, _), quick_api(mod, fun).
 answers_in_time(id) :- out_call(_, id, mod, fun, _), answers_from_os(mod, fun).
 answers_in_time(id) :- out_call(_, id, mod, fun, n), self_bounded_api(mod, fun, n).
 answers_in_time(id) :- out_call(_, id, mod, _, _), computes_only(mod).
-// A call into the logging or telemetry API (side_api, calls.dl): its
-// machinery waits only on its own servers, which answer from their own
-// state and call no process of the program's.
+// Treat logging and telemetry calls as side paths: their servers answer from their own
+// state without calling program-owned processes.
 answers_in_time(id) :- out_call(_, id, mod, _, _), side_api(mod).
 answers_in_time(id) :- out_call(_, id, ":erlang", fun, _), !erlang_waits(fun).
-// `x.field` on a value the compiler could not prove a map compiles to
-// this helper: on a map it reads the field. On an atom it would call
-// that module's zero-arity function, a form deprecated with a warning.
+// The compiler uses this helper for x.field when x is not known to be a map. It reads
+// map fields; atom-based zero-arity calls are deprecated.
 answers_in_time(id) :- out_call(_, id, ":elixir_erl_pass", "no_parens_remote", 2).
 answers_in_time(id) :- out_call(f, id, _, _, _), sync_call_site(id, f, _, t), t > 0.
 
@@ -1398,9 +1173,9 @@ computes_only("RuntimeError").
 computes_only("KeyError").
 computes_only("ErlangError").
 
-// The :erlang functions that can wait: a message (hibernate), a busy
-// port, another process being suspended or collected, the schedulers,
-// or code they cannot see (apply). Every other :erlang function answers.
+// :erlang operations that may wait: hibernate, port operations, process suspension or
+// collection, scheduler coordination, and dynamic apply. Treat other :erlang operations
+// as immediate.
 .decl erlang_waits(fun: symbol)
 
 erlang_waits("apply").
@@ -1413,13 +1188,9 @@ erlang_waits("garbage_collect").
 erlang_waits("check_process_code").
 erlang_waits("system_flag").
 
-// A site init/1 runs — an rpc or a :global op, in init/1 or in anything
-// it calls on its own stack, or in a task it awaits — holds the
-// supervisor's start, and is startup's finding (blocks_on_peer, which
-// reads the same words: rpc_during_init, clientlib/init_phase.dl, and
-// global_call_during_init, clientlib/global_reach.dl). Reported there,
-// once. A helper init/1 shares with handle_call/3 is then reported only
-// as startup's: the start is the worse wait.
+// RPC and global operations reached by init, including in awaited tasks, are reported
+// by startup. Shared helpers reached by both init and runtime callbacks receive only
+// the startup finding.
 .decl during_init(site: symbol)
 
 during_init(site) :- rpc_during_init(_, site).
@@ -1441,28 +1212,18 @@ rpc_in_callback(func, call, variant) :-
 
 handles_messages(func) :- handler_function(_, func).
 
-// Only the RPC directly in the callback is reported. The transitive
-// form — `rpc_call(_, g, _, _), call_reachable(func, g)` — was removed:
-// call_reachable runs over a function-granularity call graph that
-// collapses the clauses of a guarded dispatcher, so on the corpus every
-// GenServer callback that reached a library's routing function (Cachex's
-// Router.route, whose guards statically pick local vs. RPC) was reported
-// as making an RPC, even when the concrete action provably routes local.
-// All 13 of the analysis's transitive findings were false; the RPC sites
-// themselves are already surfaced by rpc_without_timeout.
+// Report RPC-in-callback only for direct sites. Function-level transitive reach loses
+// dispatcher-clause selection and can attribute remote work to a local branch.
+// `rpc_without_timeout` still reports unbounded RPC sites.
 wait_found(func, call, "rpc_in_callback", variant, "", "") :-
   rpc_in_callback(func, call, variant).
 
-// ── Blocking :global synchronization ─────────────────────────────
+// Global synchronization
 //
-// The locks startup reports during init/1, and on the same terms
-// (clientlib/vocabulary.dl): one that retries until it is granted, over
-// any nodes, and one that gives up after a positive count but asks other
-// nodes each try. A bounded lock over `[node()]` alone is the fix, and
-// quiet.
+// Use startup's lock criteria: unbounded retries on any node scope, or finite positive
+// retries involving other nodes. Finite local-only retries are exempt.
 
-// A function outside init/1 takes a :global lock that retries until it
-// is granted, so it waits as long as anyone else holds the lock.
+// A :global lock outside init/1 retries indefinitely while another process holds it.
 .decl unbounded_lock_wait(func: symbol, lock: symbol)
 
 unbounded_lock_wait(func, lock) :-
@@ -1470,9 +1231,8 @@ unbounded_lock_wait(func, lock) :-
   retries_until_locked(lock),
   !during_init(lock).
 
-// A function outside init/1 takes a :global lock that gives up only
-// after its retries, and each retry waits on other nodes: a partitioned
-// node holds every try until it is declared down.
+// A :global lock outside init/1 uses finite retries, but each attempt may wait for a
+// partitioned node to be declared down.
 .decl bounded_lock_wait(func: symbol, lock: symbol)
 
 bounded_lock_wait(func, lock) :-
@@ -1486,11 +1246,9 @@ bounded_lock_wait(func, lock) :-
 
 takes_global_lock(func, lock) :- global_op(lock, func, _, _, _).
 
-// A lock over the cluster's nodes stalls on a netsplit; one over
-// `[node()]` waits only on a local holder. `nodes` says which, `detail`
-// the retries ("infinity", "dynamic" or the count). `lock` is the
-// :global call instruction. One row per site — finding builders dedupe
-// on (func, op, retries, nodes).
+// A global lock site with retry count and node scope. Cluster scope can stall on
+// partitions; local scope waits only on local holders. Builders deduplicate by
+// function, operation, retries, and nodes.
 wait_found(func, lock, "global", op, retries, nodes) :-
   unbounded_lock_wait(func, lock),
   global_op(lock, func, op, retries, nodes).
@@ -1499,28 +1257,17 @@ wait_found(func, lock, "global", op, retries, nodes) :-
   bounded_lock_wait(func, lock),
   global_op(lock, func, op, retries, nodes).
 
-// ══ A peer call that catches :noproc but not :shutdown ══════════════
+// Peer calls catching :noproc but not peer shutdown
 //
-// `catch :exit, {:noproc, _}` around a GenServer.call says the peer may
-// not exist. The peer stopping itself while the call is in flight is the
-// same condition, but it arrives as its stop reason wrapped with the
-// call, and this catch lets it crash the caller. A peer stops itself
-// with :normal (`{:normal, _}`) or on purpose with a reason to tell,
-// `{:stop, {:shutdown, reason}, state}` (`{{:shutdown, reason}, _}`). A
-// catch that takes neither takes no stop of the peer's own: none at all,
-// or only the bare `{:shutdown, _}`, the reason of a peer its supervisor
-// terminates. A child LiveView syncing with its parent crashed that way
-// when the parent redirected, stopping with `{:shutdown, {:redirect, _}}`
-// (phoenixframework/phoenix_live_view#4359), whether its catch had the
-// bare `{:shutdown, _}` or not; the fix (b100e10) takes
-// `{{:shutdown, _}, _}`. catch_inner_tag tells that shape from the bare
-// one (catch_tuple_tag). A clause that takes every tuple reason, or a
-// bare `:exit, reason`, takes them all.
+// A catch for `{:noproc, _}` may miss a peer stopping during the call. Check both
+// `{:normal, _}` and `{{:shutdown, reason}, _}`. The latter uses `catch_inner_tag`;
+// `catch_tuple_tag` for `{:shutdown, _}` covers only the bare shutdown reason.
+// Unrestricted tuple or exit catches cover both.
 .decl partial_noproc_catch(func: symbol, site: symbol, callee: symbol, call: symbol, guard_end: symbol)
 .output partial_noproc_catch
 
-// A try around a call to a peer catches the peer's :noproc exit but not
-// its stopping itself mid-call, so that stop crashes the caller.
+// The handler catches :noproc but not a peer stopping during the call. That stop can
+// crash the caller.
 .decl uncaught_peer_stop(try: symbol, func: symbol, callee: symbol)
 
 uncaught_peer_stop(try, func, callee) :-
@@ -1553,25 +1300,18 @@ takes_peer_stop(id, f) :- catch_inner_tag(id, f, c, ":shutdown"), (c = "exit" ; 
 takes_peer_stop(id, f) :- catches_any_tuple_exit(id, f).
 takes_peer_stop(id, f) :- try_call(id, f, _, _, _), site_catches_class(id, f, "exit").
 
-// A clause that takes every tuple reason (`exit:{Reason, _}`, brod's
-// safe_gen_call): what a call to a peer that stops mid-call exits with,
-// `{:shutdown, {GenServer, :call, _}}`, is one.
+// A catch matching every tuple exit reason also handles a peer stopping mid-call,
+// including {:shutdown, {GenServer, :call, _}}.
 .decl catches_any_tuple_exit(id: symbol, func: symbol)
 
 catches_any_tuple_exit(id, f) :- catch_tuple_tag(id, f, "exit", "*").
 catches_any_tuple_exit(id, f) :- catch_tuple_tag(id, f, "*", "*").
 
-// ══ A peer that answers, when priors are on ═════════════════════════
+// Optional prior for locally answered waits
 //
-// A server the model is sure answers every call from inside the node
-// (Argus.Priors.Questions.PeerAnswers; off by default) — a hook
-// registry, a file server, a local state holder — is not the peer that
-// hangs a chain: a hop to it with no deadline, or made from a
-// handle_cast, waits on an answer that comes. The finding steps down and
-// says so; a server whose answer waits on another node, a pool or an
-// external program keeps its severity. A call names its server by module
-// or by the name it registers. 0.8 held every peer that may not answer
-// in the calibration (the highest scored 0.62).
+// At confidence 0.8 or above, a peer classified as answering every call within the node
+// lowers the severity of infinity and cast-call findings. Peers depending on external
+// activity retain their severity. Targets resolve through module or registered name.
 .decl answers_at(target: symbol, permille: number)
 
 answers_at(m, p) :- prior_answers("server", m, _, _, p).

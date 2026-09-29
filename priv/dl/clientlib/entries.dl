@@ -1,27 +1,15 @@
-// What each process entry waits on.
-//
-// init/1, the request handlers and handle_continue each wait on other
-// processes; the rules about startup order, call chains and continue
-// deadlocks ask about one entry at a time. One relation per entry
-// rather than one with a phase column: Souffle prunes a relation no
-// output reads, but not a rule, so a shared relation would make every
-// analysis read every entry's facts.
-//
-// Requires otp.dl (callbacks.dl, calls.dl and init_phase.dl in
-// particular).
+// Dependencies of init, request handlers, and continuations. Keep separate relations
+// per entry so Souffle can prune unused phases and their input facts. Requires otp.dl,
+// especially callbacks, calls, and init_phase.
 
-// init/1 reaches a synchronous dependency ("call") on another process
-// before it acknowledges its start (init_phase.dl): what holds the
-// start. An init/1 that acks and then calls runs that call as the
-// server. No `mod != to` filter: an init that calls its own module is
-// the caller's to judge.
+// A synchronous pre-ack init dependency holds startup. Post-ack calls do not. Keep
+// same-module targets for consumers to classify rather than filtering them here.
 .decl init_dep(mod: symbol, to_mod: symbol, kind: symbol, witness: symbol)
 
 init_dep(mod, to, "call", f) :- init_function(mod, f), !acks_in_init(f), reaches_sync_dep(f, to).
 
-// An init/1 that acks: its own calls before the ack (by site: a
-// function's dependencies are not), and what the helpers it calls before
-// the ack wait on.
+// For an explicitly acknowledging init/1, include its pre-ack call sites and waits
+// reached through pre-ack helpers.
 init_dep(mod, to, "call", f) :-
   init_function(mod, f),
   acks_in_init(f),
@@ -35,24 +23,14 @@ init_dep(mod, to, "call", f) :-
   g != f,
   sync_dep(g, to).
 
-// ── The startup window ───────────────────────────────────────────────
+// Startup window
 //
-// What holds the start ends at the ack; the startup window does not.
-// Until the supervisor has started every child after this one, a call or
-// a cast to one of them lands on a name nobody holds: a cast is dropped
-// without an error, a call exits :noproc. init/1 runs in that window on
-// its own stack, before its ack and after it (the supervisor moves on
-// the moment it acks, as it does when a handle_continue runs), and so
-// does whatever init/1 starts: a task or a spawn runs at once, while the
-// supervisor goes on to the later siblings — a race nearly every boot
-// loses, and every boot when init/1 awaits the task. The window is
-// init/1's whole reach over the call graph, what runs elsewhere
-// included, less the logging and telemetry APIs (side_call, calls.dl).
-//
-// init_window_dep(mod, to, kind, witness): init/1 reaches a one-way
-// dependency ("cast"), or a synchronous one that does not hold its start
-// ("window_call": after the ack, or in what it starts) — the start-order
-// rule's warning, where "call" (init_dep) is its deadlock.
+// Acknowledgement releases the supervisor but does not guarantee later siblings are
+// ready. Follow init's full reach, including detached work and post-ack calls,
+// excluding logging/telemetry side paths.
+// `init_window_dep` records casts and non-blocking-start calls (`window_call`) that can
+// race later siblings. Pre-ack synchronous waits belong to `init_dep` as
+// startup-blocking calls.
 .decl init_window_dep(mod: symbol, to_mod: symbol, kind: symbol, witness: symbol)
 
 .init init_window = ForwardCallReachCut
@@ -65,9 +43,8 @@ init_window_dep(mod, to, "cast", i) :-
   init_window.reaches(i, g),
   async_dep(g, to).
 
-// A peer init/1 already holds its start on (init_dep "call") is that
-// finding's: its other calls to the same peer make no second, weaker
-// warning (per peer, not per site).
+// A synchronous init_dep already reports this peer's startup dependency. Suppress
+// weaker warnings for other calls to the same peer.
 init_window_dep(mod, to, "window_call", i) :-
   init_function(mod, i),
   init_window.reaches(i, g),
@@ -102,15 +79,9 @@ continue_dep(mod, to, f) :-
   reaches_sync_dep(f, to),
   mod != to.
 
-// Where a continue waits: the call in its handle_continue/2 on the way
-// to the wait on `to` (site_request, calls.dl), the GenServer.call itself
-// or the call into the helper that makes it; empty when the wait has no
-// call of the function's own (a closure it hands on). handle_continue/2
-// compiles every clause into one function, and the clause that makes the
-// call is rarely the first: encore's fugue Coda heads its
-// handle_continue/2 with a pure `:prime` clause and makes the seeded
-// call in the `{:attach, _}` clause below it, so a finding anchored at
-// the function lands on the pure clause.
+// The handle_continue call leading to a wait, directly or through a helper. Anchor at
+// the call rather than the shared function head. Use an empty site if no call
+// instruction represents the path.
 site_demand(f) :- continue_dep(_, _, f).
 
 .decl continue_site(func: symbol, to: symbol, site: symbol)

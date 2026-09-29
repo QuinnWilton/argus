@@ -1,23 +1,11 @@
-// What an rpc runs on the other node, by site.
-//
-// An rpc names its remote function with three runtime values — module,
-// function name, argument list — which the compiler never checks: a
-// misspelt name, a function since removed or made private, or one
-// argument too many is an `undef` on every call, raised on the remote
-// node and handed back as `{:badrpc, {:EXIT, {:undef, _}}}` or an
-// ErlangError. Where the three are literals the site names its function
-// (rpc_callee). A wrapper around an rpc — for telemetry, a timeout
-// default, a node choice — takes them as parameters (rpc_mfa_param,
-// through a closure it builds too) and runs whatever its callers hand
-// it (mfa_arg); a wrapper that forwards the three to another in the same
-// positions is one too.
-//
-// Prerequisites: include clientlib/imports.dl before this file.
+// RPC targets by site. Resolve literal module, function, and argument-list length
+// through rpc_callee. For wrappers, propagate consecutive MFA parameters and join
+// caller mfa_arg values, including captured closure arguments. Invalid names or arities
+// fail remotely with undef. Requires imports.dl.
 
-// The wrapper's parameters pos, pos + 1 and pos + 2 are the module,
-// function and argument list the rpc runs: it makes the rpc with them
-// (rpc_mfa_param), or hands them in the same positions to a wrapper that
-// does.
+// Parameters pos, pos + 1 and pos + 2 supply the RPC's module, function and argument
+// list. The wrapper either calls the RPC directly or forwards them at the same
+// positions to another wrapper.
 .decl forwards_to_rpc(wrapper: symbol, pos: number, rpc: symbol)
 
 forwards_to_rpc(wrapper, pos, rpc) :- rpc_mfa_param(rpc, wrapper, pos).
@@ -28,9 +16,8 @@ forwards_to_rpc(wrapper, pos, rpc) :-
   call_arg_forward(wrapper, inner, inner_pos + 1, pos + 1),
   call_arg_forward(wrapper, inner, inner_pos + 2, pos + 2).
 
-// The rpc runs `callee`, a function of `module`, on another node, named
-// by literals in `func`: at the rpc itself (`anchor` is the rpc), or at
-// `func`'s call (`anchor`) into a wrapper that forwards them to the rpc.
+// Resolve literal RPC module/function targets at the RPC or a forwarding wrapper call.
+// `anchor` identifies that local call.
 .decl rpc_runs(rpc: symbol, callee: symbol, module: symbol, func: symbol, anchor: symbol)
 
 rpc_runs(rpc, callee, module, func, rpc) :- rpc_callee(rpc, func, module, callee).

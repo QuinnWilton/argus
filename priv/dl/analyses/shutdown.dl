@@ -1,14 +1,7 @@
-// Cleanup that cannot run, or teardown that hurts a peer.
-//
-// OTP's rule for terminate/2 is narrower than it reads: it runs when a
-// callback returns {:stop, ...} or raises, and on a supervisor shutdown
-// only if the process traps exits. Trapping brings its own obligations:
-// the {:EXIT, ...} that arrives as a message needs a clause, and the
-// work must finish inside the shutdown timeout. And a process being
-// torn down still has neighbours: a sibling that may already be gone,
-// children started in another tree that will outlive this one, a
-// monitored child whose :DOWN will read as a crash, a permanent child
-// that stops itself only to be restarted.
+// Shutdown defects: skipped or unbounded cleanup, unhandled trapped exits, teardown
+// calls to stopped siblings, children outliving their owner, deliberate kills handled
+// as crashes, and permanent children restarting after normal stops. Supervisor shutdown
+// runs terminate only when the process traps exits.
 
 .include "../clientlib/imports.dl"
 .include "../clientlib/otp.dl"
@@ -23,34 +16,16 @@
 // level (clientlib/tooling.dl, Argus.Findings.Tooling).
 .output tooling
 
-// ══ terminate/2 and the exits it needs to trap ══════════════════════
-//
-// A supervisor's shutdown signal arrives while the server runs its
-// callbacks, so "the process traps" here is server_traps
-// (clientlib/trapping.dl): some entry leaves the flag set.
+// Shutdown trapping requirements. Use server_traps: some process entry leaves trap_exit
+// set, allowing supervisor shutdown signals to reach terminate/2.
 
-// ── What runs when a supervisor stops the process ────────────────
+// Follow the supervisor shutdown reason
 //
-// A supervisor stops a child with exit(pid, :shutdown) (supervisor.erl's
-// shutdown/1, DynamicSupervisor's terminate_children/2), so a process
-// that traps exits runs terminate/2 with the reason :shutdown, the bare
-// atom. {:shutdown, _} is a reason a process stops itself with, or a
-// parent that is no supervisor passes: neither is the stop these rules
-// are about. terminate/2 may choose its work by the reason, and it may
-// hand the reason to a function that does: mnesia's servers call
-// mnesia_monitor:terminate_proc(who, reason, state), whose clause for
-// `R /= shutdown` reports a fatal error and whose other clause only logs.
-// What runs on the stop is what that value reaches (ShutdownReason):
-// - terminate/2 (gen_statem's terminate/3) holds it in its first
-//   parameter;
-// - a function that chooses its clause by the parameter holding it runs
-//   the calls :shutdown reaches (shutdown_runs), and one that does not
-//   choose by it runs every call;
-// - a call that runs, and hands the value on unchanged, enters its
-//   callee holding it where it lands (shutdown_handed).
-// `pos` is -1 in a function that holds it in no parameter: every call
-// runs there. An edge with no call instruction (a closure built there, a
-// function reference) has no site the reason test places, and runs.
+// Supervisors stop children with bare :shutdown. Start terminate/2 or terminate/3 with
+// that value in parameter 0, follow only selected calls (`shutdown_runs`), and
+// propagate unchanged arguments (`shutdown_handed`). `pos = -1` means no tracked
+// reason, so all calls remain reachable. Closure/reference edges without sites are also
+// followed. Tuple shutdown reasons describe different stop paths.
 
 // The call at `id` in `func` runs when func holds the reason in `pos`.
 .decl runs_holding(func: symbol, pos: number, id: symbol) inline
@@ -58,32 +33,18 @@
 runs_holding(f, pos, id) :- shutdown_runs(id, f, pos).
 runs_holding(f, pos, id) :- !shutdown_chooses(f, pos).
 
-// Where the call at `id` hands on the reason `func` holds in `pos`: the
-// callee's argument `arg`, or -1 when it hands it on in none.
+// The call at id forwards the reason from func's parameter pos to callee argument arg.
+// Use -1 if it does not forward the reason.
 .decl hands_holding(func: symbol, pos: number, id: symbol, arg: number) inline
 
 hands_holding(f, pos, id, arg) :- shutdown_handed(id, f, pos, arg).
 hands_holding(f, pos, id, -1) :- !shutdown_handed(id, f, pos, _).
 
-// ── Cleanup worth running ────────────────────────────────────────
+// Cleanup that matters on supervisor shutdown
 //
-// WRITES only, and not logging. A terminate/2 that logs "shutting down"
-// loses nothing when it is skipped; one that flushes a buffer, releases a
-// lease, or tells another system it is going away loses something real.
-// Reads are excluded for the same reason they are excluded from
-// transaction safety: there is nothing there to lose. The categories are
-// the effect model's durable ones (effect_model.dl). Releasing what the
-// process holds — a monitor, a link, a timer, its own socket, port or
-// file (released_at_exit) — is not among them: the runtime releases each
-// when the process exits, however it exits.
-//
-// Only what terminate/2 does when a supervisor stops the process counts:
-// work in a clause for other reasons (`terminate(:normal, s)`), or on a
-// branch :shutdown does not take (the crash report elixir-ls's servers
-// write for every reason but :normal and :shutdown), was never meant for
-// that stop, and skipping terminate/2 there loses nothing. A call made in
-// terminate/2 counts when it runs for :shutdown (runs_holding); a helper,
-// when some call that does leads to it.
+// Count durable writes other than logging. Reads and resources automatically released
+// at process exit are excluded. Follow only calls reachable with reason :shutdown;
+// cleanup for other stop reasons is not expected on this path.
 .decl runs_on_shutdown(terminate: symbol, callee: symbol)
 
 runs_on_shutdown(t, g) :-
@@ -96,20 +57,9 @@ runs_on_shutdown(t, g) :-
   call_edge(t, g),
   !call_instr(t, g, _).
 
-// Bounded, not the full `call_reachable` closure.
-//
-// Cleanup a module is responsible for sits close to its terminate/2. The
-// unbounded closure walks out of the module, through a client library, into
-// that library's connection pool, and credits the module with whatever it
-// finds: Sequin's MutexOwner was reported for `:ets.insert/2 via
-// :wpool_pool:store_wpool/1`, five hops down Mutex.release -> Redis ->
-// wpool. The verdict was right and the evidence was noise, which is the
-// same "right for the wrong reason" failure that the effect model's
-// dispatch precedence was fixed for.
-//
-// Three hops covers terminate -> your cleanup function -> the API it calls,
-// which is the shape real cleanup has: the first is runs_on_shutdown, the
-// walk takes the other two.
+// Limit cleanup evidence to three calls from terminate: the direct shutdown call plus
+// two further hops. This captures nearby cleanup APIs without attributing deep
+// client-library internals to the terminating module.
 .init terminate_reach = ForwardBoundedCallReach
 
 terminate_reach.root(t, g) :- runs_on_shutdown(t, g).
@@ -117,9 +67,8 @@ terminate_reach.limit(2).
 
 // ── Cleanup a supervisor shutdown skips ──────────────────────────
 
-// A terminate/2 callback does cleanup, and its process doesn't trap
-// exits: a supervisor's shutdown kills the process without running it.
-// A process that may trap (an unread flag, may_trap) is not shown not to.
+// terminate/2 performs cleanup, but the server does not trap exits, so supervisor
+// shutdown skips it. Unknown trap flags (may_trap) suppress this finding.
 .decl skipped_cleanup(mod: symbol, terminate: symbol, cleanup: symbol)
 
 skipped_cleanup(mod, terminate, cleanup) :-
@@ -127,9 +76,8 @@ skipped_cleanup(mod, terminate, cleanup) :-
   does_cleanup(terminate, cleanup),
   !may_trap(mod).
 
-// terminate/2 does cleanup at `write`: a write on the path a supervisor
-// stop takes whose effect outlasts the process, not one the runtime
-// releases when the process exits anyway.
+// Cleanup at write has effects beyond the process's lifetime. Exclude resources the
+// runtime automatically releases on exit.
 .decl does_cleanup(terminate: symbol, write: symbol)
 
 does_cleanup(terminate, write) :-
@@ -137,9 +85,8 @@ does_cleanup(terminate, write) :-
   outlasts_process(write),
   !released_by_exit(write, terminate).
 
-// A write terminate/2 makes when a supervisor stops the process: one in
-// terminate/2 that runs for :shutdown (runs_holding), or one in a function
-// it reaches (terminate_reach).
+// A cleanup write reachable during supervisor shutdown, directly in terminate/2 or
+// through terminate_reach helpers.
 .decl writes_on_shutdown(terminate: symbol, write: symbol)
 
 writes_on_shutdown(t, id) :-
@@ -159,11 +106,8 @@ writes_on_shutdown(t, id) :-
 
 outlasts_process(id) :- impure_call(id, _, _, category, _), durable_effect(category).
 
-// The process's exit releases what the call releases, or takes what it
-// writes with it: an API released_at_exit names (a monitor, a link, a
-// timer, its own socket, port or file), or a write to an ETS table the
-// process owns (own_table_released). The effect model gives a call one
-// API, so asking it of the call is asking it of that API.
+// Automatic release includes APIs in released_at_exit and writes to an owner-held ETS
+// table that dies with the process. Classify the concrete call's effect API.
 .decl released_by_exit(call: symbol, terminate: symbol)
 
 released_by_exit(id, t) :-
@@ -176,18 +120,9 @@ released_by_exit(id, t) :-
   terminate_callback(t, mod, _),
   own_table_released(mod, id).
 
-// An ETS table goes with the process that owns it, unless it has an
-// heir: a write to one the process owns, its deletion included, is
-// released at its exit as a socket it owns is. released_at_exit cannot
-// name `:ets.delete/1` by its API alone (the table may be another
-// process's, or have an heir); the table's own facts can. The call at
-// `id`, run by `mod`'s terminate/2 or a function it reaches, works on a
-// named table mod's init/1 makes: the process running the terminate/2
-// made it (own_named_table). pg_local's and emqx_lwm2m_xml_object_db's
-// terminate/2 delete the tables their init/1 made. A table named at run
-// time, or made by another module's process (ejabberd_iq's, which
-// mod_muc_rtbl's terminate/2 writes through ejabberd_iq:route/4), may
-// outlive the process, and its write stays cleanup.
+// Writes to named tables created by the module's init are released at exit when no heir
+// preserves them. This includes table deletion. Unknown names, other owners, and
+// heir-backed tables may survive, so their writes remain cleanup.
 .decl own_table_released(mod: symbol, id: symbol)
 
 own_table_released(mod, id) :-
@@ -207,9 +142,8 @@ cleanup_candidate(mod, id) :-
   terminate_reach.reaches(t, via, _),
   impure_call(id, via, _, "ets", "write").
 
-// A named table `mod`'s init/1 makes, with an options list read whole
-// that gives it no heir, that nothing gives away, renames or sets
-// options on: the process running mod owns it until it exits.
+// A named table created by init/1 remains owned until exit when its fully known options
+// specify no heir and no operation transfers, renames or reconfigures it.
 .decl own_named_table(mod: symbol, table: symbol)
 
 own_named_table(m, t) :-
@@ -228,15 +162,10 @@ passed_on(t) :- ets_op(_, _, t, "give_away", _).
 passed_on(t) :- ets_op(_, _, t, "rename", _).
 passed_on(t) :- ets_op(_, _, t, "setopts", _).
 
-// ── Findings ─────────────────────────────────────────────────────
-//
-// One relation for terminate/2's cleanup, `kind` saying what goes wrong
-// with it: "never_runs" (durable cleanup, and the process does not trap
-// exits, so a supervisor shutdown skips terminate/2 entirely), "unclear"
-// (work the effect model cannot classify, skipped the same way; category
-// is empty), "truncated" (the module traps, but the cleanup has no bound
-// of its own inside the shutdown timeout). One finding per module and
-// kind: the rows name one cleanup, and cleanup_site every call of it.
+// Cleanup findings: `never_runs` for known durable cleanup skipped without exit
+// trapping, `unclear` for unclassified work skipped the same way, and `truncated` for
+// trapping processes with cleanup unbounded by the shutdown timeout. Report once per
+// module and kind; `cleanup_site` supplies call locations.
 .decl cleanup_defect(mod: symbol, behaviour: symbol, kind: symbol, category: symbol, api: symbol, via: symbol)
 .output cleanup_defect
 
@@ -246,18 +175,12 @@ cleanup_defect(mod, behaviour, "never_runs", category, api, via) :-
   terminate_callback(terminate, mod, behaviour),
   impure_call(cleanup, via, api, category, _).
 
-// Cleanup the effect model cannot classify — terminate/2 calling into the
-// application's own code, which is where most real cleanup lives.
-//
-// Reported separately and less confidently. The analysis cannot say WHAT
-// the work is, only that terminate/2 does something beyond logging and that
-// a supervisor shutdown will skip it. That is still the useful half of the
-// question: releasing a lease, closing a session and flushing a buffer all
-// look like an ordinary call to your own module.
+// Report unclassified terminate work separately and with lower confidence. The rule
+// establishes that supervisor shutdown skips it, but cannot establish what cleanup the
+// call performs.
 
-// A terminate/2 callback does work the effect model cannot classify, its
-// process doesn't trap exits, and it does no cleanup the model knows: a
-// supervisor's shutdown skips what may be cleanup.
+// A non-trapping server's terminate/2 contains unclassified work but no known cleanup.
+// Supervisor shutdown may skip required cleanup.
 .decl unclear_cleanup(mod: symbol, terminate: symbol, work: symbol)
 
 unclear_cleanup(mod, terminate, work) :-
@@ -266,14 +189,9 @@ unclear_cleanup(mod, terminate, work) :-
   !may_trap(mod),
   !terminate_does_cleanup(mod).
 
-// terminate/2 makes the call at `work` on the path a supervisor stop
-// takes, and the effect model has no entry for it (unknown_call): a call
-// in terminate/2 that runs for :shutdown (runs_holding), or one in a
-// function it reaches (terminate_reach). In a function it reaches,
-// building a struct or a message is not cleanup (structural_call,
-// effect_model.dl): DBConnection.Connection was reported for
-// `Kernel.struct!/2` inside an exception constructor. A soundness choice
-// made for one contract should not become noise in another.
+// An unclassified call reachable during :shutdown, directly or within the bounded
+// cleanup traversal. Exclude structural helper calls such as constructing structs or
+// messages.
 .decl does_unclassified_work(terminate: symbol, work: symbol)
 
 does_unclassified_work(t, id) :-
@@ -288,9 +206,8 @@ does_unclassified_work(t, id) :-
   unknown_call(id, via, api, _),
   !structural_call(api).
 
-// terminate/2 in `mod` does cleanup the effect model knows: a module
-// whose terminate/2 does is reported "never_runs" already, and "unclear"
-// would repeat it less surely.
+// Known terminate/2 cleanup is already reported as never_runs. Suppress the weaker
+// unclear finding for the same module.
 .decl terminate_does_cleanup(mod: symbol)
 
 terminate_does_cleanup(mod) :- terminate_callback(t, mod, _), does_cleanup(t, _).
@@ -303,9 +220,8 @@ cleanup_defect(mod, behaviour, "unclear", "", api, via) :-
 // Slow work inside terminate, for a module that DOES trap exits — so the
 // callback is reached, but may not finish.
 
-// A terminate/2 callback does cleanup with no bound of its own, and its
-// process traps exits: terminate/2 runs, and may not finish inside the
-// shutdown timeout.
+// A trapping server's terminate/2 performs unbounded cleanup, which may exceed the
+// supervisor's shutdown timeout.
 .decl truncated_cleanup(mod: symbol, terminate: symbol, cleanup: symbol)
 
 truncated_cleanup(mod, terminate, cleanup) :-
@@ -342,29 +258,12 @@ cleanup_site(mod, "truncated", api, via, id) :-
   truncated_cleanup(mod, _, id),
   impure_call(id, via, api, _, _).
 
-// ── A synchronous call to a sibling from terminate/2 ─────────────────
+// Synchronous sibling calls during terminate
 //
-// A supervisor stops its children in reverse start order, one at a
-// time. terminate/2 runs while that is under way, so a sibling under the
-// same supervisor may already be gone: the call exits with :noproc and
-// terminate/2 itself crashes, taking whatever cleanup followed with it
-// (oban#21's Watchman pausing its Producer). Siblings are the modules
-// whose lifetimes one supervisor sequences: its children, and what sits
-// under them.
-// A catch that takes the :noproc exit (oban's fix) is the shape that
-// survives the sibling being gone, but only for the call it covers: a
-// try around some other call, with the sibling call after its `end`,
-// guards nothing. The call usually goes through the sibling's API
-// (`Producer.pause()`), so the try may cover the call in terminate/2
-// that leads to the helper making the sibling call rather than that
-// call itself; either counts.
-//
-// The call at `call` is covered by a try whose handler takes the exit
-// (covered_by_catch, exceptions.dl), or names the :noproc reason a
-// synchronous call exits with: `{:noproc, _}`, a tuple (catch_tuple_tag).
-// A bare `catch :exit, :noproc` is GenServer.stop's reason, and never
-// matches a call's `{:noproc, {GenServer, :call, _}}`; every call this
-// rule guards leads to such a call.
+// Reverse shutdown order can leave a sibling unavailable, causing :noproc and aborting
+// remaining cleanup. A matching try may cover the peer call or a helper on its path.
+// Accept a general exit catch or tuple `{:noproc, _}`; bare :noproc matches stop
+// failures, not GenServer.call's wrapped reason.
 .decl exit_guarded(call: symbol)
 
 exit_guarded(call) :- covered_by_catch(call, _, _, "exit").
@@ -373,35 +272,28 @@ exit_guarded(call) :-
   try_covers(t, f, call, "try"),
   catch_tuple_tag(t, f, "exit", ":noproc").
 
-// Some try in the function takes the exit. What is left to ask of a
-// dependency with no call site to hold against a try, and of an edge
-// into a fun that no call is handed (a fun stored, then called through a
-// variable): any exit-catching try in the function counts, which errs
-// quiet.
+// For dependencies or fun edges without a call site, any matching exit handler in the
+// function suppresses the finding. This fallback may over-suppress.
 .decl catches_exit(func: symbol)
 
 catches_exit(f) :- catches_class(f, "exit").
 catches_exit(f) :- catch_tuple_tag(_, f, "exit", ":noproc").
 
-// A call that waits for another module's process to answer. A call to a
-// connection the module started for itself (private_dep, calls.dl) is
-// not a call to the sibling.
+// A synchronous dependency on another module's server. Exclude private connections the
+// module started for itself (private_dep).
 .decl waits_on(func: symbol, mod: symbol) inline
 
 waits_on(f, m) :- sync_dep(f, m), !private_dep(f, m).
 
-// The call in `func` that runs a fun value `callee`: the call it is
-// handed to (`Enum.each(ids, &Directory.unregister/1)`), or an apply
-// whose target resolves to it.
+// The call that invokes a function value, either through a receiving API such as
+// Enum.each or a resolved apply.
 .decl fun_site(func: symbol, callee: symbol, id: symbol)
 
 fun_site(f, g, id) :- fun_handed(id, f, g, _).
 fun_site(f, g, id) :- resolved_apply(id, f, g).
 
-// The call in `func` that waits on `mod`: sync_site, a call that a
-// message tag attributed to mod (sync_dep's tag clause, calls.dl), and
-// the call a fun of mod's synchronous API is handed to — the call that
-// runs it, and that a try must cover.
+// The call waiting on mod, resolved directly, by message tag, or through a passed
+// synchronous-API fun. For a fun, use its receiving call for try coverage.
 .decl wait_site(func: symbol, mod: symbol, id: symbol)
 
 wait_site(f, m, id) :- sync_site(f, m, id).
@@ -418,23 +310,13 @@ wait_site(f, m, id) :-
   sync_call_site(id, f, t, _),
   unresolved_target(t).
 
-// ── The stop's path, and the waits on it ─────────────────────────
+// Shutdown call paths
 //
-// On terminate/2's stop, `func` runs on its stack holding the reason in
-// `pos` (-1: in none), `depth` calls from terminate/2 along calls that
-// run there and that no exit-catching try covers, within three calls;
-// `first` is the path's call in terminate/2 ("" through an edge with no
-// call instruction). A try around any call on the path guards what lies
-// beyond it: the call in terminate/2 into the helper, a call between
-// helpers, the helper's own call to the sibling's API. An edge with no
-// call instruction (a closure, a function reference) is held against the
-// call that runs it (fun_site): Horde's `Enum.each(signal_to, fn ... end)`
-// is open because no try covers the Enum.each, whatever another try in
-// terminate/2 catches. Only a fun no call is handed falls back to the
-// function-wide reading (catches_exit). A fun handed to a spawn or a
-// task's start runs in another process: its :noproc ends that process,
-// not terminate/2, so the path stops there (starts_a_process,
-// runs_elsewhere). A fun enters its body holding no reason.
+// Follow at most three same-process calls reachable for :shutdown, stopping at
+// exit-catching handlers. `pos` tracks the reason parameter; `first` records
+// terminate's first call site. For fun edges, test the receiving call's coverage
+// (`fun_site`); use function-wide catches only when no such site exists. Spawned funs
+// are outside terminate's exception scope. Funs enter without a tracked reason.
 .decl stop_path(terminate: symbol, func: symbol, pos: number, depth: number, first: symbol)
 
 stop_path(t, t, 0, 0, "") :- is_terminate(t, _).
@@ -459,9 +341,8 @@ stop_path(t, h, -1, d + 1, first) :-
   d < 3,
   stop_fun_edge(g, pos, h).
 
-// A call of `func`'s that runs on the stop, where func holds the reason
-// in `pos`, and that no exit-catching try covers, entering `callee`
-// holding it in `arg`.
+// An unguarded shutdown-path call from func to callee, forwarding the shutdown reason
+// from pos to arg when applicable.
 .decl stop_call_edge(func: symbol, pos: number, callee: symbol, arg: number, call: symbol)
 
 stop_call_edge(f, pos, g, arg, call) :-
@@ -471,10 +352,9 @@ stop_call_edge(f, pos, g, arg, call) :-
   !exit_guarded(call),
   hands_holding(f, pos, call, arg).
 
-// An edge with no call instruction the stop takes: the call a fun is
-// handed to runs, no exit-catching try covers it, and it starts no other
-// process; or no call is handed the fun and no try in `func` takes an
-// exit.
+// A site-less fun edge runs during shutdown if its receiving call is reached,
+// unguarded, and same-process. Without such a call, require no function-wide exit
+// handler.
 .decl stop_fun_edge(func: symbol, pos: number, callee: symbol)
 
 stop_fun_edge(f, pos, g) :-
@@ -494,13 +374,9 @@ stop_fun_edge(f, pos, g) :-
   !catches_exit(f),
   !runs_elsewhere(f, g).
 
-// On terminate/2's stop, `func` waits on `mod` at `site`: a wait site
-// that runs there with no exit-catching try around it, or, for a
-// dependency with no site in it, in a function where no try takes an
-// exit (`site` empty). A call that hands the reason to a client API of
-// mod's waits when the API's clauses for :shutdown do (api_waits_holding):
-// mnesia_monitor:terminate_proc/3 waits on mnesia_monitor only in its
-// clause for other reasons.
+// An unguarded synchronous wait reached on the shutdown path. Use an empty site when
+// only a function-level dependency is available and no exit catch exists there.
+// Reason-aware client APIs count only if their :shutdown path waits.
 .decl stop_wait(terminate: symbol, func: symbol, mod: symbol, site: symbol)
 
 stop_wait(t, f, m, id) :-
@@ -536,12 +412,8 @@ api_handed(f, pos, id, m, g, arg) :-
   call_instr(f, g, id),
   genserver_sync_api(g, m).
 
-// `func`, entered holding :shutdown in parameter `pos`, reaches a
-// synchronous call as mod's client API does (genserver_sync_api): its
-// own, or one in a function of mod's that a call of its leads to, along
-// calls that run for :shutdown. A call that hands the reason on is
-// followed with it; one that does not enters its callee holding nothing,
-// where every call runs (sync_caller_in).
+// Follow mod's client API with :shutdown in parameter pos. Retain only selected calls
+// while forwarding the reason; calls losing it enter with all clauses possible.
 .decl api_waits_holding(func: symbol, pos: number, mod: symbol)
 
 // What api_waits_holding is asked of: the APIs a stop's call hands the
@@ -594,70 +466,24 @@ sync_caller_in(h, m) :-
 
 sync_caller_in(h, m) :- reaches_sync_caller_in(h, m).
 
-// Teardown that touches a sibling the supervisor owns, in one relation:
-// `phase` is "terminate" (terminate/2 waits on a sibling that may already
-// be gone; `kind` = "call") or "handler" (a handler stops a sibling the
-// supervisor still owns; `kind` = "stop"). `handler` is the callback the
-// row belongs to, `site` the unguarded call in `via` that makes the
-// dependency when it is direct (else empty), `sup_site` where the
-// supervisor places both.
+// Sibling teardown output. `phase = terminate` describes waits on possibly stopped
+// siblings; `handler` describes stopping a sibling still owned by its supervisor.
+// `handler` identifies the callback, `via` the waiting function, `site` its direct
+// unguarded call when known, and `sup_site` their common supervision site.
 .decl teardown_touches_sibling(mod: symbol, sibling: symbol, phase: symbol, kind: symbol, via: symbol, sup: symbol, handler: symbol, site: symbol, sup_site: symbol)
 .output teardown_touches_sibling
 
-// The call is the bug when the supervisor itself has stopped the sibling
-// before it terminates mod — two of its own sequences do:
+// When the sibling is already gone
 //
-// - its shutdown ("call"). Children stop in reverse start order, so from
-//   mod's terminate/2 a sibling started after mod is already gone, under
-//   any strategy.
-// - its restart ("call_restart"). Under rest_for_one or one_for_all, a
-//   sibling started before mod that crashes is why the supervisor
-//   terminates mod, and mod's terminate/2 then calls the one that died
-//   (oban#21: the Producer exits, rest_for_one takes the Watchman down,
-//   the Watchman pauses the Producer; Horde's SignalShutdown under
-//   one_for_all). Under one_for_one an earlier sibling's crash does not
-//   touch mod, and its restart is ordinary let-it-crash, not this rule.
-//
-// The order is the branches': a supervisor stops a whole later child,
-// a nested supervisor and everything under it, before an earlier one.
-// So the sibling may sit deep in a later branch, and mod deep in an
-// earlier one (`[WorkerSup, Directory]` with Writer under WorkerSup:
-// Directory is gone before WorkerSup stops Writer); `sup` is the
-// supervisor where their branches meet (starts_before, supervision.dl).
-// A restart needs the crash to reach sup: the sibling is sup's own child.
-// One nested in an earlier branch is restarted by its own supervisor,
-// which leaves mod alone.
-//
-// Both run terminate/2 while the supervisor stops mod, which it does
-// with exit(pid, :shutdown): only a process that traps exits runs
-// terminate/2 then (server_traps). One that does not is killed without
-// it, and its terminate/2 runs only after a {:stop, ...} or a crash,
-// while the sibling is up; that cleanup never running is
-// cleanup_defect's "never_runs", not this.
-//
-// Known limits, each erring toward a report or toward quiet as noted:
-// - A child spec with `shutdown: :brutal_kill` kills the caller even when
-//   it traps exits, so its terminate/2 never runs on the shutdown. The
-//   row stays: supervisor_child does not carry the shutdown value, and a
-//   spec usually takes it from the child's own child_spec/1 or `use`
-//   options, which the supervision extractor does not read. (Reports.)
-// - A restart that escalates — a sibling nested in an earlier branch
-//   crashing past its own supervisor's intensity — is not followed; the
-//   restart kind needs the sibling to be sup's own child. (Quiet.)
-// - The reason is followed as the value it is (stop_path): a test on
-//   something computed from it (an element of a tuple built around it,
-//   its inspected string) takes both edges, a fun or an apply enters its
-//   callee holding nothing, and a call into the runtime hands it to
-//   nothing (shutdown_handed); each runs every call it can reach.
-//   (Reports.)
-//
-// When the listing or the strategy does not settle which applies — the
-// same module started on both sides of mod, or a strategy argus did not
-// read — the row stays, as "call_unordered", for the builder to report
-// less surely.
-//
-// `via` is the function on terminate/2's path that makes the call:
-// terminate/2 itself, or a helper it reaches.
+// `call`: reverse shutdown order stops later sibling branches first.
+// `call_restart`: an earlier direct child crashes under rest_for_one or one_for_all,
+// triggering this module's teardown. A crash contained by a nested supervisor does not
+// qualify.
+// Use the common supervisor's branch order, and require exit trapping so terminate runs
+// on :shutdown. Unknown order or strategy yields the less certain `call_unordered`.
+// Limits: unmodeled brutal_kill specs can produce false reports; escalated failures
+// from nested supervisors can be missed. Tests of transformed shutdown reasons and
+// opaque calls lose the tracked reason and retain every reachable call.
 
 // terminate/2 calls a sibling with no try taking the exit, its process
 // traps exits, and the supervisor's shutdown stops that sibling first.
@@ -668,10 +494,9 @@ call_to_stopped_sibling(mod, terminate, via, sibling, sup) :-
   server_traps(mod),
   stops_before(sup, sibling, mod).
 
-// terminate/2 calls a sibling with no try taking the exit, its process
-// traps exits, and the supervisor terminates mod when that sibling
-// crashes: the sibling was started first, and its crash takes the
-// children started after it down.
+// A trapping server's terminate/2 calls an earlier sibling without catching exits.
+// Under rest_for_one, that sibling's crash triggers this cleanup after the sibling is
+// gone.
 .decl call_to_crashed_sibling(mod: symbol, terminate: symbol, via: symbol, sibling: symbol, sup: symbol)
 
 call_to_crashed_sibling(mod, terminate, via, sibling, sup) :-
@@ -680,9 +505,8 @@ call_to_crashed_sibling(mod, terminate, via, sibling, sup) :-
   stops_before(sup, mod, sibling),
   crash_restarts_later(sup, sibling).
 
-// terminate/2 calls a sibling with no try taking the exit, its process
-// traps exits, and the supervisor's listing or strategy leaves open
-// whether the sibling is gone first.
+// A trapping server's terminate/2 calls a sibling without catching exits, and
+// supervision order or strategy does not establish whether the sibling remains alive.
 .decl call_to_sibling_in_unknown_order(mod: symbol, terminate: symbol, via: symbol, sibling: symbol, sup: symbol)
 
 call_to_sibling_in_unknown_order(mod, terminate, via, sibling, sup) :-
@@ -690,9 +514,8 @@ call_to_sibling_in_unknown_order(mod, terminate, via, sibling, sup) :-
   server_traps(mod),
   order_unsettled(sup, sibling, mod).
 
-// mod's terminate/2 waits on `other` on the stop, with no try taking the
-// exit (stop_wait): in terminate/2 itself (`via` is terminate), or in a
-// helper it reaches along the stop's path (`via` is the helper).
+// During shutdown, mod waits on other without catching exits. `via` identifies
+// terminate/2 or the helper making the wait.
 .decl terminate_waits_unguarded(mod: symbol, terminate: symbol, via: symbol, other: symbol)
 
 terminate_waits_unguarded(mod, t, via, other) :-
@@ -737,10 +560,8 @@ crash_restarts_later(sup, child) :-
 strategy_known(sup) :- supervisor(sup, "one_for_one").
 strategy_known(sup) :- restarts_later_siblings(sup).
 
-// Whether sup has stopped `sibling` before `mod` is open: each is
-// started on both sides of the other, or the sibling, sup's own child,
-// was started first and sup's strategy, which says whether its crash
-// takes mod down, is one argus did not read.
+// Shutdown order is uncertain when module placements overlap or an earlier direct
+// sibling's restart effect depends on an unread supervisor strategy.
 .decl order_unsettled(sup: symbol, sibling: symbol, mod: symbol)
 
 order_unsettled(sup, sibling, mod) :-
@@ -767,13 +588,9 @@ teardown_touches_sibling(mod, sibling, "terminate", "call_unordered", via, sup, 
   stop_wait(func, via, sibling, site),
   supervisor_site_or_empty(sup, sup_site).
 
-// Where terminate/2's path to a helper that calls the sibling begins:
-// the first call of the stop's path (stop_path). A path
-// through something with no call instruction (a closure it hands to a
-// call) points at terminate/2 itself, `call` empty — unless the helper
-// is an anonymous function written inside terminate/2 (Horde's
-// `Enum.each(signal_to, fn ... end)`), whose line the finding's anchor
-// already is. The earliest such call is kept.
+// Anchor at the earliest terminate call toward the sibling wait. With no call
+// instruction, use terminate itself unless the anonymous helper's location already
+// supplies the anchor.
 .decl terminate_path(handler: symbol, via: symbol, call: symbol)
 .output terminate_path
 
@@ -813,14 +630,10 @@ supervisor_site_or_empty(sup, site) :- supervisor_site(sup, site).
 supervisor_site_or_empty(sup, "") :- sibling(sup, _, _), !supervisor_site(sup, _).
 supervisor_site_or_empty(sup, "") :- dynamic_child(sup, _, _), !supervisor_site(sup, _).
 
-// ── Children started into another tree's supervisor ──────────────────
+// Children placed in another supervision tree
 //
-// A process that starts children onto a DynamicSupervisor it does not
-// sit under ties their lifetime to that supervisor's tree, not its own.
-// When its own tree shuts down, the children stay — reconnecting,
-// logging, calling into applications that have already stopped
-// (postgrex#763: pool connections under :db_connection's supervisor
-// outliving the user's Repo). Unless terminate/2 stops them.
+// Dynamic children outside the starter's subtree can survive its shutdown and keep
+// using stopped services. Check whether terminate explicitly stops them.
 .decl foreign_dynamic_children(mod: symbol, sup: symbol, via: symbol, site: symbol, sup_site: symbol)
 .output foreign_dynamic_children
 
@@ -834,12 +647,9 @@ children_left_behind(mod, sup, start) :-
   in_another_tree(mod, sup),
   !terminate_stops_children(mod).
 
-// `mod`'s process starts children under `sup` in `start`: its callbacks
-// reach the start — not the module the start function happens to live
-// in, which may be a plain helper called from several processes (or from
-// a request surface). A supervisor held as a pid ("dynamic") has no tree
-// to place: process points-to does not follow start_child's supervisor
-// argument, which is not a pid use.
+// Attribute child starts to the process whose callbacks reach them, including shared
+// helpers. Dynamic supervisor pids have no known tree because these arguments are not
+// resolved by points-to.
 .decl starts_children_under(mod: symbol, sup: symbol, start: symbol)
 
 starts_children_under(mod, sup, start) :-
@@ -853,10 +663,8 @@ starts_children_under(mod, sup, start) :-
 
 starter_process(mod, s) :- process_entry(mod, c), reaches_child_start(c, s).
 
-// The start function lives outside the supervisor's module. One in it
-// (`Postgrex.TypeSupervisor.start_server/2`, `DBConnection.Task.run_child/4`)
-// is that tree offering a shared service; the children are meant to
-// belong to it, whoever asks.
+// Require a start function outside the supervisor's module. Its own start API may
+// intentionally offer shared child ownership to callers.
 .decl started_from_outside(start: symbol, sup: symbol)
 
 started_from_outside(start, sup) :-
@@ -885,9 +693,8 @@ tree_member(root, name) :-
   child_subtree(root, _, mid),
   supervisor_child_name(mid, _, name).
 
-// terminate/2, or a function it reaches, terminates a supervisor's child
-// or stops a supervisor (stopping_sup_op). Which supervisor is not
-// asked: any such call errs quiet.
+// Any reachable supervisor stop or child termination suppresses the finding, even if
+// its target is unknown.
 .decl terminate_stops_children(mod: symbol)
 
 terminate_stops_children(mod) :-
@@ -919,14 +726,10 @@ dynamic_start_site(f, id) :- call_site(id, f, "DynamicSupervisor", "start_child"
 dynamic_start_site_or_empty(f, id) :- dynamic_start_site(f, id).
 dynamic_start_site_or_empty(f, "") :- dynamic_child(_, _, f), !dynamic_start_site(f, _).
 
-// ── A callback stops a sibling the supervisor owns ───────────────────
+// Handlers stopping supervised siblings
 //
-// GenServer.stop on a sibling child of the same supervisor, from a
-// handler: the supervisor still owns that child and restarts it (a
-// permanent one), or has already stopped it during shutdown and the
-// stop exits with :noproc in the caller (horde#154, #193: the
-// DynamicSupervisorImpl stopping its ProcessesSupervisor sibling on
-// quorum loss, crashing at SIGTERM). terminate/2 is the other rule.
+// A stop can trigger a permanent sibling's restart or fail with noproc if supervision
+// already stopped it. terminate-path calls are checked separately.
 
 // A handler stops a sibling the supervisor owns: the supervisor restarts
 // it, or has stopped it already and the stop exits in the handler.
@@ -937,10 +740,8 @@ stop_of_owned_sibling(mod, handler, via, sibling, sup) :-
   stops_process_of(handler, via, sibling),
   sibling(sup, mod, sibling).
 
-// `handler` reaches `via`, which stops a process of `mod`'s: a
-// GenServer.stop that names mod, or mod's own API that stops a process
-// (`Sibling.stop/1`, target unknown), unless the handler hands it only
-// processes a function keeps for itself (private_stop).
+// `handler` reaches a stop of mod's process through GenServer.stop or mod's API.
+// Exclude calls whose targets are all privately owned (private_stop).
 .decl stops_process_of(handler: symbol, via: symbol, mod: symbol)
 
 stops_process_of(h, via, m) :-
@@ -1003,21 +804,15 @@ shared_stop(h, via, sib) :-
   server_process(p, sib),
   !private_process(p, _, _).
 
-// ── Trapped exits nothing takes ──────────────────────────────────
+// Unhandled trapped exits
 //
-// Trapping turns a linked process's exit into an {:EXIT, pid, reason}
-// message, and something in the process must take it. `witness` is the
-// function that sets trap_exit. One row per witness — finding builders
-// dedupe on (mod, kind). `kind` is "no_handler" (a server with no
-// handle_info at all), "no_exit_clause" (a handle_info that never matches
-// {:EXIT, ...}) or "no_receive_clause" (a hand-rolled loop whose receives
-// never take it).
+// `kind` distinguishes no handle_info, no :EXIT clause, and no matching receive in a
+// manual loop. `witness` sets trap_exit; builders deduplicate by module and kind.
 .decl unhandled_exit_signal(mod: symbol, kind: symbol, witness: symbol)
 .output unhandled_exit_signal
 
-// A server traps exits and defines no handle_info to take the
-// {:EXIT, ...} gen_server hands it. This is a heuristic: any handle_info,
-// at any arity, counts.
+// A trapping server defines no handle_info for EXIT messages. This heuristic counts any
+// handle_info arity as a handler.
 .decl exit_without_handler(mod: symbol, trap: symbol)
 
 exit_without_handler(mod, trap) :-
@@ -1025,17 +820,10 @@ exit_without_handler(mod, trap) :-
   hands_exits_to_handle_info(mod),
   !has_handle_info(mod).
 
-// A process whose trapped exits gen_server hands to handle_info/2: a
-// GenServer (or a wrapper that runs one), a GenStage, or a server under
-// a behaviour the table does not list that answers calls
-// (gen_server_like, callbacks.dl: rabbit's gen_server2). Another listed
-// loop (a LiveView, a channel, a GenEvent) takes them its own way, and a
-// process under a behaviour argus does not know (gen_batch_server
-// passes `{info, {'EXIT', ...}}` to handle_batch/2, a cowboy_loop
-// handler to info/3) runs a receive argus does not see. A gen_statem
-// delivers {:EXIT, ...} to its state functions or handle_event/4, so a
-// has_handle_info check would call every trapping gen_statem (Swarm's
-// Tracker matches {:EXIT, ...} explicitly) a finding.
+// Behaviours delivering trapped exits to handle_info/2, as classified by
+// `gen_server_like`. Other frameworks use their own callbacks or hidden receives;
+// gen_statem uses state functions or handle_event/4 and must not be checked for
+// handle_info.
 .decl hands_exits_to_handle_info(mod: symbol) inline
 
 hands_exits_to_handle_info(mod) :- gen_server_like(mod).
@@ -1043,35 +831,19 @@ hands_exits_to_handle_info(mod) :- gen_server_like(mod).
 unhandled_exit_signal(mod, "no_handler", trap) :-
   exit_without_handler(mod, trap).
 
-// ── Trap exit with a handle_info that never matches {:EXIT, ...} ──
+// Partial handle_info without an exit clause
 //
-// The module defines handle_info/2 — so the check above is satisfied —
-// but no clause discriminates on :EXIT and none is a catch-all. The
-// trapped exit arrives as a message no clause accepts, and the process
-// dies with a FunctionClauseError on the very signal trapping was meant
-// to absorb. Bandit's HTTP/1 handler shipped this shape: trap_exit set
-// by `use ThousandIsland.Handler`, one handle_info clause for
-// {:plug_conn, :sent}, and a Plug that spawned a port took the
-// connection down.
-//
-// callback_tag over-approximates (every atom compared anywhere in the
-// body counts), so a module that mentions :EXIT at all is not reported —
-// the direction that keeps the rule quiet rather than noisy. The bug is
-// the vocabulary's own word (trap_exit_without_exit_clause,
-// process_kind.dl): a module that traps, has a partial handle_info/2
-// that never takes :EXIT, and is no gen_statem.
+// A trapping server with neither an :EXIT match nor catch-all crashes on trapped exits.
+// `callback_tag` counts any atom comparison, so unrelated :EXIT mentions can suppress
+// the finding. `trap_exit_without_exit_clause` excludes gen_statem.
 unhandled_exit_signal(mod, "no_exit_clause", trap) :-
   trap_exit_without_exit_clause(mod, trap).
 
-// ── A hand-rolled loop that traps and takes no exit ─────────────────
+// Manual loops ignoring trapped exits
 //
-// A process no behaviour runs reads its mailbox in its own receive: a
-// spawn_link'ed loop, a proc_lib process. When it traps exits and none
-// of the receives it runs has a clause that can take an `{:EXIT, pid,
-// reason}` (recv_takes_exit: one for :EXIT, or one that fixes no tag), a
-// linked process's exit becomes a message nothing takes: it stays in the
-// mailbox, every receive scans past it, and the exit trapping was meant
-// to answer (the parent's shutdown among them) goes unanswered.
+// For processes outside behaviours, check all reachable receives for :EXIT or an
+// unrestricted tag. Unmatched exits remain queued, repeatedly scanned, and may leave
+// parent shutdown unanswered.
 
 // A process no behaviour runs traps exits, and none of the receives its
 // loop runs can take the {:EXIT, ...}.
@@ -1091,12 +863,8 @@ traps_in_own_loop(mod, trap) :-
   trap_loop_candidate(trap),
   function_def(trap, mod, _, _, _).
 
-// A trap_exit not on a process module's own stack (trap_on_process_stack,
-// process_kind.dl: a behaviour's loop reads that mailbox, not these
-// receives), in a module that is no gen_statem: one in a module no
-// behaviour runs, and one in what a spawn or proc_lib runs, which
-// module_traps leaves out (traps_elsewhere) because it is not the
-// module's server's.
+// A trap outside behaviour-managed process stacks, including manual spawn/proc_lib
+// loops. Exclude gen_statem; its mailbox is handled through state callbacks.
 .decl trap_loop_candidate(func: symbol)
 
 trap_loop_candidate(func) :-
@@ -1104,9 +872,8 @@ trap_loop_candidate(func) :-
   !trap_on_process_stack(func),
   !statem_process(mod).
 
-// The loop is what the trapping function runs after it in its process,
-// and what a spawned function that reaches it there runs: a loop entered
-// after a setup that traps.
+// Find loops reached on the same stack after trapping setup, including loops in spawned
+// entry functions.
 .init trap_loop_caller = SameProcessReach
 
 trap_loop_caller.seed(f, f) :- trap_loop_candidate(f).
@@ -1143,21 +910,16 @@ unhandled_exit_signal(mod, "no_receive_clause", trap) :-
 
 // ══ Teardown that hurts a monitored child ═══════════════════════════
 
-// ── Terminating a process the server still monitors ───────────────────
+// Stopping a monitored child
 //
-// terminate_child (and GenServer.stop) on a pid this server monitors,
-// with the monitor not released on the way to the kill: the {:DOWN, ...}
-// for a death the server caused is delivered like any other, into the
-// clause written for crashes. Oban's producer terminated a job's process
-// on pkill and then handled its own :DOWN as a crash; Redix's cluster
-// manager terminated a departed node's connection and its :DOWN clause
-// reconnected it.
+// A server stops a pid while retaining its monitor. The resulting :DOWN can enter
+// crash-recovery logic and undo the deliberate stop. Require no release of that monitor
+// on the path to the kill.
 .decl kills_monitored_child(mod: symbol, site: symbol, kill_site: symbol)
 .output kills_monitored_child
 
-// A server stops a process it monitors, and nothing on the kill's way
-// releases the monitor: the :DOWN for a death it caused lands in the
-// clause written for crashes.
+// The server stops a monitored process without releasing its monitor. The resulting
+// DOWN reaches the handler intended for unexpected crashes.
 .decl kill_of_monitored_child(mod: symbol, monitor: symbol, kill: symbol)
 
 kill_of_monitored_child(mod, monitor, kill) :-
@@ -1166,17 +928,14 @@ kill_of_monitored_child(mod, monitor, kill) :-
   kills_what_it_monitors(monitor, kill),
   !released_with_kill(kill).
 
-// The server takes the monitor at `monitor` on its own stack
-// (server_side): one a Task or a spawn the server starts takes is that
-// process's, and so is its :DOWN.
+// The monitor belongs to the server's stack. Monitors created in detached tasks or
+// spawns belong to those processes instead.
 .decl server_monitors(mod: symbol, monitor: symbol)
 
 server_monitors(mod, monitor) :- server_side(mod, f), monitor_call(monitor, f, _).
 
-// The server's callbacks make the kill at `kill` happen, a process they
-// start included (`spawn(fn -> GenServer.stop(conn) end)`): the :DOWN
-// still comes to the server that monitors (server_caused,
-// clientlib/process_kind.dl).
+// The server causes the stop, directly or through a spawned process. DOWN still goes to
+// the server that owns the monitor.
 .decl server_kills(mod: symbol, kill: symbol)
 
 server_kills(mod, kill) :- server_caused(mod, g), kill_call(kill, g).
@@ -1187,10 +946,8 @@ server_kills(mod, kill) :- server_caused(mod, g), kill_call(kill, g).
 kill_call(x, g) :- sup_call(x, g, _, "terminate_child", _).
 kill_call(x, g) :- remote_call(x, g, "GenServer", "stop", _).
 
-// The kill may be of the monitored process: both resolve to one process
-// (signal_target, the points-to stage: the monitor's and the stop's), or
-// either does not resolve, and may be it. A kill of one process and a
-// monitor of another (a watcher's) are no pair.
+// Pair a kill with a monitor when their targets overlap or either is unresolved.
+// Distinct resolved processes do not qualify.
 .decl kills_what_it_monitors(monitor: symbol, kill: symbol)
 
 kills_what_it_monitors(m, k) :-
@@ -1207,10 +964,8 @@ kills_what_it_monitors(m, k) :-
   kill_call(k, g),
   !signal_target(k, g, "stop", _).
 
-// The kill's own way releases a monitor: a demonitor in the function that
-// kills, in a function that calls it, or in one it calls. A demonitor of
-// some other monitor, in another callback, releases nothing the kill's
-// :DOWN would bring.
+// A demonitor in the kill's function, a caller, or a callee can release the monitor on
+// that path. Unrelated callbacks do not qualify.
 .decl released_with_kill(kill: symbol)
 
 released_with_kill(k) :- kill_call(k, g), demonitor_call(_, g, _).
@@ -1222,17 +977,11 @@ kills_monitored_child(mod, site, kill_site) :-
 
 // ══ A permanent child that stops itself ═════════════════════════════
 
-// ── Permanent child that stops itself normally ────────────────────────
+// Permanent children stopping normally
 //
-// A supervisor restarts a :permanent child whatever the exit reason —
-// :normal and :shutdown included. So a permanent child whose callback
-// returns {:stop, :normal, ...} has asked to go away and will be started
-// straight back; the code that follows the stop (graceful permdown,
-// drain-and-quit) is undone at once. Phoenix PubSub's tracker shards did
-// this on graceful permdown until their spec became :transient.
-//
-// Only a literal reason counts. One row per stop site — finding builders
-// dedupe on (sup, child).
+// A permanent child restarts even after :normal or :shutdown, potentially undoing
+// intentional drain-and-stop behavior. Check literal stop reasons only; emit per stop
+// site and deduplicate by supervisor and child.
 .decl permanent_child_stops_normally(sup: symbol, child: symbol, reason: symbol, site: symbol, sup_site: symbol)
 .output permanent_child_stops_normally
 
@@ -1253,11 +1002,8 @@ restarts_always(sup, child) :-
   supervisor(sup, _),
   restart_policy(sup, child, "permanent").
 
-// A callback of `child`'s returns a stop tuple at `stop` with a literal
-// `reason` (callback_stop_reason). terminate/2 returns no stop tuple, and
-// init/1's `{:stop, reason}` is a start that fails: there is no child
-// for the supervisor to restart (vmq_diversity_script_state's "normal
-// stop as we don't want to exhaust the supervisor strategy").
+// A runtime callback returns a literal stop reason. Exclude terminate returns and init
+// failures: the latter never create a child for supervision to restart.
 .decl stops_itself(child: symbol, stop: symbol, reason: symbol)
 
 stops_itself(child, stop, reason) :-
@@ -1277,34 +1023,18 @@ permanent_child_stops_normally(sup, child, reason, site, sup_site) :-
   normal_stop_of_permanent_child(sup, child, reason, site),
   supervisor_site(sup, sup_site).
 
-// ══ A Broadway producer that drains by cancelling its poll ═════════
+// Broadway draining that re-enables fetching
 //
-// Since Broadway 1.1 a producer is no longer switched to :accumulate
-// while its pipeline drains (GenStage 1.2): processors still send
-// demand, and stopping the fetch is the producer's own job in
-// prepare_for_draining/1. A drain that cancels the poll timer and clears
-// the field holding its ref (`%{state | receive_timer: nil}`) sets the
-// very value the fetch's clause asks for (`handle_receive_messages(
-// %{receive_timer: nil} = state)`, field_nil_test): the next demand
-// fetches again, and what it fetches — SQS messages whose visibility
-// timeout has started, entries popped from a queue — is never processed
-// before the pipeline stops (broadway_sqs, broadway_cloud_pub_sub,
-// off_broadway_redis_stream, all fixed with a `draining: true` flag and a
-// clause that takes it first).
-//
-// `drain_keeps_fetching(mod, drain, gate, key)` — `drain` (the
-// producer's prepare_for_draining/1) sets `key` to nil in the state it
-// returns, and `gate`, which handle_demand/2 reaches in the module,
-// tests `key` against nil; and no other field the drain sets to a
-// literal is one a function handle_demand/2 reaches compares with a
-// literal (a `draining: true` the fetch takes first). Whether the drain
-// cancels a timer is not asked: one that only clears the field lets the
-// fetch run all the same.
+// Since Broadway 1.1, demand continues during draining. Clearing the poll-reference
+// field can satisfy the fetcher's nil guard and restart fetching before shutdown.
+// Report when prepare_for_draining/1 resets a field tested by handle_demand's
+// same-module reach, with no other updated literal field acting as a drain guard. Timer
+// cancellation is not required: clearing the field alone can enable fetching.
 .decl drain_keeps_fetching(mod: symbol, drain: symbol, gate: symbol, key: symbol)
 .output drain_keeps_fetching
 
-// A Broadway producer's drain clears the field its fetch waits on, and
-// the fetch takes no flag the drain sets: the next demand fetches again.
+// Broadway drain clears the field used by fetch, but fetch checks no drain flag.
+// Subsequent demand can restart fetching.
 .decl fetch_during_drain(mod: symbol, drain: symbol, gate: symbol, key: symbol)
 
 fetch_during_drain(mod, drain, gate, key) :-
@@ -1334,9 +1064,8 @@ fetches_while_nil(mod, gate, key) :-
   demand_reaches(mod, gate),
   field_nil_test(gate, key).
 
-// Another field the drain sets to a literal is one a function
-// handle_demand/2 reaches compares with a literal: a `draining: true`
-// the fetch takes first.
+// A function reached by handle_demand/2 checks a literal-valued field set by drain,
+// such as draining: true.
 .decl fetch_takes_drain_flag(mod: symbol, drain: symbol)
 
 fetch_takes_drain_flag(mod, drain) :-

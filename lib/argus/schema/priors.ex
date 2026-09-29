@@ -1,16 +1,10 @@
 defmodule Argus.Schema.Priors do
   @moduledoc """
-  Layer 3, the priors: facts no extractor emits — a classifier's answers
-  to questions the bytecode cannot settle, written by `Argus.Priors`
-  into the facts directory after extraction, or not at all. Every prior
-  relation ends in `permille`, the model's probability for the row in
-  thousandths, so a rule chooses its own threshold; rules use a prior
-  only as a positive premise, to add a heuristic-labelled finding or
-  move a severity, never to remove a structural row. Absent priors are
-  empty relations, and the findings are exactly those of a run without
-  them.
-
-  Layer 3 of `Argus.Schema`, which reads the relations from here.
+  Layer-3 classifier facts, written by `Argus.Priors` for questions bytecode cannot \
+  settle and exposed through `Argus.Schema`. Each row ends in a probability in \
+  thousandths (`permille`); rules choose their thresholds. Priors appear only as \
+  positive premises to add heuristic findings or adjust severity, never to remove \
+  structural rows. Missing priors are empty relations and preserve baseline findings.
   """
 
   @doc "The relations, in the order `Argus.Schema.all/0` lists them."
@@ -27,11 +21,9 @@ defmodule Argus.Schema.Priors do
           {:permille, :number, "the model's probability for `source`, in thousandths"}
         ],
         doc: """
-        Which external source a function itself reads, judged from what it calls \
-        and its literals; its arguments do not count, whoever calls it \
-        (Argus.Priors.Questions.Reads). Asked about the functions that hold a \
-        sink, so unsafe_input can tell a helper that converts a stored record \
-        from one that converts whatever it is handed.
+        A classifier's estimate of the external source a sink-containing function reads \
+        directly, based on calls and literals. Parameter data is excluded \
+        (`Argus.Priors.Questions.Reads`).
         """
       },
       %{
@@ -48,13 +40,9 @@ defmodule Argus.Schema.Priors do
              "`outside` — in thousandths"}
         ],
         doc: """
-        What the value a sink converts is, judged from the names around the call \
-        (Argus.Priors.Questions.ValueSource): a name the operator configures, text \
-        from the program's code, data it stored itself, a message from its own \
-        cluster, a developer's or administrator's input to a tool — or data from \
-        outside the system. Asked about the functions holding an unbounded sink, \
-        so unsafe_input can tell library API handed a pool's name from one \
-        handed a URL.
+        A classifier's estimate of an unbounded sink input's origin: configuration, \
+        program text, stored data, cluster messages, tool input, or external input \
+        (`Argus.Priors.Questions.ValueSource`). Inferred from names around the call.
         """
       },
       %{
@@ -71,13 +59,9 @@ defmodule Argus.Schema.Priors do
              "in thousandths"}
         ],
         doc: """
-        Whether a wait's peer answers every request from inside the node — a \
-        registry, a file server, a runtime driver, the exit of a process just \
-        stopped — or its answer waits on another node, an external program or \
-        something that may not happen (Argus.Priors.Questions.PeerAnswers). \
-        Asked of every server with a handle_call/3 and of every function with a \
-        `receive` that has no `after`, so blocking and startup can tell a hop to \
-        a local registry from one to a pool or another node.
+        A classifier's estimate of whether a wait can be answered within the node or \
+        depends on external activity. Asked for servers with `handle_call/3` and \
+        functions with unbounded receives (`Argus.Priors.Questions.PeerAnswers`).
         """
       },
       %{
@@ -96,12 +80,10 @@ defmodule Argus.Schema.Priors do
            "the model's probability for `kind`, the sum over its details, in thousandths"}
         ],
         doc: """
-        What a field or configuration key holds, judged from its name, its type \
-        and the schema around it (Argus.Priors.Questions.Sensitivity); a secret's \
-        id, name or public half is `none`, not a secret. `kind` is the \
-        class a rule consumes and `permille` its total probability, so a field \
-        the model is sure is a secret but splits between token and credential \
-        is a secret at the sum; `detail` is the likeliest finer kind within it.
+        A field or configuration key's estimated sensitivity, based on name, type, and \
+        schema (`Argus.Priors.Questions.Sensitivity`). Secret identifiers and public \
+        portions are `none`. `permille` sums probability for the broad `kind`; `detail` \
+        is its most likely subtype.
         """
       },
       %{
@@ -116,13 +98,9 @@ defmodule Argus.Schema.Priors do
              "`test` — in thousandths"}
         ],
         doc: """
-        Whether a module is part of the product the deployed system runs, a \
-        tool only developers run (a generator, seeds, a benchmark, a debugging \
-        helper, a code reloader) or support for tests, judged from its name, \
-        its functions and the modules it calls and that call it \
-        (Argus.Priors.Questions.Tooling). Asked about the modules \
-        `tooling_module` leaves undecided, so every analysis can step a \
-        finding in tooling down (clientlib/tooling.dl).
+        A classifier's estimate of whether a module is product code, developer tooling, \
+        or test support (`Argus.Priors.Questions.Tooling`). Asked only when \
+        `tooling_module` is undecided; used to lower finding severity in tooling.
         """
       },
       %{
@@ -134,12 +112,10 @@ defmodule Argus.Schema.Priors do
            "the model's probability that calling the module's public functions messages or waits on a long-lived process, in thousandths"}
         ],
         doc: """
-        Whether a module fronts a process — its API sends to or waits on a \
-        server — or is a helper that merely contains a call somewhere \
-        (Argus.Priors.Questions.ProcessRole). Asked about the modules with a \
-        call or cast but no callback loop, which is what the module-level \
-        dependency in calls.dl cannot tell apart; coupling doubts a dependency \
-        inferred that way when the answer is no.
+        A classifier's estimate of whether a module fronts a process or is a helper \
+        containing incidental calls (`Argus.Priors.Questions.ProcessRole`). Asked for \
+        modules with calls or casts but no callback loop; qualifies inferred coupling \
+        dependencies.
         """
       }
     ])

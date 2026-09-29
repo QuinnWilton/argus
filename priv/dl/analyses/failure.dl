@@ -1,13 +1,6 @@
-// An error path swallowed, half-caught or ignored.
-//
-// A failure the code could have seen and did not: a rescue that keeps
-// every exception, a remote call whose failure value nothing matches,
-// a start result discarded, a lookup used without its nil case, a
-// process spawned with nothing watching it, an exit signal sent from a
-// callback past the supervisor that owns the target; and failures the
-// code makes certain: a local-only BIF handed another node's pid, an
-// rpc to a function its module does not export, a handle an error path
-// loses.
+// Unhandled failures: broad rescues, unchecked RPC and start results, unsafe lookups,
+// unsupervised processes, exits bypassing supervision, local-only operations on remote
+// pids, invalid RPC targets, and dropped resource handles.
 
 .include "../clientlib/imports.dl"
 .include "../clientlib/otp.dl"
@@ -25,30 +18,16 @@
 // level (clientlib/tooling.dl, Argus.Findings.Tooling).
 .output tooling
 
-// ══ The outputs ═════════════════════════════════════════════════════
-//
-// A failure the code could have seen and did not, in these shapes (the
-// ones another node and a lost handle make follow them):
-//
-// `unhandled_failure(func, site, kind, shape)` — a failure value or
-//   exception that nothing takes. `kind` is "rescue" (a catch-all rescue
-//   discards the exception; site is the try), "erpc_transport" (a
-//   rescue around :erpc.call has no clause for transport failures; site
-//   is the guarded call), or the rpc variant "rpc" | "block_call" |
-//   "yield" | "multicall" | "erpc" whose
-//   result is matched by shape with no {:badrpc, _} clause (`shape` =
-//   "case") or used as a boolean (`shape` = "boolean"); site is the call.
-// `unchecked_result(func, site, api, name)` — a result used without its
-//   failure case: Task.Supervisor.start_child discarded, or a
-//   Process.whereis of `name` used without its nil case.
-// `orphan_process(func, site, kind, target, callback)` — a process
-//   nothing supervises: a bare spawn (`kind` = "spawn"), a
-//   `:proc_lib.start` whose process lives on past its ack (`kind` =
-//   "start"; site is the call for both), or an exit signal sent to
-//   `target` from a callback, past the supervisor that owns it (`kind` =
-//   "exit", or "exit_supervised" when `target` is a supervisor's child;
-//   site is the exit call, `func` the function making it and `callback`
-//   a callback running it).
+// Outputs
+// `unhandled_failure`: discarded exceptions (`rescue`), uncaught erpc transport
+// failures, or RPC results misused as shape matches (`case`) or booleans. The site is
+// the try or failing call; `span_end` marks the handler span.
+// `unchecked_result`: discarded task-start results or process lookups used without
+// handling absence.
+// `orphan_process`: an unwatched spawn, a proc_lib start continuing past
+// acknowledgement, or an exit sent from a callback past supervision. Exit rows
+// distinguish known supervised children (`exit_supervised`) from unresolved ownership
+// (`exit`).
 .decl unhandled_failure(func: symbol, site: symbol, kind: symbol, shape: symbol, span_end: symbol)
 .output unhandled_failure
 
@@ -61,24 +40,19 @@
 .decl inconsistent_handling(func: symbol, site: symbol, callee: symbol, belief: symbol, agree: number, deviate: number, target: symbol, raises: symbol, cover: symbol, caught: symbol)
 .output inconsistent_handling
 
-// ══ Another node ════════════════════════════════════════════════
+// Distributed failures
 //
-// Two defects a cluster shows and a single node never does: a BIF that
-// acts on a local process only, handed another node's pid, and an rpc
-// to a function the program's module does not export.
+// Check local-only BIFs receiving potentially remote pids and RPC targets absent from
+// the analyzed module's exports.
 
-// `remote_pid_probe(func, anchor, site, bif, api, kind)` — a BIF that
-//   acts on a local process only (`bif` at `site`), handed a pid that
-//   may be another node's: one `api` answered (`kind` = "lookup": a
-//   cluster-wide registry or a process group), or one a conflict
-//   resolver is handed (`kind` = "resolver"). `anchor` is the site the
-//   finding points at: the BIF's call, or `func`'s call into the helper
-//   that makes it.
+// A local-only BIF receiving a possibly remote pid from a lookup or conflict resolver.
+// `site` identifies the BIF; `anchor` is that call or the caller's call into a helper.
+// `api` identifies the pid source.
 .decl remote_pid_probe(func: symbol, anchor: symbol, site: symbol, bif: symbol, api: symbol, kind: symbol)
 .output remote_pid_probe
 
-// A BIF that acts on a local process only is handed a pid that may be
-// another node's, and the ArgumentError it raises there escapes.
+// A local-only process BIF receives a possibly remote PID, and the resulting
+// ArgumentError escapes.
 .decl local_bif_on_remote_pid(func: symbol, anchor: symbol, probe: symbol, origin: symbol)
 
 local_bif_on_remote_pid(func, anchor, probe, origin) :-
@@ -97,19 +71,15 @@ remote_pid_probe(func, anchor, probe, bif, api, kind) :-
 
 probes_local_process(probe, prober) :- pid_probe(probe, prober, _, _, _).
 
-// `func` hands the BIF a pid the call at `origin` answered, which may be
-// another node's: at the BIF itself (`anchor` is the BIF), or at func's
-// call (`anchor`) into the helper that makes it (remote_probe).
+// `func` passes a possibly remote PID from origin to a BIF, directly or through
+// remote_probe. `anchor` is the BIF or the call into its helper.
 .decl hands_remote_pid(func: symbol, anchor: symbol, probe: symbol, origin: symbol) inline
 
 hands_remote_pid(func, anchor, probe, origin) :- remote_probe(func, anchor, probe, origin).
 
-// The probe's ArgumentError escapes `func` through `anchor` (Escape,
-// clientlib/escape.dl): no try that takes it and goes on covers the BIF,
-// the call into its helper, nor a call between on the path down, and not
-// every caller of `func` is inside one. A path from the anchor's callee
-// to the probe that another call takes (not the pid's) counts as the
-// pid's: some such path is unguarded.
+// The probe's ArgumentError can escape through `anchor` (`Escape`). No covering handler
+// blocks every path to the probe or every caller of `func`. Reachability is not
+// pid-flow-specific: an unguarded alternate path also counts.
 .decl probe_raise_escapes(probe: symbol, func: symbol, anchor: symbol)
 
 probe_raise_escapes(probe, func, anchor) :- probe_raise.escapes_through(probe, func, "badarg", anchor).
@@ -120,11 +90,8 @@ probe_raise.asked(probe, prober, func, "badarg") :-
   remote_probe(func, _, probe, _),
   pid_probe(probe, prober, _, _, _).
 
-// `rpc_undefined(func, anchor, site, callee, why)` — the rpc at `site`
-//   runs `callee`, a function of one of the program's modules that the
-//   module does not export (`why` = "missing": no such function at that
-//   arity; "private": defined but not exported). `anchor` is the rpc, or
-//   `func`'s call into the wrapper that makes it.
+// An RPC target is `missing` at that arity or `private`. `site` identifies the RPC;
+// `anchor` identifies it or the caller's wrapper call.
 .decl rpc_undefined(func: symbol, anchor: symbol, site: symbol, callee: symbol, why: symbol)
 .output rpc_undefined
 
@@ -151,11 +118,9 @@ rpc_undefined(func, anchor, rpc, callee, "missing") :-
 rpc_undefined(func, anchor, rpc, callee, "private") :-
   rpc_to_private_function(func, anchor, rpc, callee).
 
-// Argus has the module's code: it is one of the analyzed beams, so what it
-// defines and exports is known (the same release runs on every node). A
-// module it never saw, OTP or a dependency, defines nothing as far as the
-// facts go, so without this every rpc into one would look "missing".
-// `defines` implies it, so the private rule needs no such line.
+// The module is among the analyzed BEAMs, so its definitions and exports are known.
+// Assumes the same release on every node. Unseen modules cannot establish a missing RPC
+// target; `defines` already implies visibility for private-target checks.
 .decl code_is_known(module: symbol) inline
 
 code_is_known(module) :- program_module(module).
@@ -172,12 +137,9 @@ exports(module, func) :- function_def(func, module, _, _, 1).
 
 // ══ A handle lost on an error path ══════════════════════════════
 
-// `resource_dropped(func, site, api, drop)` — the file, socket or port
-//   the call at `site` (`api`) opens is lost at `drop` on some path that
-//   returns: only read, written, sent on or tested on the way, never
-//   closed, returned, stored or handed on (handle_dropped,
-//   Argus.Extractors.Handles). The process that opened it holds it
-//   until it exits.
+// A handle opened at site is lost at drop on a returning path without close or
+// transfer. Reads, writes, and tests do not transfer ownership; the process retains the
+// resource until exit.
 .decl resource_dropped(func: symbol, site: symbol, api: symbol, drop: symbol)
 .output resource_dropped
 
@@ -199,9 +161,8 @@ resource_dropped(func, open, api, drop) :-
 
 opens_handle(open, func) :- handle_dropped(open, func, _, _).
 
-// On a path from the open that returns, the handle is gone at `drop`:
-// only read, written, sent on or tested on the way, never closed,
-// returned, stored or handed on (handle_dropped, Argus.Extractors.Handles).
+// A returning path drops the opened handle without closing, returning, storing or
+// transferring it. Reads, writes, sends and tests alone do not release it.
 .decl loses_handle(open: symbol, drop: symbol) inline
 
 loses_handle(open, drop) :- handle_dropped(open, _, _, drop).
@@ -227,30 +188,24 @@ unhandled_failure(func, try, "rescue", "", guard_end) :-
 
 discards_every_exception(try, func) :- bare_rescue(try, func, _).
 
-// The try protects only sends, signals, calls into other processes and
-// name operations, or a log line (try_boundary), directly or through a
-// client API (boundary_through_api): it takes a dead peer, a timeout, a
-// taken name or a failed log handler, which is what it was written to
-// tolerate. A catch-all a library wrote (library_written,
-// clientlib/generated.dl: yecc's runtime in a generated parser, a `use`'s
-// expansion) is the library's, not the program's.
+// A try covering only boundary operations or logging, directly or through a client API,
+// handles expected external failures. Library-generated catch-alls are also excluded
+// through `library_written`.
 .decl protects_only_boundaries(try: symbol, func: symbol) inline
 
 protects_only_boundaries(try, func) :- try_boundary(try, func).
 protects_only_boundaries(try, func) :- boundary_through_api(try, func).
 
-// The same boundary one hop away: every call the try protects that is
-// not a boundary operation itself is a call to a client API that is
-// (boundary_function: hackney's `hackney_conn:stop(Pid) ->
-// gen_statem:stop(Pid)`, vernemq's `vmq_queue:status/1`).
+// Recognize boundary operations through one client API wrapper, such as a helper
+// forwarding to gen_statem:stop.
 .decl boundary_through_api(try: symbol, func: symbol)
 
 boundary_through_api(try, func) :-
   try_wrapper_call(try, func, _),
   !protects_other_call(try, func).
 
-// A protected call that is no boundary function, or one the call graph
-// does not resolve (it names no known boundary), keeps the try reported.
+// Keep the broad-try finding if any protected call is unresolved or is not a recognized
+// boundary operation.
 .decl protects_other_call(try: symbol, func: symbol)
 
 protects_other_call(try, func) :-
@@ -264,9 +219,8 @@ protects_other_call(try, func) :-
 
 // ── Exit in GenServer callback ───────────────────────────────────
 
-// A server's callback sends an exit signal to a process the server did
-// not start and no supervisor is known to own, stopping it behind the
-// back of whatever supervises it.
+// A server callback kills a process it neither started nor knows to be supervised,
+// potentially bypassing its actual lifecycle owner.
 .decl exit_past_supervisor(func: symbol, exit: symbol, target: symbol, callback: symbol)
 
 exit_past_supervisor(func, exit, target, callback) :-
@@ -284,12 +238,9 @@ exit_to_supervised_child(func, exit, child, callback) :-
   runs_in_callback(exit, callback),
   exits_supervised_child(exit, child, _).
 
-// One finding per exit call, in the function that makes it, whichever
-// callbacks run it: Exq's Redis connection helper kills the connection
-// on a failover from every server that queries Redis, and that is one
-// exit, not ten. `callback` is one of the callbacks that reach it (the
-// finding keeps the least). "exit" is to a process the rule knows only
-// as a value, "exit_supervised" to a supervisor's child.
+// Report once per exit call, independent of how many callbacks reach it; retain the
+// least callback as evidence. `exit_supervised` identifies a supervisor child, while
+// `exit` has only a target value.
 orphan_process(func, exit, "exit", target, callback) :-
   exit_past_supervisor(func, exit, target, callback).
 
@@ -305,12 +256,8 @@ exit_target_owner(func, child, sup, sup_site) :-
   exits_supervised_child(exit, child, sup),
   supervisor_site(sup, sup_site).
 
-// `func` sends an exit signal to `target` at `exit`: Process.exit/2 or
-// :erlang.exit/2. `:erlang.exit/1` (target "self", the sentinel the
-// extractor uses for the /1 form) *raises* an exit in the current
-// process: the "let it crash on an impossible state" idiom
-// (`exit(:unexpected_checkout)`) and ordinary client-call failure
-// propagation, both fully supervision-visible and not a bypass.
+// An exit/2 signal to another process. Exclude exit/1, represented by target self: it
+// raises locally and remains visible to supervision.
 .decl sends_exit_signal(exit: symbol, func: symbol, target: symbol) inline
 
 sends_exit_signal(exit, func, target) :- exit_call(exit, func, target), target != "self".
@@ -327,11 +274,8 @@ runs_in_callback(exit, callback) :-
   handler_function(_, callback),
   exit_reach.reaches(callback, exit).
 
-// Where process points-to (signals.dl) resolves the signal: a process
-// the sending module started itself — a helper kept in the state, a
-// worker it spawned — is its own to stop (exit_to_own_process), and a
-// child a supervisor owns is the bypass the finding is about, named with
-// its supervisor.
+// Resolve the signal target through points-to. Processes started privately by the
+// sender are its own to stop; supervised children identify the supervision-bypass case.
 .decl exits_supervised_child(exit: symbol, child: symbol, sup: symbol)
 
 exits_supervised_child(exit, child, sup) :-
@@ -385,16 +329,11 @@ takes_transport_failure(try, func) :- catch_tag(try, func, "error", ":erpc").
 
 falls_through_after_exception(try, func) :- catch_falls_through(try, func, ":exception").
 
-// ── An rpc result that is not a value ─────────────────────────────────
+// RPC failure values
 //
-// :rpc.call answers a node that is gone with {:badrpc, :nodedown} (a
-// timeout, a remote exit: {:badrpc, reason} too). Matched by shape with
-// no clause for it, that is a CaseClauseError (rabbitmq-cli#193,
-// phoenix_live_dashboard#218, livebook#972); tested as a boolean it is
-// TRUE — `member?(n) && :rpc.call(n, Process, :alive?, [pid])` says the
-// process on a gone node is alive (horde, until 30bb1a1). :erpc.call
-// raises instead, so in a boolean context it needs a rescue (horde's
-// fix: catch {:erpc, :noconnection} -> false).
+// :rpc returns `{:badrpc, reason}` for node loss, timeouts, and remote failures. An
+// incomplete shape match can raise; a boolean test treats the tuple as true. :erpc
+// raises instead and needs an appropriate handler.
 
 // An rpc answers a gone node with {:badrpc, _}, and the code matches the
 // answer by shape with no clause for it.
@@ -438,12 +377,9 @@ may_answer_badrpc(rpc, func, variant) :-
   rpc_call(rpc, func, variant, _),
   badrpc_variant(variant).
 
-// The :rpc forms whose answer is the {:badrpc, _} itself: call,
-// block_call, the yield that collects an async_call, and multicall
-// (whose failures are its bad-nodes list; the shape a rule matches is
-// the pair). nb_yield wraps the answer in {:value, _}, so a case over it
-// has a clause for the wrapper, and the badrpc it leaves out is nested:
-// not this rule's shape.
+// RPC variants with directly checked failure results: call, block_call, yield, and
+// multicall (whose failure information is the bad-nodes list). nb_yield's nested
+// `{:value, result}` shape is excluded.
 .decl badrpc_variant(variant: symbol)
 
 badrpc_variant("rpc").
@@ -457,9 +393,8 @@ badrpc_variant("multicall").
 
 matched_by_shape(rpc, func) :- rpc_result(rpc, func, "case").
 
-// Used as a boolean: tested against true/false/nil after the call, or
-// returned as the result of a predicate (a function named `...?`), whose
-// callers test it.
+// The result is used as a boolean: compared with true/false/nil or returned by a
+// predicate named ...?.
 .decl used_as_boolean(rpc: symbol, func: symbol)
 
 used_as_boolean(rpc, func) :- rpc_result(rpc, func, "boolean").
@@ -480,10 +415,8 @@ named_as_predicate(func) :-
 
 erpc_call(rpc, func) :- rpc_call(rpc, func, "erpc", _).
 
-// The {:erpc, reason} the call raises escapes its function (Escape,
-// clientlib/escape.dl): no try around the call takes the error class or
-// names :erpc and goes on, and not every caller of the function is inside
-// one. A try around other code in the function takes nothing of it.
+// The erpc exception can escape its function and callers under `Escape`. Only covering
+// error/erpc handlers count; unrelated tries do not.
 .decl erpc_raise_escapes(rpc: symbol, func: symbol)
 
 erpc_raise_escapes(rpc, func) :- erpc_raise.escapes(rpc, func, "erpc").
@@ -492,20 +425,11 @@ erpc_raise_escapes(rpc, func) :- erpc_raise.escapes(rpc, func, "erpc").
 
 erpc_raise.asked(rpc, func, func, "erpc") :- erpc_call(rpc, func), used_as_boolean(rpc, func).
 
-// ── An rpc answer a wrapper returns ───────────────────────────────────
+// RPC results forwarded by wrappers
 //
-// The answer of an rpc a function returns (rpc_result "returned") is its
-// callers' to judge: EMQX's BPAPI proto modules are one `rpc:call` each,
-// a facade returns the proto's answer, and the HTTP handler matched the
-// facade's result for ok and error only, so a gone node was a
-// CaseClauseError and a 500 (emqx#18287 fixed about fifteen such
-// callers). A wrapper returns an rpc's answer, or another wrapper's
-// (result_tested "returned", remote callees included); where its caller
-// matches that result by shape, or tests it as a boolean, in a function
-// comparing nothing to :badrpc (result_tested), the {:badrpc, _} meets
-// the test there. A function that takes the failure itself (a :badrpc
-// clause, rpc_result "badrpc") wraps nothing. `rpc_wrapped` names the
-// rpc for the finding's frame.
+// Follow returned RPC results through local or remote wrappers to callers that
+// shape-match or boolean-test them without comparing to :badrpc. A wrapper handling
+// :badrpc itself stops propagation. `rpc_wrapped` retains the originating RPC site.
 
 // A wrapper returns an rpc's answer, and its caller matches the result by
 // shape with no clause for {:badrpc, _}.
@@ -529,9 +453,8 @@ wrapped_badrpc_as_true(caller, call, wrapper, variant) :-
 unhandled_failure(caller, call, variant, "boolean", wrapper) :-
   wrapped_badrpc_as_true(caller, call, wrapper, variant).
 
-// `wrapper` returns the answer of the rpc at `rpc` (`variant`), its own
-// or another wrapper's, and takes no failure itself. A predicate's
-// answer is reported where the predicate is, not at its callers.
+// `wrapper` returns an RPC result without handling failure, directly or through another
+// wrapper. Report predicate results at the predicate itself.
 .decl rpc_wrapper(wrapper: symbol, variant: symbol, rpc: symbol)
 
 rpc_wrapper(wrapper, variant, rpc) :-
@@ -545,10 +468,8 @@ rpc_wrapper(outer, variant, rpc) :-
   rpc_wrapper(wrapper, variant, rpc),
   !predicate_function(outer).
 
-// The answers that are a {:badrpc, _} themselves. A multicall's is the
-// {results, bad_nodes} pair, which a caller's `{replies, _bad} =` match
-// always takes (mnesia's own multicall wrappers): its failures are in
-// the lists, not this rule's shape.
+// Results shaped {:badrpc, _}. Exclude multicall: it returns {results, bad_nodes}, with
+// failures inside the lists.
 .decl wrapped_answer(variant: symbol)
 
 wrapped_answer("rpc").
@@ -573,11 +494,8 @@ predicate_function(func) :-
 
 matches_result_by_shape(call, caller, wrapper) :- result_tested(call, caller, wrapper, "case").
 
-// The caller tests the wrapper's result as a boolean, or is a predicate
-// that returns it (a cluster facade's `alive?/2` returning the proto's
-// `:rpc.call`): its name is the test, and it is reported at its call of
-// the wrapper, as a predicate making the rpc itself is at the rpc
-// (used_as_boolean).
+// A caller boolean-tests a wrapper result, or returns it from a predicate. Anchor at
+// the wrapper call, matching direct-RPC predicate checks.
 .decl tests_result_as_boolean(call: symbol, caller: symbol, wrapper: symbol)
 
 tests_result_as_boolean(call, caller, wrapper) :- result_tested(call, caller, wrapper, "boolean").
@@ -609,19 +527,10 @@ discarded_task_start(func, start) :-
   start_may_fail(start),
   !start_result_checked(start).
 
-// A Task.Supervisor.start_child returns an error only as `{:error,
-// :max_children}`: a task's start cannot fail, and a supervisor that is
-// not running exits the caller instead of answering. So the start can
-// fail only when the supervisor it names may have a cap
-// (task_supervisor_cap: a literal one, or options the extractor cannot
-// read). A supervisor the start does not name (a pid, livebook's
-// RuntimeServer's `state.task_supervisor`; a `{name, node}`), or names
-// but the program does not start, may be any Task.Supervisor the program
-// starts: the start can fail when any of them may have a cap. When none
-// does, the start is quiet: the default is `:infinity`, and every
-// Task.Supervisor in view is read. Known limit: a supervisor the program
-// does not show (one a dependency starts, a library's caller's, one in a
-// child list read from config) is taken as uncapped.
+// A Task.Supervisor start can return `{:error, :max_children}` when its supervisor may
+// be capped. Unknown targets match any visible potentially capped Task.Supervisor. An
+// unavailable supervisor exits instead of returning an error. Known limit: supervisors
+// absent from the facts are treated as uncapped.
 .decl start_may_fail(start: symbol)
 
 start_may_fail(start) :-
@@ -652,11 +561,9 @@ unchecked_result(func, start, "Task.Supervisor.start_child", "") :-
 starts_supervised_task(start, func) :-
   remote_call(start, func, "Task.Supervisor", "start_child", _).
 
-// The start's result is checked: in tail position (propagated to the
-// caller), or a branch runs after it (runs_after, clientlib/order.dl):
-// on a path from the start, not merely at a later index, which a branch
-// in another clause of the function has too. Still a proxy for "the
-// result was pattern-matched": the branch need not read the result.
+// Treat a tail-returned start result or a branch reachable after the start as checked.
+// Control-flow reach excludes unrelated clauses, but the branch need not actually
+// inspect the result.
 .decl start_result_checked(start: symbol)
 
 start_result_checked(start) :-
@@ -671,8 +578,8 @@ start_result_checked(start) :-
 
 after_start.asked(start) :- starts_supervised_task(start, _).
 
-// A Process.whereis of a literal name is used without testing for nil,
-// and no try around the use takes how a nil pid fails there.
+// A literal Process.whereis result is used without a nil check or a handler for the
+// resulting failure.
 .decl whereis_without_nil_case(func: symbol, lookup: symbol, name: symbol)
 
 whereis_without_nil_case(func, lookup, name) :-
@@ -688,20 +595,10 @@ unchecked_result(func, lookup, "Process.whereis", name) :-
 
 used_untested(lookup, func, name) :- name_lookup(lookup, func, "whereis", _, "literal", name, "unchecked").
 
-// A lookup whose first use fails, on a nil or :undefined pid, the way a
-// try around that use takes (nil_use, from ProcessRegistry: the use, and
-// how it fails): its missing case is handled where the failure does not
-// escape the function (Escape, clientlib/escape.dl: a try around the
-// use, around a call on every path down to it, or around every call to
-// the function). A BIF or a send raises badarg, which a handler of the
-// error class takes, or one naming ArgumentError or :badarg
-// (`process_info(whereis(n), ...)` under `catch error:badarg`,
-// rabbit_vm's memory/0); a call to the name exits with :noproc, which
-// only a handler of the exit class takes — a `rescue` around
-// `GenServer.call(Process.whereis(n), ...)` takes nothing of it; a use
-// nothing is known of needs a handler of both. The coverage asked is the
-// use's own (nil_use's `use` column), or the lookup's when the use is no
-// call (a `send`), which a try covers with it.
+// The first use of a missing lookup result is covered by a matching handler (`Escape`).
+// Sends and BIFs need error/badarg handling; process calls need exit/noproc handling;
+// unknown uses need both classes. Check the use site, or the lookup site when the use
+// is a send instruction.
 .decl nil_use_caught(lookup: symbol, func: symbol)
 
 nil_use_caught(lookup, f) :- nil_use(lookup, f, u, "error"), nil_use_fault.rescued(u, f, "badarg").
@@ -753,35 +650,28 @@ unwatched_start(func, start) :-
 orphan_process(func, start, "start", "", "") :-
   unwatched_start(func, start).
 
-// The call at `spawn` is a spawn with nothing of its own watching the
-// process: not spawn_link or spawn_monitor (spawn_call's variant
-// "spawn"). `spawn_call` carries its caller, so this analysis does not
-// join `instruction`, the largest relation in the schema, to find it:
-// that cost 1.56 s an edit on a 531-module project with no spawn at all.
+// A spawn with variant `spawn`, excluding linked or monitored starts. `spawn_call`
+// already records its caller, avoiding an `instruction` join.
 .decl bare_spawn(spawn: symbol, func: symbol) inline
 
 bare_spawn(spawn, func) :- spawn_call(spawn, func, _, _, _, "spawn", _, _, _, _).
 
-// The call at `start` is a `:proc_lib.start` (spawn_call's variant
-// "start"). It waits for the process's init_ack and hands back a failed
-// start as a value, but the ack covers only the start: a worker that goes
-// on to loop after it is as unwatched as one proc_lib:spawn started, and
-// dies unnoticed.
+// A proc_lib.start waits for init_ack but leaves subsequent work unlinked and
+// unmonitored. A successful acknowledgement does not supervise the continuing process.
 .decl proc_lib_start(start: symbol, func: symbol) inline
 
 proc_lib_start(start, func) :- spawn_call(start, func, _, _, _, "start", _, _, _, _).
 
-// The process the start runs does more after its ack: not a process whose
-// life ends at the ack, the start the caller waited on being all of it.
+// The started process continues running after acknowledgement, so a successful start
+// does not imply that its work is complete.
 .decl lives_past_ack(start: symbol, func: symbol) inline
 
 lives_past_ack(start, func) :-
   process_start(start, func, _, "spawn", started),
   !ends_at_ack(started).
 
-// The started function acknowledges its start and then makes no call
-// and no receive (start_acked has no row for it): it returns, and its
-// process ends.
+// After acknowledgement, the function neither calls nor receives. It returns and its
+// process exits; start_acked has no continuing-work row.
 .decl ends_at_ack(func: symbol)
 
 ends_at_ack(g) :-
@@ -797,51 +687,17 @@ watched_spawn(spawn) :-
   instance(p, b),
   watched_process(p, _).
 
-// ── The belief the other call sites hold ────────────────────────
+// Call-site consistency
 //
-// No list says which results must be checked or which calls must be
-// guarded; the program does. When every other site of a callee matches
-// its result and one discards it, the one is the finding — the rule
-// Engler et al. named "bugs as deviant behavior". The belief needs
-// three agreeing sites before it counts, and the deviants must be a
-// quarter or fewer of the population: three checked against three
-// ignored is a convention, not a slip. In the result belief only the
-// used and ignored fates take part: a tail call hands its result on and
-// says nothing about it. In the exception belief every site takes part,
-// a tail call too: what it raises reaches its callers, whose tries
-// guard it as they guard any call in the function (guarded_by_callers).
-//
-// The population a site is judged in (`scope`) is its target's own
-// sites — the table, the server, the name — when the site's first
-// argument is a literal, and only then: mnesia reads its gvar table under
-// a catch 120 times and its stats table bare once, on purpose; gvar's
-// habit is not a belief about stats, and inet_db's guarded host lookups
-// say nothing of the lookups mnesia, dets_server and digraph make on
-// tables of their own. A process call whose target is the calling
-// function's own parameter, in a module that runs a process loop — the
-// client API of a GenServer or a gen_statem, `def checkout(pid, ...),
-// do: :gen_statem.call(pid, ...)` — has one target too: that module's
-// processes. A process call whose target a local helper builds
-// (`via(id)`, `{:via, Registry, {reg, id}}`) is scoped by where it comes
-// from: every call on what `via/1` makes names the same kind of server,
-// and holds or breaks a belief about it. Any other
-// site's target is not known, and it neither holds a belief nor breaks
-// one.
-//
-// Whether a call can fail depends on its arguments, and a site that
-// cannot takes no part either (`cannot_fail`): a send to anything but a
-// registered name, an ETS operation that fails only on a missing table,
-// made inside the process that created it in init/1 and never deletes
-// it, and a lookup_element of a row the owner's init/1 always seeds and
-// nothing removes. A call on a value that is never a literal — a send to
-// a pid, a timer cancelled by its reference, with `async: true` or not —
-// has no target, and so no population.
-//
-// Known limit: an Erlang macro's expansions (mnesia's `?catch_val`, one
-// guarded lookup written once and expanded a hundred times) count as
-// that many sites. The preprocessor gives the expansion the line of each
-// use, and the BEAM keeps nothing that says a macro wrote it; keying the
-// belief on the target bounds what such a count can decide.
+// Report outliers only with at least three agreeing sites and at most one quarter
+// deviating. Result checks compare used versus ignored results; returned results do not
+// vote. Exception checks include tail calls and guards inherited from callers.
+// Compare sites for the same target: a literal name, a process module's parameter-based
+// client API, or a target built by the same local helper. Unknown targets do not
+// participate. Exclude operations proven unable to fail.
+// Known limit: Erlang macro expansions count as separate sites because BEAM metadata
+// does not identify their shared source. Target-specific grouping limits the effect of
+// those duplicates.
 
 // A site drops the callee's result where a clear majority of the callee's
 // sites judged with it bind the result.
@@ -855,8 +711,8 @@ ignored_where_most_are_used(func, site, callee, used, ignored, scope) :-
   clear_majority(used, ignored),
   !reported_elsewhere(site).
 
-// A site calls the callee with no try that takes what it raises, where a
-// clear majority of the callee's sites judged with it are guarded.
+// An unguarded call deviates from a clear majority of comparable sites that handle the
+// callee's exceptions.
 .decl bare_where_most_are_guarded(func: symbol, site: symbol, callee: symbol, guarded: number, bare: number, scope: symbol)
 
 bare_where_most_are_guarded(func, site, callee, guarded, bare, scope) :-
@@ -873,15 +729,9 @@ inconsistent_handling(func, site, callee, "exception_guarded", guarded, bare, sc
   call_result(site, func, callee, _, raises, _),
   bare_cover(site, cover, caught).
 
-// A result is worth checking only if the callee can fail by returning:
-// a callee whose spec names no failure value (`:ets.new/2` returns a
-// table or raises, `:ets.delete/2` returns `true`) or never returns has
-// nothing in its result for a site to miss, however many other sites
-// happen to bind it. A callee with no spec is unknown and stays in: the
-// spec may only quiet the rule. Every callee call_result counts ships
-// specs, except the program's own start functions, whose OTP convention
-// is {:ok, pid} | {:error, _}; so there is no table of hand-written
-// shapes to keep.
+// A spec proving no failure return, or no return at all, suppresses result-check
+// findings. Missing specs remain unknown and cannot suppress. Specs only qualify the
+// rule; they do not create findings.
 .decl returns_no_failure(callee: symbol)
 
 returns_no_failure(c) :- callee_returns(c, "total").
@@ -893,31 +743,21 @@ returns_no_failure(c) :- callee_returns(c, "no_return").
 reported_elsewhere(site) :- unchecked_result(_, site, _, _).
 reported_elsewhere(site) :- start_result_owned(site).
 
-// A Task.Supervisor.start_child's result is unchecked_result's question,
-// which asks whether the start can fail: under no cap it answers only
-// {:ok, pid}, and a site dropping it hides nothing, whatever the other
-// sites do.
+// unchecked_result handles Task.Supervisor.start_child failures. Without a task cap,
+// the result is always {:ok, pid}, so dropping it is harmless.
 reported_elsewhere(site) :- starts_supervised_task(site, _), !start_may_fail(site).
 
-// A discarded start result is startup.ignored_start_result's finding,
-// whatever the other sites do; the same site is not reported twice, by
-// two concerns, under two titles.
+// startup.ignored_start_result already reports discarded start results. Suppress
+// duplicate convention findings for the same site.
 .decl start_result_owned(site: symbol)
 
 start_result_owned(site) :-
   ignored_error_result(site, _, callee),
   (contains(".start_link/", callee) ; contains(".start/", callee)).
 
-// A call site in a function another module's macro wrote, every clause
-// of it (macro_written, clientlib/generated.dl) — `use Ecto.Repo` defines
-// `stop/1` in every repo, on the `use` line — or in a closure inside one
-// is the macro's choice, not the module's: it neither holds a belief nor
-// breaks one. The program's own macro is left out too, not only a
-// library's (library_written): its expansion repeats one line of the
-// macro in every module that uses it, and a belief would count that line
-// once per use. A function whose first clause a `use` injected ahead of
-// the module's own clauses is the module's. `guard` is "try" when a try
-// takes what the call raises (guarded_site), else "bare".
+// Exclude wholly macro-generated functions and their closures from consistency counts,
+// including project macros. Mixed functions containing handwritten clauses remain
+// eligible. `guard` is `try` when the call's failure class is caught, otherwise `bare`.
 .decl program_site(site: symbol, func: symbol, callee: symbol, fate: symbol, guard: symbol, target: symbol)
 
 program_site(site, f, callee, fate, "try", t) :-
@@ -958,17 +798,15 @@ site_scope(site, cat("what ", g, " returns")) :-
 // ── What a call's arguments rule out ────────────────────────────
 .decl cannot_fail(site: symbol)
 
-// A send raises only when its destination is a name nothing holds: a
-// pid, a port or a {name, node} never raises. Only a literal atom is
-// known to be a name; a send to anything else is taken to be to a pid.
+// Treat sends as potentially raising for unregistered literal atom destinations only.
+// Other destinations are assumed pid-like for this check.
 cannot_fail(site) :-
   call_result(site, _, callee, _, _, t),
   sends(callee),
   !names_a_process(t).
 
-// An ETS operation that fails only when the table is gone, made inside
-// the process that created the named table: while the process runs, its
-// table is there.
+// An operation can fail only if its table disappears, but runs in the named table's
+// creating process. The table remains alive while that process runs.
 cannot_fail(site) :-
   call_result(site, f, callee, _, _, t),
   fails_on_missing_table(callee),
@@ -990,9 +828,8 @@ sends(":erlang:send/3").
 
 names_a_process(t) :- call_result(_, _, c, _, _, t), sends(c), t != "", !match("[{].*", t).
 
-// The ETS operations that raise only on a missing table (or no access to
-// it): not lookup_element or update_counter, which also raise on a
-// missing row.
+// Operations that raise only for a missing or inaccessible table. Exclude
+// lookup_element and update_counter, which can also fail on a missing row.
 .decl fails_on_missing_table(callee: symbol)
 
 fails_on_missing_table(":ets:delete/2").
@@ -1006,15 +843,10 @@ fails_on_missing_table(":ets:match_delete/2").
 fails_on_missing_table(":ets:select_delete/2").
 fails_on_missing_table(":ets:take/2").
 
-// `func` runs only in the process of module m that created the named
-// table `t`: reached from m's callbacks in m's own process, from no other
-// module's, and no caller outside those callbacks can call it (a private
-// function, or one of m's callbacks). m creates the table on every path
-// through its init/1, before the start returns and so before any
-// callback runs, and nothing deletes it: a table made later (in a
-// handle_call, on demand) or only when an option says so can be missing
-// when a callback asks, and a table `:ets.delete/1` drops is missing
-// after.
+// A function executed exclusively by the named table's owner, with no external entry:
+// private code or owner callbacks, reached by no other module's process. The owner must
+// create the table on every init path and never delete it. Conditional or later
+// creation cannot prove presence.
 .init own = SameProcessReach
 
 own.seed(f, f) :- ets_new(_, f, t), t != "dynamic".
@@ -1061,12 +893,9 @@ in_owner(f, t) :-
   !reached_by_other(f, m),
   (function_def(f, _, _, _, 0) ; process_entry(m, f)).
 
-// A row the table's owner writes while it starts, on every path through
-// its init/1 — in init/1, or in a function init/1 always runs — at a
-// literal key, and that no operation removes: no delete, take or
-// delete_object at that key or at one not known, no clearing of the
-// table. An insert only some starts make (`if opts[:seed]`) seeds
-// nothing a reader can count on.
+// A literal-key row inserted on every init path, directly or through unconditional
+// helpers, with no possible removal of that key or clearing of the table. Conditional
+// seeding does not qualify.
 .decl seeded_row(table: symbol, key: symbol)
 
 seeded_row(t, k) :-
@@ -1080,9 +909,8 @@ seeded_row(t, k) :-
 
 .decl removes_row(table: symbol, key: symbol)
 
-// A removal at the key, one at a key not known (it may be any of the
-// table's literal keys), or one that clears every key: the last clause
-// alone already names every literal key of a cleared table.
+// A key may be removed explicitly, through an unknown key, or by clearing the table.
+// Clearing covers every literal key in that table.
 removes_row(t, k) :-
   ets_op(w, _, t, op, "write"),
   ets_key(w, "literal", k),
@@ -1104,16 +932,11 @@ removes_row(t, k) :-
 
 own.seed(f, f) :- ets_op(_, f, t, _, "write"), t != "dynamic".
 
-// ── What guards a call ──────────────────────────────────────────
+// Call guards
 //
-// A try guards a call when it covers the call (try_covers: on a path
-// from the try that has not passed its end, so not in its `else` or
-// after it) and its handler takes the class the call raises when it
-// fails (call_result's `raises`; try_takes, in exceptions.dl): an exit
-// for a call into a process, an error for a BIF or an ETS operation. A
-// try that takes nothing — an `after`, a rescue that re-raises — guards
-// nothing, and neither does `catch :exit` around a badarg. Erlang's
-// `catch Expr` takes every class.
+// A try must cover the call and handle its failure class: exit for process calls, error
+// for BIF/ETS failures. After-only and re-raising handlers do not guard; Erlang catch
+// expressions accept every class.
 .decl guarded_site(site: symbol)
 
 guarded_site(site) :- guarded_here(site, _).
@@ -1132,20 +955,12 @@ guarded_here(site, span_end) :-
   try_takes(id, class),
   catch_class(id, _, _, span_end).
 
-// ── A guard the callers hold ────────────────────────────────────
+// Caller-provided guards
 //
-// A try guards what runs inside it in the same process, not only the
-// calls written between its `try` and its `end`: a helper called only
-// from inside `try ... rescue`, and a closure handed to Enum.each there,
-// fail into that handler. So a site's function is guarded for a class
-// when every way the program has into it passes a try that takes the
-// class. An exported function is an entry: callers outside the program
-// may call it bare. A closure built in a function that starts a process
-// may run in that process instead, where no try of the builder's
-// reaches, and so is an entry too.
-//
-// Computed as its complement: the functions some path from an entry
-// reaches past no such try (ForwardUnguardedSet, in reach.dl).
+// A function is guarded for a class when every entry path crosses a matching try in the
+// same process. Exports and potentially spawned closures are independent entries.
+// Compute the complement with `ForwardUnguardedSet`: functions reachable without such a
+// guard.
 .decl guarded_by_callers(func: symbol, class: symbol)
 
 guarded_by_callers(f, class) :-
@@ -1187,9 +1002,9 @@ exposed.guarded_edge(f, g, class) :-
   try_covers_closure(id, f, g),
   try_takes(id, class).
 
-// "try", a kind no call raises: whether a try of any kind — one that
-// takes nothing included — stands on every way in. It tells a site no
-// try reaches from one whose callers' tries take other classes.
+// Use the synthetic "try" class to test whether every incoming path has any try,
+// regardless of what it catches. Distinguish absent handlers from incompatible
+// handlers.
 exposed.root(f, "try") :- api_export(f).
 
 exposed.root(g, "try") :-
@@ -1270,15 +1085,11 @@ judged_in(site, b, t) :-
   stance(site, c, b, "deviate", t),
   own_convention(c, b, t).
 
-// ── How a bare site stands ──────────────────────────────────────
-//
-// What the finding says of a site no guard takes, each true of it:
-// "try", a try in its own function covers it but takes other classes,
-// or nothing (an `after`, a handler that raises again), and `caught`
-// names what it does take, space-separated; "callers", no try covers it
-// here, and every way into its function passes one, not all of which
-// take the class; "none", no try covers it here, and some way in passes
-// none.
+// Context for unguarded sites
+// `try`: locally covered, but the handler catches other classes or re-raises; `caught`
+// lists its classes.
+// `callers`: every entry path crosses a try, but some catch the wrong class.
+// `none`: some entry path crosses no try.
 .decl bare_cover(site: symbol, cover: symbol, caught: symbol)
 
 bare_cover(site, "try", caught) :-
@@ -1344,9 +1155,7 @@ caught_upto(site, i + 1, s) :-
   class_order(i, c),
   !deviant_catches(site, c).
 
-// The sites that follow the convention, attached to the finding as its
-// evidence: what the convention looks like, drawn from the
-// population the deviant was judged against.
+// Attach conforming call sites as evidence of the convention used to judge the outlier.
 .decl handling_site(callee: symbol, belief: symbol, site: symbol, func: symbol, guard: symbol, guard_end: symbol, target: symbol)
 .output handling_site
 

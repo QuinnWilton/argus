@@ -1,10 +1,7 @@
 defmodule Argus.Schema.ErrorHandling do
   @moduledoc """
-  How a module handles failure: its rescues and catches, the results it
-  checks or ignores, the timers it arms and cancels, the messages it can
-  find in its mailbox, and the exits it traps or sends.
-
-  Layer 2 of `Argus.Schema`, which reads the relations from here.
+  Layer-2 facts for exception handlers, result checks, timers, receives, and exit \
+  signals. Exposed through `Argus.Schema`.
   """
 
   @doc "The relations, in the order `Argus.Schema.all/0` lists them."
@@ -31,12 +28,10 @@ defmodule Argus.Schema.ErrorHandling do
           {:span_end, :symbol, "the handler's own last line marker; empty for a catch or none"}
         ],
         doc: """
-        The handler of the try at `id` takes `class`: some path through it \
-        establishes the class and returns without raising again, whatever \
-        it asks of the reason. A handler that only re-raises (`after`, \
-        `rescue e -> reraise e, __STACKTRACE__`) has no row; `*` is a path \
-        with no class test. Erlang's `catch Expr` takes every class: one \
-        row, `*`, and no span of its own.
+        An exception class handled by the try at `id`: some path accepts the class and \
+        returns without re-raising. Reason restrictions are allowed. `*` means no class \
+        test, including Erlang `catch Expr`, which has no separate span. Re-raise-only \
+        handlers have no row.
         """
       },
       %{
@@ -48,8 +43,8 @@ defmodule Argus.Schema.ErrorHandling do
           {:class, :symbol, "the class caught without a pattern on the reason"}
         ],
         doc: """
-        Some clause of the handler catches the class outright — `catch :exit, \
-        reason ->`, `rescue e ->` — so no reason of that class escapes it.
+        An exception class caught without restricting its reason. No reason of that \
+        class escapes the matching clause.
         """
       },
       %{
@@ -62,11 +57,9 @@ defmodule Argus.Schema.ErrorHandling do
           {:tag, :symbol, "an atom the clause compares against; the struct name for `rescue X`"}
         ],
         doc: """
-        A reason tag a clause discriminates on, attributed to the class that \
-        clause catches. Within a clause every compared atom counts (a `case` \
-        in the body too), the over-approximation `callback_tag` makes: rules \
-        ask whether a tag is NOT handled, so seeing too many suppresses \
-        findings rather than inventing them.
+        An atom compared in a handler clause, attributed to its exception class. \
+        Includes body comparisons, so it over-approximates handled reason tags. \
+        Consumers check for missing tags; extra tags suppress findings.
         """
       },
       %{
@@ -80,18 +73,9 @@ defmodule Argus.Schema.ErrorHandling do
            "an atom the clause compares as a tuple's first element; * for any tuple"}
         ],
         doc: """
-        The `catch_tag` rows whose atom heads the reason, a tuple the clause \
-        tests for: an `is_tagged_tuple` of the reason, or a comparison on a \
-        register holding the reason's first element. `catch :exit, \
-        {:noproc, _}` has one; `catch :exit, :noproc`, which compares the \
-        reason itself, has only the `catch_tag` row, and `catch :exit, \
-        {{:shutdown, _}, _}`, which heads a tuple inside it, a \
-        `catch_inner_tag` one. A `GenServer.call` to a dead process exits with \
-        `{:noproc, {GenServer, :call, _}}` and a `GenServer.stop` with bare \
-        `:noproc`, so the two forms catch different exits. A clause that \
-        takes any tuple reason by its shape alone, never comparing its \
-        elements (`catch exit:{Reason, _}`), is the tag `*`: it takes \
-        `{:shutdown, _}` and `{:normal, _}` too.
+        A tag matched at the head of an exception-reason tuple. Distinguishes `{:noproc, \
+        _}` from bare `:noproc` and nested `{{:shutdown, _}, _}`. `*` denotes a clause \
+        accepting tuple reasons without testing their elements.
         """
       },
       %{
@@ -105,12 +89,9 @@ defmodule Argus.Schema.ErrorHandling do
            "an atom the clause compares as the first element of the reason's first element"}
         ],
         doc: """
-        The `catch_tag` rows whose atom heads the reason's first element, \
-        itself a tuple: `catch :exit, {{:shutdown, _}, _}` has `:shutdown`. \
-        A `GenServer.call` whose peer stops with `{:shutdown, reason}` \
-        while the call waits exits with `{{:shutdown, reason}, {GenServer, \
-        :call, _}}`, which a clause for `{:shutdown, _}` (a `catch_tuple_tag`, \
-        the peer's bare `:shutdown`) does not take.
+        A tag matched at the head of the reason's first tuple element, such as \
+        `:shutdown` in `{{:shutdown, _}, _}`. Distinguishes a GenServer call's wrapped \
+        shutdown reason from a plain `{:shutdown, _}` reason.
         """
       },
       %{
@@ -122,10 +103,9 @@ defmodule Argus.Schema.ErrorHandling do
           {:tag, :symbol, "an atom compared on the path to the case"}
         ],
         doc: """
-        A `case` inside the handler, reached after comparing `tag`, has no \
-        clause for some value: a reason the handler did not anticipate is a \
-        CaseClauseError rather than a result. The tag identifies the case — \
-        the compiler emits a clause-less case of its own for `e.field`.
+        A non-exhaustive `case` in a handler after comparison with `tag`. An unexpected \
+        reason raises `CaseClauseError`. The tag distinguishes this case from \
+        compiler-generated field-access checks.
         """
       },
       %{
@@ -140,10 +120,9 @@ defmodule Argus.Schema.ErrorHandling do
            "the handler's last instruction: where a span over the catch ends"}
         ],
         doc: """
-        A peer call the try guards — GenServer.call, :gen_statem.call, \
-        :erpc.call and their kin — whose failure the handler is expected to \
-        classify. `call` is where a finding points: the try instruction \
-        carries the line of whatever preceded it.
+        A peer call protected by the try, whose failure the handler classifies. The \
+        finding anchors at `call` because the try instruction may carry an earlier \
+        source line.
         """
       },
       %{
@@ -155,12 +134,9 @@ defmodule Argus.Schema.ErrorHandling do
           {:call, :symbol, "a call the try protects that is no boundary operation itself"}
         ],
         doc: """
-        The try at `id` protects only boundary operations (as \
-        `try_boundary` names them), instructions that cannot raise, and \
-        calls to named functions, `call` being one of those calls: if \
-        every such callee is a `boundary_function`, the try is a boundary \
-        one hop away (hackney's `try hackney_conn:stop(Pid) catch _:_ -> \
-        ok end`).
+        A try containing only boundary operations, non-raising instructions, and named \
+        calls, including `call`. If every named callee is a `boundary_function`, the try \
+        also qualifies as a boundary handler.
         """
       },
       %{
@@ -168,10 +144,9 @@ defmodule Argus.Schema.ErrorHandling do
         layer: 2,
         fields: [{:func, :symbol, "the function"}],
         doc: """
-        A function whose body is boundary operations (a call, cast or stop \
-        of another process, a send, a registration) and instructions that \
-        cannot raise: a client API such as `stop(Pid) -> \
-        gen_statem:stop(Pid)` (`Argus.Extractors.ErrorHandling.Boundary`).
+        A function containing only process-boundary operations and non-raising \
+        instructions. Boundary operations include calls, casts, stops, sends, and \
+        registrations (`Argus.Extractors.ErrorHandling.Boundary`).
         """
       },
       %{
@@ -182,14 +157,10 @@ defmodule Argus.Schema.ErrorHandling do
           {:func, :symbol, "the function"}
         ],
         doc: """
-        The try at `id` protects only operations whose failure is another \
-        process's, a port's or a name's state — a send, an exit signal, a \
-        call into another process or node, a registration, a named \
-        `:ets.new` — and instructions that cannot raise; or only the \
-        building and emitting of a log line \
-        (`Argus.Extractors.ErrorHandling.Boundary`). A catch-all around it \
-        takes a dead peer, a taken name or a failed log handler, not a bug \
-        in the code it guards.
+        A try protecting only external-state operations and non-raising instructions, or \
+        only log construction and emission. A catch-all here handles peer, port, \
+        registration, or logging failures rather than errors in arbitrary application \
+        code (`Argus.Extractors.ErrorHandling.Boundary`).
         """
       },
       %{
@@ -202,13 +173,9 @@ defmodule Argus.Schema.ErrorHandling do
           {:kind, :symbol, "'try' | 'catch' (Erlang's `catch Expr`, which takes every class)"}
         ],
         doc: """
-        The try at `id` covers the call at `call`: the call is on a path \
-        from the try that has not passed its `try_end`, so what it raises \
-        goes to that try's handler, whose classes and reasons are \
-        catch_total and catch_tag at the same `id`. Walked on the \
-        function's control-flow graph: a call after the try's `end` is not \
-        covered, a call inside a nested try is covered by both, and a call \
-        in a nested try's handler by the outer one alone.
+        A call reachable from the try at `id` before its `try_end`. Nested protected \
+        calls belong to both tries; calls in a nested handler belong only to the outer \
+        try. `catch_total` and `catch_tag` describe the handler at the same `id`.
         """
       },
       %{
@@ -220,14 +187,11 @@ defmodule Argus.Schema.ErrorHandling do
           {:closure, :func_id, "a closure whose value only calls inside the region read"}
         ],
         doc: """
-        Every read of the closure's value in the function is a call inside \
-        the try's protected region: it is handed to `Enum.each` there, or \
-        called, and not returned, stored or sent. Where the closure is built \
-        does not matter; the compiler hoists one with nothing to capture \
-        out of the try. Whether the call it is handed to runs it in another \
-        process is the rules' question. `fun_handed` names the calls a fun is \
-        handed to, but has no row for a fun returned, stored or called \
-        through a variable, so it cannot say the fun runs nowhere else.
+        Every use of a closure value invokes or passes it to a call within the try's \
+        protected region. The closure may be constructed outside the try, but cannot \
+        escape through a return, store, or send. Rules separately check whether \
+        execution moves to another process; `fun_handed` alone cannot prove exclusive \
+        use here.
         """
       },
       %{
@@ -239,12 +203,10 @@ defmodule Argus.Schema.ErrorHandling do
           {:handling, :symbol, "'badrpc' | 'boolean' | 'case' | 'matched' | 'returned' | 'other'"}
         ],
         doc: """
-        How the result of an :rpc.call / :rpc.multicall / :erpc.call is \
-        treated: compared to :badrpc somewhere in the function; tested as a \
-        boolean (where a {:badrpc, _} tuple is truthy); matched by shape in a \
-        function with a clause-less exit (a CaseClauseError or MatchError on \
-        {:badrpc, _}); matched with a wildcard; returned as the function's own \
-        result; or stored or passed on unexamined.
+        How an RPC result is used: compared with `:badrpc`, tested as a boolean, matched \
+        by shape, matched by wildcard, returned, or passed on unchecked. Shape matching \
+        in a function with a clause-less exit may raise on `{:badrpc, _}`; boolean tests \
+        treat that tuple as truthy.
         """
       },
       %{
@@ -257,17 +219,10 @@ defmodule Argus.Schema.ErrorHandling do
           {:how, :symbol, "'case' | 'boolean' | 'returned'"}
         ],
         doc: """
-        What a function that compares nothing to :badrpc does with a call's \
-        result: matches it by shape where the function has a clause-less \
-        exit (`case`: an answer no clause takes raises), tests it against \
-        true/false/nil (`boolean`), or returns it as its own result \
-        (`returned`: a tail call, or the result in x0 at a return), local \
-        and remote callees alike. `rpc_result` says the same of an rpc \
-        API's own sites; this is what a caller does with a function that \
-        returns an rpc's answer. Calls into the runtime \
-        (`Argus.Extractor.Runtime`), to a function the compiler made, and \
-        to a predicate (a name ending in `?`, whose rpc is reported where \
-        it is made) are not rows.
+        How a non-runtime call's result is used when the function never compares with \
+        `:badrpc`: shape-matched with a possible clause-less exit, boolean-tested, or \
+        returned. Extends `rpc_result` to wrappers. Excludes compiler-generated callees \
+        and predicates ending in `?`, whose RPC sites are reported directly.
         """
       },
       %{
@@ -282,13 +237,9 @@ defmodule Argus.Schema.ErrorHandling do
           {:literal, :symbol, "the inspected message when it is 'bare', else ''"}
         ],
         doc: """
-        A timer armed at `id`: whether it targets the arming process, and \
-        whether its message is a literal that cannot be told from an earlier \
-        instance of itself ('bare'), one of the function's own parameters \
-        ('param', with its position, for a rule to resolve at the callers \
-        through resolved_arg), or a computed value such as a ref \
-        ('dynamic'). Refines the `timer` / `timer_bare` kinds of \
-        mailbox_writer.
+        An armed timer, its destination, and message source: a fixed literal (`bare`), \
+        caller parameter (`param`, resolved via `resolved_arg`), or computed value \
+        (`dynamic`). Refines `mailbox_writer` timer kinds.
         """
       },
       %{
@@ -301,16 +252,10 @@ defmodule Argus.Schema.ErrorHandling do
            "':atom' | '{:tag, …}' | '{ref, …}' | 'map' | 'tuple' | 'any': what a clause takes"}
         ],
         doc: """
-        The shape a clause of the receive at `id` takes the message in, \
-        read on its head as a callback's clauses are \
-        (`Argus.Extractors.CallbackTag.MessageClauses.receive_shapes/2`): \
-        the atom itself, a tuple with a literal atom tag (`{:tag, …}`), a \
-        tuple whose first element is compared with a value the function \
-        holds — a ref it made, a pid it was handed — (`{ref, …}`), a map, a \
-        tuple of any tag (`tuple`), or anything (`any`). recv_pattern reads \
-        each clause's first test only; this is the whole head. Only for a \
-        receive that waits, forever or with an `after`: an `after 0` poll \
-        takes what is already there and is no row.
+        A waiting receive clause's complete message shape: atom, tagged tuple, tuple \
+        with a pinned first element, map, arbitrary tuple, or `any`. Unlike \
+        `recv_pattern`, reads the whole head. Excludes `after 0` polls \
+        (`Argus.Extractors.CallbackTag.MessageClauses.receive_shapes/2`).
         """
       },
       %{
@@ -322,11 +267,9 @@ defmodule Argus.Schema.ErrorHandling do
           {:target, :symbol, "'self' when it arms the calling process, else 'other'"}
         ],
         doc: """
-        An `:erlang.start_timer/3,4` at `id`, and whose mailbox its \
-        `{:timeout, ref, msg}` lands in: `self` when the destination is the \
-        result of `self()` on every path, as timer_arm reads a send_after's. \
-        The flush rules do not ask of it (its message carries the ref), so \
-        it is no timer_arm.
+        An `:erlang.start_timer/3,4` and its destination. `self` requires `self()` on \
+        every path. Its `{:timeout, ref, msg}` message carries a reference, so it is \
+        excluded from `timer_arm` flush checks.
         """
       },
       %{
@@ -338,15 +281,10 @@ defmodule Argus.Schema.ErrorHandling do
           {:arity, :number, "0 when the message is the atom, else the tuple's size"}
         ],
         doc: """
-        The atom the message of the timer armed at `id` is told apart by, \
-        as a clause head or a receive compares it: the message itself when \
-        it is an atom, or the first element of a tuple — a literal one \
-        (`{:warm_up, 5}`) or one the arming site builds \
-        (`{:retry, attempts - 1}`) — with the message's `arity`: 0 for \
-        the atom, the tuple's size otherwise. `:erlang.start_timer/3,4`'s \
-        is `:timeout`, 3: it sends `{:timeout, ref, msg}`. No row when the \
-        message is anything else or does not resolve. A literal tuple's \
-        `literal` in timer_arm spells the whole term, which no tag equals.
+        A timer message's atom tag and arity: 0 for an atom, tuple size otherwise. \
+        `:erlang.start_timer/3,4` uses tag `:timeout` and arity 3. Unresolved or other \
+        message shapes have no row. Unlike `timer_arm.literal`, this identifies the tag \
+        rather than the whole term.
         """
       },
       %{
@@ -359,13 +297,9 @@ defmodule Argus.Schema.ErrorHandling do
           {:key, :symbol, "the inspected map key the ref is stored under, else ''"}
         ],
         doc: """
-        Where the ref of the timer armed at `id` goes: returned by the \
-        function (an arming helper), stored under a literal key of a map \
-        (`%{state | timer: ...}`, `Map.put(state, :timer, ...)`), dropped \
-        on the spot — every register holding it overwritten before any \
-        instruction reads it (`send_after(...)` then `{:noreply, state}`), \
-        so nothing can cancel the timer — or somewhere the walk cannot \
-        follow (a record, a tuple, another path).
+        Where a timer reference goes: returned, stored under a literal map key, \
+        discarded before any read, or unknown. Discarded references cannot be used to \
+        cancel the timer.
         """
       },
       %{
@@ -380,11 +314,8 @@ defmodule Argus.Schema.ErrorHandling do
           {:param, :number, "the parameter position when source is 'param', else -1"}
         ],
         doc: """
-        Where the ref cancelled at `id` came from: a map field read in the \
-        function (`state.timer`, a `%{timer: ref}` head), one of the \
-        function's parameters (resolved at the callers through \
-        call_arg_field), the ref a send_after in the same function returned \
-        ('local', keyed by that site), or unknown.
+        The source of a cancelled timer reference: a map field, a parameter resolved \
+        through `call_arg_field`, a local `send_after` site, or unknown.
         """
       },
       %{
@@ -396,9 +327,8 @@ defmodule Argus.Schema.ErrorHandling do
           {:callee, :symbol, "the function whose result is stored"}
         ],
         doc: """
-        A map update in `func` stores the result of a call to `callee` under \
-        `key`: `%{state | timer: arm(ms)}`. With returns_call this ties a \
-        timer ref to the state field that keeps it.
+        A map update storing a call result under `key`. Combined with `returns_call`, \
+        identifies the state field holding a timer reference.
         """
       },
       %{
@@ -410,12 +340,9 @@ defmodule Argus.Schema.ErrorHandling do
           {:callee, :symbol, "the arming helper of the module it calls"}
         ],
         doc: """
-        The call at `site` is to a function of the module that returns a \
-        timer's ref (timer_ref "returned", or a wrapper returning such a \
-        function's result, returns_call), and `func` drops the result on the \
-        spot: every register holding it is overwritten before any \
-        instruction reads it. Nothing can cancel that timer, as with a \
-        send_after whose own function drops its ref ("discarded").
+        A call to a same-module timer helper whose result is discarded before any read. \
+        Follows `returns_call` wrappers to helpers with `timer_ref` value `returned`. \
+        The discarded reference cannot be used to cancel the timer.
         """
       },
       %{
@@ -426,11 +353,8 @@ defmodule Argus.Schema.ErrorHandling do
           {:key, :symbol, "the inspected map key"}
         ],
         doc: """
-        `func` tests the map field under `key` against nil or undefined: \
-        a clause head `%{receive_timer: nil}`, an `if state.timer == nil`, \
-        an Erlang map pattern `tref := undefined`. A function that arms a timer only \
-        when the field keeping its ref is empty arms none beside a pending \
-        one (a Broadway producer's receive loop).
+        A test comparing map field `key` with `nil` or `undefined`. Supports checks for \
+        timers armed only when no reference is stored.
         """
       },
       %{
@@ -442,10 +366,8 @@ defmodule Argus.Schema.ErrorHandling do
           {:value, :symbol, "the literal atom or integer it is compared with, inspected"}
         ],
         doc: """
-        `func` tests the map field under `key` for equality with a literal \
-        (nil among them): a clause head `%{draining: true}`, an `if \
-        state.mode == :idle`, a `case` arm. field_nil_test is the nil half, \
-        read alone where only an empty field matters.
+        A test comparing map field `key` with a literal. `field_nil_test` is the subset \
+        for `nil` or `undefined`.
         """
       },
       %{
@@ -461,18 +383,10 @@ defmodule Argus.Schema.ErrorHandling do
            "the tag of the clause the return is in, as clause_call spells it, or * for a return every clause shares"}
         ],
         doc: """
-        What `func` returns sets the field under `key`: of the returned \
-        map or record, or of one an element of the returned tuple holds — \
-        a callback's `{:noreply, [], %{state | receive_timer: nil}}`, an \
-        Erlang `{noreply, State#state{subs = Subs}}`. The state an init/1 \
-        builds whole (the element after `ok` in `{ok, State}`) sets every \
-        field it has; a callback's state that is neither the one it was \
-        given nor one these fields spell (`maps:put/3`'s result) sets the \
-        whole state, key `*`. One row per clause the return is in, by the \
-        tag of the first argument (Dispatch.argument_tags/2). The state a \
-        callback hands back, where field_nil_test is what a clause head \
-        needs of it and clientlib/restart_state.dl what a restart takes \
-        back.
+        A field set in returned state, including maps or records inside callback return \
+        tuples. Init sets every field it constructs; an unrecognized replacement state \
+        uses key `*`. One row per first-argument clause tag. Used by field-gate and \
+        restart-state rules.
         """
       },
       %{
@@ -487,20 +401,10 @@ defmodule Argus.Schema.ErrorHandling do
              "'part': another piece of it; 'argument': only through another call's arguments"}
         ],
         doc: """
-        A return of `func` sets the field `key` (as `returned_update` \
-        spells it) to a value made of what the call at `site` answered: \
-        the answer itself, held in a term the field is (`%{state | subs: \
-        Map.put(subs, pid, ref)}` is made of `Map.put/3`'s answer and, \
-        through its arguments, of the monitor that answered `ref`), or a \
-        piece of it (`whole`; `{i}`, its element `i`, taken out by a \
-        `get_tuple_element`; `part`, a deeper piece), or only through \
-        another call's arguments \
-        (`argument`: `assign(socket, :cache, Map.delete(cache, k))` holds \
-        what `assign/3` answered, not the removal's answer). A local \
-        call's answer is its callee's returns' (`returns_from`). Which \
-        field holds what a call made \
-        (`Argus.Extractor.StateFields`): what a server records of a \
-        monitor, and which field a removal drops from.
+        A returned state field derived from the result of call `site`. Records the whole \
+        result, tuple element `{i}`, a deeper `part`, or dependence through another \
+        call's `argument`. Local calls follow `returns_from`. Used to locate stored \
+        monitor records and removal results (`Argus.Extractor.StateFields`).
         """
       },
       %{
@@ -511,12 +415,9 @@ defmodule Argus.Schema.ErrorHandling do
           {:site, :symbol, "a call in it whose answer what it returns is made of"}
         ],
         doc: """
-        What `func` hands back is made of what the call at `site` answered, \
-        whole or in part: a `return` of a value built from it, or a tail \
-        call (and, for one into another module, its arguments). The chain \
-        a value takes through the helpers that return it \
-        (`Argus.Extractor.StateFields`); `returned_field_from` is where a \
-        caller keeps it.
+        A return containing all or part of call `site`'s result. Includes tail calls \
+        and, for remote tail calls, their arguments. Traces results through helpers; \
+        `returned_field_from` identifies the caller's storage field.
         """
       },
       %{
@@ -527,10 +428,8 @@ defmodule Argus.Schema.ErrorHandling do
           {:callee, :symbol, "the function whose result it returns"}
         ],
         doc: """
-        `func` returns the result of a call to `callee`: a tail call, or a \
-        call followed by return. The chain `defp arm(ms), do: \
-        Process.send_after(...)` is one hop; default-argument wrappers add \
-        more.
+        A function returning a callee's result, by tail call or a subsequent return. \
+        Supports chains of result-forwarding wrappers.
         """
       },
       %{
@@ -544,18 +443,10 @@ defmodule Argus.Schema.ErrorHandling do
              "1: the answer's payload (the pid of an `{:ok, pid}`)"}
         ],
         doc: """
-        Every way `func` returns a value hands back what one of the calls \
-        its rows name answered: a tail call (a default-argument wrapper), \
-        or a return of such a call's result, of its payload (`{:ok, pid} = \
-        start(); pid`) or of the payload re-wrapped (`{:ok, pid} = \
-        start(); {:ok, pid}`, a `case` that passes `{:ok, pid}` and \
-        `{:error, reason}` on). All or nothing: one return of anything \
-        else (a lookup, a literal, a parameter, a deeper element such as \
-        the pid of `{:error, {:already_started, pid}}`) and the function \
-        has no row; a path that raises is not asked. The must-reading of \
-        a wrapper, where `returns_call` is the may-reading; \
-        `clientlib/answers.dl` chains it through the program \
-        (`Argus.Extractor.Answers`).
+        Every non-raising return forwards a listed call's result, its immediate payload, \
+        or that payload rewrapped. Any unrelated return or deeper extraction removes all \
+        rows for the function. This is the must-return counterpart of `returns_call`; \
+        `clientlib/answers.dl` chains it through wrappers (`Argus.Extractor.Answers`).
         """
       },
       %{
@@ -567,10 +458,8 @@ defmodule Argus.Schema.ErrorHandling do
           {:message, :symbol, "an inspected atom a clause matches, or 'any'"}
         ],
         doc: """
-        What a receive matches, one row per clause: a literal atom, or 'any' \
-        for a clause whose pattern is not an atom (a tuple, a wildcard, a \
-        guard on the message). Says whether a flush after cancel_timer/1 \
-        takes the timer's own message.
+        A receive clause's literal atom pattern, or `any` for other patterns. Used to \
+        check whether a flush after `cancel_timer/1` accepts the timer message.
         """
       },
       %{
@@ -582,11 +471,9 @@ defmodule Argus.Schema.ErrorHandling do
           {:message, :symbol, "the inspected atom the clause's head matches"}
         ],
         doc: """
-        A cancel_timer inside a `handle_info/2` clause whose head is a literal \
-        message: `def handle_info(:heartbeat, s)` — the head test on the \
-        first argument dominates the cancel, and nothing before it overwrote \
-        the argument. Cancelling the timer whose message this clause is \
-        handling cancels a timer that has already fired.
+        A cancellation inside a `handle_info/2` clause for a literal atom, with the head \
+        test dominating the call and the message argument unchanged. A timer for this \
+        message has already fired.
         """
       },
       %{
@@ -597,9 +484,8 @@ defmodule Argus.Schema.ErrorHandling do
           {:callback, :symbol, "'handle_call' | 'handle_cast' | 'handle_info'"}
         ],
         doc: """
-        The callback has a clause whose message is a tuple headed by a \
-        reference — `{ref, result} when is_reference(ref)`, the reply of a \
-        task started with async_nolink.
+        A callback clause accepting a tuple headed by a reference, such as the `{ref, \
+        result}` reply from an `async_nolink` task.
         """
       },
       %{
@@ -612,10 +498,9 @@ defmodule Argus.Schema.ErrorHandling do
            "'task' | 'task_nolink' | 'timer' | 'timer_bare' | 'cancel' | 'pubsub' | 'self'"}
         ],
         doc: """
-        A call after which something other than a peer's request can land in \
-        the calling process's mailbox: a Task.async reply, an async_nolink \
-        task's reply and :DOWN, a timer message, a subscription's \
-        broadcasts, a message the function sends to itself.
+        A call that can introduce non-request messages into the caller's mailbox, \
+        including task replies, `:DOWN`, timers, subscription broadcasts, and \
+        self-sends.
         """
       },
       %{
@@ -627,10 +512,8 @@ defmodule Argus.Schema.ErrorHandling do
           {:mod, :symbol, "module name"}
         ],
         doc: """
-        A `Process.flag(:trap_exit, true)` (or `:erlang.process_flag/2`) \
-        call: from here on the calling process traps exits. The call is a \
-        `site_block` site, so a rule asks what runs after it \
-        (clientlib/trapping.dl). A flag the program computes has no row.
+        A literal `trap_exit: true` process-flag call. Later sites can be ordered with \
+        `site_block` and `clientlib/trapping.dl`. Computed flag values have no row.
         """
       },
       %{
@@ -642,10 +525,8 @@ defmodule Argus.Schema.ErrorHandling do
           {:mod, :symbol, "module name"}
         ],
         doc: """
-        A `Process.flag(:trap_exit, false)` call: from here on the calling \
-        process no longer traps exits. A restore of a value an earlier \
-        call returned (`Process.flag(:trap_exit, old)`) is computed, and \
-        has no row (`trap_flag_unread`).
+        A literal `trap_exit: false` process-flag call. Computed values, including \
+        restoration of an earlier flag value, use `trap_flag_unread` instead.
         """
       },
       %{
@@ -657,13 +538,9 @@ defmodule Argus.Schema.ErrorHandling do
           {:mod, :symbol, "module name"}
         ],
         doc: """
-        A `Process.flag(:trap_exit, value)` whose value the extractor \
-        cannot read (`opts[:trap_exit]`, a restore of an earlier call's \
-        answer): the process may trap exits from here on, or may not. A \
-        rule that reports a process that does not trap asks \
-        `may_trap` (clientlib/trapping.dl), which this makes true; it is \
-        no trap for a rule that reports one (issue #4: an unread value is \
-        never the default).
+        A process-flag call with unresolved `trap_exit` value. Establishes `may_trap` \
+        but does not prove trapping is enabled, so unknown values cannot be treated as \
+        defaults.
         """
       },
       %{

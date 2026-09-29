@@ -1,48 +1,23 @@
-// Which functions a :global call holds up: the ones on whose stack it
-// runs.
-//
-// global_path(func, call, site): the :global op at `site` runs while
-// `func` waits on it, and `call` is func's own call that starts the path
-// there — the site itself when func holds it, empty for a hop with no
-// call instruction of func's (a closure it builds and hands to
-// Enum.each, a fun it hands on). Startup's lock during init and
-// blocking's step-aside for it (during_init) both read it, so a lock is
-// init's finding or blocking's, never both and never neither.
-//
-// The walk goes backward from every global_op over the edges that stay
-// on the caller's stack (runs_elsewhere, in runs_elsewhere.dl) and are
-// not side paths (side_call, in calls.dl: the logging and telemetry
-// APIs, whose machinery takes no lock of the program's), and not after
-// the function acknowledged its start (acked_edge, init_phase.dl: the
-// lock is then the server's, blocking's finding), plus the
-// edge into a task the caller awaits (awaits_task): Task.async then
-// Task.await holds the caller for as long as the lock does. It is
-// clause-aware where a call says which clause it enters: a call whose
-// first argument is always the same literal atom (literal_first, in
-// calls.dl) enters only the clauses that match it (clause_call), so `sync(:boot, s)` in init/1 does not
-// reach the set_lock in `sync(:locked, s)` beside it — the fix the talk
-// recommends, with a helper shared by init/1 and handle_continue/2.
-// Anything else (a forwarded parameter, a computed value, a tuple) is
-// taken to enter every clause.
-//
-// Prerequisites: include clientlib/imports.dl and otp.dl (for
-// runs_elsewhere, side_call and acked_edge) before this file.
+// Global operations that hold a caller. `global_path(func, call, site)` identifies the
+// operation and func's first call toward it, or an empty call for a site-less edge.
+// Shared by startup and blocking to assign each finding once.
+// Traverse backward through same-process and awaited-task edges, excluding
+// logging/telemetry and post-ack work. Literal first arguments narrow dispatcher
+// clauses; other arguments use full function reach.
+// Requires imports.dl and otp.dl.
 
 .decl global_path(func: symbol, call: symbol, site: symbol)
 
-// `init` is init/1 of a process module and waits while the :global call
-// at `site` runs (global_path), so its supervisor's start waits on it:
-// the :global half of what init/1 holds, beside rpc_during_init
-// (init_phase.dl).
+// A :global call on init/1's stack holds up supervisor startup. This complements RPC
+// tracking in init_phase.dl.
 .decl global_call_during_init(init: symbol, site: symbol) inline
 
 global_call_during_init(init, site) :- init_function(_, init), global_path(init, _, site).
 
 global_path(f, site, site) :- global_op(site, f, _, _, _), !start_acked(site, f).
 
-// A call f makes itself is on f's stack (runs_elsewhere holds only for
-// an edge f does not call); an edge with no call of f's (a closure) is
-// f's only when it does not lead off it.
+// Direct calls stay on f's stack. Site-less edges, such as closures, stay only when
+// runs_elsewhere does not classify them as detached.
 
 global_path(f, id, site) :-
   call_instr(f, g, id),

@@ -1,38 +1,13 @@
-// The process dictionary, in order: whether a key is set when a site
-// runs, and the table an operation names only while it is not.
-//
-// `put(key, value)` sets a key of the running process's dictionary from
-// the call on, until an `erase(key)` (or `erase/0`, or an erase of a key
-// not known). What a read of the key may answer is process points-to's
-// (processes.dl's `dict` source); whether the key is set at all is a
-// question of order, asked here:
-//
-// - key_set_before(func, key, site): func sets the key before `site`
-//   (earlier in func, or in a function func called earlier), and nothing
-//   erases it between.
-// - skips_default(func, op, table): the ETS operation `op` names `table`
-//   only as the default of a dictionary key it reads
-//   (`case get(key) of undefined -> table; t -> t end`,
-//   ets_table_default), and func sets the key before every call through
-//   which it reaches op. Run from func, op touches whatever the key
-//   holds, not that table: ejabberd_config's validate/1 makes a private
-//   table and puts it under `ejabberd_options` before its set_option/2
-//   calls, which then write the private table, never :ejabberd_options.
-//
-// Both are MAY words: a put on some path before the site counts (a put
-// in one branch of an `if` too), and a rule that is quiet on them is
-// quiet when any path sets the key. What they do not see:
-//
-// - A key set before func was entered (a caller's put): func's own
-//   puts alone count, so a helper run with the key set names its
-//   default as ever, and a rule stays as loud as it was.
-// - A put through a closure or `apply`, and a key computed at run time.
-// - An operand that names the same table another way too (the default
-//   literal also spelled in a caller, and passed in): the default arm
-//   alone is set aside.
-//
-// Requires imports.dl, otp.dl (runs_elsewhere), order.dl (RunsAfter) and
-// tables.dl (EtsTable) before this file.
+// Process-dictionary ordering.
+// `key_set_before(func, key, site)`: func or an earlier helper sets the key, with no
+// intervening erase.
+// `skips_default(func, op, table)`: every call path to an ETS operation has a preceding
+// set of the key whose fallback is this table. The operation then uses the stored table
+// instead.
+// Both use may-analysis: a put on one path can suppress a finding. They do not see
+// caller-provided dictionary state, closure/apply puts, or computed keys. Only the
+// default arm is excluded; other ways of naming the table remain.
+// Requires imports.dl, otp.dl, order.dl, and tables.dl.
 
 // ── Where a key is set, and erased ──────────────────────────────────
 
@@ -71,8 +46,8 @@ sets_key_at(f, id, k) :-
 
 leaves_key_set(f, k) :- sets_key_at(f, s, k), !erased_after(s, k).
 
-// `func` may erase `key` at `site`: an erase of it or of a key not known
-// there, or a call into a function whose stack makes one.
+// `func` may erase key at site, explicitly, through an unknown key, or through a
+// same-process helper.
 .decl erases_key_at(func: symbol, site: symbol, key: symbol)
 
 erases_key_at(f, id, k) :- dict_op(id, f, "erase", e), erases_key(e, k).
@@ -115,9 +90,8 @@ erased_between(f, t, s, k) :-
 
 // ── A table named only while a key is unset ─────────────────────────
 
-// `op` names the literal table `name` only while the dictionary holds
-// nothing under `key`: the default of a read of it, directly or through
-// the function whose answer the operand tests.
+// `op` uses literal table name only as the fallback when dictionary key is unset,
+// directly or through a helper result.
 .decl default_of_key(op: symbol, name: symbol, key: symbol)
 
 default_of_key(op, name, k) :-
@@ -153,9 +127,8 @@ reaches_default_at(f, op, c) :-
 
 reaches_default_at(f, op, op) :- default_of_key(op, _, _), ets_op(op, f, _, _, _).
 
-// `func` may reach `op` with `key` unset: through a call no put of the
-// key comes before, or along an edge with no call instruction (a closure
-// it runs, whose place in func is not known).
+// `op` is reachable with key unset: no preceding put is established, or the call has no
+// known instruction position.
 .decl unset_on_the_way(func: symbol, op: symbol, key: symbol)
 
 unset_on_the_way(f, op, k) :-
@@ -170,8 +143,8 @@ unset_on_the_way(f, op, k) :-
   !runs_elsewhere(f, g),
   default_reach.reaches(g, op).
 
-// Run from `func`, `op` does not touch `table`: the table is only the
-// default of a key func has set on every way to op.
+// `func` sets key on every path to op, so op cannot use table as the dictionary-read
+// fallback.
 .decl skips_default(func: symbol, op: symbol, table: EtsTable)
 
 skips_default(f, op, ["named", name]) :-

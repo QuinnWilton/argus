@@ -1,44 +1,14 @@
-// The cancel_timer flush idiom: a receive that takes a timer's message
-// cancel_timer/1 said was already delivered.
-//
-// flush_receive(recv): a receive with no `after` that is no hang. Blocking's
-// receive in a callback and startup's wait during init both step aside
-// for it:
-//
-//     if Process.cancel_timer(ref) == false do
-//       receive do :tick -> :ok end
-//     end
-//
-// `cancel_timer/1` returning false means the timer had already expired, so
-// the message has already been sent and is sitting in the mailbox — the
-// receive is guaranteed to match, and OTP's own code is written this way
-// (gen_server's mc_cancel_timer/2, Livebook's session). The receive must
-// run only on the `false` side of a test of that cancel's result, later
-// in the same function (recv_flush, Argus.Extractors.Monitor.Flush): a
-// cancel whose result nothing tests, or a receive the other side reaches
-// too, waits forever when the cancel succeeded and the message never
-// comes.
-//
-// flush_poll(recv): a receive with an `after`, run after a cancel_timer
-// in its function (runs_after, order.dl), that can take the timer's message — `receive :tick -> :ok
-// after 0 -> :ok end`, the form the cancel_timer docs give. It cannot
-// hang whichever way the cancel went, and takes exactly the message the
-// function means to drop.
-//
-// Both ask that the receive can take a timer's message — a clause for a
-// literal one of the module's timers is armed with, for :timeout
-// (erlang:start_timer/3's `{timeout, Ref, Msg}`), or for anything. A
-// receive whose every clause names some other literal, in a module whose
-// timers all carry known literals, is waiting for something else. When
-// the module arms no timer the program can see (the ref came from a
-// caller) or arms one whose message is not a known literal, the receive
-// may take it: the quiet direction.
-// The literal message a timer carries, at the site that arms it for
-// `target` ("self" for the arming process): spelled there, or a parameter
-// the arming function's callers fill with a literal (resolved_arg:
-// nebulex's `start_timer(time, ref, event \\ :heartbeat)`). A message
-// built at runtime has no row. mailbox reads it for the stale message a
-// cancel leaves behind, this file for the message a flush takes.
+// Timer-flush recognition.
+// `flush_receive`: an unbounded receive reached only after cancel_timer returns false,
+// accepting the timer's message. An unchecked cancellation cannot establish this.
+// `flush_poll`: a bounded matching receive after cancellation; it cannot hang
+// regardless of the cancellation result.
+// Match a known timer literal, start_timer's timeout tuple, or a catch-all. If the
+// module's timer/message is unknown, allow a possible match; known incompatible
+// literals do not qualify.
+// `armed_literal` resolves literal messages at the arm site or from caller parameters
+// and records the destination. Runtime-built messages have no row. Used by flush and
+// stale-timer checks.
 .decl armed_literal(site: symbol, func: symbol, target: symbol, message: symbol)
 
 armed_literal(id, a, t, lit) :- timer_arm(id, a, t, "bare", _, lit).
@@ -111,12 +81,9 @@ after_cancel_timer.asked(cancel) :- cancels_timer(cancel).
 // Prerequisites: include clientlib/imports.dl, otp.dl (for
 // resolved_arg) and order.dl (RunsAfter) before this file.
 
-// ── A helper cancels the field ───────────────────────────────────────
-//
-// helper_cancels_field(caller, site, cancel, key): `caller`'s call at
-// `site`, in its own process, is to a function of its module that reads
-// the field under `key` and cancels it at `cancel` itself. The one
-// spelling mailbox's flush scope and its timer loop's cancel both read.
+// helper_cancels_field(caller, site, cancel, key): a same-module helper called on
+// caller's stack reads field key and cancels its timer at cancel. Shared by mailbox
+// flush-scope and timer-loop rules.
 .decl helper_cancels_field(caller: symbol, site: symbol, cancel: symbol, key: symbol)
 
 helper_cancels_field(g, s, cancel, key) :-

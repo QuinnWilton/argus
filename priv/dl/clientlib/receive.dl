@@ -1,11 +1,6 @@
-// Receives, by shape.
-//
-// `recv_start`'s `blocking` column is the whole discriminator between a
-// receive that can hang and one that cannot: no `after` means no way
-// out if the message never comes. Rules ask one of three questions and
-// this file names them, so the column's encoding stays here.
-//
-// Requires imports.dl.
+// Receive-shape helpers. recv_start.blocking distinguishes receives without an after
+// clause, which may wait forever for a message. Keep that encoding here so callers can
+// query the relevant shape. Requires imports.dl.
 
 .decl receives(func: symbol)
 
@@ -21,10 +16,8 @@ blocking_receive(func) :- recv_start(_, func, 1, _).
 
 timed_receive(func) :- recv_start(_, func, 0, _).
 
-// `func` runs code whose receives are not the program's to read: a call
-// through a fun or an apply, a gen_server, gen_statem or gen_event
-// enter_loop (its callbacks take the mailbox), a hibernate that resumes
-// in an MFA.
+// Execution whose receives are not visible: function-value calls, apply, gen behaviour
+// enter_loop calls, and MFA-based hibernation.
 .decl hides_receives(func: symbol) inline
 
 hides_receives(g) :- dynamic_call(_, g, _).
@@ -45,35 +38,15 @@ receives_message(mod, message) :-
   recv_pattern(_, f, message),
   function_def(f, mod, _, _, _).
 
-// ── A wait its peer ends ─────────────────────────────────────────────
+// Receives bounded by a peer's lifetime
 //
-// A receive with no `after` can still end no later than another process:
-// when a clause takes that process's exit signal, whatever the reason it
-// exits with, the wait lasts as long as the process lives. It is bounded
-// by its peer, not by time — a peer that is alive and never answers
-// holds it as long as it lives — and startup and blocking report such a
-// wait as "down", apart from one nothing ends. Two shapes:
-//
-// - down_bounded(recv): a clause takes the `:DOWN` of a monitor: one the
-//   receive's own function took, with no demonitor on the path to the
-//   receive (recv_down), or one whose ref the clause pins wherever it came
-//   from (recv_signal "down": proc_lib's await_DOWN(pid, ref), a
-//   spawn_monitor's pair, gen_server's multi_call alias), with no
-//   demonitor on any path from the function's entry to the receive: a
-//   demonitor there may have removed the very monitor, and its :DOWN
-//   never comes. The ref's monitor is taken on trust to be in place when
-//   the function is entered. The runtime delivers the :DOWN once the
-//   process exits, or at once if it is already gone.
-// - exit_pinned(recv, func): a clause takes the `:EXIT` of the process
-//   or port its sender pin names (recv_signal "exit"), in a function
-//   that links (links_in). It ends the wait only in a process that traps
-//   exits (in one that does not, the exit kills the waiter or never
-//   comes), and trapping is the process's, not the function's: the
-//   reader asks it (startup: init/1's own stack; blocking: the server's).
-//
-// mailbox asks another question of a monitor: whether it is released on
-// every way out of the function (monitor_released, below), not whether a
-// wait ends.
+// `down_bounded` accepts every reason from a locally created monitor or pinned monitor
+// reference. Exclude possible preceding demonitor operations; incoming references are
+// assumed to have active monitors.
+// `exit_pinned` accepts every reason from a pinned linked process or port. Consumers
+// must establish that the waiting process traps exits.
+// These waits have no time bound: a live silent peer can hold them indefinitely.
+// `monitor_released` separately checks collection on every return path.
 .decl down_bounded(recv: symbol)
 
 down_bounded(id) :- recv_down(id, _, _).
@@ -83,9 +56,8 @@ down_bounded(id) :- recv_signal(id, _, "down").
 
 exit_pinned(id, f) :- recv_signal(id, f, "exit"), links_in(f).
 
-// The call at `site` in `func` links func's process to another, whose
-// exit then reaches it as a signal: a spawn_link, a link, a port opened
-// (linked to the process that opens it), a start_link.
+// A call linking the current process to another process or port: link, spawn_link,
+// start_link or port creation.
 .decl link_site(site: symbol, func: symbol)
 
 link_site(id, f) :- spawn_call(id, f, _, _, _, "spawn_link", _, _, _, _).
@@ -100,18 +72,10 @@ link_site(id, f) :- call_site(id, f, _, "start_link", _).
 
 links_in(f) :- link_site(_, f).
 
-// ── A monitor released before its function returns ──────────────────
-//
-// monitor_released(monitor): every path from the monitor call to its
-// function's return releases it (monitor_released_after of the monitor
-// call itself, Argus.Extractors.Monitor): a receive clause that takes its
-// :DOWN (any monitor's, or the one this call's ref pins), a demonitor of
-// the ref, with or without :flush, or a call to a function of the module
-// that waits so on every path. The clause, not the receive: the other
-// clauses of `receive do {:reply, x} -> ...; {:DOWN, ...} -> ... end`
-// leave it with the monitor live, and so does a timed receive's `after`.
-// Unlike down_bounded, which asks whether a wait ENDS no later than its
-// peer, this asks whether the monitor is RELEASED on every way out.
+// A monitor released on every returning path by a matching :DOWN clause, demonitor, or
+// recognized same-module collection helper. Other receive clauses and timeout arms do
+// not qualify. Flush is not required to release the monitor. Unlike `down_bounded`,
+// this proves release on every exit, not eventual completion of one wait.
 .decl monitor_released(monitor: symbol)
 
 monitor_released(m) :- monitor_call(m, f, _), monitor_released_after(f, m).

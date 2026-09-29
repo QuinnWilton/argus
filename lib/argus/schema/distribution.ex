@@ -1,9 +1,7 @@
 defmodule Argus.Schema.Distribution do
   @moduledoc """
-  Names and nodes: the process registry, `:global`, remote calls and the
-  operations that reach across nodes.
-
-  Layer 2 of `Argus.Schema`, which reads the relations from here.
+  Layer-2 facts for process registries, `:global`, RPC, and cross-node operations. \
+  Exposed through `Argus.Schema`.
   """
 
   @doc "The relations, in the order `Argus.Schema.all/0` lists them."
@@ -34,9 +32,9 @@ defmodule Argus.Schema.Distribution do
            "timeout in ms, -1 for :infinity, 0 when unknown — as sync_call_timeout"}
         ],
         doc: """
-        A remote call that waits for its answer, with its timeout: a call, \
-        a multicall, or the collection of an answer an earlier async_call or \
-        send_request asked for (yield, nb_yield/2, receive_response).
+        A remote call that waits for an answer, with its timeout. Includes multicalls \
+        and collection of earlier asynchronous requests via yield or receive-response \
+        APIs.
         """
       },
       %{
@@ -49,9 +47,9 @@ defmodule Argus.Schema.Distribution do
              "'fun' for the forms that take a fun, 'dynamic' when the site does not name it"}
         ],
         doc: """
-        What an rpc_call runs on the other node, from its M and F arguments. \
-        A yield or receive_response collects an answer another site asked \
-        for, and names no target: 'dynamic'.
+        The remote module and function of an `rpc_call`. Response-collection sites such \
+        as yield or receive-response use `dynamic` because another site initiated the \
+        request.
         """
       },
       %{
@@ -62,10 +60,8 @@ defmodule Argus.Schema.Distribution do
           {:param, :number, "0-based position of the function's parameter the timeout is"}
         ],
         doc: """
-        An rpc_call whose timeout is one of its function's parameters on \
-        every path (its timeout column says 0, unknown): a wrapper's \
-        `timeout \\\\ :infinity`. With infinity_arg, the rules ask whether a \
-        caller passes :infinity there.
+        An `rpc_call` whose timeout is a function parameter on every path. Its timeout \
+        column is 0 (unknown); `infinity_arg` identifies callers passing `:infinity`.
         """
       },
       %{
@@ -76,11 +72,9 @@ defmodule Argus.Schema.Distribution do
           {:arity, :number, "how many arguments the remote function is called with"}
         ],
         doc: """
-        The length of the argument list an rpc_call hands its remote \
-        function (rpc_target), when that list is known whole on every path: \
-        a literal, or cons cells of known values ending in `[]`. \
-        `:application.which_applications/0` waits at most gen_server's five \
-        seconds; `/1` waits as long as its argument says.
+        The RPC argument-list length when the complete list is known on every path. \
+        Distinguishes remote function arities, which may have different timeout \
+        behavior.
         """
       },
       %{
@@ -93,11 +87,9 @@ defmodule Argus.Schema.Distribution do
           {:callee, :symbol, "the remote function's ID, `Mod:fun/arity`"}
         ],
         doc: """
-        The function an rpc_call runs on the other node, when its module and \
-        name are literal atoms and its argument list's length is known on \
-        every path (its cons cells counted, their values not needed): the \
-        MFA, joinable with function_def. rpc_target spells the same call \
-        for a reader; this names the function.
+        An RPC target in `function_def` MFA format, when module and function are literal \
+        and argument-list length is known on every path. List element values need not be \
+        known.
         """
       },
       %{
@@ -112,13 +104,10 @@ defmodule Argus.Schema.Distribution do
            "0-based position of the module parameter; the function's is pos + 1, the arguments' pos + 2"}
         ],
         doc: """
-        An rpc_call whose module, function and argument list are three \
-        parameters in a row of `func` on every path: a wrapper that runs \
-        whatever MFA its callers hand it (`Rpc.call(node, mod, fun, args, \
-        opts)`). In a closure, the three are variables captured from the \
-        function that built it, followed to that function's parameters \
-        (`:timer.tc(fn -> :erpc.call(node, mod, fun, args) end)`); a closure \
-        built in two places is not followed.
+        An RPC wrapper whose module, function, and argument list come from three \
+        consecutive parameters on every path. Captured variables are traced to the \
+        enclosing function's parameters; closures constructed at multiple sites are \
+        excluded.
         """
       },
       %{
@@ -132,9 +121,8 @@ defmodule Argus.Schema.Distribution do
            "call arity: '2' (default conflict resolution) or '3' (explicit resolver)"}
         ],
         doc: """
-        `:global.register_name` call. Arity distinguishes the race-prone \
-        default (`/2`) from a call that supplies its own conflict-resolution \
-        function (`/3`).
+        A `:global.register_name` call. Arity 2 uses default conflict resolution; arity \
+        3 supplies a resolver.
         """
       },
       %{
@@ -149,21 +137,10 @@ defmodule Argus.Schema.Distribution do
            "the nodes that take part: \"local\" | \"cluster\" | \"unknown\", empty for whereis_name and send"}
         ],
         doc: """
-        `:global` synchronization primitives. The retries field is the third \
-        argument of `:global.set_lock/3` (or `:global.trans/4`); analyses use \
-        it to distinguish blocking calls (`infinity` or large positive \
-        integers) from non-blocking try-once calls (`0`).
-
-        `:global.set_lock/1,2` and `:global.trans/2,3` default to infinity \
-        retries — recorded as `"infinity"` even when the source code omits \
-        the argument.
-
-        The nodes field is the node list's shape, which says whose \
-        agreement the lock waits on: `"local"` for `[node()]` (only this \
-        node's global server), `"cluster"` for a list holding the connected \
-        nodes (`[node() | Node.list()]`, `Node.list()`) or an omitted list, \
-        which means every known node, and `"unknown"` for a list the \
-        bytecode does not show (`Argus.Extractor.Resolve.node_list/3`).
+        A `:global` synchronization operation. Retries are `0` for try-once, a positive \
+        count, or `infinity`; omitted retries default to `infinity`. Node scope is \
+        `local` for `[node()]`, `cluster` for connected-node lists or the default, and \
+        `unknown` when unresolved (`Argus.Extractor.Resolve.node_list/3`).
         """
       },
       %{

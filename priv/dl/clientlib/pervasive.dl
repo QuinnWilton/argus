@@ -1,55 +1,19 @@
-// Bounded points-to: what the stage answers when its exact pass outgrows
-// the stage's budget (points_to.dl; Argus.Analysis.Extraction runs
-// points_to_bounded.dl then, which is points_to.dl with
-// stage_mode("bounded")).
-//
-// Parameters are context-insensitive (processes.dl), and on some large
-// programs that merges most of the heap into one value: helpers that
-// return an updated copy of their parameter (`%{cs | tenant: t}`), or a
-// term built of it (`{:ok, query}`), give every caller the fields every
-// other caller's value had, and a pid anywhere in those terms is then
-// held by most of the program's terms and parameters. The exact pass
-// follows each such term, and its fixpoint grows with the square of
-// their number: over Ash's 1,327 modules, 13M field rows and over ten
-// minutes. What the analyses read of it is a few dozen targets.
-//
-// The exact fixpoint's size is what tells such a program apart, and not
-// the coarse pass: its spread measures how far a field's shape travels,
-// not how many terms merge. Over kafka_ex it finds four leaves each held
-// by a third of the sources, over rabbitmq twelve by up to one in five,
-// as over Ash, and their exact fixpoints hold 1,332 and 19,677 rows. So
-// the coarse pass does not decide whether the stage runs bounded, only,
-// once it does, which leaves it resolves.
-//
-// When the stage runs bounded, a leaf the coarse pass below finds
-// held by more than one source in a hundred (and by more than 1000) is
-// pervasive: the exact pass leaves it out (processes.dl's leaf rules),
-// and its targets, names and the stops and tables that resolve to it are
-// the coarse pass's. Every other leaf is resolved exactly, as in the
-// default stage, except where a message or a reply goes to a pervasive
-// process (message_target takes the coarse targets then). Everything
-// here is a sound over-approximation of the exact pass: a pervasive
-// leaf's rows are a superset of the ones the exact pass would derive.
-//
-// In the default stage (stage_mode("exact")) nothing here derives a row:
-// every rule not reading another relation of this file is guarded by
-// stage_mode("bounded").
-//
-// Prerequisites: included by points_to.dl after processes.dl.
+// Bounded points-to fallback. When the exact stage exceeds its budget,
+// points_to_bounded.dl enables this coarse pass. Context-insensitive parameters can
+// otherwise merge large heaps.
+// Only in bounded mode, classify a leaf as pervasive when it reaches over 1% of sources
+// and more than 1,000 sources. Resolve those leaves coarsely; resolve the rest exactly,
+// using coarse targets for messages/replies involving pervasive processes. Coarse rows
+// over-approximate exact results.
+// The exact-stage budget, not coarse spread, triggers fallback. In exact mode these
+// rules produce no rows. Included by points_to.dl after processes.dl.
 
 .decl stage_mode(mode: symbol)
 
-// ── The coarse pass ─────────────────────────────────────────────────
-//
-// Where in a value a leaf lies, kept to one field: the value itself
-// (Top); the field `at` of it (Under); somewhere below that field
-// (Below); somewhere, at a path not known (Deep). A field is named with
-// its term's shape, as the exact pass reads it (map, tuple tag and
-// arity). No term is named: the rows are per source, and a source holds
-// at most four places per leaf and field, however many terms merge
-// into it. A store puts a leaf one field further down; a load takes it
-// one field up, or keeps it Deep when it was deeper than one field. A
-// use takes a leaf that is Top, or Deep (it may be).
+// Coarse leaf locations: Top is the value itself, Under is one field, Below is deeper
+// under that field, and Deep has unknown path. Fields retain term shape, but individual
+// terms are merged per source. Stores move leaves down; loads move them up or retain
+// Deep. Uses accept Top or Deep.
 .type CoarseField = [sel: symbol, kind: symbol, tag: symbol, arity: symbol]
 .type Reach = Top {} | Under {at: CoarseField} | Below {at: CoarseField} | Deep {}
 
@@ -127,12 +91,9 @@ coarse(f, "load", l, $Deep(), x) :-
 
 coarse(f, "load", l, $Deep(), x) :- pid_load(f, l, _, bk, bs), coarse(f, bk, bs, $Deep(), x).
 
-// Parameters, entries, returns and results, as processes.dl splits
-// them: a callee that hands its parameter back returns this call's
-// argument, and a factory's fresh value is renamed where it is kept —
-// by the way the factory returns it (its own start's, or a callee's
-// passed straight up), where the exact pass renames the value however
-// it came: a superset of what that pass keeps.
+// Separate call parameters from entry arguments and fresh returns. Forwarded parameters
+// retain each call's argument. Factory values are renamed through direct or forwarded
+// factory returns, conservatively covering the exact pass's results.
 coarse(g, "param", k, r, x) :- coarse_entry(g, k, r, x).
 coarse(g, "param", k, r, x) :- pid_arg(_, f, g, k, "call", sk, s), coarse(f, sk, s, r, x).
 coarse_entry(g, k, r, x) :- pid_arg(_, f, g, k, via, sk, s), via != "call", coarse(f, sk, s, r, x).
@@ -189,8 +150,8 @@ coarse_ret_all(g, r, x) :- coarse_fresh(g, r, x).
 coarse_ret_all(g, r, x) :- passes(g, j), coarse(g, "param", j, r, x).
 coarse_ret_all(g, r, x) :- returns_key(g, k), coarse(g, "dict", k, r, x).
 
-// The field of a returned tuple a state slot names: the value itself when
-// the leaf is that field, somewhere when it is deeper or not known.
+// Resolve a state slot to its returned tuple field. Use the exact value for a direct
+// field leaf, or somewhere for deeper or unknown contents.
 .decl coarse_slot(func: symbol, tag: symbol, arity: symbol, sel: symbol, r: Reach, x: symbol)
 .decl coarse_slot_wanted(tag: symbol, arity: symbol, sel: symbol)
 

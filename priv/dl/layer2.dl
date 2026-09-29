@@ -7,17 +7,17 @@
 // prunes input relations no rule reads, so including the whole layer
 // costs nothing in the solve.
 
-// The call at `site` runs only where a membership test or a lookup found `store` lacking the key, and the key is the site's argument `arg`: `case :maps.is_key(pid, state.monitors) of false -> monitor(pid)`, `unless MapSet.member?(s.subs, t), do: subscribe(t)`, `[] = :ets.lookup(:owners, pid)` before a link. The walk that fixes the ask's answer at absent reaches the site, and the walk that fixes it at present does not (`Argus.Extractors.StateGate.Absent`). An acquisition asked so is not taken again while the store holds its key: what lets it run again is that store losing the key.
+// A call reached only when a membership test or lookup finds its argument `arg` absent from `store`. The absent path reaches the site; the present path does not (`Argus.Extractors.StateGate.Absent`). Repeating the acquisition requires removing its key from the store.
 //
 .decl acquired_if_absent(site: symbol, func: symbol, pos: number, store: symbol, arg: number)
 .input acquired_if_absent
 
-// A child a `Supervisor.start_child/2` or `supervisor:start_child/2` call adds to a supervisor, beside the children its init/1 lists: `supervisor:start_child(kernel_safe_sup, {dets, {dets_server, start_link, []}, permanent, ...})`. The spec is read as an element of a child list is, with its restart and type. Not a DynamicSupervisor's child (`dynamic_child`), of which a program starts many, and not a simple_one_for_one template's (the argument is a list of arguments, and the supervisor's init/1 names the child); a spec the extractor cannot read names no child.
+// A child added by `Supervisor.start_child/2` or `:supervisor.start_child/2`, with spec, restart, and type. Excludes DynamicSupervisor children, simple_one_for_one argument lists, and unresolved specs.
 //
 .decl added_child(sup: symbol, child_mod: symbol, restart: symbol, type: symbol, caller_func: symbol)
 .input added_child
 
-// Every way `func` returns a value hands back what one of the calls its rows name answered: a tail call (a default-argument wrapper), or a return of such a call's result, of its payload (`{:ok, pid} = start(); pid`) or of the payload re-wrapped (`{:ok, pid} = start(); {:ok, pid}`, a `case` that passes `{:ok, pid}` and `{:error, reason}` on). All or nothing: one return of anything else (a lookup, a literal, a parameter, a deeper element such as the pid of `{:error, {:already_started, pid}}`) and the function has no row; a path that raises is not asked. The must-reading of a wrapper, where `returns_call` is the may-reading; `clientlib/answers.dl` chains it through the program (`Argus.Extractor.Answers`).
+// Every non-raising return forwards a listed call's result, its immediate payload, or that payload rewrapped. Any unrelated return or deeper extraction removes all rows for the function. This is the must-return counterpart of `returns_call`; `clientlib/answers.dl` chains it through wrappers (`Argus.Extractor.Answers`).
 //
 .decl answers_call(func: symbol, site: symbol, depth: number)
 .input answers_call
@@ -26,12 +26,12 @@
 .decl async_cast(caller_func: symbol, callee_mod: symbol)
 .input async_cast
 
-// A cast's target at its site, as async_cast spells it: what pairs the process a cast goes to with the message tag of the same cast (call_tag), where async_cast says only that the function makes such a cast.
+// A cast's target at one site. Joins `call_tag` to associate the target and message of the same cast.
 //
 .decl async_cast_site(id: symbol, caller_func: symbol, callee_mod: symbol)
 .input async_cast_site
 
-// Every start `func` makes (a call named `start*` or `spawn*`) is followed, on every path to its return, by a receive clause that takes the `:DOWN` of any monitor, or of a monitor the function takes after that start: what it starts lives no longer than the call (Livebook's `UniqueTask.run/2`). The clause, not the receive: one for the child's answer, or a timed receive's `after`, leaves the child alive on its path. A path that raises is not asked (`Argus.Extractors.Monitor`).
+// Every start or spawn is followed on every returning path by a receive clause accepting its monitor's `:DOWN`, or any monitor's `:DOWN`. Other receive clauses and timeout arms do not qualify; raising paths are excluded. Establishes that started children cannot outlive the call.
 //
 .decl awaits_child_exit(func: symbol)
 .input awaits_child_exit
@@ -40,191 +40,187 @@
 .decl bare_rescue(id: symbol, func: symbol, guard_end: symbol)
 .input bare_rescue
 
-// A function whose body is boundary operations (a call, cast or stop of another process, a send, a registration) and instructions that cannot raise: a client API such as `stop(Pid) -> gen_statem:stop(Pid)` (`Argus.Extractors.ErrorHandling.Boundary`).
+// A function containing only process-boundary operations and non-raising instructions. Boundary operations include calls, casts, stops, sends, and registrations (`Argus.Extractors.ErrorHandling.Boundary`).
 //
 .decl boundary_function(func: symbol)
 .input boundary_function
 
-// Resolved argument value at a call site. Enables interprocedural constant propagation: `resolved_arg` in `clientlib/calls.dl` traces literal values from call sites through forwarding chains to resolve `sync_call`/`async_cast` targets the extractors couldn't resolve statically. Forwarded parameters are NOT values here — they are their own relation, `call_arg_forward`.
+// A resolved call argument. `resolved_arg` in `clientlib/calls.dl` propagates literals through wrappers to resolve call and cast targets. Forwarded parameters use `call_arg_forward` instead.
 //
 .decl call_arg(caller: symbol, callee: symbol, arg_pos: number, value: symbol)
 .input call_arg
 
-// Every call the caller makes to the callee passes a literal list at the position (a module attribute is one once compiled). Function-level: one call passing anything else, and there is no row.
+// Every call from caller to callee passes a literal list at this position. Compiled module attributes count as literals. Any nonliteral argument at that position removes the function-level row.
 //
 .decl call_arg_allowlist(caller: symbol, callee: symbol, arg_pos: number)
 .input call_arg_allowlist
 
-// At some call site in the caller, the argument is made of an atom an existing-atom lookup returned there (sink_arg_chosen's question, one call up): chained with call_arg_derived, whether a caller's chosen atom reaches a sink's argument.
+// A call argument derived from an existing-atom lookup in the caller. Chains with `call_arg_derived` to detect caller-selected atoms reaching a sink.
 //
 .decl call_arg_chosen(caller: symbol, callee: symbol, arg_pos: number)
 .input call_arg_chosen
 
-// At some call to the callee, the argument depends on the source: made from it, or computed under a test on it. Unlike call_arg_derived, control counts, and the sources include call results. Function-level.
+// A call argument dependent on the source through data or control flow. Unlike `call_arg_derived`, includes control dependence and call-result sources. Function-level.
 //
 .decl call_arg_depends(caller: symbol, callee: symbol, arg_pos: number, kind: symbol, source: symbol)
 .input call_arg_depends
 
-// At some call site in the caller, the argument is data-dependent on one of the caller's parameters: destructured out of it, built into a tuple or a binary with it, or returned by a call known to hand its argument's data through. A superset of call_arg_forward (identity is a dependence). A closure built with make_fun3 counts as a call whose trailing parameters are the captured environment. Function-level, so a body edit that keeps the flow does not move it.
+// A call argument derived from a caller parameter, including destructuring, construction, and known data-preserving calls. Includes `call_arg_forward`. For `make_fun3`, captured variables are trailing arguments. Function-level, so unchanged flows survive body edits.
 //
 .decl call_arg_derived(caller: symbol, callee: symbol, arg_pos: number, param_pos: number)
 .input call_arg_derived
 
-// The argument at `arg_pos` is element `index` of the caller's own parameter (`elem(record, 1)`, a `get_tuple_element` or the `element/2` BIF): what a helper that names the value by its own parameter is handed, in the caller's terms. Only emitted where call_arg says 'dynamic'.
+// A call argument taken from element `index` of a caller parameter. Covers tuple extraction instructions and `element/2`. Emitted only when `call_arg` reports `dynamic`.
 //
 .decl call_arg_element(caller: symbol, callee: symbol, arg_pos: number, param_pos: number, index: number)
 .input call_arg_element
 
-// The argument at `arg_pos` was read from a map under a literal key in the caller (`start_timer(ms, state.ref)`): which piece of the caller's state a helper is handed. Only emitted where call_arg says 'dynamic'.
+// A call argument read from a literal map key in the caller, such as `state.ref`. Emitted only when `call_arg` reports `dynamic`.
 //
 .decl call_arg_field(caller: symbol, callee: symbol, arg_pos: number, key: symbol)
 .input call_arg_field
 
-// A call site passes one of the caller's own parameters straight through as an argument — the forwarding step interprocedural constant propagation walks backwards.
-//
-// Split out of `call_arg`, where it used to be encoded in the value column as the string `"arg:N"` and decoded in Datalog with `to_number(substr(...))`. `to_number` is a PARTIAL functor: it aborts on input that is not numeric. The guard that kept non-forwarding values away from it was a sibling conjunct, and Souffle does not promise conjunct order — the default schedule happened to be safe, but the magic-set transform reordered and aborted with `to_number("mic")`. A structured column cannot be scheduled into a crash.
+// A caller parameter passed unchanged to a callee argument. Used for interprocedural constant propagation. Positions are numeric columns to avoid partial string functors, which can abort when Souffle reorders conjuncts.
 //
 .decl call_arg_forward(caller: symbol, callee: symbol, arg_pos: number, fwd_pos: number)
 .input call_arg_forward
 
-// call_arg_depends by data alone, for calls (not closures): the argument is made from the source. Function-level.
+// The data-only subset of `call_arg_depends`, for calls but not closures. Function-level.
 //
 .decl call_arg_reads(caller: symbol, callee: symbol, arg_pos: number, kind: symbol, source: symbol)
 .input call_arg_reads
 
-// The argument at `arg_pos` is a tuple the caller builds, and its element `index` is `(source, value)` in the caller's terms: a record's table (element 0) and key (element 1), an ETS object's key. A callee that names the element by its parameter is handed this. Elements the caller cannot name are not emitted.
+// Element `index` of a tuple argument constructed by the caller, expressed as `(source, value)` in `key_identity` vocabulary. Identifies record tables and keys or ETS object keys. Unresolved elements are omitted.
 //
 .decl call_arg_tuple(caller: symbol, callee: symbol, arg_pos: number, index: number, source: symbol, value: symbol)
 .input call_arg_tuple
 
-// Some call to the callee runs only because of a test on the source: everything the callee does is decided by it. Building a closure counts as a call to it. Function-level.
+// A call controlled by a test on the source. Closure construction counts as a call. Function-level.
 //
 .decl call_decided(caller: symbol, callee: symbol, kind: symbol, source: symbol)
 .input call_decided
 
-// A call to a process or OTP API, or to anything that starts a process, with what became of its result, the class it raises when it fails (what a try must take to guard it: try_covers and catch_class), and what it acts on when a literal says. One row per site, so a rule can count how the other sites of the same callee (on the same target) behave and report the one that disagrees.
+// A process or OTP API call's result usage, failure class, and literal target when known. One row per site supports comparison with other calls to the same callee and target. `try_covers` and `catch_class` determine whether the failure is handled.
 //
 .decl call_result(id: symbol, func: symbol, callee: symbol, fate: symbol, raises: symbol, target: symbol)
 .input call_result
 
-// The callback's catch-all does nothing with the message but log it or ignore it: every path from its body hands the message, or what is made of it, only to Logger, `:logger`, IO or `inspect/2`. GenServer's own handle_info/2 is one. A catch-all that calls anything else with it, returns it, stores it or tests it is not.
+// A catch-all that only logs or ignores the message. All uses of the message or derived values must go to Logger, `:logger`, IO, or `inspect/2`. Testing, returning, storing, or otherwise passing the message disqualifies it.
 //
 .decl callback_drops(func: symbol, callback: symbol)
 .input callback_drops
 
-// A `{:noreply, _}` return site in handle_call/3 that some execution reaches having never read `from`. Per site rather than per function, because handle_call compiles every clause into one function and a sibling clause that defers correctly would otherwise vouch for one that does not.
-//
-// Established by walking the intra-function block graph from the entry across blocks that do not read `from`. `from` arrives in {x,1}, and a read is either a mention of that register or a call of arity two or more, since calls take arguments positionally and a body passing `from` straight through compiles to no move at all.
+// A `handle_call/3` `{:noreply, _}` return reachable without reading `from`. Traces paths that do not read `{x,1}` or call with arity at least two. Recorded per return site so a correctly deferred sibling clause cannot hide a missing reply.
 //
 .decl callback_drops_from(id: symbol, func: symbol)
 .input callback_drops_from
 
-// Some clause other than a catch-all takes the message by its shape alone, never comparing it or its tag to a value: `msg when is_atom(msg)` (`any`), `{ref, result} when is_reference(ref)` (`tuple`, a tuple of any tag, of `arity` 2). `callback_tag` names nothing such a clause takes, so a rule asking whether a message is taken asks this too; one asking of a tuple of known size (a monitor's 5-element `:DOWN`) asks the arity as well.
+// A non-catch-all clause accepting messages by shape without comparing their value or tag. Records `any` or `tuple` with arity, including `{ref, result}` guarded by `is_reference(ref)`. Complements `callback_tag` when checking whether a message is handled.
 //
 .decl callback_open(func: symbol, callback: symbol, shape: symbol, arity: number)
 .input callback_open
 
-// The callback has a clause whose message is a tuple headed by a reference — `{ref, result} when is_reference(ref)`, the reply of a task started with async_nolink.
+// A callback clause accepting a tuple headed by a reference, such as the `{ref, result}` reply from an `async_nolink` task.
 //
 .decl callback_ref_head(func: symbol, callback: symbol)
 .input callback_ref_head
 
-// A literal return tag of an OTP callback — the first element of a tuple built into {x,0} immediately before `return`. Absent when the callback tail-calls, since the shape then belongs to the callee; consumers must treat absence as unknown rather than as "returns nothing".
+// A literal OTP callback return tag built into `{x,0}` immediately before return. Tail calls have no row because the callee supplies the shape. Absence means unknown.
 //
 .decl callback_return(id: symbol, func: symbol, callback: symbol, tag: symbol)
 .input callback_return
 
-// The reason of a `{:stop, reason, ...}` return from an OTP callback, when it is a literal atom or a `{:shutdown, term}` literal. Absent when the reason is computed, so consumers treat absence as unknown.
+// A literal reason in an OTP callback's `{:stop, reason, ...}` return: an atom or `{:shutdown, term}` literal. Computed reasons have no row; absence means unknown.
 //
 .decl callback_stop_reason(id: symbol, func: symbol, reason: symbol)
 .input callback_stop_reason
 
-// A message tag a callback matches. Over-approximated: every atom compared anywhere in the body counts, without tracking registers. Consumers ask whether a tag is NOT handled, so over-approximating suppresses findings rather than inventing them.
+// A possible message tag handled by a callback. Counts every atom comparison in the body without tracking registers. This over-approximation is safe for rules that report missing handlers: extra tags suppress findings.
 //
 .decl callback_tag(func: symbol, callback: symbol, tag: symbol)
 .input callback_tag
 
-// A clause head of the callback takes the message as the atom `tag` (`arity` 0), or as a tuple of `arity` elements whose first is `tag` (`Argus.Extractors.CallbackTag.MessageClauses.tag_shapes/2`). Read on the heads alone, where callback_tag counts every atom the body compares: `handle_info(:timeout, s)` takes the atom, not `:erlang.start_timer`'s `{:timeout, ref, msg}`, and `handle_info({:tick, n}, s)` takes no `{:tick, 1, :slow}`.
+// A callback clause's message shape: atom `tag` with arity 0, or a tuple of the given arity headed by `tag`. Reads clause heads only, unlike `callback_tag`, so an atom handler does not count as a handler for a tuple with that tag.
 //
 .decl callback_tag_shape(func: symbol, callback: symbol, tag: symbol, arity: number)
 .input callback_tag_shape
 
-// Some clause of the callback takes every `{:DOWN, ref, type, object, reason}` of a monitor of `type`, whatever reason the runtime gives it (`Argus.Extractors.CallbackTag.MessageClauses.takes_down/2`): `any` when the head leaves the type alone, `process` when it compares it with `:process`. A head that pins the ref or the object, or asks the state, takes the `:DOWN` of the monitors the program keeps there; one that tests the reason (`when reason != :normal`) is no row.
+// A callback clause handling all `:DOWN` reasons for a monitor type: `any` or `process`. Reference, object, and state restrictions are allowed; reason restrictions are not (`Argus.Extractors.CallbackTag.MessageClauses.takes_down/2`).
 //
 .decl callback_takes_down(func: symbol, callback: symbol, type: symbol)
 .input callback_takes_down
 
-// Some clause of the callback takes every trapped `{:EXIT, from, reason}`, whatever the reason the linked process ended with (`Argus.Extractors.CallbackTag.MessageClauses.takes_exit?/2`). A head that pins `from` or asks the state takes the exits of the processes the program keeps there; one for `:normal` alone is no row.
+// A callback clause handling trapped `:EXIT` messages for every exit reason. Sender and state restrictions are allowed; reason restrictions are not (`Argus.Extractors.CallbackTag.MessageClauses.takes_exit?/2`).
 //
 .decl callback_takes_exit(func: symbol, callback: symbol)
 .input callback_takes_exit
 
-// A literal integer timeout in an OTP callback's return — the third element of `{:ok, state, ms}` or `{:noreply, state, ms}`, the fourth of `{:reply, reply, state, ms}`. The message it schedules, `:timeout`, is cancelled by any other message arriving first.
+// A literal integer idle timeout in an OTP callback return. Schedules `:timeout`, cancelled if another message arrives first.
 //
 .decl callback_timeout(id: symbol, func: symbol, callback: symbol, timeout_ms: number)
 .input callback_timeout
 
-// The callback has a catch-all clause, so no tag can fail to match. Established from the bytecode: a multi-clause function raises by jumping to its own `func_info` label, so nothing branching there means every input matches. A guarded catch-all is correctly NOT total.
+// An unguarded catch-all, established by the absence of branches to the function's `func_info` failure label. Every input matches; guarded catch-alls do not qualify.
 //
 .decl callback_total(func: symbol, callback: symbol)
 .input callback_total
 
-// A cancel_timer inside a `handle_info/2` clause whose head is a literal message: `def handle_info(:heartbeat, s)` — the head test on the first argument dominates the cancel, and nothing before it overwrote the argument. Cancelling the timer whose message this clause is handling cancels a timer that has already fired.
+// A cancellation inside a `handle_info/2` clause for a literal atom, with the head test dominating the call and the message argument unchanged. A timer for this message has already fired.
 //
 .decl cancel_clause(id: symbol, func: symbol, message: symbol)
 .input cancel_clause
 
-// The handler of the try at `id` takes `class`: some path through it establishes the class and returns without raising again, whatever it asks of the reason. A handler that only re-raises (`after`, `rescue e -> reraise e, __STACKTRACE__`) has no row; `*` is a path with no class test. Erlang's `catch Expr` takes every class: one row, `*`, and no span of its own.
+// An exception class handled by the try at `id`: some path accepts the class and returns without re-raising. Reason restrictions are allowed. `*` means no class test, including Erlang `catch Expr`, which has no separate span. Re-raise-only handlers have no row.
 //
 .decl catch_class(id: symbol, func: symbol, class: symbol, span_end: symbol)
 .input catch_class
 
-// A `case` inside the handler, reached after comparing `tag`, has no clause for some value: a reason the handler did not anticipate is a CaseClauseError rather than a result. The tag identifies the case — the compiler emits a clause-less case of its own for `e.field`.
+// A non-exhaustive `case` in a handler after comparison with `tag`. An unexpected reason raises `CaseClauseError`. The tag distinguishes this case from compiler-generated field-access checks.
 //
 .decl catch_falls_through(id: symbol, func: symbol, tag: symbol)
 .input catch_falls_through
 
-// The `catch_tag` rows whose atom heads the reason's first element, itself a tuple: `catch :exit, {{:shutdown, _}, _}` has `:shutdown`. A `GenServer.call` whose peer stops with `{:shutdown, reason}` while the call waits exits with `{{:shutdown, reason}, {GenServer, :call, _}}`, which a clause for `{:shutdown, _}` (a `catch_tuple_tag`, the peer's bare `:shutdown`) does not take.
+// A tag matched at the head of the reason's first tuple element, such as `:shutdown` in `{{:shutdown, _}, _}`. Distinguishes a GenServer call's wrapped shutdown reason from a plain `{:shutdown, _}` reason.
 //
 .decl catch_inner_tag(id: symbol, func: symbol, class: symbol, tag: symbol)
 .input catch_inner_tag
 
-// A reason tag a clause discriminates on, attributed to the class that clause catches. Within a clause every compared atom counts (a `case` in the body too), the over-approximation `callback_tag` makes: rules ask whether a tag is NOT handled, so seeing too many suppresses findings rather than inventing them.
+// An atom compared in a handler clause, attributed to its exception class. Includes body comparisons, so it over-approximates handled reason tags. Consumers check for missing tags; extra tags suppress findings.
 //
 .decl catch_tag(id: symbol, func: symbol, class: symbol, tag: symbol)
 .input catch_tag
 
-// Some clause of the handler catches the class outright — `catch :exit, reason ->`, `rescue e ->` — so no reason of that class escapes it.
+// An exception class caught without restricting its reason. No reason of that class escapes the matching clause.
 //
 .decl catch_total(id: symbol, func: symbol, class: symbol)
 .input catch_total
 
-// The `catch_tag` rows whose atom heads the reason, a tuple the clause tests for: an `is_tagged_tuple` of the reason, or a comparison on a register holding the reason's first element. `catch :exit, {:noproc, _}` has one; `catch :exit, :noproc`, which compares the reason itself, has only the `catch_tag` row, and `catch :exit, {{:shutdown, _}, _}`, which heads a tuple inside it, a `catch_inner_tag` one. A `GenServer.call` to a dead process exits with `{:noproc, {GenServer, :call, _}}` and a `GenServer.stop` with bare `:noproc`, so the two forms catch different exits. A clause that takes any tuple reason by its shape alone, never comparing its elements (`catch exit:{Reason, _}`), is the tag `*`: it takes `{:shutdown, _}` and `{:normal, _}` too.
+// A tag matched at the head of an exception-reason tuple. Distinguishes `{:noproc, _}` from bare `:noproc` and nested `{{:shutdown, _}, _}`. `*` denotes a clause accepting tuple reasons without testing their elements.
 //
 .decl catch_tuple_tag(id: symbol, func: symbol, class: symbol, tag: symbol)
 .input catch_tuple_tag
 
-// The module's child_spec/1 gives a spec field from its argument: `restart: Keyword.get(opts, :restart, :transient)` (Map.get/3, `opts[:restart]`, whose default is nil) is `child_spec_option(mod, "restart", "restart", "transient")`. A shorthand start's field is then the option its argument holds (`shorthand_option`), or the default where its argument is options without the key (`shorthand_arg` `options`), and unknown otherwise.
+// A child-spec field read from the function's argument, with its option key and default. Shorthand starts resolve it through `shorthand_option`; a known options argument lacking the key uses the default. Other arguments leave the value unknown.
 //
 .decl child_spec_option(mod: symbol, field: symbol, key: symbol, default: symbol)
 .input child_spec_option
 
-// The restart a module's own child_spec/1 gives a shorthand `{Mod, arg}` start: the one each spec it answers states, `permanent` for a map with no `:restart` (the supervisor's default: an absent key), `dynamic` for one the reader cannot read (a value from a call, `opts[:restart] || :transient`, a map over a base it cannot know, another module's child_spec/1 it hands on) — never the default (issue #4). A restart read off the argument is a `child_spec_option` row instead. No row when the module has no child_spec/1 in view.
+// A module's `child_spec/1` restart policy: the stated value, `permanent` for a known map lacking `:restart`, or `dynamic` when unresolved. Argument-derived values use `child_spec_option`. No row means no visible `child_spec/1`.
 //
 .decl child_spec_restart(mod: symbol, restart: symbol)
 .input child_spec_restart
 
-// The type a module's own child_spec/1 gives the child a shorthand `{Mod, args}`, a bare `Mod` or a `start_child` of one names: a spec's `:type`, or `worker` for a map it writes with none (the supervisor's default). `use Supervisor` states `supervisor`; a child_spec/1 that hands back another module's states nothing, and no row is written.
+// A module's `child_spec/1` type for shorthand starts: the stated type or `worker` for a known map lacking it. Delegation to another module's `child_spec/1` has no row.
 //
 .decl child_spec_type(mod: symbol, type: symbol)
 .input child_spec_type
 
-// The call (or Erlang `!`, the send instruction) at `id` runs only while `func`'s first argument is `tag` — the atom, or the first element of the tuple, some path to the call tested it against — one row per such tag. A call some path reaches without establishing a tag has no row. Exact per path, unlike `callback_tag`: a synchronous call chain follows the clause of handle_call/3 a request enters, and the clause of a guarded dispatcher (`route(:local, n)`) a literal argument enters, so the `:echo` clause that closes a cycle does not stand for the `:answer` clause beside it. A gen_statem's event function (`handle_event/4`, a state function) is handed its event in two arguments and picks a clause by both: its tag is `"<type> <content>"` (`":internal :connect"`, `":info :DOWN"`), the bare type where a path fixes no content (`clause_event` splits it; `Argus.Extractor.Dispatch.event_tags/3`).
+// A call or send reached only when the first argument has `tag`, either as an atom or tuple head. Every path must establish a tag; one row is emitted per possible tag. Enables clause-specific call-chain analysis. gen_statem event functions use `"<type> <content>"`, or the type alone when content is unknown; `clause_event` splits these tags.
 //
 .decl clause_call(id: symbol, func: symbol, tag: symbol)
 .input clause_call
 
-// A two-part tag of a gen_statem event function's clauses, the tag `clause_call`, `returned_update` and `statem_insert` spell for the clause of events of `type` whose content is `content` (an atom, or a tuple headed by it). How a rule asks what event a clause takes: a `:DOWN` under `:info`, any `:internal` event.
+// The type and content of a gen_statem clause tag used by `clause_call`, `returned_update`, and `statem_insert`. Content is an atom or tuple head, allowing rules to identify events such as `:info :DOWN`.
 //
 .decl clause_event(func: symbol, tag: symbol, type: symbol, content: symbol)
 .input clause_event
@@ -233,32 +229,32 @@
 .decl code_execution(id: symbol, func: symbol, api: symbol)
 .input code_execution
 
-// The call at `id` runs only on the arm where `Phoenix.LiveView.connected?/1` answered true (or `get_connect_params/1` answered, not nil, as it does only once connected): the block that arm's edge alone enters dominates the call's (Argus.Extractors.LiveView). A LiveView's mount runs once for the static render, in the HTTP connection's process, and again connected; what registers the process for later messages belongs on that arm. A call on the other arm, or after the arms join, has no row.
+// A call restricted to the connected branch of `Phoenix.LiveView.connected?/1` or a non-nil `get_connect_params/1` result. Excludes the disconnected branch and code after branches rejoin. Used to distinguish connected mount work from static rendering (`Argus.Extractors.LiveView`).
 //
 .decl connected_guarded(id: symbol, func: symbol)
 .input connected_guarded
 
-// The return at `id` hands the process to `handle_continue/2`: `{:ok, state, {:continue, t}}`, `{:noreply, state, {:continue, t}}` or `{:reply, reply, state, {:continue, t}}`, in init/1, a handler or a helper whose result a callback returns. `tag` is what the clause of handle_continue/2 the term enters tells it by: the atom, or a tuple's first element. One row per clause of `func` the return is in, by the tag its first argument was established to be (`Argus.Extractor.Dispatch.argument_tags/2`, as `returned_update` reads one). What sends a clause of handle_continue/2 its term, for `clientlib/runs.dl`'s once clauses.
+// A return scheduling `handle_continue/2` from init, a handler, or a returned helper result. `tag` is the continuation atom or tuple head. One row per enclosing first-argument clause tag, used by `clientlib/runs.dl` to identify continuations that run once.
 //
 .decl continue_return(id: symbol, func: symbol, clause: symbol, tag: symbol)
 .input continue_return
 
-// A call that claims a name or starts a process: a registration, a named start, a via-registered start, or start_child, whose name hides in the child spec.
+// A call that registers a name or starts a process, including via registration and `start_child` with a name in its child spec.
 //
 .decl creating_op(id: symbol, func: symbol, api: symbol, scope: symbol, source: symbol, key: symbol)
 .input creating_op
 
-// A `Process.demonitor/1,2`. `flush` records whether `[:flush]` was passed, which is the difference between cancelling a future message and removing one already in the mailbox. Unreadable options are recorded as `no_flush`, the direction that keeps a finding rather than discharging one on a guess.
+// A demonitor call and whether `[:flush]` is present. Flushing removes an already queued `:DOWN`; cancellation alone does not. Unresolved options use `no_flush` so they cannot suppress a finding.
 //
 .decl demonitor_call(id: symbol, func: symbol, flush: symbol)
 .input demonitor_call
 
-// The call at `id` puts, gets or erases a key of the process dictionary: `put/2`, `get/1`, `erase/1` and `erase/0` (a key not known), and Elixir's `Process.put/2`, `Process.get/1,2` and `Process.delete/1`.
+// A process-dictionary put, get, or erase, including Elixir wrappers. `erase/0` uses an unknown key.
 //
 .decl dict_op(id: symbol, func: symbol, op: symbol, key: symbol)
 .input dict_op
 
-// The `put/2` at `id` keeps the source in the running process's dictionary under `key`: a `dict` source of `key`, read in a function the same process runs, may be it (clientlib/processes.dl).
+// A source stored under `key` in the running process's dictionary. Reads of the same `dict` source in that process may resolve to it (`clientlib/processes.dl`).
 //
 .decl dict_put(id: symbol, func: symbol, key: symbol, src_kind: symbol, src: symbol)
 .input dict_put
@@ -267,37 +263,37 @@
 .decl distributed_store_op(id: symbol, func: symbol, store: symbol, op: symbol)
 .input distributed_store_op
 
-// Runtime-spawned child via `DynamicSupervisor.start_child/2`. Captured so analyses like `one_for_one_coupling` can see workers added at runtime (connection pools, per-tenant supervisors, plugin systems) that wouldn't appear in any static `init/1` child spec scan.
+// A runtime child added by `DynamicSupervisor.start_child/2`. Makes dynamic workers visible alongside static supervision children.
 //
 .decl dynamic_child(sup: symbol, child_mod: symbol, caller_func: symbol)
 .input dynamic_child
 
-// The restart a `DynamicSupervisor.start_child/2`'s own spec states for the child its `dynamic_child` row names: a map's `:restart`, `:permanent` for a map with none (the map does not call the module's child_spec/1, so `use GenServer, restart: :temporary` does not apply), or `Supervisor.child_spec/2`'s overrides (redix e67e61a: `Supervisor.child_spec({Redix, opts}, restart: :temporary)`). No row for a shorthand, whose restart its own child_spec/1 gives (`child_spec_restart`, `child_spec_option` over the start's `shorthand_arg`); `clientlib/supervision.dl`'s `dynamic_restart` reads both.
+// The restart policy stated by a dynamic child's explicit spec or `Supervisor.child_spec/2` override. Known maps without `:restart` use `permanent`. Shorthand forms have no row here; `dynamic_restart` in `clientlib/supervision.dl` also resolves their module-defined policy.
 //
 .decl dynamic_child_restart(sup: symbol, child_mod: symbol, caller_func: symbol, restart: symbol)
 .input dynamic_child_restart
 
-// A message send, or a call into the runtime that changes something outside the function (Argus.Purity.Effects: a process, a port, a file, the network, a node; not logging), runs only because of a test on the source. Project calls are call_decided's. Function-level.
+// A send or external runtime effect controlled by a test on the source. Includes process, port, file, network, and node effects classified by `Argus.Purity.Effects`; excludes logging. Project calls use `call_decided`. Function-level.
 //
 .decl effect_decided(func: symbol, kind: symbol, source: symbol)
 .input effect_decided
 
-// What identifies an argument of the call, in ets_key's vocabulary: a callee's insert keyed by its parameter is keyed, in the caller, by what the caller passes there.
+// A call argument's identity in `ets_key` vocabulary. Translates a callee's parameter-based insert key into the caller's terms.
 //
 .decl ets_call_arg(id: symbol, callee: symbol, pos: symbol, source: symbol, value: symbol)
 .input ets_call_arg
 
-// Two effects of one function in order within one trip through it: inserts, and the calls a callee's inserts hide behind. An edge into a block that dominates its source is a loop's back edge and is not followed, so a loop body's writes are ordered as each iteration makes them, not both ways. At least one of the two is an insert or a call to a function of the same module that inserts.
+// Two ordered effects within one function iteration. At least one is an insert or a same-module call that inserts. Excludes loop back edges so writes in a loop are ordered within an iteration, not in both directions.
 //
 .decl ets_effect_order(func: symbol, first: symbol, then: symbol)
 .input ets_effect_order
 
-// What identifies the key operand of an ETS operation; for insert and insert_new, the first element of the object. Two operations agreeing on source and key touch the same row.
+// The identity of an ETS key operand; for `insert` and `insert_new`, the object's first element. Matching `source` and `key` values identify the same row.
 //
 .decl ets_key(id: symbol, source: symbol, key: symbol)
 .input ets_key
 
-// Every path from the function's entry to each make of the named table there — its named `:ets.new/2`, or a call to a function of the module that makes it — passes the side of a test of a lookup of the same table (`:ets.whereis/1`, `:ets.info/1,2`) where the answer is `:undefined`: the function makes the table only where the name is free. The mirror of `ets_read_when_present`. A function with a make on a path that skips the test, or past its other side, or past a lookup of another table only, has no row.
+// Every creation of a named table in the function follows a lookup of that same table returning `:undefined`. Includes same-module creation helpers. A creation reachable without the absence check removes the row.
 //
 .decl ets_made_when_absent(func: symbol, name: symbol, witness: symbol)
 .input ets_made_when_absent
@@ -318,32 +314,32 @@
 .decl ets_option(id: symbol, key: symbol, value: symbol)
 .input ets_option
 
-// The :ets.new/2 at `id` was given an options list the extractor read whole (a literal list, through moves): every option it gives has an `ets_option` row, so one with none, `named_table` among them, is not given. No row when the list is built at run time (a parameter, the configuration), where any option may be, nor when it is known only in part (`[:named_table | opts]`: the options it shows have rows, and an option it does not show may be in the part the extractor cannot read; issue #4). A `keypos` it cannot read is `dynamic`, not the default first element.
+// An `:ets.new/2` whose complete options list is known. Only then does a missing `ets_option` row prove an option absent. Partial or runtime lists have no row here; an unreadable `keypos` is `dynamic`, never the default.
 //
 .decl ets_options_known(id: symbol)
 .input ets_options_known
 
-// Every path from the function's entry to the read passes where the table is there: the side of a test of a whereis result that found it (of a comparison with `:undefined`, or a `case` arm, where it is not `:undefined`), or an instruction that makes it — its named `:ets.new/2`, or a call to a function of the module that makes it (an ensure helper). A read the function makes on a path that skips both, or on the `:undefined` side before a make, has no row.
+// An ETS read reached only after confirming the table exists or creating it, directly or through a same-module ensure helper. Every path must establish presence; reads on an unchecked or still-absent path have no row.
 //
 .decl ets_read_when_present(read: symbol, witness: symbol)
 .input ets_read_when_present
 
-// The table operand of the ETS operation at `id` is the literal `name` only where a test found what the call at `site` returned unset (`undefined`, `nil` or `false`), and that answer otherwise: `case get_tmp_config() do undefined -> :options; t -> t end`, or `Process.get(:tab) || :options`. The literal is one of the operand's ets_table_path rows.
+// An ETS table operand that defaults to literal `name` when the call at `site` returns `undefined`, `nil`, or `false`; otherwise it uses that call's result. The literal also appears in `ets_table_path`.
 //
 .decl ets_table_default(id: symbol, name: symbol, site: symbol)
 .input ets_table_default
 
-// Where the table operand of an ETS operation was read from: a root and the map keys read from it (Resolve.access_path/4). Two tables handed to a function in one map, `%{forward: f, reverse: r}`, are two paths under one root where ets_op knows both by the name they were created with. Absent when the operand's writers disagree; a table named by a join (`cfg.table || @default`) is to have one row per arm.
+// An ETS table operand's root and map access path (`Resolve.access_path/4`). Distinguishes tables stored under different keys of one map. Conflicting writers have no row; a fallback expression such as `cfg.table || @default` has a path for each arm.
 //
 .decl ets_table_path(id: symbol, source: symbol, root: symbol, path: symbol)
 .input ets_table_path
 
-// At some call in the caller, or in the environment of a closure it builds, the argument is the table reference :ets.new/2 returned in the caller. An unnamed table is known by the name it was created with, so an operation on the parameter joins ets_new like a named one. Function-level, like call_arg.
+// A call or closure capture receiving a table reference returned by `:ets.new/2` in the caller. Unnamed tables use their creation name so parameter-based operations can join `ets_new`. Function-level, like `call_arg`.
 //
 .decl ets_tid_arg(caller: symbol, callee: symbol, arg_pos: number, name: symbol)
 .input ets_tid_arg
 
-// What identifies an element past the key of the object an insert or insert_new writes, in ets_key's vocabulary: a row holding a value another table is keyed by joins that table's key on it. An element nothing identifies has no row.
+// An identifiable non-key element written by ETS `insert` or `insert_new`, using `ets_key` vocabulary. Supports joins where one table stores another table's key. Unresolved elements are omitted.
 //
 .decl ets_value(id: symbol, pos: number, source: symbol, value: symbol)
 .input ets_value
@@ -352,58 +348,52 @@
 .decl exit_call(id: symbol, func: symbol, target: symbol)
 .input exit_call
 
-// A test in the function compares element `pos` of a tuple the source holds with a value made from the other source, by data alone: `[{^k, cur}] when cur >= serial` compares element 1 of the lookup's row with parameter 1, and element 0 with parameter 0. A comparison with a value nothing in the facts names (a clock read) has no row. Function-level.
+// A comparison between tuple element `pos` of one source and data derived from another. Comparisons with untracked values have no row. Function-level.
 //
 .decl field_compared(func: symbol, kind: symbol, source: symbol, pos: number, other_kind: symbol, other_source: symbol)
 .input field_compared
 
-// A test in the function decides on element `pos` of a tuple the source holds, or on something made from it: `[{^k, cur}] when cur >= serial` tests element 1 of the lookup's row. A test of the source's shape alone — whether a lookup found a row — is not one; comparing the row's key is one at the key's position. An `:ets.lookup_element/3` answer is element 1 of its row. Function-level.
+// A test on tuple element `pos` of the source, or data derived from that element. Shape-only tests do not count. Key comparisons use the key position; `:ets.lookup_element/3` results use position 1. Function-level.
 //
 .decl field_decides(func: symbol, kind: symbol, source: symbol, pos: number)
 .input field_decides
 
-// `func` tests the map field under `key` against nil or undefined: a clause head `%{receive_timer: nil}`, an `if state.timer == nil`, an Erlang map pattern `tref := undefined`. A function that arms a timer only when the field keeping its ref is empty arms none beside a pending one (a Broadway producer's receive loop).
+// A test comparing map field `key` with `nil` or `undefined`. Supports checks for timers armed only when no reference is stored.
 //
 .decl field_nil_test(func: symbol, key: symbol)
 .input field_nil_test
 
-// `func` tests the map field under `key` for equality with a literal (nil among them): a clause head `%{draining: true}`, an `if state.mode == :idle`, a `case` arm. field_nil_test is the nil half, read alone where only an empty field matters.
+// A test comparing map field `key` with a literal. `field_nil_test` is the subset for `nil` or `undefined`.
 //
 .decl field_value_test(func: symbol, key: symbol, value: symbol)
 .input field_value_test
 
-// Every way `func` completes after `site` hands back a state whose `key` holds a value none of the site's state_gate rows admits — a literal outside them, a value no atom is (what a call known to answer a reference, a pid or a number made, the caller in handle_call/3's `from`), no such field — or ends the process (a `{:stop, ...}`, a raise). A return through a local helper handed the state reads the helper's returns; the handler of a `try` the site may be inside is a way to complete. A `throw` after the site (gen_server takes the thrown value as the result), a state handed back unchanged, or one the reading cannot follow, closes nothing.
+// Every completion after `site` either stops the process or returns state that excludes all values admitted by the site's `state_gate` rows. Includes local-helper returns and try handlers. Unchanged or unresolved state does not close the gate; neither does `throw`, whose value GenServer uses as the callback result.
 //
 .decl gate_closed(site: symbol, func: symbol, key: symbol)
 .input gate_closed
 
-// `:global` synchronization primitives. The retries field is the third argument of `:global.set_lock/3` (or `:global.trans/4`); analyses use it to distinguish blocking calls (`infinity` or large positive integers) from non-blocking try-once calls (`0`).
-//
-// `:global.set_lock/1,2` and `:global.trans/2,3` default to infinity retries — recorded as `"infinity"` even when the source code omits the argument.
-//
-// The nodes field is the node list's shape, which says whose agreement the lock waits on: `"local"` for `[node()]` (only this node's global server), `"cluster"` for a list holding the connected nodes (`[node() | Node.list()]`, `Node.list()`) or an omitted list, which means every known node, and `"unknown"` for a list the bytecode does not show (`Argus.Extractor.Resolve.node_list/3`).
+// A `:global` synchronization operation. Retries are `0` for try-once, a positive count, or `infinity`; omitted retries default to `infinity`. Node scope is `local` for `[node()]`, `cluster` for connected-node lists or the default, and `unknown` when unresolved (`Argus.Extractor.Resolve.node_list/3`).
 //
 .decl global_op(id: symbol, func: symbol, op: symbol, retries: symbol, nodes: symbol)
 .input global_op
 
-// `:global.register_name` call. Arity distinguishes the race-prone default (`/2`) from a call that supplies its own conflict-resolution function (`/3`).
+// A `:global.register_name` call. Arity 2 uses default conflict resolution; arity 3 supplies a resolver.
 //
 .decl global_register(id: symbol, func: symbol, name: symbol, arity: symbol)
 .input global_register
 
-// A `handle_continue(tag, _)` clause defined by a module. The
-// deferred-startup-deadlock analysis pairs this with `init_continues_to`
-// to find handle_continue bodies reachable from a module's init.
+// A module's `handle_continue(tag, _)` clause. Paired with `init_continues_to` to identify continuation bodies reachable from init.
 //
 .decl handle_continue_clause(mod: symbol, tag: symbol, func_id: symbol)
 .input handle_continue_clause
 
-// The file, socket or port the call at `id` opens is dropped on some path from it: no register holds it any more, or the function returns or tail-calls without it, and on the way it was only read, written, sent on or tested (Argus.Extractors.Handles) — not closed, returned, stored, sent or handed to any other call. A path on which the `{:ok, handle}` answer was never taken apart (its `{:error, _}` arm) owns no handle, and a path that raises drops nothing. The process that opened it owns it until it exits.
+// A file, socket, or port handle dropped on some non-raising path without being closed or transferred. Reading, writing, sending data, or testing the handle does not transfer ownership. Error-result paths that never extract a handle are excluded. The resource remains owned until the process exits (`Argus.Extractors.Handles`).
 //
 .decl handle_dropped(id: symbol, func: symbol, api: symbol, drop: symbol)
 .input handle_dropped
 
-// A route from `Phoenix.Router.__routes__/0`. `pipe_through` is absent because Phoenix compiles pipelines into the dispatch function rather than into this literal, so whether a route is authenticated is derivable but not from here.
+// A route from `Phoenix.Router.__routes__/0`. Pipeline information is compiled into dispatch code, so this relation alone cannot establish authentication.
 //
 .decl http_route(router: symbol, verb: symbol, path: symbol, plug: symbol, action: symbol)
 .input http_route
@@ -412,134 +402,127 @@
 .decl ignored_error_result(id: symbol, func: symbol, callee: symbol)
 .input ignored_error_result
 
-// Module declares a behaviour (`-behaviour`, `@behaviour`), as `inspect/1` renders it (`":gen_server"`, `"GenServer"`). Rules ask behaviours.dl's `behaves_as`, which also reads `started_as`.
+// A declared behaviour in `inspect/1` format. Rules use `behaves_as` in `behaviours.dl`, which also incorporates `started_as`.
 //
 .decl implements_behaviour(mod: symbol, behaviour: symbol)
 .input implements_behaviour
 
-// Tracks every fallback to a "dynamic" placeholder or an outright skipped fact emission. Populated only when imprecision tracing is enabled for the current pipeline run — the `coverage` analysis turns it on, every other analysis runs with tracing off and produces no rows in this relation.
-//
-// The `category` vocabulary is documented in `lib/argus/extractor/helpers.ex` and is treated as a versioned API: changes are noted in CHANGELOG so coverage diff tooling can keep stable keys.
+// An extractor fallback to `dynamic` or a skipped fact. Emitted only with imprecision tracing, enabled by the `coverage` analysis. The versioned `category` vocabulary is documented in `lib/argus/extractor/helpers.ex`; changes are recorded in CHANGELOG for coverage-diff consumers.
 //
 .decl imprecision(category: symbol, func: symbol, relation: symbol, reason: symbol)
 .input imprecision
 
-// A call with a known observable effect, classified by `Argus.Purity.Effects`. The category says WHAT the effect is; the mode says whether it changes anything.
-//
-// Both dimensions are needed because contracts differ in what they forbid. Purity rejects reads and writes alike — `Application.get_env/2` already breaks referential transparency. A transaction body only cares about writes: a config read has nothing to roll back, while an HTTP POST has already left the machine. One dimension would force every config read to be reported as a transaction hazard.
+// A known observable call effect (`Argus.Purity.Effects`). Category identifies the effect; mode distinguishes reads from writes. Purity rejects both, while transaction checks report only writes that cannot be rolled back.
 //
 .decl impure_call(id: symbol, caller: symbol, api: symbol, category: symbol, mode: symbol)
 .input impure_call
 
-// A call passes the literal `:infinity` as an argument, at any position — call_arg stops at the fourth, and a timeout is often the fifth. A wrapper whose timeout defaults to :infinity compiles to a clause that calls the full arity with it.
+// A literal `:infinity` argument at any position. Complements `call_arg`, which records only the first four positions and can miss timeout arguments.
 //
 .decl infinity_arg(caller: symbol, callee: symbol, arg_pos: number)
 .input infinity_arg
 
-// In a handle_info/2, the call at `id` runs on every path the clause for the atom `tag` takes to a return that lets the process go on: every return or tail call the message reaches is reached only through `id` (`Argus.Extractor.Dispatch.reached_with/4`), a return of `{:stop, ...}` left out. A clause that re-arms its own message this way runs a periodic loop; one that re-arms on one branch (after a failed connect) retries until it is done. Computed for atom tags only.
+// A call that every continuing path through a `handle_info/2` clause for atom `tag` must execute. Excludes `{:stop, ...}` returns. Distinguishes timers rearmed on every iteration from retries rearmed on only some branches. Computed for atom tags only.
 //
 .decl info_clause_always(id: symbol, func: symbol, tag: symbol)
 .input info_clause_always
 
-// Records that a GenServer module returns `{:ok, _, {:continue, tag}}` from
-// `init/1` or `{:noreply, _, {:continue, tag}}` from any handler. The
-// deferred-startup-deadlock analysis uses this to identify modules whose
-// `handle_continue/2` clauses run during the startup phase.
+// A GenServer return scheduling `handle_continue/2` from `init/1` or a handler. Used to identify deferred work reachable during startup.
 //
 .decl init_continues_to(mod: symbol, tag: symbol)
 .input init_continues_to
 
-// The struct's `Inspect` is derived — `@derive Inspect` with or without `except:`/`only:`, or Ecto's own derive for its `redact: true` fields — read from the `Inspect.<Struct>` implementation module. When there is one, it alone decides which fields `inspect/1` prints (`inspect_shows`). A hand-written implementation has no row.
+// A derived Inspect implementation, including Ecto's redaction derive. `inspect_shows` determines the visible fields. Hand-written implementations have no row.
 //
 .decl inspect_derived(mod: symbol)
 .input inspect_derived
 
-// A field a derived `Inspect` prints: the fields its guard admits, after `except:` and `only:`. A field of an `inspect_derived` struct with no row here is hidden from `inspect/1`.
+// A field visible through derived Inspect after `except:` and `only:` filtering. For an `inspect_derived` struct, absent fields are hidden.
 //
 .decl inspect_shows(mod: symbol, field: symbol)
 .input inspect_shows
 
-// The send at `id` is `func`'s last act: it is a tail call, or every path on from it returns with no call, send or receive between (`Argus.Extractors.OTP`). Everything else the function does it has done when the message goes: a loader spawned to fill its starter's tables that ends by reporting it is done. A function with a `try` or a `catch` has no rows.
+// A send that is a tail call or is followed only by returns, with no intervening call, send, or receive. Identifies completion notifications. Functions containing `try` or `catch` are excluded (`Argus.Extractors.OTP`).
 //
 .decl last_send(id: symbol, func: symbol)
 .input last_send
 
-// An Ecto schema whose `__schema__/1` carries no line: every line marker is line 0. An `embeds_one :totp, TOTP do ... end` block compiles its module with none (akkoma's `Pleroma.MFA.Settings.TOTP`), so a finding about its fields is anchored at the schema that embeds it.
+// An Ecto schema whose `__schema__/1` has only line-0 markers. Findings for such generated embedded schemas anchor at the embedding schema.
 //
 .decl lineless_schema(mod: symbol)
 .input lineless_schema
 
-// A function another module's macro wrote into this one — `use Ecto.Repo` defines `stop/1` in the repo — read from the `context:` Elixir records in each definition's debug-info metadata, or its `generated: true` marker (`generated`). In an Erlang module, a function the abstract code places under a `-file` attribute naming an OTP header (`yeccpre.hrl`, `leexinc.hrl`, an installed application's include), by that header's name; without abstract code, a yecc parser's `yecc*` functions (`yecc`). Its call sites are the library's, not the program's.
+// A function generated by a macro, a `generated: true` marker, or an OTP header. Elixir uses definition metadata; Erlang uses abstract-code file attributes, falling back to `yecc*` names for parsers without abstract code. The origin identifies library-generated call sites.
 //
 .decl macro_generated(func: symbol, by: symbol)
 .input macro_generated
 
-// Every clause of `func` was written by another module's macro, or marked `generated: true`, or an OTP header or yecc defined it (`Argus.Extractors.Generated`): the module wrote none of it. `macro_generated` reads the definition's metadata, which is its first clause's, and so names a function whose first clause a `use` injected ahead of the module's own; this reads each clause's. `use Cachex.Warmer`'s handle_info/2 is one.
+// A function whose every clause is generated by a macro, generation marker, OTP header, or yecc (`Argus.Extractors.Generated`). Unlike `macro_generated`, checks all clauses rather than the first clause's metadata.
 //
 .decl macro_written(func: symbol)
 .input macro_written
 
-// A call after which something other than a peer's request can land in the calling process's mailbox: a Task.async reply, an async_nolink task's reply and :DOWN, a timer message, a subscription's broadcasts, a message the function sends to itself.
+// A call that can introduce non-request messages into the caller's mailbox, including task replies, `:DOWN`, timers, subscription broadcasts, and self-sends.
 //
 .decl mailbox_writer(id: symbol, func: symbol, kind: symbol)
 .input mailbox_writer
 
-// The function handles (part of) a :DOWN message: an argument register, or one projected from it, is compared to :DOWN in a clause head. Emitted for every function rather than only named callbacks, because a gen_statem funnels :info events through private helpers.
+// A function matching `:DOWN` in an argument or projected value. Includes private helpers as well as callbacks.
 //
 .decl matches_down(func: symbol)
 .input matches_down
 
-// A call into a function of the program is handed, at positions `pos`, `pos + 1` and `pos + 2`, a literal module, a literal function name and a list whose length is known on every path: an MFA, named as function_def names a function. What a wrapper around an rpc (rpc_mfa_param) runs, keyed on the site a finding points at.
+// A literal module and function plus a list of known length, passed at consecutive positions starting at `pos`. Identifies an MFA in `function_def` format for RPC-wrapper resolution, anchored to the call site.
 //
 .decl mfa_arg(id: symbol, caller: symbol, callee: symbol, pos: number, mod: symbol, target: symbol)
 .input mfa_arg
 
-// A Mnesia dirty operation, outside any transaction's serialization, with the table and key it touches. The one-argument forms carry both in a tuple: {table, key}, or a record whose first element is its table and whose second is its key.
+// A Mnesia dirty operation's table and key, outside transaction serialization. Single-argument forms derive both from `{table, key}` or the first two record elements.
 //
 .decl mnesia_op(id: symbol, func: symbol, op: symbol, kind: symbol, table_source: symbol, table: symbol, key_source: symbol, key: symbol)
 .input mnesia_op
 
-// Two Mnesia writes of one function, `then` reachable from `first` within one trip through it (`Argus.Extractors.Mnesia`; a loop's back edge is not followed). Two writes ordered neither way are on paths that exclude each other: an upsert's two branches.
+// Two Mnesia writes ordered within one function iteration, excluding loop back edges (`Argus.Extractors.Mnesia`). Writes ordered in neither direction lie on mutually exclusive paths.
 //
 .decl mnesia_write_order(func: symbol, first: symbol, then: symbol)
 .input mnesia_write_order
 
-// The pid monitored at this site is, on every path, what one of the calls its rows name answered, `depth` payloads down (`Argus.Extractor.Answers`): the answer, or the element after its tag. All or nothing: a site with rows has one for every call the pid may come from. Any call, of the program or not: whether it answers a process it started, by itself or through the program's wrappers, is clientlib/answers.dl's (`call_origin`) and the rules'. A start's `{:error, {:already_started, pid}}` names a process others hold, its pid an element of an element: a path that monitors it leaves the site without rows (`Argus.Extractors.Monitor`).
+// Every possible call result supplying the monitored pid, at payload `depth` (`Argus.Extractor.Answers`). Rows are all-or-nothing across paths. `clientlib/answers.dl` determines whether the calls start processes. Deeper nested pids, such as `{:error, {:already_started, pid}}`, leave the site without rows.
 //
 .decl monitor_answer(id: symbol, func: symbol, call: symbol, depth: number)
 .input monitor_answer
 
-// A `Process.monitor/1` or `:erlang.monitor/2`. Once it returns, a `{:DOWN, ref, :process, object, reason}` arrives unless cancelled — so a process that monitors is a process that receives `:DOWN`.
+// A `Process.monitor/1` or `:erlang.monitor/2` call. Unless cancelled, a process monitor delivers `{:DOWN, ref, :process, object, reason}` when its target exits.
 //
 .decl monitor_call(id: symbol, func: symbol, target: symbol)
 .input monitor_call
 
-// Where the monitoring function keeps what the monitor at `id` is about: its ref, or the pid it monitors. `field`: a return sets the field `where` (as `returned_update` spells it) to a value made of the ref, or made whole of the pid (`%{state | subs: Map.put(subs, pid, ref)}`, `Data#data{owner = Pid}`). `table`: the ETS call at `where` is handed such a value (`:ets.insert(t, {ref, pid})`). `returned`: what the function hands back is made of it (`ra_monitors:add/3`'s map), in element `where` of a tuple a return builds (`{nodes, monitors}`) or anywhere (`''`), and a caller keeps it where it keeps that answer, or that element (`returns_from`, `returned_field_from`). A field made of another value of the message the pid came in is not the pid's (`Argus.Extractor.StateFields`: made whole, not in part). `holds` tells the record a demonitor needs (`ref`, the pid beside it or not) from one that only names the process (`pid`).
+// Where a monitor reference or monitored pid is stored: a returned state `field`, an ETS operation (`table`), or a returned value (`returned`, optionally a tuple element). `holds` distinguishes a stored reference from a pid-only record. Pid storage requires the whole pid, not another part of its source message. `returns_from` and `returned_field_from` trace storage through helpers.
 //
 .decl monitor_kept(id: symbol, func: symbol, kind: symbol, where: symbol, holds: symbol)
 .input monitor_kept
 
-// The reference `Process.monitor/1` returned at this site is discarded: the next thing to happen to the result register is a write that does not read it. Nothing can ever demonitor this monitor; it ends only when the monitored process does.
+// A monitor reference overwritten before its first read. The program cannot demonitor using that reference.
 //
 .decl monitor_ref_dropped(id: symbol, func: symbol)
 .input monitor_ref_dropped
 
-// Every path in `func` from the call at `call` to its return releases the monitor that call took: a receive's `{:DOWN, ...}` clause that takes any monitor's, or the one whose ref the call returned (the clause, not the receive: another clause, or a timed receive's `after`, leaves with the monitor live); a `Process.demonitor/1,2` of that ref, with `[:flush]` or without (without it a `:DOWN` already sent stays queued, which is the mailbox's to take, not a monitor left live); or a call to a function of the module that takes one on every path to its return (a receive loop's end, a path that never enters its receive, taken on trust). A monitor the callee left live is the caller's to collect: OTP's old supervisor shutdown monitors each child, looks once (`after 0`) for an exit already queued, and returns, and its caller then waits for every child's :DOWN. A path that raises is not asked; a wait in a closure or another module is not seen.
+// Every returning path after `call` releases its monitor by consuming the matching `:DOWN`, demonitoring its reference, or calling a same-module helper recognized as collecting on every return. Other receive clauses and timeout arms leave the monitor live. Demonitoring need not flush; queued messages are checked separately. Raising paths, closures, and cross-module waits are excluded.
 //
 .decl monitor_released_after(func: symbol, call: symbol)
 .input monitor_released_after
 
-// What the monitor at `id` watches, and so what it sends: a process's or a port's `{:DOWN, ref, type, object, reason}` (`Process.monitor/1` is a process's), or, for `:time_offset`, a clock service's `{:CHANGE, …}`. `dynamic` when `:erlang.monitor/2`'s type is not a literal.
+// The monitor's target type and resulting message: process or port monitors send `:DOWN`; `:time_offset` sends `:CHANGE`. Unresolved type arguments use `dynamic`.
 //
 .decl monitor_type(id: symbol, type: symbol)
 .input monitor_type
 
-// A process name looked up — Process.whereis/1, :erlang.whereis/1, Registry.lookup/2 — with what identifies the name, so a creating op on the same name can be joined to it, and whether the result is tested against nil (or []) before use. Process.registered/0 and :erlang.registered/0 look up every name at once: source any.
+// A process-name lookup, its name identity, and whether the result is checked for `nil` or `[]` before use. Joins creating operations on the same name. `Process.registered/0` and `:erlang.registered/0` use source `any`.
 //
 .decl name_lookup(id: symbol, func: symbol, api: symbol, scope: symbol, source: symbol, key: symbol, checked: symbol)
 .input name_lookup
 
-// A registered name given up — Process.unregister/1, :erlang.unregister/1 — which raises when the name is no longer registered: a lookup that decides it is stale once the process exits or another process unregisters first.
+// A `Process.unregister/1` or `:erlang.unregister/1` call. Raises if the name is already unregistered, including when a preceding lookup becomes stale.
 //
 .decl name_release(id: symbol, func: symbol, api: symbol, source: symbol, key: symbol)
 .input name_release
@@ -548,7 +531,7 @@
 .decl named_process(mod: symbol, name: symbol)
 .input named_process
 
-// How the first use of an unchecked whereis result fails when the name is not registered: a send or a BIF on the pid raises an error (badarg), a call to it exits (`:noproc`), a cast drops the message without failing (none), and anything else — handing it to a function — is not known (any). A handler that takes the nil case must take that class.
+// The failure class of the first use of an unchecked `whereis` result: `error` for sends or BIFs, `exit` for calls, `none` for casts, and `any` when unknown. A handler must catch this class to cover an unregistered name.
 //
 .decl nil_use(id: symbol, func: symbol, use: symbol, fails: symbol)
 .input nil_use
@@ -557,22 +540,22 @@
 .decl node_operation(id: symbol, func: symbol, op: symbol)
 .input node_operation
 
-// The call at `id` — into the program, a subscription or a monitor — runs only on some arms of a test of what `func`'s parameter `pos` holds: the parameter, a field of it, or a call's answer on it (`MapSet.member?(state.subscribed, id)`, a stored pid compared with the current one). A test whose other arms only raise (a match that fails with a badmatch, a clause head that fails with a function_clause) decides nothing (Argus.Extractors.LiveView). Where the parameter is a process's state, the call is decided by what the process knows.
+// A call, subscription, or monitor controlled by a test on parameter `pos`, one of its fields, or a call result derived from it (`Argus.Extractors.LiveView`). Tests whose alternative paths only raise do not count. For a state parameter, this identifies state-dependent calls.
 //
 .decl param_decided(id: symbol, func: symbol, pos: number)
 .input param_decided
 
-// At `id`, `callee`'s parameter `arg_pos` may hold the source: a call into project code (`call`), a server start's init argument (`Mod:init/1`, `init`), a spawned function's arguments (`spawn`), a child spec's argument (`Mod:start_link/1`, `child`) or a closure's captured variables, its trailing parameters (`closure`). OTP's and Elixir's own modules are not followed, but two of their calls hand a function of the program a pid of another node, and those rows carry only the `remote` source: a `:global` conflict resolver's second and third parameters (`resolver`), and the first parameter of a fun `Enum` or `:lists` runs on each element of a list of such pids (`element`).
+// A possible source for callee parameter `arg_pos`: project call, init argument, spawn argument, child-spec argument, or trailing closure capture. OTP and Elixir internals are excluded, except remote-pid inputs to global conflict resolvers and per-element funs run by `Enum` or `:lists`.
 //
 .decl pid_arg(id: symbol, caller: symbol, callee: symbol, arg_pos: symbol, via: symbol, src_kind: symbol, src: symbol)
 .input pid_arg
 
-// `obj` updates the source: the fields `obj` does not set (pid_sets) are the source's. A cons cell's base is its tail.
+// An object's base source. Fields absent from `pid_sets` retain the source's values; a cons cell's base is its tail.
 //
 .decl pid_base(func: symbol, obj: symbol, src_kind: symbol, src: symbol)
 .input pid_base
 
-// The GenServer-style call or cast at `id`, or the send (info), may target the source or a literal name: what resolves a sync_call recorded as "dynamic".
+// A possible target source or literal name for a call, cast, or info send. Resolves targets recorded as `dynamic` by `sync_call`.
 //
 .decl pid_call(id: symbol, func: symbol, api_kind: symbol, src_kind: symbol, src: symbol)
 .input pid_call
@@ -581,22 +564,22 @@
 .decl pid_field(func: symbol, obj: symbol, sel: symbol, src_kind: symbol, src: symbol)
 .input pid_field
 
-// The load `load` (a `load` source in `func`) reads the field `sel` of the source: `state.conn`, `elem(msg, 1)`, a clause head's `{:subscribe, pid}`, `Map.get(state, :conn)`.
+// A load reading selector `sel` from a source, including field access, tuple extraction, pattern matching, and `Map.get/2`.
 //
 .decl pid_load(func: symbol, load: symbol, sel: symbol, src_kind: symbol, src: symbol)
 .input pid_load
 
-// The message of the call, cast or send at `id` may be the source. It reaches the handler of the server the pid_call rows of the same site resolve to (handle_call/3, handle_cast/2, handle_info/2) as its message parameter: how a subscriber's pid gets into a server's state.
+// A possible source for a call, cast, or send message. Flows to the corresponding handler of the server resolved by the same site's `pid_call` rows.
 //
 .decl pid_message(id: symbol, func: symbol, api_kind: symbol, src_kind: symbol, src: symbol)
 .input pid_message
 
-// A term that holds a source, named by the instruction that built it (put_map_*, put_tuple2, put_list, update_record, or a call whose result has a known shape: a start's `{:ok, pid}`, `Map.put/3`).
+// A term containing a source, identified by its construction instruction. Includes maps, tuples, lists, records, and calls with known result shapes such as process starts or `Map.put/3`.
 //
 .decl pid_object(func: symbol, obj: symbol, shape: symbol, tag: symbol, arity: symbol)
 .input pid_object
 
-// The call at `id` acts on a process of this node only and raises badarg when handed another node's pid (`is_process_alive/1` and `Process.alive?/1`, `process_info/1,2` and `Process.info/1,2`, `garbage_collect/1,2`, `suspend_process/1,2`, `resume_process/1`, `process_display/2`), and may be handed the source. A fun `Enum` or `:lists` runs on each element of a list of such pids, when it is one of these BIFs, is a probe at that call. A probe on the arm where a test found `node(pid)` equal to another node (`node()`, most often) is not recorded: the program asked where the pid lives first. One on the other arm, or after the arms join, is.
+// A local-only process operation receiving a possible source; remote pids can raise `badarg`. Includes such BIFs passed as per-element funs to `Enum` or `:lists`. Excludes sites restricted to the branch where `node(pid)` matches the compared node; other branches and joined paths remain.
 //
 .decl pid_probe(id: symbol, func: symbol, bif: symbol, src_kind: symbol, src: symbol)
 .input pid_probe
@@ -605,7 +588,7 @@
 .decl pid_register(id: symbol, func: symbol, name: symbol, src_kind: symbol, src: symbol)
 .input pid_register
 
-// The call at `id` answers with a pid that may be another node's, or hands one to a fun of the program: a `remote` source named by `id`. A cluster-wide registry (`:global.whereis_name/1`, `GenServer.whereis/1` of a `{:global, _}` or `{:via, :global | :syn | Horde.Registry | Swarm, _}` name, `:syn`, Horde and Swarm lookups) answers with whichever node's process holds the name; a process group (`:pg`, `:pg2`, `:syn` and Swarm members) with every node's members; `Process.get(:"$callers")` with the callers a process was started for, which a remote start leaves on another node; `Process.info(pid, :links)` with links that may cross nodes; and `:global.register_name/3` calls its resolver with two pids on two nodes. A list of such pids keeps them through `Enum.reverse/1`, `Enum.sort/1` and `Enum.uniq/1`. No process is allocated: points-to resolves no `remote` source.
+// A call producing potentially remote pids or passing them to a fun. Covers distributed registries and groups, `$callers`, process links, and global conflict resolvers. Reverse, sort, and uniq preserve remote-pid lists. The source is `remote`, named by call site; it represents no allocation and has no process points-to target.
 //
 .decl pid_remote(id: symbol, func: symbol, api: symbol)
 .input pid_remote
@@ -618,7 +601,7 @@
 .decl pid_return(func: symbol, src_kind: symbol, src: symbol)
 .input pid_return
 
-// The send at `id` (`send/2`, `!`, Process.send/3) goes to the source or, with src_kind `name`, to a literal name. Keyed on the site because the finding about what it sends anchors there.
+// A send target source, or a literal name with `src_kind` value `name`. Keyed by send site for finding anchors.
 //
 .decl pid_send(id: symbol, func: symbol, message: symbol, src_kind: symbol, src: symbol)
 .input pid_send
@@ -627,7 +610,7 @@
 .decl pid_sets(obj: symbol, sel: symbol)
 .input pid_sets
 
-// The exit signal (Process.exit/2, :erlang.exit/2), monitor (Process.monitor/1,2, :erlang.monitor/2,3), link, unlink or stop (a gen behaviour's or an Agent's stop, a supervisor's `terminate_child/2` of a pid) at `id` goes to the source.
+// A target source for an exit signal, monitor, link, unlink, or process stop, including supervisor termination by pid.
 //
 .decl pid_signal(id: symbol, func: symbol, signal: symbol, src_kind: symbol, src: symbol)
 .input pid_signal
@@ -648,151 +631,147 @@
 .decl process_register(id: symbol, func: symbol, name: symbol, method: symbol)
 .input process_register
 
-// A process allocation site: the start at `id` starts `proc`. A spawn runs the function spawn_call resolved; a GenServer, :gen_server or :gen_statem start runs its literal callback module, as does a supervisor's start_child of a child spec naming one.
+// A process allocation at start site `id`. Spawns use the resolved entry function; server and child-spec starts use the literal callback module.
 //
 .decl process_start(id: symbol, func: symbol, proc: symbol, kind: symbol, runs: symbol)
 .input process_start
 
-// A call that dispatches through a protocol, so its target is whichever implementation the argument's type provides.
-//
-// Distinct from `unknown_call`: that one means the effect model has no entry, which somebody could add. This one means there is no single answer to have — any module may define an implementation, and it is ordinary code that can do anything.
+// A protocol-dispatched call whose target depends on the argument type. Unlike a missing effect-model entry, this has no single target: implementations may contain arbitrary effects.
 //
 .decl protocol_dispatch(id: symbol, caller: symbol, api: symbol)
 .input protocol_dispatch
 
-// The call at `id` subscribes the calling process to a topic or joins it to a group, or undoes that (Argus.Extractors.LiveView): `Phoenix.PubSub.subscribe/2,3` and `unsubscribe/2`, `:pg.join` and `:pg.leave` (`pubsub`); a module's own `subscribe/1,2` or `unsubscribe/1`, which is an endpoint's when the module is one (`via` names it); or `socket.endpoint.subscribe(topic)`, an apply of either name to a module held in a value (`apply`).
+// A subscription, unsubscription, group join, or group leave. Includes PubSub and `:pg` APIs, module subscription wrappers (`via`), and dynamic module calls (`apply`), as recognized by `Argus.Extractors.LiveView`.
 //
 .decl pubsub_call(id: symbol, func: symbol, op: symbol, via: symbol)
 .input pubsub_call
 
-// A function its module declared free of observable effects with `@pure true` (see `Argus.Purity`).
-//
-// Read out of the beam's persisted attribute chunk, so the contract comes from the compiled artifact and cannot drift from the code it describes.
+// A function declared `@pure true` (`Argus.Purity`), read from the compiled BEAM's persisted attributes.
 //
 .decl pure_contract(func: symbol, mod: symbol, name: symbol, arity: number)
 .input pure_contract
 
-// A receive with a clause that takes the `:DOWN` of a monitor its own function took: the pattern is `{:DOWN, ^ref, ...}` with `ref`, on every path, the reference that monitor call returned, and nothing else in the clause can refuse that message (a pin on the object, a reason, a guard). No path from the monitor to the receive demonitors. The runtime delivers that `:DOWN` once the process exits, or at once if it was already gone, so the receive cannot outlast the monitored process; its other clauses can only end it sooner.
+// A receive clause accepting every reason for `:DOWN` from a monitor created in the same function. The pinned reference must come from that monitor on every path, with no intervening demonitor. Other restrictions on the message disqualify it. The receive cannot outlast the monitored process.
 //
 .decl recv_down(id: symbol, func: symbol, monitor: symbol)
 .input recv_down
 
-// A receive that runs only where the `cancel_timer` call at `cancel`, earlier in the function, returned `false` (`Argus.Extractors.Monitor.Flush`): the timer had already fired, and its message is in the mailbox. Every path from the function's entry to the receive passes the test of that result against `false`, and leaves it by the `false` edge. A cancel whose result is not tested is not one: when it succeeds, the message never comes.
+// A receive reached only after the earlier `cancel_timer` at `cancel` returns `false`. Every path must take that result's false branch. An unchecked cancellation does not qualify because a successful cancellation prevents message delivery.
 //
 .decl recv_flush(id: symbol, func: symbol, cancel: symbol)
 .input recv_flush
 
-// What a receive matches, one row per clause: a literal atom, or 'any' for a clause whose pattern is not an atom (a tuple, a wildcard, a guard on the message). Says whether a flush after cancel_timer/1 takes the timer's own message.
+// A receive clause's literal atom pattern, or `any` for other patterns. Used to check whether a flush after `cancel_timer/1` accepts the timer message.
 //
 .decl recv_pattern(id: symbol, func: symbol, message: symbol)
 .input recv_pattern
 
-// The shape a clause of the receive at `id` takes the message in, read on its head as a callback's clauses are (`Argus.Extractors.CallbackTag.MessageClauses.receive_shapes/2`): the atom itself, a tuple with a literal atom tag (`{:tag, …}`), a tuple whose first element is compared with a value the function holds — a ref it made, a pid it was handed — (`{ref, …}`), a map, a tuple of any tag (`tuple`), or anything (`any`). recv_pattern reads each clause's first test only; this is the whole head. Only for a receive that waits, forever or with an `after`: an `after 0` poll takes what is already there and is no row.
+// A waiting receive clause's complete message shape: atom, tagged tuple, tuple with a pinned first element, map, arbitrary tuple, or `any`. Unlike `recv_pattern`, reads the whole head. Excludes `after 0` polls (`Argus.Extractors.CallbackTag.MessageClauses.receive_shapes/2`).
 //
 .decl recv_shape(id: symbol, func: symbol, shape: symbol)
 .input recv_shape
 
-// A receive with a clause that takes the exit signal of the process a pinned register names, whatever the reason it exits with (`Argus.Extractors.Monitor.ExitSignal`): a `:DOWN` whose ref the clause pins (`"down"`; the tag may be a monitor's own, `{alias, ^ref, :process, _, _}`) or an `:EXIT` whose sender it pins (`"exit"`). Unlike recv_down, the pinned value may come from anywhere: a parameter, a `spawn_monitor`'s pair, a port the function opened. The receive ends no later than that process, while the monitor or the link is in place: a `:DOWN` is not one where some path from the function's entry to the receive demonitors (it may have cancelled that very monitor). A clause that tests the reason, or pins nothing, is not one.
+// A receive clause accepting every exit reason for a pinned monitor reference (`down`, including custom tags) or sender (`exit`). The pinned value may come from outside the function. A possible preceding demonitor excludes `down` rows. The receive is bounded by the target's lifetime while the monitor or link remains active.
 //
 .decl recv_signal(id: symbol, func: symbol, signal: symbol)
 .input recv_signal
 
-// A receive with a clause whose head fixes the message's tag to `:DOWN`, whatever it asks of the ref, the object or the reason: the function waits for a monitor's end within its own call (`Argus.Extractors.Monitor`). A clause that fixes no tag (a catch-all) is not one.
+// A receive clause with fixed tag `:DOWN`, regardless of restrictions on reference, object, or reason. Catch-alls do not qualify.
 //
 .decl recv_takes_down(id: symbol, func: symbol)
 .input recv_takes_down
 
-// A receive with a clause that can take a trapped exit, `{:EXIT, pid, reason}`: its head fixes the message's tag to `:EXIT`, or fixes none (a catch-all, a variable, a test of another element). A clause whose head fixes another tag, or matches an atom, cannot. The arity is not read (`Argus.Extractors.Monitor`).
+// A receive clause that may accept a trapped exit: its head fixes tag `:EXIT` or leaves the tag unrestricted. Atom patterns and other fixed tags are excluded. Tuple arity is not checked.
 //
 .decl recv_takes_exit(id: symbol, func: symbol)
 .input recv_takes_exit
 
-// A field declared `redact: true`, which Ecto excludes from `inspect/1` unless the schema derives `Inspect` itself (`inspect_derived`). Absence is the interesting case — `redact` defaults to off — so consumers ask by negation.
+// An Ecto field marked `redact: true`. Ecto hides it from inspection unless a separately derived Inspect implementation controls the output. Redaction defaults to off; consumers check for absence.
 //
 .decl redacted_field(mod: symbol, field: symbol)
 .input redacted_field
 
-// What a function that compares nothing to :badrpc does with a call's result: matches it by shape where the function has a clause-less exit (`case`: an answer no clause takes raises), tests it against true/false/nil (`boolean`), or returns it as its own result (`returned`: a tail call, or the result in x0 at a return), local and remote callees alike. `rpc_result` says the same of an rpc API's own sites; this is what a caller does with a function that returns an rpc's answer. Calls into the runtime (`Argus.Extractor.Runtime`), to a function the compiler made, and to a predicate (a name ending in `?`, whose rpc is reported where it is made) are not rows.
+// How a non-runtime call's result is used when the function never compares with `:badrpc`: shape-matched with a possible clause-less exit, boolean-tested, or returned. Extends `rpc_result` to wrappers. Excludes compiler-generated callees and predicates ending in `?`, whose RPC sites are reported directly.
 //
 .decl result_tested(id: symbol, func: symbol, callee: symbol, how: symbol)
 .input result_tested
 
-// A return of `func` sets the field `key` (as `returned_update` spells it) to a value made of what the call at `site` answered: the answer itself, held in a term the field is (`%{state | subs: Map.put(subs, pid, ref)}` is made of `Map.put/3`'s answer and, through its arguments, of the monitor that answered `ref`), or a piece of it (`whole`; `{i}`, its element `i`, taken out by a `get_tuple_element`; `part`, a deeper piece), or only through another call's arguments (`argument`: `assign(socket, :cache, Map.delete(cache, k))` holds what `assign/3` answered, not the removal's answer). A local call's answer is its callee's returns' (`returns_from`). Which field holds what a call made (`Argus.Extractor.StateFields`): what a server records of a monitor, and which field a removal drops from.
+// A returned state field derived from the result of call `site`. Records the whole result, tuple element `{i}`, a deeper `part`, or dependence through another call's `argument`. Local calls follow `returns_from`. Used to locate stored monitor records and removal results (`Argus.Extractor.StateFields`).
 //
 .decl returned_field_from(func: symbol, key: symbol, site: symbol, how: symbol)
 .input returned_field_from
 
-// What `func` returns sets the field under `key`: of the returned map or record, or of one an element of the returned tuple holds — a callback's `{:noreply, [], %{state | receive_timer: nil}}`, an Erlang `{noreply, State#state{subs = Subs}}`. The state an init/1 builds whole (the element after `ok` in `{ok, State}`) sets every field it has; a callback's state that is neither the one it was given nor one these fields spell (`maps:put/3`'s result) sets the whole state, key `*`. One row per clause the return is in, by the tag of the first argument (Dispatch.argument_tags/2). The state a callback hands back, where field_nil_test is what a clause head needs of it and clientlib/restart_state.dl what a restart takes back.
+// A field set in returned state, including maps or records inside callback return tuples. Init sets every field it constructs; an unrecognized replacement state uses key `*`. One row per first-argument clause tag. Used by field-gate and restart-state rules.
 //
 .decl returned_update(func: symbol, key: symbol, value: symbol, tag: symbol)
 .input returned_update
 
-// `func` returns the result of a call to `callee`: a tail call, or a call followed by return. The chain `defp arm(ms), do: Process.send_after(...)` is one hop; default-argument wrappers add more.
+// A function returning a callee's result, by tail call or a subsequent return. Supports chains of result-forwarding wrappers.
 //
 .decl returns_call(func: symbol, callee: symbol)
 .input returns_call
 
-// What the function returns depends on the source: a lookup helper returns its site, a wrapper the call it makes, an identity function its parameter.
+// A return value dependent on the source, such as a parameter or call result.
 //
 .decl returns_depends(func: symbol, kind: symbol, source: symbol)
 .input returns_depends
 
-// What `func` hands back is made of what the call at `site` answered, whole or in part: a `return` of a value built from it, or a tail call (and, for one into another module, its arguments). The chain a value takes through the helpers that return it (`Argus.Extractor.StateFields`); `returned_field_from` is where a caller keeps it.
+// A return containing all or part of call `site`'s result. Includes tail calls and, for remote tail calls, their arguments. Traces results through helpers; `returned_field_from` identifies the caller's storage field.
 //
 .decl returns_from(func: symbol, site: symbol)
 .input returns_from
 
-// returns_depends by data alone: the returned value is made from the source, not merely chosen under a test on it. A getter that answers what a lookup found returns the lookup; one that answers :ok or an error on what it found returns neither.
+// The data-only subset of `returns_depends`: the return contains data from the source. Returning a status selected by a test on the source does not qualify.
 //
 .decl returns_reads(func: symbol, kind: symbol, source: symbol)
 .input returns_reads
 
-// The length of the argument list an rpc_call hands its remote function (rpc_target), when that list is known whole on every path: a literal, or cons cells of known values ending in `[]`. `:application.which_applications/0` waits at most gen_server's five seconds; `/1` waits as long as its argument says.
+// The RPC argument-list length when the complete list is known on every path. Distinguishes remote function arities, which may have different timeout behavior.
 //
 .decl rpc_arity(id: symbol, arity: number)
 .input rpc_arity
 
-// A remote call that waits for its answer, with its timeout: a call, a multicall, or the collection of an answer an earlier async_call or send_request asked for (yield, nb_yield/2, receive_response).
+// A remote call that waits for an answer, with its timeout. Includes multicalls and collection of earlier asynchronous requests via yield or receive-response APIs.
 //
 .decl rpc_call(id: symbol, func: symbol, variant: symbol, timeout: number)
 .input rpc_call
 
-// The function an rpc_call runs on the other node, when its module and name are literal atoms and its argument list's length is known on every path (its cons cells counted, their values not needed): the MFA, joinable with function_def. rpc_target spells the same call for a reader; this names the function.
+// An RPC target in `function_def` MFA format, when module and function are literal and argument-list length is known on every path. List element values need not be known.
 //
 .decl rpc_callee(id: symbol, func: symbol, mod: symbol, callee: symbol)
 .input rpc_callee
 
-// An rpc_call whose module, function and argument list are three parameters in a row of `func` on every path: a wrapper that runs whatever MFA its callers hand it (`Rpc.call(node, mod, fun, args, opts)`). In a closure, the three are variables captured from the function that built it, followed to that function's parameters (`:timer.tc(fn -> :erpc.call(node, mod, fun, args) end)`); a closure built in two places is not followed.
+// An RPC wrapper whose module, function, and argument list come from three consecutive parameters on every path. Captured variables are traced to the enclosing function's parameters; closures constructed at multiple sites are excluded.
 //
 .decl rpc_mfa_param(id: symbol, func: symbol, pos: number)
 .input rpc_mfa_param
 
-// How the result of an :rpc.call / :rpc.multicall / :erpc.call is treated: compared to :badrpc somewhere in the function; tested as a boolean (where a {:badrpc, _} tuple is truthy); matched by shape in a function with a clause-less exit (a CaseClauseError or MatchError on {:badrpc, _}); matched with a wildcard; returned as the function's own result; or stored or passed on unexamined.
+// How an RPC result is used: compared with `:badrpc`, tested as a boolean, matched by shape, matched by wildcard, returned, or passed on unchecked. Shape matching in a function with a clause-less exit may raise on `{:badrpc, _}`; boolean tests treat that tuple as truthy.
 //
 .decl rpc_result(id: symbol, func: symbol, handling: symbol)
 .input rpc_result
 
-// What an rpc_call runs on the other node, from its M and F arguments. A yield or receive_response collects an answer another site asked for, and names no target: 'dynamic'.
+// The remote module and function of an `rpc_call`. Response-collection sites such as yield or receive-response use `dynamic` because another site initiated the request.
 //
 .decl rpc_target(id: symbol, target: symbol)
 .input rpc_target
 
-// An rpc_call whose timeout is one of its function's parameters on every path (its timeout column says 0, unknown): a wrapper's `timeout \\ :infinity`. With infinity_arg, the rules ask whether a caller passes :infinity there.
+// An `rpc_call` whose timeout is a function parameter on every path. Its timeout column is 0 (unknown); `infinity_arg` identifies callers passing `:infinity`.
 //
 .decl rpc_timeout_param(id: symbol, param: number)
 .input rpc_timeout_param
 
-// A field on an Ecto schema, read from the literal in `__schema__/1`, with its type from `__schema__(:type, field)`. No rule reads the type; `Argus.Priors.Questions.Sensitivity` shows it to the model beside the name, where `Sequin.Encrypted.Field` or `embeds_one Sequin.Sinks.Gcp.Credentials` says what the name alone does not.
+// An Ecto field and its type from `__schema__/1,2`. Datalog rules do not read the type; `Argus.Priors.Questions.Sensitivity` uses it to classify the field.
 //
 .decl schema_field(mod: symbol, field: symbol, type: symbol)
 .input schema_field
 
-// The send at `id` sends a gen behaviour's own envelope, read by tag and size: `{:"$gen_call", from, request}`, `{:"$gen_cast", request}` or `{:system, from, request}`. `pid_send`'s message spells a tuple by its tag alone (`Argus.Extractors.PidFlow`).
+// A send of a behaviour envelope identified by tag and size: `$gen_call`, `$gen_cast`, or `system`. Adds shape information beyond `pid_send`'s tuple tag.
 //
 .decl send_envelope(id: symbol)
 .input send_envelope
 
-// A shorthand start (`{Mod, arg}`, a bare `Mod` (`arg` is `[]`), `Mod.child_spec(arg)`) in a child list (`supervisor_child`, `at` its position), a `DynamicSupervisor.start_child` (`dynamic_child`) or a `Supervisor.start_child` (`added_child`, `at` the calling function), and what its argument is: `options`, a keyword list or a map with atom keys the reader knows whole (`[]` among them), whose options are `shorthand_option` rows and whose other keys are absent; or `dynamic`, one that may hold any key. What `child_spec_option` reads a field from.
+// A shorthand child start and its argument shape. Covers static, dynamic, and added children. `options` means a fully known keyword list or atom-keyed map, with entries in `shorthand_option`; other arguments use `dynamic`. Bare modules use `[]`.
 //
 .decl shorthand_arg(sup: symbol, child_mod: symbol, at: symbol, shape: symbol)
 .input shorthand_arg
@@ -801,112 +780,112 @@
 .decl shorthand_option(sup: symbol, child_mod: symbol, at: symbol, key: symbol, value: symbol)
 .input shorthand_option
 
-// `func` chooses what it runs by its parameter `pos`, and when that parameter holds `:shutdown` — the reason a supervisor stopping a process passes its terminate/2 — some call does not run: it sits in a clause for other reasons (`terminate(:normal, s)`, `terminate_proc(_, r, _) when r != :shutdown`), after a clause that took `:shutdown`, or on a branch of a test the atom does not take. Every path is walked with the parameter fixed (`Argus.Extractor.Dispatch.reached_holding/3`), so a test the walk does not read keeps the calls after it. A function with no row for a parameter runs every call whatever it holds.
+// A function with calls excluded when parameter `pos` is `:shutdown`. The extractor walks every path with that parameter fixed; unreadable tests retain all reachable calls (`Argus.Extractor.Dispatch.reached_holding/3`). No row means no call is excluded for that parameter.
 //
 .decl shutdown_chooses(func: symbol, pos: number)
 .input shutdown_chooses
 
-// The call at `id`, which runs when `func`'s parameter `pos` holds `:shutdown`, hands that value on unchanged as the callee's argument `arg`, on every path that reaches the call with it: `terminate(reason, s)` calling `cleanup(reason, s)` enters `cleanup/2` holding the reason in its first parameter. A call into the runtime (`Argus.Extractor.Runtime`) has no row.
+// A call reachable with parameter `pos` equal to `:shutdown` that forwards it unchanged to argument `arg` on every reaching path. Runtime calls are excluded.
 //
 .decl shutdown_handed(id: symbol, func: symbol, pos: number, arg: number)
 .input shutdown_handed
 
-// For a function that chooses by its parameter `pos` (`shutdown_chooses`), the call at `id` runs when that parameter holds `:shutdown`. One row per call that runs; the calls with no row are the ones the atom never reaches.
+// A call reachable with parameter `pos` fixed to `:shutdown`, for a function in `shutdown_chooses`. Calls without rows are unreachable under that value.
 //
 .decl shutdown_runs(id: symbol, func: symbol, pos: number)
 .input shutdown_runs
 
-// On every path to the sink, its argument is one of a set the program wrote, at most 1,024 values: compared equal to a literal (a clause head, a guard's `in`, a case arm), found in a literal list (`x in @allowed`, `:lists.member/2`, `Enum.member?/2`) on the branch where it holds, an integer between two close ends, or a value made of such values, their counts multiplied (Argus.Extractors.ParamFlow.Bounded). A membership test against a list the function takes as a parameter bounds it only where the callers pass a literal list (call_arg_allowlist): `list_param` names that parameter. At an atom sink, an argument made of atoms that exist (an `is_atom/1` test, an atom's name) is `list_param` "atoms": a bound only where no outside party chose those atoms (sink_arg_chosen) and the site's own atoms do not come back to it.
+// A sink argument restricted on every path to at most 1,024 values, through literal tests, allowlists, bounded integers, or combinations of bounded values (`Argus.Extractors.ParamFlow.Bounded`). Combined bounds multiply. A list parameter is a bound only when callers pass literal lists (`call_arg_allowlist`). At atom sinks, `list_param` value `atoms` means existing-atom input; this is bounded only if outsiders cannot choose the atoms and newly created atoms cannot feed back.
 //
 .decl sink_arg_bounded(id: symbol, func: symbol, arg_pos: number, list_param: symbol)
 .input sink_arg_bounded
 
-// The sink's argument is made of an atom an existing-atom lookup returned in its function (`String.to_existing_atom/1`, `:erlang.binary_to_existing_atom/1,2`, `List.to_existing_atom/1`): one of the atoms that exist, chosen by whoever named it. An atom made of it is new, and names the next lookup's choice: no atoms-of-atoms bound holds.
+// A sink argument derived from an existing-atom lookup in the same function. Caller-selected existing atoms can produce new atoms that later lookups select, so this does not establish a bound on atom creation.
 //
 .decl sink_arg_chosen(id: symbol, func: symbol, arg_pos: number)
 .input sink_arg_chosen
 
-// call_arg_derived at a sink site — atom creation, deserialization, code execution — keyed on the site because the finding anchors there. Together with call_arg_derived it lets a rule chain a request entry's parameter to the sink's argument: a proven flow rather than a call path.
+// Parameter-derived data at an atom-creation, deserialization, or code-execution sink, keyed by site. Chains with `call_arg_derived` to establish data flow from request parameters.
 //
 .decl sink_arg_derived(id: symbol, func: symbol, arg_pos: number, param_pos: number)
 .input sink_arg_derived
 
-// A sink call the compiler duplicated: another call of the same API in the same function sits on the same source line, earlier. A body two clause heads share is compiled once per head.
+// A sink call with an earlier call to the same API on the same source line in the same function. Identifies compiler duplication of a body shared by clause heads.
 //
 .decl sink_copy(id: symbol, func: symbol, first: symbol)
 .input sink_copy
 
-// What the sink's argument is made of, by data alone (Argus.Extractors.Dependence): the runtime's calls on the way carry their arguments through, so `String.to_atom(Macro.underscore(name))` is made of `name`, which sink_arg_derived's propagators do not say.
+// A sink argument's data sources (`Argus.Extractors.Dependence`). Follows data through runtime calls beyond the propagators recognized by `sink_arg_derived`, such as `Macro.underscore/1` before atom creation.
 //
 .decl sink_reads(site: symbol, func: symbol, arg_pos: number, kind: symbol, source: symbol)
 .input sink_reads
 
-// The operation runs only because of a test on the source, or is handed a value made from it (Argus.Extractors.Dependence). A site source is another shared-state operation's result: the check a check-then-act acts on.
+// An operation controlled by a test on the source or receiving data derived from it. A site source is another shared-state operation's result, such as the check in a check-then-act sequence.
 //
 .decl site_depends(site: symbol, func: symbol, kind: symbol, source: symbol)
 .input site_depends
 
-// site_depends by data alone: the operation's arguments are made from the source, not merely computed under a test on it. An insert whose object carries what a lookup returned writes the read back; one that only runs because of the lookup writes something else.
+// The data-only subset of `site_depends`: operation arguments contain data from the source. Running an operation because of a test on the source does not qualify.
 //
 .decl site_reads(site: symbol, func: symbol, kind: symbol, source: symbol)
 .input site_reads
 
-// A call that opens a TCP or TLS socket or sets its options, and the `:active` mode its literal options give. An active socket delivers its data and its close (`{:tcp_closed, s}`, `{:ssl_closed, s}`) as messages to the process that controls it. Options built at runtime are "dynamic".
+// A socket open or options call and its literal `:active` mode. Active sockets deliver data and close messages to their controlling process. Runtime-built options use `dynamic`.
 //
 .decl socket_active(id: symbol, func: symbol, transport: symbol, mode: symbol, param: number)
 .input socket_active
 
-// A call handing a literal option list with an `:active` entry: what a wrapper's `socket_active` row whose mode is "param" resolves to.
+// A literal options argument containing `:active`, used to resolve a wrapper's `socket_active` mode `param`.
 //
 .decl socket_opts_arg(id: symbol, caller: symbol, callee: symbol, pos: number, mode: symbol)
 .input socket_opts_arg
 
-// A socket transport an endpoint enables, read from the literal that `socket/3` compiles into `__sockets__/0`. Emitted only for transports that are present and not `false`, which is how Phoenix reads them.
+// An enabled socket transport from an endpoint's compiled `__sockets__/0`. Records only present, non-false transports, matching Phoenix.
 //
 .decl socket_transport(endpoint: symbol, path: symbol, transport: symbol)
 .input socket_transport
 
-// A blocking socket call — a recv, a connect, a TLS handshake — and how long it may wait. `:gen_tcp.connect/3` is bounded only by the operating system's connect timeout.
+// A blocking socket receive, connect, or TLS handshake and its timeout. `:gen_tcp.connect/3` relies on the operating system's connect timeout.
 //
 .decl socket_wait(id: symbol, func: symbol, api: symbol, timeout: symbol, param: number)
 .input socket_wait
 
-// What a function's `@spec` claims it returns, normalized (`Argus.Specs`): `can_fail` when the return type names {:error, _}, :error, nil, false, :undefined or {:EXIT, _}; `total` when it is known and names none of them; `constant` when it is one literal atom (and so also total); `no_return`; `returns_pid`. A function may have several shapes, and one with no row is unknown — no spec, a `term()` return, a module shipped without specs (:mnesia) — never "cannot fail". Rows come from the analyzed module's own beam for its functions, and from the code path for the remote functions it calls; clientlib/specs.dl prefers the first. A spec is an unverified claim: rules use these rows only to suppress or confirm a finding, never to report one on their own.
+// Normalized return claims from `@spec` (`Argus.Specs`): `can_fail`, `total`, `constant`, `no_return`, or `returns_pid`. Failure values include `{:error, _}`, `:error`, `nil`, `false`, `:undefined`, and `{:EXIT, _}`. A function may have several shapes; no row means unknown. Specs come from analyzed BEAMs or the code path, with `clientlib/specs.dl` preferring analyzed definitions. Rules use these unverified claims only to confirm or suppress findings.
 //
 .decl spec_return(func: symbol, shape: symbol, origin: symbol)
 .input spec_return
 
-// The call or receive at `id` runs only after `func` has acknowledged its start: every path from the function's entry to it passes a `:proc_lib.init_ack/1,2` (`Argus.Extractors.OTP`). A process started with `:proc_lib.start_link/3` holds its starter until that ack; an init/1 that acks and then enters its own loop (`:gen_server.enter_loop/3`, OTP's logger_olp) waits there as the server, not as the start. An ack made in a helper the function calls is not seen.
+// A call or receive dominated by `:proc_lib.init_ack/1,2` in the same function. The starter is released before this site, so later waits belong to the running process rather than startup. Acknowledgements in helpers are not detected.
 //
 .decl start_acked(id: symbol, func: symbol)
 .input start_acked
 
-// The function compares against the atom somewhere — the loser of a start race is taken. Any comparison anywhere counts, so an unrelated one keeps the race rule quiet.
+// An atom compared anywhere in the function, used to recognize handling of a lost start race. Unrelated comparisons can also suppress the race finding.
 //
 .decl start_error_compared(func: symbol, atom: symbol)
 .input start_error_compared
 
-// An `:erlang.start_timer/3,4` at `id`, and whose mailbox its `{:timeout, ref, msg}` lands in: `self` when the destination is the result of `self()` on every path, as timer_arm reads a send_after's. The flush rules do not ask of it (its message carries the ref), so it is no timer_arm.
+// An `:erlang.start_timer/3,4` and its destination. `self` requires `self()` on every path. Its `{:timeout, ref, msg}` message carries a reference, so it is excluded from `timer_arm` flush checks.
 //
 .decl start_timer_arm(id: symbol, func: symbol, target: symbol)
 .input start_timer_arm
 
-// A start in the program (`gen_server:start_link(Name, Mod, Args, Opts)`, `Supervisor.start_link(Mod, arg)`, `gen:start/5,6`, ...) or an `enter_loop` names `mod` the callback module of `behaviour`, at a call whose module argument is a literal module (`Argus.Extractor.GenStarts`). The behaviour's machinery runs the module's callbacks whether or not it declares the behaviour: OTP's `inet_db` and `pg`, and ejabberd's `ejabberd_sql_sup`, declare none. A `proc_lib` start names a function, and is none.
+// A literal callback module named by a behaviour start or `enter_loop` (`Argus.Extractor.GenStarts`). Identifies behaviour implementations even without an explicit declaration. `proc_lib` starts name functions and are excluded.
 //
 .decl started_as(mod: symbol, behaviour: symbol)
 .input started_as
 
-// The call (or send) at `site`, in a GenServer handler, does not run while the state the handler was handed holds `value` under `key`: the walk from the entry with the field fixed at that atom misses it, and another walk reaches it. `handle_info(ev, %{status: :init} = s)` queues what the next clause serves: the serving call is excluded while the status is `:init`. (`Argus.Extractors.StateGate`.)
+// A GenServer handler call or send unreachable when input state field `key` equals atom `value`, but reachable for another value (`Argus.Extractors.StateGate`).
 //
 .decl state_excluded(site: symbol, func: symbol, key: symbol, value: symbol)
 .input state_excluded
 
-// The call (or send) at `site`, in a GenServer handler (handle_call/3, handle_cast/2, handle_info/2, handle_continue/2), runs only while the state the handler was handed holds `value` under `key`: on every path from the entry to the site, the tests of that field admit only the atoms of the site's rows (a clause head `%{registered: false}`, `if state.timer == nil`, `case state.status`; `if state.owner` admits nil and false). A field of a value made from the state (a nested map, `Map.get/2`) is not read, nor a struct's `__struct__`. (`Argus.Extractors.StateGate`.)
+// A GenServer handler call or send allowed only when input state field `key` holds one of the recorded atom values. Every reaching path must enforce the restriction. Nested fields, fields read via calls, and `__struct__` are excluded (`Argus.Extractors.StateGate`).
 //
 .decl state_gate(site: symbol, func: symbol, key: symbol, value: symbol)
 .input state_gate
 
-// A way `func` completes, in its clause for `clause`, hands back a state whose `key` holds `value`: the handlers' returns (`{:noreply, state, ...}`, `{:reply, reply, state, ...}`), code_change/3's `{:ok, state}`, and init/1's `{:ok, state, ...}`, the state each incarnation starts with; through the local helpers they return through or hand the state to. A return that keeps the field, or ends the process, has no row; a `throw` in the function is `dynamic`. Read only for the keys the module's gates test: what could set a gate's field back, and what a field starts as.
+// A possible returned value for state field `key` in clause `clause`, including init, handlers, `code_change/3`, and local helpers. Only keys used by the module's state gates are tracked. Unchanged fields and process termination have no rows; a `throw` yields `dynamic`.
 //
 .decl state_return(func: symbol, clause: symbol, key: symbol, value: symbol)
 .input state_return
@@ -919,37 +898,37 @@
 .decl statem_event_catchall(mod: symbol, func: symbol)
 .input statem_event_catchall
 
-// A gen_statem callback has a clause for this event type. Over-approximated the same way callback_tag is — every comparison of the first argument counts — so consumers ask which types are NOT handled.
+// A possible event type handled by a gen_statem callback. Counts every comparison of the first argument, so consumers use it to check for missing handlers.
 //
 .decl statem_event_clause(mod: symbol, func: symbol, event_type: symbol)
 .input statem_event_clause
 
-// A transition a function that is not a state function returns on some state's behalf (a `disconnect/2` helper returning `{:next_state, :disconnected, data}`): a way into its target from a state the extractor does not name. Only `next_state` and `stop` returns are recorded; a helper's `keep_state` is its caller's self-loop.
+// A helper's `next_state` or `stop` return on behalf of an unresolved caller state. `keep_state` is omitted because it represents the caller's self-loop.
 //
 .decl statem_helper_transition(mod: symbol, func: symbol, to_state: symbol)
 .input statem_helper_transition
 
-// Some clause of the callback accepts an :info event with any content: from a test establishing the event type is :info, a body is reachable without passing the success branch of a test on any other register.
+// A gen_statem clause accepting any content for `:info`. After establishing that event type, its body is reachable without a successful test on another register.
 //
 .decl statem_info_catchall(mod: symbol, func: symbol)
 .input statem_info_catchall
 
-// Some clause other than a catch-all takes the event content by its shape alone, never comparing it or its tag to a value — `callback_open` for a gen_statem's content, `{x, 1}`.
+// A non-catch-all clause accepting gen_statem event content by shape without testing its value or tag. Equivalent to `callback_open` for the content register `{x, 1}`.
 //
 .decl statem_info_open(mod: symbol, func: symbol, shape: symbol)
 .input statem_info_open
 
-// An atom the callback compares somewhere — an event content's tag among the event types and state names. Over-approximated as `callback_tag` is: a rule asks whether a tag is NOT taken.
+// An atom compared anywhere in a gen_statem callback. Over-approximates content tags among event types and state names; consumers check for missing tags.
 //
 .decl statem_info_tag(mod: symbol, func: symbol, tag: symbol)
 .input statem_info_tag
 
-// Initial state declared by `init/1`'s `{:ok, State, Data}` return (one row per resolvable clause — a machine with multiple init clauses has several). Read directly from the return rather than inferred topologically, so the reachability analysis knows which no-incoming state is the legitimate entry point. Only literal-atom states are recorded; a computed initial state emits no row.
+// A literal initial state returned by `init/1`, one row per resolvable clause. Computed states have no row. Gives reachability analysis an explicit entry state.
 //
 .decl statem_initial(mod: symbol, state: symbol)
 .input statem_initial
 
-// A `{:next_event, type, content}` action in a function of a gen_statem's module: an event the machine runs before anything in its mailbox, and the only way an event of type `:internal` is made. Read where the tuple is built or where a literal holds it (`[{:next_event, :internal, :go}]`), whether or not it is returned. `{:call, from}` is spelled by its tag, `:call`; a type the function does not spell (a parameter) is `*`, and so is a content it does not. One row per clause of `func`, by its first argument's tag (`Argus.Extractor.Dispatch.argument_tags/2`), or, in an event function, its event's type and content (`event_tags/3`). What enters a gen_statem's `:internal` clauses, for `clientlib/runs.dl`'s once clauses.
+// A constructed or literal `{:next_event, type, content}` action, whether returned or not. These events run before mailbox messages and are the source of `:internal` events. `{:call, from}` uses type `:call`; unresolved type or content uses `*`. Recorded per clause, using event type/content tags in event functions, for `clientlib/runs.dl`.
 //
 .decl statem_insert(id: symbol, func: symbol, clause: symbol, type: symbol, content: symbol)
 .input statem_insert
@@ -958,7 +937,7 @@
 .decl statem_module(mod: symbol, callback_mode: symbol)
 .input statem_module
 
-// A function of a `state_functions` machine that may return what a call returns: a tail call, a call whose result reaches a return, or a throw (which gen_statem takes as the callback's result, `dynamic`). The callee is the local function called, or `dynamic` for a remote, applied or thrown value: the action it returns, and so the state it leaves for, is the callee's.
+// A function of a `state_functions` machine that may return a callee's result. Local calls name the callee; remote calls, applies, and throws use `dynamic`. gen_statem treats a thrown value as the callback result.
 //
 .decl statem_returns_call(mod: symbol, func: symbol, callee: symbol)
 .input statem_returns_call
@@ -975,7 +954,7 @@
 .decl statem_transition(mod: symbol, from_state: symbol, event: symbol, to_state: symbol)
 .input statem_transition
 
-// A synchronous management call into a supervisor process. Every one is a GenServer.call underneath — `start_child` waits for the child's init/1 to return, `terminate_child` for the child's whole shutdown — but none names a GenServer module, so `sync_call` never saw them. `target` is resolved from the first argument like `sync_call`'s callee.
+// A synchronous supervisor management call, with the target resolved from its first argument. These calls wait on the supervisor; starting a child waits for init, and terminating one waits for shutdown.
 //
 .decl sup_call(id: symbol, func: symbol, api: symbol, op: symbol, target: symbol)
 .input sup_call
@@ -984,29 +963,27 @@
 .decl supervisor(mod: symbol, strategy: symbol)
 .input supervisor
 
-// Child specification within a supervisor. A shorthand (`{Mod, arg}`, a bare `Mod`, `Mod.child_spec(arg)`) states no restart: its restart is `own`, the one `Mod.child_spec(arg)` answers (`child_spec_restart`, `child_spec_option` over the start's `shorthand_arg`), unless `Supervisor.child_spec/2` overrides it.
+// A supervisor child specification. Shorthand forms use restart `own`, resolved from `child_spec_restart` or argument-dependent `child_spec_option`, unless `Supervisor.child_spec/2` overrides it.
 //
 .decl supervisor_child(sup: symbol, position: number, child_mod: symbol, restart: symbol, type: symbol)
 .input supervisor_child
 
-// Whether a child spec stated its `type`, or whether `supervisor_child.type` is the extractor's default.
-//
-// A map spec and OTP's tuple form are the program's statement: a map with no `:type` is a worker by the supervisor's own default (round 4 of the mining: supavisor 6b77121 registered a supervisor so). The `{Module, args}` and bare-`Module` forms state nothing: `Module.child_spec/1` decides, and `use Supervisor` generates `type: :supervisor` where the default written here is `worker`. Any rule reading `type` must join this, or it is reasoning about a guess — a first attempt at "supervisor registered as a worker" reported 26 modules on the corpus and every one was this artefact.
+// Whether a child type is explicit or an extractor default. Maps and OTP tuples determine the type, including the map default `worker`. Shorthand forms defer to `Module.child_spec/1`, so their provisional type must not be trusted without this relation.
 //
 .decl supervisor_child_form(sup: symbol, position: number, form: symbol)
 .input supervisor_child_form
 
-// Registered name declared in a child spec's `:name` option — e.g. the `MyApp.Pool` in `{DynamicSupervisor, name: MyApp.Pool}`. Recorded alongside `supervisor_child` (same `sup`/`position`) so a `dynamic_child` whose parent is a registered name can be anchored to the child that registers it: a `DynamicSupervisor.start_child(MyApp.Pool, _)` call resolves to the named child instead of appearing unanchored. Only atom names are recorded — `{:via, _, _}` and `{:global, _}` names are not, since name-based `start_child` targets are always atoms.
+// An atom registration name in a child spec's `:name` option, keyed by supervisor and position. Resolves named `DynamicSupervisor.start_child` targets to the registering child. Via and global names are excluded.
 //
 .decl supervisor_child_name(sup: symbol, position: number, name: symbol)
 .input supervisor_child_name
 
-// The supervisor's child list has an element or a tail the extractor cannot read: a list appended from config, an `Enum.map`, a parameter, a spec from a call it does not follow (`Supervisor.child_spec/2` it does). Its `supervisor_child` rows are partial, and their positions too: a child the list does not show may start after any it lists. A list read to its end is closed, and its rows are in source order (`Argus.Extractors.Supervision`).
+// A child list with an unresolved element or tail. Its `supervisor_child` rows and positions are partial; unseen children may start after any listed child. Fully resolved lists retain source order (`Argus.Extractors.Supervision`).
 //
 .decl supervisor_children_open(sup: symbol)
 .input supervisor_children_open
 
-// A `max_children` cap read from `DynamicSupervisor.init/1`'s options. Present when a finite cap is set, or may be: `dynamic` for options the extractor cannot read whole (a parameter, a tail or an element it cannot know), where a cap is unknown rather than the default (issue #4). The behaviour defaults to `:infinity`, so absence — options read whole that state none — is the common case and the interesting one, and consumers ask about it by negation.
+// A DynamicSupervisor `max_children` cap. A finite value is recorded directly; incomplete options use `dynamic`. Fully known options without a cap have no row, reflecting the default `:infinity`.
 //
 .decl supervisor_max_children(sup: symbol, limit: symbol)
 .input supervisor_max_children
@@ -1019,7 +996,7 @@
 .decl sync_call(caller_func: symbol, callee_mod: symbol)
 .input sync_call
 
-// A synchronous call's target and timeout at its site: what pairs a dependency with the timeout of the call that makes it, where sync_call_timeout says only that the function makes such a call.
+// A synchronous call's target and timeout at one site. Unlike function-level `sync_call_timeout`, preserves which dependency has that timeout.
 //
 .decl sync_call_site(id: symbol, caller_func: symbol, callee_mod: symbol, timeout_ms: number)
 .input sync_call_site
@@ -1028,119 +1005,117 @@
 .decl sync_call_timeout(caller_func: symbol, callee_mod: symbol, timeout_ms: number)
 .input sync_call_timeout
 
-// An ETS table allocation site, an object of the same points-to analysis a process is: the reference an unnamed table is, or the name a named table is answered with, flows from here as a `table` source through parameters, returns, fields and a server's state.
+// An ETS allocation represented as a `table` points-to source. Its reference or registered name flows through parameters, returns, fields, and server state.
 //
 .decl table_alloc(id: symbol, func: symbol, table: symbol)
 .input table_alloc
 
-// The table operand of the ETS operation at `id` is the source: clientlib/tables.dl chains it to the tables it may be.
+// An ETS operation's table source, resolved to possible allocations by `clientlib/tables.dl`.
 //
 .decl table_use(id: symbol, func: symbol, src_kind: symbol, src: symbol)
 .input table_use
 
-// A Task.Supervisor the program starts: a `{Task.Supervisor, opts}` child spec (a literal or one built at run time, in a child list or anywhere), a PartitionSupervisor's `child_spec: Task.Supervisor` or `{Task.Supervisor, opts}`, a `Task.Supervisor.start_link/0,1` or `child_spec/1` call. Every start is recorded, capped or not: `Task.Supervisor.start_child/2..5` returns an error only as `{:error, :max_children}`, under a cap (a supervisor that is not running exits the caller instead), so the rows say which starts can fail, and a start whose supervisor has no row is one the program does not show.
+// A Task.Supervisor start and its cap, from child specs, PartitionSupervisor options, or direct start/child-spec calls. Records capped and uncapped starts. A cap can produce `{:error, :max_children}`; an unavailable supervisor instead exits the caller. No row means the start is not visible.
 //
 .decl task_supervisor_cap(sup: symbol, limit: symbol)
 .input task_supervisor_cap
 
-// A task started under a Task.Supervisor, beside its `dynamic_child` row (child `Task`), which does not say how: `async_stream` and `async_stream_nolink` run at most `max_concurrency` tasks at a time for the process enumerating the stream, the others start one each. `sup` is matched against `task_supervisor_cap`'s names.
+// A Task.Supervisor task start and its API, supplementing `dynamic_child`. Stream APIs run up to `max_concurrency` tasks per enumerating process; other APIs start one task per call. Supervisor names join `task_supervisor_cap`.
 //
 .decl task_supervisor_start(id: symbol, func: symbol, op: symbol, sup: symbol)
 .input task_supervisor_start
 
-// The return at `id` arms its loop's idle timeout: `{:ok, state, ms}`, `{:noreply, state, ms}` or `{:reply, reply, state, ms}`, whose `:timeout` message comes when no other does first. A value the return does not spell counts: only `:infinity`, `:hibernate` and a continue are known not to be a timeout. Read in every function, as `continue_return` is, one row per clause the return is in. Unlike `callback_timeout` (a callback's literal integer), what makes a `:timeout` message, for `clientlib/runs.dl`'s once clauses.
+// A return arming a callback's idle timeout, including unresolved timeout values. Excludes `:infinity`, `:hibernate`, and continuations. The runtime sends `:timeout` only if no other message arrives first. Recorded in helpers as well as callbacks, once per enclosing clause; unlike `callback_timeout`, does not require a literal integer.
 //
 .decl timeout_return(id: symbol, func: symbol, clause: symbol)
 .input timeout_return
 
-// A timer armed at `id`: whether it targets the arming process, and whether its message is a literal that cannot be told from an earlier instance of itself ('bare'), one of the function's own parameters ('param', with its position, for a rule to resolve at the callers through resolved_arg), or a computed value such as a ref ('dynamic'). Refines the `timer` / `timer_bare` kinds of mailbox_writer.
+// An armed timer, its destination, and message source: a fixed literal (`bare`), caller parameter (`param`, resolved via `resolved_arg`), or computed value (`dynamic`). Refines `mailbox_writer` timer kinds.
 //
 .decl timer_arm(id: symbol, func: symbol, target: symbol, message: symbol, param: number, literal: symbol)
 .input timer_arm
 
-// Where the ref cancelled at `id` came from: a map field read in the function (`state.timer`, a `%{timer: ref}` head), one of the function's parameters (resolved at the callers through call_arg_field), the ref a send_after in the same function returned ('local', keyed by that site), or unknown.
+// The source of a cancelled timer reference: a map field, a parameter resolved through `call_arg_field`, a local `send_after` site, or unknown.
 //
 .decl timer_cancel(id: symbol, func: symbol, source: symbol, key: symbol, param: number)
 .input timer_cancel
 
-// The call at `site` is to a function of the module that returns a timer's ref (timer_ref "returned", or a wrapper returning such a function's result, returns_call), and `func` drops the result on the spot: every register holding it is overwritten before any instruction reads it. Nothing can cancel that timer, as with a send_after whose own function drops its ref ("discarded").
+// A call to a same-module timer helper whose result is discarded before any read. Follows `returns_call` wrappers to helpers with `timer_ref` value `returned`. The discarded reference cannot be used to cancel the timer.
 //
 .decl timer_dropped(site: symbol, func: symbol, callee: symbol)
 .input timer_dropped
 
-// Where the ref of the timer armed at `id` goes: returned by the function (an arming helper), stored under a literal key of a map (`%{state | timer: ...}`, `Map.put(state, :timer, ...)`), dropped on the spot — every register holding it overwritten before any instruction reads it (`send_after(...)` then `{:noreply, state}`), so nothing can cancel the timer — or somewhere the walk cannot follow (a record, a tuple, another path).
+// Where a timer reference goes: returned, stored under a literal map key, discarded before any read, or unknown. Discarded references cannot be used to cancel the timer.
 //
 .decl timer_ref(id: symbol, func: symbol, flow: symbol, key: symbol)
 .input timer_ref
 
-// A map update in `func` stores the result of a call to `callee` under `key`: `%{state | timer: arm(ms)}`. With returns_call this ties a timer ref to the state field that keeps it.
+// A map update storing a call result under `key`. Combined with `returns_call`, identifies the state field holding a timer reference.
 //
 .decl timer_store(func: symbol, key: symbol, callee: symbol)
 .input timer_store
 
-// The atom the message of the timer armed at `id` is told apart by, as a clause head or a receive compares it: the message itself when it is an atom, or the first element of a tuple — a literal one (`{:warm_up, 5}`) or one the arming site builds (`{:retry, attempts - 1}`) — with the message's `arity`: 0 for the atom, the tuple's size otherwise. `:erlang.start_timer/3,4`'s is `:timeout`, 3: it sends `{:timeout, ref, msg}`. No row when the message is anything else or does not resolve. A literal tuple's `literal` in timer_arm spells the whole term, which no tag equals.
+// A timer message's atom tag and arity: 0 for an atom, tuple size otherwise. `:erlang.start_timer/3,4` uses tag `:timeout` and arity 3. Unresolved or other message shapes have no row. Unlike `timer_arm.literal`, this identifies the tag rather than the whole term.
 //
 .decl timer_tag(id: symbol, tag: symbol, arity: number)
 .input timer_tag
 
-// A call establishing a TLS session. `dynamic` options are recorded as such rather than guessed at: a false "this is insecure" on a call that configures itself properly is worse than silence.
+// A TLS connection call. Unresolved options remain `dynamic` and do not establish insecure configuration.
 //
 .decl tls_connect(id: symbol, func: symbol, api: symbol, opts: symbol)
 .input tls_connect
 
-// A verification setting that configures a server: the site of a server's call (`:ssl.listen/2`, `:ssl.handshake/2,3`, a Ranch or Cowboy TLS listener, a Plug.Cowboy, Bandit or ThousandIsland server), or a mention whose value is made, in its function, only into the options of one. There `verify_none` means the server does not ask its clients for a certificate, not that it trusts a peer server.
+// A verification setting used only for a TLS server, including listener or handshake calls and options flowing exclusively to them. Here `verify_none` disables client-certificate requests; it does not describe verification of a remote server.
 //
 .decl tls_server_side(id: symbol, func: symbol)
 .input tls_server_side
 
-// How a TLS session verifies its peer, read from literal option lists and bare atoms. `absent` means a connect supplied literal options that never mention `verify`, so the library's default applies — Erlang's `:ssl` client verified nothing at all before OTP 26.
+// TLS peer-verification mode from literal options or bare atoms. `absent` means known options omit `verify`, so the library default applies. Erlang `:ssl` clients before OTP 26 defaulted to no verification.
 //
 .decl tls_verification(id: symbol, func: symbol, setting: symbol)
 .input tls_verification
 
-// A module only developers' tools or tests run, as its name or the path compile_info records says (`Argus.Extractors.Tooling`): a Mix task or the helpers Mix tasks share, a project's test support compiled into a dev build, the test helpers a library ships in its own lib/. Every analysis steps a finding there down (clientlib/tooling.dl); the tooling prior asks about the modules this leaves undecided.
+// A module identified as developer tooling or test support by its name or compile path (`Argus.Extractors.Tooling`). `clientlib/tooling.dl` lowers finding severity there; the tooling prior classifies unresolved modules.
 //
 .decl tooling_module(mod: symbol, basis: symbol)
 .input tooling_module
 
-// A `Process.flag(:trap_exit, true)` (or `:erlang.process_flag/2`) call: from here on the calling process traps exits. The call is a `site_block` site, so a rule asks what runs after it (clientlib/trapping.dl). A flag the program computes has no row.
+// A literal `trap_exit: true` process-flag call. Later sites can be ordered with `site_block` and `clientlib/trapping.dl`. Computed flag values have no row.
 //
 .decl trap_exit(id: symbol, func: symbol, mod: symbol)
 .input trap_exit
 
-// A `Process.flag(:trap_exit, value)` whose value the extractor cannot read (`opts[:trap_exit]`, a restore of an earlier call's answer): the process may trap exits from here on, or may not. A rule that reports a process that does not trap asks `may_trap` (clientlib/trapping.dl), which this makes true; it is no trap for a rule that reports one (issue #4: an unread value is never the default).
+// A process-flag call with unresolved `trap_exit` value. Establishes `may_trap` but does not prove trapping is enabled, so unknown values cannot be treated as defaults.
 //
 .decl trap_flag_unread(id: symbol, func: symbol, mod: symbol)
 .input trap_flag_unread
 
-// The try at `id` protects only operations whose failure is another process's, a port's or a name's state — a send, an exit signal, a call into another process or node, a registration, a named `:ets.new` — and instructions that cannot raise; or only the building and emitting of a log line (`Argus.Extractors.ErrorHandling.Boundary`). A catch-all around it takes a dead peer, a taken name or a failed log handler, not a bug in the code it guards.
+// A try protecting only external-state operations and non-raising instructions, or only log construction and emission. A catch-all here handles peer, port, registration, or logging failures rather than errors in arbitrary application code (`Argus.Extractors.ErrorHandling.Boundary`).
 //
 .decl try_boundary(id: symbol, func: symbol)
 .input try_boundary
 
-// A peer call the try guards — GenServer.call, :gen_statem.call, :erpc.call and their kin — whose failure the handler is expected to classify. `call` is where a finding points: the try instruction carries the line of whatever preceded it.
+// A peer call protected by the try, whose failure the handler classifies. The finding anchors at `call` because the try instruction may carry an earlier source line.
 //
 .decl try_call(id: symbol, func: symbol, callee: symbol, call: symbol, guard_end: symbol)
 .input try_call
 
-// The try at `id` covers the call at `call`: the call is on a path from the try that has not passed its `try_end`, so what it raises goes to that try's handler, whose classes and reasons are catch_total and catch_tag at the same `id`. Walked on the function's control-flow graph: a call after the try's `end` is not covered, a call inside a nested try is covered by both, and a call in a nested try's handler by the outer one alone.
+// A call reachable from the try at `id` before its `try_end`. Nested protected calls belong to both tries; calls in a nested handler belong only to the outer try. `catch_total` and `catch_tag` describe the handler at the same `id`.
 //
 .decl try_covers(id: symbol, func: symbol, call: symbol, kind: symbol)
 .input try_covers
 
-// Every read of the closure's value in the function is a call inside the try's protected region: it is handed to `Enum.each` there, or called, and not returned, stored or sent. Where the closure is built does not matter; the compiler hoists one with nothing to capture out of the try. Whether the call it is handed to runs it in another process is the rules' question. `fun_handed` names the calls a fun is handed to, but has no row for a fun returned, stored or called through a variable, so it cannot say the fun runs nowhere else.
+// Every use of a closure value invokes or passes it to a call within the try's protected region. The closure may be constructed outside the try, but cannot escape through a return, store, or send. Rules separately check whether execution moves to another process; `fun_handed` alone cannot prove exclusive use here.
 //
 .decl try_covers_closure(id: symbol, func: symbol, closure: symbol)
 .input try_covers_closure
 
-// The try at `id` protects only boundary operations (as `try_boundary` names them), instructions that cannot raise, and calls to named functions, `call` being one of those calls: if every such callee is a `boundary_function`, the try is a boundary one hop away (hackney's `try hackney_conn:stop(Pid) catch _:_ -> ok end`).
+// A try containing only boundary operations, non-raising instructions, and named calls, including `call`. If every named callee is a `boundary_function`, the try also qualifies as a boundary handler.
 //
 .decl try_wrapper_call(id: symbol, func: symbol, call: symbol)
 .input try_wrapper_call
 
-// A call the effect model has no opinion about — neither known-impure nor known-pure.
-//
-// Recorded rather than ignored because purity is a claim about every execution. Assuming unknown calls are harmless would make a verification report success far more often and mean nothing.
+// A call classified as neither pure nor impure by the effect model. Unknown effects prevent proving purity.
 //
 .decl unknown_call(id: symbol, caller: symbol, api: symbol, callee: symbol)
 .input unknown_call
@@ -1149,7 +1124,7 @@
 .decl unsafe_atom_creation(id: symbol, func: symbol, api: symbol)
 .input unsafe_atom_creation
 
-// A one-shot decompression: `:zlib.gunzip/1`, `unzip/1`, `uncompress/1` or `inflate/2,3`, which return the whole output of their input with no bound on its size (a few hundred bytes of layered gzip inflate to gigabytes: Bandit's and Tesla's advisories). The streaming `safeInflate/2` and `inflateChunk/1,2`, which hand back one bounded chunk at a time, are not rows.
+// A decompression call returning its entire output without a size bound: `:zlib.gunzip/1`, `unzip/1`, `uncompress/1`, or `inflate/2,3`. Excludes bounded-chunk APIs `safeInflate/2` and `inflateChunk/1,2`.
 //
 .decl unsafe_decompression(id: symbol, func: symbol, api: symbol, data_pos: number)
 .input unsafe_decompression
@@ -1158,7 +1133,7 @@
 .decl unsafe_deserialization(id: symbol, func: symbol, api: symbol, safety: symbol)
 .input unsafe_deserialization
 
-// A `Process.flag(:trap_exit, false)` call: from here on the calling process no longer traps exits. A restore of a value an earlier call returned (`Process.flag(:trap_exit, old)`) is computed, and has no row (`trap_flag_unread`).
+// A literal `trap_exit: false` process-flag call. Computed values, including restoration of an earlier flag value, use `trap_flag_unread` instead.
 //
 .decl untrap_exit(id: symbol, func: symbol, mod: symbol)
 .input untrap_exit

@@ -1,14 +1,6 @@
-// Work in a phase whose invariants do not hold yet.
-//
-// init/1 runs inside the supervisor's start sequence: a synchronous
-// call from it to a sibling that starts later is a deadlock by
-// construction, a call to any peer stalls the tree, a connect with no
-// way to retry crash-loops the child until the tree gives up, a
-// cluster-wide lock hangs the boot on a partition. handle_continue runs
-// after init returns but before any message, so its own races and
-// cycles are startup's too. And state written after
-// Supervisor.start_link returned is written after the children are
-// already serving.
+// Startup ordering and blocking defects: waits during init, dependencies on later
+// siblings, unretriable connects, global locks, continuation races, and state
+// initialized after children begin serving.
 
 .include "../clientlib/imports.dl"
 .include "../clientlib/otp.dl"
@@ -25,43 +17,23 @@
 // level (clientlib/tooling.dl, Argus.Findings.Tooling).
 .output tooling
 
-// ══ The outputs ═════════════════════════════════════════════════════
-//
-// `blocks_on_peer(mod, phase, dep, kind, ordering, sup, site, detail)` —
-//   a phase waits on a peer. `phase` is "init" or "continue"; `kind`
-//   says how: "call" (a synchronous call; `detail` is "conditional" or
-//   "unconditional" when the ordering is unknown), "cast" (a one-way
-//   dependency on a later sibling), "sup" (a supervisor management call;
-//   `detail` is api.op, `dep` the target), "blocking_server" (the callee
-//   runs but its handler `detail` blocks at `site`), "parent" (a
-//   handle_continue calls its own supervisor), "global" (a :global lock
-//   that retries until it is granted; `detail` is the op, `dep` the nodes
-//   it waits on: "cluster", "local" or "unknown"), "global_assumed" (the
-//   same, with a retry count the bytecode does not show, assumed
-//   :infinity), "global_bounded" (a lock over other nodes that gives up
-//   after a positive retry count) or "remote" (an rpc, a node
-//   operation, a distributed store; `detail` is the op). `ordering` is where the peer
-//   starts relative to this child under `sup`: "later" (a deadlock by
-//   construction, or a race from handle_continue), "earlier",
-//   "parent", "unknown" (no tree places both), or empty. `site` anchors
-//   the tree definition for a later sibling, the call otherwise.
-// `unbounded_effect_in_init(mod, kind, api)` — init/1, in its own
-//   process, reaches a socket receive with :infinity ("recv"; `api` is
-//   the function), a `receive` with no `after` ("receive"), one only the
-//   exit of the process it waits on ends ("down"), a server loop entered
-//   before the start is acknowledged ("enter_loop"; `api` holds the
-//   call), or a connect with no way to retry ("connect").
-// `deferral_defect(mod, kind, site, detail)` — deferred work that will
-//   not happen as written: an init timeout of `detail` ms that any
-//   earlier message cancels ("init_timeout"), or a defensive catch in
-//   handle_continue that turns a deadlock into a restart loop under the
-//   supervisor `detail` ("continue_catch").
+// Outputs
+// `blocks_on_peer`: an init or continue phase depending on a peer. Kinds cover calls,
+// casts, supervisor operations, blocking handlers, parent calls, global locks
+// (unbounded, assumed, or bounded), and remote operations. `detail` identifies the
+// operation or conditionality. `ordering` is later, earlier, parent, unknown, or empty;
+// `sup` identifies the tree. Later-sibling findings anchor at the tree, others at the
+// call.
+// `unbounded_effect_in_init`: an infinity socket receive, unbounded receive,
+// peer-lifetime-bounded receive (`down`), enter_loop before acknowledgement, or connect
+// without retry.
+// `deferral_defect`: a cancellable init timeout or a continuation catch turning a
+// deadlock into a restart loop. Detail gives the timeout or supervisor.
 .decl blocks_on_peer(mod: symbol, phase: symbol, dep: symbol, kind: symbol, ordering: symbol, sup: symbol, site: symbol, detail: symbol)
 .output blocks_on_peer
 
-// With priors on, a "receive" or "down" wait carries `peer` ("local")
-// and `permille` when the model is sure what it waits on answers from
-// inside the node (below); else "" and 0.
+// Priors may classify receive/down waits as local. Set peer to "local" with confidence
+// permille; otherwise use an empty peer and zero confidence.
 .decl unbounded_effect_in_init(mod: symbol, kind: symbol, api: symbol, site: symbol, peer: symbol, permille: number)
 .output unbounded_effect_in_init
 
@@ -71,47 +43,32 @@
 .decl deferral_defect(mod: symbol, kind: symbol, site: symbol, detail: symbol)
 .output deferral_defect
 
-// ══ What holds the start ════════════════════════════════════════════
+// Work holding startup
 //
-// init/1 runs inside its starter's start (a supervisor's, or whoever
-// called start_child), and the start returns when init/1 acknowledges it:
-// by returning, or by `:proc_lib.init_ack/1,2`, after which what init/1
-// runs is the server's (acked_edge, clientlib/init_phase.dl). What init/1
-// runs on its own stack before that, the start waits on.
+// The starter waits until init returns or calls init_ack. Same-process work before that
+// point holds startup; subsequent work belongs to the running server.
 
-// `init` is init/1 of a process module, and `what` runs on its own stack
-// before it acknowledges its start, so its supervisor's start waits while
-// `what` runs: a supervisor call, an rpc or another distributed operation
-// (sites), or a function that reads a socket, waits in a receive or enters
-// a server loop.
+// An operation or function on a process init's stack before acknowledgement, including
+// supervisor/distributed calls, socket waits, receives, and server loops.
 .decl holds_start(init: symbol, what: symbol)
 
 holds_start(init, what) :- is_init(init), own_stack.reaches(init, what).
 
-// An rpc in init/1 or in anything it calls on its own stack
-// (rpc_during_init, clientlib/init_phase.dl: blocking reads the same walk
-// and leaves these sites out, so a helper's rpc holding the start is
-// reported here, once).
+// RPCs on init/1's own stack before acknowledgement. blocking.dl excludes these sites
+// so startup reports each wait once; see rpc_during_init.
 holds_start(init, rpc) :- rpc_during_init(init, rpc).
 
-// A distributed operation init/1 makes itself. Only an rpc (above) is
-// followed into the helpers init/1 calls; a :global registration, a node
-// operation or a store operation in a helper is not seen.
+// Distributed operations called directly by init/1. Only RPC tracking follows helpers;
+// helper-local registrations, node operations and store operations are not covered
+// here.
 holds_start(init, op) :-
   is_init(init),
   distributed_operation(op, init, _),
   !start_acked(op, init).
 
-// What a function runs on its own stack: calls that stay in its process
-// (not what a spawn, task or agent runs), not through the logging and
-// telemetry APIs (side_call, calls.dl: their machinery waits on its own
-// servers, which call no process of the program's), and not after it
-// acknowledged its start (acked_edge): OwnStackBeforeAck,
-// clientlib/init_phase.dl, the walk rpc_during_init takes. Walked
-// backwards from the few things a start can wait on: a supervisor call
-// made before its own function's ack, and the functions that read a
-// socket without a timeout, wait in a receive with no `after`, or enter a
-// server loop.
+// Same-process work before startup acknowledgement (`OwnStackBeforeAck`). Exclude
+// detached funs, post-ack calls, and logging/telemetry side paths. Traverse backward
+// from supervisor calls, unbounded socket/receive waits, and server loops.
 .init own_stack = OwnStackBeforeAck
 
 own_stack.seed(g, site) :- sup_management_call(site, g, _, _, _), !start_acked(site, g).
@@ -121,9 +78,8 @@ own_stack.seed(f, f) :- enters_loop_at(f, _).
 
 // ══ Synchronous calls from init/1 ═══════════════════════════════════
 
-// An init/1 waits on a synchronous call to a process that no supervision
-// tree is known to have started first, so its supervisor's start waits on
-// a process that may not be there.
+// init/1 waits on a process not known to start earlier in any supervision tree. That
+// process may be unavailable during startup.
 .decl call_to_unplaced_peer_during_init(mod: symbol, peer: symbol)
 
 call_to_unplaced_peer_during_init(mod, peer) :-
@@ -145,10 +101,8 @@ calls_during_init(mod, peer) :- init_dep(mod, peer, "call", _).
 already_running(mod, peer) :- init_safe_sibling(mod, peer).
 already_running(mod, peer) :- init_safe_cross_supervisor(mod, peer).
 
-// The call is to a sibling that starts later (later_sibling_dep) or to a
-// process the start function starts only after the tree (after_tree_dep):
-// "Start order" below reports it once, with the tree ordering, as the
-// deadlock it is, not also as a call of unknown place beside it.
+// Later-sibling and post-tree dependencies are reported by start-order rules with their
+// ordering evidence. Do not also report them as unordered calls.
 .decl later_sibling_call(child: symbol, dep: symbol)
 
 later_sibling_call(child, dep) :- later_sibling_dep(child, dep, "call", _, _, _).
@@ -182,10 +136,9 @@ init_safe_sibling(child, dep) :-
   calls_during_init(child, dep),
   starts_before(_, dep, child, _, _).
 
-// Both likely supervised but under disjoint supervisor trees — callee
-// is already running because it was started by a different supervisor.
-// At least one must be provably supervised (in a child_subtree) to
-// prevent false negatives when no supervision facts exist at all.
+// Assume a dependency in a disjoint supervision tree is already running. Require at
+// least one module to have positive supervision evidence so missing facts alone cannot
+// suppress a wait.
 .decl init_safe_cross_supervisor(child: symbol, dep: symbol)
 
 init_safe_cross_supervisor(child, dep) :-
@@ -206,10 +159,8 @@ init_safe_cross_supervisor(child, dep) :-
 // init is not control-dependent on a branch.
 .decl unconditional_sync_call_in_init(mod: symbol, callee: symbol)
 
-// The call making the dependency is itself unconditional — not some
-// other GenServer.call in init. A call made after init/1's own ack
-// (start_acked), or an edge taken only after it (acked_edge), no longer
-// holds the start: it cannot make the start's wait unconditional.
+// Require the specific dependency call to be unconditional and before acknowledgement.
+// An unrelated unconditional call or post-ack edge cannot establish this.
 unconditional_sync_call_in_init(mod, callee) :-
   init_function(mod, func),
   sync_site(func, callee, id),
@@ -237,16 +188,9 @@ unconditional_sync_call_in_init(mod, callee) :-
   genserver_sync_api(g, callee),
   mod != callee.
 
-// ── Where init/1 waits ─────────────────────────────────────────────────
-//
-// The call in init/1, before it acknowledges its start, on the way to
-// the wait on `callee`: the GenServer.call itself (or the tag-attributed
-// call on a pid it holds), or the call into the helper or client API
-// that makes it. A finding anchored at init/1 lands on its head, often
-// tens of lines above the call. An unconditional site is preferred where
-// init has one: the call that makes the finding "unconditional". Empty
-// when init/1 makes no call of its own on the way (a closure it hands
-// on), and the finding falls back to the function.
+// The pre-ack call in init leading to the wait, directly or through a helper/API.
+// Prefer an unconditional site when available. Use an empty site, falling back to
+// init's head, when no call instruction represents the path.
 .decl init_wait_site(mod: symbol, callee: symbol, site: symbol)
 
 init_wait_site(mod, callee, id) :-
@@ -297,10 +241,8 @@ init_wait(mod, callee, "") :-
 
 // ── The report ─────────────────────────────────────────────────────────
 
-// `detail` is "unconditional" when some path from init to the call runs
-// on every init, "conditional" when every path goes through a call site
-// in init that a branch guards (postgrex's `sync_connect: true`, goth's
-// `prefetch: :sync`).
+// `detail` is unconditional if some path reaches the call on every init run. It is
+// conditional if every path crosses a branch-guarded call in init.
 blocks_on_peer(mod, "init", peer, "call", "unknown", "", site, "unconditional") :-
   call_to_unplaced_peer_during_init(mod, peer),
   unconditional_sync_call_in_init(mod, peer),
@@ -311,21 +253,14 @@ blocks_on_peer(mod, "init", peer, "call", "unknown", "", site, "conditional") :-
   !unconditional_sync_call_in_init(mod, peer),
   init_wait(mod, peer, site).
 
-// ── Supervisor management calls from init/1 ──────────────────────────
+// Supervisor management calls during init
 //
-// Supervisor.start_child/2 and its relatives are GenServer.calls into
-// the supervisor, and start_child does not return until the new child's
-// init/1 has: an init that starts children has put those children's
-// inits on the tree's startup path, and a child that calls back into
-// the starter (or into anything the starter's tree has not reached yet)
-// deadlocks the whole boot. Broadway's server fanned out four of these
-// from init; Oban's Midwife started every queue from init. Reported for
-// every management op, since terminate_child waits for a whole
-// shutdown and which_children on the parent is the classic deadlock.
+// These synchronous calls hold startup: start_child waits for the new child's init,
+// terminate_child for shutdown, and a call to the parent can deadlock. Include every
+// management operation because any may wait on the startup sequence it blocks.
 
-// An init/1 calls into a supervisor before it acknowledges its start, so
-// its own start waits on that supervisor and on the init/1 of every child
-// the call starts.
+// Before acknowledging startup, init/1 calls a supervisor. Startup waits for that call
+// and for any child initialization it triggers.
 .decl supervisor_call_during_init(mod: symbol, call: symbol)
 
 supervisor_call_during_init(mod, call) :-
@@ -346,9 +281,8 @@ blocks_on_peer(mod, "init", target, "sup", "", "", call, cat(api, ".", op)) :-
 
 // ── A server that blocks in its handler ────────────────────────────────
 
-// An init/1 calls a server that is already running, and a handler of
-// that server can wait without a bound, so the call, and the start, wait
-// as long as the handler does.
+// init/1 calls an existing server whose handler may wait indefinitely, leaving startup
+// dependent on that wait.
 .decl call_to_blocking_server_during_init(mod: symbol, server: symbol, handler: symbol, wait: symbol)
 
 call_to_blocking_server_during_init(mod, server, handler, wait) :-
@@ -359,21 +293,10 @@ call_to_blocking_server_during_init(mod, server, handler, wait) :-
 blocks_on_peer(mod, "init", server, "blocking_server", "earlier", "", wait, handler) :-
   call_to_blocking_server_during_init(mod, server, handler, wait).
 
-// A handler of the server init/1 waits on that waits without a bound:
-// evidence for a report, so only operations with no bound of their own
-// count (unbounded_sup_op), and a synchronous call with :infinity
-// (sync_call_site, whichever API spells it: GenServer, gen_statem,
-// GenStage, Agent), which waits for as long as the callee takes.
-// db_connection's fixed Watcher still start_childs from its handler —
-// that is the design, not the bug. Every handler counts: a handle_info
-// that blocks holds up the call init/1 makes as surely as a
-// handle_call does.
-//
-// blocking's `answers_straight_away` is the dual, and differs on
-// purpose: it suppresses an :infinity hop, so it must hold only of a
-// handle_call/3 that provably answers at once, and every call it cannot
-// vouch for (answers_in_time) counts as a wait. This word reports, so it
-// holds only of a wait that provably has no bound.
+// A target server handler with a provably unbounded wait, including infinity peer calls
+// and unbounded supervisor operations. Any callback can block the request from init.
+// This reporting predicate requires evidence of a wait; blocking's suppression
+// predicate `answers_straight_away` instead requires proof that the handler answers.
 .decl handler_blocks(mod: symbol, handler: symbol, op_site: symbol)
 
 handler_blocks(mod, h, site) :-
@@ -401,17 +324,13 @@ handler_blocks(mod, h, site) :-
   handler_function(mod, h),
   infinite_call_reach.reaches(h, site).
 
-// ── An unbounded socket receive on init's path ───────────────────────
+// Unbounded socket reads during init
 //
-// A connect-in-init (`sync_connect: true`) that reads its greeting with
-// `:gen_tcp.recv(sock, n, :infinity)` blocks the supervisor's start —
-// and whoever called start_child — for as long as the server is silent:
-// hours, for a replication slot waiting on a checkpoint
-// (elixir-ecto/postgrex#746).
+// An infinity receive waiting for a remote greeting holds both the child start and its
+// supervisor's startup sequence while the peer remains silent.
 
-// An init/1 reads a socket with no timeout before it acknowledges its
-// start, so its supervisor's start waits for as long as the peer stays
-// silent.
+// Before acknowledging startup, init/1 reads a socket without a timeout. A silent peer
+// can hold up the supervisor indefinitely.
 .decl socket_read_during_init(mod: symbol, reader: symbol)
 
 socket_read_during_init(mod, reader) :-
@@ -419,9 +338,8 @@ socket_read_during_init(mod, reader) :-
   holds_start(init, reader),
   reads_socket_without_timeout(reader).
 
-// The function reads a socket with :infinity: given literally, by the
-// two-argument form, or handed down as :infinity through a wrapper's
-// parameter (`msg_recv(s, :infinity, buffer)`, infinite_recv_param).
+// An infinite socket read timeout, omitted by arity, given literally, or forwarded
+// through a wrapper parameter (infinite_recv_param).
 .decl reads_socket_without_timeout(func: symbol)
 
 reads_socket_without_timeout(f) :- call_arg(f, ":gen_tcp:recv/3", 2, ":infinity").
@@ -445,29 +363,15 @@ init_effect(mod, "recv", reader, site) :-
   socket_read_during_init(mod, reader),
   recv_site_or_empty(reader, site).
 
-// ── A receive with no `after` on init's path ─────────────────────────
+// Unbounded receives during init
 //
-// A `receive` with no `after` waits the same way, on the mailbox. How
-// long depends on what its clauses take:
-//
-// - nothing that ends with a peer: it waits until the message comes,
-//   forever if the sender is gone or never sends ("receive");
-// - the exit signal of the process it waits on, pinned (ends_with_peer):
-//   the `:DOWN` of a monitor (recv_down, recv_signal "down"; gen's call,
-//   code_server's, a hand-written request, a spawn_monitor's pair), or,
-//   in a process that traps exits, the `:EXIT` of a process or port its
-//   function links to (recv_signal "exit"; peer's init/1 closes the port
-//   it opened and waits for that port's exit). If the peer is gone the
-//   signal comes, but a peer that is alive and never answers holds the
-//   start as long as it lives ("down"). An `:EXIT` clause in a process
-//   that does not trap exits, or for a process nothing linked, never
-//   fires, and bounds nothing;
-// - a timer message cancel_timer/1 said was delivered (flush_receive,
-//   clientlib/timer_flush.dl): no wait at all.
+// `receive`: no guaranteed completion message.
+// `down`: a pinned monitor :DOWN or linked peer :EXIT bounds the wait by that peer's
+// lifetime. Exit messages require both trapping and a link.
+// A confirmed timer-flush message is already delivered and introduces no wait.
 
-// An init/1 waits in a receive with no `after` before it acknowledges its
-// start, and nothing the receive takes ends with its peer, so the start
-// waits for a message that may never be sent.
+// Before acknowledging startup, init/1 receives without an after clause or peer-exit
+// escape. The expected message may never arrive.
 .decl endless_receive_during_init(mod: symbol, waiter: symbol, recv: symbol)
 
 endless_receive_during_init(mod, waiter, recv) :-
@@ -476,9 +380,8 @@ endless_receive_during_init(mod, waiter, recv) :-
   receives_without_timeout(waiter, recv),
   !ends_with_peer(mod, recv).
 
-// An init/1 waits in a receive with no `after` before it acknowledges its
-// start, and only its peer's exit ends it, so a peer that is alive and
-// never answers holds the start as long as it lives.
+// An untimed startup receive ends only on a reply or peer exit. A live but unresponsive
+// peer can block startup indefinitely.
 .decl receive_until_peer_exits_during_init(mod: symbol, waiter: symbol, recv: symbol)
 
 receive_until_peer_exits_during_init(mod, waiter, recv) :-
@@ -487,12 +390,9 @@ receive_until_peer_exits_during_init(mod, waiter, recv) :-
   receives_without_timeout(waiter, recv),
   ends_with_peer(mod, recv).
 
-// The function waits in `recv`, a receive with no `after`, before its own
-// ack, and the receive is not the cancel_timer flush (flush_receive). Only
-// what runs before the start is acknowledged holds the starter: an init/1
-// that calls `:proc_lib.init_ack/1` and then enters its own loop waits
-// there as the server it has become. An enter_loop reached before any ack
-// is a finding of its own ("enter_loop", below).
+// An unbounded receive before the function's acknowledgement, excluding confirmed timer
+// flushes. Post-ack waits belong to the running server; pre-ack enter_loop has its own
+// finding.
 .decl receives_without_timeout(func: symbol, recv: symbol)
 
 receives_without_timeout(f, id) :-
@@ -500,19 +400,15 @@ receives_without_timeout(f, id) :-
   !start_acked(id, f),
   !flush_receive(id).
 
-// The receive ends when its peer exits: it takes the pinned `:DOWN` of a
-// monitor (down_bounded, clientlib/receive.dl), or the `:EXIT` of a
-// linked process while the process traps exits (ends_with_linked_exit).
+// The receive accepts its monitored peer's DOWN or, while trapping exits, its linked
+// peer's EXIT.
 .decl ends_with_peer(mod: symbol, recv: symbol) inline
 
 ends_with_peer(mod, recv) :- down_bounded(recv).
 ends_with_peer(mod, recv) :- ends_with_linked_exit(recv).
 
-// The receive takes the pinned `:EXIT` of a process or port its function
-// links to (exit_pinned, clientlib/receive.dl), and the process is
-// trapping exits when it waits (trapping_at, clientlib/trapping.dl), so
-// the signal arrives as that message: a flag set after the wait, or
-// cleared before it, is not in effect for it.
+// A pinned linked-peer :EXIT bounds the receive only when exit trapping is active at
+// the wait, accounting for preceding sets and clears.
 .decl ends_with_linked_exit(recv: symbol)
 
 ends_with_linked_exit(recv) :- exit_pinned(recv, f), trapping_at(f, recv).
@@ -523,13 +419,10 @@ init_effect(mod, "receive", waiter, recv) :-
 init_effect(mod, "down", waiter, recv) :-
   receive_until_peer_exits_during_init(mod, waiter, recv).
 
-// ── An init/1 that becomes the server before its start returns ──
+// Entering the server loop before acknowledgement
 //
-// `:gen_server.enter_loop/3` (and gen_statem's) does not return: the
-// process runs the server loop from there. A start waits on init/1 —
-// GenServer's until it returns, proc_lib's until it calls init_ack — so
-// an init/1 that reaches enter_loop before acknowledging its start holds
-// its starter, and the supervisor's start, for good.
+// Behaviour enter_loop calls do not return. Reaching one before init returns or
+// acknowledges leaves the starter waiting indefinitely.
 
 // An init/1 enters a server loop before it acknowledges its start, and a
 // starter waits on it, so the start never returns.
@@ -578,11 +471,8 @@ recv_site(f, id) :- call_arg(f, g, pos, ":infinity"), infinite_recv_param(g, pos
 recv_site_or_empty(f, id) :- recv_site(f, id).
 recv_site_or_empty(f, "") :- reads_socket_without_timeout(f), !recv_site(f, _).
 
-// One finding per receiving function; the inits that reach it are its
-// evidence frames.
-// `call` is the call in init/1 that starts its path to the receiving
-// function (the earliest, when several do), or empty when init/1 is the
-// receiving function or leaves through no call instruction.
+// Report once per receiving function with reaching inits as evidence. Use init's
+// earliest call toward it, or an empty call for direct/site-less paths.
 .decl init_reaches_recv(mod: symbol, api: symbol, call: symbol)
 .output init_reaches_recv
 
@@ -594,9 +484,8 @@ reported_wait(mod, r) :- init_effect(mod, "recv", r, _).
 reported_wait(mod, r) :- init_effect(mod, "receive", r, _).
 reported_wait(mod, r) :- init_effect(mod, "down", r, _).
 
-// The first step out of init/1 takes the walk's own cut: an edge taken
-// only after init/1's ack (acked_edge) starts no path that holds the
-// start.
+// Apply phase cuts to the first edge out of init/1 as well. Post-acknowledgement calls
+// do not hold up startup.
 .decl init_recv_step(mod: symbol, api: symbol, call: symbol)
 
 init_recv_step(mod, r, call) :-
@@ -616,19 +505,14 @@ init_reaches_recv(mod, r, "") :-
   reported_wait(mod, r),
   !init_recv_stepped(mod, r).
 
-// ── A connection made in init/1 with no way to try again ─────────────
+// Connections without a retry path
 //
-// A child that connects to an external dependency in init/1 and stops
-// or raises when it cannot is restarted by its supervisor, immediately,
-// until the intensity is spent — and then the tree, usually the whole
-// application, goes down at boot because a dependency was slow to come
-// up (tortoise#46, grpc-elixir#557, newrelic/elixir_agent#181,
-// brod#666). The fixes all defer the connect to a timer or a
-// handle_continue with backoff, which is what the rule looks for.
+// A failed connect in init can consume the supervisor's restart intensity before the
+// dependency becomes available. Look for a later retry path, such as a timer or
+// continuation with backoff.
 
-// An init/1 connects to a service, and its module has no way to try
-// again later, so a service that is down crash-loops the child until its
-// supervisor gives up.
+// init/1 connects to a service without a later retry path. An unavailable service can
+// exhaust the supervisor's restart budget.
 .decl connect_without_retry(mod: symbol, api: symbol)
 
 connect_without_retry(mod, api) :-
@@ -636,12 +520,8 @@ connect_without_retry(mod, api) :-
   connects_in_process(init, api),
   !retries_later(mod).
 
-// The function, or what it runs in its own process, calls the connect
-// `api`. Not cut at the ack: a connect after it still crashes the child a
-// moment after its start returned when the peer is not up yet, and the
-// supervisor restarts it at once, into the same crash, until the tree
-// gives up. The ack moves the crash out of the start, not out of the
-// restart loop.
+// A connect reached on the function's own process stack. Do not stop at init_ack: a
+// post-ack connection failure can still crash-loop the newly started child.
 .decl connects_in_process(func: symbol, api: symbol) inline
 
 connects_in_process(f, api) :- connect_reach.reaches(f, api).
@@ -659,10 +539,8 @@ connect_api(api) :- impure_call(_, _, api, "network", _), match(":ssl.connect/.*
 connect_api(api) :- impure_call(_, _, api, "network", _), match(":gen_udp.open/.*", api).
 connect_api(api) :- impure_call(_, _, api, "network", _), match(":httpc.request/.*", api).
 
-// The module has a way back in to retry: a timer, a self-message, a
-// handle_continue, or a gen_statem's own timeout (postgrex's connections
-// arm {{:timeout, :backoff}, ms, nil}): deferral_path,
-// clientlib/deferral.dl.
+// A later retry path via timer, self-message, handle_continue or gen_statem timeout.
+// See deferral_path.
 .decl retries_later(mod: symbol)
 
 retries_later(mod) :- deferral_path(mod, _).
@@ -671,16 +549,12 @@ init_effect(mod, "connect", api, "") :- connect_without_retry(mod, api).
 
 // ══ Start order ═════════════════════════════════════════════════════
 
-// ── A dependency on a later sibling ──────────────────────────────────
+// Dependencies on later siblings
 //
-// A synchronous dependency that holds the start (init_dep "call": before
-// the ack, on init/1's own stack) is a deadlock by construction: the
-// supervisor cannot reach the dependency until this init returns. One in
-// the startup window that does not hold it (init_window_dep, entries.dl:
-// a cast, or a call after the ack or in what init/1 starts) runs against
-// a process that is not alive yet: the cast is dropped, the call exits
-// :noproc, as a handle_continue's does. One row per witness; the finding
-// builders keep one per (child, dep) and the synchronous one wins.
+// A pre-ack synchronous wait blocks the supervisor from starting its target. Casts,
+// post-ack calls, and detached startup work instead race the target's start. Keep
+// witnesses but deduplicate by child and dependency, preferring the synchronous
+// finding.
 
 // A child's init/1 depends on a process that its supervisor starts after
 // it, so the process is not there yet when init/1 needs it.
@@ -692,10 +566,9 @@ later_sibling_dep(child, dep, kind, sup, sup_site, witness) :-
   child != dep,
   tree_defined_at(sup, sup_site).
 
-// mod's init/1 depends on `dep`, as `kind` says ("call" or "cast"):
-// holding its start (init_dep) or in the startup window after it
-// (init_window_dep), clientlib/entries.dl. `witness` is the function
-// that makes the dependency.
+// A call or cast dependency from mod's init/1, either before acknowledgement (init_dep)
+// or in the subsequent startup window (init_window_dep). `witness` makes the
+// dependency.
 .decl depends_during_startup(mod: symbol, dep: symbol, kind: symbol, witness: symbol)
 
 depends_during_startup(mod, dep, kind, witness) :- init_dep(mod, dep, kind, witness).
@@ -717,20 +590,14 @@ tree_defined_at(sup, site) :- supervisor_site(sup, site).
 blocks_on_peer(child, "init", dep, kind, "later", sup, sup_site, witness) :-
   later_sibling_dep(child, dep, kind, sup, sup_site, witness).
 
-// ── A process the start function starts after the tree ───────────────
+// Dependencies started after the tree
 //
-// The same deadlock one level up: a function starts a tree
-// (`Supervisor.start_link(children, opts)`, an Application's start/2)
-// and then, once it returns, starts D itself (post_start_call). A child
-// C of the tree whose init/1 holds its start on D (init_dep "call") runs
-// inside that start_link, before D's start: the call exits :noproc, C
-// fails, the tree fails, and the application with it. Two supervision
-// trees are not "already running" for each other by being two: the
-// start function's own order places them.
+// A child cannot depend during init on a process started only after its enclosing
+// Supervisor.start_link returns. `post_start_call` captures this ordering even across
+// separate trees; the missing target can fail the child and the tree's start.
 
-// A child's init/1 waits on a process that the function starting its tree
-// starts only after the tree is up, so the process is not there yet.
-// `start` is the start function, `site` its call that starts `dep`.
+// A child waits for dep, but the tree's start function starts dep only after the tree
+// returns. `site` is the later start of dep.
 .decl after_tree_dep(child: symbol, dep: symbol, start: symbol, site: symbol, witness: symbol)
 
 after_tree_dep(child, dep, start, site, witness) :-
@@ -777,9 +644,7 @@ blocks_on_peer(child, "init", dep, "call", "after_tree", start, site, witness) :
 
 // ── handle_continue calls a later-started sibling ────────────────────
 
-// A handle_continue/2 calls a process its supervisor starts after the
-// worker, which is not there yet: the continue runs before the
-// supervisor has gone on to start it.
+// handle_continue/2 calls a later sibling before the supervisor has started it.
 .decl later_sibling_call_during_continue(worker: symbol, sibling: symbol, sup: symbol, call: symbol)
 
 later_sibling_call_during_continue(worker, sibling, sup, call) :-
@@ -796,13 +661,10 @@ continue_calls(worker, target, call) :- continue_wait(worker, target, call).
 blocks_on_peer(worker, "continue", sibling, "call", "later", sup, call, "") :-
   later_sibling_call_during_continue(worker, sibling, sup, call).
 
-// ── handle_continue calls back into its parent supervisor ────────────
+// Continuations calling their parent
 //
-// The supervisor is still mid-start_link, starting the children after
-// the worker, and not reading its mailbox: the worker blocks until the
-// rest of the child list is up, and a later child that waits on it
-// deadlocks the boot. The worker's last-child case is quiet: its init
-// returning is the supervisor's last wait.
+// The parent may still be starting later children and cannot answer. A later child
+// waiting on this worker can then deadlock startup. A known last child is exempt.
 
 // A handle_continue/2 calls its own supervisor while the supervisor is
 // still starting the children after it.
@@ -813,10 +675,8 @@ parent_call_during_continue(worker, sup, call) :-
   supervises(sup, worker),
   has_later_sibling(sup, worker).
 
-// The worker's handle_continue/2 calls into the supervisor `sup`: a
-// management call (manages_supervisor_during_continue), or a plain
-// synchronous call on the supervisor's name (a GenServer.call the call
-// resolution sees), which reaches the same mailbox.
+// handle_continue/2 calls its supervisor through a management API or a plain
+// synchronous call to the same supervisor mailbox.
 .decl calls_supervisor_during_continue(worker: symbol, sup: symbol, call: symbol)
 
 calls_supervisor_during_continue(worker, sup, call) :-
@@ -826,11 +686,8 @@ calls_supervisor_during_continue(worker, sup, call) :-
   continue_calls(worker, sup, call),
   supervisor(sup, _).
 
-// A handle_continue/2 of a worker whose init/1 continues makes a
-// Supervisor query or management call on `sup` at `call`, described by
-// `detail` (api.op). Supervisor.which_children and the other management
-// calls are sup_calls, not sync calls: they are read on the continue's
-// own stack (own_stack), the call their site.
+// A startup continuation makes a supervisor management call on its own stack. detail
+// identifies api.op; the management-call site anchors it.
 .decl manages_supervisor_during_continue(worker: symbol, sup: symbol, call: symbol, detail: symbol)
 
 manages_supervisor_during_continue(worker, sup, call, cat(api, ".", op)) :-
@@ -849,12 +706,8 @@ manages_supervisor_during_continue(worker, sup, call, cat(api, ".", op)) :-
 
 supervises(sup, worker) :- supervisor(sup, _), supervisor_child(sup, _, worker, _, _).
 
-// A child starts after the worker: one the list shows at a later
-// position, or one it may not show. A list the extractor cannot read to
-// its end (supervisor_children_open: an element from
-// Supervisor.child_spec/2 of a spec it does not read, a list appended
-// from config) may hold a later child anywhere; only a closed list's
-// last child is known to be last.
+// A later child exists explicitly or may occur in an unresolved child-list
+// tail/element. Only the last child of a fully known list is provably last.
 .decl has_later_sibling(sup: symbol, worker: symbol)
 
 has_later_sibling(sup, worker) :- boots_before(sup, worker, _, _, _).
@@ -874,11 +727,8 @@ blocks_on_peer(worker, "continue", sup, "parent", "parent", sup, call, "") :-
 
 // ── init/1 calls its parent supervisor after its ack ─────────────────
 
-// An init/1 calls its own supervisor after it acknowledges its start,
-// while the supervisor is still starting the children after it: the
-// supervisor has moved on to the later children and reads no mailbox
-// until they are up, as it does while a handle_continue runs. Not the
-// start's hold, which ended at the ack.
+// A post-ack init call to its parent can wait while later siblings start, like
+// handle_continue. It no longer holds its own start directly.
 .decl parent_call_after_ack(worker: symbol, sup: symbol, call: symbol)
 
 parent_call_after_ack(worker, sup, call) :-
@@ -886,11 +736,8 @@ parent_call_after_ack(worker, sup, call) :-
   supervises(sup, worker),
   has_later_sibling(sup, worker).
 
-// The worker's init/1 makes a Supervisor query or management call on
-// `sup` at `call` after it acknowledged its start (`detail` is api.op):
-// in a function it runs before the ack, at a call made after that
-// function's own ack, or anywhere on its own stack past an edge taken
-// only after the ack (after_ack).
+// A supervisor operation after acknowledgement, either locally after a function's ack
+// or downstream of a post-ack edge. detail identifies api.op.
 .decl manages_supervisor_after_ack(worker: symbol, sup: symbol, call: symbol, detail: symbol)
 
 manages_supervisor_after_ack(worker, sup, call, cat(api, ".", op)) :-
@@ -915,20 +762,16 @@ blocks_on_peer(worker, "acked", sup, "parent", "parent", sup, call, detail) :-
 
 // ── Defensive variant: try/catch wraps the call ──────────────────────
 
-// A handle_continue/2 that calls a later sibling also catches: the catch
-// turns the deadlock into a crash the supervisor restarts, into the same
-// call, until its restart intensity is spent.
+// A caught failure in handle_continue/2 can restart the worker into the same
+// unavailable-sibling call, exhausting restart intensity.
 .decl caught_later_sibling_call(worker: symbol, sup: symbol)
 
 caught_later_sibling_call(worker, sup) :-
   later_sibling_call_during_continue(worker, _, sup, _),
   catches_in_continue(worker).
 
-// A handle_continue/2 of the module has a try (or an older catch).
-// try_start carries its containing function and its kind ("try" or
-// "catch"), so both syntaxes are one rule and neither needs to join
-// `instruction` — 343k rows on a real project, rewritten on every body
-// edit — purely to recover the function an instruction sits in.
+// A try or catch in handle_continue. try_start already records the containing function
+// and syntax kind, avoiding a positional instruction join.
 .decl catches_in_continue(mod: symbol)
 
 catches_in_continue(mod) :-
@@ -937,20 +780,14 @@ catches_in_continue(mod) :-
 
 deferral_defect(worker, "continue_catch", "", sup) :- caught_later_sibling_call(worker, sup).
 
-// ── Init timeout used as a deferral ───────────────────────────────────
+// Init timeouts used for deferred work
 //
-// {:ok, state, 0} from init/1 is the pre-handle_continue idiom for "do
-// the rest after the supervisor moves on": the :timeout message arrives
-// as soon as the mailbox is otherwise empty. The catch is in that
-// clause. A timeout is cancelled by any message arriving first, and an
-// init that opened an active socket, subscribed to a PubSub, or was
-// handed a message by its starter has already arranged for one.
-// libcluster's Gossip strategy lost its deferred connect this way to
-// the first UDP datagram. Any integer works the same; 0 is the one that
-// is unmistakably a deferral.
+// An integer timeout in init's return fires only if no message arrives first. Socket,
+// subscription, or startup messages can cancel it and lose the deferred work, even with
+// timeout 0.
 
-// An init/1 returns a timeout to defer the rest of its work, and any
-// message that arrives first cancels the timeout, and the work with it.
+// init/1 defers work using an idle timeout. Any earlier message cancels that timeout
+// and the deferred work.
 .decl init_timeout_deferral(mod: symbol, site: symbol)
 
 init_timeout_deferral(mod, site) :-
@@ -970,28 +807,20 @@ deferral_defect(mod, "init_timeout", site, to_string(ms)) :-
 
 // ── A :global lock in init/1 ─────────────────────────────────────
 
-// The worst case: a :global lock that retries until it is granted
-// (lock_until_granted, clientlib/vocabulary.dl), held from supervisor
-// startup — in init/1, or in anything init/1 runs on its own stack or
-// waits for (global_path, clientlib/global_reach.dl). The supervisor
-// waits on the lock, and the lock waits on the nodes in its list: every
-// connected node when `dep` is "cluster", only this node's global server
-// when it is "local" (it still waits forever on a local holder), and
-// "unknown" when the list is not in the bytecode. `lock` is the :global
-// call itself, in whichever function holds it (init/1 included).
+// A global lock retried until granted, reached by init on its own stack or in awaited
+// work. Node scope is cluster, local, or unknown. Even a local lock can wait
+// indefinitely on its holder. `lock` identifies the actual operation.
 
-// An init/1 waits for a :global lock that retries until it is granted,
-// so its supervisor's start waits as long as anyone else holds the lock.
+// init/1 waits for a :global lock with unlimited retries, holding up its supervisor
+// while the lock remains taken.
 .decl lock_during_init(init: symbol, lock: symbol)
 
 lock_during_init(init, lock) :-
   global_call_during_init(init, lock),
   retries_until_locked(lock).
 
-// Each lock is reported with its node list as `dep`. A retry count the
-// bytecode does not show is assumed :infinity, the default the wrappers
-// forward, and the row says so by its kind ("global_assumed"). One row
-// per site — finding builders dedupe on (func, nodes, op).
+// Retain node scope in dep. Unknown retry counts are assumed infinity and marked
+// global_assumed. Builders deduplicate by function, nodes, and operation.
 blocks_on_peer(init, "init", nodes, "global", "", "", lock, op) :-
   lock_during_init(init, lock),
   global_op(lock, _, op, "infinity", nodes).
@@ -1000,13 +829,9 @@ blocks_on_peer(init, "init", nodes, "global_assumed", "", "", lock, op) :-
   lock_during_init(init, lock),
   global_op(lock, _, op, "dynamic", nodes).
 
-// A lock with a positive retry count gives up and returns false, after
-// backoff that OTP caps at 8 s a try. Over [node()] that is the fix the
-// "local" finding recommends, and is quiet. Over other nodes each try
-// still asks every one of them, and a partitioned node holds a try until
-// the node is declared down, so the start waits for a bounded but
-// possibly long time: reported one severity below the other kinds, as
-// "global_bounded".
+// A finite positive retry count bounds attempts. Local-only retries are exempt;
+// cross-node attempts can still wait for node failure detection, so report
+// `global_bounded` at lower severity.
 
 // An init/1 waits for a :global lock that gives up only after its
 // retries, and each retry waits on other nodes.
@@ -1027,15 +852,9 @@ blocks_on_peer(init, "init", nodes, "global_bounded", "", "", lock, op) :-
 init_lock(init, lock) :- lock_during_init(init, lock).
 init_lock(init, lock) :- bounded_lock_during_init(init, lock).
 
-// Where init/1's path to a lock in a helper starts: the call in init/1
-// whose callee, on init's own stack, reaches the lock (or the Task.async
-// whose task init/1 awaits). The finding's "init/1 reaches it from here"
-// frame points at that call; a path that leaves init/1 through something
-// with no call instruction (a closure it runs, a fun it applies) points
-// at init/1 itself, `call` empty — unless the lock is in an anonymous
-// function written inside init/1, whose line the finding's anchor
-// already is. The earliest such call is kept (the relation's
-// `earliest`).
+// The earliest call in init leading to the lock, including an awaited Task.async. If
+// the path has no call instruction, use an empty call and anchor at init, unless the
+// lock's anonymous-function location already identifies it.
 .decl init_lock_path(init: symbol, lock: symbol, call: symbol)
 .output init_lock_path
 
@@ -1072,9 +891,8 @@ lock_in_init_closure(init, lock) :-
 
 // ── Distributed operations in init ───────────────────────────────
 
-// An init/1 makes a distributed operation before it acknowledges its
-// start, so its supervisor's start waits as long as the other node, or
-// the store, takes to answer.
+// A distributed operation before startup acknowledgement makes the supervisor wait for
+// the remote node or store.
 .decl distributed_operation_during_init(init: symbol, op: symbol)
 
 distributed_operation_during_init(init, op) :-
@@ -1082,13 +900,9 @@ distributed_operation_during_init(init, op) :-
   holds_start(init, op),
   distributed_operation(op, _, _).
 
-// The call at `op`, in `func`, is an operation that waits on another
-// node or on a distributed store, named `name`: an rpc (by its variant),
-// a :global name registration ("global_register"), a node operation, or
-// a Mnesia or DETS operation. Node.list ("list"), Node.monitor
-// ("monitor") and :net_kernel.monitor_nodes ("monitor_nodes", a
-// subscription flag, not a connection attempt) return at once, and are
-// not ones.
+// Operations waiting on another node or distributed store: RPC, global registration,
+// node operations, Mnesia, and DETS. Exclude immediate node-list and monitoring
+// subscriptions.
 .decl distributed_operation(op: symbol, func: symbol, name: symbol)
 
 distributed_operation(id, f, name) :- rpc_call(id, f, name, _).
@@ -1109,13 +923,10 @@ blocks_on_peer(init, "init", "", "remote", "", "", op, name) :-
 
 // ══ After the tree is up ════════════════════════════════════════════
 
-// ── Initialization after the tree is up ──────────────────────────────
+// State initialized after tree startup
 //
-// Children start serving the moment Supervisor.start_link returns. State
-// they read — a persistent_term, an ETS row, an application env — that
-// the caller writes only afterwards is a window in which they run against
-// nothing (phoenixframework/phoenix#5981: the endpoint's warmup after the
-// listener was accepting).
+// Children can serve as soon as Supervisor.start_link returns. Later writes to state
+// they need create an initialization window with missing data.
 
 // A function starts a supervision tree and only afterwards writes state
 // other processes read, so the children are already serving when the
@@ -1132,9 +943,8 @@ write_after_tree_starts(func, call, callee) :-
 
 calls_after_tree_starts(func, call, callee) :- post_start_call(func, call, callee).
 
-// The callee writes state other processes read (persistent_term, ETS,
-// application env): it is such a write (config_write_api), or a function
-// that reaches one (config_writer, clientlib/effect_model.dl).
+// The callee writes shared configuration through persistent_term, ETS or application
+// environment, directly or through config_writer helpers.
 .decl writes_shared_state(callee: symbol)
 
 writes_shared_state(callee) :- config_write_api(callee).
@@ -1174,15 +984,8 @@ ignored_start(func, callee) :-
 
 ignores_result(func, callee) :- ignored_error_result(_, func, callee).
 
-// The callee is a start_link or a start. It is rendered as
-// "Mod.func/arity", so the function name is always preceded by "." and
-// followed by "/": matching the delimited name keeps a callee like
-// "Mod.restart_link/1" from substring-matching "start_link".
-//
-// NOTE Souffle's contains(needle, haystack) takes the needle FIRST. The
-// rule originally wrote contains(callee, "start_link") — "is the callee
-// a substring of 'start_link'" — which is false for every real callee,
-// so this relation had never produced a single row.
+// Match delimited `.start_link/` and `.start/` names in rendered callees, avoiding
+// names such as restart_link. Souffle uses `contains(needle, haystack)`.
 .decl starts_process(callee: symbol) inline
 
 starts_process(callee) :- contains(".start_link/", callee).
@@ -1193,15 +996,11 @@ starts_process(callee) :- contains(".start/", callee).
 
 ignored_start_result(func, callee) :- ignored_start(func, callee).
 
-// ══ A wait whose peer answers, when priors are on ═══════════════════
+// Optional local-answer prior
 //
-// A receive the model is sure waits on something inside the node that
-// always answers (Argus.Priors.Questions.PeerAnswers; off by default):
-// a reply from code_server or a file or io server, a runtime driver, the
-// exit of a child it has just stopped. The start still waits, but on an
-// answer that comes; the finding steps down and says so. One that waits
-// on another node, an external program or a message that may never be
-// sent keeps its severity. 0.8, as in blocking.
+// Lower severity when confidence is at least 0.8 that an init receive waits on a peer
+// guaranteed to answer within the node. External or uncertain waits retain their
+// severity. The startup wait is still reported.
 .decl answering_wait(func: symbol, permille: number)
 
 answering_wait(r, p) :- prior_answers("wait", r, _, _, p), p >= 800.

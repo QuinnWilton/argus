@@ -1,42 +1,16 @@
-// Code only developers' tools or tests run.
-//
-// A dev or test build compiles more than the product: Mix tasks and the
-// helpers they share, a project's test support, the test helpers a
-// library ships in its own lib/, a development-only seed or dashboard.
-// A defect there costs a developer's command or a test run, not the
-// running system, and every analysis steps its finding down one level
-// (Argus.Findings.Tooling, by the finding's module).
-//
-// tooling(mod, basis, permille): the module is tooling because its
-// name or source path says so (`tooling_module`: basis "mix" or
-// "test_support", permille 1000), or because the tooling prior is sure
-// of it (basis "prior": the probability that it is a developer's tool
-// or test support, at 0.9 or more; Argus.Priors.Questions.Tooling). The
-// prior is asked only about modules the structure leaves undecided, and
-// a module the prior is unsure of stays the product: the word errs
-// quiet, toward the structural severity.
-//
-// A module the product calls into is not tooling, whatever its name or
-// path: the deployed system runs it. akkoma's `pleroma_ctl` runs Mix
-// tasks inside the live node (Pleroma.ReleaseTasks.run/1 calls
-// Mix.Tasks.Pleroma.*.run/1), and an exam platform's `lib/exam/test/`
-// is its Test context, which its controllers call. "Calls" is the call
-// graph from a module that is not itself named tooling, and on through
-// the named modules it reaches. Known limit: a call the graph does not
-// resolve (akkoma finds the task module by name and applies it) leaves
-// the module tooling.
-//
-// An analysis includes this file and declares `.output tooling`; its
-// rows re-tier the analysis's findings and are no findings themselves.
-// Requires imports.dl.
+// Tooling and test modules whose findings receive lower severity. `tooling` records
+// structural mix/test_support evidence at 1000 permille or a prior at confidence at
+// least 0.9. Uncertain classifications retain normal severity.
+// Product reach overrides names and paths. Unresolved dynamic calls can miss that reach
+// and leave a module classified as tooling. Consumers declare `.output tooling`; these
+// rows adjust findings rather than create them. Requires imports.dl.
 
 .decl tooling(mod: symbol, basis: symbol, permille: number)
 
 tooling(m, basis, p) :- tooling_named(m, basis, p), !product_reached(m).
 
-// What the structure or the prior names. 0.9 is where the calibration
-// measured 8 of 9 re-tiers right over the modules holding a finding in
-// the evaluation programs.
+// Tooling classification from structural evidence or a prior with confidence at least
+// 0.9.
 .decl tooling_named(mod: symbol, basis: symbol, permille: number)
 
 tooling_named(m, basis, 1000) :- tooling_module(m, basis).

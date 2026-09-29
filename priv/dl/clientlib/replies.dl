@@ -1,18 +1,7 @@
-// How a server answers the calls it takes: a handle_call/3 of a
-// GenServer-like behaviour, and the returns that defer its reply.
-//
-// `answers_calls(mod, func)`: `func` is `mod`'s handle_call/3, in a
-// module whose behaviour replies to calls as GenServer does
-// (handle_call_function, callbacks.dl).
-//
-// `defers_reply(mod, func, id)`: the return at `id` is `{:noreply, …}`
-// (callback_return): the caller's call is still waiting when the callback
-// returns, and is answered, if at all, by a later GenServer.reply/2.
-// Mailbox asks whether that reply can be sent; blocking, whether a hop
-// into the server answers at once.
-//
-// Prerequisites: include clientlib/imports.dl and otp.dl before this
-// file, and run Argus.Extractors.Reply (callback_return).
+// GenServer reply contracts. `answers_calls` identifies handle_call/3; `defers_reply`
+// identifies noreply returns requiring a later GenServer.reply/2. Used by mailbox and
+// blocking checks. Requires imports.dl, otp.dl, and Reply extraction for
+// callback_return.
 .decl answers_calls(mod: symbol, func: symbol)
 
 answers_calls(mod, func) :- handle_call_function(mod, func).

@@ -1,9 +1,7 @@
 defmodule Argus.Schema.GenStatem do
   @moduledoc """
-  gen_statem machines: their states, transitions and timeouts, and the
-  events their clauses handle.
-
-  Layer 2 of `Argus.Schema`, which reads the relations from here.
+  Layer-2 gen_statem facts: states, transitions, timeouts, and handled event types. \
+  Exposed through `Argus.Schema`.
   """
 
   @doc "The relations, in the order `Argus.Schema.all/0` lists them."
@@ -45,18 +43,11 @@ defmodule Argus.Schema.GenStatem do
              "`*` unspelled"}
         ],
         doc: """
-        A `{:next_event, type, content}` action in a function of a \
-        gen_statem's module: an event the machine runs before anything in \
-        its mailbox, and the only way an event of type `:internal` is made. \
-        Read where the tuple is built or where a literal holds it \
-        (`[{:next_event, :internal, :go}]`), whether or not it is returned. \
-        `{:call, from}` is spelled by its tag, `:call`; a type the function \
-        does not spell (a parameter) is `*`, and so is a content it does \
-        not. One row per clause of `func`, by its first argument's tag \
-        (`Argus.Extractor.Dispatch.argument_tags/2`), or, in an event \
-        function, its event's type and content (`event_tags/3`). \
-        What enters a gen_statem's `:internal` clauses, for \
-        `clientlib/runs.dl`'s once clauses.
+        A constructed or literal `{:next_event, type, content}` action, whether returned \
+        or not. These events run before mailbox messages and are the source of \
+        `:internal` events. `{:call, from}` uses type `:call`; unresolved type or \
+        content uses `*`. Recorded per clause, using event type/content tags in event \
+        functions, for `clientlib/runs.dl`.
         """
       },
       %{
@@ -67,12 +58,9 @@ defmodule Argus.Schema.GenStatem do
           {:state, :symbol, "initial state atom"}
         ],
         doc: """
-        Initial state declared by `init/1`'s `{:ok, State, Data}` return \
-        (one row per resolvable clause — a machine with multiple init clauses \
-        has several). Read directly from the return rather than inferred \
-        topologically, so the reachability analysis knows which no-incoming \
-        state is the legitimate entry point. Only literal-atom states are \
-        recorded; a computed initial state emits no row.
+        A literal initial state returned by `init/1`, one row per resolvable clause. \
+        Computed states have no row. Gives reachability analysis an explicit entry \
+        state.
         """
       },
       %{
@@ -95,12 +83,8 @@ defmodule Argus.Schema.GenStatem do
           {:to_state, :symbol, "target state, `stop`, or `dynamic` when computed"}
         ],
         doc: """
-        A transition a function that is not a state function returns on \
-        some state's behalf (a `disconnect/2` helper returning \
-        `{:next_state, :disconnected, data}`): a way into its target from \
-        a state the extractor does not name. Only `next_state` and `stop` \
-        returns are recorded; a helper's `keep_state` is its caller's \
-        self-loop.
+        A helper's `next_state` or `stop` return on behalf of an unresolved caller \
+        state. `keep_state` is omitted because it represents the caller's self-loop.
         """
       },
       %{
@@ -112,12 +96,9 @@ defmodule Argus.Schema.GenStatem do
           {:callee, :symbol, "the local function whose result it returns, or `dynamic`"}
         ],
         doc: """
-        A function of a `state_functions` machine that may return what a \
-        call returns: a tail call, a call whose result reaches a return, \
-        or a throw (which gen_statem takes as the callback's result, \
-        `dynamic`). The callee is the local function called, or `dynamic` \
-        for a remote, applied or thrown value: the action it returns, and \
-        so the state it leaves for, is the callee's.
+        A function of a `state_functions` machine that may return a callee's result. \
+        Local calls name the callee; remote calls, applies, and throws use `dynamic`. \
+        gen_statem treats a thrown value as the callback result.
         """
       },
       %{
@@ -142,9 +123,8 @@ defmodule Argus.Schema.GenStatem do
              "'info', 'cast', 'timeout', 'state_timeout', ..., or '{call}' / '{timeout}' for tagged tuples"}
         ],
         doc: """
-        A gen_statem callback has a clause for this event type. Over-approximated \
-        the same way callback_tag is — every comparison of the first argument \
-        counts — so consumers ask which types are NOT handled.
+        A possible event type handled by a gen_statem callback. Counts every comparison \
+        of the first argument, so consumers use it to check for missing handlers.
         """
       },
       %{
@@ -172,9 +152,9 @@ defmodule Argus.Schema.GenStatem do
           {:shape, :symbol, "'any' | 'tuple'"}
         ],
         doc: """
-        Some clause other than a catch-all takes the event content by its \
-        shape alone, never comparing it or its tag to a value — \
-        `callback_open` for a gen_statem's content, `{x, 1}`.
+        A non-catch-all clause accepting gen_statem event content by shape without \
+        testing its value or tag. Equivalent to `callback_open` for the content register \
+        `{x, 1}`.
         """
       },
       %{
@@ -186,9 +166,8 @@ defmodule Argus.Schema.GenStatem do
           {:tag, :symbol, "an atom the callback compares anything to"}
         ],
         doc: """
-        An atom the callback compares somewhere — an event content's tag \
-        among the event types and state names. Over-approximated as \
-        `callback_tag` is: a rule asks whether a tag is NOT taken.
+        An atom compared anywhere in a gen_statem callback. Over-approximates content \
+        tags among event types and state names; consumers check for missing tags.
         """
       },
       %{
@@ -199,9 +178,8 @@ defmodule Argus.Schema.GenStatem do
           {:func, :symbol, "the state function or handle_event/4"}
         ],
         doc: """
-        Some clause of the callback accepts an :info event with any content: \
-        from a test establishing the event type is :info, a body is reachable \
-        without passing the success branch of a test on any other register.
+        A gen_statem clause accepting any content for `:info`. After establishing that \
+        event type, its body is reachable without a successful test on another register.
         """
       },
       %{

@@ -1,10 +1,7 @@
 defmodule Argus.Schema.OwnedResources do
   @moduledoc """
-  The resources a process owns and loses with it: ETS tables, their
-  options and the operations on them, ports, and the sockets it
-  controls.
-
-  Layer 2 of `Argus.Schema`, which reads the relations from here.
+  Layer-2 facts for process-owned resources: ETS tables and operations, ports, and \
+  controlled sockets. Exposed through `Argus.Schema`.
   """
 
   @doc "The relations, in the order `Argus.Schema.all/0` lists them."
@@ -38,15 +35,9 @@ defmodule Argus.Schema.OwnedResources do
           {:id, :symbol, "instruction ID (same as ets_new)"}
         ],
         doc: """
-        The :ets.new/2 at `id` was given an options list the extractor read \
-        whole (a literal list, through moves): every option it gives has an \
-        `ets_option` row, so one with none, `named_table` among them, is not \
-        given. No row when the list is built at run time (a parameter, the \
-        configuration), where any option may be, nor when it is known only \
-        in part (`[:named_table | opts]`: the options it shows have rows, \
-        and an option it does not show may be in the part the extractor \
-        cannot read; issue #4). A `keypos` it cannot read is `dynamic`, not \
-        the default first element.
+        An `:ets.new/2` whose complete options list is known. Only then does a missing \
+        `ets_option` row prove an option absent. Partial or runtime lists have no row \
+        here; an unreadable `keypos` is `dynamic`, never the default.
         """
       },
       %{
@@ -79,13 +70,9 @@ defmodule Argus.Schema.OwnedResources do
            "the first :ets.whereis/1 of the same named table in the function, or else the first instruction that makes it"}
         ],
         doc: """
-        Every path from the function's entry to the read passes where the \
-        table is there: the side of a test of a whereis result that found \
-        it (of a comparison with `:undefined`, or a `case` arm, where it is \
-        not `:undefined`), or an instruction that makes it — its named \
-        `:ets.new/2`, or a call to a function of the module that makes it \
-        (an ensure helper). A read the function makes on a path that skips \
-        both, or on the `:undefined` side before a make, has no row.
+        An ETS read reached only after confirming the table exists or creating it, \
+        directly or through a same-module ensure helper. Every path must establish \
+        presence; reads on an unchecked or still-absent path have no row.
         """
       },
       %{
@@ -98,14 +85,9 @@ defmodule Argus.Schema.OwnedResources do
            "the first :ets.whereis/1 or :ets.info/1,2 of the table in the function"}
         ],
         doc: """
-        Every path from the function's entry to each make of the named \
-        table there — its named `:ets.new/2`, or a call to a function of \
-        the module that makes it — passes the side of a test of a lookup \
-        of the same table (`:ets.whereis/1`, `:ets.info/1,2`) where the \
-        answer is `:undefined`: the function makes the table only where \
-        the name is free. The mirror of `ets_read_when_present`. A \
-        function with a make on a path that skips the test, or past its \
-        other side, or past a lookup of another table only, has no row.
+        Every creation of a named table in the function follows a lookup of that same \
+        table returning `:undefined`. Includes same-module creation helpers. A creation \
+        reachable without the absence check removes the row.
         """
       },
       %{
@@ -133,14 +115,11 @@ defmodule Argus.Schema.OwnedResources do
           {:drop, :symbol, "the first instruction at which some path drops the handle"}
         ],
         doc: """
-        The file, socket or port the call at `id` opens is dropped on some \
-        path from it: no register holds it any more, or the function \
-        returns or tail-calls without it, and on the way it was only read, \
-        written, sent on or tested (Argus.Extractors.Handles) — not closed, \
-        returned, stored, sent or handed to any other call. A path on which \
-        the `{:ok, handle}` answer was never taken apart (its `{:error, _}` \
-        arm) owns no handle, and a path that raises drops nothing. The \
-        process that opened it owns it until it exits.
+        A file, socket, or port handle dropped on some non-raising path without being \
+        closed or transferred. Reading, writing, sending data, or testing the handle \
+        does not transfer ownership. Error-result paths that never extract a handle are \
+        excluded. The resource remains owned until the process exits \
+        (`Argus.Extractors.Handles`).
         """
       },
       %{
@@ -156,10 +135,9 @@ defmodule Argus.Schema.OwnedResources do
           {:param, :number, "the 0-based parameter the options come from, for \"param\"; else -1"}
         ],
         doc: """
-        A call that opens a TCP or TLS socket or sets its options, and the \
-        `:active` mode its literal options give. An active socket delivers its \
-        data and its close (`{:tcp_closed, s}`, `{:ssl_closed, s}`) as messages \
-        to the process that controls it. Options built at runtime are "dynamic".
+        A socket open or options call and its literal `:active` mode. Active sockets \
+        deliver data and close messages to their controlling process. Runtime-built \
+        options use `dynamic`.
         """
       },
       %{
@@ -173,8 +151,8 @@ defmodule Argus.Schema.OwnedResources do
           {:mode, :symbol, "the :active value: true | once | n | false"}
         ],
         doc: """
-        A call handing a literal option list with an `:active` entry: what a \
-        wrapper's `socket_active` row whose mode is "param" resolves to.
+        A literal options argument containing `:active`, used to resolve a wrapper's \
+        `socket_active` mode `param`.
         """
       },
       %{
@@ -190,9 +168,8 @@ defmodule Argus.Schema.OwnedResources do
            "the 0-based parameter the timeout comes from, for \"param\"; else -1"}
         ],
         doc: """
-        A blocking socket call — a recv, a connect, a TLS handshake — and how \
-        long it may wait. `:gen_tcp.connect/3` is bounded only by the operating \
-        system's connect timeout.
+        A blocking socket receive, connect, or TLS handshake and its timeout. \
+        `:gen_tcp.connect/3` relies on the operating system's connect timeout.
         """
       }
     ])

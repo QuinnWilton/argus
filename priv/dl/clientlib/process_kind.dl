@@ -1,18 +1,14 @@
-// What kind of process a module is, and what it can take from its
-// mailbox.
-//
-// Requires imports.dl, behaviours.dl, callbacks.dl (otp.dl includes all
-// of them). A gen_statem's state functions are process entries too, but
-// saying so reads `statem_event_clause`, which most analyses do not:
-// process_statem.dl adds that rule for the ones that do.
+// Process kinds and mailbox handlers. Requires imports.dl, behaviours.dl and
+// callbacks.dl, all included by otp.dl. Analyses that need gen_statem state-function
+// entries also include process_statem.dl, which reads statem_event_clause.
 
 // A module that runs as a process (callbacks.dl).
 .decl process_module(mod: symbol)
 
 process_module(mod) :- process_behaviour_module(mod).
 
-// Any behaviour module: a process's, or a plug's, a type's, a worker's
-// — code with a contract its caller relies on, not a library function.
+// Modules implementing any behaviour contract, including processes, plugs, types and
+// workers.
 .decl behaviour_module(mod: symbol)
 
 behaviour_module(mod) :- behaves_as(mod, _).
@@ -35,29 +31,13 @@ partial_handle_info(mod, func) :-
 
 takes_some_exits(h) :- callback_tag(h, "handle_info", ":EXIT").
 
-// ── What a server's own code is ─────────────────────────────────────
-//
-// Three readings, one root set: the entries of `mod`'s process
-// (process_entry, callbacks.dl: its callbacks, init/1, terminate/2, and
-// with process_statem.dl a gen_statem's state functions). A client
-// function of the same module runs in its caller, and none of them
-// counts it.
-//
-// - server_side(mod, func): the module's own code on its server's stack
-//   — what the entries reach without leaving the module or the process.
-//   A closure a callback hands to a Task or a spawn runs in that process
-//   (runs_elsewhere), and a receive or a monitor there is not the
-//   server's. What a rule attributes to `mod` itself (a monitor it takes
-//   and must release, a receive written for its own protocol) is here.
-// - RunsInServer (below): any code on the server's stack, in any module
-//   — a helper module's monitor or timer, taken in the server's process,
-//   is the server's all the same. Seeded: a rule asks it of the few
-//   functions that matter (mailbox's timers, monitors and sockets).
-// - server_caused(mod, func): what the entries make happen in the
-//   module, in any process: its own stack and the closures it spawns.
-//   Not the server's stack: a kill made from a spawned closure is still
-//   the server's doing (shutdown's kills_monitored_child), where a
-//   monitor taken there is not the server's.
+// Server execution scopes
+// `server_side`: same-module code on the server's own stack.
+// `RunsInServer`: same-process code in any module, seeded by relevant functions.
+// `server_caused`: same-module work caused by callbacks, including spawned closures.
+// All start from process_entry. Client APIs run in their callers and are not
+// automatically server code; detached monitors belong to their new process even when
+// detached effects are server-caused.
 .init server_reach = ForwardIntraModuleSameProcessReach
 
 server_reach.root(mod, func) :- process_entry(mod, func).
@@ -74,11 +54,9 @@ server_caused_reach.root(mod, func) :- process_entry(mod, func).
 
 server_caused(mod, func) :- server_caused_reach.reaches(mod, func).
 
-// A seeded function runs on the stack of `mod`'s server, one the program
-// starts (server_process): an entry of the server's process reaches it
-// in that process, in any module, and not through the logging or
-// telemetry API (side_call). Requires the points-to stage
-// (staged_processes.dl, through otp.dl).
+// The seeded function runs on a started server's stack, in any module. Exclude logging
+// and telemetry paths (side_call). Requires staged points-to facts via
+// staged_processes.dl or otp.dl.
 .comp RunsInServer {
   .decl seed(func: symbol)
   .decl runs(mod: symbol, func: symbol)

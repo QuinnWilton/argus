@@ -1,8 +1,6 @@
 defmodule Argus.Schema.Tls do
   @moduledoc """
-  TLS connections and how their peers are verified.
-
-  Layer 2 of `Argus.Schema`, which reads the relations from here.
+  Layer-2 TLS connection and peer-verification facts. Exposed through `Argus.Schema`.
   """
 
   @doc "The relations, in the order `Argus.Schema.all/0` lists them."
@@ -18,10 +16,9 @@ defmodule Argus.Schema.Tls do
           {:setting, :symbol, "'none' | 'peer' | 'absent'"}
         ],
         doc: """
-        How a TLS session verifies its peer, read from literal option lists and \
-        bare atoms. `absent` means a connect supplied literal options that never \
-        mention `verify`, so the library's default applies — Erlang's `:ssl` \
-        client verified nothing at all before OTP 26.
+        TLS peer-verification mode from literal options or bare atoms. `absent` means \
+        known options omit `verify`, so the library default applies. Erlang `:ssl` \
+        clients before OTP 26 defaulted to no verification.
         """
       },
       %{
@@ -34,9 +31,8 @@ defmodule Argus.Schema.Tls do
           {:opts, :symbol, "how options were supplied: 'literal' | 'dynamic'"}
         ],
         doc: """
-        A call establishing a TLS session. `dynamic` options are recorded as \
-        such rather than guessed at: a false "this is insecure" on a call that \
-        configures itself properly is worse than silence.
+        A TLS connection call. Unresolved options remain `dynamic` and do not establish \
+        insecure configuration.
         """
       },
       %{
@@ -47,12 +43,10 @@ defmodule Argus.Schema.Tls do
           {:func, :symbol, "the function"}
         ],
         doc: """
-        A verification setting that configures a server: the site of a \
-        server's call (`:ssl.listen/2`, `:ssl.handshake/2,3`, a Ranch or \
-        Cowboy TLS listener, a Plug.Cowboy, Bandit or ThousandIsland server), \
-        or a mention whose value is made, in its function, only into the \
-        options of one. There `verify_none` means the server does not ask \
-        its clients for a certificate, not that it trusts a peer server.
+        A verification setting used only for a TLS server, including listener or \
+        handshake calls and options flowing exclusively to them. Here `verify_none` \
+        disables client-certificate requests; it does not describe verification of a \
+        remote server.
         """
       }
     ])

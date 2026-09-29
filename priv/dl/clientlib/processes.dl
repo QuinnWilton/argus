@@ -1,76 +1,22 @@
-// Which process a pid can be: the interprocedural half of process
-// points-to. Argus.Extractors.PidFlow summarises each function (where the
-// values it passes on, returns, calls, registers and sends to come from,
-// and the terms it builds); this file chains the summaries.
-//
-// The objects are processes and the terms that hold them. A process is
-// named by the site that started it (process_start: "spawn <id>",
-// "server <id>"); a start inside a function that returns it is a
-// factory, and each call that keeps what the factory returns is its own
-// process ("start <call site>"), as is the child a supervisor's child
-// spec starts through it ("child <sup>#<pos>"). instance(proc, base)
-// maps each to its start site; server_process is the module-level view.
-// A term is named by the instruction that built it
-// (pid_object), with a field per map key, tuple position or list element,
-// so two pids in one state map stay two pids. A source is one of
-//   proc   — the process started at a site in the same function;
-//   param  — the function's parameter at a position;
-//   result — what a project call at a site returned;
-//   name   — a pid registered under a literal name;
-//   self   — self(), which is whichever process runs the function;
-//   obj    — a term the function built;
-//   load   — a field read from a term the function did not build;
-//   reply  — what a GenServer.call at a site returned;
-//   dict   — what the running process keeps in its dictionary under a
-//            literal key (see "The process dictionary" below).
-// Parameters are context-insensitive, like Andersen's analysis: a
-// parameter points to everything any caller passes it. That is "may
-// point to", and a rule that concludes something from it asks what a
-// process does NOT do. Two things keep that from costing more than the
-// answer is worth:
-//
-// - Only a term that holds a leaf (a process or a table, directly or in
-//   a term it holds) is followed as an object. The others cannot lead a
-//   use to a leaf, and the rules below only ever ask where the leaves go:
-//   every row of every staged relation is the same with them or without
-//   them, and on a large program they are most of the terms.
-// - A callee that hands its parameter back (`def put(x), do: x`, or a
-//   helper returning what such a callee returned of it) returns, at each
-//   call, what that call passed it, not everything any caller passed it.
-//   Merged at the parameter, one such helper made every caller's value
-//   every other caller's; chained, the helpers of a large library made
-//   one value of almost every term in it (see "Returns" below).
-//
-// The rules run once per program, in the points-to stage
-// (priv/dl/points_to.dl), not in every analysis that asks: the fixpoint
-// is most of what a solve over a large program costs, and it was
-// recomputed by each of them. The stage stages what the analyses read
-// (clientlib/staged_processes.dl declares it), and a gen_statem's data
-// (process_statem.dl's process_entry rule), exit signals, monitors and
-// links (pid_signal) and ETS tables (table_alloc) are followed here for
-// every analysis alike. None of those changes what the others see: a
-// signal's target is a use of its own kind, and a table is a leaf no
-// process is read out of.
-//
-// Where sends go (sends.dl) and which signal goes where (signals.dl) are
-// asked apart, over the staged targets, so an analysis that asks only
-// about calls does not read every send or signal in the program.
-//
-// A leaf the stage finds pervasive (clientlib/pervasive.dl: only when the
-// stage runs bounded, points_to_bounded.dl) is left out of these rules
-// and resolved by the coarse pass there instead; in the stage as it
-// runs by default no leaf is.
-//
-// Prerequisites: include clientlib/imports.dl, behaviours.dl,
-// callbacks.dl, process_statem.dl and runs_elsewhere.dl before this file,
-// and clientlib/pervasive.dl with it (points_to.dl does).
+// Interprocedural process points-to, composing `Argus.Extractors.PidFlow` summaries.
+// Processes use allocation-site identities; factory results and supervised children
+// receive caller-specific instances mapped to their base by `instance`. Terms use
+// construction sites and field selectors.
+// Sources include proc, param, result, name, self, obj, load, reply, and dict.
+// Parameters merge possible callers, except unchanged returned parameters are resolved
+// from each call's own argument. Only terms containing a process/table leaf are
+// followed.
+// Run once in points_to.dl and expose results through staged_processes.dl. Sends and
+// signals have separate consumer views. In bounded mode, pervasive.dl resolves
+// widespread leaves coarsely; exact mode excludes none.
+// Requires imports, behaviours, callbacks, process_statem, and runs_elsewhere, with
+// pervasive.dl included alongside it.
 
 // ── Processes ───────────────────────────────────────────────────────
 
-// A process running a module's callbacks: started by a start call in the
-// program (a GenServer start, or a supervisor's start_child), or a
-// GenServer a supervisor's child spec names, whose own start the program
-// may not spell out (`start: {GenServer, :start_link, [Mod, arg]}`).
+// A process running a module's callbacks, identified by an explicit start or a
+// supervisor child spec. The spec can identify the callback module even when its own
+// start call is not visible.
 .decl server_process(proc: symbol, mod: symbol)
 
 server_process(p, m) :- process_start(_, _, p, "server", m).
@@ -79,20 +25,13 @@ server_process(cat("child ", cat(s, cat("#", to_string(pos)))), m) :-
   supervisor_child(s, pos, m, _, _),
   behaves_as(m, "GenServer").
 
-// ── Instances ───────────────────────────────────────────────────────
+// Factory instances
 //
-// `def start_link(arg), do: GenServer.start_link(__MODULE__, arg)` starts
-// a new process each time it is called: its supervisor's call is one, a
-// module's private `{:ok, conn} = Conn.start_link()` another. Named by
-// the start site alone, the two were one process, and a private
-// connection looked like the supervised sibling. So the value a factory
-// returns — its own start's `{:ok, pid}` or bare pid, or its callee's,
-// passed straight up — is renamed at each call that keeps it rather than
-// returning it again: the object "result <site>" whose field {1} is the
-// process "start <site>". A child spec's child is the process its
-// module's start_link/1 returns. Every process keeps its start site as
-// its base; the base itself stands for a start the program does not see
-// the caller of.
+// A process factory's returned pid is renamed at each call that retains it,
+// distinguishing private instances from supervised siblings. Wrapped results use
+// `result <site>` and `start <site>` identities; child specs receive their own
+// instance. `instance` retains the original allocation as base, which also represents
+// unseen callers.
 .decl start_object(obj: symbol, proc: symbol)
 
 start_object(t, b) :-
@@ -156,16 +95,9 @@ private_process(b, f, id) :-
 process(p) :- instance(p, _).
 process(p) :- server_process(p, _).
 
-// ── What a source points to ─────────────────────────────────────────
-//
-// The recursive rules carry `.plan`s that start each semi-naive version
-// from its new tuples. In source order Souffle scanned all of pid_arg,
-// pid_load or pid_return on every iteration to probe a few new
-// source_pts rows: over a 751-module deps tree, most of each OTP
-// analysis's solve. A join of a static relation with source_pts that a
-// second recursive atom then extends (a load's base, an update's base)
-// is named once (load_base, update_base) so a new field of a term meets
-// the loads of that term, not every load.
+// Recursive join plans start from newly derived tuples rather than rescanning static
+// arguments, loads, and returns. `load_base` and `update_base` factor joins so new
+// fields meet only the relevant operations.
 
 // A parameter, a callee's result, a term's field: each may point to a
 // process or to a term.
@@ -194,10 +126,9 @@ reads_name(f, n) :- pid_signal(_, f, _, "name", n).
 
 source_pts(f, "proc", p, p) :- process_start(_, f, p, _, _), !pervasive(p).
 
-// A term is an object once it holds a leaf: a field of it points to one,
-// or to a term that does. Only then can a use reach a leaf through it,
-// so only then is it followed; field_pts only ever holds leaves and such
-// terms, so any row of it says the term holds a leaf.
+// Follow only terms containing a process or table leaf, directly or through another
+// term. Every field_pts row points to a leaf or such a term, so it also proves that its
+// containing term is relevant.
 source_pts(f, "obj", o, o) :- pid_object(f, o, _, _, _), holds_leaf(o).
 .plan 0:(2,1)
 
@@ -236,22 +167,19 @@ source_pts(f, "name", n, p) :- reads_name(f, n), named_pid(n, p), !pervasive(p).
 source_pts(f, "dict", k, x) :- dict_read(f, k, g, sk, s), source_pts(g, sk, s, x).
 .plan 0:(2,1)
 
-// A callee that hands back what the dictionary holds under a key returns,
-// at each call, what the caller's process holds there (see "The process
-// dictionary" below).
+// A helper returning a dictionary entry returns the value held by the caller's process
+// at that call.
 source_pts(f, "result", c, x) :- pid_result(c, f, g), returns_key(g, k), source_pts(f, "dict", k, x).
 .plan 0:(3,1,2)
 source_pts(f, "self", "self", p) :- self_pid(f, p), !pervasive(p).
 
-// An ETS table is an object too, allocated by the :ets.new/2 that made
-// it (clientlib/tables.dl asks where it goes). Named "table <site>", so
-// it is never a process nor a term a field is read out of: a leaf of
-// every relation below.
+// ETS tables are allocation leaves named "table <site>". They are neither processes nor
+// field-bearing terms. tables.dl uses these identities to track tables allocated by
+// :ets.new/2.
 source_pts(f, "table", t, t) :- table_alloc(_, f, t), !pervasive(t).
 
-// A GenServer.call returns the server's reply: the second field of a
-// `{:reply, reply, state}` its handle_call/3 returns. Every reply of the
-// server, whichever clause the message reaches.
+// GenServer.call may return the reply field of any {:reply, reply, state} from the
+// server's handle_call/3, without filtering by request clause.
 source_pts(f, "reply", id, x) :-
   message_target(id, f, "call", p),
   server_process(p, m),
@@ -264,18 +192,16 @@ source_pts(f, "reply", id, x) :-
 source_pts(f, "load", l, x) :- load_base(f, l, sel, o), reads_field(o, sel, x).
 .plan 1:(2,1)
 
-// The term a load reads its field from. Named once, so that a new field
-// of a term joins the loads of that term, not every load in the program.
+// Index field loads by their source term, so new field facts join only that term's
+// loads.
 .decl load_base(func: symbol, load: symbol, sel: symbol, obj: symbol)
 
 load_base(f, l, sel, o) :- pid_load(f, l, sel, bk, bs), source_pts(f, bk, bs, o).
 .plan 0:(2,1)
 
-// What a read of field `sel` of `obj` may see: the field, and in a map a
-// field written under a key not known, which may be any key. A read by a
-// key not known sees only the latter: taking every field would make
-// `Map.get(struct, key)` every pid the struct holds. Derived only for the
-// reads the program makes (field_read), never for every term and selector.
+// A field read sees the named field and unknown-key writes. Unknown-key reads see only
+// unknown-key writes, avoiding merges of every struct field. Derive results only for
+// selectors the program reads.
 .decl reads_field(obj: symbol, sel: symbol, x: symbol)
 .decl field_read(obj: symbol, sel: symbol)
 
@@ -314,17 +240,11 @@ field_pts(o, sel, x) :- update_base(o, b), field_pts(b, sel, x), !pid_sets(o, se
 update_base(o, b) :- pid_base(f, o, bk, bs), source_pts(f, bk, bs, b).
 .plan 0:(2,1)
 
-// ── Returns ─────────────────────────────────────────────────────────
+// Fresh returns
 //
-// What a function returns, apart from the parameters it hands back as
-// they came (`passes`): the values its callers get whoever called it.
-// A parameter handed back is the caller's own argument (the result rule
-// above), so it is kept out of here — merged here, a helper such as
-// `def set(x), do: x` gave every caller's argument to every caller. A
-// callee's result the function returns in turn is split the same way:
-// the callee's own returns, and of what it hands back, the argument this
-// function passed it unless that is one of its parameters, which it then
-// hands back itself.
+// Keep unchanged returned parameters in `passes`, resolving them against each caller's
+// argument. `returns_pts` contains other values. Split forwarded callee results the
+// same way to avoid mixing one caller's argument into every other's result.
 returns_pts(g, x) :-
   pid_return(g, k, s),
   k != "param",
@@ -361,9 +281,8 @@ passes(g, j) :-
   passes(h, i),
   pid_arg(c, g, h, i, "call", "param", j).
 
-// Everything a function returns, the parameters it hands back included:
-// what the process machinery gets back from a callback, which no call in
-// the program passed its arguments.
+// All returned values, including forwarded parameters. This also models callback
+// results whose arguments are supplied by the runtime.
 .decl returns_all(func: symbol, x: symbol)
 
 returns_all(g, x) :- returns_pts(g, x).
@@ -371,19 +290,17 @@ returns_all(g, x) :- passes(g, j), param_pts(g, j, x).
 .plan 0:(2,1)
 returns_all(g, x) :- returns_key(g, k), source_pts(g, "dict", k, x).
 
-// A parameter is filled by the process that runs the function as an
-// entry — a server start's init argument, a spawned function's arguments,
-// a child spec's argument, a closure's environment, and (below) a
-// callback's state and message — or by a caller. Both are in param_pts;
-// entry_pts holds the first kind alone, which is all a callback's or a
-// spawned function's own calls can be resolved against.
+// `entry_pts` contains runtime-supplied arguments: init, spawn, child-spec, closure
+// captures, callback state, and messages. `param_pts` also includes ordinary callers.
+// Resolve callback and spawned-body uses against entry arguments rather than lifting
+// them to runtime machinery.
 .decl entry_pts(func: symbol, pos: symbol, x: symbol)
 
 entry_pts(g, k, x) :- entry_arg(f, g, k, sk, s), source_pts(f, sk, s, x).
 .plan 0:(2,1)
 
-// The arguments a process's start hands its entry: the few pid_arg rows
-// that are not calls, apart, so the rule above does not probe them all.
+// Process-start arguments passed to entry functions. Keep these non-call pid_arg rows
+// separate from ordinary call arguments.
 .decl entry_arg(caller: symbol, func: symbol, pos: symbol, src_kind: symbol, src: symbol)
 
 entry_arg(f, g, k, sk, s) :- pid_arg(_, f, g, k, via, sk, s), via != "call".
@@ -405,10 +322,8 @@ named_pid(n, cat("child ", cat(s, cat("#", to_string(pos))))) :-
   supervisor_child(s, pos, m, _, _),
   behaves_as(m, "GenServer").
 
-// The module-level guess, for a name nothing above resolves:
-// named_process says a module's process is registered under the name
-// (ProcessRegistry assumes `Process.register(pid, n)` registers the
-// caller's own module, which a registration of another pid is not).
+// Fallback to named_process for unresolved names. Its module-level assumption can
+// misattribute Process.register calls that register another process's PID.
 .decl resolved_name(name: symbol)
 
 resolved_name(n) :- pid_register(_, _, n, _, _).
@@ -419,45 +334,17 @@ named_pid(n, p) :-
   !resolved_name(n),
   server_process(p, mod).
 
-// ── The process dictionary ──────────────────────────────────────────
+// Process-dictionary points-to
 //
-// Each process has a dictionary of its own: `put(key, value)` keeps a
-// value there and a later `get(key)` in the same process reads it back
-// (dict_op, dict_put; `erase/1` hands it back too). So a value is a heap
-// field keyed by the literal key, like a registered name, except that
-// only the process that put it can read it. A `dict` source of `key` in
-// `func` points to what every put of `key` in a function the same
-// process may run points to.
-//
-// Which functions one process runs is approximated from the call graph,
-// on each process's own stack (runs_elsewhere cut, as SameProcessReach):
-// a put and a read share a dictionary when some function reaches both
-// (validate/1 calls create_tmp_config/0, which puts, and set_option/2,
-// which reads), or when both are reached from callbacks of one module
-// (a server's init/1 puts, its handle_call/3 reads). What that leaves
-// out and adds:
-//
-// - Order is not asked: a put the process makes only after the read
-//   counts, and so does a put an erase undoes (a MAY word: the value may
-//   be there). The dictionary words over order are dictionary.dl's.
-// - Two processes running the same code share its puts: a helper both
-//   of two servers' callbacks call reads what either's callbacks put,
-//   as a context-insensitive parameter holds every caller's value.
-// - A function outside the program that puts (a dependency's
-//   `Logger.metadata/1`), a key computed at run time, and a put through
-//   `apply` are not followed: the read points to nothing, and the rules
-//   on it stay quiet.
-// - A put in a function no function of the program reaches along with
-//   the read (each an API an outside caller calls in turn, in its own
-//   process) is not connected: the program does not show one caller.
+// A literal-key read may see puts from functions sharing a same-process caller or
+// callbacks of one module. Order and erases are ignored here; dictionary.dl handles
+// ordering. Shared code can merge different processes' values.
+// External puts, computed keys, applies, and separate APIs used sequentially by an
+// unseen caller are not connected.
 
-// A function returning what the dictionary holds under a key returns
-// it at each call, in the caller's process: a helper such as
-// `defp table, do: Process.get(:table)`, which both a server's callbacks
-// and its API functions call, reads the server's put in the callbacks
-// and nothing in the API's callers. So the value is not one of the
-// helper's returns (returns_pts), and `returns_key` lifts it, like a
-// parameter it hands back (passes), to each call.
+// A helper returning a dictionary key is resolved at each call in the caller's process,
+// like a forwarded parameter. Keep it out of shared `returns_pts` so server and
+// external callers do not inherit each other's dictionary values.
 .decl returns_key(func: symbol, key: symbol)
 
 returns_key(g, k) :- pid_return(g, "dict", k).
@@ -489,17 +376,15 @@ reads_dict(f, k) :- table_use(_, f, "dict", k).
 reads_dict(f, k) :- dict_put(_, f, _, "dict", k).
 reads_dict(f, k) :- pid_result(_, f, g), returns_key(g, k).
 
-// The functions a process's own stack reaches a dictionary read or put
-// from: seeded at the functions holding a read of a key some function
-// puts, and a put of a key some function reads.
+// Seed same-process dictionary reachability from reads and writes whose keys have a
+// corresponding write or read elsewhere.
 .init dict_stack = SameProcessReach
 
 dict_stack.seed(f, f) :- reads_dict(f, k), dict_put(_, _, k, _, _).
 dict_stack.seed(g, g) :- dict_put(_, g, k, _, _), reads_dict(_, k).
 
-// `func` and `other` may run in one process, as far as their dictionaries
-// go: some function reaches both on its own stack, or callbacks of one
-// module do.
+// `func` and other may share a process dictionary if one stack reaches both or they are
+// callbacks of the same module.
 .decl shares_dictionary(func: symbol, other: symbol)
 
 shares_dictionary(f, g) :-
@@ -518,14 +403,9 @@ shares_dictionary(f, g) :-
 
 // ── Who runs a function ─────────────────────────────────────────────
 
-// self() in a server's callbacks (process_entry: its callbacks, init/1,
-// terminate/2) is that server; in a spawned function, that spawn; and in
-// a function either calls, the same process: a callback's helper, a
-// client API a callback calls, or a closure handed to Enum.map runs on
-// the caller's stack. What a start runs is not followed (runs_elsewhere:
-// a task's closure is the task's), nor a fun registered or kept to run
-// later (a :telemetry handler runs in the emitter), and only functions on
-// the way to a self() are, so the relation stays the size of its use.
+// self() resolves to the server or spawned process running the function and propagates
+// along its own stack. Exclude spawned, stored, or deferred fun execution. Traverse
+// only paths leading to a self() use.
 .decl self_pid(func: symbol, proc: symbol)
 
 self_pid(f, p) :- process_entry(m, f), server_process(p, m).
@@ -536,9 +416,8 @@ self_pid(g, p) :-
   same_process_call(f, g),
   self_relevant(g).
 
-// A call that runs the callee on the caller's stack: not the creation of
-// a closure, nor a fun handed to a call (fun_ref), that a start runs
-// elsewhere, which call_edge also counts.
+// Call edges that execute on the caller's stack. Exclude closure creation and function
+// arguments started elsewhere.
 .decl same_process_call(caller: symbol, callee: symbol)
 
 same_process_call(f, g) :- call_edge(f, g), !runs_elsewhere(f, g).
@@ -561,11 +440,9 @@ self_relevant(f) :- same_process_call(f, g), self_relevant(g).
 
 // ── A GenServer's state ─────────────────────────────────────────────
 
-// What init/1 and the handlers return becomes the state the next handler
-// (or terminate/2) is called with: the field of the returned tuple its
-// tag puts the state in — {:ok, state}, {:reply, reply, state},
-// {:noreply, state}, {:stop, reason, state}, {:stop, reason, reply,
-// state}, each with its optional trailing timeout or continue.
+// Callback return tuples supply the state for the next handler or terminate/2. Select
+// the state field from ok, reply, noreply and stop tuples, including forms with
+// trailing timeout or continue values.
 .decl state_out(mod: symbol, func: symbol)
 .decl state_in(mod: symbol, func: symbol, pos: symbol)
 .decl state_slot(tag: symbol, arity: symbol, sel: symbol)
@@ -603,22 +480,13 @@ entry_pts(f, k, x) :- state_in(m, f, k), state_pts(m, x).
 
 // ── What the pids reach ─────────────────────────────────────────────
 
-// Context-insensitive parameters make a shared helper the meeting point
-// of every caller's pid: `def safe_call(pid, msg), do: GenServer.call(pid,
-// msg)` would call every server any caller hands it, and every caller of
-// it would reach all of them. So a call whose target is a parameter is not
-// resolved in the helper; it is a summary — "this function's parameter k
-// (or its field sel) becomes the target of the call at `site`" — lifted
-// to each caller, where the pid is known, and the dependency is the
-// caller's, anchored at its call into the helper. The summaries are
-// finite (functions × parameters × sites), so the lifting follows any
-// depth of helpers without a bound; a field of a field of a parameter
-// falls back to the context-insensitive parameter.
+// Parameter-based process targets
 //
-// Only a caller's own parameter lifts further; a callback's state and
-// message, a spawned function's and init/1's arguments and a closure's
-// environment are resolved where they are (entry_pts), since their
-// "caller" is the process machinery, which waits on nothing.
+// Summarize target parameters or their immediate fields and resolve them at each
+// caller, preserving caller-specific dependencies and anchors. Summaries support
+// arbitrary helper depth; nested fields fall back to context-insensitive resolution.
+// Runtime entry arguments use `entry_pts` locally because process machinery is not a
+// waiting caller.
 .decl targets_param(func: symbol, pos: symbol, api_kind: symbol, site: symbol)
 .decl targets_field(func: symbol, pos: symbol, sel: symbol, api_kind: symbol, site: symbol)
 
@@ -657,13 +525,10 @@ source_field_pts(f, sk, s, sel, x) :-
   source_pts(f, sk, s, o),
   reads_field(o, sel, x).
 
-// `func` waits on (call), casts to (cast), sends to (info), signals an
-// exit to (exit), monitors (monitor), links to (link) or unlinks from
-// (unlink) `proc`: through the use at `site`, which is in `func` itself
-// or in a helper `func` hands the pid to at `anchor` (the site a finding
-// about `func` points at). `anchor` = `site` when the use is `func`'s own.
-// The stage hands the calls, casts and sends on as process_call and the
-// signals as process_signal; signals.dl puts them back together.
+// A call, cast, send, exit, monitor, link, or unlink targeting proc. `site` is the
+// actual use; `anchor` is func's call into a helper, or the site itself. The stage
+// exports calls/casts/sends as process_call and signals as process_signal; signals.dl
+// combines them.
 .decl process_call(func: symbol, anchor: symbol, site: symbol, api_kind: symbol, proc: symbol)
 
 // A target `func` resolves itself.
@@ -743,16 +608,14 @@ call_site_target(id, g, kind, p) :-
   process_call(_, _, id, kind, p),
   pid_call(id, g, kind, _, _).
 
-// Where the message of a call, cast or send, and a call's reply, go: its
-// targets (and when the stage runs bounded, a pervasive one's as the
-// coarse pass resolves it, clientlib/pervasive.dl).
+// Resolve destinations of call/cast/send messages and call replies. Bounded staging may
+// use coarse targets for pervasive sources; see pervasive.dl.
 .decl message_target(id: symbol, func: symbol, api_kind: symbol, proc: symbol)
 
 message_target(id, g, kind, p) :- call_site_target(id, g, kind, p).
 
-// A synchronous call that is provably to the calling process itself — to
-// self(), or to a name only the caller's module's processes hold, from
-// that module's own process — which gen exits with `calling_self`.
+// A synchronous call provably targets its own process, by self() or a name held
+// exclusively by that module's servers. gen exits with calling_self.
 .decl self_call(func: symbol, site: symbol)
 
 self_call(f, id) :- pid_call(id, f, "call", "self", "self").
@@ -779,10 +642,8 @@ self_call(f, id) :-
 
 // ── Messages ────────────────────────────────────────────────────────
 
-// A call, cast or send delivers its message to the handler of the server
-// its target resolves to, as that handler's first parameter: how
-// `Hub.subscribe(self())` puts a subscriber's pid into the hub's state.
-// The message and the target are the same site's.
+// A call, cast or send passes its message to the resolved server handler's first
+// parameter. Match the message and target from the same call site.
 .decl message_handler(api_kind: symbol, name: symbol, arity: number)
 
 message_handler("call", "handle_call", 3).
@@ -797,14 +658,9 @@ entry_pts(h, "0", x) :-
   message_handler(kind, name, arity),
   function_def(h, m, name, arity, _).
 
-// ── A gen_statem's data ─────────────────────────────────────────────
-//
-// What init/1 and the state functions return becomes the data the next
-// state function (or terminate/3) is called with: the field of the
-// returned tuple its tag puts the data in — {:ok, state, data},
-// {:next_state, state, data}, {:keep_state, data}, {:repeat_state,
-// data}, {:stop, reason, data}, {:stop_and_reply, reason, replies,
-// data}, each with its optional actions.
+// gen_statem data flow. Return tuples supply data for the next state function or
+// terminate/3. Handle ok, next_state, keep_state, repeat_state, stop and stop_and_reply
+// forms, including optional actions.
 .decl statem_data_slot(tag: symbol, arity: symbol, sel: symbol)
 
 statem_data_slot(":ok", "3", "{2}").

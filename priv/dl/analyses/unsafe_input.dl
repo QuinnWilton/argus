@@ -1,43 +1,13 @@
-// Attacker-shaped data reaching a sink.
-//
-// Four sinks matter on the BEAM: atom creation (the atom table is
-// fixed-size and never collected, so distinct attacker-supplied values
-// kill the node), deserialization (binary_to_term materializes funs,
-// ports and references), one-shot decompression (the whole output of an
-// input with no size bound: a few hundred bytes of gzip inflate to
-// gigabytes) and code execution. One relation, with the
-// proximity to a request surface as a column, says how exposed each
-// sink is:
-//
-//   direct      the sink is in a request-handling callback, operating
-//               on the callback's own arguments — which ARE the request
-//   adjacent    one call away: the callback passed something to it
-//   transitive  anywhere else in the callback's cone — a path, not a
-//               proven flow
-//   flow        request DATA reaches the sink's argument: one of the
-//               entry's request-carrying parameters, through
-//               destructuring, string building and forwarding — a
-//               proven flow, whatever the distance
-//
-// Reachability is not taint. Verified the hard way on sequin, where
-// every transitive hit sourced its input from Postgres or Redis rather
-// than the request, reached only because a LiveView happens to load
-// those records. A sink inside the callback is another matter. The flow
-// proximity is the answer to that: the per-function summaries
-// (call_arg_derived, sink_arg_derived) are computed from reaching
-// definitions in Elixir, and Souffle only chains them backward from the
-// sink. A flow the summaries cannot see — a value laundered through a
-// local helper's return, an element handed to a closure — stays a path,
-// so the absence of a flow row is not evidence the data comes from
-// elsewhere.
-//
-// A sink no request reaches is reported once, on its own: code
-// execution when some exported function reaches it (in a library that is
-// very nearly everything, so this is "is this code live", not "can an
-// attacker reach it"), atom creation when what a caller hands in reaches
-// its argument (caller_input, below), and every deserialization without
-// :safe, since the caller's input is the question. Entry points are identified by OTP behaviour plus callback
-// name/arity, which is exactly the information beam attributes carry.
+// Unsafe atom creation, deserialization, decompression, and code execution reachable
+// from requests. Evidence distinguishes direct/adjacent/transitive call paths from
+// proven argument flow (`flow`). Reachability alone does not establish
+// attacker-controlled data.
+// Flow chains per-function argument summaries backward from sinks. Missing flow
+// evidence may reflect unsupported returns, captures, or stored state; it does not
+// prove safe input.
+// Outside request paths, report live code-execution sinks, atom creation from external
+// caller parameters, and deserialization without :safe. Export reach establishes
+// liveness, not attacker access. Request entries use behaviour and callback signatures.
 
 .include "../clientlib/imports.dl"
 .include "../clientlib/behaviours.dl"
@@ -53,22 +23,17 @@
 
 // ── A sink a request reaches ─────────────────────────────────────
 
-// A request reaches a call that makes an atom, deserializes, decompresses
-// or runs code on input the program does not bound: the request's data
-// flows into its argument, a view renders it from a template's assigns,
-// or it is on the calls a request handler makes.
+// An unbounded sink reached through request-data flow, template assigns, or a
+// request-handler call path.
 .decl request_reached_sink(id: symbol, func: symbol, entry: symbol, kind: symbol, evidence: symbol)
 
 request_reached_sink(id, func, entry, kind, evidence) :-
   sink(id, func, _, _, _),
   reached_by_request(id, func, entry, kind, evidence).
 
-// A call that makes an atom, deserializes, decompresses or runs code, on
-// input the program does not bound, once per call in the source.
-// `safety` is the deserialization's option class — unsafe, atoms_only
-// ([:safe] passed: no new atoms, but a fun referencing a loaded module
-// still runs when the term is used) or dynamic — and empty for the other
-// sinks. It reaches the finding so the text can say which.
+// One unbounded sink per source call. Deserialization `safety` is unsafe, atoms_only
+// ([:safe], preventing new atoms but not unsafe use of decoded terms), or dynamic.
+// Other sink kinds leave it empty.
 .decl sink(id: symbol, func: symbol, api: symbol, kind: symbol, safety: symbol)
 
 sink(id, func, api, kind, safety) :-
@@ -76,10 +41,9 @@ sink(id, func, api, kind, safety) :-
   !bounded_sink_input(id, func, kind),
   !repeated_site(id).
 
-// Every site of the four sinks, bounded or not: the flow walk (below)
-// starts at each, since whether an atoms-of-atoms bound holds asks
-// whether request data reaches the site. A deserialization is one only
-// in the option classes that can make atoms or funs.
+// Seed flow at all four sink kinds, including bounded candidates, because request reach
+// can invalidate an existing-atom bound. Include only deserialization classes capable
+// of creating atoms or funs.
 .decl sink_call(id: symbol, func: symbol, api: symbol, kind: symbol, safety: symbol)
 
 sink_call(id, func, api, "atom", "") :- unsafe_atom_creation(id, func, api).
@@ -90,12 +54,9 @@ sink_call(id, func, api, "deserialization", safety) :-
   unsafe_deserialization(id, func, api, safety),
   unsafe_safety_class(safety).
 
-// The program bounds the input of an atom or deserialization sink
-// (bounded_input). A code sink's module may be bounded while its function
-// is not, and a one-shot decompression's input has no bound the program
-// can write: a literal compressed blob is not a shape anyone
-// decompresses, so no allowlist quiets it. What bounds a decompression is
-// the streaming form, which is not a sink.
+// Apply allowlist suppression to atom and deserialization arguments only. A bounded
+// code module does not bound its function, and decompression size safety requires
+// streaming APIs, excluded from sinks.
 .decl bounded_sink_input(id: symbol, func: symbol, kind: symbol)
 
 bounded_sink_input(id, func, "atom") :- sink_call(id, func, _, "atom", _), bounded_input(id, func).
@@ -110,19 +71,11 @@ bounded_sink_input(id, func, "deserialization") :-
 
 sink_data_arg(id, func, pos) :- unsafe_decompression(id, func, _, pos).
 
-// ── Input the program bounds ─────────────────────────────────────
+// Bounded sink input
 //
-// A sink whose argument is one of a set the program wrote, on every path
-// to it — compared equal to a literal in a clause head, a guard's `in` or
-// a case arm, or found in a literal list on the branch where it holds
-// (sink_arg_bounded) — takes no attacker's input, however that input was
-// derived: logflare's `handle_event(dir, ...) when dir in ["backwards",
-// "forwards"]` makes one of two atoms. A membership test against a list
-// the function takes as a parameter bounds it where every caller passes
-// a literal list (call_arg_allowlist): hexpm's `safe_to_atom(bin,
-// allowed)`, called with `@sort_params`. Only the argument at position 0
-// is asked, the one an atom or a deserialization sink reads
-// (bounded_sink_input).
+// Suppress arguments restricted on every path to program-defined values. A parameter
+// allowlist qualifies only when every caller passes a literal list. Check argument 0,
+// used by atom and deserialization sinks (`bounded_sink_input`).
 .decl bounded_input(id: symbol, func: symbol)
 
 bounded_input(id, f) :- sink_arg_bounded(id, f, 0, "").
@@ -154,35 +107,13 @@ unlisted_caller(f, q) :-
 
 allowlist_at(c, f, to_string(n)) :- call_arg_allowlist(c, f, n).
 
-// ── Atoms made of atoms ──────────────────────────────────────────
+// Atoms derived from existing atoms
 //
-// An atom made of an atom that exists and of literals (`:"#{name}_id"`,
-// `list_to_atom(atom_to_list(Tab) ++ "_sup")`, sink_arg_bounded's
-// "atoms") is one per atom its callers hand in: a library's pool and
-// table names, the program's own. That count is only a bound while the
-// atoms that exist are not the caller's to choose, and the site's own
-// atoms are among them the moment it makes one. They are the caller's
-// choice:
-//
-// - when an existing atom's lookup made the atom (sink_arg_chosen, or
-//   call_arg_chosen at a call whose argument reaches the site): a
-//   caller sends "name", then "name_desc" — the atom the first request
-//   made — then "name_desc_desc", one new atom per request;
-// - when a request reaches the site at all: a request carries strings,
-//   and an atom made of one is a lookup's or a sink's, here or before
-//   the value was kept in a process's state, which the flow does not
-//   follow;
-// - when the site's atoms come back to it: a function on a cycle of the
-//   call graph (a recursion naming each child after its parent; not the
-//   loop a comprehension compiles to, which walks its list), or the fun a
-//   fold runs. Known limit: a fold's closure calling the maker hands its
-//   answer back unseen (`Enum.reduce(1..n, base, fn _, a ->
-//   :"#{a}.child" end)`, each answer the next call's argument).
-//
-// A process that keeps the atom it made in its state and makes the next
-// of it is the last shape, through the runtime: its callbacks take their
-// state from the program, not from a caller (runtime_callback), and it
-// is not reported with or without the bound.
+// Existing-atom input bounds creation only if callers cannot choose or recycle those
+// atoms. Reject the bound for existing-atom lookups, any request reach, call-graph
+// feedback, or fold closures. Comprehension self-loops are excluded from feedback.
+// Limits: a fold calling an atom-making helper can hide feedback; callback state is not
+// traced and runtime-only state-derived atoms are not reported as external input.
 .decl atoms_chosen(id: symbol)
 
 atoms_chosen(id) :- sink_arg_bounded(id, f, 0, "atoms"), sink_arg_chosen(id, f, 0).
@@ -215,11 +146,8 @@ atoms_fed_back(f) :-
 
 atoms_fed_back(f) :- fold_closure(f), sink_arg_bounded(_, f, 0, "atoms").
 
-// The edge an Erlang comprehension's function makes to itself, walking
-// its list: the loop the comprehension compiles to, not a way back. A
-// comprehension whose body calls a function that reaches it again
-// (`[{N, names(N, Sub)} || ...]`, each level's atom the next level's
-// parent) is on a cycle through that function all the same.
+// Exclude an Erlang comprehension's list-walking self-edge from atom feedback. A cycle
+// through another atom-making function still counts.
 .decl comprehension_loop(func: symbol, callee: symbol)
 
 comprehension_loop(f, f) :-
@@ -254,9 +182,8 @@ fold_api(":lists", "mapfoldl").
 fold_api(":lists", "mapfoldr").
 fold_api(":maps", "fold").
 
-// A copy of an earlier sink site: the compiler duplicated the code that
-// holds it (a body shared by two clause heads), and the source has one
-// call. The copy is reported as the first, once.
+// Compiler-duplicated sinks from one source call are reported once, anchored at the
+// first copy.
 .decl repeated_site(id: symbol)
 
 repeated_site(id) :- sink_copy(id, _, first), !bounded_first(first).
@@ -268,14 +195,9 @@ bounded_first(first) :- sink_copy(_, f, first), bounded_input(first, f).
 
 // ── Reachability from a request surface ──────────────────────────
 
-// How a request reaches the sink at `id` in `func`, strongest evidence
-// first: its data flows into the sink's argument ("flow"), else a view
-// renders the sink from a template's assigns ("rendered"; only the call
-// that reaches the view's dispatch is on its path, so it replaces the
-// path rows, as a flow does), else the sink is on the calls a request
-// handler makes, graded by how far (request_reaches). One evidence per
-// sink: the analysis module dedupes on the site, keeping the
-// lexicographically least row, and "adjacent" sorts before "flow".
+// Choose the strongest evidence per sink: proven `flow`, then template `rendered` flow,
+// then graded call-path reach. Weaker rows must be excluded before lexicographic
+// deduplication, where adjacent would otherwise sort before flow.
 .decl reached_by_request(id: symbol, func: symbol, entry: symbol, kind: symbol, evidence: symbol)
 
 reached_by_request(id, func, entry, kind, "flow") :-
@@ -294,9 +216,8 @@ reached_by_request(id, func, entry, kind, proximity) :-
   !request_data_reaches(id, _, _),
   !rendered_from_assigns(id).
 
-// A request entry reaches `func` on its calls: `func` is the entry
-// ("direct", its arguments ARE the request), one call away ("adjacent"),
-// or further ("transitive": a path, not a proven flow).
+// Reachability from a request entry: direct at the entry, adjacent one call away, or
+// transitive further away. Transitive reachability does not prove data flow.
 .decl request_reaches(entry: symbol, kind: symbol, func: symbol, proximity: symbol)
 
 request_reaches(entry, kind, entry, "direct") :-
@@ -306,9 +227,8 @@ request_reaches(entry, kind, callee, "adjacent") :-
   request_entry(entry, kind),
   call_edge(entry, callee).
 
-// Only a function holding a sink is asked about, so the walk runs back
-// from those to the entries rather than forward from every entry over
-// everything it calls.
+// Walk backward from sink functions to request entries, avoiding unrelated code
+// reachable from those entries.
 .init sink_func_reach = CallReach
 
 sink_func_reach.seed(func, func) :- sink(_, func, _, _, _).
@@ -324,17 +244,10 @@ request_reaches(entry, kind, func, "transitive") :-
 // Backward from each sink's argument over call_arg_derived to a request
 // entry, then only the parameters that carry the request count.
 
-// ParamReach's walk, with one edge read by name: a view's dispatch on
-// the template's name (Phoenix.Template's render_template/2, a clause per
-// template, which render/2 calls) reaches every template, so a
-// controller rendering "token.json" would flow into "_scopes.html"
-// through it. The walk crosses a dispatch only to a render that names
-// the template it came from, as a literal (`render("_scopes.html",
-// assigns)`), through the functions that hand the name down (render/2 to
-// render_template/2). Any other caller of a template — the one clause of
-// a view with one template, a helper calling it directly — hands it its
-// assigns as any call does. What a template's assigns carry otherwise is
-// `rendered` (below), whichever controller put it there.
+// Parameter flow with template-sensitive dispatch. Cross a template dispatcher only
+// toward a template named by the incoming literal, following wrappers that forward the
+// name. Direct template calls propagate assigns normally. Other assigns-derived input
+// is classified as `rendered`.
 .decl sink_flow_seed(func: symbol, pos: number, target: symbol)
 .decl sink_flow_reaches(func: symbol, pos: number, target: symbol)
 
@@ -361,9 +274,8 @@ template_dispatch(f) :-
   template_function(t2),
   t1 != t2.
 
-// The assigns reach f's parameter `ap` for the template called `name`,
-// and f's parameter `np` must name it: the dispatch's two parameters
-// (template, assigns), and each function that hands both down.
+// Template name and assigns travel together through parameters np and ap. Follow
+// functions that forward both to the template dispatcher.
 .decl named_flow(func: symbol, ap: number, np: number, target: symbol, name: symbol)
 
 named_flow(f, ap, 1 - ap, t, name) :-
@@ -403,23 +315,12 @@ request_data_reaches(id, entry, kind) :-
   request_param(entry, pos),
   request_entry(entry, kind).
 
-// ── Rendered from a template's assigns ───────────────────────────
+// Template assigns reaching sinks
 //
-// A Phoenix template compiles to a function of its assigns
-// (`"_scopes.html"(assigns)`, Phoenix.Template's `name.format` naming),
-// rendered once per request with what the controller put there: the
-// request's params, and the records the request looked up. A sink whose
-// argument is made of the template's assigns makes a value per request
-// that no program text fixes, from data the request chose — its own, or a
-// row it asked for by id. akkoma's OAuth authorize page makes an atom of
-// each scope of the app named by `client_id`, and any client registers
-// an app with scopes of its choosing (POST /api/v1/apps, no
-// authentication): one atom per scope an attacker stores, for every
-// visitor. The render itself reaches the template only through Phoenix's
-// dispatch, which the call graph does not follow, so the path found is
-// whichever call reaches the view's render/2; the flow from assigns is
-// what makes it the request's. A flow from a request entry's own
-// parameters stays `flow`.
+// A compiled Phoenix template takes assigns containing request data or records selected
+// by the request. Track assigns-derived sink arguments even when the call graph reaches
+// only the view dispatcher. Direct request-parameter flow retains the stronger `flow`
+// evidence.
 .decl template_function(func: symbol)
 
 template_function(f) :-
@@ -433,12 +334,10 @@ rendered_from_assigns(id) :-
   template_function(t),
   sink_flow_reaches(t, 0, id).
 
-// ── Findings ─────────────────────────────────────────────────────
+// Finding anchors
 //
-// Anchored at the sink's call site, because that is where the fix
-// goes, with one reaching entry point so the report can show the path
-// is real. A sink reachable from several entries is one finding: the
-// analysis module dedupes on the site.
+// Anchor at the sink and retain one reaching entry as evidence. Multiple entry paths
+// produce one finding per sink site.
 
 // Each sink a request reaches, with what its function reads when the
 // evidence is a path (graded_by_reads).
@@ -450,12 +349,9 @@ sink_reachable(id, func, api, s, entry, kind, evidence, source, p, safety) :-
   sink(id, func, api, s, safety),
   graded_by_reads(func, evidence, source, p).
 
-// What the sink's own function reads, when priors are on (Argus.Priors;
-// off by default): a path row to a helper that converts a stored record
-// is the sequin shape — real as a path, storage as data — and the
-// finding says so at a step lower severity. A proven flow, or a render
-// from assigns, needs no prior and is not graded. 0.7 is where the
-// calibration spike measured 95% precision.
+// With priors enabled, lower severity of path-only findings when the sink function is
+// classified as reading stored data at confidence at least 0.7. Proven flow and
+// rendered-assigns evidence are not regraded.
 .decl graded_by_reads(func: symbol, evidence: symbol, source: symbol, permille: number)
 
 graded_by_reads(func, evidence, "", 0) :-
@@ -488,19 +384,16 @@ sink_func_reads(func, source, p) :-
   p >= 700,
   !several_sinks(func).
 
-// A prior answers per function, not per call: of a function holding two
-// sinks it cannot say which one converts what it names, and it re-tiers
-// neither.
+// Function-level priors cannot distinguish multiple sink sites in one function. Do not
+// re-tier those sites.
 .decl several_sinks(func: symbol)
 
 several_sinks(func) :- sink(a, func, _, _, _), sink(b, func, _, _, _), a != b.
 
 // ── A sink its callers' input reaches ───────────────────────────
 
-// No request reaches a sink whose input the program's callers choose:
-// what an exported function is handed reaches its argument, or the sink
-// deserializes without :safe, where the caller's input is the question.
-// Reported here only, so a sink is one finding.
+// Report caller-controlled sinks here only when no request reaches them, avoiding
+// duplicates. Include external parameter flow and deserialization without :safe.
 .decl exposed_sink(id: symbol, func: symbol, api: symbol, sink: symbol, safety: symbol)
 
 exposed_sink(id, func, api, s, safety) :-
@@ -508,11 +401,9 @@ exposed_sink(id, func, api, s, safety) :-
   exposed_to_callers(id, func),
   !request_reached_sink(id, _, _, _, _).
 
-// The program's callers reach the sink at `id` in `func`: code execution
-// an exported function reaches (in a library that is very nearly
-// everything, so this says the code is live), atom creation and
-// decompression an exported function reaches whose argument is made of
-// what a caller hands in (caller_input), and every deserialization.
+// External reach establishes code-execution liveness. Atom and decompression findings
+// also require caller-derived arguments. Deserialization remains eligible
+// independently.
 .decl exposed_to_callers(id: symbol, func: symbol)
 
 exposed_to_callers(id, func) :- sink_call(id, func, _, "code", _), called_from_api(func).
@@ -539,13 +430,9 @@ sink_without_request_path(id, func, api, s, "", 0, safety) :-
   exposed_sink(id, func, api, s, safety),
   !sink_value(func, s, _, _).
 
-// What the value such a sink converts is, when priors are on
-// (Argus.Priors; off by default): library API handed a pool's name, a
-// dets file's own records or a mix task's command is doing what it is
-// for, and the finding says so at a step lower severity; one handed a
-// URL, a request's parameter or a connecting peer's name is the bug and
-// keeps its severity. 0.9 of the mass away from outside data is where
-// the calibration measured 98% precision (Questions.ValueSource).
+// With priors enabled, lower severity when at least 0.9 probability places the sink's
+// input outside externally supplied data. Preserve severity for request, URL, or
+// peer-controlled input (`Questions.ValueSource`).
 .decl sink_value(func: symbol, sink: symbol, source: symbol, permille: number)
 
 sink_value(func, s, source, p) :-
@@ -554,29 +441,13 @@ sink_value(func, s, source, p) :-
   p >= 900,
   !several_sinks(func).
 
-// ── Atoms made of what a caller hands in ─────────────────────────
+// Atom creation from external caller data
 //
-// Reachable from an exported function says the code is live, not that a
-// caller's data reaches the atom: the atom may be made of a literal, of
-// configuration, of what the process read from its own state. Atom
-// creation no request reaches is reported where its argument is made of
-// what the program's callers hand in: a parameter of an exported function
-// — the library's API, which its users call with their own input —
-// reached backward from the sink's argument. The sink's argument is made
-// of a parameter through the propagators ParamFlow lists
-// (sink_arg_derived) or through any call of the runtime's
-// (Dependence's sink_reads: `String.to_atom(Macro.underscore(name))`),
-// and from there through what calls are handed (call_arg_reads, which
-// carry data through any call): tesla's adapter building an atom of the
-// URL's scheme, membrane parsing box names out of the file it is handed,
-// absinthe_federation converting the keys of the representations its
-// resolver is handed (through the closure `Map.new/2` runs on each). A
-// message a client function sends its server carries the client's
-// parameter into the callback's (`message_param`): an `intern(name)`
-// that calls the server with `{:intern, name}`, whose handle_call/3
-// makes the atom. A callback the runtime calls with the program's own
-// data is not an API: a process's callbacks and init/1, Broadway's
-// `process_name/2`, a protocol's implementation.
+// For sinks outside request reach, trace the argument back to exported API parameters
+// through `sink_arg_derived`, `sink_reads`, and `call_arg_reads`. Include client
+// messages forwarded into server parameters. Export reach alone proves only liveness.
+// Exclude runtime callbacks receiving the program's own state, start arguments, or
+// names.
 .init atom_input = ParamReadsReach
 
 atom_input.seed(func, to_string(pos), id) :-
@@ -597,9 +468,8 @@ atom_input.seed(func, p, id) :-
 
 atom_input.reaches(f, p, t) :- message_param(f, p, h), atom_input.reaches(h, "0", t).
 
-// A client function calls (or casts to) a server running `mod`'s
-// callbacks with a message made of its parameter `pos`: the message is
-// the callback's first parameter.
+// A client sends a call or cast derived from parameter pos to mod's server. The handler
+// receives the message as its first parameter.
 .decl message_param(client: symbol, pos: symbol, callback: symbol)
 
 message_param(f, to_string(p), h) :-
@@ -632,12 +502,9 @@ cast_api(":gen_server:cast/2").
 
 caller_input(id) :- atom_input.reaches(f, _, id), outside_api(f).
 
-// An exported function: the library's users can call it with anything,
-// whether or not the program also calls it itself (an Ecto type's
-// cast/1, which the program calls once with a literal default). As
-// failure's `exposed` roots, every export is an entry. A macro is not:
-// the compiler calls it, with the code that uses it, and what it makes
-// it makes at compile time.
+// Every exported function is a possible external entry, even if internal callers pass
+// only literals. Macros are excluded because they run at compile time on the caller's
+// code.
 .decl outside_api(func: symbol)
 
 outside_api(f) :-
@@ -646,25 +513,18 @@ outside_api(f) :-
   !runtime_callback(m, n, a),
   !function_def(_, m, "__impl__", 1, _).
 
-// A protocol's implementation is called with what the protocol's own
-// function is handed: dispatch relays it. The implementation of a
-// protocol the program defines is a way in when that function is
-// (a library's `MyLib.Key.to_key/1`, whose BitString implementation
-// makes an atom of the users' string). An implementation of a protocol
-// the program does not define is the runtime's or a library's to call,
-// with the program's own values (`Inspect`, `String.Chars`,
-// `Phoenix.Param`), and is not one.
+// A protocol implementation is an external entry when the program defines and exposes
+// the corresponding protocol function. Implementations of external protocols are
+// treated as receiving the program's own values.
 outside_api(f) :-
   function_def(f, m, n, a, _),
   implements_protocol(m, p),
   function_def(pf, p, n, a, _),
   outside_api(pf).
 
-// `m` implements the protocol `p` the program defines: `defimpl`'s
-// module, named `p` then the implementation's type, which compiles
-// `__impl__/1`; `p` compiles `__protocol__/1`. The name is `p` and a dot
-// first (the pattern, whose dots take any character, from the start;
-// the literal prefix somewhere: substr is a partial functor).
+// Identify implementations of program-defined protocols through __impl__, __protocol__,
+// and the protocol-prefixed module name. Combine pattern matching with a literal prefix
+// check; avoid partial substring functors.
 .decl implements_protocol(impl: symbol, protocol: symbol)
 
 implements_protocol(m, p) :-
@@ -673,21 +533,10 @@ implements_protocol(m, p) :-
   match(cat(p, "[.].*"), m),
   contains(cat(p, "."), m).
 
-// What the runtime calls a process module with: its own start arguments,
-// its own messages, its own name. A process's callbacks that take them
-// (otp_callback and message_callback, clientlib/callbacks.dl; not a
-// LiveView's handle_event/3, which takes the client's), and Broadway's
-// process_name/2, which the topology calls with the pipeline's own name
-// when it starts.
-//
-// Not a process's handle_info/2 when the process makes a socket active:
-// the bytes a peer sends arrive as its messages (`{:tcp, socket, data}`),
-// an outside party's data — a Ranch protocol written as a gen_server
-// loop, a GenServer holding a client connection. Any activation counts,
-// a mode the bytecode does not show included (mailbox's rules ask the
-// opposite question, whether a message surely arrives, and read only the
-// modes it can see): the runtime's call is the program's own only where
-// nothing says a socket feeds it.
+// Callbacks normally receiving program-owned values, including process callbacks and
+// Broadway process_name/2. Request callbacks remain external. Exclude handle_info from
+// this classification when the process may activate a socket, including unresolved
+// modes: peer bytes can then supply its messages.
 .decl runtime_callback(mod: symbol, name: symbol, arity: number)
 
 runtime_callback(m, n, a) :-
@@ -708,12 +557,10 @@ runtime_callback(m, "process_name", 2) :-
   behaves_as(m, "Broadway"),
   function_def(_, m, "process_name", 2, _).
 
-// ── Decompression of what a caller hands in ──────────────────────
+// Decompression from external input
 //
-// As atoms: reported with no request path where the compressed data is
-// made of a parameter of an exported function (tesla's
-// Compression middleware inflating the response body its `call/3` is
-// handed, a client library's decompress of what its users pass).
+// Without request reach, require compressed data derived from an exported function's
+// parameter.
 .init inflate_input = ParamReadsReach
 
 inflate_input.seed(func, to_string(pos), id) :-
@@ -728,10 +575,8 @@ inflate_input.seed(func, p, id) :-
 
 caller_input(id) :- inflate_input.reaches(f, _, id), outside_api(f).
 
-// The exported functions the sink is reachable from, walked back from
-// the sink a few calls: evidence for "the module's public surface
-// reaches it". The sink's own function, when exported, is the finding's
-// anchor already.
+// Nearby exported callers provide evidence of public reachability. An exported sink
+// function already serves as its own anchor.
 .init sink_callers = BackwardBoundedCallReach
 
 sink_callers.root(func, func) :- exposed_sink(_, func, _, _, _).
@@ -756,10 +601,8 @@ sink_export(id, e) :-
   sink_export_reach(id, e),
   !forwards_to_listed_arity(id, e).
 
-// An export that calls a higher arity of itself, which is listed too: a
-// default-argument head (`start_link/0` calling `start_link/1` from the
-// same `def` line), or a wrapper filling in an option. Its frame would
-// say what the higher arity's says, and take one of the three.
+// Suppress redundant evidence frames for exports forwarding to a higher arity of
+// themselves, such as default-argument wrappers, when that arity is already listed.
 .decl forwards_to_listed_arity(sink: symbol, export: symbol)
 
 forwards_to_listed_arity(id, e) :-
@@ -770,15 +613,10 @@ forwards_to_listed_arity(id, e) :-
   k > n,
   sink_export_reach(id, g).
 
-// ── Which HTTP endpoint reaches the sink ─────────────────────────
+// HTTP routes reaching a sink
 //
-// "Reachable from a plug entry point" is a claim a reader has to go and
-// check; "reachable from GET /public/sessions/:id/assets/..." is one
-// they can act on. Routes come from Phoenix's `__routes__/0` literal.
-// `pipe_through` is not in it — pipelines compile into the dispatch
-// function as control flow — so this does NOT say whether the route is
-// authenticated. The path is often the tell, and that judgement stays
-// with the reader.
+// Attach verb, path, and plug from Phoenix's __routes__/0. Route facts omit compiled
+// pipelines, so they do not establish whether the endpoint is authenticated.
 
 .decl sink_endpoint(sink: symbol, verb: symbol, path: symbol, plug: symbol)
 .output sink_endpoint
@@ -796,18 +634,14 @@ sink_endpoint(sink, verb, path, plug) :-
   function_def(entry, plug, _, _, _),
   sink_reach.reaches(entry, sink).
 
-// ── Processes an outside party can create without limit ──────────
+// Request-driven process growth
 //
-// DynamicSupervisor defaults to max_children: :infinity, and the default
-// is what everyone uses. On its own that is fine: most dynamic
-// supervisors are driven by trusted callers. The finding is the pairing:
-// can start_child be reached from a request handler? Then an
-// unauthenticated request creates a process and nothing bounds how many.
-// No single line is wrong, which is why the supervisor and the handler
-// each read fine in isolation.
+// A request can reach start_child under a supervisor without a cap and leave the child
+// running after the request. Repeated requests can accumulate processes. An uncapped
+// supervisor alone is not a finding.
 
-// A request starts a child under a dynamic supervisor that caps nothing,
-// and does not wait for the child to end: each request adds a process.
+// Each request starts a child under an uncapped dynamic supervisor without waiting for
+// completion, allowing processes to accumulate.
 .decl unbounded_request_child(sup: symbol, child: symbol, via: symbol, kind: symbol)
 
 unbounded_request_child(sup, child, via, kind) :-
@@ -828,16 +662,10 @@ unbounded_children_from_request(sup, child, via, kind) :-
 
 starts_child(via, sup, child) :- dynamic_child(sup, child, via).
 
-// A supervisor with no finite max_children. `supervisor_max_children` is
-// emitted when a finite cap is set, or may be ("dynamic": init/1's
-// options could not be read whole, so a cap is unknown rather than the
-// default; issue #4), so absence is the question. A supervisor held as a
-// pid ("dynamic") has no init/1 to read the cap from; process points-to
-// does not follow start_child's supervisor argument, which is not a pid
-// use. A supervisor whose options are nowhere in view (an inline
-// `{DynamicSupervisor, name: n}` spec, one a dependency starts) has no
-// row either, and counts as uncapped: the default, which the extractor
-// does not read there.
+// A supervisor with no known finite or dynamic max_children cap. Dynamic option rows
+// block this conclusion. Pid targets are not resolved by points-to here; inline or
+// external supervisors without visible options are treated as uncapped, a known
+// limitation.
 .decl uncapped_supervisor(sup: symbol)
 
 uncapped_supervisor(sup) :-
@@ -853,27 +681,17 @@ started_by_request(via, kind) :-
   request_entry(entry, kind),
   reaches_child_start(entry, via).
 
-// The start keeps its child no longer than the request that made it: the
-// request's own process enumerates a task stream (stream_only), or the
-// start's caller waits for the child's :DOWN (awaits_child_exit:
-// Livebook's UniqueTask.run/2 monitors what it started and blocks until
-// it exits), so no more children are alive than callers waiting.
+// The request bounds child lifetime by enumerating a task stream itself or waiting for
+// the child's :DOWN. Live children are then bounded by active callers.
 .decl waits_for_child(via: symbol, child: symbol)
 
 waits_for_child(via, child) :- stream_only(via, child).
 waits_for_child(via, child) :- dynamic_child(_, child, via), awaits_child_exit(via).
 
-// Tasks the request's own enumeration runs: Task.Supervisor's
-// async_stream and async_stream_nolink start at most max_concurrency
-// tasks at a time for the process that enumerates the stream, and it
-// waits for each, so what they start lives no longer than the request —
-// when the request's own process enumerates it. Reached through a start
-// (a `Task.start(fn -> fan_out(ids) end)` from handle_event/3,
-// runs_elsewhere) the stream runs in a process the request does not wait
-// for, and each request adds another max_concurrency tasks beside the
-// last. A function that also starts tasks another way keeps its row: the
-// Task dynamic_child row is per function, not per call (TaskLive fires,
-// StreamLive is quiet).
+// Stream-only tasks are bounded by max_concurrency when enumerated by the request's own
+// process. Detached enumeration can add a new group per request. A function also
+// starting tasks through other APIs remains reportable because dynamic_child is
+// function-level.
 .decl stream_only(via: symbol, child: symbol)
 
 stream_only(via, "Task") :-
@@ -888,13 +706,9 @@ starts_tasks_otherwise(via) :-
   task_supervisor_start(_, via, op, _),
   task_supervisor_op(op, "one").
 
-// A request reaches the streaming function through an edge off its own
-// stack: some function a request reaches starts (or keeps) a fun whose
-// code reaches it. Or the streaming function itself starts one, which
-// may enumerate the stream it built (a stream is lazy: its tasks start
-// where it is run, `Task.start(fn -> Stream.run(stream) end)`). Known
-// limit: a stream handed back to a caller that runs it in a process of
-// its own reads as enumerated by the request.
+// The request reaches the stream through detached or stored-fun execution, or the
+// streaming function starts a fun that may enumerate it. Known limit: a returned stream
+// later enumerated by another process appears to run in the request.
 .init detach_reach = CallReach
 
 detach_reach.seed(f, via) :-
@@ -912,14 +726,8 @@ streams_detached(via) :-
   task_supervisor_op(op, "stream"),
   runs_elsewhere(via, _).
 
-// A dangerous path in a dependency is not a finding when nothing turns
-// it on. Phoenix's long-poll transport starts a process per
-// unauthenticated request with no ceiling, and it was reported in three
-// projects while being enabled in exactly one. `Phoenix.Endpoint`'s
-// `socket/3` is a macro, so its options compile into `__sockets__/0` as
-// a literal, readable the same way as the TLS option lists: config is
-// visible when a macro bakes it into the module and invisible when it
-// is read at runtime.
+// Require evidence that a dependency's transport is enabled. Phoenix socket options are
+// visible in compiled __sockets__/0 literals; runtime configuration may remain unknown.
 .decl transport_supervisor(sup: symbol, transport: symbol)
 
 transport_supervisor("Phoenix.Transports.LongPoll.Supervisor", "longpoll").

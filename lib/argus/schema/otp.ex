@@ -1,10 +1,7 @@
 defmodule Argus.Schema.Otp do
   @moduledoc """
-  OTP processes and their callbacks: the names a module starts under,
-  its links, the behaviours it implements, the calls and casts it makes,
-  and what its callbacks return.
-
-  Layer 2 of `Argus.Schema`, which reads the relations from here.
+  Layer-2 OTP facts: registered names, links, behaviours, calls, casts, and callback \
+  returns. Exposed through `Argus.Schema`.
   """
 
   @doc "The relations, in the order `Argus.Schema.all/0` lists them."
@@ -37,9 +34,8 @@ defmodule Argus.Schema.Otp do
           {:behaviour, :symbol, "behaviour module"}
         ],
         doc: """
-        Module declares a behaviour (`-behaviour`, `@behaviour`), as \
-        `inspect/1` renders it (`":gen_server"`, `"GenServer"`). Rules ask \
-        behaviours.dl's `behaves_as`, which also reads `started_as`.
+        A declared behaviour in `inspect/1` format. Rules use `behaves_as` in \
+        `behaviours.dl`, which also incorporates `started_as`.
         """
       },
       %{
@@ -50,14 +46,9 @@ defmodule Argus.Schema.Otp do
           {:behaviour, :symbol, "the behaviour of the start, as implements_behaviour spells it"}
         ],
         doc: """
-        A start in the program (`gen_server:start_link(Name, Mod, Args, \
-        Opts)`, `Supervisor.start_link(Mod, arg)`, `gen:start/5,6`, ...) or \
-        an `enter_loop` names `mod` the callback module of `behaviour`, at \
-        a call whose module argument is a literal module \
-        (`Argus.Extractor.GenStarts`). The behaviour's machinery runs the \
-        module's callbacks whether or not it declares the behaviour: \
-        OTP's `inet_db` and `pg`, and ejabberd's `ejabberd_sql_sup`, \
-        declare none. A `proc_lib` start names a function, and is none.
+        A literal callback module named by a behaviour start or `enter_loop` \
+        (`Argus.Extractor.GenStarts`). Identifies behaviour implementations even without \
+        an explicit declaration. `proc_lib` starts name functions and are excluded.
         """
       },
       %{
@@ -98,9 +89,8 @@ defmodule Argus.Schema.Otp do
           {:timeout_ms, :number, "timeout in ms (-1=infinity, 0=dynamic)"}
         ],
         doc: """
-        A synchronous call's target and timeout at its site: what pairs a \
-        dependency with the timeout of the call that makes it, where \
-        sync_call_timeout says only that the function makes such a call.
+        A synchronous call's target and timeout at one site. Unlike function-level \
+        `sync_call_timeout`, preserves which dependency has that timeout.
         """
       },
       %{
@@ -112,10 +102,8 @@ defmodule Argus.Schema.Otp do
           {:callee_mod, :symbol, "target GenServer module, or dynamic"}
         ],
         doc: """
-        A cast's target at its site, as async_cast spells it: what pairs \
-        the process a cast goes to with the message tag of the same cast \
-        (call_tag), where async_cast says only that the function makes \
-        such a cast.
+        A cast's target at one site. Joins `call_tag` to associate the target and \
+        message of the same cast.
         """
       },
       %{
@@ -132,11 +120,9 @@ defmodule Argus.Schema.Otp do
            "the supervisor argument: a module atom, 'via:Registry', or 'dynamic'"}
         ],
         doc: """
-        A synchronous management call into a supervisor process. Every one is \
-        a GenServer.call underneath — `start_child` waits for the child's \
-        init/1 to return, `terminate_child` for the child's whole shutdown — \
-        but none names a GenServer module, so `sync_call` never saw them. \
-        `target` is resolved from the first argument like `sync_call`'s callee.
+        A synchronous supervisor management call, with the target resolved from its \
+        first argument. These calls wait on the supervisor; starting a child waits for \
+        init, and terminating one waits for shutdown.
         """
       },
       %{
@@ -149,10 +135,9 @@ defmodule Argus.Schema.Otp do
           {:tag, :symbol, "the literal return tag, e.g. ':reply' | ':noreply' | ':stop'"}
         ],
         doc: """
-        A literal return tag of an OTP callback — the first element of a tuple \
-        built into {x,0} immediately before `return`. Absent when the callback \
-        tail-calls, since the shape then belongs to the callee; consumers must \
-        treat absence as unknown rather than as "returns nothing".
+        A literal OTP callback return tag built into `{x,0}` immediately before return. \
+        Tail calls have no row because the callee supplies the shape. Absence means \
+        unknown.
         """
       },
       %{
@@ -163,17 +148,10 @@ defmodule Argus.Schema.Otp do
           {:func, :symbol, "the handle_call/3 function"}
         ],
         doc: """
-        A `{:noreply, _}` return site in handle_call/3 that some execution \
-        reaches having never read `from`. Per site rather than per function, \
-        because handle_call compiles every clause into one function and a \
-        sibling clause that defers correctly would otherwise vouch for one \
-        that does not.
-
-        Established by walking the intra-function block graph from the entry \
-        across blocks that do not read `from`. `from` arrives in {x,1}, and a \
-        read is either a mention of that register or a call of arity two or \
-        more, since calls take arguments positionally and a body passing \
-        `from` straight through compiles to no move at all.
+        A `handle_call/3` `{:noreply, _}` return reachable without reading `from`. \
+        Traces paths that do not read `{x,1}` or call with arity at least two. Recorded \
+        per return site so a correctly deferred sibling clause cannot hide a missing \
+        reply.
         """
       },
       %{
@@ -185,9 +163,9 @@ defmodule Argus.Schema.Otp do
           {:reason, :symbol, "the literal reason: ':normal', ':shutdown', or another atom"}
         ],
         doc: """
-        The reason of a `{:stop, reason, ...}` return from an OTP callback, \
-        when it is a literal atom or a `{:shutdown, term}` literal. Absent \
-        when the reason is computed, so consumers treat absence as unknown.
+        A literal reason in an OTP callback's `{:stop, reason, ...}` return: an atom or \
+        `{:shutdown, term}` literal. Computed reasons have no row; absence means \
+        unknown.
         """
       },
       %{
@@ -200,10 +178,8 @@ defmodule Argus.Schema.Otp do
           {:timeout_ms, :number, "the literal timeout in milliseconds"}
         ],
         doc: """
-        A literal integer timeout in an OTP callback's return — the third \
-        element of `{:ok, state, ms}` or `{:noreply, state, ms}`, the fourth \
-        of `{:reply, reply, state, ms}`. The message it schedules, `:timeout`, \
-        is cancelled by any other message arriving first.
+        A literal integer idle timeout in an OTP callback return. Schedules `:timeout`, \
+        cancelled if another message arrives first.
         """
       }
     ])

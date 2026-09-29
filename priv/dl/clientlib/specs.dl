@@ -1,18 +1,7 @@
-// What a callee's spec claims it returns.
-//
-// spec_return rows come from two places (Argus.Extractors.Specs): the
-// analyzed beams' own specs, and the specs of the remote functions they
-// call as installed on the code path. A function the program defines is
-// read only from the program — the installed copy of an analyzed module
-// may be an older build — and everything else from the code path.
-//
-// A spec is a claim nothing verified. Rules read callee_returns to stay
-// quiet about a callee whose spec rules out what they ask about, or to
-// confirm what they already derived; never to report on a spec alone. A
-// callee with no row is unknown (no spec, a term() return, a module
-// shipped without specs), which is not the same as "cannot fail".
-//
-// Requires imports.dl.
+// Return shapes claimed by specs. Prefer analyzed modules' own specs over installed
+// code-path copies; use code-path specs for external functions. These unverified claims
+// may suppress or confirm findings, never create them alone. No row means unknown, not
+// unable to fail. Requires imports.dl.
 
 .decl callee_returns(func: symbol, shape: symbol)
 

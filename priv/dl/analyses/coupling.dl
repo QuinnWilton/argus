@@ -1,14 +1,6 @@
-// Two owners of one relationship across supervisor branches.
-//
-// A supervisor restarts what it owns: the restarted child starts from
-// what its init/1 makes, without what a sibling put into it (a hook, a
-// subscription, a monitor, a row: clientlib/restart_state.dl), and a
-// sibling that cached its pid keeps a dead one. The sibling is not
-// restarted with it. The strategy decides: under one_for_one the caller
-// survives the callee's restart, under rest_for_one an earlier child
-// survives a later one's, and a child a process both starts under a
-// supervisor and restarts from its own :DOWN handler has two restart
-// authorities.
+// Relationships that become stale across supervisor branches: registrations lost on
+// restart, cached pids, incompatible restart policies, and competing restart
+// authorities. one_for_one preserves siblings; rest_for_one preserves earlier children.
 
 .include "../clientlib/imports.dl"
 .include "../clientlib/otp.dl"
@@ -26,10 +18,8 @@
 //
 // docs/design/restart-state.md is the model.
 
-// Two children a one_for_one supervisor restarts apart, one of which
-// registered with the other while starting: when the keeper restarts
-// alone its init/1 builds afresh without the registration, and the
-// registrant, not restarted, never makes it again.
+// A one_for_one sibling registers during startup. If the registration holder restarts
+// alone, it loses the registration and the surviving sibling does not register again.
 .decl lost_registration(sup: symbol, caller: symbol, keeper: symbol)
 
 lost_registration(sup, caller, keeper) :-
@@ -48,21 +38,16 @@ restarted_apart(sup, a, b) :-
   child_subtree(sup, b_branch, b),
   a_branch != b_branch.
 
-// The caller's once code — init/1 and what runs on its stack before it
-// serves, a handle_continue/2 — made a request the keeper keeps: an ETS
-// row, a monitor, a state field, its process dictionary, or code outside
-// the program it hands the request to (holds_in,
-// clientlib/restart_state.dl). A call made on each use is not one: the
-// next call reaches the new process by name and nothing is lost that the
-// caller holds. When the caller restarts alone it registers again beside
-// its old incarnation's registration.
+// A request made during the caller's once phase that the keeper stores in a table,
+// monitor, state, dictionary, or external code (`holds_in`). Per-use requests are
+// excluded. Restarting either side alone can lose the relationship or leave an old
+// registration.
 .decl registers_with(caller: symbol, keeper: symbol) inline
 
 registers_with(caller, keeper) :- holds_in(caller, keeper, _, _, _, _).
 
-// Every resolved call `from` makes to `to`'s module goes to an instance
-// it started for itself (private_module_dep, calls.dl): a supervisor
-// restarting its child does not touch the one a sibling keeps.
+// All resolved calls from `from` to `to` use privately started instances
+// (private_module_dep). Restarting the supervisor's instance does not affect them.
 .decl only_own_instances(from: symbol, to: symbol)
 
 only_own_instances(from, to) :- private_module_dep(from, to).
@@ -74,10 +59,8 @@ only_own_instances(from, to) :- private_module_dep(from, to).
 linked(a, b) :- links_to(a, b).
 linked(a, b) :- links_to(b, a).
 
-// `from` links to `to`: a link the extractor names, a supervisor's link
-// to its child, or a link to a pid the extractor could not name
-// ("dynamic") that the points-to analysis follows to a server started
-// with `to`'s callbacks.
+// Links from `from` to `to`: explicit links, supervisor-child links, or dynamic PID
+// links resolved by points-to analysis.
 .decl links_to(from: symbol, to: symbol)
 
 links_to(from, to) :- process_link(from, to).
@@ -88,17 +71,9 @@ links_to(from, to) :-
   function_def(func, from, _, _, _),
   server_process(pid, to).
 
-// Where the caller registers: the step of its once phase that makes the
-// request or leads to it (once_step, runs.dl). The phase runs at its own
-// level in a start callback and at the sites of the phase (a
-// handle_continue/2 clause init/1 continues to): a request made there is
-// its own step, and one made below it — in a helper of the caller's, or
-// in the keeper's client API the phase calls (eusapia's Sonar calling
-// `Notifier.listen(server, channel)` from handle_continue/2, ejabberd's
-// acl:init/1 calling ejabberd_hooks:add/4) — is the phase's call that
-// leads to it. The step is the caller's own code, never the keeper's:
-// the finding shows where the caller, starting, registers. The walk
-// back from the request takes the edges once_code's walk takes.
+// The caller's once-phase step that registers with the keeper, directly or through
+// helpers/client APIs. Anchor in the caller's startup or continuation code. The
+// backward traversal uses the same edges as `once_code`.
 .init once_path = SameProcessReachCut
 
 once_path.cut(f, g) :- side_call(f, g).
@@ -139,11 +114,9 @@ stepped(caller, keeper, how) :- step_site(caller, keeper, _, how, _).
 
 holds_site(caller, keeper, site, how, store) :- step_site(caller, keeper, site, how, store).
 
-// No step of the keeping has an instruction (a request in init/1 whose
-// call the facts place at no site of its own, a closure init/1 builds
-// and keeps): the start callback that reaches the request. Every keeping
-// holds_in finds has a site, so the frame never decides which keeping
-// the row reports (chosen_keeping).
+// If no once-phase call instruction anchors the request, use the reaching start
+// callback. Every holds_in result retains an anchor; anchor selection does not choose
+// the stored relationship.
 holds_site(caller, keeper, start, how, store) :-
   lost_registration(_, caller, keeper),
   holds_in(caller, keeper, func, _, how, store),
@@ -151,36 +124,20 @@ holds_site(caller, keeper, start, how, store) :-
   once_path.reaches(start, func),
   !stepped(caller, keeper, how).
 
-// ══ The one output: a child depending on a sibling ═══════════════════
-//
-// One relationship, three reasons it goes stale. `reason` says which,
-// `detail` qualifies it:
-//   restart_isolation — two branches of a one_for_one supervisor, one
-//     holding something in the other; detail is how the other keeps it
-//     (table, monitor, state, dict, handed), witness what keeps it (an
-//     instruction or function of the keeper) and site the step of the
-//     caller's once phase that makes the request or leads to it
-//     (holds_site): the caller's own code.
-//   restart_policy — a permanent child depends on a sibling that may
-//     never come back; detail is the sibling's restart policy.
-//   cached_pid — init/1 looks the sibling up by name under one_for_one
-//     and the handlers call the cached pid; detail is empty.
-// For the last two, `witness` is the function in the caller the
-// dependency flows through and `site` the witness. Finding builders
-// dedupe on (sup, caller, callee, reason). `site` anchors with
-// `Findings.at_site/2` either way.
-//
-// `basis` says how a restart_policy dependency was established: `resolved`
-// through a call or cast whose target is known, `inferred` through the
-// module-level clause of stateful_module_dep alone — the caller reaches
-// some function of the sibling and the sibling has a call somewhere — and
-// `doubted` when that inference is all there is and a prior
-// (Argus.Priors, off by default) puts the sibling's API at 0.3 or below
-// for messaging a process: a helper with a call in its start_link, not a
-// facade. The finding steps down a severity for a doubted row; `permille`
-// is the prior's probability that the module does talk to a process. A
-// restart_isolation row is always resolved: the request the keeper keeps
-// is known.
+// Sibling dependency output
+// `restart_isolation`: one_for_one branches with a stored relationship. Detail
+// identifies storage kind; witness identifies the keeper's storage; site identifies the
+// caller's once-phase request.
+// `restart_policy`: a permanent child depends on a sibling that may not restart. Detail
+// is that sibling's policy.
+// `cached_pid`: init caches a named sibling's pid and handlers use it under
+// one_for_one. Detail is empty.
+// For the last two, witness and site identify the caller function. Findings deduplicate
+// by (sup, caller, callee, reason).
+// `basis` is `resolved` for known call/cast targets, `inferred` for module-level
+// dependencies, or `doubted` when only that inference exists and the process-role prior
+// is at most 0.3. Doubted findings have lower severity; `permille` retains confidence.
+// Restart-isolation rows are always resolved.
 .decl dep_resolved(from: symbol, to: symbol)
 
 dep_resolved(f, t) :- module_sync_dep(f, t, _).
@@ -211,9 +168,8 @@ dep_basis(f, t, "inferred", 0) :-
 .decl sibling_dependency(sup: symbol, caller: symbol, callee: symbol, reason: symbol, detail: symbol, sup_site: symbol, witness: symbol, site: symbol, basis: symbol, permille: number)
 .output sibling_dependency
 
-// A supervisor with no site of its own is not reported. What the keeper
-// does with code outside the program is inferred, and the row says so; a
-// keeping the program shows is preferred to it.
+// Require a source site for the supervisor. Mark retention inferred from external code,
+// preferring direct program evidence when available.
 sibling_dependency(sup, caller, keeper, "restart_isolation", how, sup_site, store, site, basis, 0) :-
   lost_registration(sup, caller, keeper),
   supervisor_site(sup, sup_site),
@@ -245,11 +201,10 @@ keeping_basis("state", "resolved").
 keeping_basis("dict", "resolved").
 keeping_basis("handed", "inferred").
 
-// ══ A permanent child depending on a sibling that may not come back ═
+// Permanent children depending on non-restarting siblings
 //
-// A transient child that stops normally is never restarted, and a
-// temporary child is never restarted at all — strictly worse. One row
-// per witness — finding builders dedupe on (sup, permanent, sibling).
+// Transient children do not restart after normal stops; temporary children never
+// restart. Keep witnesses and deduplicate by supervisor, permanent child, and sibling.
 
 // A permanent child depends on a sibling whose restart policy can leave
 // it down, and keeps running against a process that no longer exists.
@@ -262,19 +217,10 @@ dependency_on_unrestarted_sibling(sup, child, sibling, restart, witness) :-
   !teardown_only(witness),
   !only_own_instances(child, sibling).
 
-// The witness runs only as its process ends: it is a terminate/2, or
-// nothing reaches it but a terminate/2. A process whose sole use of a
-// sibling is in its own teardown does not keep running against it: it
-// is going away when it asks (thousand_island's ShutdownListener stops
-// its transient Listener from terminate/2, which is why the Listener is
-// transient; phoenix_pubsub's Tracker.ShutdownHandler drains its shards
-// the same way). The witness runs outside teardown when a root other
-// than terminate/2 reaches it: a function with no caller in view (a
-// callback, an exported API function, one only a dependency calls). A
-// closure is reached from where it is built (call_edge follows closure
-// construction), so one built in terminate/2 is teardown too. Known
-// limit: a function called only from a cycle of its own module's
-// functions that nothing enters is read as teardown.
+// A witness reached only from terminate/2, including closures built there.
+// Teardown-only use does not create an ongoing sibling dependency. Any other visible
+// root disqualifies it. Known limit: an unreachable intra-module cycle may also be
+// classified as teardown-only.
 .decl teardown_only(witness: symbol)
 
 teardown_only(w) :-
@@ -300,10 +246,8 @@ runs_outside_teardown(w) :-
   name != "terminate",
   !call_edge(_, root).
 
-// `sibling` is a child of sup under a restart policy that can leave it
-// dead (`restart`; restart_policy: its spec's, or a shorthand's own
-// child_spec/1's). A start_child whose supervisor the extractor could
-// not resolve ("dynamic") names no sibling.
+// A child whose restart policy may leave it stopped. Unresolved start_child targets do
+// not identify a sibling.
 .decl may_stay_down(sup: symbol, sibling: symbol, restart: symbol)
 
 may_stay_down(sup, sibling, restart) :-
@@ -317,9 +261,8 @@ may_stay_down(sup, sibling, restart) :-
 leaves_down("transient").
 leaves_down("temporary").
 
-// A function of `from` (`witness`) depends on `to`'s process, through a
-// call, a cast, or a reach to `to`'s module that makes a call somewhere
-// (stateful_module_dep, calls.dl; how is `basis`).
+// `witness` in `from` depends on `to` through a call, cast, or stateful module
+// dependency. `basis` records the evidence; see stateful_module_dep.
 .decl depends_on(from: symbol, to: symbol, witness: symbol) inline
 
 depends_on(from, to, witness) :- stateful_module_dep(from, to, witness).
@@ -330,16 +273,13 @@ sibling_dependency(sup, child, sibling, "restart_policy", restart, sup_site, wit
   supervisor_site(sup, sup_site),
   dep_basis(child, sibling, basis, permille).
 
-// ── A sibling's pid cached in init/1 under one_for_one ───────────────
+// Cached sibling pids under one_for_one
 //
-// k8s 99c05d6 replaced such pids with :via names; oban#1413 and #1499
-// are the inverse, registrations made with a sibling that its restart
-// forgets. :rest_for_one and :one_for_all restart the holder too.
+// A restarted sibling has a new pid. Name-based calls can resolve it again;
+// rest_for_one or one_for_all may instead restart the holder with it.
 
-// init/1 looks a sibling up by name and keeps the pid, and a handler
-// calls it: under one_for_one the sibling restarts alone and the cached
-// pid is a dead process from then on — every call :noproc, every send
-// lost.
+// Init caches a sibling's pid and handlers reuse it. Under one_for_one, the sibling can
+// restart alone, leaving calls to the cached pid failing and sends undelivered.
 .decl cached_sibling_pid(sup: symbol, mod: symbol, name: symbol, init: symbol)
 
 cached_sibling_pid(sup, mod, name, init) :-
@@ -355,9 +295,8 @@ caches_pid(mod, init, name) :-
   init_function(mod, init),
   name_lookup(_, init, "whereis", _, "literal", name, _).
 
-// mod is a child of a one_for_one supervisor, and so is the process
-// `name` names (a child module or a child's registered name): the
-// supervisor restarts that sibling without restarting mod.
+// `mod` and the process identified by `name` are one_for_one siblings. The named
+// sibling can restart independently of mod.
 .decl sibling_restarts_alone(sup: symbol, mod: symbol, name: symbol)
 
 sibling_restarts_alone(sup, mod, name) :-
@@ -371,12 +310,9 @@ sibling_restarts_alone(sup, mod, name) :-
 child_named(sup, name) :- supervisor_child(sup, _, name, _, _).
 child_named(sup, name) :- supervisor_child_name(sup, _, name).
 
-// A handler of mod uses the pid rather than the name: process points-to
-// follows a handler's call, cast or send to the process registered under
-// the name, through anything but the name itself (a call by name each
-// time is the fix). Where the name resolves to no process points-to
-// knows, a handler's call to some pid it cannot follow stands in, as it
-// did before points-to.
+// A handler uses a stored pid for the named process, as resolved by points-to, rather
+// than looking up the name on each call. If the name has no known process, an
+// unresolved pid call serves as the fallback.
 .decl handler_calls_cached_pid(mod: symbol, name: symbol)
 
 handler_calls_cached_pid(mod, name) :-
@@ -403,20 +339,14 @@ sibling_dependency(sup, mod, name, "cached_pid", "", sup_site, init, init, "reso
   cached_sibling_pid(sup, mod, name, init),
   supervisor_site(sup, sup_site).
 
-// ── rest_for_one: a later child owns processes inside an earlier one ──
+// rest_for_one ownership inversion
 //
-// rest_for_one restarts the crashed child and everything after it; the
-// children before it keep running. That is the right shape when earlier
-// children are dependencies of later ones, and exactly wrong when a later
-// child starts processes inside an earlier one: Oban's producer (position
-// 1) running jobs under the Task.Supervisor at position 0 left the old
-// producer's jobs running beside the new producer's, duplicate
-// long-running jobs and `attempt > max_attempts`. Oban's fix was
-// :one_for_all.
+// A later child starts processes under an earlier sibling. Restarting the later child
+// leaves its old workers alive and may create duplicates, because rest_for_one
+// preserves earlier children.
 
-// Under rest_for_one a later child starts processes under an earlier
-// one: when the later child restarts, what it started keeps running
-// under the earlier one, which is not restarted, and is started again.
+// Under rest_for_one, a later child starts processes under an earlier sibling.
+// Restarting the later child leaves those processes alive and starts duplicates.
 .decl orphaned_children(sup: symbol, owner: symbol, owner_pos: number, holder: symbol, holder_pos: number, start: symbol, basis: symbol)
 
 orphaned_children(sup, owner, owner_pos, holder, holder_pos, start, basis) :-
@@ -450,10 +380,9 @@ starts_child(owner, start) :-
   sup_management_call(start, func, _, op, _),
   child_creating_op(op).
 
-// The start puts its process under sup's child at `holder_pos`, earlier
-// than `owner_pos`, and `basis` says how that is known, in
-// sibling_dependency's words. `resolved`: the call names the earlier
-// child's registered name.
+// The process is started under an earlier sibling at holder_pos. `basis` uses
+// sibling_dependency's evidence categories; "resolved" means a literal registered
+// target.
 .decl starts_under_earlier_child(start: symbol, sup: symbol, owner_pos: number, holder_pos: number, basis: symbol)
 
 starts_under_earlier_child(start, sup, owner_pos, holder_pos, "resolved") :-
@@ -462,13 +391,9 @@ starts_under_earlier_child(start, sup, owner_pos, holder_pos, "resolved") :-
   supervisor_child(sup, owner_pos, _, _, _),
   holder_pos < owner_pos.
 
-// `inferred`: the call's supervisor is a pid ("dynamic"), and the earlier
-// child is the only one before the owner whose module is the API called —
-// a Task.Supervisor.async_nolink into an unresolvable pid, with exactly
-// one Task.Supervisor started earlier under the same rest_for_one, is not
-// much of an inference. Process points-to does not follow the pid: a
-// supervisor management call is not a pid use (pid_call covers calls,
-// casts and sends; sup_call's target is its own extractor's).
+// Infer the holder when the management-call target is dynamic and exactly one earlier
+// sibling matches the supervisor API. Supervisor management calls are not represented
+// by `pid_call`, so points-to cannot resolve this pid.
 starts_under_earlier_child(start, sup, owner_pos, holder_pos, "inferred") :-
   sup_management_call(start, _, api, _, "dynamic"),
   sole_earlier_sibling_of_kind(sup, holder_pos, api, owner_pos).
@@ -507,43 +432,22 @@ other_earlier_sibling_of_kind(sup, pos, api, owner_pos) :-
 rest_for_one_orphaned_children(sup, owner, holder, owner_pos, holder_pos, start, basis) :-
   orphaned_children(sup, owner, owner_pos, holder, holder_pos, start, basis).
 
-// ── Two restart authorities ──────────────────────────────────────────
+// Competing restart authorities
 //
-// A process that starts a child under a DynamicSupervisor, monitors it,
-// and starts it again from its :DOWN handler has taken over restarting —
-// while the supervisor, for a :permanent child, does the same. A child
-// that fails on a semantic error crash-loops under both, blows the
-// supervisor's intensity and takes the tree with it (redix#334). The
-// supervisor restarts the child when the start gives it a restart other
-// than :temporary (dynamic_restart: the spec the start hands over, so
-// redix's own fix, Supervisor.child_spec({Redix, opts}, restart:
-// :temporary), is quiet, and a map spec with no :restart is permanent
-// whatever the module's child_spec/1 says).
-//
-// The start, the monitor and the :DOWN handling are usually spread over
-// private helpers (redix: start_connection/7, start_and_monitor_connection/5,
-// handle_down/2), so each is asked of a function's reach within its own
-// module. The monitor must be OF the started child — the pid a
-// supervisor start returned — not of some other process the module
-// watches (Oban.Queues monitors its notifier and restarts queues from a
-// signal: two facts about two processes, not two restart authorities).
-// The :DOWN handler is whichever function of the module matches :DOWN
-// (matches_down): handle_info/2 for a GenServer, a private helper its
-// state functions' catch-alls dispatch to for a gen_statem.
-//
-// Walked back from the only targets these rules ask about — the functions
-// that start a dynamic child and the ones that monitor what they started
-// — rather than closed over every function of the program: seeded at every
-// function, the closure held every intra-module path (6.1M rows from 43k
-// edges on a deps tree) to answer questions about a handful.
+// A process starts and monitors a DynamicSupervisor child, then starts it again from a
+// :DOWN handler while the supervisor also restarts it. Resolve the supplied spec's
+// policy; temporary children are exempt. The monitor must target the started child's
+// pid.
+// Follow same-module helpers for starts, monitors, and :DOWN matching, including
+// gen_statem helpers. Seed traversal only at relevant start and monitor functions to
+// avoid materializing every intra-module path.
 .init module_reach = IntraModuleReach
 
 module_reach.seed(s, s) :- dynamic_child(_, _, s).
 module_reach.seed(m, m) :- monitors_started_child(_, m).
 
-// A process starts a child under a DynamicSupervisor that will restart
-// it, monitors it, and starts it again from its :DOWN handler: two
-// restart authorities for one child.
+// A monitored child has two restart owners: its DynamicSupervisor and a process that
+// restarts it from a DOWN handler.
 .decl two_restart_authorities(mod: symbol, sup: symbol, child: symbol, via: symbol, handler: symbol)
 
 two_restart_authorities(mod, sup, child, via, handler) :-
@@ -551,9 +455,8 @@ two_restart_authorities(mod, sup, child, via, handler) :-
   down_handler(mod, handler),
   starts_supervised_again(handler, sup, child).
 
-// `via`, a function of mod, reaches a start of a named child under sup
-// and a monitor of a child a supervisor started. Task children and
-// children the extractor could not name are left out.
+// `via` reaches both a named child start under sup and a monitor of a supervised child.
+// Exclude task children and unresolved children.
 .decl starts_and_monitors(mod: symbol, sup: symbol, child: symbol, via: symbol)
 
 starts_and_monitors(mod, sup, child, via) :-
@@ -565,12 +468,9 @@ starts_and_monitors(mod, sup, child, via) :-
   module_reach.reaches(via, monitor),
   monitors_started_child(_, monitor).
 
-// A monitor of a pid a supervisor's start_child returned: on every path,
-// directly or through the program's wrappers (monitor_answer and
-// call_origin, clientlib/answers.dl: redix's start_connection/7 hands
-// back DynamicSupervisor.start_child's answer), or a pid the points-to
-// analysis follows to a process a DynamicSupervisor.start_child may have
-// started.
+// A monitor targeting a supervisor-started child, established by all-path answer
+// origins through wrappers or by points-to reaching a possible DynamicSupervisor
+// allocation.
 .decl monitors_started_child(id: symbol, func: symbol)
 
 monitors_started_child(id, func) :-
@@ -610,9 +510,8 @@ down_handler(mod, handler) :-
   function_def(handler, mod, _, _, _),
   matches_down(handler).
 
-// The handler reaches a start of `child` under sup whose spec gives it
-// a restart other than :temporary (dynamic_restart), so the supervisor
-// restarts it too.
+// The handler starts `child` under sup with a non-temporary restart policy, so the
+// supervisor also restarts it.
 .decl starts_supervised_again(handler: symbol, sup: symbol, child: symbol)
 
 starts_supervised_again(handler, sup, child) :-

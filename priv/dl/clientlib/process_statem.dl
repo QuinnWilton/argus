@@ -1,11 +1,5 @@
-// A gen_statem's state functions are where its own code starts running,
-// the same as a GenServer's callbacks. The points-to stage
-// (points_to.dl) includes this file, so self() and a statem's data
-// resolve through them; an analysis that reads the staged points-to
-// includes it too, so the process_entry it asks agrees with the one the
-// stage resolved with. statem_event_clause is an input, and the pins
-// record what each analysis reads.
-//
-// Requires otp.dl (the stage: callbacks.dl).
+// Add gen_statem state/event functions as process entries. Both the points-to stage and
+// consuming analyses include these rows so self() and callback state use consistent
+// roots. Requires otp.dl, or callbacks.dl in the stage.
 
 process_entry(mod, f) :- statem_event_clause(mod, f, _).

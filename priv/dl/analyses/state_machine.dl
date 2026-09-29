@@ -1,9 +1,6 @@
-// gen_statem graph defects.
-//
-// The state machine as a graph: a state no transition reaches, and a
-// state with no way out that never stops the machine. Scoped to
-// state_functions mode, where states are function names the extractor
-// can read.
+// gen_statem graph defects: unreachable states and states with no exit or stop
+// transition. Applies to state_functions mode, where states have extractable function
+// names.
 
 .include "../clientlib/imports.dl"
 .include "../clientlib/tooling.dl"
@@ -19,8 +16,8 @@
 .decl unreachable_state(mod: symbol, state: symbol, site: symbol)
 .output unreachable_state
 
-// A machine whose every transition names its target has a state no
-// other state or helper enters, and the machine does not start in it.
+// All transition targets are known, but this non-initial state has no incoming
+// transition from another state or helper.
 .decl state_never_entered(mod: symbol, state: symbol)
 
 state_never_entered(mod, state) :-
@@ -39,10 +36,8 @@ unreachable_state(mod, state, site) :-
 .decl terminal_without_stop(mod: symbol, state: symbol, site: symbol)
 .output terminal_without_stop
 
-// A machine enters a state from another state, and the state has no way
-// out and no stop: the process idles there for good. A machine that
-// never leaves the state it starts in is a server with one state, not a
-// machine stuck in a terminal one.
+// A state reached from another state has no outgoing transition or stop. Exclude a
+// machine that simply remains in its initial state.
 terminal_without_stop(mod, state, func) :-
   state_function(mod, state, func),
   has_transition_graph(mod),
@@ -61,15 +56,9 @@ declared_state(mod, state) :-
   state != "stop",
   state != "dynamic".
 
-// The rules reason over a graph of state-function callbacks, which
-// exists only in state_functions mode, and only where extraction built
-// one: at least one transition names its target. In
-// handle_event_function mode there is a single handle_event/4 callback
-// and states are ordinary data values, so "unreachable state function"
-// and "terminal state function" are not well-defined. A module whose
-// return tuples the extractor could not read yields no resolved
-// transitions; without this gate its states would be flagged both
-// unreachable and terminal from an empty graph.
+// State-graph checks require state_functions mode and at least one resolved transition
+// target. handle_event_function represents states as data, and an empty extracted graph
+// cannot establish unreachable or terminal states.
 .decl has_transition_graph(mod: symbol)
 
 has_transition_graph(mod) :-
@@ -83,9 +72,8 @@ has_resolved_transition(mod) :-
   statem_transition(mod, _, _, to),
   to != "dynamic".
 
-// The machine has a transition graph and no transition computes its
-// target at run time: one that does could land on any state, so no
-// unreachability claim about the module is sound.
+// Require a transition graph with no computed targets. A dynamic target could reach any
+// state, preventing sound unreachability claims.
 .decl targets_all_known(mod: symbol)
 
 targets_all_known(mod) :-
@@ -101,21 +89,14 @@ has_dynamic_transition(mod) :-
 has_dynamic_transition(mod) :-
   statem_helper_transition(mod, _, "dynamic").
 
-// ── The graph without self-loops ─────────────────────────────────
+// Ignore graph self-loops
 //
-// A state's own `keep_state`/`repeat_state` return (and a `next_state`
-// naming itself) is extracted as a transition from the state to itself.
-// It is neither a way in nor a way out: counted as either, every state
-// function with a keep-state clause was both reachable and non-terminal,
-// and terminal_without_stop could never report one.
+// keep_state, repeat_state, and next_state-to-self establish neither incoming reach
+// from another state nor an exit from this state.
 
-// A state function: the exported arity-3 function gen_statem calls for
-// a state — one the extractor recognised, or one a transition names
-// that returns only what it delegates to (Rondo.Broken's `abyss/3`,
-// every clause handed to a private keep-state helper), which returns no
-// action of its own. What it may return is read through its returned
-// calls, like any state's. A state named only by a transition, with no
-// such function in the module, has no function to judge.
+// An exported arity-3 state callback recognized by extraction or named by a transition.
+// Include callbacks delegating all returns to helpers and follow those return paths. A
+// named state without such a function has no callback to inspect.
 .decl state_function(mod: symbol, state: symbol, func: symbol)
 
 state_function(mod, state, func) :-
@@ -124,9 +105,8 @@ state_function(mod, state, func) :-
 
 // ── A way in ─────────────────────────────────────────────────────
 
-// A state is entered from another state, or by a helper's transition
-// (a `disconnect/2` returning `{:next_state, :disconnected, …}` on its
-// caller's behalf, which names no source state).
+// A state has an incoming transition from another state or a helper returning
+// next_state on its caller's behalf.
 .decl has_way_in(mod: symbol, state: symbol)
 
 has_way_in(mod, state) :-
@@ -135,10 +115,8 @@ has_way_in(mod, state) :-
   state != "stop",
   state != "dynamic".
 
-// A helper's transition is a way in unless the state's own function is
-// the helper's only caller: a catch-all that re-enters its state through
-// a helper (to restart a state timeout) is a self-loop spelled as a
-// call (review 2, item 27: 6aff4d81 read it as a way in).
+// A helper transition provides an incoming edge unless this state callback is its sole
+// caller, in which case it represents a self-loop.
 has_way_in(mod, state) :-
   statem_helper_transition(mod, h, state),
   state != "stop",
@@ -146,22 +124,17 @@ has_way_in(mod, state) :-
   call_edge(c, h),
   !state_function(mod, state, c).
 
-// A helper no function in view calls may be called from anywhere (an
-// export the program's callers use), so its transition stays a way in.
+// A helper with no visible caller may be called externally, so its transition remains a
+// possible entry path.
 has_way_in(mod, state) :-
   statem_helper_transition(mod, h, state),
   state != "stop",
   state != "dynamic",
   !call_edge(_, h).
 
-// The state the machine starts in. Authoritative when init/1's return
-// was resolvable (statem_initial); otherwise a topological fallback — a
-// state that is a transition source with no way in. The fallback is used
-// only for modules with no resolved init state, so a machine whose real
-// entry point was read from init/1 never has a second state
-// misclassified as initial by the heuristic. In a module whose init/1
-// return is computed, the fallback takes every such state for initial,
-// so unreachable_state reports none of them.
+// Use resolved init states when available. Otherwise, treat every transition-source
+// state without incoming edges as a possible initial state. This fallback can suppress
+// unreachable-state findings when init's result is computed.
 .decl initial_state(mod: symbol, state: symbol)
 
 initial_state(mod, state) :-
@@ -180,8 +153,8 @@ initial_state_read(mod) :- statem_initial(mod, _).
 
 // ── A way out ────────────────────────────────────────────────────
 
-// A state has a way out: a transition to another state or to stop, its
-// own or one a function it returns the result of builds.
+// A state can leave through a transition to another state or stop, directly or through
+// a returned helper result.
 .decl has_way_out(mod: symbol, state: symbol)
 
 has_way_out(mod, state) :-
@@ -193,19 +166,15 @@ has_way_out(mod, state) :-
   may_return_transition(mod, func, to),
   to != state.
 
-// What a function may return on some state's behalf: a transition a
-// helper builds, or whatever the function it returns the result of may
-// return (`dynamic` when that is a remote call, an apply or a throw).
+// Possible transitions returned on a state's behalf, following helper results. Remote
+// calls, apply and throw yield unknown (dynamic) transitions.
 .decl may_return_transition(mod: symbol, func: symbol, to: symbol)
 
 may_return_transition(mod, func, to) :-
   statem_helper_transition(mod, func, to).
 
-// A remote call the state returns may transition anywhere, unless its
-// callee is a function of the program in a module that is no machine
-// (a shared handler of another module, whose returns name no state of
-// this one): what it returns is read as keeping the state (review 2,
-// item 27). A callee outside the program stays "dynamic".
+// An external returned call may transition anywhere. A visible non-machine module's
+// returned result is treated as keeping the state; unseen callees remain dynamic.
 may_return_transition(mod, func, "dynamic") :-
   statem_returns_call(mod, func, "dynamic"),
   !returns_program_handler(mod, func).

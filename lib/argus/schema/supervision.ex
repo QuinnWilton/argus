@@ -1,10 +1,7 @@
 defmodule Argus.Schema.Supervision do
   @moduledoc """
-  Supervision trees: the supervisors a module defines, their children
-  and how each is written, how they restart, and what runs after they
-  start.
-
-  Layer 2 of `Argus.Schema`, which reads the relations from here.
+  Layer-2 supervision facts: supervisors, child specs, restart policies, and runtime \
+  child starts. Exposed through `Argus.Schema`.
   """
 
   @doc "The relations, in the order `Argus.Schema.all/0` lists them."
@@ -21,13 +18,9 @@ defmodule Argus.Schema.Supervision do
         doc: "Module that implements the Supervisor behaviour."
       },
 
-      # The tree-definition site is where a FINDING should be anchored, not
-      # something the logic joins on — so it lives apart from `supervisor`. It
-      # is an instruction ID, which renumbers whenever anything earlier in the
-      # supervisor's init shifts; keeping it in `supervisor` made every rule
-      # that merely asks "is this module a supervisor, and with what strategy"
-      # churn on unrelated edits. Analyses that anchor a finding at the tree
-      # definition join this relation explicitly and accept that coupling.
+      # Keep the finding anchor separate from `supervisor`: instruction IDs change on
+      # body edits, while supervisor identity and strategy may not. Only analyses
+      # needing the tree-definition location join this relation.
       %{
         name: :supervisor_site,
         layer: 2,
@@ -54,11 +47,9 @@ defmodule Argus.Schema.Supervision do
           {:type, :symbol, "child type (worker/supervisor)"}
         ],
         doc: """
-        Child specification within a supervisor. A shorthand (`{Mod, arg}`, \
-        a bare `Mod`, `Mod.child_spec(arg)`) states no restart: its restart \
-        is `own`, the one `Mod.child_spec(arg)` answers \
-        (`child_spec_restart`, `child_spec_option` over the start's \
-        `shorthand_arg`), unless `Supervisor.child_spec/2` overrides it.
+        A supervisor child specification. Shorthand forms use restart `own`, resolved \
+        from `child_spec_restart` or argument-dependent `child_spec_option`, unless \
+        `Supervisor.child_spec/2` overrides it.
         """
       },
       %{
@@ -66,14 +57,9 @@ defmodule Argus.Schema.Supervision do
         layer: 2,
         fields: [{:sup, :symbol, "supervisor module"}],
         doc: """
-        The supervisor's child list has an element or a tail the extractor \
-        cannot read: a list appended from config, an `Enum.map`, a \
-        parameter, a spec from a call it does not follow \
-        (`Supervisor.child_spec/2` it does). Its `supervisor_child` rows \
-        are partial, and their positions too: a child the list does not \
-        show may start after any it lists. A list read to its end is \
-        closed, and its rows are in source order \
-        (`Argus.Extractors.Supervision`).
+        A child list with an unresolved element or tail. Its `supervisor_child` rows and \
+        positions are partial; unseen children may start after any listed child. Fully \
+        resolved lists retain source order (`Argus.Extractors.Supervision`).
         """
       },
       %{
@@ -86,18 +72,10 @@ defmodule Argus.Schema.Supervision do
           {:form, :symbol, "'explicit' | 'shorthand'"}
         ],
         doc: """
-        Whether a child spec stated its `type`, or whether \
-        `supervisor_child.type` is the extractor's default.
-
-        A map spec and OTP's tuple form are the program's statement: a map \
-        with no `:type` is a worker by the supervisor's own default (round \
-        4 of the mining: supavisor 6b77121 registered a supervisor so). \
-        The `{Module, args}` and bare-`Module` forms state nothing: \
-        `Module.child_spec/1` decides, and `use Supervisor` generates \
-        `type: :supervisor` where the default written here is `worker`. Any \
-        rule reading `type` must join this, or it is reasoning about a guess — \
-        a first attempt at "supervisor registered as a worker" reported 26 \
-        modules on the corpus and every one was this artefact.
+        Whether a child type is explicit or an extractor default. Maps and OTP tuples \
+        determine the type, including the map default `worker`. Shorthand forms defer to \
+        `Module.child_spec/1`, so their provisional type must not be trusted without \
+        this relation.
         """
       },
       %{
@@ -110,14 +88,9 @@ defmodule Argus.Schema.Supervision do
           {:name, :symbol, "registered name from the child spec's :name option"}
         ],
         doc: """
-        Registered name declared in a child spec's `:name` option — e.g. \
-        the `MyApp.Pool` in `{DynamicSupervisor, name: MyApp.Pool}`. Recorded \
-        alongside `supervisor_child` (same `sup`/`position`) so a \
-        `dynamic_child` whose parent is a registered name can be anchored to \
-        the child that registers it: a `DynamicSupervisor.start_child(MyApp.Pool, _)` \
-        call resolves to the named child instead of appearing unanchored. \
-        Only atom names are recorded — `{:via, _, _}` and `{:global, _}` names \
-        are not, since name-based `start_child` targets are always atoms.
+        An atom registration name in a child spec's `:name` option, keyed by supervisor \
+        and position. Resolves named `DynamicSupervisor.start_child` targets to the \
+        registering child. Via and global names are excluded.
         """
       },
       %{
@@ -130,15 +103,9 @@ defmodule Argus.Schema.Supervision do
              "for a spec that states none), 'dynamic' when the reader cannot read it"}
         ],
         doc: """
-        The restart a module's own child_spec/1 gives a shorthand `{Mod, \
-        arg}` start: the one each spec it answers states, `permanent` for \
-        a map with no `:restart` (the supervisor's default: an absent key), \
-        `dynamic` for one the reader cannot read (a value from a call, \
-        `opts[:restart] || :transient`, a map over a base it cannot know, \
-        another module's child_spec/1 it hands on) — never the default \
-        (issue #4). A restart read off the argument is a \
-        `child_spec_option` row instead. No row when the module has no \
-        child_spec/1 in view.
+        A module's `child_spec/1` restart policy: the stated value, `permanent` for a \
+        known map lacking `:restart`, or `dynamic` when unresolved. Argument-derived \
+        values use `child_spec_option`. No row means no visible `child_spec/1`.
         """
       },
       %{
@@ -152,13 +119,10 @@ defmodule Argus.Schema.Supervision do
            "the value when the argument does not hold the key, 'dynamic' unread"}
         ],
         doc: """
-        The module's child_spec/1 gives a spec field from its argument: \
-        `restart: Keyword.get(opts, :restart, :transient)` (Map.get/3, \
-        `opts[:restart]`, whose default is nil) is `child_spec_option(mod, \
-        "restart", "restart", "transient")`. A shorthand start's field is \
-        then the option its argument holds (`shorthand_option`), or the \
-        default where its argument is options without the key \
-        (`shorthand_arg` `options`), and unknown otherwise.
+        A child-spec field read from the function's argument, with its option key and \
+        default. Shorthand starts resolve it through `shorthand_option`; a known options \
+        argument lacking the key uses the default. Other arguments leave the value \
+        unknown.
         """
       },
       %{
@@ -169,12 +133,9 @@ defmodule Argus.Schema.Supervision do
           {:type, :symbol, "type its child_spec/1 states (worker/supervisor)"}
         ],
         doc: """
-        The type a module's own child_spec/1 gives the child a shorthand \
-        `{Mod, args}`, a bare `Mod` or a `start_child` of one names: a \
-        spec's `:type`, or `worker` for a map it writes with none (the \
-        supervisor's default). `use Supervisor` states `supervisor`; a \
-        child_spec/1 that hands back another module's states nothing, and \
-        no row is written.
+        A module's `child_spec/1` type for shorthand starts: the stated type or `worker` \
+        for a known map lacking it. Delegation to another module's `child_spec/1` has no \
+        row.
         """
       },
       %{
@@ -196,10 +157,8 @@ defmodule Argus.Schema.Supervision do
           {:caller_func, :symbol, "function that calls start_child"}
         ],
         doc: """
-        Runtime-spawned child via `DynamicSupervisor.start_child/2`. Captured \
-        so analyses like `one_for_one_coupling` can see workers added at \
-        runtime (connection pools, per-tenant supervisors, plugin systems) \
-        that wouldn't appear in any static `init/1` child spec scan.
+        A runtime child added by `DynamicSupervisor.start_child/2`. Makes dynamic \
+        workers visible alongside static supervision children.
         """
       },
       %{
@@ -214,15 +173,10 @@ defmodule Argus.Schema.Supervision do
            "'options' when the argument is options every key of which is known, else 'dynamic'"}
         ],
         doc: """
-        A shorthand start (`{Mod, arg}`, a bare `Mod` (`arg` is `[]`), \
-        `Mod.child_spec(arg)`) in a child list (`supervisor_child`, `at` \
-        its position), a `DynamicSupervisor.start_child` (`dynamic_child`) \
-        or a `Supervisor.start_child` (`added_child`, `at` the calling \
-        function), and what its argument is: `options`, a keyword list or \
-        a map with atom keys the reader knows whole (`[]` among them), \
-        whose options are `shorthand_option` rows and whose other keys are \
-        absent; or `dynamic`, one that may hold any key. What \
-        `child_spec_option` reads a field from.
+        A shorthand child start and its argument shape. Covers static, dynamic, and \
+        added children. `options` means a fully known keyword list or atom-keyed map, \
+        with entries in `shorthand_option`; other arguments use `dynamic`. Bare modules \
+        use `[]`.
         """
       },
       %{
@@ -249,16 +203,10 @@ defmodule Argus.Schema.Supervision do
              "permanent for a map with none), 'dynamic' when the spec's restart could not be read"}
         ],
         doc: """
-        The restart a `DynamicSupervisor.start_child/2`'s own spec states \
-        for the child its `dynamic_child` row names: a map's `:restart`, \
-        `:permanent` for a map with none (the map does not call the \
-        module's child_spec/1, so `use GenServer, restart: :temporary` does \
-        not apply), or `Supervisor.child_spec/2`'s overrides (redix \
-        e67e61a: `Supervisor.child_spec({Redix, opts}, restart: \
-        :temporary)`). No row for a shorthand, whose restart its own \
-        child_spec/1 gives (`child_spec_restart`, `child_spec_option` over \
-        the start's `shorthand_arg`); \
-        `clientlib/supervision.dl`'s `dynamic_restart` reads both.
+        The restart policy stated by a dynamic child's explicit spec or \
+        `Supervisor.child_spec/2` override. Known maps without `:restart` use \
+        `permanent`. Shorthand forms have no row here; `dynamic_restart` in \
+        `clientlib/supervision.dl` also resolves their module-defined policy.
         """
       },
       %{
@@ -276,15 +224,9 @@ defmodule Argus.Schema.Supervision do
           {:caller_func, :symbol, "function that calls start_child"}
         ],
         doc: """
-        A child a `Supervisor.start_child/2` or `supervisor:start_child/2` \
-        call adds to a supervisor, beside the children its init/1 lists: \
-        `supervisor:start_child(kernel_safe_sup, {dets, {dets_server, \
-        start_link, []}, permanent, ...})`. The spec is read as an element \
-        of a child list is, with its restart and type. Not a \
-        DynamicSupervisor's child (`dynamic_child`), of which a program \
-        starts many, and not a simple_one_for_one template's (the argument \
-        is a list of arguments, and the supervisor's init/1 names the \
-        child); a spec the extractor cannot read names no child.
+        A child added by `Supervisor.start_child/2` or `:supervisor.start_child/2`, with \
+        spec, restart, and type. Excludes DynamicSupervisor children, simple_one_for_one \
+        argument lists, and unresolved specs.
         """
       },
       %{
@@ -300,11 +242,9 @@ defmodule Argus.Schema.Supervision do
              "or 'dynamic' (a pid, a {name, node}, a name the reader cannot read)"}
         ],
         doc: """
-        A task started under a Task.Supervisor, beside its `dynamic_child` \
-        row (child `Task`), which does not say how: `async_stream` and \
-        `async_stream_nolink` run at most `max_concurrency` tasks at a time \
-        for the process enumerating the stream, the others start one each. \
-        `sup` is matched against `task_supervisor_cap`'s names.
+        A Task.Supervisor task start and its API, supplementing `dynamic_child`. Stream \
+        APIs run up to `max_concurrency` tasks per enumerating process; other APIs start \
+        one task per call. Supervisor names join `task_supervisor_cap`.
         """
       },
       %{
@@ -319,16 +259,10 @@ defmodule Argus.Schema.Supervision do
              "none or :infinity, 'dynamic' when the options or the cap cannot be read"}
         ],
         doc: """
-        A Task.Supervisor the program starts: a `{Task.Supervisor, opts}` \
-        child spec (a literal or one built at run time, in a child list or \
-        anywhere), a PartitionSupervisor's `child_spec: Task.Supervisor` or \
-        `{Task.Supervisor, opts}`, a `Task.Supervisor.start_link/0,1` or \
-        `child_spec/1` call. Every start is recorded, capped or not: \
-        `Task.Supervisor.start_child/2..5` returns an error only as \
-        `{:error, :max_children}`, under a cap (a supervisor that is not \
-        running exits the caller instead), so the rows say which starts \
-        can fail, and a start whose supervisor has no row is one the \
-        program does not show.
+        A Task.Supervisor start and its cap, from child specs, PartitionSupervisor \
+        options, or direct start/child-spec calls. Records capped and uncapped starts. A \
+        cap can produce `{:error, :max_children}`; an unavailable supervisor instead \
+        exits the caller. No row means the start is not visible.
         """
       },
       %{
@@ -339,13 +273,9 @@ defmodule Argus.Schema.Supervision do
           {:limit, :symbol, "the configured cap, 'dynamic' when the options may set one"}
         ],
         doc: """
-        A `max_children` cap read from `DynamicSupervisor.init/1`'s \
-        options. Present when a finite cap is set, or may be: `dynamic` for \
-        options the extractor cannot read whole (a parameter, a tail or an \
-        element it cannot know), where a cap is unknown rather than the \
-        default (issue #4). The behaviour defaults to `:infinity`, so \
-        absence — options read whole that state none — is the common case \
-        and the interesting one, and consumers ask about it by negation.
+        A DynamicSupervisor `max_children` cap. A finite value is recorded directly; \
+        incomplete options use `dynamic`. Fully known options without a cap have no row, \
+        reflecting the default `:infinity`.
         """
       },
       %{
@@ -357,9 +287,8 @@ defmodule Argus.Schema.Supervision do
           {:transport, :symbol, "'websocket' | 'longpoll'"}
         ],
         doc: """
-        A socket transport an endpoint enables, read from the literal that \
-        `socket/3` compiles into `__sockets__/0`. Emitted only for transports \
-        that are present and not `false`, which is how Phoenix reads them.
+        An enabled socket transport from an endpoint's compiled `__sockets__/0`. Records \
+        only present, non-false transports, matching Phoenix.
         """
       }
     ])

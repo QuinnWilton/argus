@@ -1,24 +1,11 @@
-// ETS table ownership, concurrency, and lifecycle analysis.
-//
-// Detects common ETS anti-patterns:
-// - Tables owned by processes without heir protection.
-// - Reads from callers' processes while the owner may be restarting.
-// - Cross-module access without concurrency settings.
-// - Write contention on ordered_set tables.
-// - Tables that only grow.
-// - Unnamed tables in processes (stale reference risk).
-//
-// The read-then-write race on a key is races.dl's.
-//
-// Which table an operation touches is clientlib/tables.dl's ets_table,
-// the identity races.dl compares too: a named table by its name, an
-// unnamed one by its :ets.new/2 site (followed through returns, fields
-// and a server's state by points-to), so two unnamed tables made under
-// one atom are two tables. An operation no view names a table for
-// (may_touch_any_table) joins no table, except where a rule says it is
-// taken to be any of its module's (the quiet direction). A creation site
-// is reported by the name its :ets.new/2 gave, and one whose name is
-// computed at run time only where a rule says so.
+// ETS ownership, lifetime, and concurrency checks: missing heirs, restart-window reads,
+// concurrency options, ordered_set contention, growing tables, and stale unnamed-table
+// references. Key-level read/write races belong to races.dl.
+// Use `ets_table` from clientlib/tables.dl for identity: names for named tables,
+// allocation sites for unnamed tables. Unresolved operations join no table unless a
+// rule explicitly treats them as possibly touching an owner's table. Findings label
+// creation sites by their supplied name; computed names are handled only where
+// specified.
 
 .include "../clientlib/imports.dl"
 .include "../clientlib/otp.dl"
@@ -34,60 +21,21 @@
 
 // ── Ownership & lifecycle ──────────────────────────────────────────
 
-// A table's owner is the process that runs its `:ets.new/2`. The
-// processes that run the program's code, each named by what starts it
-// (process_root):
-// - "server <mod>": a process module's own process, which runs its
-//   callbacks (process_entry, callbacks.dl; a supervisor_bridge's
-//   init/1 among them), and what its start function spawns on its own
-//   code (`proc_lib:start_link(?MODULE, init, _)`, an
-//   `Agent.start_link(fn -> ... end)`): the process the start returns,
-//   the one a supervisor restarts;
-// - "spawn <root>": any other process a spawn, a task or an agent starts
-//   (process_start; a fun handed to a helper that starts one,
-//   runs_elsewhere.dl's fun_sink), running `root` — a keeper a server's
-//   init/1 spawns to hold a table is a process of its own, and outlives
-//   neither its own crash nor the end of its function;
-// - "app <mod>": an Application's start/2, which runs in the process
-//   that lives as long as the application does;
-// - "behaviour <mod>": a module under a behaviour that is not a
-//   process's (an Oban worker's perform/1, a plug's call/2), run by
-//   whichever process its framework calls it from — a job's, a
-//   request's — which the program does not show. Each function of the
-//   module that no root above reaches is a root.
-// A root's own stack (owner_reaches: SameProcessReach, into any module)
-// is its process's. A server module's client function, run by its
-// callers, makes its caller's table: the process of whichever root
-// reaches it (another server's callback, a spawned task, a job).
+// Table ownership
 //
-// Code of another module makes a table the owner holds when the table is
-// named: shared state the helper sets up for the process
-// (`Metrics.init()` from the server's init/1). An unnamed table another
-// module makes is a value it hands back — a digraph's, a query cache's,
-// a connection's statement table — the caller's data, held as its state
-// is and gone when it is, by design. So is an unnamed table a behaviour
-// module makes and returns (grpc's load-balancing strategies, whose
-// init/1 hands the table back in the state its caller keeps): the
-// caller holds it, not the module. Soundness assumption: a reference
-// handed back is held only by the caller it goes to; one also kept
-// elsewhere (in persistent_term, another table) is not seen.
-//
-// Three words about who holds ETS state, apart on purpose:
-// - this one, may_hold_table (and owner_reaches): the process a table
-//   dies with, when SOME path on its stack makes it — the direction that
-//   reports (a crash takes the table, a caller's read raises); both
-//   rules below that ask who owns a table (it dies with its owner; it is
-//   read outside its owner) read it;
-// - failure.dl's `always_holds_table`/`in_owner`/`seeded_row`: a table (and
-//   rows) created on EVERY path through init/1 and never dropped, and a
-//   function only that process runs — what makes an operation unable to
-//   fail, the direction that stays quiet, so it asks more;
-// - races.dl's `mints_every_row`/`held_row`: rows, not tables — a row only
-//   the writer that minted its key can name.
-//
-// Backward from the table functions (creators and readers) to the roots
-// that reach them, so the closure is bounded by functions x table
-// functions rather than by every process's whole reach.
+// The process executing :ets.new/2 owns the table. Roots identify server processes,
+// separately spawned processes, application processes, and framework-run behaviour
+// callbacks. SameProcessReach follows each root's stack across modules; client APIs run
+// in the caller's process.
+// Named tables created by helpers count as shared state. Unnamed tables returned by
+// another module or a behaviour are treated as caller-owned data. Assumption: returned
+// references are not also stored elsewhere.
+// `may_hold_table` requires creation on some path and supports lifetime findings.
+// failure.dl requires creation on every init path and exclusive owner execution to
+// prove operations safe. races.dl separately checks ownership of rows by freshly minted
+// keys.
+// Traverse backward from creators and readers so reachability is limited to relevant
+// table functions.
 .init ets_reach = SameProcessReach
 
 ets_reach.seed(f, f) :- ets_new(_, f, _).
@@ -110,9 +58,8 @@ process_root(c, cat("server ", m), m, "server") :- process_entry(m, c).
 
 process_root(g, cat("server ", m), m, "server") :- own_start(g, m).
 
-// A special process's sys callbacks run in its own process: its loop
-// hands a system message to sys:handle_system_msg/6, which calls them
-// back there (vmq_queue_sup's system_continue/3 re-enters its loop).
+// Special-process sys callbacks run in the process handling sys:handle_system_msg/6,
+// including callbacks that resume its loop.
 process_root(c, cat("server ", m), m, "server") :-
   own_start(_, m),
   function_def(c, m, n, a, _),
@@ -149,15 +96,9 @@ process_root(f, cat("behaviour ", m), m, "behaviour") :-
   function_def(f, m, _, _, _),
   !known_reaches(f).
 
-// A module's start function starts a process on the module's own code
-// and returns it (PidFlow's pid_return: the start's `{:ok, pid}`, or the
-// pid), or starts no server beside it (application_controller:start/1
-// spawns its process and answers with the ack it waits for): the
-// module's own process, the one its supervisor restarts. A keeper the
-// start function spawns beside the server it returns is not. Nor is one
-// spawned anywhere else — but the subsystem a supervisor_bridge's
-// init/1 spawns on the module's own code, which the bridge links to and
-// stops, and whose exit ends the bridge for its supervisor to restart.
+// A module's start function creates its own process and returns its pid, or starts no
+// separate server. Excludes sidecar keepers. Includes a supervisor_bridge subsystem
+// started on the module's own code, linked and stopped by the bridge.
 .decl own_start(root: symbol, mod: symbol)
 
 own_start(g, m) :-
@@ -204,9 +145,8 @@ known_reaches(t) :- known_root(c), ets_reach.reaches(c, t).
 
 owner_reaches(p, m, t) :- process_root(c, p, m, _), ets_reach.reaches(c, t).
 
-// The process `proc` (of `mod`'s code) may hold the table made at
-// `site`: some path on its stack runs the :ets.new/2 (failure.dl's
-// always_holds_table asks every path, the quiet direction).
+// Process proc may own the table allocated at site: some path on its stack creates it.
+// failure.dl's always_holds_table requires every path.
 .decl may_hold_table(name: symbol, proc: symbol, mod: symbol, site: symbol)
 
 may_hold_table(name, p, mod, id) :-
@@ -216,18 +156,16 @@ may_hold_table(name, p, mod, id) :-
   function_def(func, mod, _, _, _),
   !handed_back(id, p).
 
-// A named table is held by whichever process runs its :ets.new/2, in
-// that process's module or in a helper's (`Metrics.setup()`): a named
-// table is never handed back (handed_back asks an unnamed one).
+// A named table belongs to the process executing :ets.new/2, including creation in
+// helpers. handed_back applies only to unnamed tables.
 may_hold_table(name, p, mod, id) :-
   ets_new(id, func, name),
   name != "dynamic",
   owner_reaches(p, mod, func),
   ets_option(id, "named_table", "true").
 
-// An unnamed table a behaviour module makes and returns — itself, or in
-// a term its function builds and returns, any depth down (PidFlow's
-// pid_return and pid_field): the caller's data.
+// An unnamed table returned by a behaviour module, directly or nested in a returned
+// term. pid_return and pid_field track it as caller-owned data.
 .decl handed_back(site: symbol, proc: symbol)
 
 handed_back(id, p) :-
@@ -249,11 +187,8 @@ returned_term(f, o) :- returned_term(f, p), pid_field(f, p, _, "obj", o).
 
 // ── A table that dies with its owner ──
 
-// A table other processes can read goes with the process that owns it,
-// and nothing keeps it or makes it again: no heir takes it over, no
-// supervisor restarts the owner, and the owner does not live as long as
-// the application. `create` is the :ets.new/2 instruction, the creation
-// line.
+// A readable table dies with an owner lacking an heir, permanent restart, or
+// application lifetime. `create` anchors the finding at :ets.new/2.
 .decl table_dies_with_owner(table: symbol, owner: symbol, owner_mod: symbol, create: symbol)
 
 table_dies_with_owner(table, owner, owner_mod, create) :-
@@ -263,42 +198,30 @@ table_dies_with_owner(table, owner, owner_mod, create) :-
   !restarted_by_supervisor(owner),
   !lives_with_application(owner).
 
-// The table made at `create` is :private: no other process can read it,
-// so no reader meets it gone, and its rows are the owner's state, lost
-// with the process as its heap is (zotonic's mod_logging dedup table).
+// A private table is inaccessible to other processes. Its contents die with its owner,
+// so no external reader can observe its disappearance.
 .decl private_table(create: symbol) inline
 
 private_table(create) :- ets_option(create, "access", "private").
 
-// `owner` is a module's own process (a server's, an application's, a
-// behaviour's), not one spawned beside it: a keeper an init/1 spawns is
-// not the child its supervisor restarts, and a table it holds dies with
-// it however the spawning module is supervised. (What a module's start
-// function spawns on its own code is the child, and a "server" root.)
+// A module-owned server, application, or behaviour process. Excludes separately spawned
+// keepers, whose lifetime is independent of the module's supervision. A start function
+// spawning its own implementation is a server root.
 .decl module_process(owner: symbol, mod: symbol)
 
 module_process(p, mod) :- process_root(_, p, mod, kind), kind != "spawn".
 
-// A supervisor restarts the owner's module permanently, and the restart
-// makes the table again: listed in a child list, started by a
-// DynamicSupervisor.start_child or added by a start_child (dets_server's
-// ensure_started puts it under kernel_safe_sup), under :permanent
-// (restart_policy: the spec's, or a shorthand's own child_spec/1's). A
-// `use GenServer, restart: :temporary` owner started by its shorthand is
-// never restarted, and its table is gone for good once it crashes; a
-// transient or temporary spec, or one whose restart the extractor could
-// not read, is no excuse.
+// The owner's module is a permanent static, dynamic, or added child whose restart
+// recreates the table. Transient, temporary, and unresolved policies do not establish
+// recovery.
 .decl restarted_by_supervisor(owner: symbol)
 
 restarted_by_supervisor(p) :-
   module_process(p, mod),
   restart_policy(_, mod, "permanent").
 
-// The owner lives as long as the application, so its table is never lost
-// while the application runs: an Application module's, or the supervisor
-// the Application starts (application_root, supervision.dl: partisan_sup
-// keeps its membership snapshot in a table it creates in init/1 so the
-// table outlives the managers it restarts).
+// An application process or root supervisor owns the table for the application's
+// lifetime, so it is not lost while that application continues.
 .decl lives_with_application(owner: symbol)
 
 lives_with_application(p) :- module_process(p, mod), behaves_as(mod, "Application").
@@ -381,9 +304,8 @@ touches_made_table(id, create) :-
   ets_table(id, k, t),
   table_made_at(k, t, create).
 
-// The :ets.new/2 at `create` makes the table of that name, the name a
-// finding spells it by ("dynamic", a name computed at run time, is
-// none).
+// Use the literal name from :ets.new/2 for display. "dynamic" denotes a computed,
+// unknown name.
 .decl makes_table(create: symbol, table: symbol)
 
 makes_table(create, table) :- ets_new(create, _, table), table != "dynamic".
@@ -430,10 +352,8 @@ ets_ordered_set_contention(name, mod1, mod2, site) :-
 
 // ── Stale reference risk ───────────────────────────────────────────
 
-// A process module's own server makes a table without a name: whoever
-// keeps the reference holds a dead one once the server restarts and
-// makes the table again. `create` is the :ets.new/2 instruction, the
-// creation line.
+// A server creates an unnamed table. Restarting creates a new table, leaving retained
+// references stale. `create` anchors the finding at :ets.new/2.
 .decl unnamed_table_in_server(table: symbol, owner_mod: symbol, create: symbol)
 
 unnamed_table_in_server(table, owner_mod, create) :-
@@ -451,18 +371,11 @@ runs_as_server(p) :- process_root(_, p, mod, "server"), process_module(mod).
 
 ets_unnamed_in_process(name, mod, site) :- unnamed_table_in_server(name, mod, site).
 
-// ── Write-only tables ──────────────────────────────────────────────
+// Tables that only grow
 //
-// A named table that the code inserts into from outside init/1 and
-// never deletes from is a table that only grows. Sentry's check-in ID
-// mapping was one: every check-in inserted a row, nothing ever removed
-// one, and the process held the table for the life of the VM. A table
-// filled once in init/1 and read thereafter is a cache, not a leak, and
-// is not reported.
-//
-// Any removal (ets_removal_op, clientlib/effect_model.dl) of a table no
-// view names (may_touch_any_table) in the owner's module is taken as
-// possibly this table — the direction that stays quiet.
+// A named table receives inserts outside init and has no known removal. Init-only
+// population is excluded. An unresolved removal in the owner's module is treated as
+// possibly removing this table and suppresses the finding.
 
 // A named table gains rows outside init/1, and nothing ever removes one.
 .decl table_only_grows(table: symbol, create: symbol)
@@ -473,9 +386,8 @@ table_only_grows(table, create) :-
   grows_outside_init(create),
   !loses_rows(create).
 
-// An insert outside init/1 adds a row to the table made at `create`: one
-// that does not overwrite the row its key names (overwrites_row). A
-// function named init, of any arity, counts as init/1.
+// An insert outside initialization adds a row without overwriting its key. Treat
+// functions named init, at any arity, as initialization.
 .decl grows_outside_init(create: symbol)
 
 grows_outside_init(create) :-
@@ -486,9 +398,8 @@ grows_outside_init(create) :-
   fname != "init",
   !overwrites_row(id).
 
-// Code removes rows from the table made at `create`: any removal of that
-// table, or any removal of a table no view names in the module that
-// makes it, taken as possibly this table (quiet).
+// Possible row removal: an operation on this table, or an unresolved table operation in
+// the creating module. Either suppresses growth warnings.
 .decl loses_rows(create: symbol)
 
 loses_rows(create) :-
@@ -503,11 +414,8 @@ loses_rows(create) :-
   may_touch_any_table(id),
   function_def(f, mod, _, _, _).
 
-// An insert whose key is a literal (ets_key) into a set table keyed on
-// the first element overwrites the one row that key names: however often
-// it runs, the table holds one row for it. rabbit_disk_monitor keeps its
-// four settings that way. A bag keeps every insert, and a table with a
-// keypos of its own is keyed on another element.
+// A literal-key insert overwrites a single row when the table is a set with default key
+// position. Bags and custom key positions do not establish this bound.
 .decl overwrites_row(id: symbol)
 
 overwrites_row(id) :-
@@ -534,30 +442,17 @@ ets_write_only_table(name, mod, site) :-
   table_only_grows(name, site),
   made_in(site, mod).
 
-// ── Reads from outside the owner ─────────────────────────────────────
+// Reads outside the owner
 //
-// A named table created by a process's own callbacks disappears with
-// the process and comes back only when its restart reaches :ets.new
-// again. Its module's API (`lookup/1`, run in the caller's process)
-// reads the table in that window and raises ArgumentError in the caller
-// instead of returning a value — Redix.Cluster callers saw exactly that
-// during a :one_for_all restart (whatyouhide/redix#338). A heir keeps
-// the table alive; a rescue in the reader (or in a wrapper the reader
-// hands its closure to) turns the window into a result.
-//
-// The window needs a reader that outlives the owner (reader_outlives,
-// below): a process that runs the read goes on after the owner's process
-// ends. The owner's own process does not (owner_reaches); nor does one
-// its supervisors end with it (ends_with, supervision.dl: a child of the
-// owner's subtree, a sibling a one_for_all or rest_for_one restarts with
-// it), nor any when the owner's end is the application's
-// (application_lifetime). A reader no process in view runs is called
-// from outside them, and goes on. docs/design/restart-state.md is the
-// model: what one process holds that another's end discards.
+// A reader that outlives a table's owner may access it between owner exit and
+// recreation, raising ArgumentError. Heirs preserve the table; covering rescues handle
+// the missing-table error.
+// Exclude the owner, processes ended with it by supervision, and owners whose lifetime
+// is the application's. Readers outside visible process roots may outlive the owner.
+// See docs/design/restart-state.md.
 
-// A read of a table, from a process that goes on after the table's owner
-// ends: the table goes with its owner, and the read raises ArgumentError
-// until the owner's restart makes it again.
+// A reader outlives the table's owner. After the owner exits, reads raise ArgumentError
+// until restart recreates the table.
 .decl read_while_owner_restarts(reader: symbol, read: symbol, create: symbol, owner: symbol, owner_mod: symbol)
 
 read_while_owner_restarts(reader, read, create, owner, owner_mod) :-
@@ -566,32 +461,23 @@ read_while_owner_restarts(reader, read, create, owner, owner_mod) :-
   reader_outlives(reader, owner, owner_mod),
   !handles_missing_table(read, reader).
 
-// `reader` reads, at `read`, the table made at `create`, which the process
-// `owner` (of `owner_mod`'s code) holds (may_hold_table): the read's table is
-// that one (reads_made_table); or the table's name is computed at run
-// time, and the read is one the owner's own module makes of a table no
-// view names (computed_read).
+// A read of a table held by owner, matched by allocation identity or by the
+// computed-name fallback for unresolved reads in the owner's module.
 .decl reads_held_table(read: symbol, reader: symbol, create: symbol, owner: symbol, owner_mod: symbol)
 
-// The owner is may_hold_table's: the process whose stack runs the
-// :ets.new/2, a helper module's named table included (the server whose
-// init/1 calls `Metrics.setup()` holds it, and `Metrics.lookup/1`, run
-// by callers, reads it from outside).
+// Use may_hold_table to identify the owning process, including named tables allocated
+// by helpers called on its stack.
 reads_held_table(read, reader, create, owner, owner_mod) :-
   may_hold_table(_, owner, owner_mod, create),
   reads_made_table(read, reader, create).
 
-// A table under a name computed at runtime: only the owner's own API can
-// be tied to it. It is judged as a named read is: a reader outlives the
-// owner (a shard's `get/2` its callers run, though the shard's own
-// handle_call also runs it), and the read is not rescued.
+// For computed-name tables, check only the owner's API: the reader must outlive the
+// owner and the missing-table error must escape.
 reads_held_table(read, reader, create, owner, owner_mod) :-
   computed_read(owner, owner_mod, reader, read, create).
 
-// The read meets a missing table without raising out of the reader: it
-// is rescued (read_rescued), or it is made only while the table is there
-// (read_when_present; the extractor gives no read of a computed name
-// one).
+// The read handles a missing table through rescue or a presence guard. Computed table
+// names receive no extracted presence guard.
 .decl handles_missing_table(read: symbol, reader: symbol)
 
 handles_missing_table(read, reader) :- read_rescued(read, reader).
@@ -605,9 +491,8 @@ ets_read_outside_owner(name, owner_mod, reader, read, create) :-
   read_while_owner_restarts(reader, read, create, _, owner_mod),
   read_names(read, reader, create, name).
 
-// The name a finding spells the table by: the named table the read names,
-// made at `create`, or else the name its :ets.new/2 gave ("dynamic" when
-// computed at run time).
+// Display the name used by the read, falling back to the creation name or "dynamic"
+// when computed.
 .decl read_names(read: symbol, reader: symbol, create: symbol, name: symbol)
 
 read_names(read, reader, create, name) :-
@@ -626,22 +511,15 @@ reads_named_table(read, reader, create) :-
   table_read(read, reader, "named", name),
   table_made_at("named", name, create).
 
-// The read at `site` raises when its table is gone (races'
-// raises_if_row_missing asks of a missing row). :ets.info/1,2 answers
-// :undefined for a table that is gone; it is how a reader asks, not a
-// read that raises (ets_answers_missing_table, clientlib/effect_model.dl).
+// Reads that raise when a table is missing. Exclude :ets.info/1,2, which return
+// :undefined; see ets_answers_missing_table. races.dl separately handles missing rows.
 .decl raises_if_table_missing(site: symbol)
 
 raises_if_table_missing(site) :- ets_op(site, _, _, op, "read"), !ets_answers_missing_table(op).
 
-// The ArgumentError a missing table raises does not escape the reader
-// (Escape, clientlib/escape.dl): a try that takes it and goes on covers
-// the read, or a call on every path from the reader down to it (a read
-// through a caller's literal is made in the helper the literal is handed
-// to), or every call to the reader. A rescue around unrelated code
-// elsewhere in the reader does not take it, as ets_missing_row learned
-// (9406a24). A read in a closure is rescued where every call the closure
-// is handed to is covered.
+// The missing-table ArgumentError is caught at the read, along every path through
+// helpers, or at every call to the reader (`Escape`). Closures require coverage of
+// every call receiving them. Unrelated rescues do not qualify.
 .decl read_rescued(site: symbol, func: symbol)
 
 read_rescued(site, reader) :- table_miss.rescued(site, reader, "badarg").
@@ -652,25 +530,16 @@ table_miss.asked(site, g, reader, "badarg") :- table_read(site, reader, _, _), e
 table_miss.asked(site, reader, reader, "badarg") :- computed_read(_, _, reader, site, _).
 table_miss.asked(create, f, start, "badarg") :- makes_on_its_stack(start, create), ets_new(create, f, _).
 
-// A reader that asks `:ets.whereis/1` of the table before reading it
-// (hackney's HTTP/3 connection table, Sentry's dedupe), or makes it on
-// its way when it is missing (an ensure helper before each read:
-// blockster's SystemConfig, sequin's Benchmark.Stats), reads only while
-// the table is there — when every path to the read passes the side of
-// the answer's test that found it, or an instruction that makes it
-// (ets_read_when_present, from the ETS extractor). A whereis in another
-// clause, one whose answer is logged and the table read anyway, a read
-// on the `:undefined` side, or a make on one path only guards nothing.
-// The window between the question and the read is left, and a table the
-// reader makes is its own (dies-with-owner's row for it stands).
+// Every path to the read confirms table presence or creates the table
+// (`ets_read_when_present`). A lookup in another clause or unchecked result does not
+// qualify. This leaves a check/read race window; reader-created tables still receive
+// ownership checks.
 .decl read_when_present(site: symbol)
 
 read_when_present(site) :- ets_read_when_present(site, _).
 
-// `reader` reads, at `site`, a table of that kind and identity
-// (clientlib/tables.dl), with a read that raises when the table is gone:
-// the read's own function, or, for a read of the function's parameter, a
-// caller whose literal names the table through it.
+// A read that raises if its identified table disappears. Attribute parameter-based
+// reads to the caller supplying a literal name, while retaining the actual read site.
 .decl table_read(site: symbol, reader: symbol, kind: symbol, ident: symbol)
 
 table_read(site, reader, k, t) :-
@@ -679,12 +548,9 @@ table_read(site, reader, k, t) :-
   !ets_op_param(site, _),
   ets_table(site, k, t).
 
-// A read through a helper that takes the table as a parameter
-// (`defp fetch(table, key), do: :ets.lookup(table, key)`): the name is
-// the literal a caller passes, possibly forwarded through more than one
-// parameter, and a name reaches only a named table. The caller passing
-// the literal is the reader that matters — it is the API someone calls —
-// and the site stays the lookup.
+// A table read in a helper whose table parameter receives a literal name, possibly
+// through forwarding. The caller supplying the name is the reader; the lookup remains
+// the site. Literal names resolve only to named tables.
 table_read(site, caller, "named", name) :-
   call_arg(caller, g, q, name),
   name != "dynamic",
@@ -708,13 +574,10 @@ reads_made_table(read, reader, create) :-
   table_read(read, reader, k, t),
   table_made_at(k, t, create).
 
-// A process that runs `reader` goes on after the owner's process `p`
-// ends: not p itself, not one p's end takes (ends_with, for a
-// supervised owner's own process), and none at all when p's end is the
-// application's. A caller outside the program runs a reader a way in
-// reaches (called_from_outside), whatever process in view also runs it:
-// a library's `get/2` its own handle_call also calls is its users' read
-// too. A reader no process in view runs is run by a caller outside them.
+// A reader process can continue after owner process `p` exits. Excludes the owner,
+// processes ended with it, and application-lifetime owners. External entry points still
+// count even when an internal process also reaches the reader; unassigned readers are
+// treated as external.
 .decl reader_outlives(reader: symbol, proc: symbol, owner: symbol)
 
 reader_outlives(reader, p, owner) :-
@@ -743,15 +606,9 @@ read_owner(p, owner, reader) :- computed_read(p, owner, reader, _, _).
 
 runs_somewhere(f) :- read_owner(_, _, f), owner_reaches(_, _, f).
 
-// A way in from outside the program reaches `f` on its caller's stack:
-// an export of a module the program is the client of nowhere
-// (library_face, ways_in.dl) that roots no process in view — its
-// callers are the library's users, in processes of their own; or an
-// export of the owner's own module, its client API, that roots no
-// process and that no process in view runs: the code in view that calls
-// it runs in its callers' processes, which the program does not show
-// (Phoenix.Tracker's `list/2`, which Phoenix.Presence's functions call
-// for their users, reaching `pool_size/1`).
+// A reader reachable on an external caller's stack from a library-facing export, or an
+// unused client API of the owner's module. Process-root functions are excluded. Such
+// callers may not appear among the analyzed process roots.
 .decl called_from_outside(func: symbol)
 
 called_from_outside(f) :-
@@ -768,12 +625,9 @@ called_from_outside(f) :-
   ets_reach.reaches(e, f),
   !owner_reaches(_, _, e).
 
-// The reader's process q (of qm's code) ends when the owner's process p
-// ends: q is a supervised module's own process its supervisors end with
-// the owner's server (ends_with), or q is spawned linked
-// (`spawn_link`) by a process that is p or ends with it — the link ends
-// it too. A linked process that traps exits outlives its peer and is
-// taken as ended (quiet): a spawned loader rarely traps.
+// The reader ends with the owner through supervision or a spawn_link chain. Assumption:
+// linked spawned processes do not trap exits; treating them as ending suppresses
+// findings.
 .decl ended_with(proc: symbol, owner: symbol, q: symbol, qm: symbol)
 
 ended_with(p, owner, q, qm) :-
@@ -809,30 +663,19 @@ ends_by(p, owner, r) :-
   process_root(_, r, rm, "server"),
   ends_with(owner, rm).
 
-// A process whose exit is its application's: the process an
-// Application's start/2 runs in, and the supervisor that start/2 starts
-// and no other supervisor in view does (application_root,
-// supervision.dl), whose death stops the application. Nothing restarts
-// either, so no read meets the table gone while the application runs:
-// the lifetime lives_with_application excuses from dying with its owner,
-// asked of the process here. A worker start/2 starts, a supervisor
-// another tree also starts, a keeper a root supervisor spawns and a
-// table one of its children makes each have a restart of their own.
+// An application process or its uniquely started root supervisor. Its exit ends the
+// application, so there is no in-application restart window. Workers, shared
+// supervisors, sidecar keepers, and child-owned tables have separate lifetimes.
 .decl application_lifetime(proc: symbol)
 
 application_lifetime(p) :- process_root(_, p, _, "app").
 application_lifetime(p) :- process_root(_, p, m, "server"), application_root(m).
 
-// ── A table under a computed name ──
+// Tables with computed names
 //
-// A table whose :ets.new/2 is given a name computed at run time, by a
-// server of the module, is judged as a named one is where its reads name
-// it (reads_made_table). A read of a table no site in view is known to
-// make (none named, a name no site is known to give, a field or a
-// handed-in table), in the owner's own module, is taken to be it: only
-// the owner's own API can be tied to it (vmq_diversity_cache's
-// `ets:new(table(T), ...)` over a list, read through `match_/3`'s
-// parameter). A read the facts say is a table made in view is not.
+// Use known allocation/read links where available. Otherwise, an unresolved read in the
+// owner's module may refer to its computed-name table. Reads known to target another
+// visible allocation are excluded.
 .decl computed_read(proc: symbol, owner: symbol, reader: symbol, site: symbol, id: symbol)
 
 computed_read(p, owner, reader, site, id) :-
@@ -846,8 +689,8 @@ computed_read(p, owner, reader, site, id) :-
   !reads_table_made_in_view(site),
   function_def(reader, owner, _, _, _).
 
-// The read touches a table some site in view is known to make: then it
-// is that table, not one under a name computed at run time.
+// A visible allocation identifies the accessed table, avoiding fallback to an unknown
+// runtime name.
 .decl reads_table_made_in_view(site: symbol)
 
 reads_table_made_in_view(site) :-
@@ -866,38 +709,17 @@ computed_name_held(p, owner, id) :-
   owner_reaches(p, owner, creator),
   !has_heir(id).
 
-// ── A named table a start function creates ─────────────────────────
+// Named tables created by start functions
 //
-// A server's `start_link` runs in whoever starts the server — its
-// supervisor, when the server is a child — not in the server: only the
-// callbacks the start leads to run in the new process. A named table
-// `start_link` creates belongs to that caller. It outlives the server's
-// crash, and the restart, which calls `start_link` again in the same
-// supervisor, raises ArgumentError on the `:ets.new/2` of a name that is
-// still taken: the child cannot restart, and its supervisor retries until
-// its intensity is spent and exits (ex_uid2's Dsp moved the call into
-// init/1; blockscout's ContractCreator and policr-mini's UpdatesPoller
-// guarded it with `:ets.whereis/1`; joken_jwks#40 reported the crash).
-//
-// A start function is a process module's `start_link` that starts a
-// server itself (a GenServer, gen_statem, GenStage, Agent or Supervisor
-// start). The table is made on its own stack (SameProcessReach, so not in
-// what it spawns), and none of the module's own callbacks, init/1
-// included, make the same table: those run in the server. Not judged: a
-// table made only where the name is free (the function that creates it,
-// or the start function, makes it only past the `:undefined` side of its
-// own `:ets.whereis/1` or `:ets.info/1,2` of that table:
-// ets_made_when_absent; a lookup of another table guards nothing), one
-// rescued of the ArgumentError at the call, one given away
-// (`:ets.give_away/3` of the same table, or of an operand that may be
-// it), an unnamed table (a second one does not collide), and a module
-// whose child spec says `restart: :temporary` (never restarted). A start
-// function the program's own supervisors never call is still judged: a
-// library's server is started by its users'.
+// start_link runs in the starter's process, often the supervisor. A named table created
+// there can survive the server and collide with its next start. Follow only the start
+// function's own stack; exclude tables also created by the server's callbacks.
+// Suppress when creation requires an absent name, ArgumentError is caught, the table
+// may be given away, the table is unnamed, or the child is temporary. Library starts
+// still count when their supervisors are outside the analyzed program.
 
-// A server's start function makes a named table in its caller's process,
-// so the table outlives the server, and the restart's `:ets.new/2` of the
-// taken name raises before the server can start again.
+// A start function creates a named table in its caller's process. The table survives
+// the server, so restarting fails when :ets.new/2 reuses its name.
 .decl table_made_in_start(mod: symbol, start: symbol, create: symbol)
 
 table_made_in_start(mod, start, create) :-
@@ -955,9 +777,8 @@ made_by_server(n, m) :-
   process_entry(m, c),
   start_side.reaches(c, f).
 
-// The function that makes the table, or the start function, makes it only
-// past the `:undefined` side of its own `:ets.whereis/1` or `:ets.info/1,2`
-// of that table (ets_made_when_absent): where the name is free.
+// Creation is guarded by :ets.whereis/1 or :ets.info/1,2 returning :undefined, in
+// either the creator or start function.
 .decl made_only_when_free(create: symbol, start: symbol)
 
 made_only_when_free(create, start) :-
@@ -970,9 +791,8 @@ made_only_when_free(create, start) :-
   ets_new(create, _, name),
   ets_made_when_absent(start, name, _).
 
-// The function that makes the table, or the start function, gives the
-// table away (`:ets.give_away/3` of the same table, or of an operand
-// that may be it): its new owner is no longer the caller.
+// The creator or start function gives this table, or a possible alias, away. Its owner
+// is then no longer the caller.
 .decl given_away(create: symbol, start: symbol)
 
 given_away(create, start) :-
@@ -994,10 +814,8 @@ gives_table_away(f, create) :- ets_op(id, f, _, "give_away", _), touches_made_ta
 
 gives_some_table_away(f) :- ets_op(id, f, _, "give_away", _), may_touch_any_table(id).
 
-// The ArgumentError a taken name raises at the `:ets.new/2` does not
-// escape the start function (Escape): a try that takes it covers the
-// :ets.new/2, a call on every path from the start down to it, or every
-// call to the start.
+// The start function cannot leak the table-name collision ArgumentError because every
+// path to creation, or every caller of the start, has a matching handler (`Escape`).
 .decl rescued_when_taken(create: symbol, start: symbol)
 
 rescued_when_taken(create, start) :- table_miss.rescued(create, start, "badarg").

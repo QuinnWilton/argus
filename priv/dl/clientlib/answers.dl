@@ -1,36 +1,11 @@
-// What a call answers, through the program's wrappers.
-//
-// A fact read off a call to a known API — a start's fresh process, a
-// monitor's ref, a timer's ref — is lost when the program calls the API
-// through a function of its own: `def start_transmitter(opts), do:
-// DynamicSupervisor.start_child(sup, spec)`, a default-argument wrapper
-// in front of it, `{:ok, pid} = start(); {:ok, pid}`. This is the one
-// reading of such a wrapper: a function every way of whose returning a
-// value hands back what one of its calls answered (answers_call, from
-// Argus.Extractor.Answers: the answer itself, its payload — the pid of
-// an `{:ok, pid}` — or that payload re-wrapped), followed through as
-// many of the program's functions as it takes to calls outside the
-// program: the origins.
-//
-// It is a must-reading. answers_call is all or nothing per function, so
-// a function's origins are every value it can answer; and a function
-// that calls, on one of its ways out, a function of the program that
-// answers nothing (a lookup of a running process, a literal, a
-// parameter), or answers too deep a payload, is opaque: nothing is
-// concluded of it. A rule may then conclude from the origins what the
-// answer is — a process one of them just started — where points-to's
-// may-reading (processes.dl's fresh_return) says what it may be.
-//
-// A consumer seeds `answer_demand(site, func)` with the calls whose
-// answers it asks about, and reads `call_origin(site, origin, depth)`
-// for each origin (`depth` counts the payloads taken on the way, 0 or 1:
-// a deeper element, such as the pid of `{:error, {:already_started,
-// pid}}`, is no answer; add the consumer's own depth and keep the sum at
-// most 1) and `call_opaque(site)` for a call whose answers are not all
-// known.
-//
-// Prerequisites: include clientlib/imports.dl (call_instr) before this
-// file; answers_call is a Layer-2 input.
+// Resolve call-result origins through wrappers. `answers_call` requires every returning
+// path to forward a call result, its immediate payload, or that payload rewrapped.
+// Follow wrappers to external APIs; unrelated returns or deeper payloads make the
+// result opaque. This proves all origins, unlike points-to's possible origins.
+// Seed `answer_demand(site, func)`. Read `call_origin(site, origin, depth)` and
+// `call_opaque(site)`; depth is 0 or 1, including any payload extraction by the
+// consumer. Nested already_started pids are excluded.
+// Requires imports.dl for `call_instr` and the Layer-2 `answers_call` relation.
 
 // One of the calls outside the program (a library's, a BIF) whose
 // answer `func` may hand back, `depth` payloads down, through the
@@ -45,9 +20,8 @@ wrapper_answer(g, o, k + j) :-
   wrapper_answer(h, o, j),
   k + j <= 1.
 
-// A function that answers calls, one of which leads to no origin: a call
-// to a function of the program that answers nothing, or to one whose
-// origin is too deep a payload down.
+// A returned call has no traceable origin because its callee has no known answer or the
+// relevant payload exceeds the depth bound.
 .decl answer_opaque(func: symbol)
 
 answer_opaque(g) :- answers_call(g, d, _), call_instr(g, h, d), !answers_call(h, _, _).
@@ -62,9 +36,8 @@ answer_opaque(g) :-
 // The calls a consumer asks the answers of, with the function they are in.
 .decl answer_demand(site: symbol, func: symbol)
 
-// The call at `site` may answer what the call at `origin` answered,
-// `depth` payloads down: itself, when it is a call outside the program;
-// an origin of the function it calls, when that function answers calls.
+// The call at site may return origin's result at payload depth depth. External calls
+// are their own origins; project calls inherit callee origins.
 .decl call_origin(site: symbol, origin: symbol, depth: number)
 
 call_origin(c, c, 0) :- answer_demand(c, f), !call_instr(f, _, c).

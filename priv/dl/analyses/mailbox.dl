@@ -1,18 +1,6 @@
-// A message arrives and nothing takes it, or takes it wrongly.
-//
-// A process's mailbox is written by more than its owner: a task's
-// reply, a monitor's :DOWN, a timer that fired before it was cancelled,
-// a subscription's broadcast, the module's own client API. Every finding
-// here is a message the program is shown to send and the clause that is
-// not there for it, or the reply a caller waits for that never comes: a
-// message a server is sent and cannot take (a send, a timer, a monitor's
-// :DOWN, a socket's close, node events, a port's output, an async_nolink
-// task's reply and :DOWN, what a timed receive leaves behind), a monitor
-// taken again before the last one is released, a cancelled timer's stale
-// message, a tag the module sends itself and cannot handle, a
-// handle_call that defers a reply it cannot send, a statem timeout no
-// clause matches. A handle_info/2 with no catch-all is no finding by
-// itself: only a message that falls through it is.
+// Mailbox protocol defects: messages with no matching handler, stale timers, repeated
+// monitors, lost task results, and missing replies. Findings require a known message
+// source or broken reply path; a missing handle_info catch-all alone is not a defect.
 
 .include "../clientlib/imports.dl"
 .include "../clientlib/otp.dl"
@@ -33,24 +21,15 @@
 // level (clientlib/tooling.dl, Argus.Findings.Tooling).
 .output tooling
 
-// ══ The outputs ═════════════════════════════════════════════════════
-//
-// `monitor_leak(mod, func, site, how)` — a monitor taken again before the
-//   one before it is released, in code that runs again: "wait" (a way
-//   out of the wait keeps it), "ended" (the server drops its record of
-//   the process and keeps the monitor), "dropped" (the ref thrown away,
-//   taken without asking the state). See "Monitors that pile up".
-// `task_result_defect(func, site, kind)` — a Task.async whose result
-//   goes wrong: "never_awaited", "yield_linked" (collected with
-//   Task.yield in a process that does not trap exits),
-//   "linked_in_library" (started in library code, linked to whoever
-//   called it).
-// `reply_defect(mod, func, site, kind, tag)` — a reply that never comes:
-//   "unhandled_call" | "unhandled_cast" (the module sends its own server
-//   `tag` and has no clause for it; `func` is the sender — not
-//   clientlib's `self_call`, a call provably to the calling process), "dropped_from" (a
-//   handle_call defers a reply without keeping `from`; `site` is the
-//   return), "statem_unreplied" (a {:call, from} clause answers nothing).
+// Outputs
+// `monitor_leak`: repeated acquisition with a previous monitor still live, after an
+// incomplete wait (`wait`), removal of its record (`ended`), or an unguarded discarded
+// reference (`dropped`).
+// `task_result_defect`: a task never awaited, yielded while linked without exit
+// trapping, or linked to a library caller.
+// `reply_defect`: an unhandled self-directed call/cast tag, a deferred reply losing
+// `from`, or an unreplied statem call. Self-directed here means the module's server,
+// not necessarily the calling process.
 
 .decl task_result_defect(func: symbol, site: symbol, kind: symbol)
 .output task_result_defect
@@ -58,30 +37,15 @@
 .decl reply_defect(mod: symbol, func: symbol, site: symbol, kind: symbol, tag: symbol)
 .output reply_defect
 
-// ══ Stale timers ══════════════════════════════════════════════════
-// ── A timer cancelled but not flushed ────────────────────────────────
+// Cancelled timers with stale messages
 //
-// Process.cancel_timer/1 does not remove a message the timer already
-// delivered. A process that cancels and re-arms a timer whose message
-// is a bare atom (`:tick`) cannot tell the stale message from the next
-// one: the action fires twice, or early (MongooseIM#3502, beam-bots/bb
-// #214; nebulex's generation rotation and cachex's warmer have the
-// shape). A message that carries the timer's ref (`{:tick, ref}`, or
-// :erlang.start_timer's `{:timeout, ref, _}`) is matched against the
-// current ref; a `receive :tick -> :ok after 0 -> :ok end` flushes.
-// Cancelling only in terminate/2 arms nothing again.
-//
-// The timer's identity is followed through the state: the ref the arm
-// site produces is returned or stored under a map key (timer_ref,
-// returns_call, timer_store), and the ref a cancel site takes was read
-// from a map key or handed in as a parameter (timer_cancel,
-// call_arg_field). A cancel and an arm pair up only on the same key,
-// so a module with a heartbeat and a reconnect timer gets two verdicts.
-// The flush must name the armed message (recv_pattern), or match
-// anything, and be where the cancel is: in the function that cancels,
-// or one a call after the cancel runs (flushes_after_cancel). A receive
-// for the message before the cancel, or in an unrelated function of the
-// module, is no flush.
+// Cancellation does not remove an already delivered message. Rearming a timer with the
+// same bare message can make the stale message trigger the new action. Reference-tagged
+// messages and matching flushes avoid this ambiguity; teardown-only cancellations do
+// not rearm.
+// Pair arms and cancellations through the state key holding the reference, following
+// returned references and wrapper parameters. A flush must accept the armed message or
+// any message and run after cancellation on the relevant same-process path.
 
 // The map key the ref armed in `a` ends up under.
 .decl timer_key(arm: symbol, key: symbol)
@@ -110,23 +74,16 @@ param_field(f, pos, key) :-
   call_arg_forward(g, f, pos, gpos),
   param_field(g, gpos, key).
 
-// The literal a timer armed for the arming process carries: at the
-// site, or a parameter the callers fill with a literal (nebulex's
-// `start_timer(time, ref, event)` with `event \\ :heartbeat`).
+// A literal message in a timer targeting self, supplied directly or through a caller's
+// argument.
 .decl armed_message(arm: symbol, message: symbol)
 
 armed_message(a, lit) :- armed_literal(_, a, "self", lit).
 
-// The message the timer kept under `key` carries. A literal at the arm
-// site is it. A parameter is filled along the calls that store the ref
-// — the storing function's own call to the arming function, or a
-// wrapper it goes through that fills the parameter itself or forwards
-// one the storing function filled — so two keys armed through one
-// helper each get their own message: nebulex's
-// `start_timer(time, ref, event \\ :heartbeat)` keeps :cleanup under
-// one key and :heartbeat under another. When the arming function stores
-// the ref itself, its callers are the only source, and any literal they
-// pass is taken (armed_message).
+// The message associated with the timer reference stored under `key`. Resolve parameter
+// messages through the calls that store the reference, keeping different keys distinct
+// even when they share an arming helper. If the arming function stores the reference
+// itself, use literals from its callers.
 .decl stored_message(key: symbol, arm: symbol, message: symbol)
 
 stored_message(key, a, lit) :-
@@ -144,11 +101,8 @@ stored_message(key, a, lit) :-
   timer_store(f, key, callee),
   literal_toward(f, callee, a, pos, lit).
 
-// `lit` fills parameter `pos` of `to` on the way from `from`'s call to
-// `callee`: at that call when the callee is `to`, else through a
-// wrapper that returns `to`'s result and either fills the parameter or
-// forwards one of its own that `from` filled. One wrapper deep, which
-// is what default arguments compile to.
+// Resolve a literal argument from a call or one returning wrapper that supplies or
+// forwards it. The one-wrapper limit covers default-argument expansion.
 .decl literal_toward(from: symbol, callee: symbol, to: symbol, pos: number, lit: symbol)
 
 literal_toward(f, a, a, pos, lit) :-
@@ -170,8 +124,8 @@ literal_toward(f, w, a, pos, lit) :-
 .decl timer_cancel_without_flush(mod: symbol, cancel: symbol, arm: symbol, key: symbol, message: symbol, cancel_site: symbol, arm_site: symbol)
 .output timer_cancel_without_flush
 
-// The cancel_timer instruction in `cancel` that read the ref from `key`:
-// at the site, or at a caller that read it and passed it down.
+// The cancel_timer instruction reads its reference from key, directly or through a
+// caller that passes the field value.
 .decl cancel_site(cancel: symbol, key: symbol, id: symbol)
 
 cancel_site(c, key, id) :- timer_cancel(id, c, "field", key, _).
@@ -180,19 +134,11 @@ cancel_site(c, key, id) :-
   timer_cancel(id, c, "param", _, pos),
   param_field(c, pos, key).
 
-// A cancel that cannot leave a stale message behind for the process to
-// mistake for the next one:
-//
-// - one in terminate/2, or in a helper only terminate/2 calls (directly,
-//   or through one more helper only such helpers call): the process is
-//   going away, and no later message is handled. A helper nothing in the
-//   program calls is not one: BB.Loop.cancel/1's docs said "call from
-//   terminate/2", and its callers also called it before re-arming at a
-//   new rate (bb#214, fixed with the flush);
-// - one in the `handle_info/2` clause of the very message the timer
-//   sends (`def handle_info(:heartbeat, s)` cancelling heartbeat_ref):
-//   that timer has already fired, and its message is the one being
-//   handled (cancel_clause).
+// Cancellations exempt from stale-message checks:
+// - terminate/2 and exclusively called helpers, through at most one additional helper
+// level. Uncalled helpers do not qualify.
+// - handle_info clauses processing the timer's own literal message, which has already
+// arrived.
 .decl terminate_helper(func: symbol)
 .decl called_outside_terminate(func: symbol)
 
@@ -230,12 +176,9 @@ handles_that_message(cancel, msg) :- cancel_clause(cancel, _, msg).
 
 // ── A timer kept in a local ──
 
-// A function arms a timer, keeps its ref in a local and cancels it, the
-// function runs again, and nothing takes the old timer's message out of
-// the mailbox: the next run handles it as its own.
-//
-// `cancel` and `arm` are the cancel_timer and send_after instructions
-// (the function holding both is the output's cancel and arm columns).
+// A repeatable function cancels a locally retained timer without flushing its old
+// message. `cancel` and `arm` identify the operations; output function columns identify
+// their common owner.
 .decl local_cancel_without_flush(cancel: symbol, arm: symbol, message: symbol)
 
 local_cancel_without_flush(cancel, arm, message) :-
@@ -245,10 +188,8 @@ local_cancel_without_flush(cancel, arm, message) :-
   !cancelled_on_the_way_out(cancel),
   !flushes_after_cancel(cancel, message).
 
-// init/1 cancels a watchdog it armed and kept in a local, the server's
-// handle_info/2 has a clause for the watchdog's message, and nothing
-// takes a message the watchdog already delivered: once init/1 returns,
-// that clause acts on a timer init/1 cancelled.
+// Init cancels its local watchdog without flushing, and handle_info accepts its
+// message. A previously delivered message can trigger the handler after init returns.
 .decl init_cancel_without_flush(cancel: symbol, arm: symbol, message: symbol)
 
 init_cancel_without_flush(cancel, arm, message) :-
@@ -268,13 +209,9 @@ timer_cancel_without_flush(mod, func, func, "", message, cancel, arm) :-
   timer_cancel(cancel, func, _, _, _),
   in_module(func, mod).
 
-// The cancel_timer `cancel` takes the ref of the send_after `arm`, which
-// the same function made and kept in a local (`ref = send_after(...);
-// work(); cancel_timer(ref)`). No state key pairs them; the arming site
-// does. The clause that takes the same message is no excuse here
-// (handles_that_message is the kept key's): this timer was armed after
-// the message being handled arrived, so what it delivers is always one
-// left behind.
+// Pair a local cancellation with the exact arming site supplying its reference.
+// Handling the same message is not an exemption: this timer was armed after the current
+// message arrived.
 .decl cancels_timer_kept_in_local(cancel: symbol, arm: symbol) inline
 
 cancels_timer_kept_in_local(cancel, arm) :-
@@ -287,9 +224,8 @@ cancels_timer_kept_in_local(cancel, arm) :-
 
 carries_message(arm, lit) :- armed_literal(arm, _, "self", lit).
 
-// The cancel is in init/1, which runs once: what its watchdog delivers
-// is no next run's, and handle_info/2 takes it once init/1 returns, as
-// if the timer had just fired. Left to a catch-all, it is dropped.
+// init/1 runs once, so its cancelled watchdog cannot affect another init run. Its
+// message is handled or dropped normally after initialization.
 .decl cancelled_in_init(cancel: symbol)
 
 cancelled_in_init(cancel) :- timer_cancel(cancel, c, _, _, _), is_init(c).
@@ -306,12 +242,8 @@ server_has_clause_for(cancel, message) :-
 
 // ── A timer kept under a state key ──
 
-// A timer kept under a state key is cancelled and armed again under that
-// key, and nothing takes the old timer's message out of the mailbox.
-//
-// `cancel` and `rearm` are the cancel_timer and send_after instructions
-// (the functions holding them are the output's cancel and arm columns);
-// `key` is what pairs them, and `message` is what a flush must take.
+// A timer reference stored under one key is cancelled and rearmed without a matching
+// flush. The key pairs sites; the message identifies what must be removed.
 .decl cancel_without_flush(cancel: symbol, rearm: symbol, key: symbol, message: symbol)
 
 cancel_without_flush(cancel, rearm, key, message) :-
@@ -338,19 +270,11 @@ timer_pair(mod, cancel, arm, key, message, cancel_site, arm_site) :-
   rearm_site(arm_site, arm, key, message),
   in_module(cancel, mod).
 
-// ── Where a key's finding points ──
+// Choose the finding anchor per timer key
 //
-// A key is one finding however many cancels and arms pair up under it
-// (the relation's dedupe key), and the finding points at the least row,
-// which orders by function name. Plausible's WriteBuffer cancels its
-// :tick timer in handle_cast's buffer-full branch, the path every
-// insert can take, and in handle_call(:flush), which only its test
-// helpers request; the name put handle_call first. The rows keep a
-// cancel the program itself runs over one only its tests reach
-// (test_code.dl), and then an arm likewise; a key whose cancels are all
-// under test keeps them all. The cancels left out are the finding's
-// related frames (timer_cancel_under_test). Which modules and keys are
-// reported does not change.
+// Prefer production cancellations, then production arms, over test-only sites before
+// choosing the least row. If every cancellation is test-only, retain them all. Excluded
+// test cancellations remain related frames; the set of reported keys is unchanged.
 .decl timer_ranked(mod: symbol, cancel: symbol, arm: symbol, key: symbol, message: symbol, cancel_site: symbol, arm_site: symbol)
 
 timer_ranked(mod, cancel, arm, key, message, cancel_site, arm_site) :-
@@ -384,11 +308,9 @@ site_under_test(id) :- cancel_site(c, _, id), requested_only_under_test(c).
 site_under_test(id) :- rearm_site(id, a, _, _), runs_under_test(a).
 site_under_test(id) :- rearm_site(id, a, _, _), requested_only_under_test(a).
 
-// A handle_call/3 or handle_cast/2 whose requests the program sends
-// only from code under test: some site sends one of the tags it
-// compares, of its kind, and every such site runs only under test.
-// Over-approximated by callback_tag (every atom its body compares), so a
-// callback with any request sent from elsewhere is not one.
+// A call/cast handler whose known requests all come from test-only code.
+// Over-approximated callback tags mean any production request matching a compared atom
+// disqualifies it.
 .decl requested_only_under_test(callback: symbol)
 .decl requested_outside_tests(callback: symbol)
 
@@ -422,10 +344,9 @@ timer_cancel_under_test(mod, key, cancel_site, cancel) :-
 
 cancels_timer_kept_under(cancel, key) :- cancel_site(_, key, cancel).
 
-// The send_after `rearm` keeps its ref under `key`, and the timer carries
-// `message`. The arm must be one that can follow the cancel (rearm_site
-// below): a timer armed only in init/1 and cancelled later is stopped,
-// not re-armed, and its stale message is handled once as an ordinary one.
+// A rearm storing its reference under key and carrying message. Require that it can
+// follow cancellation; an init-only arm followed by a later cancellation merely stops
+// the timer.
 .decl rearms_timer_kept_under(rearm: symbol, key: symbol, message: symbol) inline
 
 rearms_timer_kept_under(rearm, key, msg) :- rearm_site(rearm, _, key, msg).
@@ -455,27 +376,17 @@ in_same_module(cancel, arm) :-
 
 cancelled_on_the_way_out(cancel) :- timer_cancel(cancel, c, _, _, _), runs_only_on_the_way_out(c).
 
-// The old timer's message leaves the mailbox where the cancel is: a
-// receive flushes it (flushes_after_cancel), or the cancel is in the
-// handle_info/2 clause taking that very message (handles_that_message),
-// so the timer has fired and its message is the one being handled.
+// The old message is consumed by a post-cancel flush or is the message currently
+// handled by the cancelling handle_info clause.
 .decl takes_old_message(cancel: symbol, message: symbol)
 
 takes_old_message(cancel, msg) :- flushes_after_cancel(cancel, msg).
 takes_old_message(cancel, msg) :- handles_that_message(cancel, msg).
 
-// A receive after the cancel takes the message: by name, or a clause
-// that matches anything (`after 0` with a wildcard, the cancel_timer
-// docs' blocking receive, Ostinato.Eager). After the cancel means later
-// on a path through the function holding it (runs_after,
-// clientlib/order.dl), or in a function a call there runs in the same
-// process (a `flush_tick/0` helper); where a caller hands the ref down
-// to a cancel helper, or calls a helper that reads the field and cancels
-// it, it means after that call in the caller. A receive before the
-// cancel, in another clause of the function or elsewhere in the module
-// runs on some other path: one handle_cast/2 waits in does not flush the
-// heartbeat handle_call/3 cancels, and a receive the timer can fire
-// after leaves its message behind.
+// A matching or catch-all receive after cancellation, in the cancelling function, a
+// same-process helper, or the caller after invoking a cancellation helper. `runs_after`
+// must connect the sites; an earlier receive or unrelated clause does not flush this
+// cancellation.
 .decl flushes_after_cancel(cancel: symbol, message: symbol)
 
 // The cancel's own function flushes after it: every caller's path
@@ -484,11 +395,8 @@ flushes_after_cancel(cancel, msg) :-
   timer_cancel(cancel, _, _, _, _),
   flushes_after(cancel, msg).
 
-// The cancel is made on its callers' behalf (helper_cancel): flushed
-// only when every call toward it, from a caller that is not on the way
-// out, is followed by a flush. One caller's flush is not another's: a
-// :pause that flushes does not cover a :reset that re-arms without
-// flushing (review 2, item 19).
+// A cancellation helper is flushed only if every non-teardown caller flushes after its
+// call. One caller's flush cannot protect another caller's rearm.
 flushes_after_cancel(cancel, msg) :-
   helper_cancel(cancel, _, site),
   flushes_after(site, msg),
@@ -502,9 +410,8 @@ unflushed_caller(cancel, msg) :-
   armed_message(_, msg),
   !flushes_after(site, msg).
 
-// A receive that takes the message runs after the instruction `site`
-// (a cancel, or a call toward one): in its function, or in a function a
-// later call there runs in the same process.
+// A matching receive follows site, locally or in a helper called later on the same
+// process stack.
 .decl flushes_after(site: symbol, message: symbol)
 
 flushes_after(site, msg) :-
@@ -531,9 +438,8 @@ takes_message(recv, msg) :-
   recv_pattern(recv, _, "any"),
   armed_message(_, msg).
 
-// The call at `call` runs `h` in the caller's process: a function of the
-// program called there, or a closure handed to it that is not run
-// elsewhere. A side path (side_call) is not the caller's flush.
+// The call executes h on the caller's stack, directly or through a passed closure.
+// Exclude detached work and side_call paths.
 .decl calls_in_process(call: symbol, callee: symbol)
 
 calls_in_process(call, h) :-
@@ -557,20 +463,15 @@ flushes_in(f, msg) :- flush_scope.reaches(f, g), recv_pattern(recv, g, _), takes
 flush_scope.cut(f, g) :- side_call(f, g).
 flush_scope.root(h, h) :- after_cancel.runs_after(_, call), calls_in_process(call, h).
 
-// The call at `site` in `func` makes the cancel_timer `cancel` through a
-// helper: it hands the ref down (hands_down_ref), or it calls, in its
-// process, a function of its module that reads the field and cancels it
-// (helper_cancels_field, clientlib/timer_flush.dl: MongooseIM's
-// maybe_cancel_timer/2).
+// A helper cancellation reached at site: the caller supplies the reference or invokes a
+// same-module helper that reads and cancels the state field.
 .decl helper_cancel(cancel: symbol, func: symbol, site: symbol)
 
 helper_cancel(cancel, g, site) :- hands_down_ref(cancel, g, site).
 helper_cancel(cancel, g, site) :- helper_cancels_field(g, site, cancel, _).
 
-// `func` passes the ref the cancel_timer `cancel` takes as a parameter,
-// read from its state or its own parameter (param_field's path), at its
-// calls to the function taking it (`site`: every call to that function,
-// as the argument facts name no call).
+// A caller passes the cancellation reference from its state or parameter. Argument
+// facts are function-level, so associate every call to the receiving helper.
 .decl hands_down_ref(cancel: symbol, func: symbol, site: symbol)
 .decl ref_param(cancel: symbol, func: symbol, pos: number)
 
@@ -585,23 +486,16 @@ hands_down_ref(cancel, g, site) :-
   (call_arg_field(g, f, pos, _) ; call_arg_forward(g, f, pos, _)),
   call_instr(g, f, site).
 
-// ══ Tasks whose messages land unhandled ═════════════════════════════
+// Uncollected linked-task messages
 //
-// A task a function starts linked to itself (Task.async,
-// Task.Supervisor.async) must be awaited or yielded: its reply,
-// `{ref, result}`, and its :DOWN land in the mailbox of the process that
-// started it. Task.Supervisor.async_nolink is not one: it is not linked
-// to the caller, and its messages are unhandled_info's source "task"
-// below.
+// Task.async and Task.Supervisor.async send reply and :DOWN messages to their starter.
+// async_nolink messages are checked separately by unhandled_info.
 
 // ── A task never awaited ──
 
-// A function starts a task linked to it and nothing takes the task's
-// reply: its path never awaits, it does not hand the task to its caller,
-// and no mailbox callback of its server takes the reply. A handle_info/2
-// that takes other messages only crashes on the reply, and a catch-all —
-// the one `use GenServer` injects, or the program's own — drops it with
-// the result.
+// A linked task is neither collected nor returned, and no matching server callback
+// consumes its reply. Partial handlers can crash; logging catch-alls discard the
+// result.
 .decl unawaited_task(func: symbol, start: symbol)
 
 unawaited_task(func, start) :-
@@ -630,12 +524,9 @@ collects_a_task(func) :- await_reach.reaches(func).
 
 await_reach.seed(func) :- remote_call(_, func, "Task", w, _), task_collect(w).
 
-// The task started at `start` is what the function hands back: its tail
-// call, or what every way it returns hands back (answers_call, the
-// must-reading of a wrapper: `task = Task.async(fun); log(task); task`).
-// Its caller is responsible for awaiting it. The function is a factory,
-// not a leak. A task handed back on one way out and dropped on another,
-// or a field of it (its pid), is not.
+// Every return forwards the started task, directly or through answers_call, making
+// collection the caller's responsibility. Partial returns or returning only the pid do
+// not qualify.
 .decl returns_task(func: symbol, start: symbol)
 
 returns_task(func, start) :-
@@ -646,20 +537,10 @@ returns_task(func, start) :-
   starts_linked_task(func, start),
   answers_call(func, start, 0).
 
-// A mailbox callback takes the reply of the task started at `func`:
-// - a handle_info/2 clause headed by a reference (`{ref, result} when
-//   is_reference(ref)`) in the starting function's own module — a clause
-//   written for task replies, whichever process of the module's runs it
-//   (a LiveView's helper, a module whose host delegates its messages) —
-//   or a handle_info/2 of that module that collects a task where it takes
-//   the reply (an await, a yield or a shutdown on its stack: Phoenix.
-//   Presence's `{task_ref, {:phoenix, ref, diffs}}` clause shuts the task
-//   down);
-// - or, on the stack of a server that starts the task (task_runs_in:
-//   its callbacks' own module code, or any module's code a started
-//   server runs), that server's handle_info/2 clause headed by a
-//   reference or open to a tuple of any tag (`{_ref, result}`), or its
-//   gen_statem :info clause open to a tuple of any tag.
+// A callback accepts the task reply: a reference-headed handle_info clause or
+// task-collection call in the starter's module, or a matching handler in the server
+// running the task start. Server handlers may also accept tuples of any tag, including
+// gen_statem :info clauses.
 .decl reply_taken(func: symbol)
 
 reply_taken(f) :-
@@ -696,17 +577,13 @@ takes_task_reply(h) :- callback_ref_head(h, "handle_info").
 takes_task_reply(h) :- callback_open(h, "handle_info", "tuple", 2).
 takes_task_reply(h) :- callback_open(h, "handle_info", "tuple", -1).
 
-// ── Yielding on a linked task ────────────────────────────────────────
+// Yielding linked tasks
 //
-// Task.yield/yield_many document an `{:exit, reason}` result for a task
-// that crashed — but the link delivers the crash to the caller first, so
-// unless the caller traps exits that branch never runs: the caller is
-// dead (whatyouhide/redix#317's cluster fan-out, whose partial-failure
-// path was unreachable). async_nolink is the tool for that shape.
+// Without exit trapping, a task crash kills the linked caller before yield can return
+// an exit result. Unlinked tasks support collecting such failures.
 
-// A function yields on the tasks it starts linked to its process, and
-// the process does not trap exits when it starts them: a crashing task
-// kills the caller before yield can report the crash.
+// Yielding on linked tasks does not protect a caller that is not trapping exits: a task
+// crash kills it before yield can report the failure.
 .decl yield_on_linked_task(owner: symbol, start: symbol)
 
 yield_on_linked_task(owner, start) :-
@@ -716,10 +593,8 @@ yield_on_linked_task(owner, start) :-
 
 task_result_defect(owner, start, "yield_linked") :- yield_on_linked_task(owner, start).
 
-// The linked task started at `start` belongs to `owner`: the named
-// function that starts it, or that defines the closure that does. A
-// closure's calls belong to the function that defines it: the task is
-// usually started inside an Enum.map fn and collected outside it.
+// The linked task's owner is its starting function or the enclosing function of its
+// starting closure, allowing collection outside an Enum callback to match the start.
 .decl starts_linked_task_in(owner: symbol, start: symbol)
 
 starts_linked_task_in(owner, start) :-
@@ -734,11 +609,8 @@ starts_linked_task_in(owner, start) :-
 yields_on_task(owner, id) :- remote_call(id, g, "Task", "yield", _), enclosing_function(g, owner).
 yields_on_task(owner, id) :- remote_call(id, g, "Task", "yield_many", _), enclosing_function(g, owner).
 
-// The process is trapping exits when it starts the task at `start`
-// (trapping_at, clientlib/trapping.dl): set earlier on the way there, or
-// the function is a callback of a server that traps. A client function
-// of a trapping server's module runs in its callers, which the server's
-// trap says nothing of.
+// The caller traps exits at the task start, through a preceding flag set or server
+// callback context. A trapping module's client API does not imply its callers trap.
 .decl starts_trapping(start: symbol)
 
 starts_trapping(start) :- starts_linked_task(f, start), trapping_at(f, start).
@@ -751,24 +623,16 @@ task_yield_site(owner, "yield_linked", id) :-
   task_result_defect(owner, _, "yield_linked"),
   yields_on_task(owner, id).
 
-// ── A linked task inside library code ────────────────────────────────
+// Linked tasks in library code
 //
-// In a caller that traps exits the task's normal exit arrives as an
-// `{:EXIT, pid, :normal}` message Task.await never consumes
-// (elixir-ecto/ecto#2246: a GenServer preloading in parallel), and a
-// crashing task takes an unrelated caller down with it. A behaviour
-// module that runs no process of its own (a plug, a type) owns its
-// callers' expectations. A process module's callbacks, and what they
-// reach in the module, run in its own process (server_side), but its
-// client API runs in whoever calls it, like a library function:
-// elixir-nodejs#45's `NodeJS.Supervisor.call/3`, a `use Supervisor`
-// module's public call, linked every caller to the pool worker's task
-// (PoolCallSupervisor; ServerSideTaskAwait is quiet).
+// A linked task can crash its caller; in an exit-trapping caller, even its normal exit
+// leaves an :EXIT message that Task.await does not consume. Check functions running in
+// their callers, including process-module client APIs. Exclude callbacks and
+// same-module code reached on the server's own stack.
 
-// A function that runs in whoever calls it starts a task linked to that
-// caller and awaits it: the task's exit and crash become the caller's.
-// One that returns a task (returns_task) hands its caller the link with
-// it, in plain sight.
+// A library function starts and awaits a linked task in its caller's process, exposing
+// that caller to exits. Returning the task instead makes the link part of the explicit
+// API result.
 .decl linked_task_in_library(owner: symbol, start: symbol)
 
 linked_task_in_library(owner, start) :-
@@ -779,9 +643,8 @@ linked_task_in_library(owner, start) :-
 
 task_result_defect(owner, start, "linked_in_library") :- linked_task_in_library(owner, start).
 
-// The function a task belongs to runs in its callers' process: its
-// module is no behaviour's (a library), or it is a process module's
-// function its own process does not run (its client API).
+// The task starts in the caller's process: its function is library code or a process
+// module's client API, outside that module's server stack.
 .decl runs_in_callers(func: symbol)
 
 runs_in_callers(func) :-
@@ -800,59 +663,37 @@ task_owner(owner, mod) :-
   enclosing_function(f, owner),
   function_def(owner, mod, _, _, _).
 
-// ══ Monitors that pile up ═══════════════════════════════════════════
+// Repeated monitors
 //
-// A monitor costs its holder until it is released: its :DOWN taken, its
-// ref demonitored, or the holder gone. One taken once, or one per
-// process the holder keeps a relationship with and forgets when that
-// process's :DOWN comes, is bounded by what the holder keeps. It leaks
-// when the holder can hold two live monitors on one process: the site
-// runs again (again_code, clientlib/runs.dl), meets a process it
-// already monitors, and the monitor it took before is still live. Each
-// such run leaves one more, and each is a :DOWN that comes later
-// (docs/design/monitor-leaks.md).
-//
-// `monitor_leak(mod, func, site, how)`: the monitor at `site`, in `func`,
-// piles up. `how` is what shows the one before is still live:
-//   "wait"    — the run waits for the process's :DOWN (a receive with a
-//               :DOWN clause) and some way out of it keeps the monitor:
-//               the wait gave up, or the answer came first. The next run
-//               asks the same process again (Livebook's Evaluator.call/2,
-//               LiveViewTest's render_chunk/3).
-//   "ended"   — the run records the process in the server (a field of
-//               its state, a row of a table) and another run drops that
-//               record while the process may live, without releasing the
-//               monitor: its next registration monitors it again
-//               (postgrex#781's Parameters, eventstore's AdvisoryLocks).
-//   "dropped" — the ref is thrown away, so nothing but the process's
-//               death releases the monitor, and the run takes it without
-//               asking its state whether it holds one: each time the same
-//               process is named again, one more (ejabberd's route
-//               owners, rabbit_alarm's alertees).
+// Report sites that can reacquire a monitor for the same process while a prior monitor
+// remains live (`again_code`). One-time monitors and tracked relationships released on
+// :DOWN are excluded. See docs/design/monitor-leaks.md.
+// `how = wait`: a receive can finish without releasing the monitor.
+// `how = ended`: a server removes the relationship record while leaving the monitor
+// active.
+// `how = dropped`: the reference is discarded and no state check prevents
+// reacquisition.
 .decl monitor_leak(mod: symbol, func: symbol, site: symbol, how: symbol)
 .output monitor_leak
 
-// A monitor is taken again while the one before it is still live: the
-// run waits for the process's :DOWN, and a way out of the wait (it gave
-// up, or the answer came first) keeps the monitor.
+// A monitor wait returns without releasing the monitor, so a later run may monitor the
+// same process again.
 .decl monitor_kept_by_wait(monitor: symbol)
 
 monitor_kept_by_wait(monitor) :-
   monitor_taken_again(monitor),
   waits_for_down(monitor).
 
-// A monitor is taken again while the one before it is still live: the
-// server dropped its record of the process while the process may live,
-// and kept the monitor, so the next registration monitors it again.
+// The server removes a live process from its records without releasing its monitor.
+// Registering it again adds another monitor.
 .decl monitor_kept_past_record(monitor: symbol)
 
 monitor_kept_past_record(monitor) :-
   monitor_taken_again(monitor),
   drops_record_of(_, monitor).
 
-// A monitor whose ref is thrown away is taken without asking the state
-// whether it holds one already: each time the same process is named
-// again, one more.
+// The monitor reference is discarded without checking for an existing monitor. Repeated
+// registrations add monitors for the same process.
 .decl monitor_taken_unasked(monitor: symbol)
 
 monitor_taken_unasked(monitor) :-
@@ -877,22 +718,18 @@ monitor_leak(mod, func, monitor, "dropped") :-
 
 monitor_in(s, m, f) :- monitor_call(s, f, _), function_def(f, m, _, _, _).
 
-// What the function runs in its own process, apart from the logging and
-// telemetry APIs (side_call, calls.dl): a demonitor with :flush there,
-// on any path, flushes a monitor's :DOWN (unhandled_info's question).
+// Same-process work excluding logging and telemetry. For unhandled_info, any reachable
+// demonitor with :flush can consume the monitor's DOWN.
 .init flush = SameProcessReachSetCut
 
 flush.cut(f, g) :- side_call(f, g).
 
 flush.seed(func) :- demonitor_call(_, func, "flush").
 
-// ── A monitor that can be taken again ───────────────────────────────
+// Repeatable monitor sites
 //
-// A monitor the program's own code (a library's macro wrote nothing of
-// it: library_written) takes again on a later run: its function runs
-// again, and its site is not in a clause that runs once (once_site,
-// runs.dl); its process is not one the run itself starts, and the run
-// does not release it.
+// Require handwritten repeatable code, a site not proven once-only, a target not newly
+// started by this run, and no guaranteed release.
 .decl monitor_taken_again(monitor: symbol)
 
 monitor_taken_again(s) :-
@@ -904,28 +741,18 @@ monitor_taken_again(s) :-
   !starts_its_target(s),
   !released_by_run(s, f).
 
-// A process the monitoring function starts itself is new on every run,
-// and this monitor is the only one on it: its :DOWN ends both. The pid
-// is, on every path, what one of the function's calls answered
-// (monitor_answer: the pid, or the one in its `{:ok, pid}`, never the
-// `{:error, {:already_started, pid}}` of a process others hold), and
-// every origin of those answers, directly or through the program's
-// wrappers (call_origin, clientlib/answers.dl: `{:ok, pid} =
-// Mod.start_transmitter(opts)` over a DynamicSupervisor.start_child),
-// starts a process: a start the process facts know (process_start: exq's
-// worker and the Task it starts for the job) or a library's call named
-// like a start (`:gun.open`, `DynamicSupervisor.start_child`). A wrapper
-// that looks a process up on some path answers nothing, and its pid is
-// not taken as new (review 2, item 25).
+// Every possible origin of the monitored pid starts a new process. Follow
+// `monitor_answer` and wrapper `call_origin` rows, excluding lookups and
+// already_started payloads. A fresh target on each run cannot accumulate repeated
+// monitors on the same process.
 .decl starts_its_target(site: symbol)
 
 starts_its_target(s) :- monitor_answer(s, _, _, _), !target_maybe_old(s).
 
 answer_demand(c, f) :- monitor_answer(_, f, c, _).
 
-// Some value the pid at `site` may be is not a process the run started:
-// an origin that starts none, too deep a payload, or a call whose
-// answers are not all known.
+// The monitored PID may refer to a process this run did not start, including unresolved
+// origins, deeply nested payloads or incompletely known call results.
 .decl target_maybe_old(site: symbol)
 
 target_maybe_old(s) :- monitor_answer(s, _, c, _), call_opaque(c).
@@ -958,36 +785,20 @@ start_named(name) :- match("start.*", name).
 start_named(name) :- match("spawn.*", name).
 start_named(name) :- name = "open".
 
-// Released by the run: every path from the monitor to its function's
-// return takes the :DOWN or demonitors the ref (monitor_released,
-// clientlib/receive.dl), or every way into the function passes a caller
-// that does so after the call (collected_by_callers, below).
+// Every return path consumes DOWN or demonitors the reference, or every incoming path
+// passes a caller that releases it after the call.
 .decl released_by_run(site: symbol, func: symbol)
 
 released_by_run(s, f) :- monitor_call(s, f, _), monitor_released(s).
 released_by_run(s, f) :- monitor_call(s, f, _), collected_by_callers(f).
 
-// ── A monitor its callers release ───────────────────────────────────
+// Caller-released monitors
 //
-// Returning with a monitor live is the protocol, not a leak, when the
-// caller goes on to take the :DOWN. OTP's old supervisor shutdown,
-// which GenStage's ConsumerSupervisor and Horde's ProcessesSupervisor
-// copy, monitors each child in monitor_child/1, looks once with `after
-// 0` for an {:EXIT, ...} already queued, and returns :ok; its caller
-// then blocks in wait_children until every child's {:DOWN, ...} has
-// come. monitor_released_after names the calls such a release follows
-// on every path (a receive with no `after` taking any :DOWN, or the one
-// for the ref the call returned, or a demonitor of that ref).
-//
-// The monitor is released when every way the program has into the
-// monitoring function passes such a call. Walked backward from each
-// monitoring function, over the ways in no release follows
-// (BackwardUnguarded, in reach.dl). A walk that reaches an exported
-// function (its callers are outside the program), one nothing calls,
-// or what a spawn runs (its process is not the caller's, and its wait
-// releases nothing of this one) leaves the monitor exposed. A
-// monitoring function nothing reaches but through one uncovered cycle
-// is not released either: some way in must be a covered call.
+// A live monitor returned to a caller is safe when every entry path includes a call
+// followed by guaranteed collection or demonitoring (`monitor_released_after`). Walk
+// backward over uncovered paths. Exports, uncalled functions, and spawned entries leave
+// it exposed. An uncovered cycle is not sufficient proof: at least one covered entry
+// must exist.
 .init uncollected = BackwardUnguarded
 
 uncollected.seed(g, g) :- monitor_call(_, g, _).
@@ -1013,16 +824,11 @@ collected_by_callers(g) :-
   monitor_released_after(f, id),
   !collection_exposed(g).
 
-// ── "wait": the run waits on the process, and a way out keeps it ────
+// Wait exits that retain a monitor
 //
-// A receive with a :DOWN clause (recv_takes_down) in the monitoring
-// function's own reach: the monitor was taken for a wait inside the
-// run. When the monitor is the function's tail call, its ref goes back
-// to the caller, and the wait may be the caller's (exq's WorkerDrainer
-// maps its workers' refs into a set and awaits them). The monitor is not
-// released on some way out (monitor_taken_again): a timed receive's
-// `after`, the clause for the answer, a path that never enters the
-// receive.
+// A reachable receive accepts :DOWN, but some returning path leaves the monitor active:
+// a timeout, another clause, or a path skipping the receive. If the monitor reference
+// is tail-returned, the wait may belong to the caller.
 .init down_wait = SameProcessReachSetCut
 
 down_wait.cut(f, g) :- side_call(f, g).
@@ -1039,16 +845,11 @@ waits_for_down(s) :-
   !runs_elsewhere(g, f),
   down_wait.reaches(g).
 
-// ── "dropped": nothing can release it, and nothing asks first ───────
+// Discarded references without state checks
 //
-// A ref thrown away (monitor_ref_dropped) leaves the monitor to the
-// process's death. Taken without a look at the process's own state, it
-// is taken again each time the same process is named: some way from a
-// root that runs again reaches the site with no call on it the state
-// decides (state_decided, the guard a repeated subscription's walk asks
-// of the same callbacks: a `MapSet.member?(state.monitored, pid)`, a
-// pid compared with the one stored). Whether the same process is ever
-// named again is the protocol's, not the code's: loud, at info.
+// A repeatable root reaches a dropped-reference monitor without a state-dependent call
+// guarding it. Repeated registration of the same process can add monitors. Whether the
+// protocol actually repeats the pid is unknown, so this is informational.
 .init unasked = BackwardUnguardedSameProcess
 
 unasked.seed(f, s) :- monitor_ref_dropped(s, f), !state_decided(s).
@@ -1067,25 +868,12 @@ taken_without_asking_state(s) :- unasked.reaches(r, s), again_root(r, _).
 
 throws_ref_away(s) :- monitor_ref_dropped(s, _).
 
-// ── "ended": the server drops its record, and keeps the monitor ─────
+// Stored monitor records
 //
-// What the run records of the monitored process: where the monitoring
-// function keeps the monitor's ref, or the pid it monitors
-// (monitor_kept, the Monitor extractor, over Argus.Extractor.StateFields):
-// a field of the state it returns whose value is made of the ref, or made
-// whole of the pid (`%{state | subs: Map.put(subs, pid, ref)}`,
-// `Data#data{receiver = {Pid, Ref}}`), or a table an ETS call handed
-// such a value writes. A function that hands back what holds it
-// (`ra_monitors:add/3`'s map, a helper's `{:ok, ref}`) records it where
-// its callers keep that answer, through as many helpers as return it
-// (returns_from), in the field made of the call (returned_field_from).
-// The record is read by where it is kept, a field or a table of a module,
-// not by its key. A field the monitoring clause sets to anything else (a
-// backoff, a counter, a buffer it resets) is no record of the monitor:
-// until issue #3's follow-up every field the clause returned was, and a
-// reset of an unrelated field read as the drop. Each record says what it
-// holds (`holds`): the ref, which a demonitor needs (the pid beside it or
-// not), or the pid alone.
+// Identify a returned state field or ETS table containing the monitor reference or
+// whole target pid. Follow returned helper results to their callers' storage. Track by
+// field or table, not record key. `holds` distinguishes references needed for
+// demonitoring from pid-only records; unrelated updated fields do not count.
 .decl monitor_record_holding(site: symbol, mod: symbol, record: symbol, holds: symbol)
 
 monitor_record_holding(s, m, k, held) :-
@@ -1108,11 +896,9 @@ monitor_record_holding(s, m, k, held) :-
 
 monitor_record(s, m, k) :- monitor_record_holding(s, m, k, _).
 
-// `func` hands back what holds the monitor at `site`'s ref or pid
-// (`holds`), in element `piece` of the tuple it returns (`"{1}"`:
-// global_group's sync fold answers `{Nodes, Monitors}`) or anywhere
-// (`""`): the monitoring function itself, or a function that returns
-// what a call to one answered (where in its answer, it does not say).
+// A function returns the monitor's reference or pid, optionally in a known tuple
+// element. Follow helpers returning that result; otherwise preserve unknown element
+// location.
 .decl kept_through(site: symbol, func: symbol, piece: symbol, holds: symbol)
 
 kept_through(s, f, p, held) :- monitor_kept(s, f, "returned", p, held).
@@ -1122,11 +908,8 @@ kept_through(s, h, "", held) :-
   answered_at(h, g, c),
   returns_from(h, c).
 
-// A field that holds `how` of a call's answer (returned_field_from) keeps
-// what the answer holds in `piece`: the whole answer, a term a call built
-// from it, the element that holds it; not another element. Where the
-// answer holds it is not known (""), any way of holding the answer keeps
-// it but another piece of an element.
+// A returned field retains the monitor only when it contains the relevant whole result
+// or tuple piece. Unrelated or deeper pieces do not establish retention.
 .decl keeps_piece(piece: symbol, how: symbol) inline
 
 keeps_piece(p, how) :- how = "whole", p = p.
@@ -1134,32 +917,17 @@ keeps_piece(p, how) :- how = "argument", p = p.
 keeps_piece(p, how) :- p != "", how = p.
 keeps_piece(p, how) :- p = "", how != "part".
 
-// The call at `site`, in `func`, answers what `callee` hands back: a call
-// of it, or a call it is handed to as a fun (`lists:foldl/3` over a fun
-// that monitors, global_group's sync), whose answer is made of what the
-// fun returns.
+// A call returns callee's result directly or through a higher-order consumer whose
+// result contains the passed fun's return, such as a fold.
 .decl answered_at(func: symbol, callee: symbol, site: symbol)
 
 answered_at(h, g, c) :- call_instr(h, g, c).
 answered_at(h, g, c) :- fun_handed(c, h, g, _).
 
-// What lets the monitor at `site` be taken again on a process it already
-// monitors. A run that monitors only where a store of the server lacks
-// the process (acquired_if_absent, the StateGate extractor: `case
-// maps:is_key(Pid, PidMonitors) of false -> monitor(process, Pid)`,
-// `unless MapSet.member?(s.watched, pid)`, `[] = :ets.lookup(:owners,
-// pid)`) is not taken again while that store holds the process: what
-// lets it run again for the process is that store losing it. A drop of
-// another record leaves the next registration asking the store, which
-// answers that the process is monitored (hackney_pool's register_h2 asks
-// `pid_monitors`; a checkout that removes the connection from
-// `h2_connections`, which records the pid too, takes no second monitor).
-// A run that asks no store takes the monitor whenever the process is
-// named, and a drop of any record is what lets it be named again.
-//
-// `monitor_asks(site, mod, store)`: the monitor at `site` is taken only
-// where `store` (a field of the state, or `table :name`) lacks the
-// process it monitors.
+// The monitor is acquired only when `store` lacks the target process
+// (`acquired_if_absent`). Reacquisition requires removing that process from the checked
+// store; dropping another record is insufficient. Without such a check, removing any
+// relationship record may allow repeated acquisition.
 .decl monitor_asks(site: symbol, mod: symbol, store: symbol)
 
 monitor_asks(s, m, k) :-
@@ -1179,29 +947,18 @@ monitored_arg(s, f, 0) :- monitor_call(s, f, _), remote_call(s, f, "Process", "m
 
 asks_before_monitoring(s) :- monitor_asks(s, _, _).
 
-// The stores whose drop lets the monitor at `site` be taken again on the
-// process it named: the store its run asks, when it asks one (a record
-// of it or not); every record, when it asks none.
+// Stores whose removal permits another monitor: the store checked by registration, or
+// every record when registration checks none.
 .decl consulted_store(site: symbol, mod: symbol, store: symbol)
 
 consulted_store(s, m, k) :- monitor_asks(s, m, k).
 consulted_store(s, m, k) :- monitor_record(s, m, k), !asks_before_monitoring(s).
 
-// Where a clause of a callback that runs again drops records of `record`
-// (`func`, the callback or the helper its clause calls), while the
-// process they name may live: a clause other than a :DOWN one removes an
-// entry (removal_api, effect_model.dl) and returns the field it removed
-// from — the field whose value is the removal's answer, or a piece of it
-// (returned_field_from, not `argument`: not a field another call's answer
-// is made from it, `assign(socket, :cache, Map.delete(cache, k))`), in the
-// clause or in a helper it calls — or deletes rows of the table;
-// or any clause empties the field, :DOWN clauses included (eventstore's
-// AdvisoryLocks resets every lock when its connection's :DOWN comes, and
-// the owners' monitors stay). The removal a :DOWN clause makes is that
-// monitor's own end: its process is gone. A removal from another field
-// the clause also returns is no drop of this one. A field set to nil,
-// :undefined or false is a reset (reset_forgets, below), not a drop of
-// every record: it forgets one value.
+// A repeatable callback removes a monitor record while its target may live. For fields,
+// require the returned field to contain the removal result itself or a part of it, not
+// merely depend on it through another call's arguments. Exclude ordinary :DOWN
+// removals, but include whole-store clearing even on :DOWN. Resets to nil, undefined,
+// or false are handled separately.
 .decl record_drop(mod: symbol, record: symbol, func: symbol, callback: symbol, tag: symbol)
 
 record_drop(m, k, h, h, tag) :-
@@ -1256,17 +1013,10 @@ record_drop(m, cat("table ", t), g, h, tag) :-
   ets_op(_, g, t, op, _),
   ets_removal_op(op).
 
-// A clause forgets the monitor at `site` when it resets a store the run
-// consults (field_reset, vocabulary.dl: sets it to nil, :undefined or
-// false) and the server then holds nothing that could demonitor it: the
-// field was the one record that holds the ref (global_group's
-// `config_check`, the sync's refs, set back to undefined when the groups
-// are reconfigured), or it held the pid and the ref was thrown away at
-// the call. A reset of a field that holds the ref beside another record
-// that does (Postgrex.Notifications' pending `ref`, the listener kept in
-// `listeners` too), or the pid while the ref is kept (hackney's
-// `stream_to`, the ref in `owner_mon`), leaves the monitor in hand: it is
-// released, or not, where that other record is.
+// Resetting a consulted field forgets the monitor only if no retained record can
+// demonitor it. This holds when it was the sole reference record, or when it held only
+// the pid and the reference was discarded. Other retained reference records prevent
+// this conclusion.
 .decl forgotten_at_reset(site: symbol, mod: symbol, record: symbol)
 
 forgotten_at_reset(s, m, k) :-
@@ -1287,11 +1037,8 @@ ref_kept_elsewhere(s, k) :-
   monitor_record_holding(s, _, other, "ref"),
   other != k.
 
-// `func` (a callback's clause for `tag`, or a helper the clause returns
-// through) resets a field after which the server holds nothing of the
-// monitor at `site`. A :DOWN clause's reset is, like its removal, the
-// monitor's own end (global_group's `config_check` goes back to
-// undefined when the last check's :DOWN comes).
+// A callback clause or returned helper resets the last monitor record. Exclude resets
+// in the monitor's own :DOWN clause because that target has already exited.
 .decl reset_forgets(site: symbol, func: symbol, callback: symbol, tag: symbol)
 
 reset_forgets(s, h, h, tag) :-
@@ -1312,9 +1059,8 @@ reset_forgets(s, g, h, tag) :-
   function_def(g, m, _, _, _),
   field_reset(g, k, _, _).
 
-// A clause for a monitor's :DOWN: a handler's `:DOWN` clause, known by a
-// call it makes or a state it returns, or a gen_statem's for `:info`
-// events of content `:DOWN` (clause_event).
+// A DOWN handler clause, identified by its calls or returned state. For gen_statem, use
+// :info/:DOWN clause_event facts.
 .decl down_clause(func: symbol, tag: symbol)
 
 down_clause(h, ":DOWN") :- clause_call(_, h, ":DOWN").
@@ -1328,10 +1074,8 @@ emptied("%{}").
 emptied("[]").
 emptied("#{}").
 
-// The drop releases the monitor, or ends its process, when the clause
-// (or the helper) demonitors, or stops a process: a supervisor's
-// terminate_child, a gen behaviour's stop, an exit signal. The process's
-// :DOWN then comes, or none does.
+// Treat removal as releasing the monitor if its clause or helper demonitors or stops
+// the target process, including supervisor termination and exit signals.
 .init release_reach = SameProcessReachSetCut
 
 release_reach.cut(f, g) :- side_call(f, g).
@@ -1358,10 +1102,8 @@ clause_releases(h, tag) :-
   clause_call(c, h, tag),
   release_reach.reaches(g).
 
-// `func` drops a store the monitor at `monitor` consults, or resets the
-// field that forgets it, while its process may live, and neither it nor
-// its clause releases the monitor: a helper a callback's clause calls,
-// or the callback itself.
+// A callback or helper drops the consulted store or last monitor record while the
+// target may live, without releasing the monitor in that function or clause.
 .decl drops_record_of(func: symbol, monitor: symbol)
 
 drops_record_of(g, s) :-
@@ -1382,14 +1124,9 @@ drops_record_of(h, s) :-
 ends_record_of(s, g, h, tag) :- consulted_store(s, m, k), record_drop(m, k, g, h, tag).
 ends_record_of(s, g, h, tag) :- reset_forgets(s, g, h, tag).
 
-// What the finding relates (role): where the record is dropped
-// ("drop"), and the callbacks that run the monitoring function again
-// ("runs"), when it is not one itself. A callback runs it again on a
-// way that passes no site that runs once (once_site, runs.dl: a clause
-// the start's own messages enter, a site a gate on the state closes),
-// the way monitor_taken_again's again_code takes; for a ref thrown away,
-// the way taken_without_asking_state walks, which passes no call the
-// state decides either.
+// Related evidence: record-removal functions (`drop`) and callbacks that repeat the
+// acquisition (`runs`). Repetition paths exclude once-only sites; dropped-reference
+// paths also exclude state-guarded calls.
 .decl monitor_leak_frame(mod: symbol, site: symbol, how: symbol, role: symbol, func: symbol)
 .output monitor_leak_frame
 
@@ -1417,9 +1154,8 @@ monitor_leak_frame(m, s, "dropped", "runs", r) :-
 //
 // The tag a call or cast sends is staged by stage 0 (`call_tag`).
 
-// The module sends its own server a call or cast whose tag no clause of
-// the server's handler takes, and the handler has no catch-all: the
-// request crashes the server.
+// The module calls or casts its own server with a tag no handler clause accepts, and no
+// catch-all exists. The request crashes the server.
 .decl unhandled_own_request(request: symbol, kind: symbol, tag: symbol)
 
 unhandled_own_request(request, kind, tag) :-
@@ -1469,19 +1205,10 @@ kind_callback("cast", "handle_cast").
 handler(mod, "handle_call", func) :- handle_call_function(mod, func).
 handler(mod, "handle_cast", func) :- handle_cast_function(mod, func).
 
-// Judged per call site, by where that site sends: a function that
-// casts an audit log to another server and then calls its own server
-// with a stale tag sends its own server that tag all the same.
-//
-// The site at `id` sends to its module's own server when its target
-// resolves to one of the module's processes (call_site_target, the
-// points-to stage: a name the module registers, self(), a pid the
-// module's start returned), or when it resolves to no process and names
-// no other server — neither a literal name the module does not register
-// nor a tag another module's handler discriminates on (horde's
-// ProcessesSupervisor calling its DynamicSupervisorImpl through a pid).
-// A site that resolves to another module's server is that server's
-// business.
+// A site targets its module's own server when points-to resolves it there, or when the
+// target is unresolved and neither a literal name nor message tag identifies another
+// server. Classify each site independently; unrelated calls in the same function do not
+// change its target.
 .decl to_own_server(mod: symbol, id: symbol)
 
 to_own_server(mod, id) :-
@@ -1497,9 +1224,8 @@ to_own_server(mod, id) :-
   !names_other_server(id),
   !tag_elsewhere(id).
 
-// The site names a server by a literal that is not its module's own: a
-// name its module does not register (a sync_call_site's callee, or the
-// name pid_call reads).
+// The literal target names another server, rather than a name registered by the
+// caller's own module.
 .decl names_other_server(id: symbol)
 
 names_other_server(id) :-
@@ -1530,11 +1256,8 @@ tag_elsewhere(id) :-
 // A handle_call/3 that defers its reply (`defers_reply`,
 // clientlib/replies.dl) has promised the caller one.
 
-// ── The promise cannot be kept ───────────────────────────────────
-//
-// `callback_drops_from` is per return site: some execution reaches this
-// {:noreply, _} having never read `from`. That execution cannot reply, no
-// matter what the rest of the program does.
+// callback_drops_from identifies a {:noreply, _} return reachable without reading from.
+// That execution has discarded the reply address and cannot reply later.
 
 // A handle_call/3 defers its reply at a return some execution reaches
 // without ever reading `from`: nothing can send that reply, and the
@@ -1549,36 +1272,17 @@ reply_defect(mod, func, return, "dropped_from", "") :-
   unsendable_reply(func, return),
   defers_reply(mod, func, return).
 
-// ── Not attempted: the reply that is stored and never sent ───────
-//
-// A module that keeps `from` and calls GenServer.reply/2 nowhere hangs its
-// callers just as surely. It is not reported here, because stating it
-// precisely needs escape analysis this does not have: `from` leaves the
-// callback through a send, a spawned closure, an ETS write, or any call
-// that happens to take it as an argument, and whoever receives it can
-// reply. Suppressing on the routes one can enumerate leaves the rest as
-// false positives.
-//
-// The heuristic version was written, measured against roughly six thousand
-// modules, found nothing, and was removed. `defers_reply` above is where a
-// real version would start.
+// Not modeled: a stored reply address that is never used. `from` may escape through
+// calls, sends, closures, or ETS to code that replies later. Reporting its absence
+// would require escape analysis beyond `defers_reply`.
 
 // ══ gen_statem events without a clause ══════════════════════════════
 
-// ── A timeout armed that no clause handles ──────────────────────────
+// Unhandled gen_statem timeouts
 //
-// `unhandled_timeout(mod, state, kind)` — the witness is the timeout: a
-// state (or handle_event/4) returns an action that arms it, and the
-// runtime delivers it as an event of its own type, which no clause of
-// the machine takes. Not an :info message: its own relation, not
-// unhandled_info's.
-//
-// {:timeout, ms, content} arms an event of type :timeout; {:state_timeout,
-// ms, content} one of type :state_timeout. Postgrex's SimpleConnection
-// armed the former and matched `handle_event(:info, :timeout, ...)` —
-// the idle ping never ran and the event fell through to the generic
-// :info clause. The module-level question is enough: some callback has
-// a clause for the type, or accepts any type.
+// An armed timeout produces its own event type, such as :timeout or :state_timeout, not
+// :info. Report when no callback handles that type or accepts every type. The arming
+// action is the witness.
 .decl unhandled_timeout(mod: symbol, state: symbol, kind: symbol)
 .output unhandled_timeout
 
@@ -1591,12 +1295,8 @@ timeout_without_clause(mod, state, kind) :-
 
 unhandled_timeout(mod, state, kind) :- timeout_without_clause(mod, state, kind).
 
-// `state` (or handle_event/4) returns an action arming a timeout of
-// `kind`, which the runtime delivers as an event of `event_type`:
-// {:timeout, ms, content} one of type :timeout, {:state_timeout, ms,
-// content} one of type :state_timeout, and a generic timeout
-// {{:timeout, name}, ms, content} one of type {:timeout, name}, a tagged
-// tuple, not the :timeout atom.
+// Map an armed statem timeout to its delivered event type: timeout, state_timeout, or
+// the tagged tuple `{:timeout, name}` for named timeouts.
 .decl arms_timeout(mod: symbol, state: symbol, kind: symbol, event_type: symbol)
 
 arms_timeout(mod, state, "event_timeout", "timeout") :- statem_timeout(mod, state, "event_timeout", _).
@@ -1612,39 +1312,24 @@ statem_handles_event(mod, "timeout") :- statem_event_catchall(mod, _).
 statem_handles_event(mod, "state_timeout") :- statem_event_catchall(mod, _).
 statem_handles_event(mod, "{timeout}") :- statem_event_catchall(mod, _).
 
-// ── A call that is never answered ────────────────────────────────────
+// Missing statem replies
 //
-// The extractor walks every {:call, from} clause to its returns and
-// reports the ones that reply nothing, postpone nothing and keep `from`
-// nowhere. The caller of :gen_statem.call/2 waits :infinity by default
-// (sneako/finch#213: a cancel while disconnected blocked for days).
+// Find call clauses whose returns neither reply, postpone, nor retain from. The default
+// infinity call timeout can leave callers waiting indefinitely.
 reply_defect(mod, func, site, "statem_unreplied", tag) :- statem_call_unreplied(mod, func, site, tag).
 
-// ══ A message its process never takes ═══════════════════════════════
+// Messages never received by a spawned process
 //
-// A send that process points-to (sends.dl) follows to a spawned process
-// none of whose receives has a clause for the message. It is not
-// dropped: it stays in the mailbox for the life of the process, and
-// every later receive scans past it. The receives are every one the
-// process runs: the spawned function's and those of what it calls in
-// its own process (a loop entered after a handshake), not only the
-// spawned function's own, which on OTP's kernel was 6 of 56 sends to a
-// spawned process. Judged only for a literal atom or a tuple with a
-// literal tag, and only when the process runs some receive; never when a
-// clause recv_pattern reads as "any" (a variable, a tuple pattern, a
-// guard) could take it, and never when the process runs code whose
-// receives are not the program's to read: a call through a fun or an
-// apply, a gen_server or gen_statem enter_loop (its callbacks take the
-// mailbox), a hibernate that resumes in an MFA.
+// Follow sends to process targets and check every receive on their same-process call
+// paths. Report literal atoms or tagged tuples only when the process has a receive and
+// no clause can accept the message. Exclude processes reaching opaque calls, behaviour
+// enter_loop, or hibernate, whose later receives cannot be inspected. Unconsumed
+// messages remain queued and are rescanned.
 .decl unreceived_message(mod: symbol, func: symbol, site: symbol, message: symbol, runs: symbol, starter: symbol, spawn: symbol, recv: symbol)
 .output unreceived_message
 
-// A send reaches a spawned process that runs receives, and none of them
-// can take the message: it stays in the mailbox for the life of the
-// process.
-//
-// `runs` is the function the process started at `spawn` runs: a spawn
-// site may start more than one, and each is judged by its own receives.
+// A send targets a spawned function with receives, none accepting the message. Check
+// each possible root separately when a spawn has multiple targets.
 .decl message_never_received(send: symbol, spawn: symbol, runs: symbol, message: symbol)
 
 message_never_received(send, spawn, runs, message) :-
@@ -1705,58 +1390,23 @@ receive_takes_anything(r) :- receive_takes(r, "any").
 
 receives_out_of_sight(r) :- spawned_reach.reaches(r, g), hides_receives(g).
 
-// ══ A message its server has no clause for ═════════════════════════
+// Messages without a server handler
 //
-// The GenServer half of the question unreceived_message asks of a
-// spawned process. A message reaches a server's handle_info/2 in ways
-// the program spells out, each a witness (`source`): a send process
-// points-to follows to the server (sends.dl), a timer the server arms
-// for itself, a monitor the server takes, whose {:DOWN, …} the runtime
-// sends, a socket the server makes active, whose close the runtime
-// sends, the node monitoring it turns on, a port it opens, an
-// async_nolink task it starts and does not collect, and a timed receive
-// on its stack that can give up before the message it asked for comes.
-// Each is below. A handle_info/2 with no catch-all is no finding by
-// itself (the retired "handle_info/2 has no catch-all"): what a server
-// runs that it did not build — a fun from its state, a caller's stream —
-// shows no message, and is not judged. When no clause of handle_info/2
-// takes the message, what happens depends on what the module has in its
-// place (`fallback`):
-//
-// - "crash": clauses and no catch-all. The message is a
-//   FunctionClauseError that takes the server down, every time it is
-//   sent (sequin's SlotMessageStore armed :max_memory_check and handled
-//   it nowhere; astarte's AMQPEventsProducer re-armed :init after a
-//   refactor removed its clause).
-// - "catch_all": a catch-all that does nothing with the message but log
-//   it or ignore it (callback_drops). The message is dropped: the
-//   monitor's :DOWN that should have removed a listener (oban's
-//   Notifiers.PG leaked every dead listener), the timer whose work
-//   never runs (teslamate's Repair armed :repair beside a handle_cast
-//   for it). A catch-all may be meant, so this is its own kind.
-// - "default": no handle_info/2 but GenServer's own, which logs the
-//   message as an error and drops it.
-// - "state_crash": a gen_statem's state function (or handle_event/4)
-//   with no :info catch-all, where no callback of the machine takes the
-//   message (below).
-//
-// A catch-all that hands the message on — to a helper, into the state —
-// may take it there, and is not judged. Neither is a message a clause
-// could take by its shape alone (callback_open: `msg when is_atom(msg)`
-// takes any atom, `{ref, result}` a tuple of any tag). Judged for a
-// literal atom and a tuple with a literal tag, :DOWN included, and the
-// shapes the runtime writes (a port's output, a task's `{ref, …}`). A
-// runtime :DOWN is taken only by a clause for every reason of it. A
-// message the server's own receives could take (a selective receive in
-// a callback), and a monitor whose function waits on it or demonitors
-// with :flush, are not judged; what a timed receive leaves behind is its
-// own source (below).
+// Require a known source: a send, self-timer, monitor, active socket, node
+// subscription, port, uncollected task, or late reply after a timed receive. Check
+// literal atoms, tagged tuples, and recognized runtime shapes.
+// `fallback = crash`: handle_info has clauses but none matches.
+// `catch_all`: a catch-all only logs or ignores the message.
+// `default`: GenServer's default handler logs and drops it.
+// `state_crash`: no gen_statem callback accepts the :info message.
+// Exclude forwarding catch-alls, compatible shape-only clauses, matching selective
+// receives, and locally collected or flushed monitors. :DOWN handlers must accept every
+// reason. A missing catch-all without a known message is not reported.
 .decl unhandled_info(mod: symbol, func: symbol, site: symbol, message: symbol, source: symbol, server: symbol, handler: symbol, fallback: symbol)
 .output unhandled_info
 
-// A server is sent a message no clause of its handle_info/2 takes, and
-// no receive of its own could take it: the message crashes the server,
-// or a catch-all drops it.
+// No handle_info/2 clause or same-process receive accepts the message. It either
+// crashes the server or is dropped by a catch-all.
 .decl unhandled_message(server: symbol, site: symbol, message: symbol, source: symbol, handler: symbol, fallback: symbol)
 
 unhandled_message(server, site, message, source, handler, fallback) :-
@@ -1767,9 +1417,8 @@ unhandled_message(server, site, message, source, handler, fallback) :-
   !taken_at(handler, site, message),
   !server_receives(server, message).
 
-// A server that traps exits takes some :EXIT messages, and no clause
-// takes the exit of a process linked to it, whatever its reason: the
-// exit crashes the server.
+// A trapping server handles some EXIT messages but lacks a clause accepting every exit
+// reason from a linked process.
 .decl unhandled_exit(server: symbol, link: symbol, message: symbol, handler: symbol)
 
 unhandled_exit(server, link, message, handler) :-
@@ -1779,10 +1428,8 @@ unhandled_exit(server, link, message, handler) :-
   takes_some_exits(handler),
   !taken_at(handler, link, message).
 
-// A timed receive on a server's stack gives up, and the message it waited
-// for comes later to a handle_info/2 with no clause for it: the server
-// crashes. That receive is why the message comes, so a receive of the
-// server's own is no excuse.
+// A timed receive can leave a late message for handle_info, which crashes if no clause
+// accepts it. The original receive cannot suppress this finding.
 .decl late_message_unhandled(server: symbol, recv: symbol, message: symbol, handler: symbol)
 
 late_message_unhandled(server, recv, message, handler) :-
@@ -1791,10 +1438,8 @@ late_message_unhandled(server, recv, message, handler) :-
   partial_handle_info(server, handler),
   !taken_at(handler, recv, message).
 
-// A server arms a timer for itself whose tag a clause of handle_info/2
-// compares, but whose shape no clause head takes (timer_refused: a
-// `{:tick, 1, :slow}` beside `{:tick, n}`): it is as unhandled as one
-// whose tag none compares.
+// A timer's tag is recognized, but its message shape matches no clause head. For
+// example, {:tick, 1, :slow} does not match {:tick, n}.
 .decl timer_shape_unhandled(server: symbol, arm: symbol, message: symbol, handler: symbol, fallback: symbol)
 
 timer_shape_unhandled(server, arm, message, handler, fallback) :-
@@ -1815,8 +1460,8 @@ statem_message_unhandled(machine, site, message, callback) :-
   !statem_takes(machine, message),
   !server_receives(machine, message).
 
-// A timed receive on a gen_statem's stack gives up, and the message it
-// waited for comes later as an :info no callback of the machine takes.
+// A timed receive in gen_statem expires; its eventual reply becomes an unhandled :info
+// event.
 .decl statem_late_message_unhandled(machine: symbol, recv: symbol, message: symbol, callback: symbol)
 
 statem_late_message_unhandled(machine, recv, message, callback) :-
@@ -1894,10 +1539,8 @@ info_message(m, f, id, msg, "send") :-
   !send_envelope(id),
   server_process(p, m).
 
-// A timer or a monitor in a function a server's callbacks run: the
-// callback's process arms it, so the message comes back to that server
-// (RunsInServer, clientlib/process_kind.dl: any module's code on the server's
-// stack).
+// Timers and monitors created on a server callback's stack deliver messages to that
+// server, even when created in another module. See RunsInServer.
 .init info_reach = RunsInServer
 
 info_reach.seed(f) :- timer_arm(id, f, "self", _, _, _), timer_tag(id, _, _).
@@ -1916,9 +1559,8 @@ info_reach.seed(f) :- link_site(_, f).
 
 runs_in_server(m, f) :- info_reach.runs(m, f).
 
-// Judged, as a send is, when the message is an atom or a tuple with an
-// atom first (timer_tag): a literal is named as it is written, a tuple
-// the site builds as pid_send spells one, `{:tag, …}`.
+// Analyze atom messages and tuples with atom tags. Literal values retain their
+// spelling; constructed tuples use pid_send's {:tag, …} representation.
 info_message(m, f, id, lit, "timer") :-
   timer_arm(id, f, "self", "bare", _, lit),
   timer_tag(id, _, _),
@@ -1929,13 +1571,9 @@ info_message(m, f, id, cat("{", tag, ", …}"), "timer") :-
   timer_tag(id, tag, _),
   runs_in_server(m, f).
 
-// :erlang.start_timer/3,4 armed for the server itself sends `{:timeout,
-// ref, msg}`: a 3-tuple tagged :timeout (timer_tag), which GenServer's
-// idle `handle_info(:timeout, s)` does not take. A start timer is most
-// often a wait's own deadline: armed by the function that then waits for
-// it, or for what it bounds, in a receive and cancels and flushes it
-// (mongoose_lib:pmap/3). Like a monitor its function waits on, its
-// message is taken where it is armed.
+// A self-directed start_timer sends `{:timeout, ref, msg}`, which an atom :timeout
+// handler does not match. Exclude timers whose messages are consumed by a local wait
+// and cancellation/flush protocol.
 info_message(m, f, id, "{:timeout, …}", "timer") :-
   start_timer_arm(id, f, "self"),
   runs_in_server(m, f),
@@ -1957,9 +1595,8 @@ info_message(m, f, id, "{:DOWN, …}", "monitor") :-
   !receive_reach.reaches(f),
   !flush.reaches(f).
 
-// A process's or a port's monitor sends a `{:DOWN, ref, type, object,
-// reason}`; one whose type is not a literal is taken for one of them. A
-// :time_offset monitor sends a clock service's {:CHANGE, …} instead.
+// Process and port monitors send DOWN. Treat unknown monitor types as potentially
+// either; :time_offset monitors instead send CHANGE.
 .decl sends_down(type: symbol)
 
 sends_down("process").
@@ -1973,31 +1610,21 @@ sends_down("dynamic").
 down_type_at(id, t) :- info_message(_, _, id, "{:DOWN, …}", "monitor"), monitor_type(id, t).
 down_type_at(id, "process") :- info_message(_, _, id, "{:DOWN, …}", "task").
 
-// A clause of `h` takes every :DOWN the monitor at `id` sends, whatever
-// reason the runtime gives it (callback_takes_down): one for its type,
-// or for any type. The ref, the object and the state are the program's
-// (a clause pinning the ref takes the monitor whose ref the state keeps);
-// the reason is the runtime's, and a clause guarding it
-// (`when reason != :normal`) leaves the others to no clause. A monitor
-// whose type is not a literal is read as a process's.
+// The handler accepts every reason for this monitor's :DOWN, for its type or any type.
+// Reference, object, and state restrictions are allowed; reason restrictions leave
+// messages unhandled. Unknown monitor types are treated as process monitors.
 .decl down_taken(handler: symbol, id: symbol)
 
 down_taken(h, id) :- down_type_at(id, t), callback_takes_down(h, "handle_info", t).
 down_taken(h, id) :- down_type_at(id, _), callback_takes_down(h, "handle_info", "any").
 down_taken(h, id) :- down_type_at(id, "dynamic"), callback_takes_down(h, "handle_info", "process").
 
-// ── An async_nolink task's reply and its :DOWN ───────────────────────
+// async_nolink messages
 //
-// Task.Supervisor.async_nolink sends the process that starts it two
-// messages it did not ask for by name: the task's reply, `{ref, result}`,
-// and, the task being monitored, `{:DOWN, ref, :process, pid, reason}`
-// when it ends — after the reply, or in its place when it crashes
-// (archethic-node#1306, sentry-elixir#172, Engram#1552). A start the
-// function collects where it starts (an await, a yield, a shutdown:
-// mailbox_writer "task") leaves neither behind. A start a library's macro
-// wrote (library_written) is that library's protocol with its own
-// handle_info/2; the program's own start under a library's handle_info/2
-// lands there all the same (review 2, item 23).
+// An uncollected Task.Supervisor.async_nolink produces `{ref, result}` and then :DOWN,
+// or only :DOWN on failure. Locally collected tasks are excluded. Library-generated
+// starts belong to that library's protocol; handwritten starts remain checked even with
+// a library-generated handler.
 info_message(m, f, id, "{ref, …}", "task") :-
   mailbox_writer(id, f, "task_nolink"),
   runs_in_server(m, f),
@@ -2008,24 +1635,12 @@ info_message(m, f, id, "{:DOWN, …}", "task") :-
   runs_in_server(m, f),
   !library_written(f).
 
-// ── A message a timed receive leaves behind ─────────────────────────
+// Messages arriving after timed receives
 //
-// A function on a server's stack asks for a message and then waits for
-// it with an `after`. It spawns a process and takes the reply by a value
-// it holds (`{ref, …}`): vernemq's vmq_ql_query spawn_links a row
-// initializer and waits RowQueryTimeout for `{CallerRef, …}`, then kills
-// it. Or it subscribes and waits for one event of the subscription:
-// realtime's Connect.wait_for_connection, which the replication Watchdog
-// reaches, subscribes to a tenant's topic and waits for a "ready" map
-// about one pid. The wait can give up before the message comes, and a
-// reply sent as the timeout fires, or an event broadcast before the
-// unsubscribe (or about another pid, which the receive never selects),
-// stays in the mailbox: the server's handle_info/2 is where it lands.
-// The message is the shape the receive waits for (recv_shape; a receive
-// that waits, not an `after 0` poll). A gen call is no such wait: it
-// neither spawns nor subscribes, and it waits on an alias it deactivates.
-// Only the crash is judged: a catch-all dropping a late reply is what it
-// is for.
+// A spawned reply or subscription event may arrive after the receive times out, or fail
+// its selective pattern and remain queued. Check the receive's message shape against
+// the server handler. Exclude after-0 polls and gen calls using deactivated aliases.
+// Report crashes only; a catch-all may intentionally discard late replies.
 .init subscribe_reach = SameProcessReachSetCut
 
 subscribe_reach.cut(f, g) :- side_call(f, g).
@@ -2046,42 +1661,23 @@ late_wait(r, g, shape) :-
 
 info_message(m, g, r, msg, "late") :- late_wait(r, g, msg), runs_in_server(m, g).
 
-// ── A linked process's exit, in a server that traps exits ────────────
+// Partially handled trapped exits
 //
-// A server that traps exits (server_traps) receives the end of every
-// process or port linked to it as `{:EXIT, from, reason}`, the reason
-// whatever the linked process ended with. A link its own stack makes is
-// the witness: a spawn_link, a link/1, a port it opens, a start_link of
-// anything (a worker started from a callback is linked to the server).
-// The exit is taken as a :DOWN is: by a clause for every reason of it
-// (callback_takes_exit), whatever it pins of `from` or asks of the state,
-// or by an open clause that can hold three elements. vernemq's
-// vmq_tracer spawn_links its rate tracer and takes only its :normal
-// exit. (sequin's Redis ConnectionCache takes only `{:EXIT, _pid,
-// :normal}` too, but start_links through a fun in its state, which the
-// call graph does not follow.) A handler that names no :EXIT
-// at all is shutdown's finding (unhandled_exit_signal "no_exit_clause");
-// this judges one that takes some exits (it compares :EXIT) and not
-// others. The links are link_site's (clientlib/receive.dl).
+// A server trapping exits receives :EXIT from links, linked starts, and ports created
+// on its stack. A handler must accept every reason or a compatible open tuple shape.
+// This rule checks handlers accepting some exits; shutdown.dl reports handlers with no
+// :EXIT clause. Link sites come from clientlib/receive.dl.
 
 info_message(m, f, id, "{:EXIT, …}", "exit") :-
   link_site(id, f),
   runs_in_server(m, f),
   server_traps(m).
 
-// ── Node events and a port's output ─────────────────────────────────
+// Node and port messages
 //
-// What the runtime writes a process that asks for it. `:net_kernel.
-// monitor_nodes/1,2` with `true` subscribes the calling process to every
-// node's `{:nodeup, node}` and `{:nodedown, node}` (a third element with
-// options); `:erlang.monitor_node/2,3` and `Node.monitor/2,3` with `true`
-// to one node's `{:nodedown, node}`. A flag the program computes shows
-// nothing, and `false` turns the events off. A port a server's process
-// opens (`Port.open/2`, which compiles to `:erlang.open_port/2`) is
-// connected to it: what the port's program writes arrives as `{port,
-// {:data, data}}`. A function that hands the port to another process
-// (`Port.connect/2`), or that waits in a receive of its own (the port's
-// output taken where it is read, as `System.cmd/3` does), is not judged.
+// Literal true node-monitoring calls produce nodeup/nodedown events; false and computed
+// flags do not establish a source. Open ports deliver `{port, {:data, data}}`. Exclude
+// functions transferring the port or receiving its output locally.
 .decl node_events(id: symbol, func: symbol, message: symbol)
 
 node_events(id, f, "{:nodeup, …}") :-
@@ -2121,34 +1717,15 @@ info_message(m, f, id, "{port, {:data, …}}", "port") :-
   !hands_port_off(f),
   !receive_reach.reaches(f).
 
-// ── The close of a socket the server holds ───────────────────────────
+// Active-socket close messages
 //
-// An active socket (`active: true`, `:once` or a count) sends what it
-// receives to the process that controls it, and its end the same way:
-// `{:tcp_closed, socket}` for TCP, `{:ssl_closed, socket}` for TLS, when
-// the peer closes, the network drops or an alert ends the session. With
-// no clause for it the first disconnect is a crash (kafka_ex#381's new
-// client took only its own :update_metadata); a catch-all that only logs
-// it leaves the server holding a socket that is gone (cqerl's TLS clients
-// took `{:tcp_closed, _}`, let `{:ssl_closed, _}` fall into the catch-all,
-// and answered every query after a server restart with a timeout).
-//
-// The server's process makes a socket active where it connects one
-// (`:gen_tcp.connect/3,4`, `:ssl.connect/2,3,4`, active unless the
-// options say otherwise) or sets its options (`:inet.setopts/2`,
-// `:ssl.setopts/2`, a transport module's `setopts/2` through a variable)
-// with a literal mode, or where it hands a wrapper of the program's the
-// literal list the wrapper sets (`Socket.setopts(s, [:binary, active:
-// true])`, through any chain of parameters). Which close that means
-// follows the socket: `:ssl.setopts/2` a TLS one's, `:inet.setopts/2` a
-// TCP one's when the server's process connects TCP sockets (it may be a
-// UDP one, which has no close), a transport in a variable either kind the
-// process connects. Soundness rests on the extractor's literal reading:
-// options it cannot read say nothing, so a socket made active by options
-// built at runtime is missed, never assumed. A function that hands its
-// socket to another process (controlling_process) is not judged: the
-// messages go to that process. Nor is an accepted socket, which takes
-// its mode from the listening socket.
+// Active TCP and TLS sockets send tcp_closed and ssl_closed to their controlling
+// process. Check literal active modes at connect/setopts sites, including options
+// forwarded through wrappers. TLS setopts identifies TLS; inet or dynamic transport
+// calls use the socket kinds connected by the process.
+// Unknown options do not prove an active socket. Exclude ownership transfers and
+// accepted sockets, which inherit listener options. A missing clause crashes; a logging
+// catch-all can leave stale socket state.
 .decl socket_active_mode(mode: symbol)
 
 socket_active_mode("true").
@@ -2227,11 +1804,8 @@ info_message(m, f, id, msg, "socket") :-
   activation_close(f, id, m, msg),
   !hands_socket_off(f).
 
-// Whether `tag` is what `message` is told apart by: the atom itself, or
-// a tuple's literal tag (`{:tag, …}`, as pid_send spells it). Joined from
-// the tag's side with cat/2: the message is not parsed. A timer's is its
-// timer_tag: a literal tuple (`{:warm_up, 5}`) is spelled whole, and the
-// join would find no tag for it.
+// Match atoms or tuple-head tags using construction with cat, not string parsing. Timer
+// messages use timer_tag because literal tuples may be stored as whole terms.
 .decl tag_of(message: symbol, tag: symbol)
 
 tag_of(msg, tag) :- info_message(_, _, id, msg, "timer"), timer_tag(id, tag, _).
@@ -2266,10 +1840,8 @@ info_fallback(m, msg, h, "crash") :-
   info_message(m, _, _, msg, _),
   partial_handle_info(m, h).
 
-// A catch-all that drops the message is the module's own, or code no
-// clause of which the module wrote (macro_written, clientlib/generated.dl:
-// GenServer's default logs and drops): a handler whose first clause a
-// `use` injected ahead of the module's own clauses is the module's.
+// A dropping catch-all is handwritten or wholly generated. First-clause macro metadata
+// alone cannot classify a mixed handler as generated.
 info_fallback(m, msg, h, "catch_all") :-
   info_message(m, _, _, msg, _),
   function_def(h, m, "handle_info", 2, _),
@@ -2282,9 +1854,8 @@ info_fallback(m, msg, h, "default") :-
   callback_drops(h, "handle_info"),
   macro_written(h).
 
-// A message some clause could take: its tag is compared, or a clause
-// tests the message by shape alone and a tuple of any tag, or an atom,
-// could pass it.
+// A clause may accept the message by comparing its tag or matching a compatible shape
+// without a tag restriction.
 .decl info_taken(handler: symbol, message: symbol)
 
 info_taken(h, msg) :-
@@ -2292,9 +1863,8 @@ info_taken(h, msg) :-
   tag_of(msg, tag),
   callback_tag(h, "handle_info", tag).
 
-// A timer's message a clause head takes in its own shape: a literal
-// tuple head (`handle_info({:tick, :fast}, s)` is one comparison with
-// the tuple) compares no atom callback_tag sees.
+// A timer message matches a clause head directly. Literal tuple comparisons count even
+// when callback_tag records no atom comparison.
 info_taken(h, msg) :-
   info_fallback(_, msg, h, _),
   info_message(_, _, id, msg, "timer"),
@@ -2319,9 +1889,8 @@ info_taken(h, "tuple") :-
   info_fallback(_, "tuple", h, _),
   callback_open(h, "handle_info", "tuple", _).
 
-// How the message at `id` is told taken: a :DOWN the runtime sends for a
-// monitor (a monitor's, a task's) by a clause for every reason of it
-// ("reason"), anything else by its tag or its shape ("tag").
+// Match monitor and task DOWN messages by a handler accepting every reason ("reason");
+// match other messages by tag or shape ("tag").
 .decl taken_by(id: symbol, message: symbol, how: symbol)
 
 taken_by(id, msg, "reason") :- down_type_at(id, _), info_message(_, _, id, msg, _), msg = "{:DOWN, …}".
@@ -2334,11 +1903,8 @@ taken_by(id, msg, "tag") :-
 
 taken_by(id, "{ref, …}", "tag") :- info_message(_, _, id, "{ref, …}", "task").
 
-// A message some clause of `h` takes as the source at `id` sends it: a
-// runtime :DOWN by a clause for every reason of it (down_taken), or by
-// one that takes any tuple; a message the program writes by its tag or
-// its shape (info_taken); a task's reply by a clause headed by a
-// reference as well.
+// The handler accepts the source's message: all-reason :DOWN handling or open tuples,
+// matching tags/shapes for program messages, or reference-headed task replies.
 .decl taken_at(handler: symbol, id: symbol, message: symbol)
 
 taken_at(h, id, msg) :-
@@ -2380,11 +1946,9 @@ taken_at(h, id, "{ref, …}") :-
   info_fallback(m, "{ref, …}", h, _),
   callback_ref_head(h, "handle_info").
 
-// Which fallback of a source's message unhandled_message judges: a
-// crash, for every source but the two with rules of their own (a timed
-// receive's leftover, a trapped exit); a catch-all's drop, or
-// GenServer's default, only for a message the program sends or arms, a
-// monitor's :DOWN and a socket's close.
+// Check crashes for ordinary sources; late replies and trapped exits have dedicated
+// rules. Dropping/default handlers are checked only for sends, timers, monitors, and
+// socket closes.
 .decl fallback_judged(source: symbol, fallback: symbol)
 
 fallback_judged("send", "crash").
@@ -2405,11 +1969,8 @@ fallback_judged("timer", "default").
 fallback_judged("monitor", "default").
 fallback_judged("socket", "default").
 
-// The handler's clause heads take the timer's tag only in other shapes
-// (callback_tag_shape): `{:tick, n}` for a `{:tick, 1, :slow}` timer, the
-// atom `:timeout` for a start_timer's `{:timeout, ref, msg}`. A handler
-// whose heads say nothing of the tag (it compares it in its body), or
-// with a clause that takes a message by its shape alone, is not asked.
+// The handler recognizes a timer tag only at incompatible shapes or arities. Exclude
+// body-only tag comparisons and compatible shape-only clauses.
 .decl timer_refused(handler: symbol, id: symbol)
 
 timer_refused(h, id) :-
@@ -2419,15 +1980,12 @@ timer_refused(h, id) :-
   !callback_tag_shape(h, "handle_info", tag, -1),
   !callback_open(h, "handle_info", _, _).
 
-// ── The same message sent to a gen_statem ──────────────────────────
+// Messages sent to gen_statem
 //
-// It arrives as an :info event, in whatever state the machine is in: a
-// state function (or handle_event/4) with neither an :info catch-all nor
-// one for every event crashes on it. Judged only when no callback of the
-// machine compares its tag or takes it by shape (statem_info_tag,
-// statem_info_open): a message some state takes may be one the program
-// only sends while the machine is in that state. A catch-all is not
-// judged here — whether it drops the content is not read for a machine.
+// Check :info messages only when no callback accepts their tag or shape and no
+// info/event catch-all covers them. A handler in any state suppresses the finding
+// because sends may be state-specific. Dropping catch-alls are not classified for state
+// machines.
 .decl statem_takes(mod: symbol, message: symbol)
 
 statem_takes(m, msg) :-
@@ -2461,62 +2019,32 @@ statem_info_partial(m, h) :-
   !statem_event_catchall(m, h).
 
 
-// ══ A periodic timer loop armed again while it runs ═════════════════
+// Duplicate periodic timer loops
 //
-// A server whose handle_info/2 clause for a message arms a timer with
-// that message for itself, on every path the clause goes on by, runs a
-// periodic loop: each tick arms the next. Another callback that arms the
-// message again — a send_after of it, or a send of it to self() — while
-// the loop's timer is pending starts a second loop beside the first, and
-// each later run of that callback one more: the loop's work multiplies
-// with every config change, reset or owner change (vernemq's acl and
-// passwd reloaders, Livebook's RuntimeServer before e9ea88e).
-//
-// The second path can stop the running loop only by cancelling its
-// timer, through the ref the loop keeps:
-// - a loop whose re-arm drops its ref (timer_ref "discarded") cannot be
-//   stopped from anywhere, and every second arm multiplies it
-//   (ReloadLoop, SelfKick);
-// - a loop that keeps its ref under a state key is stopped by a second
-//   path that cancels that key first (CancelFirst), and folds a second
-//   chain into its own when its clause cancels the key before re-arming
-//   (IdempotentLoop: realtime's subscribe loop, where a second arm costs
-//   one stale tick, the flush rule's defect, not a loop);
-// - a loop whose ref goes where the walk does not follow (a record
-//   field, a tuple, a library's assign) is not judged: the quiet
-//   direction.
-// Only a periodic loop is asked: a clause that re-arms on one branch
-// only (after a failed connect) retries until it is done, and the second
-// arm of a retry loop comes, most often, from the event that stopped
-// being connected, when no retry runs (RetryLoop: ejabberd_redis's and
-// MongooseIM's LDAP reconnects). Only a literal message is asked
-// (armed_literal): one carrying a ref or a counter (`{:tick, ref}`,
-// start_timer's `{:timeout, ref, msg}`) is told apart by the loop's
-// clause (RefTagged). Code that runs once per incarnation (runs.dl's
-// once clauses: init/1, mount/3, and a clause only their messages enter —
-// a handle_continue/2 init/1 continues to, a Channel's `:after_join`,
-// MongooseIM's `initial_loading` cast, sequin's `:init` clause that arms
-// the loop) arms the loop the ticks then carry, and is no second path
-// (InitOnly, ContinueArm, AfterJoin, CastFromInit).
+// A handle_info clause rearming the same literal message on every continuing path
+// creates a periodic loop. Another repeatable callback arming or self-sending that
+// message can start an additional loop. Conditional retry loops and
+// once-per-incarnation startup paths are excluded.
+// A discarded reference makes cancellation impossible. A stored reference is safe if
+// the second path cancels it first, or the loop cancels it before every rearm; the
+// latter may still leave a stale-message defect. Untracked reference storage is
+// excluded. Reference- or counter-bearing messages are not treated as identical loop
+// ticks.
 
 .decl timer_loop_rearmed(mod: symbol, message: symbol, entry: symbol, site: symbol, arm_site: symbol, loop_site: symbol, keeps: symbol)
 .output timer_loop_rearmed
 
-// A second path arms a periodic loop's message while the loop's timer is
-// pending, and the loop throws its ref away: nothing can stop the
-// running loop, so each second arm starts one more beside it.
-//
-// `site` is where the callback `entry` arms, or calls what does; `arm`
-// is the arm itself, and `loop_arm` the loop's own re-arm.
+// A repeatable second arm duplicates a periodic loop whose reference is discarded.
+// `site` anchors the callback path; `arm` and `loop_arm` identify the competing timer
+// operations.
 .decl unstoppable_loop_armed_again(mod: symbol, message: symbol, entry: symbol, site: symbol, arm: symbol, loop_arm: symbol)
 
 unstoppable_loop_armed_again(mod, message, entry, site, arm, loop_arm) :-
   second_arm(mod, message, entry, site, _, arm),
   loop_drops_ref(mod, message, loop_arm).
 
-// A second path arms a periodic loop's message while the loop's timer,
-// kept under a state key, is pending, and nothing cancels the kept timer
-// first: a second loop starts beside the first.
+// Another path arms a periodic message while the loop's stored timer is pending,
+// without cancelling it. This starts a second timer chain.
 .decl kept_loop_armed_again(mod: symbol, message: symbol, entry: symbol, site: symbol, arm: symbol, loop_arm: symbol, key: symbol)
 
 kept_loop_armed_again(mod, message, entry, site, arm, loop_arm, key) :-
@@ -2533,10 +2061,8 @@ timer_loop_rearmed(mod, message, entry, site, arm, loop_arm, "") :-
 timer_loop_rearmed(mod, message, entry, site, arm, loop_arm, key) :-
   kept_loop_armed_again(mod, message, entry, site, arm, loop_arm, key).
 
-// A server that handles its own messages in handle_info/2: the callback
-// of a loop behaviour (otp_callback, a GenServer, a GenStage, a Channel,
-// a LiveView, a gen_server2) but a gen_statem's, which takes its info
-// messages in its state functions.
+// Loop behaviours that handle info in handle_info/2, including GenServer, GenStage,
+// Channel, LiveView and gen_server2. Exclude gen_statem's state-function handlers.
 .decl looping_server(mod: symbol, handler: symbol)
 
 looping_server(mod, h) :-
@@ -2545,10 +2071,8 @@ looping_server(mod, h) :-
   b != "GenStateMachine",
   b != "Supervisor".
 
-// The literal message a timer armed for the process carries
-// (armed_literal: at the site, or filled in by the arming function's
-// callers), and the tag a clause head tells it apart by: timer_tag's, or
-// the atom itself for one a caller filled in.
+// A self-timer's literal message and callback tag, resolved at the site or from caller
+// arguments. Caller-supplied atom messages use the atom as tag.
 .decl self_arm_tag(site: symbol, func: symbol, lit: symbol, tag: symbol)
 
 self_arm_tag(a, f, lit, tag) :-
@@ -2577,11 +2101,8 @@ tick_path.root(c, g) :-
   self_timer_tag(mod, tag),
   call_instr(h, g, c).
 
-// `site` re-arms the periodic loop of `lit`: a timer the clause of
-// handle_info/2 for the message's tag arms with that message for the
-// process on every path it goes on by — in the clause (`via` is `site`
-// itself), or on every completing path of what the clause's call `via`
-// runs.
+// A periodic rearm for lit on every continuing path of its handle_info clause, directly
+// or through an unconditionally completing helper. `via` identifies the clause's call.
 .decl loop_arm(mod: symbol, lit: symbol, site: symbol, func: symbol, via: symbol)
 
 loop_arm(mod, lit, a, h, a) :-
@@ -2605,10 +2126,8 @@ tick_clause(id, h, lit) :-
   looping_server(mod, h),
   clause_call(id, h, tag).
 
-// A callback that runs again and again, whenever its request or message
-// comes (again_root, runs.dl): not init/1 or mount/3. handle_continue/2
-// is one, and its clauses that run once are no second path
-// (once_site, below).
+// Callbacks that may run repeatedly, including handle_continue/2. Exclude startup
+// callbacks and individual sites classified once_site.
 .decl rearm_entry(mod: symbol, entry: symbol)
 
 rearm_entry(mod, e) :-
@@ -2617,20 +2136,16 @@ rearm_entry(mod, e) :-
   function_def(e, mod, _, _, _).
 
 
-// `site` arms the literal message `lit` for the process itself: a timer,
-// or a send to self() (pid_send spells an atom as the timer's literal
-// does; a tuple it spells `{:tag, …}`, which no literal equals).
+// `site` sends literal lit to self by timer or send. Constructed tuple messages use
+// {:tag, …}, which does not equal a full literal.
 .decl self_arm(site: symbol, func: symbol, lit: symbol)
 
 self_arm(b, g, lit) :- armed_literal(b, g, "self", lit).
 self_arm(b, g, lit) :- pid_send(b, g, lit, "self", _).
 
-// What each call a looping module's callback makes runs in the module,
-// in its process, without going back into handle_info/2: a callback that
-// hands a message on to handle_info/2 (a deferred one drained later,
-// vernemq's vmq_swc_store; `handle_info(:disconnect, socket)` from
-// another clause) dispatches it to the clause that message enters, and
-// a call that hands it the loop's own literal is a second arm below.
+// Follow same-module, same-process callback work without re-entering handle_info
+// wholesale. Calls forwarding the loop's literal message are checked separately as
+// explicit dispatch to that clause.
 .init arm_path = ForwardIntraModuleSameProcessReachCut
 
 arm_path.root(c, g) :-
@@ -2641,10 +2156,8 @@ arm_path.root(c, g) :-
 
 arm_path.cut(g, h) :- looping_server(_, h), call_edge(g, h).
 
-// A second arm of `lit`'s loop: `site` is where the callback `entry`
-// arms it (the arm itself) or makes the call that does (`arm_site` in
-// `func`), outside the clause of handle_info/2 the loop runs in and
-// outside a site that runs once (once_site, runs.dl).
+// A second arm outside the loop's own clause and once-only sites. Anchor at the
+// repeatable callback's direct arm or call leading to arm_site.
 .decl second_arm(mod: symbol, lit: symbol, entry: symbol, site: symbol, func: symbol, arm_site: symbol)
 
 second_arm(mod, lit, e, b, e, b) :-
@@ -2663,10 +2176,8 @@ second_arm(mod, lit, e, c, g, b) :-
   !tick_clause(c, e, lit),
   !once_site(c, e).
 
-// A callback that runs the loop's clause itself, handing handle_info/2
-// the loop's own message (`def handle_cast(:now, s), do: handle_info(:tick, s)`).
-// The loop's own clause is no exception: it arms on every path, so its
-// call back into itself arms a second timer beside its own re-arm.
+// A callback explicitly invokes the loop's handle_info clause with its message.
+// Recursive entry from the loop itself also adds an arm beside its ordinary rearm.
 second_arm(mod, lit, e, c, f, a) :-
   loop_arm(mod, lit, a, f, _),
   looping_server(mod, h),
@@ -2675,9 +2186,8 @@ second_arm(mod, lit, e, c, f, a) :-
   call_arg(e, h, 0, lit),
   !once_site(c, e).
 
-// How the loop keeps its ref: dropped where it is armed, or under a
-// state key (timer_key: stored there, or returned to a caller that
-// stores it).
+// The loop either discards its timer reference or retains it under a state key,
+// directly or through a caller (timer_key).
 .decl loop_drops_ref(mod: symbol, lit: symbol, site: symbol)
 
 loop_drops_ref(mod, lit, a) :-
@@ -2698,10 +2208,8 @@ loop_drops_ref(mod, lit, a) :-
   timer_dropped(_, g, f),
   tick_path.reaches(via, g).
 
-// The loop's re-arm at `site` keeps its ref under `key`. A loop any arm
-// of which drops its ref (loop_drops_ref) cannot be stopped by any
-// cancel: unstoppable_loop_armed_again reports it, and
-// kept_loop_armed_again would repeat it under the key.
+// The re-arm stores its reference under key. If any arm discards the reference,
+// unstoppable_loop_armed_again reports it instead to avoid duplicates.
 .decl loop_keeps_ref_under(mod: symbol, lit: symbol, site: symbol, key: symbol)
 
 loop_keeps_ref_under(mod, lit, a, key) :-
@@ -2713,10 +2221,8 @@ loop_keeps_ref_under(mod, lit, a, key) :-
   timer_ref(a, f, "returned", _),
   returns_to_key(f, key).
 
-// The call at `site` in `func` cancels the timer kept under `key`: the
-// cancel_timer that reads the field, or a call handing the field to a
-// function that cancels what it is handed (realtime's
-// `Helpers.cancel_timer(pg_sub_ref)`).
+// `site` cancels the timer stored under key, directly or through a helper receiving
+// that field.
 .decl cancels_param(func: symbol, pos: number)
 
 cancels_param(g, pos) :- timer_cancel(_, g, "param", _, pos).
@@ -2734,20 +2240,13 @@ cancel_call(f, s, key) :-
   cancels_param(g, pos),
   call_instr(f, g, s).
 
-// A call to a function of the module that reads the field and cancels
-// it itself (helper_cancels_field, clientlib/timer_flush.dl: MongooseIM's
-// `maybe_cancel_timer(IsInitial, State)`). One level, and only a helper
-// whose own code is the cancel: a function that cancels in one clause
-// (through another helper) and arms in another is no cancel of the path
-// that arms (review 2, item 21: 041f72e6 took any cancel anywhere below).
+// A one-level same-module helper that directly reads and cancels the field. Do not
+// infer cancellation from arbitrary deeper calls, which may belong to another clause.
 cancel_call(f, s, key) :- helper_cancels_field(f, s, _, key).
 
-// Two call sites of `func` run in the same clause: one the tag of its
-// first argument names for both, or two that no tag names. A clause
-// whose head is a map or a struct names no tag, so the untagged clauses
-// of one function share a verdict: a cancel in one quiets an arm in
-// another (the quiet direction). The loop's own clause always has its
-// tag.
+// Call sites share a clause tag, or both lack one. Untagged map/struct clauses are
+// merged, so cancellation in one can suppress an arm in another. Periodic loop clauses
+// have known tags.
 .decl has_clause(site: symbol)
 
 has_clause(s) :- clause_call(s, _, _).
@@ -2764,9 +2263,8 @@ same_clause(f, s, t) :-
   !has_clause(s),
   !has_clause(t).
 
-// The loop's own clause cancels its kept timer before arming the next:
-// a second chain folds into it at the next tick. In the handler's clause
-// for the tag, or anywhere in the function that re-arms.
+// The loop cancels its stored timer before re-arming, merging duplicate chains at the
+// next tick. Recognize cancellation in the tag's clause or re-arming function.
 .decl idempotent_loop(mod: symbol, lit: symbol, key: symbol)
 
 idempotent_loop(mod, lit, key) :-
@@ -2792,9 +2290,8 @@ cancels_before(e, c, key) :-
   same_clause(e, s, c),
   !cancels_in_arming(e, s, g).
 
-// The call at `site` cancels in `arm`, the very function that arms: its
-// cancel and its arm may be on two branches (two clauses of a
-// `configure/2`), so the call is asked as the arming function is, below.
+// The called function both cancels and arms timers. Those operations may be on separate
+// branches, so evaluate the call as an arming path.
 .decl cancels_in_arming(func: symbol, site: symbol, arm: symbol)
 
 cancels_in_arming(e, s, g) :-
@@ -2809,12 +2306,9 @@ cancels_before(e, c, key) :-
   cancel_call(g, s, key),
   !conditional_call(s).
 
-// The second path arms only while the key is empty: the arming function
-// or the callback tests the kept field against nil or undefined
-// (field_nil_test) — a Broadway producer's `handle_receive_messages(%{receive_timer:
-// nil} = state)`, mbta's `schedule_fetch(%{ref: nil})`. The loop keeps the
-// key full while its timer is pending, so that path arms only when no
-// loop runs. Which branch arms is not asked: the quiet direction.
+// Suppress a second arm when its function or callback tests the stored reference field
+// for nil/undefined. The branch containing the arm is not checked, so this may
+// over-suppress.
 .decl arms_when_empty(entry: symbol, site: symbol, key: symbol)
 
 arms_when_empty(e, c, key) :-
@@ -2823,30 +2317,18 @@ arms_when_empty(e, c, key) :-
   (field_nil_test(g, key) ; field_nil_test(e, key)).
 
 
-// ══ A registration made on the static render ══════════════════════
+// Registrations during static rendering
 //
-// A callback that runs on the static render too (static_render_callback,
-// clientlib/live_view.dl) and reaches, in its own process, what
-// registers the process for later messages — a subscription (a PubSub
-// subscription or a Registry or :pg join, mailbox_writer "pubsub"; an
-// endpoint's, subscription_call), a timer to self, a monitor — registers
-// the HTTP connection's process on the first run: a keep-alive
-// connection takes every broadcast and tick meant for the LiveView
-// (Bandit logs each as unexpected), and the work is done twice. A
-// registration on the arm where connected?/1 answered true
-// (connected_guarded), or reached only through calls on such arms, is
-// not one.
-//
-// `static_render_registration(mod, entry, func, site, kind)` — the
-// registration at `site` in `func`, reached from `entry` of `mod`
-// without a connected?/1 test that answered true: `kind` "subscribe",
-// "timer" or "monitor".
+// A LiveView callback may run in the HTTP connection process before the connected
+// mount. Subscriptions, self-timers, and monitors reached there can leave that process
+// receiving LiveView messages. Report the registration site and entry callback unless
+// every path is guarded by a successful connection check. `kind` is subscribe, timer,
+// or monitor.
 .decl static_render_registration(mod: symbol, entry: symbol, func: symbol, site: symbol, kind: symbol)
 .output static_render_registration
 
-// A callback that runs on the static render too reaches a registration
-// of its process for later messages without a connected?/1 test that
-// answered true: the HTTP connection's process is the one registered.
+// A callback reachable during static rendering registers for messages without a
+// successful connected?/1 check, registering the HTTP connection's process.
 .decl registered_on_static_render(entry: symbol, registration: symbol)
 
 registered_on_static_render(entry, registration) :-
@@ -2884,12 +2366,8 @@ process_registration(id, f, "subscribe") :- subscription_call(id, f, "subscribe"
 process_registration(id, f, "timer") :- timer_arm(id, f, "self", _, _, _).
 process_registration(id, f, "monitor") :- monitor_call(id, f, _).
 
-// Walked back from each registration along the calls not on a true
-// arm of connected?/1 (BackwardUnguardedSameProcess: a fun handed to a
-// call is held against that call; an edge into another process is not
-// followed). A subscription inside an endpoint's own subscribe/1,2 is
-// the caller's, at its call of the endpoint (subscription_call names
-// it).
+// Trace registrations backward through same-process calls without successful connection
+// guards. Attribute endpoint-internal subscriptions to the caller's endpoint API site.
 .init render_reach = BackwardUnguardedSameProcess
 
 render_reach.seed(f, id) :-
@@ -2900,36 +2378,17 @@ render_reach.seed(f, id) :-
 render_reach.guarded(id) :- connected_guarded(id, _).
 
 
-// ══ A subscription made again and again ═══════════════════════════
+// Repeated subscriptions
 //
-// Subscribing a process to a topic it is already subscribed to adds a
-// second subscription: Phoenix.PubSub delivers each broadcast once per
-// subscription, and a :pg join is a second membership. A callback that
-// runs again and again (again_root, runs.dl: a handle_info, handle_cast,
-// handle_call or handle_continue, a LiveView's handle_params or
-// handle_event, a channel's handle_in) and subscribes each time
-// multiplies every later message
-// (oban's Sonar re-listened every 5 s; nerves_hub_web's device list
-// re-subscribed its devices on every refresh; livebook's
-// App.unsubscribe/1 subscribed). The subscription is judged by where it
-// is made, not by its topic, which is rarely literal: a callback that
-// also undoes a subscription on its way (subscription_call
-// "unsubscribe") is taken to swap them, and is not judged. An
-// unsubscribe in another callback — terminate/2, a separate handler —
-// leaves the repeated one standing. A clause that runs once per
-// incarnation (runs.dl's once clauses: one only init/1, join/3 or
-// mount/3's messages enter) subscribes once, and a subscription reached
-// only from such clauses is not judged.
-//
-// `repeated_subscription(mod, entry, func, site)` — `entry`, a callback
-// of `mod` that runs again and again, reaches in its own process the
-// subscription at `site` in `func`, and unsubscribes nothing itself.
+// A repeatable callback subscribing again can multiply PubSub deliveries or group
+// memberships. Check the acquisition site without requiring a literal topic. An
+// unsubscribe on the same callback's path is treated as a swap; one in another callback
+// does not qualify. Exclude sites reachable only through once-per-incarnation clauses.
 .decl repeated_subscription(mod: symbol, entry: symbol, func: symbol, site: symbol)
 .output repeated_subscription
 
-// A callback that runs again and again subscribes its process on every
-// run, and unsubscribes nothing on its way: each run adds one more
-// subscription.
+// A repeated callback subscribes on every run without unsubscribing, accumulating
+// subscriptions.
 .decl subscribes_again(entry: symbol, subscription: symbol)
 
 subscribes_again(entry, subscription) :-
@@ -2954,9 +2413,8 @@ callback_runs_again(e) :- again_root(e, "callback").
 
 subscribes(id) :- subscription_call(id, _, "subscribe").
 
-// `entry` reaches the subscription, in its own process, on a way that
-// passes no site that runs once and no call its state decides
-// (repeat_reach).
+// `entry` reaches the subscription on its own stack without crossing a once-only site
+// or state-dependent call. See repeat_reach.
 .decl reached_every_run(entry: symbol, subscription: symbol) inline
 
 reached_every_run(e, id) :- repeat_reach.reaches(e, id).
@@ -2971,11 +2429,8 @@ entry_unsubscribes(e) :-
   subscription_reach.reaches(e, id),
   subscription_call(id, _, "unsubscribe").
 
-// Walked back from each subscription along the calls that do not run
-// only at a site that runs once (once_site, runs.dl)
-// (BackwardUnguardedSameProcess, in the callback's own process). A
-// subscription inside an endpoint's own subscribe/1,2 is the caller's,
-// at its call of the endpoint.
+// Trace subscriptions backward through same-process calls not restricted to once-only
+// sites. Attribute endpoint internals to the caller's subscription site.
 .init repeat_reach = BackwardUnguardedSameProcess
 
 repeat_reach.seed(f, id) :-
@@ -2986,11 +2441,9 @@ repeat_reach.seed(f, id) :-
 
 repeat_reach.guarded(s) :- once_site(s, _).
 
-// A callback that asks its own state before it subscribes — a stored
-// scope pid compared with the current one, a membership test, a field
-// matched in the head — keeps its subscriptions: the test reads the
-// callback's last parameter, or the parameter of a helper it hands the
-// state to (param_decided, call_arg_forward).
+// A state-dependent subscription checks a callback's final state parameter, directly or
+// forwarded to a helper. Covers membership tests, stored-pid comparisons, and head
+// patterns.
 repeat_reach.guarded(s) :- state_decided(s).
 
 .decl state_param(func: symbol, pos: number)

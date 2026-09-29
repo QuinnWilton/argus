@@ -1,9 +1,6 @@
-// A child spec, registration or tree shape that is wrong on its own.
-//
-// No dependency between processes is needed to see these: a supervisor
-// registered with type: :worker, a ConsumerSupervisor template that
-// restarts finished children, a name two modules register, a :global
-// registration with no conflict resolver.
+// Structural defects independent of process dependencies: incorrect supervisor child
+// types, restarting ConsumerSupervisor templates, duplicate registered names, and
+// global registration without a resolver.
 
 .include "../clientlib/imports.dl"
 .include "../clientlib/otp.dl"
@@ -13,17 +10,10 @@
 // level (clientlib/tooling.dl, Argus.Findings.Tooling).
 .output tooling
 
-// ── A supervisor registered as a worker ──────────────────────────
+// Supervisors registered as workers
 //
-// OTP requires a child that is itself a supervisor to be registered with
-// `type: :supervisor` and `shutdown: :infinity`. A supervisor given a finite
-// shutdown is killed part-way through unlinking its own children, and its
-// grandchildren are orphaned rather than terminated.
-//
-// RabbitMQ e40387e4 is the fixed instance: three modules carrying
-// -behaviour(supervisor) were registered through a helper that builds
-// `worker` specs with a finite shutdown, and the fix switched them to the
-// supervisor-building helper.
+// Supervisor children need supervisor type and an infinite shutdown allowance. A finite
+// worker shutdown can interrupt their child cleanup and leave grandchildren running.
 
 .decl supervisor_registered_as_worker(sup: symbol, child: symbol, position: number)
 .output supervisor_registered_as_worker
@@ -34,12 +24,8 @@ supervisor_registered_as_worker(sup, child, position) :-
   spec_says_worker(sup, position, child),
   is_supervisor(child).
 
-// A shorthand names a child by its module, and `Mod.child_spec/1`
-// decides its type. supavisor 6b77121 is the fixed instance:
-// TenantSupervisor, a `use Supervisor` module, overrode child_spec/1 with
-// a map that said `restart: :transient` and nothing of its type, and
-// DynamicSupervisor.start_child/2 started every tenant's tree as a worker
-// (5 s shutdown, skipped by the release handler).
+// For shorthand children, inspect the module's child_spec type. A supervisor module can
+// override child_spec with a map lacking type and thereby default to worker.
 
 // A supervisor's own child_spec/1 leaves its type to the worker default,
 // and a supervisor starts it by that spec.
@@ -57,21 +43,10 @@ own_spec_registered_as_worker(child, sup, via) :-
 
 is_supervisor(mod) :- behaves_as(mod, "Supervisor").
 
-// The spec at `position` in sup's child list was written out (a tuple or
-// a map, "explicit") and says `worker`, or is a map that states no type
-// and takes the supervisor's worker default.
-//
-// The form join is load-bearing, not a detail. `supervisor_child.type` is
-// a DEFAULT for the `{Module, args}` and bare-`Module` shorthands: those
-// state no type, `Module.child_spec/1` decides, and `use Supervisor`
-// generates `type: :supervisor` where the extractor writes `worker`. A
-// first version of this rule without the join reported 26 modules on the
-// corpus and every one was that artefact.
-//
-// A spec whose start function is the supervisor's own module's
-// (Phoenix.Endpoint.Supervisor's `%{id: :warmup, start: {__MODULE__,
-// :warmup, [mod]}}`) starts whatever that function starts, which the
-// module's behaviour does not say: not the supervisor itself.
+// Require an explicit worker spec, including a map's default worker type. Shorthand
+// forms defer to Module.child_spec/1, so the extractor's provisional worker value is
+// insufficient. Also exclude custom starts in the supervisor's own module: its
+// behaviour does not establish what those functions start.
 .decl spec_says_worker(sup: symbol, position: number, child: symbol)
 
 spec_says_worker(sup, position, child) :-
@@ -79,12 +54,8 @@ spec_says_worker(sup, position, child) :-
   supervisor_child_form(sup, position, "explicit"),
   child != sup.
 
-// The module's own child_spec/1, handed the start's argument
-// (own_field, supervision.dl), says `worker`: a map with no `:type`, a
-// worker by the supervisor's default, or a type option the argument
-// holds or defaults; and nothing else it may say is `:supervisor` or
-// unread. A child_spec/1 whose returns disagree, or whose type the
-// extractor could not read, is not judged.
+// Require every resolved child_spec type for the supplied arguments to be worker.
+// Conflicting supervisor values or unreadable types suppress the finding.
 .decl own_spec_says_worker(child: symbol, sup: symbol, at: symbol)
 
 own_spec_says_worker(child, sup, at) :-
@@ -92,11 +63,9 @@ own_spec_says_worker(child, sup, at) :-
   !own_field(sup, child, at, "type", "supervisor"),
   !own_field(sup, child, at, "type", "dynamic").
 
-// sup starts `child` by the child's own child_spec/1 at the start `at`:
-// a shorthand in its child list (`{Mod, args}`, a bare `Mod`; `at` its
-// position), a spec of the parent's own module aside, or a
-// DynamicSupervisor.start_child/2 of one, `via` the function that makes
-// that call ("" for a child list).
+// A shorthand static or dynamic start using the child's child_spec. at is its list
+// position or dynamic start identity; via is the dynamic caller, empty for static
+// lists. Exclude the parent's own module spec.
 .decl started_by_own_spec(child: symbol, sup: symbol, via: symbol, at: symbol)
 
 started_by_own_spec(child, sup, "", to_string(position)) :-
@@ -106,19 +75,16 @@ started_by_own_spec(child, sup, "", to_string(position)) :-
 
 started_by_own_spec(child, sup, via, via) :- dynamic_child(sup, child, via).
 
-// ── ConsumerSupervisor children that never finish ────────────────────
+// ConsumerSupervisor templates
 //
-// A ConsumerSupervisor's child spec is a template: one child per event,
-// which exits :normal when it is done. A :permanent template restarts
-// every finished child, which fails again, consumes demand and trips
-// the restart intensity (elixir-lang/gen_stage#195). The spec must say
-// :temporary or :transient.
+// Permanent templates restart children after successful normal completion, consuming
+// demand and restart intensity. Event workers should use temporary or transient restart
+// policy.
 .decl consumer_supervisor_permanent_child(sup: symbol, child: symbol, sup_site: symbol)
 .output consumer_supervisor_permanent_child
 
-// A ConsumerSupervisor's child template is :permanent (restart_policy:
-// its spec's, or a shorthand's own child_spec/1's), so every child that
-// finishes its event is started straight back.
+// A ConsumerSupervisor uses a permanent child template, causing completed event workers
+// to restart immediately.
 .decl permanent_consumer_template(sup: symbol, child: symbol)
 
 permanent_consumer_template(sup, child) :-
@@ -143,17 +109,15 @@ consumer_supervisor_permanent_child(sup, child, sup_site) :-
 .decl duplicate_process_name(name: symbol, mod1: symbol, mod2: symbol, site1: symbol, site2: symbol)
 .output duplicate_process_name
 
-// Two modules register the same name, and whichever process registers
-// second fails: at most one of them can run at a time. `mod1` sorts
-// before `mod2`, so each pair is one row.
+// Two modules register the same name, so the second registration fails. Order mod1
+// before mod2 to report each pair once.
 duplicate_process_name(name, mod1, mod2, site1, site2) :-
   registers_name(mod1, name, site1),
   registers_name(mod2, name, site2),
   mod1 < mod2.
 
-// Code of `mod` registers a literal name at `site`, the registration
-// instruction (anchor-grade evidence). A name computed at run time
-// ("dynamic", ":dynamic") is no one name.
+// A literal registration name with instruction-level evidence at site. Exclude dynamic
+// and :dynamic placeholders.
 .decl registers_name(mod: symbol, name: symbol, site: symbol)
 
 registers_name(mod, name, site) :-

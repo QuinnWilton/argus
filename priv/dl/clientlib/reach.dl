@@ -1,36 +1,12 @@
-// Reachability over the call graph, as components.
-//
-// Every analysis asks the same two questions of the call graph: which
-// functions can reach one of these sites (backward), and what can this
-// entry reach (forward). Each used to write its own two-clause closure;
-// this file writes each shape once. An analysis instantiates the variant
-// it needs, seeds it with the sites it cares about, and reads `reaches`:
-//
-//   .init connect_reach = CallReach
-//   connect_reach.seed(f, api) :- impure_call(_, f, api, "network", _), connect_api(api).
-//   ... connect_reach.reaches(init, api) ...
-//
-// A seed is in its own reach. A rule that wants callers only (the
-// function holding the site excluded) seeds the first hop instead:
-// `seed(f, sink) :- call_edge(f, g), sink_in(g, sink)`.
-//
-// The step is the difference between the variants. `call_edge` treats
-// closure construction as a call (stage 0 derives an edge from every
-// `closure_def`), and a fun handed to a call as one (`fun_ref`), so a
-// plain step follows execution into lambdas and fun references;
-// SameProcess subtracts the edges into what a start runs (a receive
-// inside `spawn(fn -> ... end)` or `spawn(&M.loop/0)` runs elsewhere,
-// one inside a closure handed to Enum.map in the caller's process:
-// runs_elsewhere, in runs_elsewhere.dl, which a SameProcess instance needs);
-// IntraModule stays inside one module. Each variant states its step in its own
-// recursive clause rather than copying `call_edge` into a per-instance
-// relation, so an analysis with four instances pays for four closures,
-// not four call graphs.
-//
-// The declarations inside a component are indented on purpose:
-// dl_declarations_test scans for `^.decl`, and these are not schema
-// relations. Instances add no `.input`, so the analysis input pins do not
-// move.
+// Seeded call-graph reachability components. Backward variants find callers of relevant
+// sites; forward variants find work reached from selected entries. Seeds reach
+// themselves; seed the first caller hop to exclude the source function.
+// Plain reach follows call, closure, and fun-reference edges. SameProcess excludes
+// detached/deferred execution and requires runs_elsewhere.dl. IntraModule restricts
+// traversal to one module. Each variant traverses call_edge directly rather than
+// copying the graph per instance.
+// Instantiate the needed component, populate seed/root, and read reaches. Indented
+// component declarations are not schema relations and add no inputs.
 
 // ── Backward: which functions reach a seeded (func, target) ──────────
 
@@ -44,28 +20,21 @@
   reaches(f, t) :- call_edge(f, g), reaches(g, t).
 }
 
-// The calling process's own work: every edge but the one into a
-// function a start hands to a new process. `spawn_link(fn -> loop() end)`
-// in init/1 waits in the loop's process; a closure handed to Enum.each
-// runs in init's.
+// Follow the caller's own work. Exclude functions started in another process; retain
+// inline closures, such as those passed to Enum.each.
 .comp SameProcessReach : Backward {
   reaches(f, t) :- call_edge(f, g), !runs_elsewhere(f, g), reaches(g, t).
 }
 
-// SameProcessReach, less the edges the instance names `cut`: what the
-// process runs before some point on its way, where calls made after it
-// are another phase's (startup's init/1 up to the acknowledgement of its
-// start), or edges outside the question (a side path, side_call in
-// calls.dl).
+// SameProcessReach with instance-defined cut edges excluded. Use cuts to bound a phase,
+// such as init before acknowledgement, or to exclude side paths.
 .comp SameProcessReachCut : Backward {
   .decl cut(func: symbol, callee: symbol)
   reaches(f, t) :- call_edge(f, g), !runs_elsewhere(f, g), !cut(f, g), reaches(g, t).
 }
 
-// What holds the caller up while it runs: its own stack, as
-// SameProcessReach, and a task it awaits (awaits_task, runs_elsewhere.dl):
-// `Task.async(fn -> ... end) |> Task.await()` runs the closure elsewhere
-// and waits for it all the same.
+// Work the caller waits for: its own stack plus tasks it awaits. See awaits_task in
+// runs_elsewhere.dl.
 .comp HoldingReach : Backward {
   reaches(f, t) :- call_edge(f, g), !runs_elsewhere(f, g), reaches(g, t).
   reaches(f, t) :- awaits_task(f, _, g), reaches(g, t).
@@ -79,14 +48,10 @@
     reaches(g, t).
 }
 
-// ── Backward over data flow: which (function, parameter) feeds a seed ─
-//
-// The step is call_arg_derived rather than call_edge: f's parameter p
-// reaches the target when some call in f hands a value derived from p to
-// g's parameter k, and g's k reaches it. A closure's captured environment
-// is recorded as its trailing parameters, so closure_def needs no clause
-// of its own. Seeded at the few sites that matter (a sink's argument),
-// never closed forward from every entry.
+// Backward parameter flow through `call_arg_derived`. A caller parameter reaches a
+// target when data derived from it enters a callee parameter that reaches the target.
+// Closure captures are trailing parameters, so no separate closure edge is needed. Seed
+// only relevant sink arguments.
 
 .comp ParamReach {
   .decl seed(func: symbol, pos: number, target: symbol)
@@ -95,15 +60,10 @@
   reaches(f, p, t) :- call_arg_derived(f, g, k, p), reaches(g, k, t).
 }
 
-// The same walk over Argus.Extractors.Dependence's data-only rows
-// (call_arg_reads) as well: a call's result is made of its arguments
-// whatever the callee, where call_arg_derived follows only the
-// propagators it knows — and call_arg_derived's own rows, which carry an
-// element into the closure a higher-order call runs on it. Wider —
-// `Tesla.build_url(env.url, env.query)` carries the URL here and not
-// there — for a question whose answer may over-count: "is this made of
-// something a caller handed in at all". A position is a symbol, as the
-// rows spell a parameter.
+// Broader backward data flow using `call_arg_reads` plus `call_arg_derived` for closure
+// elements. Runtime call results are treated as derived from their arguments even
+// without a known propagator. Suitable for conservative caller-input checks, not exact
+// taint claims. Positions use symbols.
 .comp ParamReadsReach {
   .decl seed(func: symbol, pos: symbol, target: symbol)
   .decl reaches(func: symbol, pos: symbol, target: symbol)
@@ -154,9 +114,8 @@
   reaches(r, h) :- reaches(r, g), call_edge(g, h), !cut(g, h).
 }
 
-// Forward over what the root's own process runs (runs_elsewhere, as
-// SameProcessReach): a spawned function and the loop it calls, less the
-// edges the instance names `cut` (a side path, side_call in calls.dl).
+// Forward same-process reachability, excluding instance-defined cut edges such as side
+// paths.
 .comp ForwardSameProcessReachCut : Forward {
   .decl cut(func: symbol, callee: symbol)
   reaches(r, h) :- reaches(r, g), call_edge(g, h), !runs_elsewhere(g, h), !cut(g, h).
@@ -171,10 +130,9 @@
     function_def(h, m, _, _, _).
 }
 
-// ForwardIntraModuleReach over what the root's own process runs: a
-// server's callbacks and the helpers they run in its module, less a
-// closure handed to a Task, a spawn or a registrar (runs_elsewhere). A
-// receive or a monitor there is that other process's.
+// Forward reach within the root's module and process. Exclude closures handed to tasks,
+// spawns or registrars (runs_elsewhere); their receives and monitors belong to other
+// execution contexts.
 .comp ForwardIntraModuleSameProcessReach : Forward {
   reaches(r, h) :-
     reaches(r, g),
@@ -217,17 +175,15 @@
   reaches(h) :- reaches(g), call_edge(g, h).
 }
 
-// ForwardCallReachSet over what the root's own process runs
-// (runs_elsewhere), less the edges the instance names `cut` (a side
-// path): the functions some root reaches on its own stack.
+// Functions reached on any root's own stack, excluding detached work and
+// instance-defined cut edges.
 .comp ForwardSameProcessReachSetCut : ForwardSet {
   .decl cut(func: symbol, callee: symbol)
   reaches(h) :- reaches(g), call_edge(g, h), !runs_elsewhere(g, h), !cut(g, h).
 }
 
-// Depth-bounded, for the rules that want "close to" rather than
-// "anywhere below": `limit(3)` covers terminate -> cleanup helper -> the
-// API it calls, and stops before a client library's connection pool.
+// Depth-bounded reachability for nearby dependencies. For example, limit(3) covers
+// terminate, its cleanup helper and that helper's API call.
 .comp ForwardBoundedCallReach {
   .decl root(root: symbol, func: symbol)
   .decl limit(n: number)
@@ -236,12 +192,9 @@
   reaches(r, h, d + 1) :- reaches(r, g, d), limit(n), d < n, call_edge(g, h).
 }
 
-// Forward, by kind, along the calls no guard of that kind covers: what
-// runs, on some path from a root, with no guard of `kind` around it. A
-// call the instance marks `guarded` for a kind stops the path for that
-// kind; a closure the function builds is entered unless the instance
-// marks the edge `guarded_edge`, and a function reference always is.
-// Its complement is what every path reaches only through a guard.
+// Forward reach along paths without a guard of the requested kind. `guarded` cuts call
+// sites; `guarded_edge` cuts closure edges; fun references are followed. The complement
+// identifies functions guarded on every entry path.
 .comp ForwardUnguardedSet {
   .decl root(func: symbol, kind: symbol)
   .decl guarded(call: symbol, kind: symbol)
@@ -254,12 +207,9 @@
   reaches(g, k) :- reaches(f, k), fun_ref(f, g).
 }
 
-// Backward, along the ways in no guard covers: the functions that reach
-// a seed through calls the instance does not mark `guarded`. A fun
-// handed to a call (fun_handed) is held against that call; any other
-// edge with no call instruction (a closure kept, an apply) is open. A
-// seed's callers that are all guarded leave it reached from nothing but
-// itself.
+// Walk backward through edges the instance does not mark guarded. For fun_handed, test
+// the receiving call's guard; other edges without call instructions remain open. If all
+// incoming paths are guarded, a seed reaches only itself.
 .comp BackwardUnguarded {
   .decl seed(func: symbol, target: symbol)
   .decl guarded(call: symbol)
@@ -276,10 +226,9 @@
     !fun_handed(_, f, h, _).
 }
 
-// BackwardUnguarded over what one process runs: an edge that leaves the
-// caller's stack (runs_elsewhere: a task's closure, a spawned fun, a fun
-// kept to run later) is not followed, so a seed a callback reaches is
-// one it reaches in its own process.
+// BackwardUnguarded restricted to one process's stack. Exclude detached or deferred
+// work, such as task closures, spawned functions and registered callbacks
+// (runs_elsewhere).
 .comp BackwardUnguardedSameProcess {
   .decl seed(func: symbol, target: symbol)
   .decl guarded(call: symbol)

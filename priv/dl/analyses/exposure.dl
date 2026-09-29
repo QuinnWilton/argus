@@ -1,11 +1,5 @@
-// Credentials printed, or sent unauthenticated.
-//
-// Two ways a secret leaves protection without anyone deciding it
-// should: an Ecto schema field holding one that inspect/1 prints in
-// full (Logger calls, changeset errors, crash reports), and a TLS
-// connection that encrypts without authenticating the peer, so anyone
-// able to answer for the host terminates the session with a certificate
-// they minted themselves.
+// Secret exposure through inspect output or TLS connections without peer
+// authentication.
 
 .include "../clientlib/imports.dl"
 .include "../clientlib/tooling.dl"
@@ -14,23 +8,11 @@
 // level (clientlib/tooling.dl, Argus.Findings.Tooling).
 .output tooling
 
-// ══ Secrets a schema prints ═════════════════════════════════════════
-// Credentials an inspect/1 will print.
+// Secrets printed by Inspect
 //
-// Ecto's `redact: true` keeps a field out of `inspect/1`, and so does
-// `@derive {Inspect, except: [...]}` (or `only: [...]`). Both default to
-// off, so a struct holding a third-party API key prints it in full — into
-// Logger calls, changeset error output, LiveView debug, crash reports, and
-// whatever error reporter is installed. Nothing at the field's definition
-// site suggests that, and nothing fails when it happens.
-//
-// The field name is the only signal available for "is this a secret", which
-// makes this a heuristic. It is one of the few places a heuristic is
-// clearly right: nobody names a field `sendgrid_api_key` by accident.
-//
-// Severity follows what leaking the value costs. A live third-party
-// credential is someone else's system; a hash is an offline attack; a
-// session token expires.
+// Ecto fields may reach logs, changeset errors, and crash reports unless redacted or
+// excluded by derived Inspect. Secret classification is a field-name heuristic.
+// Severity depends on the value's kind: credential, password hash, or expiring token.
 
 // A schema field named for a secret is printed in full by inspect/1: into
 // log lines, changeset errors and crash reports.
@@ -62,8 +44,8 @@ secret_kind("refresh_token", "token").
 secret_kind("auth_token", "token").
 secret_kind("session_token", "token").
 
-// The field's name names a secret of `kind` (one of several, for a name
-// that matches more than one fragment), and not a fact about it.
+// The field name suggests a secret of `kind`, excluding metadata about secrets. A name
+// may match multiple kinds.
 .decl named_for_secret(mod: symbol, field: symbol, kind: symbol)
 
 named_for_secret(mod, field, kind) :-
@@ -72,30 +54,22 @@ named_for_secret(mod, field, kind) :-
   contains(fragment, field),
   !secret_metadata(field).
 
-// A schema named for a token (akkoma's PasswordResetToken and MFA.Token,
-// phx.gen.auth's UserToken, an OAuth Token) exists to hold the bearer
-// value in its field `token`. The module's name is the signal the bare
-// field name lacks: `token` alone is also a currency ticker (blockster's
-// Hub) or a lexer's, and stays the classifier's to judge.
+// A token-named schema's `token` field is treated as a bearer secret. Bare token fields
+// elsewhere are ambiguous and left to the classifier.
 named_for_secret(mod, ":token", "token") :-
   schema_field(mod, ":token", _),
   match(".*Token", mod).
 
-// A field that names a secret but holds a fact about it — when it was
-// sent, when it expires, whether one is set — is not the secret:
-// `password_reset_sent_at`, `api_key_expires_at`, `password_changed_at`.
-// Matched on the field's ending, as schemas spell these.
+// Exclude secret metadata fields by suffix, such as sent_at, expires_at, or changed_at;
+// they describe the secret rather than contain it.
 .decl secret_metadata(field: symbol)
 
 secret_metadata(field) :-
   schema_field(_, field, _),
   match(".*_(at|on|date|time|count|expires|expiry|expiration|ttl|set|length|version)", field).
 
-// A field can match more than one fragment — `smtp_password` is both a
-// third-party credential and a password — and reporting it twice under two
-// severities is worse than useless. The most severe kind wins, which is
-// also the most specific: `smtp_password` is somebody else's SMTP account,
-// not a local login.
+// Choose the highest-severity kind when a field matches several secret patterns,
+// avoiding duplicate findings.
 .decl secret_rank(kind: symbol, rank: number)
 
 secret_rank("credential", 1).
@@ -110,14 +84,9 @@ holds_secret(mod, field, kind) :-
   secret_rank(kind, rank),
   rank = min r : { named_for_secret(mod, field, other), secret_rank(other, r) }.
 
-// What inspect/1 leaves out. Ecto implements `redact: true` by deriving
-// Inspect with `except:` the redacted fields — unless the schema derives
-// Inspect itself, in which case its own list is all there is and
-// `redact: true` hides nothing. So a derived Inspect, when one is in
-// view, is the whole answer: a field it does not show is hidden, and a
-// field it shows is printed whatever `redact:` says. Without one in view
-// (a hand-written impl, or a run that did not include the impl module),
-// `redact: true` is taken at its word.
+// Fields hidden from inspect/1. A visible derived Inspect implementation determines the
+// complete field list, overriding `redact: true`. Without a visible derive, trust the
+// Ecto redaction flag.
 .decl hidden_from_inspect(mod: symbol, field: symbol)
 
 hidden_from_inspect(mod, field) :-
@@ -134,13 +103,9 @@ derive_hides(mod, field) :-
   schema_field(mod, field, _),
   !inspect_shows(mod, field).
 
-// Where the fix goes: the field's `redact: true`, or — when the schema
-// derives Inspect itself — that derive's field list. Ecto's own derive
-// hides exactly the redacted fields; any other derive is the schema's.
-// Ecto derives Inspect only for a schema with a redacted field, so a
-// derive in a schema with none is the schema's own.
-//
-// The schema's derived Inspect hides a field not marked `redact: true`.
+// Identify a schema-owned Inspect derive so fixes target its field list. Ecto's
+// generated derive hides exactly redacted fields; a derive hiding unredacted fields, or
+// present without redacted fields, is treated as the schema's own.
 .decl hides_unredacted(mod: symbol)
 
 hides_unredacted(mod) :- derive_hides(mod, field), !redacted_field(mod, field).
@@ -164,19 +129,14 @@ own_derive(mod) :- inspect_derived(mod), schema_field(mod, _, _), !redacted_fiel
 hides_via(mod, "derive") :- own_derive(mod).
 hides_via(mod, "redact") :- schema_field(mod, _, _), !own_derive(mod).
 
-// A schema that hides something has answered the question, and answered
-// it differently here. That is a stronger finding than one that never
-// considered it, and the finding text says so — one sequin schema redacts a
-// field while twenty-four of its siblings do not.
+// Existing redaction indicates a deliberate distinction: the schema hides some fields
+// but still exposes this secret. Preserve that context in the finding.
 .decl schema_redacts_something(mod: symbol)
 
 schema_redacts_something(mod) :- hidden_from_inspect(mod, _).
 
-// Where a schema's fields are anchored: its own `__schema__/1`, or, for
-// one compiled with no line (an `embeds_one ... do` block, lineless_schema),
-// the schema that embeds it, whose source holds the block — the outermost
-// one with a line, for an embed inside an embed. The field's line is found
-// from there by its name.
+// Anchor at the schema's __schema__/1, or the outermost embedding schema with source
+// lines when the schema is lineless. Locate the field by name from that anchor.
 .decl schema_anchor(mod: symbol, anchor: symbol)
 
 schema_anchor(mod, mod) :- schema_field(mod, _, _), !lineless_schema(mod).
@@ -214,22 +174,12 @@ unredacted_secret(mod, field, kind, "unaware", via, anchor) :-
   hides_via(mod, via),
   schema_anchor(mod, anchor).
 
-// ── A secret the table cannot name ──────────────────────────────────
+// Optional secret classification
 //
-// `totp_seed`, `teams_key`, a `secret_first` beside a `secret_second`:
-// names a reader recognises and thirteen substrings do not. When priors
-// are on (Argus.Priors, off by default), `prior_sensitive` carries a
-// classifier's judgement of every field with its probability in
-// thousandths. A field the table already names is the table's; the
-// rest are reported from the prior at 0.9 and above — the point at which
-// the calibration spike measured 98% precision — as their own relation,
-// so the structural rows above are byte-identical with priors on or off,
-// and the finding says it is heuristic.
-//
-// The 0.9 is the probability that the field is a secret at all, summed
-// over credential, password and token: `jwt` at 0.89 token and 0.11
-// credential is a secret the model is sure of, and unsure only which
-// kind. The kind reported is the likeliest of the three.
+// With priors enabled, report otherwise unclassified fields when total secret
+// probability is at least 0.9. Sum credential, password, and token probabilities;
+// report the most likely kind. Keep these heuristic findings separate so structural
+// output is unchanged.
 
 // A schema field a model judges a secret is printed in full by inspect/1.
 .decl printed_inferred_secret(mod: symbol, field: symbol, kind: symbol, permille: number)
@@ -264,48 +214,19 @@ unredacted_secret_inferred(mod, field, kind, "unaware", via, p, anchor) :-
   hides_via(mod, via),
   schema_anchor(mod, anchor).
 
-// ══ TLS without verification ════════════════════════════════════════
-// TLS that encrypts without authenticating.
+// TLS without peer verification
 //
-// A TLS connection that does not verify the peer's certificate is
-// confidential against a passive observer and wide open to anyone who can
-// answer for the host — which is the threat TLS exists to address. Nothing
-// distinguishes a verified session from an unverified one at runtime: the
-// connection succeeds, the bytes are encrypted, and the padlock is a lie.
-//
-// Two shapes. The first is greppable and reported anyway, because it is
-// high severity and rare enough that every site deserves a look. The second
-// is the reason this is an analysis: an option list that never mentions
-// `verify` takes whatever the library defaults to, and Erlang's `:ssl`
-// client verified nothing at all before OTP 26. Reading the call site tells
-// you nothing — the absence IS the finding, and absence is what a search
-// cannot look for.
+// Detect disabled verification and known option lists that omit it. Encryption alone
+// does not authenticate the peer. Missing `verify` uses the library default; Erlang
+// :ssl clients before OTP 26 defaulted to no verification.
 
 
 // ── Verification disabled outright ───────────────────────────────
 
-// Reported only when the module offers no way to get a verified
-// connection. That distinction is the whole value here, and it is not one a
-// search can make.
-//
-// Sequin has both shapes. `ConfigParser` maps REDIS_TLS_VERIFY=verify-none
-// onto :verify_none — an explicit, documented user choice, and the same
-// module sets :verify_peer when certificates are configured. Reporting it
-// would be noise. `RedisStringSink.maybe_put_tls/2` does
-//
-//     defp maybe_put_tls(opts, %RedisStringSink{tls: true}),
-//       do: Keyword.put(opts, :tls, verify: :verify_none)
-//
-// and :verify_peer appears nowhere in the module, so enabling TLS gets you
-// an unauthenticated channel and there is no option that changes it.
-//
-// A module naming :verify_peer anywhere is credited with offering the
-// choice, which is deliberately generous: the alternative is arguing about
-// which branch is reachable, and a false "this is insecure" against code
-// that supports verification is the finding that gets an analysis switched
-// off. The credit is for a setting built apart from the connect, which a
-// choice can replace: a client connect whose own literal options say
-// :verify_none has no choice, whatever else the module offers (below).
+// Suppress separately built verify_none settings when the module also names
+// verify_peer, treating it as a configurable choice. This is intentionally module-wide.
+// A client's literal connect options are checked independently because another
+// connection's settings cannot change them.
 
 // A TLS setting tells a client to verify nothing, and its module offers no
 // verified connection that a choice could put in its place.
@@ -342,22 +263,14 @@ module_offers_verification(func) :- in_module(func, mod), module_can_verify(mod)
 
 module_can_verify(mod) :- tls_verification(_, func, "peer"), in_module(func, mod).
 
-// A server's `verify_none` (tls_server_side: a listener's or an accepted
-// socket's options, made only into those) is not this bug: the server
-// does not ask its clients for a certificate, which is how nearly every
-// server runs. ejabberd's HTTP listener and supavisor's client handler
-// accept TLS that way. A setting that also reaches a client's connect,
-// a return or a field stays reported.
+// Server-only verify_none settings disable client-certificate requests and are exempt.
+// Settings also used by client connects, returned, or stored remain reportable.
 .decl server_setting(setting: symbol, func: symbol) inline
 
 server_setting(setting, func) :- tls_server_side(setting, func).
 
-// A client connect (`:ssl.connect/3,4`) whose options are a literal list
-// in the call. Its own `:verify_none` holds whatever other connections of
-// the module do (a mesh transport's listener demanding its
-// peers' certificates beside the dialer that checks none; a metrics push
-// beside a verified API connection). A choice is between settings one
-// connection can take, and this one is written into the call.
+// A client :ssl.connect/3,4 with literal options. Its verify_none is checked
+// independently of other verified connections in the module.
 .decl literal_client_connect(connect: symbol, func: symbol)
 
 literal_client_connect(connect, func) :-
@@ -374,17 +287,14 @@ client_connect_api(":ssl.connect/4").
 
 literal_connect(connect, func, api) :- tls_connect(connect, func, api, "literal").
 
-// ── Verification left to the library's default ───────────────────
+// Verification defaults
 //
-// Only for connects whose options are a literal list. A list built at
-// runtime may well set `verify` somewhere this cannot see, and a false
-// "insecure" on correctly configured code is worse than silence. A
-// server's call is not a connect: a server that leaves `verify` out does
-// not ask for client certificates, the usual configuration.
+// Check only literal client-connect option lists. Runtime-built options may enable
+// verification outside the extractor's view. Server-side omission concerns client
+// certificates and is excluded.
 
-// A client's connect names every option but `verify`, so the connection
-// verifies the peer only if the library's default does (`:ssl`'s did not
-// before OTP 26).
+// A fully specified TLS option list omits verify. Peer verification then depends on the
+// library default; :ssl did not verify by default before OTP 26.
 .decl unstated_verification(func: symbol, connect: symbol, api: symbol)
 
 unstated_verification(func, connect, api) :-

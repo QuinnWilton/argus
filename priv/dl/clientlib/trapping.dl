@@ -1,46 +1,12 @@
-// Whether a process traps exits, and from where on.
-//
-// `Process.flag(:trap_exit, true)` (trap_exit) turns the exit signals of
-// linked processes into `{:EXIT, from, reason}` messages, in the process
-// that makes the call, from the call on, until a
-// `Process.flag(:trap_exit, false)` (untrap_exit). Every rule that asks
-// "does this process trap" means one of two points:
-//
-// - trapping_at(func, site): the process is trapping when it runs `site`
-//   in `func` (a receive waiting on a linked peer's :EXIT, a linked
-//   task's start). The flag is set before the site: earlier in func, in
-//   a function func called earlier, or before func was entered (a caller
-//   set it before the call, or func is a callback of a server that traps).
-// - server_traps(mod), with its witness module_traps(func, mod): mod's
-//   server is trapping while its callbacks run, where a supervisor's
-//   shutdown and a linked peer's exit arrive at any time: some entry of
-//   the process (init/1, a callback) leaves the flag set.
-//
-// Both are MAY words: some path, and some caller, sets the flag. A trap
-// set on one branch (`if opts[:trap], do: ...`) counts, and a function
-// called both after a trap and without one is entered trapping. A rule
-// that reports on "not trapping" is quiet when any path traps.
-//
-// What they do not see:
-//
-// - A clear the program computes: `old = Process.flag(:trap_exit, true)`
-//   ... `Process.flag(:trap_exit, old)` restores a value, and only a
-//   literal `false` is a clear (untrap_exit). The trap stays set.
-// - A clear in another function than the set it undoes, or than the
-//   call leading to it: a behaviour that traps before a callback that
-//   clears (realtime's ReplicationConnection clears in init/1 what
-//   Postgrex's connect set) still traps.
-// - Order across processes' lifetimes: a server's callbacks run in any
-//   order, so a trap left set by one counts for every other (and for
-//   the next run of itself). Only init/1 is ordered before them: it is
-//   entered trapping only when its behaviour trapped first
-//   (behaviour_traps_exits, behaviours.dl: a supervisor_bridge).
-// - A trap in a function no process entry reaches (an API function
-//   that traps in its caller, a library function whose callers are not
-//   in the program) stays with the module holding it (module_traps'
-//   second clause), for want of a better owner.
-//
-// Requires imports.dl, otp.dl and order.dl (RunsAfter) before this file.
+// Exit-trapping state. `trapping_at(func, site)` follows a preceding flag set through
+// local calls or callers. `server_traps` identifies a server whose entry leaves
+// trapping enabled; `module_traps` supplies the witness.
+// These are may-properties: one trapping branch or caller is sufficient. Only literal
+// false clears the flag; computed restores and clears in other functions may be missed.
+// Callback ordering is unknown except for init, so a flag left by one callback counts
+// for others. Traps with no known process entry remain attributed to their defining
+// module.
+// Requires imports.dl, otp.dl, and order.dl.
 
 // ── Where the flag is set, and cleared ──────────────────────────────
 
@@ -58,9 +24,8 @@ trap_order.asked(id) :- trap_exit(id, _, _).
 trap_order.asked(id) :- untrap_exit(id, _, _).
 trap_order.asked(id) :- call_instr(f, g, id), !runs_elsewhere(f, g), trap_below.reaches(g).
 
-// `func` sets the flag at `site`: a trap_exit call there, or a call to a
-// function that returns with the flag set (leaves_trapping). `witness`
-// holds the trap_exit call.
+// `func` sets trap_exit at site, directly or through a helper that returns trapping.
+// `witness` identifies the actual flag-setting call.
 .decl sets_trap_at(func: symbol, site: symbol, witness: symbol)
 
 sets_trap_at(f, id, f) :- trap_exit(id, f, _).
@@ -70,9 +35,8 @@ sets_trap_at(f, id, w) :-
   !runs_elsewhere(f, g),
   leaves_trapping(g, w).
 
-// `func` returns with the flag set: it sets it (sets_trap_at) and no
-// clear runs after, or a closure or fun it runs in its own process does
-// (an edge with no call instruction, whose place in func is unknown).
+// `func` returns trapping if it sets the flag without a later clear, or runs a
+// same-process function that leaves it set.
 .decl leaves_trapping(func: symbol, witness: symbol)
 
 leaves_trapping(f, w) :- sets_trap_at(f, id, w), !cleared_after(id).
@@ -103,9 +67,8 @@ cleared_between(t, s) :-
 
 // ── Is the process trapping at this point ───────────────────────────
 
-// The process is trapping exits when it runs `site` in `func`: its
-// function set the flag earlier (flag_set_before), or it was entered
-// trapping and has not cleared it since (entered_trapping).
+// At site, trap_exit was set earlier locally or inherited on entry, with no intervening
+// clear.
 .decl trapping_at(func: symbol, site: symbol) inline
 
 trapping_at(f, s) :- flag_set_before(f, s).
@@ -119,10 +82,9 @@ flag_set_before(f, s) :-
   trap_order.runs_after(t, s),
   !cleared_between(t, s).
 
-// `func` starts running with the flag set: a callback of a server that
-// traps (every entry but init/1, which runs first), init/1 under a
-// behaviour that traps before calling it, or a function its caller
-// calls, or hands as a fun to a call, after setting the flag.
+// The function enters with trap_exit set: a trapping server's non-init callback, init/1
+// under a behaviour that pre-traps exits, or a call or passed fun reached after its
+// caller sets the flag.
 .decl entered_trapping(func: symbol)
 
 entered_trapping(e) :-
@@ -160,24 +122,9 @@ entered_trapping(h) :-
 
 server_traps(mod) :- module_traps(_, mod).
 
-// The module's own process traps exits, `func` the function holding the
-// trap_exit call: a process entry returns with the flag set
-// (leaves_trapping), where the trap is not in a closure the module only
-// hands to a process start (traps_elsewhere). gen_server2's multi_call
-// middleman and elixir-ls's OutputDevice Task trap in funs they spawn;
-// the flag is that process's, and the module's server still dies with
-// its supervisor's signal, and never receives an {:EXIT, ...} for the
-// fun's links.
-//
-// The flag is the process's that runs the function setting it, which is
-// not always the module holding it: a server whose init/1 calls a
-// helper module's function that traps is the process that traps
-// (postgrex's connect/1 trapping in DBConnection's connection process),
-// and the helper module runs no process of its own. A trap on a process
-// module's own stack (a process_entry reaching it, SameProcessReach) is
-// that module's; one no process entry reaches (an API function such as
-// a start_link that traps in its caller, a library function whose
-// callers are outside the program) stays with the module holding it.
+// Attribute a flag left enabled to the process entry whose same-process stack sets it,
+// even in another module's helper. Detached closures trap only their own process's
+// exits. If no process entry reaches the set, fall back to its defining module.
 .decl module_traps(func: symbol, mod: symbol)
 
 module_traps(func, mod) :-
@@ -199,14 +146,9 @@ module_traps(func, mod) :-
   behaviour_traps_exits(b),
   function_def(func, mod, "init", 1, _).
 
-// The module's process may trap exits: it does (server_traps), or one of
-// its entries reaches, on its own stack, a `Process.flag(:trap_exit,
-// value)` whose value the extractor could not read (trap_flag_unread).
-// One in a fun the module hands to a process start is that process's. A rule
-// that reports a process that does NOT trap (a terminate/2 its
-// supervisor's shutdown skips) asks this: an unread value may set the
-// flag, and is never the default, false (issue #4). A rule that reports
-// on a process that traps asks server_traps.
+// Use `may_trap` when reporting absent trapping: a known set or unresolved flag value
+// can enable it. Detached funs do not affect the starter. Use `server_traps` when a
+// finding requires positive evidence of trapping.
 .decl may_trap(mod: symbol)
 
 may_trap(mod) :- server_traps(mod).
@@ -219,9 +161,8 @@ may_trap(mod) :-
 
 unread_trap_reach.seed(func) :- trap_flag_unread(_, func, _).
 
-// A trap_exit call some process entry reaches on its own stack, whether
-// or not the flag stays set: the trap is a server's, not a hand-rolled
-// loop's.
+// A server entry reaches this trap_exit call on its own stack. The flag need not remain
+// set afterward.
 .decl trap_on_process_stack(func: symbol)
 
 trap_on_process_stack(func) :-
@@ -241,10 +182,9 @@ traps_elsewhere(func) :-
   runs_elsewhere(_, func),
   !call_instr(_, func, _).
 
-// A module that traps exits and has a handle_info/2 whose clauses never
-// take an {:EXIT, ...}: the trapped exit arrives as a message nothing
-// matches. `witness` is the function that sets trap_exit. A gen_statem
-// hands {:EXIT, ...} to its state functions, not to handle_info/2.
+// A trapping module's handle_info/2 has no clause accepting EXIT messages. `witness`
+// identifies the function setting trap_exit. Exclude gen_statem, which delivers these
+// messages to state functions.
 .decl trap_exit_without_exit_clause(mod: symbol, witness: symbol)
 
 trap_exit_without_exit_clause(mod, func) :-

@@ -1,26 +1,7 @@
-// Synchronous call targets, including the ones the extractor could not name.
-//
-// `sync_call` resolves a callee module only when the target is written as a
-// literal — a registered name or a module atom. Elixir does not usually do
-// that: the idiom is `GenServer.call(pid, msg)` with a pid from a
-// supervisor, a Registry lookup, or the caller's own state. On sequin that
-// is 47 of 48 rows unresolved, so the analyses keyed on a resolved target
-// reason from ONE edge across a 531-module program. Their findings are
-// real; their silences mean almost nothing, and nothing said which was
-// which.
-//
-// The convention that resolves it is the client wrapper:
-//
-//     def get(pid, key), do: GenServer.call(pid, {:get, key})
-//
-// which lives in the module that handles the call. Assuming that outright
-// would be wrong — a GenServer that is also a CLIENT of another server has
-// exactly this shape and calls somebody else. The guard is the message tag:
-// if the wrapper sends a tag its own module's handle_call discriminates on,
-// it is calling itself. A proxy sends the other server's tags, which its own
-// handler does not match, and resolves to nothing.
-//
-// Requires clientlib/imports.dl, which declares the staged `call_tag`.
+// Infer unresolved same-module server targets from client-wrapper message tags. A
+// wrapper sending a tag handled by its own module is attributed there; proxies sending
+// only another server's tags are not. This supplements literal sync_call targets.
+// Requires imports.dl and staged call_tag facts.
 
 // The wrapper's own module handles the tag it sends, so the target is that
 // module.

@@ -1,12 +1,5 @@
-// How a process defers work past init/1.
-//
-// An init/1 that cannot do something yet (connect, subscribe, find a
-// peer) has four ways to try again later: arm a timer, send itself a
-// message, return {:continue, _} to a handle_continue, or (a
-// gen_statem) arm a timeout. A rule that asks "can this module retry"
-// asks for any of them; one that asks "which" reads the kind.
-//
-// Requires otp.dl.
+// Ways to defer or retry work after init: a timer, self-message, handle_continue, or
+// gen_statem timeout. `deferral_path` records the kind. Requires otp.dl.
 
 .decl deferral_path(mod: symbol, kind: symbol)
 

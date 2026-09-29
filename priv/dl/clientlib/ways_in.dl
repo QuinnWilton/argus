@@ -1,38 +1,12 @@
-// Ways in from outside the program.
-//
-// The analyzed beams are not the whole system: a library's users, the
-// runtime and the compiler call into it too. Rules ask, of a function,
-// whether a caller the program does not show can call it, and they asked
-// it five ways (failure's exposed roots, unsafe_input's outside_api,
-// races' table_from_outside and open_source, concurrency's open_entry).
-// Two questions stand behind them, and are named here:
-//
-// - api_export(f): a caller outside the program may call f. Every
-//   exported function but those the compiler calls or makes: a macro
-//   (`MACRO-name`, run at compile time with the code that uses it), and
-//   the reflection a module is compiled with (`__info__/1`,
-//   `module_info/0,1`, `__struct__`, `__impl__`, `__schema__` and the
-//   other `__name__` functions of no arguments a `use` defines for its
-//   library to read; reflection/2).
-//   A function the program also calls is still its users' API (an Ecto
-//   type's cast/1). Callbacks are exported, and the runtime calls them:
-//   a rule for which the runtime's call is not an outside party's leaves
-//   them out itself (unsafe_input's runtime_callback), and one for which
-//   it is — failure's guard, which no try of the program's covers —
-//   keeps them.
-// - library_face(f): an api_export of a module no other module of the
-//   program calls into — the program is that module's client nowhere, so
-//   its users are the ones who call it. A module other modules of the
-//   program call is one whose callers are in view: an export of it none
-//   of them calls is unused (the tests, not in the beams, may call it),
-//   not a way in. nerves_hub_web's CLISessionCache is the shape: Accounts
-//   calls its get_and_update/2 and get/1, and only the tests call its
-//   clear/0. The same module in a library nothing calls into is all API,
-//   clear/0 included. It misses a module a library both calls itself and
-//   hands its users, through a function the library never calls (quiet).
-//   open_entry(f) is a library_face nothing in the program calls.
-//
-// Requires imports.dl.
+// External entry points.
+// `api_export` includes exports except macros and compiler/library reflection
+// functions. Internal use does not remove API status. Consumers decide whether runtime
+// callbacks count as outside input.
+// `library_face` restricts APIs to modules with no clients elsewhere in the analyzed
+// program; `open_entry` further requires no visible caller. Unused exports of
+// internally used modules are treated as inactive.
+// Known limit: a library may both use a module internally and expose otherwise unused
+// functions to its users. Requires imports.dl.
 
 .decl api_export(func: symbol)
 
@@ -42,11 +16,9 @@ api_export(f) :-
   !reflection(n, a),
   n != "module_info".
 
-// The reflection a module is compiled with, which takes no outside data:
-// any `__name__` function of no arguments (`__routes__/0`, `__live__/0`),
-// and the compiler's and Ecto's lookups by a key of their own. A
-// `__name__` function that takes arguments is otherwise a way in like
-// any export: Phoenix's `__match_route__/3` takes the request's path.
+// Exclude zero-argument __name__ reflection functions and compiler/Ecto lookups using
+// internal keys. Other __name__ exports with arguments remain entry points, such as
+// Phoenix's __match_route__/3.
 .decl reflection(name: symbol, arity: number)
 
 reflection(n, 0) :- function_def(_, _, n, 0, 1), match("__.*__", n).

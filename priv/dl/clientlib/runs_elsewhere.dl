@@ -1,55 +1,17 @@
-// Which calls lead off the caller's stack: the edge from a function that
-// starts a spawn, a task or an agent to what that process runs, and the
-// edge to a fun it only registers or keeps for later. A walk
-// over what one process runs (reach.dl's SameProcess variants, calls.dl's
-// waits) stops at these edges.
-//
-// Apart from the points-to stage (points_to.dl) and read there too: it
-// is derived from the start sites and the call graph (with stage 0's
-// fun_handed_to) alone, so an analysis that walks a process's own calls
-// does not wait for, or read, the process points-to.
-//
-// Prerequisites: include clientlib/imports.dl before this file.
-//
-// Known limit: a fun built into a term that a call then runs on the
-// caller's stack (`run(on_start: fn -> ... end)`, the callee calling
-// `opts[:on_start].()`) is taken to be kept, since fun_handed follows a
-// fun into call arguments, not into the terms around it. That errs
-// quiet: what it holds is not reported as the caller's.
+// Execution edges leaving the caller's stack: spawned/task/agent bodies and funs stored
+// or registered for later. SameProcess walks stop at these edges. Derived from starts
+// and the call graph independently of points-to. Requires imports.dl.
+// Known limit: a fun embedded in a term may run synchronously, but fun_handed cannot
+// follow it through that term and treats it as stored.
 
-// `func`'s edge to `callee` leads off func's stack: callee runs in
-// another process, or later, and not while func runs.
-//
-// Into another process: callee is what a spawn, a task or an agent in
-// func runs, and func does not call it itself; or func hands callee's
-// fun to a helper that starts a process on the fun it is handed
-// (`start_worker(fn -> ... end)`). A closure func builds into a term
-// rather than handing it to a call is set aside too when it is func's
-// only such closure and func starts a process on a fun points-to does
-// not follow (the fun came from a variable, or a spec) or a child whose
-// spec may hold a fun: with one there is nothing to confuse the handed
-// one with. A closure func hands to a call (Enum.each) is never that
-// one: a start of `opts[:warmup]` beside `Enum.each(names, fn ...)`
-// leaves the closure on func's stack.
-//
-// Later: a fun func only registers or keeps, and does not call — handed
-// only to a callback registrar (`:telemetry.attach`, which runs it in
-// whichever process emits the event), or to no call at all (built into
-// the state init/1 returns, or into a message). It runs after func has
-// returned, if at all.
-//
-// A closure handed to Task.async_stream is not set aside: the caller
-// waits for what it does. Neither is a fun handed to a call this file
-// does not know (a library's higher-order function may run it in the
-// caller's process: Enum.each, :telemetry.span, Repo.transaction). Told
-// without closure_def (by the compiler's name for a closure), which the
-// supervision family must not read (stage0_test).
-//
-// No clause holds for an edge func calls itself (call_instr): a rule
-// that has the call's instruction in hand is on func's stack already and
-// need not ask.
-// The call at `call` starts a process (a spawn, a task, an agent: not a
-// server) that runs what it is handed, not the caller.
+// Classify fun execution as detached or deferred unless func also calls the target
+// directly. Follow helpers receiving a fun and starting a process with it. A sole
+// unassigned closure may stand for an unresolved process-start argument; a closure
+// explicitly passed to another call does not.
+// Registrar-only or unpassed funs count as deferred. async_stream funs and unknown
+// higher-order consumers remain on the caller's wait path. Use compiler closure names
+// without requiring closure_def.
+// `starts_a_process` identifies non-server starts that run the supplied function.
 .decl starts_a_process(call: symbol)
 
 starts_a_process(call) :- process_start(call, _, _, kind, _), kind != "server".
@@ -62,9 +24,8 @@ runs_elsewhere(f, g) :-
   !call_instr(f, g, _),
   !calls_fun(f).
 
-// A function that calls a fun value may run the one it starts inline as
-// well (`worker = fn -> ... end`, then a task or `worker.()`, which the
-// compiler makes a call to the closure when it can: call_instr).
+// A function may both start a fun elsewhere and invoke it inline. Preserve
+// compiler-resolved direct calls to the closure as same-stack edges.
 .decl calls_fun(func: symbol)
 
 calls_fun(f) :- dynamic_call(_, f, "call_fun").
@@ -85,9 +46,8 @@ runs_elsewhere(f, g) :-
   held_closures(f, 1),
   !call_instr(f, g, _).
 
-// Registered or kept, never run here: a fun handed to no call that may
-// run it here (runs_handed). One handed to a start is the second
-// clause's already.
+// A retained function is not run here if no consumer may invoke it inline. Functions
+// handed to process starts are already handled above.
 runs_elsewhere(f, g) :-
   fun_edge(f, g),
   !runs_handed(f, g),
@@ -100,10 +60,8 @@ runs_elsewhere(f, g) :-
 fun_edge(f, g) :- call_edge(f, g), match(".*:-.*-fun-[0-9]+-/[0-9]+", g).
 fun_edge(f, g) :- fun_ref(f, g).
 
-// What a call does with a fun it is handed, where this file knows: a
-// helper that starts a process on it ("start"), or a registrar that
-// keeps it for another process to run later ("keep"). Any other call
-// may run it on the caller's stack.
+// Known fun consumers either start a process ("start") or register the fun for later
+// execution elsewhere ("keep"). Unknown consumers may invoke it on the caller's stack.
 .decl fun_sink(callee: symbol, how: symbol)
 
 fun_sink(h, "start") :- process_start(_, h, _, kind, "dynamic"), kind != "server".
@@ -147,15 +105,9 @@ hands_funs_off(f) :-
   call_site(_, f, m, "start_child", _),
   (m = "Supervisor" ; m = "DynamicSupervisor").
 
-// ── A task the caller waits for ──────────────────────────────────────
-//
-// `Task.async(fn -> ... end) |> Task.await()`: the closure runs in the
-// task's process, so the edge stays runs_elsewhere (a receive in it is
-// the task's, and self() is the task), but func waits for what it does.
-// A walk asking what holds func up (startup's lock during init) steps
-// into it. `start` is the async call. Function-level: an await, yield
-// or await_many anywhere in func is taken to collect this task, as
-// error_handling's task collection does.
+// Awaited task work still runs in another process, but holds the caller. Wait analyses
+// may cross this boundary. `start` is the async site. Collection is function-level: any
+// await, yield, or await_many is taken to collect the task.
 .decl awaits_task(func: symbol, start: symbol, runs: symbol)
 
 awaits_task(f, id, g) :-
@@ -165,26 +117,18 @@ awaits_task(f, id, g) :-
   call_site(_, f, "Task", w, _),
   task_wait(w).
 
-// ── The Task API ─────────────────────────────────────────────────────
-//
-// The starts whose task replies to its caller: `{ref, result}` when it
-// returns, then the task's `:DOWN`. `link` says whether the task is
-// linked to the caller ("linked": Task.async, Task.Supervisor.async, a
-// crashing task takes the caller down, and a caller that traps exits
-// gets an `{:EXIT, ...}` too) or not ("unlinked": async_nolink, whose
-// messages are the caller's to handle). Task.start, Task.start_link and
-// Task.Supervisor.start_child reply to nobody and are not here.
+// Reply-producing task APIs send `{ref, result}` and :DOWN. Linked variants can also
+// crash the caller or deliver :EXIT when it traps. Unlinked variants leave replies and
+// monitors to the caller. Fire-and-forget start APIs are excluded.
 .decl task_start_api(mod: symbol, func: symbol, link: symbol)
 
 task_start_api("Task", "async", "linked").
 task_start_api("Task.Supervisor", "async", "linked").
 task_start_api("Task.Supervisor", "async_nolink", "unlinked").
 
-// How a Task.Supervisor call starts its tasks (task_supervisor_start's
-// `op`): one per call ("one": start_child, async, async_nolink), or a
-// stream of them ("stream": async_stream, async_stream_nolink), which
-// runs at most `max_concurrency` at a time for the process enumerating
-// it and waits for each.
+// Task.Supervisor operations start one task per call ("one") or a bounded stream
+// ("stream"). Each stream enumerator runs at most max_concurrency tasks at once and
+// waits for each result.
 .decl task_supervisor_op(op: symbol, how: symbol)
 
 task_supervisor_op("start_child", "one").
@@ -193,8 +137,8 @@ task_supervisor_op("async_nolink", "one").
 task_supervisor_op("async_stream", "stream").
 task_supervisor_op("async_stream_nolink", "stream").
 
-// Waits for what a task does: the caller holds until the task returns
-// (or the wait gives up). Task.shutdown is not one: it stops the task.
+// Task waits block until the task returns or the wait expires. Exclude Task.shutdown,
+// which stops the task.
 .decl task_wait(func: symbol)
 
 task_wait("await").
@@ -202,9 +146,8 @@ task_wait("await_many").
 task_wait("yield").
 task_wait("yield_many").
 
-// Takes a task's reply out of the caller's mailbox: the waits, and
-// Task.shutdown, which flushes the reply (or the :DOWN) of the task it
-// stops. After one of these no late message of the task is left behind.
+// Task reply consumers include waits and Task.shutdown. Shutdown also flushes the
+// stopped task's reply or DOWN.
 .decl task_collect(func: symbol)
 
 task_collect(w) :- task_wait(w).

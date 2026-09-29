@@ -1,8 +1,7 @@
 defmodule Argus.Schema.UnsafeInput do
   @moduledoc """
-  Where outside input can become an atom, a term or code.
-
-  Layer 2 of `Argus.Schema`, which reads the relations from here.
+  Layer-2 facts for input converted into atoms, terms, or executable code. Exposed \
+  through `Argus.Schema`.
   """
 
   @doc "The relations, in the order `Argus.Schema.all/0` lists them."
@@ -40,12 +39,9 @@ defmodule Argus.Schema.UnsafeInput do
           {:data_pos, :number, "the argument position of the compressed data"}
         ],
         doc: """
-        A one-shot decompression: `:zlib.gunzip/1`, `unzip/1`, \
-        `uncompress/1` or `inflate/2,3`, which return the whole output of \
-        their input with no bound on its size (a few hundred bytes of \
-        layered gzip inflate to gigabytes: Bandit's and Tesla's advisories). \
-        The streaming `safeInflate/2` and `inflateChunk/1,2`, which hand \
-        back one bounded chunk at a time, are not rows.
+        A decompression call returning its entire output without a size bound: \
+        `:zlib.gunzip/1`, `unzip/1`, `uncompress/1`, or `inflate/2,3`. Excludes \
+        bounded-chunk APIs `safeInflate/2` and `inflateChunk/1,2`.
         """
       },
       %{

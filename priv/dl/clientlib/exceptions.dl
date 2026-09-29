@@ -1,11 +1,5 @@
-// What a function's try handlers take.
-//
-// `catch_total(id, func, class)` says a clause of the try at `id` takes
-// every reason of `class` (`*` for every class); `catch_tag` names one
-// reason. The questions rules ask are "does anything here catch an
-// exit", "does THIS try catch an exit" and "is THIS call inside a try
-// that catches an exit", so all three granularities are named.
-//
+// Exception handlers at function, try, and covered-call scope. `catch_total` accepts
+// every reason of a class (`*` for all classes); `catch_tag` records reason tags.
 // Requires imports.dl.
 
 .decl catches_class(func: symbol, class: symbol)
@@ -22,12 +16,9 @@ site_catches_class(id, func, "error") :- catch_total(id, func, "*").
 site_catches_class(id, func, "exit") :- catch_total(id, func, "*").
 site_catches_class(id, func, "throw") :- catch_total(id, func, "*").
 
-// The call at `call` is inside the protected region of the try at
-// `try_site` (try_covers: on a path from the try that has not passed its
-// `try_end`, walked on the function's graph), and that try's handler
-// takes every reason of `class`. Erlang's `catch Expr` takes every class.
-// What a rule asks when the question is whether THIS call is guarded,
-// not whether its function has a handler somewhere.
+// A call in this try's protected region whose handler accepts every reason of `class`.
+// `try_covers` excludes code after try_end. Erlang catch expressions accept every
+// class.
 .decl covered_by_catch(call: symbol, func: symbol, try_site: symbol, class: symbol)
 
 covered_by_catch(call, f, t, class) :-
@@ -38,23 +29,17 @@ covered_by_catch(call, f, t, class) :-
   try_covers(t, f, call, "catch"),
   (class = "error" ; class = "exit" ; class = "throw").
 
-// The try (or `catch`) at `id` takes some reason of `class`: a path
-// through its handler establishes the class and returns without raising
-// again (catch_class), whatever it asks of the reason — `rescue
-// ArgumentError` takes the class error, as `catch :error, _` does. A
-// handler with no class test takes every class; `class` "*" asks
-// whether it takes anything at all. An `after`, or a rescue that only
-// re-raises, takes nothing.
+// A try handler has a path accepting class `class` without re-raising; reason
+// restrictions are allowed. An untested class accepts all classes, and query `*` asks
+// whether anything is handled. After-only and re-raise-only handlers do not qualify.
 .decl try_takes(id: symbol, class: symbol)
 
 try_takes(id, class) :- catch_class(id, _, class, _), class != "*".
 try_takes(id, class) :- catch_class(id, _, "*", _), (class = "error" ; class = "exit" ; class = "throw").
 try_takes(id, "*") :- catch_class(id, _, _, _).
 
-// A handler in `func` that takes the ArgumentError (:badarg) a BIF raises
-// on a missing table or a taken name: a bare rescue or catch-all of
-// class error, one naming ArgumentError or :badarg, or Erlang's `catch
-// Expr`, which takes every class. `rescue SomeOtherError` is not one.
+// Handlers accepting badarg/ArgumentError: general error handlers, matching reason
+// tags, or Erlang catch expressions. A rescue for another error type does not qualify.
 .decl rescues_argument_error(func: symbol)
 
 rescues_argument_error(f) :- catches_class(f, "error").
@@ -62,23 +47,16 @@ rescues_argument_error(f) :- catch_tag(_, f, "error", "ArgumentError").
 rescues_argument_error(f) :- catch_tag(_, f, "error", ":badarg").
 rescues_argument_error(f) :- try_start(_, f, "catch", _).
 
-// The same question asked of one call: the call at `call` in `func` is
-// inside a try whose handler takes the ArgumentError, or inside Erlang's
-// `catch Expr`. What a rule asks when a handler elsewhere in the function
-// — around unrelated code after the call — must not count.
+// The call is covered by a badarg/ArgumentError handler or catch expression. Unrelated
+// handlers in the same function do not count.
 .decl site_rescues_argument_error(call: symbol, func: symbol)
 
 site_rescues_argument_error(c, f) :- covered_by_catch(c, f, _, "error").
 site_rescues_argument_error(c, f) :- try_covers(t, f, c, "try"), catch_tag(t, f, "error", "ArgumentError").
 site_rescues_argument_error(c, f) :- try_covers(t, f, c, "try"), catch_tag(t, f, "error", ":badarg").
 
-// ── A raise, and the handlers that take it ──────────────────────────
-//
-// The raises a rule asks whether a handler takes, each with the class it
-// is raised in: "badarg", the ArgumentError a BIF raises on a missing
-// table or row, a taken name or another node's pid; "erpc", the
-// `{:erpc, reason}` :erpc.call raises when the node is gone; "error",
-// "exit" and "throw", any reason of the class.
+// Supported raise categories: badarg (ArgumentError), erpc transport errors, or any
+// reason of error, exit, or throw. Map each to its exception class for handler checks.
 .decl raise_class(raise: symbol, class: symbol)
 
 raise_class("badarg", "error").
@@ -94,12 +72,9 @@ raise_tag("badarg", "ArgumentError").
 raise_tag("badarg", ":badarg").
 raise_tag("erpc", ":erpc").
 
-// The handler of the try at `id` in `func` takes `raise` and goes on: a
-// clause takes the raise's whole class or names its tag, and some path
-// through the handler takes that class without raising again (try_takes:
-// a rescue that only re-raises, or an `after`, takes nothing). Erlang's
-// `catch Expr` takes every raise. Tags are catch_tag's over-approximation
-// (every atom a clause compares), which errs quiet.
+// A handler accepts the raise's class or tag and has a non-re-raising path for that
+// class. Erlang catch expressions cover every raise. `catch_tag` over-approximates
+// tags, so unrelated comparisons may suppress escape findings.
 .decl handler_takes(id: symbol, func: symbol, raise: symbol)
 
 handler_takes(t, f, r) :-
@@ -115,9 +90,8 @@ handler_takes(t, f, r) :-
 
 handler_takes(t, f, r) :- try_start(t, f, "catch", _), raise_class(r, _).
 
-// The call at `call` in `func` is inside a try whose handler takes
-// `raise` (try_covers: on a path from the try that has not passed its
-// `try_end`). A handler around other code in the function does not count.
+// The call is covered by a try that catches raise. Require try_covers for this site; an
+// unrelated try in the same function does not count.
 .decl site_takes(call: symbol, func: symbol, raise: symbol)
 
 site_takes(c, f, r) :- try_covers(t, f, c, _), handler_takes(t, f, r).

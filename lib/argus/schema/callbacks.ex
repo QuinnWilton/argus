@@ -1,9 +1,7 @@
 defmodule Argus.Schema.Callbacks do
   @moduledoc """
-  What a callback handles: the message tags it matches, whether it has a
-  catch-all, and the continues an `init/1` hands to `handle_continue/2`.
-
-  Layer 2 of `Argus.Schema`, which reads the relations from here.
+  Layer-2 callback facts: handled message tags, catch-all clauses, and transitions from \
+  `init/1` to `handle_continue/2`. Exposed through `Argus.Schema`.
   """
 
   @doc "The relations, in the order `Argus.Schema.all/0` lists them."
@@ -19,10 +17,9 @@ defmodule Argus.Schema.Callbacks do
           {:tag, :symbol, "an atom the callback discriminates on"}
         ],
         doc: """
-        A message tag a callback matches. Over-approximated: every atom \
-        compared anywhere in the body counts, without tracking registers. \
-        Consumers ask whether a tag is NOT handled, so over-approximating \
-        suppresses findings rather than inventing them.
+        A possible message tag handled by a callback. Counts every atom comparison in \
+        the body without tracking registers. This over-approximation is safe for rules \
+        that report missing handlers: extra tags suppress findings.
         """
       },
       %{
@@ -36,13 +33,9 @@ defmodule Argus.Schema.Callbacks do
            "0 when the message is the atom, the tuple's size when it is its tag, -1 when that size is not known"}
         ],
         doc: """
-        A clause head of the callback takes the message as the atom `tag` \
-        (`arity` 0), or as a tuple of `arity` elements whose first is `tag` \
-        (`Argus.Extractors.CallbackTag.MessageClauses.tag_shapes/2`). Read \
-        on the heads alone, where callback_tag counts every atom the body \
-        compares: `handle_info(:timeout, s)` takes the atom, not \
-        `:erlang.start_timer`'s `{:timeout, ref, msg}`, and \
-        `handle_info({:tick, n}, s)` takes no `{:tick, 1, :slow}`.
+        A callback clause's message shape: atom `tag` with arity 0, or a tuple of the \
+        given arity headed by `tag`. Reads clause heads only, unlike `callback_tag`, so \
+        an atom handler does not count as a handler for a tuple with that tag.
         """
       },
       %{
@@ -54,13 +47,10 @@ defmodule Argus.Schema.Callbacks do
           {:type, :symbol, "'process' | 'port' | 'any': the monitor type the clause takes"}
         ],
         doc: """
-        Some clause of the callback takes every `{:DOWN, ref, type, object, \
-        reason}` of a monitor of `type`, whatever reason the runtime gives it \
-        (`Argus.Extractors.CallbackTag.MessageClauses.takes_down/2`): `any` \
-        when the head leaves the type alone, `process` when it compares it \
-        with `:process`. A head that pins the ref or the object, or asks the \
-        state, takes the `:DOWN` of the monitors the program keeps there; one \
-        that tests the reason (`when reason != :normal`) is no row.
+        A callback clause handling all `:DOWN` reasons for a monitor type: `any` or \
+        `process`. Reference, object, and state restrictions are allowed; reason \
+        restrictions are not \
+        (`Argus.Extractors.CallbackTag.MessageClauses.takes_down/2`).
         """
       },
       %{
@@ -71,11 +61,9 @@ defmodule Argus.Schema.Callbacks do
           {:callback, :symbol, "'handle_call' | 'handle_cast' | 'handle_info'"}
         ],
         doc: """
-        Some clause of the callback takes every trapped `{:EXIT, from, \
-        reason}`, whatever the reason the linked process ended with \
-        (`Argus.Extractors.CallbackTag.MessageClauses.takes_exit?/2`). A head \
-        that pins `from` or asks the state takes the exits of the processes \
-        the program keeps there; one for `:normal` alone is no row.
+        A callback clause handling trapped `:EXIT` messages for every exit reason. \
+        Sender and state restrictions are allowed; reason restrictions are not \
+        (`Argus.Extractors.CallbackTag.MessageClauses.takes_exit?/2`).
         """
       },
       %{
@@ -86,11 +74,9 @@ defmodule Argus.Schema.Callbacks do
           {:callback, :symbol, "'handle_call' | 'handle_cast' | 'handle_info'"}
         ],
         doc: """
-        The callback's catch-all does nothing with the message but log it or \
-        ignore it: every path from its body hands the message, or what is \
-        made of it, only to Logger, `:logger`, IO or `inspect/2`. GenServer's \
-        own handle_info/2 is one. A catch-all that calls anything else with \
-        it, returns it, stores it or tests it is not.
+        A catch-all that only logs or ignores the message. All uses of the message or \
+        derived values must go to Logger, `:logger`, IO, or `inspect/2`. Testing, \
+        returning, storing, or otherwise passing the message disqualifies it.
         """
       },
       %{
@@ -103,13 +89,10 @@ defmodule Argus.Schema.Callbacks do
           {:arity, :number, "a tuple's arity where the head tests it, else -1"}
         ],
         doc: """
-        Some clause other than a catch-all takes the message by its shape \
-        alone, never comparing it or its tag to a value: `msg when \
-        is_atom(msg)` (`any`), `{ref, result} when is_reference(ref)` \
-        (`tuple`, a tuple of any tag, of `arity` 2). `callback_tag` names \
-        nothing such a clause takes, so a rule asking whether a message is \
-        taken asks this too; one asking of a tuple of known size (a \
-        monitor's 5-element `:DOWN`) asks the arity as well.
+        A non-catch-all clause accepting messages by shape without comparing their value \
+        or tag. Records `any` or `tuple` with arity, including `{ref, result}` guarded \
+        by `is_reference(ref)`. Complements `callback_tag` when checking whether a \
+        message is handled.
         """
       },
       %{
@@ -120,10 +103,9 @@ defmodule Argus.Schema.Callbacks do
           {:callback, :symbol, "'handle_call' | 'handle_cast' | 'handle_info'"}
         ],
         doc: """
-        The callback has a catch-all clause, so no tag can fail to match. \
-        Established from the bytecode: a multi-clause function raises by \
-        jumping to its own `func_info` label, so nothing branching there means \
-        every input matches. A guarded catch-all is correctly NOT total.
+        An unguarded catch-all, established by the absence of branches to the function's \
+        `func_info` failure label. Every input matches; guarded catch-alls do not \
+        qualify.
         """
       },
       %{
@@ -135,15 +117,10 @@ defmodule Argus.Schema.Callbacks do
           {:pos, :number, "0-based position of the parameter the deciding test reads"}
         ],
         doc: """
-        The call at `id` — into the program, a subscription or a monitor — runs only \
-        on some arms of a test of what `func`'s parameter `pos` holds: the \
-        parameter, a field of it, or a call's answer on it \
-        (`MapSet.member?(state.subscribed, id)`, a stored pid compared with \
-        the current one). A test whose other arms only raise (a match that \
-        fails with a badmatch, a clause head that fails with a \
-        function_clause) decides nothing (Argus.Extractors.LiveView). Where \
-        the parameter is a process's state, the call is decided by what \
-        the process knows.
+        A call, subscription, or monitor controlled by a test on parameter `pos`, one of \
+        its fields, or a call result derived from it (`Argus.Extractors.LiveView`). \
+        Tests whose alternative paths only raise do not count. For a state parameter, \
+        this identifies state-dependent calls.
         """
       },
       %{
@@ -155,21 +132,11 @@ defmodule Argus.Schema.Callbacks do
           {:tag, :symbol, "the inspected tag its first argument is established to be"}
         ],
         doc: """
-        The call (or Erlang `!`, the send instruction) at `id` runs only \
-        while `func`'s first argument is `tag` — \
-        the atom, or the first element of the tuple, some path to the call \
-        tested it against — one row per such tag. A call some path reaches \
-        without establishing a tag has no row. Exact per path, unlike \
-        `callback_tag`: a synchronous call chain follows the clause of \
-        handle_call/3 a request enters, and the clause of a guarded \
-        dispatcher (`route(:local, n)`) a literal argument enters, so the \
-        `:echo` clause that closes a cycle does not stand for the `:answer` \
-        clause beside it. A gen_statem's event function (`handle_event/4`, \
-        a state function) is handed its event in two arguments and picks a \
-        clause by both: its tag is `"<type> <content>"` (`":internal \
-        :connect"`, `":info :DOWN"`), the bare type where a path fixes no \
-        content (`clause_event` splits it; \
-        `Argus.Extractor.Dispatch.event_tags/3`).
+        A call or send reached only when the first argument has `tag`, either as an atom \
+        or tuple head. Every path must establish a tag; one row is emitted per possible \
+        tag. Enables clause-specific call-chain analysis. gen_statem event functions use \
+        `"<type> <content>"`, or the type alone when content is unknown; `clause_event` \
+        splits these tags.
         """
       },
       %{
@@ -182,11 +149,9 @@ defmodule Argus.Schema.Callbacks do
           {:content, :symbol, "the tag's content, inspected (`:connect`, `:DOWN`)"}
         ],
         doc: """
-        A two-part tag of a gen_statem event function's clauses, the tag \
-        `clause_call`, `returned_update` and `statem_insert` spell for the \
-        clause of events of `type` whose content is `content` (an atom, or \
-        a tuple headed by it). How a rule asks what event a clause takes: \
-        a `:DOWN` under `:info`, any `:internal` event.
+        The type and content of a gen_statem clause tag used by `clause_call`, \
+        `returned_update`, and `statem_insert`. Content is an atom or tuple head, \
+        allowing rules to identify events such as `:info :DOWN`.
         """
       },
       %{
@@ -198,14 +163,10 @@ defmodule Argus.Schema.Callbacks do
           {:tag, :symbol, "the inspected atom the clause takes"}
         ],
         doc: """
-        In a handle_info/2, the call at `id` runs on every path the clause \
-        for the atom `tag` takes to a return that lets the process go on: \
-        every return or tail call the message reaches is reached only \
-        through `id` (`Argus.Extractor.Dispatch.reached_with/4`), a return \
-        of `{:stop, ...}` left out. A clause that re-arms its own message \
-        this way runs a periodic loop; one that re-arms on one branch (after \
-        a failed connect) retries until it is done. Computed for atom tags \
-        only.
+        A call that every continuing path through a `handle_info/2` clause for atom \
+        `tag` must execute. Excludes `{:stop, ...}` returns. Distinguishes timers \
+        rearmed on every iteration from retries rearmed on only some branches. Computed \
+        for atom tags only.
         """
       },
       %{
@@ -216,16 +177,10 @@ defmodule Argus.Schema.Callbacks do
           {:pos, :number, "0-based position of the parameter it chooses by"}
         ],
         doc: """
-        `func` chooses what it runs by its parameter `pos`, and when that \
-        parameter holds `:shutdown` — the reason a supervisor stopping a \
-        process passes its terminate/2 — some call does not run: it sits in \
-        a clause for other reasons (`terminate(:normal, s)`, \
-        `terminate_proc(_, r, _) when r != :shutdown`), after a clause that \
-        took `:shutdown`, or on a branch of a test the atom does not take. \
-        Every path is walked with the parameter fixed \
-        (`Argus.Extractor.Dispatch.reached_holding/3`), so a test the walk \
-        does not read keeps the calls after it. A function with no row for \
-        a parameter runs every call whatever it holds.
+        A function with calls excluded when parameter `pos` is `:shutdown`. The \
+        extractor walks every path with that parameter fixed; unreadable tests retain \
+        all reachable calls (`Argus.Extractor.Dispatch.reached_holding/3`). No row means \
+        no call is excluded for that parameter.
         """
       },
       %{
@@ -237,10 +192,8 @@ defmodule Argus.Schema.Callbacks do
           {:pos, :number, "0-based position of a parameter `func` chooses by"}
         ],
         doc: """
-        For a function that chooses by its parameter `pos` \
-        (`shutdown_chooses`), the call at `id` runs when that parameter \
-        holds `:shutdown`. One row per call that runs; the calls with no \
-        row are the ones the atom never reaches.
+        A call reachable with parameter `pos` fixed to `:shutdown`, for a function in \
+        `shutdown_chooses`. Calls without rows are unreachable under that value.
         """
       },
       %{
@@ -253,12 +206,8 @@ defmodule Argus.Schema.Callbacks do
           {:arg, :number, "0-based position of the callee's argument it lands in"}
         ],
         doc: """
-        The call at `id`, which runs when `func`'s parameter `pos` holds \
-        `:shutdown`, hands that value on unchanged as the callee's argument \
-        `arg`, on every path that reaches the call with it: \
-        `terminate(reason, s)` calling `cleanup(reason, s)` enters \
-        `cleanup/2` holding the reason in its first parameter. A call into \
-        the runtime (`Argus.Extractor.Runtime`) has no row.
+        A call reachable with parameter `pos` equal to `:shutdown` that forwards it \
+        unchanged to argument `arg` on every reaching path. Runtime calls are excluded.
         """
       },
       %{
@@ -269,10 +218,8 @@ defmodule Argus.Schema.Callbacks do
           {:tag, :symbol, "the continue tag (inspected atom or 'dynamic')"}
         ],
         doc: """
-        Records that a GenServer module returns `{:ok, _, {:continue, tag}}` from
-        `init/1` or `{:noreply, _, {:continue, tag}}` from any handler. The
-        deferred-startup-deadlock analysis uses this to identify modules whose
-        `handle_continue/2` clauses run during the startup phase.
+        A GenServer return scheduling `handle_continue/2` from `init/1` or a handler. \
+        Used to identify deferred work reachable during startup.
         """
       },
       %{
@@ -284,9 +231,8 @@ defmodule Argus.Schema.Callbacks do
           {:func_id, :symbol, "function ID of the clause"}
         ],
         doc: """
-        A `handle_continue(tag, _)` clause defined by a module. The
-        deferred-startup-deadlock analysis pairs this with `init_continues_to`
-        to find handle_continue bodies reachable from a module's init.
+        A module's `handle_continue(tag, _)` clause. Paired with `init_continues_to` to \
+        identify continuation bodies reachable from init.
         """
       },
       %{
@@ -300,16 +246,10 @@ defmodule Argus.Schema.Callbacks do
           {:tag, :symbol, "the continue term's atom or tuple tag, `*` when not spelled"}
         ],
         doc: """
-        The return at `id` hands the process to `handle_continue/2`: \
-        `{:ok, state, {:continue, t}}`, `{:noreply, state, {:continue, t}}` \
-        or `{:reply, reply, state, {:continue, t}}`, in init/1, a handler \
-        or a helper whose result a callback returns. `tag` is what the \
-        clause of handle_continue/2 the term enters tells it by: the atom, \
-        or a tuple's first element. One row per clause of `func` the return \
-        is in, by the tag its first argument was established to be \
-        (`Argus.Extractor.Dispatch.argument_tags/2`, as `returned_update` \
-        reads one). What sends a clause of handle_continue/2 its term, for \
-        `clientlib/runs.dl`'s once clauses.
+        A return scheduling `handle_continue/2` from init, a handler, or a returned \
+        helper result. `tag` is the continuation atom or tuple head. One row per \
+        enclosing first-argument clause tag, used by `clientlib/runs.dl` to identify \
+        continuations that run once.
         """
       },
       %{
@@ -322,14 +262,11 @@ defmodule Argus.Schema.Callbacks do
            "the tag of func's first argument on the paths to the return, `*` for none"}
         ],
         doc: """
-        The return at `id` arms its loop's idle timeout: `{:ok, state, ms}`, \
-        `{:noreply, state, ms}` or `{:reply, reply, state, ms}`, whose \
-        `:timeout` message comes when no other does first. A value the \
-        return does not spell counts: only `:infinity`, `:hibernate` and a \
-        continue are known not to be a timeout. Read in every function, as \
-        `continue_return` is, one row per clause the return is in. Unlike \
-        `callback_timeout` (a callback's literal integer), what makes a \
-        `:timeout` message, for `clientlib/runs.dl`'s once clauses.
+        A return arming a callback's idle timeout, including unresolved timeout values. \
+        Excludes `:infinity`, `:hibernate`, and continuations. The runtime sends \
+        `:timeout` only if no other message arrives first. Recorded in helpers as well \
+        as callbacks, once per enclosing clause; unlike `callback_timeout`, does not \
+        require a literal integer.
         """
       },
       %{
@@ -340,14 +277,9 @@ defmodule Argus.Schema.Callbacks do
           {:func, :symbol, "the function holding it"}
         ],
         doc: """
-        The call or receive at `id` runs only after `func` has \
-        acknowledged its start: every path from the function's entry to \
-        it passes a `:proc_lib.init_ack/1,2` (`Argus.Extractors.OTP`). A \
-        process started with `:proc_lib.start_link/3` holds its starter \
-        until that ack; an init/1 that acks and then enters its own loop \
-        (`:gen_server.enter_loop/3`, OTP's logger_olp) waits there as the \
-        server, not as the start. An ack made in a helper the function \
-        calls is not seen.
+        A call or receive dominated by `:proc_lib.init_ack/1,2` in the same function. \
+        The starter is released before this site, so later waits belong to the running \
+        process rather than startup. Acknowledgements in helpers are not detected.
         """
       },
       %{
@@ -361,16 +293,10 @@ defmodule Argus.Schema.Callbacks do
           {:value, :symbol, "an atom the field holds when the site runs, inspected"}
         ],
         doc: """
-        The call (or send) at `site`, in a GenServer handler \
-        (handle_call/3, handle_cast/2, handle_info/2, handle_continue/2), \
-        runs only while the state the handler was handed holds `value` \
-        under `key`: on every path from the entry to the site, the tests \
-        of that field admit only the atoms of the site's rows (a clause \
-        head `%{registered: false}`, `if state.timer == nil`, `case \
-        state.status`; `if state.owner` admits nil and false). A field of \
-        a value made from the state (a nested map, `Map.get/2`) is not \
-        read, nor a struct's `__struct__`. \
-        (`Argus.Extractors.StateGate`.)
+        A GenServer handler call or send allowed only when input state field `key` holds \
+        one of the recorded atom values. Every reaching path must enforce the \
+        restriction. Nested fields, fields read via calls, and `__struct__` are excluded \
+        (`Argus.Extractors.StateGate`).
         """
       },
       %{
@@ -382,16 +308,11 @@ defmodule Argus.Schema.Callbacks do
           {:key, :symbol, "the gated field, as state_gate spells it"}
         ],
         doc: """
-        Every way `func` completes after `site` hands back a state whose \
-        `key` holds a value none of the site's state_gate rows admits — a \
-        literal outside them, a value no atom is (what a call known to \
-        answer a reference, a pid or a number made, the caller in \
-        handle_call/3's `from`), no such field — or ends the process (a \
-        `{:stop, ...}`, a raise). A return through a local helper handed \
-        the state reads the helper's returns; the handler of a `try` the \
-        site may be inside is a way to complete. A `throw` after the site \
-        (gen_server takes the thrown value as the result), a state handed \
-        back unchanged, or one the reading cannot follow, closes nothing.
+        Every completion after `site` either stops the process or returns state that \
+        excludes all values admitted by the site's `state_gate` rows. Includes \
+        local-helper returns and try handlers. Unchanged or unresolved state does not \
+        close the gate; neither does `throw`, whose value GenServer uses as the callback \
+        result.
         """
       },
       %{
@@ -404,13 +325,8 @@ defmodule Argus.Schema.Callbacks do
           {:value, :symbol, "an atom the field holds when the site does not run, inspected"}
         ],
         doc: """
-        The call (or send) at `site`, in a GenServer handler, does not run \
-        while the state the handler was handed holds `value` under `key`: \
-        the walk from the entry with the field fixed at that atom misses \
-        it, and another walk reaches it. `handle_info(ev, %{status: \
-        :init} = s)` queues what the next clause serves: the serving call \
-        is excluded while the status is `:init`. \
-        (`Argus.Extractors.StateGate`.)
+        A GenServer handler call or send unreachable when input state field `key` equals \
+        atom `value`, but reachable for another value (`Argus.Extractors.StateGate`).
         """
       },
       %{
@@ -424,16 +340,10 @@ defmodule Argus.Schema.Callbacks do
           {:arg, :number, "which of the site's arguments is the key the test asked about"}
         ],
         doc: """
-        The call at `site` runs only where a membership test or a lookup \
-        found `store` lacking the key, and the key is the site's argument \
-        `arg`: `case :maps.is_key(pid, state.monitors) of false -> \
-        monitor(pid)`, `unless MapSet.member?(s.subs, t), do: \
-        subscribe(t)`, `[] = :ets.lookup(:owners, pid)` before a link. \
-        The walk that fixes the ask's answer at absent reaches the site, \
-        and the walk that fixes it at present does not \
-        (`Argus.Extractors.StateGate.Absent`). An acquisition asked so \
-        is not taken again while the store holds its key: what lets it \
-        run again is that store losing the key.
+        A call reached only when a membership test or lookup finds its argument `arg` \
+        absent from `store`. The absent path reaches the site; the present path does not \
+        (`Argus.Extractors.StateGate.Absent`). Repeating the acquisition requires \
+        removing its key from the store.
         """
       },
       %{
@@ -449,15 +359,10 @@ defmodule Argus.Schema.Callbacks do
              "'dynamic' for any value, or a state the return does not show"}
         ],
         doc: """
-        A way `func` completes, in its clause for `clause`, hands back a \
-        state whose `key` holds `value`: the handlers' returns \
-        (`{:noreply, state, ...}`, `{:reply, reply, state, ...}`), \
-        code_change/3's `{:ok, state}`, and init/1's `{:ok, state, ...}`, \
-        the state each incarnation starts with; through the local helpers \
-        they return through or hand the state to. A return that keeps the \
-        field, or ends the process, has no row; a `throw` in the function \
-        is `dynamic`. Read only for the keys the module's gates test: what \
-        could set a gate's field back, and what a field starts as.
+        A possible returned value for state field `key` in clause `clause`, including \
+        init, handlers, `code_change/3`, and local helpers. Only keys used by the \
+        module's state gates are tracked. Unchanged fields and process termination have \
+        no rows; a `throw` yields `dynamic`.
         """
       },
       %{
@@ -468,12 +373,9 @@ defmodule Argus.Schema.Callbacks do
           {:func, :symbol, "the function holding it"}
         ],
         doc: """
-        The send at `id` is `func`'s last act: it is a tail call, or every \
-        path on from it returns with no call, send or receive between \
-        (`Argus.Extractors.OTP`). Everything else the function does it \
-        has done when the message goes: a loader spawned to fill its \
-        starter's tables that ends by reporting it is done. A function \
-        with a `try` or a `catch` has no rows.
+        A send that is a tail call or is followed only by returns, with no intervening \
+        call, send, or receive. Identifies completion notifications. Functions \
+        containing `try` or `catch` are excluded (`Argus.Extractors.OTP`).
         """
       }
     ])

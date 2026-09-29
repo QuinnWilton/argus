@@ -1,34 +1,9 @@
-// Behaviour names, canonicalised across the two languages.
-//
-// `implements_behaviour` stores whatever the module declared, rendered with
-// `inspect/1`. An Elixir module writing `@behaviour GenServer` produces
-// "GenServer"; an Erlang module writing `-behaviour(gen_server)` produces
-// ":gen_server", colon and all, because that is how the atom inspects.
-//
-// A rule matching `implements_behaviour(mod, "GenServer")` therefore sees
-// only the Elixir half. That is not a small half. On one project swept
-// here, 100 modules declared `GenServer` and 42 declared `:gen_server` —
-// roughly thirty percent of the gen_servers in the tree, all of them in
-// dependencies, which is exactly where nobody is reading the source and a
-// bug survives longest.
-//
-// The failure is silent in the worst way: the analysis returns fewer
-// findings, not an error, and fewer findings is indistinguishable from
-// cleaner code. It was found only by comparing a Datalog result against the
-// raw extractor output that fed it.
-//
-// So rules should ask `behaves_as(mod, "GenServer")` rather than matching
-// the declared string. The canonical name is the Elixir spelling, which is
-// what the rules already say.
-//
-// A declaration is one witness of a behaviour; a start is the other. The
-// behaviour's machinery runs a module's callbacks because a start named
-// it the callback module (`started_as`: `gen_server:start_link({local,
-// inet_db}, inet_db, [], [])`, `supervisor:start_link({local, ?MODULE},
-// ?MODULE, [])`), whether or not it says `-behaviour`: OTP's inet_db, pg
-// and group, and ejabberd's ejabberd_sql_sup and ejabberd_tmp_sup, say
-// nothing, and every process rule missed them. `behaves_as` is the one
-// relation that answers "what does this module run as", from either.
+// Canonical behaviour names across Erlang and Elixir. `implements_behaviour` uses
+// inspect/1 strings, so GenServer and :gen_server differ. Rules should use
+// `behaves_as(mod, canonical)` with the Elixir spelling.
+// A module may declare a behaviour or be named as its callback module by a start
+// (`started_as`). Both establish behaviour membership, including modules with no
+// explicit declaration.
 
 .decl behaviour_alias(declared: symbol, canonical: symbol)
 
@@ -52,15 +27,13 @@ behaviour_alias("Application", "Application").
 behaviour_alias(":application", "Application").
 behaviour_alias("application", "Application").
 
-// Erlang-only: a supervisor_bridge runs its init/1 and terminate/2 in a
-// process of its own, which a supervisor starts and stops as it does a
-// supervisor, around a subsystem started some other way.
+// Erlang supervisor_bridge runs init/1 and terminate/2 in its own supervised process,
+// wrapping a subsystem with a separate lifecycle.
 behaviour_alias(":supervisor_bridge", ":supervisor_bridge").
 behaviour_alias("supervisor_bridge", ":supervisor_bridge").
 
-// Elixir-only behaviours. Listed so that `behaves_as` is total — a rule
-// asking about one of these should not have to know whether it has an
-// Erlang spelling.
+// Elixir-only behaviours are listed directly so behaves_as works without requiring an
+// Erlang equivalent.
 behaviour_alias("GenStage", "GenStage").
 behaviour_alias("Broadway", "Broadway").
 behaviour_alias("Phoenix.LiveView", "Phoenix.LiveView").
@@ -68,13 +41,9 @@ behaviour_alias("Phoenix.Channel", "Phoenix.Channel").
 behaviour_alias("Task", "Task").
 behaviour_alias("Agent", "Agent").
 
-// Wrappers that run a GenServer (or a gen_statem loop forwarding to
-// GenServer-shaped callbacks) and hand their users the same init/1,
-// handle_call/3, handle_cast/2, handle_info/2 contract. A module
-// declaring one of these answers calls, blocks on receives and defers
-// replies exactly as a GenServer does, and every rule about those
-// callbacks applies. Postgrex's Notifications is a SimpleConnection;
-// before this alias reply_contract and callback_receive could not see it.
+// Wrappers exposing GenServer-style init, call, cast, and info callbacks. The same
+// blocking and reply-contract rules apply even if the wrapper internally uses another
+// loop.
 behaviour_alias("Connection", "GenServer").
 behaviour_alias("Postgrex.SimpleConnection", "GenServer").
 behaviour_alias("Postgrex.ReplicationConnection", "GenServer").
@@ -85,10 +54,8 @@ behaves_as(mod, canonical) :-
   implements_behaviour(mod, declared),
   behaviour_alias(declared, canonical).
 
-// Anything not in the alias table passes through unchanged, so a rule can
-// still ask about a behaviour nobody thought to list. Without this, adding
-// the indirection would LOSE matches for every behaviour the table omits —
-// turning a fix for under-reporting into a fresh source of it.
+// Preserve behaviour names absent from the alias table so custom behaviours remain
+// queryable through behaves_as.
 behaves_as(mod, declared) :-
   implements_behaviour(mod, declared),
   !behaviour_alias(declared, _).
@@ -101,16 +68,10 @@ behaves_as(mod, named) :-
   started_as(mod, named),
   !behaviour_alias(named, _).
 
-// What a behaviour is, by the properties rules ask about. One table, three
-// kinds: `loop` — the module runs a callback loop over its own mailbox, so
-// a receive or a blocking call in a callback is on the server's stack;
-// `gen_server_like` — handle_call/3 answers with GenServer's return
-// contract, so `{:noreply, _}` is a deferred reply; `terminating` — the
-// behaviour calls terminate/2,3 on the way down. Five analyses each kept
-// their own list of the first kind and no two agreed. A behaviour of any
-// kind here runs as a process (callbacks.dl's process_behaviour_module):
-// its init/1 in the process it starts, whose own table dies with it
-// (supervisor_bridge's only kind is `terminating`).
+// Behaviour properties: `loop` owns a mailbox callback loop; `gen_server_like` uses
+// GenServer's reply contract; `terminating` runs terminate/2,3. Any listed kind
+// identifies a process behaviour, including supervisor_bridge, whose only kind is
+// terminating.
 .decl process_behaviour(canonical: symbol, kind: symbol)
 
 process_behaviour("GenServer", "loop").
@@ -135,9 +96,8 @@ process_behaviour("GenEvent", "terminating").
 process_behaviour("Broadway", "terminating").
 process_behaviour("Phoenix.LiveView", "terminating").
 
-// A behaviour whose machinery sets trap_exit in the process before it
-// calls the module's init/1: supervisor_bridge does, as a supervisor
-// does, so that its supervisor's shutdown reaches terminate/2.
+// Behaviours such as supervisor_bridge set trap_exit before init/1, allowing supervisor
+// shutdown to invoke terminate/2.
 .decl behaviour_traps_exits(canonical: symbol)
 
 behaviour_traps_exits(":supervisor_bridge").

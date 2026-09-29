@@ -1,11 +1,6 @@
-// An effect where its context forbids it.
-//
-// Two contracts, one written down and one imposed by context. `@pure
-// true` is a claim the author made; the analysis checks it against the
-// call graph and the effect model, and says verified, violated or
-// unprovable. `Repo.transaction/1` says nothing, but the closure it runs
-// must be something the database can undo, because the database is
-// going to decide whether it happened.
+// Check purity contracts and effects inside database transactions. Purity yields
+// verified, violated, or unprovable. Transaction checks find external writes that
+// survive rollback or repeat on retry.
 
 .include "../clientlib/imports.dl"
 .include "../clientlib/behaviours.dl"
@@ -16,25 +11,13 @@
 // level (clientlib/tooling.dl, Argus.Findings.Tooling).
 .output tooling
 
-// ══ Purity contracts ════════════════════════════════════════════════
-// Purity contract verification.
+// Purity contracts
 //
-// Every other analysis here looks for a bug nobody claimed was absent. This
-// one checks a claim the author made with `@pure true`, which changes what
-// a finding means: not "this looks suspicious" but "you said this function
-// has no side effects, and here is the call that gives it one".
-//
-// It is also the only analysis that has to be SOUND rather than merely
-// useful. A missed supervision smell costs a warning; a purity check that
-// says "verified" when the function writes to ETS has actively misled
-// someone into depending on it. So every call is accounted for, and calls
-// the analysis cannot see through produce "unprovable" rather than silence.
-//
-// Three outcomes, and the third is the honest one:
-//
-//   violated    reaches a call with a known observable effect
-//   unprovable  reaches a call that cannot be followed or classified
-//   verified    everything reachable is known to be effect-free
+// Check every reachable call for functions marked `@pure true`:
+// - violated: a known observable effect is reachable.
+// - unprovable: a reachable call cannot be followed or classified.
+// - verified: all reachable calls are known to be effect-free.
+// Unknown calls must prevent verification.
 
 
 // ── What the author claimed ──────────────────────────────────────
@@ -43,17 +26,13 @@
 
 declared_pure(func) :- pure_contract(func, _, _, _).
 
-// ── Effects the function performs itself ─────────────────────────
+// Direct effects
 //
-// Two sources. `impure_call` comes from the effect model in
-// Argus.Purity.Effects — a curated table of standard-library and BIF
-// behaviour, kept in Elixir where it can be unit-tested. The rest come from
-// Layer 1, where the instruction itself IS the effect and no table is
-// needed: a send is a send.
+// `impure_call` supplies the classifications from `Argus.Purity.Effects`. Layer-1
+// instructions supply intrinsic effects such as sends.
 
-// `site` is the instruction performing it, which is where a finding's
-// frame points; a receive is a loop of instructions rather than one
-// call, so its site is empty.
+// `site` anchors the finding at the effect's instruction. Receives span an instruction
+// loop, so they have no single site.
 .decl performs_effect(func: symbol, category: symbol, api: symbol, site: symbol)
 
 // Purity rejects both modes: reading a clock or the process dictionary
@@ -82,15 +61,10 @@ performs_effect(func, "port", "port", id) :-
 performs_effect(func, "process", "register", id) :-
   process_register(id, func, _, _).
 
-// ── Calls that cannot be accounted for ───────────────────────────
+// Opaque calls
 //
-// A fun value or an `apply` has no statically known target, so nothing
-// downstream of it can be inspected. An unclassified remote call is a
-// different gap with the same consequence: the effect model has no entry
-// for it, so its behaviour is unknown.
-//
-// Both are reported rather than assumed harmless. This is the difference
-// between a verification and an opinion.
+// Unresolved fun/apply targets and remote calls absent from the effect model prevent
+// purity verification.
 
 .decl opaque(func: symbol, reason: symbol, detail: symbol, site: symbol)
 
@@ -100,12 +74,8 @@ opaque(func, "dynamic_call", kind, id) :-
   dynamic_call(id, func, kind),
   !resolved_apply(id, _, _).
 
-// A call to a function that declares its OWN purity is not opaque. The
-// declaration is trusted at the call site and verified independently at the
-// definition — modular verification, the same bargain every contract system
-// makes. Without this, purity does not compose: no function could ever be
-// verified if it called another of your own pure functions, which is most
-// of what pure code does.
+// Trust a callee's declared purity at the call site and verify its definition
+// separately. This allows purity contracts to compose across functions.
 opaque(func, "unclassified_call", api, id) :-
   unknown_call(id, func, api, callee),
   !pure_contract(callee, _, _, _).
@@ -115,18 +85,14 @@ opaque(func, "unclassified_call", api, id) :-
 opaque(func, "protocol_dispatch", api, id) :-
   protocol_dispatch(id, func, api).
 
-// ── Propagation ──────────────────────────────────────────────────
+// Propagation
 //
-// Purity is a property of everything a function can reach, so both effects
-// and opacity travel up the call graph. `call_edge` already treats closure
-// construction as a call, which is exactly right here: a lambda built
-// inside a function and handed to Enum.each still runs its body, so an
-// effect in that lambda is an effect of the function that built it.
+// Effects and opacity propagate through the call graph, including closure-construction
+// edges. A closure body may run through a higher-order call made by its enclosing
+// function.
 
-// The functions whose transitive effects the findings ask about: every
-// declared-pure function, and every closure defined in a caller of one
-// (`impure_closure_to_pure`). Reachability is explored forward from
-// those roots only.
+// Seed effect reachability from declared-pure functions and closures passed to them.
+// Explore forward only from these roots.
 .decl purity_root(func: symbol)
 
 purity_root(func) :- declared_pure(func).
@@ -160,13 +126,9 @@ reaches_opaque(func, reason, detail, via, site) :-
 
 // ── Findings ─────────────────────────────────────────────────────
 
-// The one output of both contracts: an effect where its context forbids
-// it. `context` is "pure_contract" (func carries @pure true; scope is
-// empty) or "transaction" (func opens a Repo transaction; scope is the
-// repo). `via` is the function that actually performs the effect, which
-// is where the fix goes when it is not func itself, and `site` the
-// instruction that does (empty for a receive). `opened` is the
-// transaction call, empty for a pure contract.
+// Shared effect output. `context` is `pure_contract` or `transaction`; `scope` names
+// the repo for transactions. `via` performs the effect and `site` anchors it (empty for
+// receives). `opened` identifies the transaction call and is empty for purity findings.
 .decl effect_in_context(func: symbol, context: symbol, scope: symbol, category: symbol, api: symbol, via: symbol, site: symbol, opened: symbol)
 .output effect_in_context
 
@@ -181,9 +143,8 @@ violated_purity_claim(func, category, api, via, site) :-
 effect_in_context(func, "pure_contract", "", category, api, via, site, "") :-
   violated_purity_claim(func, category, api, via, site).
 
-// A function declared pure reaches a call nothing can follow, and no
-// known effect: not a violation, since the function may well be pure,
-// but nobody should rely on it having been verified.
+// A declared-pure function has an unresolved call but no known effect. Its purity is
+// unverified, rather than disproven.
 .decl purity_unprovable(func: symbol, reason: symbol, detail: symbol, via: symbol, site: symbol)
 .output purity_unprovable
 
@@ -192,10 +153,8 @@ purity_unprovable(func, reason, detail, via, site) :-
   reaches_opaque(func, reason, detail, via, site),
   !reaches_effect(func, _, _, _, _).
 
-// A function declared pure reaches no effect and no call nothing can
-// follow: the claim holds. Emitted deliberately — the value of a
-// contract is knowing it was actually checked, and an analysis that only
-// ever reports failures cannot distinguish "verified" from "not looked at".
+// A declared-pure function reaches no known effect or opaque call. Emit verified
+// results explicitly to distinguish successful checking from no analysis.
 .decl purity_verified(func: symbol)
 .output purity_verified
 
@@ -204,22 +163,13 @@ purity_verified(func) :-
   !reaches_effect(func, _, _, _, _),
   !reaches_opaque(func, _, _, _, _).
 
-// ── Higher-order contracts, checked at the call site ─────────────
+// Higher-order contracts
 //
-// A declared-pure function that takes a fun and calls it is unprovable in
-// general: its purity depends on what it was handed. But it is decidable
-// PER CALL SITE, and that is where the obligation actually lives — the
-// caller is the one choosing the closure.
-//
-// So when a caller hands an effectful closure to a function declared pure,
-// the caller has broken the contract, and it is the caller's line that has
-// to change.
+// A pure function invoking a supplied fun may be unprovable in isolation. When a caller
+// supplies a known effectful closure, report the violation at that caller's site.
 
-// A caller hands a closure that performs an effect to a function
-// declared pure that calls the fun it is handed.
-//
-// `site` is the call handing the closure over, where the contract
-// breaks; `effect_site` the effect inside the closure.
+// An effectful closure is passed to a declared-pure function that invokes it. `site` is
+// the passing call; `effect_site` is the closure's effect.
 .decl impure_closure_to_pure(caller: symbol, callee: symbol, closure: symbol, category: symbol, api: symbol, site: symbol, effect_site: symbol)
 .output impure_closure_to_pure
 
@@ -229,21 +179,15 @@ impure_closure_to_pure(caller, callee, closure, category, api, site, effect_site
   handed_closure(site, caller, closure),
   impure_closure(caller, closure, category, api, effect_site).
 
-// `func` is declared pure and calls a fun it is handed.
-//
-// Transitive, not direct. `Enum.map(list, fn x -> f.(x) end)` puts the
-// call_fun inside the LIFTED closure, so the declared function never
-// contains one itself — checking only its own body would find nothing and
-// this whole rule would sit dead.
+// A declared-pure function transitively invokes a supplied fun. Include lifted
+// closures, where higher-order APIs may place the call_fun instruction.
 .decl higher_order_pure(func: symbol)
 
 higher_order_pure(func) :-
   declared_pure(func),
   reaches_opaque(func, "dynamic_call", "call_fun", _, _).
 
-// The call at `site` in `caller` is to `callee`, a function declared
-// pure: the call graph's edge, and the call instruction naming the
-// callee's module, name and arity.
+// A call instruction and call-graph edge from `caller` to declared-pure `callee`.
 .decl calls_declared_pure(site: symbol, caller: symbol, callee: symbol) inline
 
 calls_declared_pure(site, caller, callee) :-
@@ -251,61 +195,34 @@ calls_declared_pure(site, caller, callee) :-
   pure_contract(callee, mod, name, arity),
   call_site(site, caller, mod, name, arity).
 
-// `closure` is built in `caller` and performs an effect, itself or
-// through a function it calls; `site` is the effect. Which closure a
-// call hands over is handed_closure (clientlib/closures.dl).
+// `closure` is defined in caller and reaches an effect at site. handed_closure
+// identifies which closure a call passes; see closures.dl.
 .decl impure_closure(caller: symbol, closure: symbol, category: symbol, api: symbol, site: symbol)
 
 impure_closure(caller, closure, category, api, site) :-
   closure_def(caller, closure),
   reaches_effect(closure, category, api, _, site).
 
-// ══ Effects inside a transaction ════════════════════════════════════
-// Unrollbackable side effects inside a database transaction.
+// Effects inside transactions
 //
-// `@pure` is a contract someone writes down. This one nobody writes down —
-// it is imposed by CONTEXT. Passing a closure to `Repo.transaction/1`
-// silently accepts an obligation: whatever that closure does must be
-// something the database can undo, because the database is going to decide
-// whether it happened.
-//
-// Three ways that goes wrong, all common and none of them visible in
-// review because the offending call looks perfectly ordinary:
-//
-//   1. ROLLBACK LEAVES THE EFFECT BEHIND. The transaction aborts, the rows
-//      vanish, and the webhook has already fired. The system is now in a
-//      state its own database says never existed.
-//
-//   2. RETRY REPEATS IT. Serialization failures and deadlocks are retried
-//      by design — that is what `:serializable` costs. Every retry re-runs
-//      the closure, so one logical operation sends two emails.
-//
-//   3. THE CONNECTION IS HELD THROUGHOUT. A checked-out pooled connection
-//      is held for the whole closure, so an HTTP call inside a transaction
-//      couples database capacity to a third party's latency. A slow
-//      external dependency stops being a slow feature and becomes pool
-//      exhaustion, which is an outage.
-//
-// The third is the one that takes systems down, and it is the least
-// obvious: the code is correct, it just holds a scarce resource while
-// waiting on something it does not control.
+// External writes can survive rollback and repeat when a transaction is retried.
+// External waits also hold the checked-out database connection for their duration,
+// tying pool capacity to another service's latency.
 
 
 // ── Transaction call sites ───────────────────────────────────────
 
-// Any module implementing Ecto.Repo, called as `.transaction/1,2`. Reading
-// the behaviour rather than matching on a name means an app's own
-// `MyApp.Repo` is found without knowing what it is called.
+// Calls to transaction/1,2 on any Ecto.Repo implementation. Match the behaviour so
+// application-specific repo names are covered.
 .decl transaction_site(id: symbol, caller: symbol, repo: symbol)
 
 transaction_site(id, caller, repo) :-
   remote_call(id, caller, repo, "transaction", _),
   behaves_as(repo, "Ecto.Repo").
 
-// Ecto 3.13's `Repo.transact/2`, and the app-defined `transact` that
-// predates it (Saša Jurić's, ambry's): the fun it is handed runs in the
-// transaction the repo's own `transaction` opens, a call argus does not
-// follow into the caller's closure.
+// Repo.transact/2 and application wrappers run their function argument inside
+// Repo.transaction. Model that boundary because ordinary call traversal misses the
+// passed closure.
 transaction_site(id, caller, repo) :-
   remote_call(id, caller, repo, "transact", _),
   behaves_as(repo, "Ecto.Repo").
@@ -314,16 +231,11 @@ transaction_site(id, caller, repo) :-
 transaction_site(id, caller, "Postgrex") :-
   remote_call(id, caller, "Postgrex", "transaction", _).
 
-// ── The closure the transaction runs ─────────────────────────────
+// Transaction body
 //
-// The closure handed to the transaction call (handed_closure,
-// clientlib/closures.dl): the site names its body, whatever else the
-// function builds. Where no closure is handed at the site the function's
-// one closure stands in, gated as before: with two there is no way to
-// say which was passed, and naming the wrong lambda sends someone to the
-// wrong line; and a function that opens transactions on two repos (one
-// with the closure, one with an Ecto.Multi) cannot say whose that one
-// closure is, so it belongs to neither rather than to both.
+// Use the closure passed at the transaction site (`handed_closure`). Fall back to a
+// function's sole closure only when it is unambiguous. Multiple closures or
+// transactions on multiple repos prevent that fallback.
 
 .decl transaction_body(site: symbol, caller: symbol, repo: symbol, body: symbol)
 
@@ -347,12 +259,9 @@ transaction_on_another_repo(caller, repo) :-
 
 // ── Writes the database cannot undo ─────────────────────────────
 
-// A transaction's closure makes a write the database cannot undo, itself
-// or through what it runs, so a rollback leaves the write behind and a
-// retry makes it again. A process the closure starts and does not wait
-// for runs beside the transaction: its writes count, but not what it
-// does to the process table, which is the start's own (see
-// runs_from_transaction).
+// A transaction body or reachable function performs a write the database cannot undo.
+// Include writes in detached processes, but count their process-table effects only at
+// the start site (`runs_from_transaction`).
 .decl irreversible_write_in_transaction(opened: symbol, caller: symbol, repo: symbol, category: symbol, api: symbol, via: symbol, site: symbol)
 
 irreversible_write_in_transaction(opened, caller, repo, category, api, via, site) :-
@@ -366,21 +275,9 @@ irreversible_write_in_transaction(opened, caller, repo, category, api, via, site
   irreversible_write(site, via, api, category),
   !on_process_table(category).
 
-// The call at `site` in `func` writes what has left the process, so no
-// rollback can undo it.
-//
-// Deliberately NOT every effect. Logging is fine inside a transaction and
-// is the most common effect there by a wide margin; reading a clock or
-// drawing a random number needs no undoing. What matters is effects that
-// escape the database's control, and the shared effect model already
-// classifies those.
-//
-// Only WRITES. `Application.get_env/2` and `Process.get/1` are impure —
-// they break purity — but there is nothing for a rollback to undo, and
-// reporting them here would bury the calls that matter under every config
-// read in the codebase. The categories are the effect model's durable
-// ones (clientlib/effect_model.dl): what has left the process cannot be
-// rolled back.
+// A write outside the database's control, using the durable effect categories in
+// `clientlib/effect_model.dl`. Excludes logging and read-only effects such as
+// configuration, dictionary, clock, or random reads.
 .decl irreversible_write(site: symbol, func: symbol, api: symbol, category: symbol) inline
 
 irreversible_write(site, func, api, category) :-
@@ -393,11 +290,8 @@ irreversible_write(site, func, api, category) :-
 
 on_process_table("process").
 
-// `via` is the closure `body` itself or what it runs as the
-// transaction's work: what the body's own process runs, and what a task
-// it waits for runs (`Task.async(fn -> ... end) |> Task.await()`,
-// awaits_task: the request leaves before the commit, and the
-// transaction holds its connection for the whole round trip).
+// Transaction work includes the body, same-process callees, and tasks it awaits.
+// Awaited external requests hold the transaction and connection until completion.
 .decl runs_in_transaction(body: symbol, via: symbol) inline
 
 runs_in_transaction(body, via) :- body_reach.reaches(body, via).
@@ -409,9 +303,8 @@ runs_in_transaction(body, via) :- body_reach.reaches(body, via).
 body_reach.root(body, body) :- transaction_body(_, _, _, body).
 body_reach.cut(caller, fun) :- starts_on(caller, fun), !awaits_task(caller, _, fun).
 
-// `caller` starts a process on `fun`: a spawn, a task or an agent
-// running it, or a helper that starts one on the fun it is handed. A fun
-// the body only registers or keeps is walked as before.
+// `caller` starts `fun` in a spawn, task, agent or forwarding helper. Functions merely
+// registered or retained are traversed normally.
 .decl starts_on(caller: symbol, fun: symbol)
 
 starts_on(caller, fun) :-
@@ -424,18 +317,10 @@ starts_on(caller, fun) :-
   fun_handed_to(caller, fun, sink),
   fun_sink(sink, "start").
 
-// `via` is anything `body` runs, past a start it does not wait for too
-// (on runs_in_transaction's functions it is the same). The new process
-// runs beside the transaction: the start is the process operation
-// reported, and what the process then does to the process table is not
-// reported again (akkoma's `Streamer.stream/2` spawns a pusher per topic
-// from inside `ActivityPub.create/2`'s transaction, and the pusher's
-// Registry.dispatch/3 and sends were each a finding beside the spawn's).
-// What it does outside the process table is: a webhook a supervised task
-// posts is sent whether or not the transaction commits, and sent again
-// when it is retried. So is what a fun the body registers or keeps does,
-// which the walk follows as it always did: whether it runs inside the
-// transaction is not something the call graph says.
+// Functions run by the transaction body, including detached processes and registered
+// funs. External writes still count after detachment. Process-table effects in detached
+// work are covered by the start finding and are not reported again. Call-graph reach
+// alone does not establish when a stored fun runs.
 .decl runs_from_transaction(body: symbol, via: symbol) inline
 
 runs_from_transaction(body, via) :- started_reach.reaches(body, via).
@@ -446,8 +331,7 @@ started_reach.root(body, body) :- transaction_body(_, _, _, body).
 
 // ── Findings ─────────────────────────────────────────────────────
 
-// The repo is the one of the transaction the body belongs to: joining
-// the caller's transaction sites apart from its body paired a closure
-// with every repo the function touched.
+// Match each transaction body to the repo at its own call site, avoiding unrelated
+// repos used by the same caller.
 effect_in_context(caller, "transaction", repo, category, api, via, site, opened) :-
   irreversible_write_in_transaction(opened, caller, repo, category, api, via, site).

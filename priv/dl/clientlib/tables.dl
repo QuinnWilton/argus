@@ -1,67 +1,24 @@
-// Which ETS tables an operation may touch, in the one identity every
-// analysis that asks "the same table?" shares.
-//
-// A table is known the way the runtime knows it. A named table is its
-// name, the same table wherever the name is spelled. An unnamed table is
-// its reference, which only the :ets.new/2 call that made it hands out:
-// it is an allocation site, and where the reference goes is the question
-// process points-to already answers for pids (processes.dl: a `table`
-// source, through parameters, returns, map and tuple fields, a server's
-// state, a closure's environment and a spawned function's arguments).
-//
-// ── A table's identity ──────────────────────────────────────────────
-//
-// A table is a kind and an identity within that kind (EtsTable):
-//
-//   ["named", ":name"]               a table registered under a name;
-//   ["new", site]                    the unnamed table made at `site`;
-//   ["field", "<module> <path>"]     a table a module reads out of a
-//                                    parameter's map, where nothing
-//                                    better is known;
-//   ["handed_in", "param P of F"]    a table the program's users hand to
-//                                    parameter P of F, a way in.
-//
-// Two references are the same table when kind and identity are equal.
-// A name and a site are the same table everywhere; a field table is one
-// within its module, and a handed-in table within what F forwards it to,
-// since that is all the identity knows of them. Two kinds are never one
-// table, though at run time a field or handed-in table may be a named or
-// a new one: nothing in view says which, and a rule that needs two
-// references to be one table goes quiet.
-//
-// Relations spell a table as two columns, `kind` and `ident`, so that a
-// CheckThenAct instance can lift it (table_source); a rule that holds a
-// table as one value uses EtsTable.
-//
-// ── How an operation reaches its table ──────────────────────────────
-//
-// An operand is a set of tables, not one: `cfg.table || @default` is
-// whatever the field holds or the default, and both are answers. A name
-// reaches an operation spelled at it, as one arm of a join
-// (ets_table_path's literal answers), or through the parameters callers
-// pass it in (call_arg, forwarded). Names are atoms and the points-to
-// analysis follows references, not atoms, so a name kept in a field or a
-// server's state and read back is known only when the :ets.new/2 that
-// answered it is what was stored: then it is that site's table.
-//
-// What points-to cannot see — a table handed over by a call it cannot
-// follow, `store.intern(state, b)` with `store` a module in a struct —
-// leaves an operation with no table (may_touch_any_table). Two
-// fallbacks name it all the same: a table read out of a parameter's map
-// is the module's field (`%{forward: f, reverse: r}` is two fields), and
-// a parameter nothing in view fills, below a function outside callers
-// call, is the table those callers hand in.
-//
-// Prerequisites: imports.dl (library_face), otp.dl (staged_processes.dl,
-// process_entry) and vocabulary.dl (named_site).
+// Shared ETS table identities.
+// `named`: registered atom name.
+// `new`: unnamed allocation site, followed by points-to.
+// `field`: unresolved parameter-map path within one module.
+// `handed_in`: an external entry's forwarded table parameter.
+// Equality requires the same kind and identity. Different kinds may alias at runtime
+// but are not unified without evidence. Relations expose kind/ident columns; EtsTable
+// packages them as a value.
+// An operation may touch several tables, including fallback-expression arms. Literal
+// names propagate through arguments; stored atom names resolve only when tied to a
+// known allocation. Points-to follows references through terms, state, closures, and
+// spawned arguments. Field and external-parameter identities provide fallbacks;
+// unresolved operations use may_touch_any_table.
+// Requires imports.dl, otp.dl, and vocabulary.dl.
 
 .type EtsTable = [kind: symbol, ident: symbol]
 
 // ── Tables as objects ───────────────────────────────────────────────
 
-// An ETS table is an object of process points-to, allocated by the
-// :ets.new/2 that made it (processes.dl seeds it). The points-to stage
-// hands on only where tables go: source_table, in staged_processes.dl.
+// ETS allocations are points-to objects seeded by processes.dl. source_table exposes
+// their destinations after staging.
 
 // ── Creation sites ──────────────────────────────────────────────────
 
@@ -77,9 +34,8 @@ site_name(n, name) :-
   ets_table_path(n, "param", p, ""),
   name_at_param(f, p, name).
 
-// The table the :ets.new/2 at `site` makes: the named table of each name
-// it may give, or its own unnamed one. Options built at run time (no
-// ets_options_known) may name it, so such a site may make either.
+// An allocation may create a named table or a site-specific unnamed table. Unknown
+// runtime options permit both possibilities.
 .decl site_table(site: symbol, kind: symbol, ident: symbol)
 
 site_table(n, "named", name) :- named_site(n), site_name(n, name).
@@ -88,9 +44,8 @@ site_table(n, "named", name) :- site_name(n, name), !named_site(n), !ets_options
 
 // ── Tables through parameters ───────────────────────────────────────
 
-// The parameters whose tables are asked about: an operation's or a
-// creation site's operand, and every caller's parameter that forwards
-// into one. An analysis that asks about another parameter adds it here.
+// Track table parameters used by operations or creation sites and parameters forwarding
+// into them. Analyses can add further seeds.
 .decl table_param_needed(func: symbol, pos: symbol)
 
 table_param_needed(f, p) :- ets_table_path(id, "param", p, ""), ets_op(id, f, _, _, _).
@@ -118,9 +73,8 @@ name_at_param(f, p, name) :-
   p = to_string(n),
   name_at_param(c, to_string(m), name).
 
-// The :ets.new/2 site whose reference a caller passes the parameter: the
-// caller made it (ets_tid_arg records the name it was made with, and the
-// caller's :ets.new/2 of that name is the site), directly or forwarded.
+// Resolve the allocation whose reference reaches a parameter, directly from a caller's
+// matching ets_tid_arg or through forwarding.
 .decl tid_at_param(func: symbol, pos: symbol, site: symbol)
 
 tid_at_param(f, p, n) :-
@@ -135,9 +89,8 @@ tid_at_param(f, p, n) :-
   p = to_string(k),
   tid_at_param(c, to_string(m), n).
 
-// Some call in view fills the parameter, on some chain of forwarding
-// callers, with a value of its own (a literal, a reference, anything
-// computed).
+// A visible caller supplies its own value to this parameter, directly or through a
+// forwarding chain.
 .decl table_filled_in_view(func: symbol, pos: symbol)
 
 table_filled_in_view(f, p) :- table_param_needed(f, p), call_arg(_, f, n, _), p = to_string(n).
@@ -149,11 +102,9 @@ table_filled_in_view(f, p) :-
   p = to_string(n),
   table_filled_in_view(c, to_string(m)).
 
-// The parameter holds what callers outside the program pass to parameter
-// `way_in_pos` of `way_in`: a way in for them (library_face, ways_in.dl:
-// exported, in a module no other module of the program calls; not a
-// callback the runtime calls with what the program's own init
-// returned), forwarding it down to `func`.
+// An external caller supplies this parameter through library_face entry `way_in`, at
+// `way_in_pos`, then wrappers forward it to `func`. Runtime callback state is excluded;
+// see ways_in.dl.
 .decl param_from_outside(func: symbol, pos: symbol, way_in: symbol, way_in_pos: symbol)
 
 param_from_outside(f, p, f, p) :-
@@ -167,12 +118,9 @@ param_from_outside(f, p, w, q) :-
   p = to_string(n),
   param_from_outside(c, to_string(m), w, q).
 
-// The tables a parameter may hold: a named table whose name a caller
-// passes, the table a caller made and passes the reference of, or, when
-// the parameter arrives from outside the program and no call in view
-// fills it, the table the program's users hand in (Hammer's `hit(table,
-// key, ...)`, which `use Hammer` calls with the user's own table). Where
-// a handed-in table was made, and with which options, is out of view.
+// Tables supplied through a parameter: propagated literal names, known allocation
+// references, or an external handed-in table with no visible caller supplying it.
+// Handed-in allocation options are unknown.
 .decl param_table(func: symbol, pos: symbol, kind: symbol, ident: symbol)
 
 param_table(f, p, "named", name) :- name_at_param(f, p, name).
@@ -202,9 +150,8 @@ known_table(id, k, t) :-
   ets_op_param(id, p),
   param_table(f, to_string(p), k, t).
 
-// The table the operand may be, by points-to. A table a bounded stage
-// resolved coarsely (coarse_table) is a superset's answer, not an
-// identity: an operand only it answers names no table.
+// Points-to table identities for an operand. Coarse bounded-stage results are
+// supersets, so they cannot establish a specific table identity.
 known_table(id, k, t) :-
   table_use(id, f, sk, s),
   source_table(f, sk, s, x),
@@ -235,11 +182,9 @@ ets_table(id, "field", cat(mod, " ", path)) :-
 
 // ── Where a table is made ───────────────────────────────────────────
 
-// The :ets.new/2 sites that may make the table. A named or unnamed
-// table's are its own; a field table's are the sites of the name its
-// operations were created with (ets_op's table column, which the
-// extractor follows through a map's fields where points-to does not). A
-// handed-in table is made out of view.
+// Possible :ets.new/2 allocation sites. Named and allocation-site tables use their own
+// sites. Field tables use ets_op's extracted table name as a fallback. Handed-in tables
+// have no visible allocation.
 .decl table_made_at(kind: symbol, ident: symbol, site: symbol)
 
 table_made_at(k, t, n) :- site_table(n, k, t).
@@ -250,21 +195,17 @@ table_made_at("field", t, n) :-
   name != "dynamic",
   ets_new(n, _, name).
 
-// A table the program does not show being made: a named table only a
-// dependency or a name that arrives at run time makes, or a handed-in
-// one. Nothing says it is private.
+// Tables without a visible allocation, including externally created named tables and
+// handed-in references. Their privacy is unknown.
 .decl table_made_out_of_view(kind: symbol, ident: symbol)
 
 table_made_out_of_view("named", t) :- ets_table(_, "named", t), !table_made_at("named", t, _).
 table_made_out_of_view("handed_in", t) :- ets_table(_, "handed_in", t).
 
-// An operation that may touch any table: no view names its table
-// (points-to could not follow its operand, and neither fallback holds),
-// or only as a field or a handed-in table no site in view is known to
-// make, which may be the program's own (a server's table under a name it
-// keeps in its state, handed to its own API as a parameter or in a map).
-// A rule that must not miss the table takes it to be any table; one that
-// must not invent one, none.
+// An unresolved operation, or one known only through a field/handed-in identity, may
+// alias any table. Consumers choose the conservative direction: include all candidates
+// when proving absence of interference, or none when requiring a definite shared
+// identity.
 .decl may_touch_any_table(id: symbol)
 
 may_touch_any_table(id) :- ets_op(id, _, _, _, _), !names_a_table(id).
@@ -300,10 +241,9 @@ table_public(k, t) :-
   ets_option(n, "access", "public"),
   !kept_by_its_process(k, t).
 
-// An unnamed table the process that made it keeps in its dictionary and
-// never hands to another (kept_in_dictionary, points_to.dl), nor gives
-// away: each process running the code keeps a table of its own, and
-// whatever its options, no other process holds a reference to it.
+// An unnamed table kept only in its creator's process dictionary, never passed or given
+// away, has a separate instance per process. No other process holds its reference,
+// regardless of table access options.
 .decl kept_by_its_process(kind: symbol, ident: symbol)
 
 kept_by_its_process("new", n) :-
@@ -319,12 +259,9 @@ handed_to_another(k, t) :- ets_op(id, _, _, "give_away", _), ets_table(id, k, t)
 
 // ── Tables across calls ─────────────────────────────────────────────
 
-// A table's kind as a CheckThenAct source (check_then_act.dl): a named
-// table is its name, a literal that crosses every call unchanged, as a
-// caller's literal argument does; a site and a handed-in table cross
-// every call too (global_identity); a field table crosses within its
-// module ("module field", module_identity). CheckThenAct's own "field"
-// is a key read from a map, which crosses nothing.
+// CheckThenAct table identities: names, allocation sites and handed-in tables survive
+// all calls (global_identity); module fields survive calls within that module
+// (module_identity). Ordinary CheckThenAct "field" keys do not cross calls.
 .decl table_source(kind: symbol, source: symbol)
 
 table_source("named", "literal").

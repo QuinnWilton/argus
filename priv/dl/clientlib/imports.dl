@@ -1,64 +1,27 @@
-// Standard imports for Argus client analyses.
-//
-// Include this single file to get all base fact declarations and the
-// call graph. This is the recommended starting point for writing new
-// analyses.
-//
-// Usage:
-//   .include "../clientlib/imports.dl"
-//
-// Provides:
-//   Base facts:     every Layer-1 and Layer-2 relation in Argus.Schema
-//                   (base.dl + layer2.dl, both generated)
-//   Stage-0 facts:  call_edge
-//   Derived here:   call_reachable
-//
-// `call_edge` arrives as FACTS, not a derivation: it is produced once by
-// `stage0.dl` and read here. Deriving it per analysis meant recomputing
-// the same fixpoint once per analysis, and it dragged the layer-1
-// relations — instruction, remote_call, function_def and friends — into
-// every analysis's input set, so any edit to a function body dirtied
-// every analysis, including ones that only reason about supervision
-// structure. call_edge is far more stable than its inputs: changing what
-// a function *does* leaves it untouched; only changing what a function
-// *calls* moves it. `Argus.Analysis.run_rules/3` runs stage 0 for you;
-// incremental consumers memoize it separately and reuse it across solves.
-//
-// call_reachable stays derived here rather than staged — see stage0.dl
-// for why (the closure is quadratic and dwarfs the edge relation).
-//
-// There is no instruction-level control-flow graph in Datalog. Souffle
-// drops a derived relation no output depends on, and the inputs only it
-// reads, so an unread cfg_edge rule here would cost nothing; but every
-// analysis that read it would take branch/jump/next/label_at as inputs,
-// rows that move on every body edit. Intra-function reachability is
-// computed per module in Elixir (`Argus.Cfg`) and arrives as facts such
-// as `conditional_call` and `def_use`; whether one instruction runs after
-// another is `runs_after` (order.dl), over the block facts the pipeline
-// derives for the instructions a rule can ask about (`site_block`,
-// `block_flow`).
+// Standard imports for client analyses: generated Layer-1/2 facts and the staged call
+// graph. Start with `.include "../clientlib/imports.dl"`.
+// `call_edge` is produced once by stage0.dl and reused across analyses;
+// Argus.Analysis.run_rules/3 runs that stage. `call_reachable` is derived on demand
+// because its full closure can be large.
+// Intra-function control flow is computed in Elixir (`Argus.Cfg`) and exposed through
+// facts such as conditional_call and def_use. For site ordering, use order.dl over
+// site_block/block_flow rather than rebuilding an instruction-level CFG.
 .include "../base.dl"
 
-// Layer-2 domain-extractor declarations, generated from the same schema.
-// Analyses used to hand-declare the handful they read — 95 declarations of
-// 50 distinct relations across 19 files, none of them checked against
-// Argus.Schema. Declaring the whole layer here is free for the same reason
-// base.dl is: Souffle prunes input relations no rule reads.
+// Generated Layer-2 declarations from Argus.Schema. Include the full layer; Souffle
+// prunes unused relations and their inputs.
 .include "../layer2.dl"
 
-// Layer-3 priors: a classifier's answers, written by Argus.Priors after
-// extraction or left empty. Declared for every program for the same
-// reason as the layers above; a rule that reads one uses it only as a
-// positive premise (see Argus.Schema).
+// Layer-3 priors contain optional classifier results from Argus.Priors. Declare them
+// for every program; rules may use them only as positive premises.
 .include "../priors.dl"
 
 // Call graph, derived once by stage0.dl.
 .decl call_edge(caller: symbol, callee: symbol)
 .input call_edge
 
-// Stage-0 as well: the project-internal call sites, the GenServer ones
-// and the few library calls findings anchor at, so a finding can point
-// at the calling instruction without reading remote_call.
+// Stage-0 call sites cover project calls, GenServer calls and selected library calls,
+// providing finding anchors without reading remote_call.
 .decl call_site(id: symbol, caller: symbol, callee_mod: symbol, callee_func: symbol, arity: number)
 .input call_site
 
@@ -76,9 +39,8 @@
 .decl fun_handed_to(caller: symbol, fun: symbol, callee: symbol)
 .input fun_handed_to
 
-// The instruction in `func` that calls the project function `callee`:
-// the site a finding points at when a rule knows only the functions.
-// Over the staged call_site, so no analysis reads remote_call for it.
+// The staged instruction where func calls project function callee. Use it to anchor
+// function-level findings without reading remote_call.
 .decl call_instr(func: symbol, callee: symbol, id: symbol)
 
 call_instr(f, g, id) :-
@@ -91,21 +53,15 @@ call_instr(f, g, id) :-
 
 in_module(f, m) :- function_def(f, m, _, _, _).
 
-// Transitive call reachability, closed over the staged edges. No
-// built-in analysis reads it any more: the closure is quadratic in the
-// call graph (17M rows from 100k edges on one corpus project, ~500 MB per
-// solve) and every question the analyses ask is answered by propagating
-// over call_edge from the few functions that matter — see calls.dl.
-// It stays declared for custom programs; Souffle prunes it when unread.
+// Full transitive reach over staged call edges, retained for custom programs and pruned
+// when unused. Built-in analyses instead seed targeted propagation to avoid a
+// potentially quadratic closure.
 .decl call_reachable(from: symbol, to: symbol)
 .include "call_reachable_rules.dl"
 
-// Target columns that name no module say "dynamic" (the extractor could
-// not resolve the target), ":dynamic" (a partially resolved via tuple
-// carried the placeholder into the registry slot) or "via:Registry" (a
-// via tuple whose module is unknowable). A join against function_def or
-// behaves_as is safe by construction; a rule that carries a target into
-// a finding must exclude all three, as calls.dl does.
+// Non-module targets use dynamic, :dynamic, or via:Registry. Definition/behaviour joins
+// naturally reject them; rules carrying target strings into findings must filter all
+// three explicitly.
 
 // Reachability components: see reach.dl.
 .include "reach.dl"

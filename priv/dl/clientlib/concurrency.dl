@@ -1,51 +1,14 @@
-// Which functions more than one process can be running at once.
-//
-// A check-then-act on a shared built-in — a registry, an ETS table — is a
-// race only if a second process can act between the check and the act.
-// The owner of a registry deciding on its own registry from its own
-// callbacks is not a race, and reporting it was the false-positive class
-// this component exists to remove. A function runs in more than one
-// process when two different process modules' callbacks reach it, when
-// one module with many live instances (a LiveView, a Channel, a
-// DynamicSupervisor child) reaches it, when a request entry reaches it,
-// or when one entry reaches it and so does a caller outside the program
-// (a library's reset/1 its own server also calls). A function no process
-// entry reaches at all is a plain API: it runs in every caller, and is
-// not single_process either.
-//
-// A process a spawn, a task or an agent starts (process_start) is an
-// entry of its own, keyed by the process: what it runs is its work, not
-// its starter's, since the walk from an entry stays in the entry's
-// process (SameProcessReach). It has many instances when the start runs
-// more than once — reached from a request or a message handler, in a
-// closure (a comprehension's body), or in a function that calls itself —
-// and is one process otherwise (a worker init/1 spawns).
-//
-// Whether a process other than a given entry's can run a function
-// (runs_beside, which the races ask of the other writer when the
-// check-then-act runs in one process): another entry's process reaches
-// it, whether or not the given entry's reaches it too, a request's, or
-// a caller outside the program does, unless what that process runs is
-// ordered before (handed_off, below). A caller outside the program — a library's
-// user — can be any process. An exported function is such a caller's
-// way in when no other module of the program calls into its module (the
-// module is the program's face to its callers) and it is no callback the
-// runtime calls in the module's own process, whether or not the program
-// calls it too: a library's reset/1 its own server also calls is its
-// users' as well. A module other modules of the program call is one the
-// program is the client of, with its callers in view, and an exported
-// function of it none of them calls is unused (the tests, which are not
-// in the beams, may call it), not a way in. nerves_hub_web's
-// CLISessionCache is the shape: Accounts calls its get_and_update/2 and
-// get/1, and only the tests call its clear/0. The same module in a
-// library nothing calls into is all API, clear/0 included. What this
-// misses is a module a library both calls itself and hands its users,
-// through a function the library never calls.
-//
-// Instantiate with the sites of interest as seeds; the closure is
-// backward from them, never forward from every entry. Prerequisites:
-// imports.dl, otp.dl (process_entry, behaves_as, dynamic_child,
-// runs_elsewhere) and request_entry.dl.
+// Classify functions that can run concurrently. Multiple process entries,
+// multi-instance servers, request entries, or external callers prevent
+// `single_process`. Functions with no process entry are caller-run APIs.
+// Spawned/task/agent bodies have separate roots; repeatable starts imply multiple
+// instances.
+// SameProcessReach keeps work on its execution stack. `runs_beside` identifies other
+// processes unless a proven handoff orders their work. External entries use ways_in.dl:
+// exports of library-facing modules count, but unused exports of modules with visible
+// clients do not. This can miss APIs a library both uses and exposes.
+// Seed functions of interest and traverse backward. Requires imports.dl, otp.dl, and
+// request_entry.dl.
 
 // open_entry and called_by_other_module are clientlib/ways_in.dl's.
 
@@ -95,29 +58,19 @@
   .decl single_process(func: symbol)
   single_process(t) :- entry_reaches(_, t), !second_process(t).
 
-  // A seed a caller outside the program can run, in its own process: an
-  // exported function of a module no other module of the program calls
-  // (library_face, clientlib/ways_in.dl) reaches it on the caller's
-  // stack.
+  // An external caller can run the seed on its own stack through a library_face export.
+  // See ways_in.dl.
   .decl outside_reaches(func: symbol)
   outside_reaches(t) :- seed(t), walk.reaches(c, t), outside_caller(c).
 
-  // A way in callers outside the program use: an exported function of a
-  // module no other module calls, that the runtime does not call in a
-  // process of its own — no callback, and no process body a start of the
-  // program runs (`spawn(__MODULE__, :loop, [t])`'s loop/1).
+  // An externally callable export of a library-facing module, excluding runtime
+  // callbacks and known spawned process bodies.
   .decl outside_caller(func: symbol)
   outside_caller(c) :- library_face(c), !process_entry(_, c), !process_start(_, _, _, _, c).
 
-  // runs_beside(m, f, g, x): a process other than entry m's can run g,
-  // on its way to an operation in x (g itself, or a function g reaches),
-  // while m's process runs f: another entry's process reaches g, a
-  // request's, or a caller outside the program. That m's own process
-  // runs g too changes nothing: a function the owner's callbacks and a
-  // janitor both call runs in the janitor as well. Another entry's
-  // process is not beside m's when all it runs happens before m's
-  // process runs f, or when all m's process runs of x happens after it
-  // (handed_off): a write named at a caller is made where the write is.
+  // Another process can run g toward operation x while entry m runs f. Internal use of
+  // g by m does not exclude external use. A proven handoff suppresses overlap based on
+  // where the operation executes, even when its key is named at a caller.
   .decl runs_beside(entry: symbol, func: symbol, other: symbol, at: symbol) inline
   runs_beside(m, f, g, x) :-
     entry_reaches(m, f),
@@ -128,17 +81,14 @@
   runs_beside(m, f, g, x) :- entry_reaches(m, f), seed(x), request_entry(e, _), walk.reaches(e, g).
   runs_beside(m, f, g, x) :- entry_reaches(m, f), seed(x), outside_reaches(g).
 
-  // `func` runs in one process, entry m's, and a process other than m's
-  // can run `other` beside it (runs_beside): the second process of a
-  // race whose own function runs in only one.
+  // `func` runs only in entry m's process, while another process may execute other
+  // concurrently (runs_beside).
   .decl beside_single_process(func: symbol, other: symbol) inline
   beside_single_process(f, g) :- single_process(f), entry_reaches(m, f), runs_beside(m, f, g, g).
 
-  // The same, of what the other process runs once it has started: a
-  // write only its init/1 (or an Application's start/2) makes runs while
-  // it starts, which a supervisor's ordered start runs before the pair's
-  // process (an assumption: a later sibling's init/1, or a restart of the
-  // other process alone, running it while the pair runs, is not seen).
+  // Consider only rival work after startup. Init-only writes are assumed ordered before
+  // the pair's process; later-sibling init and isolated-restart overlap are known
+  // omissions.
   .decl runs_beside_up(entry: symbol, func: symbol, other: symbol, at: symbol) inline
   runs_beside_up(m, f, g, x) :-
     entry_reaches(m, f),
@@ -149,35 +99,18 @@
   runs_beside_up(m, f, g, x) :- entry_reaches(m, f), seed(x), request_entry(e, _), walk.reaches(e, g).
   runs_beside_up(m, f, g, x) :- entry_reaches(m, f), seed(x), outside_reaches(g).
 
-  // What an entry's process runs once it is up: from a callback other
-  // than the ones it starts in, and all a spawned process runs.
+  // Work after startup: non-startup callbacks and all work in spawned processes.
   .decl up_reaches(entry: symbol, func: symbol)
   up_reaches(m, t) :- process_entry(m, c), !startup_callback(c), walk.reaches(c, t).
   up_reaches(p, t) :- spawned(p, _, r), walk.reaches(r, t), seed(t).
 
-  // ── Handed off: a loader its starter waits for ─────────────────────
+  // Loader handoff
   //
-  // handed_off(p, m, x): everything process p runs happens before entry
-  // m's process runs x. vernemq's trie servers are the shape: init/1
-  // spawns a loader that fills the tables and, as its last act, sends
-  // its starter `subscribers_loaded`; until that message is taken, every
-  // update the server is asked for is queued (its clauses match
-  // `status = init`), and the clause for it drains the queue and sets the
-  // status that lets the server serve. The loader's writes come before
-  // its message, the message before the server takes it, and the server
-  // runs the tables' updates only after it has. Each link is a witness:
-  //
-  // - p is a loader of m: a spawn m's init/1 makes on its own stack, once
-  //   per incarnation of a single m (no loop or handler starts it again);
-  // - p's last act sends m's process a message tagged t (last_send, the
-  //   send's only target m's server), and no other message the program
-  //   spells t goes to m's process, nor does a timer the program arms;
-  // - every call of m's callbacks that reaches x runs only once m has
-  //   taken t (serves_after).
-  //
-  // A loader that reports in the middle of its work, or goes on working
-  // after it reports, has no last_send; a starter that serves before the
-  // report has a call to x that runs early.
+  // `handed_off(p, m, x)` proves p finishes its work before m runs x. Require one
+  // loader started by a single process's init, a final send to that server, no
+  // competing send or timer with the same tag, and every callback path to x gated until
+  // the report is received. Reporting before work finishes or serving early invalidates
+  // the ordering.
   .decl handed_off(proc: symbol, entry: symbol, func: symbol)
   handed_off(p, m, x) :-
     sole_report(p, m, t),
@@ -213,9 +146,8 @@
     process_call(r, id, id, "info", proc),
     !server_process(proc, m).
 
-  // The report is the only message tagged t the program makes for m's
-  // process: every other send spelling t goes to a process that is not
-  // m's, as points-to resolves it, and no timer spells t.
+  // The report is the sole known producer of tag t for m. Other sends target different
+  // processes, and no timer produces t.
   .decl sole_report(proc: symbol, entry: symbol, tag: symbol)
   sole_report(p, m, t) :- report_site(p, m, t, _), !other_report(p, m, t).
 
@@ -242,13 +174,9 @@
     pid_send(id, _, _, _, _),
     !process_call(_, _, id, "info", _).
 
-  // A call of one of m's callbacks, on the way to x, that may run before
-  // m has taken t: at a site not known to run after (serves_after), or
-  // with no site of its own (a closure made there, a fun handed on). A
-  // callback that is x itself holds x's own operations, and is not read
-  // here. The callbacks are the ones GenServer's loop calls (server_root):
-  // a helper that only shares a callback's name (vernemq's
-  // handle_event/2) runs where its callers do.
+  // A callback call toward x that may precede report t: no `serves_after` proof or no
+  // call site. Only actual server callbacks count. When x is itself a callback, its own
+  // operations are handled separately.
   .decl early_call(entry: symbol, func: symbol, tag: symbol)
   early_call(m, x, t) :-
     sole_report(_, m, t),
@@ -280,8 +208,8 @@
 
   early_call(m, x, t) :- sole_report(_, m, t), seed(x), server_root(m, x).
 
-  // A site of m's callback c that runs only once m has taken t: in the
-  // clause of m's handle_info/2 for t, and in no other clause.
+  // A site belongs exclusively to m's handle_info/2 clause for tag t, so it runs only
+  // after that message arrives.
   .decl serves_after(site: symbol, callback: symbol, entry: symbol, tag: symbol)
   serves_after(s, c, m, t) :-
     sole_report(_, m, t),
@@ -293,13 +221,10 @@
   .decl other_clause(site: symbol, callback: symbol, tag: symbol)
   other_clause(s, c, t) :- sole_report(_, m, t), server_root(m, c), clause_call(s, c, t), clause_call(s, c, t2), t2 != t.
 
-  // Behind a gate on m's state that only the clause for t opens: the
-  // site does not run while a field holds the value init/1 starts it at
-  // (state_excluded, Argus.Extractors.StateGate), and no return of m's
-  // handlers or code_change/3 but that clause's sets the field to
-  // anything else. Until m has taken t, the field keeps its start. The
-  // handler is the process's own: nothing in the program calls it with
-  // a state of its own making.
+  // A state gate blocks the site at init's field value, and only the report-t clause
+  // changes that value. All handlers and code_change are checked. Require the callback
+  // to receive only the server's own state, with no direct program calls supplying
+  // another state.
   serves_after(s, c, m, t) :-
     sole_report(_, m, t),
     state_setter(m, c),
@@ -326,36 +251,22 @@
   // handle_call/3 or handle_cast/2 no request the program makes enters.
   serves_after(s, c, m, t) :- sole_report(_, m, t), unrequested(s, c), function_def(c, m, _, _, _).
 
-  // ── Requests: the clauses of a server the program asks for ───────────
+  // Requests entering server clauses
   //
-  // A clause of handle_call/3 runs when a call carrying its tag reaches
-  // the server, and one of handle_cast/2 when such a cast does. Where the
-  // program's calls and casts all say what they carry, a clause for a tag
-  // none of them carries is not a way into the server: vernemq's tries
-  // answer `{event, e}`, which only their tests send. A call or cast goes
-  // where points-to resolves it, or to any server where it resolves none;
-  // one whose message the program does not spell may be any request.
-  // Every call counts, whoever calls it: an exported function nothing in
-  // view calls (vmq_reg_trie's init_subscriptions/0, whose `init_subs`
-  // starts a second loader) may be applied by a computed name.
-  //
-  // Callers outside the program ask a server the way its module offers,
-  // as they call its exported functions (ways_in.dl): through the calls
-  // and casts its own functions make. A server whose module is its users'
-  // (no other module of the program calls it, library_face) and makes no
-  // request of its own offers no way but the raw one: its users may ask
-  // it anything. An assumption: a server is asked through the `GenServer`
-  // and `:gen_server` calls and casts, and a caller outside the program
-  // asks one that offers an API through it.
+  // Known call/cast tags select matching handlers; unknown messages admit any clause.
+  // Resolved targets select servers; unresolved targets may reach any server. Count all
+  // call sites, including otherwise unused exports.
+  // Assume external callers use an offered API. A library-facing server with no own
+  // request API may receive any raw request. This model covers GenServer and
+  // :gen_server calls/casts.
   .decl request(site: symbol, func: symbol, kind: symbol)
   request(id, f, kind) :-
     remote_call(id, f, gs, kind, a),
     (gs = "GenServer" ; gs = ":gen_server"),
     ((kind = "call", (a = 2 ; a = 3)) ; (kind = "cast", a = 2)).
 
-  // A request, by the tag it carries, in the function that makes it or,
-  // where the message is the function's parameter, in each caller that
-  // fills it: `call(key, {:write, ...})` handed on by a wrapper.
+  // Resolve request tags at the sending function or callers that supply its message
+  // parameter.
   .decl request_tag(func: symbol, site: symbol, kind: symbol, tag: symbol)
   request_tag(f, id, kind, tag) :- request(id, f, kind), call_tag(id, f, kind, tag).
 
@@ -385,9 +296,8 @@
     pid_message(id, f, kind, "param", q),
     untold_arg(c, f, q).
 
-  // A request whose message is spelled, or is a parameter every caller
-  // fills with a spelled message, or none (a function no call fills is
-  // any request, through its callers outside the program).
+  // Requests with known messages, directly or at every supplying caller. With no
+  // visible caller, external callers may supply any request.
   .decl told_request(site: symbol, func: symbol, kind: symbol)
   told_request(id, f, kind) :- request(id, f, kind), call_tag(id, f, kind, _).
 
@@ -404,8 +314,8 @@
     !untold_param(f, q),
     !untold_object(id, f, kind).
 
-  // The message may be something the facts do not spell: a term with no
-  // tag, or of a source other than a term or a parameter.
+  // The message has an unknown tag or an unsupported source, so its request shape is
+  // unresolved.
   .decl untold_object(site: symbol, func: symbol, kind: symbol)
   untold_object(id, f, kind) :-
     request(id, f, kind),
@@ -487,9 +397,8 @@ message_tag(msg, t) :-
   pid_send(_, _, msg, _, _),
   (msg = t ; msg = cat("{", t, ", …}")).
 
-// The value a field of a server's state starts at: every way its init/1
-// completes with a state holds it there (Argus.Extractors.StateGate's
-// state_return, read for the fields its handlers test).
+// A state field has this value on every successful init/1 return. Read state_return for
+// fields tested by handlers.
 .decl starts_at(mod: symbol, key: symbol, value: symbol)
 
 starts_at(m, k, v) :-
@@ -505,10 +414,8 @@ starts_elsewhere(m, k, v) :-
   state_return(i, _, k, v2),
   v2 != v.
 
-// The callbacks GenServer's loop calls in a server's process: init/1,
-// the handlers and code_change/3 (state_setter, callbacks.dl),
-// terminate/2 and format_status/1,2. A module under another behaviour
-// has none: the handoff is read of GenServers.
+// GenServer process callbacks: init, handlers, code_change, terminate and
+// format_status. This handoff model does not classify other behaviours.
 .decl server_root(mod: symbol, func: symbol)
 
 server_root(m, f) :- state_setter(m, f).

@@ -1,20 +1,10 @@
-// Which process a pid can be, as the points-to stage (priv/dl/points_to.dl)
-// derived it: the relations of processes.dl the analyses read, staged
-// once per program and read here as facts. Each is documented where
-// processes.dl derives it.
-//
-// The fixpoint behind them is most of a solve over a large program, and
-// every analysis that asked about processes used to recompute it. It is
-// the same fixpoint for each of them, so it is computed once; what an
-// analysis may add to it (sends.dl, signals.dl) it adds over the staged
-// rows.
-//
-// Prerequisites: include clientlib/imports.dl before this file (otp.dl
-// does).
+// Process points-to facts computed once by points_to.dl and consumed by analyses. See
+// processes.dl for relation definitions. sends.dl and signals.dl extend these staged
+// rows without recomputing the fixpoint. Requires imports.dl; otp.dl includes this
+// file.
 
-// Processes: those running a module's callbacks, each instance of a
-// start with its start site, a supervisor's children, the processes a
-// function keeps for itself, and every process the program names.
+// Process identities: callback modules, individual start sites, supervised children,
+// privately retained instances and named processes.
 .decl server_process(proc: symbol, mod: symbol)
 .input server_process
 
@@ -34,9 +24,8 @@
 .decl named_pid(name: symbol, proc: symbol)
 .input named_pid
 
-// `func` waits on (call), casts to (cast) or sends to (info) `proc`,
-// through the use at `site`, in `func` or in a helper `func` hands the
-// pid to at `anchor`. Signals are staged apart (signals.dl).
+// `func` calls, casts or sends info to proc at site, directly or through a
+// PID-receiving helper at anchor. Signals are staged separately.
 .decl process_call(func: symbol, anchor: symbol, site: symbol, api_kind: symbol, proc: symbol)
 .input process_call
 
@@ -49,14 +38,9 @@
 .decl self_call(func: symbol, site: symbol)
 .input self_call
 
-// What a source, seen from inside `func`, may point to — only the
-// processes and the ETS tables, and only for the sources the analyses
-// ask about: the first argument of a call a GenServer handler makes
-// (source_process, shutdown's stops) and the table operand of an :ets
-// operation (source_table, tables.dl). The terms that hold them are the
-// bulk of source_pts (118 MB of it over ssl, public_key and kernel), and
-// the points-to of an arbitrary source is what the stage otherwise never
-// needs; a rule that asks about another source adds it to points_to.dl.
+// Possible process/table leaves for demanded sources: handler call targets and ETS
+// operands. Do not export intermediate terms or arbitrary source points-to rows. New
+// source demands must be added to points_to.dl.
 .decl source_process(func: symbol, src_kind: symbol, src: symbol, proc: symbol)
 .input source_process
 

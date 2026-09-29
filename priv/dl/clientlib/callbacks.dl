@@ -1,14 +1,5 @@
-// Which functions are OTP callbacks, and of what.
-//
+// OTP callback classification: initialization, handlers, termination and state setters.
 // Requires imports.dl and behaviours.dl.
-//
-// Provides:
-//   otp_callback(func, mod, callback, behaviour)
-//   init_function(mod, func)
-//   handle_call_function(mod, func) / handle_cast_function(mod, func)
-//   handler_function(mod, func)
-//   terminate_callback(func, mod, behaviour)
-//   state_setter(mod, func)
 
 // Names a callback loop dispatches to. A function of this name in a
 // module of a loop behaviour runs on the server's own stack.
@@ -33,13 +24,9 @@ callback_name("mount").
 callback_name("code_change").
 callback_name("format_status").
 
-// The callbacks a loop calls with what its own process was started
-// with or sent: its start arguments, its calls, casts, messages and
-// continues, its exit, a code change, a status request. Not those an
-// outside party's data arrives in: a LiveView's events and params, a
-// channel's payloads, a Broadway or GenStage message (request_entry.dl
-// names the ones that carry a request). unsafe_input asks it of a
-// function a caller's input may reach.
+// Callbacks receiving process-owned start arguments, messages, exits, or management
+// requests. Excludes callbacks carrying external request data, such as LiveView events,
+// channel payloads, and Broadway/GenStage messages. Used by unsafe_input.
 .decl message_callback(name: symbol)
 
 message_callback("init").
@@ -51,11 +38,9 @@ message_callback("terminate").
 message_callback("code_change").
 message_callback("format_status").
 
-// Callbacks one behaviour's loop runs, too specific to name in every
-// loop module: a helper called `join` in a GenServer is its client API.
-// A channel's join/3 and handle_out/3 run in the channel's process (the
-// channel server calls join before the channel is joined); a LiveView's
-// and a LiveComponent's handle_async/3 in the LiveView's.
+// Behaviour-specific callback names and arities avoid mistaking ordinary helpers for
+// callbacks. Channel join/out run in the channel; LiveView/LiveComponent async
+// callbacks run in the LiveView.
 .decl behaviour_callback(behaviour: symbol, name: symbol)
 
 behaviour_callback("Phoenix.Channel", "join").
@@ -63,11 +48,9 @@ behaviour_callback("Phoenix.Channel", "handle_out").
 behaviour_callback("Phoenix.LiveView", "handle_async").
 behaviour_callback("Phoenix.LiveComponent", "handle_async").
 
-// A callback of a loop behaviour, with the canonical behaviour it belongs
-// to. Nine analyses each kept a private version of this, and they did
-// not agree on arities: ask function_def for the arity when it matters.
-// A callback name is matched at any arity, so a helper that shares one
-// counts (loud where a finding rests on it being the server's code).
+// A loop callback and its canonical behaviour. This relation matches names at any
+// arity; consumers needing precision must check function_def arity. Same-name helpers
+// can otherwise count as server code.
 .decl otp_callback(func: symbol, mod: symbol, callback: symbol, behaviour: symbol)
 
 otp_callback(func, mod, name, behaviour) :-
@@ -82,10 +65,8 @@ otp_callback(func, mod, name, behaviour) :-
   behaviour_callback(behaviour, name),
   function_def(func, mod, name, _, _).
 
-// A server under a behaviour the table does not list: a module that
-// declares one and handles calls, casts or messages the way a server does
-// (process_behaviour_module's second clause, a library's GenServer
-// wrapper) runs its callbacks in its own process, as a listed one does.
+// An unlisted declared behaviour is treated as a server when its module exposes
+// server-shaped call, cast, or info handlers.
 otp_callback(func, mod, name, behaviour) :-
   unlisted_server(mod),
   behaves_as(mod, behaviour),
@@ -104,12 +85,9 @@ unlisted_server(mod) :-
 
 loop_module(mod) :- behaves_as(mod, b), process_behaviour(b, "loop").
 
-// A module that runs as a process: a process behaviour's
-// (process_behaviour: GenServer, Supervisor, gen_statem, GenStage, ...),
-// or one of a behaviour the table does not list whose module handles
-// messages the way a server does (a library's GenServer wrapper). Plug,
-// Ecto.Type or Ecto.ParameterizedType define init/1 too, and run in
-// whoever calls them.
+// Process modules have a recognized process behaviour or inferred server-shaped
+// handlers. Merely defining init/1, as Plug or Ecto types do, does not establish
+// process ownership.
 .decl process_behaviour_module(mod: symbol)
 
 process_behaviour_module(mod) :- behaves_as(mod, b), process_behaviour(b, _).
@@ -127,10 +105,8 @@ init_function(mod, func) :-
   function_def(func, mod, "init", 1, _),
   process_behaviour_module(mod).
 
-// Where a process module's own code starts running: its callbacks. What
-// these reach runs in the process; what only its API reaches runs in
-// callers. An analysis that also reads statem_event_clause adds the
-// state functions of a gen_statem with a rule of its own.
+// Process callbacks root execution on the server's own stack. Client-only APIs run in
+// callers. Consumers of statem_event_clause add gen_statem state entries separately.
 .decl process_entry(mod: symbol, func: symbol)
 
 process_entry(mod, func) :- otp_callback(func, mod, _, _).
@@ -140,17 +116,10 @@ process_entry(mod, func) :-
   function_def(func, mod, "terminate", 2, _),
   process_behaviour_module(mod).
 
-// The request handlers of a server that answers calls by GenServer's
-// contract (process_behaviour "gen_server_like": GenServer, the wrappers
-// behaviours.dl aliases to it, GenStage; and a server under an unlisted
-// behaviour with a handle_call/3), at their contract arities: the
-// handle_call/3 a call's request enters, whose `{:noreply, …}` defers
-// the reply, and the handle_cast/2 a cast enters. The one word for "the
-// handler that answers a call": the chains, the tag attribution
-// (calls.dl), the self-directed calls (resolved_calls.dl) and the reply
-// rules (replies.dl) all read it. A gen_statem answers calls from its
-// state functions, by another contract. A module that defines
-// handle_call/3 and runs no process answers nobody.
+// Canonical GenServer-contract call and cast handlers at their expected arities.
+// Includes aliases, GenStage, and process behaviours inferred from handle_call/3.
+// Shared by dependency, target, and reply rules. gen_statem uses a separate contract; a
+// helper module merely defining handle_call is not a server.
 .decl handle_call_function(mod: symbol, func: symbol)
 
 handle_call_function(mod, func) :-
@@ -163,10 +132,8 @@ handle_cast_function(mod, func) :-
   function_def(func, mod, "handle_cast", 2, _),
   gen_server_like(mod).
 
-// A server under a behaviour the table does not list that defines
-// handle_call/3 (unlisted_server: rabbit's gen_server2, a library's own
-// wrapper) is taken to answer by the same contract: it is what a
-// handle_call/3 in a server says.
+// Treat handle_call/3 in an unlisted server behaviour as following the usual
+// request/reply contract.
 .decl gen_server_like(mod: symbol)
 
 gen_server_like(mod) :- behaves_as(mod, b), process_behaviour(b, "gen_server_like").
@@ -188,16 +155,12 @@ terminate_callback(func, mod, behaviour) :-
   process_behaviour(behaviour, "terminating"),
   function_def(func, mod, "terminate", _, _).
 
-// ── Callbacks that run once, and callbacks that run again ────────────
+// Callback frequency
 //
-// runs_again_callback(name, arity): a callback that runs whenever its
-// request or message comes (not init/1, handle_continue/2 or mount/3).
-// start_callback(mod, func): where a process starts, and runs once:
-// init/1 (init_function), a Channel's join/3, a LiveView's mount/3.
-// handle_continue/2 is neither: it runs whenever a return continues to
-// it, once from init/1 or again from a handler, and runs.dl tells its
-// clauses apart by what continues to them. Read by runs.dl and by
-// mailbox's timer loop.
+// `runs_again_callback` identifies repeatable request/message callbacks.
+// `start_callback` identifies init, Channel join, and LiveView mount. handle_continue
+// belongs to neither list: runs.dl classifies each clause by whether startup or
+// repeatable handlers schedule it.
 .decl runs_again_callback(name: symbol, arity: number)
 
 runs_again_callback("handle_info", 2).
@@ -215,16 +178,10 @@ start_callback(mod, f) :- init_function(mod, f).
 start_callback(mod, f) :- otp_callback(f, mod, "join", _), function_def(f, mod, "join", 3, _).
 start_callback(mod, f) :- otp_callback(f, mod, "mount", _), function_def(f, mod, "mount", 3, _).
 
-// ── What sets a server's state ────────────────────────────────────────
-//
-// state_setter(mod, func): a callback whose return hands a GenServer, or
-// a wrapper that hands its users GenServer's callbacks (behaves_as,
-// behaviours.dl), its next state: handle_call/3, handle_cast/2,
-// handle_info/2, handle_continue/2 and code_change/3. A result of a
-// shape GenServer does not return (Connection's `{:connect, info,
-// state}`) reads as any state (state_return's `dynamic`); a server under
-// a behaviour the table does not know is not read. Read by runs.dl's
-// gated once sites and concurrency.dl's handoff.
+// Callbacks returning a GenServer's next state: call, cast, info, continue, and
+// code_change. Applies to recognized GenServer wrappers. Unrecognized return shapes
+// yield dynamic state; unlisted behaviours are excluded. Used for state gates and
+// concurrency handoff.
 .decl state_setter(mod: symbol, func: symbol)
 
 state_setter(m, f) :-

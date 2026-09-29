@@ -1,13 +1,6 @@
-// The effect model's categories, grouped by what a rule needs to know.
-//
-// `impure_call` classifies a call by category (io, network, ets,
-// process, port, node, logging, clock, ...) and mode (read or write).
-// Two analyses had each kept a list of "the categories that matter":
-// shutdown safety's durable cleanup and transaction safety's effects a
-// rollback cannot undo are the same six. One list, one rationale:
-// effects that leave the process and cannot be taken back.
-//
-// Requires imports.dl.
+// Shared effect categories for cleanup and transaction checks. `impure_call` supplies
+// category and read/write mode; durable effects leave the process and cannot be rolled
+// back. Requires imports.dl.
 
 .decl durable_effect(category: symbol)
 
@@ -25,9 +18,8 @@ durable_effect("node").      // another node already saw it
 slow_effect("network").
 slow_effect("port").
 
-// Building a struct or a message is not an effect. `Kernel` is
-// deliberately not in the effect model's pure list (purity found a
-// soundness hole there), so its calls arrive as unknown.
+// Struct and message construction are not effects. Handle them explicitly because
+// Kernel as a whole is not classified pure.
 .decl structural_call(api: symbol)
 
 structural_call(api) :- unknown_call(_, _, api, _), match("Kernel\\..*", api).
@@ -57,18 +49,10 @@ config_write_api(":ets:insert_new/2").
 config_write_api(c) :- post_start_call(_, _, c), match("Application:put_env/.*", c).
 config_write_api(c) :- post_start_call(_, _, c), match("Application:put_all_env/.*", c).
 
-// ── ETS operations, by what they do to a table's rows ────────────────
-//
-// ets_removal_op(op): removes rows of the table it is given (`ets_op`'s
-// op): by key (delete/2, take/2, which reads the row too), by object
-// (delete_object/2), by what a pattern or a match spec matches
-// (match_delete/2, select_delete/2), or all of them
-// (delete_all_objects/1). delete/1, which drops the table and its rows
-// with it, is `ets_op`'s op "delete" too, in mode "delete".
-// ets_removes_every_key(op) names the ones whose rows are not known by a
-// key. races (a row another process may have removed), ets (a table
-// that only grows), failure (a seeded row nothing removes) and mailbox's
-// bookkeeping (removal_api) read them.
+// ETS row removals by key, object, pattern, or whole table. `ets_removes_every_key`
+// identifies operations without a specific key. ETS delete/1 and delete/2 both use op
+// `delete`; mode distinguishes table deletion. Shared by race, growth, missing-row, and
+// bookkeeping checks.
 .decl ets_removal_op(op: symbol)
 
 ets_removal_op("delete").
@@ -84,15 +68,10 @@ ets_removes_every_key("delete_all_objects").
 ets_removes_every_key("select_delete").
 ets_removes_every_key("match_delete").
 
-// ets_answers_missing_table(op): answers, where every other ETS operation
-// raises badarg, when its table is gone: :ets.info/1,2 and
-// :ets.whereis/1 say :undefined. ets_raises_without_row(api): raises
-// badarg when the key has no row, the table being there:
-// lookup_element/3 and update_counter/3 (their /4 forms take a default;
-// update_element answers false). races asks the second of an act,
-// ets.dl the first of a read in a caller, failure a stricter list of
-// its own (fails_on_missing_table: what fails only without the table,
-// leaving out a select or a match, whose spec can raise on its own).
+// `ets_answers_missing_table` identifies info/whereis operations returning undefined
+// for absent tables. `ets_raises_without_row` identifies lookup_element/3 and
+// update_counter/3; /4 forms supply defaults and update_element returns false.
+// failure.dl separately checks operations failing only on table absence.
 .decl ets_answers_missing_table(op: symbol)
 
 ets_answers_missing_table("info").
@@ -103,9 +82,8 @@ ets_answers_missing_table("whereis").
 ets_raises_without_row(":ets", "lookup_element", 3).
 ets_raises_without_row(":ets", "update_counter", 3).
 
-// Removing an entry from a map, set, keyword list or ETS table: the
-// bookkeeping paths a monitor's release belongs on. Both the Elixir
-// spelling and the :maps one the compiler rewrites it to.
+// Entry-removal operations used in monitor bookkeeping: maps, sets, keyword lists and
+// ETS. Include Elixir APIs and compiler-generated :maps calls.
 .decl removal_api(mod: symbol, func: symbol)
 
 removal_api("Map", "delete").
@@ -119,14 +97,9 @@ removal_api("Keyword", "delete").
 removal_api("List", "delete").
 removal_api(":ets", op) :- ets_removal_op(op).
 
-// Releasing what the calling process holds: its monitors and links, the
-// timers it armed, the ports, sockets and files it owns. The runtime
-// does each of these itself when the process exits, so a skipped call
-// leaves nothing behind, and none waits on anything that could overrun
-// a deadline. Not here: `:timer.cancel/1` (an apply_after outlives the
-// process that armed it), `:ets.delete/1` (the table may be another
-// process's, or have an heir), `:ssl.close/2` (it can hand the socket
-// on), `:dets.close/1` (a shared table others may hold open).
+// Resource releases treated as automatic on owner exit: monitors, links, owned timers,
+// ports, sockets, and files. Excludes timer.cancel for surviving apply_after work, ETS
+// tables with other owners or heirs, ssl.close/2 handoff, and shared DETS handles.
 .decl released_at_exit(api: symbol)
 
 released_at_exit(":erlang.demonitor/1").
@@ -149,9 +122,8 @@ released_at_exit(":socket.close/1").
 released_at_exit(":file.close/1").
 released_at_exit("File.close/1").
 
-// A message send at `site` in `func`: the `send` instruction Erlang's
-// `!` compiles to, or a call to `:erlang.send/2,3` or `Process.send/3`
-// (what Elixir's send/2 becomes).
+// Message sends from a BEAM send instruction or :erlang.send/2,3 and Process.send/3
+// calls.
 .decl sends_message(site: symbol, func: symbol)
 
 sends_message(id, f) :- send_msg(id, f).

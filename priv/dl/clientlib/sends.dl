@@ -1,23 +1,13 @@
-// Which process a send reaches, over the targets the points-to stage
-// resolved (processes.dl, staged by points_to.dl).
-//
-// Prerequisites: include clientlib/imports.dl and clientlib/otp.dl
-// (which brings staged_processes.dl) before this file.
+// Send destinations from staged points-to results. Include imports.dl and otp.dl, which
+// provides staged_processes.dl, first.
 
-// The send at `id` in `func`, carrying `message`, may reach `proc`: the
-// send's own target, or, when `func` sends to its parameter, whatever its
-// callers hand it (process_call).
+// The send may reach proc through its direct target or a parameter supplied by a caller
+// (process_call).
 .decl send_target(id: symbol, func: symbol, message: symbol, proc: symbol)
 
 send_target(id, f, m, p) :- pid_send(id, f, m, _, _), call_site_target(id, f, "info", p).
 
-// The gen behaviours' own envelopes. A gen_server's loop takes a
-// `{:"$gen_call", from, request}` to handle_call/3 and a
-// `{:"$gen_cast", request}` to handle_cast/2 (a gen_statem's to its state
-// function, as a call or a cast event), and a `{:system, from, request}`
-// to :sys: none reaches handle_info/2, or an :info event. A library that
-// sends one by hand — rabbit's gen_server2:cast/2 is `Dest ! {'$gen_cast',
-// Request}` — makes a call or a cast. Spelled as pid_send spells a tuple
-// by its tag.
-// Read by tag and size, per send (send_envelope, PidFlow): the message
-// spells a tuple by its tag alone, and `{:system, :reload}` is a message.
+// Behaviour envelopes use tag and tuple size: `$gen_call`, `$gen_cast`, and `system`
+// are dispatched as calls, casts, or sys requests, not info messages. Check each send's
+// `send_envelope`; tag alone would misclassify ordinary messages such as `{:system,
+// :reload}`.

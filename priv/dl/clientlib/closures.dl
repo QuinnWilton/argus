@@ -1,13 +1,6 @@
-// Closure ownership.
-//
-// `closure_def(owner, closure)` is one level; a closure built inside a
-// closure has an enclosing function two levels up. Rules that ask
-// "which top-level function does this code belong to" (a task started
-// inside an Enum.map fn and collected outside it; a rescue in the
-// function that built the closure) want the whole chain, and the
-// function itself counts as its own owner.
-//
-// Requires imports.dl.
+// Closure ownership through nested construction. `enclosing_function` follows the full
+// owner chain and includes each function as its own owner. Used to associate nested
+// task or exception work with its enclosing function. Requires imports.dl.
 
 .decl enclosing_function(func: symbol, owner: symbol)
 
@@ -23,11 +16,9 @@ sole_closure(func, closure) :-
   closure_def(func, closure),
   closure_count(func, 1).
 
-// The closure the call at `site` in `func` runs: the one it is handed
-// (fun_handed, from the emitter's register walk), a closure `func`
-// builds. A site no closure is handed to, in a function that builds one
-// closure, falls back to that one (sole_closure): a closure kept in a
-// variable the walk does not follow, handed on through a tuple.
+// Use the closure passed at the call site. If none is identified and the function
+// builds exactly one closure, use it as a fallback for untracked term/variable
+// forwarding.
 .decl handed_closure(site: symbol, func: symbol, closure: symbol)
 
 handed_closure(site, f, c) :- fun_handed(site, f, c, _), closure_def(f, c).
