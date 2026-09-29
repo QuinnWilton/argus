@@ -13,6 +13,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- On OTP 29 every finding fell back to its module's declaration line,
+  or to line 1 (issue #2): OTP 29's `beam_disasm` resolves a `line`
+  marker to its location (`{:line, [{:location, file, line}]}`, or
+  `{:line, []}` for none) where OTP 28's leaves the Line-chunk
+  reference, and the emitter looked every marker up as a reference, so
+  no `line_info` row was written. Every reader of a marker takes either
+  form now (`Argus.Pipeline.Disassemble.marker_line/2`): the emitter's
+  rows and a `try`'s line, param_flow's sink lines, error_handling's
+  catch spans and log regions, and the Ecto extractor's test for a
+  schema compiled without lines.
 - An analysis's rows come back sorted (`Argus.analyze/3`,
   `Argus.Souffle.run/3`, and the rows findings are built from),
   whatever order the solver wrote them in. Souffle writes a relation in

@@ -108,6 +108,7 @@ defmodule Argus.Extractors.ErrorHandling do
   alias Argus.Instr
   alias Argus.Instr.Reaching
   alias Argus.InstrId
+  alias Argus.Pipeline.Disassemble
   alias Argus.Pipeline.Normalize
 
   import Argus.Extractor.Helpers,
@@ -431,8 +432,8 @@ defmodule Argus.Extractors.ErrorHandling do
 
     markers =
       for idx <- own,
-          {:line, ref} <- [elem(instrs, idx)],
-          line = Map.get(line_table, ref),
+          {:line, marker} <- [elem(instrs, idx)],
+          line = Disassemble.marker_line(marker, line_table),
           is_integer(line),
           do: {line, idx}
 

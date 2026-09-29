@@ -92,11 +92,12 @@ defmodule Argus.Extractors.EctoSchema do
 
   defp row(:redacted_field, mod, field, _types), do: [mod, inspect(field)]
 
-  # Every line marker in the function is line 0 (none): the module was
-  # compiled from a block that carries no location.
+  # Every line marker in the function names no location (reference 0, or
+  # `[]` from OTP 29's disassembler): the module was compiled from a
+  # block that carries none.
   defp lineless?(instrs) do
-    lines = for {:line, n} <- instrs, do: n
-    lines != [] and Enum.all?(lines, &(&1 == 0))
+    markers = for {:line, marker} <- instrs, do: marker
+    markers != [] and Enum.all?(markers, &(&1 in [0, []]))
   end
 
   defp find_function(functions, arity) do

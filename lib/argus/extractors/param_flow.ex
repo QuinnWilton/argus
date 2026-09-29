@@ -88,6 +88,7 @@ defmodule Argus.Extractors.ParamFlow do
   alias Argus.Extractors.ParamFlow.Propagators
   alias Argus.Instr
   alias Argus.InstrId
+  alias Argus.Pipeline.Disassemble
   alias Argus.Pipeline.Normalize
 
   import Argus.Extractor.Helpers, only: [register: 1]
@@ -510,7 +511,7 @@ defmodule Argus.Extractors.ParamFlow do
   defp line_before(tuple, idx, line_table) do
     Enum.find_value((idx - 1)..0//-1, fn i ->
       case elem(tuple, i) do
-        {:line, ref} -> Map.get(line_table, ref)
+        {:line, marker} -> Disassemble.marker_line(marker, line_table)
         _other -> nil
       end
     end)

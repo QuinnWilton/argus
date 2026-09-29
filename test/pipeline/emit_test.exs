@@ -1,7 +1,7 @@
 defmodule Argus.Pipeline.EmitTest do
   use ExUnit.Case, async: true
 
-  alias Argus.Pipeline.Emit
+  alias Argus.Pipeline.{Disassemble, Emit}
 
   # Helper to emit facts for a single function in a minimal module.
   defp emit_func(instructions, opts \\ []) do
@@ -736,6 +736,81 @@ defmodule Argus.Pipeline.EmitTest do
                ["TestMod:test_func/0#0", "10"],
                ["TestMod:test_func/0#1", "10"]
              ] = Enum.sort(facts[:line_info])
+    end
+
+    # OTP 29's beam_disasm resolves a `line` marker to its location (a
+    # `debug_line` still carries the reference); OTP 28's leaves the
+    # reference, which the table resolves. Both give the same rows.
+    test "a marker OTP 29 resolved to its location stamps that line, with no table" do
+      facts =
+        emit_func([
+          {:line, [{:location, ~c"lib/a.ex", 10}]},
+          {:move, {:atom, :ok}, {:x, 0}},
+          {:line, [{:location, ~c"lib/a.ex", 20}]},
+          {:call_ext, 1, {:extfunc, :erlang, :whereis, 1}}
+        ])
+
+      referenced =
+        emit_func(
+          [
+            {:line, 1},
+            {:move, {:atom, :ok}, {:x, 0}},
+            {:line, 2},
+            {:call_ext, 1, {:extfunc, :erlang, :whereis, 1}}
+          ],
+          line_table: %{1 => 10, 2 => 20}
+        )
+
+      assert [
+               ["TestMod:test_func/0#0", "10"],
+               ["TestMod:test_func/0#1", "10"],
+               ["TestMod:test_func/0#2", "20"],
+               ["TestMod:test_func/0#3", "20"]
+             ] = Enum.sort(facts[:line_info])
+
+      assert facts == referenced
+    end
+
+    test "an OTP 29 marker with no location resets the line in effect" do
+      facts =
+        emit_func([
+          {:line, [{:location, ~c"lib/a.ex", 10}]},
+          {:move, {:atom, :ok}, {:x, 0}},
+          {:line, []},
+          {:call_ext, 1, {:extfunc, :erlang, :whereis, 1}}
+        ])
+
+      assert [
+               ["TestMod:test_func/0#0", "10"],
+               ["TestMod:test_func/0#1", "10"]
+             ] = Enum.sort(facts[:line_info])
+    end
+
+    test "a try takes the line of the marker after it, in either form" do
+      for marker <- [3, [{:location, ~c"lib/a.ex", 30}]] do
+        facts =
+          emit_func(
+            [
+              {:line, 1},
+              {:label, 2},
+              {:try, {:y, 0}, {:f, 9}},
+              {:line, marker},
+              {:call_ext, 1, {:extfunc, :erlang, :whereis, 1}}
+            ],
+            line_table: %{1 => 10, 3 => 30}
+          )
+
+        assert ["TestMod:test_func/0#2", "30"] in facts[:line_info], inspect(marker)
+      end
+    end
+
+    test "Disassemble.marker_line/2 reads a reference through the table, and a location as it is" do
+      table = %{1 => 10}
+      assert Disassemble.marker_line(1, table) == 10
+      assert Disassemble.marker_line(0, table) == nil
+      assert Disassemble.marker_line(7, table) == nil
+      assert Disassemble.marker_line([{:location, ~c"lib/a.ex", 12}], table) == 12
+      assert Disassemble.marker_line([], table) == nil
     end
 
     test "instructions before the first marker carry no line" do

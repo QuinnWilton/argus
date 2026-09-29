@@ -65,10 +65,12 @@ defmodule Argus.Pipeline.Disassemble do
 
   Returns `{:ok, data}` where `data` has the standard BeamSpy disassembly
   shape plus `:imports` and `:line_table` fields, or `{:error, reason}`
-  on failure. The line table maps the disassembly's `{:line, ref}`
-  references to real source lines (reference 0 — "no location" — has no
-  entry); it is empty when the module has no parseable Line chunk, in
-  which case no `line_info` facts can be emitted.
+  on failure. The line table maps the Line-chunk references a
+  disassembly's markers carry to real source lines (reference 0 — "no
+  location" — has no entry): every `debug_line`'s, and each `{:line,
+  ref}` OTP 28 leaves as it is (OTP 29's disassembler resolves a `line`
+  marker to its location itself; `marker_line/2` reads either). It is empty when the module has no parseable Line
+  chunk, in which case no `line_info` facts can be emitted.
   """
   @spec disassemble_path(String.t() | binary()) :: {:ok, module_data()} | {:error, term()}
   def disassemble_path(path) do
@@ -94,4 +96,18 @@ defmodule Argus.Pipeline.Disassemble do
       {:error, _} -> %{}
     end
   end
+
+  @doc """
+  The source line a line marker names: a reference into the Line chunk,
+  looked up in `line_table` (OTP 28's `beam_disasm` leaves a `line`
+  marker's reference as it is, and every release a `debug_line`'s), or
+  the location OTP 29's resolves a `line` marker to
+  (`[{:location, file, line}]`). Nil for no location (reference 0, or
+  `[]`) and for a reference the table does not hold.
+  """
+  @spec marker_line(non_neg_integer() | list(), %{optional(pos_integer()) => non_neg_integer()}) ::
+          non_neg_integer() | nil
+  def marker_line(ref, line_table) when is_integer(ref), do: Map.get(line_table, ref)
+  def marker_line([{:location, _file, line} | _], _line_table) when is_integer(line), do: line
+  def marker_line(_no_location, _line_table), do: nil
 end

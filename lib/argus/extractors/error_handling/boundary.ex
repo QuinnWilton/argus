@@ -28,6 +28,7 @@ defmodule Argus.Extractors.ErrorHandling.Boundary do
   """
 
   alias Argus.Extractor.Helpers
+  alias Argus.Pipeline.Disassemble
   alias Argus.Purity.Effects
 
   # Calls whose failure is the state of something else: a process, a
@@ -454,7 +455,7 @@ defmodule Argus.Extractors.ErrorHandling.Boundary do
       Enum.reduce(instrs, {%{}, nil}, fn {at, instr}, {map, line} ->
         line =
           case instr do
-            {:line, ref} -> Map.get(line_table, ref, line)
+            {:line, marker} -> Disassemble.marker_line(marker, line_table) || line
             _ -> line
           end
 

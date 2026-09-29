@@ -17,6 +17,7 @@ defmodule Argus.Pipeline.Emit do
   alias Argus.Extractor.Terms
   alias Argus.Instr
   alias Argus.InstrId
+  alias Argus.Pipeline.Disassemble
   alias Argus.Pipeline.Emit.{Applies, FunRefs, Spawns}
   alias Argus.Pipeline.Normalize
 
@@ -31,7 +32,8 @@ defmodule Argus.Pipeline.Emit do
   the list of imports and the attributes (which no relation reads: the
   extractors that need an attribute read the chunk), the function
   definitions, and the module's Line-chunk table (`BeamSpy.Source.parse_line_table/1`, used to
-  resolve `{:line, ref}` markers to real source lines for `line_info`).
+  resolve line markers to real source lines for `line_info`:
+  `Argus.Pipeline.Disassemble.marker_line/2`).
   Returns a map of relation name to list of fact rows.
   """
   @spec emit_module(atom(), list(), list(), keyword(), list(), map()) :: facts()
@@ -216,11 +218,11 @@ defmodule Argus.Pipeline.Emit do
       {_id, {:label, _}}, line ->
         {:halt, line}
 
-      {_id, {:line, ref}}, line ->
-        {:halt, Map.get(line_table, ref) || line}
+      {_id, {:line, marker}}, line ->
+        {:halt, Disassemble.marker_line(marker, line_table) || line}
 
       {_id, {:debug_line, _kind, ref, _index, _live}}, line ->
-        {:halt, Map.get(line_table, ref) || line}
+        {:halt, Disassemble.marker_line(ref, line_table) || line}
 
       _other, line ->
         {:cont, line}
@@ -238,18 +240,19 @@ defmodule Argus.Pipeline.Emit do
     facts = add_fact(facts, :instruction, [id, func_id, idx, to_string(op)])
 
     case instr do
-      # A marker switches the line in effect. Reference 0 ("no location")
-      # and references the table cannot resolve switch it to unknown —
-      # compiler-generated code must not inherit the previous source line.
-      {:line, ref} ->
-        line = Map.get(line_table, ref)
+      # A marker switches the line in effect. No location (reference 0,
+      # or `[]` on OTP 29) and references the table cannot resolve switch
+      # it to unknown — compiler-generated code must not inherit the
+      # previous source line.
+      {:line, marker} ->
+        line = Disassemble.marker_line(marker, line_table)
         {emit_line_info(facts, id, line), line}
 
       # OTP 28 debug builds (`beam_debug_info`) carry a debug_line marker
       # on every executable line — same Line-chunk reference space, same
       # sticky semantics.
       {:debug_line, _kind, ref, _index, _live} ->
-        line = Map.get(line_table, ref)
+        line = Disassemble.marker_line(ref, line_table)
         {emit_line_info(facts, id, line), line}
 
       _ ->
