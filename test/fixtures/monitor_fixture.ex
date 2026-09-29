@@ -1343,8 +1343,10 @@ defmodule Argus.Test.Fixtures.MonitorLeak do
   end
 
   # What lets a monitor be taken again is the store its run asks before it
-  # monitors, when it asks one. Each is quiet; its neighbour in
-  # test/fixtures/soundness/monitors_fixture.ex drops the store asked.
+  # monitors, when it asks one; and a field reset forgets a monitor only
+  # when nothing else the server keeps holds its ref. Each is quiet; its
+  # neighbour in test/fixtures/soundness/monitors_fixture.ex drops the
+  # store asked, or resets the one field that held the ref.
 
   defmodule AsksWatched do
     @moduledoc """
@@ -1380,6 +1382,80 @@ defmodule Argus.Test.Fixtures.MonitorLeak do
       {:noreply,
        %{state | watched: MapSet.delete(state.watched, pid), refs: Map.delete(state.refs, ref)}}
     end
+  end
+
+  defmodule PendingRefBesideListeners do
+    @moduledoc """
+    Postgrex.Notifications: a listen monitors the caller and keeps the ref
+    in `listeners`, and in `pending` until the server's answer comes; the
+    answer resets `pending` to nil with the monitor still kept under
+    `listeners`, where an unlisten demonitors it.
+    """
+    use GenServer
+
+    @impl true
+    def init(_), do: {:ok, %{listeners: %{}, pending: nil}}
+
+    @impl true
+    def handle_call({:listen, channel}, {pid, _}, state) do
+      ref = Process.monitor(pid)
+      listeners = Map.put(state.listeners, ref, {channel, pid})
+      {:reply, {:ok, ref}, %{state | listeners: listeners, pending: ref}}
+    end
+
+    def handle_call({:unlisten, ref}, _from, state) do
+      Process.demonitor(ref, [:flush])
+      {:reply, :ok, %{state | listeners: Map.delete(state.listeners, ref)}}
+    end
+
+    @impl true
+    def handle_cast(:answered, state), do: {:noreply, %{state | pending: nil}}
+
+    @impl true
+    def handle_info({:DOWN, ref, :process, _pid, _}, state),
+      do: {:noreply, %{state | listeners: Map.delete(state.listeners, ref)}}
+  end
+
+  defmodule PidSlotBesideRef do
+    @moduledoc """
+    hackney's connection: a request monitors the process it streams to,
+    keeping the ref in `owner_mon` and the pid in `stream_to`; the end of
+    the response resets `stream_to` to nil, and the next request
+    demonitors `owner_mon` before it monitors again.
+    """
+    use GenServer
+
+    @impl true
+    def init(_), do: {:ok, %{owner_mon: nil, stream_to: nil}}
+
+    @impl true
+    def handle_call({:request, stream_to}, _from, state) do
+      if state.owner_mon, do: Process.demonitor(state.owner_mon, [:flush])
+      mon = Process.monitor(stream_to)
+      {:reply, :ok, %{state | owner_mon: mon, stream_to: stream_to}}
+    end
+
+    @impl true
+    def handle_cast(:done, state), do: {:noreply, %{state | stream_to: nil}}
+  end
+
+  defmodule ResetsOnItsDown do
+    @moduledoc """
+    Keeps the one ref of its upstream's monitor in `mon`, and resets it to
+    nil when that monitor's `:DOWN` comes: the monitor's own end.
+    """
+    use GenServer
+
+    @impl true
+    def init(_), do: {:ok, %{mon: nil}}
+
+    @impl true
+    def handle_call({:follow, pid}, _from, state),
+      do: {:reply, :ok, %{state | mon: Process.monitor(pid)}}
+
+    @impl true
+    def handle_info({:DOWN, ref, :process, _pid, _}, %{mon: ref} = state),
+      do: {:noreply, %{state | mon: nil}}
   end
 
   defmodule AsksItsTable do

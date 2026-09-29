@@ -99,3 +99,16 @@ named_site(site) :- ets_option(site, "named_table", "true").
 
 has_heir(site) :- ets_option(site, "heir", "true").
 
+
+// A way `func` completes, in its clause for `tag`, hands back a state
+// whose field `key` is set to `value`, the literal a field holds when it
+// holds nothing: nil, :undefined or false (returned_update). Whatever
+// the field held before — a ref, a pid, a timer — the state no longer
+// holds there: mailbox's monitors read the reset of the field that alone
+// held a monitor's ref, and shutdown's Broadway drain the reset of the
+// field its fetch waits on.
+.decl field_reset(func: symbol, key: symbol, value: symbol, tag: symbol) inline
+
+field_reset(f, k, v, tag) :-
+  returned_update(f, k, v, tag),
+  (v = "nil" ; v = ":undefined" ; v = "false").

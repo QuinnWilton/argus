@@ -86,7 +86,8 @@ defmodule Argus.Schema.Monitors do
           {:kind, :symbol, "'field' | 'table' | 'returned'"},
           {:where, :symbol,
            "the field's key, the table write's site, or for returned the element " <>
-             "of the returned tuple that holds it ({i}), '' for anywhere"}
+             "of the returned tuple that holds it ({i}), '' for anywhere"},
+          {:holds, :symbol, "'ref' when made of the ref, 'pid' when made whole of the pid alone"}
         ],
         doc: """
         Where the monitoring function keeps what the monitor at `id` is \
@@ -101,7 +102,9 @@ defmodule Argus.Schema.Monitors do
         caller keeps it where it keeps that answer, or that element \
         (`returns_from`, `returned_field_from`). A field \
         made of another value of the message the pid came in is not the \
-        pid's (`Argus.Extractor.StateFields`: made whole, not in part).
+        pid's (`Argus.Extractor.StateFields`: made whole, not in part). \
+        `holds` tells the record a demonitor needs (`ref`, the pid beside \
+        it or not) from one that only names the process (`pid`).
         """
       },
       %{

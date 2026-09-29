@@ -1320,10 +1320,11 @@ prepares_for_draining(mod, drain) :-
   behaves_as(mod, "Broadway.Producer"),
   function_def(drain, mod, "prepare_for_draining", 1, _).
 
-// The drain returns a state with `key` set to nil.
+// The drain returns a state with `key` reset to nil (field_reset,
+// vocabulary.dl): the value the fetch's clause asks for.
 .decl clears_field(drain: symbol, key: symbol) inline
 
-clears_field(drain, key) :- returned_update(drain, key, "nil", _).
+clears_field(drain, key) :- field_reset(drain, key, "nil", _).
 
 // `gate`, which handle_demand/2 reaches in the module, tests `key`
 // against nil (field_nil_test): the fetch runs while the field is nil.

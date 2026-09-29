@@ -146,7 +146,8 @@ one late message, the mailbox's to take, not a monitor left live.
   through the functions that hand back what holds it, the field a
   caller keeps their answer in (by the element of a returned tuple that
   holds it). A field the monitoring clause sets to anything else is no
-  record. What lets the run monitor T
+  record. Each record holds the ref (the pid beside it or not) or the
+  pid alone (`monitor_kept`'s `holds`). What lets the run monitor T
   again is the store it asks first: a run that monitors only where a
   store of P lacks T (`acquired_if_absent`, `Argus.Extractors.StateGate`:
   `case maps:is_key(Pid, Mons) of false -> monitor(process, Pid)`, a
@@ -158,8 +159,13 @@ one late message, the mailbox's to take, not a monitor left live.
   - a clause other than a `:DOWN` one removes an entry and returns the
     field it removed from (the field whose value is the removal's
     answer), or deletes rows of the table;
-  - or any clause empties the field, `:DOWN` clauses included
-    (AdvisoryLocks resets every lock on its connection's `:DOWN`).
+  - any clause empties the field, `:DOWN` clauses included
+    (AdvisoryLocks resets every lock on its connection's `:DOWN`);
+  - or a clause other than a `:DOWN` one resets the field to nil,
+    `:undefined` or `false` (`field_reset`, clientlib/vocabulary.dl),
+    and P then holds nothing that could demonitor: the field was the one
+    record that holds the ref (global_group's `config_check`), or it
+    held the pid and the ref was thrown away at the call.
 
   The drop releases when its clause demonitors or stops a process. T's
   next registration monitors it again.
@@ -187,11 +193,10 @@ the code does not show it (the rubric's evidence clause).
   field and table the monitoring clause wrote (hackney's connection
   buffers, ra's notifications, other modules' clauses reaching a helper
   that monitors); the eval sets lost 11 rows to the change, 10 false and
-  one true (below). A field set to a scalar literal is not a drop:
-  global_group's sync keeps its refs in `config_check` and three clauses
-  reset it to `undefined` without a demonitor, a true leak this misses
-  (Postgrex.Notifications resets a pending `ref` it also keeps in its
-  listeners the same way, and would be reported with it). A clause is a callback's by its message's
+  one true (below). A reset is a drop only of the ref's last holder:
+  Postgrex.Notifications resets a pending `ref` it also keeps in its
+  `listeners`, and hackney's connection resets `stream_to`, a pid, with
+  the ref kept in `owner_mon`; each still holds the monitor. A clause is a callback's by its message's
   tag, and a gen_statem's by its event's type and content together
   (`clause_event`, issue #3): what the `:internal :connect` clause
   records is not what an `:internal {:received, _}` clause resets, and an
@@ -379,28 +384,44 @@ evaluation sets, 11 `ended` rows went and none came:
   `nodes`, which holds no monitor; the refs are in `config_check`, which
   three clauses reset to `undefined` without a demonitor. The record is
   now `config_check` (through the fold's answer, by the element that
-  holds the refs), and a reset to a scalar literal is not a drop.
+  holds the refs), and a reset to a scalar literal was no drop (one that
+  forgets the ref is again, below).
 
-### The store asked
+### The store asked, and the reset that forgets the ref
 
-hackney_pool's `register_h2`/`register_h3` monitor a connection only
-where `pid_monitors` lacks it, and record the pid in `h2_connections`
-too; a checkout that finds the connection dead removes it from
-`h2_connections` and keeps the monitor. The next registration asks
-`pid_monitors`, which still holds the pid, and monitors nothing: both
-rows were false. The ask is read by the StateGate extractor
-(`acquired_if_absent`): a membership test or a lookup of a key in a
-field of a parameter or a named table, whose absent answer is the only
-one that reaches the call, and whose key is the call's argument (for a
-monitor, the process it names). A monitor asked so counts the drop of
-that store alone; an ask about another key, or one after the monitor,
-asks nothing.
+Two witnesses joined `ended` after the record round:
+- **The store asked.** hackney_pool's `register_h2`/`register_h3` monitor
+  a connection only where `pid_monitors` lacks it, and record the pid in
+  `h2_connections` too; a checkout that finds the connection dead removes
+  it from `h2_connections` and keeps the monitor. The next registration
+  asks `pid_monitors`, which still holds the pid, and monitors nothing:
+  both rows were false. The ask is read by the StateGate extractor
+  (`acquired_if_absent`): a membership test or a lookup of a key in a
+  field of a parameter or a named table, whose absent answer is the only
+  one that reaches the call, and whose key is the call's argument (for a
+  monitor, the process it names). A monitor asked so counts the drop of
+  that store alone; an ask about another key, or one after the monitor,
+  asks nothing.
+- **The reset that forgets the ref.** global_group's sync keeps its refs
+  in `config_check`, their one record, and three `handle_call/3` clauses
+  reconfiguring the groups set it back to `undefined` without a
+  demonitor: the refs are gone, and the next sync monitors each peer
+  again. A reset (`field_reset`: nil, `:undefined`, `false`) is a drop
+  when P holds nothing else that could demonitor. A plain "a reset is a
+  drop" brought back Postgrex.Notifications (a pending `ref` kept in
+  `listeners` too) and a hackney pid slot (the ref in `owner_mon`); the
+  last-holder witness tells them apart. A `:DOWN` clause's reset is the
+  monitor's own end, like its removal.
 
 Over the 44 evaluation sets: 2 rows went (hackney_pool's
-`handle_cast/2` twice, false) and none came.
+`handle_cast/2` twice, false) and 1 came (global_group's sync, true).
 
 Known gaps, the quiet direction:
 - A record set in one arm of a `case` and returned through a later
-  update is not read (StateFields reads the update the return makes).
+  update is not read (StateFields reads the update the return makes):
+  hackney's `do_request_async/9` keeps `owner_mon` so, and `stream_to`
+  is its only record read. Here that is quiet, since the pid slot is no
+  last holder of the ref.
 - A monitor inside a helper whose call is asked is not read as asked: the
   helper may be called unasked elsewhere.
+- A reset in a `:DOWN` clause for another monitor is not a drop.

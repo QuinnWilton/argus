@@ -248,13 +248,19 @@ defmodule Argus.Analyses.MailboxMonitorTest do
     for mods <- [
           [M.AsksWatched],
           [M.AsksItsTable],
-          [:mon_asks_pool]
+          [:mon_asks_pool],
+          [M.PendingRefBesideListeners],
+          [M.PidSlotBesideRef],
+          [M.ResetsOnItsDown]
         ] do
-      test "#{inspect(mods)}: no drop of the store asked" do
+      test "#{inspect(mods)}: no drop of the store asked, and no reset that forgets the ref" do
         skip_without_souffle()
 
         # hackney_pool's register_h2 asks `pid_monitors` before it
-        # monitors, and a checkout drops the pid from `h2_connections`.
+        # monitors, and a checkout drops the pid from `h2_connections`;
+        # Postgrex.Notifications resets its pending `ref` with the
+        # listener's ref kept in `listeners`; hackney's connection resets
+        # `stream_to` with the ref kept in `owner_mon`.
         assert {:ok, r} = Memo.analyze(unquote(mods), :mailbox)
         refute Enum.any?(Map.get(r, "monitor_leak", []), &match?([_, _, _, "ended"], &1))
       end

@@ -520,12 +520,13 @@ defmodule Argus.Test.Soundness.Monitors.FoldResetsChecks do
   def handle_cast(:reset, state), do: {:noreply, %{state | checks: %{}}}
 end
 
-# ── ended: the store the run asks ─────────────────────────────────────
+# ── ended: the store the run asks, and the field that alone holds the ref ──
 #
 # The neighbours of the quiet shapes at the end of
 # test/fixtures/monitor_fixture.ex (and test/fixtures/erl/mon_asks_pool.erl):
-# the store the monitoring run asks is the one dropped, or the ask is not
-# about the process or does not gate the monitor.
+# the store the monitoring run asks is the one dropped, the ask is not
+# about the process or does not gate the monitor, or the field reset is
+# the one that held the ref.
 
 defmodule Argus.Test.Soundness.Monitors.AsksWatchedDrops do
   @moduledoc """
@@ -636,6 +637,91 @@ defmodule Argus.Test.Soundness.Monitors.AsksStoreFilledElsewhere do
 
   def handle_cast({:bye, pid}, state),
     do: {:noreply, %{state | greeted: MapSet.delete(state.greeted, pid)}}
+end
+
+defmodule Argus.Test.Soundness.Monitors.ListenersKeepPidOnly do
+  @moduledoc """
+  PendingRefBesideListeners' neighbour: `listeners` keeps the channel's
+  pid, not the ref, so `pending` is the one field that holds it, and the
+  answer's reset to nil forgets the monitor.
+  """
+  use GenServer
+
+  @impl true
+  def init(_), do: {:ok, %{listeners: %{}, pending: nil}}
+
+  @impl true
+  def handle_call({:listen, channel}, {pid, _}, state) do
+    ref = Process.monitor(pid)
+    listeners = Map.put(state.listeners, channel, pid)
+    {:reply, {:ok, ref}, %{state | listeners: listeners, pending: ref}}
+  end
+
+  @impl true
+  def handle_cast(:answered, state), do: {:noreply, %{state | pending: nil}}
+end
+
+defmodule Argus.Test.Soundness.Monitors.ResetsOwnerMon do
+  @moduledoc """
+  PidSlotBesideRef's neighbour: the end of the response resets
+  `owner_mon`, the field that holds the ref, to nil, and the next request
+  finds nothing to demonitor.
+  """
+  use GenServer
+
+  @impl true
+  def init(_), do: {:ok, %{owner_mon: nil, stream_to: nil}}
+
+  @impl true
+  def handle_call({:request, stream_to}, _from, state) do
+    if state.owner_mon, do: Process.demonitor(state.owner_mon, [:flush])
+    mon = Process.monitor(stream_to)
+    {:reply, :ok, %{state | owner_mon: mon, stream_to: stream_to}}
+  end
+
+  @impl true
+  def handle_cast(:done, state), do: {:noreply, %{state | owner_mon: nil}}
+end
+
+defmodule Argus.Test.Soundness.Monitors.ResetsPidRefThrownAway do
+  @moduledoc """
+  Monitors its owner and throws the ref away, keeping the pid in `owner`;
+  a release resets `owner` to :undefined, and the next claim of the same
+  process monitors it again.
+  """
+  use GenServer
+
+  @impl true
+  def init(_), do: {:ok, %{owner: :undefined}}
+
+  @impl true
+  def handle_call({:claim, pid}, _from, state) do
+    Process.monitor(pid)
+    {:reply, :ok, %{state | owner: pid}}
+  end
+
+  @impl true
+  def handle_cast(:release, state), do: {:noreply, %{state | owner: :undefined}}
+end
+
+defmodule Argus.Test.Soundness.Monitors.ResetsThroughHelper do
+  @moduledoc """
+  Keeps its upstream's ref in `mon`; a cast hands the state to a helper
+  that resets `mon` to nil and answers the callback's return.
+  """
+  use GenServer
+
+  @impl true
+  def init(_), do: {:ok, %{mon: nil}}
+
+  @impl true
+  def handle_call({:follow, pid}, _from, state),
+    do: {:reply, :ok, %{state | mon: Process.monitor(pid)}}
+
+  @impl true
+  def handle_cast(:unfollow, state), do: unfollow(state)
+
+  defp unfollow(state), do: {:noreply, %{state | mon: nil}}
 end
 
 defmodule Argus.Test.Soundness.Monitors.AsksItsTableDrops do

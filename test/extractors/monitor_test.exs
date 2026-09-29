@@ -139,7 +139,17 @@ defmodule Argus.Extractors.MonitorTest do
 
   describe "monitor_kept" do
     defp kept(mod) do
-      rows = for [_id, _f, kind, where] <- extract(mod)[:monitor_kept] || [], do: {kind, where}
+      rows =
+        for [_id, _f, kind, where, _holds] <- extract(mod)[:monitor_kept] || [], do: {kind, where}
+
+      rows |> Enum.uniq() |> Enum.sort()
+    end
+
+    defp holds(mod) do
+      rows =
+        for [_id, _f, kind, where, held] <- extract(mod)[:monitor_kept] || [],
+            do: {kind, where, held}
+
       Enum.sort(rows)
     end
 
@@ -164,6 +174,19 @@ defmodule Argus.Extractors.MonitorTest do
     test "what a helper hands back, and the element of a fold's answer that holds it" do
       assert kept(M.Monitors) == [{"returned", ""}]
       assert kept(M.FoldKeepsNodesAndChecks) == [{"returned", "{1}"}]
+    end
+
+    test "what each record holds: the ref, the pid beside it or not, or the pid alone" do
+      assert holds(M.PidSlotBesideRef) == [
+               {"field", ":owner_mon", "ref"},
+               {"field", ":stream_to", "pid"},
+               {"returned", "{2}", "ref"}
+             ]
+
+      assert holds(Argus.Test.Soundness.Monitors.ResetsPidRefThrownAway) == [
+               {"field", ":owner", "pid"},
+               {"returned", "{2}", "pid"}
+             ]
     end
   end
 

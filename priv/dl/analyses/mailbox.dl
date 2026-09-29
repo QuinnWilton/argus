@@ -1083,36 +1083,42 @@ throws_ref_away(s) :- monitor_ref_dropped(s, _).
 // not by its key. A field the monitoring clause sets to anything else (a
 // backoff, a counter, a buffer it resets) is no record of the monitor:
 // until issue #3's follow-up every field the clause returned was, and a
-// reset of an unrelated field read as the drop.
-.decl monitor_record(site: symbol, mod: symbol, record: symbol)
+// reset of an unrelated field read as the drop. Each record says what it
+// holds (`holds`): the ref, which a demonitor needs (the pid beside it or
+// not), or the pid alone.
+.decl monitor_record_holding(site: symbol, mod: symbol, record: symbol, holds: symbol)
 
-monitor_record(s, m, k) :-
-  monitor_kept(s, f, "field", k),
+monitor_record_holding(s, m, k, held) :-
+  monitor_kept(s, f, "field", k, held),
   function_def(f, m, _, _, _).
 
-monitor_record(s, m, cat("table ", t)) :-
-  monitor_kept(s, f, "table", x),
+monitor_record_holding(s, m, cat("table ", t), held) :-
+  monitor_kept(s, f, "table", x, held),
   ets_op(x, f, t, _, "write"),
   function_def(f, m, _, _, _).
 
-monitor_record(s, m, k) :-
-  kept_through(s, g, piece),
+monitor_record_holding(s, m, k, held) :-
+  kept_through(s, g, piece, held),
   answered_at(h, g, c),
   returned_field_from(h, k, c, how),
   keeps_piece(piece, how),
   function_def(h, m, _, _, _).
 
-// `func` hands back what holds the monitor at `site`'s ref or pid, in
-// element `piece` of the tuple it returns (`"{1}"`: global_group's sync
-// fold answers `{Nodes, Monitors}`) or anywhere (`""`): the monitoring
-// function itself, or a function that returns what a call to one
-// answered (where in its answer, it does not say).
-.decl kept_through(site: symbol, func: symbol, piece: symbol)
+.decl monitor_record(site: symbol, mod: symbol, record: symbol)
 
-kept_through(s, f, p) :- monitor_kept(s, f, "returned", p).
+monitor_record(s, m, k) :- monitor_record_holding(s, m, k, _).
 
-kept_through(s, h, "") :-
-  kept_through(s, g, _),
+// `func` hands back what holds the monitor at `site`'s ref or pid
+// (`holds`), in element `piece` of the tuple it returns (`"{1}"`:
+// global_group's sync fold answers `{Nodes, Monitors}`) or anywhere
+// (`""`): the monitoring function itself, or a function that returns
+// what a call to one answered (where in its answer, it does not say).
+.decl kept_through(site: symbol, func: symbol, piece: symbol, holds: symbol)
+
+kept_through(s, f, p, held) :- monitor_kept(s, f, "returned", p, held).
+
+kept_through(s, h, "", held) :-
+  kept_through(s, g, _, held),
   answered_at(h, g, c),
   returns_from(h, c).
 
@@ -1193,10 +1199,9 @@ consulted_store(s, m, k) :- monitor_record(s, m, k), !asks_before_monitoring(s).
 // AdvisoryLocks resets every lock when its connection's :DOWN comes, and
 // the owners' monitors stay). The removal a :DOWN clause makes is that
 // monitor's own end: its process is gone. A removal from another field
-// the clause also returns is no drop of this one. A field set to another
-// literal (`nil`, `undefined`) is not read as a drop: a field that holds
-// one ref beside the record (Postgrex.Notifications' pending `ref`) is
-// reset so, and so is one the clause released first.
+// the clause also returns is no drop of this one. A field set to nil,
+// :undefined or false is a reset (reset_forgets, below), not a drop of
+// every record: it forgets one value.
 .decl record_drop(mod: symbol, record: symbol, func: symbol, callback: symbol, tag: symbol)
 
 record_drop(m, k, h, h, tag) :-
@@ -1251,11 +1256,69 @@ record_drop(m, cat("table ", t), g, h, tag) :-
   ets_op(_, g, t, op, _),
   ets_removal_op(op).
 
-// A clause for a monitor's :DOWN: a handler's `:DOWN` clause, or a
-// gen_statem's for `:info` events of content `:DOWN` (clause_event).
+// A clause forgets the monitor at `site` when it resets a store the run
+// consults (field_reset, vocabulary.dl: sets it to nil, :undefined or
+// false) and the server then holds nothing that could demonitor it: the
+// field was the one record that holds the ref (global_group's
+// `config_check`, the sync's refs, set back to undefined when the groups
+// are reconfigured), or it held the pid and the ref was thrown away at
+// the call. A reset of a field that holds the ref beside another record
+// that does (Postgrex.Notifications' pending `ref`, the listener kept in
+// `listeners` too), or the pid while the ref is kept (hackney's
+// `stream_to`, the ref in `owner_mon`), leaves the monitor in hand: it is
+// released, or not, where that other record is.
+.decl forgotten_at_reset(site: symbol, mod: symbol, record: symbol)
+
+forgotten_at_reset(s, m, k) :-
+  consulted_store(s, m, k),
+  monitor_record_holding(s, m, k, "ref"),
+  !ref_kept_elsewhere(s, k).
+
+forgotten_at_reset(s, m, k) :-
+  consulted_store(s, m, k),
+  monitor_record_holding(s, m, k, "pid"),
+  monitor_ref_dropped(s, _).
+
+// A record of the monitor at `site` other than `record` holds its ref.
+.decl ref_kept_elsewhere(site: symbol, record: symbol)
+
+ref_kept_elsewhere(s, k) :-
+  monitor_record_holding(s, _, k, "ref"),
+  monitor_record_holding(s, _, other, "ref"),
+  other != k.
+
+// `func` (a callback's clause for `tag`, or a helper the clause returns
+// through) resets a field after which the server holds nothing of the
+// monitor at `site`. A :DOWN clause's reset is, like its removal, the
+// monitor's own end (global_group's `config_check` goes back to
+// undefined when the last check's :DOWN comes).
+.decl reset_forgets(site: symbol, func: symbol, callback: symbol, tag: symbol)
+
+reset_forgets(s, h, h, tag) :-
+  forgotten_at_reset(s, m, k),
+  again_root(h, _),
+  function_def(h, m, _, _, _),
+  field_reset(h, k, _, tag),
+  !down_clause(h, tag).
+
+reset_forgets(s, g, h, tag) :-
+  forgotten_at_reset(s, m, k),
+  again_root(h, _),
+  function_def(h, m, _, _, _),
+  returns_call(h, g),
+  call_instr(h, g, c),
+  clause_call(c, h, tag),
+  !down_clause(h, tag),
+  function_def(g, m, _, _, _),
+  field_reset(g, k, _, _).
+
+// A clause for a monitor's :DOWN: a handler's `:DOWN` clause, known by a
+// call it makes or a state it returns, or a gen_statem's for `:info`
+// events of content `:DOWN` (clause_event).
 .decl down_clause(func: symbol, tag: symbol)
 
 down_clause(h, ":DOWN") :- clause_call(_, h, ":DOWN").
+down_clause(h, ":DOWN") :- returned_update(h, _, _, ":DOWN").
 down_clause(h, t) :- clause_event(h, t, ":info", ":DOWN").
 
 // A field set to an empty collection: every record in it goes.
@@ -1295,22 +1358,29 @@ clause_releases(h, tag) :-
   clause_call(c, h, tag),
   release_reach.reaches(g).
 
-// `func` drops a store the monitor at `monitor` consults, while its
-// process may live, and neither it nor its clause releases the monitor:
-// a helper a callback's clause calls, or the callback itself.
+// `func` drops a store the monitor at `monitor` consults, or resets the
+// field that forgets it, while its process may live, and neither it nor
+// its clause releases the monitor: a helper a callback's clause calls,
+// or the callback itself.
 .decl drops_record_of(func: symbol, monitor: symbol)
 
 drops_record_of(g, s) :-
-  consulted_store(s, m, k),
-  record_drop(m, k, g, h, tag),
+  ends_record_of(s, g, h, tag),
   !clause_releases(h, tag),
   !release_reach.reaches(g),
   g != h.
 
 drops_record_of(h, s) :-
-  consulted_store(s, m, k),
-  record_drop(m, k, h, h, tag),
+  ends_record_of(s, h, h, tag),
   !clause_releases(h, tag).
+
+// `func`, in `callback`'s clause for `tag`, drops a store the monitor at
+// `site` consults (record_drop), or resets a field that forgets it
+// (reset_forgets).
+.decl ends_record_of(site: symbol, func: symbol, callback: symbol, tag: symbol)
+
+ends_record_of(s, g, h, tag) :- consulted_store(s, m, k), record_drop(m, k, g, h, tag).
+ends_record_of(s, g, h, tag) :- reset_forgets(s, g, h, tag).
 
 // What the finding relates (role): where the record is dropped
 // ("drop"), and the callbacks that run the monitoring function again

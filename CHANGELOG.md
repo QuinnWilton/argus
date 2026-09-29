@@ -133,6 +133,27 @@ answering `[]`). mailbox's `ended` witness counts, for a monitor asked
 so, the drop of the store asked alone (`consulted_store`, a record or
 not); for a monitor asked nothing, the drop of any record, as before.
 
+### A reset forgets a monitor when nothing else holds its ref (schema 161)
+
+**Fixed.** OTP `global_group`'s sync, a true leak, was missed since
+schema 159: it keeps the sync's refs in `config_check`, their one
+record, and three `handle_call/3` clauses set it back to `undefined`
+without a demonitor, and a field set to a scalar literal was no drop.
+
+**Changed.** Schema 161. `monitor_kept` has a fifth column, `holds`:
+`ref` when the record is made of the monitor's ref (the pid beside it or
+not), `pid` when it holds the pid alone. A clause other than a `:DOWN`
+one that resets a store the monitor consults (`field_reset`, a new word
+in clientlib/vocabulary.dl: a returned field set to nil, `:undefined` or
+`false`) drops it when the server then holds nothing that could
+demonitor: the field was the one record that holds the ref, or it held
+the pid and the ref was thrown away (`forgotten_at_reset`). A pending
+ref reset beside the listeners map that keeps it (Postgrex.Notifications)
+and a pid slot reset beside the field that keeps the ref (hackney's
+`stream_to`) stay quiet. A clause that only returns a state counts as a
+`:DOWN` clause by its tag (`down_clause`). shutdown's Broadway drain
+reads `field_reset` for the field it clears.
+
 ### An unread value is unknown, never the default, beyond supervision (schema 158)
 
 **Fixed.** The same conflation as issue #4's, in the other extractors

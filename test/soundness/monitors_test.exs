@@ -212,10 +212,11 @@ defmodule Argus.Soundness.MonitorsTest do
   end
 
   # A monitoring run that asks a store before it monitors is taken again
-  # on the same process only once that store loses it. The quiet shapes
-  # are at the end of test/fixtures/monitor_fixture.ex and in
-  # test/fixtures/erl/mon_asks_pool.erl.
-  describe "ended: the store the run asks" do
+  # on the same process only once that store loses it; a field reset
+  # forgets a monitor only when nothing else the server keeps holds its
+  # ref. The quiet shapes are at the end of test/fixtures/monitor_fixture.ex
+  # and in test/fixtures/erl/mon_asks_pool.erl.
+  describe "ended: the store the run asks, and the reset that forgets the ref" do
     test "a removal from the store asked, beside a record the ask does not read" do
       assert_fires([:mon_asks_pool_drops], @ended, {:mon_asks_pool_drops, :handle_cast, 2})
       assert_fires([M.AsksWatchedDrops], @ended, {M.AsksWatchedDrops, :handle_call, 3})
@@ -239,6 +240,31 @@ defmodule Argus.Soundness.MonitorsTest do
         @ended,
         {M.AsksStoreFilledElsewhere, :handle_call, 3}
       )
+    end
+
+    test "a reset of the one record of a fold's refs to undefined" do
+      assert_fires(
+        [:mon_reset_config],
+        @ended,
+        {:mon_reset_config, :"-handle_call/3-fun-0-", 2}
+      )
+    end
+
+    test "a reset of the field that holds the ref, beside one that holds the pid" do
+      assert_fires([M.ListenersKeepPidOnly], @ended, {M.ListenersKeepPidOnly, :handle_call, 3})
+      assert_fires([M.ResetsOwnerMon], @ended, {M.ResetsOwnerMon, :handle_call, 3})
+    end
+
+    test "a reset of the pid when the ref was thrown away" do
+      assert_fires(
+        [M.ResetsPidRefThrownAway],
+        @ended,
+        {M.ResetsPidRefThrownAway, :handle_call, 3}
+      )
+    end
+
+    test "a reset in a helper the clause returns through" do
+      assert_fires([M.ResetsThroughHelper], @ended, {M.ResetsThroughHelper, :handle_call, 3})
     end
   end
 
