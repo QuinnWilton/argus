@@ -209,13 +209,17 @@ defmodule Mix.Tasks.Compile.ArgusManifestTest do
 
       # As if a relation had other columns when the last run extracted:
       # its entry's digest then, computed by the schema's code then. One
-      # some modules read and others do not.
+      # some modules read and others do not. A module's entry may name a
+      # read more than once (its producers' trace observes it too), and
+      # how often moves with what the run found kept: each module counts
+      # once.
       {read, readers} =
         rewrite!(fn db ->
           reads =
             for key <- keys,
                 {:ok, dependencies} = Roux.Memo.dependencies(db, {:module_facts, key}),
                 {:schema_entry, _} = read <- dependencies,
+                uniq: true,
                 do: {read, key}
 
           {read, _} =
@@ -233,7 +237,7 @@ defmodule Mix.Tasks.Compile.ArgusManifestTest do
                 code_version: "old"
             })
 
-          {read, for({^read, key} <- reads, uniq: true, do: key)}
+          {read, for({^read, key} <- reads, do: key)}
         end)
 
       assert {:schema_entry, _} = read
