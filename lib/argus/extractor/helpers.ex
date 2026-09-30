@@ -1,15 +1,12 @@
 defmodule Argus.Extractor.Helpers do
   @moduledoc """
-  What every extractor reads a module through: the call sites and the
-  per-instruction scan (`each_remote_call/3`, `each_call/3`,
-  `scan_functions/4`), the call instructions (`match_remote_call/1`,
-  `match_local_call/1`), a function's instructions and attributes
-  (`find_function/3`, `instructions_from_label/2`, `get_behaviours/1`,
-  `attribute_values/2`), and what the pipeline attached to the module
-  data, built on the spot for bare disassembly (`cfg/3`, `reaching/1`,
-  `typed/1`, `debug_info/1`, `copies/1`).
+  Shared access to module instructions, attributes, call sites and dataflow.
 
-  The rest lives by concern:
+  Scans use `each_remote_call/3`, `each_call/3`, or `scan_functions/4`.
+  Accessors such as `cfg/3`, `reaching/1`, `typed/1` and `debug_info/1` reuse
+  pipeline-provided data and build it when given bare disassembly.
+
+  Related helpers:
 
   - `Argus.Extractor.Facts` — the rows an extractor emits, and the
     imprecision the coverage analysis records
@@ -20,7 +17,7 @@ defmodule Argus.Extractor.Helpers do
   - `Argus.Extractor.Terms` — spelling and walking a literal term
   - `Argus.Extractor.Shapes` — the tuples a function returns
 
-  Their functions were once here, and still answer here, deprecated.
+  Deprecated delegates remain here for compatibility.
   """
 
   alias Argus.Extractor.CallSites

@@ -2,14 +2,17 @@ defmodule Argus.Extractor do
   @moduledoc """
   Behaviour for domain-specific fact extractors.
 
-  Extractors receive a module's disassembly data and produce additional
-  fact tuples beyond what the generic emitter provides. They run per-module,
-  in parallel alongside base emission.
+  Extractors receive one module's disassembly and return rows grouped by
+  relation. The pipeline shares indexes and decoded facts between extractors;
+  modules are processed concurrently.
 
   ## Implementing an extractor
 
       defmodule MyExtractor do
         @behaviour Argus.Extractor
+
+        @impl true
+        def relations, do: [:my_relation]
 
         @impl true
         def extract(module_data) do
@@ -23,17 +26,16 @@ defmodule Argus.Extractor do
   """
 
   @typedoc """
-  What `extract/1` receives: the disassembly, plus — when the pipeline is
-  calling — the module's call-site index, per-function control-flow
-  graphs and decoded Layer-1 facts (the relations
-  `Argus.Pipeline.typed_relations/0` names), so extractors neither walk the
-  instruction stream for calls nor build their own graphs or re-emit the
-  facts. `Argus.Extractor.Helpers.each_remote_call/3`, `Helpers.cfg/3` and
-  `Helpers.typed/1` fall back to building each when absent, which is what
-  an extractor called on bare disassembly (its unit tests) gets.
-  `installed_specs` is the run's memo of `Argus.Specs.installed/2`.
-  `debug_info` is the module's debug-info chunk (`Helpers.debug_info/1`),
-  read when an extractor that wants it runs.
+  Disassembly and optional pipeline-provided indexes.
+
+  Use `Argus.Extractor.Helpers` to access call sites, control-flow graphs,
+  decoded facts, and debug info. These helpers reuse supplied data or build it
+  when called on bare disassembly. Extractors needing decoded facts must be
+  listed in `Argus.Pipeline.typed_readers/0`; their input relations belong in
+  `Argus.Pipeline.typed_relations/0`.
+
+  `installed_specs` caches `Argus.Specs.installed/2` for the run. The pipeline
+  reads `debug_info` only for extractors registered as debug-info readers.
   """
   @type module_data :: %{
           required(:module) => atom(),
@@ -53,11 +55,8 @@ defmodule Argus.Extractor do
         }
 
   @doc """
-  The relations `extract/1` can emit. `Argus.ExtractorRelationsTest`
-  checks every one against the schema and against the rules: a relation
-  no rule reads is a fact nobody asked for, and the six that had
-  accumulated before this callback existed were the same story six
-  times.
+  Relations `extract/1` can emit. Each must be declared in the schema and
+  consumed by a rule; `Argus.ExtractorRelationsTest` checks this contract.
   """
   @callback relations() :: [atom()]
 

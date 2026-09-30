@@ -1,28 +1,15 @@
 defmodule Argus.Extractor.ValueFlow do
   @moduledoc """
-  A value per register write, solved to a fixpoint over one function's
-  reaching definitions: the engine `Argus.Extractors.ParamFlow`,
-  `Argus.Extractors.PidFlow` and `Argus.Extractors.Dependence` share.
+  Shared dataflow solver for ParamFlow, PidFlow and Dependence.
 
-  Each of them asks the same question of a different lattice — which
-  parameters a value is made of, which processes it can be, which
-  sources it depends on — and each answers it the same way: an
-  instruction's writes are a function of what reaches its reads, and
-  what reaches a read is the join of what the writes reaching it hold.
-  The extractor says what an instruction writes (`evaluate`); this
-  module keeps what every write holds, and evaluates an instruction
-  again only when a write it reads changes, or when the extractor says
-  another of its own facts did (`also`). A function's instructions are
-  first evaluated in order, so code without a loop settles in one
-  evaluation each.
+  Each extractor defines the value written by an instruction and how to join
+  values reaching a read. The solver evaluates instructions in order, then
+  revisits only those affected by changed writes or explicitly requested by
+  the extractor. Changes are detected with `==`.
 
-  The values are the extractor's: a write is changed when the new value
-  is not `==` the one held, and a read joins the writes that reach it as
-  `inputs/4` does (PidFlow joins its own, the same way). The fixpoint is
-  the least one whatever the order of evaluation, as long as every
-  `evaluate` is monotone in what it reads — which is what makes the
-  worklist here and a pass over every instruction until nothing changes
-  the same answer.
+  Evaluators must be monotone over a finite lattice to reach the same least
+  fixpoint regardless of evaluation order. An evaluation budget bounds runaway
+  work; reaching it leaves the affected instruction's current result in place.
   """
 
   alias Argus.InstrId

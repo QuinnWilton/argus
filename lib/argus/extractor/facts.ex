@@ -9,7 +9,7 @@ defmodule Argus.Extractor.Facts do
   alias Argus.Extractor.Helpers
 
   @doc """
-  Append a row to the given relation in a facts map.
+  Prepend a row to the given relation in a facts map.
   """
   @spec add_fact(Argus.Pipeline.Emit.facts(), atom(), [String.t()]) :: Argus.Pipeline.Emit.facts()
   def add_fact(facts, relation, row) do
@@ -18,15 +18,9 @@ defmodule Argus.Extractor.Facts do
 
   # --- Coverage instrumentation ---
   #
-  # The `imprecision` Layer 2 fact records every fallback to "dynamic" or
-  # an outright skipped emission. The tracking is gated on a process-
-  # dictionary flag so non-coverage analyses pay zero cost: every
-  # `track_*` call becomes a single sub-microsecond `Process.get/2`.
-  #
-  # The pipeline runner sets the flag (via `enable_tracing/0`) only when
-  # the active analysis is `coverage`, then clears it (via
-  # `disable_tracing/0`) on the way out. The state is process-local so
-  # concurrent analysis runs from different processes don't interfere.
+  # Coverage tracing records unresolved values and skipped emissions. A
+  # process-local flag keeps concurrent runs independent; disabled tracing
+  # costs only a Process.get/2. The pipeline clears it in an after block.
 
   @tracing_key :argus_trace_imprecision
 

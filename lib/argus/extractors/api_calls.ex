@@ -2,22 +2,16 @@ defmodule Argus.Extractors.ApiCalls do
   @moduledoc """
   Calls to known APIs, classified by a table.
 
-  Most of what the domain extractors record is one shape: a remote call
-  to a function on a fixed list, with one or two of its arguments read
-  back as a literal, and a row that says which API it was. Five
-  extractors each kept such a list and each walked the module to apply
-  it; the lists lived in module attributes, inline function heads and
-  `MapSet`s, and encoded "infinity" three different ways. This one table
-  holds them all, and the readers — the resolved target module, an atom
-  argument, a timeout, a port target — are named once.
+  Each table entry is `{{mod, fun, arity}, relation, columns}`. `arity`
+  accepts an integer, a list, or `:any`; `fun: :any` matches every function
+  in a module. The table also defines the sink APIs shared with dataflow
+  extractors and the relations this extractor declares.
 
-  An entry is `{{mod, fun, arity}, relation, columns}`; `arity` may be a
-  list, and `fun` may be `:any` to match every function of a module.
   Columns are readers (see `read/4`): `:id`, `:func`, `:api`, `:fun`,
   `:arity`, `{:const, value}`, `{:module_target, n}`, `{:atom, n,
   category}`, `{:timeout, n, category}`, and a few domain readers. A
   reader that resolves to `"dynamic"` records the imprecision under its
-  category, exactly as the extractors it replaces did.
+  category when coverage tracing is enabled.
 
   ## Emitted facts
 
@@ -319,6 +313,9 @@ defmodule Argus.Extractors.ApiCalls do
   # Indexed by {mod, fun} at compile time; arity is checked per entry.
   @by_mod_fun Enum.group_by(@table, fn {{m, f, _a}, _rel, _cols} -> {m, f} end)
 
+  # rpc_mfa_param is emitted separately because it follows closure captures.
+  @relations [:rpc_mfa_param | Enum.map(@table, &elem(&1, 1))] |> Enum.uniq() |> Enum.sort()
+
   @sink_relations [
     :unsafe_atom_creation,
     :unsafe_deserialization,
@@ -331,10 +328,9 @@ defmodule Argus.Extractors.ApiCalls do
              |> Enum.uniq()
 
   @doc """
-  The calls `unsafe_input` treats as sinks — atom creation, deserialization,
-  one-shot decompression and code execution — as the table spells them: `{mod, fun, arity}` where
-  `arity` may be a list or `:any`. One table, so a dataflow extractor and
-  the sink extractor cannot disagree about what a sink is.
+  APIs treated as unsafe-input sinks: atom creation, deserialization,
+  one-shot decompression and code execution. Entries are `{mod, fun, arity}`;
+  `arity` may be an integer, a list, or `:any`.
   """
   @spec sink_mfas() :: [{module(), atom(), arity() | [arity()] | :any}]
   def sink_mfas, do: @sink_mfas
@@ -361,13 +357,11 @@ defmodule Argus.Extractors.ApiCalls do
     end
   end
 
-  defp listed?({mod, fun, arity}, table) do
-    Enum.any?(table, fn {m, f, a} -> m == mod and f == fun and arity_matches?(a, arity) end)
-  end
+  defp listed?(mfa, table), do: Enum.any?(table, &mfa_matches?(&1, mfa))
 
   @doc "Whether a concrete `{mod, fun, arity}` is one of `sink_mfas/0`."
   @spec sink?({module(), atom(), arity()}) :: boolean()
-  def sink?(mfa), do: Enum.any?(@sink_mfas, &mfa_matches?(&1, mfa))
+  def sink?(mfa), do: listed?(mfa, @sink_mfas)
 
   @atom_sink_mfas @table
                   |> Enum.filter(fn {_mfa, rel, _cols} -> rel == :unsafe_atom_creation end)
@@ -375,12 +369,11 @@ defmodule Argus.Extractors.ApiCalls do
                   |> Enum.uniq()
 
   @doc """
-  Whether a concrete `{mod, fun, arity}` is a sink that makes an atom
-  (`unsafe_atom_creation`): what matters of its argument is how many
-  values it can take, where a deserialization's is what its bytes are.
+  Whether a concrete `{mod, fun, arity}` creates atoms. Its risk depends
+  on the number of possible argument values, rather than their contents.
   """
   @spec atom_sink?({module(), atom(), arity()}) :: boolean()
-  def atom_sink?(mfa), do: Enum.any?(@atom_sink_mfas, &mfa_matches?(&1, mfa))
+  def atom_sink?(mfa), do: listed?(mfa, @atom_sink_mfas)
 
   defp mfa_matches?({mod, fun, :any}, {mod, fun, _arity}), do: true
 
@@ -391,30 +384,7 @@ defmodule Argus.Extractors.ApiCalls do
   defp mfa_matches?(_entry, _mfa), do: false
 
   @impl true
-  def relations,
-    do: [
-      :async_cast,
-      :async_cast_site,
-      :code_execution,
-      :distributed_store_op,
-      :global_op,
-      :global_register,
-      :node_operation,
-      :port_open,
-      :rpc_arity,
-      :rpc_call,
-      :rpc_callee,
-      :rpc_mfa_param,
-      :rpc_target,
-      :rpc_timeout_param,
-      :sup_call,
-      :sync_call,
-      :sync_call_site,
-      :sync_call_timeout,
-      :unsafe_atom_creation,
-      :unsafe_decompression,
-      :unsafe_deserialization
-    ]
+  def relations, do: @relations
 
   @impl true
   @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()
