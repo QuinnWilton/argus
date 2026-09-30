@@ -7,6 +7,9 @@ which a change appeared; older names and APIs may have changed since then.
 
 ### Added
 
+- `Argus.Graph.open(reverse_dependencies: true)` opts into Roux's reverse
+  index, skipping validation of queries unrelated to an input edit. Requires
+  the updated local Roux checkout and adds memory and input-update work.
 - An opt-in function extraction graph reuses unchanged function bodies and
   closure summaries. Enable it with `Argus.Graph.open(extraction: :functions)`;
   it currently requires the local Roux checkout's query deadline and packed

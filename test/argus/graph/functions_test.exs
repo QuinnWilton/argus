@@ -191,10 +191,17 @@ defmodule Argus.Graph.FunctionsTest do
   def record(_, _, _, _), do: :ok
 
   defp open(dir) do
-    Session.open(
+    opts = [
       modules: Argus.Graph.modules() ++ [Functions, Argus.Graph.Captures],
       blob: Path.join(dir, "store")
-    )
+    ]
+
+    opts =
+      if Code.ensure_loaded?(Roux.Dependencies),
+        do: Keyword.put(opts, :reverse_dependencies, true),
+        else: opts
+
+    Session.open(opts)
   end
 
   defp compile(number) do

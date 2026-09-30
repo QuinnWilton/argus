@@ -120,6 +120,9 @@ defmodule Argus.Graph do
     * `:extraction` — `:modules` (the default), or `:functions` to use the
       function query graph. The latter requires Roux query deadlines and trace packs; until
       released, build with `ARGUS_ROUX_PATH` pointing to the updated checkout;
+    * `:reverse_dependencies` — track affected readers when inputs change,
+      skipping validation of unrelated queries. Defaults to false. Requires
+      the updated Roux checkout and adds memory and input-update work;
     * `:frontend` — the module answering the frontend contract's queries
       (`Argus.Graph.Frontend`'s, by name) in its place: a frontend that
       compiles in memory. What it reads of a module's specs is tracked
@@ -135,7 +138,8 @@ defmodule Argus.Graph do
         manifest: nil,
         force: false,
         frontend: nil,
-        extraction: :modules
+        extraction: :modules,
+        reverse_dependencies: false
       )
 
     extraction_modules =
@@ -150,12 +154,23 @@ defmodule Argus.Graph do
         frontend -> List.replace_at(extraction_modules, 1, frontend)
       end
 
-    Roux.Session.open(
+    session_opts = [
       modules: modules,
       blob: opts[:store] || store(),
       manifest: opts[:manifest],
       force: opts[:force]
-    )
+    ]
+
+    if opts[:reverse_dependencies] do
+      unless Code.ensure_loaded?(Roux.Dependencies) do
+        raise ArgumentError,
+              "reverse dependency tracking requires ARGUS_ROUX_PATH pointing to an updated Roux checkout"
+      end
+
+      Roux.Session.open([reverse_dependencies: true] ++ session_opts)
+    else
+      Roux.Session.open(session_opts)
+    end
   end
 
   @doc """

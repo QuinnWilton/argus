@@ -161,9 +161,10 @@ defmodule Argus.Graph.FunctionPackTest do
   def record(_, _, _, _), do: :ok
 
   defp open(dir) do
-    Session.open(
-      modules: Argus.Graph.modules(:functions),
-      blob: Path.join(dir, "store"),
+    Argus.Graph.open(
+      extraction: :functions,
+      reverse_dependencies: Code.ensure_loaded?(Roux.Dependencies),
+      store: Path.join(dir, "store"),
       manifest: Path.join(dir, "manifest")
     )
   end
