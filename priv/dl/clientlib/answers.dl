@@ -7,14 +7,23 @@
 // consumer. Nested already_started pids are excluded.
 // Requires imports.dl for `call_instr` and the Layer-2 `answers_call` relation.
 
+// Follow only return wrappers needed by a requested call. Keep every return path,
+// including paths deeper than the payload bound: they can make an answer opaque.
+.decl answer_demand(site: symbol, func: symbol)
+.decl wrapper_demand(func: symbol)
+
+wrapper_demand(g) :- answer_demand(c, f), call_instr(f, g, c).
+wrapper_demand(h) :- wrapper_demand(g), answers_call(g, d, _), call_instr(g, h, d).
+
 // One of the calls outside the program (a library's, a BIF) whose
 // answer `func` may hand back, `depth` payloads down, through the
 // program's wrappers.
 .decl wrapper_answer(func: symbol, origin: symbol, depth: number)
 
-wrapper_answer(g, d, k) :- answers_call(g, d, k), !call_instr(g, _, d).
+wrapper_answer(g, d, k) :- wrapper_demand(g), answers_call(g, d, k), !call_instr(g, _, d).
 
 wrapper_answer(g, o, k + j) :-
+  wrapper_demand(g),
   answers_call(g, d, k),
   call_instr(g, h, d),
   wrapper_answer(h, o, j),
@@ -24,17 +33,18 @@ wrapper_answer(g, o, k + j) :-
 // relevant payload exceeds the depth bound.
 .decl answer_opaque(func: symbol)
 
-answer_opaque(g) :- answers_call(g, d, _), call_instr(g, h, d), !answers_call(h, _, _).
-answer_opaque(g) :- answers_call(g, d, _), call_instr(g, h, d), answer_opaque(h).
+answer_opaque(g) :-
+  wrapper_demand(g), answers_call(g, d, _), call_instr(g, h, d), !answers_call(h, _, _).
 
 answer_opaque(g) :-
+  wrapper_demand(g), answers_call(g, d, _), call_instr(g, h, d), answer_opaque(h).
+
+answer_opaque(g) :-
+  wrapper_demand(g),
   answers_call(g, d, k),
   call_instr(g, h, d),
   wrapper_answer(h, _, j),
   k + j > 1.
-
-// The calls a consumer asks the answers of, with the function they are in.
-.decl answer_demand(site: symbol, func: symbol)
 
 // The call at site may return origin's result at payload depth depth. External calls
 // are their own origins; project calls inherit callee origins.
