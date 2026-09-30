@@ -7,7 +7,6 @@ System.put_env("ARGUS_CACHE_DIR", Path.join(Mix.Project.build_path(), "argus/sto
 # Answers to the same solve are shared across the run (`Argus.Test.Memo`),
 # and facts and solves kept across runs in the blob store above.
 Argus.Test.Memo.start()
-Argus.Test.Memo.warm_programs()
 
 ExUnit.after_suite(fn _result ->
   # The graph's store, as a driver run collects it: once a day.

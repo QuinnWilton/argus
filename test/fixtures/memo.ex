@@ -34,31 +34,6 @@ defmodule Argus.Test.Memo do
   end
 
   @doc """
-  Resolves what each shipped program reads (`Argus.Souffle.input_relations/2`),
-  in parallel, once: every later ask in the run is the VM's memo.
-  """
-  @spec warm_programs() :: :ok
-  def warm_programs do
-    if Argus.Souffle.available?() do
-      [
-        Argus.Analysis.stage0_rules_path(),
-        Argus.Analysis.points_to_rules_path(),
-        Argus.Analysis.points_to_bounded_rules_path()
-      ]
-      |> Kernel.++(for name <- Argus.Analysis.builtin_analyses(), do: rules_path(name))
-      |> Task.async_stream(&Argus.Souffle.input_relations/1, timeout: :infinity)
-      |> Stream.run()
-    end
-
-    :ok
-  end
-
-  defp rules_path(name) do
-    {:ok, path} = Argus.Analysis.Catalog.rules_path(name)
-    path
-  end
-
-  @doc """
   An analysis's rules solved over hand-built facts (`Argus.Pipeline.write_facts/2`
   into a directory of the call's own, removed after).
   """
