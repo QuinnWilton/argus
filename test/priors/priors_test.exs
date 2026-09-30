@@ -10,6 +10,7 @@ defmodule Argus.PriorsTest do
   alias Argus.Test.Fixtures.Secret, as: S
 
   @moduletag :tmp_dir
+  @moduletag :capture_log
 
   @mods [S.Exposed, S.PartlyRedacted, S.Redacted, S.Ordinary, S.Heuristic]
 

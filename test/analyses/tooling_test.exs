@@ -13,6 +13,7 @@ defmodule Argus.Analyses.ToolingTest do
   alias Argus.Test.Memo
 
   @moduletag :tmp_dir
+  @moduletag :capture_log
 
   @mods [Mix.ArgusFixtures.Seed, Product, DevSetup]
 
