@@ -44,30 +44,38 @@ defmodule Argus.Graph.FunctionsTest do
     end)
   end
 
-  test "function queries preserve facts for closure and cross-function fixtures", %{
-    peer: peer,
-    tmp_dir: dir
-  } do
-    Peer.run(peer, fn ->
-      session = open(dir)
+  # Keep all fixture comparisons while bounding each test's work under suite
+  # contention. Each partition still exercises several modules in one session.
+  for partition <- 0..3 do
+    @partition partition
 
-      try do
-        paths =
-          Path.wildcard("_build/test/lib/argus_beam/ebin/Elixir.Argus.Test.Fixtures.*.beam")
-          |> Enum.filter(fn path ->
-            String.contains?(path, ["RpcTarget.", "GenStatem", "SameLine", "CheckThenAct."])
-          end)
+    test "function queries preserve closure and cross-function facts, partition #{partition}", %{
+      peer: peer,
+      tmp_dir: dir
+    } do
+      Peer.run(peer, fn ->
+        session = open(dir)
 
-        assert length(paths) > 10
+        try do
+          paths =
+            Path.wildcard("_build/test/lib/argus_beam/ebin/Elixir.Argus.Test.Fixtures.*.beam")
+            |> Enum.filter(fn path ->
+              String.contains?(path, ["RpcTarget.", "GenStatem", "SameLine", "CheckThenAct."])
+            end)
+            |> Enum.with_index()
+            |> Enum.filter(fn {_path, index} -> rem(index, 4) == @partition end)
 
-        for path <- paths do
-          set_beam(session.db, path, File.read!(path))
-          assert_same(demand(session.db, path), fresh(path))
+          assert length(paths) > 10
+
+          for {path, _index} <- paths do
+            set_beam(session.db, path, File.read!(path))
+            assert_same(demand(session.db, path), fresh(path))
+          end
+        after
+          Session.close(session)
         end
-      after
-        Session.close(session)
-      end
-    end)
+      end)
+    end
   end
 
   test "content traces reuse extraction across logical module keys without a manifest", %{

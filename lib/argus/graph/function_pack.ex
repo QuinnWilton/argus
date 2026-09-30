@@ -12,6 +12,7 @@ defmodule Argus.Graph.FunctionPack do
     key: module,
     store: :blob,
     timeout: &__MODULE__.timeout/0,
+    around_demand: {__MODULE__, :packed},
     on_timeout: &__MODULE__.timed_out/2,
     transient: &match?({:ok, %{lost: true}}, &1) do
     with {:ok, pack, held} <- rebuild(db, module, :extracted) do
@@ -24,6 +25,7 @@ defmodule Argus.Graph.FunctionPack do
     key: module,
     store: :blob,
     timeout: &__MODULE__.timeout/0,
+    around_demand: {__MODULE__, :packed},
     on_timeout: &__MODULE__.timed_out/2,
     transient: &match?({:ok, %{lost: true}}, &1) do
     with {:ok, pack, held} <- rebuild(db, module, :in_process) do
@@ -35,6 +37,17 @@ defmodule Argus.Graph.FunctionPack do
   @doc false
   @spec timeout() :: timeout()
   def timeout, do: Application.get_env(:argus_beam, :extraction_timeout, 120_000)
+
+  @doc false
+  @spec packed(Roux.Database.t(), atom(), term(), (-> result)) :: result when result: var
+  if Code.ensure_loaded?(Roux.Blob.Trace.Pack) do
+    def packed(db, _query, module, run) do
+      name = R.untracked(fn -> R.query(db, :module_name, module) end)
+      Roux.Blob.Trace.Pack.with_group(db.blob, {:argus_extraction, name}, run)
+    end
+  else
+    def packed(_db, _query, _module, run), do: run.()
+  end
 
   @doc false
   @spec timed_out(Roux.Database.t(), term()) :: {:ok, Pack.t()}
@@ -60,7 +73,9 @@ defmodule Argus.Graph.FunctionPack do
   end
 
   defquery :extraction_segments, key: {module, kind}, store: :blob do
-    segments(db, module, kind)
+    packed(db, :extraction_segments, module, fn ->
+      segments(db, module, kind)
+    end)
   end
 
   @doc false

@@ -83,9 +83,9 @@ defmodule Argus.Graph do
   @doc "Query modules for the function extraction graph."
   @spec modules(:functions) :: [module()]
   def modules(:functions) do
-    unless Code.ensure_loaded?(Roux.Runtime.Scope) do
+    unless Code.ensure_loaded?(Roux.Runtime.Scope) and Code.ensure_loaded?(Roux.Blob.Trace.Pack) do
       raise ArgumentError,
-            "function extraction requires Roux query timeouts; " <>
+            "function extraction requires Roux query timeouts and trace packs; " <>
               "use ARGUS_ROUX_PATH to build against the updated Roux checkout"
     end
 
@@ -118,7 +118,7 @@ defmodule Argus.Graph do
       default) to keep nothing but the store;
     * `:force` — start cold, ignoring the manifest;
     * `:extraction` — `:modules` (the default), or `:functions` to use the
-      function query graph. The latter requires Roux query deadlines; until
+      function query graph. The latter requires Roux query deadlines and trace packs; until
       released, build with `ARGUS_ROUX_PATH` pointing to the updated checkout;
     * `:frontend` — the module answering the frontend contract's queries
       (`Argus.Graph.Frontend`'s, by name) in its place: a frontend that

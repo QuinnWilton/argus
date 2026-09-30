@@ -9,7 +9,8 @@ which a change appeared; older names and APIs may have changed since then.
 
 - An opt-in function extraction graph reuses unchanged function bodies and
   closure summaries. Enable it with `Argus.Graph.open(extraction: :functions)`;
-  it currently requires the local Roux checkout's query deadline support.
+  it currently requires the local Roux checkout's query deadline and packed
+  trace support. Function traces are batched by module to reduce small files.
 
 ### Fixed
 

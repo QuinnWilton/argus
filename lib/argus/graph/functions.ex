@@ -118,7 +118,7 @@ defmodule Argus.Graph.Functions do
     with {:ok, data} when data != nil <- R.query(db, :extraction_function, key) do
       code = R.query(db, :extraction_code, :base)
 
-      ExtractionCache.fetch(db, :base, {code, data}, fn ->
+      ExtractionCache.fetch(db, elem(key, 0), :base, {code, data}, fn ->
         Pipeline.extract_data(data, producers: [:base], keep_base: true, trace_imprecision: true)
       end)
     end
@@ -149,7 +149,7 @@ defmodule Argus.Graph.Functions do
       context = context(db, key, producer)
       input = base_input(db, key, base)
 
-      ExtractionCache.fetch(db, producer, {code, input, context}, fn ->
+      ExtractionCache.fetch(db, elem(key, 0), producer, {code, input, context}, fn ->
         case input do
           {:unprepared, data} ->
             Pipeline.extract_data(Map.merge(data, context), options(db, producer))
@@ -222,7 +222,7 @@ defmodule Argus.Graph.Functions do
           :error -> base.digest
         end
 
-      ExtractionCache.fetch(db, producer, {code, identity}, fn ->
+      ExtractionCache.fetch(db, module, producer, {code, identity}, fn ->
         if base.prepared? do
           data =
             prepared_input(db, module, :module, identity, fn ->
@@ -287,7 +287,7 @@ defmodule Argus.Graph.Functions do
     code = R.query(db, :extraction_code, producer)
     data = empty_data(R.query(db, :module_name, module)) |> Map.put(:attributes, attributes)
 
-    ExtractionCache.fetch(db, producer, {code, data}, fn ->
+    ExtractionCache.fetch(db, module, producer, {code, data}, fn ->
       Pipeline.extract_prepared(data, options(db, producer))
     end)
     |> producer_rows(producer)
@@ -300,7 +300,7 @@ defmodule Argus.Graph.Functions do
       data = with_chunks(db, module, producer, data)
       code = R.query(db, :extraction_code, producer)
 
-      ExtractionCache.fetch(db, producer, {code, data}, fn ->
+      ExtractionCache.fetch(db, module, producer, {code, data}, fn ->
         Pipeline.extract_prepared(data, options(db, producer))
       end)
       |> producer_rows(producer)
