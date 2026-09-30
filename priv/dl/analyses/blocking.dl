@@ -69,6 +69,12 @@ clause_dep(mod, clause, to, request) :-
 
 // Map request tags to matching handler clauses, including catch-alls. An unknown
 // request tag may enter every clause.
+.decl request_enters_clause(request: symbol, clause: symbol) inline
+
+request_enters_clause(request, clause) :- request = clause.
+request_enters_clause(_request, clause) :- clause = "any".
+request_enters_clause(request, _clause) :- request = "any".
+
 .decl requested(mod: symbol, request: symbol)
 
 requested(to, request) :- clause_dep(_, _, to, request).
@@ -78,7 +84,7 @@ requested(to, request) :- clause_dep(_, _, to, request).
 enters(m, request, clause) :-
   requested(m, request),
   clause_dep(m, clause, _, _),
-  (request = clause ; clause = "any" ; request = "any").
+  request_enters_clause(request, clause).
 
 // ── Timeout chain computation ────────────────────────────────────────
 
@@ -532,17 +538,8 @@ calls_back(b, a, w) :-
 calls_back(b, a, w) :-
   process_dep(a, b, w, "start"),
   reaches_sync_request(w, b, request),
-  clause_dep(b, request, a, _).
-
-calls_back(b, a, w) :-
-  process_dep(a, b, w, "start"),
-  reaches_sync_request(w, b, _),
-  clause_dep(b, "any", a, _).
-
-calls_back(b, a, w) :-
-  process_dep(a, b, w, "start"),
-  reaches_sync_request(w, b, "any"),
-  clause_dep(b, _, a, _).
+  clause_dep(b, clause, a, _),
+  request_enters_clause(request, clause).
 
 // Process a waits on process b at w, either during normal operation or during startup
 // when the start can participate in a cycle.

@@ -607,6 +607,14 @@ forwards_untagged(f, g) :-
 
 literal_entry(f, g, a) :- site_demand(f), literal_first(f, g, a).
 
+// A known first argument selects its literal clause, a catch-all, or a gen_statem
+// clause with that event type. Event content does not narrow the first argument.
+.decl literal_enters_clause(func: symbol, value: symbol, clause: symbol) inline
+
+literal_enters_clause(_func, a, c) :- c = a.
+literal_enters_clause(_func, _a, c) :- c = "any".
+literal_enters_clause(f, a, c) :- clause_event(f, c, a, _).
+
 site_demand(g) :- site_demand(f), call_instr(f, g, _), literal_entry(f, g, _).
 
 .decl site_request(func: symbol, site: symbol, mod: symbol, tag: symbol)
@@ -629,15 +637,7 @@ site_request(f, id, m, tag) :-
   literal_entry(f, g, a),
   site_request(g, s, m, tag),
   site_clause(g, s, c),
-  (c = a ; clause_event(g, c, a, _)).
-
-site_request(f, id, m, tag) :-
-  site_demand(f),
-  call_instr(f, g, id),
-  !side_call(f, g),
-  literal_entry(f, g, _),
-  site_request(g, s, m, tag),
-  site_clause(g, s, "any").
+  literal_enters_clause(g, a, c).
 
 site_request(f, id, m, tag) :-
   site_demand(f),

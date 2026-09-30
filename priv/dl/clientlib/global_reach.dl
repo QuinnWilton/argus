@@ -33,15 +33,7 @@ global_path(f, id, site) :-
   literal_first(f, g, a),
   global_path(g, s, site),
   clause_of(g, s, c),
-  (c = a ; clause_event(g, c, a, _)).
-
-global_path(f, id, site) :-
-  call_instr(f, g, id),
-  !side_call(f, g),
-  !acked_edge(f, g),
-  literal_first(f, g, _),
-  global_path(g, s, site),
-  clause_of(g, s, "any").
+  literal_enters_clause(g, a, c).
 
 global_path(f, "", site) :-
   call_edge(f, g),
