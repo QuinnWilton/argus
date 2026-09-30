@@ -24,6 +24,11 @@ defmodule Argus.Extractors.ErrorHandlingTest do
       bare = Map.get(facts, :bare_rescue, [])
       assert bare == []
     end
+
+    test "returning exception data in a tuple, map, closure or directly is not swallowing it" do
+      facts = ErrorHandling.extract(disassemble(Argus.Test.Fixtures.ReifyingRescue))
+      assert Map.get(facts, :bare_rescue, []) == []
+    end
   end
 
   describe "extract/1 — returned_update" do

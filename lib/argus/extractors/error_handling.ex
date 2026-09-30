@@ -1994,89 +1994,23 @@ defmodule Argus.Extractors.ErrorHandling do
       handler_body != []
   end
 
-  # After `{:try_case, _}` the caught exception occupies x0 (class), x1
-  # (reason), and x2 (stacktrace). A handler that reads any of them before
-  # overwriting it is doing something with the exception — returning
-  # `{:error, reason}`, logging it, passing it to a handler function — not
-  # silently swallowing it. A truly-bare handler (`catch _, _ -> :ok` /
-  # `-> default`) overwrites x0 with its return value and never reads the
-  # exception registers. This is a small liveness scan: start with the
-  # three exception registers live, and report a read the moment a live
-  # one is used as a source, tracking overwrites so a reused register
-  # (the return value later moved through x0) is not mistaken for the
-  # exception.
+  # After try_case, x0/x1/x2 hold the class, reason and stacktrace. A read
+  # before overwrite exposes the exception to the handler's caller or callees.
+  # Use the shared instruction semantics so maps, closures and returns count too.
   @exception_regs MapSet.new([{:x, 0}, {:x, 1}, {:x, 2}])
 
   defp reifies_exception?(handler_body) do
     result =
       Enum.reduce_while(handler_body, @exception_regs, fn instr, live ->
-        if Enum.any?(source_regs(instr), &MapSet.member?(live, &1)) do
+        if Enum.any?(Instr.uses(instr), &MapSet.member?(live, &1)) do
           {:halt, :reifies}
         else
-          {:cont, MapSet.difference(live, MapSet.new(dest_regs(instr)))}
+          {:cont, MapSet.difference(live, MapSet.new(Instr.defs(instr)))}
         end
       end)
 
     result == :reifies
   end
-
-  # Registers read (as source operands) by an instruction. Only the shapes
-  # that can appear in a catch handler and can carry an exception register
-  # are enumerated; anything else reads nothing relevant. A call of arity N
-  # reads x0..x(N-1) (its argument registers).
-  defp source_regs({:move, src, _dst}), do: regs([src])
-  defp source_regs({:swap, a, b}), do: regs([a, b])
-  defp source_regs({:put_list, hd, tl, _dst}), do: regs([hd, tl])
-  defp source_regs({:put_tuple2, _dst, {:list, elems}}), do: regs(elems)
-  defp source_regs({:get_tuple_element, src, _idx, _dst}), do: regs([src])
-  defp source_regs({:get_hd, src, _dst}), do: regs([src])
-  defp source_regs({:get_tl, src, _dst}), do: regs([src])
-  defp source_regs({:call, arity, _}), do: arg_regs(arity)
-  defp source_regs({:call_only, arity, _}), do: arg_regs(arity)
-  defp source_regs({:call_last, arity, _, _}), do: arg_regs(arity)
-  defp source_regs({:call_ext, arity, _}), do: arg_regs(arity)
-  defp source_regs({:call_ext_only, arity, _}), do: arg_regs(arity)
-  defp source_regs({:call_ext_last, arity, _, _}), do: arg_regs(arity)
-  defp source_regs({:bif, _name, _fail, args, _dst}) when is_list(args), do: regs(args)
-  defp source_regs({:gc_bif, _name, _fail, _live, args, _dst}) when is_list(args), do: regs(args)
-  defp source_regs({:test, _op, _fail, args}) when is_list(args), do: regs(args)
-  # raw_raise / build_stacktrace operate on the caught exception in place.
-  defp source_regs(:raw_raise), do: [{:x, 0}]
-  defp source_regs({:raw_raise}), do: [{:x, 0}]
-  defp source_regs(:build_stacktrace), do: [{:x, 0}]
-  defp source_regs({:build_stacktrace}), do: [{:x, 0}]
-  defp source_regs(_instr), do: []
-
-  # Registers written (as destination) by an instruction — removed from the
-  # live exception set so a later reuse of the register is not mistaken for
-  # a read of the exception. A call writes its result to x0.
-  defp dest_regs({:move, _src, dst}), do: regs([dst])
-  defp dest_regs({:swap, a, b}), do: regs([a, b])
-  defp dest_regs({:put_list, _hd, _tl, dst}), do: regs([dst])
-  defp dest_regs({:put_tuple2, dst, _}), do: regs([dst])
-  defp dest_regs({:get_tuple_element, _src, _idx, dst}), do: regs([dst])
-  defp dest_regs({:get_hd, _src, dst}), do: regs([dst])
-  defp dest_regs({:get_tl, _src, dst}), do: regs([dst])
-  defp dest_regs({:call, _, _}), do: [{:x, 0}]
-  defp dest_regs({:call_only, _, _}), do: [{:x, 0}]
-  defp dest_regs({:call_last, _, _, _}), do: [{:x, 0}]
-  defp dest_regs({:call_ext, _, _}), do: [{:x, 0}]
-  defp dest_regs({:call_ext_only, _, _}), do: [{:x, 0}]
-  defp dest_regs({:call_ext_last, _, _, _}), do: [{:x, 0}]
-  defp dest_regs({:bif, _name, _fail, _args, dst}), do: regs([dst])
-  defp dest_regs({:gc_bif, _name, _fail, _live, _args, dst}), do: regs([dst])
-  defp dest_regs(_instr), do: []
-
-  # Normalize operands to plain registers, dropping literals/atoms/labels.
-  defp regs(operands), do: operands |> Enum.map(&to_reg/1) |> Enum.reject(&is_nil/1)
-
-  defp to_reg({:x, _} = reg), do: reg
-  defp to_reg({:y, _} = reg), do: reg
-  defp to_reg({:tr, inner, _type}), do: to_reg(inner)
-  defp to_reg(_operand), do: nil
-
-  defp arg_regs(arity) when arity > 0, do: for(i <- 0..(arity - 1), do: {:x, i})
-  defp arg_regs(_arity), do: []
 
   # Extract handler body: skip labels and try_case, take until next
   # label, try, func_info, or function boundary.

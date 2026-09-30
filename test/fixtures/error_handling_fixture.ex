@@ -183,6 +183,30 @@ defmodule Argus.Test.Fixtures.ReifyingRescue do
       kind, reason -> {:error, {kind, reason}}
     end
   end
+
+  def to_map(f) do
+    try do
+      f.()
+    catch
+      kind, reason -> %{kind: kind, reason: reason}
+    end
+  end
+
+  def to_closure(f) do
+    try do
+      f.()
+    catch
+      _, reason -> fn -> reason end
+    end
+  end
+
+  def to_class(f) do
+    try do
+      f.()
+    catch
+      kind, _ -> kind
+    end
+  end
 end
 
 defmodule Argus.Test.Fixtures.ReraisingRescue do
