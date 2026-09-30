@@ -7,6 +7,12 @@ which a change appeared; older names and APIs may have changed since then.
 
 ### Fixed
 
+- Recognize exception data returned as maps, closures or the exception class,
+  avoiding false reports that a catch handler swallows the exception.
+- Follow tuple values to actual returns when classifying callbacks. Overwritten
+  tuples and call arguments no longer count as callback return values.
+- Recognize `from` retained in the callback state or used after constructing a
+  `:noreply` tuple, avoiding false reports of missing replies.
 - Silence Souffle warnings during analysis and fix singleton-variable warnings
   in the shipped rules. A separate compile check keeps warnings visible in CI.
 - Follow process starts through wrappers when checking monitor lifetimes.

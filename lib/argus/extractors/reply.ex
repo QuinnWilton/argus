@@ -1,61 +1,27 @@
 defmodule Argus.Extractors.Reply do
   @moduledoc """
-  What an OTP callback returns, and whether it kept the means to reply.
+  OTP callback returns and whether a deferred reply keeps `from`.
 
-  `handle_call/3` may answer immediately with `{:reply, value, state}`, or
-  defer by returning `{:noreply, state}` and calling `GenServer.reply/2`
-  later. Deferring is a promise, and the only thing that can discharge it is
-  the `from` term the callback was handed — an opaque `{pid, tag}` that
-  exists nowhere else.
+  A `handle_call/3` returning `{:noreply, state}` must retain or use its
+  `from` argument so someone can reply later. This extractor records a dropped
+  `from` when a path returns that tuple without referencing the argument.
+  Checks are per return construction, so a correct clause cannot hide a broken
+  sibling. References after tuple construction count too.
 
-  So a `handle_call/3` clause that returns `{:noreply, _}` while never
-  reading its `from` parameter has made a promise it cannot keep, no matter
-  what the rest of the system does. The caller blocks for the full
-  `GenServer.call/3` timeout and then exits.
-
-  ## Approach
-
-  Both halves are visible in bytecode without dataflow.
-
-  A callback's return shape is a tuple built into `{x, 0}` immediately
-  before `return`, and its tag is a literal atom:
-
-      {:put_tuple2, {:x, 0}, {:list, [atom: :noreply, x: 2]}}
-      :return
-
-  And `from` is argument 1, so it arrives in `{x, 1}`. Reading it is either
-  a mention of that register or a call of arity two or more, because calls
-  take their arguments positionally: a body that passes `from` straight
-  through, as `publish(payload, from, state)` does, compiles to no move at
-  all and mentions the register nowhere.
-
-  Which sites drop `from` is then a reachability question — walk the
-  control-flow graph from the entry, refuse to pass through any instruction
-  that reads `from`, and see which `{:noreply, _}` sites remain. Per site,
-  not per function: `handle_call/3` compiles every clause into one function,
-  and asking function-wide lets a clause that defers correctly vouch for one
-  that does not.
-
-  Both directions of imprecision are toward silence. A tail call hides the
-  return shape, so no tag is recorded; a write to `{x, 1}` counts as a read,
-  so a clobbered register looks retained; and any two-argument call counts,
-  so a callback that merely passes its arguments along is never reported.
+  Return tuples come from `Argus.Extractor.Shapes`, which follows copies and
+  control-flow joins. The `from` check walks paths that do not reference `x1`,
+  including implicit reads by calls and sends. Writes to `x1` also stop the
+  walk conservatively. Tail calls have no visible tuple shape.
 
   ## Emitted facts
 
   - `callback_return(id, func, callback, tag)` — a literal return tag
-  - `callback_stop_reason(id, func, reason)` — the reason of a
-    `{:stop, reason, ...}` return when it is a literal atom or a
-    `{:shutdown, term}` literal
-  - `callback_timeout(id, func, callback, timeout_ms)` — the literal integer
-    timeout of a `{:ok, state, ms}`, `{:noreply, state, ms}` or
-    `{:reply, reply, state, ms}` return
-  - `callback_drops_from(id, func)` — a `{:noreply, _}` site some execution
-    reaches without ever having read `from`
-
-  A whole return folded into one literal — `{:ok, %{}, 0}` with a
-  constant state compiles to a single `move` of the tuple into `{x, 0}` —
-  is read the same way as a tuple built in place.
+  - `callback_stop_reason(id, func, reason)` — a literal atom or
+    `{:shutdown, term}` reason in a `{:stop, reason, ...}` return
+  - `callback_timeout(id, func, callback, timeout_ms)` — an integer timeout in
+    an `:ok`, `:noreply`, or `:reply` return
+  - `callback_drops_from(id, func)` — a returned `:noreply` tuple reached on a
+    path that never references `from`
   """
 
   @behaviour Argus.Extractor
@@ -102,10 +68,11 @@ defmodule Argus.Extractors.Reply do
       case Map.fetch(@callbacks, {name, arity}) do
         {:ok, callback} ->
           func_id = InstrId.func_id(mod, name, arity)
+          shapes = return_shapes(instrs)
 
           acc
-          |> emit_returns(func_id, callback, instrs)
-          |> emit_retains_from(func_id, name, arity, instrs, cfg(module_data, name, arity))
+          |> emit_returns(func_id, callback, shapes)
+          |> emit_dropped_from(func_id, callback, instrs, cfg(module_data, name, arity), shapes)
 
         :error ->
           acc
@@ -113,10 +80,8 @@ defmodule Argus.Extractors.Reply do
     end)
   end
 
-  defp emit_returns(facts, func_id, callback, instrs) do
-    instrs
-    |> return_shapes()
-    |> Enum.reduce(facts, fn
+  defp emit_returns(facts, func_id, callback, shapes) do
+    Enum.reduce(shapes, facts, fn
       {idx, [{:atom, tag} | rest]}, acc ->
         id = InstrId.mint(func_id, idx)
 
@@ -161,32 +126,15 @@ defmodule Argus.Extractors.Reply do
 
   defp emit_timeout(facts, _id, _func_id, _callback, _tag, _rest), do: facts
 
-  # Per return site, not per function. Whether a callback keeps `from` is a
-  # property of the clause that defers, and `handle_call/3` compiles every
-  # clause into one function: asking the question function-wide lets a
-  # sibling clause that defers correctly vouch for one that does not. That
-  # is not a rounding error, it is the difference between finding the bug
-  # and not — the interesting case is precisely a multi-clause callback
-  # where one clause forgets.
-  #
-  # So: walk the intra-function control-flow graph from the entry, refusing
-  # to pass through any instruction that reads `from`, and ask which
-  # {:noreply, _} sites are still reachable. Those are the ones some
-  # execution arrives at having never touched the term.
-  #
-  # Instruction-level rather than block-level, because the two interleave.
-  # Elixir inlines the first clause into the entry block, so a block there
-  # holds both the dispatch test for the *other* clauses and a body that
-  # stores `from`; at block granularity that store poisons the entry and
-  # nothing downstream is ever reported.
-  defp emit_retains_from(facts, func_id, :handle_call, 3, instrs, %Cfg.Function{} = fun) do
+  # Find candidate constructions without a prior reference to `from`, then
+  # check that the tuple can reach a return without a later reference either.
+  # Instruction-level walks keep sibling clauses in the same block separate.
+  defp emit_dropped_from(facts, func_id, "handle_call", instrs, %Cfg.Function{} = fun, shapes) do
     reachable = reachable_without_from(fun, instrs)
 
-    instrs
-    |> return_shapes()
-    |> Enum.reduce(facts, fn
+    Enum.reduce(shapes, facts, fn
       {idx, [{:atom, :noreply} | _]}, acc ->
-        if MapSet.member?(reachable, idx),
+        if MapSet.member?(reachable, idx) and returns_without_from?(fun, instrs, idx),
           do: add_fact(acc, :callback_drops_from, [InstrId.mint(func_id, idx), func_id]),
           else: acc
 
@@ -195,7 +143,23 @@ defmodule Argus.Extractors.Reply do
     end)
   end
 
-  defp emit_retains_from(facts, _func_id, _name, _arity, _instrs, _fun), do: facts
+  defp emit_dropped_from(facts, _func_id, _callback, _instrs, _fun, _shapes), do: facts
+
+  # `from` can still be used after the result tuple is built. Follow that
+  # tuple, so another branch returning a different value cannot vouch for it.
+  defp returns_without_from?(fun, instrs, idx) do
+    instr = Enum.at(instrs, idx)
+
+    reg =
+      case instr do
+        {:put_tuple2, dst, _elements} -> Instr.register(dst)
+        {:move, _literal, dst} -> Instr.register(dst)
+        {:put_tuple, _size, dst} -> Instr.register(dst)
+      end
+
+    not references_from?(instr) and
+      Walk.carries_to_return?(fun, instrs, idx + 1, reg, &references_from?/1)
+  end
 
   # Forward walk from the entry across instructions that do not read
   # `from`. A reading instruction is reached but not passed: everything
@@ -209,22 +173,8 @@ defmodule Argus.Extractors.Reply do
     visited
   end
 
-  # A register can be read without ever appearing as an operand. Calls take
-  # their arguments positionally in {x,0}..{x,arity-1}, so a handle_call/3
-  # body doing
-  #
-  #     publish(Payload, From, State)
-  #
-  # compiles to a bare `{:call, 3, ...}` with no moves at all: the arguments
-  # are already in the right registers. Searching for {x,1} finds nothing
-  # and the callback looks as though it dropped `from`, when it passed it
-  # on. amqp_rpc_client is exactly this shape, and treating an argument
-  # order that happens to match as evidence of a bug is how a static
-  # analysis earns its reputation.
-  #
-  # So an instruction that reads {x,1} by `Argus.Instr` — a call of arity
-  # two or more, `send`, whose operands are implicit in {x,0} and {x,1} —
-  # counts as a read.
+  # Calls and sends read implicit argument registers. Explicit mentions,
+  # including overwrites, conservatively count as retaining `from` too.
   defp references_from?(instr) do
     @from_register in Instr.uses(instr) or
       Terms.mentions?(instr, &(&1 == @from_register))

@@ -2,10 +2,8 @@ defmodule Argus.Test.Fixtures.Reply do
   @moduledoc """
   Fixtures for the reply-contract analysis.
 
-  Each module holds exactly one `handle_call/3`, because retaining `from` is
-  recorded per function: putting a correct clause and a broken one in the
-  same module would mask the broken one, which is the analysis's known
-  imprecision rather than a property worth fixturing.
+  Includes both isolated callbacks and mixed clauses to check that a correct
+  reply path cannot hide another clause that drops `from`.
   """
 
   defmodule Forgets do
@@ -176,5 +174,63 @@ defmodule Argus.Test.Fixtures.Reply do
     def handle_call(:ping, _from, state), do: {:reply, :pong, state, 10}
     def handle_cast(:later, state), do: {:noreply, state, {:continue, :later}}
     def handle_continue(:later, state), do: {:noreply, state, :hibernate}
+  end
+
+  defmodule BuildsBeforeReply do
+    @moduledoc "Builds the return tuple before using `from`."
+    use GenServer
+
+    @impl true
+    def init(state), do: {:ok, state}
+
+    @impl true
+    def handle_call(:work, from, state) do
+      result = {:noreply, state}
+      GenServer.reply(from, :ok)
+      result
+    end
+  end
+
+  defmodule KeepsFromAsState do
+    @moduledoc "The callback state itself retains `from`."
+    use GenServer
+
+    @impl true
+    def init(state), do: {:ok, state}
+
+    @impl true
+    def handle_call(:work, from, _state), do: {:noreply, from}
+  end
+
+  defmodule BuildsBeforeHandoff do
+    @moduledoc "Builds the return tuple before handing `from` to a helper."
+    use GenServer
+
+    @impl true
+    def init(state), do: {:ok, state}
+
+    @impl true
+    def handle_call(:work, from, state) do
+      result = {:noreply, state}
+      handoff(from)
+      result
+    end
+
+    def handoff(from), do: send(:worker, {:reply_to, from})
+  end
+
+  defmodule BuildsBeforeUnrelatedWork do
+    @moduledoc "Work after tuple construction does not keep `from`."
+    use GenServer
+
+    @impl true
+    def init(state), do: {:ok, state}
+
+    @impl true
+    def handle_call(:work, _from, state) do
+      result = {:noreply, state}
+      System.monotonic_time()
+      result
+    end
   end
 end

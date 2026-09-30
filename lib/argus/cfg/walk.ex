@@ -3,21 +3,16 @@ defmodule Argus.Cfg.Walk do
   Forward, all-paths walks over a function's control flow, one instruction
   at a time.
 
-  Three extractors used to carry their own copy of this loop — one
-  deciding whether a deferred reply ever read `from`, one whether a
-  monitor ref was ever read, one whether a clause head accepts any
-  content — and their `successors/3` functions disagreed with each other
-  about which instructions end a path. Here the block graph decides:
-  within a block execution is sequential, at the block's end it takes
-  every edge the caller allows, and a block whose terminator returns,
-  raises or tail-calls has no edges to take.
+  Execution advances within a block, then follows its outgoing edges.
+  Returns, raises and tail calls end paths. Walks can start inside a block,
+  for example just after a successful test.
 
-  The walk starts at instruction indices, not blocks, because the
-  interesting starting points are "just after this test succeeded", which
-  is the middle of a block as often as not.
+  `explore/4` checks reachability with caller-defined stopping conditions.
+  `carries_to_return?/5` follows a value through copies and overwrites.
   """
 
   alias Argus.Cfg.{Block, Function}
+  alias Argus.Instr
 
   @typedoc """
   What the caller decides at each instruction: keep walking, stop this
@@ -51,6 +46,55 @@ defmodule Argus.Cfg.Walk do
     }
 
     walk(Enum.reject(starts, &is_nil/1), state, %{})
+  end
+
+  @doc """
+  Whether the value in `reg` before `start` can reach a return's `x0`.
+
+  Follows copies and control-flow edges, stopping paths where `stop?` is true.
+  Each instruction/register pair is visited once, so loops terminate without
+  losing distinct copies of the value.
+  """
+  @spec carries_to_return?(
+          Function.t(),
+          [Instr.instr()],
+          non_neg_integer(),
+          Instr.reg(),
+          (Instr.instr() -> boolean())
+        ) :: boolean()
+  def carries_to_return?(%Function{} = fun, instrs, start, reg, stop?) do
+    state = %{
+      instrs: List.to_tuple(instrs),
+      fun: fun,
+      stop?: stop?,
+      follow?: fn _instr, _kind -> true end
+    }
+
+    carries([{start, reg}], state, %{})
+  end
+
+  defp carries([], _state, _visited), do: false
+
+  defp carries([{idx, reg} = point | rest], state, visited) do
+    if idx >= tuple_size(state.instrs) or Map.has_key?(visited, point) do
+      carries(rest, state, visited)
+    else
+      instr = elem(state.instrs, idx)
+      visited = Map.put(visited, point, true)
+
+      cond do
+        state.stop?.(instr) ->
+          carries(rest, state, visited)
+
+        instr == :return and reg == {:x, 0} ->
+          true
+
+        true ->
+          held = Instr.carry(instr, [reg])
+          following = for at <- next(instr, idx, state), dst <- held, do: {at, dst}
+          carries(following ++ rest, state, visited)
+      end
+    end
   end
 
   defp walk([], _state, visited), do: {:done, visited |> Map.keys() |> MapSet.new()}

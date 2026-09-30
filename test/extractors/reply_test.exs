@@ -9,6 +9,22 @@ defmodule Argus.Extractors.ReplyTest do
     Reply.extract(data)
   end
 
+  test "using from in or after the tuple construction fulfills the reply contract" do
+    for mod <- [R.KeepsFromAsState, R.BuildsBeforeReply, R.BuildsBeforeHandoff] do
+      facts = extract(mod)
+
+      assert Enum.any?(facts[:callback_return], fn [_, _, callback, tag] ->
+               callback == "handle_call" and tag == ":noreply"
+             end)
+
+      assert Map.get(facts, :callback_drops_from, []) == []
+    end
+  end
+
+  test "unrelated work after building the tuple does not keep from" do
+    assert [[_id, _func]] = extract(R.BuildsBeforeUnrelatedWork)[:callback_drops_from]
+  end
+
   describe "callback_stop_reason" do
     test "a literal atom and a {:shutdown, term} literal are recorded; a computed reason is not" do
       facts = extract(R.StopsNormally)

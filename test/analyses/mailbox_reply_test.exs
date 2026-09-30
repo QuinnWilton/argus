@@ -15,7 +15,11 @@ defmodule Argus.Analyses.MailboxReplyTest do
     R.StopsWithReply,
     R.CastsAndInfos,
     R.NotAGenServer,
-    R.MixedClauses
+    R.MixedClauses,
+    R.KeepsFromAsState,
+    R.BuildsBeforeReply,
+    R.BuildsBeforeHandoff,
+    R.BuildsBeforeUnrelatedWork
   ]
 
   # Every test reads the same solve of @all: solved once, read-only.
@@ -42,6 +46,10 @@ defmodule Argus.Analyses.MailboxReplyTest do
   defp named?(list, fragment), do: Enum.any?(list, &String.contains?(&1, fragment))
 
   describe "detection" do
+    test "unrelated work between tuple construction and return does not keep from", ctx do
+      assert named?(mods(results(ctx), "never_replies"), "BuildsBeforeUnrelatedWork")
+    end
+
     test "deferring without keeping `from` is reported", ctx do
       skip_without_souffle()
 
@@ -82,6 +90,13 @@ defmodule Argus.Analyses.MailboxReplyTest do
   end
 
   describe "what is deliberately not reported" do
+    test "using from in or after tuple construction fulfills the reply contract", ctx do
+      r = results(ctx)
+      refute named?(mods(r, "never_replies"), "KeepsFromAsState")
+      refute named?(mods(r, "never_replies"), "BuildsBeforeReply")
+      refute named?(mods(r, "never_replies"), "BuildsBeforeHandoff")
+    end
+
     test "replying directly promises nothing", ctx do
       skip_without_souffle()
       refute named?(mods(results(ctx), "never_replies"), "RepliesDirectly")
