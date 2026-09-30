@@ -119,23 +119,42 @@ defmodule Argus.Specs.Source do
   end
 
   @doc """
-  A stamp of where `module` would be read from, without reading it: a
-  memo of what was read is good while the stamp holds.
+  A stamp of where `module` would be read from. Recently changed files are
+  hashed because a stat timestamp cannot distinguish writes in one second.
   """
   @spec stamp(t(), module()) :: term()
   def stamp(source, module) do
     case which(source, module) do
       {:ok, :runtime} ->
-        {:runtime, System.version()}
+        case :code.which(module) do
+          path when is_list(path) -> file_stamp(List.to_string(path))
+          other -> {:runtime, module, other, System.version()}
+        end
 
       {:ok, path} ->
-        case File.stat(path, time: :posix) do
-          {:ok, %File.Stat{mtime: mtime, size: size}} -> {path, mtime, size}
-          {:error, _} -> {path, nil, nil}
-        end
+        file_stamp(path)
 
       :error ->
         :non_existing
+    end
+  end
+
+  @doc false
+  @spec file_stamp(Path.t()) :: term()
+  def file_stamp(path) do
+    case Roux.Stamp.stamp(path) do
+      :absent ->
+        {path, :absent}
+
+      {_size, mtime, _inode, ctime} = stamp ->
+        if max(mtime, ctime) < System.os_time(:second) - 2 do
+          {path, stamp}
+        else
+          case File.read(path) do
+            {:ok, bytes} -> {path, stamp, :crypto.hash(:sha256, bytes)}
+            {:error, _} -> {path, :absent}
+          end
+        end
     end
   end
 

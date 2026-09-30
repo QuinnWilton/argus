@@ -128,16 +128,26 @@ defmodule Argus.Specs do
     do: memoized(memo, {:specs, module}, fn -> stamped_installed(module, memo) end)
 
   defp stamped_installed(module, memo) do
+    case installed_declarations(module, memo) do
+      :unknown -> :unknown
+      specs -> reduce(specs, installed_types(module, memo), memo)
+    end
+  end
+
+  # Cache declarations, not resolved shapes: remote types have their own
+  # stamps and must be read again, including on a warm declaration-cache hit.
+  # This also records those dependencies in each caller's extraction memo.
+  defp installed_declarations(module, memo) do
     stamp = stamp(module, memo)
     key = {__MODULE__, :installed, module}
 
     case :persistent_term.get(key, nil) do
-      {^stamp, value} ->
+      {:declarations, ^stamp, value} ->
         value
 
       _stale_or_missing ->
         value = read_installed(module, memo)
-        :persistent_term.put(key, {stamp, value})
+        :persistent_term.put(key, {:declarations, stamp, value})
         value
     end
   end
@@ -290,7 +300,7 @@ defmodule Argus.Specs do
   defp read_installed(module, memo) do
     with {:ok, target} <- target(module, memo),
          {:ok, specs} <- fetch(fn -> Code.Typespec.fetch_specs(target) end) do
-      reduce(specs, installed_types(module, memo), memo)
+      specs
     else
       :error -> :unknown
     end
@@ -358,10 +368,7 @@ defmodule Argus.Specs do
   defp code_path_stamp(module) do
     case :code.which(module) do
       path when is_list(path) ->
-        case File.stat(path, time: :posix) do
-          {:ok, %{mtime: mtime, size: size}} -> {path, mtime, size}
-          {:error, _} -> {path, nil, nil}
-        end
+        Source.file_stamp(List.to_string(path))
 
       other ->
         other
