@@ -85,16 +85,7 @@ defmodule Argus.Graph.Solve do
 
   defquery :analysis_inputs, key: {program, analysis} do
     with {:ok, io} <- Runtime.query(db, :program_io, analysis) do
-      Enum.reduce_while(io.inputs, {:ok, []}, fn {relation, file}, {:ok, acc} ->
-        case input(db, program, relation, file) do
-          {:ok, source} -> {:cont, {:ok, [{file, source} | acc]}}
-          {:error, _} = error -> {:halt, error}
-        end
-      end)
-      |> case do
-        {:ok, inputs} -> {:ok, Enum.sort(inputs)}
-        {:error, _} = error -> error
-      end
+      inputs(db, program, io.inputs)
     end
   end
 
@@ -149,12 +140,14 @@ defmodule Argus.Graph.Solve do
   defp solve_program(db, program, stage_program) do
     with {:ok, digest} <- Runtime.query(db, :program_digest, stage_program),
          {:ok, io} <- Runtime.query(db, :program_io, stage_program),
-         {:ok, inputs} <- stage_inputs(db, program, io.inputs) do
+         {:ok, inputs} <- inputs(db, program, io.inputs) do
       run(db, program, stage_program, digest, io, inputs)
     end
   end
 
-  defp stage_inputs(db, program, inputs) do
+  # Analyses and stages resolve the same input sources and stop at the first
+  # missing relation. Sort both so their solve keys are deterministic.
+  defp inputs(db, program, inputs) do
     Enum.reduce_while(inputs, {:ok, []}, fn {relation, file}, {:ok, acc} ->
       case input(db, program, relation, file) do
         {:ok, source} -> {:cont, {:ok, [{file, source} | acc]}}
