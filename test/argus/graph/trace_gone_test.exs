@@ -35,7 +35,7 @@ defmodule Argus.Graph.TraceGoneTest do
     :ok =
       :telemetry.attach_many(
         handler,
-        [[:argus, :graph, :extract], [:roux, :query, :start]],
+        [[:argus, :graph, :pack], [:roux, :query, :start]],
         &__MODULE__.handle/4,
         config
       )
@@ -50,7 +50,7 @@ defmodule Argus.Graph.TraceGoneTest do
   end
 
   @doc false
-  def handle([:argus, :graph, :extract], _measurements, %{module: @module}, config),
+  def handle([:argus, :graph, :pack], _measurements, %{module: @module}, config),
     do: send(config.test, :extracted)
 
   def handle([:roux, :query, :start], _, %{query_name: :schema_entry} = meta, config) do

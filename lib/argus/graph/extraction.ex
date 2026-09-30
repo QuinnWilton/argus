@@ -1,45 +1,8 @@
 defmodule Argus.Graph.Extraction do
   @moduledoc """
-  A module's facts, and the first cutoff seam.
-
-    * `module_facts(beam_key)` — the module's rows from every producer
-      (`Argus.Pipeline`'s base and every extractor an analysis runs:
-      `producers/0`), one segment per producer in the blob store
-      (`Argus.Graph.Pack`),
-      with each relation's chunk digest; `{:error, reason}` for a beam
-      the pipeline cannot read. Not kept in a manifest when the module
-      was lost (it outlived the per-module timeout, or its worker
-      exited), nor is anything that read it: the next run extracts it
-      again.
-    * `module_semantic(beam_key)` — the same digests without
-      `line_info`: an edit that only moves lines extracts the module
-      again, and this comes out equal, so nothing past it runs. No
-      relation carries a module's attributes (`Argus.Pipeline.Emit`
-      drops them), so the `vsn` checksum, which moves with every edit,
-      reaches none.
-    * `module_in_process(beam_key)` — the base's rows of the relations
-      only the in-process passes read (`Argus.Schema.in_process_only/0`),
-      which `module_facts` leaves out: no program of argus's reads them,
-      and they are most of a module's rows. A program of the caller's
-      own that reads one demands them (`Argus.Graph.Relations`), and
-      they are extracted then, in packs of their own
-      (`Argus.Graph.Pack`'s `:in_process`), keyed on the base's code
-      alone (`base_code`).
-
-  `module_facts` reads the code every producer runs as a value
-  (`Argus.Graph.Code`'s `producer_code`): an extractor edit moves it,
-  every module's facts run again, and each finds every other producer's
-  rows by its trace and runs that extractor alone, over the module's
-  kept base, writing its own segment. An edit to an
-  analysis that names no other extractor moves nothing here.
+  The producers used by the extraction graph. Query entry points delegate to
+  `Argus.Graph.FunctionPack`, which assembles cached function and producer facts.
   """
-
-  use Roux.Query,
-    code: [exclude: &Argus.Graph.Reads.schema_module?/1],
-    around: {Argus.Graph.Reads, :around}
-
-  alias Argus.Graph.{Frontend, Pack}
-  alias Roux.Runtime
 
   @doc "Every producer the graph extracts: `:base` and `extractors/0`, in that order."
   @spec producers() :: [Argus.Pipeline.producer()]
@@ -62,50 +25,16 @@ defmodule Argus.Graph.Extraction do
     |> Enum.sort()
   end
 
-  defquery :module_facts,
-    key: beam_key,
-    store: :blob,
-    transient: &match?({:ok, %{lost: true}}, &1),
-    returns: {:ok, Pack.t()} | {:error, term()} do
-    case Runtime.query(db, :module_beam, beam_key) do
-      {:ok, beam} ->
-        module = Runtime.query(db, :module_name, beam_key)
-        codes = Runtime.query(db, :producer_code, :all)
-        Pack.extract(db, Frontend.read(beam), beam.hash, module, codes)
+  @spec module_facts(Roux.Database.t(), term()) :: {:ok, Argus.Graph.Pack.t()} | {:error, term()}
+  defdelegate module_facts(db, key), to: Argus.Graph.FunctionPack
 
-      :external ->
-        {:error, {:external, beam_key}}
-    end
-  end
+  @spec module_in_process(Roux.Database.t(), term()) ::
+          {:ok, Argus.Graph.Pack.t()} | {:error, term()}
+  defdelegate module_in_process(db, key), to: Argus.Graph.FunctionPack
 
-  defquery :module_in_process,
-    key: beam_key,
-    store: :blob,
-    transient: &match?({:ok, %{lost: true}}, &1),
-    returns: {:ok, Pack.t()} | {:error, term()} do
-    case Runtime.query(db, :module_beam, beam_key) do
-      {:ok, beam} ->
-        module = Runtime.query(db, :module_name, beam_key)
-        codes = %{base: Runtime.query(db, :base_code, :all)}
-        Pack.extract(db, Frontend.read(beam), beam.hash, module, codes, :in_process)
-
-      :external ->
-        {:error, {:external, beam_key}}
-    end
-  end
-
-  # The base's code digest alone: an extractor edit moves
-  # `producer_code`, and this comes out equal.
-  defquery :base_code, key: :all do
-    db |> Runtime.query(:producer_code, :all) |> Map.fetch!(:base)
-  end
-
-  defquery :module_semantic,
-    key: beam_key,
-    returns: {:ok, %{atom() => binary()}} | {:error, term()} do
-    case Runtime.query(db, :module_facts, beam_key) do
-      {:ok, %{relations: relations}} -> {:ok, Map.delete(relations, :line_info)}
-      {:error, _} = error -> error
-    end
-  end
+  @spec module_semantic(Roux.Database.t(), term()) ::
+          {:ok, %{atom() => binary()}} | {:error, term()}
+  defdelegate module_semantic(db, key), to: Argus.Graph.FunctionPack
+  @spec base_code(Roux.Database.t(), :all) :: term()
+  defdelegate base_code(db, key), to: Argus.Graph.FunctionPack
 end

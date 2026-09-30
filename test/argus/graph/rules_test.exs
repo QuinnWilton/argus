@@ -124,16 +124,22 @@ defmodule Argus.Graph.RulesTest do
 
     :telemetry.attach(
       handler,
-      [:argus, :graph, :extract],
+      [:argus, :graph, :extraction_compute],
       fn _event, _measurements, meta, table ->
-        :ets.insert(table, {meta.module, meta.producers, meta.kept_base})
+        :ets.insert(table, {meta.module, meta.producer})
       end,
       table
     )
 
     try do
       fun.()
-      :ets.tab2list(table)
+
+      table
+      |> :ets.tab2list()
+      |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
+      |> Enum.map(fn {module, producers} ->
+        {module, Enum.sort(producers), :base not in producers}
+      end)
     after
       :telemetry.detach(handler)
     end
@@ -215,18 +221,20 @@ defmodule Argus.Graph.RulesTest do
   # revision: what a build with other code gives a query that reads that
   # code as a value (`Argus.Graph.Code`).
   defp came_out!(db, key, value) do
-    Roux.Revision.advance(db.revision, :high)
-    now = Roux.Revision.current(db.revision)
-    {:ok, entry} = Memo.get(db, key)
+    Roux.Dependencies.mutate(db, key, fn ->
+      now = Roux.Dependencies.advance(db, :high)
+      {:ok, entry} = Memo.get(db, key)
 
-    :ok =
-      Memo.put(db, key, %{
-        entry
-        | value: value,
-          hash: :erlang.phash2(value),
-          changed_at: now,
-          verified_at: now
-      })
+      Roux.Memo.publish(
+        db,
+        key,
+        %{entry | value: value, hash: :erlang.phash2(value), changed_at: now, verified_at: now},
+        false,
+        :restored
+      )
+    end)
+
+    :ok
   end
 
   # The code digests these edits make up are no build's: in the suite's
@@ -338,7 +346,17 @@ defmodule Argus.Graph.RulesTest do
       # As if `spawn_call` had other columns when these memos were made:
       # its entry's digest then, and an argus build since.
       {:ok, entry} = Memo.get(db, read)
-      :ok = Memo.put(db, read, %{entry | value: "before", hash: :erlang.phash2("before")})
+
+      Roux.Dependencies.mutate(db, read, fn ->
+        Memo.publish(
+          db,
+          read,
+          %{entry | value: "before", hash: :erlang.phash2("before")},
+          false,
+          :restored
+        )
+      end)
+
       :ok = edit_code!(db, :schema_entry)
 
       extracted = extracted(fn -> findings!(db) end)

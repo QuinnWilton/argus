@@ -650,7 +650,7 @@ defmodule Argus.Graph.Pack do
   `:ok`; `{:error, {:not_reproduced, made}}` when the extraction made
   another pack, or the extraction's error.
 
-  Emits `[:argus, :graph, :extract]` as any extraction does. Reads the
+  Emits `[:argus, :graph, :pack]` when rebuilding a function pack. Reads the
   graph without edges and records no read of the schema: the entry
   whose value names `pack` depends on what made it already.
   """
@@ -678,13 +678,10 @@ defmodule Argus.Graph.Pack do
       {:ok, %{engine: :functions}} ->
         kind = if query == :module_facts, do: :extracted, else: :in_process
 
-        with {:ok, segments} <- Runtime.query(db, :extraction_segments, {beam_key, kind}) do
-          module = Runtime.query(db, :module_name, beam_key)
-
-          case from_segments(db.blob, module, segments) do
-            {%{pack: ^pack}, _held} -> :ok
-            {%{pack: made}, _held} -> {:error, {:not_reproduced, made}}
-          end
+        case Argus.Graph.FunctionPack.rebuild(db, beam_key, kind) do
+          {:ok, %{pack: ^pack}, _held} -> :ok
+          {:ok, %{pack: made}, _held} -> {:error, {:not_reproduced, made}}
+          error -> error
         end
 
       _legacy ->

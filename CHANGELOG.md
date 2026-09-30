@@ -7,14 +7,12 @@ which a change appeared; older names and APIs may have changed since then.
 
 ### Added
 
-- `Argus.Graph.open(reverse_dependencies: true)` opts into Roux's reverse
-  index, skipping validation of queries unrelated to an input edit. Requires
-  the updated local Roux checkout and adds memory and input-update work.
-- An opt-in function extraction graph reuses unchanged function bodies and
-  closure summaries. Enable it with `Argus.Graph.open(extraction: :functions)`;
-  it currently requires the local Roux checkout's query deadline and packed
-  trace support. Function traces are batched by module to reduce small files,
-  and producers share prepared function data to reduce cold extraction work.
+- Extraction now uses the function query graph and reverse dependency tracking
+  by default. Unchanged functions reuse their facts and prepared data; unrelated
+  input edits skip validation. Packed traces reduce small-file storage overhead.
+  Fact assembly merges only requested relations and deduplicates rows in one pass.
+- Returning to a cached module version reuses the finished fact pack after
+  checking its code, schema and specs, avoiding function validation and merging.
 
 ### Fixed
 

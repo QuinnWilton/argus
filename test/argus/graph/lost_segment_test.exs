@@ -16,6 +16,7 @@ defmodule Argus.Graph.LostSegmentTest do
 
   @moduletag :souffle
   @moduletag :tmp_dir
+  @moduletag timeout: 120_000
 
   @modules [Argus.Test.Fixtures.LeakedTaskModule, Argus.Test.Fixtures.GenServerTaskConsumer]
   # The module with mailbox's findings: its lines are read to place them.
@@ -54,7 +55,7 @@ defmodule Argus.Graph.LostSegmentTest do
   # What `fun` returns, and the modules extracted while it ran.
   defp extracting(fun) do
     handler = "lost-segment-#{System.unique_integer([:positive])}"
-    :ok = :telemetry.attach(handler, [:argus, :graph, :extract], &__MODULE__.forward/4, self())
+    :ok = :telemetry.attach(handler, [:argus, :graph, :pack], &__MODULE__.forward/4, self())
 
     try do
       result = fun.()

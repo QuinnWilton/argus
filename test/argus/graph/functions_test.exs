@@ -2,7 +2,7 @@ defmodule Argus.Graph.FunctionsTest do
   use ExUnit.Case, async: true
   use Argus.Test.Peer
 
-  alias Argus.Graph.{Extraction, Functions}
+  alias Argus.Graph.Extraction
   alias Argus.Test.{Files, Peer}
   alias Roux.{Blob, Input, QueryLog, Runtime, Session}
 
@@ -192,14 +192,9 @@ defmodule Argus.Graph.FunctionsTest do
 
   defp open(dir) do
     opts = [
-      modules: Argus.Graph.modules() ++ [Functions, Argus.Graph.Captures],
+      modules: Argus.Graph.modules(),
       blob: Path.join(dir, "store")
     ]
-
-    opts =
-      if Code.ensure_loaded?(Roux.Dependencies),
-        do: Keyword.put(opts, :reverse_dependencies, true),
-        else: opts
 
     Session.open(opts)
   end

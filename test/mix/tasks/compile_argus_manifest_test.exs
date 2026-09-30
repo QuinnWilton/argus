@@ -116,13 +116,23 @@ defmodule Mix.Tasks.Compile.ArgusManifestTest do
     end
   end
 
+  # These fixtures deliberately replace a coherent historical entry. Keep the
+  # other restored entries' proofs so the manifest still exercises warm reuse.
+  defp put_kept(db, key, entry) do
+    Roux.Dependencies.mutate(db, key, fn ->
+      Roux.Memo.publish(db, key, entry, false, :restored)
+    end)
+
+    :ok
+  end
+
   # As if the last run had computed `query`'s entries with other code: a
   # build of argus with an edit to the code the query runs.
   defp code_edited_since!(query) do
     rewrite!(fn db ->
       Roux.Memo.reduce_entries(db, :ok, fn
         {{^query, _key} = key, entry}, :ok ->
-          Roux.Memo.put(db, key, %{entry | code_version: "old"})
+          put_kept(db, key, %{entry | code_version: "old"})
 
         _other, :ok ->
           :ok
@@ -137,7 +147,7 @@ defmodule Mix.Tasks.Compile.ArgusManifestTest do
 
     :telemetry.attach(
       handler,
-      [:argus, :graph, :extract],
+      [:argus, :graph, :extraction_compute],
       &__MODULE__.record_extraction/4,
       table
     )
@@ -152,7 +162,7 @@ defmodule Mix.Tasks.Compile.ArgusManifestTest do
 
   @doc false
   def record_extraction(_event, _measurements, meta, table),
-    do: :ets.insert(table, {meta.module, meta.producers})
+    do: :ets.insert(table, {meta.module, meta.producer})
 
   test "an edit to the producers' code re-runs every module, extracts nothing, solves nothing",
        %{peer: peer, copy: copy} do
@@ -230,7 +240,7 @@ defmodule Mix.Tasks.Compile.ArgusManifestTest do
           {:ok, entry} = Roux.Memo.get(db, read)
 
           :ok =
-            Roux.Memo.put(db, read, %{
+            put_kept(db, read, %{
               entry
               | value: "before",
                 hash: :erlang.phash2("before"),
@@ -277,9 +287,9 @@ defmodule Mix.Tasks.Compile.ArgusManifestTest do
           key = Path.expand(path)
           producer = {:producer_extraction, {key, :base}}
           {:ok, facts} = Roux.Memo.get(db, {:module_facts, key})
-          :ok = Roux.Memo.put(db, producer, facts)
+          :ok = put_kept(db, producer, facts)
           {:ok, semantic} = Roux.Memo.get(db, {:module_semantic, key})
-          :ok = Roux.Memo.put(db, {:module_semantic, key}, %{semantic | dependencies: [producer]})
+          :ok = put_kept(db, {:module_semantic, key}, %{semantic | dependencies: [producer]})
         end
 
         # And a :high input the next run sets back, so validation walks

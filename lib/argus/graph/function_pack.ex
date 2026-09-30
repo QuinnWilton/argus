@@ -5,7 +5,7 @@ defmodule Argus.Graph.FunctionPack do
     code: [exclude: &Argus.Graph.Reads.schema_module?/1],
     around: {Argus.Graph.Reads, :around}
 
-  alias Argus.Graph.Pack
+  alias Argus.Graph.{ModuleTrace, Pack}
   alias Roux.Runtime, as: R
 
   defquery :module_facts,
@@ -15,7 +15,7 @@ defmodule Argus.Graph.FunctionPack do
     around_demand: {__MODULE__, :packed},
     on_timeout: &__MODULE__.timed_out/2,
     transient: &match?({:ok, %{lost: true}}, &1) do
-    with {:ok, pack, held} <- rebuild(db, module, :extracted) do
+    with {:ok, pack, held} <- cached(db, module, :extracted) do
       R.hold(held)
       {:ok, pack}
     end
@@ -28,7 +28,7 @@ defmodule Argus.Graph.FunctionPack do
     around_demand: {__MODULE__, :packed},
     on_timeout: &__MODULE__.timed_out/2,
     transient: &match?({:ok, %{lost: true}}, &1) do
-    with {:ok, pack, held} <- rebuild(db, module, :in_process) do
+    with {:ok, pack, held} <- cached(db, module, :in_process) do
       R.hold(held)
       {:ok, pack}
     end
@@ -40,13 +40,25 @@ defmodule Argus.Graph.FunctionPack do
 
   @doc false
   @spec packed(Roux.Database.t(), atom(), term(), (-> result)) :: result when result: var
-  if Code.ensure_loaded?(Roux.Blob.Trace.Pack) do
-    def packed(db, _query, module, run) do
-      name = R.untracked(fn -> R.query(db, :module_name, module) end)
-      Roux.Blob.Trace.Pack.with_group(db.blob, {:argus_extraction, name}, run)
+  def packed(db, _query, module, run) do
+    name = R.untracked(fn -> R.query(db, :module_name, module) end)
+    Roux.Blob.Trace.Pack.with_group(db.blob, {:argus_extraction, name}, run)
+  end
+
+  defp cached(db, module, kind) do
+    # Validate the module input before walking the previous function graph.
+    # An edit or revert can then go straight to its content trace.
+    token = Roux.Dependencies.snapshot(db)
+
+    with {:ok, beam} <- R.query(db, :module_beam, module) do
+      name = R.query(db, :module_name, module)
+      producers = R.query(db, :producer_code, :all)
+      identity = {beam.hash, name, kind, R.code_version(), producers}
+      ModuleTrace.fetch(db, module, kind, identity, token, fn -> rebuild(db, module, kind) end)
+    else
+      :external -> {:error, {:external, module}}
+      error -> error
     end
-  else
-    def packed(_db, _query, _module, run), do: run.()
   end
 
   @doc false
@@ -85,22 +97,29 @@ defmodule Argus.Graph.FunctionPack do
     with {:ok, segments} <- R.query(db, :extraction_segments, {module, kind}) do
       name = R.query(db, :module_name, module)
       {pack, held} = Pack.from_segments(db.blob, name, segments)
+
+      :telemetry.execute([:argus, :graph, :pack], %{segments: length(segments)}, %{
+        database: Roux.Database.id(db),
+        module: name,
+        kind: kind
+      })
+
       {:ok, pack, held}
     end
   end
 
   defp segments(db, module, kind) do
-    with {:ok, base} <- R.query(db, :extraction_base_rows, module) do
+    with {:ok, base} <- R.query(db, :extraction_base_rows, {module, kind}) do
       in_process = Argus.Schema.in_process_only()
 
       segments =
         case kind do
           :in_process ->
-            [{:base, Map.take(base, in_process)}]
+            [{:base, base}]
 
           :extracted ->
             {:ok, locations} = R.query(db, :extraction_locations, module)
-            base = base |> Map.drop(in_process) |> Map.merge(locations)
+            base = Map.merge(base, locations)
 
             producers =
               for producer <- R.query(db, :extraction_producers, :all) do

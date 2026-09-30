@@ -157,7 +157,7 @@ defmodule Argus.Graph.FreshVmTest do
     :ok =
       :telemetry.attach(
         handler,
-        [:argus, :graph, :extract],
+        [:argus, :graph, :extraction_compute],
         &__MODULE__.record/4,
         table
       )

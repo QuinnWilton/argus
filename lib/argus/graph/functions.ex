@@ -136,12 +136,19 @@ defmodule Argus.Graph.Functions do
     end
   end
 
-  defquery :extraction_base_rows, key: module, store: :blob do
+  defquery :extraction_base_rows, key: {module, kind}, store: :blob do
+    in_process = Argus.Schema.in_process_only()
+
     with {:ok, keys} <- R.query(db, :extraction_functions, module) do
       parts =
         for key <- keys do
           {:ok, base} = R.query(db, :extraction_base, {module, key})
-          Map.delete(base.facts.base, :line_info)
+          rows = Map.delete(base.facts.base, :line_info)
+
+          case kind do
+            :extracted -> Map.drop(rows, in_process)
+            :in_process -> Map.take(rows, in_process)
+          end
         end
 
       {:ok, merge_rows(parts)}
@@ -403,8 +410,7 @@ defmodule Argus.Graph.Functions do
       bytes =
         chunks
         |> Enum.flat_map(&encoded_lines/1)
-        |> Enum.uniq()
-        |> Enum.sort()
+        |> :lists.usort()
         |> Enum.map(&[&1, "\n"])
         |> IO.iodata_to_binary()
 

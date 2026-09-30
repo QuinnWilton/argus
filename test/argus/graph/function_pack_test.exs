@@ -8,7 +8,6 @@ defmodule Argus.Graph.FunctionPackTest do
 
   @moduletag :tmp_dir
   @moduletag timeout: 120_000
-  @moduletag skip: not Code.ensure_loaded?(Roux.Runtime.Scope)
 
   setup %{tmp_dir: dir} do
     on_exit(fn -> Files.rm_rf!(dir) end)
@@ -154,6 +153,96 @@ defmodule Argus.Graph.FunctionPackTest do
     end)
   end
 
+  test "reverting a module reuses its pack without visiting function queries", %{
+    peer: peer,
+    tmp_dir: dir
+  } do
+    Peer.run(peer, fn ->
+      Code.compiler_options(ignore_module_conflict: true)
+      session = open(dir)
+      db = session.db
+      first = compile(1)
+      second = compile(2)
+      log = Roux.QueryLog.start(db)
+
+      try do
+        set_beam(db, first)
+        facts = Runtime.query(db, :module_facts, :fixture)
+        in_process = Runtime.query(db, :module_in_process, :fixture)
+        {:ok, entry} = Memo.get(db, {:module_facts, :fixture})
+        assert hd(entry.dependencies) == {:module_beam, :fixture}
+        assert Enum.any?(entry.dependencies, &match?({:schema_entry, _}, &1))
+
+        set_beam(db, second)
+        assert Runtime.query(db, :module_facts, :fixture) != facts
+        Runtime.query(db, :module_in_process, :fixture)
+        set_beam(db, first)
+        Roux.QueryLog.reset(log)
+
+        assert Runtime.query(db, :module_facts, :fixture) == facts
+        assert Runtime.query(db, :module_in_process, :fixture) == in_process
+        assert Roux.QueryLog.executions(log, :extraction_segments) == []
+        assert Roux.QueryLog.hits(log, :extraction_segments) == []
+        assert Roux.QueryLog.executions(log, :extraction_function) == []
+        assert Roux.QueryLog.hits(log, :extraction_function) == []
+      after
+        Roux.QueryLog.stop(log)
+        Session.close(session)
+      end
+    end)
+  end
+
+  test "a saved module trace rejects missing blobs and changed observations", %{
+    peer: peer,
+    tmp_dir: dir
+  } do
+    Peer.run(peer, fn ->
+      Code.compiler_options(ignore_module_conflict: true)
+      session = open(dir)
+      db = session.db
+      first = compile(1)
+      second = compile(2)
+      log = Roux.QueryLog.start(db)
+
+      try do
+        set_beam(db, first)
+        {:ok, pack} = Runtime.query(db, :module_facts, :fixture)
+        {:ok, entry} = Memo.get(db, {:module_facts, :fixture})
+        schema = Enum.find(entry.dependencies, &match?({:schema_entry, _}, &1))
+
+        set_beam(db, second)
+        Runtime.query(db, :module_facts, :fixture)
+        File.rm!(Blob.path(db.blob, pack.pack))
+        set_beam(db, first)
+        Roux.QueryLog.reset(log)
+        assert Runtime.query(db, :module_facts, :fixture) == {:ok, pack}
+        assert Roux.QueryLog.executions(log, :extraction_segments) != []
+        assert Blob.member?(db.blob, pack.pack)
+
+        set_beam(db, second)
+        Runtime.query(db, :module_facts, :fixture)
+        {:ok, entry} = Memo.get(db, schema)
+        now = Roux.Revision.current(db.revision)
+
+        Memo.put(db, schema, %{
+          entry
+          | value: "changed schema observation",
+            hash: 0,
+            changed_at: now,
+            verified_at: now
+        })
+
+        set_beam(db, first)
+        Roux.QueryLog.reset(log)
+        assert Runtime.query(db, :module_facts, :fixture) == {:ok, pack}
+        assert Roux.QueryLog.executions(log, :extraction_segments) != []
+      after
+        Roux.QueryLog.stop(log)
+        Session.close(session)
+      end
+    end)
+  end
+
   @doc false
   def record(_, _, %{database: db, name: name}, {events, db}),
     do: :ets.insert(events, {name})
@@ -162,8 +251,6 @@ defmodule Argus.Graph.FunctionPackTest do
 
   defp open(dir) do
     Argus.Graph.open(
-      extraction: :functions,
-      reverse_dependencies: Code.ensure_loaded?(Roux.Dependencies),
       store: Path.join(dir, "store"),
       manifest: Path.join(dir, "manifest")
     )

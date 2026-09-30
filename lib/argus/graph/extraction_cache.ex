@@ -5,24 +5,20 @@ defmodule Argus.Graph.ExtractionCache do
   alias Roux.Blob
   alias Roux.Blob.Trace
 
-  @traces if(Code.ensure_loaded?(Roux.Blob.Trace.Pack), do: Roux.Blob.Trace.Pack, else: Trace)
+  @traces Roux.Blob.Trace.Pack
 
   @spec fetch(Roux.Database.t(), term(), term(), term(), (-> {:ok, map()})) :: {:ok, map()}
   def fetch(db, module, kind, identity, compute) do
-    grouped(db, module, fn -> fetch_trace(db, kind, identity, compute) end)
+    grouped(db, module, fn -> fetch_trace(db, module, kind, identity, compute) end)
   end
 
-  if Code.ensure_loaded?(Roux.Blob.Trace.Pack) do
-    defp grouped(db, module, run) do
-      # This chooses a storage partition; the trace identity covers the data.
-      name = Roux.Runtime.untracked(fn -> Roux.Runtime.query(db, :module_name, module) end)
-      Roux.Blob.Trace.Pack.with_group(db.blob, {:argus_extraction, name}, run, write: :loose)
-    end
-  else
-    defp grouped(_db, _module, run), do: run.()
+  defp grouped(db, module, run) do
+    # This chooses a storage partition; the trace identity covers the data.
+    name = Roux.Runtime.untracked(fn -> Roux.Runtime.query(db, :module_name, module) end)
+    Roux.Blob.Trace.Pack.with_group(db.blob, {:argus_extraction, name}, run, write: :loose)
   end
 
-  defp fetch_trace(db, kind, identity, compute) do
+  defp fetch_trace(db, module, kind, identity, compute) do
     # Graph-side preparation can change without changing the producer itself.
     # A content trace must cover the enclosing query's code as well.
     identity = {Roux.Runtime.code_version(), identity}
@@ -38,12 +34,14 @@ defmodule Argus.Graph.ExtractionCache do
         end
       end)
 
-    hit || store(db, name, compute)
+    hit || store(db, module, kind, name, compute)
   end
 
-  defp store(db, name, compute) do
+  defp store(db, module, kind, name, compute) do
     :telemetry.execute([:argus, :graph, :extraction_compute], %{count: 1}, %{
       database: Roux.Database.id(db),
+      module: Roux.Runtime.untracked(fn -> Roux.Runtime.query(db, :module_name, module) end),
+      producer: kind,
       name: name
     })
 

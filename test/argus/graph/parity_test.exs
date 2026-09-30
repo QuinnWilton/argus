@@ -67,24 +67,15 @@ defmodule Argus.Graph.ParityTest do
     analyses: analyses,
     peer: peer
   } do
-    Peer.run(peer, fn -> parity(paths, analyses, :modules) end)
+    Peer.run(peer, fn -> parity(paths, analyses) end)
   end
 
-  @tag skip: not Code.ensure_loaded?(Roux.Runtime.Scope)
-  test "function extraction equals fresh across cross-module edits", %{
-    paths: paths,
-    analyses: analyses,
-    peer: peer
-  } do
-    Peer.run(peer, fn -> parity(paths, analyses, :functions) end)
-  end
-
-  defp parity(paths, analyses, extraction) do
+  defp parity(paths, analyses) do
     for module <- @edits do
       assert Map.has_key?(paths, module), "the fixture no longer defines #{inspect(module)}"
     end
 
-    db = Graph.new_db(paths, extraction: extraction)
+    db = Graph.new_db(paths)
 
     try do
       cold = assert_parity(db, paths, analyses, "cold")

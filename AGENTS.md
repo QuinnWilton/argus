@@ -20,9 +20,8 @@ with the affected test files. Plain `mix test` includes the closed-issue corpus,
 which can fetch and compile external projects and is expensive when cold.
 
 Use `ARGUS_ROUX_PATH=../roux` with Mix commands when testing unreleased Roux
-changes. The opt-in function extraction graph currently requires that checkout's
-query deadline and packed trace support; ordinary extraction still uses the
-published dependency.
+changes. Extraction requires that checkout's query deadlines, packed traces and
+reverse dependency tracking until a Roux release includes them.
 
 | Change | Additional checks |
 |---|---|

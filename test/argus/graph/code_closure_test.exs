@@ -59,15 +59,9 @@ defmodule Argus.Graph.CodeClosureTest do
     assert outside == %{}
   end
 
-  @tag skip: not Code.ensure_loaded?(Roux.Runtime.Scope)
-  test "function graph queries execute only covered code", %{paths: paths, peer: peer} do
-    outside = Peer.run(peer, fn -> outside(paths, :functions) end)
-    assert outside == %{}
-  end
-
   # `%{query => modules executed outside its closure}` over every query.
-  defp outside(paths, extraction \\ :modules) do
-    db = Graph.new_db(paths, store: :temporary, extraction: extraction)
+  defp outside(paths) do
+    db = Graph.new_db(paths, store: :temporary)
     key = paths |> Map.values() |> Enum.sort() |> hd() |> Path.expand()
     program = :test
 
@@ -103,23 +97,19 @@ defmodule Argus.Graph.CodeClosureTest do
     # query alone.
     Enum.each(demands, fn {query, k} -> Roux.Runtime.query(db, query, k) end)
 
-    demands =
-      if extraction == :functions do
-        reached = dependencies(db, demands, MapSet.new())
+    reached = dependencies(db, demands, MapSet.new())
 
-        Enum.uniq_by(
-          demands ++
-            Enum.filter(reached, fn {name, _} ->
-              String.starts_with?(Atom.to_string(name), "extraction_")
-            end),
-          &coverage_key/1
-        )
-      else
-        demands
-      end
+    demands =
+      Enum.uniq_by(
+        demands ++
+          Enum.filter(reached, fn {name, _} ->
+            String.starts_with?(Atom.to_string(name), "extraction_")
+          end),
+        &coverage_key/1
+      )
 
     watched = watched()
-    allowed = allowed(extraction)
+    allowed = allowed()
     log = Roux.QueryLog.start(db)
 
     try do
@@ -131,7 +121,11 @@ defmodule Argus.Graph.CodeClosureTest do
           definition = Roux.Database.query_definition(db, query)
           # Invalidate only this key. Changing the query's code version also
           # invalidates its other keys, which would run inside later traces.
-          :ok = Roux.Memo.delete(db, {query, k})
+          Roux.Dependencies.mutate(db, {query, k}, fn ->
+            Roux.Dependencies.forget(db, {query, k})
+            :ets.delete(db.memo_table, {query, k})
+          end)
+
           Roux.QueryLog.reset(log)
 
           {_value, ran} =
@@ -184,17 +178,13 @@ defmodule Argus.Graph.CodeClosureTest do
     argus ++ deps
   end
 
-  defp allowed(extraction) do
+  defp allowed() do
     {:ok, hook} = Roux.Code.closure([Argus.Graph.Reads])
 
     Application.spec(:argus_beam, :modules)
     |> Enum.filter(&Reads.schema_module?/1)
     |> Enum.concat([Argus.Graph.Reads | Enum.map(hook, &elem(&1, 0))])
-    |> Enum.concat(
-      if extraction == :functions,
-        do: Argus.Graph.modules(:functions),
-        else: Argus.Graph.modules()
-    )
+    |> Enum.concat(Argus.Graph.modules())
     |> MapSet.new()
   end
 
@@ -210,12 +200,22 @@ defmodule Argus.Graph.CodeClosureTest do
         _other -> []
       end)
 
-    if roots == [] do
-      MapSet.new()
-    else
-      {:ok, modules} = Roux.Code.closure(roots, exclude: &Reads.schema_module?/1)
-      MapSet.new(modules, &elem(&1, 0))
-    end
+    observed =
+      Enum.reduce(deps, MapSet.new(), fn key, covered ->
+        {:ok, reads} = Roux.Memo.dependencies(db, key)
+
+        Enum.reduce(reads, covered, fn
+          {:query_code, query, _}, covered ->
+            definition = Roux.Database.query_definition(db, query)
+            MapSet.union(covered, closure(definition.module, query))
+
+          _, covered ->
+            covered
+        end)
+      end)
+
+    {:ok, modules} = Roux.Code.closure(roots, exclude: &Reads.schema_module?/1)
+    MapSet.union(observed, MapSet.new(modules, &elem(&1, 0)))
   end
 
   defp dependencies(_db, [], seen), do: seen
@@ -231,6 +231,7 @@ defmodule Argus.Graph.CodeClosureTest do
               {:parallel, _max, members} -> members
               {:input, _, _} -> []
               {:input_absent, _, _} -> []
+              {:query_code, _, _} -> []
               dep -> [dep]
             end)
 

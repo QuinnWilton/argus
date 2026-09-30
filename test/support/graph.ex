@@ -115,7 +115,7 @@ defmodule Argus.Test.Graph do
         store -> store
       end
 
-    session = Argus.Graph.open([store: store] ++ Keyword.take(opts, [:extraction]))
+    session = Argus.Graph.open(store: store)
     db = session.db
     env = [stamps: false] |> Keyword.merge(Keyword.take(opts, [:specs_source, :stamps]))
     _moved = Argus.Graph.set_environment(db, env)

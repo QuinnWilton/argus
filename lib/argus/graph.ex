@@ -68,7 +68,9 @@ defmodule Argus.Graph do
     Argus.Graph.Frontend,
     Argus.Graph.Reads,
     Argus.Graph.Code,
-    Argus.Graph.Extraction,
+    Argus.Graph.Functions,
+    Argus.Graph.Captures,
+    Argus.Graph.FunctionPack,
     Argus.Graph.Relations,
     Argus.Graph.Programs,
     Argus.Graph.Solve,
@@ -79,24 +81,6 @@ defmodule Argus.Graph do
   @doc "The modules of the graph's queries and inputs, to register (`Roux.Session.open/1`)."
   @spec modules() :: [module()]
   def modules, do: @modules
-
-  @doc "Query modules for the function extraction graph."
-  @spec modules(:functions) :: [module()]
-  def modules(:functions) do
-    unless Code.ensure_loaded?(Roux.Runtime.Scope) and Code.ensure_loaded?(Roux.Blob.Trace.Pack) do
-      raise ArgumentError,
-            "function extraction requires Roux query timeouts and trace packs; " <>
-              "use ARGUS_ROUX_PATH to build against the updated Roux checkout"
-    end
-
-    Enum.flat_map(@modules, fn
-      Argus.Graph.Extraction ->
-        [Argus.Graph.Functions, Argus.Graph.Captures, Argus.Graph.FunctionPack]
-
-      other ->
-        [other]
-    end)
-  end
 
   @doc """
   The analyses the frontends run unconfigured: argus's `:default` set.
@@ -117,12 +101,6 @@ defmodule Argus.Graph do
     * `:manifest` — where the graph is kept between runs, or nil (the
       default) to keep nothing but the store;
     * `:force` — start cold, ignoring the manifest;
-    * `:extraction` — `:modules` (the default), or `:functions` to use the
-      function query graph. The latter requires Roux query deadlines and trace packs; until
-      released, build with `ARGUS_ROUX_PATH` pointing to the updated checkout;
-    * `:reverse_dependencies` — track affected readers when inputs change,
-      skipping validation of unrelated queries. Defaults to false. Requires
-      the updated Roux checkout and adds memory and input-update work;
     * `:frontend` — the module answering the frontend contract's queries
       (`Argus.Graph.Frontend`'s, by name) in its place: a frontend that
       compiles in memory. What it reads of a module's specs is tracked
@@ -137,21 +115,13 @@ defmodule Argus.Graph do
         store: nil,
         manifest: nil,
         force: false,
-        frontend: nil,
-        extraction: :modules,
-        reverse_dependencies: false
+        frontend: nil
       )
-
-    extraction_modules =
-      case opts[:extraction] do
-        :modules -> @modules
-        :functions -> modules(:functions)
-      end
 
     modules =
       case opts[:frontend] do
-        nil -> extraction_modules
-        frontend -> List.replace_at(extraction_modules, 1, frontend)
+        nil -> @modules
+        frontend -> List.replace_at(@modules, 1, frontend)
       end
 
     session_opts = [
@@ -161,16 +131,7 @@ defmodule Argus.Graph do
       force: opts[:force]
     ]
 
-    if opts[:reverse_dependencies] do
-      unless Code.ensure_loaded?(Roux.Dependencies) do
-        raise ArgumentError,
-              "reverse dependency tracking requires ARGUS_ROUX_PATH pointing to an updated Roux checkout"
-      end
-
-      Roux.Session.open([reverse_dependencies: true] ++ session_opts)
-    else
-      Roux.Session.open(session_opts)
-    end
+    Roux.Session.open(session_opts)
   end
 
   @doc """
