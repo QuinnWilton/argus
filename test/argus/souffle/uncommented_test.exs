@@ -1,8 +1,8 @@
 defmodule Argus.Souffle.UncommentedTest do
   @moduledoc """
-  Comment-only edits preserve every shipped program's cache key and compiled
-  instructions. Comparing the full RAM program covers every input dataset;
-  only diagnostic source locations may change.
+  Comment-only edits preserve every shipped program's cache key and parsed
+  rules. Compare the complete syntax tree Souffle reads, including declarations
+  and components, independently of any input dataset.
   """
   use ExUnit.Case, async: true
 
@@ -24,7 +24,7 @@ defmodule Argus.Souffle.UncommentedTest do
   end
 
   @tag timeout: 120_000
-  test "prose preserves every program's key and compiled instructions; a rule edit does", %{
+  test "prose preserves every program's key and parsed rules; a rule edit does", %{
     tmp_dir: tmp
   } do
     unless Souffle.available?(), do: flunk("souffle not installed")
@@ -50,7 +50,7 @@ defmodule Argus.Souffle.UncommentedTest do
       fn program ->
         original = Path.join(shipped, Path.relative_to(program, dl))
         assert Program.declared_digest(program, :all) == before[program], program
-        assert compiled(program) == compiled(original), program
+        assert parsed(program) == parsed(original), program
         :ok
       end,
       max_concurrency: 4,
@@ -59,7 +59,7 @@ defmodule Argus.Souffle.UncommentedTest do
     |> Enum.each(fn {:ok, :ok} -> :ok end)
 
     races = Path.join(dl, "analyses/races.dl")
-    original = compiled(races)
+    original = parsed(races)
 
     File.write!(
       races,
@@ -68,22 +68,18 @@ defmodule Argus.Souffle.UncommentedTest do
     )
 
     refute Program.declared_digest(races, :all) == before[races]
-    refute compiled(races) == original
+    refute parsed(races) == original
   end
 
-  defp compiled(program) do
-    {ram, status} =
-      System.cmd(Souffle.executable(), ["--wno=all", "--show=transformed-ram", program],
+  defp parsed(program) do
+    # Optimized RAM assigns generated aggregate names in an unstable order.
+    # The initial AST retains the complete rules without optimizer artifacts.
+    {ast, status} =
+      System.cmd(Souffle.executable(), ["--wno=all", "--show=initial-ast", program],
         stderr_to_stdout: true
       )
 
-    assert status == 0, "#{program} failed to compile:\n#{ram}"
-
-    # Keep the complete instructions and debug rule text; ignore only source ranges.
-    Regex.replace(
-      ~r/^([ \t]*DEBUG ".*\\nin file [^"\n]+ )\[\d+:\d+-\d+:\d+\]"$/m,
-      ram,
-      "\\1[location]\""
-    )
+    assert status == 0, "#{program} failed to parse:\n#{ast}"
+    ast
   end
 end
