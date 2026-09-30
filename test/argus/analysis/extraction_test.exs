@@ -3,6 +3,7 @@ defmodule Argus.Analysis.ExtractionTest do
 
   alias Argus.Analysis
   alias Argus.Analysis.Extraction
+  alias Argus.Test.Files
 
   @moduletag :tmp_dir
 
@@ -14,7 +15,7 @@ defmodule Argus.Analysis.ExtractionTest do
         assert File.exists?(Path.join(facts_dir, "#{relation}.facts"))
       end
     after
-      File.rm_rf!(Path.dirname(facts_dir))
+      Files.rm_rf!(Path.dirname(facts_dir))
     end
   end
 
@@ -30,7 +31,7 @@ defmodule Argus.Analysis.ExtractionTest do
         assert File.stat!(linked).links > 1
         assert File.stat!(linked).access == :read
       after
-        File.rm_rf!(Path.dirname(dir))
+        Files.rm_rf!(Path.dirname(dir))
       end
     end
   end
@@ -52,7 +53,7 @@ defmodule Argus.Analysis.ExtractionTest do
           refute staged.(deferred, relation)
         end
       after
-        for dir <- [reads, reads_not, deferred], do: File.rm_rf!(Path.dirname(dir))
+        for dir <- [reads, reads_not, deferred], do: Files.rm_rf!(Path.dirname(dir))
       end
     end
 

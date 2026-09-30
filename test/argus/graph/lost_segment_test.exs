@@ -10,7 +10,7 @@ defmodule Argus.Graph.LostSegmentTest do
 
   use ExUnit.Case, async: true
 
-  alias Argus.Test.Graph
+  alias Argus.Test.{Files, Graph}
   alias Roux.Blob
 
   @moduletag :souffle
@@ -86,7 +86,7 @@ defmodule Argus.Graph.LostSegmentTest do
     try do
       files(dir)
     after
-      File.rm_rf!(Path.dirname(dir))
+      Files.rm_rf!(Path.dirname(dir))
     end
   end
 

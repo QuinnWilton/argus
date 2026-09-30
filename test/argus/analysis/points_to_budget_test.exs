@@ -20,6 +20,7 @@ defmodule Argus.Analysis.PointsToBudgetTest do
   import ExUnit.CaptureLog
 
   alias Argus.{Analysis, Souffle}
+  alias Argus.Test.Files
   alias Argus.Test.Fixtures.PidFlow
 
   @moduletag :tmp_dir
@@ -253,13 +254,13 @@ defmodule Argus.Analysis.PointsToBudgetTest do
         try do
           {rows(dir, "points_to_mode"), rows(dir, "process_call")}
         after
-          File.rm_rf!(Path.dirname(dir))
+          Files.rm_rf!(Path.dirname(dir))
         end
       end
 
       {:ok, exact_dir} = Analysis.extract_facts(modules, [:startup])
       exact = rows(exact_dir, "process_call")
-      File.rm_rf!(Path.dirname(exact_dir))
+      Files.rm_rf!(Path.dirname(exact_dir))
 
       # The exact solve says it outgrew the budget: the bounded one runs,
       # and over these modules finds nothing pervasive.

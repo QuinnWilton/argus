@@ -24,6 +24,8 @@ defmodule Argus.Test.Memo do
   it every call is made.
   """
 
+  alias Argus.Test.Files
+
   @table __MODULE__
 
   @doc "Creates the run's table; `test_helper.exs` calls it once."
@@ -51,7 +53,7 @@ defmodule Argus.Test.Memo do
       :ok = Argus.Pipeline.write_facts(facts, dir)
       Argus.Analysis.run_rules(dir, analysis)
     after
-      File.rm_rf(dir)
+      Files.rm_rf!(dir)
     end
   end
 

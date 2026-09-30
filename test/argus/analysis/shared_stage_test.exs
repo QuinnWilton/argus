@@ -18,6 +18,7 @@ defmodule Argus.Analysis.SharedStageTest do
 
   alias Argus.Analysis
   alias Argus.Souffle
+  alias Argus.Test.Files
   alias Argus.Test.Fixtures.PidFlow
 
   @moduletag :tmp_dir
@@ -34,7 +35,7 @@ defmodule Argus.Analysis.SharedStageTest do
       for name <- ~w(SafeCall UserA UserB TargetA TargetB), do: Module.concat(PidFlow, name)
 
     {:ok, dir} = Analysis.extract_facts(modules, [:startup])
-    on_exit(fn -> File.rm_rf!(Path.dirname(dir)) end)
+    on_exit(fn -> Files.rm_rf!(Path.dirname(dir)) end)
     assert File.read!(Path.join(dir, "process_call.facts")) != ""
     dir
   end

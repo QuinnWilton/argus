@@ -12,6 +12,7 @@ defmodule Argus.Graph.InProcessTest do
   use ExUnit.Case, async: true
 
   alias Argus.Analysis
+  alias Argus.Test.Files
 
   @moduletag :souffle
   @moduletag :tmp_dir
@@ -69,7 +70,7 @@ defmodule Argus.Graph.InProcessTest do
       # The in-process relations the program does not read have no file.
       refute File.exists?(Path.join(dir, "jump.facts"))
     after
-      File.rm_rf!(Path.dirname(dir))
+      Files.rm_rf!(Path.dirname(dir))
     end
   end
 
@@ -83,7 +84,7 @@ defmodule Argus.Graph.InProcessTest do
 
       assert {:error, _reason} = Analysis.run_rules(dir, {:custom, path})
     after
-      File.rm_rf!(Path.dirname(dir))
+      Files.rm_rf!(Path.dirname(dir))
     end
   end
 end

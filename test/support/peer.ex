@@ -19,6 +19,8 @@ defmodule Argus.Test.Peer do
   `mix` invocation would.
   """
 
+  alias Argus.Test.Files
+
   defmacro __using__(_opts) do
     quote do
       @after_compile Argus.Test.Peer
@@ -69,11 +71,7 @@ defmodule Argus.Test.Peer do
       })
 
     :ok = call(peer, __MODULE__, :boot, [Code.compiler_options()])
-    # Removed by `rm`, not `File.rm_rf/1`: that goes through the VM's
-    # file server, which every test's `File` call queues behind, and a
-    # peer's scratch of fact directories outlasted the callback's timeout
-    # under a full suite's load.
-    ExUnit.Callbacks.on_exit(fn -> System.cmd("rm", ["-rf", tmp]) end)
+    ExUnit.Callbacks.on_exit(fn -> Files.rm_rf!(tmp) end)
     peer
   end
 

@@ -8,6 +8,7 @@ defmodule Argus.Test.Graph do
   the test build compiles them.
   """
 
+  alias Argus.Test.Files
   alias Roux.{Database, GC, Input}
 
   # The fixture files the parity set is made of: argus's own, for the
@@ -193,7 +194,7 @@ defmodule Argus.Test.Graph do
       )
       |> Map.new(fn {:ok, entry} -> entry end)
     after
-      File.rm_rf(Path.dirname(dir))
+      Files.rm_rf!(Path.dirname(dir))
     end
   end
 end
