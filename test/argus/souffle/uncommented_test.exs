@@ -1,25 +1,17 @@
 defmodule Argus.Souffle.UncommentedTest do
   @moduledoc """
-  A program's key reads its text without comment lines
-  (`Argus.Souffle.Program.uncommented/1`): an edit to a rule's prose
-  solves nothing again. Checked against the solver: every shipped
-  program, with a comment line added after every line of every file it
-  reads as text, loads the same relations and writes the same files, and
-  its key does not move; a change to a rule moves it.
+  Comment-only edits preserve every shipped program's cache key and compiled
+  instructions. Comparing the full RAM program covers every input dataset;
+  only diagnostic source locations may change.
   """
   use ExUnit.Case, async: true
 
+  alias Argus.Souffle
   alias Argus.Souffle.Program
 
   doctest Argus.Souffle.Program, only: [uncommented: 1]
 
   @moduletag :tmp_dir
-
-  # Six solves no store can keep (`Argus.Souffle.run/3`, a program each
-  # side of the edit), races.dl over :gen_server among them: seconds on
-  # a fast machine, and cold on every run, a cached store or not. On a
-  # four-core CI runner beside the suite they ran past the default minute.
-  @moduletag timeout: 300_000
 
   test "a comment line that opens or closes a block comment is kept" do
     for text <- ["a(1).\n// opens /*\nb(2).", "a(1).\n// closes */\nb(2)."] do
@@ -31,12 +23,19 @@ defmodule Argus.Souffle.UncommentedTest do
     assert Program.uncommented("a(1). // why\n") == "a(1). // why"
   end
 
-  test "prose added to every text file moves no program's key; a rule edit does", %{
+  @tag timeout: 120_000
+  test "prose preserves every program's key and compiled instructions; a rule edit does", %{
     tmp_dir: tmp
   } do
+    unless Souffle.available?(), do: flunk("souffle not installed")
+    shipped = Argus.Dl.root()
     dl = Path.join(tmp, "dl")
-    File.cp_r!(Path.join(:code.priv_dir(:argus_beam), "dl"), dl)
-    programs = Path.wildcard(Path.join(dl, "analyses/*.dl")) ++ [Path.join(dl, "stage0.dl")]
+    File.cp_r!(shipped, dl)
+
+    programs =
+      Path.wildcard(Path.join(dl, "analyses/*.dl")) ++
+        Enum.map(~w(stage0.dl points_to.dl points_to_bounded.dl), &Path.join(dl, &1))
+
     before = Map.new(programs, &{&1, Program.declared_digest(&1, :all)})
 
     for file <- Path.wildcard(Path.join(dl, "**/*.dl")),
@@ -46,31 +45,45 @@ defmodule Argus.Souffle.UncommentedTest do
       File.write!(file, "// a header\n\n" <> prose <> "\n// a footer\n")
     end
 
-    for program <- programs do
-      assert Program.declared_digest(program, :all) == before[program], program
-    end
-
-    # The solver agrees: the same outputs over the fixtures' facts.
-    unless Argus.Souffle.available?(), do: flunk("souffle not installed")
-    shipped = Path.join(:code.priv_dir(:argus_beam), "dl")
-    modules = [Argus.Test.Fixtures.EtsBounded, Argus.Test.Fixtures.MissingRow, :gen_server]
-    analyses = [:races, :mailbox, :startup]
-    {:ok, facts} = Argus.Analysis.extract_facts(modules, analyses)
-
-    try do
-      for analysis <- analyses do
-        {:ok, rules} = Argus.Analysis.Catalog.rules_path(analysis)
-        copy = Path.join(dl, Path.relative_to(rules, shipped))
-
-        assert Argus.Souffle.run(facts, copy) == Argus.Souffle.run(facts, rules),
-               inspect(analysis)
-      end
-    after
-      File.rm_rf!(Path.dirname(facts))
-    end
+    programs
+    |> Task.async_stream(
+      fn program ->
+        original = Path.join(shipped, Path.relative_to(program, dl))
+        assert Program.declared_digest(program, :all) == before[program], program
+        assert compiled(program) == compiled(original), program
+        :ok
+      end,
+      max_concurrency: 4,
+      timeout: 120_000
+    )
+    |> Enum.each(fn {:ok, :ok} -> :ok end)
 
     races = Path.join(dl, "analyses/races.dl")
-    File.write!(races, File.read!(races) <> "\n.decl argus_probe(x: symbol)\n")
+    original = compiled(races)
+
+    File.write!(
+      races,
+      File.read!(races) <>
+        "\n.decl argus_probe(x: symbol)\n.output argus_probe\nargus_probe(\"changed\").\n"
+    )
+
     refute Program.declared_digest(races, :all) == before[races]
+    refute compiled(races) == original
+  end
+
+  defp compiled(program) do
+    {ram, status} =
+      System.cmd(Souffle.executable(), ["--wno=all", "--show=transformed-ram", program],
+        stderr_to_stdout: true
+      )
+
+    assert status == 0, "#{program} failed to compile:\n#{ram}"
+
+    # Keep the complete instructions and debug rule text; ignore only source ranges.
+    Regex.replace(
+      ~r/^([ \t]*DEBUG ".*\\nin file [^"\n]+ )\[\d+:\d+-\d+:\d+\]"$/m,
+      ram,
+      "\\1[location]\""
+    )
   end
 end
