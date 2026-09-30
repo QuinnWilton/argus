@@ -54,10 +54,20 @@ runs_elsewhere(f, g) :-
   !call_instr(f, g, _),
   !calls_fun(f).
 
+// Classify each distinct call target once, rather than matching its name at
+// every incoming edge. Keep name-based recognition when closure_def is absent.
+.decl closure_candidate(func: symbol)
+
+closure_candidate(g) :- call_edge(_, g).
+
+.decl compiler_closure(func: symbol)
+
+compiler_closure(g) :- closure_candidate(g), match(".*:-.*-fun-[0-9]+-/[0-9]+", g).
+
 // A closure func builds, or a fun it hands on (fun_ref).
 .decl fun_edge(func: symbol, fun: symbol)
 
-fun_edge(f, g) :- call_edge(f, g), match(".*:-.*-fun-[0-9]+-/[0-9]+", g).
+fun_edge(f, g) :- call_edge(f, g), compiler_closure(g).
 fun_edge(f, g) :- fun_ref(f, g).
 
 // Known fun consumers either start a process ("start") or register the fun for later
@@ -86,7 +96,7 @@ runs_handed(f, g) :- fun_handed_to(f, g, h), !fun_sink(h, _).
 held_closure(f, g) :-
   hands_funs_off(f),
   call_edge(f, g),
-  match(".*:-.*-fun-[0-9]+-/[0-9]+", g),
+  compiler_closure(g),
   !fun_handed_to(f, g, _).
 
 .decl held_closures(func: symbol, n: number)

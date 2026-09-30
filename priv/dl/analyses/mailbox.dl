@@ -2251,7 +2251,8 @@ cancel_call(f, s, key) :- helper_cancels_field(f, s, _, key).
 
 has_clause(s) :- clause_call(s, _, _).
 
-.decl same_clause(func: symbol, first: symbol, then: symbol)
+// Inline so consumers restrict the pair to a cancellation and an arming site.
+.decl same_clause(func: symbol, first: symbol, then: symbol) inline
 
 same_clause(f, s, t) :-
   clause_call(s, f, tag),
