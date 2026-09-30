@@ -67,7 +67,7 @@ defmodule Argus.Graph.ParityTest do
     analyses: analyses,
     peer: peer
   } do
-    Peer.run(peer, fn -> parity(Graph.use_parity!(paths), analyses) end)
+    Peer.run(peer, fn -> parity(paths, analyses) end)
   end
 
   defp parity(paths, analyses) do

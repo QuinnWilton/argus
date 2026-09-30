@@ -68,7 +68,7 @@ defmodule Argus.Graph.StageOutputTest do
     try do
       # A store of its own: a solve kept by another test would not run
       # the solver at all.
-      db = Graph.new_db(Graph.use_parity!(paths), store: :temporary)
+      db = Graph.new_db(paths, store: :temporary)
 
       assert {:error, %Argus.MissingRelationError{} = error} =
                Argus.Graph.Solve.stage(db, {:test, :stage0})

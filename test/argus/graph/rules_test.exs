@@ -58,7 +58,7 @@ defmodule Argus.Graph.RulesTest do
       Application.put_env(:argus_beam, :dl_root, root)
 
       try do
-        db = Graph.new_db(Graph.use_parity!(paths), opts)
+        db = Graph.new_db(paths, opts)
         log = QueryLog.start(db)
         findings!(db)
         QueryLog.reset(log)

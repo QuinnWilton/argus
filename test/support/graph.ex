@@ -39,9 +39,21 @@ defmodule Argus.Test.Graph do
 
     case :persistent_term.get(key, nil) do
       nil ->
-        paths = find_parity()
-        :persistent_term.put(key, paths)
-        paths
+        :global.trans(
+          {key, self()},
+          fn ->
+            case :persistent_term.get(key, nil) do
+              nil ->
+                paths = find_parity()
+                :persistent_term.put(key, paths)
+                paths
+
+              paths ->
+                paths
+            end
+          end,
+          [node()]
+        )
 
       paths ->
         paths
@@ -67,13 +79,6 @@ defmodule Argus.Test.Graph do
     if map_size(paths) == 0, do: raise("no parity fixture beams found in #{ebin}")
     paths
   end
-
-  @doc """
-  `paths`, for a peer handed them: the parity beams are in this
-  application's ebin, which is on every peer's code path already.
-  """
-  @spec use_parity!(%{optional(module()) => String.t()}) :: %{optional(module()) => String.t()}
-  def use_parity!(paths), do: paths
 
   @doc """
   The suite's blob store, `_build/test/argus/store` (beside the beams,
