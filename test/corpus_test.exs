@@ -162,6 +162,9 @@ defmodule Argus.CorpusTest do
       if Map.has_key?(pair, :fix) do
         fix = results!(results, pair, :fix)
 
+        assert fix.degraded == [],
+               "degraded analyses on #{pair.issue} fix: #{inspect(fix.degraded)}"
+
         refute Corpus.present?(fix, pair),
                "#{pair.issue}: #{analysis} / #{title}#{in_module(pair)} still reported on the fix"
       end
