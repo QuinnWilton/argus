@@ -5,6 +5,12 @@ which a change appeared; older names and APIs may have changed since then.
 
 ## Unreleased
 
+### Added
+
+- An opt-in function extraction graph reuses unchanged function bodies and
+  closure summaries. Enable it with `Argus.Graph.open(extraction: :functions)`;
+  it currently requires the local Roux checkout's query deadline support.
+
 ### Fixed
 
 - Accept `--color always` and `--color never` in the escript. Both crashed with

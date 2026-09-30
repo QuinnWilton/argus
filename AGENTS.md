@@ -19,6 +19,10 @@ Run checks relevant to the change; documentation-only edits need no tests. Start
 with the affected test files. Plain `mix test` includes the closed-issue corpus,
 which can fetch and compile external projects and is expensive when cold.
 
+Use `ARGUS_ROUX_PATH=../roux` with Mix commands when testing unreleased Roux
+changes. The opt-in function extraction graph currently requires that checkout's
+query deadline support; ordinary extraction still uses the published dependency.
+
 | Change | Additional checks |
 |---|---|
 | Analysis rules | Positive fixtures and nearby counterexamples in `test/analyses/` and `test/soundness/`; add a corpus pair for a new bug class. |

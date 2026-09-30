@@ -74,6 +74,31 @@ defmodule Argus.Pipeline.Emit do
     end)
   end
 
+  @doc "Source locations alone, using the same marker and exception-region rules as emission."
+  @spec locations(module(), list(), map()) :: facts()
+  def locations(module, functions, line_table) do
+    Enum.reduce(functions, %{}, fn function, facts ->
+      normalized = Normalize.normalize_function(module, function)
+      location_rows(normalized, line_table, nil, facts)
+    end)
+  end
+
+  defp location_rows([], _table, _line, facts), do: facts
+
+  defp location_rows([{id, instruction} | rest], table, line, facts) do
+    line = instruction_line(instruction, rest, table, line)
+    location_rows(rest, table, line, emit_line_info(facts, id, line))
+  end
+
+  defp instruction_line({:line, marker}, _rest, table, _line),
+    do: Disassemble.marker_line(marker, table)
+
+  defp instruction_line({:debug_line, _, marker, _, _}, _rest, table, _line),
+    do: Disassemble.marker_line(marker, table)
+
+  defp instruction_line(instruction, rest, table, line),
+    do: region_line(instruction, rest, table, line)
+
   # Emit facts for a sequence of normalized instructions within a function.
   defp emit_instructions(facts, func_id, normalized, line_table) do
     facts
@@ -189,7 +214,7 @@ defmodule Argus.Pipeline.Emit do
   defp emit_instructions_loop(facts, _func_id, [], _idx, _line_table, _line), do: facts
 
   defp emit_instructions_loop(facts, func_id, [{id, instr} | rest], idx, line_table, line) do
-    line = region_line(instr, rest, line_table, line)
+    line = instruction_line(instr, rest, line_table, line)
 
     {facts, line} =
       emit_instruction_fact(facts, id, func_id, to_string(idx), instr, line_table, line)

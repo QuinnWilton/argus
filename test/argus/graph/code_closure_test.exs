@@ -59,9 +59,15 @@ defmodule Argus.Graph.CodeClosureTest do
     assert outside == %{}
   end
 
+  @tag skip: not Code.ensure_loaded?(Roux.Runtime.Scope)
+  test "function graph queries execute only covered code", %{paths: paths, peer: peer} do
+    outside = Peer.run(peer, fn -> outside(paths, :functions) end)
+    assert outside == %{}
+  end
+
   # `%{query => modules executed outside its closure}` over every query.
-  defp outside(paths) do
-    db = Graph.new_db(paths, store: :temporary)
+  defp outside(paths, extraction \\ :modules) do
+    db = Graph.new_db(paths, store: :temporary, extraction: extraction)
     key = paths |> Map.values() |> Enum.sort() |> hd() |> Path.expand()
     program = :test
 
@@ -96,25 +102,69 @@ defmodule Argus.Graph.CodeClosureTest do
     # Every query up to date first, so each run below executes its own
     # query alone.
     Enum.each(demands, fn {query, k} -> Roux.Runtime.query(db, query, k) end)
+
+    demands =
+      if extraction == :functions do
+        reached = dependencies(db, demands, MapSet.new())
+
+        Enum.uniq_by(
+          demands ++
+            Enum.filter(reached, fn {name, _} ->
+              String.starts_with?(Atom.to_string(name), "extraction_")
+            end),
+          &coverage_key/1
+        )
+      else
+        demands
+      end
+
     watched = watched()
-    allowed = allowed()
+    allowed = allowed(extraction)
+    log = Roux.QueryLog.start(db)
 
-    for {query, k} <- demands, reduce: %{} do
-      acc ->
-        # A store that has seen nothing: the extraction and the solve
-        # run, rather than finding what they would compute.
-        fresh!(db)
-        definition = Roux.Database.query_definition(db, query)
-        :ok = Roux.Database.register_query(db, query, %{definition | code_version: "moved"})
+    try do
+      for {query, k} <- demands, reduce: %{} do
+        acc ->
+          # A store that has seen nothing: the extraction and the solve
+          # run, rather than finding what they would compute.
+          fresh!(db)
+          definition = Roux.Database.query_definition(db, query)
+          # Invalidate only this key. Changing the query's code version also
+          # invalidates its other keys, which would run inside later traces.
+          :ok = Roux.Memo.delete(db, {query, k})
+          Roux.QueryLog.reset(log)
 
-        {_value, ran} =
-          Roux.Code.Verify.executed(fn -> Roux.Runtime.query(db, query, k) end, modules: watched)
+          {_value, ran} =
+            Roux.Code.Verify.executed(fn -> Roux.Runtime.query(db, query, k) end,
+              modules: watched
+            )
 
-        closure = closure(definition.module, query) |> MapSet.union(by_value(db, {query, k}))
-        outside = Enum.reject(ran, &(MapSet.member?(closure, &1) or MapSet.member?(allowed, &1)))
-        if outside == [], do: acc, else: Map.put(acc, query, outside)
+          assert k in Roux.QueryLog.executions(log, query)
+
+          closure = closure(definition.module, query) |> MapSet.union(by_value(db, {query, k}))
+
+          outside =
+            Enum.reject(ran, &(MapSet.member?(closure, &1) or MapSet.member?(allowed, &1)))
+
+          if outside == [], do: acc, else: Map.put(acc, query, outside)
+      end
+    after
+      Roux.QueryLog.stop(log)
     end
   end
+
+  defp coverage_key({:extraction_local, {_, producer}}), do: {:extraction_local, producer}
+
+  defp coverage_key({name, {_, producer}})
+       when name in [
+              :extraction_module_producer,
+              :extraction_metadata_rows,
+              :extraction_attribute_rows,
+              :extraction_producer
+            ],
+       do: {name, producer}
+
+  defp coverage_key({name, _}), do: name
 
   # Argus's own modules, but its tests' and fixtures', and its
   # dependencies' (roux, beam_spy, ctf, pentiment, telemetry).
@@ -134,13 +184,17 @@ defmodule Argus.Graph.CodeClosureTest do
     argus ++ deps
   end
 
-  defp allowed do
+  defp allowed(extraction) do
     {:ok, hook} = Roux.Code.closure([Argus.Graph.Reads])
 
     Application.spec(:argus_beam, :modules)
     |> Enum.filter(&Reads.schema_module?/1)
     |> Enum.concat([Argus.Graph.Reads | Enum.map(hook, &elem(&1, 0))])
-    |> Enum.concat(Argus.Graph.modules())
+    |> Enum.concat(
+      if extraction == :functions,
+        do: Argus.Graph.modules(:functions),
+        else: Argus.Graph.modules()
+    )
     |> MapSet.new()
   end
 

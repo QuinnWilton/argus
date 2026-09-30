@@ -65,7 +65,7 @@ defmodule Argus.MixProject do
       # that line_info resolution depends on (0.2.0+).
       {:beam_spy, "~> 0.2"},
       # The incremental query graph (memos, the manifest, the blob store).
-      {:roux, "~> 0.2.3"},
+      {:roux, "~> 0.2.3", roux_options()},
       {:telemetry, "~> 1.0"},
       # Findings rendered as source frames.
       {:pentiment, "~> 0.2"},
@@ -85,6 +85,15 @@ defmodule Argus.MixProject do
       {:ex_doc, "~> 0.31", only: :dev, runtime: false},
       {:presubmit, "~> 0.1.0", only: [:dev, :test], runtime: false}
     ]
+  end
+
+  # Exercise unreleased query-runtime changes without changing the package's
+  # dependency or sharing a modified deps/ checkout with other builds.
+  defp roux_options do
+    case System.get_env("ARGUS_ROUX_PATH") do
+      nil -> []
+      path -> [path: path]
+    end
   end
 
   defp elixirc_paths(:test), do: ["lib", "test/fixtures", "test/support"]

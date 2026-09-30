@@ -347,6 +347,86 @@ defmodule Argus.Pipeline do
     end
   end
 
+  @doc """
+  Extracts an already disassembled module or function partition.
+
+  Uses the same passes and error handling as `extract_module/2`, in the calling
+  process. The caller owns scheduling and timeouts. `base:` can supply a kept
+  base when only extractor rows are requested; `keep_base:` returns one for reuse.
+  """
+  @spec extract_data(Disassemble.module_data(), keyword()) ::
+          {:ok, module_extraction()} | {:error, term()}
+  def extract_data(data, opts) do
+    producers = opts |> Keyword.fetch!(:producers) |> Enum.uniq()
+    extractors = Enum.reject(producers, &(&1 == :base))
+    base? = :base in producers
+
+    how = %{
+      base: base?,
+      keep: Keyword.get(opts, :keep_base, false),
+      kept: if(base?, do: nil, else: Keyword.get(opts, :base))
+    }
+
+    memo = new_memo(opts)
+    was_tracing = Facts.tracing_enabled?()
+    if Keyword.get(opts, :trace_imprecision, false), do: Facts.enable_tracing()
+
+    try do
+      written = Writer.written(Keyword.get(opts, :relations, :all))
+
+      shape = fn produced, kept, reads ->
+        {Map.new(produced, fn {producer, rows} -> {producer, Writer.encode(rows, written)} end),
+         kept, reads}
+      end
+
+      with {:ok, {encoded, kept, reads}} <-
+             extract_module(data, extractors, false, how, shape, memo) do
+        {:ok,
+         %{
+           status: :ok,
+           facts: Map.new(producers, &{&1, Map.get(encoded, &1, %{})}),
+           reads: Map.take(reads, producers),
+           installed: installed_reads(memo),
+           base: kept
+         }}
+      end
+    after
+      :ets.delete(memo)
+      if not was_tracing, do: Facts.disable_tracing()
+    end
+  end
+
+  @doc """
+  Runs extractors over prepared disassembly, CFGs, and reaching definitions.
+
+  The caller restores any serialized reaching solutions before calling this.
+  Installed-spec memoization is scoped to the call and never enters its result.
+  """
+  @spec extract_prepared(map(), keyword()) :: {:ok, module_extraction()}
+  def extract_prepared(data, opts) do
+    extractors = opts |> Keyword.fetch!(:producers) |> Enum.uniq()
+    memo = new_memo(opts)
+    was_tracing = Facts.tracing_enabled?()
+    if Keyword.get(opts, :trace_imprecision, false), do: Facts.enable_tracing()
+
+    try do
+      produced = data |> extractor_data(memo, extractors) |> run_extractors(extractors)
+      written = Writer.written(Keyword.get(opts, :relations, :all))
+
+      {:ok,
+       %{
+         status: :ok,
+         facts: Map.new(produced, fn {p, rows, _reads} -> {p, Writer.encode(rows, written)} end),
+         reads: Map.new(produced, fn {p, _rows, reads} -> {p, reads} end),
+         installed: installed_reads(memo),
+         base: nil
+       }}
+    after
+      :ets.delete(memo)
+      if not was_tracing, do: Facts.disable_tracing()
+    end
+  end
+
   # One `{:ok, shaped} | {:lost, shaped} | {:error, reason}` per module,
   # in input order: `:lost` for a module that outlived the timeout or
   # whose worker exited, whose facts are its one `extraction_error` row.
@@ -491,7 +571,7 @@ defmodule Argus.Pipeline do
   # keep, if asked for. A kept base that cannot be read is computed
   # afresh.
   defp module_base(path, extractors, memo, %{kept: kept} = how) when is_binary(kept) do
-    case restore(kept, path, extractors) do
+    case restore(kept, beam_input(path), extractors) do
       {:ok, restored} ->
         data =
           restored.data
@@ -507,7 +587,7 @@ defmodule Argus.Pipeline do
   end
 
   defp module_base(path, extractors, memo, how) do
-    with {:ok, data} <- Disassemble.disassemble_path(path) do
+    with {:ok, data} <- disassemble(path) do
       mod_str = inspect(data.module)
 
       base_facts =
@@ -558,18 +638,33 @@ defmodule Argus.Pipeline do
     end
   end
 
+  defp disassemble(%{module: _, functions: _} = data), do: {:ok, data}
+  defp disassemble(path), do: Disassemble.disassemble_path(path)
+
+  defp beam_input(%{} = data), do: Map.get(data, :beam, "")
+  defp beam_input(path), do: path
+
   # What every extractor reads besides the disassembly and the parts the
   # base computed: every call site indexed once (the extractors filter
   # the index rather than each walking the instruction stream), the
   # origins of each read, the run's memo of installed specs, and the
   # debug-info chunk when an extractor reads it.
+  @doc "Shares immutable call-site and register-origin indexes between extractor calls."
+  @spec prepare_indexes(map()) :: map()
+  def prepare_indexes(data) do
+    data
+    |> Map.put_new_lazy(:call_sites, fn ->
+      Argus.Extractor.CallSites.index(data.module, data.functions)
+    end)
+    |> Map.put_new_lazy(:origins_index, fn ->
+      Argus.Extractor.Identity.origins_index(%{reaching: data.reaching})
+    end)
+  end
+
   defp extractor_data(data, memo, extractors) do
     data
-    |> Map.merge(%{
-      call_sites: Argus.Extractor.CallSites.index(data.module, data.functions),
-      origins_index: Argus.Extractor.Identity.origins_index(%{reaching: data.reaching}),
-      installed_specs: memo
-    })
+    |> prepare_indexes()
+    |> Map.put(:installed_specs, memo)
     |> with_debug_info(extractors)
   end
 
@@ -721,6 +816,8 @@ defmodule Argus.Pipeline do
   # The module's name as `function_def` spells it, read from the beam's
   # header alone; the path when even that fails (and a placeholder for
   # in-memory beam data, which has no path to show).
+  defp module_label(%{module: module}), do: inspect(module)
+
   defp module_label(path) do
     target = if BeamSpy.BeamFile.beam_data?(path), do: path, else: String.to_charlist(path)
 

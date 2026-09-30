@@ -109,6 +109,7 @@ defmodule Argus.Graph.Pack do
   digest, and whether it was lost.
   """
   @type t :: %{
+          optional(:engine) => :functions,
           module: module() | nil,
           pack: Blob.digest(),
           relations: %{atom() => binary()},
@@ -129,6 +130,22 @@ defmodule Argus.Graph.Pack do
   caller's own that reads them solves over).
   """
   @type kind :: :extracted | :in_process
+
+  @doc false
+  @spec from_segments(Blob.t(), module() | nil, [{Pipeline.producer(), map()}]) ::
+          {t(), [Blob.digest()]}
+  def from_segments(store, module, segments) do
+    {producers, chosen} =
+      Enum.map(segments, fn {producer, encoded} ->
+        {:ok, entry} = variant(store, producer, %{producer => nil}, encoded, [])
+        {producer, entry}
+      end)
+      |> Enum.unzip()
+
+    {current, _} = pack(store, producers, Map.new(Enum.zip(producers, chosen)))
+    held = [current.pack | for(%{segment: segment} <- chosen, segment != nil, do: segment)]
+    {Map.put(facts(module, current, false), :engine, :functions), held}
+  end
 
   @doc """
   The facts of the beam `input` (a path or the bytes, `hash` its
@@ -657,6 +674,25 @@ defmodule Argus.Graph.Pack do
   end
 
   defp restore(db, query, beam_key, beam, pack) do
+    case Runtime.query(db, query, beam_key) do
+      {:ok, %{engine: :functions}} ->
+        kind = if query == :module_facts, do: :extracted, else: :in_process
+
+        with {:ok, segments} <- Runtime.query(db, :extraction_segments, {beam_key, kind}) do
+          module = Runtime.query(db, :module_name, beam_key)
+
+          case from_segments(db.blob, module, segments) do
+            {%{pack: ^pack}, _held} -> :ok
+            {%{pack: made}, _held} -> {:error, {:not_reproduced, made}}
+          end
+        end
+
+      _legacy ->
+        restore_legacy(db, query, beam_key, beam, pack)
+    end
+  end
+
+  defp restore_legacy(db, query, beam_key, beam, pack) do
     store = db.blob
     module = Runtime.query(db, :module_name, beam_key)
 

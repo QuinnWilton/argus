@@ -389,7 +389,10 @@ defmodule Argus.Extractors.ApiCalls do
   @impl true
   @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()
   def extract(module_data) do
-    parents = closure_parents(module_data)
+    origins =
+      Map.get_lazy(module_data, :capture_origins, fn ->
+        {:parents, closure_parents(module_data)}
+      end)
 
     each_remote_call(module_data, %{}, fn facts, ctx, {mod, fun, arity} = mfa ->
       @by_mod_fun
@@ -399,7 +402,7 @@ defmodule Argus.Extractors.ApiCalls do
       |> Enum.reduce(facts, fn {_mfa, relation, columns}, acc ->
         emit(acc, ctx, mfa, relation, columns)
       end)
-      |> rpc_mfa_param(ctx, mfa, parents)
+      |> rpc_mfa_param(ctx, mfa, origins)
     end)
   end
 
@@ -426,13 +429,13 @@ defmodule Argus.Extractors.ApiCalls do
     {:erpc, :multicall, 5} => 1
   }
 
-  defp rpc_mfa_param(facts, ctx, mfa, parents) do
+  defp rpc_mfa_param(facts, ctx, mfa, origins) do
     with {:ok, m} <- Map.fetch(@rpc_mfa_regs, mfa),
-         {:ok, {holder, k}} <- holder_param(ctx.func_id, ctx.instrs, ctx.idx, {:x, m}, parents),
+         {:ok, {holder, k}} <- parameter_origin(ctx, {:x, m}, origins),
          {:ok, {^holder, k1}} <-
-           holder_param(ctx.func_id, ctx.instrs, ctx.idx, {:x, m + 1}, parents),
+           parameter_origin(ctx, {:x, m + 1}, origins),
          {:ok, {^holder, k2}} <-
-           holder_param(ctx.func_id, ctx.instrs, ctx.idx, {:x, m + 2}, parents),
+           parameter_origin(ctx, {:x, m + 2}, origins),
          true <- k1 == k + 1 and k2 == k + 2 do
       add_fact(facts, :rpc_mfa_param, [
         InstrId.mint(ctx.func_id, ctx.idx),
@@ -444,16 +447,64 @@ defmodule Argus.Extractors.ApiCalls do
     end
   end
 
+  defp parameter_origin(ctx, reg, {:parents, parents}),
+    do: holder_param(ctx.func_id, ctx.instrs, ctx.idx, reg, parents)
+
+  defp parameter_origin(ctx, reg, origins) do
+    with {:ok, k} <- Resolve.arg_position(ctx.instrs, ctx.idx, reg) do
+      case Map.fetch(origins, ctx.func_id) do
+        {:ok, {first, captures}} when k >= first -> Map.get(captures, k, :no)
+        _ -> {:ok, {ctx.func_id, k}}
+      end
+    end
+  end
+
+  @doc "Captured parameter origins, preserving ambiguous or unresolved captures."
+  @spec capture_origins(Argus.Extractor.module_data()) :: map()
+  def capture_origins(module_data) do
+    parents = closure_parents(module_data)
+
+    Map.new(parents, fn {closure, {parent, instrs, at, first, env}} ->
+      captures =
+        env
+        |> Enum.with_index(first)
+        |> Map.new(fn {operand, k} ->
+          origin =
+            case register(operand) do
+              {kind, _} = captured when kind in [:x, :y] ->
+                holder_param(parent, instrs, at, captured, parents)
+
+              _ ->
+                :no
+            end
+
+          {k, origin}
+        end)
+
+      {closure, {first, captures}}
+    end)
+  end
+
   # Which parameter of which function the value in `reg` at `idx` is, on
   # every path: `func`'s own, or — `func` being a closure — the variable
   # its parent captured there, followed to the parent's parameter.
-  defp holder_param(func, instrs, idx, reg, parents) do
+  defp holder_param(func, instrs, idx, reg, parents, seen \\ %{}) do
+    key = {func, idx, reg}
+
+    if Map.has_key?(seen, key) do
+      :no
+    else
+      follow_holder(func, instrs, idx, reg, parents, Map.put(seen, key, true))
+    end
+  end
+
+  defp follow_holder(func, instrs, idx, reg, parents, seen) do
     with {:ok, k} <- Resolve.arg_position(instrs, idx, reg) do
       case Map.fetch(parents, func) do
         {:ok, {parent, parent_instrs, at, first, env}} when k >= first ->
           case register(Enum.at(env, k - first)) do
             {kind, _} = captured when kind in [:x, :y] ->
-              holder_param(parent, parent_instrs, at, captured, parents)
+              holder_param(parent, parent_instrs, at, captured, parents, seen)
 
             _literal ->
               :no
