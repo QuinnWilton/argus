@@ -32,6 +32,7 @@ defmodule Argus.Graph.RulesTest do
   @moduletag :project
   use Argus.Test.Peer
 
+  alias Argus.Test.Fixtures.{LeakedTaskModule, PidFlow, Restart}
   alias Argus.Test.{Graph, Peer}
   alias Roux.{Input, Memo, QueryLog}
 
@@ -41,10 +42,22 @@ defmodule Argus.Graph.RulesTest do
   @analyses [:coupling, :mailbox]
 
   setup_all do
-    %{paths: Graph.parity!(), peer: Peer.start!()}
+    # A coupling defect with real ETS rows, a leaked task, and a module
+    # that reads spawn_call's schema. The separate parity gate covers
+    # every analysis over the full fixture set.
+    modules = [
+      Restart.HookSup,
+      Restart.HookKeeper,
+      Restart.HookUser,
+      LeakedTaskModule,
+      PidFlow.Loops
+    ]
+
+    paths = Map.new(modules, &{&1, &1 |> :code.which() |> List.to_string()})
+    %{paths: paths, peer: Peer.start!()}
   end
 
-  # Runs `fun` in the peer over a graph of the parity fixture solved
+  # Runs `fun` in the peer over a graph of the fixtures solved
   # cold, with a copy of argus's Datalog tree to edit and a query log
   # attached, reset: it sees only what `fun` makes happen. `fun` takes the
   # database, the log, and the tree's root. The database takes the
@@ -77,8 +90,10 @@ defmodule Argus.Graph.RulesTest do
   end
 
   defp findings!(db) do
-    for analysis <- @analyses,
-        do: {:ok, _} = Argus.Graph.Locate.located(db, {:test, analysis})
+    for analysis <- @analyses do
+      assert {:ok, [_ | _]} = Argus.Graph.Locate.located(db, {:test, analysis}),
+             "#{analysis} must have findings for the invalidation checks"
+    end
 
     :ok
   end
@@ -222,6 +237,7 @@ defmodule Argus.Graph.RulesTest do
   test "an edit to one extractor re-runs that extractor alone, over each module's kept base",
        %{paths: paths} = context do
     in_graph(Map.put(context, :db_opts, store: :temporary), fn db, log, _root ->
+      assert [_ | _] = Argus.Graph.Relations.rows(db, :test, :ets_new)
       {:ok, %{value: codes}} = Memo.get(db, {:producer_code, :all})
       edited = "edited #{System.unique_integer([:positive])} #{System.os_time()}"
       :ok = came_out!(db, {:producer_code, :all}, %{codes | Argus.Extractors.ETS => edited})
