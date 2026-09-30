@@ -353,6 +353,11 @@ defmodule Argus.Pipeline do
   Uses the same passes and error handling as `extract_module/2`, in the calling
   process. The caller owns scheduling and timeouts. `base:` can supply a kept
   base when only extractor rows are requested; `keep_base:` returns one for reuse.
+
+  With `keep_base: true`, `on_prepared:` receives the kept binary and its live
+  prepared data before any extractors run. This lets a worker reuse that data
+  without immediately decoding the binary. The callback never receives the
+  installed-spec memo, and its result does not enter the extraction value.
   """
   @spec extract_data(Disassemble.module_data(), keyword()) ::
           {:ok, module_extraction()} | {:error, term()}
@@ -364,7 +369,8 @@ defmodule Argus.Pipeline do
     how = %{
       base: base?,
       keep: Keyword.get(opts, :keep_base, false),
-      kept: if(base?, do: nil, else: Keyword.get(opts, :base))
+      kept: if(base?, do: nil, else: Keyword.get(opts, :base)),
+      on_prepared: Keyword.get(opts, :on_prepared)
     }
 
     memo = new_memo(opts)
@@ -614,7 +620,17 @@ defmodule Argus.Pipeline do
       data =
         data
         |> Map.merge(%{cfg: cfgs, typed: typed, reaching: reaching})
-        |> extractor_data(memo, extractors)
+        |> prepare_indexes()
+
+      case {kept, Map.get(how, :on_prepared)} do
+        {kept, callback} when is_binary(kept) and is_function(callback, 2) ->
+          callback.(kept, data)
+
+        _ ->
+          :ok
+      end
+
+      data = extractor_data(data, memo, extractors)
 
       derive = fn ->
         {conditional, errors} =

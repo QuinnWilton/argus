@@ -37,6 +37,17 @@ defmodule Argus.Instr.Reaching do
   @typedoc "What can have written a register: an instruction's index, or a parameter."
   @type source :: non_neg_integer() | {:param, non_neg_integer()}
 
+  @typep solution :: %{
+           code: tuple(),
+           skeleton: term(),
+           blocks: map(),
+           block_of: map()
+         }
+
+  @typedoc "Complete immutable solutions, including instruction and block lookups."
+  @opaque prepared ::
+            {:reaching_prepared, [{{term(), term()}, [Instr.instr()], solution()}]}
+
   @cache :argus_instr_reaching
 
   @doc """
@@ -203,15 +214,81 @@ defmodule Argus.Instr.Reaching do
     functions
     |> Enum.zip(exported)
     |> Enum.each(fn {{:function, _name, _arity, _entry, instrs}, blocks} ->
-      # No skeleton: it is how a twin list borrows a solution
-      # (`solve/2`), and a list met after this one is solved anew.
-      keep(instrs, %{
-        code: List.to_tuple(instrs),
-        skeleton: nil,
-        blocks: blocks,
-        block_of: block_of(blocks)
-      })
+      {key, solution} = restored_solution(instrs, blocks)
+      install(key, instrs, solution)
     end)
+  end
+
+  @doc """
+  Captures complete solutions for reuse by `restore_prepared/1`, solving any
+  functions absent from this process's cache. Unlike `export/1`, the result
+  retains instruction tuples and block lookups so restoring it needs no rebuild.
+  """
+  @spec prepare([{:function, atom(), arity(), term(), [Instr.instr()]}]) :: prepared()
+  def prepare(functions) do
+    entries =
+      for {:function, _name, _arity, _entry, instrs} <- functions,
+          do: {cache_key(instrs), instrs, solution(instrs)}
+
+    {:reaching_prepared, entries}
+  end
+
+  @doc """
+  Prepares complete solutions from `export/1` without installing them. Reuses
+  an installed solution only when both its instructions and blocks match exactly.
+  """
+  @spec prepare([{:function, atom(), arity(), term(), [Instr.instr()]}], [term()]) ::
+          prepared()
+  def prepare(functions, exported) do
+    entries =
+      functions
+      |> Enum.zip(exported)
+      |> Enum.map(fn {{:function, _name, _arity, _entry, instrs}, blocks} ->
+        {key, solution} = restored_solution(instrs, blocks)
+        {key, instrs, solution}
+      end)
+
+    {:reaching_prepared, entries}
+  end
+
+  @doc """
+  Installs complete prepared solutions in this process. Repeated installation
+  skips entries still present; an intervening query for another module is safe.
+  """
+  @spec restore_prepared(prepared()) :: :ok
+  def restore_prepared({:reaching_prepared, entries}) do
+    Enum.each(entries, fn {key, instrs, solution} -> install(key, instrs, solution) end)
+  end
+
+  defp restored_solution(instrs, blocks) do
+    {module, key} = cache_key(instrs)
+    cached = module |> cached_functions() |> Map.get(key, [])
+
+    solution =
+      case cached_solution(cached, instrs) do
+        %{blocks: ^blocks} = solution ->
+          solution
+
+        _ ->
+          # Exported blocks have no skeleton for borrowing a twin list's solution.
+          %{
+            code: List.to_tuple(instrs),
+            skeleton: nil,
+            blocks: blocks,
+            block_of: block_of(blocks)
+          }
+      end
+
+    {{module, key}, solution}
+  end
+
+  defp install({module, key} = cache_key, instrs, solution) do
+    cached = module |> cached_functions() |> Map.get(key, [])
+
+    case cached_solution(cached, instrs) do
+      %{blocks: blocks} when blocks === solution.blocks -> :ok
+      _ -> keep(cache_key, instrs, solution)
+    end
   end
 
   # --- the per-function solution -----------------------------------------
@@ -219,13 +296,7 @@ defmodule Argus.Instr.Reaching do
   defp solution(instrs) do
     {module, key} = cache_key(instrs)
 
-    functions =
-      case Process.get(@cache) do
-        {^module, functions} -> functions
-        _other -> %{}
-      end
-
-    cached = Map.get(functions, key, [])
+    cached = module |> cached_functions() |> Map.get(key, [])
 
     case cached_solution(cached, instrs) do
       nil ->
@@ -245,16 +316,20 @@ defmodule Argus.Instr.Reaching do
   defp cached_solution([], _instrs), do: nil
 
   defp keep(instrs, solution) do
-    {module, key} = cache_key(instrs)
+    keep(cache_key(instrs), instrs, solution)
+  end
 
-    functions =
-      case Process.get(@cache) do
-        {^module, functions} -> functions
-        _other -> %{}
-      end
-
+  defp keep({module, key}, instrs, solution) do
+    functions = cached_functions(module)
     kept = Enum.take([{instrs, solution} | Map.get(functions, key, [])], 2)
     Process.put(@cache, {module, Map.put(functions, key, kept)})
+  end
+
+  defp cached_functions(module) do
+    case Process.get(@cache) do
+      {^module, functions} -> functions
+      _other -> %{}
+    end
   end
 
   # A function is named by its func_info; code without one (a fragment

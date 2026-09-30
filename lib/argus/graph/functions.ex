@@ -12,14 +12,11 @@ defmodule Argus.Graph.Functions do
     code: [exclude: &Argus.Graph.Reads.schema_module?/1],
     around: {Argus.Graph.Reads, :around}
 
-  alias Argus.Graph.{ExtractionCache, Frontend}
-  alias Argus.Instr.Reaching
+  alias Argus.Graph.{ExtractionCache, Frontend, Prepared}
   alias Argus.Pipeline
-  alias Argus.Pipeline.{Base, Disassemble, Function}
+  alias Argus.Pipeline.{Disassemble, Function}
   alias Roux.Blob
   alias Roux.Runtime, as: R
-
-  @prepared {__MODULE__, :prepared}
 
   @local [
     Argus.Extractors.ApiCalls,
@@ -118,9 +115,24 @@ defmodule Argus.Graph.Functions do
     with {:ok, data} when data != nil <- R.query(db, :extraction_function, key) do
       code = R.query(db, :extraction_code, :base)
 
-      ExtractionCache.fetch(db, elem(key, 0), :base, {code, data}, fn ->
-        Pipeline.extract_data(data, producers: [:base], keep_base: true, trace_imprecision: true)
-      end)
+      {result, captured} =
+        Prepared.capture(fn on_prepared ->
+          ExtractionCache.fetch(db, elem(key, 0), :base, {code, data}, fn ->
+            Pipeline.extract_data(data,
+              producers: [:base],
+              keep_base: true,
+              trace_imprecision: true,
+              on_prepared: on_prepared
+            )
+          end)
+        end)
+
+      with {:ok, base} <- result do
+        # Every producer shares this identity without serializing the kept base again.
+        base = Map.put(base, :fingerprint, base_fingerprint(base, data))
+        Prepared.remember(db, elem(key, 0), elem(key, 1), base, captured)
+        {:ok, base}
+      end
     end
   end
 
@@ -147,22 +159,17 @@ defmodule Argus.Graph.Functions do
     with {:ok, base} when base != nil <- R.query(db, :extraction_base, key) do
       code = R.query(db, :extraction_code, producer)
       context = context(db, key, producer)
-      input = base_input(db, key, base)
+      fingerprint = base_identity(db, key, base)
 
-      ExtractionCache.fetch(db, elem(key, 0), producer, {code, input, context}, fn ->
-        case input do
+      ExtractionCache.fetch(db, elem(key, 0), producer, {code, fingerprint, context}, fn ->
+        case base_input(db, key, base) do
           {:unprepared, data} ->
             Pipeline.extract_data(Map.merge(data, context), options(db, producer))
 
           kept ->
             {module, function} = key
-
-            data =
-              prepared_input(db, module, function, kept, fn ->
-                data = kept |> Base.restore("") |> prepared()
-                {data, export_reaching(data)}
-              end)
-
+            prepared = %{base: kept, fingerprint: fingerprint}
+            data = Prepared.function(db, module, function, prepared)
             Pipeline.extract_prepared(Map.merge(data, context), options(db, producer))
         end
       end)
@@ -195,18 +202,18 @@ defmodule Argus.Graph.Functions do
       parts =
         for key <- keys do
           {:ok, base} = R.query(db, :extraction_base, {module, key})
-          base_input(db, {module, key}, base)
+          {is_binary(base.base), base_identity(db, {module, key}, base)}
         end
 
       code = Roux.Database.code_version(db, :extraction_module_base)
-      identity = Blob.term_digest({code, metadata, parts})
+      identity = Blob.term_digest({code, metadata, Enum.map(parts, &elem(&1, 1))})
 
       {:ok,
        %{
          metadata: metadata,
          keys: keys,
          digest: identity,
-         prepared?: Enum.all?(parts, &is_binary/1)
+         prepared?: Enum.all?(parts, &elem(&1, 0))
        }}
     end
   end
@@ -225,15 +232,15 @@ defmodule Argus.Graph.Functions do
       ExtractionCache.fetch(db, module, producer, {code, identity}, fn ->
         if base.prepared? do
           data =
-            prepared_input(db, module, :module, identity, fn ->
-              bases =
+            Prepared.fetch(db, module, :module, identity, fn ->
+              parts =
                 for key <- base.keys do
                   {:ok, part} = R.query(db, :extraction_base, {module, key})
-                  Base.restore(part.base, "")
+                  part = Map.put(part, :fingerprint, base_identity(db, {module, key}, part))
+                  Prepared.function(db, module, key, part)
                 end
 
-              data = assemble(metadata, bases)
-              {data, export_reaching(data)}
+              Prepared.assemble(metadata, parts)
             end)
 
           Pipeline.extract_prepared(data, options(db, producer))
@@ -332,8 +339,24 @@ defmodule Argus.Graph.Functions do
 
   defp base_input(_db, _key, %{base: kept}), do: kept
 
-  defp export_reaching(%{reaching: nil}), do: nil
-  defp export_reaching(data), do: Reaching.export(data.functions)
+  defp base_fingerprint(%{base: nil}, data), do: {:unprepared, Blob.term_digest(data)}
+  defp base_fingerprint(%{base: kept}, _data), do: {:prepared, Blob.digest(kept)}
+
+  defp base_identity(_db, _key, %{base: nil, fingerprint: {:unprepared, _} = fingerprint}),
+    do: fingerprint
+
+  defp base_identity(_db, _key, %{base: kept, fingerprint: {:prepared, _} = fingerprint})
+       when is_binary(kept),
+       do: fingerprint
+
+  # Old values normally invalidate with this query's code. Keep injected or
+  # partially restored values safe too, including a base that became unkeepable.
+  defp base_identity(db, key, base) do
+    case base_input(db, key, base) do
+      {:unprepared, data} -> base_fingerprint(base, data)
+      kept -> base_fingerprint(%{base: kept}, nil)
+    end
+  end
 
   defp context(db, key, Argus.Extractors.ApiCalls),
     do: %{capture_origins: R.query(db, :extraction_capture_context, key)}
@@ -342,65 +365,6 @@ defmodule Argus.Graph.Functions do
 
   defp export_key({name, arity, _}), do: {name, arity}
   defp export_key({:atom, name, arity, _}), do: {name, arity}
-
-  # The worker reuses these indexes across producers. Keep only its current
-  # module, and restore reaching solutions even on a hit: another query may
-  # have installed a different module's process-local reaching cache.
-  defp prepared_input(db, module, key, identity, prepare) do
-    scope = {Roux.Database.id(db), module, Roux.Database.code_version(db, :extraction_local)}
-
-    entries =
-      case Process.get(@prepared) do
-        {^scope, entries} -> entries
-        _ -> %{}
-      end
-
-    {data, solutions} =
-      case Map.get(entries, key) do
-        {^identity, data, solutions} ->
-          {data, solutions}
-
-        _ ->
-          {data, solutions} = prepare.()
-          data = Pipeline.prepare_indexes(data)
-          Process.put(@prepared, {scope, Map.put(entries, key, {identity, data, solutions})})
-          {data, solutions}
-      end
-
-    if solutions, do: Reaching.restore(data.functions, solutions)
-    data
-  end
-
-  defp prepared(restored) do
-    {:ok, typed} = restored.typed
-    Map.merge(restored.data, %{typed: typed, cfg: restored.cfg, reaching: restored.reaching})
-  end
-
-  defp assemble(metadata, bases) do
-    parts = Enum.map(bases, &prepared/1)
-
-    typed =
-      parts
-      |> Enum.reduce(%{}, fn part, rows ->
-        Enum.reduce(part.typed || %{}, rows, fn {relation, own}, rows ->
-          Map.update(rows, relation, [own], &[own | &1])
-        end)
-      end)
-      |> Map.new(fn {relation, chunks} ->
-        {relation, chunks |> Enum.reverse() |> Enum.concat()}
-      end)
-
-    Map.merge(metadata, %{
-      functions: Enum.flat_map(parts, & &1.functions),
-      line_table: Enum.reduce(parts, %{}, &Map.merge(&2, &1.line_table)),
-      cfg: Enum.reduce(parts, %{}, &Map.merge(&2, &1.cfg)),
-      typed: typed,
-      reaching:
-        if(Enum.all?(parts, & &1.reaching),
-          do: Enum.reduce(parts, MapSet.new(), &MapSet.union(&2, &1.reaching))
-        )
-    })
-  end
 
   # Debug-info and compile-info consumers still need the original BEAM. They
   # have their own producer query, so this does not invalidate other producers.
