@@ -10,7 +10,8 @@ defmodule Argus.Graph.LostSegmentTest do
 
   use ExUnit.Case, async: true
 
-  alias Argus.Test.{Files, Graph}
+  alias Argus.Graph.Relations
+  alias Argus.Test.Graph
   alias Roux.Blob
 
   @moduletag :souffle
@@ -74,34 +75,35 @@ defmodule Argus.Graph.LostSegmentTest do
     end
   end
 
-  defp files(dir) do
-    for file <- dir |> File.ls!() |> Enum.sort(), into: %{} do
-      {file, File.read!(Path.join(dir, file))}
-    end
-  end
-
-  defp facts!(modules, store) do
-    {:ok, dir} = Argus.Analysis.extract_facts(modules, [:mailbox], store: store)
+  defp functions!(store) do
+    db = Graph.new_db(Map.new(@modules, &{&1, path(&1)}), store: Blob.open!(store))
 
     try do
-      files(dir)
+      digest = Relations.relation(db, {:test, :function_def})
+
+      # A different producer selection bypasses the first solve's assembled
+      # file, so this read must open the module's missing base segment.
+      {:ok, %{function_def: file}} =
+        Relations.files(db, :test, [{:function_def, digest}], [:base])
+
+      {:ok, content} = Blob.get(db.blob, file)
+      assert content != ""
+      content
     after
-      Files.rm_rf!(Path.dirname(dir))
+      Roux.Database.shutdown(db)
     end
   end
 
   test "a relation assembled again extracts the module again, and puts its segment back",
        %{store: store, segment: segment, tmp_dir: tmp} do
-    # Another producer set than the first run's: its relations' files are
-    # assembled from the modules' segments anew.
-    {facts, extracted} = extracting(fn -> facts!(@modules, store) end)
+    {functions, extracted} = extracting(fn -> functions!(store) end)
 
     # Every event is VM-wide: other tests extract beside this one.
     assert @lost in extracted
     assert Blob.member?(Blob.open!(store), segment)
 
     # The same rows a store that never lost anything gives.
-    assert facts == facts!(@modules, Path.join(tmp, "fresh"))
+    assert functions == functions!(Path.join(tmp, "fresh"))
   end
 
   test "a line table read again extracts the module again", %{store: store, tmp_dir: tmp} do
