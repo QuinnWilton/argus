@@ -227,16 +227,22 @@ defmodule Argus.Instr.Reaching do
 
     cached = Map.get(functions, key, [])
 
-    case List.keyfind(cached, instrs, 0) do
-      {^instrs, solution} ->
-        solution
-
+    case cached_solution(cached, instrs) do
       nil ->
         solution = solve(instrs, cached)
         keep(instrs, solution)
         solution
+
+      solution ->
+        solution
     end
   end
+
+  # List.keyfind uses numeric equality: literals such as {1} and {1.0}
+  # would select the same entry. Match the complete list exactly once.
+  defp cached_solution([{instrs, solution} | _], instrs), do: solution
+  defp cached_solution([_ | rest], instrs), do: cached_solution(rest, instrs)
+  defp cached_solution([], _instrs), do: nil
 
   defp keep(instrs, solution) do
     {module, key} = cache_key(instrs)

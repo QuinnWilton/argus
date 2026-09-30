@@ -8,6 +8,24 @@ defmodule Argus.Instr.ReachingTest do
   alias Argus.InstrId
   alias Argus.Pipeline.{Disassemble, Normalize}
 
+  test "cached instruction lists distinguish integer and float literals" do
+    instructions = fn value ->
+      [
+        {:func_info, {:atom, :m}, {:atom, :f}, 0},
+        {:move, {:literal, {value}}, {:x, 0}},
+        :return
+      ]
+    end
+
+    integer = instructions.(1)
+    float = instructions.(1.0)
+
+    for instrs <- [integer, float, integer, float] do
+      assert Reaching.at(instrs, 1) === Enum.at(instrs, 1)
+      assert Reaching.sources(instrs, 2, {:x, 0}) == [1]
+    end
+  end
+
   describe "sources/3" do
     test "the last write in the block, else what reaches the block" do
       instrs = [
