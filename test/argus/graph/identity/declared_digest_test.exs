@@ -99,7 +99,10 @@ defmodule Argus.Graph.Identity.DeclaredDigestTest do
           root = Path.join([tmp, Path.basename(program, ".dl"), relation])
 
           broken =
-            Path.join(perturb(root, dl, &(&1 == relation), fn _, d -> retype(d) end), relative)
+            Path.join(
+              perturb(root, dl, program, &(&1 == relation), fn _, d -> retype(d) end),
+              relative
+            )
 
           if match?({:error, _}, Souffle.input_relations(broken)), do: broken
         end)
@@ -125,8 +128,8 @@ defmodule Argus.Graph.Identity.DeclaredDigestTest do
       if relation in named, do: rename(decl), else: decl |> rename() |> retype()
     end
 
-    perturbed = perturb(Path.join([tmp, name, "perturbed"]), dl, &(&1 not in kept), change)
-    perturbed = Path.join(perturbed, relative)
+    root = perturb(Path.join([tmp, name, "perturbed"]), dl, program, &(&1 not in kept), change)
+    perturbed = Path.join(root, relative)
 
     assert Program.declared_digest(perturbed, kept) == digest, name
     refute Program.declared_digest(perturbed, :all) == Program.declared_digest(program, :all)
@@ -135,8 +138,8 @@ defmodule Argus.Graph.Identity.DeclaredDigestTest do
 
     # A declaration it loads moves its key.
     if loaded = Enum.find(kept, &generated?(dl, &1)) do
-      moved = perturb(Path.join([tmp, name, "moved"]), dl, &(&1 == loaded), &rename/2)
-      refute Program.declared_digest(Path.join(moved, relative), kept) == digest, name
+      rewrite_declarations(root, dl, &(&1 == loaded), &rename/2)
+      refute Program.declared_digest(perturbed, kept) == digest, name
     end
 
     :ok
@@ -169,16 +172,28 @@ defmodule Argus.Graph.Identity.DeclaredDigestTest do
         do: relation
   end
 
-  # A copy of `dl` whose generated files have each declaration of a
-  # relation `change?` picks changed by `change`, their prose rewritten,
-  # and a relation added.
-  defp perturb(root, dl, change?, change) do
-    File.mkdir_p!(Path.dirname(root))
-    File.cp_r!(dl, root)
+  # Copy the program's complete include tree, not every other analysis's
+  # rules too. The generated files retain all declarations, including
+  # the ones the program never loads: those are what this test changes.
+  defp perturb(root, dl, program, change?, change) do
+    files =
+      Enum.map(Program.program_files(program), &elem(&1, 1)) ++
+        Enum.map(@generated, &Path.join(dl, &1))
 
+    for file <- Enum.uniq(files) do
+      target = Path.join(root, Path.relative_to(file, dl))
+      File.mkdir_p!(Path.dirname(target))
+      File.cp!(file, target)
+    end
+
+    rewrite_declarations(root, dl, change?, change)
+    root
+  end
+
+  defp rewrite_declarations(root, dl, change?, change) do
     for file <- @generated do
       path = Path.join(root, file)
-      {:ok, blocks} = Program.declarations(File.read!(path))
+      {:ok, blocks} = Program.declarations(File.read!(Path.join(dl, file)))
 
       body =
         Enum.map_join(blocks, "\n", fn {relation, block} ->
@@ -195,8 +210,6 @@ defmodule Argus.Graph.Identity.DeclaredDigestTest do
           ".decl #{probe}(x: symbol)\n.input #{probe}\n"
       )
     end
-
-    root
   end
 
   defp rename(_relation, decl), do: rename(decl)

@@ -47,7 +47,10 @@ defmodule Argus.Graph.Identity.SchemaPerturbationTest do
   @install ~S"""
   Code.put_compiler_option(:ignore_module_conflict, true)
 
-  for {mod, read, relations} <- concerns do
+  # Most concerns are unchanged when the final check moves one column.
+  # Keep their installed definitions; Schema still recompiles over the
+  # complete set below, including the one concern that did move.
+  for {mod, read, relations} <- concerns, mod.relations() != relations do
     Code.compile_quoted(
       quote do
         defmodule unquote(mod) do

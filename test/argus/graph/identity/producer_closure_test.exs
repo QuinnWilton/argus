@@ -87,12 +87,12 @@ defmodule Argus.Graph.Identity.ProducerClosureTest do
     end
 
     executed =
-      for m <- mods,
-          {f, a} <- m.module_info(:functions),
-          f not in [:module_info, :__info__],
-          match?({:call_count, n} when n > 0, :erlang.trace_info({m, f, a}, :call_count)),
-          uniq: true,
-          do: m
+      Enum.filter(mods, fn m ->
+        Enum.any?(m.module_info(:functions), fn {f, a} ->
+          f not in [:module_info, :__info__] and
+            match?({:call_count, n} when n > 0, :erlang.trace_info({m, f, a}, :call_count))
+        end)
+      end)
 
     for m <- mods, do: :erlang.trace_pattern({m, :_, :_}, false, [:call_count])
     executed
