@@ -148,7 +148,7 @@ defmodule Argus.Souffle do
 
   defp transformed_ram(bin, rules_path) do
     case System.cmd(bin, ["--show=transformed-ram", "--wno=all", rules_path],
-           stderr_to_stdout: false
+           stderr_to_stdout: true
          ) do
       {output, 0} -> {:ok, output}
       {output, code} -> {:error, {:souffle_error, code, output}}

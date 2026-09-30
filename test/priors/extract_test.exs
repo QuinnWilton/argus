@@ -10,6 +10,7 @@ defmodule Argus.Priors.ExtractTest do
   alias Argus.Test.Fixtures.Secret, as: S
 
   @moduletag :tmp_dir
+  @moduletag :capture_log
 
   defmodule Oracle do
     @behaviour Argus.Priors.Oracle

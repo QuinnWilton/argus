@@ -141,6 +141,7 @@ defmodule Argus.Priors.DriverTest do
     assert length(rows) == 4
   end
 
+  @tag :capture_log
   test "an oracle error or raise loses that request only", %{tmp_dir: dir} do
     defmodule Flaky do
       @behaviour Argus.Priors.Oracle

@@ -21,6 +21,29 @@ defmodule Argus.SouffleTest do
   end
 
   describe "input_relations/2" do
+    test "returns compiler diagnostics for a mismatched declaration", %{tmp_dir: tmp_dir} do
+      if not Souffle.available?(), do: flunk("souffle not installed")
+
+      rules_path = Path.join(tmp_dir, "bad_arity.dl")
+
+      File.write!(rules_path, """
+      .decl catch_class(id: symbol, func: symbol, class: symbol, span_end: symbol, extra: number)
+      .input catch_class
+      .decl try_takes(id: symbol, class: symbol)
+      .output try_takes
+      try_takes(id, class) :- catch_class(id, _, class, _).
+      """)
+
+      assert {:error, {:souffle_error, status, diagnostics}} = Souffle.input_relations(rules_path)
+      assert status != 0
+      assert diagnostics =~ "Mismatching arity of relation catch_class (expected 5, got 4)"
+
+      assert {:error, {:souffle_error, ^status, diagnostics}} =
+               Souffle.ram_io(Souffle.executable(), rules_path)
+
+      assert diagnostics =~ "Mismatching arity of relation catch_class (expected 5, got 4)"
+    end
+
     test "a shipped program resolves to the same inputs on every call" do
       if not Souffle.available?(), do: flunk("souffle not installed")
 
