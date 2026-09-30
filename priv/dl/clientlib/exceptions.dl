@@ -4,10 +4,7 @@
 
 .decl catches_class(func: symbol, class: symbol)
 
-catches_class(func, class) :- catch_total(_, func, class), class != "*".
-catches_class(func, "error") :- catch_total(_, func, "*").
-catches_class(func, "exit") :- catch_total(_, func, "*").
-catches_class(func, "throw") :- catch_total(_, func, "*").
+catches_class(func, class) :- site_catches_class(_, func, class).
 
 .decl site_catches_class(id: symbol, func: symbol, class: symbol)
 
@@ -80,7 +77,7 @@ raise_tag("erpc", ":erpc").
 handler_takes(t, f, r) :-
   raise_class(r, c),
   try_takes(t, c),
-  (catch_total(t, f, c) ; catch_total(t, f, "*")).
+  site_catches_class(t, f, c).
 
 handler_takes(t, f, r) :-
   raise_class(r, c),
