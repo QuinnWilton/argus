@@ -1,6 +1,6 @@
 # Stub behaviours for the request-surface, transaction, LiveView and
 # call-cycle fixtures. None of Phoenix, Plug, Oban, Broadway, Ecto,
-# ThousandIsland or WebSock is a dependency of argus;
+# ThousandIsland, Ranch or WebSock is a dependency of argus;
 # the fixtures declare `@behaviour` on them because the analyses read the
 # attribute out of the beam. A stub gives the attribute a behaviour to
 # name, and every callback is optional so a fixture implements only the
@@ -13,16 +13,29 @@ defmodule Phoenix.LiveView do
   @callback handle_params(term(), term(), term()) :: term()
   @callback handle_event(term(), term(), term()) :: term()
   @callback handle_info(term(), term()) :: term()
+  @callback handle_async(term(), term(), term()) :: term()
   @callback render(term()) :: term()
-  @optional_callbacks mount: 3, handle_params: 3, handle_event: 3, handle_info: 2, render: 1
+  @optional_callbacks mount: 3,
+                      handle_params: 3,
+                      handle_event: 3,
+                      handle_info: 2,
+                      handle_async: 3,
+                      render: 1
 end
 
 defmodule Phoenix.LiveComponent do
   @moduledoc false
   @callback mount(term()) :: term()
   @callback update(term(), term()) :: term()
+  @callback handle_async(term(), term(), term()) :: term()
   @callback render(term()) :: term()
-  @optional_callbacks mount: 1, update: 2, render: 1
+  @optional_callbacks mount: 1, update: 2, handle_async: 3, render: 1
+end
+
+defmodule :ranch_protocol do
+  @moduledoc false
+  @callback start_link(term(), term(), term()) :: term()
+  @optional_callbacks start_link: 3
 end
 
 defmodule Phoenix.Channel do

@@ -6,7 +6,7 @@ defmodule Argus.Analyses.SingletonShapesTest do
   alias Argus.Test.Rows
 
   defp skip_without_souffle do
-    unless Argus.Souffle.available?(), do: ExUnit.skip("souffle not installed")
+    unless Argus.Souffle.available?(), do: flunk("souffle not installed")
   end
 
   defp erpc_rows(r) do

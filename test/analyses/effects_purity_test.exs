@@ -170,8 +170,7 @@ defmodule Argus.Analyses.EffectsPurityTest do
       # `apply` is only opaque when M and F are genuinely unknown. With
       # literals it is a static call wearing a disguise, and giving up on it
       # would be laziness rather than honesty.
-      %{verified: verified, violated: violated, unprovable: unprovable} =
-        run([P.ResolvedApply])
+      %{verified: verified, unprovable: unprovable} = run([P.ResolvedApply])
 
       assert Enum.any?(verified, &(&1 =~ "reverse/1")),
              "apply(Enum, :reverse, [list]) is a call to a pure function"

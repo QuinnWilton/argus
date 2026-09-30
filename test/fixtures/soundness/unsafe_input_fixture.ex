@@ -269,6 +269,8 @@ defmodule Argus.Test.Soundness.G9.FoundMix do
 end
 
 defmodule Argus.Test.Soundness.G6.RanchAtom do
+  @compile {:no_warn_undefined, [{:ranch, :handshake, 1}]}
+
   # A Ranch protocol written as a hand-entered gen_server loop: it declares
   # only :ranch_protocol, and its handle_info/2 takes the socket's bytes.
   # Every frame a client sends becomes a term: binary_to_term/1 without

@@ -3,7 +3,6 @@ defmodule Argus.PropertyTest do
   use ExUnitProperties
 
   alias Argus.Extractor.Facts
-  alias Argus.Extractor.Helpers
   alias Argus.Extractor.Resolve
   alias Argus.Pipeline.Normalize
 

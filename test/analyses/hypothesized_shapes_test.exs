@@ -9,14 +9,6 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
     unless Argus.Souffle.available?(), do: flunk("souffle not installed")
   end
 
-  defp rows(results, relation, column \\ 0),
-    do:
-      results
-      |> Map.get(relation, [])
-      |> Enum.map(&Enum.at(&1, column))
-      |> Enum.uniq()
-      |> Enum.sort()
-
   test "an rpc result matched without a badrpc clause, or used as a boolean, is reported" do
     skip_without_souffle()
 

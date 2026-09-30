@@ -1,7 +1,10 @@
 # Soundness fixtures (review 2): each shape must keep the severity its
 # test states. Probes of the review and adversarial neighbours.
+# Bandit and ThousandIsland calls are analyzed without installing those libraries.
 # credo:disable-for-this-file
 defmodule Argus.Test.Soundness.G2.TlsProxyServer do
+  @compile {:no_warn_undefined, [{Bandit, :child_spec, 1}, {ThousandIsland, :child_spec, 1}]}
+
   # A reverse proxy. Bandit serves it (the server's side), but the
   # plug's own init options carry the TLS options the plug DIALS its
   # upstream with: `verify: :verify_none` there is a client that trusts
@@ -58,6 +61,8 @@ defmodule Argus.Test.Soundness.G2.TlsPeerListener do
 end
 
 defmodule Argus.Test.Soundness.Adv.Tls.Servers do
+  @compile {:no_warn_undefined, [{Bandit, :child_spec, 1}, {ThousandIsland, :child_spec, 1}]}
+
   # (a) The plug's upstream options, through a variable.
   def proxy(port) do
     upstream = [verify: :verify_none]
@@ -84,6 +89,8 @@ defmodule Argus.Test.Soundness.Adv.Tls.Servers do
 end
 
 defmodule Argus.Test.Soundness.Adv.Tls.Quiet do
+  @compile {:no_warn_undefined, [{Bandit, :child_spec, 1}, {ThousandIsland, :child_spec, 1}]}
+
   # A server asking its clients for nothing, three ways.
   def island(port, dir) do
     ThousandIsland.child_spec(
