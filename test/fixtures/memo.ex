@@ -1,9 +1,8 @@
 defmodule Argus.Test.Memo do
   @moduledoc """
   `Argus.analyze/3` and `Argus.run_analyses/2`, each computed once per
-  test run for the same modules, analysis and options: several test
-  modules solve the same fixture set, and a solve's answer is a term,
-  so every caller after the first reads the one the first computed.
+  test run for the same modules and analysis. Concurrent callers wait
+  for the first computation; later callers read its saved answer.
 
   An answer is immutable: sharing it keeps tests independent, which a
   shared facts directory would not. Only answers are kept (`{:ok, _}`),
@@ -121,18 +120,31 @@ defmodule Argus.Test.Memo do
         answer
 
       :none ->
+        :global.trans({{@table, key}, self()}, fn -> fill(key, compute) end, [node()])
+
+      :off ->
+        compute.()
+    end
+  end
+
+  defp once(_key, _opts, compute), do: compute.()
+
+  defp fill(key, compute) do
+    case lookup(key) do
+      {:ok, answer} ->
+        answer
+
+      _ ->
         answer = compute.()
         keep(key, answer)
         answer
     end
   end
 
-  defp once(_key, _opts, compute), do: compute.()
-
   defp lookup(key) do
     case :ets.whereis(@table) do
       :undefined ->
-        :none
+        :off
 
       _ ->
         case :ets.lookup(@table, key) do
