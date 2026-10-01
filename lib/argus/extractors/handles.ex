@@ -166,6 +166,17 @@ defmodule Argus.Extractors.Handles do
   @max_states 20_000
 
   @impl true
+  @doc false
+  def candidate_instructions?(instructions) do
+    Enum.any?(instructions, fn instruction ->
+      case Helpers.match_remote_call(instruction) do
+        {:ok, m, f, a} -> Map.has_key?(@opens, {m, f, a})
+        :none -> false
+      end
+    end)
+  end
+
+  @impl true
   def relations, do: [:handle_dropped]
 
   @impl true

@@ -44,7 +44,7 @@ defmodule Argus.Graph.FunctionPack do
   @spec packed(Roux.Database.t(), atom(), term(), (-> result)) :: result when result: var
   def packed(db, _query, module, run) do
     name = R.untracked(fn -> R.query(db, :module_name, module) end)
-    Roux.Blob.Trace.Pack.with_group(db.blob, {:argus_extraction, name}, run)
+    Roux.Blob.Trace.Pack.with_group(db.blob, {:argus_extraction, name}, run, lookup: :snapshot)
   end
 
   defp cached(db, module, kind) do

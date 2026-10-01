@@ -38,19 +38,18 @@ defmodule Argus.Specs do
   `of_beam/1` reads an analyzed module's own beam (its debug info);
   `installed/1` looks a module up on the code path, and memoizes the
   answer per module for the life of the VM, keyed by the file it was read
-  from, so a recompiled dependency is read again; `installed/2` and
-  `of_beam/2` answer from a table the caller keeps for one run instead,
-  which asks the code path about each module once — or, when the table
-  carries a source (`Argus.Specs.Source`, `Argus.Pipeline`'s
-  `specs_source:`), the project's own ebins and the installed OTP, and
-  never the code path. What reading one module's specs can give is
+  from, so a recompiled dependency is read again. `installed/2` and
+  `of_beam/2` use a caller-owned memo for one run. With `Argus.Specs.Source`
+  (`Argus.Pipeline`'s `specs_source:`), the memo resolves modules through the
+  project's ebins and installed OTP instead of the code path.
+  What reading one module's specs can give is
   `interface_digest/2`: the query graph keys each read on it
   (`Argus.Graph.Reads`'s `installed_specs`).
   """
 
   require Record
 
-  alias Argus.Specs.Source
+  alias Argus.Specs.{Memo, Source}
   Record.defrecordp(:file_info, Record.extract(:file_info, from_lib: "kernel/include/file.hrl"))
 
   @max_depth 4
@@ -63,7 +62,7 @@ defmodule Argus.Specs do
 
   # The types a spec's names resolve against — the module's own, or a
   # remote module's while its type is expanded — and the run's memo.
-  @typep scope :: {%{{atom(), arity()} => {list(), tuple()}}, :ets.tid() | nil}
+  @typep scope :: {%{{atom(), arity()} => {list(), tuple()}}, Memo.context() | nil}
 
   # One alternative of a return type, after resolution.
   @typep alt ::
@@ -82,7 +81,8 @@ defmodule Argus.Specs do
   its contents. `:error` when the beam carries no debug info to read
   specs from.
   """
-  @spec of_beam(Path.t() | binary(), :ets.tid() | nil) :: {:ok, returns()} | :error
+  @spec of_beam(Path.t() | binary(), Memo.context() | nil) ::
+          {:ok, returns()} | :error
   def of_beam(beam, memo \\ nil) when is_binary(beam) do
     with {:ok, binary} <- read_beam(beam),
          {:ok, {module, chunk}} <- fetch(fn -> read_chunk(binary) end) do
@@ -96,7 +96,8 @@ defmodule Argus.Specs do
   it) of `module`: what `Argus.Extractors.Specs` asks, with the chunk the
   pipeline read once for every extractor that wants it.
   """
-  @spec of_debug_info(module(), tuple(), :ets.tid() | nil) :: {:ok, returns()} | :error
+  @spec of_debug_info(module(), tuple(), Memo.context() | nil) ::
+          {:ok, returns()} | :error
   def of_debug_info(module, chunk, memo \\ nil) when is_atom(module) do
     with {:ok, forms} <- fetch(fn -> typespec_forms(module, chunk) end) do
       specs = for {:attribute, _, :spec, value} <- forms, do: value
@@ -121,7 +122,7 @@ defmodule Argus.Specs do
   module's own specs and every remote type they name — so that an edit
   is seen; within a run there is nothing to see. `nil` is `installed/1`.
   """
-  @spec installed(module(), :ets.tid() | nil) :: returns() | :unknown
+  @spec installed(module(), Memo.context() | nil) :: returns() | :unknown
   def installed(module, nil), do: installed(module)
 
   def installed(module, memo) when is_atom(module),
@@ -153,13 +154,15 @@ defmodule Argus.Specs do
   end
 
   defp memoized(memo, key, compute) do
-    case :ets.lookup(memo, key) do
+    table = Memo.table(memo)
+
+    case :ets.lookup(table, key) do
       [{^key, value}] ->
         value
 
       [] ->
         value = compute.()
-        :ets.insert(memo, {key, value})
+        :ets.insert(table, {key, value})
         value
     end
   end
@@ -349,12 +352,7 @@ defmodule Argus.Specs do
 
   defp source(nil), do: nil
 
-  defp source(memo) do
-    case :ets.lookup(memo, :specs_source) do
-      [{:specs_source, source}] -> source
-      [] -> nil
-    end
-  end
+  defp source(memo), do: Memo.source(memo)
 
   # Which file a module would be read from, and when it was written: a
   # memoized answer is reused only while both still hold.

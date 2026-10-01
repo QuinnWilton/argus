@@ -46,6 +46,7 @@ defmodule Argus.Extractors.ProcessRegistry do
   @behaviour Argus.Extractor
 
   alias Argus.Extractor.Dispatch
+  alias Argus.Extractor.Helpers
   alias Argus.Extractor.Terms
   alias Argus.Extractors.PidFlow
   alias Argus.Instr
@@ -116,6 +117,21 @@ defmodule Argus.Extractors.ProcessRegistry do
   @doc "Whether a remote call looks up, claims or releases a name."
   @spec site?(mfa()) :: boolean()
   def site?(mfa), do: mfa in @sites
+
+  @impl true
+  @doc false
+  def candidate_instructions?(instructions) do
+    Enum.any?(instructions, fn instruction ->
+      case Helpers.match_remote_call(instruction) do
+        {:ok, m, f, a} -> site?({m, f, a})
+        :none -> false
+      end
+    end) or
+      Enum.any?(
+        Dispatch.compared_atoms(instructions, :any),
+        &(&1 in [:already_started, :already_registered])
+      )
+  end
 
   @impl true
   @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()
@@ -414,7 +430,7 @@ defmodule Argus.Extractors.ProcessRegistry do
   defp nil_fails({:send}), do: "error"
 
   defp nil_fails(instr) do
-    case Argus.Extractor.Helpers.match_remote_call(instr) do
+    case Helpers.match_remote_call(instr) do
       {:ok, :erlang, f, _a} -> if f in @error_bifs, do: "error", else: others(:erlang, f)
       {:ok, Process, f, _a} -> if f in @elixir_process, do: "error", else: others(Process, f)
       {:ok, m, f, _a} -> others(m, f)

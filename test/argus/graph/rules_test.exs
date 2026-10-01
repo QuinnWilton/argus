@@ -290,17 +290,21 @@ defmodule Argus.Graph.RulesTest do
       extracted = extracted(fn -> findings!(db) end)
 
       assert length(QueryLog.executions(log, :module_facts)) == map_size(paths)
-      # Every applicable producer ran from the beam; name-specific producers
-      # need no query for functions that cannot emit any of their facts.
+      # Every applicable producer ran from the beam. Selectors need no local
+      # queries for functions that cannot emit any of their facts.
       assert length(extracted) == map_size(paths)
 
       for {module, producers, _kept_base} <- extracted do
-        {:ok, keys} = Roux.Runtime.query(db, :extraction_functions, paths[module])
+        {:ok, data} = Roux.Runtime.query(db, :extraction_index, paths[module])
 
         expected =
           for producer <- Map.keys(codes),
-              not function_exported?(producer, :candidate?, 1) or
-                Enum.any?(keys, &producer.candidate?/1),
+              Enum.any?(data.functions, fn {key, {:function, _, _, _, instructions}} ->
+                (not function_exported?(producer, :candidate?, 1) or
+                   producer.candidate?(key)) and
+                  (not function_exported?(producer, :candidate_instructions?, 1) or
+                     producer.candidate_instructions?(instructions))
+              end),
               do: producer
 
         assert producers == Enum.sort(expected)

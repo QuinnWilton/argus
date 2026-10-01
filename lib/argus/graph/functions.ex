@@ -269,9 +269,9 @@ defmodule Argus.Graph.Functions do
         # Selector changes matter even when no function currently qualifies.
         R.query(db, :extraction_code, producer)
 
-        with {:ok, keys} <- R.query(db, :extraction_functions, module) do
+        with {:ok, keys} <- candidate_keys(db, module, producer) do
           parts =
-            for key <- candidates(keys, producer) do
+            for key <- keys do
               {:ok, rows} = R.query(db, :extraction_local, {{module, key}, producer})
               rows
             end
@@ -289,6 +289,31 @@ defmodule Argus.Graph.Functions do
 
       true ->
         R.query(db, :extraction_module_producer, {module, producer})
+    end
+  end
+
+  defquery :extraction_candidates, key: {module, producer} do
+    R.query(db, :extraction_code, producer)
+
+    with {:ok, data} <- R.query(db, :extraction_index, module) do
+      keys = data.functions |> Map.keys() |> Enum.sort() |> candidates(producer)
+
+      {:ok,
+       Enum.filter(keys, fn key ->
+         {:function, _, _, _, instructions} = Map.fetch!(data.functions, key)
+         producer.candidate_instructions?(instructions)
+       end)}
+    end
+  end
+
+  defp candidate_keys(db, module, producer) do
+    Code.ensure_loaded!(producer)
+
+    if function_exported?(producer, :candidate_instructions?, 1) do
+      R.query(db, :extraction_candidates, {module, producer})
+    else
+      with {:ok, keys} <- R.query(db, :extraction_functions, module),
+           do: {:ok, candidates(keys, producer)}
     end
   end
 
@@ -399,8 +424,7 @@ defmodule Argus.Graph.Functions do
   defp with_chunks(_, _, _, data), do: data
 
   defp options(db, producer) do
-    source = R.untracked(fn -> R.input(db, :specs_source, :all, default: nil) end)
-    [producers: [producer], trace_imprecision: true, specs_source: source]
+    [producers: [producer], trace_imprecision: true, specs_source: Prepared.source(db)]
   end
 
   defp producer_rows({:ok, extraction}, producer),

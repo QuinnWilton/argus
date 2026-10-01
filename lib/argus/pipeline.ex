@@ -47,6 +47,7 @@ defmodule Argus.Pipeline do
   alias Argus.InstrId
   alias Argus.Pipeline.{Base, Disassemble, Emit, Writer}
   alias Argus.Schema.Reads
+  alias Argus.Specs.Memo
 
   @typedoc """
   Who emits a row: `:base` (the emitter and the derivations every
@@ -186,7 +187,7 @@ defmodule Argus.Pipeline do
             {:error, reason}
         end
       after
-        :ets.delete(memo)
+        Memo.close(memo)
       end
     end
   end
@@ -210,11 +211,13 @@ defmodule Argus.Pipeline do
   # The modules whose installed specs the run read: the memo's keys
   # (`Argus.Specs.installed/2` and the types it resolved through).
   defp installed_reads(memo) do
-    for {{kind, module}, _value} <- :ets.tab2list(memo),
-        kind in [:specs, :types],
-        is_atom(module),
-        uniq: true,
-        do: module
+    memo
+    |> Memo.table()
+    |> :ets.select([
+      {{{:"$1", :"$2"}, :_},
+       [{:orelse, {:"=:=", :"$1", :specs}, {:"=:=", :"$1", :types}}, {:is_atom, :"$2"}], [:"$2"]}
+    ])
+    |> Enum.uniq()
   end
 
   @doc """
@@ -247,7 +250,7 @@ defmodule Argus.Pipeline do
               throw({:extraction_error, reason})
           end)
         after
-          :ets.delete(memo)
+          Memo.close(memo)
         end
 
       {:ok, merged}
@@ -342,7 +345,7 @@ defmodule Argus.Pipeline do
             {:error, reason}
         end
       after
-        :ets.delete(memo)
+        Memo.close(memo)
       end
     end
   end
@@ -397,7 +400,7 @@ defmodule Argus.Pipeline do
          }}
       end
     after
-      :ets.delete(memo)
+      Memo.close(memo)
       if not was_tracing, do: Facts.disable_tracing()
     end
   end
@@ -428,7 +431,7 @@ defmodule Argus.Pipeline do
          base: nil
        }}
     after
-      :ets.delete(memo)
+      Memo.close(memo)
       if not was_tracing, do: Facts.disable_tracing()
     end
   end
@@ -774,18 +777,11 @@ defmodule Argus.Pipeline do
   # the same path. The caller owns the table and deletes it when the run
   # is done; the workers read and fill it.
   #
-  # With `specs_source:` (`Argus.Specs.Source`), the specs are read from a
-  # project's own ebins and the installed OTP rather than the code path:
-  # the memo carries the source to every worker.
+  # The immutable source stays on the worker's heap, outside ETS. Only spec
+  # results and read markers enter the table, so collecting reads never copies
+  # the project's full source index.
   defp new_memo(opts) do
-    memo = :ets.new(:argus_extraction_memo, [:set, :public, read_concurrency: true])
-
-    case Keyword.get(opts, :specs_source) do
-      nil -> :ok
-      %Argus.Specs.Source{} = source -> :ets.insert(memo, {:specs_source, source})
-    end
-
-    memo
+    Memo.new(Keyword.get(opts, :specs_source))
   end
 
   # `{value, errors}`: the step's result, or nil with the failure added to

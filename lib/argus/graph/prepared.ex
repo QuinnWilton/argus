@@ -7,6 +7,31 @@ defmodule Argus.Graph.Prepared do
   alias Roux.Database
 
   @cache {__MODULE__, :cache}
+  @source {__MODULE__, :source}
+
+  @doc "Reuses source context only while the database's mutation token remains valid."
+  @spec source(Database.t()) :: Argus.Specs.Source.t() | nil
+  def source(db) do
+    token = Roux.Dependencies.snapshot(db)
+    scope = {Database.id(db), token}
+
+    case Process.get(@source) do
+      {^scope, source} when token != nil ->
+        source
+
+      _ ->
+        source =
+          Roux.Runtime.untracked(fn ->
+            Roux.Runtime.input(db, :specs_source, :all, default: nil)
+          end)
+
+        if token != nil and Roux.Dependencies.snapshot(db) == token,
+          do: Process.put(@source, {scope, source}),
+          else: Process.delete(@source)
+
+        source
+    end
+  end
 
   @type captured :: {binary(), {map(), Reaching.prepared() | nil}} | nil
 

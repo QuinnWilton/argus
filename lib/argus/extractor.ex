@@ -50,7 +50,7 @@ defmodule Argus.Extractor do
           optional(:typed) => Argus.Facts.t() | nil,
           optional(:reaching) => MapSet.t(Argus.Dataflow.reaching_use()) | nil,
           optional(:origins_index) => map(),
-          optional(:installed_specs) => :ets.tid(),
+          optional(:installed_specs) => Argus.Specs.Memo.context(),
           optional(:debug_info) => {:ok, tuple()} | :error
         }
 
@@ -68,5 +68,12 @@ defmodule Argus.Extractor do
   Omit this callback when function membership alone cannot rule out output.
   """
   @callback candidate?({atom(), arity()}) :: boolean()
-  @optional_callbacks candidate?: 1
+
+  @doc """
+  Whether the instructions can produce any facts, errors or imprecision from
+  this local extractor. False must guarantee empty output. The graph tracks
+  the body and producer code even when no function qualifies.
+  """
+  @callback candidate_instructions?([Argus.Instr.instr()]) :: boolean()
+  @optional_callbacks candidate?: 1, candidate_instructions?: 1
 end

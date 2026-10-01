@@ -16,6 +16,9 @@ which a change appeared; older names and APIs may have changed since then.
 - Restored module queries check their completed trace before visiting function
   queries. Fact assembly caches a small pack descriptor instead of another copy
   of the rows, and name-specific extractors skip functions that cannot emit facts.
+- Cold extraction shares the specs source context and discovers packed traces
+  once per module. Handle, socket, TLS and process-registry extractors skip
+  functions whose instructions cannot produce their facts.
 
 ### Fixed
 

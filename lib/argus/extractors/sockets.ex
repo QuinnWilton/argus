@@ -91,6 +91,28 @@ defmodule Argus.Extractors.Sockets do
   def relations, do: [:socket_active, :socket_opts_arg, :socket_wait]
 
   @impl true
+  @doc false
+  def candidate_instructions?(instructions) do
+    holds_active_literal?(instructions) or
+      Enum.any?(instructions, fn
+        {:apply, 2} ->
+          true
+
+        {:apply_last, 2, _} ->
+          true
+
+        instruction ->
+          case Argus.Extractor.Helpers.match_remote_call(instruction) do
+            {:ok, m, f, a} ->
+              Map.has_key?(@activations, {m, f, a}) or Map.has_key?(@waits, {m, f, a})
+
+            :none ->
+              false
+          end
+      end)
+  end
+
+  @impl true
   @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()
   def extract(%{module: mod, functions: functions} = module_data) do
     sites = CallSites.for_module(module_data)

@@ -152,6 +152,21 @@ defmodule Argus.Extractors.Tls do
     ]
 
   @impl true
+  @doc false
+  def candidate_instructions?(instructions) do
+    Enum.any?(instructions, fn instruction ->
+      mentions_atom?(instruction, :verify_none) or mentions_atom?(instruction, :verify_peer) or
+        case match_remote_call(instruction) do
+          {:ok, m, f, a} ->
+            Map.has_key?(@tls_connects, {m, f, a}) or Map.has_key?(@server_apis, {m, f, a})
+
+          :none ->
+            false
+        end
+    end)
+  end
+
+  @impl true
   def extract(%{module: mod, functions: functions}) do
     Enum.reduce(functions, %{}, fn {:function, name, arity, _entry, instrs}, acc ->
       func_id = InstrId.func_id(mod, name, arity)
