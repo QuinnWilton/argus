@@ -183,7 +183,7 @@ defmodule Mix.Tasks.Compile.ArgusSouffleGateTest do
         assert Enum.sort(codes(diags)) == ["coupling", "mailbox", "mailbox"]
 
         assert QueryLog.executions(log, :solve) == [{:project, :mailbox}]
-        assert QueryLog.executions(log, :module_facts) == []
+        assert QueryLog.executions(log, :extraction_pack) == []
 
         # And that success is persisted: a third run is a noop.
         QueryLog.reset(log)

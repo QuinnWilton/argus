@@ -115,7 +115,7 @@ defmodule Argus.Graph.FreshVmTest do
 
   # A kept session over the beams, as the driver runs one: mailbox's
   # placed findings (each one's file and line), and the keys `findings`,
-  # `located` and `module_facts` ran on.
+  # `located` and fact assembly ran on.
   defp session_run(%{store: store, manifest: manifest, beams: beams}) do
     session = Argus.Graph.open(store: Roux.Blob.open!(store), manifest: manifest)
     db = session.db
@@ -138,7 +138,8 @@ defmodule Argus.Graph.FreshVmTest do
 
       %{
         places: located |> Enum.map(&{Path.basename(&1.file), &1.line}) |> Enum.sort(),
-        extracted: Roux.QueryLog.executions(log, :module_facts),
+        extracted:
+          for({key, :extracted} <- Roux.QueryLog.executions(log, :extraction_pack), do: key),
         located: Roux.QueryLog.executions(log, :located),
         findings: Roux.QueryLog.executions(log, :findings)
       }

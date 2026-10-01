@@ -77,7 +77,7 @@ defmodule Mix.Tasks.Compile.ArgusExtractionTest do
       # And with nothing left to retry, the next run is a noop again.
       QueryLog.reset(log)
       assert {:noop, _} = Fixture.compile!()
-      assert QueryLog.executions(log, :module_facts) == []
+      assert QueryLog.executions(log, :extraction_pack) == []
       System.put_env("ARGUS_CACHE_DIR", store)
     end)
   end

@@ -36,8 +36,11 @@ defmodule Argus.Extractors.Router do
     ]
 
   @impl true
+  def candidate?(key), do: key == {:__routes__, 0}
+
+  @impl true
   def extract(%{module: mod, functions: functions}) do
-    case Enum.find(functions, &match?({:function, :__routes__, 0, _, _}, &1)) do
+    case Enum.find(functions, fn {:function, name, arity, _, _} -> candidate?({name, arity}) end) do
       nil -> %{}
       {:function, _, _, _, instrs} -> emit(inspect(mod), routes(instrs))
     end

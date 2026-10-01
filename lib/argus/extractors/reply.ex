@@ -63,6 +63,9 @@ defmodule Argus.Extractors.Reply do
     ]
 
   @impl true
+  def candidate?(key), do: is_map_key(@callbacks, key)
+
+  @impl true
   def extract(%{module: mod, functions: functions} = module_data) do
     Enum.reduce(functions, %{}, fn {:function, name, arity, _entry, instrs}, acc ->
       case Map.fetch(@callbacks, {name, arity}) do

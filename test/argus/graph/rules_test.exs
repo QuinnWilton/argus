@@ -16,7 +16,7 @@ defmodule Argus.Graph.RulesTest do
     * an edit to code every producer runs (`Argus.Pipeline`, and what
       it reaches) extracts every module again, and solves nothing when
       the rows come out the same;
-    * a schema entry that moved re-runs exactly the modules that read it;
+    * a schema code change checks module traces against the entries they read;
     * an edit to the findings' prose rebuilds each analysis's findings,
       which come out the same (cutoff), and nothing past them runs;
     * a `:high` input that moves reaches only what reads it.
@@ -290,9 +290,22 @@ defmodule Argus.Graph.RulesTest do
       extracted = extracted(fn -> findings!(db) end)
 
       assert length(QueryLog.executions(log, :module_facts)) == map_size(paths)
-      # Every producer ran on every module, from the beam.
+      # Every applicable producer ran from the beam; name-specific producers
+      # need no query for functions that cannot emit any of their facts.
       assert length(extracted) == map_size(paths)
-      assert extracted |> Enum.map(&length(elem(&1, 1))) |> Enum.uniq() == [map_size(codes)]
+
+      for {module, producers, _kept_base} <- extracted do
+        {:ok, keys} = Roux.Runtime.query(db, :extraction_functions, paths[module])
+
+        expected =
+          for producer <- Map.keys(codes),
+              not function_exported?(producer, :candidate?, 1) or
+                Enum.any?(keys, &producer.candidate?/1),
+              do: producer
+
+        assert producers == Enum.sort(expected)
+      end
+
       assert extracted |> Enum.map(&elem(&1, 2)) |> Enum.uniq() == [false]
       # The same rows, the same packs: nothing past them runs.
       assert QueryLog.executions(log, :module_semantic) == []
@@ -328,7 +341,7 @@ defmodule Argus.Graph.RulesTest do
     end)
   end
 
-  test "a schema entry that moved re-runs the modules that read it, and extracts nothing",
+  test "a schema code change rechecks module proofs without extracting facts",
        %{paths: paths} = context do
     in_graph(context, fn db, log, _root ->
       read = {:schema_entry, "columns spawn_call"}
@@ -361,7 +374,8 @@ defmodule Argus.Graph.RulesTest do
 
       extracted = extracted(fn -> findings!(db) end)
 
-      assert QueryLog.executions(log, :module_facts) == Enum.sort(readers)
+      assert QueryLog.executions(log, :module_facts) == Enum.sort(Map.values(paths))
+      assert QueryLog.executions(log, :extraction_pack) == []
       # The traces recorded the entry as it is: every producer's rows hold.
       assert extracted == []
       assert solved(log) == []

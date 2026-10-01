@@ -266,9 +266,12 @@ defmodule Argus.Graph.Functions do
         R.query(db, :extraction_metadata_rows, {module, producer})
 
       producer in @local ->
+        # Selector changes matter even when no function currently qualifies.
+        R.query(db, :extraction_code, producer)
+
         with {:ok, keys} <- R.query(db, :extraction_functions, module) do
           parts =
-            for key <- keys do
+            for key <- candidates(keys, producer) do
               {:ok, rows} = R.query(db, :extraction_local, {{module, key}, producer})
               rows
             end
@@ -287,6 +290,14 @@ defmodule Argus.Graph.Functions do
       true ->
         R.query(db, :extraction_module_producer, {module, producer})
     end
+  end
+
+  defp candidates(keys, producer) do
+    Code.ensure_loaded!(producer)
+
+    if function_exported?(producer, :candidate?, 1),
+      do: Enum.filter(keys, &producer.candidate?/1),
+      else: keys
   end
 
   defquery :extraction_attributes, key: {module, names} do

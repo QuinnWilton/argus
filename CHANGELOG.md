@@ -13,6 +13,9 @@ which a change appeared; older names and APIs may have changed since then.
   Fact assembly merges only requested relations and deduplicates rows in one pass.
 - Returning to a cached module version reuses the finished fact pack after
   checking its code, schema and specs, avoiding function validation and merging.
+- Restored module queries check their completed trace before visiting function
+  queries. Fact assembly caches a small pack descriptor instead of another copy
+  of the rows, and name-specific extractors skip functions that cannot emit facts.
 
 ### Fixed
 

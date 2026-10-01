@@ -1,7 +1,7 @@
 defmodule Mix.Tasks.Compile.ArgusManifestTest do
   @moduledoc """
   What a warm run trusts between runs, through the real chain: a warm
-  run that executes nothing, the code versions an argus build moves, the
+  run that reuses facts and findings, the code versions an argus build moves, the
   schema entries a module read, the beam prefilter a touch passes, a
   manifest naming a query this graph does not define, and the manifest a
   corrupt write falls back from.
@@ -71,7 +71,14 @@ defmodule Mix.Tasks.Compile.ArgusManifestTest do
   # The keys the query log saw `query` execute on.
   defp ran(log, query), do: QueryLog.executions(log, query)
 
-  test "a warm run executes nothing, and an edit re-extracts only its modules", %{
+  defp assembled(log), do: for({key, :extracted} <- ran(log, :extraction_pack), do: key)
+
+  defp assert_only_trace_checks(log) do
+    assert log |> QueryLog.by_query(:execution) |> Map.drop([:module_facts, :module_in_process]) ==
+             %{}
+  end
+
+  test "a warm run checks traces, and an edit re-extracts only its modules", %{
     peer: peer,
     copy: copy
   } do
@@ -82,7 +89,7 @@ defmodule Mix.Tasks.Compile.ArgusManifestTest do
 
       QueryLog.reset(log)
       assert {:noop, _} = compile!()
-      assert QueryLog.by_query(log, :execution) == %{}
+      assert_only_trace_checks(log)
       assert Enum.sort(QueryLog.hits(log, :located)) == [project: :coupling, project: :mailbox]
 
       queue = Path.join(copy, "lib/depot/queue.ex")
@@ -94,7 +101,7 @@ defmodule Mix.Tasks.Compile.ArgusManifestTest do
       # Queue's beam is rewritten with its code unchanged: equal once the
       # chunks extraction never reads are left out, so only the new
       # module is extracted.
-      assert log |> ran(:module_facts) |> Enum.map(&Path.basename/1) ==
+      assert log |> assembled() |> Enum.map(&Path.basename/1) ==
                ["Elixir.Depot.Extra.beam"]
 
       assert ran(log, :program_relations) == [:project]
@@ -202,13 +209,13 @@ defmodule Mix.Tasks.Compile.ArgusManifestTest do
       assert ran(log, :findings) == [project: :coupling, project: :mailbox]
       assert QueryLog.cutoffs(log, :findings) == ran(log, :findings)
       assert ran(log, :located) == []
-      assert ran(log, :module_facts) == []
+      assert assembled(log) == []
       assert ran(log, :solve) == []
       assert counts_by_code(argus_diagnostics(warm)) == counts_by_code(argus_diagnostics(cold))
     end)
   end
 
-  test "a schema entry that moved re-runs the modules that read it, and extracts nothing",
+  test "a schema entry that moved is rechecked without extracting facts",
        %{peer: peer, copy: copy} do
     Fixture.checkout!(copy, @quick, :depot_quick)
 
@@ -259,7 +266,8 @@ defmodule Mix.Tasks.Compile.ArgusManifestTest do
       QueryLog.reset(log)
       {warm, extracted} = extracted(&compile!/0)
 
-      assert ran(log, :module_facts) == Enum.sort(readers)
+      assert ran(log, :schema_entry) == [elem(read, 1)]
+      assert assembled(log) == []
       assert extracted == []
       assert ran(log, :module_semantic) == []
       assert ran(log, :solve) == []
@@ -313,7 +321,7 @@ defmodule Mix.Tasks.Compile.ArgusManifestTest do
 
       QueryLog.reset(log)
       assert {:noop, _} = compile!()
-      assert QueryLog.by_query(log, :execution) == %{}
+      assert_only_trace_checks(log)
     end)
   end
 
@@ -352,7 +360,7 @@ defmodule Mix.Tasks.Compile.ArgusManifestTest do
 
       QueryLog.reset(log)
       compile!()
-      assert ran(log, :module_facts) == []
+      assert assembled(log) == []
       assert ran(log, :solve) == []
     end)
   end

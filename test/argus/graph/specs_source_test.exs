@@ -81,7 +81,7 @@ defmodule Argus.Graph.SpecsSourceTest do
 
         assert :telemetry in QueryLog.executions(log, :installed_specs)
         # Its specs came out equal: the module is not extracted again.
-        assert QueryLog.executions(log, :module_facts) == []
+        assert QueryLog.executions(log, :extraction_pack) == []
       after
         QueryLog.stop(log)
       end

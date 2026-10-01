@@ -39,8 +39,11 @@ defmodule Argus.Extractors.Endpoint do
     ]
 
   @impl true
+  def candidate?(key), do: key == {:__sockets__, 0}
+
+  @impl true
   def extract(%{module: mod, functions: functions}) do
-    case Enum.find(functions, &match?({:function, :__sockets__, 0, _, _}, &1)) do
+    case Enum.find(functions, fn {:function, name, arity, _, _} -> candidate?({name, arity}) end) do
       nil -> %{}
       {:function, _, _, _, instrs} -> emit(inspect(mod), sockets(instrs))
     end

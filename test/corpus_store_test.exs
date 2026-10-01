@@ -56,7 +56,7 @@ defmodule Argus.CorpusStoreTest do
     end
   end
 
-  test "a checkout keeps its manifest, and a second analysis executes nothing" do
+  test "a checkout keeps its manifest, and a second analysis only checks traces" do
     unless Argus.Souffle.available?(), do: flunk("souffle not installed")
 
     _dir = fake_checkout!(root(), @pair)
@@ -66,7 +66,7 @@ defmodule Argus.CorpusStoreTest do
     assert File.regular?(manifest)
 
     {{:ok, again}, executed} = executed(fn -> Corpus.analyze(@pair, :pre) end)
-    assert executed == %{}
+    assert Map.drop(executed, [:module_facts, :module_in_process]) == %{}
     assert again.findings == first.findings
   end
 
@@ -87,8 +87,8 @@ defmodule Argus.CorpusStoreTest do
 
     {{:ok, again}, executed} = executed(fn -> Corpus.analyze(@pair, :pre) end)
     assert File.regular?(manifest)
-    # The same code computed the newer one's entries: they all hold.
-    assert executed == %{}
+    # The newer entries hold after their module traces are checked.
+    assert Map.drop(executed, [:module_facts, :module_in_process]) == %{}
     assert again.findings == first.findings
     File.rm!(older)
     File.rm!(newer)

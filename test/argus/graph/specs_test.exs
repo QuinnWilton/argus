@@ -170,7 +170,7 @@ defmodule Argus.Graph.SpecsTest do
                |> then(&QueryLog.executions(log, &1))
                |> Enum.member?(Argus.Schema)
 
-        assert QueryLog.executions(log, :module_facts) == []
+        assert QueryLog.executions(log, :extraction_pack) == []
       after
         QueryLog.stop(log)
       end

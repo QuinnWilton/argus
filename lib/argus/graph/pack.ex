@@ -678,7 +678,7 @@ defmodule Argus.Graph.Pack do
       {:ok, %{engine: :functions}} ->
         kind = if query == :module_facts, do: :extracted, else: :in_process
 
-        case Argus.Graph.FunctionPack.rebuild(db, beam_key, kind) do
+        case Argus.Graph.FunctionPack.repair(db, beam_key, kind) do
           {:ok, %{pack: ^pack}, _held} -> :ok
           {:ok, %{pack: made}, _held} -> {:error, {:not_reproduced, made}}
           error -> error

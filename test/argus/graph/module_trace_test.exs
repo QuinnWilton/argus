@@ -36,7 +36,7 @@ defmodule Argus.Graph.ModuleTraceTest do
 
       try do
         assert Runtime.query(db, :module_facts, :fixture) == {:ok, expected}
-        assert QueryLog.executions(log, :extraction_segments) == []
+        assert QueryLog.executions(log, :extraction_pack) == []
         assert :miss = Memo.get(db, {:extraction_disassembly, :fixture})
         assert shapes(db, expected) == ["constant", "total"]
         assert {:ok, deps} = Memo.dependencies(db, {:module_facts, :fixture})
@@ -48,7 +48,7 @@ defmodule Argus.Graph.ModuleTraceTest do
         {:ok, changed} = Runtime.query(db, :module_facts, :fixture)
         assert shapes(db, changed) == ["can_fail"]
         assert @callee in QueryLog.executions(log, :installed_specs)
-        assert QueryLog.executions(log, :extraction_segments) != []
+        assert QueryLog.executions(log, :extraction_pack) != []
         assert changed == seed(Path.join(dir, "fresh"), beam, watch)
       after
         QueryLog.stop(log)
@@ -72,7 +72,7 @@ defmodule Argus.Graph.ModuleTraceTest do
 
       try do
         assert Runtime.query(db, :module_facts, :fixture) == {:ok, expected}
-        assert QueryLog.executions(log, :extraction_segments) == []
+        assert QueryLog.executions(log, :extraction_pack) == []
         assert :miss = Memo.get(db, {:extraction_disassembly, :fixture})
 
         definition = Database.query_definition(db, :extraction_local)
@@ -84,7 +84,7 @@ defmodule Argus.Graph.ModuleTraceTest do
 
         QueryLog.reset(log)
         assert Runtime.query(db, :module_facts, :fixture) == {:ok, expected}
-        assert QueryLog.executions(log, :extraction_segments) != []
+        assert QueryLog.executions(log, :extraction_pack) != []
         assert QueryLog.executions(log, :extraction_local) != []
       after
         QueryLog.stop(log)
@@ -107,7 +107,7 @@ defmodule Argus.Graph.ModuleTraceTest do
 
       try do
         assert Runtime.query(db, :module_facts, :fixture) == {:ok, expected}
-        assert QueryLog.executions(log, :extraction_segments) == []
+        assert QueryLog.executions(log, :extraction_pack) == []
         assert :miss = Memo.get(db, {:extraction_disassembly, :fixture})
         assert :miss = Memo.get(db, {:extraction_base, {:fixture, {:run, 1}}})
         {:ok, rows} = Pack.chunks(db.blob, expected.pack, [:function_def])
@@ -119,7 +119,7 @@ defmodule Argus.Graph.ModuleTraceTest do
                  {:ok, rows}
 
         assert Blob.member?(db.blob, segment)
-        assert QueryLog.executions(log, :extraction_segments) != []
+        assert QueryLog.executions(log, :extraction_base_rows) != []
       after
         QueryLog.stop(log)
         Session.close(session)

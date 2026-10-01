@@ -25,7 +25,8 @@ defmodule Argus.Graph.FunctionPackTest do
       key = {:fixture, :extracted}
 
       try do
-        {:ok, original} = Runtime.query(db, :extraction_segments, key)
+        {:ok, original_pack, _held} = Runtime.query(db, :extraction_pack, key)
+        {:ok, original} = Blob.get_term(db.blob, original_pack.pack)
         {:ok, %{value: codes}} = Memo.get(db, {:producer_code, :all})
         producer = Argus.Extractors.ETS
         assert List.keymember?(original, producer, 0)
@@ -43,10 +44,12 @@ defmodule Argus.Graph.FunctionPackTest do
               verified_at: now
           })
 
-          {:ok, segments} = Runtime.query(db, :extraction_segments, key)
-          assert List.keymember?(segments, producer, 0) == Map.has_key?(next, producer)
-          expected = Enum.filter(original, fn {p, _} -> Map.has_key?(next, p) end)
-          assert segments == expected
+          {:ok, pack, held} = Runtime.query(db, :extraction_pack, key)
+          {:ok, index} = Blob.get_term(db.blob, pack.pack)
+          assert Enum.all?(held, &Blob.member?(db.blob, &1))
+          assert List.keymember?(index, producer, 0) == Map.has_key?(next, producer)
+          expected = Enum.filter(original, fn {p, _, _} -> Map.has_key?(next, p) end)
+          assert index == expected
         end
       after
         Session.close(session)
@@ -100,6 +103,101 @@ defmodule Argus.Graph.FunctionPackTest do
     end)
   end
 
+  test "restored roots use the module proof without visiting function memos", %{
+    peer: peer,
+    tmp_dir: dir
+  } do
+    Peer.run(peer, fn ->
+      first = open(dir)
+      set_beam(first.db, compile(1))
+      facts = Runtime.query(first.db, :module_facts, :fixture)
+      in_process = Runtime.query(first.db, :module_in_process, :fixture)
+      Session.commit(first, %{})
+      Session.close(first)
+
+      restored = open(dir)
+      assert restored.restored?
+      log = Roux.QueryLog.start(restored.db)
+
+      try do
+        assert Runtime.query(restored.db, :module_facts, :fixture) == facts
+        assert Runtime.query(restored.db, :module_in_process, :fixture) == in_process
+
+        for query <- [:extraction_pack, :extraction_function, :extraction_base] do
+          assert Roux.QueryLog.executions(log, query) == []
+          assert Roux.QueryLog.hits(log, query) == []
+        end
+
+        assert {:ok, deps} = Memo.dependencies(restored.db, {:module_facts, :fixture})
+        refute {:extraction_pack, {:fixture, :extracted}} in deps
+        assert Enum.any?(deps, &match?({:query_code, :extraction_pack, _}, &1))
+
+        assert {:unchanged, _} = Session.commit(restored, %{})
+        again = open(dir)
+
+        try do
+          assert Runtime.query(again.db, :module_facts, :fixture) == facts
+          assert Runtime.query(again.db, :module_in_process, :fixture) == in_process
+          assert {:unchanged, _} = Session.commit(again, %{})
+        after
+          Session.close(again)
+        end
+
+        Roux.QueryLog.reset(log)
+        Input.set(restored.db, :beam, :unrelated, %{data: <<>>, hash: Blob.digest(<<>>)})
+        assert Runtime.query(restored.db, :module_facts, :fixture) == facts
+        assert Roux.QueryLog.executions(log, :module_facts) == []
+      after
+        Roux.QueryLog.stop(log)
+        Session.close(restored)
+      end
+    end)
+  end
+
+  test "compact descriptors repair lost indexes and segments after reopening", %{
+    peer: peer,
+    tmp_dir: dir
+  } do
+    Peer.run(peer, fn ->
+      first = open(dir)
+      set_beam(first.db, compile(1))
+
+      expected =
+        for query <- [:module_facts, :module_in_process] do
+          {:ok, pack} = Runtime.query(first.db, query, :fixture)
+          {:ok, chunks} = Pack.chunks(first.db.blob, pack.pack, Map.keys(pack.relations))
+          {query, pack, chunks}
+        end
+
+      Session.commit(first, %{})
+      Session.close(first)
+      restored = open(dir)
+
+      try do
+        for {query, pack, chunks} <- expected do
+          {:ok, index} = Blob.get_term(restored.db.blob, pack.pack)
+          segments = Enum.map(index, &elem(&1, 1))
+
+          for removed <- [[pack.pack], Enum.take(segments, 1), [pack.pack | segments]] do
+            for digest <- Enum.uniq(removed), do: File.rm!(Blob.path(restored.db.blob, digest))
+
+            assert Pack.read_chunks(
+                     restored.db,
+                     query,
+                     :fixture,
+                     pack.pack,
+                     Map.keys(pack.relations)
+                   ) == {:ok, chunks}
+
+            assert Enum.all?(removed, &Blob.member?(restored.db.blob, &1))
+          end
+        end
+      after
+        Session.close(restored)
+      end
+    end)
+  end
+
   test "manifest and content traces survive a fresh VM", %{peer: first, tmp_dir: dir} do
     expected =
       Peer.run(first, fn ->
@@ -120,8 +218,11 @@ defmodule Argus.Graph.FunctionPackTest do
       assert session.restored?
       assert Runtime.query(session.db, :module_facts, :fixture) == {:ok, expected}
       key = {:extraction_base, {:fixture, {:run, 2}}}
-      assert {:ok, digest} = Memo.held_digest(session.db, key)
-      File.rm!(Blob.path(session.db.blob, digest))
+      assert {:ok, locator} = Memo.held_locator(session.db, key)
+
+      for digest <- Roux.Memo.Value.roots(locator) do
+        File.rm!(Blob.path(session.db.blob, digest))
+      end
 
       assert {:ok, %{base: base}} =
                Runtime.query(session.db, :extraction_base, {:fixture, {:run, 2}})
@@ -181,8 +282,8 @@ defmodule Argus.Graph.FunctionPackTest do
 
         assert Runtime.query(db, :module_facts, :fixture) == facts
         assert Runtime.query(db, :module_in_process, :fixture) == in_process
-        assert Roux.QueryLog.executions(log, :extraction_segments) == []
-        assert Roux.QueryLog.hits(log, :extraction_segments) == []
+        assert Roux.QueryLog.executions(log, :extraction_pack) == []
+        assert Roux.QueryLog.hits(log, :extraction_pack) == []
         assert Roux.QueryLog.executions(log, :extraction_function) == []
         assert Roux.QueryLog.hits(log, :extraction_function) == []
       after
@@ -216,7 +317,7 @@ defmodule Argus.Graph.FunctionPackTest do
         set_beam(db, first)
         Roux.QueryLog.reset(log)
         assert Runtime.query(db, :module_facts, :fixture) == {:ok, pack}
-        assert Roux.QueryLog.executions(log, :extraction_segments) != []
+        assert Roux.QueryLog.executions(log, :extraction_pack) != []
         assert Blob.member?(db.blob, pack.pack)
 
         set_beam(db, second)
@@ -235,7 +336,7 @@ defmodule Argus.Graph.FunctionPackTest do
         set_beam(db, first)
         Roux.QueryLog.reset(log)
         assert Runtime.query(db, :module_facts, :fixture) == {:ok, pack}
-        assert Roux.QueryLog.executions(log, :extraction_segments) != []
+        assert Roux.QueryLog.executions(log, :extraction_pack) != []
       after
         Roux.QueryLog.stop(log)
         Session.close(session)

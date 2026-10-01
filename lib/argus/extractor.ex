@@ -61,4 +61,12 @@ defmodule Argus.Extractor do
   @callback relations() :: [atom()]
 
   @callback extract(module_data()) :: Argus.Pipeline.Emit.facts()
+
+  @doc """
+  Whether a function-local extractor can emit facts for this name and arity.
+  Returning false guarantees empty output for every body of that function.
+  Omit this callback when function membership alone cannot rule out output.
+  """
+  @callback candidate?({atom(), arity()}) :: boolean()
+  @optional_callbacks candidate?: 1
 end

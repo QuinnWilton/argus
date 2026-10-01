@@ -11,6 +11,7 @@ defmodule Argus.Graph.FunctionPack do
   defquery :module_facts,
     key: module,
     store: :blob,
+    revalidate: :execute,
     timeout: &__MODULE__.timeout/0,
     around_demand: {__MODULE__, :packed},
     on_timeout: &__MODULE__.timed_out/2,
@@ -24,6 +25,7 @@ defmodule Argus.Graph.FunctionPack do
   defquery :module_in_process,
     key: module,
     store: :blob,
+    revalidate: :execute,
     timeout: &__MODULE__.timeout/0,
     around_demand: {__MODULE__, :packed},
     on_timeout: &__MODULE__.timed_out/2,
@@ -84,9 +86,12 @@ defmodule Argus.Graph.FunctionPack do
     end
   end
 
-  defquery :extraction_segments, key: {module, kind}, store: :blob do
-    packed(db, :extraction_segments, module, fn ->
-      segments(db, module, kind)
+  defquery :extraction_pack, key: {module, kind} do
+    packed(db, :extraction_pack, module, fn ->
+      with {:ok, _pack, held} = result <- materialize(db, module, kind) do
+        R.hold(held)
+        result
+      end
     end)
   end
 
@@ -94,7 +99,24 @@ defmodule Argus.Graph.FunctionPack do
   @spec rebuild(Roux.Database.t(), term(), Pack.kind()) ::
           {:ok, Pack.t(), [Roux.Blob.digest()]} | {:error, term()}
   def rebuild(db, module, kind) do
-    with {:ok, segments} <- R.query(db, :extraction_segments, {module, kind}) do
+    with {:ok, _pack, held} = result <- R.query(db, :extraction_pack, {module, kind}) do
+      if Enum.all?(held, &Roux.Blob.member?(db.blob, &1)),
+        do: result,
+        else: repair(db, module, kind)
+    end
+  end
+
+  @doc false
+  @spec repair(Roux.Database.t(), term(), Pack.kind()) ::
+          {:ok, Pack.t(), [Roux.Blob.digest()]} | {:error, term()}
+  def repair(db, module, kind) do
+    # A valid descriptor can outlive its blobs. Rebuild from the row queries,
+    # not from the cached descriptor that names the missing files.
+    packed(db, :extraction_pack, module, fn -> materialize(db, module, kind) end)
+  end
+
+  defp materialize(db, module, kind) do
+    with {:ok, segments} <- segments(db, module, kind) do
       name = R.query(db, :module_name, module)
       {pack, held} = Pack.from_segments(db.blob, name, segments)
 

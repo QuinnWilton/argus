@@ -115,7 +115,7 @@ defmodule Mix.Tasks.Compile.ArgusTest do
       # Prior findings re-emit from memo hits: same diagnostics, zero
       # extraction, zero solves.
       assert counts_by_code(diags) == %{"coupling" => 1, "mailbox" => 2}
-      assert QueryLog.executions(log, :module_facts) == []
+      assert QueryLog.executions(log, :extraction_pack) == []
       assert QueryLog.executions(log, :solve) == []
 
       # The persisted diagnostics callback serves the same list.
@@ -134,7 +134,7 @@ defmodule Mix.Tasks.Compile.ArgusTest do
       result = compile!()
       diags = argus_diagnostics(result)
 
-      assert [extracted] = QueryLog.executions(log, :module_facts)
+      assert [{extracted, :extracted}] = QueryLog.executions(log, :extraction_pack)
       assert String.ends_with?(extracted, "/Elixir.Depot.Application.beam")
       assert QueryLog.executions(log, :solve) == []
 
@@ -180,7 +180,7 @@ defmodule Mix.Tasks.Compile.ArgusTest do
       # And a further run is a clean noop.
       QueryLog.reset(log)
       result = compile!()
-      assert QueryLog.executions(log, :module_facts) == []
+      assert QueryLog.executions(log, :extraction_pack) == []
       assert QueryLog.executions(log, :solve) == []
       assert argus_diagnostics(result) == []
     end)

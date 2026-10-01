@@ -31,22 +31,25 @@ defmodule Argus.Graph.ModuleTrace do
   end
 
   defp store(db, module, kind, name, token, compute) do
-    result = compute.()
+    result = if token, do: R.untracked(compute), else: compute.()
 
     # Nested query hooks keep separate read sets. Walk their completed memos
-    # to retain every schema/spec observation, without copying fact values.
+    # to record a complete frontier instead of the assembly query's edge.
+    # If the proof fails, demand assembly again with ordinary tracking.
     with {:ok, %{lost: false} = pack, held} <- result,
          true <- token != nil,
-         {:ok, reads, codes} <- frontier(db, module, [{:extraction_segments, {module, kind}}]),
-         observed = for(read <- Enum.sort(Map.keys(reads)), do: {read, observe(db, read)}),
+         {:ok, reads, codes} <- frontier(db, module, [{:extraction_pack, {module, kind}}]),
+         codes = Enum.sort(codes),
          true <- Enum.all?(codes, fn {query, version} -> R.query_code(db, query) == version end),
+         observed = for(read <- Enum.sort(Map.keys(reads)), do: {read, observe(db, read)}),
+         true <- Enum.all?(held, &Blob.member?(db.blob, &1)),
          ^token <- Dependencies.snapshot(db) do
-      Trace.put(db.blob, name, observed, %{pack: pack, held: held, codes: Enum.sort(codes)},
-        keep: 4
-      )
-    end
+      Trace.put(db.blob, name, observed, %{pack: pack, held: held, codes: codes}, keep: 4)
 
-    result
+      result
+    else
+      _ -> if token, do: compute.(), else: result
+    end
   end
 
   defp frontier(db, module, keys), do: walk(db, module, keys, %{}, %{}, %{})
