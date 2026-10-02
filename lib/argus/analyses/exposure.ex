@@ -110,7 +110,7 @@ defmodule Argus.Analyses.Exposure do
 
   def finding(:unredacted_secret, [mod, field, kind, aware, via, anchor]) do
     Findings.new(
-      severity(kind),
+      severity(kind, field),
       # The field as a reader writes its access, `User.password_hash`;
       # the facts spell the key as an atom, `:password_hash`.
       "Secret field printed by inspect/1",
@@ -119,7 +119,10 @@ defmodule Argus.Analyses.Exposure do
         "the struct is inspected — Logger calls, changeset errors, LiveView " <>
         "debug output, crash reports, and any error reporter that serialises " <>
         "state. " <>
-        Enum.join(Enum.reject([consequence(kind), awareness(aware, mod)], &(&1 == "")), " "),
+        Enum.join(
+          Enum.reject([consequence(kind, field), awareness(aware, mod)], &(&1 == "")),
+          " "
+        ),
       # Bytecode places every generated schema function at the `schema do`
       # line; the field's own line is in the source, under its name. An
       # `embeds_one ... do` block's module has no line: the schema that
@@ -190,22 +193,39 @@ defmodule Argus.Analyses.Exposure do
     )
   end
 
-  defp severity("credential"), do: :error
-  defp severity(_other), do: :warning
+  defp severity("credential", field), do: if(hash_named?(field), do: :warning, else: :error)
+  defp severity(_other, _field), do: :warning
 
-  defp consequence("credential") do
-    "This looks like a third-party credential, so leaking it hands over " <>
-      "someone else's system rather than this one — the value is live until " <>
-      "a human notices and rotates it."
+  defp consequence(kind, field) do
+    if hash_named?(field) do
+      "The field name suggests a hash or digest, rather than a raw credential. " <>
+        "Exposure may permit offline guessing, depending on the original secret's " <>
+        "entropy and the hash construction; it does not by itself establish a " <>
+        "reusable password or bearer token."
+    else
+      raw_consequence(kind)
+    end
   end
 
-  defp consequence("password") do
-    "A hash is not a plaintext password, but it is offline-attackable and " <>
-      "does not belong in a log."
+  defp raw_consequence("credential") do
+    "The field name suggests credential material. If it stores a live credential, " <>
+      "exposing it can grant access to the system that accepts it until it is revoked."
   end
 
-  defp consequence("token"), do: "Bearer material, usable until it expires."
-  defp consequence(_other), do: ""
+  defp raw_consequence("password") do
+    "The field name suggests a password. A plaintext value can authenticate directly; " <>
+      "a stored password hash can permit offline guessing. The name alone does not " <>
+      "establish which representation is stored."
+  end
+
+  defp raw_consequence("token"),
+    do:
+      "If the field stores a raw bearer token, exposure permits its use until expiry or revocation."
+
+  defp raw_consequence(_other), do: ""
+
+  defp hash_named?(field),
+    do: Regex.match?(~r/(?:^:?(?:hashed_|hash_|digest_)|_(?:hash|digest)$)/, field)
 
   defp why_printed("derive", mod, field),
     do: "#{mod} derives Inspect with a field list that keeps #{field}"

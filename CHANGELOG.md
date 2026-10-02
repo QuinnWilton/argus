@@ -38,6 +38,9 @@ which a change appeared; older names and APIs may have changed since then.
   reject cyclic positional list summaries. Intraprocedural value
   flow converges without a fixed iteration cutoff; explicit solver budgets
   fail visibly rather than returning incomplete facts.
+- Exclude known boolean schema policy flags from secret-exposure findings.
+  Hash-named secrets retain a lower severity redaction warning without being
+  described as reusable credentials.
 - Refresh cached specs when a transitive remote type changes, including recent
   equal-size BEAM replacements with the same modification timestamp.
 - Recognize exception data returned as maps, closures or the exception class,

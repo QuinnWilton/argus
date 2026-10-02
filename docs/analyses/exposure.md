@@ -8,7 +8,7 @@ not a complete information-flow or TLS configuration model.
 
 ## Secrets printed by Inspect
 
-`unredacted_secret` · **error** for credentials; **warning** for passwords and tokens
+`unredacted_secret` · **error** for credentials; **warning** for passwords, tokens and hash-named fields
 
 An Ecto persisted field has a secret-like name and remains visible to Inspect.
 Logging a struct, reporting an error or inspecting a changeset can disclose it.
@@ -19,10 +19,15 @@ When a schema derives Inspect, that implementation determines visible fields;
 redact: true alone may not hide them. Without a visible derived implementation,
 the analysis relies on the schema's redacted-field metadata.
 
-Names are clues, not proof. Metadata suffixes are excluded, but identifiers and
-flags such as api_key_id or has_password can still match. Virtual fields, plain
-structs, JSON encoders and hand-written Inspect implementations are not fully covered.
-Review the actual value and output behaviour.
+Names are clues, not proof. Metadata suffixes and fields with a known boolean
+schema type are excluded. String, custom and unknown types remain candidates;
+identifiers such as api_key_id can still match. A hash-like name changes the
+finding's severity and wording, but does not remove it: offline guessing risk
+depends on the secret's entropy and the hash construction. Test-support findings
+step down one severity level.
+
+Virtual fields, plain structs, JSON encoders and hand-written Inspect
+implementations are not fully covered. Review the actual value and output behaviour.
 
 ## Secrets identified by a prior
 
@@ -30,7 +35,8 @@ Review the actual value and output behaviour.
 
 With priors enabled, a classifier can identify an otherwise unmatched persisted
 field as sensitive at confidence 0.9 or higher. The same Inspect visibility checks
-apply. The finding is marked heuristic and shows the inferred kind and confidence.
+apply, including the known-boolean exclusion. The finding is marked heuristic and
+shows the inferred kind and confidence.
 Priors are optional; structural name-based findings do not depend on them.
 
 ## Explicitly disabled TLS verification

@@ -104,8 +104,10 @@ defmodule Argus.Analyses.ExposureSecretsTest do
     pass = mod.finding(:unredacted_secret, ["M", ":password", "password", "unaware", "redact"])
 
     assert cred.severity == :error
-    assert cred.detail =~ "someone else's system"
+    assert cred.detail =~ "If it stores a live credential"
     assert pass.severity == :warning
+    assert pass.detail =~ "A plaintext value can authenticate directly"
+    refute pass.detail =~ "A hash is not a plaintext password"
   end
 
   test "the anchor is the schema's generated function, refined by the field's name" do

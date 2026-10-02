@@ -52,13 +52,21 @@ named_for_secret(mod, field, kind) :-
   schema_field(mod, field, _),
   secret_kind(fragment, kind),
   contains(fragment, field),
+  !secret_boolean(mod, field),
   !secret_metadata(field).
 
 // A token-named schema's `token` field is treated as a bearer secret. Bare token fields
 // elsewhere are ambiguous and left to the classifier.
 named_for_secret(mod, ":token", "token") :-
   schema_field(mod, ":token", _),
+  !secret_boolean(mod, ":token"),
   match(".*Token", mod).
+
+// A known boolean schema field is a policy or status flag, not credential
+// material. Keep string, custom and unknown types: their names may denote values.
+.decl secret_boolean(mod: symbol, field: symbol)
+
+secret_boolean(mod, field) :- schema_field(mod, field, "boolean").
 
 // Exclude secret metadata fields by suffix, such as sent_at, expires_at, or changed_at;
 // they describe the secret rather than contain it.
@@ -196,6 +204,7 @@ model_names_secret(mod, field, detail, p) :-
   prior_sensitive("schema_field", mod, field, "secret", detail, _, p),
   schema_field(mod, field, _),
   p >= 900,
+  !secret_boolean(mod, field),
   !named_for_secret(mod, field, _).
 
 
