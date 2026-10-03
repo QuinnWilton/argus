@@ -30,8 +30,10 @@ defmodule Mix.Tasks.Compile.ArgusManifestTest do
   # `Mix.Tasks.Compile.ArgusTest` pins).
   @quick [analyses: [:coupling, :mailbox]]
 
+  # Its own store: the suite's keeps the edited beams' packs from an
+  # earlier run, and these tests assert the extractions an edit causes.
   setup_all do
-    %{peer: Peer.start!()}
+    %{peer: Peer.start!(store: :own)}
   end
 
   setup do

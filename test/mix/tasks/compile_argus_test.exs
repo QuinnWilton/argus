@@ -21,8 +21,10 @@ defmodule Mix.Tasks.Compile.ArgusTest do
   @moduletag timeout: 300_000
   @moduletag :souffle
 
+  # Its own store: the suite's keeps the edited beams' packs from an
+  # earlier run, and these tests assert the extractions an edit causes.
   setup_all do
-    %{peer: Peer.start!()}
+    %{peer: Peer.start!(store: :own)}
   end
 
   setup do
