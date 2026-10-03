@@ -7,6 +7,13 @@ which a change appeared; older names and APIs may have changed since then.
 
 ### Fixed
 
+- Count a `trap_exit` set by a function a `proc_lib` start runs when that
+  function goes on to enter its own module's loop
+  (`gen_server:enter_loop(?MODULE, ...)` or `gen_statem:enter_loop/4,5,6`):
+  the process becomes that module's server, so its trap is the server's.
+  Servers started this way (the pattern ranch documents for protocols) were
+  reported as never trapping exits, and their `terminate/2` cleanup as skipped
+  on shutdown.
 - Accept `--color always` and `--color never` in the escript. Both crashed with
   "not an already existing atom", which broke `rebar3 argus` in a terminal,
   since the plugin passes `--color always` there.
