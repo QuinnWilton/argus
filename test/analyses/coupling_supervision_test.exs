@@ -48,7 +48,7 @@ defmodule Argus.Analyses.CouplingSupervisionTest do
     defp base_facts(sibling_restart) do
       %{
         supervisor: [["Sup", "one_for_one"]],
-        # Anchor site split out of `supervisor` in schema v8.
+        # The anchor site is a relation separate from `supervisor`.
         supervisor_site: [["Sup", "Sup:init/1#3"]],
         supervisor_child: [
           ["Sup", "0", "P", "permanent", "worker"],

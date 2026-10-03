@@ -54,8 +54,8 @@ defmodule Argus.SchemaTest do
         assert ftype in [:symbol, :number, :instr_id, :func_id, :label],
                "unknown field type #{inspect(ftype)}: #{inspect(rel.name)}.#{inspect(fname)}"
 
-        assert is_binary(fdoc),
-               "field doc must be a string: #{inspect(rel.name)}.#{inspect(fname)}"
+        assert is_binary(fdoc) and fdoc != "",
+               "field doc must be a non-empty string: #{inspect(rel.name)}.#{inspect(fname)}"
       end
     end
 

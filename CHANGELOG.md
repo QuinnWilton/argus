@@ -29,11 +29,16 @@ which a change appeared; older names and APIs may have changed since then.
 
 ### Changed
 
-- Schema version 164: rename `Argus.Extractors.PidFlow` to `TermFlow`.
+- Rename `Argus.Extractors.PidFlow` to `TermFlow`.
   General `pid_{arg,return,result,object,field,base,sets,load}` relations become
   `value_*`; process `pid_{call,message,register,send,signal,remote,probe}`
   relations become `process_*_source`. Update custom extractors and fact consumers;
   the old module and relation names are removed.
+
+### Removed
+
+- `Argus.Schema.version/0` and the schema version number. Nothing in argus
+  read it; schema changes are recorded here instead.
 
 ### Fixed
 
@@ -96,7 +101,7 @@ which a change appeared; older names and APIs may have changed since then.
 
 ### Schema changes
 
-Fact schema advances from 154 to 164. Custom Datalog consumers must account for:
+Custom Datalog consumers must account for:
 
 - `answers_call` and the replacement of `monitor_started` with
   `monitor_answer`, which follows results through wrappers.

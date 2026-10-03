@@ -42,8 +42,7 @@ finding counts; do not update expected output merely to make a failure disappear
   register-flow semantics; do not duplicate their instruction tables.
 - `lib/argus/schema/`: relation declarations. Regenerate
   `priv/dl/{base,layer2,priors}.dl` with `mix argus.gen.dl`; do not edit generated
-  declarations directly. Schema shape changes require a version bump, the shape
-  digest in `Argus.SchemaVersionTest`, and a changelog entry.
+  declarations directly. Schema shape changes require a changelog entry.
 - `priv/dl/clientlib/`: shared rule concepts. `priv/dl/analyses/` detects defects;
   `lib/argus/analyses/` declares outputs and builds findings.
 - `priv/dl/stage0.dl` and `points_to.dl`: shared whole-program stages. New staged

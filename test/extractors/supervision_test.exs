@@ -23,7 +23,7 @@ defmodule Argus.Extractors.SupervisionTest do
 
       facts = Supervision.extract(data)
       [_mod, strategy] = hd(facts[:supervisor])
-      # The anchor site is a separate relation since schema v8.
+      # The anchor site is a separate relation.
       [_smod, site] = hd(facts[:supervisor_site])
       assert strategy == "one_for_one"
 
@@ -114,7 +114,7 @@ defmodule Argus.Extractors.SupervisionTest do
 
       facts = Supervision.extract(data)
       [_mod, strategy] = hd(facts[:supervisor])
-      # The anchor site is a separate relation since schema v8.
+      # The anchor site is a separate relation.
       [_smod, site] = hd(facts[:supervisor_site])
       assert strategy == "one_for_one"
 

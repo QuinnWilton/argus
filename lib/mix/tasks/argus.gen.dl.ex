@@ -40,7 +40,7 @@ defmodule Mix.Tasks.Argus.Gen.Dl do
     if check? do
       case Enum.reject(results, &match?({:ok, _}, &1)) do
         [] ->
-          Mix.shell().info("dl declarations are up to date (schema v#{Schema.version()})")
+          Mix.shell().info("dl declarations are up to date")
 
         stale ->
           Mix.raise("""

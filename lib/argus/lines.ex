@@ -2,8 +2,8 @@ defmodule Argus.Lines do
   @moduledoc """
   Resolves anchor IDs to source lines using `line_info` facts.
 
-  Layer 1 stamps every instruction with the source line in effect
-  (schema version 3), so an instruction ID resolves to its exact line
+  Layer 1 stamps every instruction with the source line in effect,
+  so an instruction ID resolves to its exact line
   and a function ID to its first stamped line. Build a table once per
   extraction with `from_facts/1` or `from_facts_dir/1`, then `resolve/2`
   the ID forms findings carry: witness-column strings, `Argus.InstrId`

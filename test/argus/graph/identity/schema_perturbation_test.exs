@@ -7,7 +7,7 @@ defmodule Argus.Graph.Identity.SchemaPerturbationTest do
   fixtures in a VM of its own whose schema has every entry it did not
   read changed — its fields renamed and retyped, a field added, its
   documentation, its in-process flag and its layer changed, relations
-  reordered, one removed and one added, the version bumped — and its
+  reordered, one removed and one added — and its
   rows must come out byte for byte as they do here, computed afresh and
   over kept bases alike. A producer that read the schema some way that
   records nothing (memoized it, smuggled it out of a module attribute,
@@ -225,23 +225,16 @@ defmodule Argus.Graph.Identity.SchemaPerturbationTest do
     value
   end
 
-  defp install(%{modules: modules, version: bump?}) do
+  defp install(%{modules: modules}) do
     schema_file = Argus.Schema.module_info(:compile)[:source] |> List.to_string()
-    source = File.read!(schema_file)
-
-    source =
-      if bump?,
-        do: String.replace(source, ~r/@schema_version \d+/, "@schema_version 99999"),
-        else: source
-
-    [concerns: modules, schema_file: schema_file, schema_source: source]
+    [concerns: modules, schema_file: schema_file, schema_source: File.read!(schema_file)]
   end
 
   # ── The perturbation ────────────────────────────────────────────────
 
   # Every concern module with its relations changed wherever `reads`
   # leaves them free — and, when `also` names a relation, its columns
-  # too: `%{modules: [{mod, read, relations}], version: bump?}`.
+  # too: `%{modules: [{mod, read, relations}]}`.
   defp perturbed(reads, also \\ nil) do
     cover = coverage(reads)
     cover = %{cover | columns: MapSet.delete(cover.columns, also)}
@@ -266,7 +259,7 @@ defmodule Argus.Graph.Identity.SchemaPerturbationTest do
       end)
 
     assert probe? or cover.membership, "the perturbation added no relation"
-    %{modules: modules, version: not cover.version}
+    %{modules: modules}
   end
 
   defp concerns do
@@ -278,23 +271,19 @@ defmodule Argus.Graph.Identity.SchemaPerturbationTest do
   end
 
   # What the reads hold still: whole relations, relations' columns, the
-  # set and order of the relations, the in-process flags, the version,
-  # whole concern modules.
+  # set and order of the relations, the in-process flags, whole concern
+  # modules.
   defp coverage(reads) do
     base = %{
       whole: MapSet.new(),
       columns: MapSet.new(),
       membership: false,
       flags: false,
-      version: false,
       concerns: MapSet.new()
     }
 
     Enum.reduce(reads, base, fn read, cover ->
       case String.split(read, " ", parts: 2) do
-        ["version"] ->
-          %{cover | version: true}
-
         ["names"] ->
           %{cover | membership: true}
 
@@ -313,7 +302,7 @@ defmodule Argus.Graph.Identity.SchemaPerturbationTest do
           )
 
         ["souffle_decls", _layer] ->
-          whole(%{cover | membership: true, version: true}, Argus.Schema.all())
+          whole(%{cover | membership: true}, Argus.Schema.all())
 
         ["fetch", name] ->
           %{cover | whole: MapSet.put(cover.whole, String.to_existing_atom(name))}

@@ -17,8 +17,8 @@ defmodule Argus.Extractors.Purity do
   The classification lives in Elixir (`Argus.Purity.Effects`) rather than in
   Datalog for two reasons. It is a large table that wants unit tests and
   doctests, and expressing it as rules would mean either hundreds of facts
-  or string surgery — and string surgery in these rules is what produced the
-  partial-functor unsoundness fixed in schema v9.
+  or string surgery — and string surgery in these rules once produced a
+  partial-functor unsoundness.
   """
 
   @behaviour Argus.Extractor

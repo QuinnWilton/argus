@@ -138,7 +138,7 @@ defmodule Argus.Graph.SpecsTest do
 
     compile_source!(dir, ebin, "argus_probe.ex", """
     defmodule #{inspect(@argus_caller)} do
-      def run, do: Argus.Schema.version()
+      def run, do: Argus.Schema.names()
     end
     """)
 
@@ -151,7 +151,7 @@ defmodule Argus.Graph.SpecsTest do
     try do
       for key <- Map.values(paths), do: {:ok, _} = Extraction.module_facts(db, key)
 
-      # The specs of `Argus.Schema.version/0` were read off the code
+      # The specs of `Argus.Schema.names/0` were read off the code
       # path, from argus's own directory.
       assert read_specs?(db, paths[@argus_caller], Argus.Schema)
       refute read_specs?(db, paths[@caller], Argus.Schema)
