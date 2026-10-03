@@ -151,6 +151,30 @@ actual supervision path, not just the module containing a call.
 The [intraprocedural value-flow model](value-flow.md) describes TermFlow's
 register and container summaries, convergence contract and coverage limits.
 
+Parameter flow follows actual returns from helpers in the same module and from
+supported collection callbacks, including their captured values. A helper that
+returns a constant does not pass its argument through. Recursive helpers converge
+on finite parameter summaries; an unknown external call still has an unknown
+result. These summaries are extracted from the whole module, so a helper-body
+change also invalidates its callers' summaries.
+
+Security value facts distinguish call results, parameters and nested tuple or map
+fields. A safety fact belongs to the particular argument used at a call. Size
+guards must constrain that same value before use on every path to the operation;
+a bound on the encoded input does not bound the output of decompression. Missing
+identity or guard facts do not establish safety.
+
+Result-use facts retain the producing invocation and distinguish a payload use
+from forwarding the complete result, testing it, or raising with it. A required
+literal verdict or excluded failure value must belong to that same invocation
+and hold before the particular use on every path, including exception handlers.
+
+Runtime callback origins are separate from parameter flow. They describe content
+returned by an unresolved function invocation, without asserting attacker control.
+Template analysis carries necessary literal conditions back through exact call
+sites, so a caller passing a flag that disables evaluation can be distinguished
+from another call to the same helper that enables it.
+
 `EtsTable` identifies tables by name, allocation site, or module field when stronger
 identity is unavailable. `CheckThenAct` carries resource/key identities through
 callers and relates a check to the act it controls or supplies. The

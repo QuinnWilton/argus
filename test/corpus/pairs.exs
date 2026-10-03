@@ -6,7 +6,112 @@
 # Titles are matched exactly against `Argus.Findings.t().title`; `module:`
 # is the finding's anchor module, which keeps another module's identical
 # title from standing in for the one the fix removed.
+# `function: {name, arity}` narrows this further when another function in the
+# same module still has the defect. It never suppresses that other finding.
 [
+  # Erlang Ecosystem Foundation CNA: require the actual verification verdict,
+  # not merely JOSE's three-element result shape, before accepting its payload.
+  %{
+    repo: "dashbitco/nimble_zta",
+    issue: "CVE-2026-91187",
+    module: "NimbleZTA.Cloudflare",
+    pre: "c1a084dd5ebe58bebfccb7bb8773f6dc280885bd",
+    fix: "6458fd18a5ba41166d4973214c519e98fe05b72d",
+    finding: {:unsafe_input, "Cryptographic verification result is not enforced"}
+  },
+  # Select the cursor-decoding entry covered by the advisory.
+  %{
+    repo: "ash-project/ash",
+    issue: "CVE-2026-69659",
+    module: "Ash.Page.Keyset",
+    function: {:decode_values, 2},
+    pre: "09f42593035bceb0f6153dd7ee45cc49d108300a",
+    fix: "1816b103af975221210478d61db20adcea700319",
+    finding: {:unsafe_input, "Compressed ETF allocation from external input"}
+  },
+  %{
+    repo: "ash-project/ash_ai",
+    issue: "CVE-2026-77956",
+    module: "AshAi.Actions.Prompt",
+    pre: "043461cc2e56dec2ba1dcd9d6b9d17e02e8e3d05",
+    fix: "e9948254b5659c1143b73dc2f59f457931e64514",
+    finding: {:unsafe_input, "Runtime callback content evaluated as a template"}
+  },
+  %{
+    repo: "elixir-ecto/postgrex",
+    issue: "CVE-2026-32687",
+    module: "Postgrex.Notifications",
+    pre: "f78f401c4b088b24ab6b6b78012ddba6c1f92b6e",
+    fix: "7cdedbd4316bb65f82e6a9a4f922c0ac491cb770",
+    finding: {:unsafe_input, "SQL injection through a quoted identifier"}
+  },
+  %{
+    repo: "ash-project/ash_admin",
+    issue: "CVE-2026-82673",
+    module: "AshAdmin.Components.Resource.Form",
+    pre: "8e8ef91e8ba07498053887c6212f8b0f08178df6",
+    fix: "4bb41cb697f3d9be58462d727aed75aba76efc82",
+    finding: {:unsafe_input, "Upload filename controls a filesystem path"}
+  },
+  # Identifier quoting from the earlier fix does not protect the outer dollar
+  # delimiter. Keep this as a separate lexical-context regression.
+  %{
+    repo: "elixir-ecto/postgrex",
+    issue: "CVE-2026-58225",
+    module: "Postgrex.Notifications",
+    pre: "da99211bdafe909422153070db7baa6463e8976c",
+    fix: "795c6062f62c4394272ff4b89170688857b4f841",
+    finding: {:unsafe_input, "SQL injection through a dollar-quoted block"}
+  },
+  %{
+    repo: "elixir-ecto/postgrex",
+    issue: "CVE-2026-66838",
+    module: "Postgrex",
+    pre: "0391e5cde45d38c732620dcb0147a4e90145a3da",
+    fix: "e1ecba618ddea4cee2556bd6ad9b6285e05f9d3c",
+    finding: {:unsafe_input, "SQL injection through a query comment"}
+  },
+  # Presence-only coverage of the published vulnerable revisions. Escaping
+  # counterexamples are tested independently in the analysis fixtures.
+  %{
+    repo: "ash-project/ash_admin",
+    issue: "CVE-2026-77850:relationship",
+    module: "AshAdmin.Components.Resource.RelationshipField",
+    pre: "731dffa09416d68f4ad3a0b6ee146b285ca0083b",
+    finding: {:unsafe_input, "Unescaped data rendered as HTML"}
+  },
+  %{
+    repo: "ash-project/ash_admin",
+    issue: "CVE-2026-77850:managed",
+    module: "AshAdmin.Components.Resource.ManagedRelationshipSelectField",
+    pre: "731dffa09416d68f4ad3a0b6ee146b285ca0083b",
+    finding: {:unsafe_input, "Unescaped data rendered as HTML"}
+  },
+  %{
+    repo: "elixir-grpc/grpc",
+    issue: "CVE-2026-48853",
+    module: "GRPC.Codec.Erlpack",
+    subdir: "grpc_core",
+    pre: "7936c63b031272e6431618d1f86b90e10c69eacb",
+    fix: "272a97a5ea1b46af1819f14a831fcf35fc91f992",
+    finding: {:unsafe_input, "binary_to_term without :safe"}
+  },
+  %{
+    repo: "hexpm/hex",
+    issue: "CVE-2026-21619",
+    module: ":mix_hex_api",
+    pre: "89cca6c3b1dcfb8149b8b1481c383ad5fe750842",
+    fix: "636739f3322514e9303ca335fb630696fcbb3c95",
+    finding: {:unsafe_input, "binary_to_term without :safe"}
+  },
+  # Presence-only coverage of the published vulnerable revision.
+  %{
+    repo: "ZenHive/mpp",
+    issue: "CVE-2026-73829",
+    module: "MPP.Methods.Tempo",
+    pre: "121b7a2190398002f9466d1ca73501ed7947ba69",
+    finding: {:races, "Non-atomic claim of a shared-store key"}
+  },
   %{
     repo: "oban-bg/oban",
     issue: "oban#21",
@@ -557,7 +662,7 @@
     module: "Paginator.Cursor",
     pre: "24237ba10e17ae77adb4e3a3e5d34abf730221c4",
     fix: "b4945c6e30b2b2599047ad3c10389671662c3bad",
-    finding: {:unsafe_input, "binary_to_term with [:safe] and no shape check"}
+    finding: {:unsafe_input, "binary_to_term with [:safe] may admit executable terms"}
   },
   # sequin 46ce4e1, present-only and live at upstream HEAD: DebouncedLogger.log/4
   # looks a bucket up and then calls :ets.update_counter/3 bare, while the

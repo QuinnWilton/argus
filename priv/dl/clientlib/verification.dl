@@ -1,0 +1,68 @@
+// JOSE returns a verdict alongside a payload even when signature verification
+// fails. OTP's verification APIs return a boolean. These contracts are documented
+// by https://jose.hexdocs.pm/JOSE.JWT.html#verify/2,
+// https://jose.hexdocs.pm/JOSE.JWS.html#verify/2, and the OTP crypto/public_key APIs.
+// called_from_api is unsafe_input's shared export-reach relation.
+
+.decl verification_payload_api(api: symbol)
+verification_payload_api("JOSE.JWT:verify/2").
+verification_payload_api("JOSE.JWT:verify_strict/3").
+verification_payload_api("JOSE.JWS:verify/2").
+verification_payload_api("JOSE.JWS:verify_strict/3").
+
+.decl verification_boolean_api(api: symbol)
+verification_boolean_api(":crypto:verify/5").
+verification_boolean_api(":crypto:verify/6").
+verification_boolean_api(":public_key:verify/4").
+verification_boolean_api(":public_key:verify/5").
+
+// A payload (or one of its fields) is consumed. Extracting it, checking its shape,
+// raising with it, and forwarding the original result do not establish acceptance.
+.decl verification_payload_used(id: symbol, func: symbol, use: symbol)
+verification_payload_used(id, func, use) :-
+  security_result_use(id, func, use, "tuple:1", "value").
+verification_payload_used(id, func, use) :-
+  security_result_use(id, func, use, path, "value"),
+  match("^tuple:1/.*", path).
+
+// Passing both the original verdict and payload to the same operation preserves
+// the recipient's ability to enforce the verdict. This says nothing about a later
+// operation that consumes the payload alone, or a verdict from another invocation.
+.decl verification_verdict_forwarded(id: symbol, func: symbol, use: symbol)
+verification_verdict_forwarded(id, func, use) :-
+  security_result_use(id, func, use, "tuple:0", "value").
+
+// The exact invocation's true verdict is required before this payload use on every
+// path. A tuple-arity test, another verification, or a check after use is not enough.
+.decl verification_succeeded_before_use(id: symbol, func: symbol, use: symbol)
+verification_succeeded_before_use(id, func, use) :-
+  security_result_precondition(id, func, use, "tuple:0", "true").
+// These APIs guarantee tuple element zero is boolean. Excluding false therefore
+// establishes true, including Elixir's `if valid` false/nil select-default shape.
+verification_succeeded_before_use(id, func, use) :-
+  security_result(id, func, api),
+  verification_payload_api(api),
+  security_result_exclusion(id, func, use, "tuple:0", "false").
+
+// A live function consumes an unverified payload or definitely discards a scalar
+// verification verdict. Scalar results whose fate is unknown remain unreported.
+.decl unchecked_crypto_use(id: symbol, func: symbol, api: symbol, use: symbol, kind: symbol)
+unchecked_crypto_use(id, func, api, use, "payload") :-
+  security_result(id, func, api),
+  verification_payload_api(api),
+  called_from_api(func),
+  verification_payload_used(id, func, use),
+  !verification_succeeded_before_use(id, func, use),
+  !verification_verdict_forwarded(id, func, use).
+unchecked_crypto_use(id, func, api, use, "discarded") :-
+  security_result(id, func, api),
+  verification_boolean_api(api),
+  called_from_api(func),
+  security_result_discarded(id, func, use).
+
+// The finding builder keys on the verification invocation, retaining a concrete
+// unprotected use as a secondary source anchor.
+.decl unchecked_crypto_verification(id: symbol, func: symbol, api: symbol, use: symbol, kind: symbol)
+.output unchecked_crypto_verification
+unchecked_crypto_verification(id, func, api, use, kind) :-
+  unchecked_crypto_use(id, func, api, use, kind).

@@ -2312,3 +2312,6 @@ mnesia_race_frame(w, "read", r2, f2) :-
   mnesia_check_act(_, _, _, _, r, w, _, _),
   racing_record_pair(f2, r2, w),
   r2 != r.
+
+// One-use verdicts built from shared-cache reads and separate marks.
+.include "../clientlib/shared_store_claim.dl"

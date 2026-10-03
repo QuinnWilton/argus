@@ -1,0 +1,72 @@
+// SQL control bytes come from a caller or retained callback state. Safety is
+// specific to this construction, input, and lexical context; quoting an identifier
+// cannot establish that an enclosing dollar-quoted block is safe.
+.decl unsafe_sql_input(id: symbol, func: symbol, context: symbol)
+
+unsafe_sql_input(id, func, context) :-
+  sql_input(id, func, context, param),
+  !sql_input_safe(id, func, context, param).
+
+unsafe_sql_input(id, func, context) :-
+  sql_call_input(id, func, callee, context, param),
+  generated_sql_api(callee),
+  !sql_call_input_safe(id, func, callee, context, param).
+
+.decl sql_injection(id: symbol, func: symbol, context: symbol)
+.output sql_injection
+
+sql_injection(id, func, context) :-
+  unsafe_sql_input(id, func, context),
+  !generated_sql_delegate(id, func).
+
+// Ecto's generated Repo.query/query! functions implement the SQL API itself.
+// An unchanged statement supplied to that API is not construction of SQL by
+// the application. Require the SQL adapter's generated definition, every clause
+// to be generated, and unchanged forwarding of SQL, bound values, and options.
+// Forwarding facts are per caller/callee, so require exactly one matching call. A
+// generated interpolation, an application definition, or a mixed definition
+// does not satisfy this boundary classification.
+.decl generated_sql_delegate(id: symbol, func: symbol)
+
+generated_sql_delegate(id, func) :-
+  macro_written(func),
+  macro_generated(func, "Ecto.Adapters.SQL"),
+  function_def(func, _, name, 3, _),
+  (name = "query" ; name = "query!"),
+  remote_call(id, func, "Ecto.Adapters.SQL", name, 4),
+  tail_call(id),
+  !multiple_sql_delegate_calls(func, name),
+  callee = cat("Ecto.Adapters.SQL:", cat(name, "/4")),
+  call_arg_forward(func, callee, 1, 0),
+  call_arg_forward(func, callee, 2, 1),
+  call_arg_forward(func, callee, 3, 2).
+
+.decl multiple_sql_delegate_calls(func: symbol, name: symbol)
+
+multiple_sql_delegate_calls(func, name) :-
+  remote_call(first, func, "Ecto.Adapters.SQL", name, 4),
+  remote_call(second, func, "Ecto.Adapters.SQL", name, 4),
+  first != second.
+
+// The implementation and default-argument shims remain query APIs. Their
+// callers are checked using their own statement bytes, not bound parameters.
+.decl generated_sql_api(func: symbol)
+generated_sql_api(func) :- generated_sql_delegate(_, func).
+
+generated_sql_delegate(id, func) :-
+  macro_written(func),
+  macro_generated(func, "Ecto.Adapters.SQL"),
+  function_def(func, _, name, arity, _),
+  (name = "query" ; name = "query!"),
+  arity >= 1, arity <= 3,
+  local_call(id, func, callee, _),
+  generated_sql_api(callee),
+  tail_call(id),
+  !multiple_local_sql_calls(func, callee),
+  call_arg_forward(func, callee, 0, 0).
+
+.decl multiple_local_sql_calls(func: symbol, callee: symbol)
+multiple_local_sql_calls(func, callee) :-
+  local_call(first, func, callee, _),
+  local_call(second, func, callee, _),
+  first != second.

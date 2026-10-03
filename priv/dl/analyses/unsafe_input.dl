@@ -16,6 +16,12 @@
 .include "../clientlib/runs_elsewhere.dl"
 .include "../clientlib/supervision.dl"
 .include "../clientlib/tooling.dl"
+.include "../clientlib/etf_allocation.dl"
+.include "../clientlib/verification.dl"
+.include "../clientlib/code_injection.dl"
+.include "../clientlib/sql_injection.dl"
+.include "../clientlib/html_injection.dl"
+.include "../clientlib/path_traversal.dl"
 
 // A finding in code only developers' tools or tests run steps down a
 // level (clientlib/tooling.dl, Argus.Findings.Tooling).
@@ -52,7 +58,17 @@ sink_call(id, func, api, "decompression", "") :- unsafe_decompression(id, func, 
 
 sink_call(id, func, api, "deserialization", safety) :-
   unsafe_deserialization(id, func, api, safety),
-  unsafe_safety_class(safety).
+  unsafe_safety_class(safety),
+  !inert_decoded_term(id, func).
+
+// Recursive validation protects the exact accepted decoded payload. Rejected error
+// envelopes can be returned unchanged, but their payload cannot be reused unchecked.
+// Validation does not undo atom creation, and compressed ETF is reported independently.
+.decl inert_decoded_term(id: symbol, func: symbol)
+
+inert_decoded_term(id, func) :-
+  unsafe_deserialization(id, func, _, "atoms_only"),
+  decoded_term_validated(id, func).
 
 // Apply allowlist suppression to atom and deserialization arguments only. A bounded
 // code module does not bound its function, and decompression size safety requires
@@ -110,10 +126,11 @@ allowlist_at(c, f, to_string(n)) :- call_arg_allowlist(c, f, n).
 // Atoms derived from existing atoms
 //
 // Existing-atom input bounds creation only if callers cannot choose or recycle those
-// atoms. Reject the bound for existing-atom lookups, any request reach, call-graph
+// atoms. Reject the bound for existing-atom lookups, request argument flow, call-graph
 // feedback, or fold closures. Comprehension self-loops are excluded from feedback.
-// Limits: a fold calling an atom-making helper can hide feedback; callback state is not
-// traced and runtime-only state-derived atoms are not reported as external input.
+// Limits: a fold calling an atom-making helper can hide feedback. Mutable socket
+// arguments remain possibly client-selected across callback invocations; their
+// individual fields and prior writes are not reconstructed here.
 .decl atoms_chosen(id: symbol)
 
 atoms_chosen(id) :- sink_arg_bounded(id, f, 0, "atoms"), sink_arg_chosen(id, f, 0).
@@ -123,17 +140,21 @@ atoms_chosen(id) :-
   sink_flow_reaches(g, k, id),
   call_arg_chosen(_, g, k).
 
-atoms_chosen(id) :- sink_arg_bounded(id, f, 0, "atoms"), atoms_requested(f).
+atoms_chosen(id) :- sink_arg_bounded(id, _, 0, "atoms"), request_data_reaches(id, _, _).
+
+// Stateful request callbacks may keep an existing-atom lookup from an earlier
+// request in their socket. Follow that exact socket argument too; Plug options
+// and unrelated configuration parameters do not become client-selected.
+atoms_chosen(id) :-
+  sink_arg_bounded(id, _, 0, "atoms"),
+  sink_flow_reaches(entry, 2, id),
+  request_entry(entry, kind),
+  (kind = "live_view" ; kind = "live_component" ; kind = "channel").
 atoms_chosen(id) :- sink_arg_bounded(id, f, 0, "atoms"), atoms_fed_back(f).
 
 .init atoms_reach = CallReach
 
 atoms_reach.seed(f, f) :- sink_arg_bounded(_, f, 0, "atoms").
-
-// A request entry reaches the function making atoms of atoms.
-.decl atoms_requested(func: symbol)
-
-atoms_requested(f) :- request_entry(e, _), atoms_reach.reaches(e, f).
 
 // The function's atoms come back to it: it is on a cycle of the call
 // graph, or it is the fun a fold runs.
@@ -186,9 +207,13 @@ fold_api(":maps", "fold").
 // first copy.
 .decl repeated_site(id: symbol)
 
-repeated_site(id) :- sink_copy(id, _, first), !bounded_first(first).
+repeated_site(id) :-
+  sink_copy(id, func, first),
+  sink_call(first, func, _, _, _),
+  !bounded_first(first).
 
-// The first copy is bounded, so its copies are reported in its stead.
+// A bounded or validated first copy cannot represent an unchecked sibling.
+// Validated calls are absent from sink_call; bounded calls are excluded here.
 .decl bounded_first(id: symbol)
 
 bounded_first(first) :- sink_copy(_, f, first), bounded_input(first, f).

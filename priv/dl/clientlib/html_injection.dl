@@ -1,0 +1,19 @@
+// Render assigns carry stored labels as well as reflected request data. Follow
+// actual parameter provenance from an exported API, rather than requiring an HTTP
+// request source or treating unrelated regex escaping as HTML safety.
+.init html_source = ParamReach
+
+html_source.seed(func, param, id) :-
+  html_output_site(id, func, _, pos),
+  call_arg_param(id, func, pos, param).
+
+.decl html_has_external_input(id: symbol)
+html_has_external_input(id) :- html_source.reaches(func, _, id), outside_api(func).
+
+.decl unescaped_html_from_input(id: symbol, func: symbol, api: symbol)
+.output unescaped_html_from_input
+
+unescaped_html_from_input(id, func, api) :-
+  html_output_site(id, func, api, pos),
+  html_has_external_input(id),
+  !html_input_escaped(id, func, pos).

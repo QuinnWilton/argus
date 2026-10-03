@@ -68,7 +68,7 @@ defmodule Argus.Schema do
   # saying what changed and who reads it. Downstream, the version rides
   # scry's and planchette's `env_fingerprint` so extraction memos never
   # outlive the encoder that wrote them.
-  @schema_version 162
+  @schema_version 164
 
   # Each relation is declared once, in the module of its concern, with its
   # flags; the order of the modules and of the relations in each is the
@@ -83,6 +83,15 @@ defmodule Argus.Schema do
     Argus.Schema.Callbacks,
     Argus.Schema.OwnedResources,
     Argus.Schema.UnsafeInput,
+    Argus.Schema.SecurityValues,
+    Argus.Schema.SharedStore,
+    Argus.Schema.ResultChecks,
+    Argus.Schema.EtfAllocation,
+    Argus.Schema.TermValidation,
+    Argus.Schema.CodeInjection,
+    Argus.Schema.SqlInjection,
+    Argus.Schema.HtmlInjection,
+    Argus.Schema.PathTraversal,
     Argus.Schema.ErrorHandling,
     Argus.Schema.Distribution,
     Argus.Schema.GenStatem,

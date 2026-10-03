@@ -7,6 +7,13 @@ which a change appeared; older names and APIs may have changed since then.
 
 ### Added
 
+- Detect unenforced cryptographic verification, compressed ETF allocation,
+  runtime template evaluation, SQL injection, unescaped HTML, upload filename
+  traversal, and non-atomic shared-store claims. Real EEF CNA advisory revisions
+  join the corpus, with fixed revisions checked where the vulnerable path is removed.
+- Follow actual same-module helper and callback returns when tracking input.
+  Security facts retain exact value/field identities, guards and verification-result
+  uses, so unrelated checks cannot suppress a finding.
 - Extraction now uses the function query graph and reverse dependency tracking
   by default. Unchanged functions reuse their facts and prepared data; unrelated
   input edits skip validation. Packed traces reduce small-file storage overhead.
@@ -22,7 +29,7 @@ which a change appeared; older names and APIs may have changed since then.
 
 ### Changed
 
-- Schema version 162: rename `Argus.Extractors.PidFlow` to `TermFlow`.
+- Schema version 164: rename `Argus.Extractors.PidFlow` to `TermFlow`.
   General `pid_{arg,return,result,object,field,base,sets,load}` relations become
   `value_*`; process `pid_{call,message,register,send,signal,remote,probe}`
   relations become `process_*_source`. Update custom extractors and fact consumers;
@@ -38,9 +45,24 @@ which a change appeared; older names and APIs may have changed since then.
   reject cyclic positional list summaries. Intraprocedural value
   flow converges without a fixed iteration cutoff; explicit solver budgets
   fail visibly rather than returning incomplete facts.
+- Recognize finite atom values passed through private helpers, recursive
+  non-executable term validation, and context-specific HTML escaping. Unknown
+  callers, incomplete validation, and unchecked alternatives remain reportable.
+  A validated compiler copy no longer stands in for an unchecked sibling.
+  Finite lists retain their bounds through reversal; custom protocol output is
+  not assumed finite merely because its input is fixed.
+  Character bounds survive recursive helpers and tuple returns, and numeric
+  equality preserves the distinct values that can produce different atom names.
+- Treat generated Ecto Repo query wrappers as SQL APIs and check statement
+  construction at their callers, including default-argument calls. Bound query
+  values do not count as statement construction. SQL joins retain caller-supplied
+  separators independently of escaping in their mapping callbacks.
+- Keep captured ETF decoders reportable when direct callers reject compression.
 - Exclude known boolean schema policy flags from secret-exposure findings.
   Hash-named secrets retain a lower severity redaction warning without being
   described as reusable credentials.
+- Exclude fully literal shell commands from unsafe-input findings. Deserialization
+  warnings now state when custom recursive validators are unproven.
 - Refresh cached specs when a transitive remote type changes, including recent
   equal-size BEAM replacements with the same modification timestamp.
 - Recognize exception data returned as maps, closures or the exception class,
@@ -74,7 +96,7 @@ which a change appeared; older names and APIs may have changed since then.
 
 ### Schema changes
 
-Fact schema advances from 154 to 162. Custom Datalog consumers must account for:
+Fact schema advances from 154 to 164. Custom Datalog consumers must account for:
 
 - `answers_call` and the replacement of `monitor_started` with
   `monitor_answer`, which follows results through wrappers.
@@ -87,6 +109,19 @@ Fact schema advances from 154 to 162. Custom Datalog consumers must account for:
   `monitor_clause`. The final `monitor_kept` column, `holds`, distinguishes
   retained refs from retained pids.
 - `acquired_if_absent`, which links an acquisition to the store it checked.
+- `call_arg_param` and `call_arg_runtime` for parameter and runtime-callback origins.
+- `security_arg_*`, `security_value_*` and `security_result*` for exact argument
+  identities, field provenance, safety/limit proofs and checked or discarded results.
+- `etf_decode_site`, `etf_compression_rejected`, `code_template_site`, `code_call`,
+  `code_arg_identity`, `code_site_gate`, `sql_input`, `sql_input_safe`,
+  `html_output_site`, `html_input_escaped`, `upload_path_use`, and
+  `upload_path_leaf_safe` for operation-specific security evidence.
+- `shared_store_*` relations for store/key identities, conditional claims,
+  locks and callback returns.
+- `decoded_term_validated` for a recursive validation proof tied to the exact
+  decode result, and `sql_call_input` / `sql_call_input_safe` for SQL construction
+  at callers of generated query APIs. The unsafe-input analysis consumes these
+  relations; compressed ETF allocation remains a separate check.
 
 ## 0.20.1 — 2026-09-29
 

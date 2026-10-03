@@ -1,0 +1,10 @@
+// A browser-provided upload filename controls a filesystem path. Joining it to
+// a chosen directory does not exclude separators or parent components. The
+// extractor's leaf proof is deliberately narrower than generic containment.
+.decl upload_filename_path_traversal(id: symbol, func: symbol, api: symbol,
+                                     source: symbol, shape: symbol)
+.output upload_filename_path_traversal
+upload_filename_path_traversal(id, func, api, source, shape) :-
+  upload_path_use(id, func, api, source, shape),
+  called_from_api(func),
+  !upload_path_leaf_safe(id, func, source).

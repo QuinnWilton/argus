@@ -244,8 +244,13 @@ defmodule Argus.Extractors.ApiCalls do
            {{:zlib, :inflate, [2, 3]}, :unsafe_decompression, [:id, :func, :api, {:const, "1"}]},
            {{Code, :eval_string, [1, 2, 3]}, :code_execution, [:id, :func, :api]},
            {{Code, :compile_string, [1, 2]}, :code_execution, [:id, :func, :api]},
-           {{:os, :cmd, [1, 2]}, :code_execution, [:id, :func, :api]},
-           {{System, :shell, [1, 2]}, :code_execution, [:id, :func, :api]},
+           {{EEx, :eval_string, [1, 2, 3]}, :code_execution,
+            [:id, :func, :api, :unless_literal_source]},
+           {{EEx, :compile_string, [1, 2]}, :code_execution,
+            [:id, :func, :api, :unless_literal_source]},
+           {{:os, :cmd, [1, 2]}, :code_execution, [:id, :func, :api, :unless_literal_command]},
+           {{System, :shell, [1, 2]}, :code_execution,
+            [:id, :func, :api, :unless_literal_command]},
            # System.cmd with a literal command and literal args runs a known
            # program; only a dynamic one is code execution.
            {{System, :cmd, [2, 3]}, :code_execution, [:id, :func, :api, :unless_static_command]},
@@ -804,6 +809,32 @@ defmodule Argus.Extractors.ApiCalls do
         {:pass, facts}
     end
   end
+
+  # Template bindings do not become source code. A literal source remains trusted
+  # even when its bindings contain caller data; an unknown source remains a sink.
+  defp read(:unless_literal_source, ctx, _mfa, facts, _rel) do
+    case resolve_register(ctx.instrs, ctx.idx, {:x, 0}) do
+      {:ok, source} when is_binary(source) -> {:skip, facts}
+      _ -> {:pass, facts}
+    end
+  end
+
+  # A shell parses its command as code, but a fully literal command contains no
+  # caller-selected source. Keep partial lists and joins with unknown alternatives.
+  defp read(:unless_literal_command, ctx, _mfa, facts, _rel) do
+    case resolve_register(ctx.instrs, ctx.idx, {:x, 0}) do
+      {:ok, source} -> if literal_command?(source), do: {:skip, facts}, else: {:pass, facts}
+      _ -> {:pass, facts}
+    end
+  end
+
+  defp literal_command?(source) when is_binary(source), do: true
+  defp literal_command?([]), do: true
+
+  defp literal_command?([head | tail]),
+    do: (is_integer(head) or literal_command?(head)) and literal_command?(tail)
+
+  defp literal_command?(_source), do: false
 
   # The finders a program's literal name is read through. `:os.find_executable/2`
   # searches the path it is handed: whatever file of that name sits

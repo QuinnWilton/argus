@@ -1,0 +1,192 @@
+// A shared-cache read decides a non-atomic mark and a verdict returned to callers.
+// CheckThenAct keeps the store and key together; the concurrency model must witness
+// competing callers, and a returned read value alone is not a one-use verdict.
+.init shared_claim = CheckThenAct
+
+shared_claim.check(r, f, ss, s, ks, k) :- shared_store_op(r, f, "get", ss, s, ks, k).
+shared_claim.act(w, f, ss, s, ks, k) :- shared_store_op(w, f, "put", ss, s, ks, k).
+
+// A unary pure normalization has its own identity: normalizing a hash for both the
+// read and write does not make their independently computed keys different rows.
+// Keep the underlying source explicit so caller substitution preserves the mapping.
+.decl store_identity_source(source: symbol)
+store_identity_source(s) :- shared_store_argument(_, _, _, _, _, s, _).
+store_identity_source("param").
+store_identity_source("literal").
+
+// Projecting an element from one exact caller value retains that value's identity.
+// The finite source vocabulary is taken from arguments, never recursively projected.
+.decl projected_store_source(element: symbol, base: symbol, projected: symbol)
+projected_store_source(e, s, cat(e, " of ", s)) :-
+  liftable(e), e != "param", shared_store_argument(_, _, _, _, "", s, _),
+  s != "dynamic", s != "param".
+store_identity_source(projected) :- projected_store_source(_, _, projected).
+
+.decl mapped_store_source(transform: symbol, source: symbol, mapped: symbol)
+mapped_store_source(t, s, cat("mapped ", t, " ", s)) :-
+  shared_store_transform(t), store_identity_source(s).
+
+shared_claim.lift(f, g, "param", to_string(n), s, v) :-
+  shared_claim.needs(g, "param", to_string(n)),
+  shared_store_argument(_, f, g, n, "", s, v), s != "dynamic".
+
+shared_claim.lift(f, g, "param", to_string(n), mapped, v) :-
+  shared_claim.needs(g, "param", to_string(n)),
+  shared_store_argument(_, f, g, n, t, s, v), t != "", s != "dynamic",
+  mapped_store_source(t, s, mapped).
+
+shared_claim.lift(f, g, mapped, to_string(n), mapped2, v) :-
+  shared_claim.needs(g, mapped, to_string(n)),
+  mapped_store_source(t, "param", mapped),
+  shared_store_argument(_, f, g, n, "", s, v), s != "dynamic",
+  mapped_store_source(t, s, mapped2).
+
+shared_claim.lift(f, g, mapped, v, mapped, v) :-
+  shared_claim.needs(g, mapped, v),
+  mapped_store_source(_, "literal", mapped), call_edge(f, g).
+
+// The source of a tuple element passed intact through another wrapper remains that
+// element of the wrapper's argument. This is common for {StoreModule, options}.
+shared_claim.lift(f, g, mapped, to_string(n), mapped, to_string(p)) :-
+  shared_claim.needs(g, mapped, to_string(n)),
+  mapped_store_source(_, s, mapped), s != "param", liftable(s),
+  call_arg_forward(f, g, n, p).
+
+shared_claim.lift(f, g, element, to_string(n), projected, v) :-
+  shared_claim.needs(g, element, to_string(n)),
+  shared_store_argument(_, f, g, n, "", source, v),
+  projected_store_source(element, source, projected).
+shared_claim.lift(f, g, mapped, to_string(n), mapped2, v) :-
+  shared_claim.needs(g, mapped, to_string(n)),
+  mapped_store_source(t, element, mapped),
+  shared_store_argument(_, f, g, n, "", source, v),
+  projected_store_source(element, source, projected),
+  mapped_store_source(t, projected, mapped2).
+
+// Track what each wrapper returns specifically when the shared-store row is
+// absent. Merely testing a result or refreshing an existing cache entry is not a
+// one-use claim. An equality edge must guard this write (or its actual caller).
+.decl shared_absence_value(func: symbol, kind: symbol, source: symbol, read: symbol, value: symbol)
+shared_absence_value(f, "site", r, r, "nil") :- shared_store_op(r, f, "get", _, _, _, _).
+shared_absence_value(f, "call", site, r, v) :-
+  shared_absence_return(g, r, v), shared_claim.carries(f, "call", g, r, _, _, _, _),
+  call_site(site, f, m, n, a), g = cat(m, ":", n, "/", to_string(a)).
+
+.decl shared_absence_return(func: symbol, read: symbol, value: symbol)
+shared_absence_return(f, r, returned) :-
+  shared_absence_value(f, kind, src, r, tested),
+  shared_store_return_choice(f, kind, src, tested, returned).
+shared_absence_return(f, r, value) :-
+  shared_absence_value(f, kind, src, r, value), shared_store_returned_call(f, kind, src).
+
+// CheckThenAct's summaries are function-level. For a guard, translate the read's
+// identities using the actual tested invocation, not a different call of the same
+// accessor. Local value identities distinguish even computed caller arguments.
+.decl shared_store_site_lift(site: symbol, source: symbol, value: symbol, lifted_source: symbol, lifted_value: symbol)
+shared_store_site_lift(site, "literal", v, "literal", v) :-
+  call_site(site, _, m, n, a), g = cat(m, ":", n, "/", to_string(a)),
+  shared_claim.needs(g, "literal", v).
+shared_store_site_lift(site, "param", to_string(p), source, value) :-
+  shared_store_argument(site, _, _, p, "", source, value), source != "dynamic".
+shared_store_site_lift(site, "param", to_string(p), mapped, value) :-
+  shared_store_argument(site, _, _, p, t, source, value), t != "", source != "dynamic",
+  mapped_store_source(t, source, mapped).
+shared_store_site_lift(site, mapped, to_string(p), mapped2, value) :-
+  mapped_store_source(t, "param", mapped),
+  shared_store_argument(site, _, _, p, "", source, value), source != "dynamic",
+  mapped_store_source(t, source, mapped2).
+shared_store_site_lift(site, mapped, v, mapped, v) :-
+  call_site(site, _, m, n, a), g = cat(m, ":", n, "/", to_string(a)),
+  shared_claim.needs(g, mapped, v), mapped_store_source(_, "literal", mapped).
+shared_store_site_lift(site, source, to_string(p), source, value) :-
+  liftable(source), source != "param",
+  shared_store_argument(site, _, _, p, "", "param", value).
+shared_store_site_lift(site, mapped, to_string(p), mapped, value) :-
+  mapped_store_source(_, source, mapped), liftable(source), source != "param",
+  shared_store_argument(site, _, _, p, "", "param", value).
+
+shared_store_site_lift(site, element, to_string(p), projected, v) :-
+  shared_store_argument(site, _, _, p, "", source, v),
+  projected_store_source(element, source, projected).
+shared_store_site_lift(site, mapped, to_string(p), mapped2, v) :-
+  mapped_store_source(t, element, mapped),
+  shared_store_argument(site, _, _, p, "", source, v),
+  projected_store_source(element, source, projected),
+  mapped_store_source(t, projected, mapped2).
+
+.decl shared_checked_row(func: symbol, kind: symbol, source: symbol, read: symbol, ss: symbol, store: symbol, ks: symbol, key: symbol)
+shared_checked_row(f, "site", r, r, ss, s, ks, k) :- shared_store_op(r, f, "get", ss, s, ks, k).
+shared_checked_row(f, "call", site, r, ss2, s2, ks2, k2) :-
+  call_site(site, f, m, n, a), g = cat(m, ":", n, "/", to_string(a)),
+  shared_claim.returns_check(g, r, ss, s, ks, k),
+  shared_store_site_lift(site, ss, s, ss2, s2),
+  shared_store_site_lift(site, ks, k, ks2, k2).
+
+.decl shared_absent_mark(func: symbol, read: symbol, write: symbol, anchor: symbol)
+shared_absent_mark(f, r, w, w) :-
+  shared_claim.meets(f, r, w, ss, s, ks, k),
+  shared_absence_value(f, kind, src, r, value),
+  shared_checked_row(f, kind, src, r, ss, s, ks, k),
+  shared_store_gate(w, f, kind, src, value).
+shared_absent_mark(f, r, w, site) :-
+  shared_claim.meets(f, r, w, ss, s, ks, k),
+  shared_absence_value(f, kind, src, r, value),
+  shared_checked_row(f, kind, src, r, ss, s, ks, k),
+  shared_store_gate(site, f, kind, src, value),
+  call_site(site, f, m, n, a), g = cat(m, ":", n, "/", to_string(a)),
+  shared_claim.acts_if(g, w, _, _, _, _, _, _).
+
+// The lock applies to exactly this closure's store and key. Isolation of another
+// key, or an unrelated closure passed beside the real callback, proves nothing.
+.decl shared_claim_locked(func: symbol, read: symbol, write: symbol)
+shared_claim_locked(f, r, w) :-
+  shared_claim.meets(f, r, w, ss, s, ks, k), shared_store_lock(f, ss, s, ks, k).
+
+.init shared_claim_values = PairCarries
+// This consumer only asks whether the verdict returns the cached value; it has
+// no fresh-fill sources. Define that component input as empty explicitly.
+shared_claim_values.fresh("", "") :- false.
+shared_claim_values.pair(f, r, w) :- shared_claim.meets(f, r, w, _, _, _, _).
+shared_claim_values.read_in(r, f) :- shared_store_op(r, f, "get", _, _, _, _).
+shared_claim_values.write_in(w, f) :- shared_store_op(w, f, "put", _, _, _, _).
+
+.decl shared_claim_verdict(meet: symbol, func: symbol, read: symbol)
+shared_claim_verdict(f, f, r) :-
+  shared_claim.meets(f, r, _, _, _, _, _),
+  shared_claim.carries(f, kind, src, r, _, _, _, _),
+  returns_depends(f, kind, src), !shared_claim_values.answers(f, r).
+// A wrapper can return read-derived error details on failure while returning an
+// explicit :ok on absence. Those error paths do not turn the successful claim
+// into a cached-data return. Require that exact success status at the mark.
+shared_claim_verdict(f, f, r) :-
+  shared_absent_mark(f, r, _, anchor),
+  shared_absence_value(f, kind, src, r, ":ok"),
+  shared_store_gate(anchor, f, kind, src, ":ok"),
+  shared_claim.carries(f, dependency_kind, dependency_source, r, _, _, _, _),
+  returns_depends(f, dependency_kind, dependency_source).
+shared_claim_verdict(f, g, r) :-
+  shared_claim_verdict(f, h, r), returns_depends(g, "call", h),
+  shared_claim.carries(g, "call", h, r, _, _, _, _).
+shared_claim_verdict(f, g, r) :-
+  shared_claim_verdict(f, h, r), shared_store_callback(g, h).
+
+.decl shared_claim_escapes(func: symbol, read: symbol)
+shared_claim_escapes(f, r) :-
+  shared_claim_verdict(f, g, r), api_export(g), !callee_returns(g, "constant").
+shared_claim_escapes(f, r) :- shared_claim_verdict(f, g, r), call_decided(_, _, "call", g).
+
+runs.seed(f) :- shared_claim.meets(f, _, _, _, _, _, _).
+
+.decl shared_claim_concurrent(func: symbol)
+shared_claim_concurrent(f) :- runs.outside_reaches(f).
+shared_claim_concurrent(f) :- runs.second_process(f).
+
+.decl shared_store_claim(mod: symbol, func: symbol, store: symbol, key: symbol, read: symbol, write: symbol)
+.output shared_store_claim
+shared_store_claim(m, f, s, k, r, anchor) :-
+  shared_claim.meets(f, r, w, _, s, _, k),
+  shared_claim_escapes(f, r),
+  shared_absent_mark(f, r, w, anchor),
+  shared_claim_concurrent(f),
+  !shared_claim_locked(f, r, w),
+  function_def(f, m, _, _, _).

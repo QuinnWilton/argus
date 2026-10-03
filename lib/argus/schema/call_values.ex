@@ -44,6 +44,22 @@ defmodule Argus.Schema.CallValues do
         """
       },
       %{
+        name: :call_arg_param,
+        layer: 2,
+        fields: [
+          {:id, :symbol, "call instruction ID"},
+          {:func, :symbol, "calling function ID"},
+          {:arg_pos, :number, "zero-based call argument position"},
+          {:param_pos, :number, "caller parameter from which this argument is derived"}
+        ],
+        doc: """
+        Parameter provenance at one concrete call site, with the same data-flow \
+        semantics as call_arg_derived. Distinguishes multiple calls to the same \
+        callee, so safety at one cannot be applied to another. Includes every \
+        argument position of direct local and remote calls.
+        """
+      },
+      %{
         name: :call_arg_field,
         layer: 2,
         fields: [

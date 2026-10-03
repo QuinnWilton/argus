@@ -15,11 +15,11 @@ it and the limits to consider when reviewing it.
 | [Mailbox](analyses/mailbox.md) | Unhandled messages, missing replies and repeated acquisitions. |
 | [Failure handling](analyses/failure.md) | Lost errors, unchecked results and dropped resources. |
 | [Structure](analyses/structure.md) | Child specs and conflicting registrations. |
-| [Races](analyses/races.md) | Harmful interleavings on names, ETS rows and Mnesia records. |
+| [Races](analyses/races.md) | Harmful interleavings on names, ETS rows, Mnesia records and shared-cache claims. |
 | [State machines](analyses/state-machine.md) | Unreachable states and states with no exit. |
 | [ETS](analyses/ets.md) | Table ownership, restart windows and access patterns. |
 | [Effects](analyses/effects.md) | Purity contracts and effects that transactions cannot undo. |
-| [Unsafe input](analyses/unsafe-input.md) | Resource exhaustion and code execution reachable from external input. |
+| [Unsafe input](analyses/unsafe-input.md) | Resource exhaustion, code/SQL/HTML injection, upload path traversal and unenforced cryptographic verification. |
 | [Exposure](analyses/exposure.md) | Inspect-visible secrets and TLS verification settings. |
 | [Coverage](analyses/coverage.md) | Facts the analysis could not recover; opt-in and informational. |
 

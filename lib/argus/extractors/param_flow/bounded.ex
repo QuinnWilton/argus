@@ -40,8 +40,14 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
   narrow: at most 1,024 values, a thousandth of the default atom
   table, since `n in 1..100_000` is bounded only in name. A pure
   conversion of a bounded value (`Integer.to_string/1`,
-  `String.Chars.to_string/1`, ...) is bounded too: the image of a finite
+  `String.Chars.to_string/1` on builtin inputs, ...) is bounded too: the image of a finite
   set is finite, so `:"phrase_\#{n}"` makes one of eight atoms.
+
+  A lookup in a literal table (`Enum.at/2,3`, `Enum.fetch!/2`, or
+  `:lists.nth/2`) also has a finite result vocabulary. `Enum.at` includes
+  its default in the bound; a dynamic fallback or runtime-supplied table
+  remains unbounded. Finite table members stay finite through atom-name
+  conversion instead of becoming the weaker existing-atom bound.
 
   ## How many
 
@@ -56,6 +62,13 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
   anything else as the sum of the two counts, unless both ways carry the
   same description: the same values, as a loop's back edge carries what
   its entry did.
+
+  When this join loses correlations, atom sinks get a bounded fallback
+  that keeps guard alternatives separate. A tokenizer admitting a few
+  three-character operators need not admit every combination of their
+  characters. The fallback uses the same transfers, collapses excess
+  alternatives to their conservative join, and proves nothing if its
+  fixed instruction-step budget is exhausted.
 
   ## Atoms made of atoms
 
@@ -83,6 +96,7 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
 
   alias Argus.Cfg.Function, as: CfgFunction
   alias Argus.Extractor.Helpers
+  alias Argus.Extractors.SecurityValues.Binary
   alias Argus.Instr
 
   @typedoc """
@@ -105,6 +119,9 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
           | :atom
           | {:many, pos_integer(), non_neg_integer()}
 
+  @type bounds :: %{reg() => bound()}
+  @type return_bounds :: %{mfa() => bound()}
+
   @typep reg :: {:x | :y, non_neg_integer()}
 
   # What the tests on a path have said of an integer: whether it is one,
@@ -114,20 +131,32 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
   @typedoc false
   @type state :: %{
           bounded: %{reg() => bound()},
+          binaries: MapSet.t(reg()),
           lists: %{reg() => bound()},
           groups: [[reg()]],
           pending: %{reg() => {[reg()], bound()}},
-          ranges: %{reg() => range()}
+          ranges: %{reg() => range()},
+          returns: %{tuple() => bound()}
         }
 
   # The most values a bound admits: a thousandth of the default atom
   # table, for an integer range and for a product of bounded pieces alike.
   @range_limit 1024
 
+  # Exact alternatives retain list shape as well as cardinality. Limit the
+  # total retained list cells too, including nested heads, so a CFG cycle
+  # cannot keep growing a small set of increasingly large literal lists.
+  @literal_cell_limit 4096
+
+  # Preserve a few alternatives when joining their independent character
+  # domains would invent combinations the guards never allow. Exhaustion
+  # loses a proof, never a path.
+  @partition_limit 32
+  @partition_steps 50_000
+
   # Conversions whose result is a function of their arguments alone: a
   # bounded argument gives a bounded result.
   @conversions MapSet.new([
-                 {String.Chars, :to_string, 1},
                  {Integer, :to_string, 1},
                  {Integer, :to_string, 2},
                  {Integer, :to_charlist, 1},
@@ -143,6 +172,8 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
                  {:lists, :append, 2},
                  {:lists, :concat, 1},
                  {:lists, :flatten, 1},
+                 {:lists, :reverse, 1},
+                 {:lists, :reverse, 2},
                  {List, :to_string, 1},
                  {String, :upcase, 1},
                  {String, :downcase, 1},
@@ -175,10 +206,169 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
   %{reg => bound}}`, the bounded registers there. An index the analysis
   does not reach (an unreachable block) maps to no bound.
   """
-  @spec at(CfgFunction.t(), [tuple()], non_neg_integer(), [non_neg_integer()]) ::
-          %{non_neg_integer() => %{reg() => bound()}}
-  def at(%CfgFunction{} = fun, instrs, arity, idxs) do
-    states_at(fun, instrs, arity, idxs, & &1.bounded)
+  @spec at(CfgFunction.t(), [Instr.instr()], arity(), [non_neg_integer()]) ::
+          %{non_neg_integer() => bounds()}
+  @spec at(CfgFunction.t(), [Instr.instr()], arity(), [non_neg_integer()], bounds()) ::
+          %{non_neg_integer() => bounds()}
+  @spec at(
+          CfgFunction.t(),
+          [Instr.instr()],
+          arity(),
+          [non_neg_integer()],
+          bounds(),
+          return_bounds()
+        ) :: %{non_neg_integer() => bounds()}
+  def at(%CfgFunction{} = fun, instrs, arity, idxs, entry \\ %{}, returns \\ %{}) do
+    states_at(fun, instrs, arity, idxs, & &1.bounded, entry, returns)
+  end
+
+  @doc false
+  @spec common_entries(nonempty_list(bounds())) :: bounds()
+  def common_entries([head | tail]), do: Enum.reduce(tail, head, &meet_bounds/2)
+
+  @doc """
+  A bounded fallback for sinks whose independently joined registers lose
+  correlations between guard alternatives. It uses the same transfers as
+  `at/4`, retaining at most 32 incoming states per block before joining all
+  of them. Only blocks that can reach the requested sink are considered.
+  A fixed instruction-step budget returns no proof if exhausted.
+  """
+  @spec correlated_at(CfgFunction.t(), [Instr.instr()], arity(), [non_neg_integer()]) ::
+          %{non_neg_integer() => bounds()}
+  @spec correlated_at(CfgFunction.t(), [Instr.instr()], arity(), [non_neg_integer()], bounds()) ::
+          %{non_neg_integer() => bounds()}
+  @spec correlated_at(
+          CfgFunction.t(),
+          [Instr.instr()],
+          arity(),
+          [non_neg_integer()],
+          bounds(),
+          return_bounds()
+        ) :: %{non_neg_integer() => bounds()}
+  def correlated_at(fun, instrs, arity, idxs, entry \\ %{}, returns \\ %{}) do
+    tuple = List.to_tuple(instrs)
+
+    Map.new(idxs, fn idx ->
+      block = CfgFunction.block_at(fun, idx)
+      allowed = ancestors([block.id], fun.blocks, %{})
+      ins = %{fun.entry => {false, [entry_state(arity, entry, returns)]}}
+
+      bounds =
+        case partitioned([fun.entry], ins, fun, tuple, allowed, @partition_steps) do
+          {:ok, ins} -> partition_bounds(Map.get(ins, block.id), block.range, idx, tuple)
+          :exhausted -> %{}
+        end
+
+      {idx, bounds}
+    end)
+  end
+
+  defp ancestors([], _blocks, seen), do: seen
+
+  defp ancestors([id | rest], blocks, seen) do
+    if Map.has_key?(seen, id) do
+      ancestors(rest, blocks, seen)
+    else
+      preds = Enum.map(Map.fetch!(blocks, id).preds, &elem(&1, 0))
+      ancestors(preds ++ rest, blocks, Map.put(seen, id, true))
+    end
+  end
+
+  defp partitioned([], ins, _fun, _tuple, _allowed, _budget), do: {:ok, ins}
+  defp partitioned(_queue, _ins, _fun, _tuple, _allowed, budget) when budget < 0, do: :exhausted
+
+  defp partitioned([id | rest], ins, fun, tuple, allowed, budget) do
+    %{range: {first, last}} = block = Map.fetch!(fun.blocks, id)
+    {_collapsed, states} = Map.fetch!(ins, id)
+    budget = budget - (last - first + 1) * length(states)
+
+    if budget < 0 do
+      :exhausted
+    else
+      outputs =
+        Enum.flat_map(states, fn state ->
+          state = Enum.reduce(first..(last - 1)//1, state, &step(elem(tuple, &1), &2))
+          instr = elem(tuple, last)
+          block = %{block | succs: Enum.filter(block.succs, &possible_edge?(instr, &1, state))}
+          out_states(block, instr, state, fun)
+        end)
+
+      {ins, changed} =
+        outputs
+        |> Enum.filter(fn {succ, _state} -> Map.has_key?(allowed, succ) end)
+        |> Enum.reduce({ins, []}, fn {succ, out}, {ins, changed} ->
+          old = Map.get(ins, succ)
+          new = add_partition(old, out)
+
+          if old == new,
+            do: {ins, changed},
+            else: {Map.put(ins, succ, new), [succ | changed]}
+        end)
+
+      queue = rest ++ (changed |> Enum.uniq() |> Enum.sort() |> Enum.reject(&(&1 in rest)))
+      partitioned(queue, ins, fun, tuple, allowed, budget)
+    end
+  end
+
+  # A disjunct keeps exact literal information from earlier tests. Reject
+  # an edge only when every value still represented contradicts it.
+  defp possible_edge?({:test, op, _fail, [a, b]}, {_succ, kind}, state)
+       when op in [:is_eq_exact, :is_ne_exact, :is_eq, :is_ne] and
+              kind in [:branch_pass, :branch_fail] do
+    equal? = op in [:is_eq_exact, :is_eq] == (kind == :branch_pass)
+
+    case {literal_options(a, state), literal_options(b, state)} do
+      {{:ok, as}, {:ok, bs}} ->
+        Enum.any?(as, fn a ->
+          Enum.any?(bs, fn b ->
+            # Keep exact-inequality edges conservatively feasible: a bound
+            # establishes a finite vocabulary, not all refinements of the
+            # value's type. Loose equality includes numeric equivalents.
+            if equal?, do: a == b, else: op in [:is_eq_exact, :is_ne_exact] or a != b
+          end)
+        end)
+
+      _ ->
+        true
+    end
+  end
+
+  defp possible_edge?(_instr, _edge, _state), do: true
+
+  defp literal_options(operand, state) do
+    case Map.get(state.bounded, Instr.register(operand)) do
+      {:values, {:set, values}} -> {:ok, values}
+      _ -> literal_option(operand)
+    end
+  end
+
+  defp literal_option({:atom, value}), do: {:ok, [value]}
+  defp literal_option({:integer, value}), do: {:ok, [value]}
+  defp literal_option({:float, value}), do: {:ok, [value]}
+  defp literal_option({:literal, value}), do: {:ok, [value]}
+  defp literal_option(nil), do: {:ok, [[]]}
+  defp literal_option(_operand), do: :unknown
+
+  defp add_partition(nil, out), do: {false, [out]}
+  defp add_partition({true, [old]}, out), do: {true, [meet(old, out)]}
+
+  defp add_partition({false, old}, out) do
+    states = Enum.sort(Enum.uniq([out | old]))
+
+    if length(states) > @partition_limit,
+      do: {true, [Enum.reduce(tl(states), hd(states), &meet/2)]},
+      else: {false, states}
+  end
+
+  defp partition_bounds(nil, _range, _idx, _tuple), do: %{}
+
+  defp partition_bounds({_collapsed, states}, {first, _last}, idx, tuple) do
+    [head | tail] =
+      Enum.map(states, fn state ->
+        Enum.reduce(first..(idx - 1)//1, state, &step(elem(tuple, &1), &2)).bounded
+      end)
+
+    Enum.reduce(tail, head, &meet_bounds/2)
   end
 
   @doc """
@@ -189,14 +379,14 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
   @spec literal_lists(CfgFunction.t(), [tuple()], non_neg_integer(), [non_neg_integer()]) ::
           %{non_neg_integer() => %{reg() => bound()}}
   def literal_lists(%CfgFunction{} = fun, instrs, arity, idxs) do
-    states_at(fun, instrs, arity, idxs, & &1.lists)
+    states_at(fun, instrs, arity, idxs, & &1.lists, %{}, %{})
   end
 
-  defp states_at(_fun, _instrs, _arity, [], _pick), do: %{}
+  defp states_at(_fun, _instrs, _arity, [], _pick, _entry, _returns), do: %{}
 
-  defp states_at(fun, instrs, arity, idxs, pick) do
+  defp states_at(fun, instrs, arity, idxs, pick, entry, returns) do
     tuple = List.to_tuple(instrs)
-    ins = solve(fun, tuple, entry_state(arity))
+    ins = solve(fun, tuple, entry_state(arity, entry, returns))
 
     Map.new(idxs, fn idx ->
       case CfgFunction.block_at(fun, idx) do
@@ -216,13 +406,15 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
     end)
   end
 
-  defp entry_state(arity) do
+  defp entry_state(arity, bounded, returns) do
     %{
-      bounded: %{},
+      bounded: bounded,
+      binaries: MapSet.new(),
       lists: Map.new(0..(arity - 1)//1, &{{:x, &1}, {:param, &1}}),
       groups: [],
       pending: %{},
-      ranges: %{}
+      ranges: %{},
+      returns: returns
     }
   end
 
@@ -276,7 +468,10 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
        when op in [:is_eq_exact, :is_eq, :is_ne_exact, :is_ne] and
               kind in [:branch_pass, :branch_fail] do
     equal? = op in [:is_eq_exact, :is_eq] == (kind == :branch_pass)
-    if equal?, do: narrow_eq(after_instr, a, b), else: narrow_ne(after_instr, a, b)
+
+    if equal?,
+      do: narrow_eq(after_instr, a, b, op in [:is_eq_exact, :is_ne_exact]),
+      else: narrow_ne(after_instr, a, b)
   end
 
   # An order test against an integer literal narrows the register's
@@ -304,6 +499,11 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
     if register?(reg),
       do: bound(after_instr, holders(after_instr, reg), {:atoms, :atom}),
       else: after_instr
+  end
+
+  defp edge_state({:test, :is_binary, _fail, [a]}, :branch_pass, _succ, _state, after_instr, _fun) do
+    binaries = Enum.reduce(holders(after_instr, a), after_instr.binaries, &MapSet.put(&2, &1))
+    %{after_instr | binaries: binaries}
   end
 
   # A test that fails writes nothing (a bs_start_match's context only
@@ -366,6 +566,7 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
     state = %{
       state
       | bounded: carry_map(instr, state.bounded),
+        binaries: Binary.step(instr, state.binaries),
         lists: carry_map(instr, state.lists),
         groups: groups,
         pending: carry_pending(instr, state.pending),
@@ -434,7 +635,54 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
   # A value built only of bounded values and literals — `"prefix_" <>
   # tab`, a tuple of two — is one of a bounded set too. Not a call's
   # result, which may be anything, nor a copy's, which carry handles.
-  defp put_made_of_bounded(state, instr, before) do
+  defp put_made_of_bounded(state, {:put_list, head, tail, dst} = instr, before) do
+    with {:ok, heads} <- literal_options(head, before),
+         {:ok, tails} <- literal_options(tail, before),
+         true <- length(heads) * length(tails) <= @range_limit,
+         true <- list_expansion_fits?(heads, tails) do
+      values = for head <- heads, tail <- tails, do: [head | tail]
+      bound = {:values, {:set, exact_values(values)}}
+      %{state | bounded: Map.put(state.bounded, Instr.register(dst), bound)}
+    else
+      _ -> put_combined(state, instr, before)
+    end
+  end
+
+  defp put_made_of_bounded(state, instr, before), do: put_combined(state, instr, before)
+
+  defp list_expansion_fits?(heads, tails) do
+    with head_cells when is_integer(head_cells) <- list_cells_in(heads),
+         tail_cells when is_integer(tail_cells) <- list_cells_in(tails) do
+      length(heads) * length(tails) + head_cells * length(tails) +
+        tail_cells * length(heads) <= @literal_cell_limit
+    else
+      _ -> false
+    end
+  end
+
+  defp list_cells_in(values) do
+    Enum.reduce_while(values, 0, fn value, cells ->
+      case list_cells(value, @literal_cell_limit - cells) do
+        remaining when is_integer(remaining) ->
+          {:cont, @literal_cell_limit - remaining}
+
+        :exhausted ->
+          {:halt, :exhausted}
+      end
+    end)
+  end
+
+  defp list_cells([head | tail], remaining) when remaining > 0 do
+    case list_cells(head, remaining - 1) do
+      remaining when is_integer(remaining) -> list_cells(tail, remaining)
+      :exhausted -> :exhausted
+    end
+  end
+
+  defp list_cells([_head | _tail], _remaining), do: :exhausted
+  defp list_cells(_other, remaining), do: remaining
+
+  defp put_combined(state, instr, before) do
     uses = Enum.filter(Instr.uses(instr), &register?/1)
     defs = Instr.defs(instr)
 
@@ -472,8 +720,8 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
   # The values of either way in: literals as a set, integers as the range
   # that holds both, anything else as the sum of the counts. The tag of a
   # sum is the pair's, whichever way round it was met.
+  defp join({:set, a}, {:set, b}), do: {:set, exact_values(a ++ b)}
   defp join(same, same), do: same
-  defp join({:set, a}, {:set, b}), do: {:set, :lists.umerge(a, b)}
   defp join({:range, lo1, hi1}, {:range, lo2, hi2}), do: {:range, min(lo1, lo2), max(hi1, hi2)}
 
   defp join({:set, values} = set, {:range, lo, hi} = range) do
@@ -493,16 +741,101 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
   # arguments: an atom's name whatever the argument, or a pure conversion
   # of bounded arguments.
   defp conversion(instr, state) do
-    with {:ok, mod, fun, arity} <- Helpers.match_remote_call(instr) do
+    target =
+      case Helpers.match_remote_call(instr) do
+        :none -> Helpers.match_local_call(instr)
+        remote -> remote
+      end
+
+    with {:ok, mod, fun, arity} <- target do
       cond do
+        Map.has_key?(state.returns, {mod, fun, arity}) ->
+          Map.fetch!(state.returns, {mod, fun, arity})
+
+        {mod, fun, arity} in [
+          {Enum, :at, 2},
+          {Enum, :at, 3},
+          {Enum, :fetch!, 2},
+          {:lists, :nth, 2}
+        ] ->
+          table_lookup(state, mod, fun, arity)
+
+        {mod, fun, arity} == {String.Chars, :to_string, 1} ->
+          stringify_builtin(state, instr)
+
+        {mod, fun, arity} == {Enum, :reverse, 1} ->
+          reverse_literal_lists(state, instr)
+
         MapSet.member?(@atom_names, {mod, fun, arity}) ->
-          {:atoms, :atom}
+          # Retain an explicitly finite atom table through atom_to_binary.
+          # The general existing-atom bound is weaker and may be invalidated
+          # when request data chooses from atoms created by previous calls.
+          combine([Map.get(state.bounded, {:x, 0})], instr) || {:atoms, :atom}
 
         MapSet.member?(@conversions, {mod, fun, arity}) ->
           combine(for(i <- 0..(arity - 1)//1, do: Map.get(state.bounded, {:x, i})), instr)
 
         true ->
           nil
+      end
+    else
+      _ -> nil
+    end
+  end
+
+  # Protocol implementations may consult state outside their input. Only
+  # builtin inputs establish that to_string is a pure finite conversion.
+  # The original atom bound arises from an atom guard or an atom-name BIF;
+  # transformations of it have a different descriptor and stay unknown here.
+  defp stringify_builtin(state, instr) do
+    bound = Map.get(state.bounded, {:x, 0})
+
+    pure? =
+      case bound do
+        {:atoms, :atom} -> true
+        {:values, {:range, _lo, _hi}} -> true
+        {:values, {:set, values}} -> Enum.all?(values, &builtin_string_value?/1)
+        _ -> false
+      end
+
+    if pure? or MapSet.member?(state.binaries, {:x, 0}), do: combine([bound], instr)
+  end
+
+  defp builtin_string_value?(value)
+       when is_atom(value) or is_number(value) or is_binary(value),
+       do: true
+
+  defp builtin_string_value?(value), do: proper_list?(value)
+
+  # Enum dispatches arbitrary values through a user-defined Enumerable
+  # implementation, whose output need not depend only on its argument. Its
+  # proper-list branch is pure; retain that proof only for complete list
+  # alternatives, including lists built from finite character selections.
+  defp reverse_literal_lists(state, instr) do
+    case Map.get(state.bounded, {:x, 0}) do
+      {:values, {:set, values}} = bound ->
+        if Enum.all?(values, &proper_list?/1), do: combine([bound], instr)
+
+      _ ->
+        nil
+    end
+  end
+
+  defp proper_list?([]), do: true
+  defp proper_list?([_head | tail]), do: proper_list?(tail)
+  defp proper_list?(_other), do: false
+
+  # A fixed table bounds the selected data even when the index is arbitrary.
+  # Enum.at can also return its default; an unknown default never proves safety.
+  # Lists.nth/fetch! raise outside the table and therefore have no extra result.
+  defp table_lookup(state, mod, fun, arity) do
+    list_pos = if mod == :lists, do: 1, else: 0
+
+    with {:values, _} = table <- Map.get(state.lists, {:x, list_pos}) do
+      case {fun, arity} do
+        {:at, 2} -> weaker(table, {:values, {:set, [nil]}})
+        {:at, 3} -> weaker(table, Map.get(state.bounded, {:x, 2}))
+        _ -> table
       end
     else
       _ -> nil
@@ -528,7 +861,7 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
   # the list has (an improper literal counts its cells). The program wrote
   # every one, so a long list is still a bound; the limit is on what
   # values made of it multiply to.
-  defp list_bound(list), do: {:values, {:set, list |> cells([]) |> Enum.sort() |> Enum.dedup()}}
+  defp list_bound(list), do: {:values, {:set, list |> cells([]) |> exact_values()}}
 
   defp cells([value | rest], acc), do: cells(rest, [value | acc])
   defp cells([], acc), do: acc
@@ -559,14 +892,12 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
 
   # `x == lit` as a value: the boolean a later test branches on.
   defp put_comparison(state, {:bif, op, _fail, [a, b], dst}) when op in [:"=:=", :==] do
-    case register_and_literal(a, b) do
-      {:ok, reg} ->
-        holders = holders(state, reg)
-        bound = {:values, {:set, [element_of(a, b)]}}
-        %{state | pending: Map.put(state.pending, Instr.register(dst), {holders, bound})}
-
-      :error ->
-        state
+    with {:ok, reg} <- register_and_literal(a, b),
+         {:values, _} = bound <- equality_bound(element_of(a, b), op == :"=:=") do
+      holders = holders(state, reg)
+      %{state | pending: Map.put(state.pending, Instr.register(dst), {holders, bound})}
+    else
+      _ -> state
     end
   end
 
@@ -574,18 +905,50 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
 
   # ── Narrowing on an edge ─────────────────────────────────────────────
 
-  # `a` equals `b` on this edge: a register equal to a literal holds one
-  # value, and a membership result equal to `true` bounds its element.
-  defp narrow_eq(state, a, b) do
-    case register_and_literal(a, b) do
-      {:ok, reg} ->
-        state
-        |> bound(holders(state, reg), {:values, {:set, [element_of(a, b)]}})
-        |> settle(reg, literal_of(a, b) == true)
-
-      :error ->
-        state
+  # Equality with a literal establishes its complete equivalence class.
+  # Loose numeric equality includes integer and floating representations;
+  # composite numeric classes stay unknown instead of undercounting them.
+  defp narrow_eq(state, a, b, exact? \\ true) do
+    with {:ok, reg} <- register_and_literal(a, b),
+         {:values, _} = value_bound <- equality_bound(element_of(a, b), exact?) do
+      state
+      |> bound(holders(state, reg), value_bound)
+      |> settle(reg, literal_of(a, b) == true)
+    else
+      _ -> state
     end
+  end
+
+  defp equality_bound(value, true), do: {:values, {:set, [value]}}
+
+  defp equality_bound(value, false) when is_number(value),
+    do: {:values, {:set, exact_values(numeric_equivalents(value))}}
+
+  defp equality_bound(value, false) do
+    unless Argus.Extractor.Terms.value_contains?(value, &is_number/1),
+      do: {:values, {:set, [value]}}
+  end
+
+  defp numeric_equivalents(value) when value == 0, do: [0, 0.0, -0.0]
+
+  defp numeric_equivalents(value) when is_float(value) do
+    integer = trunc(value)
+    if value == integer, do: [integer, value], else: [value]
+  end
+
+  defp numeric_equivalents(value) when is_integer(value) do
+    float = :erlang.float(value)
+    if value == float, do: [value, float], else: [value]
+  rescue
+    ArgumentError -> [value]
+  end
+
+  # Erlang's sorted-set merge identifies 1 and 1.0; conversions distinguish
+  # them. A deterministic binary tie-break also keeps either join order equal.
+  defp exact_values(values) do
+    values
+    |> Enum.uniq()
+    |> Enum.sort_by(fn value -> {value, :erlang.term_to_binary(value, [:deterministic])} end)
   end
 
   # Several arms of a select reach one block: the register is one of the
@@ -620,7 +983,7 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
   end
 
   defp arm_values(values),
-    do: {:set, values |> Enum.map(&element/1) |> Enum.sort() |> Enum.dedup()}
+    do: {:set, values |> Enum.map(&element/1) |> exact_values()}
 
   defp settle(state, reg, true) do
     case Map.fetch(state.pending, reg) do
@@ -734,6 +1097,7 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
   defp literal_value({:atom, a}), do: a
   defp literal_value({:literal, v}), do: v
   defp literal_value({:integer, i}), do: i
+  defp literal_value({:float, f}), do: f
   defp literal_value(nil), do: []
   defp literal_value(_operand), do: :unknown
 
@@ -748,10 +1112,12 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
   defp meet(a, b) do
     %{
       bounded: meet_bounds(a.bounded, b.bounded),
+      binaries: MapSet.intersection(a.binaries, b.binaries),
       lists: meet_bounds(a.lists, b.lists),
       groups: meet_groups(a.groups, b.groups),
       pending: meet_pending(a.pending, b.pending),
-      ranges: meet_ranges(a.ranges, b.ranges)
+      ranges: meet_ranges(a.ranges, b.ranges),
+      returns: a.returns
     }
   end
 

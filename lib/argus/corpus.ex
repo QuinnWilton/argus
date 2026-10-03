@@ -83,6 +83,7 @@ defmodule Argus.Corpus do
           optional(:env) => %{optional(String.t()) => String.t()},
           optional(:submodules) => boolean(),
           optional(:module) => String.t(),
+          optional(:function) => {atom(), non_neg_integer()},
           required(:finding) => {atom(), String.t()}
         }
 
@@ -449,7 +450,9 @@ defmodule Argus.Corpus do
 
   @doc """
   Whether the pair's finding is among the results: its analysis and title,
-  and — when the pair names a `module:` — anchored in that module. The
+  and — when the pair names a `module:` — anchored in that module. An optional
+  `function: {name, arity}` selects the affected function when another function
+  in the same module legitimately retains the finding. The
   module matters on the fix side: the same title can be true of another
   module in the tree (db_connection has two foreign starters; the fix
   removed one).
@@ -461,9 +464,14 @@ defmodule Argus.Corpus do
 
     Enum.any?(findings, fn f ->
       f.analysis == analysis and f.title == title and
-        (module == nil or inspect(f.module) == module)
+        (module == nil or inspect(f.module) == module) and
+        in_function?(f, Map.get(pair, :function))
     end)
   end
+
+  defp in_function?(_finding, nil), do: true
+  defp in_function?(%{mfa: {_, name, arity}}, {name, arity}), do: true
+  defp in_function?(_finding, _function), do: false
 
   # ── Helpers ──────────────────────────────────────────────────────────
 

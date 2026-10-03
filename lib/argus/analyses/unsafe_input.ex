@@ -2,11 +2,10 @@ defmodule Argus.Analyses.UnsafeInput do
   @moduledoc """
   Attacker-shaped data reaching a sink.
 
-  Four sinks matter on the BEAM: atom creation (the atom table is
-  fixed-size and never collected), deserialization (`binary_to_term`
-  materializes funs, ports and references), one-shot decompression (the
-  whole output of an input with no bound on its size) and code
-  execution. Each is reported once, with how exposed it is:
+  Tracks atom creation, deserialization, decompression and code execution,
+  with separate rules for compressed ETF allocation, cryptographic verdicts,
+  runtime templates, SQL construction, raw HTML and upload filesystem paths.
+  The general sink findings describe how exposed each operation is:
 
   - `sink_reachable(id, func, api, sink, entry, kind, proximity, source,
     permille, safety)` — the
@@ -41,8 +40,8 @@ defmodule Argus.Analyses.UnsafeInput do
   transitive hit sourced its data from storage rather than the request.
   A proven flow is an error at any distance; a path that the flow
   summaries could not confirm keeps the proximity it had, since the
-  summaries do not follow every shape (a local helper's return, an
-  element handed to a closure) and their silence is not evidence.
+  summaries do not follow every shape (an unknown external helper's return
+  or an unresolved callback) and their silence is not evidence.
   A sink no request reaches keeps the severities the sinks carried when
   they were reported by export reachability alone: deserialization is an
   error, code execution an error, atom creation and decompression a
@@ -51,6 +50,12 @@ defmodule Argus.Analyses.UnsafeInput do
 
   @behaviour Argus.Analysis
 
+  alias Argus.Analyses.UnsafeInput.CodeInjection
+  alias Argus.Analyses.UnsafeInput.EtfAllocation
+  alias Argus.Analyses.UnsafeInput.HtmlInjection
+  alias Argus.Analyses.UnsafeInput.PathTraversal
+  alias Argus.Analyses.UnsafeInput.SqlInjection
+  alias Argus.Analyses.UnsafeInput.Verification
   alias Argus.Findings
 
   @impl true
@@ -58,9 +63,7 @@ defmodule Argus.Analyses.UnsafeInput do
 
   @impl true
   def description,
-    do:
-      "atom exhaustion, unsafe deserialization, unbounded decompression and code execution " <>
-        "reachable from a request"
+    do: "unsafe input, injection, compressed allocation and unenforced cryptographic verification"
 
   @impl true
   def rules_file, do: "analyses/unsafe_input.dl"
@@ -71,6 +74,14 @@ defmodule Argus.Analyses.UnsafeInput do
       Argus.Extractors.ApiCalls,
       Argus.Extractors.OTP,
       Argus.Extractors.ParamFlow,
+      Argus.Extractors.EtfAllocation,
+      Argus.Extractors.TermValidation,
+      Argus.Extractors.ResultChecks,
+      Argus.Extractors.CodeInjection,
+      Argus.Extractors.SqlInjection,
+      Argus.Extractors.Generated,
+      Argus.Extractors.HtmlInjection,
+      Argus.Extractors.PathTraversal,
       Argus.Extractors.Router,
       Argus.Extractors.Supervision,
       # A start whose caller waits for the child's :DOWN (awaits_child_exit).
@@ -171,7 +182,12 @@ defmodule Argus.Analyses.UnsafeInput do
         doc: "start_child on an uncapped DynamicSupervisor, reachable from a request."
       },
       Argus.Findings.Tooling.relation()
-    ]
+    ] ++
+      EtfAllocation.output_relations() ++
+      Verification.output_relations() ++
+      CodeInjection.output_relations() ++
+      SqlInjection.output_relations() ++
+      HtmlInjection.output_relations() ++ PathTraversal.output_relations()
   end
 
   @atom_help [
@@ -262,9 +278,10 @@ defmodule Argus.Analyses.UnsafeInput do
       severity(proximity),
       "Unbounded atom creation #{reached(proximity)} #{surface(kind)}",
       route(func, atom_api(api), entry, proximity, kind) <>
-        " The atom table is fixed-size and never garbage collected, so every " <>
-        "distinct value an attacker supplies permanently consumes a slot " <>
-        "until the node aborts — killing every process on it.",
+        " The atom table is fixed-size and never garbage collected. If " <>
+        "caller-influenced values reach this conversion, every new atom " <>
+        "permanently consumes a slot until the node aborts, killing every " <>
+        "process on it.",
       [at: Findings.at_instr(id)] ++
         route_opts(proximity, "atom interned from a string here", @atom_help)
     )
@@ -351,6 +368,23 @@ defmodule Argus.Analyses.UnsafeInput do
     )
   end
 
+  def finding(:compressed_etf_from_input, row),
+    do: EtfAllocation.finding(:compressed_etf_from_input, row)
+
+  def finding(:unchecked_crypto_verification, row),
+    do: Verification.finding(:unchecked_crypto_verification, row)
+
+  def finding(:runtime_template_evaluation, row),
+    do: CodeInjection.finding(:runtime_template_evaluation, row)
+
+  def finding(:sql_injection, row), do: SqlInjection.finding(:sql_injection, row)
+
+  def finding(:unescaped_html_from_input, row),
+    do: HtmlInjection.finding(:unescaped_html_from_input, row)
+
+  def finding(:upload_filename_path_traversal, row),
+    do: PathTraversal.finding(:upload_filename_path_traversal, row)
+
   # The endpoint rather than the callback is the question a reader asks
   # next: a path is something they can try. It does NOT say whether the
   # route is authenticated — Phoenix compiles pipe_through into the
@@ -406,29 +440,34 @@ defmodule Argus.Analyses.UnsafeInput do
   # CVE-2020-15150 was RCE through [:safe]), so it downgrades and does
   # not clear — only a term-walking decoder such as
   # Plug.Crypto.non_executable_binary_to_term/2 does.
-  defp deserialization_title("atoms_only"), do: "binary_to_term with [:safe] and no shape check"
+  defp deserialization_title("atoms_only"),
+    do: "binary_to_term with [:safe] may admit executable terms"
+
   defp deserialization_title("dynamic"), do: "binary_to_term with options not known statically"
   defp deserialization_title(_unsafe), do: "binary_to_term without :safe"
 
   defp deserialization_severity("atoms_only"), do: :warning
   defp deserialization_severity(_unsafe_or_dynamic), do: :error
 
-  defp deserialization_how("atoms_only"), do: "with [:safe] and nothing else"
+  defp deserialization_how("atoms_only"), do: "with a literal [:safe] option"
   defp deserialization_how("dynamic"), do: "with options computed at runtime"
   defp deserialization_how(_unsafe), do: "without the :safe option"
 
   defp deserialization_risk("atoms_only") do
     "[:safe] refuses new atoms and references to unloaded modules, which " <>
       "takes atom-table exhaustion off the table. It does not refuse a fun " <>
-      "that references a module already loaded, and the first thing that " <>
-      "enumerates or calls the decoded term runs it — the shape of Paginator's " <>
-      "CVE-2020-15150."
+      "that references a module already loaded. Calling such a value, or " <>
+      "enumerating it through a function-based protocol, can execute it — the " <>
+      "shape of Paginator's CVE-2020-15150. This finding does not establish " <>
+      "that a decoded function reaches an execution site. A recursive validator " <>
+      "may already reject executable terms; no supported complete validation is proven here."
   end
 
   defp deserialization_risk("dynamic") do
     "Whether :safe is among them cannot be seen here. Without it, untrusted " <>
       "bytes intern unbounded atoms and materialize funs, ports and " <>
-      "references; with it, a fun referencing a loaded module still runs."
+      "references. With :safe, executable terms still require validation before use; " <>
+      "validation does not prevent atom creation when :safe is missing."
   end
 
   defp deserialization_risk(_unsafe) do

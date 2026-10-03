@@ -1,0 +1,19 @@
+// Compressed ETF materializes its entire output before safe/non-executable term
+// checks run. Encoded-input size limits do not bound that output. Only a proof
+// excluding the compressed prefix of these same bytes clears this finding.
+.init etf_source = ParamReach
+
+etf_source.seed(func, param, id) :-
+  etf_decode_site(id, func, _),
+  call_arg_param(id, func, 0, param).
+
+.decl etf_has_external_input(id: symbol)
+etf_has_external_input(id) :- etf_source.reaches(func, _, id), outside_api(func).
+
+.decl compressed_etf_from_input(id: symbol, func: symbol, api: symbol)
+.output compressed_etf_from_input
+
+compressed_etf_from_input(id, func, api) :-
+  etf_decode_site(id, func, api),
+  etf_has_external_input(id),
+  !etf_compression_rejected(id, func).

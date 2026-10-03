@@ -46,6 +46,29 @@ For counters and claims, prefer the appropriate atomic ETS operation. For larger
 updates, make ownership or serialization explicit. A lock is useful only if every
 competing path participates.
 
+## Shared-cache replay claims
+
+`shared_store_claim` · **warning**
+
+A ConCache read's absence result controls a separate write of the same cache key and a verdict
+returned to callers. Concurrent callers can observe the same unused credential
+before either records its claim. Use a check-and-mark operation whose losing result
+is handled, or keep the complete decision inside `ConCache.isolated/3` for that
+cache and key. An individual `put` does not make a preceding check atomic.
+
+The rule reuses `CheckThenAct`, returned-value provenance and process concurrency.
+It does not report an unconditional duplicate fill with no escaping decision,
+distinct known keys or stores, or a complete claim owned by one process. Isolation
+is matched to its actual closure and captured cache/key; locking another key does
+not protect the claim. A callback reused outside its isolation is not treated as
+locked. Pure unary leaf helpers preserve normalized key identity.
+Dynamic store dispatch, database revocation transactions, and nested normalization
+helpers remain outside this initial model. Function summaries do not correlate a
+store implementation with an atomic-capability guard: a library retaining a plain
+`put` fallback can still be reported even when a concrete configured store would
+select its atomic implementation. An explicitly retained non-atomic fallback is
+still not protected by that other implementation.
+
 ## Mnesia uniqueness races
 
 `mnesia_check_act` with `kind=unique` · **warning**

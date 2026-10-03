@@ -20,6 +20,18 @@ defmodule Argus.CorpusCheckoutTest do
     assert Corpus.checkout(@pair, :fix) == nil
   end
 
+  test "finding selectors distinguish a corrected function from another affected entry" do
+    pair = Map.merge(@pair, %{module: "Example", function: {:decode, 2}})
+    finding = %{analysis: :exposure, title: "x", module: Example, mfa: {Example, :decode, 2}}
+
+    assert Corpus.present?(%{findings: [finding]}, pair)
+    refute Corpus.present?(%{findings: [%{finding | mfa: {Example, :delegate, 2}}]}, pair)
+    refute Corpus.present?(%{findings: [%{finding | mfa: {Example, :decode, 1}}]}, pair)
+    refute Corpus.present?(%{findings: [%{finding | module: Other}]}, pair)
+    refute Corpus.present?(%{findings: [Map.delete(finding, :mfa)]}, pair)
+    assert Corpus.present?(%{findings: [%{finding | mfa: nil}]}, Map.delete(pair, :function))
+  end
+
   test "the project is the clone unless the pair names a subdir" do
     plain = Corpus.checkout(@pair, :pre)
     assert plain.name == "firezone-0123456"

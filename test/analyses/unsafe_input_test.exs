@@ -123,9 +123,11 @@ defmodule Argus.Analyses.UnsafeInputTest do
       assert unsafe.severity == :error
 
       assert {"atoms_only", safe} = by_func["decode_atoms_only/1"]
-      assert safe.title == "binary_to_term with [:safe] and no shape check"
+      assert safe.title == "binary_to_term with [:safe] may admit executable terms"
       assert safe.severity == :warning
       assert safe.detail =~ "CVE-2020-15150"
+      assert safe.detail =~ "no supported complete validation is proven here"
+      refute safe.detail =~ "with [:safe] and nothing else"
       assert Enum.any?(safe.help, &(&1 =~ "non_executable_binary_to_term"))
     end
 
@@ -146,9 +148,10 @@ defmodule Argus.Analyses.UnsafeInputTest do
       end
 
       safe = UnsafeInput.finding(:sink_reachable, row.("atoms_only"))
-      assert safe.title =~ "with [:safe] and no shape check"
+      assert safe.title =~ "with [:safe] may admit executable terms"
       assert safe.severity == :error
-      assert safe.detail =~ "with [:safe] and nothing else"
+      assert safe.detail =~ "with a literal [:safe] option"
+      assert safe.detail =~ "does not establish that a decoded function reaches an execution site"
 
       dynamic = UnsafeInput.finding(:sink_reachable, row.("dynamic"))
       assert dynamic.title =~ "options not known statically"
@@ -168,7 +171,7 @@ defmodule Argus.Analyses.UnsafeInputTest do
                unsafe.severity == :error
     end
 
-    test "flags eval and shell-out APIs, not a fully-literal System.cmd", ctx do
+    test "flags eval and dynamic commands, leaving literal commands quiet", ctx do
       skip_without_souffle()
 
       funcs =
@@ -180,6 +183,15 @@ defmodule Argus.Analyses.UnsafeInputTest do
       assert Enum.any?(funcs, &String.contains?(&1, "os_cmd"))
       assert Enum.any?(funcs, &String.contains?(&1, "system_cmd"))
       refute Enum.any?(funcs, &String.contains?(&1, "static_system_cmd"))
+
+      for quiet <- [:literal_os_cmd, :literal_os_cmd_options, :literal_shell] do
+        refute Enum.any?(funcs, &String.contains?(&1, ":#{quiet}/"))
+      end
+
+      for dynamic <- [:partial_os_cmd, :nested_os_cmd, :branch_os_cmd, :dynamic_shell] do
+        assert Enum.any?(funcs, &String.contains?(&1, ":#{dynamic}/"))
+      end
+
       # A program PATH finds by a literal name is that program; a shell
       # found or named that way, handed a script, is still code execution.
       refute Enum.any?(funcs, &String.contains?(&1, "found_program"))

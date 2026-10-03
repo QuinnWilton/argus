@@ -104,6 +104,15 @@ defmodule Argus.Pipeline do
   @typed_readers [
     Argus.Extractors.Dependence,
     Argus.Extractors.ParamFlow,
+    Argus.Extractors.SecurityValues,
+    Argus.Extractors.SharedStore,
+    Argus.Extractors.ResultChecks,
+    Argus.Extractors.EtfAllocation,
+    Argus.Extractors.TermValidation,
+    Argus.Extractors.CodeInjection,
+    Argus.Extractors.SqlInjection,
+    Argus.Extractors.HtmlInjection,
+    Argus.Extractors.PathTraversal,
     Argus.Extractors.TermFlow
   ]
 

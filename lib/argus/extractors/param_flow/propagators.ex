@@ -6,9 +6,9 @@ defmodule Argus.Extractors.ParamFlow.Propagators do
   known to hand the argument's data through: a decoder, an accessor, a
   string or collection operation. Everything else — a database read, a
   process call, a size, a boolean — yields a result the extractor treats
-  as fresh, and any real flow through such a callee is the interprocedural
-  rule's business, never this table's. Missing an entry therefore costs a
-  finding, not a false one.
+  as fresh. Same-module helpers and supported callback returns use their
+  actual return summaries in `ParamFlow.Returns`, separately from this
+  table. Missing an entry therefore costs a finding, not a false one.
 
   Callees are spelled as the bytecode spells them: `Kernel.to_string/1`
   is `String.Chars.to_string/1`, `conn.params` outside a pattern is
@@ -68,20 +68,22 @@ defmodule Argus.Extractors.ParamFlow.Propagators do
     {:elixir_erl_pass, [:no_parens_remote], 2, [0]},
     {String, :any, :any, [0]},
     {String, ~w(replace pad_leading pad_trailing)a, :any, [0, 2]},
-    {Enum, ~w(at fetch fetch! map filter reject take drop reverse sort sort_by uniq uniq_by concat
-        flat_map to_list slice split chunk_every with_index group_by frequencies min max
+    {Enum, ~w(at fetch fetch! filter reject take drop reverse sort sort_by uniq uniq_by concat
+        to_list slice split chunk_every with_index group_by frequencies min max
         find)a, :any, [0]},
-    {Enum, ~w(into zip join map_join)a, :any, [0, 1]},
+    {Enum, ~w(zip join)a, :any, [0, 1]},
+    {Enum, [:into], 2, [0, 1]},
+    {Enum, ~w(into map_join)a, 3, [1]},
     {Enum, [:reduce], 2, [0]},
-    {Enum, [:reduce], 3, [0, 1]},
+    {Enum, [:reduce], 3, [1]},
     {List,
      ~w(first last flatten to_string to_charlist wrap delete to_tuple zip keyfind to_existing_atom)a,
      :any, [0]},
     {List, ~w(insert_at replace_at)a, 3, [0, 2]},
     {List, [:update_at], 3, [0]},
-    {Map,
-     ~w(get fetch fetch! keys values to_list new take drop split pop from_struct filter reject
+    {Map, ~w(get fetch fetch! keys values to_list take drop split pop from_struct filter reject
         update!)a, :any, [0]},
+    {Map, [:new], 1, [0]},
     {Map, [:get], 3, [0, 2]},
     {Map, ~w(put put_new)a, 3, [0, 2]},
     {Map, [:merge], :any, [0, 1]},
@@ -104,6 +106,10 @@ defmodule Argus.Extractors.ParamFlow.Propagators do
     {Base, ~w(decode64 decode64! url_decode64 url_decode64! encode64 decode16 decode16!)a, :any,
      [0]},
     {URI, ~w(decode decode_www_form decode_query parse new)a, :any, [0]},
+    # Encoding preserves content provenance; context-specific safety is modeled
+    # separately (HTML text escaping does not make script/URL interpolation safe).
+    {Plug.HTML, [:html_escape], 1, [0]},
+    {Phoenix.HTML, ~w(html_escape safe_to_string raw)a, 1, [0]},
     {Plug.Conn.Query, [:decode], :any, [0]},
     {Plug.Conn, ~w(get_req_header fetch_query_params read_body)a, :any, [0]},
     # The conn fetch_cookies/2 returns carries every cookie the client
@@ -115,7 +121,14 @@ defmodule Argus.Extractors.ParamFlow.Propagators do
     {Plug.Conn.Utils, :any, :any, [0]},
     # `@scope` in an EEx template: the assign's value, read out of the
     # assigns the template is rendered with.
-    {Phoenix.HTML.Engine, [:fetch_assign!], 2, [0]}
+    {Phoenix.HTML.Engine, [:fetch_assign!], 2, [0]},
+    {Phoenix.Component, [:assign], 2, [0, 1]},
+    {Phoenix.Component, [:assign], 3, [0, 2]},
+    {Phoenix.LiveView, [:assign], 2, [0, 1]},
+    {Phoenix.LiveView, [:assign], 3, [0, 2]},
+    # The HEEx comprehension compiler marks the collection consumable before
+    # traversing it; the entries are unchanged (including LiveStream inserts).
+    {Phoenix.LiveView.LiveStream, [:mark_consumable], 1, [0]}
   ]
 
   @doc """

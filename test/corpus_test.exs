@@ -101,11 +101,12 @@ defmodule Argus.CorpusTest do
     end
   end
 
-  defp slim({:ok, %{findings: findings, degraded: degraded}}) do
+  defp slim({:ok, %{findings: findings, degraded: degraded, extraction_errors: errors}}) do
     {:ok,
      %{
        degraded: degraded,
-       findings: Enum.map(findings, &Map.take(&1, [:analysis, :title, :module]))
+       extraction_errors: errors,
+       findings: Enum.map(findings, &Map.take(&1, [:analysis, :title, :module, :mfa]))
      }}
   end
 
@@ -125,6 +126,9 @@ defmodule Argus.CorpusTest do
       :error -> flunk("#{pair.issue} #{side}: #{name} was not analyzed")
     end
   end
+
+  defp in_module(%{module: module, function: {name, arity}}),
+    do: " in #{module}.#{name}/#{arity}"
 
   defp in_module(%{module: module}), do: " in #{module}"
   defp in_module(_pair), do: ""
@@ -153,6 +157,9 @@ defmodule Argus.CorpusTest do
       assert pre.degraded == [],
              "degraded analyses on #{pair.issue} pre: #{inspect(pre.degraded)}"
 
+      assert pre.extraction_errors == [],
+             "extraction errors on #{pair.issue} pre: #{inspect(pre.extraction_errors)}"
+
       assert Corpus.present?(pre, pair),
              "#{pair.issue}: #{analysis} / #{title}#{in_module(pair)} not found on the pre-fix tree; seen:\n" <>
                Enum.map_join(pre.findings, "\n", fn f ->
@@ -164,6 +171,9 @@ defmodule Argus.CorpusTest do
 
         assert fix.degraded == [],
                "degraded analyses on #{pair.issue} fix: #{inspect(fix.degraded)}"
+
+        assert fix.extraction_errors == [],
+               "extraction errors on #{pair.issue} fix: #{inspect(fix.extraction_errors)}"
 
         refute Corpus.present?(fix, pair),
                "#{pair.issue}: #{analysis} / #{title}#{in_module(pair)} still reported on the fix"

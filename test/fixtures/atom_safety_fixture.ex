@@ -27,6 +27,18 @@ defmodule Argus.Test.Fixtures.CodeExecution do
 
   def eval(code), do: Code.eval_string(code)
   def os_cmd(cmd), do: :os.cmd(cmd)
+  def literal_os_cmd, do: :os.cmd(~c"git rev-list --count HEAD")
+  def literal_os_cmd_options(options), do: :os.cmd(~c"git status --porcelain", options)
+  def literal_shell, do: System.shell("printf constant")
+  def partial_os_cmd(command), do: :os.cmd(~c"printf " ++ command)
+  def nested_os_cmd(command), do: :os.cmd([~c"printf ", command])
+  def dynamic_shell(command), do: System.shell(command)
+
+  def branch_os_cmd(command, choose) do
+    selected = if choose, do: ~c"printf constant", else: command
+    :os.cmd(selected)
+  end
+
   def system_cmd(cmd, args), do: System.cmd(cmd, args)
   def static_system_cmd, do: System.cmd("echo", ["hello"])
   def static_command_dynamic_args(args), do: System.cmd("fwup", args)

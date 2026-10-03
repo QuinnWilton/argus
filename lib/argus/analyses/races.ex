@@ -16,6 +16,12 @@ defmodule Argus.Analyses.Races do
     lookup-then-start race, and its release twin,
     lookup-then-unregister. `key_source` says how `func` names the key
     (`literal`, `param`, `field`, `local`, `dynamic` or `any`).
+  - `shared_store_claim(mod, func, store, key, read, write)` — a ConCache
+    lookup's absence result controls a separate mark of the same cache/key,
+    concurrent callers can enter the pair, and the claim verdict escapes.
+    The complete pair is not protected by a matching `ConCache.isolated/3`
+    callback. The reported write is the mark or its immediate calling helper
+    in the meeting function.
   - `ets_check_act(mod, func, name, key, read, write, kind)` — an ETS read
     decides or feeds a plain write of the same key on a public table, a
     rival write can land on the row between the two (the pair itself in a
@@ -103,7 +109,7 @@ defmodule Argus.Analyses.Races do
   def description,
     do:
       "check-then-act races on a process name, an ETS key or a Mnesia record that " <>
-        "another process can write between the check and the act, ETS values " <>
+        "another process can write between the check and the act, non-atomic shared-cache claims, ETS values " <>
         "published before the rows they point to, and ETS rows acted on after another " <>
         "process may have removed them"
 
@@ -114,6 +120,7 @@ defmodule Argus.Analyses.Races do
   def extractors,
     do: [
       Argus.Extractors.ETS,
+      Argus.Extractors.SharedStore,
       Argus.Extractors.Mnesia,
       Argus.Extractors.ProcessRegistry,
       Argus.Extractors.OTP,
@@ -143,6 +150,19 @@ defmodule Argus.Analyses.Races do
   @impl true
   def output_relations do
     [
+      %{
+        name: :shared_store_claim,
+        fields: [
+          {:mod, :symbol, "the meeting function's module"},
+          {:func, :symbol, "the function where the read controls the claim"},
+          {:store, :symbol, "the shared cache identity"},
+          {:key, :symbol, "the claimed key identity"},
+          {:read, :symbol, "the deciding lookup"},
+          {:write, :symbol, "the non-atomic mark"}
+        ],
+        key: [:func, :read, :write],
+        doc: "Concurrent callers can receive a successful claim verdict for one shared-cache key."
+      },
       %{
         name: :registry_race,
         fields: [
@@ -305,6 +325,23 @@ defmodule Argus.Analyses.Races do
           "replace the lookup",
         "if the decision must span both, serialise it through one process — the owner, or " <>
           "`:global.trans/2`"
+      ]
+    )
+  end
+
+  def finding(:shared_store_claim, [mod, func, _store, _key, read, write]) do
+    Findings.new(
+      :warning,
+      "Non-atomic claim of a shared-store key",
+      "#{func} decides a claim from a shared-cache read and records it with a separate write. " <>
+        "Concurrent callers can pass the same check before either writes, and each receives " <>
+        "the successful verdict. A replay marker does not reserve the credential it records.",
+      at: Findings.at_site_in_func(write, func),
+      at_label: "this mark does not settle which caller won",
+      related: [Findings.related("the read deciding the claim", Findings.at_site(read, mod))],
+      help: [
+        "use an atomic insert-if-absent or check-and-mark operation and require its winning result",
+        "or serialize the complete check and mark for this store and key through one owner"
       ]
     )
   end

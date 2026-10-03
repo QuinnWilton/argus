@@ -347,14 +347,26 @@ defmodule Argus.PriorsTest do
       assert Enum.any?(findings, &(&1.severity == :error))
     end
 
-    test "on: each row steps down, says what its value is, and none goes", %{tmp_dir: dir} do
+    test "on: value-source sinks step down, independent allocation findings remain structural", %{
+      tmp_dir: dir
+    } do
       skip_without_souffle()
       off = unreached([])
       on = unreached(values(dir))
       key = &Enum.map(&1, fn f -> {f.title, f.mfa, f.instr} end)
       assert key.(off) == key.(on)
 
-      for {before, now} <- Enum.zip(off, on) do
+      {allocation, value_sinks} =
+        Enum.split_with(Enum.zip(off, on), fn {finding, _} ->
+          finding.title == "Compressed ETF allocation from external input"
+        end)
+
+      # A term-safety/value-source prior is not an allocation bound. Both the raw
+      # and non-executable decoder still need a compressed-prefix rejection.
+      assert length(allocation) == 3
+      for {before, now} <- allocation, do: assert(before == now)
+
+      for {before, now} <- value_sinks do
         assert now.provenance == :heuristic and now.confidence == 950
         assert now.severity == if(before.severity == :error, do: :warning, else: :info)
 

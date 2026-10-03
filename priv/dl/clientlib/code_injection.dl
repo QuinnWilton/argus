@@ -1,0 +1,64 @@
+// Template source is code; assigns and bindings are data. Runtime callback origins
+// are independent of attacker-input taint and therefore keep a warning severity.
+// A necessary literal gate travels backwards with the source demand. Literal
+// callers contradicting it cannot reach that evaluation. Unknown arguments do
+// not prove a contradiction. Keeping one gate at a time can add false positives,
+// but cannot establish an exclusion that does not hold.
+.decl template_source_need(func: symbol, param: number, guard_param: number,
+                           guard_value: symbol, sink: symbol, sink_func: symbol)
+template_source_need(func, param, guard_param, guard_value, sink, func) :-
+  code_template_site(sink, func, _),
+  call_arg_param(sink, func, 0, param),
+  code_site_gate(sink, func, guard_param, guard_value).
+
+// Translate the callee's required literal at this exact invocation. Once a
+// literal satisfies it, the caller's own necessary condition may take its place.
+.decl template_gate_at(id: symbol, caller: symbol, param: number, value: symbol,
+                       outer_param: number, outer_value: symbol)
+.decl template_gate_conflict(id: symbol, caller: symbol, param: number, value: symbol)
+template_gate_conflict(id, caller, param, value) :-
+  code_site_gate(id, caller, param, required),
+  code_site_gate(_, _, _, value),
+  required != value.
+template_gate_at(id, caller, -1, "", outer_param, outer_value) :-
+  code_site_gate(id, caller, outer_param, outer_value).
+template_gate_at(id, caller, param, value, outer_param, outer_value) :-
+  template_source_need(callee, _, param, value, _, _), param >= 0,
+  code_call(id, caller, callee),
+  code_arg_identity(id, caller, param, "literal", value),
+  code_site_gate(id, caller, outer_param, outer_value).
+template_gate_at(id, caller, param, value, outer, value) :-
+  template_source_need(callee, _, param, value, _, _), param >= 0,
+  code_call(id, caller, callee),
+  call_arg_param(id, caller, param, outer),
+  code_arg_identity(id, caller, param, "param", to_string(outer)),
+  !template_gate_conflict(id, caller, outer, value).
+template_gate_at(id, caller, param, value, outer_param, outer_value) :-
+  template_source_need(callee, _, param, value, _, _), param >= 0,
+  code_call(id, caller, callee),
+  code_arg_identity(id, caller, param, "unknown", _),
+  code_site_gate(id, caller, outer_param, outer_value).
+
+template_source_need(caller, outer_source, outer_param, outer_value, sink, sink_func) :-
+  template_source_need(callee, source, param, value, sink, sink_func),
+  code_call(id, caller, callee),
+  call_arg_param(id, caller, source, outer_source),
+  template_gate_at(id, caller, param, value, outer_param, outer_value).
+
+.decl runtime_template_path(source: symbol, source_func: symbol, sink: symbol, sink_func: symbol)
+runtime_template_path(source, source_func, sink, func) :-
+  code_template_site(sink, func, _),
+  call_arg_runtime(sink, func, 0, source, source_func).
+runtime_template_path(source, source_func, sink, sink_func) :-
+  template_source_need(callee, source_param, guard_param, guard_value, sink, sink_func),
+  code_call(id, caller, callee),
+  call_arg_runtime(id, caller, source_param, source, source_func),
+  template_gate_at(id, caller, guard_param, guard_value, _, _).
+
+.decl runtime_template_evaluation(source: symbol, source_func: symbol,
+                                  sink: symbol, sink_func: symbol, api: symbol)
+.output runtime_template_evaluation
+runtime_template_evaluation(source, source_func, sink, sink_func, api) :-
+  runtime_template_path(source, source_func, sink, sink_func),
+  code_template_site(sink, sink_func, api),
+  called_from_api(source_func).

@@ -158,7 +158,10 @@ defmodule Argus.Extractors.Dependence do
   extractor defines it.
   """
   @spec site?(mfa()) :: boolean()
-  def site?(mfa), do: ProcessRegistry.site?(mfa) or ETS.site?(mfa) or Mnesia.site?(mfa)
+  def site?(mfa),
+    do:
+      ProcessRegistry.site?(mfa) or ETS.site?(mfa) or Mnesia.site?(mfa) or
+        Argus.Extractors.SharedStore.site?(mfa)
 
   @impl true
   @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()
