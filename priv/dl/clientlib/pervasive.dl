@@ -378,7 +378,7 @@ coarse_holder(f, sk, s, x) :- coarse(f, sk, s, _, x).
 
 leaf_spread(x, n) :- leaf(x), n = count : { coarse_holder(_, _, _, x) }.
 
-// Every source of the program, as PidFlow names them.
+// Every source of the program, as TermFlow names them.
 .decl pid_source(func: symbol, src_kind: symbol, src: symbol)
 
 pid_source(g, "param", k) :- stage_mode("bounded"), value_arg(_, _, g, k, _, _, _).

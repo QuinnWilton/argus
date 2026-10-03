@@ -1,7 +1,7 @@
 // The points-to stage — which process a pid can be, derived once.
 //
 // Process points-to (clientlib/processes.dl) is a whole-program fixpoint
-// over PidFlow's per-function summaries, and on a large program it is
+// over TermFlow's per-function summaries, and on a large program it is
 // most of what a solve costs: over ssl, public_key and kernel it was four
 // of the four and a half seconds each of blocking, coupling, failure,
 // mailbox, shutdown, startup, coverage and races spent, the same rows
