@@ -1,8 +1,8 @@
 defmodule Argus.Schema.Processes do
   @moduledoc """
-  Layer-2 process points-to facts from `Argus.Extractors.PidFlow`, chained across \
-  functions by `clientlib/processes.dl`. Sources use `(src_kind, src)` pairs. Exposed \
-  through `Argus.Schema`.
+  Layer-2 value provenance and process operations from `Argus.Extractors.TermFlow`.
+  General `value_*` summaries are composed by the shared Datalog stages.
+  Sources use `(src_kind, src)` pairs. Exposed through `Argus.Schema`.
   """
 
   @doc "The relations, in the order `Argus.Schema.all/0` lists them."
@@ -25,7 +25,7 @@ defmodule Argus.Schema.Processes do
         """
       },
       %{
-        name: :pid_arg,
+        name: :value_arg,
         layer: 2,
         fields: [
           {:id, :instr_id, "instruction ID of the call, start or closure"},
@@ -34,7 +34,7 @@ defmodule Argus.Schema.Processes do
           {:arg_pos, :symbol, "0-based parameter position, as a symbol"},
           {:via, :symbol, "call, init, spawn, child, closure, resolver or element"},
           {:src_kind, :symbol,
-           "where the value comes from: proc, param, result, name, self, obj, load, reply, remote or dict"},
+           "where the value comes from: proc, param, result, name, self, obj, load, reply, remote, dict or table"},
           {:src, :symbol,
            "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
         ],
@@ -46,19 +46,19 @@ defmodule Argus.Schema.Processes do
         """
       },
       %{
-        name: :pid_return,
+        name: :value_return,
         layer: 2,
         fields: [
           {:func, :func_id, "function returning"},
           {:src_kind, :symbol,
-           "where the value comes from: proc, param, result, name, self, obj, load, reply, remote or dict"},
+           "where the value comes from: proc, param, result, name, self, obj, load, reply, remote, dict or table"},
           {:src, :symbol,
            "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
         ],
         doc: "`func` may return the source, directly or by a tail call."
       },
       %{
-        name: :pid_call,
+        name: :process_call_source,
         layer: 2,
         fields: [
           {:id, :instr_id, "instruction ID of the call, cast or send"},
@@ -66,7 +66,7 @@ defmodule Argus.Schema.Processes do
           {:api_kind, :symbol,
            "call or cast (the sync_call/async_cast table), or info for a send"},
           {:src_kind, :symbol,
-           "where the value comes from: proc, param, result, name, self, obj, load, reply, remote or dict"},
+           "where the value comes from: proc, param, result, name, self, obj, load, reply, remote, dict or table"},
           {:src, :symbol,
            "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
         ],
@@ -76,31 +76,31 @@ defmodule Argus.Schema.Processes do
         """
       },
       %{
-        name: :pid_message,
+        name: :process_message_source,
         layer: 2,
         fields: [
           {:id, :instr_id, "instruction ID of the call, cast or send"},
           {:func, :func_id, "function making the call, cast or send"},
           {:api_kind, :symbol, "call, cast or info (a send)"},
           {:src_kind, :symbol,
-           "where the value comes from: proc, param, result, name, self, obj, load, reply, remote or dict"},
+           "where the value comes from: proc, param, result, name, self, obj, load, reply, remote, dict or table"},
           {:src, :symbol,
            "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
         ],
         doc: """
         A possible source for a call, cast, or send message. Flows to the corresponding \
-        handler of the server resolved by the same site's `pid_call` rows.
+        handler of the server resolved by the same site's `process_call_source` rows.
         """
       },
       %{
-        name: :pid_register,
+        name: :process_register_source,
         layer: 2,
         fields: [
           {:id, :instr_id, "instruction ID of the registration"},
           {:func, :func_id, "function registering"},
           {:name, :symbol, "the literal name"},
           {:src_kind, :symbol,
-           "where the value comes from: proc, param, result, name, self, obj, load, reply, remote or dict"},
+           "where the value comes from: proc, param, result, name, self, obj, load, reply, remote, dict or table"},
           {:src, :symbol,
            "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
         ],
@@ -108,7 +108,7 @@ defmodule Argus.Schema.Processes do
           "The call at `id` registers the source under `name` (Process.register/2, :erlang.register/2)."
       },
       %{
-        name: :pid_send,
+        name: :process_send_source,
         layer: 2,
         fields: [
           {:id, :instr_id, "instruction ID of the send"},
@@ -116,7 +116,7 @@ defmodule Argus.Schema.Processes do
           {:message, :symbol,
            "literal atom, {:tag, …} for a tuple with a literal atom tag, or dynamic"},
           {:src_kind, :symbol,
-           "where the value comes from: proc, param, result, name, self, obj, load, reply, remote or dict"},
+           "where the value comes from: proc, param, result, name, self, obj, load, reply, remote, dict or table"},
           {:src, :symbol,
            "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
         ],
@@ -126,7 +126,7 @@ defmodule Argus.Schema.Processes do
         """
       },
       %{
-        name: :pid_result,
+        name: :value_result,
         layer: 2,
         fields: [
           {:id, :instr_id, "instruction ID of the call"},
@@ -136,14 +136,14 @@ defmodule Argus.Schema.Processes do
         doc: "The project call at `id`, whose result is a `result` source (src = `id`)."
       },
       %{
-        name: :pid_signal,
+        name: :process_signal_source,
         layer: 2,
         fields: [
           {:id, :instr_id, "instruction ID of the call"},
           {:func, :func_id, "function making it"},
           {:signal, :symbol, "exit, monitor, link, unlink or stop"},
           {:src_kind, :symbol,
-           "where the value comes from: proc, param, result, name, self, obj, load, reply, remote or dict"},
+           "where the value comes from: proc, param, result, name, self, obj, load, reply, remote, dict or table"},
           {:src, :symbol,
            "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
         ],
@@ -158,11 +158,11 @@ defmodule Argus.Schema.Processes do
         fields: [{:id, :instr_id, "instruction ID of the send"}],
         doc: """
         A send of a behaviour envelope identified by tag and size: `$gen_call`, \
-        `$gen_cast`, or `system`. Adds shape information beyond `pid_send`'s tuple tag.
+        `$gen_cast`, or `system`. Adds shape information beyond `process_send_source`'s tuple tag.
         """
       },
       %{
-        name: :pid_object,
+        name: :value_object,
         layer: 2,
         fields: [
           {:func, :func_id, "function building the term"},
@@ -178,7 +178,7 @@ defmodule Argus.Schema.Processes do
         """
       },
       %{
-        name: :pid_field,
+        name: :value_field,
         layer: 2,
         fields: [
           {:func, :func_id, "function building the term"},
@@ -186,30 +186,30 @@ defmodule Argus.Schema.Processes do
           {:sel, :symbol,
            "a map key (inspected), {i} for tuple position i (0-based), [] for a list's elements, * for an unknown map key"},
           {:src_kind, :symbol,
-           "where the value comes from: proc, param, result, name, self, obj, load, reply, remote or dict"},
+           "where the value comes from: proc, param, result, name, self, obj, load, reply, remote, dict or table"},
           {:src, :symbol,
            "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
         ],
         doc: "The field `sel` of `obj` may hold the source."
       },
       %{
-        name: :pid_base,
+        name: :value_base,
         layer: 2,
         fields: [
           {:func, :func_id, "function building the term"},
           {:obj, :symbol, "the term"},
           {:src_kind, :symbol,
-           "where the value comes from: proc, param, result, name, self, obj, load, reply, remote or dict"},
+           "where the value comes from: proc, param, result, name, self, obj, load, reply, remote, dict or table"},
           {:src, :symbol,
            "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
         ],
         doc: """
-        An object's base source. Fields absent from `pid_sets` retain the source's \
+        An object's base source. Fields absent from `value_sets` retain the source's \
         values; a cons cell's base is its tail.
         """
       },
       %{
-        name: :pid_sets,
+        name: :value_sets,
         layer: 2,
         fields: [
           {:obj, :symbol, "the updated term"},
@@ -218,14 +218,14 @@ defmodule Argus.Schema.Processes do
         doc: "The update `obj` sets `sel`, shadowing its base's field."
       },
       %{
-        name: :pid_load,
+        name: :value_load,
         layer: 2,
         fields: [
           {:func, :func_id, "function reading"},
           {:load, :symbol, "the load: the reading instruction's ID and the field"},
-          {:sel, :symbol, "the field read, as in pid_field"},
+          {:sel, :symbol, "the field read, as in value_field"},
           {:src_kind, :symbol,
-           "where the value comes from: proc, param, result, name, self, obj, load, reply, remote or dict"},
+           "where the value comes from: proc, param, result, name, self, obj, load, reply, remote, dict or table"},
           {:src, :symbol,
            "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
         ],
@@ -235,7 +235,7 @@ defmodule Argus.Schema.Processes do
         """
       },
       %{
-        name: :pid_remote,
+        name: :process_remote_source,
         layer: 2,
         fields: [
           {:id, :instr_id, "instruction ID of the call"},
@@ -251,7 +251,7 @@ defmodule Argus.Schema.Processes do
         """
       },
       %{
-        name: :pid_probe,
+        name: :process_probe_source,
         layer: 2,
         fields: [
           {:id, :instr_id, "instruction ID of the call"},
@@ -287,8 +287,8 @@ defmodule Argus.Schema.Processes do
         fields: [
           {:id, :instr_id, "instruction ID of the :ets call"},
           {:func, :func_id, "function containing it"},
-          {:src_kind, :symbol, "as in pid_arg, or table"},
-          {:src, :symbol, "as in pid_arg, or the table"}
+          {:src_kind, :symbol, "as in value_arg, or table"},
+          {:src, :symbol, "as in value_arg, or the table"}
         ],
         doc: """
         An ETS operation's table source, resolved to possible allocations by \
@@ -316,8 +316,8 @@ defmodule Argus.Schema.Processes do
           {:id, :instr_id, "instruction ID of the put"},
           {:func, :func_id, "function containing it"},
           {:key, :symbol, "the literal key"},
-          {:src_kind, :symbol, "as in pid_arg"},
-          {:src, :symbol, "as in pid_arg"}
+          {:src_kind, :symbol, "as in value_arg"},
+          {:src, :symbol, "as in value_arg"}
         ],
         doc: """
         A source stored under `key` in the running process's dictionary. Reads of the \

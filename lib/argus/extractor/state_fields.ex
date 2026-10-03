@@ -9,7 +9,7 @@ defmodule Argus.Extractor.StateFields do
   returns itself, or of one an element of the returned tuple holds — a
   callback's `{:noreply, [], %{state | receive_timer: nil}}` — and of an
   Erlang record the same way (`State#state{subs = Subs}`, a field spelled
-  as its 0-based tuple position, `{2}`, as PidFlow spells one). A state
+  as its 0-based tuple position, `{2}`, as TermFlow spells one). A state
   built whole in a callback's state slot (the record or map after `ok` in
   `{ok, State}`, a literal or built there) sets every field it has. A
   state in that slot that is neither the one the callback was given nor

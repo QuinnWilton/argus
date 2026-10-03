@@ -77,7 +77,7 @@ defmodule Argus.Pipeline do
 
   # The Layer-1 relations the in-process passes read from a module's
   # decoded facts: `Argus.Cfg`, `Argus.Dataflow` and the extractors that
-  # take `module_data.typed` (Dependence, ParamFlow, PidFlow). Decoding
+  # take `module_data.typed` (Dependence, ParamFlow, TermFlow). Decoding
   # every relation was a fifth of extraction time, most of it for
   # relations only Souffle reads.
   @typed_relations ~w(
@@ -104,7 +104,7 @@ defmodule Argus.Pipeline do
   @typed_readers [
     Argus.Extractors.Dependence,
     Argus.Extractors.ParamFlow,
-    Argus.Extractors.PidFlow
+    Argus.Extractors.TermFlow
   ]
 
   @doc """

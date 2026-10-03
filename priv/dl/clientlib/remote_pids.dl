@@ -1,5 +1,5 @@
-// Potentially remote pids used by local-only BIFs. `pid_remote` identifies distributed
-// lookups, groups, and conflict resolvers; `pid_probe` identifies local-only operations
+// Potentially remote pids used by local-only BIFs. `process_remote_source` identifies distributed
+// lookups, groups, and conflict resolvers; `process_probe_source` identifies local-only operations
 // without a node guard.
 // Follow local values, returned results, and parameter/field summaries resolved at each
 // caller. Anchor helper uses at the supplying call. Unbuilt terms such as server state,
@@ -12,11 +12,11 @@
 .decl remote_origin(origin: symbol, api: symbol, kind: symbol)
 
 remote_origin(s, api, "resolver") :-
-  pid_remote(s, _, api),
+  process_remote_source(s, _, api),
   (api = ":global.register_name/3" ; api = ":global.re_register_name/3").
 
 remote_origin(s, api, "lookup") :-
-  pid_remote(s, _, api),
+  process_remote_source(s, _, api),
   api != ":global.register_name/3",
   api != ":global.re_register_name/3".
 
@@ -33,47 +33,47 @@ remote_origin(f, "syn resolve_registry_conflict/4", "resolver") :- syn_resolver(
 // `func`'s value (src_kind, src) may be another node's pid, from `origin`.
 .decl remote_value(func: symbol, src_kind: symbol, src: symbol, origin: symbol)
 
-remote_value(f, "remote", s, s) :- pid_remote(s, f, _).
+remote_value(f, "remote", s, s) :- process_remote_source(s, f, _).
 
 // A parameter the runtime fills with one: a resolver's pids, the
-// element a fun is run on (pid_arg's `resolver` and `element` rows).
-remote_value(g, "param", k, o) :- pid_arg(_, _, g, k, via, "remote", o), via != "call".
+// element a fun is run on (value_arg's `resolver` and `element` rows).
+remote_value(g, "param", k, o) :- value_arg(_, _, g, k, via, "remote", o), via != "call".
 
-remote_value(f, "load", l, f) :- syn_resolver(f), pid_load(f, l, "{0}", "param", "2").
-remote_value(f, "load", l, f) :- syn_resolver(f), pid_load(f, l, "{0}", "param", "3").
+remote_value(f, "load", l, f) :- syn_resolver(f), value_load(f, l, "{0}", "param", "2").
+remote_value(f, "load", l, f) :- syn_resolver(f), value_load(f, l, "{0}", "param", "3").
 
 // A callee's result: what the callee returns.
-remote_value(f, "result", c, o) :- pid_result(c, f, g), returns_remote(g, o).
+remote_value(f, "result", c, o) :- value_result(c, f, g), returns_remote(g, o).
 
 .decl returns_remote(func: symbol, origin: symbol)
 
-returns_remote(g, o) :- pid_return(g, sk, s), remote_value(g, sk, s, o).
+returns_remote(g, o) :- value_return(g, sk, s), remote_value(g, sk, s, o).
 
 // A probe of a function's parameter, or of a field of it, lifted to
 // every caller that forwards its own parameter there.
 .decl probes_param(func: symbol, pos: symbol, site: symbol)
 
-probes_param(g, k, id) :- pid_probe(id, g, _, "param", k).
-probes_param(f, j, id) :- pid_arg(_, f, g, k, "call", "param", j), probes_param(g, k, id).
+probes_param(g, k, id) :- process_probe_source(id, g, _, "param", k).
+probes_param(f, j, id) :- value_arg(_, f, g, k, "call", "param", j), probes_param(g, k, id).
 
 .decl probes_field(func: symbol, pos: symbol, sel: symbol, site: symbol)
 
-probes_field(g, k, sel, id) :- pid_probe(id, g, _, "load", l), pid_load(g, l, sel, "param", k).
-probes_field(f, j, sel, id) :- pid_arg(_, f, g, k, "call", "param", j), probes_field(g, k, sel, id).
+probes_field(g, k, sel, id) :- process_probe_source(id, g, _, "load", l), value_load(g, l, sel, "param", k).
+probes_field(f, j, sel, id) :- value_arg(_, f, g, k, "call", "param", j), probes_field(g, k, sel, id).
 
 // A possibly remote PID from origin reaches the probe at site, directly or through a
 // helper. `anchor` identifies the direct probe or helper call.
 .decl remote_probe(func: symbol, anchor: symbol, site: symbol, origin: symbol)
 
-remote_probe(f, id, id, o) :- pid_probe(id, f, _, sk, s), remote_value(f, sk, s, o).
+remote_probe(f, id, id, o) :- process_probe_source(id, f, _, sk, s), remote_value(f, sk, s, o).
 
 remote_probe(f, a, id, o) :-
-  pid_arg(a, f, g, k, "call", sk, s),
+  value_arg(a, f, g, k, "call", sk, s),
   probes_param(g, k, id),
   remote_value(f, sk, s, o).
 
 remote_probe(f, a, id, o) :-
-  pid_arg(a, f, g, k, "call", "obj", t),
+  value_arg(a, f, g, k, "call", "obj", t),
   probes_field(g, k, sel, id),
-  pid_field(f, t, sel, sk, s),
+  value_field(f, t, sel, sk, s),
   remote_value(f, sk, s, o).

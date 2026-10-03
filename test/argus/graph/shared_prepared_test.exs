@@ -62,7 +62,7 @@ defmodule Argus.Graph.SharedPreparedTest do
 
       assert assembled == rebuilt
 
-      producers = [Argus.Extractors.ETS, Argus.Extractors.PidFlow]
+      producers = [Argus.Extractors.ETS, Argus.Extractors.TermFlow]
       opts = [producers: producers, trace_imprecision: true]
       {:ok, expected} = Pipeline.extract_data(data, opts)
       {:ok, actual} = Pipeline.extract_prepared(assembled, opts)

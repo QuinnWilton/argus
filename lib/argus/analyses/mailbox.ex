@@ -90,7 +90,7 @@ defmodule Argus.Analyses.Mailbox do
       Argus.Extractors.Reply,
       # Where a send goes: process points-to (clientlib/processes.dl,
       # sends.dl), and the names servers are started under.
-      Argus.Extractors.PidFlow,
+      Argus.Extractors.TermFlow,
       Argus.Extractors.ProcessRegistry,
       # A GenServer a child spec names is a server process too.
       Argus.Extractors.Supervision,

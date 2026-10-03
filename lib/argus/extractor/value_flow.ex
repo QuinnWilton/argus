@@ -1,6 +1,6 @@
 defmodule Argus.Extractor.ValueFlow do
   @moduledoc """
-  Shared dataflow solver for ParamFlow, PidFlow and Dependence.
+  Shared dataflow solver for ParamFlow, TermFlow and Dependence.
 
   Each extractor defines the value written by an instruction and how to join
   values reaching a read. The solver evaluates instructions in order, then
@@ -8,8 +8,12 @@ defmodule Argus.Extractor.ValueFlow do
   the extractor. Changes are detected with `==`.
 
   Evaluators must be monotone over a finite lattice to reach the same least
-  fixpoint regardless of evaluation order. An evaluation budget bounds runaway
-  work; reaching it leaves the affected instruction's current result in place.
+  fixpoint regardless of evaluation order. Every changing state dependency
+  must reschedule its readers through `also`. Missing writes represent bottom;
+  evaluators must not withdraw previously emitted writes.
+
+  The default solves to convergence. An optional evaluation budget raises on
+  exhaustion: a partial result must not masquerade as a completed fixpoint.
   """
 
   alias Argus.InstrId
@@ -32,9 +36,6 @@ defmodule Argus.Extractor.ValueFlow do
   @type evaluate(state) ::
           (non_neg_integer(), outs(), state ->
              {[{String.t(), term()}], state, [non_neg_integer()]})
-
-  # A fixpoint over a finite lattice converges; the bound only guards a bug.
-  @max_evaluations 64
 
   @doc """
   The reads of every function in a module's reaching definitions
@@ -67,8 +68,8 @@ defmodule Argus.Extractor.ValueFlow do
   of them a changed write reaches or `evaluate` names, until nothing
   changes. Returns what every write holds and the final state.
 
-  `:max_evaluations` (default #{@max_evaluations}) bounds how often one
-  instruction is evaluated.
+  `:max_evaluations` defaults to `:infinity`. A positive integer bounds
+  evaluations per instruction and raises if more work remains at that bound.
   """
   @spec solve([non_neg_integer()], reads(), state, evaluate(state), keyword()) ::
           {outs(), state}
@@ -77,9 +78,14 @@ defmodule Argus.Extractor.ValueFlow do
     env = %{
       users: users(reads),
       evaluate: evaluate,
-      max: Keyword.get(opts, :max_evaluations, @max_evaluations)
+      max: Keyword.get(opts, :max_evaluations, :infinity)
     }
 
+    unless env.max == :infinity or (is_integer(env.max) and env.max > 0) do
+      raise ArgumentError, "max_evaluations must be a positive integer or :infinity"
+    end
+
+    idxs = Enum.uniq(idxs)
     run(:queue.from_list(idxs), MapSet.new(idxs), %{}, %{}, state, env)
   end
 
@@ -94,6 +100,13 @@ defmodule Argus.Extractor.ValueFlow do
     reads
     |> Map.get(idx, %{})
     |> Map.new(fn {reg, froms} -> {reg, join(froms, outs, reg, param)} end)
+  end
+
+  @doc "Join reaching sources for a single register without constructing all inputs."
+  @spec input(reads(), outs(), non_neg_integer(), String.t(), (non_neg_integer() -> term())) ::
+          Enumerable.t()
+  def input(reads, outs, idx, reg, param) do
+    join(Map.get(Map.get(reads, idx, %{}), reg, []), outs, reg, param)
   end
 
   defp join(froms, outs, reg, param) do
@@ -124,8 +137,9 @@ defmodule Argus.Extractor.ValueFlow do
         pending = MapSet.delete(pending, idx)
         evaluated = Map.get(count, idx, 0)
 
-        if evaluated >= env.max do
-          run(queue, pending, outs, count, state, env)
+        if env.max != :infinity and evaluated >= env.max do
+          raise ArgumentError,
+                "value-flow evaluation budget exhausted at instruction #{idx} (#{env.max})"
         else
           count = Map.put(count, idx, evaluated + 1)
           {writes, state, also} = env.evaluate.(idx, outs, state)
@@ -138,7 +152,9 @@ defmodule Argus.Extractor.ValueFlow do
   end
 
   defp commit(idx, writes, outs) do
-    Enum.reduce(writes, {false, outs}, fn {reg, value}, {changed?, outs} ->
+    # Compare only the final write, not intermediate values overwritten in
+    # the same evaluation. Otherwise a stable transfer can reschedule forever.
+    Enum.reduce(Map.new(writes), {false, outs}, fn {reg, value}, {changed?, outs} ->
       if Map.get(outs, {idx, reg}) == value,
         do: {changed?, outs},
         else: {true, Map.put(outs, {idx, reg}, value)}

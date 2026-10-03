@@ -102,13 +102,13 @@ points_to_mode("bounded") :- stage_mode("bounded").
 // monitors and links, which only signals.dl reads.
 .decl staged_process_call(func: symbol, anchor: symbol, site: symbol, api_kind: symbol, proc: symbol)
 
-staged_process_call(f, a, id, kind, p) :- process_call(f, a, id, kind, p), pid_call(id, _, kind, _, _).
+staged_process_call(f, a, id, kind, p) :- process_call(f, a, id, kind, p), process_call_source(id, _, kind, _, _).
 
 .output staged_process_call(filename="process_call.facts")
 
 .decl process_signal(func: symbol, anchor: symbol, site: symbol, signal: symbol, proc: symbol)
 
-process_signal(f, a, id, kind, p) :- process_call(f, a, id, kind, p), pid_signal(id, _, kind, _, _).
+process_signal(f, a, id, kind, p) :- process_call(f, a, id, kind, p), process_signal_source(id, _, kind, _, _).
 
 .output process_signal(filename="process_signal.facts")
 
@@ -123,13 +123,13 @@ process_signal(f, a, id, kind, p) :- process_call(f, a, id, kind, p), pid_signal
 
 source_process(h, sk, s, p) :-
   handler_function(_, h),
-  pid_arg(_, h, _, "0", "call", sk, s),
+  value_arg(_, h, _, "0", "call", sk, s),
   source_pts(h, sk, s, p),
   process(p).
 
 source_process(h, sk, s, p) :-
   handler_function(_, h),
-  pid_arg(_, h, _, "0", "call", sk, s),
+  value_arg(_, h, _, "0", "call", sk, s),
   coarse(h, sk, s, r, p),
   coarse_top(r),
   pervasive(p).
@@ -171,14 +171,14 @@ kept_in_dictionary(t) :-
 leaves_process(t) :- field_pts(_, _, t), table_alloc(_, _, t).
 
 leaves_process(t) :-
-  pid_arg(_, f, _, _, via, sk, s),
+  value_arg(_, f, _, _, via, sk, s),
   via != "call",
   via != "closure",
   source_pts(f, sk, s, t),
   table_alloc(_, _, t).
 
 leaves_process(t) :-
-  pid_arg(_, f, g, _, "closure", sk, s),
+  value_arg(_, f, g, _, "closure", sk, s),
   runs_elsewhere(_, g),
   source_pts(f, sk, s, t),
   table_alloc(_, _, t).

@@ -309,7 +309,7 @@ defmodule Argus.Schema.Bytecode do
         variables count toward closure arity. A forwarded fun is `param`; unresolved \
         names are `dynamic` and unknown arity is -1. Known module or function names are \
         retained even if the other is unknown. `variant` comes from literal options. \
-        `Argus.Extractors.PidFlow` uses the spawn site as the process identity.
+        `Argus.Extractors.TermFlow` uses the spawn site as the process identity.
         """
       },
       %{

@@ -105,11 +105,11 @@ message_site_clause(s, h, t) :- statem_insert(s, h, t, _, _), t != "*".
 
 // A send to self(): the atom, or the tuple tagged by it.
 self_message(id, f, "info", t) :-
-  pid_send(id, f, msg, "self", _),
+  process_send_source(id, f, msg, "self", _),
   node_tag("info", t),
   (msg = t ; msg = cat("{", cat(t, ", …}"))).
 
-self_message(id, f, "info", "*") :- pid_send(id, f, "dynamic", "self", _).
+self_message(id, f, "info", "*") :- process_send_source(id, f, "dynamic", "self", _).
 
 // A one-shot timer armed for the process (an interval is below).
 self_message(id, f, "info", t) :-
@@ -172,11 +172,11 @@ callback_result(g) :- callback_result(f), returns_call(f, g).
 
 // A cast to self().
 self_message(id, f, "cast", t) :-
-  pid_call(id, f, "cast", "self", _),
+  process_call_source(id, f, "cast", "self", _),
   call_tag(id, f, "cast", t).
 
 self_message(id, f, "cast", "*") :-
-  pid_call(id, f, "cast", "self", _),
+  process_call_source(id, f, "cast", "self", _),
   !call_tag(id, f, "cast", _).
 
 // A return that continues to handle_continue/2.
@@ -234,7 +234,7 @@ self_message(c, f, k, "*") :-
 .decl outside_message(kind: symbol, tag: symbol)
 
 outside_message("info", t) :-
-  pid_send(_, _, msg, src, _),
+  process_send_source(_, _, msg, src, _),
   src != "self",
   node_tag("info", t),
   (msg = t ; msg = cat("{", cat(t, ", …}"))).
@@ -243,7 +243,7 @@ outside_message("info", t) :- timer_arm(id, _, "other", _, _, _), timer_tag(id, 
 
 outside_message("cast", t) :-
   call_tag(id, f, "cast", t),
-  !pid_call(id, f, "cast", "self", _).
+  !process_call_source(id, f, "cast", "self", _).
 
 // Interval timers produce repeated messages wherever they are armed. An interval
 // targeting self contributes repeated_message; one targeting another process

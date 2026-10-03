@@ -148,6 +148,9 @@ actual supervision path, not just the module containing a call.
 
 ## Shared values and effects
 
+The [intraprocedural value-flow model](value-flow.md) describes TermFlow's
+register and container summaries, convergence contract and coverage limits.
+
 `EtsTable` identifies tables by name, allocation site, or module field when stronger
 identity is unavailable. `CheckThenAct` carries resource/key identities through
 callers and relates a check to the act it controls or supplies. The

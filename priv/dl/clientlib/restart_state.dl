@@ -76,8 +76,8 @@ request_handler(m, "cast", h) :- handle_cast_function(m, h), once_request(_, m, 
 .decl keeps_site(site: symbol, func: symbol, how: symbol)
 
 keeps_site(x, f, "table") :- ets_op(x, f, _, _, "write").
-keeps_site(x, f, "monitor") :- pid_signal(x, f, "monitor", _, _).
-keeps_site(x, f, "monitor") :- pid_signal(x, f, "link", _, _).
+keeps_site(x, f, "monitor") :- process_signal_source(x, f, "monitor", _, _).
+keeps_site(x, f, "monitor") :- process_signal_source(x, f, "link", _, _).
 keeps_site(x, f, "monitor") :- monitor_call(x, f, _).
 keeps_site(x, f, "dict") :- impure_call(x, f, _, "process_dict", "write").
 

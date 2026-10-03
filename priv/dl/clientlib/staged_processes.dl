@@ -63,7 +63,7 @@
 // adds the signals.
 .decl pid_use(id: symbol, func: symbol, kind: symbol, src_kind: symbol, src: symbol)
 
-pid_use(id, f, kind, sk, s) :- pid_call(id, f, kind, sk, s).
+pid_use(id, f, kind, sk, s) :- process_call_source(id, f, kind, sk, s).
 
 // `func` calls or casts to `proc`, itself or through a helper.
 .decl call_target(func: symbol, api_kind: symbol, proc: symbol)

@@ -77,7 +77,7 @@ defmodule Argus.Analyses.UnsafeInput do
       Argus.Extractors.Monitor,
       # Where a start hands its fun to a new process (process_start):
       # runs_elsewhere's edges, off a request's own stack.
-      Argus.Extractors.PidFlow,
+      Argus.Extractors.TermFlow,
       Argus.Extractors.Endpoint,
       # What a call's arguments are made of whatever the callee
       # (call_arg_reads): whether a caller's input reaches an atom.

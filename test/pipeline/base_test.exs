@@ -78,7 +78,7 @@ defmodule Argus.Pipeline.BaseTest do
   end
 
   test "extractors over a kept base give what they give over a computed one; a base unreadable is computed" do
-    extractors = [Argus.Extractors.CallArgs, Argus.Extractors.ETS, Argus.Extractors.PidFlow]
+    extractors = [Argus.Extractors.CallArgs, Argus.Extractors.ETS, Argus.Extractors.TermFlow]
 
     for mod <- @modules do
       {:ok, fresh} = Pipeline.extract_module(path(mod), producers: extractors, keep_base: true)

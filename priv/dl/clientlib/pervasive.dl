@@ -31,7 +31,7 @@ leaf(t) :- stage_mode("bounded"), table_alloc(_, _, t).
 
 .decl coarse_shape(obj: symbol, kind: symbol, tag: symbol, arity: symbol)
 
-coarse_shape(o, kind, tag, ar) :- stage_mode("bounded"), pid_object(_, o, kind, tag, ar).
+coarse_shape(o, kind, tag, ar) :- stage_mode("bounded"), value_object(_, o, kind, tag, ar).
 
 .decl coarse_top(r: Reach)
 
@@ -46,93 +46,93 @@ coarse(f, "dict", k, r, x) :- dict_read(f, k, g, sk, s), coarse(g, sk, s, r, x).
 
 // A store: one field further down.
 coarse(f, "obj", o, $Under([sel, kind, tag, ar]), x) :-
-  pid_field(f, o, sel, sk, s),
+  value_field(f, o, sel, sk, s),
   coarse(f, sk, s, r, x),
   r = $Top(),
   coarse_shape(o, kind, tag, ar).
 
 coarse(f, "obj", o, $Below([sel, kind, tag, ar]), x) :-
-  pid_field(f, o, sel, sk, s),
+  value_field(f, o, sel, sk, s),
   coarse(f, sk, s, r, x),
   r != $Top(),
   coarse_shape(o, kind, tag, ar).
 
 // An update keeps the fields it does not set, as fields of its own shape.
 coarse(f, "obj", o, $Under([sel, kind, tag, ar]), x) :-
-  pid_base(f, o, bk, bs),
+  value_base(f, o, bk, bs),
   coarse(f, bk, bs, $Under([sel, _, _, _]), x),
-  !pid_sets(o, sel),
+  !value_sets(o, sel),
   coarse_shape(o, kind, tag, ar).
 
 coarse(f, "obj", o, $Below([sel, kind, tag, ar]), x) :-
-  pid_base(f, o, bk, bs),
+  value_base(f, o, bk, bs),
   coarse(f, bk, bs, $Below([sel, _, _, _]), x),
-  !pid_sets(o, sel),
+  !value_sets(o, sel),
   coarse_shape(o, kind, tag, ar).
 
-coarse(f, "obj", o, $Deep(), x) :- pid_base(f, o, bk, bs), coarse(f, bk, bs, $Deep(), x).
+coarse(f, "obj", o, $Deep(), x) :- value_base(f, o, bk, bs), coarse(f, bk, bs, $Deep(), x).
 
 // A load: the field, or a map's field under a key not known.
 coarse(f, "load", l, $Top(), x) :-
-  pid_load(f, l, sel, bk, bs),
+  value_load(f, l, sel, bk, bs),
   coarse(f, bk, bs, $Under([sel, _, _, _]), x).
 
 coarse(f, "load", l, $Top(), x) :-
-  pid_load(f, l, _, bk, bs),
+  value_load(f, l, _, bk, bs),
   coarse(f, bk, bs, $Under(["*", "map", _, _]), x).
 
 coarse(f, "load", l, $Deep(), x) :-
-  pid_load(f, l, sel, bk, bs),
+  value_load(f, l, sel, bk, bs),
   coarse(f, bk, bs, $Below([sel, _, _, _]), x).
 
 coarse(f, "load", l, $Deep(), x) :-
-  pid_load(f, l, _, bk, bs),
+  value_load(f, l, _, bk, bs),
   coarse(f, bk, bs, $Below(["*", "map", _, _]), x).
 
-coarse(f, "load", l, $Deep(), x) :- pid_load(f, l, _, bk, bs), coarse(f, bk, bs, $Deep(), x).
+coarse(f, "load", l, $Deep(), x) :- value_load(f, l, _, bk, bs), coarse(f, bk, bs, $Deep(), x).
 
 // Separate call parameters from entry arguments and fresh returns. Forwarded parameters
 // retain each call's argument. Factory values are renamed through direct or forwarded
 // factory returns, conservatively covering the exact pass's results.
 coarse(g, "param", k, r, x) :- coarse_entry(g, k, r, x).
-coarse(g, "param", k, r, x) :- pid_arg(_, f, g, k, "call", sk, s), coarse(f, sk, s, r, x).
-coarse_entry(g, k, r, x) :- pid_arg(_, f, g, k, via, sk, s), via != "call", coarse(f, sk, s, r, x).
+coarse(g, "param", k, r, x) :- value_arg(_, f, g, k, "call", sk, s), coarse(f, sk, s, r, x).
+coarse_entry(g, k, r, x) :- value_arg(_, f, g, k, via, sk, s), via != "call", coarse(f, sk, s, r, x).
 
 .decl coarse_fresh(func: symbol, r: Reach, x: symbol)
 .decl fresh_route(func: symbol, src_kind: symbol, src: symbol)
 
-fresh_route(g, "obj", t) :- stage_mode("bounded"), pid_return(g, "obj", t), start_object(t, _).
-fresh_route(g, "proc", b) :- stage_mode("bounded"), pid_return(g, "proc", b), process_start(_, g, b, _, _).
+fresh_route(g, "obj", t) :- stage_mode("bounded"), value_return(g, "obj", t), start_object(t, _).
+fresh_route(g, "proc", b) :- stage_mode("bounded"), value_return(g, "proc", b), process_start(_, g, b, _, _).
 
 coarse_fresh(g, r, x) :- fresh_route(g, k, s), coarse(g, k, s, r, x).
-coarse_fresh(g, r, x) :- pid_return(g, "result", c), pid_result(c, g, h), coarse_fresh(h, r, x).
+coarse_fresh(g, r, x) :- value_return(g, "result", c), value_result(c, g, h), coarse_fresh(h, r, x).
 
 coarse_ret(g, r, x) :-
-  pid_return(g, k, s),
+  value_return(g, k, s),
   k != "param",
   k != "result",
   k != "dict",
   !fresh_route(g, k, s),
   coarse(g, k, s, r, x).
 
-coarse_ret(g, r, x) :- pid_return(g, "result", c), pid_result(c, g, h), coarse_ret(h, r, x).
+coarse_ret(g, r, x) :- value_return(g, "result", c), value_result(c, g, h), coarse_ret(h, r, x).
 
 coarse_ret(g, r, x) :-
-  pid_return(g, "result", c),
-  pid_result(c, g, h),
+  value_return(g, "result", c),
+  value_result(c, g, h),
   passes(h, i),
-  pid_arg(c, g, h, i, "call", sk, s),
+  value_arg(c, g, h, i, "call", sk, s),
   sk != "param",
   coarse(g, sk, s, r, x).
 
-coarse(f, "result", c, r, x) :- pid_result(c, f, g), coarse_ret(g, r, x).
-coarse(f, "result", c, r, x) :- pid_result(c, f, g), returns_key(g, k), coarse(f, "dict", k, r, x).
-coarse(f, "result", c, r, x) :- pid_result(c, f, g), pid_return(f, "result", c), coarse_fresh(g, r, x).
+coarse(f, "result", c, r, x) :- value_result(c, f, g), coarse_ret(g, r, x).
+coarse(f, "result", c, r, x) :- value_result(c, f, g), returns_key(g, k), coarse(f, "dict", k, r, x).
+coarse(f, "result", c, r, x) :- value_result(c, f, g), value_return(f, "result", c), coarse_fresh(g, r, x).
 
 coarse(f, "result", c, r, x) :-
-  pid_result(c, f, g),
+  value_result(c, f, g),
   passes(g, j),
-  pid_arg(c, f, g, j, "call", sk, s),
+  value_arg(c, f, g, j, "call", sk, s),
   coarse(f, sk, s, r, x).
 
 coarse(f, "result", c, $Top(), cat("start ", c)) :-
@@ -175,7 +175,7 @@ coarse_entry(f, k, r, x) :-
   coarse_slot(g, tag, n, sel, r, x).
 
 coarse_entry(h, "0", r, x) :-
-  pid_message(id, f, kind, sk, s),
+  process_message_source(id, f, kind, sk, s),
   coarse(f, sk, s, r, x),
   coarse_target(id, f, kind, p),
   server_process(p, m),
@@ -183,7 +183,7 @@ coarse_entry(h, "0", r, x) :-
   function_def(h, m, name, arity, _).
 
 coarse_entry(h, "1", r, x) :-
-  pid_message(id, f, kind, sk, s),
+  process_message_source(id, f, kind, sk, s),
   coarse(f, sk, s, r, x),
   coarse_target(id, f, kind, p),
   server_process(p, m),
@@ -208,7 +208,7 @@ coarse(f, "reply", id, $Deep(), x) :-
   coarse_ret_all(h, $Deep(), x).
 
 // Names, as the coarse pass resolves them.
-coarse_named(n, p) :- pid_register(_, f, n, k, s), coarse(f, k, s, r, p), coarse_top(r), process(p).
+coarse_named(n, p) :- process_register_source(_, f, n, k, s), coarse(f, k, s, r, p), coarse_top(r), process(p).
 coarse_named(n, i) :- coarse_named(n, b), instance(i, b), i != b.
 
 coarse_named(n, cat("child ", cat(s, cat("#", to_string(pos))))) :-
@@ -232,13 +232,13 @@ coarse_named(n, p) :-
 coarse_asked(f, sk, s, sel) :-
   stage_mode("bounded"),
   pid_use(_, f, _, "load", l),
-  pid_load(f, l, sel, sk, s),
+  value_load(f, l, sel, sk, s),
   sk != "param".
 
 coarse_asked(f, sk, s, sel) :-
   stage_mode("bounded"),
   targets_field(g, k, sel, _, _),
-  pid_arg(_, f, g, k, "call", sk, s),
+  value_arg(_, f, g, k, "call", sk, s),
   sk != "param".
 
 .decl coarse_reads(func: symbol, src_kind: symbol, src: symbol, sel: symbol, r: Reach, x: symbol)
@@ -266,12 +266,12 @@ coarse_reads(f, sk, s, sel, $Deep(), x) :- coarse_asked(f, sk, s, sel), coarse(f
 coarse_entry_asked(f, k, sel) :-
   stage_mode("bounded"),
   pid_use(_, f, _, "load", l),
-  pid_load(f, l, sel, "param", k).
+  value_load(f, l, sel, "param", k).
 
 coarse_entry_asked(f, j, sel) :-
   stage_mode("bounded"),
   targets_field(g, k, sel, _, _),
-  pid_arg(_, f, g, k, "call", "param", j).
+  value_arg(_, f, g, k, "call", "param", j).
 
 .decl coarse_entry_reads(func: symbol, pos: symbol, sel: symbol, r: Reach, x: symbol)
 
@@ -316,7 +316,7 @@ coarse_use(f, id, id, kind, p) :-
 
 coarse_use(f, id, id, kind, p) :-
   pid_use(id, f, kind, "load", l),
-  pid_load(f, l, sel, bk, bs),
+  value_load(f, l, sel, bk, bs),
   bk != "param",
   coarse_reads(f, bk, bs, sel, r, p),
   coarse_top(r),
@@ -330,13 +330,13 @@ coarse_use(f, id, id, kind, p) :-
 
 coarse_use(f, id, id, kind, p) :-
   pid_use(id, f, kind, "load", l),
-  pid_load(f, l, sel, "param", k),
+  value_load(f, l, sel, "param", k),
   coarse_entry_reads(f, k, sel, r, p),
   coarse_top(r),
   process(p).
 
 coarse_use(f, a, id, kind, p) :-
-  pid_arg(a, f, g, k, "call", sk, s),
+  value_arg(a, f, g, k, "call", sk, s),
   sk != "param",
   targets_param(g, k, kind, id),
   coarse(f, sk, s, r, p),
@@ -344,14 +344,14 @@ coarse_use(f, a, id, kind, p) :-
   process(p).
 
 coarse_use(f, a, id, kind, p) :-
-  pid_arg(a, f, g, k, "call", "param", j),
+  value_arg(a, f, g, k, "call", "param", j),
   targets_param(g, k, kind, id),
   coarse_entry(f, j, r, p),
   coarse_top(r),
   process(p).
 
 coarse_use(f, a, id, kind, p) :-
-  pid_arg(a, f, g, k, "call", sk, s),
+  value_arg(a, f, g, k, "call", sk, s),
   sk != "param",
   targets_field(g, k, sel, kind, id),
   coarse_reads(f, sk, s, sel, r, p),
@@ -359,13 +359,13 @@ coarse_use(f, a, id, kind, p) :-
   process(p).
 
 coarse_use(f, a, id, kind, p) :-
-  pid_arg(a, f, g, k, "call", "param", j),
+  value_arg(a, f, g, k, "call", "param", j),
   targets_field(g, k, sel, kind, id),
   coarse_entry_reads(f, j, sel, r, p),
   coarse_top(r),
   process(p).
 
-coarse_target(id, g, kind, p) :- coarse_use(_, _, id, kind, p), pid_call(id, g, kind, _, _).
+coarse_target(id, g, kind, p) :- coarse_use(_, _, id, kind, p), process_call_source(id, g, kind, _, _).
 
 // ── Pervasive leaves ────────────────────────────────────────────────
 
@@ -381,11 +381,11 @@ leaf_spread(x, n) :- leaf(x), n = count : { coarse_holder(_, _, _, x) }.
 // Every source of the program, as PidFlow names them.
 .decl pid_source(func: symbol, src_kind: symbol, src: symbol)
 
-pid_source(g, "param", k) :- stage_mode("bounded"), pid_arg(_, _, g, k, _, _, _).
-pid_source(f, sk, s) :- stage_mode("bounded"), pid_arg(_, f, _, _, _, sk, s).
-pid_source(f, "load", l) :- stage_mode("bounded"), pid_load(f, l, _, _, _).
-pid_source(f, "obj", o) :- stage_mode("bounded"), pid_object(f, o, _, _, _).
-pid_source(f, "result", c) :- stage_mode("bounded"), pid_result(c, f, _).
+pid_source(g, "param", k) :- stage_mode("bounded"), value_arg(_, _, g, k, _, _, _).
+pid_source(f, sk, s) :- stage_mode("bounded"), value_arg(_, f, _, _, _, sk, s).
+pid_source(f, "load", l) :- stage_mode("bounded"), value_load(f, l, _, _, _).
+pid_source(f, "obj", o) :- stage_mode("bounded"), value_object(f, o, _, _, _).
+pid_source(f, "result", c) :- stage_mode("bounded"), value_result(c, f, _).
 
 .decl pid_sources(n: number)
 

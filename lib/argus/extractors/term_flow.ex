@@ -1,133 +1,20 @@
-defmodule Argus.Extractors.PidFlow do
+defmodule Argus.Extractors.TermFlow do
   @moduledoc """
-  Which process each pid a function handles can be: the per-function half of
-  a points-to analysis whose objects are processes and the terms that hold
-  them.
+  Intraprocedural provenance summaries for values, containers and processes.
 
-  A pid is a reference and the call that started the process is its
-  allocation site: a spawn (`spawn_call`'s, `:proc_lib`'s, a `Task`'s),
-  a `GenServer`, `:gen_server`, `:gen_statem` or `Supervisor` start with
-  a literal callback module (`start_monitor` too), an `Agent`, a
-  supervisor's `start_child`. The process registry is a heap field
-  everyone shares: `register/2`, `:global.register_name/2`,
-  `Registry.register/3` and a start with a literal `name:` store a pid
-  under a name, and a send to that name, or a `whereis`, `whereis_name`
-  or `Registry.lookup` of it, loads it back. The three registries are
-  three namespaces (`name_of/1`).
+  Values include parameters, project-call results, replies, ETS tables and
+  process-dictionary contents. Register reads join sources from reaching
+  definitions; containers retain field identity
+  through construction, updates and reads. `Argus.Extractors.TermFlow.Heap`
+  models local containers, and `Argus.Extractor.ValueFlow` solves the coupled
+  register/heap equations. Datalog connects these summaries across functions.
 
-  A pid is rarely held bare. A server keeps it in its state map, a client
-  sends it in `{:subscribe, pid}`, a start returns it in `{:ok, pid}`. So
-  the terms that hold pids are objects too, named by the instruction that
-  built them (`put_map_*`, `put_tuple2`, `put_list`, `update_record`, or
-  a call whose result has a known shape), with a field per map key, tuple
-  position or list element. A read of `state.conn` is a load of the
-  `:conn` field rather than everything the state holds, so two pids in one
-  map stay two pids. A map update keeps the fields it does not set from
-  the map it updates; a list's elements share one field, the collection
-  abstraction.
+  Unknown operations lose provenance. An empty source set therefore means
+  "no modeled source", not "safe" or "no possible value". Branch joins and
+  allocation-site merging can also retain infeasible sources.
 
-  This extractor summarises, for every function, where the values it
-  passes on came from, and `clientlib/processes.dl` chains the summaries
-  across functions.
-
-  ## Sources
-
-  A value is a set of sources `{src_kind, src}`:
-
-  - `proc` — the process started at a site in this function (its id);
-  - `param` — a parameter position;
-  - `result` — what the project call at a site returned (the site;
-    `pid_result` names the callee);
-  - `name` — a pid registered under a literal name: `:n` (or `Mod`),
-    `{:global, :n}`, `{:via, Registry, {Reg, key}}`;
-  - `self` — `self()`, which is whichever process runs the function;
-  - `obj` — a term this function built (its id, see `pid_object`);
-  - `load` — a field read from a term this function did not build (the
-    load's id, see `pid_load`);
-  - `reply` — what the `GenServer.call` at a site returned: the reply of
-    the server the call reaches.
-  - `table` — the ETS table the `:ets.new/2` at a site made;
-  - `dict` — what the running process keeps in its dictionary under a
-    literal key: a `get/1` (`Process.get/1,2`), and the old value a
-    `put/2` or an `erase/1` (`Process.delete/1`) hands back.
-
-  A timer's `apply_after/4`, `apply_interval/4` and `apply_repeatedly/4`
-  start a process too: the MFA runs in it, handed the argument list, and
-  the `{:ok, tref}` it answers names no process.
-
-  ## Emitted facts
-
-  - `process_start(id, func, proc, kind, runs)` — the start at `id` starts
-    `proc` (`"<kind> <id>"`): `spawn` (`runs` is the function it runs, or
-    `dynamic`), `server` (the callback module), `agent`.
-  - `pid_arg(id, caller, callee, arg_pos, via, src_kind, src)` — at the
-    call `id`, `callee`'s parameter `arg_pos` may hold the source. `via`
-    is `call` for a call into project code, `init` for a server start's
-    init argument (`Mod:init/1`), `spawn` for a spawned function's
-    arguments, `child` for a child spec's argument (`Mod:start_link/1`)
-    and `closure` for a closure's captured variables (its trailing
-    parameters).
-  - `pid_return(func, src_kind, src)` — `func` may return the source.
-  - `pid_result(id, func, callee)` — the project call at `id` is to
-    `callee`; its result is a `result` source somewhere.
-  - `pid_call(id, func, api_kind, src_kind, src)` — the GenServer-style
-    call or cast (`call`/`cast`, the `sync_call`/`async_cast` table) or
-    send (`info`: to a server it lands in `handle_info/2`) at `id` targets
-    the source.
-  - `pid_message(id, func, api_kind, src_kind, src)` — the message of that
-    call, cast or send is the source.
-  - `pid_register(id, func, name, src_kind, src)` — the call at `id`
-    registers the source under `name`; a start with a literal name
-    registers the process it starts.
-  - `send_envelope(id)` — the send at `id` sends a gen behaviour's own
-    envelope, by tag and size: `{:"$gen_call", from, req}`,
-    `{:"$gen_cast", req}`, `{:system, from, req}`
-  - `pid_send(id, func, message, src_kind, src)` — the send at `id` goes to
-    the source; `message` is the literal atom sent, `{:tag, …}` for a
-    tuple with a literal atom first, or `dynamic`.
-  - `pid_signal(id, func, signal, src_kind, src)` — the exit signal
-    (`exit`: `Process.exit/2`, `:erlang.exit/2`), monitor (`monitor`),
-    link (`link`), unlink (`unlink`) or stop (`stop`: a gen behaviour's
-    or an Agent's `stop`, a supervisor's `terminate_child/2` of a pid) at
-    `id` goes to the source.
-  - `pid_object(func, obj, shape, tag, arity)` — `func` builds the term
-    `obj`: a `map`, `tuple` or `list`, with a tuple's literal atom tag and
-    arity (else `""` and 0). Only a term that holds a source is an object.
-  - `pid_field(func, obj, sel, src_kind, src)` — `obj`'s field `sel` holds
-    the source: a map key (inspected), `{i}` for tuple position i
-    (0-based), `[]` for a list's elements, `*` for a map key not known.
-  - `pid_base(func, obj, src_kind, src)` — the term `obj` updates: the
-    fields `obj` does not set are the base's (a list's tail is its base).
-  - `pid_sets(obj, sel)` — a field an update sets, shadowing the base's.
-  - `pid_load(func, load, sel, src_kind, src)` — the load `load` reads the
-    field `sel` of the source.
-  - `table_alloc(id, func, table)` — the `:ets.new/2` at `id` makes the
-    table `table` (`"table <id>"`), an object like a process: a `table`
-    source, the reference an unnamed table is or the name a named one is
-    answered with.
-  - `table_use(id, func, src_kind, src)` — the `:ets` operation at `id`
-    names its table with the source: `clientlib/tables.dl` resolves it.
-  - `dict_op(id, func, op, key)` — the call at `id` is a `put`, `get` or
-    `erase` of the process dictionary, under a literal key or `dynamic`
-    (`erase/0` erases every key, a key not known).
-  - `dict_put(id, func, key, src_kind, src)` — the `put/2` at `id` keeps
-    the source in the process dictionary under the literal `key`: a
-    `dict` source of `key`, in a function the same process runs, may
-    read it back (`clientlib/processes.dl`).
-
-  ## Reading the bytecode
-
-  Per function, a sparse fixpoint over `Argus.Dataflow`'s reaching
-  definitions (`Argus.Extractor.ValueFlow`): an instruction is evaluated
-  again only when a definition it reads, or a term it read a field of,
-  changes. A call into the
-  runtime, `apply`, a BIF outside the structural few, and anything else
-  not modelled yield nothing: what cannot be followed is lost rather than
-  invented, so every rule on top of these facts stays quiet where it
-  cannot be sure.
-
-  Positions are symbols, not numbers, so the Datalog joins them to each
-  other without the partial `to_number` functor.
+  See `docs/design/value-flow.md` for the model, supported operations,
+  relation families and limits.
   """
 
   @behaviour Argus.Extractor
@@ -140,15 +27,13 @@ defmodule Argus.Extractors.PidFlow do
   alias Argus.Extractor.Terms
   alias Argus.Extractor.ValueFlow
   alias Argus.Extractors.ApiCalls
+  alias Argus.Extractors.TermFlow.Heap
   alias Argus.Instr
   alias Argus.InstrId
   alias Argus.Pipeline.Normalize
 
   import Argus.Extractor.Helpers, only: [register: 1]
   import Argus.Extractor.Facts, only: [add_fact: 3]
-
-  # A fixpoint over a finite lattice converges; the bound only guards a bug.
-  @max_evaluations 64
 
   # Starts that return `{:ok, pid}`: the register holding the callback
   # module, and where the name is (`{:opts, reg}`: a `name:` option;
@@ -378,22 +263,22 @@ defmodule Argus.Extractors.PidFlow do
   def relations,
     do: [
       :process_start,
-      :pid_arg,
-      :pid_return,
-      :pid_result,
-      :pid_call,
-      :pid_message,
-      :pid_register,
-      :pid_send,
+      :value_arg,
+      :value_return,
+      :value_result,
+      :process_call_source,
+      :process_message_source,
+      :process_register_source,
+      :process_send_source,
       :send_envelope,
-      :pid_signal,
-      :pid_object,
-      :pid_field,
-      :pid_base,
-      :pid_sets,
-      :pid_load,
-      :pid_remote,
-      :pid_probe,
+      :process_signal_source,
+      :value_object,
+      :value_field,
+      :value_base,
+      :value_sets,
+      :value_load,
+      :process_remote_source,
+      :process_probe_source,
       :table_alloc,
       :table_use,
       :dict_op,
@@ -611,13 +496,13 @@ defmodule Argus.Extractors.PidFlow do
   `{:via, module, key}` inspected whole, so the three namespaces never
   meet. `nil` for anything with an unknown part.
 
-      iex> Argus.Extractors.PidFlow.name_of(:cache)
+      iex> Argus.Extractors.TermFlow.name_of(:cache)
       ":cache"
 
-      iex> Argus.Extractors.PidFlow.name_of({:global, :cache})
+      iex> Argus.Extractors.TermFlow.name_of({:global, :cache})
       "{:global, :cache}"
 
-      iex> Argus.Extractors.PidFlow.name_of({:via, Registry, {MyReg, :dynamic}})
+      iex> Argus.Extractors.TermFlow.name_of({:via, Registry, {MyReg, :dynamic}})
       nil
   """
   @spec name_of(term()) :: String.t() | nil
@@ -664,7 +549,7 @@ defmodule Argus.Extractors.PidFlow do
           {again, state} = commit_objects(idx, result, state)
           {result.writes, state, again}
         end,
-        max_evaluations: @max_evaluations
+        max_evaluations: :infinity
       )
 
     emit(facts, fun, Map.put(state, :outs, outs))
@@ -674,20 +559,7 @@ defmodule Argus.Extractors.PidFlow do
   # of; returns the loads to evaluate again, through a term whose fields
   # changed.
   defp commit_objects(idx, result, state) do
-    readers =
-      Enum.reduce(result.read_objs, state.readers, fn obj, acc ->
-        Map.update(acc, obj, MapSet.new([idx]), &MapSet.put(&1, idx))
-      end)
-
-    {changed_objs, objs} =
-      Enum.reduce(result.objs, {[], state.objs}, fn {key, obj}, {changed, objs} ->
-        if Map.get(objs, key) == obj,
-          do: {changed, objs},
-          else: {[key | changed], Map.put(objs, key, obj)}
-      end)
-
-    again = Enum.flat_map(changed_objs, &MapSet.to_list(Map.get(readers, &1, MapSet.new())))
-    {again, %{state | objs: objs, readers: readers}}
+    Heap.commit(idx, result.objs, result.read_objs, state)
   end
 
   # ── What an instruction writes ───────────────────────────────────────
@@ -703,6 +575,8 @@ defmodule Argus.Extractors.PidFlow do
       :error -> instruction(ctx, instr, new_result())
     end
   end
+
+  defp instruction(ctx, :send, r), do: write(r, {:x, 0}, val(ctx, {:x, 1}))
 
   defp instruction(ctx, {:move, src, dst}, r), do: write(r, dst, val(ctx, src))
 
@@ -1014,6 +888,9 @@ defmodule Argus.Extractors.PidFlow do
       Map.has_key?(ctx.fun.starts, idx) ->
         start_result(ctx, Map.fetch!(ctx.fun.starts, idx), r)
 
+      mfa == {:erlang, :send, 2} ->
+        write(r, {:x, 0}, val(ctx, {:x, 1}))
+
       mfa == {:ets, :new, 2} ->
         write(r, {:x, 0}, MapSet.new([{:table, table(ctx.fun, idx)}]))
 
@@ -1029,6 +906,7 @@ defmodule Argus.Extractors.PidFlow do
       Map.has_key?(@field_reads, mfa) ->
         {term, key} = Map.fetch!(@field_reads, mfa)
         {value, r} = library_load(ctx, term, key, r)
+        value = if elem(mfa, 2) == 3, do: MapSet.union(value, val(ctx, {:x, 2})), else: value
         write(r, {:x, 0}, value)
 
       Map.has_key?(@wrapped_field_reads, mfa) ->
@@ -1228,13 +1106,7 @@ defmodule Argus.Extractors.PidFlow do
       {kind, n} when kind in [:x, :y] ->
         reg = "#{kind}#{n}"
 
-        ctx.fun.reads
-        |> Map.get(ctx.idx, %{})
-        |> Map.get(reg, [])
-        |> Enum.reduce(MapSet.new(), fn
-          {:param, k}, acc -> MapSet.put(acc, {:param, k})
-          {:def, d}, acc -> MapSet.union(acc, Map.get(ctx.state.outs, {d, reg}, MapSet.new()))
-        end)
+        ValueFlow.input(ctx.fun.reads, ctx.state.outs, ctx.idx, reg, &{:param, &1})
 
       _literal ->
         MapSet.new()
@@ -1258,64 +1130,9 @@ defmodule Argus.Extractors.PidFlow do
   # directly (its field, a map's unknown-key field, and the base's field
   # when the term does not set it); a term from elsewhere becomes a load
   # the Datalog resolves; a pid has no fields.
-  defp load(ctx, value, sel, id, r), do: load(ctx, value, sel, id, r, %{})
-
-  defp load(ctx, value, sel, id, r, seen) do
-    Enum.reduce(value, {MapSet.new(), r}, fn token, {acc, r} ->
-      case token do
-        {:obj, key} ->
-          if Map.has_key?(seen, key) do
-            {acc, r}
-          else
-            r = %{r | read_objs: [key | r.read_objs]}
-
-            local_field(
-              ctx,
-              Map.get(ctx.state.objs, key),
-              sel,
-              id,
-              r,
-              Map.put(seen, key, true),
-              acc
-            )
-          end
-
-        {kind, _} when kind in [:param, :result, :load, :reply] ->
-          {MapSet.put(acc, {:load, id}), %{r | loads: [{id, sel, token} | r.loads]}}
-
-        _pid_or_fun ->
-          {acc, r}
-      end
-    end)
-  end
-
-  defp local_field(_ctx, nil, _sel, _id, r, _seen, acc), do: {acc, r}
-
-  defp local_field(ctx, obj, sel, id, r, seen, acc) do
-    own =
-      case {obj.shape, sel} do
-        # A read by a literal key may read what was written under a key
-        # not known. A read by a key not known reads only that: taking
-        # every field would make `Map.get(struct, key)` every pid in the
-        # struct (a socket's transport pid, say).
-        {"map", sel} when sel != "*" ->
-          MapSet.union(
-            Map.get(obj.fields, sel, MapSet.new()),
-            Map.get(obj.fields, "*", MapSet.new())
-          )
-
-        _ ->
-          Map.get(obj.fields, sel, MapSet.new())
-      end
-
-    acc = MapSet.union(acc, own)
-
-    if MapSet.member?(obj.keys, sel) do
-      {acc, r}
-    else
-      {inherited, r} = load(ctx, obj.base, sel, id, r, seen)
-      {MapSet.union(acc, inherited), r}
-    end
+  defp load(ctx, value, sel, id, r) do
+    {sources, dependencies, loads} = Heap.read(ctx.state.objs, value, sel, id)
+    {sources, %{r | read_objs: dependencies ++ r.read_objs, loads: loads ++ r.loads}}
   end
 
   # A map key as a field name: the inspected literal, or `*`.
@@ -1328,8 +1145,7 @@ defmodule Argus.Extractors.PidFlow do
 
   defp literal_selector(instrs, idx, pos) do
     case Resolve.resolve_register(instrs, idx, {:x, pos}) do
-      {:ok, key} when is_atom(key) and key != :dynamic -> inspect(key)
-      {:ok, key} when is_binary(key) or is_integer(key) -> inspect(key)
+      {:ok, key} when key != :dynamic -> Terms.spell(key)
       _ -> "*"
     end
   end
@@ -1337,7 +1153,7 @@ defmodule Argus.Extractors.PidFlow do
   # ── Emission ─────────────────────────────────────────────────────────
 
   defp emit(facts, fun, state) do
-    live = live_objects(state.objs)
+    live = Heap.live(state.objs)
     ctx = %{fun: fun, state: state, live: live}
 
     facts
@@ -1354,8 +1170,11 @@ defmodule Argus.Extractors.PidFlow do
 
       # A start with a literal name registers the process under it.
       case Map.get(start, :name) do
-        nil -> acc
-        name -> add_fact(acc, :pid_register, [id, fun.func_id, name, "proc", start.proc])
+        nil ->
+          acc
+
+        name ->
+          add_fact(acc, :process_register_source, [id, fun.func_id, name, "proc", start.proc])
       end
     end)
   end
@@ -1371,48 +1190,24 @@ defmodule Argus.Extractors.PidFlow do
 
   defp runs(%{runs: runs}, _ictx), do: runs
 
-  # The terms that hold a source: a field or base with anything but a
-  # term, or with a term that does. Fixpoint over the function's terms.
-  defp live_objects(objs, live \\ %{}) do
-    grown =
-      Enum.reduce(objs, live, fn {key, obj}, acc ->
-        if Map.has_key?(acc, key) or not holds_source?(obj, acc),
-          do: acc,
-          else: Map.put(acc, key, true)
-      end)
-
-    if map_size(grown) == map_size(live), do: live, else: live_objects(objs, grown)
-  end
-
-  defp holds_source?(obj, live) do
-    obj.fields
-    |> Map.values()
-    |> Enum.concat([obj.base])
-    |> Enum.any?(fn value -> Enum.any?(value, &source?(&1, live)) end)
-  end
-
-  defp source?({:obj, key}, live), do: Map.has_key?(live, key)
-  defp source?({:fun, _closure}, _live), do: false
-  defp source?(_token, _live), do: true
-
   defp emit_objects(facts, ctx) do
     func = ctx.fun.func_id
 
     Enum.reduce(Map.keys(ctx.live), facts, fn key, acc ->
       obj = Map.fetch!(ctx.state.objs, key)
       id = obj_id(ctx.fun, key)
-      acc = add_fact(acc, :pid_object, [func, id, obj.shape, obj.tag, to_string(obj.arity)])
+      acc = add_fact(acc, :value_object, [func, id, obj.shape, obj.tag, to_string(obj.arity)])
 
       acc =
         Enum.reduce(obj.fields, acc, fn {sel, value}, inner ->
-          sources(inner, ctx, :pid_field, [func, id, sel], value)
+          sources(inner, ctx, :value_field, [func, id, sel], value)
         end)
 
-      acc = sources(acc, ctx, :pid_base, [func, id], obj.base)
+      acc = sources(acc, ctx, :value_base, [func, id], obj.base)
 
       if convert(ctx, obj.base) == [],
         do: acc,
-        else: Enum.reduce(obj.keys, acc, &add_fact(&2, :pid_sets, [id, &1]))
+        else: Enum.reduce(obj.keys, acc, &add_fact(&2, :value_sets, [id, &1]))
     end)
   end
 
@@ -1426,7 +1221,7 @@ defmodule Argus.Extractors.PidFlow do
 
       acc =
         Enum.reduce(result.loads, acc, fn {id, sel, token}, inner ->
-          sources(inner, ctx, :pid_load, [fun.func_id, id, sel], MapSet.new([token]))
+          sources(inner, ctx, :value_load, [fun.func_id, id, sel], MapSet.new([token]))
         end)
 
       case Map.fetch(fun.sites, idx) do
@@ -1437,7 +1232,7 @@ defmodule Argus.Extractors.PidFlow do
   end
 
   defp emit_other(facts, at, ictx, :return),
-    do: sources(facts, at, :pid_return, [at.fun.func_id], val(ictx, {:x, 0}))
+    do: sources(facts, at, :value_return, [at.fun.func_id], val(ictx, {:x, 0}))
 
   defp emit_other(facts, at, ictx, :send), do: send_row(facts, at, ictx)
 
@@ -1456,7 +1251,7 @@ defmodule Argus.Extractors.PidFlow do
       sources(
         acc,
         at,
-        :pid_arg,
+        :value_arg,
         [site(at.fun, at.idx), at.fun.func_id, closure, to_string(first + slot), "closure"],
         val(ictx, operand)
       )
@@ -1499,8 +1294,11 @@ defmodule Argus.Extractors.PidFlow do
 
   defp emit_remote(facts, at, mfa) do
     case remote_answer(at.fun.instrs, at.idx, mfa) do
-      nil -> facts
-      _shape -> add_fact(facts, :pid_remote, [site(at.fun, at.idx), at.fun.func_id, spell(mfa)])
+      nil ->
+        facts
+
+      _shape ->
+        add_fact(facts, :process_remote_source, [site(at.fun, at.idx), at.fun.func_id, spell(mfa)])
     end
   end
 
@@ -1518,7 +1316,13 @@ defmodule Argus.Extractors.PidFlow do
       if MapSet.size(value) == 0 or node_tested?(at.fun, at.idx) do
         facts
       else
-        sources(facts, at, :pid_probe, [site(at.fun, at.idx), at.fun.func_id, spell(mfa)], value)
+        sources(
+          facts,
+          at,
+          :process_probe_source,
+          [site(at.fun, at.idx), at.fun.func_id, spell(mfa)],
+          value
+        )
       end
     else
       facts
@@ -1612,9 +1416,9 @@ defmodule Argus.Extractors.PidFlow do
       id = site(at.fun, at.idx)
 
       facts
-      |> add_fact(:pid_remote, [id, at.fun.func_id, spell(mfa)])
-      |> add_fact(:pid_arg, [id, at.fun.func_id, resolver, "1", "resolver", "remote", id])
-      |> add_fact(:pid_arg, [id, at.fun.func_id, resolver, "2", "resolver", "remote", id])
+      |> add_fact(:process_remote_source, [id, at.fun.func_id, spell(mfa)])
+      |> add_fact(:value_arg, [id, at.fun.func_id, resolver, "1", "resolver", "remote", id])
+      |> add_fact(:value_arg, [id, at.fun.func_id, resolver, "2", "resolver", "remote", id])
     else
       _ -> facts
     end
@@ -1649,7 +1453,7 @@ defmodule Argus.Extractors.PidFlow do
         {:external, {mod, name, arity} = called} ->
           cond do
             called in @probes ->
-              emit_rows(facts, :pid_probe, [id, at.fun.func_id, spell(called)], remote)
+              emit_rows(facts, :process_probe_source, [id, at.fun.func_id, spell(called)], remote)
 
             Runtime.module?(mod) ->
               facts
@@ -1670,7 +1474,7 @@ defmodule Argus.Extractors.PidFlow do
     id = site(at.fun, at.idx)
 
     Enum.reduce(remote, facts, fn {"remote", src}, acc ->
-      add_fact(acc, :pid_arg, [id, at.fun.func_id, callee, "0", "element", "remote", src])
+      add_fact(acc, :value_arg, [id, at.fun.func_id, callee, "0", "element", "remote", src])
     end)
   end
 
@@ -1749,7 +1553,7 @@ defmodule Argus.Extractors.PidFlow do
         sources(
           acc,
           at,
-          :pid_arg,
+          :value_arg,
           [site(at.fun, at.idx), at.fun.func_id, callee(mfa), to_string(pos), "call"],
           val(ictx, {:x, pos})
         )
@@ -1764,7 +1568,7 @@ defmodule Argus.Extractors.PidFlow do
     sources(
       facts,
       at,
-      :pid_arg,
+      :value_arg,
       [site(at.fun, at.idx), at.fun.func_id, "#{mod}:init/1", "0", "init"],
       val(ictx, reg)
     )
@@ -1779,7 +1583,7 @@ defmodule Argus.Extractors.PidFlow do
     sources(
       facts,
       at,
-      :pid_arg,
+      :value_arg,
       [site(at.fun, at.idx), at.fun.func_id, "#{mod}:start_link/1", "0", "child"],
       arg
     )
@@ -1796,7 +1600,7 @@ defmodule Argus.Extractors.PidFlow do
           sources(
             acc,
             at,
-            :pid_arg,
+            :value_arg,
             [site(at.fun, at.idx), at.fun.func_id, runs, to_string(pos), "spawn"],
             value
           )
@@ -1809,37 +1613,7 @@ defmodule Argus.Extractors.PidFlow do
 
   defp emit_start_args(facts, _at, _ictx, _start), do: facts
 
-  # The positional elements of a list built here, when every cons cell
-  # is: `[a, b]` is two cells ending in `[]`.
-  defp list_elements(ictx, value) do
-    case MapSet.to_list(value) do
-      [] ->
-        {:ok, []}
-
-      [{:obj, key}] ->
-        case Map.get(ictx.state.objs, key) do
-          %{shape: "list", fields: %{"[]" => head}, base: tail, nil_tail: nil_tail?} ->
-            cond do
-              nil_tail? -> {:ok, [head]}
-              MapSet.size(tail) == 0 -> :unknown
-              true -> list_tail(ictx, head, tail)
-            end
-
-          _ ->
-            :unknown
-        end
-
-      _ ->
-        :unknown
-    end
-  end
-
-  defp list_tail(ictx, head, tail) do
-    case list_elements(ictx, tail) do
-      {:ok, rest} -> {:ok, [head | rest]}
-      :unknown -> :unknown
-    end
-  end
+  defp list_elements(ictx, value), do: Heap.list_elements(ictx.state.objs, value)
 
   # The target in x0 (a pid, or a literal name), and the message in x1.
   defp emit_process_call(facts, at, ictx, mfa) do
@@ -1853,8 +1627,8 @@ defmodule Argus.Extractors.PidFlow do
     id = site(at.fun, at.idx)
 
     facts
-    |> sources(at, :pid_call, [id, at.fun.func_id, kind], destination(at, ictx))
-    |> sources(at, :pid_message, [id, at.fun.func_id, kind], val(ictx, {:x, 1}))
+    |> sources(at, :process_call_source, [id, at.fun.func_id, kind], destination(at, ictx))
+    |> sources(at, :process_message_source, [id, at.fun.func_id, kind], val(ictx, {:x, 1}))
   end
 
   defp destination(at, ictx, reg \\ {:x, 0}) do
@@ -1907,7 +1681,7 @@ defmodule Argus.Extractors.PidFlow do
         sources(
           facts,
           at,
-          :pid_signal,
+          :process_signal_source,
           [site(at.fun, at.idx), at.fun.func_id, signal],
           destination(at, ictx, reg)
         )
@@ -1965,7 +1739,14 @@ defmodule Argus.Extractors.PidFlow do
   defp register_row(facts, _at, "dynamic", _value), do: facts
 
   defp register_row(facts, at, name, value),
-    do: sources(facts, at, :pid_register, [site(at.fun, at.idx), at.fun.func_id, name], value)
+    do:
+      sources(
+        facts,
+        at,
+        :process_register_source,
+        [site(at.fun, at.idx), at.fun.func_id, name],
+        value
+      )
 
   defp emit_send(facts, at, ictx, {mod, :send, arity})
        when (mod == :erlang and arity in [2, 3]) or (mod == Process and arity == 3),
@@ -1983,7 +1764,7 @@ defmodule Argus.Extractors.PidFlow do
       if envelope?(at.fun.instrs, at.idx), do: add_fact(facts, :send_envelope, [id]), else: facts
 
     facts
-    |> sources(at, :pid_send, [id, at.fun.func_id, message], destination(at, ictx))
+    |> sources(at, :process_send_source, [id, at.fun.func_id, message], destination(at, ictx))
     |> call_rows(at, ictx, "info")
   end
 
@@ -2005,7 +1786,7 @@ defmodule Argus.Extractors.PidFlow do
     end
   end
 
-  # The gen behaviours' envelopes, by tag and size: pid_send's message
+  # The gen behaviours' envelopes, by tag and size: process_send_source's message
   # spells a tuple by its tag alone, and `{:system, :reload}` is a
   # message, not :sys's `{:system, from, request}` (review 2, item 33).
   @envelopes %{:"$gen_call" => 3, :"$gen_cast" => 2, :system => 3}
@@ -2024,7 +1805,7 @@ defmodule Argus.Extractors.PidFlow do
   defp emit_tail(facts, at, ictx, _site) do
     if elem(elem(at.fun.code, at.idx), 0) in @tail_ops do
       value = Map.get(ictx.state.outs, {at.idx, "x0"}, MapSet.new())
-      sources(facts, at, :pid_return, [at.fun.func_id], value)
+      sources(facts, at, :value_return, [at.fun.func_id], value)
     else
       facts
     end
@@ -2032,7 +1813,7 @@ defmodule Argus.Extractors.PidFlow do
 
   defp emit_loads(facts, at, r) do
     Enum.reduce(r.loads, facts, fn {id, sel, token}, inner ->
-      sources(inner, at, :pid_load, [at.fun.func_id, id, sel], MapSet.new([token]))
+      sources(inner, at, :value_load, [at.fun.func_id, id, sel], MapSet.new([token]))
     end)
   end
 
@@ -2049,12 +1830,12 @@ defmodule Argus.Extractors.PidFlow do
     end)
   end
 
-  # A `result` source names its call site; `pid_result` says what it calls.
+  # A `result` source names its call site; `value_result` says what it calls.
   defp emit_results(facts, ctx, value) do
     Enum.reduce(value, facts, fn
       {:result, idx}, acc ->
         %{mfa: mfa} = Map.fetch!(ctx.fun.sites, idx)
-        add_fact(acc, :pid_result, [site(ctx.fun, idx), ctx.fun.func_id, callee(mfa)])
+        add_fact(acc, :value_result, [site(ctx.fun, idx), ctx.fun.func_id, callee(mfa)])
 
       _token, acc ->
         acc
@@ -2105,17 +1886,28 @@ defmodule Argus.Extractors.PidFlow do
 
   # One literal add_fact per relation, so the relation list stays
   # checkable against the source.
-  defp emit_row(facts, :pid_arg, row), do: add_fact(facts, :pid_arg, row)
-  defp emit_row(facts, :pid_return, row), do: add_fact(facts, :pid_return, row)
-  defp emit_row(facts, :pid_call, row), do: add_fact(facts, :pid_call, row)
-  defp emit_row(facts, :pid_message, row), do: add_fact(facts, :pid_message, row)
-  defp emit_row(facts, :pid_register, row), do: add_fact(facts, :pid_register, row)
-  defp emit_row(facts, :pid_send, row), do: add_fact(facts, :pid_send, row)
-  defp emit_row(facts, :pid_signal, row), do: add_fact(facts, :pid_signal, row)
-  defp emit_row(facts, :pid_field, row), do: add_fact(facts, :pid_field, row)
-  defp emit_row(facts, :pid_base, row), do: add_fact(facts, :pid_base, row)
-  defp emit_row(facts, :pid_load, row), do: add_fact(facts, :pid_load, row)
-  defp emit_row(facts, :pid_probe, row), do: add_fact(facts, :pid_probe, row)
+  defp emit_row(facts, :value_arg, row), do: add_fact(facts, :value_arg, row)
+  defp emit_row(facts, :value_return, row), do: add_fact(facts, :value_return, row)
+  defp emit_row(facts, :process_call_source, row), do: add_fact(facts, :process_call_source, row)
+
+  defp emit_row(facts, :process_message_source, row),
+    do: add_fact(facts, :process_message_source, row)
+
+  defp emit_row(facts, :process_register_source, row),
+    do: add_fact(facts, :process_register_source, row)
+
+  defp emit_row(facts, :process_send_source, row), do: add_fact(facts, :process_send_source, row)
+
+  defp emit_row(facts, :process_signal_source, row),
+    do: add_fact(facts, :process_signal_source, row)
+
+  defp emit_row(facts, :value_field, row), do: add_fact(facts, :value_field, row)
+  defp emit_row(facts, :value_base, row), do: add_fact(facts, :value_base, row)
+  defp emit_row(facts, :value_load, row), do: add_fact(facts, :value_load, row)
+
+  defp emit_row(facts, :process_probe_source, row),
+    do: add_fact(facts, :process_probe_source, row)
+
   defp emit_row(facts, :table_use, row), do: add_fact(facts, :table_use, row)
   defp emit_row(facts, :dict_put, row), do: add_fact(facts, :dict_put, row)
 

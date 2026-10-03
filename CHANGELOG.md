@@ -20,11 +20,24 @@ which a change appeared; older names and APIs may have changed since then.
   once per module. Handle, socket, TLS and process-registry extractors skip
   functions whose instructions cannot produce their facts.
 
+### Changed
+
+- Schema version 162: rename `Argus.Extractors.PidFlow` to `TermFlow`.
+  General `pid_{arg,return,result,object,field,base,sets,load}` relations become
+  `value_*`; process `pid_{call,message,register,send,signal,remote,probe}`
+  relations become `process_*_source`. Update custom extractors and fact consumers;
+  the old module and relation names are removed.
+
 ### Fixed
 
 - Accept `--color always` and `--color never` in the escript. Both crashed with
   "not an already existing atom", which broke `rebar3 argus` in a terminal,
   since the plugin passes `--color always` there.
+- Preserve map/access defaults, send results and fields of dictionary-held
+  containers in value provenance. Recognize compound literal map keys and
+  reject cyclic positional list summaries. Intraprocedural value
+  flow converges without a fixed iteration cutoff; explicit solver budgets
+  fail visibly rather than returning incomplete facts.
 - Refresh cached specs when a transitive remote type changes, including recent
   equal-size BEAM replacements with the same modification timestamp.
 - Recognize exception data returned as maps, closures or the exception class,
@@ -58,7 +71,7 @@ which a change appeared; older names and APIs may have changed since then.
 
 ### Schema changes
 
-Fact schema advances from 154 to 161. Custom Datalog consumers must account for:
+Fact schema advances from 154 to 162. Custom Datalog consumers must account for:
 
 - `answers_call` and the replacement of `monitor_started` with
   `monitor_answer`, which follows results through wrappers.

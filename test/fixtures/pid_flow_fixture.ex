@@ -1,6 +1,6 @@
 defmodule Argus.Test.Fixtures.PidFlow do
   @moduledoc """
-  Shapes for `Argus.Extractors.PidFlow`: where a pid comes from, and where
+  Shapes for `Argus.Extractors.TermFlow`: where a pid comes from, and where
   it goes. The quiet ones start or reach a process nothing can name.
   """
 
@@ -659,6 +659,29 @@ defmodule Argus.Test.Fixtures.PidFlow do
     def query_directly, do: GenServer.call(conn(), :query)
 
     defp conn, do: Process.get(:dict_conn)
+  end
+
+  defmodule DictMapConnUser do
+    @moduledoc false
+    use GenServer
+
+    alias Argus.Test.Fixtures.PidFlow.Conn
+
+    def start_link(_), do: GenServer.start_link(__MODULE__, :ok)
+
+    @impl true
+    def init(:ok) do
+      {:ok, conn} = Conn.start_link(:private)
+      Process.put(:connection, %{conn: conn, unrelated: self()})
+      {:ok, nil}
+    end
+
+    @impl true
+    def handle_call(:query, _from, state) do
+      {:reply, GenServer.call(Process.get(:connection).conn, :query), state}
+    end
+
+    def query_directly, do: GenServer.call(Process.get(:connection).conn, :query)
   end
 
   defmodule ConnSup do

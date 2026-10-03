@@ -28,7 +28,7 @@ defmodule Argus.Graph.Functions do
     Argus.Extractors.LiveView,
     Argus.Extractors.OTP,
     Argus.Extractors.ParamFlow,
-    Argus.Extractors.PidFlow,
+    Argus.Extractors.TermFlow,
     Argus.Extractors.ProcessRegistry,
     Argus.Extractors.Purity,
     Argus.Extractors.Reply,

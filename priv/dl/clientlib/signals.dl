@@ -2,7 +2,7 @@
 // parameters. Rejoin staged process_signal with call/use views here so call-only
 // consumers need not read signals. Requires imports.dl and otp.dl.
 
-pid_use(id, f, kind, sk, s) :- pid_signal(id, f, kind, sk, s).
+pid_use(id, f, kind, sk, s) :- process_signal_source(id, f, kind, sk, s).
 
 // Signal kinds (exit, monitor, link, unlink) are not call kinds, so a
 // call's rows are the same with or without these.
@@ -17,7 +17,7 @@ process_call(f, a, id, signal, p) :- process_signal(f, a, id, signal, p).
 
 signal_target(id, g, signal, p) :-
   process_signal(_, _, id, signal, p),
-  pid_signal(id, g, signal, _, _).
+  process_signal_source(id, g, signal, _, _).
 
 // A process something monitors or links to: its crash is observed.
 .decl watched_process(proc: symbol, how: symbol)

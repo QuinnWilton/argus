@@ -60,7 +60,7 @@ defmodule Argus.Analyses.Ets do
       Argus.Extractors.CallArgs,
       # Where a process starts (process_start): the same-process walk of
       # ets_created_in_start sets aside what a start runs (runs_elsewhere).
-      Argus.Extractors.PidFlow,
+      Argus.Extractors.TermFlow,
       Argus.Extractors.Tooling
     ]
 

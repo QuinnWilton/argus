@@ -97,7 +97,7 @@ defmodule Argus.Analyses.Failure do
       Argus.Extractors.Generated,
       # Which process an exit signal or a monitor reaches, and whether a
       # supervisor owns it (clientlib/processes.dl, signals.dl).
-      Argus.Extractors.PidFlow,
+      Argus.Extractors.TermFlow,
       Argus.Extractors.Supervision,
       # A gen_statem's state functions and data (clientlib/process_statem.dl,
       # and processes.dl in the points-to stage).

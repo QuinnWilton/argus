@@ -1,4 +1,4 @@
-// Interprocedural process points-to, composing `Argus.Extractors.PidFlow` summaries.
+// Interprocedural process points-to, composing `Argus.Extractors.TermFlow` summaries.
 // Processes use allocation-site identities; factory results and supervised children
 // receive caller-specific instances mapped to their base by `instance`. Terms use
 // construction sites and field selectors.
@@ -36,16 +36,16 @@ server_process(cat("child ", cat(s, cat("#", to_string(pos)))), m) :-
 
 start_object(t, b) :-
   process_start(t, _, b, _, _),
-  pid_object(_, t, "tuple", ":ok", "2"),
-  pid_field(_, t, "{1}", "proc", b).
+  value_object(_, t, "tuple", ":ok", "2"),
+  value_field(_, t, "{1}", "proc", b).
 
 // `func` returns `x`, allocated while it ran: its own start's result, or
 // its callee's returned as it is.
 .decl fresh_return(func: symbol, x: symbol)
 
-fresh_return(g, t) :- pid_return(g, "obj", t), start_object(t, _).
-fresh_return(g, b) :- pid_return(g, "proc", b), process_start(_, g, b, _, _).
-fresh_return(g, x) :- pid_return(g, "result", c), pid_result(c, g, h), fresh_return(h, x).
+fresh_return(g, t) :- value_return(g, "obj", t), start_object(t, _).
+fresh_return(g, b) :- value_return(g, "proc", b), process_start(_, g, b, _, _).
+fresh_return(g, x) :- value_return(g, "result", c), value_result(c, g, h), fresh_return(h, x).
 
 .decl fresh_base(x: symbol, base: symbol)
 
@@ -56,9 +56,9 @@ fresh_base(b, b) :- process_start(_, _, b, _, _).
 .decl kept_fresh(site: symbol, func: symbol, x: symbol)
 
 kept_fresh(c, f, x) :-
-  pid_result(c, f, g),
+  value_result(c, f, g),
   fresh_return(g, x),
-  !pid_return(f, "result", c).
+  !value_return(f, "result", c).
 
 // A process and the start site it comes from.
 .decl instance(proc: symbol, base: symbol)
@@ -115,21 +115,21 @@ process(p) :- server_process(p, _).
 // them are bound by the function that uses them.
 .decl reads_name(func: symbol, name: symbol)
 
-reads_name(f, n) :- pid_arg(_, f, _, _, _, "name", n).
-reads_name(f, n) :- pid_return(f, "name", n).
-reads_name(f, n) :- pid_call(_, f, _, "name", n).
-reads_name(f, n) :- pid_message(_, f, _, "name", n).
-reads_name(f, n) :- pid_register(_, f, _, "name", n).
-reads_name(f, n) :- pid_field(f, _, _, "name", n).
-reads_name(f, n) :- pid_base(f, _, "name", n).
-reads_name(f, n) :- pid_signal(_, f, _, "name", n).
+reads_name(f, n) :- value_arg(_, f, _, _, _, "name", n).
+reads_name(f, n) :- value_return(f, "name", n).
+reads_name(f, n) :- process_call_source(_, f, _, "name", n).
+reads_name(f, n) :- process_message_source(_, f, _, "name", n).
+reads_name(f, n) :- process_register_source(_, f, _, "name", n).
+reads_name(f, n) :- value_field(f, _, _, "name", n).
+reads_name(f, n) :- value_base(f, _, "name", n).
+reads_name(f, n) :- process_signal_source(_, f, _, "name", n).
 
 source_pts(f, "proc", p, p) :- process_start(_, f, p, _, _), !pervasive(p).
 
 // Follow only terms containing a process or table leaf, directly or through another
 // term. Every field_pts row points to a leaf or such a term, so it also proves that its
 // containing term is relevant.
-source_pts(f, "obj", o, o) :- pid_object(f, o, _, _, _), holds_leaf(o).
+source_pts(f, "obj", o, o) :- value_object(f, o, _, _, _), holds_leaf(o).
 .plan 0:(2,1)
 
 .decl holds_leaf(obj: symbol)
@@ -138,23 +138,23 @@ holds_leaf(o) :- field_pts(o, _, _).
 
 source_pts(f, "param", k, x) :- param_pts(f, k, x).
 // A callee's result; a factory's fresh value is renamed where it is kept.
-source_pts(f, "result", c, x) :- pid_result(c, f, g), returns_pts(g, x), !fresh_return(g, x).
+source_pts(f, "result", c, x) :- value_result(c, f, g), returns_pts(g, x), !fresh_return(g, x).
 .plan 0:(2,1)
 
 // A callee that hands its parameter back returns, at this call, what
 // this call passed it (see "Returns" below).
 source_pts(f, "result", c, x) :-
-  pid_result(c, f, g),
+  value_result(c, f, g),
   passes(g, j),
-  pid_arg(c, f, g, j, "call", sk, s),
+  value_arg(c, f, g, j, "call", sk, s),
   source_pts(f, sk, s, x),
   !fresh_return(g, x).
 .plan 0:(4,3,1,2)
 
 source_pts(f, "result", c, x) :-
-  pid_result(c, f, g),
+  value_result(c, f, g),
   fresh_return(g, x),
-  pid_return(f, "result", c),
+  value_return(f, "result", c),
   !pervasive(x).
 
 source_pts(f, "result", c, cat("start ", c)) :-
@@ -169,7 +169,7 @@ source_pts(f, "dict", k, x) :- dict_read(f, k, g, sk, s), source_pts(g, sk, s, x
 
 // A helper returning a dictionary entry returns the value held by the caller's process
 // at that call.
-source_pts(f, "result", c, x) :- pid_result(c, f, g), returns_key(g, k), source_pts(f, "dict", k, x).
+source_pts(f, "result", c, x) :- value_result(c, f, g), returns_key(g, k), source_pts(f, "dict", k, x).
 .plan 0:(3,1,2)
 source_pts(f, "self", "self", p) :- self_pid(f, p), !pervasive(p).
 
@@ -185,7 +185,7 @@ source_pts(f, "reply", id, x) :-
   server_process(p, m),
   function_def(h, m, "handle_call", 3, _),
   returns_all(h, t),
-  pid_object(_, t, "tuple", ":reply", _),
+  value_object(_, t, "tuple", ":reply", _),
   field_pts(t, "{1}", x).
 
 // A load reads a field of whatever its base points to.
@@ -196,7 +196,7 @@ source_pts(f, "load", l, x) :- load_base(f, l, sel, o), reads_field(o, sel, x).
 // loads.
 .decl load_base(func: symbol, load: symbol, sel: symbol, obj: symbol)
 
-load_base(f, l, sel, o) :- pid_load(f, l, sel, bk, bs), source_pts(f, bk, bs, o).
+load_base(f, l, sel, o) :- value_load(f, l, sel, bk, bs), source_pts(f, bk, bs, o).
 .plan 0:(2,1)
 
 // A field read sees the named field and unknown-key writes. Unknown-key reads see only
@@ -209,18 +209,18 @@ field_read(o, sel) :- load_base(_, _, sel, o).
 
 field_read(o, sel) :-
   targets_field(g, _, sel, _, _),
-  pid_arg(_, f, g, _, "call", sk, s),
+  value_arg(_, f, g, _, "call", sk, s),
   source_pts(f, sk, s, o).
 
 reads_field(o, sel, x) :- field_read(o, sel), field_pts(o, sel, x).
 
 reads_field(o, sel, x) :-
   field_read(o, sel),
-  pid_object(_, o, "map", _, _),
+  value_object(_, o, "map", _, _),
   field_pts(o, "*", x).
 .plan 1:(3,2,1)
 
-field_pts(o, sel, x) :- pid_field(f, o, sel, sk, s), source_pts(f, sk, s, x).
+field_pts(o, sel, x) :- value_field(f, o, sel, sk, s), source_pts(f, sk, s, x).
 .plan 0:(2,1)
 
 // A kept `{:ok, pid}` holds its own instance.
@@ -231,13 +231,13 @@ field_pts(cat("result ", c), "{1}", cat("start ", c)) :-
 
 // An update keeps the fields it does not set; a cons cell's tail holds
 // the rest of the elements.
-field_pts(o, sel, x) :- update_base(o, b), field_pts(b, sel, x), !pid_sets(o, sel).
+field_pts(o, sel, x) :- update_base(o, b), field_pts(b, sel, x), !value_sets(o, sel).
 .plan 1:(2,1)
 
 // The term an update copies the fields it does not set from.
 .decl update_base(obj: symbol, base: symbol)
 
-update_base(o, b) :- pid_base(f, o, bk, bs), source_pts(f, bk, bs, b).
+update_base(o, b) :- value_base(f, o, bk, bs), source_pts(f, bk, bs, b).
 .plan 0:(2,1)
 
 // Fresh returns
@@ -246,25 +246,25 @@ update_base(o, b) :- pid_base(f, o, bk, bs), source_pts(f, bk, bs, b).
 // argument. `returns_pts` contains other values. Split forwarded callee results the
 // same way to avoid mixing one caller's argument into every other's result.
 returns_pts(g, x) :-
-  pid_return(g, k, s),
+  value_return(g, k, s),
   k != "param",
   k != "result",
   k != "dict",
   source_pts(g, k, s, x).
 .plan 0:(2,1)
 
-returns_pts(g, x) :- pid_return(g, "result", c), pid_result(c, g, h), returns_pts(h, x).
+returns_pts(g, x) :- value_return(g, "result", c), value_result(c, g, h), returns_pts(h, x).
 .plan 0:(3,2,1)
 
 // What the callee allocated while it ran (fresh_return) is the caller's
 // result by whichever of these rules it also arrives.
-returns_pts(g, x) :- pid_return(g, "result", c), pid_result(c, g, h), fresh_return(h, x).
+returns_pts(g, x) :- value_return(g, "result", c), value_result(c, g, h), fresh_return(h, x).
 
 returns_pts(g, x) :-
-  pid_return(g, "result", c),
-  pid_result(c, g, h),
+  value_return(g, "result", c),
+  value_result(c, g, h),
   passes(h, i),
-  pid_arg(c, g, h, i, "call", sk, s),
+  value_arg(c, g, h, i, "call", sk, s),
   sk != "param",
   source_pts(g, sk, s, x).
 .plan 0:(5,4,2,1,3)
@@ -273,13 +273,13 @@ returns_pts(g, x) :-
 // as a callee's result that hands back what `func` passed it there.
 .decl passes(func: symbol, pos: symbol)
 
-passes(g, j) :- pid_return(g, "param", j).
+passes(g, j) :- value_return(g, "param", j).
 
 passes(g, j) :-
-  pid_return(g, "result", c),
-  pid_result(c, g, h),
+  value_return(g, "result", c),
+  value_result(c, g, h),
   passes(h, i),
-  pid_arg(c, g, h, i, "call", "param", j).
+  value_arg(c, g, h, i, "call", "param", j).
 
 // All returned values, including forwarded parameters. This also models callback
 // results whose arguments are supplied by the runtime.
@@ -299,19 +299,19 @@ returns_all(g, x) :- returns_key(g, k), source_pts(g, "dict", k, x).
 entry_pts(g, k, x) :- entry_arg(f, g, k, sk, s), source_pts(f, sk, s, x).
 .plan 0:(2,1)
 
-// Process-start arguments passed to entry functions. Keep these non-call pid_arg rows
+// Process-start arguments passed to entry functions. Keep these non-call value_arg rows
 // separate from ordinary call arguments.
 .decl entry_arg(caller: symbol, func: symbol, pos: symbol, src_kind: symbol, src: symbol)
 
-entry_arg(f, g, k, sk, s) :- pid_arg(_, f, g, k, via, sk, s), via != "call".
+entry_arg(f, g, k, sk, s) :- value_arg(_, f, g, k, via, sk, s), via != "call".
 
 param_pts(g, k, x) :- entry_pts(g, k, x).
-param_pts(g, k, x) :- pid_arg(_, f, g, k, "call", sk, s), source_pts(f, sk, s, x).
+param_pts(g, k, x) :- value_arg(_, f, g, k, "call", sk, s), source_pts(f, sk, s, x).
 .plan 0:(2,1)
 
 // A registration (register/2, :global.register_name/2, Registry.register/3,
 // or a start with a literal name) stores the pid it resolves to.
-named_pid(n, p) :- pid_register(_, f, n, k, s), source_pts(f, k, s, p), process(p).
+named_pid(n, p) :- process_register_source(_, f, n, k, s), source_pts(f, k, s, p), process(p).
 
 // A name registered by a start names every instance of it.
 named_pid(n, i) :- named_pid(n, b), instance(i, b), i != b.
@@ -326,7 +326,7 @@ named_pid(n, cat("child ", cat(s, cat("#", to_string(pos))))) :-
 // misattribute Process.register calls that register another process's PID.
 .decl resolved_name(name: symbol)
 
-resolved_name(n) :- pid_register(_, _, n, _, _).
+resolved_name(n) :- process_register_source(_, _, n, _, _).
 resolved_name(n) :- supervisor_child_name(_, _, n).
 
 named_pid(n, p) :-
@@ -347,8 +347,8 @@ named_pid(n, p) :-
 // external callers do not inherit each other's dictionary values.
 .decl returns_key(func: symbol, key: symbol)
 
-returns_key(g, k) :- pid_return(g, "dict", k).
-returns_key(g, k) :- pid_return(g, "result", c), pid_result(c, g, h), returns_key(h, k).
+returns_key(g, k) :- value_return(g, "dict", k).
+returns_key(g, k) :- value_return(g, "result", c), value_result(c, g, h), returns_key(h, k).
 
 // A dictionary read of `key` in `func`, and each put of it the same
 // process may make, in `putter`, of the source (sk, s).
@@ -363,18 +363,18 @@ dict_read(f, k, g, sk, s) :-
 // bound by the function that uses them.
 .decl reads_dict(func: symbol, key: symbol)
 
-reads_dict(f, k) :- pid_arg(_, f, _, _, _, "dict", k).
-reads_dict(f, k) :- pid_return(f, "dict", k).
-reads_dict(f, k) :- pid_call(_, f, _, "dict", k).
-reads_dict(f, k) :- pid_message(_, f, _, "dict", k).
-reads_dict(f, k) :- pid_register(_, f, _, "dict", k).
-reads_dict(f, k) :- pid_field(f, _, _, "dict", k).
-reads_dict(f, k) :- pid_base(f, _, "dict", k).
-reads_dict(f, k) :- pid_signal(_, f, _, "dict", k).
-reads_dict(f, k) :- pid_load(f, _, _, "dict", k).
+reads_dict(f, k) :- value_arg(_, f, _, _, _, "dict", k).
+reads_dict(f, k) :- value_return(f, "dict", k).
+reads_dict(f, k) :- process_call_source(_, f, _, "dict", k).
+reads_dict(f, k) :- process_message_source(_, f, _, "dict", k).
+reads_dict(f, k) :- process_register_source(_, f, _, "dict", k).
+reads_dict(f, k) :- value_field(f, _, _, "dict", k).
+reads_dict(f, k) :- value_base(f, _, "dict", k).
+reads_dict(f, k) :- process_signal_source(_, f, _, "dict", k).
+reads_dict(f, k) :- value_load(f, _, _, "dict", k).
 reads_dict(f, k) :- table_use(_, f, "dict", k).
 reads_dict(f, k) :- dict_put(_, f, _, "dict", k).
-reads_dict(f, k) :- pid_result(_, f, g), returns_key(g, k).
+reads_dict(f, k) :- value_result(_, f, g), returns_key(g, k).
 
 // Seed same-process dictionary reachability from reads and writes whose keys have a
 // corresponding write or read elsewhere.
@@ -424,14 +424,14 @@ same_process_call(f, g) :- call_edge(f, g), !runs_elsewhere(f, g).
 
 .decl reads_self(func: symbol)
 
-reads_self(f) :- pid_arg(_, f, _, _, _, "self", _).
-reads_self(f) :- pid_return(f, "self", _).
-reads_self(f) :- pid_call(_, f, _, "self", _).
-reads_self(f) :- pid_message(_, f, _, "self", _).
-reads_self(f) :- pid_register(_, f, _, "self", _).
-reads_self(f) :- pid_field(f, _, _, "self", _).
-reads_self(f) :- pid_base(f, _, "self", _).
-reads_self(f) :- pid_signal(_, f, _, "self", _).
+reads_self(f) :- value_arg(_, f, _, _, _, "self", _).
+reads_self(f) :- value_return(f, "self", _).
+reads_self(f) :- process_call_source(_, f, _, "self", _).
+reads_self(f) :- process_message_source(_, f, _, "self", _).
+reads_self(f) :- process_register_source(_, f, _, "self", _).
+reads_self(f) :- value_field(f, _, _, "self", _).
+reads_self(f) :- value_base(f, _, "self", _).
+reads_self(f) :- process_signal_source(_, f, _, "self", _).
 
 .decl self_relevant(func: symbol)
 
@@ -472,7 +472,7 @@ state_in(m, f, "1") :-
 state_pts(m, x) :-
   state_out(m, g),
   returns_all(g, t),
-  pid_object(_, t, "tuple", tag, n),
+  value_object(_, t, "tuple", tag, n),
   state_slot(tag, n, sel),
   field_pts(t, sel, x).
 
@@ -490,38 +490,38 @@ entry_pts(f, k, x) :- state_in(m, f, k), state_pts(m, x).
 .decl targets_param(func: symbol, pos: symbol, api_kind: symbol, site: symbol)
 .decl targets_field(func: symbol, pos: symbol, sel: symbol, api_kind: symbol, site: symbol)
 
-// Everything that goes to a process: a call, cast or send (pid_call),
-// an exit signal, a monitor or a link (pid_signal).
+// Everything that goes to a process: a call, cast or send (process_call_source),
+// an exit signal, a monitor or a link (process_signal_source).
 .decl pid_use(id: symbol, func: symbol, kind: symbol, src_kind: symbol, src: symbol)
 
-pid_use(id, f, kind, sk, s) :- pid_call(id, f, kind, sk, s).
-pid_use(id, f, kind, sk, s) :- pid_signal(id, f, kind, sk, s).
+pid_use(id, f, kind, sk, s) :- process_call_source(id, f, kind, sk, s).
+pid_use(id, f, kind, sk, s) :- process_signal_source(id, f, kind, sk, s).
 
 targets_param(g, k, kind, id) :- pid_use(id, g, kind, "param", k).
 targets_param(f, j, kind, id) :-
-  pid_arg(_, f, g, k, "call", "param", j),
+  value_arg(_, f, g, k, "call", "param", j),
   targets_param(g, k, kind, id).
 
 targets_field(g, k, sel, kind, id) :-
   pid_use(id, g, kind, "load", l),
-  pid_load(g, l, sel, "param", k).
+  value_load(g, l, sel, "param", k).
 
 targets_field(f, j, sel, kind, id) :-
-  pid_arg(_, f, g, k, "call", "param", j),
+  value_arg(_, f, g, k, "call", "param", j),
   targets_field(g, k, sel, kind, id).
 
 // A load whose base is a parameter: resolved through its summary, not in
 // place (unless the parameter is an entry's).
 .decl param_load(func: symbol, load: symbol)
 
-param_load(f, l) :- pid_load(f, l, _, "param", _).
+param_load(f, l) :- value_load(f, l, _, "param", _).
 
 // A field of what a source points to, a map's unknown-key field included.
 .decl source_field_pts(func: symbol, src_kind: symbol, src: symbol, sel: symbol, x: symbol)
 
 source_field_pts(f, sk, s, sel, x) :-
   targets_field(g, _, sel, _, _),
-  pid_arg(_, f, g, _, "call", sk, s),
+  value_arg(_, f, g, _, "call", sk, s),
   source_pts(f, sk, s, o),
   reads_field(o, sel, x).
 
@@ -548,7 +548,7 @@ process_call(f, id, id, kind, p) :-
 // A field read from a source other than a parameter.
 process_call(f, id, id, kind, p) :-
   pid_use(id, f, kind, "load", l),
-  pid_load(f, l, sel, bk, bs),
+  value_load(f, l, sel, bk, bs),
   bk != "param",
   source_pts(f, bk, bs, o),
   reads_field(o, sel, p),
@@ -562,14 +562,14 @@ process_call(f, id, id, kind, p) :-
 
 process_call(f, id, id, kind, p) :-
   pid_use(id, f, kind, "load", l),
-  pid_load(f, l, sel, "param", k),
+  value_load(f, l, sel, "param", k),
   entry_pts(f, k, o),
   reads_field(o, sel, p),
   process(p).
 
 // A helper's parameter, resolved at the caller that knows the pid.
 process_call(f, a, id, kind, p) :-
-  pid_arg(a, f, g, k, "call", sk, s),
+  value_arg(a, f, g, k, "call", sk, s),
   sk != "param",
   targets_param(g, k, kind, id),
   source_pts(f, sk, s, p),
@@ -577,7 +577,7 @@ process_call(f, a, id, kind, p) :-
 .plan 0:(2,1,3,4)
 
 process_call(f, a, id, kind, p) :-
-  pid_arg(a, f, g, k, "call", "param", j),
+  value_arg(a, f, g, k, "call", "param", j),
   targets_param(g, k, kind, id),
   entry_pts(f, j, p),
   process(p).
@@ -585,7 +585,7 @@ process_call(f, a, id, kind, p) :-
 
 // A helper reading a field of its parameter: the caller's term's field.
 process_call(f, a, id, kind, p) :-
-  pid_arg(a, f, g, k, "call", sk, s),
+  value_arg(a, f, g, k, "call", sk, s),
   sk != "param",
   targets_field(g, k, sel, kind, id),
   source_field_pts(f, sk, s, sel, p),
@@ -593,7 +593,7 @@ process_call(f, a, id, kind, p) :-
 .plan 0:(2,1,3,4)
 
 process_call(f, a, id, kind, p) :-
-  pid_arg(a, f, g, k, "call", "param", j),
+  value_arg(a, f, g, k, "call", "param", j),
   targets_field(g, k, sel, kind, id),
   entry_pts(f, j, o),
   reads_field(o, sel, p),
@@ -606,7 +606,7 @@ process_call(f, a, id, kind, p) :-
 
 call_site_target(id, g, kind, p) :-
   process_call(_, _, id, kind, p),
-  pid_call(id, g, kind, _, _).
+  process_call_source(id, g, kind, _, _).
 
 // Resolve destinations of call/cast/send messages and call replies. Bounded staging may
 // use coarse targets for pervasive sources; see pervasive.dl.
@@ -618,12 +618,12 @@ message_target(id, g, kind, p) :- call_site_target(id, g, kind, p).
 // exclusively by that module's servers. gen exits with calling_self.
 .decl self_call(func: symbol, site: symbol)
 
-self_call(f, id) :- pid_call(id, f, "call", "self", "self").
+self_call(f, id) :- process_call_source(id, f, "call", "self", "self").
 
 // self() handed to a helper that calls its parameter: the call into the
 // helper, in the function that owns the self().
 self_call(f, a) :-
-  pid_arg(a, f, g, k, "call", "self", _),
+  value_arg(a, f, g, k, "call", "self", _),
   targets_param(g, k, "call", _).
 
 .decl named_module(name: symbol, mod: symbol)
@@ -635,7 +635,7 @@ named_module(n, m) :- named_pid(n, p), server_process(p, m).
 named_otherwise(n, m) :- named_module(n, m), named_pid(n, p), !server_process(p, m).
 
 self_call(f, id) :-
-  pid_call(id, f, "call", "name", n),
+  process_call_source(id, f, "call", "name", n),
   process_entry(m, f),
   named_module(n, m),
   !named_otherwise(n, m).
@@ -651,7 +651,7 @@ message_handler("cast", "handle_cast", 2).
 message_handler("info", "handle_info", 2).
 
 entry_pts(h, "0", x) :-
-  pid_message(id, f, kind, sk, s),
+  process_message_source(id, f, kind, sk, s),
   source_pts(f, sk, s, x),
   message_target(id, f, kind, p),
   server_process(p, m),
@@ -692,7 +692,7 @@ statem_data_in(m, f, "2") :- statem_process(m), function_def(f, m, "terminate", 
 statem_data_pts(m, x) :-
   statem_data_out(m, g),
   returns_all(g, t),
-  pid_object(_, t, "tuple", tag, n),
+  value_object(_, t, "tuple", tag, n),
   statem_data_slot(tag, n, sel),
   field_pts(t, sel, x).
 
@@ -701,7 +701,7 @@ entry_pts(f, k, x) :- statem_data_in(m, f, k), statem_data_pts(m, x).
 // A call, cast or send to a gen_statem is an event: its message is the
 // state function's content, the second parameter.
 entry_pts(h, "1", x) :-
-  pid_message(id, f, kind, sk, s),
+  process_message_source(id, f, kind, sk, s),
   source_pts(f, sk, s, x),
   message_target(id, f, kind, p),
   server_process(p, m),

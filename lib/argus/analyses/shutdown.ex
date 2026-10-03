@@ -68,7 +68,7 @@ defmodule Argus.Analyses.Shutdown do
       # A call whose target is a pid resolves through process points-to
       # (clientlib/processes.dl, in the points-to stage): where the pid was
       # started, and names.
-      Argus.Extractors.PidFlow,
+      Argus.Extractors.TermFlow,
       Argus.Extractors.ProcessRegistry,
       # The tables a process makes itself: a write to one goes with it.
       Argus.Extractors.ETS,

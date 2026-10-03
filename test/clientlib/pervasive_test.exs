@@ -41,7 +41,7 @@ defmodule Argus.Clientlib.PervasiveTest do
           Argus.Extractors.ProcessRegistry,
           Argus.Extractors.Supervision,
           Argus.Extractors.GenStatem,
-          Argus.Extractors.PidFlow,
+          Argus.Extractors.TermFlow,
           Argus.Extractors.CallArgs
         ]
       )

@@ -154,7 +154,7 @@ defmodule Argus.Analyses.CouplingSupervisionTest do
             ["P:init/1#5", "P:init/1", "GenServer", "call", "2"],
             ["P:init/1#9", "P:init/1", "GenServer", "call", "2"]
           ],
-          pid_call: [["P:init/1#9", "P:init/1", "call", "name", "S"]],
+          process_call_source: [["P:init/1#9", "P:init/1", "call", "name", "S"]],
           ets_op: [["S:handle_call/3#4", "S:handle_call/3", "subs", "insert", "write"]]
         })
 

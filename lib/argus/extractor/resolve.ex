@@ -407,7 +407,7 @@ defmodule Argus.Extractor.Resolve do
   sorted. Unlike the other walks here a join keeps every arm, so two
   operands with a writer in common may hold the same value, and two with
   none cannot: how a test on `node(pid)` is known to be about the pid a
-  later call is handed (`Argus.Extractors.PidFlow`).
+  later call is handed (`Argus.Extractors.TermFlow`).
   """
   @spec writers([term()], non_neg_integer(), register()) :: [
           {:param, non_neg_integer()} | non_neg_integer()

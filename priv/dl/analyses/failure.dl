@@ -62,14 +62,14 @@ local_bif_on_remote_pid(func, anchor, probe, origin) :-
 
 remote_pid_probe(func, anchor, probe, bif, api, kind) :-
   local_bif_on_remote_pid(func, anchor, probe, origin),
-  pid_probe(probe, _, bif, _, _),
+  process_probe_source(probe, _, bif, _, _),
   remote_origin(origin, api, kind).
 
 // The BIF at `probe`, in `prober`, acts on a process of this node only,
-// and raises badarg on another node's pid (pid_probe, remote_pids.dl).
+// and raises badarg on another node's pid (process_probe_source, remote_pids.dl).
 .decl probes_local_process(probe: symbol, prober: symbol) inline
 
-probes_local_process(probe, prober) :- pid_probe(probe, prober, _, _, _).
+probes_local_process(probe, prober) :- process_probe_source(probe, prober, _, _, _).
 
 // `func` passes a possibly remote PID from origin to a BIF, directly or through
 // remote_probe. `anchor` is the BIF or the call into its helper.
@@ -88,7 +88,7 @@ probe_raise_escapes(probe, func, anchor) :- probe_raise.escapes_through(probe, f
 
 probe_raise.asked(probe, prober, func, "badarg") :-
   remote_probe(func, _, probe, _),
-  pid_probe(probe, prober, _, _, _).
+  process_probe_source(probe, prober, _, _, _).
 
 // An RPC target is `missing` at that arity or `private`. `site` identifies the RPC;
 // `anchor` identifies it or the caller's wrapper call.
@@ -792,7 +792,7 @@ site_scope(site, cat("processes of ", m)) :-
 // A target a local helper returns: what that helper builds.
 site_scope(site, cat("what ", g, " returns")) :-
   call_result(site, f, _, _, "exit", ""),
-  pid_call(site, f, _, "result", r),
+  process_call_source(site, f, _, "result", r),
   local_call(r, f, g, _).
 
 // ── What a call's arguments rule out ────────────────────────────

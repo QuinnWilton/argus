@@ -13,7 +13,7 @@ defmodule Argus.Extractors.ProcessRegistry do
     name a start claims: the `name:` option of a GenServer, GenStateMachine,
     Supervisor or Agent start, the `{:local, n}` / `{:global, n}` of an
     Erlang `:gen_server`, `:gen_statem`, `:supervisor` or `:gen_event` start.
-    A global name is spelled `{:global, :n}` (`PidFlow.name_of/1`), never
+    A global name is spelled `{:global, :n}` (`TermFlow.name_of/1`), never
     as the local atom
   - `named_process(mod, name)` — module-level: a process implemented by `mod` is registered
     as `name`; for an Agent, which has no module of its own, the module that starts it
@@ -48,7 +48,7 @@ defmodule Argus.Extractors.ProcessRegistry do
   alias Argus.Extractor.Dispatch
   alias Argus.Extractor.Helpers
   alias Argus.Extractor.Terms
-  alias Argus.Extractors.PidFlow
+  alias Argus.Extractors.TermFlow
   alias Argus.Instr
   alias Argus.InstrId
   alias Argus.Pipeline.Normalize
@@ -670,9 +670,9 @@ defmodule Argus.Extractors.ProcessRegistry do
             named_start(facts, ctx, method, owner, inspect(name))
 
           # The global registry is its own namespace: `{:global, :n}` is
-          # not the local `:n` (PidFlow.name_of/1 spells both).
+          # not the local `:n` (TermFlow.name_of/1 spells both).
           {:global, name} = global when is_atom(name) and name != :dynamic ->
-            named_start(facts, ctx, method, owner, PidFlow.name_of(global))
+            named_start(facts, ctx, method, owner, TermFlow.name_of(global))
 
           # A via-registered name is the registry's, not a process_register;
           # for the race it is a create scoped to that registry.
@@ -744,7 +744,7 @@ defmodule Argus.Extractors.ProcessRegistry do
       {:ok, {kind, name} = tuple}
       when kind in [:local, :global] and is_atom(name) and name != :dynamic ->
         id = InstrId.mint(ctx.func_id, ctx.idx)
-        spelled = if kind == :local, do: inspect(name), else: PidFlow.name_of(tuple)
+        spelled = if kind == :local, do: inspect(name), else: TermFlow.name_of(tuple)
 
         facts
         |> add_fact(:process_register, [id, ctx.func_id, spelled, method])

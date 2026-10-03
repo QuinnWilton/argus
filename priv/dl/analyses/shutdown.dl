@@ -782,7 +782,7 @@ site_or_empty_call(f, g, "") :- stop_reach.reaches(f, g), !call_instr(f, g, _).
 
 stop_arg(h, via, p) :-
   handler_function(_, h),
-  pid_arg(_, h, via, "0", "call", sk, s),
+  value_arg(_, h, via, "0", "call", sk, s),
   source_process(h, sk, s, p).
 
 // Every process of sib's that `handler` hands `via` is one a function

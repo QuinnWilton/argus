@@ -106,14 +106,14 @@ own_start(g, m) :-
   kind != "server",
   start_function(s, m),
   function_def(g, m, _, _, _),
-  pid_return(s, "obj", id).
+  value_return(s, "obj", id).
 
 own_start(g, m) :-
   process_start(_, s, p, kind, g),
   kind != "server",
   start_function(s, m),
   function_def(g, m, _, _, _),
-  pid_return(s, "proc", p).
+  value_return(s, "proc", p).
 
 own_start(g, m) :-
   process_start(_, s, _, kind, g),
@@ -172,7 +172,7 @@ may_hold_table(name, p, mod, id) :-
   ets_option(id, "named_table", "true").
 
 // An unnamed table returned by a behaviour module, directly or nested in a returned
-// term. pid_return and pid_field track it as caller-owned data.
+// term. value_return and value_field track it as caller-owned data.
 .decl handed_back(site: symbol, proc: symbol)
 
 handed_back(id, p) :-
@@ -184,13 +184,13 @@ handed_back(id, p) :-
 
 .decl returns_table(func: symbol, table: symbol)
 
-returns_table(f, t) :- pid_return(f, "table", t).
-returns_table(f, t) :- returned_term(f, o), pid_field(f, o, _, "table", t).
+returns_table(f, t) :- value_return(f, "table", t).
+returns_table(f, t) :- returned_term(f, o), value_field(f, o, _, "table", t).
 
 .decl returned_term(func: symbol, obj: symbol)
 
-returned_term(f, o) :- pid_return(f, "obj", o).
-returned_term(f, o) :- returned_term(f, p), pid_field(f, p, _, "obj", o).
+returned_term(f, o) :- value_return(f, "obj", o).
+returned_term(f, o) :- returned_term(f, p), value_field(f, p, _, "obj", o).
 
 // ── A table that dies with its owner ──
 

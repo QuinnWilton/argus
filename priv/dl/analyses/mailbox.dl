@@ -1085,7 +1085,7 @@ release_reach.seed(g) :- stop_site(_, g).
 .decl stop_site(site: symbol, func: symbol)
 
 stop_site(x, g) :- sup_call(x, g, _, "terminate_child", _).
-stop_site(x, g) :- pid_signal(x, g, "exit", _, _).
+stop_site(x, g) :- process_signal_source(x, g, "exit", _, _).
 
 stop_site(x, g) :-
   remote_call(x, g, gm, "stop", _),
@@ -1238,7 +1238,7 @@ names_other_server(id) :-
 
 names_other_server(id) :-
   call_tag(id, f, kind, _),
-  pid_call(id, f, kind, "name", n),
+  process_call_source(id, f, kind, "name", n),
   function_def(f, mod, _, _, _),
   n != mod,
   !named_process(mod, n).
@@ -1560,7 +1560,7 @@ info_reach.seed(f) :- link_site(_, f).
 runs_in_server(m, f) :- info_reach.runs(m, f).
 
 // Analyze atom messages and tuples with atom tags. Literal values retain their
-// spelling; constructed tuples use pid_send's {:tag, …} representation.
+// spelling; constructed tuples use process_send_source's {:tag, …} representation.
 info_message(m, f, id, lit, "timer") :-
   timer_arm(id, f, "self", "bare", _, lit),
   timer_tag(id, _, _),
@@ -2141,7 +2141,7 @@ rearm_entry(mod, e) :-
 .decl self_arm(site: symbol, func: symbol, lit: symbol)
 
 self_arm(b, g, lit) :- armed_literal(b, g, "self", lit).
-self_arm(b, g, lit) :- pid_send(b, g, lit, "self", _).
+self_arm(b, g, lit) :- process_send_source(b, g, lit, "self", _).
 
 // Follow same-module, same-process callback work without re-entering handle_info
 // wholesale. Calls forwarding the loop's literal message are checked separately as

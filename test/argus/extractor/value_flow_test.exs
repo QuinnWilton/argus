@@ -74,11 +74,10 @@ defmodule Argus.Extractor.ValueFlowTest do
     assert outs[{1, "x0"}] == MapSet.new([:a])
   end
 
-  test "an instruction is evaluated no more than max_evaluations times" do
-    # Each evaluation writes a new value, and its own write reaches it.
+  test "exhausting an explicit budget fails instead of returning a partial fixpoint" do
     reads = %{0 => %{"x0" => [{:def, 0}]}}
 
-    {outs, count} =
+    assert_raise ArgumentError, ~r/budget exhausted at instruction 0/, fn ->
       ValueFlow.solve(
         [0],
         reads,
@@ -86,9 +85,55 @@ defmodule Argus.Extractor.ValueFlowTest do
         fn 0, _outs, count -> {[{"x0", count + 1}], count + 1, []} end,
         max_evaluations: 5
       )
+    end
+  end
 
-    assert count == 5
-    assert outs[{0, "x0"}] == 5
+  test "a finite chain can require more than 64 evaluations of an instruction" do
+    reads = %{0 => %{"x0" => [{:def, 0}]}}
+
+    {outs, nil} =
+      ValueFlow.solve([0], reads, nil, fn 0, outs, nil ->
+        value = min(Map.get(outs, {0, "x0"}, 0) + 1, 100)
+        {[{"x0", value}], nil, []}
+      end)
+
+    assert outs[{0, "x0"}] == 100
+  end
+
+  test "only the last write to a register determines whether it changed" do
+    reads = %{0 => %{"x0" => [{:def, 0}]}}
+
+    {outs, evaluations} =
+      ValueFlow.solve(
+        [0, 0],
+        reads,
+        0,
+        fn 0, _outs, count ->
+          {[{"x0", :intermediate}, {"x0", :final}], count + 1, []}
+        end,
+        max_evaluations: 3
+      )
+
+    assert outs[{0, "x0"}] == :final
+    assert evaluations == 2
+  end
+
+  property "schedule reversal and duplicated reaching edges preserve the solution" do
+    check all({n, reads, sources} <- function_gen()) do
+      duplicated =
+        Map.new(reads, fn {idx, regs} ->
+          {idx, Map.new(regs, fn {reg, froms} -> {reg, froms ++ Enum.reverse(froms)} end)}
+        end)
+
+      {outs, nil} =
+        ValueFlow.solve(Enum.reverse(Enum.to_list(0..(n - 1))), duplicated, nil, fn idx,
+                                                                                    outs,
+                                                                                    nil ->
+          {[{"x0", transfer(idx, outs, duplicated, sources)}], nil, []}
+        end)
+
+      assert outs == round_robin(n, reads, sources)
+    end
   end
 
   test "reads_by_function groups a module's reaching definitions by function" do

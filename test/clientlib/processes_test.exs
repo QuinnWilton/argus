@@ -39,6 +39,7 @@ defmodule Argus.Clientlib.ProcessesTest do
     PidFlow.Conn,
     PidFlow.ConnUser,
     PidFlow.DictConnUser,
+    PidFlow.DictMapConnUser,
     PidFlow.ConnSup,
     PidFlow.Joiner,
     PidFlow.Reindexer,
@@ -90,7 +91,7 @@ defmodule Argus.Clientlib.ProcessesTest do
           Argus.Extractors.ProcessRegistry,
           Argus.Extractors.Supervision,
           Argus.Extractors.GenStatem,
-          Argus.Extractors.PidFlow,
+          Argus.Extractors.TermFlow,
           Argus.Extractors.CallArgs
         ]
       )
@@ -506,6 +507,17 @@ defmodule Argus.Clientlib.ProcessesTest do
 
     # The callers' own processes put nothing under the key.
     assert for(["DictConnUser:query_directly/0" | _] = row <- r["process_call"], do: row) == []
+  end
+
+  test "a dictionary-held map retains field and process identity", ctx do
+    r = solve(ctx, ~w(process_call server_process))
+
+    targets = for ["DictMapConnUser:handle_call/3", _, _, "call", p] <- r["process_call"], do: p
+    assert [started] = targets
+    assert String.starts_with?(started, "start DictMapConnUser:init/1#")
+    assert [started, "Conn"] in r["server_process"]
+    # Neither the other map field nor a caller's separate dictionary supplies the target.
+    assert for(["DictMapConnUser:query_directly/0" | _] = row <- r["process_call"], do: row) == []
   end
 
   test "a computed module, apply and a library pid name no process", ctx do

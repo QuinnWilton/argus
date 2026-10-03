@@ -133,7 +133,7 @@
   report_site(p, m, t, id) :-
     loader(p, m, r),
     last_send(id, r),
-    pid_send(id, r, msg, _, _),
+    process_send_source(id, r, msg, _, _),
     message_tag(msg, t),
     process_call(r, id, id, "info", proc),
     server_process(proc, m),
@@ -154,7 +154,7 @@
   .decl other_report(proc: symbol, entry: symbol, tag: symbol)
   other_report(p, m, t) :-
     report_site(p, m, t, _),
-    pid_send(id, _, msg, _, _),
+    process_send_source(id, _, msg, _, _),
     message_tag(msg, t),
     !report_site(p, m, t, id),
     may_reach_server(id, m).
@@ -171,7 +171,7 @@
 
   may_reach_server(id, m) :-
     report_site(_, m, _, _),
-    pid_send(id, _, _, _, _),
+    process_send_source(id, _, _, _, _),
     !process_call(_, _, id, "info", _).
 
   // A callback call toward x that may precede report t: no `serves_after` proof or no
@@ -272,19 +272,19 @@
 
   request_tag(f, id, kind, tag) :-
     request(id, f, kind),
-    pid_message(id, f, kind, "obj", o),
-    pid_object(f, o, "tuple", tag, _),
+    process_message_source(id, f, kind, "obj", o),
+    value_object(f, o, "tuple", tag, _),
     tag != "".
 
   request_tag(c, id, kind, tag) :-
     request(id, f, kind),
-    pid_message(id, f, kind, "param", q),
+    process_message_source(id, f, kind, "param", q),
     call_arg_tuple(c, f, n, 0, "literal", tag),
     q = to_string(n).
 
   request_tag(c, id, kind, tag) :-
     request(id, f, kind),
-    pid_message(id, f, kind, "param", q),
+    process_message_source(id, f, kind, "param", q),
     call_arg(c, f, n, tag),
     match(":.*", tag),
     q = to_string(n).
@@ -293,7 +293,7 @@
 
   request_tag(c, id, kind, "*") :-
     request(id, f, kind),
-    pid_message(id, f, kind, "param", q),
+    process_message_source(id, f, kind, "param", q),
     untold_arg(c, f, q).
 
   // Requests with known messages, directly or at every supplying caller. With no
@@ -303,14 +303,14 @@
 
   told_request(id, f, kind) :-
     request(id, f, kind),
-    pid_message(id, f, kind, "obj", o),
-    pid_object(f, o, "tuple", tag, _),
+    process_message_source(id, f, kind, "obj", o),
+    value_object(f, o, "tuple", tag, _),
     tag != "",
     !untold_object(id, f, kind).
 
   told_request(id, f, kind) :-
     request(id, f, kind),
-    pid_message(id, f, kind, "param", q),
+    process_message_source(id, f, kind, "param", q),
     !untold_param(f, q),
     !untold_object(id, f, kind).
 
@@ -319,25 +319,25 @@
   .decl untold_object(site: symbol, func: symbol, kind: symbol)
   untold_object(id, f, kind) :-
     request(id, f, kind),
-    pid_message(id, f, kind, "obj", o),
-    pid_object(f, o, _, "", _).
+    process_message_source(id, f, kind, "obj", o),
+    value_object(f, o, _, "", _).
 
   untold_object(id, f, kind) :-
     request(id, f, kind),
-    pid_message(id, f, kind, sk, _),
+    process_message_source(id, f, kind, sk, _),
     sk != "obj",
     sk != "param".
 
   .decl untold_param(func: symbol, pos: symbol)
   untold_param(f, q) :- untold_arg(_, f, q).
-  untold_param(f, q) :- request(id, f, kind), pid_message(id, f, kind, "param", q), outside_caller(f).
+  untold_param(f, q) :- request(id, f, kind), process_message_source(id, f, kind, "param", q), outside_caller(f).
 
   // A caller that fills the message parameter with what it does not
   // spell, or hands on a parameter of its own.
   .decl untold_arg(caller: symbol, func: symbol, pos: symbol)
   untold_arg(c, f, q) :-
     request(id, f, kind),
-    pid_message(id, f, kind, "param", q),
+    process_message_source(id, f, kind, "param", q),
     call_edge(c, f),
     !spelled_arg(c, f, q).
 
@@ -389,12 +389,12 @@
 }
 
 // The tag a message spells, of those a clause tells apart: the atom, or
-// a tuple's first element (pid_send's `{:tag, …}`).
+// a tuple's first element (process_send_source's `{:tag, …}`).
 .decl message_tag(message: symbol, tag: symbol)
 
 message_tag(msg, t) :-
   clause_call(_, _, t),
-  pid_send(_, _, msg, _, _),
+  process_send_source(_, _, msg, _, _),
   (msg = t ; msg = cat("{", t, ", …}")).
 
 // A state field has this value on every successful init/1 return. Read state_return for

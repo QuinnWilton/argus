@@ -65,7 +65,7 @@ defmodule Argus.Analyses.Coverage do
       Argus.Extractors.Supervision,
       # Traffic through pids (clientlib/processes.dl), and the targets
       # forwarding wrappers name (clientlib/calls.dl).
-      Argus.Extractors.PidFlow,
+      Argus.Extractors.TermFlow,
       Argus.Extractors.CallArgs
     ]
   end

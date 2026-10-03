@@ -108,8 +108,8 @@ default_of_key(op, name, k) :-
 // a callee's answer that is one.
 .decl answers_with_key(func: symbol, key: symbol)
 
-answers_with_key(g, k) :- pid_return(g, "dict", k).
-answers_with_key(g, k) :- pid_return(g, "result", c), call_instr(g, h, c), answers_with_key(h, k).
+answers_with_key(g, k) :- value_return(g, "dict", k).
+answers_with_key(g, k) :- value_return(g, "result", c), call_instr(g, h, c), answers_with_key(h, k).
 
 // The functions whose stack reaches such an operation.
 .init default_reach = SameProcessReach

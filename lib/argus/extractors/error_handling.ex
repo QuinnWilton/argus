@@ -921,7 +921,7 @@ defmodule Argus.Extractors.ErrorHandling do
   # of one an element of the returned tuple holds — a callback's
   # `{:noreply, [], %{state | receive_timer: nil}}` — and of an Erlang
   # record the same way (`State#state{subs = Subs}`, a field spelled as
-  # its 0-based tuple position, `{2}`, as PidFlow spells one). What a
+  # its 0-based tuple position, `{2}`, as TermFlow spells one). What a
   # state a callback hands back says, where a clause head's test says
   # what it needs (field_nil_test), and what a restart takes back
   # (clientlib/restart_state.dl). A state an init/1 builds whole — the

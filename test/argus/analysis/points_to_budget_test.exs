@@ -6,7 +6,7 @@ defmodule Argus.Analysis.PointsToBudgetTest do
   bounded one past it, and a failure, never a switch of stage, when the
   solver runs out of time.
 
-  The programs are PidFlow's summaries written by hand: a merge
+  The programs are TermFlow's summaries written by hand: a merge
   function `merge/1` whose parameter every caller hands a term holding
   the one registered process, and which hands that parameter on to
   `helpers` helpers. Each helper's parameter then points to every
@@ -46,29 +46,29 @@ defmodule Argus.Analysis.PointsToBudgetTest do
     merge = "M:merge/1"
 
     write!(dir, "process_start", [["s0", "M:start/0", @proc, "spawn", "M:loop/0"]])
-    write!(dir, "pid_register", [["r0", "M:start/0", "reg", "proc", @proc]])
+    write!(dir, "process_register_source", [["r0", "M:start/0", "reg", "proc", @proc]])
 
     write!(
       dir,
-      "pid_object",
+      "value_object",
       for(i <- 1..callers, do: ["M:c#{i}/0", "o#{i}", "tuple", "", "1"])
     )
 
     write!(
       dir,
-      "pid_field",
+      "value_field",
       for(i <- 1..callers, do: ["M:c#{i}/0", "o#{i}", "{0}", "name", "reg"])
     )
 
     write!(
       dir,
-      "pid_arg",
+      "value_arg",
       for(i <- 1..callers, do: ["a#{i}", "M:c#{i}/0", merge, "0", "call", "obj", "o#{i}"]) ++
         for(j <- 1..helpers, do: ["b#{j}", merge, "M:h#{j}/1", "0", "call", "param", "0"])
     )
 
-    write!(dir, "pid_load", [[merge, "l0", "{0}", "param", "0"]])
-    write!(dir, "pid_call", [["k0", merge, "call", "load", "l0"]])
+    write!(dir, "value_load", [[merge, "l0", "{0}", "param", "0"]])
+    write!(dir, "process_call_source", [["k0", merge, "call", "load", "l0"]])
     dir
   end
 

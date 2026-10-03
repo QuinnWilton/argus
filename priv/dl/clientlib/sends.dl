@@ -5,7 +5,7 @@
 // (process_call).
 .decl send_target(id: symbol, func: symbol, message: symbol, proc: symbol)
 
-send_target(id, f, m, p) :- pid_send(id, f, m, _, _), call_site_target(id, f, "info", p).
+send_target(id, f, m, p) :- process_send_source(id, f, m, _, _), call_site_target(id, f, "info", p).
 
 // Behaviour envelopes use tag and tuple size: `$gen_call`, `$gen_cast`, and `system`
 // are dispatched as calls, casts, or sys requests, not info messages. Check each send's
