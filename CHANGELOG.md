@@ -7,6 +7,9 @@ which a change appeared; older names and APIs may have changed since then.
 
 ### Fixed
 
+- Accept `--color always` and `--color never` in the escript. Both crashed with
+  "not an already existing atom", which broke `rebar3 argus` in a terminal,
+  since the plugin passes `--color always` there.
 - Recognize exception data returned as maps, closures or the exception class,
   avoiding false reports that a catch handler swallows the exception.
 - Follow tuple values to actual returns when classifying callbacks. Overwritten

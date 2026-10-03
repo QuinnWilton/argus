@@ -55,6 +55,18 @@ defmodule Argus.EscriptTest do
     end
   end
 
+  # rebar3_argus passes `--color always` whenever rebar3 has a terminal.
+  # In the escript no loaded module names :always or :never yet, so these
+  # values are the ones an atom lookup would miss.
+  test "every --color and --format value parses", context do
+    root = Projects.synthesize!(:rebar3_app, Path.join(context.dir, "rebar3_flags"))
+
+    for color <- ~w(auto always never), format <- ~w(text json) do
+      argv = ["--analyses", "coupling", "--color", color, "--format", format]
+      assert {_, 0} = escript(context, argv, root), "--color #{color} --format #{format}"
+    end
+  end
+
   test "from outside the repository it finds what the CLI in this VM finds", context do
     root = Projects.synthesize!(:rebar3_app, Path.join(context.dir, "rebar3_app"))
     argv = ["--analyses", "coupling,failure", "--format", "json", "--include-deps"]
