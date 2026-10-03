@@ -11,8 +11,8 @@ defmodule Argus.Analyses.InitLockTest do
   """
 
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
-  alias Argus.Souffle
   alias Argus.Test.Fixtures.InitLock
   alias Argus.Test.Memo
 
@@ -23,8 +23,6 @@ defmodule Argus.Analyses.InitLockTest do
   ]
 
   setup_all do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-
     modules = [
       InitLock.Bounded,
       InitLock.BoundedLocal,

@@ -1,5 +1,6 @@
 defmodule Argus.Test.MemoTest do
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
   alias Argus.Test.Memo
 

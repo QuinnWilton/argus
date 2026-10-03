@@ -1,22 +1,17 @@
 defmodule Argus.Clientlib.CallbacksTest do
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
   alias Argus.Pipeline
   alias Argus.Souffle
 
   @moduletag :tmp_dir
 
-  defp skip_without_souffle do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-  end
-
   defp priv_dl, do: Path.join(:code.priv_dir(:argus_beam), "dl")
 
   describe "callbacks.dl" do
     @tag :tmp_dir
     test "identifies handle_call and handle_cast functions", %{tmp_dir: tmp_dir} do
-      skip_without_souffle()
-
       facts_dir = Path.join(tmp_dir, "facts")
 
       {:ok, _} =

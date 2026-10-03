@@ -1,8 +1,8 @@
 defmodule Argus.Analyses.UnsafeInputTest do
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
   alias Argus.Analyses.UnsafeInput
-  alias Argus.Souffle
   alias Argus.Test.Batch
   alias Argus.Test.Fixtures.Decompression, as: D
   alias Argus.Test.Fixtures.RequestSurface
@@ -72,10 +72,6 @@ defmodule Argus.Analyses.UnsafeInputTest do
   defp solve(:alone, modules), do: Memo.analyze(modules, :unsafe_input)
   defp solve(%{batch: batch}, modules), do: Batch.analyze(batch, modules)
 
-  defp skip_without_souffle do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-  end
-
   defp analyze(source, modules) do
     assert {:ok, results} = solve(source, modules)
     results
@@ -86,7 +82,6 @@ defmodule Argus.Analyses.UnsafeInputTest do
 
   describe "sinks no request reaches" do
     test "flags dynamic atom creation reachable from an export, not to_existing_atom", ctx do
-      skip_without_souffle()
       rows = local(analyze(ctx, [Argus.Test.Fixtures.UnsafeAtomCreation]), "atom")
       funcs = Enum.map(rows, &elem(&1, 0))
       apis = Enum.map(rows, &elem(&1, 1))
@@ -98,7 +93,6 @@ defmodule Argus.Analyses.UnsafeInputTest do
     end
 
     test "[:safe] downgrades a deserialization but does not clear it", ctx do
-      skip_without_souffle()
       rows = local(analyze(ctx, [Argus.Test.Fixtures.UnsafeDeserialization]), "deserialization")
       funcs = Enum.map(rows, &elem(&1, 0))
       assert Enum.any?(funcs, &String.contains?(&1, "decode_unsafe"))
@@ -108,8 +102,6 @@ defmodule Argus.Analyses.UnsafeInputTest do
     end
 
     test "the deserialization finding says what the options were, and grades [:safe] down", ctx do
-      skip_without_souffle()
-
       by_func =
         analyze(ctx, [Argus.Test.Fixtures.UnsafeDeserialization])["sink_without_request_path"]
         |> Enum.filter(&(Enum.at(&1, 3) == "deserialization"))
@@ -131,6 +123,7 @@ defmodule Argus.Analyses.UnsafeInputTest do
       assert Enum.any?(safe.help, &(&1 =~ "non_executable_binary_to_term"))
     end
 
+    @tag souffle: false
     test "a request-reachable deserialization carries the same class" do
       row = fn safety ->
         [
@@ -172,8 +165,6 @@ defmodule Argus.Analyses.UnsafeInputTest do
     end
 
     test "flags eval and dynamic commands, leaving literal commands quiet", ctx do
-      skip_without_souffle()
-
       funcs =
         analyze(ctx, [Argus.Test.Fixtures.CodeExecution])
         |> local("code")
@@ -200,7 +191,6 @@ defmodule Argus.Analyses.UnsafeInputTest do
     end
 
     test "a module using only safe APIs produces no findings", ctx do
-      skip_without_souffle()
       results = analyze(ctx, [Argus.Test.Fixtures.SafeModule])
       assert results["sink_without_request_path"] == []
       assert results["sink_reachable"] == []
@@ -221,7 +211,6 @@ defmodule Argus.Analyses.UnsafeInputTest do
 
   describe "request surfaces" do
     test "a behaviour callback is an entry point; a bare exported function is not" do
-      skip_without_souffle()
       results = analyze(:alone, [RequestSurface.DirectPlug, RequestSurface.NotAnEntryPoint])
 
       rows =
@@ -244,8 +233,6 @@ defmodule Argus.Analyses.UnsafeInputTest do
     # the path proximities are exercised on shapes whose data comes from
     # storage instead.
     test "the calibration shapes are proven flows, at every distance" do
-      skip_without_souffle()
-
       rows =
         atom_rows(:alone, [
           RequestSurface.DirectPlug,
@@ -259,19 +246,16 @@ defmodule Argus.Analyses.UnsafeInputTest do
     end
 
     test "a sink reachable from a request is not also reported as export-reachable", ctx do
-      skip_without_souffle()
       results = analyze(ctx, [RequestSurface.DirectPlug])
       assert results["sink_reachable"] != []
       assert results["sink_without_request_path"] == []
     end
 
     test "a safe conversion in a callback is not flagged", ctx do
-      skip_without_souffle()
       assert proximity_for(atom_rows(ctx, [RequestSurface.SafeCallback]), "SafeCallback") == []
     end
 
     test "a sink inside the callback is direct", ctx do
-      skip_without_souffle()
       rows = atom_rows(ctx, [Taint.StoreSourcedPlug])
       assert proximity_for(rows, "StoreSourcedPlug") == ["direct"]
       assert [[_id, _func, api, entry, "plug", "direct"]] = rows
@@ -280,21 +264,18 @@ defmodule Argus.Analyses.UnsafeInputTest do
     end
 
     test "a sink one call away is adjacent", ctx do
-      skip_without_souffle()
       rows = atom_rows(ctx, [Taint.StoreSourcedAdjacent])
       assert proximity_for(rows, "convert") == ["adjacent"]
       assert Enum.all?(rows, fn [_, _, _, _, kind, _] -> kind == "live_view" end)
     end
 
     test "a sink further down the call graph is transitive", ctx do
-      skip_without_souffle()
       rows = atom_rows(ctx, [Taint.StoreSourcedWorker])
       assert proximity_for(rows, "level_two") == ["transitive"]
       assert Enum.all?(rows, fn [_, _, _, _, kind, _] -> kind == "oban_job" end)
     end
 
     test "direct and adjacent are distinguished within one run" do
-      skip_without_souffle()
       rows = atom_rows(:alone, [Taint.StoreSourcedPlug, Taint.StoreSourcedAdjacent])
       assert proximity_for(rows, "StoreSourcedPlug") == ["direct"]
       assert proximity_for(rows, "convert") == ["adjacent"]
@@ -303,7 +284,6 @@ defmodule Argus.Analyses.UnsafeInputTest do
 
   describe "proven flow" do
     test "a head pattern and a helper called from a second clause both carry the params", ctx do
-      skip_without_souffle()
       rows = atom_rows(ctx, [Taint.FlowLiveView])
       assert proximity_for(rows, "handle_event") == ["flow"]
       assert proximity_for(rows, "order_by") == ["flow"]
@@ -311,18 +291,15 @@ defmodule Argus.Analyses.UnsafeInputTest do
     end
 
     test "the job's args reach a sink two calls down", ctx do
-      skip_without_souffle()
       assert proximity_for(atom_rows(ctx, [Taint.FlowTransitive]), "level_two") == ["flow"]
     end
 
     test "a captured request value reaches the sink inside the closure", ctx do
-      skip_without_souffle()
       rows = atom_rows(ctx, [Taint.FlowClosureEnv])
       assert ["flow"] = proximity_for(rows, "FlowClosureEnv")
     end
 
     test "a controller action is a request entry, though no call reaches it", ctx do
-      skip_without_souffle()
       rows = atom_rows(ctx, [Taint.Controller])
       assert [[_id, func, _api, entry, "controller", "flow"]] = rows
       assert func =~ "show/2"
@@ -331,8 +308,6 @@ defmodule Argus.Analyses.UnsafeInputTest do
 
     test "a cookie fetched signed is the server's; one fetched unverified is request data",
          ctx do
-      skip_without_souffle()
-
       flows =
         for [_id, func, _api, "deserialization", _entry, _kind, "flow" | _] <-
               analyze(ctx, [Taint.CookieController])["sink_reachable"],
@@ -342,8 +317,6 @@ defmodule Argus.Analyses.UnsafeInputTest do
     end
 
     test "an admin config action's evaluations: two flows and a path", ctx do
-      skip_without_souffle()
-
       rows =
         for [_id, func, _api, "code", _entry, "controller", proximity | _] <-
               analyze(ctx, [Taint.AdminConfigController])["sink_reachable"],
@@ -360,8 +333,6 @@ defmodule Argus.Analyses.UnsafeInputTest do
     end
 
     test "an atom made of a template's assigns is rendered, not a bare path", ctx do
-      skip_without_souffle()
-
       rows =
         for [_id, func, _api, "atom", _entry, kind, proximity | _] <-
               analyze(ctx, [Template.ScopesView, Template.OAuthController])["sink_reachable"],
@@ -393,7 +364,6 @@ defmodule Argus.Analyses.UnsafeInputTest do
     end
 
     test "a plug's exported helper is no action", ctx do
-      skip_without_souffle()
       results = analyze(ctx, [Taint.PlainPlugHelpers])
       assert atom_rows(ctx, [Taint.PlainPlugHelpers]) == []
       assert [[_id, func | _]] = results["sink_without_request_path"]
@@ -401,7 +371,6 @@ defmodule Argus.Analyses.UnsafeInputTest do
     end
 
     test "a flow replaces the path rows for its site: one row per sink" do
-      skip_without_souffle()
       rows = atom_rows(:alone, [Taint.FlowLiveView, Taint.FlowTransitive])
       ids = Enum.map(rows, &hd/1)
       assert ids == Enum.uniq(ids)
@@ -409,13 +378,10 @@ defmodule Argus.Analyses.UnsafeInputTest do
     end
 
     test "a flow sink is not also reported as export-reachable", ctx do
-      skip_without_souffle()
       assert analyze(ctx, [Taint.FlowLiveView])["sink_without_request_path"] == []
     end
 
     test "data from storage is a path, never a flow" do
-      skip_without_souffle()
-
       rows =
         atom_rows(:alone, [
           Taint.StoreSourcedPlug,
@@ -427,7 +393,6 @@ defmodule Argus.Analyses.UnsafeInputTest do
     end
 
     test "the socket, the session and a literal are not the request", ctx do
-      skip_without_souffle()
       rows = atom_rows(ctx, [Taint.SocketOnly, Taint.SessionOnly])
       assert Enum.map(rows, &List.last/1) |> Enum.uniq() == ["direct"]
 
@@ -436,31 +401,26 @@ defmodule Argus.Analyses.UnsafeInputTest do
     end
 
     test "the safe conversion is not a sink", ctx do
-      skip_without_souffle()
       assert atom_rows(ctx, [Taint.ExistingAtom]) == []
     end
 
     # A closure a higher-order call runs takes the collection's element as
     # its first parameter (ParamFlow's element flow).
     test "an element handed to a closure a higher-order call runs is a flow", ctx do
-      skip_without_souffle()
       assert proximity_for(atom_rows(ctx, [Taint.HofElement]), "HofElement") == ["flow"]
     end
   end
 
   describe "bounded input" do
     test "a guard holding the value to literals bounds it: no sink", ctx do
-      skip_without_souffle()
       assert atom_rows(ctx, [Taint.GuardAllowlist]) == []
     end
 
     test "a literal list in the body bounds it, short or long, and what is built of it", ctx do
-      skip_without_souffle()
       assert atom_rows(ctx, [Taint.BodyAllowlist]) == []
     end
 
     test "an allowlist handed in bounds it where every caller hands a literal list" do
-      skip_without_souffle()
       {:ok, results} = Memo.analyze([Taint.Allow, Taint.ParamAllowlist], :unsafe_input)
       assert results["sink_reachable"] == []
 
@@ -473,12 +433,10 @@ defmodule Argus.Analyses.UnsafeInputTest do
     end
 
     test "two atoms made on one line are one finding", ctx do
-      skip_without_souffle()
       assert [_] = atom_rows(ctx, [Taint.SameLine])
     end
 
     test "two atoms on one line made of different things are two findings", ctx do
-      skip_without_souffle()
       assert [_, _] = Enum.uniq_by(atom_rows(ctx, [Taint.SameLineMixed]), &hd/1)
     end
   end
@@ -486,8 +444,6 @@ defmodule Argus.Analyses.UnsafeInputTest do
   describe "atom creation no request reaches" do
     test "is reported where a caller's input reaches it: an uncalled export, a closure over one",
          ctx do
-      skip_without_souffle()
-
       funcs =
         ctx
         |> analyze([Argus.Test.Fixtures.AtomSources])
@@ -499,8 +455,6 @@ defmodule Argus.Analyses.UnsafeInputTest do
     end
 
     test "is reported of an export the program also calls with a literal", ctx do
-      skip_without_souffle()
-
       funcs =
         ctx
         |> analyze([Argus.Test.Fixtures.AtomSources])
@@ -513,8 +467,6 @@ defmodule Argus.Analyses.UnsafeInputTest do
     end
 
     test "is reported through a call no propagator lists, and a server's message", ctx do
-      skip_without_souffle()
-
       funcs =
         ctx
         |> analyze([
@@ -532,8 +484,6 @@ defmodule Argus.Analyses.UnsafeInputTest do
     end
 
     test "is not reported of the environment, or at compile time", ctx do
-      skip_without_souffle()
-
       funcs =
         ctx
         |> analyze([Argus.Test.Fixtures.AtomSources])
@@ -546,7 +496,6 @@ defmodule Argus.Analyses.UnsafeInputTest do
     end
 
     test "is not reported of a close integer range, an atom, or an atom's name", ctx do
-      skip_without_souffle()
       results = analyze(ctx, [Argus.Test.Fixtures.AtomBounds])
 
       funcs =
@@ -567,8 +516,6 @@ defmodule Argus.Analyses.UnsafeInputTest do
     end
 
     test "is not reported of a server's own messages or a pipeline's own name", ctx do
-      skip_without_souffle()
-
       assert ctx
              |> analyze([
                Argus.Test.Fixtures.AtomFromMessages,
@@ -579,6 +526,8 @@ defmodule Argus.Analyses.UnsafeInputTest do
   end
 
   describe "severity" do
+    @describetag souffle: false
+
     test "tracks proximity rather than sink type" do
       row = fn prox ->
         ["i", "M:f/1", "String.to_atom/1", "atom", "E:call/2", "plug", prox, "", "0", ""]
@@ -771,6 +720,7 @@ defmodule Argus.Analyses.UnsafeInputTest do
   end
 
   describe "sink_endpoint" do
+    @tag souffle: false
     test "is a related frame naming the HTTP method and path rather than the callback" do
       frame =
         UnsafeInput.evidence(:sink_endpoint, ["M:f/1#3", "get", "/public/x/:id", "W.Controller"])
@@ -800,8 +750,6 @@ defmodule Argus.Analyses.UnsafeInputTest do
     defp short(func), do: func |> String.split(".") |> List.last()
 
     test "a frame a socket handler inflates in one call is fed by the socket's data", ctx do
-      skip_without_souffle()
-
       assert {[{"FrameHandler:handle_data/3", "socket", "flow"}], []} =
                inflates(ctx, [D.FrameHandler])
 
@@ -818,17 +766,14 @@ defmodule Argus.Analyses.UnsafeInputTest do
     end
 
     test "a request body a plug gunzips is a flow", ctx do
-      skip_without_souffle()
       assert {[{"GzipBodyPlug:call/2", "plug", "flow"}], []} = inflates(ctx, [D.GzipBodyPlug])
     end
 
     test "a body a client middleware's caller hands in is reported with no request path", ctx do
-      skip_without_souffle()
       assert {[], ["ClientMiddleware:decompress/1"]} = inflates(ctx, [D.ClientMiddleware])
     end
 
     test "inflating in bounded chunks, or data the program wrote, is quiet", ctx do
-      skip_without_souffle()
       assert {[], []} = inflates(ctx, [D.BoundedFrameHandler])
       assert {[], []} = inflates(ctx, [D.OwnData])
     end
@@ -856,7 +801,6 @@ defmodule Argus.Analyses.UnsafeInputTest do
     defp named?(list, f), do: Enum.any?(list, &String.contains?(&1, f))
 
     test "an uncapped supervisor driven by a request is reported; a ceiling discharges it", ctx do
-      skip_without_souffle()
       callers = callers(ctx)
       assert named?(callers, "PublicLive")
       refute named?(callers, "CappedLive"), "max_children is the whole fix"
@@ -864,7 +808,6 @@ defmodule Argus.Analyses.UnsafeInputTest do
     end
 
     test "a start the request then waits out is no child that outlives it", ctx do
-      skip_without_souffle()
       callers = callers(ctx)
       # Positive: PublicLive starts and returns.
       assert named?(callers, "PublicLive")
@@ -872,15 +815,12 @@ defmodule Argus.Analyses.UnsafeInputTest do
     end
 
     test "a task a request starts is reported; a stream the request enumerates is not", ctx do
-      skip_without_souffle()
       callers = callers(ctx)
       assert named?(callers, "TaskLive")
       refute named?(callers, "StreamLive"), "async_stream lives no longer than its request"
     end
 
     test "the finding names the entry surface it came from", ctx do
-      skip_without_souffle()
-
       assert [[sup, child, _via, kind]] =
                Enum.filter(analyze(ctx, @all)["unbounded_children_from_request"], fn [
                                                                                        _s,

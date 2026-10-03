@@ -1,17 +1,11 @@
 defmodule Argus.Analyses.BlockingFanInTest do
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
-  alias Argus.Souffle
   alias Argus.Test.Memo
-
-  defp skip_without_souffle do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-  end
 
   describe "process_bottleneck.dl" do
     test "below-threshold fan-in produces no findings" do
-      skip_without_souffle()
-
       # 3 modules with sync calls — below the >= 5 threshold.
       modules = [
         Argus.Test.Fixtures.CycleServerA,
@@ -29,8 +23,6 @@ defmodule Argus.Analyses.BlockingFanInTest do
     end
 
     test "5 callers exceeds threshold" do
-      skip_without_souffle()
-
       modules = [
         Argus.Test.Fixtures.BottleneckTarget,
         Argus.Test.Fixtures.BottleneckCallerA,
@@ -60,8 +52,6 @@ defmodule Argus.Analyses.BlockingFanInTest do
     end
 
     test "runs without error on modules with no sync calls" do
-      skip_without_souffle()
-
       assert {:ok, results} = Memo.analyze([:maps], :blocking)
       assert Map.has_key?(results, "bottleneck_caller")
       assert Map.has_key?(results, "sync_call_fan_in")

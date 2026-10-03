@@ -2,7 +2,6 @@ defmodule Argus.Analyses.FailureRemotePidTest do
   use ExUnit.Case, async: true
 
   alias Argus.Analyses.Failure
-  alias Argus.Souffle
   alias Argus.Test.Batch
   alias Argus.Test.Fixtures.RemotePid
   alias Argus.Test.Rows
@@ -28,10 +27,6 @@ defmodule Argus.Analyses.FailureRemotePidTest do
     %{batch: Batch.solve(:failure, [@batched])}
   end
 
-  defp skip_without_souffle do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-  end
-
   # `{function, anchor, site, bif, api, kind}` with the fixture prefix
   # dropped from the function.
   defp probes(%{batch: batch}, module) do
@@ -47,9 +42,9 @@ defmodule Argus.Analyses.FailureRemotePidTest do
   defp funcs(rows), do: rows |> Enum.map(&elem(&1, 0)) |> Enum.sort()
 
   describe "remote_pid_probe" do
-    test "a :global lookup's pid handed to Process.alive?/1 (aprs.me before 37c9ac7)", ctx do
-      skip_without_souffle()
+    @describetag :souffle
 
+    test "a :global lookup's pid handed to Process.alive?/1 (aprs.me before 37c9ac7)", ctx do
       assert [
                {"GlobalAlive:cleanup/1", true, ":erlang.is_process_alive/1",
                 ":global.whereis_name/1", "lookup"}
@@ -58,8 +53,6 @@ defmodule Argus.Analyses.FailureRemotePidTest do
 
     test "a probe on the arm where node(pid) is this node is cleared; the other arm, a join or another pid is not",
          ctx do
-      skip_without_souffle()
-
       assert funcs(probes(ctx, RemotePid.NodeGuarded)) == [
                "NodeGuarded:asked_before/1",
                "NodeGuarded:else_arm/1",
@@ -71,8 +64,6 @@ defmodule Argus.Analyses.FailureRemotePidTest do
 
     test "a rescue of ArgumentError that goes on clears it; a re-raise, an after, another exception or another call's rescue does not",
          ctx do
-      skip_without_souffle()
-
       assert funcs(probes(ctx, RemotePid.Rescued)) == [
                "Rescued:after_only/1",
                "Rescued:other_call/1",
@@ -83,8 +74,6 @@ defmodule Argus.Analyses.FailureRemotePidTest do
 
     test "a conflict resolver's pids are another node's by construction (aprs.me before 9212088)",
          ctx do
-      skip_without_souffle()
-
       rows = probes(ctx, RemotePid.Resolver)
 
       assert funcs(rows) == ["Resolver:resolve_conflict/3", "Resolver:resolve_conflict/3"]
@@ -96,8 +85,6 @@ defmodule Argus.Analyses.FailureRemotePidTest do
     end
 
     test "syn's resolve_registry_conflict/4 is handed each holder in a tuple", ctx do
-      skip_without_souffle()
-
       assert [
                {"SynHandler:resolve_registry_conflict/4", true, ":erlang.is_process_alive/1", _,
                 "resolver"}
@@ -105,8 +92,6 @@ defmodule Argus.Analyses.FailureRemotePidTest do
     end
 
     test "a process group's members, by a captured BIF and in a comprehension", ctx do
-      skip_without_souffle()
-
       rows = probes(ctx, RemotePid.Members)
 
       assert {"Members:live/1", true, ":erlang.is_process_alive/1", ":pg.get_members/2", "lookup"} in rows
@@ -124,8 +109,6 @@ defmodule Argus.Analyses.FailureRemotePidTest do
     end
 
     test "a helper's probe of its parameter is the caller's, at the call into it", ctx do
-      skip_without_souffle()
-
       assert [
                {"Helper:leader_alive?/1", false, ":erlang.is_process_alive/1",
                 ":global.whereis_name/1", "lookup"}
@@ -133,14 +116,11 @@ defmodule Argus.Analyses.FailureRemotePidTest do
     end
 
     test "a private probe whose every caller rescues the badarg is quiet", ctx do
-      skip_without_souffle()
       assert probes(ctx, RemotePid.CallerRescues) == []
     end
 
     test "a rescue around a call between the helpers takes the badarg; one around other code does not",
          ctx do
-      skip_without_souffle()
-
       assert [
                {"MiddleRescue:leader_seen?/1", false, ":erlang.is_process_alive/1",
                 ":global.whereis_name/1", "lookup"}
@@ -148,8 +128,6 @@ defmodule Argus.Analyses.FailureRemotePidTest do
     end
 
     test "a process's links, reordered and walked (phoenix_live_dashboard before 57e8a1f)", ctx do
-      skip_without_souffle()
-
       assert [
                {"Links:-children/2-fun-0-/" <> _, false, "Process.info/2", "Process.info/2",
                 "lookup"}
@@ -159,8 +137,6 @@ defmodule Argus.Analyses.FailureRemotePidTest do
 
     test "GenServer.whereis/1 of a :global name and a lookup a helper returns; a Registry's is quiet",
          ctx do
-      skip_without_souffle()
-
       assert funcs(probes(ctx, RemotePid.Names)) == ["Names:global_info/1", "Names:leader_info/0"]
     end
   end

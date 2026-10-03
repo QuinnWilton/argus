@@ -5,10 +5,10 @@ defmodule Argus.Exclusions.MailboxTest do
   Fixtures: test/fixtures/exclusions/mailbox.ex.
   """
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
   import Argus.Test.Soundness, only: [fired: 2]
 
-  alias Argus.Souffle
   alias Argus.Test.Batch
   alias Argus.Test.Rows
   alias Excl.Mailbox, as: M
@@ -50,7 +50,6 @@ defmodule Argus.Exclusions.MailboxTest do
   end
 
   defp results(%{batch: batch}, set) do
-    unless Souffle.available?(), do: flunk("souffle not installed")
     {:ok, results} = Batch.analyze(batch, set)
     results
   end

@@ -1,16 +1,12 @@
 defmodule Argus.Analyses.PrivateInstanceTest do
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
   alias Argus.Test.Fixtures.PrivateConn, as: P
   alias Argus.Test.Memo
   alias Argus.Test.Rows
 
   @modules [P.Conn, P.Pool, P.Cache, P.Reporter, P.Tree]
-
-  setup do
-    unless Argus.Souffle.available?(), do: flunk("souffle not installed")
-    :ok
-  end
 
   defp pairs(rows), do: rows |> Enum.map(fn [a, b | _] -> {short(a), short(b)} end) |> Enum.uniq()
   defp short(mod), do: mod |> String.split(".") |> List.last()

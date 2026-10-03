@@ -24,6 +24,7 @@ defmodule Argus.CorpusTest do
   alias Argus.Corpus
 
   @moduletag :corpus
+  @moduletag :souffle
   @moduletag timeout: :infinity
 
   @only (case System.get_env("ARGUS_CORPUS_ONLY") do
@@ -88,17 +89,13 @@ defmodule Argus.CorpusTest do
       )
     end
 
-    if Argus.Souffle.available?() do
-      results =
-        @selected
-        |> Corpus.checkouts()
-        |> Corpus.analyze_all(&slim/1)
-        |> Map.new(fn {co, result} -> {co.name, result} end)
+    results =
+      @selected
+      |> Corpus.checkouts()
+      |> Corpus.analyze_all(&slim/1)
+      |> Map.new(fn {co, result} -> {co.name, result} end)
 
-      %{results: results}
-    else
-      %{results: %{}}
-    end
+    %{results: results}
   end
 
   defp slim({:ok, %{findings: findings, degraded: degraded, extraction_errors: errors}}) do
@@ -133,10 +130,6 @@ defmodule Argus.CorpusTest do
   defp in_module(%{module: module}), do: " in #{module}"
   defp in_module(_pair), do: ""
 
-  defp skip_without_souffle do
-    unless Argus.Souffle.available?(), do: flunk("souffle not installed")
-  end
-
   for pair <- Corpus.pairs() do
     {analysis, title} = pair.finding
 
@@ -147,7 +140,6 @@ defmodule Argus.CorpusTest do
 
     @tag skip: Map.fetch!(@skipped, pair.issue)
     test "#{pair.issue}: #{analysis} / #{title} — #{sides}", %{results: results} do
-      skip_without_souffle()
       pair = @pair
       {analysis, title} = pair.finding
       _ = {analysis, title}

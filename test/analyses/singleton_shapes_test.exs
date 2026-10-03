@@ -1,13 +1,10 @@
 defmodule Argus.Analyses.SingletonShapesTest do
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
   alias Argus.Test.Fixtures.{CatchShapes, EtsOwners, InitAck, InitRecv}
   alias Argus.Test.Memo
   alias Argus.Test.Rows
-
-  defp skip_without_souffle do
-    unless Argus.Souffle.available?(), do: flunk("souffle not installed")
-  end
 
   defp erpc_rows(r) do
     r
@@ -31,8 +28,6 @@ defmodule Argus.Analyses.SingletonShapesTest do
   # `{{:shutdown, _}, _}`, which neither clause takes. It was pinned quiet
   # while the catch facts could not tell the two shapes apart.
   test "a peer call catching :noproc, or :noproc and the bare :shutdown, is reported; a bare reason is not" do
-    skip_without_souffle()
-
     {:ok, r} =
       Memo.analyze(
         [CatchShapes.NoprocOnly, CatchShapes.NoprocAndShutdown, CatchShapes.AnyExit],
@@ -46,8 +41,6 @@ defmodule Argus.Analyses.SingletonShapesTest do
   end
 
   test "a clause that takes every tuple reason covers a peer that stops mid-call" do
-    skip_without_souffle()
-
     {:ok, r} =
       Memo.analyze([CatchShapes.NoprocAndAnyTuple, CatchShapes.NoprocAndNamedTuple], :blocking)
 
@@ -57,16 +50,12 @@ defmodule Argus.Analyses.SingletonShapesTest do
   end
 
   test "an :erpc rescue with no clause for transport failures is reported" do
-    skip_without_souffle()
-
     {:ok, r} = Memo.analyze([CatchShapes.Erpc], :failure)
 
     assert erpc_rows(r) == ["Argus.Test.Fixtures.CatchShapes.Erpc:partial/4"]
   end
 
   test "a table read from outside its owner without heir or rescue is reported" do
-    skip_without_souffle()
-
     {:ok, r} =
       Memo.analyze(
         [
@@ -115,8 +104,6 @@ defmodule Argus.Analyses.SingletonShapesTest do
   end
 
   test "a reader that asks :ets.whereis/1 first is guarded; one that asks elsewhere is not" do
-    skip_without_souffle()
-
     {:ok, r} =
       Memo.analyze([EtsOwners.WhereisOwner, EtsOwners.WhereisElsewhereOwner], :ets)
 
@@ -126,16 +113,12 @@ defmodule Argus.Analyses.SingletonShapesTest do
   end
 
   test "a table read inside an Erlang catch is guarded; the same read outside one is not" do
-    skip_without_souffle()
-
     {:ok, r} = Memo.analyze([:ets_catch_reader], :ets)
 
     assert rows(r, "ets_read_outside_owner", 2) == [":ets_catch_reader:peek/1"]
   end
 
   test "an :infinity socket receive on init's path is reported; bounded or later is not" do
-    skip_without_souffle()
-
     {:ok, r} =
       Memo.analyze(
         [InitRecv.Blocking, InitRecv.Bounded, InitRecv.Later, InitRecv.Waits],
@@ -153,8 +136,6 @@ defmodule Argus.Analyses.SingletonShapesTest do
   end
 
   test "a receive with no after in init's own process is reported as a wait on a message" do
-    skip_without_souffle()
-
     {:ok, r} =
       Memo.analyze(
         [InitRecv.Waits, InitRecv.AwaitsEach, InitRecv.SpawnsLoop, InitRecv.Blocking],
@@ -208,8 +189,6 @@ defmodule Argus.Analyses.SingletonShapesTest do
   end
 
   test "a flush, or a wait after the ack, holds no start; a wait a peer ends is a down" do
-    skip_without_souffle()
-
     fixtures = [
       InitRecv.AcksThenLoops,
       InitRecv.AcksThenWaits,
@@ -275,8 +254,6 @@ defmodule Argus.Analyses.SingletonShapesTest do
   end
 
   test "init/1 entering the server loop before any ack holds its start for good" do
-    skip_without_souffle()
-
     {:ok, r} = Memo.analyze([InitRecv.EntersWithoutAck, InitRecv.AcksThenLoops], :startup)
 
     assert [["Argus.Test.Fixtures.InitRecv.EntersWithoutAck", "enter_loop", api, _site]] =
@@ -289,8 +266,6 @@ defmodule Argus.Analyses.SingletonShapesTest do
   end
 
   test "what init/1 runs after it acknowledges its start is the server's, not the start's" do
-    skip_without_souffle()
-
     {:ok, r} =
       Memo.analyze(
         [
@@ -352,8 +327,6 @@ defmodule Argus.Analyses.SingletonShapesTest do
   end
 
   test "a call a task init/1 starts makes to a later sibling is no deadlock, but races it" do
-    skip_without_souffle()
-
     alias InitRecv.TaskCalls
 
     {:ok, r} =
@@ -369,8 +342,6 @@ defmodule Argus.Analyses.SingletonShapesTest do
   end
 
   test "a cast a task init/1 starts makes to a later sibling races its start" do
-    skip_without_souffle()
-
     alias InitRecv.TaskCasts
 
     {:ok, r} =
@@ -390,8 +361,6 @@ defmodule Argus.Analyses.SingletonShapesTest do
   end
 
   test "a connect, a lock or a supervisor call in a task init/1 starts holds nothing" do
-    skip_without_souffle()
-
     {:ok, r} = Memo.analyze([InitRecv.SpawnsWork], :startup)
 
     assert Rows.where(r, :startup, "unbounded_effect_in_init",

@@ -33,6 +33,7 @@ defmodule Argus.Extractor.HtmlInjectionTest do
     refute escaped?(facts, "controller/2")
   end
 
+  @tag :souffle
   test "a different implementation of a known renderer name is never trusted" do
     peer = Peer.start!(store: :own)
 

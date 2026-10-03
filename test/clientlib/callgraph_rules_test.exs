@@ -1,22 +1,17 @@
 defmodule Argus.Clientlib.CallgraphRulesTest do
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
   alias Argus.Pipeline
   alias Argus.Souffle
 
   @moduletag :tmp_dir
 
-  defp skip_without_souffle do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-  end
-
   defp priv_dl, do: Path.join(:code.priv_dir(:argus_beam), "dl")
 
   describe "callgraph_rules.dl" do
     @tag :tmp_dir
     test "derives call_edge from remote, BIF, and local calls", %{tmp_dir: tmp_dir} do
-      skip_without_souffle()
-
       facts_dir = Path.join(tmp_dir, "facts")
       {:ok, _} = Pipeline.run([Enum], facts_dir)
 
@@ -48,8 +43,6 @@ defmodule Argus.Clientlib.CallgraphRulesTest do
 
     @tag :tmp_dir
     test "follows closures lifted by the compiler into call_edge", %{tmp_dir: tmp_dir} do
-      skip_without_souffle()
-
       facts_dir = Path.join(tmp_dir, "facts")
       {:ok, _} = Pipeline.run([Argus.Test.Fixtures.ClosureModule], facts_dir)
 

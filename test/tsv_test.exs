@@ -70,10 +70,7 @@ defmodule Argus.TsvTest do
   end
 
   describe "through Souffle" do
-    setup do
-      unless Souffle.available?(), do: flunk("souffle not installed")
-      :ok
-    end
+    @describetag :souffle
 
     property "a copied relation comes back as it was written", %{tmp_dir: tmp_dir} do
       rules = Path.join(tmp_dir, "copy.dl")
@@ -102,10 +99,7 @@ defmodule Argus.TsvTest do
   end
 
   describe "names no fact file could hold" do
-    setup do
-      unless Souffle.available?(), do: flunk("souffle not installed")
-      :ok
-    end
+    @describetag :souffle
 
     # A function named with a tab used to write a six-column function_def
     # row, and Souffle refused the whole directory over it.

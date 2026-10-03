@@ -6,13 +6,13 @@ defmodule Argus.Soundness.ToolingTest do
   test/fixtures/soundness/tooling_fixture.ex and lib/).
   """
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
   import Argus.Test.Soundness.Case
 
   alias Argus.Findings
 
   setup do
-    unless Argus.Souffle.available?(), do: raise("souffle not installed")
     :ok
   end
 

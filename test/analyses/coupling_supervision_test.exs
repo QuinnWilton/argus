@@ -1,18 +1,12 @@
 defmodule Argus.Analyses.CouplingSupervisionTest do
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
-  alias Argus.Souffle
   alias Argus.Test.Fixtures.SupervisionShapes, as: Shapes
   alias Argus.Test.Memo
 
-  defp skip_without_souffle do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-  end
-
   describe "rest_for_one_orphaned_children" do
     test "a later child starting tasks in an earlier Task.Supervisor is reported" do
-      skip_without_souffle()
-
       modules = [
         Argus.Test.Fixtures.QueueSupervisor,
         Argus.Test.Fixtures.NamedQueueSupervisor,
@@ -62,15 +56,11 @@ defmodule Argus.Analyses.CouplingSupervisionTest do
     end
 
     test "flags a transient sibling dependency" do
-      skip_without_souffle()
-
       assert [["Sup", "P", "S", "restart_policy", "transient", _site, _witness, _ | _]] =
                dependency_rows(base_facts("transient"))
     end
 
     test "flags a temporary sibling dependency" do
-      skip_without_souffle()
-
       # Temporary is strictly worse than transient: never restarted,
       # not even after a crash.
       assert [["Sup", "P", "S", "restart_policy", "temporary", _site, _witness, _ | _]] =
@@ -78,8 +68,6 @@ defmodule Argus.Analyses.CouplingSupervisionTest do
     end
 
     test "does not flag a permanent sibling dependency" do
-      skip_without_souffle()
-
       # A permanent sibling is always restarted — the dependency is safe
       # from this rule's perspective.
       assert dependency_rows(base_facts("permanent")) == []
@@ -102,8 +90,6 @@ defmodule Argus.Analyses.CouplingSupervisionTest do
     end
 
     test "a shorthand sibling whose own child_spec/1 says :temporary is flagged" do
-      skip_without_souffle()
-
       # `use GenServer, restart: :temporary` on S: the shorthand listing
       # it states nothing, and S is never restarted. P's own child_spec/1
       # states no restart (`use GenServer`): permanent, read as such.
@@ -112,8 +98,6 @@ defmodule Argus.Analyses.CouplingSupervisionTest do
     end
 
     test "a shorthand child whose own child_spec/1 says :temporary is not the permanent one" do
-      skip_without_souffle()
-
       # P is temporary by its own child_spec/1: it stays down beside S
       # rather than running against a sibling that is gone.
       assert dependency_rows(shorthand_facts([["P", "temporary"], ["S", "temporary"]])) == []
@@ -121,8 +105,6 @@ defmodule Argus.Analyses.CouplingSupervisionTest do
     end
 
     test "a shorthand child whose own restart is unread is neither permanent nor down" do
-      skip_without_souffle()
-
       # Issue #4: a restart the extractor could not read is unknown, not
       # OTP's default: P is not shown permanent, and S not shown to stay
       # down.
@@ -131,8 +113,6 @@ defmodule Argus.Analyses.CouplingSupervisionTest do
     end
 
     test "a registration through a pid is anchored at the call that makes it" do
-      skip_without_souffle()
-
       # P's init/1 makes two GenServer calls: #5 to a process nobody can
       # name, #9 to the S its supervisor starts, through the pid of the
       # name the child spec gives it, and S's handler keeps it as an ETS
@@ -165,8 +145,6 @@ defmodule Argus.Analyses.CouplingSupervisionTest do
     end
 
     test "a sibling used only in terminate/2 is not a dependency; one used at run time is" do
-      skip_without_souffle()
-
       alias Argus.Test.Fixtures.TeardownDeps, as: T
 
       {:ok, r} = Memo.analyze([T.Sup, T.Keeper, T.Drainer, T.User], :coupling)
@@ -193,8 +171,6 @@ defmodule Argus.Analyses.CouplingSupervisionTest do
 
   describe "dual restart authority" do
     test "a manager that monitors and restarts a permanent dynamic child is reported" do
-      skip_without_souffle()
-
       {:ok, r} =
         Memo.analyze(
           [

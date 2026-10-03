@@ -5,7 +5,12 @@ The Hex package and OTP application are `argus_beam`; modules use `Argus`.
 
 ## Setup and checks
 
-Use Elixir 1.19 and OTP 28 (CI uses 1.19.4 / 28.3). Souffle must be on `PATH`.
+Use Elixir 1.19 and OTP 28 (CI uses 1.19.4 / 28.3). Souffle must be on `PATH`;
+without it `mix test` excludes the tests tagged `:souffle` and runs the rest
+(under `CI` a missing souffle is an error). Tag a new test that solves with
+`@tag :souffle`, or its `describe` or module with `@describetag`/`@moduletag`;
+where most of a module or `describe` solves, tag it and opt the rest out with
+`souffle: false`.
 
 ```sh
 mix deps.get

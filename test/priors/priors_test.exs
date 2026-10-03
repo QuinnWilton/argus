@@ -5,8 +5,8 @@ defmodule Argus.PriorsTest do
   """
 
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
-  alias Argus.Souffle
   alias Argus.Test.Fixtures.Secret, as: S
 
   @moduletag :tmp_dir
@@ -41,10 +41,6 @@ defmodule Argus.PriorsTest do
     end
   end
 
-  defp skip_without_souffle do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-  end
-
   # The fixtures' facts and the solves come from the suite's blob store
   # (`Argus.Graph.store/0`); the priors are asked every run, which is
   # what these tests test.
@@ -64,7 +60,6 @@ defmodule Argus.PriorsTest do
     ]
 
   test "off by default: the heuristic relation stays empty and the findings are the structural ones" do
-    skip_without_souffle()
     findings = run([])
 
     assert findings |> Enum.map(& &1.module) |> Enum.sort() ==
@@ -76,7 +71,6 @@ defmodule Argus.PriorsTest do
   test "with priors, the model's secret is a heuristic finding a step down in severity", %{
     tmp_dir: dir
   } do
-    skip_without_souffle()
     findings = run(priors(dir))
 
     assert [heuristic] = Enum.filter(findings, &(&1.provenance == :heuristic))
@@ -90,27 +84,23 @@ defmodule Argus.PriorsTest do
   end
 
   test "priors add and never remove: findings with priors are a superset", %{tmp_dir: dir} do
-    skip_without_souffle()
     without = run([]) |> Enum.map(&{&1.title, &1.mfa}) |> MapSet.new()
     with_priors = run(priors(dir)) |> Enum.map(&{&1.title, &1.mfa}) |> MapSet.new()
     assert MapSet.subset?(without, with_priors)
   end
 
   test "below the threshold the model's answer changes nothing", %{tmp_dir: dir} do
-    skip_without_souffle()
     findings = run(priors(dir, oracle_opts: [p: 0.85]))
     refute Enum.any?(findings, &(&1.provenance == :heuristic))
   end
 
   test "a field the table names is the table's, whatever the model says", %{tmp_dir: dir} do
-    skip_without_souffle()
     findings = run(priors(dir))
     structural = Enum.filter(findings, &(&1.provenance == :structural))
     assert length(structural) == 3
   end
 
   test "cached_only reads the cache the live run filled and needs no oracle", %{tmp_dir: dir} do
-    skip_without_souffle()
     live = run(priors(dir))
 
     cached =
@@ -123,8 +113,6 @@ defmodule Argus.PriorsTest do
   end
 
   test "cached_only with an empty cache is the run without priors", %{tmp_dir: dir} do
-    skip_without_souffle()
-
     assert run(
              priors: :cached_only,
              priors_opts: [cache_dir: Path.join(dir, "empty"), model: "jev-test"]
@@ -134,7 +122,6 @@ defmodule Argus.PriorsTest do
   @tag :cache
   test "through a store, priors are asked every run and the findings are a fresh run's",
        %{tmp_dir: dir} do
-    skip_without_souffle()
     opts = [analyses: [:exposure]] ++ priors(Path.join(dir, "answers"))
     kept = [store: Path.join(dir, "store")]
 
@@ -147,6 +134,7 @@ defmodule Argus.PriorsTest do
     assert Enum.any?(afresh.findings, &(&1.provenance == :heuristic))
   end
 
+  @tag souffle: false
   test "an unknown mode is refused" do
     assert_raise ArgumentError, ~r/:cached_only or :live/, fn ->
       Argus.Findings.run(@mods, analyses: [:exposure], priors: :sometimes)
@@ -229,7 +217,6 @@ defmodule Argus.PriorsTest do
       ]
 
     test "off: direct is an error, adjacent a warning, transitive info, all structural" do
-      skip_without_souffle()
       by_prox = sinks([]) |> Map.new(&{&1.at_label, &1.severity})
       assert map_size(by_prox) >= 1
       assert Enum.all?(sinks([]), &(&1.provenance == :structural))
@@ -239,7 +226,6 @@ defmodule Argus.PriorsTest do
     test "on: the adjacent and transitive rows step down and say why; direct is untouched", %{
       tmp_dir: dir
     } do
-      skip_without_souffle()
       findings = sinks(storage(dir))
 
       direct = Enum.find(findings, &(elem(&1.mfa, 1) == :call))
@@ -258,7 +244,6 @@ defmodule Argus.PriorsTest do
     end
 
     test "on: the same sites, the same titles — a re-tier never removes a row", %{tmp_dir: dir} do
-      skip_without_souffle()
       key = &Enum.map(&1, fn f -> {f.title, f.mfa, f.instr} end)
       assert key.(sinks([])) == key.(sinks(storage(dir)))
     end
@@ -266,8 +251,6 @@ defmodule Argus.PriorsTest do
     test "passthrough leaves the row alone, and so does a probability under 0.7 (reads)", %{
       tmp_dir: dir
     } do
-      skip_without_souffle()
-
       assert Enum.all?(
                sinks(storage(dir, oracle_opts: [source: "passthrough"])),
                &(&1.provenance == :structural)
@@ -341,7 +324,6 @@ defmodule Argus.PriorsTest do
       ]
 
     test "off: every row is structural at its own severity" do
-      skip_without_souffle()
       findings = unreached([])
       assert Enum.all?(findings, &(&1.provenance == :structural))
       assert Enum.any?(findings, &(&1.severity == :error))
@@ -350,7 +332,6 @@ defmodule Argus.PriorsTest do
     test "on: value-source sinks step down, independent allocation findings remain structural", %{
       tmp_dir: dir
     } do
-      skip_without_souffle()
       off = unreached([])
       on = unreached(values(dir))
       key = &Enum.map(&1, fn f -> {f.title, f.mfa, f.instr} end)
@@ -376,7 +357,6 @@ defmodule Argus.PriorsTest do
     end
 
     test "outside data, or a mass under 0.9, leaves every row as it was", %{tmp_dir: dir} do
-      skip_without_souffle()
       off = unreached([])
       assert unreached(values(dir, oracle_opts: [source: "outside", p: 0.95])) == off
       assert unreached(values(Path.join(dir, "low"), oracle_opts: [p: 0.85])) == off
@@ -446,7 +426,6 @@ defmodule Argus.PriorsTest do
       ]
 
     test "off: the cast and the init wait are structural warnings" do
-      skip_without_souffle()
       assert [cast, wait] = waits([])
       assert cast.title == "handle_cast blocks on a synchronous call"
       assert wait.title == "init/1 waits on a message with no timeout"
@@ -456,7 +435,6 @@ defmodule Argus.PriorsTest do
     test "on: a peer that answers from inside the node steps both down and says so", %{
       tmp_dir: dir
     } do
-      skip_without_souffle()
       assert [cast, wait] = waits(peers(dir))
       assert cast.severity == :info and cast.provenance == :heuristic and cast.confidence == 950
       assert List.last(cast.help) =~ "#{inspect(ServerC)} answers every call from inside the node"
@@ -467,7 +445,6 @@ defmodule Argus.PriorsTest do
     end
 
     test "a peer that may not answer, or one scored under 0.8, changes nothing", %{tmp_dir: dir} do
-      skip_without_souffle()
       off = waits([])
       assert waits(peers(dir, oracle_opts: [peer: "remote"])) == off
       assert waits(peers(Path.join(dir, "low"), oracle_opts: [p: 0.75])) == off
@@ -532,7 +509,6 @@ defmodule Argus.PriorsTest do
     # The caller reaches only a pure function of the helper: the
     # dependency is inferred, and reported at the class's severity.
     test "off: the inferred dependency is a structural warning" do
-      skip_without_souffle()
       assert [finding] = couplings([])
       assert finding.severity == :warning
       assert finding.provenance == :structural
@@ -542,7 +518,6 @@ defmodule Argus.PriorsTest do
          %{
            tmp_dir: dir
          } do
-      skip_without_souffle()
       assert [finding] = couplings(noul(dir, 0.1))
       assert finding.severity == :info
       assert finding.provenance == :heuristic
@@ -557,7 +532,6 @@ defmodule Argus.PriorsTest do
     end
 
     test "on, and the model thinks it is a facade: nothing changes", %{tmp_dir: dir} do
-      skip_without_souffle()
       assert [finding] = couplings(noul(dir, 0.85))
       assert finding.severity == :warning and finding.provenance == :structural
     end

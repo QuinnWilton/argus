@@ -7,6 +7,7 @@ defmodule Argus.Analyses.ToolingTest do
   """
 
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
   alias Argus.Findings
   alias Argus.Test.Fixtures.Tooling.{DevSetup, Product}
@@ -47,10 +48,6 @@ defmodule Argus.Analyses.ToolingTest do
     end
   end
 
-  defp skip_without_souffle do
-    unless Argus.Souffle.available?(), do: flunk("souffle not installed")
-  end
-
   # Code execution each module's export reaches, by module.
   defp findings(opts) do
     opts = Keyword.put(opts, :analyses, [:unsafe_input])
@@ -78,7 +75,6 @@ defmodule Argus.Analyses.ToolingTest do
     ]
 
   test "a module under Mix. steps down, structurally; the product and the undecided do not" do
-    skip_without_souffle()
     by_module = findings([])
 
     assert %{severity: :warning, provenance: :structural, confidence: nil} =
@@ -95,7 +91,6 @@ defmodule Argus.Analyses.ToolingTest do
   end
 
   test "the tooling prior at 0.9 or more steps its module down, heuristic", %{tmp_dir: dir} do
-    skip_without_souffle()
     by_module = findings(priors(dir))
 
     assert %{severity: :warning, provenance: :heuristic, confidence: 950} =
@@ -112,7 +107,6 @@ defmodule Argus.Analyses.ToolingTest do
   end
 
   test "below 0.9 the prior moves nothing", %{tmp_dir: dir} do
-    skip_without_souffle()
     by_module = findings(priors(dir, oracle_opts: [p: 0.85]))
     assert %{severity: :error, provenance: :structural} = by_module[DevSetup]
   end
@@ -120,7 +114,6 @@ defmodule Argus.Analyses.ToolingTest do
   test "priors re-tier and never remove: the same findings, by title and anchor", %{
     tmp_dir: dir
   } do
-    skip_without_souffle()
     key = fn m -> m |> Map.values() |> Enum.map(&{&1.title, &1.mfa, &1.instr}) |> Enum.sort() end
     assert key.(findings([])) == key.(findings(priors(dir)))
   end
@@ -141,13 +134,10 @@ defmodule Argus.Analyses.ToolingTest do
     }
 
     test "a structural row is the structure's at 1000; without a prior nothing else" do
-      skip_without_souffle()
       assert tooling_rows(@base) == [["Mix.Tasks.Seed", "mix", "1000"]]
     end
 
     test "the prior names a module at 0.9 or more, never one the structure named" do
-      skip_without_souffle()
-
       facts =
         Map.put(@base, :prior_tooling, [
           ["App.DevSetup", "development", "930", "940"],

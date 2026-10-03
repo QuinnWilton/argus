@@ -15,14 +15,13 @@ defmodule Argus.Graph.StoreRaceTest do
   """
 
   use ExUnit.Case, async: false
+  @moduletag :souffle
 
   @moduletag :cache
   @moduletag :tmp_dir
   @moduletag timeout: 300_000
 
   test "concurrent runs over a fresh store degrade nothing", %{tmp_dir: dir} do
-    unless Argus.Souffle.available?(), do: flunk("souffle not installed")
-
     fixtures =
       for module <- Application.spec(:argus_beam, :modules),
           String.starts_with?(Atom.to_string(module), "Elixir.Argus.Test.Fixtures."),

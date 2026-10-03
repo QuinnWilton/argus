@@ -11,6 +11,7 @@ defmodule Argus.DlComponentsTest do
       other -> c                 (`other` lives in module N; the rest in M)
   """
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
   @moduletag :tmp_dir
 
@@ -66,8 +67,6 @@ defmodule Argus.DlComponentsTest do
   """
 
   setup %{tmp_dir: dir} do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-
     facts = Path.join(dir, "facts")
     File.mkdir_p!(facts)
 

@@ -1,17 +1,12 @@
 defmodule Argus.Analyses.HypothesizedShapesTest do
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
   alias Argus.Test.Fixtures.Hypothesized, as: H
   alias Argus.Test.Memo
   alias Argus.Test.Rows
 
-  defp skip_without_souffle do
-    unless Argus.Souffle.available?(), do: flunk("souffle not installed")
-  end
-
   test "an rpc result matched without a badrpc clause, or used as a boolean, is reported" do
-    skip_without_souffle()
-
     {:ok, r} =
       Memo.analyze(
         [
@@ -48,8 +43,6 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
   end
 
   test "an rpc result a wrapper returns is judged where its caller matches it" do
-    skip_without_souffle()
-
     {:ok, r} =
       Memo.analyze(
         [H.RpcProto, H.RpcFacade, H.RpcWrapperCaller, H.RpcWrapperCallerHandled],
@@ -83,8 +76,6 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
   end
 
   test "a timer cancelled and re-armed with a bare message, without a flush, is reported" do
-    skip_without_souffle()
-
     {:ok, r} =
       Memo.analyze(
         [
@@ -142,8 +133,6 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
   end
 
   test "a helper that cancels the field it reads with maps:get/3: the caller's flush is its" do
-    skip_without_souffle()
-
     {:ok, r} = Memo.analyze([:timer_flush_maps_get, :timer_loop_domain_db], :mailbox)
 
     reported =
@@ -158,8 +147,6 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
   end
 
   test "a cancel in the clause of the timer's own message is not the finding; another cancel is" do
-    skip_without_souffle()
-
     {:ok, r} = Memo.analyze([H.TimerCancelOwnClauseAndDown], :mailbox)
 
     sites =
@@ -196,8 +183,6 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
     end
 
     test "at the cancel the program runs, not the one only its tests request" do
-      skip_without_souffle()
-
       # Plausible's WriteBuffer: handle_call(:flush) sorts first by name,
       # but only the test support requests :flush; the buffer-full branch
       # of handle_cast is the path inserts take.
@@ -212,8 +197,6 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
     end
 
     test "a flush/1 nothing calls is a public API, and ranks with the rest" do
-      skip_without_souffle()
-
       # Without the test support, nothing tells the two cancels apart:
       # the least row, as before.
       finding = timer_finding([H.WriteBuffer, H.WriteBufferIngest])
@@ -222,8 +205,6 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
     end
 
     test "a key whose only cancel is under test is still reported, there" do
-      skip_without_souffle()
-
       finding = timer_finding([H.FlushOnlyBuffer, H.FlushOnlyBufferTestSupport])
       assert %Argus.InstrId{func: "handle_call"} = finding.instr
       refute Enum.any?(finding.related, &(&1.label =~ "only the tests"))
@@ -231,8 +212,6 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
   end
 
   test "a timer armed and cancelled within one call, from a local ref, is reported" do
-    skip_without_souffle()
-
     {:ok, r} =
       Memo.analyze(
         [H.TimerLocalNoFlush, H.TimerLocalFlushed, H.TimerLocalStartTimer, H.TimerLocalEitherArm],
@@ -249,6 +228,7 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
     assert {:ok, _} = Argus.InstrId.parse(arm_site)
   end
 
+  @tag souffle: false
   test "a local timer's finding says the stale message outlives the call" do
     row = [
       "M",
@@ -268,8 +248,6 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
   end
 
   test "an async_nolink task whose messages have no clause is reported, once per missing shape" do
-    skip_without_souffle()
-
     {:ok, r} =
       Memo.analyze(
         [H.NolinkPartialInfo, H.NolinkBothClauses, H.NolinkCollected],
@@ -285,8 +263,6 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
   end
 
   test "a connect in init/1 with no reconnect path is reported" do
-    skip_without_souffle()
-
     {:ok, r} =
       Memo.analyze(
         [H.ConnectInInit, H.ConnectWithBackoff, H.ConnectWithGenericBackoff],
@@ -303,8 +279,6 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
   end
 
   test "a handler stopping a sibling through its API is reported; asking the supervisor is not" do
-    skip_without_souffle()
-
     {:ok, r} =
       Memo.analyze(
         [
@@ -326,8 +300,6 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
   end
 
   test "a sibling pid cached in init/1 and called is reported under one_for_one only" do
-    skip_without_souffle()
-
     {:ok, r} =
       Memo.analyze(
         [

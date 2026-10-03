@@ -1,5 +1,6 @@
 defmodule Argus.Soundness.CommandPrecisionTest do
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
   alias Argus.Test.Fixtures.CodeExecution
   alias Argus.Test.Memo

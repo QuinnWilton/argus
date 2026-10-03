@@ -8,6 +8,7 @@ defmodule Argus.ClientlibTest do
   named here are empty, and the points-to stage is derived from them.
   """
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
   @moduletag :tmp_dir
 
@@ -76,8 +77,6 @@ defmodule Argus.ClientlibTest do
   }
 
   setup %{tmp_dir: dir} do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-
     facts = Path.join(dir, "facts")
     File.mkdir_p!(facts)
 

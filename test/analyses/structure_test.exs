@@ -1,13 +1,9 @@
 defmodule Argus.Analyses.StructureTest do
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
-  alias Argus.Souffle
   alias Argus.Test.Fixtures.SupervisionShapes, as: Shapes
   alias Argus.Test.Memo
-
-  defp skip_without_souffle do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-  end
 
   defp analyze(modules) do
     assert {:ok, results} = Memo.analyze(modules, :structure)
@@ -27,13 +23,10 @@ defmodule Argus.Analyses.StructureTest do
     end
 
     test "an explicit type: :worker on a supervisor child is reported" do
-      skip_without_souffle()
       assert Enum.any?(as_worker(), &String.contains?(&1, "SupAsWorker"))
     end
 
     test "the shorthand is not, because child_spec/1 gets it right" do
-      skip_without_souffle()
-
       # supervisor_child.type is a DEFAULT for {Module, args} and bare
       # Module — those state nothing and `use Supervisor` generates
       # type: :supervisor. A version of this rule without the form join
@@ -62,8 +55,6 @@ defmodule Argus.Analyses.StructureTest do
     end
 
     test "a map spec with no :type registers the supervisor it starts as a worker", %{r: r} do
-      skip_without_souffle()
-
       # TypelessSup's `%{id: :pool, start: {PoolSup, ...}}`; its warmup map,
       # whose start function is the parent's own, starts what that
       # function starts, and the shorthand beside it states nothing.
@@ -74,8 +65,6 @@ defmodule Argus.Analyses.StructureTest do
     test "a supervisor whose own child_spec/1 says no type, wherever a shorthand names it", %{
       r: r
     } do
-      skip_without_souffle()
-
       # supavisor 6b77121: started by DynamicSupervisor.start_child/2 and
       # listed by the shorthand. The fixed map, overrides over the
       # generated child_spec/1, `use Supervisor`'s own and a worker's
@@ -103,8 +92,6 @@ defmodule Argus.Analyses.StructureTest do
 
   describe "ConsumerSupervisor templates" do
     test "a ConsumerSupervisor with a permanent template is reported; a temporary one is not" do
-      skip_without_souffle()
-
       {:ok, r} =
         Memo.analyze(
           [Shapes.PermanentConsumers, Shapes.TemporaryConsumers, Shapes.EventWorker],
@@ -116,8 +103,6 @@ defmodule Argus.Analyses.StructureTest do
     end
 
     test "a shorthand template's restart is its module's own child_spec/1's" do
-      skip_without_souffle()
-
       {:ok, r} =
         Memo.analyze(
           [
@@ -138,8 +123,6 @@ defmodule Argus.Analyses.StructureTest do
 
   describe "duplicate_process_name" do
     test "flags the same name registered by two modules" do
-      skip_without_souffle()
-
       results =
         analyze([
           Argus.Test.Fixtures.ProcessRegisterer,
@@ -157,8 +140,6 @@ defmodule Argus.Analyses.StructureTest do
     end
 
     test "a single module's distinct names are not duplicates" do
-      skip_without_souffle()
-
       # ProcessRegisterer registers :my_process and :my_erlang_proc —
       # different names, no conflict.
       results = analyze([Argus.Test.Fixtures.ProcessRegisterer])
@@ -169,8 +150,6 @@ defmodule Argus.Analyses.StructureTest do
 
   describe "global_register_risk" do
     test "flags register_name/2 but not register_name/3 with a resolver" do
-      skip_without_souffle()
-
       results = analyze([Argus.Test.Fixtures.GlobalRegisterModule])
       funcs = Enum.map(results["global_register_risk"], fn [func, _name, _site] -> func end)
 

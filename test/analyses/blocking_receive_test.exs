@@ -1,8 +1,8 @@
 defmodule Argus.Analyses.BlockingReceiveTest do
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
   alias Argus.Analyses.Blocking
-  alias Argus.Souffle
   alias Argus.Test.Batch
   alias Argus.Test.Fixtures.CallbackReceive
   alias Argus.Test.Memo
@@ -53,10 +53,6 @@ defmodule Argus.Analyses.BlockingReceiveTest do
   defp solve(:alone, modules), do: Memo.analyze(modules, :blocking)
   defp solve(%{batch: batch}, modules), do: Batch.analyze(batch, modules)
 
-  defp skip_without_souffle do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-  end
-
   defp run(source, modules) do
     assert {:ok, results} = solve(source, modules)
 
@@ -77,8 +73,6 @@ defmodule Argus.Analyses.BlockingReceiveTest do
 
   describe "detection" do
     test "a blocking receive in a callback is reported", ctx do
-      skip_without_souffle()
-
       {blocking, bounded} = run(ctx, [CallbackReceive.BlockingInCallback])
 
       assert [[_id, func, callback, "GenServer", "direct"]] = blocking
@@ -88,8 +82,6 @@ defmodule Argus.Analyses.BlockingReceiveTest do
     end
 
     test "a bounded receive is reported separately, not as blocking", ctx do
-      skip_without_souffle()
-
       {blocking, bounded} = run(ctx, [CallbackReceive.BoundedInCallback])
 
       assert blocking == []
@@ -98,8 +90,6 @@ defmodule Argus.Analyses.BlockingReceiveTest do
     end
 
     test "an Erlang-spelled behaviour is a callback loop too", ctx do
-      skip_without_souffle()
-
       # `@behaviour :gen_statem` inspects as ":gen_statem"; matching the
       # declared string against "GenStateMachine" found nothing.
       {blocking, _} = run(ctx, [CallbackReceive.StatemBlockingInInit])
@@ -110,8 +100,6 @@ defmodule Argus.Analyses.BlockingReceiveTest do
     end
 
     test "a blocking receive in init/1 is startup's finding, reported there once", ctx do
-      skip_without_souffle()
-
       {blocking, _} = run(ctx, [CallbackReceive.StatemBlockingInInit])
       refute Enum.any?(blocking, fn [_, func | _] -> func =~ "init/1" end)
 
@@ -121,8 +109,6 @@ defmodule Argus.Analyses.BlockingReceiveTest do
     end
 
     test "a receive in a closure handed to Enum.each is the callback's own", ctx do
-      skip_without_souffle()
-
       {blocking, _} = run(ctx, [CallbackReceive.ReceiveInEach])
 
       assert [[_id, func, callback, "GenServer", "helper"]] = blocking
@@ -131,8 +117,6 @@ defmodule Argus.Analyses.BlockingReceiveTest do
     end
 
     test "a receive one call from the callback is reported as a helper", ctx do
-      skip_without_souffle()
-
       {blocking, _} = run(ctx, [CallbackReceive.BlockingInHelper])
 
       assert [[_id, func, callback, "GenServer", "helper"]] = blocking
@@ -147,8 +131,6 @@ defmodule Argus.Analyses.BlockingReceiveTest do
     # entire output on a real project was two false positives.
 
     test "a receive inside a spawned closure runs elsewhere and is not reported", ctx do
-      skip_without_souffle()
-
       {blocking, bounded} = run(ctx, [CallbackReceive.SpawnedReceive])
 
       assert blocking == [], "attributed a spawned process's receive to its parent callback"
@@ -156,8 +138,6 @@ defmodule Argus.Analyses.BlockingReceiveTest do
     end
 
     test "the cancel_timer flush idiom is not reported", ctx do
-      skip_without_souffle()
-
       {blocking, _} = run(ctx, [CallbackReceive.TimerFlush])
 
       assert blocking == [],
@@ -166,20 +146,17 @@ defmodule Argus.Analyses.BlockingReceiveTest do
     end
 
     test "the flush idiom in the module that arms the timer is not reported", ctx do
-      skip_without_souffle()
       {blocking, _} = run(ctx, [CallbackReceive.TimerFlushArmed])
       assert blocking == []
     end
 
     test "the zero-timeout flush after a cancel is not reported as a bounded receive", ctx do
-      skip_without_souffle()
       {blocking, bounded} = run(ctx, [CallbackReceive.TimerFlushAfterZero])
       assert blocking == []
       assert bounded == [], "flagged `receive :tick -> :ok after 0 -> :ok end` after a cancel"
     end
 
     test "a zero-timeout receive before the cancel is no flush of it", ctx do
-      skip_without_souffle()
       {blocking, bounded} = run(ctx, [CallbackReceive.PollThenCancel])
       assert blocking == []
       assert [[_id, func, _cb, "GenServer", "direct"]] = bounded
@@ -188,7 +165,6 @@ defmodule Argus.Analyses.BlockingReceiveTest do
 
     test "a bounded receive after a cancel that waits for something else is still reported",
          ctx do
-      skip_without_souffle()
       {blocking, bounded} = run(ctx, [CallbackReceive.CancelThenBoundedWait])
       assert blocking == []
       assert [[_id, func, _cb, "GenServer", "direct"]] = bounded
@@ -196,15 +172,12 @@ defmodule Argus.Analyses.BlockingReceiveTest do
     end
 
     test "a cancel does not excuse a receive that waits for something no timer sends", ctx do
-      skip_without_souffle()
       {blocking, _} = run(ctx, [CallbackReceive.CancelThenWait])
       assert [[_id, func, _cb, "GenServer", "direct"]] = blocking
       assert func =~ "CancelThenWait:handle_call/3"
     end
 
     test "a blocking receive outside any OTP behaviour is not reported", ctx do
-      skip_without_souffle()
-
       {blocking, bounded} = run(ctx, [CallbackReceive.PlainProcess])
 
       assert blocking == []
@@ -216,8 +189,6 @@ defmodule Argus.Analyses.BlockingReceiveTest do
     # The runtime sends that :DOWN once the process exits, or at once if
     # it was already gone: the wait cannot outlast the monitored process.
     test "is bounded by the monitored process, not reported as blocking", ctx do
-      skip_without_souffle()
-
       # AwaitsAnotherDown pins a ref its server's state holds, as
       # startup's AwaitsHandedDown pins one handed in (down_bounded,
       # clientlib/receive.dl); AwaitsLinkedExit pins a linked worker's
@@ -242,8 +213,6 @@ defmodule Argus.Analyses.BlockingReceiveTest do
 
     test "a grace period, then a kill and a wait: one timed receive, one bounded by the :DOWN",
          ctx do
-      skip_without_souffle()
-
       {blocking, bounded, down} = run_down(ctx, [CallbackReceive.KillsAfterGrace])
 
       assert blocking == []
@@ -256,8 +225,6 @@ defmodule Argus.Analyses.BlockingReceiveTest do
     # (trapping_at): a server that clears the flag before it waits, or
     # whose init/1 traps only around a start, waits on nothing that comes.
     test "a pinned reason, a demonitor first or an untrapped :EXIT still blocks", ctx do
-      skip_without_souffle()
-
       for mod <- [
             CallbackReceive.AwaitsNormalDown,
             CallbackReceive.DemonitorsThenAwaits,
@@ -273,6 +240,7 @@ defmodule Argus.Analyses.BlockingReceiveTest do
       end
     end
 
+    @tag souffle: false
     test "the finding says what bounds the wait, not that it has a timeout" do
       attrs =
         Blocking.finding(:receive_in_callback, [
@@ -295,8 +263,6 @@ defmodule Argus.Analyses.BlockingReceiveTest do
 
   describe "whose callbacks run on the server's stack" do
     test "a server under a behaviour the table does not list", ctx do
-      skip_without_souffle()
-
       {blocking, _bounded} = run(ctx, [CallbackReceive.WrappedServer])
 
       assert [[_id, func, _cb, "Argus.Test.Fixtures.CallbackReceive.Wrapper", "direct"]] =
@@ -306,8 +272,6 @@ defmodule Argus.Analyses.BlockingReceiveTest do
     end
 
     test "a gen_statem's state function", ctx do
-      skip_without_souffle()
-
       {blocking, _bounded} = run(ctx, [CallbackReceive.StatemStateReceive])
 
       assert [[_id, func, cb, "GenStateMachine", "direct"]] = blocking
@@ -317,16 +281,12 @@ defmodule Argus.Analyses.BlockingReceiveTest do
 
     test "a GenServer's client function named like a channel callback runs in its caller",
          ctx do
-      skip_without_souffle()
-
       assert run(ctx, [CallbackReceive.JoinsInClient]) == {[], []}
     end
   end
 
   describe "the suppressions are not blanket" do
     test "a real bug is still found when analysed alongside every suppressed shape" do
-      skip_without_souffle()
-
       # Guards the failure mode where a suppression is written too broadly
       # and silences the analysis: all six fixtures at once must yield
       # exactly the three genuine placements.
@@ -354,6 +314,7 @@ defmodule Argus.Analyses.BlockingReceiveTest do
   end
 
   describe "recv_start facts" do
+    @tag souffle: false
     test "blocking is decided by following the fail label, on real OTP code" do
       # gen_server's own loop uses wait_timeout; timer's interval loop uses
       # a bare wait. If this ever collapses to one value the analysis
@@ -372,6 +333,7 @@ defmodule Argus.Analyses.BlockingReceiveTest do
   end
 
   describe "the anchor" do
+    @tag souffle: false
     test "every placement anchors at the receive keyword, not the function's first clause" do
       # A receive's loop_rec carries no line, so the bytecode puts it on
       # the function head, which for a multi-clause function is another

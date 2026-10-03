@@ -16,10 +16,10 @@ defmodule Argus.Stage0Test do
   """
 
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
   alias Argus.Analysis
   alias Argus.Pipeline
-  alias Argus.Souffle
 
   @moduletag :tmp_dir
 
@@ -28,14 +28,8 @@ defmodule Argus.Stage0Test do
   # can never cut off on an edit.
   @volatile_cfg_relations ~w(branch jump next label_at select_branch closure_def local_call bif_call)
 
-  defp skip_without_souffle do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-  end
-
   describe "derive_stage0/2" do
     test "a fun held by a function is an edge the call graph follows", %{tmp_dir: tmp_dir} do
-      skip_without_souffle()
-
       [{_mod, beam}] =
         Code.compile_string("""
         defmodule Argus.Stage0Test.Refs do
@@ -70,8 +64,6 @@ defmodule Argus.Stage0Test do
     end
 
     test "an apply whose target resolved is an edge", %{tmp_dir: tmp_dir} do
-      skip_without_souffle()
-
       facts_dir = Path.join(tmp_dir, "facts")
       {:ok, _} = Pipeline.run([Argus.Test.Fixtures.MyGenServer], facts_dir)
 
@@ -91,8 +83,6 @@ defmodule Argus.Stage0Test do
     end
 
     test "writes call_edge.facts into the facts directory", %{tmp_dir: tmp_dir} do
-      skip_without_souffle()
-
       facts_dir = Path.join(tmp_dir, "facts")
       {:ok, _} = Pipeline.run([Argus.Test.Fixtures.MyGenServer], facts_dir)
 
@@ -105,8 +95,6 @@ defmodule Argus.Stage0Test do
     end
 
     test "is idempotent — re-deriving reproduces the same content", %{tmp_dir: tmp_dir} do
-      skip_without_souffle()
-
       facts_dir = Path.join(tmp_dir, "facts")
       {:ok, _} = Pipeline.run([Argus.Test.Fixtures.MyGenServer], facts_dir)
 
@@ -118,8 +106,6 @@ defmodule Argus.Stage0Test do
     end
 
     test "extract_facts/3 stages it, so run_rules never has to", %{tmp_dir: _tmp_dir} do
-      skip_without_souffle()
-
       assert {:ok, facts_dir} =
                Analysis.extract_facts([Argus.Test.Fixtures.MyGenServer], [:startup], [])
 
@@ -130,8 +116,6 @@ defmodule Argus.Stage0Test do
 
     test "run_rules/3 derives it on demand for hand-built fact directories",
          %{tmp_dir: tmp_dir} do
-      skip_without_souffle()
-
       facts_dir = Path.join(tmp_dir, "facts")
       {:ok, _} = Pipeline.run([Argus.Test.Fixtures.MyGenServer], facts_dir)
       refute File.exists?(Path.join(facts_dir, "call_edge.facts"))
@@ -143,8 +127,6 @@ defmodule Argus.Stage0Test do
 
   describe "input_relations/1" do
     test "reports the staged call graph, not its layer-1 ingredients" do
-      skip_without_souffle()
-
       assert {:ok, relations} = Analysis.input_relations(:coupling)
 
       assert "call_edge" in relations,
@@ -155,8 +137,6 @@ defmodule Argus.Stage0Test do
     end
 
     test "the supervision family no longer reads volatile control-flow relations" do
-      skip_without_souffle()
-
       # These reason about supervision structure. Nothing about a function
       # body's control flow can change their verdict, and after
       # stratification their input sets say so — which is exactly what
@@ -176,8 +156,6 @@ defmodule Argus.Stage0Test do
     end
 
     test "input sets are genuinely resolved, not uniformly narrow" do
-      skip_without_souffle()
-
       # The guard above must not be vacuous. It used to be anchored on some
       # analysis still reading `instruction` — first unlinked_spawn, then
       # unsafe_task. Neither does now, so the anchor has to be something
@@ -205,6 +183,7 @@ defmodule Argus.Stage0Test do
       assert length(supervision_relations) > 8
     end
 
+    @tag souffle: false
     test "unknown analyses error rather than returning an empty set" do
       assert {:error, {:unknown_analysis, :nope}} = Analysis.input_relations(:nope)
     end

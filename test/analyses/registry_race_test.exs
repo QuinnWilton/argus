@@ -1,8 +1,8 @@
 defmodule Argus.Analyses.RegistryRaceTest do
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
   alias Argus.Analyses.Races
-  alias Argus.Souffle
   alias Argus.Test.Batch
   alias Argus.Test.Fixtures.CheckThenAct, as: C
 
@@ -44,10 +44,6 @@ defmodule Argus.Analyses.RegistryRaceTest do
     %{batch: Batch.solve(:races, [@batched])}
   end
 
-  defp skip_without_souffle do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-  end
-
   defp races(%{batch: batch}, modules) do
     {:ok, results} = Batch.analyze(batch, modules)
 
@@ -66,7 +62,6 @@ defmodule Argus.Analyses.RegistryRaceTest do
   defp short(id), do: id |> String.split("#") |> hd() |> String.split(".") |> List.last()
 
   test "the key_source field's doc names every source the rule reports", ctx do
-    skip_without_souffle()
     {:ok, results} = Batch.analyze(ctx.batch, @batched)
 
     {:key_source, :symbol, doc} =
@@ -85,7 +80,6 @@ defmodule Argus.Analyses.RegistryRaceTest do
 
   describe "registry_race: processes a server starts" do
     test "a task the owner's handler starts per message is many processes", ctx do
-      skip_without_souffle()
       assert [{"claim/1", _, _, _}] = races(ctx, [C.OwnerSpawnsClaims])
     end
   end
@@ -93,8 +87,6 @@ defmodule Argus.Analyses.RegistryRaceTest do
   describe "registry_race: losers that are not a bug" do
     test "a register inside an Erlang catch takes its loser; a dropped start answer is moot",
          ctx do
-      skip_without_souffle()
-
       found = sites(ctx, [:registry_losers])
       meetings = found |> Enum.map(&elem(&1, 0)) |> Enum.uniq()
 
@@ -106,44 +98,33 @@ defmodule Argus.Analyses.RegistryRaceTest do
 
   describe "registry_race" do
     test "whereis, then a named start of the same parameter, in a plain API", ctx do
-      skip_without_souffle()
       assert [{"ensure/1", "whereis", "start_link", "0"}] = races(ctx, [C.WhereisThenStart])
     end
 
     test "whereis, then a named Agent start of the same name", ctx do
-      skip_without_souffle()
-
       assert [{"set/1", "whereis", "start_link", key}] = races(ctx, [C.AgentWhereisThenStart])
       assert key == inspect(C.AgentWhereisThenStart)
     end
 
     test "Registry.lookup, then start_child, the result returned untaken", ctx do
-      skip_without_souffle()
-
       assert [{"get_or_start/1", "registry_lookup", "start_child", "0"}] =
                races(ctx, [C.LookupThenStartChild])
     end
 
     test "whereis of a literal, then register of the same literal", ctx do
-      skip_without_souffle()
       assert [{"claim/0", "whereis", "register", ":leader"}] = races(ctx, [C.WhereisThenRegister])
     end
 
     test "a LiveView doing it runs once per socket", ctx do
-      skip_without_souffle()
-
       assert [{"handle_event/3", "registry_lookup", "start_child", _}] =
                races(ctx, [C.ManyInstances])
     end
 
     test "a later clause keeps its parameters across the first clause's return", ctx do
-      skip_without_souffle()
       assert [{"ensure/2", "whereis", "start_link", "1"}] = races(ctx, [C.LaterClauseName])
     end
 
     test "taking the loser's outcome, in the function or its caller, is the fix", ctx do
-      skip_without_souffle()
-
       assert races(ctx, [
                C.HandlesAlreadyStarted,
                C.HandlesAlreadyRegistered,
@@ -154,56 +135,44 @@ defmodule Argus.Analyses.RegistryRaceTest do
     end
 
     test "the owner deciding on its own registry from its own callbacks is one process", ctx do
-      skip_without_souffle()
       assert races(ctx, [C.OwnerRegisters]) == []
     end
 
     test "a worker init/1 spawns once is one process", ctx do
-      skip_without_souffle()
       assert races(ctx, [C.OwnerSpawnsClaimer]) == []
     end
 
     test "no branch on the lookup, or different names, is not the shape", ctx do
-      skip_without_souffle()
       assert races(ctx, [C.UncheckedWhereisThenStart, C.DifferentNames]) == []
     end
 
     test "whereis, then unregister", ctx do
-      skip_without_souffle()
       assert [{"release/1", "whereis", "unregister", "0"}] = races(ctx, [C.UnregisterIfPresent])
     end
 
     test "Process.registered/0 decides a register of any name", ctx do
-      skip_without_souffle()
       assert [{"claim/1", "registered", "register", ""}] = races(ctx, [C.RegisterIfUnlisted])
     end
 
     test "unregister's ArgumentError rescued is the loser's outcome taken", ctx do
-      skip_without_souffle()
       assert races(ctx, [C.UnregisterRescued]) == []
     end
   end
 
   describe "registry_race across functions" do
     test "a lookup helper's result decides the start in its caller", ctx do
-      skip_without_souffle()
-
       assert sites(ctx, [C.LookupHelper]) == [
                {"LookupHelper:ensure/1", "LookupHelper:lookup/1", "LookupHelper:ensure/1"}
              ]
     end
 
     test "the decision calls a helper that starts the name", ctx do
-      skip_without_souffle()
-
       assert sites(ctx, [C.StartHelper]) == [
                {"StartHelper:ensure/1", "StartHelper:ensure/1", "StartHelper:start/1"}
              ]
     end
 
     test "the lookup's result is an argument a multi-clause helper dispatches on", ctx do
-      skip_without_souffle()
-
       assert sites(ctx, [C.DispatchHelper]) == [
                {"DispatchHelper:ensure/1", "DispatchHelper:ensure/1",
                 "DispatchHelper:do_ensure/2"}
@@ -211,20 +180,19 @@ defmodule Argus.Analyses.RegistryRaceTest do
     end
 
     test "the lookup and the start live in two other modules", ctx do
-      skip_without_souffle()
-
       assert sites(ctx, [C.AcrossModules, C.NameDirectory, C.NameStarter]) == [
                {"AcrossModules:ensure/1", "NameDirectory:whereis/1", "NameStarter:start/1"}
              ]
     end
 
     test "a helper that takes the loser's outcome, or starts another name, is quiet", ctx do
-      skip_without_souffle()
       assert sites(ctx, [C.HelperTakesLoser, C.HelperOtherName]) == []
     end
   end
 
   describe "finding" do
+    @describetag souffle: false
+
     test "anchors the start, relates the lookup, and says what to do" do
       row = [
         "M",

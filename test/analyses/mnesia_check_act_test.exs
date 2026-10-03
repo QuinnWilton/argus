@@ -2,7 +2,6 @@ defmodule Argus.Analyses.MnesiaCheckActTest do
   use ExUnit.Case, async: true
 
   alias Argus.Analyses.Races
-  alias Argus.Souffle
   alias Argus.Test.Batch
   alias Argus.Test.Fixtures.CheckThenAct, as: C
   alias Argus.Test.Memo
@@ -55,10 +54,6 @@ defmodule Argus.Analyses.MnesiaCheckActTest do
   defp solve(:alone, modules), do: Memo.analyze(modules, :races)
   defp solve(%{batch: batch}, modules), do: Batch.analyze(batch, modules)
 
-  defp skip_without_souffle do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-  end
-
   defp races(source, modules) do
     {:ok, results} = solve(source, modules)
 
@@ -83,16 +78,15 @@ defmodule Argus.Analyses.MnesiaCheckActTest do
   defp short(id), do: id |> String.split("#") |> hd() |> String.split(":") |> List.last()
 
   describe "mnesia_check_act" do
-    test "a dirty read, one added, a dirty write of the same record", ctx do
-      skip_without_souffle()
+    @describetag :souffle
 
+    test "a dirty read, one added, a dirty write of the same record", ctx do
       assert races(ctx, [C.MnesiaCounter]) == [
                {"bump/1", ":counters", "0", "bump/1", "bump/1"}
              ]
     end
 
     test "the record the read found, updated in place and written back", ctx do
-      skip_without_souffle()
       assert [{"bump/1", ":counters", "0", "bump/1", "bump/1"}] = races(ctx, [C.MnesiaPutElem])
 
       assert [{"bump/1", ":counters", "0", "bump/1", "bump/1"}] =
@@ -100,34 +94,27 @@ defmodule Argus.Analyses.MnesiaCheckActTest do
     end
 
     test "the record the read found, updated by a helper's put_elem pipeline", ctx do
-      skip_without_souffle()
-
       assert [{"record_bet/2", ":betting_stats", "0", "record_bet/2", "record_bet/2"}] =
                races(ctx, [C.MnesiaHelperUpdate])
     end
 
     test "an update in place that sets the key writes another record", ctx do
-      skip_without_souffle()
       assert races(ctx, [C.MnesiaPutElemKey]) == []
     end
 
     test "deleting the record the read found expired is not a lost update", ctx do
-      skip_without_souffle()
       assert races(ctx, [C.MnesiaExpire]) == []
       # A delete whose decision also tells another process, in a helper.
       assert [_ | _] = races(ctx, [C.MnesiaCaptchaCheck])
     end
 
     test "the delete is reported on a table the program writes back from a read", ctx do
-      skip_without_souffle()
       found = races(ctx, [C.MnesiaExpireCounted])
       assert Enum.any?(found, &match?({"fetch/2", ":uses", _, _, _}, &1))
       assert Enum.any?(found, &match?({"use/2", ":uses", _, _, _}, &1))
     end
 
     test "the read and the write in helpers, the read's result handed to the write", ctx do
-      skip_without_souffle()
-
       # put/2's `[]` clause writes 1, its other clause n + 1: one race,
       # reported where it loses an update, the fill its other branch.
       assert [{"bump/1", ":counters", "0", "get/1", "put/2"}] = races(ctx, [C.MnesiaHelpers])
@@ -135,20 +122,15 @@ defmodule Argus.Analyses.MnesiaCheckActTest do
     end
 
     test "a key built at runtime is the same key when one definition feeds both", ctx do
-      skip_without_souffle()
-
       assert [{"put/3", ":records", key, "put/3", "put/3"}] = races(ctx, [C.MnesiaComputedKey])
       assert key =~ "MnesiaComputedKey:put/3#"
     end
 
     test "a key another definition makes is not the read's key", ctx do
-      skip_without_souffle()
       assert races(ctx, [C.MnesiaJoinedKey]) == []
     end
 
     test "a read-modify-write in a dirty activity", ctx do
-      skip_without_souffle()
-
       assert [
                {"-bump/1-fun-0-/1", ":counters", "0", _, _},
                {"-bump_in_activity/1-fun-0-/1", ":counters", "0", _, _} | _
@@ -157,26 +139,20 @@ defmodule Argus.Analyses.MnesiaCheckActTest do
     end
 
     test "a transaction, the atomic counter, and a different record are quiet", ctx do
-      skip_without_souffle()
       assert races(ctx, [C.MnesiaTransaction, C.MnesiaUpdateCounter, C.MnesiaOtherKey]) == []
     end
 
     test "a record handed to a helper as elements and whole meets where the caller builds it",
          ctx do
-      skip_without_souffle()
-
       assert [{"create/2", ":entities", _key, "do_insert_new/3", "do_insert_new/3"}] =
                races(ctx, [C.MnesiaRecordHelper])
     end
 
     test "elements of one record and another record whole are not the same record", ctx do
-      skip_without_souffle()
       assert races(ctx, [C.MnesiaRecordOther]) == []
     end
 
     test "a match on the key and a lookup by an index are reads", ctx do
-      skip_without_souffle()
-
       assert [{"claim/2", ":claims", _, "claim/2", "claim/2"}] =
                races(ctx, [C.MnesiaMatchThenWrite])
 
@@ -185,35 +161,27 @@ defmodule Argus.Analyses.MnesiaCheckActTest do
     end
 
     test "a cluster lock every writer takes serializes the pair", ctx do
-      skip_without_souffle()
       assert races(ctx, [C.MnesiaGlobalLock]) == []
     end
 
     test "one writer outside the lock unserializes it" do
-      skip_without_souffle()
-
       assert [{"-bump/1-fun-0-/1", ":locked_counters", _, _, _}] =
                races(:alone, [C.MnesiaGlobalLock, C.MnesiaLockBypass])
     end
 
     test "an idempotent default whose decision stays inside is not reported", ctx do
-      skip_without_souffle()
       assert races(ctx, [C.MnesiaEnsureDefault]) == []
     end
 
     test "a claim whose decision the caller gets is reported", ctx do
-      skip_without_souffle()
       assert [{"claim/1", ":prefs_claims", _, _, _}] = races(ctx, [C.MnesiaClaim])
     end
 
     test "a table only its owner's callbacks write has one writer", ctx do
-      skip_without_souffle()
       assert races(ctx, [C.MnesiaOwner]) == []
     end
 
     test "another writer through a helper handed the record, in a transaction, or counting" do
-      skip_without_souffle()
-
       for other <- [C.MnesiaOwnerResetter, C.MnesiaOwnerTxnResetter, C.MnesiaOwnerCounter] do
         assert [{"handle_call/3", ":owned_counters", _, _, _}] =
                  races(:alone, [C.MnesiaOwner, other]),
@@ -222,8 +190,6 @@ defmodule Argus.Analyses.MnesiaCheckActTest do
     end
 
     test "each kind: a lost update, a guard, a claim, a delete, a search", ctx do
-      skip_without_souffle()
-
       assert [{_, _, _, "lost_update"}] = kinds(ctx, [C.MnesiaCounter])
       assert [{_, _, _, "guarded"}] = kinds(ctx, [C.MnesiaComputedKey])
       assert [{_, _, _, "claim"}] = kinds(ctx, [C.MnesiaClaim])
@@ -237,7 +203,6 @@ defmodule Argus.Analyses.MnesiaCheckActTest do
     end
 
     test "fills fanning in to one write are one finding, the weakest", ctx do
-      skip_without_souffle()
       found = kinds(ctx, [C.MnesiaCachedTotals])
 
       # The save/2 write, once, for get_total/1's or get_parts/1's fill;
@@ -258,7 +223,6 @@ defmodule Argus.Analyses.MnesiaCheckActTest do
     end
 
     test "a write is judged by the read beside it, not by one further up", ctx do
-      skip_without_souffle()
       found = kinds(ctx, [C.MnesiaShadowedRead])
 
       # set_balance/2's own read decides both of its writes; deduct/2's
@@ -274,7 +238,6 @@ defmodule Argus.Analyses.MnesiaCheckActTest do
     end
 
     test "a read two functions share is ranked where it meets each write", ctx do
-      skip_without_souffle()
       found = kinds(ctx, [C.MnesiaSharedRead])
 
       # use/2's write-back does not make fetch/2's delete a weaker branch.
@@ -283,26 +246,21 @@ defmodule Argus.Analyses.MnesiaCheckActTest do
     end
 
     test "a marker whose decision also charges decides more than a fill", ctx do
-      skip_without_souffle()
-
       # The two writes are on one path, to two tables: not an upsert's
       # branches, and the charge is more than the marker.
       assert [{"charge_once/2", _, _, "decides_more"}] = kinds(ctx, [C.MnesiaChargeOnce])
     end
 
     test "a search that found nothing decides an insert that is never harmless", ctx do
-      skip_without_souffle()
       assert [{"record/2", _, _, "unique"}] = kinds(ctx, [C.MnesiaUniqueQuiet])
     end
 
     test "a get-or-create answers with the record: a fill, not a claim", ctx do
-      skip_without_souffle()
       assert Enum.any?(kinds(ctx, [C.MnesiaGetOrDefault]), &match?({"get/1", _, _, "fill"}, &1))
       refute Enum.any?(kinds(ctx, [C.MnesiaGetOrDefault]), &(elem(&1, 3) == "claim"))
     end
 
     test "two write-backs of one read are one finding, the second a frame", ctx do
-      skip_without_souffle()
       assert [{"deduct/2", _, first, "lost_update"}] = kinds(ctx, [C.MnesiaTwoBranches])
 
       assert [{^first, "also_writes", second}] =
@@ -312,8 +270,6 @@ defmodule Argus.Analyses.MnesiaCheckActTest do
     end
 
     test "a delete on a table written back through a record helper, or counted into", ctx do
-      skip_without_souffle()
-
       assert Enum.any?(
                races(ctx, [C.MnesiaExpireSaved]),
                &match?({"fetch/2", ":saved_uses", _, _, _}, &1)

@@ -12,6 +12,7 @@ defmodule Argus.Soundness.SupervisionTest do
   supervision_specs_fixture.ex, spec_helper_sup.erl, spec_start_child.erl).
   """
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
   import Argus.Test.Soundness, only: [fired: 2]
 

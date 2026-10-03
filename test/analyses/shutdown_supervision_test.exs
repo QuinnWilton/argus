@@ -1,17 +1,11 @@
 defmodule Argus.Analyses.ShutdownSupervisionTest do
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
-  alias Argus.Souffle
   alias Argus.Test.Memo
-
-  defp skip_without_souffle do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-  end
 
   describe "permanent_child_stops_normally" do
     test "a permanent child that stops with :normal is reported; a transient one is not" do
-      skip_without_souffle()
-
       modules = [
         Argus.Test.Fixtures.QuitterSupervisor,
         Argus.Test.Fixtures.TransientQuitterSupervisor,
@@ -29,8 +23,6 @@ defmodule Argus.Analyses.ShutdownSupervisionTest do
     end
 
     test "a shorthand's restart is the one its child's own child_spec/1 states" do
-      skip_without_souffle()
-
       alias Argus.Test.Fixtures.ChildSpecs, as: Specs
 
       modules = [
@@ -55,8 +47,6 @@ defmodule Argus.Analyses.ShutdownSupervisionTest do
     # argument may override, is unknown; a permanent child is shown to be
     # one.
     test "the issue's repro: Keyword.get(opts, :restart, :transient) under {Repro.Worker, []}" do
-      skip_without_souffle()
-
       alias Argus.Test.Fixtures.Issue4.Repro
 
       assert {:ok, results} = Memo.analyze([Repro.Worker, Repro.Supervisor], :shutdown)
@@ -64,8 +54,6 @@ defmodule Argus.Analyses.ShutdownSupervisionTest do
     end
 
     test "a restart shown permanent is reported; one unknown or transient is not" do
-      skip_without_souffle()
-
       alias Argus.Test.Fixtures.Issue4.{ListSup, Starter, Stoppers}
 
       modules = [

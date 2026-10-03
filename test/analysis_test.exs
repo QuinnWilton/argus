@@ -2,7 +2,6 @@ defmodule Argus.AnalysisTest do
   use ExUnit.Case, async: true
 
   alias Argus.Analysis
-  alias Argus.Souffle
 
   @expected_analyses [
     :blocking,
@@ -20,10 +19,6 @@ defmodule Argus.AnalysisTest do
     :structure,
     :unsafe_input
   ]
-
-  defp skip_without_souffle do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-  end
 
   # -- Discovery ---------------------------------------------------------------
 
@@ -143,9 +138,8 @@ defmodule Argus.AnalysisTest do
   # -- Custom analysis ---------------------------------------------------------
 
   describe "custom analysis" do
+    @tag :souffle
     test "custom analysis with user rules" do
-      skip_without_souffle()
-
       tmp = System.tmp_dir!()
       rules_path = Path.join(tmp, "argus_custom_test.dl")
 

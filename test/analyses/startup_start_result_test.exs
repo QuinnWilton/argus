@@ -1,12 +1,8 @@
 defmodule Argus.Analyses.StartupStartResultTest do
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
-  alias Argus.Souffle
   alias Argus.Test.Memo
-
-  defp skip_without_souffle do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-  end
 
   defp analyze(modules) do
     assert {:ok, results} = Memo.analyze(modules, :startup)
@@ -15,8 +11,6 @@ defmodule Argus.Analyses.StartupStartResultTest do
 
   describe "ignored_start_result" do
     test "flags an ignored start_link result, not a checked one" do
-      skip_without_souffle()
-
       results = analyze([Argus.Test.Fixtures.IgnoredResultModule])
 
       funcs = Enum.map(results["ignored_start_result"], fn [func, _callee] -> func end)
@@ -26,8 +20,6 @@ defmodule Argus.Analyses.StartupStartResultTest do
     end
 
     test "matches the delimited function name, not a substring" do
-      skip_without_souffle()
-
       # Hand-authored facts: a callee named restart_link must not match
       # ".start_link/" — the name is delimited by "." and "/" in the
       # rendered callee.

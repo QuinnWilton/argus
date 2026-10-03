@@ -5,8 +5,8 @@ defmodule Argus.Exclusions.UnsafeInputTest do
   Fixtures: test/fixtures/exclusions/unsafe_input.ex.
   """
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
-  alias Argus.Souffle
   alias Argus.Test.Batch
   alias Argus.Test.Rows
   alias Excl.UnsafeInput, as: U
@@ -32,7 +32,6 @@ defmodule Argus.Exclusions.UnsafeInputTest do
   end
 
   defp results(%{batch: batch}, set) do
-    unless Souffle.available?(), do: flunk("souffle not installed")
     {:ok, results} = Batch.analyze(batch, set)
     results
   end

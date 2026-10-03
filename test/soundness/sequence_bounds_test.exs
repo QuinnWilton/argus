@@ -1,5 +1,6 @@
 defmodule Argus.Soundness.SequenceBoundsTest do
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
   alias Argus.Test.Memo
 

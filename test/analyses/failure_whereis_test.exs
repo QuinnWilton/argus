@@ -1,13 +1,9 @@
 defmodule Argus.Analyses.FailureWhereisTest do
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
-  alias Argus.Souffle
   alias Argus.Test.Memo
   alias Argus.Test.Rows
-
-  defp skip_without_souffle do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-  end
 
   defp analyze(modules) do
     assert {:ok, results} = Memo.analyze(modules, :failure)
@@ -19,8 +15,6 @@ defmodule Argus.Analyses.FailureWhereisTest do
 
   describe "unchecked_result: Process.whereis" do
     test "flags a static-name whereis call site" do
-      skip_without_souffle()
-
       results = analyze([Argus.Test.Fixtures.StaticWhereis])
 
       assert Enum.any?(whereis(results), fn [func, _id, name] ->
@@ -29,8 +23,6 @@ defmodule Argus.Analyses.FailureWhereisTest do
     end
 
     test "a lookup whose nil use is rescued is not flagged; one rescuing else is" do
-      skip_without_souffle()
-
       funcs =
         [Argus.Test.Fixtures.StaticWhereis]
         |> analyze()
@@ -45,8 +37,6 @@ defmodule Argus.Analyses.FailureWhereisTest do
     end
 
     test "does not flag whereis on a runtime-computed name" do
-      skip_without_souffle()
-
       # WhereisModule's lookups take the name as an argument — the rule
       # only speaks about statically-known names.
       results = analyze([Argus.Test.Fixtures.WhereisModule])

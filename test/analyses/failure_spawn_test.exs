@@ -1,18 +1,12 @@
 defmodule Argus.Analyses.FailureSpawnTest do
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
-  alias Argus.Souffle
   alias Argus.Test.Memo
   alias Argus.Test.Rows
 
-  defp skip_without_souffle do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-  end
-
   describe "failure.dl" do
     test "detects bare spawn calls in fixture" do
-      skip_without_souffle()
-
       assert {:ok, results} =
                Memo.analyze([Argus.Test.Fixtures.UnlinkedSpawner], :failure)
 
@@ -36,8 +30,6 @@ defmodule Argus.Analyses.FailureSpawnTest do
     end
 
     test "a proc_lib:start whose worker loops after its ack is unwatched after it" do
-      skip_without_souffle()
-
       assert {:ok, results} = Memo.analyze([Argus.Test.Fixtures.ProcLibWorker], :failure)
 
       assert [[func, _id]] =
@@ -50,8 +42,6 @@ defmodule Argus.Analyses.FailureSpawnTest do
     end
 
     test "a spawn its caller monitors or links to afterwards is watched" do
-      skip_without_souffle()
-
       assert {:ok, results} =
                Memo.analyze([Argus.Test.Fixtures.ExitSignals.Watched], :failure)
 

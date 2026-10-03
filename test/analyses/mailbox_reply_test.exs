@@ -1,7 +1,7 @@
 defmodule Argus.Analyses.MailboxReplyTest do
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
-  alias Argus.Souffle
   alias Argus.Test.Fixtures.Reply, as: R
   alias Argus.Test.Memo
   alias Argus.Test.Rows
@@ -27,10 +27,6 @@ defmodule Argus.Analyses.MailboxReplyTest do
     %{solved: Memo.analyze(@all, :mailbox)}
   end
 
-  defp skip_without_souffle do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-  end
-
   defp results(%{solved: solved}) do
     assert {:ok, r} = solved
     r
@@ -51,8 +47,6 @@ defmodule Argus.Analyses.MailboxReplyTest do
     end
 
     test "deferring without keeping `from` is reported", ctx do
-      skip_without_souffle()
-
       assert [[mod, func, id]] =
                results(ctx)
                |> never_replies()
@@ -64,8 +58,6 @@ defmodule Argus.Analyses.MailboxReplyTest do
     end
 
     test "the return site is anchored, not the clause's first instruction", ctx do
-      skip_without_souffle()
-
       assert [[_mod, func, id]] =
                results(ctx)
                |> never_replies()
@@ -82,8 +74,6 @@ defmodule Argus.Analyses.MailboxReplyTest do
     # correct clause hide the broken one — and a multi-clause callback where
     # exactly one clause forgets is the case that actually occurs.
     test "a broken clause is found alongside correct siblings", ctx do
-      skip_without_souffle()
-
       assert named?(mods(results(ctx), "never_replies"), "MixedClauses"),
              "the forgetful clause was masked by its well-behaved siblings"
     end
@@ -98,41 +88,33 @@ defmodule Argus.Analyses.MailboxReplyTest do
     end
 
     test "replying directly promises nothing", ctx do
-      skip_without_souffle()
       refute named?(mods(results(ctx), "never_replies"), "RepliesDirectly")
     end
 
     test "storing `from` and replying from another callback is the point", ctx do
-      skip_without_souffle()
       r = results(ctx)
       refute named?(mods(r, "never_replies"), "DefersProperly")
     end
 
     test "handing `from` to another process is not this analysis's business", ctx do
-      skip_without_souffle()
       r = results(ctx)
       refute named?(mods(r, "never_replies"), "HandsOff")
     end
 
     test "{:stop, reason, reply, state} answers the caller", ctx do
-      skip_without_souffle()
       refute named?(mods(results(ctx), "never_replies"), "StopsWithReply")
     end
 
     test "handle_cast and handle_info return :noreply as a matter of course", ctx do
-      skip_without_souffle()
       r = results(ctx)
       refute named?(mods(r, "never_replies"), "CastsAndInfos")
     end
 
     test "a handle_call outside a GenServer means nothing", ctx do
-      skip_without_souffle()
       refute named?(mods(results(ctx), "never_replies"), "NotAGenServer")
     end
 
     test "storing `from` and never replying is a real bug this does not claim", ctx do
-      skip_without_souffle()
-
       # StoresAndForgets hangs its callers exactly as surely as Forgets
       # does. Stating it precisely needs escape analysis this does not have
       # — `from` leaves through a send, a spawned closure, an ETS write, or
@@ -145,6 +127,8 @@ defmodule Argus.Analyses.MailboxReplyTest do
   end
 
   describe "the extractor" do
+    @describetag souffle: false
+
     alias Argus.Extractors.Reply
 
     defp facts_for(mod) do

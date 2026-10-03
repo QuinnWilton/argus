@@ -2,7 +2,6 @@ defmodule Argus.Analyses.EffectsPurityTest do
   use ExUnit.Case, async: true
 
   alias Argus.Purity.Effects
-  alias Argus.Souffle
   alias Argus.Test.Fixtures.Purity, as: P
   alias Argus.Test.Memo
   alias Argus.Test.Rows
@@ -17,10 +16,6 @@ defmodule Argus.Analyses.EffectsPurityTest do
     P.Unprovable,
     P.Undeclared
   ]
-
-  defp skip_without_souffle do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-  end
 
   defp run(modules \\ @all) do
     assert {:ok, r} = Memo.analyze(modules, :effects)
@@ -67,9 +62,9 @@ defmodule Argus.Analyses.EffectsPurityTest do
   end
 
   describe "verified" do
-    test "arithmetic, recursion through a private helper, and pure closures" do
-      skip_without_souffle()
+    @describetag :souffle
 
+    test "arithmetic, recursion through a private helper, and pure closures" do
       %{verified: verified} = run()
 
       assert Enum.any?(verified, &(&1 =~ "Clean:add/2"))
@@ -84,9 +79,9 @@ defmodule Argus.Analyses.EffectsPurityTest do
   end
 
   describe "violated" do
-    test "an effect in the function itself, with the right category" do
-      skip_without_souffle()
+    @describetag :souffle
 
+    test "an effect in the function itself, with the right category" do
       %{violated: violated} = run()
 
       by_func =
@@ -100,8 +95,6 @@ defmodule Argus.Analyses.EffectsPurityTest do
     end
 
     test "an effect that compiles to a bif instruction is read, and a guard bif is not one" do
-      skip_without_souffle()
-
       %{violated: violated, verified: verified} = run([P.BifEffects])
 
       by_func =
@@ -116,8 +109,6 @@ defmodule Argus.Analyses.EffectsPurityTest do
     end
 
     test "an effect several calls away is attributed to the function performing it" do
-      skip_without_souffle()
-
       %{violated: violated} = run()
 
       assert [[func, "io", "IO.inspect/1", via]] =
@@ -128,8 +119,6 @@ defmodule Argus.Analyses.EffectsPurityTest do
     end
 
     test "an effect inside a closure the function builds counts against it" do
-      skip_without_souffle()
-
       # The compiler lifts the lambda to its own function; argus records a
       # closure_def edge, so the existing call graph reaches it. Worth
       # pinning because it is load-bearing and invisible.
@@ -143,9 +132,9 @@ defmodule Argus.Analyses.EffectsPurityTest do
   end
 
   describe "unprovable" do
-    test "a call through a fun value cannot be verified" do
-      skip_without_souffle()
+    @describetag :souffle
 
+    test "a call through a fun value cannot be verified" do
       %{unprovable: unprovable, violated: violated} = run([P.Unprovable])
 
       assert Enum.any?(names(unprovable), &(&1 =~ "applies/2"))
@@ -153,8 +142,6 @@ defmodule Argus.Analyses.EffectsPurityTest do
     end
 
     test "apply/3 is unprovable, not impure" do
-      skip_without_souffle()
-
       # apply observes nothing; what it reaches might, and that is exactly
       # what cannot be determined. Reporting it as an effect would be a
       # different and wrong claim.
@@ -165,8 +152,6 @@ defmodule Argus.Analyses.EffectsPurityTest do
     end
 
     test "apply with a literal MFA is resolved, not given up on" do
-      skip_without_souffle()
-
       # `apply` is only opaque when M and F are genuinely unknown. With
       # literals it is a static call wearing a disguise, and giving up on it
       # would be laziness rather than honesty.
@@ -179,8 +164,6 @@ defmodule Argus.Analyses.EffectsPurityTest do
     end
 
     test "apply to an impure literal target is a violation, naming the target" do
-      skip_without_souffle()
-
       # The payoff of resolving: seeing THROUGH the apply turns what would
       # have been a shrug into a proven violation that names IO.puts/1.
       %{violated: violated} = run([P.ResolvedApply])
@@ -192,8 +175,6 @@ defmodule Argus.Analyses.EffectsPurityTest do
     end
 
     test "a violation outranks unprovability" do
-      skip_without_souffle()
-
       # A function that both performs a known effect and makes an
       # unfollowable call is a violation — the effect is proven, so
       # reporting only "cannot check" would bury it.
@@ -207,14 +188,14 @@ defmodule Argus.Analyses.EffectsPurityTest do
   end
 
   describe "higher-order contracts" do
+    @describetag :souffle
+
     # A declared-pure function that calls the fun it is given cannot be
     # verified in isolation — its purity is whatever the caller handed it.
     # That obligation is decidable at the CALL SITE, which is also where the
     # fix belongs.
 
     test "passing an effectful closure to a pure function blames the caller" do
-      skip_without_souffle()
-
       assert {:ok, r} =
                Memo.analyze([P.HigherOrder, P.GoodCaller, P.BadCaller], :effects)
 
@@ -227,8 +208,6 @@ defmodule Argus.Analyses.EffectsPurityTest do
     end
 
     test "the finding anchors at the call handing the closure over, the effect as a frame" do
-      skip_without_souffle()
-
       assert {:ok, %{findings: findings}} =
                Memo.run_analyses([P.HigherOrder, P.BadCaller], analyses: [:effects])
 
@@ -243,8 +222,6 @@ defmodule Argus.Analyses.EffectsPurityTest do
     end
 
     test "a violated contract points at the effect it performs" do
-      skip_without_souffle()
-
       assert {:ok, %{findings: findings}} =
                Memo.run_analyses([P.DirectEffects], analyses: [:effects])
 
@@ -254,15 +231,11 @@ defmodule Argus.Analyses.EffectsPurityTest do
     end
 
     test "passing a pure closure is not reported" do
-      skip_without_souffle()
-
       assert {:ok, r} = Memo.analyze([P.HigherOrder, P.GoodCaller], :effects)
       assert Map.get(r, "impure_closure_to_pure", []) == []
     end
 
     test "the higher-order function is recognised through its lifted closure" do
-      skip_without_souffle()
-
       # `Enum.map(list, fn x -> f.(x) end)` puts the call_fun inside the
       # LIFTED closure, so transform/2 never contains one itself. Matching
       # only on the declared function's own body would leave this rule dead
@@ -278,9 +251,9 @@ defmodule Argus.Analyses.EffectsPurityTest do
   end
 
   describe "scope" do
-    test "functions that claim nothing are never reported" do
-      skip_without_souffle()
+    @describetag :souffle
 
+    test "functions that claim nothing are never reported" do
       %{verified: v, violated: vi, unprovable: u} = run()
       all = v ++ names(vi) ++ names(u)
 

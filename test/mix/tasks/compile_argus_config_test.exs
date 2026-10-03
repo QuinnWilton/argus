@@ -48,7 +48,8 @@ defmodule Mix.Tasks.Compile.ArgusConfigTest do
   end
 
   describe "config" do
-    @tag :souffle
+    @describetag :souffle
+
     test "fail_on: :warning promotes findings to a build failure", %{peer: peer} do
       project = checkout!([fail_on: :warning], :depot_failon)
 
@@ -62,7 +63,6 @@ defmodule Mix.Tasks.Compile.ArgusConfigTest do
       end)
     end
 
-    @tag :souffle
     test "severity overrides change the diagnostic and the status", %{peer: peer} do
       project = checkout!([severity: [mailbox: :error]], :depot_severity)
 
@@ -78,7 +78,6 @@ defmodule Mix.Tasks.Compile.ArgusConfigTest do
       end)
     end
 
-    @tag :souffle
     test "file ignores suppress reports without suppressing facts", %{peer: peer} do
       project = checkout!([ignore: [files: ["lib/depot/application.ex"]]], :depot_ignfile)
 
@@ -96,7 +95,6 @@ defmodule Mix.Tasks.Compile.ArgusConfigTest do
       end)
     end
 
-    @tag :souffle
     test "module ignores keep the module out of analysis entirely", %{peer: peer} do
       project = checkout!([ignore: [modules: [~r/Archive/]]], :depot_ignmod)
 
@@ -112,6 +110,7 @@ defmodule Mix.Tasks.Compile.ArgusConfigTest do
       end)
     end
 
+    @tag souffle: false
     test "invalid config aborts the compile with the valid options", %{peer: peer} do
       project = checkout!([analyses: [:nonsense]], :depot_badcfg)
 

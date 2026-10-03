@@ -1,22 +1,17 @@
 defmodule Argus.Clientlib.CallReachableRulesTest do
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
   alias Argus.Pipeline
   alias Argus.Souffle
 
   @moduletag :tmp_dir
 
-  defp skip_without_souffle do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-  end
-
   defp priv_dl, do: Path.join(:code.priv_dir(:argus_beam), "dl")
 
   describe "call_reachable_rules.dl" do
     @tag :tmp_dir
     test "computes transitive call reachability", %{tmp_dir: tmp_dir} do
-      skip_without_souffle()
-
       facts_dir = Path.join(tmp_dir, "facts")
       {:ok, _} = Pipeline.run([Enum, :lists], facts_dir)
       # imports.dl reads the staged call graph rather than deriving it.

@@ -15,18 +15,13 @@ defmodule Argus.Analysis.SharedStageTest do
   """
 
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
   alias Argus.Analysis
-  alias Argus.Souffle
   alias Argus.Test.Files
   alias Argus.Test.Fixtures.PidFlow
 
   @moduletag :tmp_dir
-
-  setup do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-    :ok
-  end
 
   # Servers each caller reaches through a helper, both stages derived:
   # each has rows to stage.

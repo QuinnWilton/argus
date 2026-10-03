@@ -1,13 +1,9 @@
 defmodule Argus.Analyses.ShutdownTrapExitTest do
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
-  alias Argus.Souffle
   alias Argus.Test.Memo
   alias Argus.Test.Rows
-
-  defp skip_without_souffle do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-  end
 
   defp analyze(modules) do
     assert {:ok, results} = Memo.analyze(modules, :shutdown)
@@ -19,8 +15,6 @@ defmodule Argus.Analyses.ShutdownTrapExitTest do
 
   describe "unhandled_exit_signal: no_exit_clause" do
     test "a handle_info that never matches {:EXIT, ...} is reported" do
-      skip_without_souffle()
-
       results =
         analyze([
           Argus.Test.Fixtures.TrapsWithoutExitClause,
@@ -41,8 +35,6 @@ defmodule Argus.Analyses.ShutdownTrapExitTest do
 
   describe "unhandled_exit_signal: the process that traps" do
     test "a trap a helper sets is the calling server's, not the helper module's" do
-      skip_without_souffle()
-
       results =
         analyze([
           Argus.Test.Fixtures.TrapHelper,
@@ -68,8 +60,6 @@ defmodule Argus.Analyses.ShutdownTrapExitTest do
 
   describe "a proc_lib start that enters the server loop" do
     test "traps for the server it becomes" do
-      skip_without_souffle()
-
       results =
         analyze([
           Argus.Test.Fixtures.CleansUpEnteringLoop,
@@ -97,8 +87,6 @@ defmodule Argus.Analyses.ShutdownTrapExitTest do
 
   describe "a trap the process clears, or sets on one path" do
     test "a trap init/1 clears before it returns leaves the server not trapping" do
-      skip_without_souffle()
-
       results =
         analyze([
           Argus.Test.Fixtures.CleansUpAfterScopedTrap,
@@ -122,8 +110,6 @@ defmodule Argus.Analyses.ShutdownTrapExitTest do
 
   describe "unhandled_exit_signal: no_handler" do
     test "flags a raw :gen_server that traps exits with no handle_info" do
-      skip_without_souffle()
-
       results = analyze([Argus.Test.Fixtures.RawTrapExit])
 
       assert Enum.any?(exit_rows(results, "no_handler"), fn [mod, _witness] ->
@@ -132,8 +118,6 @@ defmodule Argus.Analyses.ShutdownTrapExitTest do
     end
 
     test "cannot fire for `use GenServer` modules (known false negative)" do
-      skip_without_souffle()
-
       # TrapExitModule traps exits and defines no handle_info of its own,
       # but `use GenServer` compiles a default handle_info/2 into every
       # module — so the has_handle_info(mod) heuristic is always
@@ -147,16 +131,12 @@ defmodule Argus.Analyses.ShutdownTrapExitTest do
     end
 
     test "a module that runs no gen_server misses no handle_info" do
-      skip_without_souffle()
-
       # Positive: RawTrapExit (above) is a gen_server with no handle_info.
       results = analyze([Argus.Test.Fixtures.TrapsForItsCaller])
       assert exit_rows(results, "no_handler") == []
     end
 
     test "does not flag a gen_statem that traps exits" do
-      skip_without_souffle()
-
       # gen_statem delivers {:EXIT, ...} to its state functions, not to a
       # handle_info callback, so the has_handle_info heuristic would
       # false-positive every trapping gen_statem.

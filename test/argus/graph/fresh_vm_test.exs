@@ -57,6 +57,7 @@ defmodule Argus.Graph.FreshVmTest do
     assert Peer.run(peer, fn -> extracted(store, path) end) == []
   end
 
+  @tag :souffle
   test "a line-only edit in a fresh VM places the kept findings again", %{tmp_dir: dir} do
     n = System.unique_integer([:positive])
     ebin = Path.join(dir, "ebin")

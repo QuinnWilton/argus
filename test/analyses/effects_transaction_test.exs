@@ -1,8 +1,8 @@
 defmodule Argus.Analyses.EffectsTransactionTest do
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
   alias Argus.Purity.Effects
-  alias Argus.Souffle
   alias Argus.Test.Fixtures.Transaction, as: T
   alias Argus.Test.Memo
   alias Argus.Test.Rows
@@ -16,10 +16,6 @@ defmodule Argus.Analyses.EffectsTransactionTest do
     T.ReadsConfig,
     T.EffectOutside
   ]
-
-  defp skip_without_souffle do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-  end
 
   defp findings(modules \\ @all) do
     assert {:ok, r} = Memo.analyze(modules, :effects)
@@ -40,8 +36,6 @@ defmodule Argus.Analyses.EffectsTransactionTest do
 
   describe "detection" do
     test "an unrollbackable effect in the transaction body is reported" do
-      skip_without_souffle()
-
       assert [[caller, repo, "network", api, via]] = for_module(findings(), "Unsafe:create/1")
 
       assert caller =~ "Unsafe:create/1"
@@ -51,8 +45,6 @@ defmodule Argus.Analyses.EffectsTransactionTest do
     end
 
     test "a start in the transaction is a process effect; the new process's own are not repeated" do
-      skip_without_souffle()
-
       rows = findings([T.FakeRepo, T.StreamsBeforeCommit, T.TaskBeforeCommit])
 
       # One row each: the spawn and the Task start, where the work is
@@ -71,8 +63,6 @@ defmodule Argus.Analyses.EffectsTransactionTest do
     end
 
     test "a broadcast, an HTTP request, and Repo.transact's fun" do
-      skip_without_souffle()
-
       rows =
         findings([
           T.FakeRepo,
@@ -91,8 +81,6 @@ defmodule Argus.Analyses.EffectsTransactionTest do
     end
 
     test "an effect several calls inside the transaction is attributed to its site" do
-      skip_without_souffle()
-
       assert [[_caller, _repo, "network", _api, via]] =
                for_module(findings(), "UnsafeIndirect:create/1")
 
@@ -100,8 +88,6 @@ defmodule Argus.Analyses.EffectsTransactionTest do
     end
 
     test "sleeping inside a transaction is reported" do
-      skip_without_souffle()
-
       # The purest form of the connection-holding problem: a pooled
       # connection checked out and doing nothing.
       assert [[_caller, _repo, "process", api, _via]] = for_module(findings(), "Sleeps:create/1")
@@ -109,8 +95,6 @@ defmodule Argus.Analyses.EffectsTransactionTest do
     end
 
     test "the repo is found by behaviour, not by being called Repo" do
-      skip_without_souffle()
-
       # FakeRepo only declares @behaviour Ecto.Repo. An app's own repo can
       # be called anything, so matching on the name would miss most of them.
       assert [[_c, repo, _cat, _api, _v] | _] = for_module(findings(), "Unsafe:create/1")
@@ -120,8 +104,6 @@ defmodule Argus.Analyses.EffectsTransactionTest do
 
   describe "the transaction a body belongs to" do
     test "a closure in a function that opens transactions on two repos is paired with its own" do
-      skip_without_souffle()
-
       # Joining the caller's transaction sites apart from its body paired
       # the closure with every repo the function touched; the finding,
       # deduplicated on (func, context, category, api), then named
@@ -134,8 +116,6 @@ defmodule Argus.Analyses.EffectsTransactionTest do
     end
 
     test "the closure handed to the transaction is its body, beside another the function builds" do
-      skip_without_souffle()
-
       assert [[_caller, repo, "network", api, via]] =
                for_module(findings([T.FakeRepo, T.TwoClosures]), "TwoClosures")
 
@@ -145,8 +125,6 @@ defmodule Argus.Analyses.EffectsTransactionTest do
     end
 
     test "the finding anchors at the transaction call, with the effect as a frame" do
-      skip_without_souffle()
-
       assert {:ok, %{findings: findings}} =
                Memo.run_analyses([T.FakeRepo, T.Unsafe], analyses: [:effects])
 
@@ -165,28 +143,23 @@ defmodule Argus.Analyses.EffectsTransactionTest do
     # nobody runs twice.
 
     test "logging inside a transaction is fine" do
-      skip_without_souffle()
-
       assert for_module(findings(), "LogsOnly") == [],
              "Logger is the most common effect inside a transaction by far"
     end
 
     test "reading configuration inside a transaction is fine" do
-      skip_without_souffle()
-
       # Impure — it breaks referential transparency — but there is nothing
       # for a rollback to undo. This is why impure_call carries a mode.
       assert for_module(findings(), "ReadsConfig") == []
     end
 
     test "an effect after the transaction commits is the correct shape" do
-      skip_without_souffle()
-
       assert for_module(findings(), "EffectOutside") == []
     end
   end
 
   describe "the read/write distinction" do
+    @tag souffle: false
     test "reads and writes in the same module are told apart" do
       # The model dimension this analysis rests on. Without it every
       # Application.get_env/2 in a transaction is a finding, and the real
@@ -201,6 +174,7 @@ defmodule Argus.Analyses.EffectsTransactionTest do
       assert {:impure, :ets, :write} = Effects.classify(":ets", "insert")
     end
 
+    @tag souffle: false
     test "an unlisted effect defaults to write" do
       # The safe direction: a false "irreversible" costs a look, a false
       # "harmless" costs the bug.
@@ -219,8 +193,6 @@ defmodule Argus.Analyses.EffectsTransactionTest do
     end
 
     test "purity still rejects reads, which reversibility does not" do
-      skip_without_souffle()
-
       # The same call is disqualifying for one contract and harmless for
       # the other — which is the whole reason for two dimensions.
       assert for_module(findings(), "ReadsConfig") == []

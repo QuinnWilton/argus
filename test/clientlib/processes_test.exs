@@ -1,5 +1,6 @@
 defmodule Argus.Clientlib.ProcessesTest do
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
   alias Argus.{Analysis, Pipeline, Souffle}
   alias Argus.Test.Fixtures.PidFlow
@@ -76,8 +77,6 @@ defmodule Argus.Clientlib.ProcessesTest do
               sync_site tag_resolved_site watched_process)
 
   setup_all do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-
     dir = Path.join(System.tmp_dir!(), "argus_processes_#{System.unique_integer([:positive])}")
     on_exit(fn -> File.rm_rf!(dir) end)
     facts_dir = Path.join(dir, "facts")

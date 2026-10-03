@@ -2,7 +2,6 @@ defmodule Argus.Analyses.MailboxResubscribeTest do
   use ExUnit.Case, async: true
 
   alias Argus.Analyses.Mailbox
-  alias Argus.Souffle
   alias Argus.Test.Batch
   alias Argus.Test.Fixtures.Resubscribe
   alias Argus.Test.Rows
@@ -38,10 +37,6 @@ defmodule Argus.Analyses.MailboxResubscribeTest do
     %{batch: Batch.solve(:mailbox, [@batched])}
   end
 
-  defp skip_without_souffle do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-  end
-
   # `{module, entry, function}`, the fixture prefix dropped.
   defp repeated(%{batch: batch}, modules) do
     assert {:ok, results} = Batch.analyze(batch, modules)
@@ -54,9 +49,9 @@ defmodule Argus.Analyses.MailboxResubscribeTest do
   end
 
   describe "repeated_subscription" do
-    test "a server that subscribes on every tick; subscribing in init/1 is once", ctx do
-      skip_without_souffle()
+    @describetag :souffle
 
+    test "a server that subscribes on every tick; subscribing in init/1 is once", ctx do
       assert repeated(ctx, [Resubscribe.Ticker]) == [
                {"Ticker", "Ticker:handle_info/2", "Ticker:handle_info/2"}
              ]
@@ -65,8 +60,6 @@ defmodule Argus.Analyses.MailboxResubscribeTest do
     end
 
     test "re-subscribing through the socket's endpoint (nerves_hub_web before 59dd4c6)", ctx do
-      skip_without_souffle()
-
       assert [
                {"DeviceList", "DeviceList:handle_info/2",
                 "DeviceList:-subscribe_all/1-fun-0-/" <> _}
@@ -77,8 +70,6 @@ defmodule Argus.Analyses.MailboxResubscribeTest do
     end
 
     test "an unsubscribe that subscribes (livebook before 3e63097)", ctx do
-      skip_without_souffle()
-
       assert repeated(ctx, [Resubscribe.Apps, Resubscribe.Session]) == [
                {"Session", "Session:handle_event/3", "Apps:subscribe/1"},
                {"Session", "Session:handle_event/3", "Apps:unsubscribe/1"}
@@ -86,18 +77,16 @@ defmodule Argus.Analyses.MailboxResubscribeTest do
     end
 
     test "an endpoint's subscribe/1, named, from a channel's handle_in/3", ctx do
-      skip_without_souffle()
-
       rows = repeated(ctx, [Resubscribe.Endpoint, Resubscribe.Channel])
       assert {"Channel", "Channel:handle_in/3", "Channel:handle_in/3"} in rows
     end
   end
 
   describe "repeated_subscription, beside its quieting condition" do
+    @describetag :souffle
+
     test "an unsubscribe only at stop, in another callback or another entry's helper leaves it",
          ctx do
-      skip_without_souffle()
-
       assert [{"UnsubscribesAtStop", "UnsubscribesAtStop:handle_cast/2", _}] =
                repeated(ctx, [Resubscribe.UnsubscribesAtStop])
 
@@ -111,8 +100,6 @@ defmodule Argus.Analyses.MailboxResubscribeTest do
     end
 
     test "a clause for a message sent once, from init/1, is not judged; one sent again is", ctx do
-      skip_without_souffle()
-
       assert repeated(ctx, [Resubscribe.OnceFromInit]) == []
 
       for module <- [Resubscribe.SentAgain, Resubscribe.Rearmed] do
@@ -124,8 +111,6 @@ defmodule Argus.Analyses.MailboxResubscribeTest do
     end
 
     test "a callback that asks its own state first is not judged; the nearest shapes are", ctx do
-      skip_without_souffle()
-
       assert repeated(ctx, [Resubscribe.StateChecked]) == []
       assert repeated(ctx, [Resubscribe.ScopeRestart]) == []
       assert repeated(ctx, [Resubscribe.HelperStateChecked]) == []
@@ -141,8 +126,6 @@ defmodule Argus.Analyses.MailboxResubscribeTest do
     end
 
     test "a LiveView's handle_params/3, which live navigation runs again", ctx do
-      skip_without_souffle()
-
       assert [{"Navigates", "Navigates:handle_params/3", "Navigates:handle_params/3"}] =
                repeated(ctx, [Resubscribe.Navigates])
     end

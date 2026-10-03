@@ -9,6 +9,7 @@ defmodule Argus.Soundness.EtsTest do
   its application.
   """
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
   alias Argus.Test.Memo
   alias Argus.Test.Soundness.Census

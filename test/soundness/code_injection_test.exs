@@ -1,5 +1,6 @@
 defmodule Argus.Soundness.CodeInjectionTest do
   use ExUnit.Case, async: true
+  @moduletag :souffle
   alias Argus.Test.Fixtures.CodeInjection
   alias Argus.Test.Memo
 

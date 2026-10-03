@@ -16,6 +16,7 @@ defmodule Argus.Analysis.PointsToBudgetTest do
   field reaches the process from every caller.
   """
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
   import ExUnit.CaptureLog
 
@@ -30,11 +31,6 @@ defmodule Argus.Analysis.PointsToBudgetTest do
   @within {40, 30}
 
   @proc "spawn M:start/0#1"
-
-  setup do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-    :ok
-  end
 
   # A facts directory holding every relation the stage reads, empty but
   # for the merged heap's summaries.

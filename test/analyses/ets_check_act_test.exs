@@ -1,8 +1,8 @@
 defmodule Argus.Analyses.EtsCheckActTest do
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
   alias Argus.Analyses.Races
-  alias Argus.Souffle
   alias Argus.Test.Batch
   alias Argus.Test.Fixtures.CheckThenAct, as: C
   alias Argus.Test.Fixtures.Dictionary, as: D
@@ -82,10 +82,6 @@ defmodule Argus.Analyses.EtsCheckActTest do
         do: {func |> String.split(":") |> List.last(), kind}
   end
 
-  defp skip_without_souffle do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-  end
-
   defp races(source, modules) do
     {:ok, results} = solve(source, modules)
 
@@ -95,22 +91,18 @@ defmodule Argus.Analyses.EtsCheckActTest do
 
   describe "ets_check_act" do
     test "a public table read then inserted on the same key from an API", ctx do
-      skip_without_souffle()
       assert [{"put_if_absent/2", ":public_cache", "0"}] = races(ctx, [C.PublicCache])
     end
 
     test "a write in the last branch, after two returns, still names its key", ctx do
-      skip_without_souffle()
       assert [{"bump/2", ":branch_cache", "0"}] = races(ctx, [C.LaterBranchKey])
     end
 
     test "insert_new is the atomic form", ctx do
-      skip_without_souffle()
       assert races(ctx, [C.InsertNewCache]) == []
     end
 
     test "a Broadway processor's read-then-write races the other processors", ctx do
-      skip_without_souffle()
       # One row per write: the absent key's insert and the count's.
       assert Enum.uniq(races(ctx, [C.BroadwayCount])) == [
                {"handle_message/3", ":broadway_counts", ":seen"}
@@ -118,25 +110,19 @@ defmodule Argus.Analyses.EtsCheckActTest do
     end
 
     test "a protected table written only by its owner has one writer", ctx do
-      skip_without_souffle()
       assert races(ctx, [C.ProtectedOwnerOnly]) == []
     end
 
     test "a cache serialized in its owner, whose clear/0 no caller in the program calls" do
-      skip_without_souffle()
       assert races(:alone, [C.SerializedSessionCache, C.SessionAccounts]) == []
     end
 
     test "the same cache with no client in view is API, clear/0 included", ctx do
-      skip_without_souffle()
-
       assert [{"handle_call/3", ":serialized_sessions", _}] =
                Enum.uniq(races(ctx, [C.SerializedSessionCache]))
     end
 
     test "a function outside callers can call reaches the cache's clear/0" do
-      skip_without_souffle()
-
       assert [{"handle_call/3", ":serialized_sessions", _}] =
                Enum.uniq(
                  races(:alone, [C.SerializedSessionCache, C.SessionAccounts, C.SessionAdmin])
@@ -144,8 +130,6 @@ defmodule Argus.Analyses.EtsCheckActTest do
     end
 
     test "another process that inserts into the serialized cache's table races it" do
-      skip_without_souffle()
-
       assert [{"handle_call/3", ":serialized_sessions", _}] =
                Enum.uniq(
                  races(:alone, [C.SerializedSessionCache, C.SessionAccounts, C.SessionImporter])
@@ -153,8 +137,6 @@ defmodule Argus.Analyses.EtsCheckActTest do
     end
 
     test "another process that deletes from it races it too: the write puts a revoked row back" do
-      skip_without_souffle()
-
       assert [{"handle_call/3", ":serialized_sessions", _}] =
                Enum.uniq(
                  races(:alone, [C.SerializedSessionCache, C.SessionAccounts, C.SessionReaper])
@@ -162,46 +144,36 @@ defmodule Argus.Analyses.EtsCheckActTest do
     end
 
     test "another process that only deletes loses nothing to an update_element" do
-      skip_without_souffle()
       assert races(:alone, [C.SerializedTouch, C.TouchClient, C.TouchReaper]) == []
     end
 
     test "another process that writes the row whole still races it" do
-      skip_without_souffle()
-
       assert [{"handle_call/3", ":touched_sessions", _}] =
                Enum.uniq(races(:alone, [C.SerializedTouch, C.TouchClient, C.TouchImporter]))
     end
 
     test "a row seeded in another process's init/1, before the serialized counter runs" do
-      skip_without_souffle()
       assert races(:alone, [C.SeedingOwner, C.SerializedCounter]) == []
     end
 
     test "another process that writes only a literal row of its own beside the counts" do
-      skip_without_souffle()
       assert races(:alone, [C.SeedingOwner, C.SerializedCounter, C.VersionStamper]) == []
     end
 
     test "another process that writes counts by key while the counter runs races it" do
-      skip_without_souffle()
-
       assert [{"handle_call/3", ":serialized_counts", _}] =
                Enum.uniq(races(:alone, [C.SeedingOwner, C.SerializedCounter, C.CountImporter]))
     end
 
     test "a table of records keyed past the tag (keypos: 2)", ctx do
-      skip_without_souffle()
       assert [{"deposit/2", ":accts", "0"}] = Enum.uniq(races(ctx, [C.RecordTable]))
     end
 
     test "a match on the key is a read that decides; a match with no key names none", ctx do
-      skip_without_souffle()
       assert [{"bump/1", ":matched_counts", "0"}] = Enum.uniq(races(ctx, [C.MatchThenWrite]))
     end
 
     test "different keys are not a race", ctx do
-      skip_without_souffle()
       assert races(ctx, [C.DifferentKeys]) == []
     end
   end
@@ -209,8 +181,6 @@ defmodule Argus.Analyses.EtsCheckActTest do
   describe "races both racers win" do
     test "a refill that is a function of the key, and an invalidating delete, are not reported",
          ctx do
-      skip_without_souffle()
-
       # get/1's copy is the same whenever it is made; setting/1's copy of
       # a Mnesia record, read before the record changes, can land after
       # invalidate/1 and stay: a stale fill, its rival the invalidation.
@@ -219,56 +189,46 @@ defmodule Argus.Analyses.EtsCheckActTest do
 
     test "a refill that mints the value it hands out is reported: each racer returns its own",
          ctx do
-      skip_without_souffle()
       assert [{"token/1", ":tokens", "0"}] = races(ctx, [C.TokenMint])
       assert [{"id/1", ":ids", "0"}] = races(ctx, [C.IdMint])
     end
 
     test "the refill is reported on a table the program writes back from a read", ctx do
-      skip_without_souffle()
       found = races(ctx, [C.RefillWrittenBack])
       assert {"get/1", ":counted_cache", "0"} in found
       assert {"bump/1", ":counted_cache", "0"} in found
     end
 
     test "a count kept in a literal row of its own does not write the filled rows back", ctx do
-      skip_without_souffle()
       assert races(ctx, [C.CacheWithHits]) == []
     end
 
     test "a trip whose decision stays inside is not reported", ctx do
-      skip_without_souffle()
       assert races(ctx, [C.Trip]) == []
     end
 
     test "a claim whose decision a caller acts on is reported", ctx do
-      skip_without_souffle()
       assert [{"claim/1", ":claims", "0"}] = races(ctx, [C.Claim])
     end
 
     test "a guard on what the row holds is reported, whatever the racers return", ctx do
-      skip_without_souffle()
       assert [{"put/2", ":serials_ok", "0"}] = races(ctx, [C.SerialsOk])
     end
 
     test "a marker whose decision also sends is reported: both racers send", ctx do
-      skip_without_souffle()
       assert [{"handle/2", ":notified", "0"}] = races(ctx, [C.NotifyOnce])
     end
 
     test "a delete decided by the row's owner is reported: it can take the next owner's row",
          ctx do
-      skip_without_souffle()
       assert [{"release/2", ":locks", "0"}] = races(ctx, [C.LockRelease])
     end
 
     test "a trip checked against the clock, whose helper tells the other nodes, is not", ctx do
-      skip_without_souffle()
       assert races(ctx, [C.BreakerTrip]) == []
     end
 
     test "an expired row deleted from a table of refills is not: losing a copy is a miss", ctx do
-      skip_without_souffle()
       assert races(ctx, [C.ExpiringCache]) == []
 
       # A delete whose decision also tells another process — itself, or
@@ -278,42 +238,33 @@ defmodule Argus.Analyses.EtsCheckActTest do
     end
 
     test "a delete_object of the owner's own row is not", ctx do
-      skip_without_souffle()
       assert races(ctx, [C.LockReleaseObject]) == []
     end
 
     test "a first insert over a key update_counter counts into is reported", ctx do
-      skip_without_souffle()
       assert [{"hit/1", ":hits", "0"}] = races(ctx, [C.CounterClobber])
     end
 
     test "a row holding a counter array is counted in, not filled", ctx do
-      skip_without_souffle()
       assert [{"hit/2", ":window_counters", _}] = races(ctx, [C.WindowCounters])
     end
   end
 
   describe "rows only their holder writes" do
     test "a row made at a monitor of its caller, updated in place by that caller", ctx do
-      skip_without_souffle()
       assert races(ctx, [C.HeldParameters]) == []
     end
 
     test "a row made at a fresh reference the opener returns", ctx do
-      skip_without_souffle()
       assert races(ctx, [C.HeldSessions]) == []
     end
 
     test "a table that also makes rows at keys its callers name is reported", ctx do
-      skip_without_souffle()
-
       assert [{"put/3", "Argus.Test.Fixtures.CheckThenAct.HeldParametersNamed", "0"}] =
                races(ctx, [C.HeldParametersNamed])
     end
 
     test "a write back with insert is reported: it can put a removed row back", ctx do
-      skip_without_souffle()
-
       assert [{"put/3", "Argus.Test.Fixtures.CheckThenAct.HeldParametersInsert", "0"}] =
                races(ctx, [C.HeldParametersInsert])
     end
@@ -321,25 +272,20 @@ defmodule Argus.Analyses.EtsCheckActTest do
 
   describe "a table the program's users hand in" do
     test "is named by the parameter it arrives in: hammer#129's first insert", ctx do
-      skip_without_souffle()
       assert [{"hit/3", "param 0", "1"}] = races(ctx, [C.HandedCounters])
     end
 
     test "insert_new, hammer#130's fix, is quiet", ctx do
-      skip_without_souffle()
       assert races(ctx, [C.HandedCountersFixed]) == []
     end
 
     test "one the program fills in itself is not the users'", ctx do
-      skip_without_souffle()
       assert races(ctx, [C.FetchedTable]) == []
     end
   end
 
   describe "ets_check_act through accessors" do
     test "a shared key through one-line accessors meets at the calls, in the caller", ctx do
-      skip_without_souffle()
-
       {:ok, results} = Batch.analyze(ctx.batch, [C.GvarAccessors, C.GvarUsers])
 
       assert [[_mod, func, ":gvar", "0", read, write, "lost_update"]] =
@@ -353,8 +299,6 @@ defmodule Argus.Analyses.EtsCheckActTest do
     end
 
     test "a constant written on a decision that stays inside is no race", ctx do
-      skip_without_souffle()
-
       {:ok, results} = Batch.analyze(ctx.batch, [C.GvarAccessors, C.GvarUsers])
       funcs = for [_, func | _] <- results["ets_check_act"], do: short(func)
 
@@ -367,8 +311,6 @@ defmodule Argus.Analyses.EtsCheckActTest do
     end
 
     test "a literal the meeting function hands the accessor itself is its own pair", ctx do
-      skip_without_souffle()
-
       {:ok, results} = Batch.analyze(ctx.batch, [C.CounterAccessors])
 
       # incr/0 reads `:count` through get/1 and hands put/2 the same
@@ -383,8 +325,6 @@ defmodule Argus.Analyses.EtsCheckActTest do
     end
 
     test "an accessor the meeting function reaches through another call is its own site", ctx do
-      skip_without_souffle()
-
       {:ok, results} = Batch.analyze(ctx.batch, [C.CounterAccessorChain])
 
       # incr/0 calls set_count/1 but reaches count/0 through next/0: the
@@ -405,8 +345,6 @@ defmodule Argus.Analyses.EtsCheckActTest do
     end
 
     test "accessors whose bodies name the row meet where both are called", ctx do
-      skip_without_souffle()
-
       assert [{"sync/1", ":decisions", ":serial"}] = races(ctx, [C.SerialAccessors])
     end
   end
@@ -414,8 +352,6 @@ defmodule Argus.Analyses.EtsCheckActTest do
   describe "ets_check_act across functions" do
     test "a read helper's result handed to a multi-clause write helper meets in the caller",
          ctx do
-      skip_without_souffle()
-
       {:ok, results} = Batch.analyze(ctx.batch, [C.HelperCache])
 
       sites =
@@ -436,8 +372,6 @@ defmodule Argus.Analyses.EtsCheckActTest do
     end
 
     test "a pair that meets in a helper is not reported again in its caller", ctx do
-      skip_without_souffle()
-
       {:ok, results} = Batch.analyze(ctx.batch, [C.CachedTwice])
       funcs = for [_mod, func | _] <- results["ets_check_act"], uniq: true, do: short(func)
 
@@ -445,19 +379,16 @@ defmodule Argus.Analyses.EtsCheckActTest do
     end
 
     test "an unnamed public table handed to a helper by its reference", ctx do
-      skip_without_souffle()
       assert [{"count/2", ":unnamed_counts", "1"} | _] = races(ctx, [C.UnnamedTable])
     end
 
     test "two unnamed tables made under one atom are two tables", ctx do
-      skip_without_souffle()
       assert races(ctx, [C.TwoTablesOneName]) == []
     end
   end
 
   describe "ets_check_act through the process dictionary" do
     test "a table named only while a key is unset is not touched where the key was set", ctx do
-      skip_without_souffle()
       # validate/1 puts its private table under the key first: its read and
       # write touch that table. reload/1 sets nothing, and abort/1 erases
       # the key again before the pair: both touch the public options table,
@@ -467,42 +398,36 @@ defmodule Argus.Analyses.EtsCheckActTest do
     end
 
     test "a table its maker keeps in its dictionary is its own", ctx do
-      skip_without_souffle()
       assert races(ctx, [D.CallerTable]) == []
     end
 
     test "a kept table whose reference is sent on is shared", ctx do
-      skip_without_souffle()
       assert [{"bump/2", ":shared_caller_table", _} | _] = races(ctx, [D.SharedCallerTable])
     end
   end
 
   describe "ets_check_act on the one table identity" do
     test "a named table a helper makes is public by the helper's options", ctx do
-      skip_without_souffle()
-
       assert [{"put_if_absent/2", ":helper_named", "0"}] =
                races(ctx, [C.NamedThroughHelper])
     end
 
     test "the same table made :protected by the helper has one writer", ctx do
-      skip_without_souffle()
       assert races(ctx, [C.ProtectedThroughHelper]) == []
     end
 
     test "a table a helper returns is the table its :ets.new/2 makes", ctx do
-      skip_without_souffle()
-
       assert [{"put_if_absent/2", ":ensured_cache", "0"}] = races(ctx, [C.EnsuredCache])
     end
 
     test "two tables two helpers return are two tables", ctx do
-      skip_without_souffle()
       assert races(ctx, [C.EnsuredTwoCaches]) == []
     end
   end
 
   describe "finding" do
+    @describetag souffle: false
+
     test "anchors the write, relates the read, and names the atomic forms" do
       row = [
         "M",

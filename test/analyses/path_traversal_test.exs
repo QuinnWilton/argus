@@ -1,5 +1,6 @@
 defmodule Argus.Analyses.PathTraversalTest do
   use ExUnit.Case, async: true
+  @moduletag :souffle
   alias Argus.Test.Fixtures.PathTraversal
   alias Argus.Test.Memo
 

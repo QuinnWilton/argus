@@ -6,13 +6,13 @@ defmodule Argus.Soundness.UnsafeInputTest do
   (test/fixtures/soundness/unsafe_input_fixture.ex).
   """
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
   import Argus.Test.Soundness.Case
 
   alias Argus.Test.Soundness.Census
 
   setup_all do
-    unless Argus.Souffle.available?(), do: raise("souffle not installed")
     mods = modules("unsafe_input_fixture.ex")
     %{mods: mods, sev: severities(mods, [:unsafe_input])}
   end

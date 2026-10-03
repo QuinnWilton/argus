@@ -28,6 +28,26 @@ end)
 # gleam`.
 exclude = if Argus.Dirs.keep?(), do: [:identity_verify], else: [:cache, :identity_verify]
 
+# A test that solves (`@tag :souffle`, or its `@describetag` and
+# `@moduletag`) needs the souffle binary on PATH. Without it those tests
+# are excluded, said once here, and the rest of the suite still runs. A
+# module or describe that mostly solves tags itself and opts the rest
+# out (`souffle: false`), which is why the filter is `souffle: true`. CI
+# installs souffle in every job that tests, so there a missing souffle is
+# an error, never a silently smaller suite.
+exclude =
+  cond do
+    Argus.Souffle.available?() ->
+      exclude
+
+    System.get_env("CI") ->
+      raise "souffle is not on PATH: CI runs the :souffle tests"
+
+    true ->
+      IO.puts(:stderr, "souffle is not on PATH: the :souffle tests are excluded")
+      [{:souffle, true} | exclude]
+  end
+
 # `ARGUS_TEST_TIMINGS=N` prints the N slowest tests as they ran beside the
 # others (`Argus.Test.Timings`), as CI's log does: `mix test --slowest`
 # measures another run, one test at a time with no timeout.

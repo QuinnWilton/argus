@@ -5,8 +5,8 @@ defmodule Argus.Exclusions.StateMachineTest do
   Fixtures: test/fixtures/erl/excl_state_machine_*.erl.
   """
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
-  alias Argus.Souffle
   alias Argus.Test.Batch
   alias Argus.Test.Rows
 
@@ -23,7 +23,6 @@ defmodule Argus.Exclusions.StateMachineTest do
 
   # {module, state} of each row of `relation`.
   defp states(%{batch: batch}, set, relation) do
-    unless Souffle.available?(), do: flunk("souffle not installed")
     {:ok, results} = Batch.analyze(batch, set)
 
     for [mod, state] <- Rows.where(results, :state_machine, relation, drop: [:site]),

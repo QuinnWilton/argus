@@ -11,10 +11,6 @@ defmodule Argus.Souffle.ProgramTest do
 
   @moduletag :tmp_dir
 
-  defp skip_without_souffle do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-  end
-
   # A program over `edge` that includes its output's rule from a second
   # file, as the shipped programs include their clientlib.
   defp program!(dir) do
@@ -39,9 +35,10 @@ defmodule Argus.Souffle.ProgramTest do
   end
 
   describe "input files" do
+    @describetag :souffle
+
     test "are the files the program reads, named by a filename it gives",
          %{tmp_dir: tmp} do
-      skip_without_souffle()
       rules = Path.join(tmp, "q.dl")
 
       File.write!(rules, """

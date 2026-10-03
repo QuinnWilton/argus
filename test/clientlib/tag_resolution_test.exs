@@ -1,14 +1,11 @@
 defmodule Argus.Clientlib.TagResolutionTest do
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
   alias Argus.{Analysis, Pipeline, Souffle}
   alias Argus.Test.Memo
 
   @moduletag :tmp_dir
-
-  defp skip_without_souffle do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-  end
 
   defp priv_dl, do: Path.join(:code.priv_dir(:argus_beam), "dl")
 
@@ -42,8 +39,6 @@ defmodule Argus.Clientlib.TagResolutionTest do
 
   test "a dynamic-target call is attributed to the one module handling its tag",
        %{tmp_dir: tmp_dir} do
-    skip_without_souffle()
-
     results =
       solve(tmp_dir, [Argus.Test.Fixtures.TagServerA, Argus.Test.Fixtures.TagServerB], [
         "tag_resolved_call",
@@ -60,8 +55,6 @@ defmodule Argus.Clientlib.TagResolutionTest do
   end
 
   test "a tag handled by more than one module attributes nothing", %{tmp_dir: tmp_dir} do
-    skip_without_souffle()
-
     results =
       solve(
         tmp_dir,
@@ -81,8 +74,6 @@ defmodule Argus.Clientlib.TagResolutionTest do
   end
 
   test "a generic tag names no server even with one handler", %{tmp_dir: tmp_dir} do
-    skip_without_souffle()
-
     results =
       solve(tmp_dir, [Argus.Test.Fixtures.TagGetServer, Argus.Test.Fixtures.TagGenericClient], [
         "tag_handler_count",
@@ -94,8 +85,6 @@ defmodule Argus.Clientlib.TagResolutionTest do
   end
 
   test "a tag a handle_info also matches is not evidence", %{tmp_dir: tmp_dir} do
-    skip_without_souffle()
-
     results =
       solve(
         tmp_dir,
@@ -112,8 +101,6 @@ defmodule Argus.Clientlib.TagResolutionTest do
 
   test "among several handlers, the one the caller's module refers to wins",
        %{tmp_dir: tmp_dir} do
-    skip_without_souffle()
-
     results =
       solve(
         tmp_dir,
@@ -132,8 +119,6 @@ defmodule Argus.Clientlib.TagResolutionTest do
   end
 
   test "a cycle edge that exists only by tag attribution says so" do
-    skip_without_souffle()
-
     {:ok, results} =
       Memo.analyze(
         [Argus.Test.Fixtures.TagServerA, Argus.Test.Fixtures.TagServerB],

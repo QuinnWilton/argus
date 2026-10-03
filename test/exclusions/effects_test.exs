@@ -5,8 +5,8 @@ defmodule Argus.Exclusions.EffectsTest do
   Fixtures: test/fixtures/exclusions/effects.ex.
   """
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
-  alias Argus.Souffle
   alias Argus.Test.Batch
   alias Argus.Test.Rows
   alias Excl.Effects, as: E
@@ -25,7 +25,6 @@ defmodule Argus.Exclusions.EffectsTest do
 
   # {function, context, category, api} of each effect in a context.
   defp effects(%{batch: batch}, set) do
-    unless Souffle.available?(), do: flunk("souffle not installed")
     {:ok, results} = Batch.analyze(batch, set)
 
     for [func, context, category, api] <-

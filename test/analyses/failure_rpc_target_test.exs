@@ -2,14 +2,9 @@ defmodule Argus.Analyses.FailureRpcTargetTest do
   use ExUnit.Case, async: true
 
   alias Argus.Analyses.Failure
-  alias Argus.Souffle
   alias Argus.Test.Fixtures.RpcTarget
   alias Argus.Test.Memo
   alias Argus.Test.Rows
-
-  defp skip_without_souffle do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-  end
 
   # `{function, through a wrapper?, callee, why}`, fixture prefix dropped.
   defp undefined do
@@ -27,9 +22,9 @@ defmodule Argus.Analyses.FailureRpcTargetTest do
   end
 
   describe "rpc_undefined" do
-    test "an rpc to a function its module does not export, direct or through a wrapper" do
-      skip_without_souffle()
+    @describetag :souffle
 
+    test "an rpc to a function its module does not export, direct or through a wrapper" do
       assert undefined() == [
                {"Caller:forwarded/1", true, "Remote:nope/0", "missing"},
                {"Caller:missing/1", true, "Remote:run_db_request/2", "missing"},

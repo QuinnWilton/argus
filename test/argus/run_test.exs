@@ -77,8 +77,8 @@ defmodule Argus.RunFactsTest do
   end
 
   for analyses <- [[:startup, :races], [:coverage], [:mailbox, :ets, :effects]] do
+    @tag :souffle
     test "for #{inspect(analyses)}, every file holds the pipeline's rows" do
-      unless Argus.Souffle.available?(), do: flunk("souffle not installed")
       analyses = unquote(analyses)
 
       {:ok, dir} = Analysis.extract_facts(@modules, analyses)
