@@ -164,8 +164,8 @@ defmodule Argus.CLI.Options do
   end
 
   defp build(options, opts) do
-    with {:ok, format} <- one_of(opts, :format, ~w(text json), "text"),
-         {:ok, color} <- one_of(opts, :color, ~w(auto always never), "auto"),
+    with {:ok, format} <- one_of(opts, :format, ~w(text json)a, :text),
+         {:ok, color} <- one_of(opts, :color, ~w(auto always never)a, :auto),
          {:ok, project} <- project(opts[:project]),
          {:ok, apps} <- pairs(Keyword.get_values(opts, :app), "--app"),
          {:ok, deps} <- pairs(Keyword.get_values(opts, :dep), "--dep"),
@@ -184,13 +184,13 @@ defmodule Argus.CLI.Options do
            dep_ebins: Keyword.get_values(opts, :dep_ebin),
            analyses: analyses,
            all: Keyword.get(opts, :all, false),
-           format: String.to_existing_atom(format),
+           format: format,
            fail_above: opts[:fail_above],
            include_deps: opts[:include_deps],
            force: Keyword.get(opts, :force, false),
            state_dir: opts[:state_dir],
            config: opts[:config],
-           color: String.to_existing_atom(color),
+           color: color,
            grace: opts[:grace],
            keep: opts[:keep]
        }}
@@ -198,11 +198,15 @@ defmodule Argus.CLI.Options do
   end
 
   defp one_of(opts, key, allowed, default) do
-    value = Keyword.get(opts, key, default)
+    value = Keyword.get(opts, key, Atom.to_string(default))
 
-    if value in allowed,
-      do: {:ok, value},
-      else: {:error, "--#{dashed(key)} must be one of #{Enum.join(allowed, ", ")}, got: #{value}"}
+    case Enum.find(allowed, &(Atom.to_string(&1) == value)) do
+      nil ->
+        {:error, "--#{dashed(key)} must be one of #{Enum.join(allowed, ", ")}, got: #{value}"}
+
+      atom ->
+        {:ok, atom}
+    end
   end
 
   defp project(nil), do: {:ok, nil}
