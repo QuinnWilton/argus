@@ -880,6 +880,100 @@ defmodule Argus.Test.Fixtures.CleansUpThroughHelperTrap do
   def terminate(_reason, file), do: File.close(file)
 end
 
+defmodule Argus.Test.Fixtures.CleansUpEnteringLoop do
+  @moduledoc """
+  A server started as ranch protocols are: a proc_lib start runs init/1,
+  which sets trap_exit and enters the gen_server loop itself. The
+  process proc_lib starts is the server, so it traps, and a supervisor's
+  shutdown runs terminate/2.
+  """
+  @behaviour :gen_server
+
+  def start_link(path), do: {:ok, :proc_lib.spawn_link(__MODULE__, :init, [path])}
+
+  @impl true
+  def init(path) do
+    Process.flag(:trap_exit, true)
+    :gen_server.enter_loop(__MODULE__, [], path)
+  end
+
+  @impl true
+  def handle_call(_request, _from, path), do: {:reply, :ok, path}
+
+  @impl true
+  def handle_cast(_request, path), do: {:noreply, path}
+
+  @impl true
+  def handle_info({:EXIT, _pid, _reason}, path), do: {:noreply, path}
+
+  @impl true
+  def terminate(_reason, path), do: File.write!(path, "final")
+end
+
+defmodule Argus.Test.Fixtures.LeaksBesideAnotherLoop do
+  @moduledoc """
+  A server that never traps exits, and also starts a process that traps
+  and enters another module's loop (TrapsForItsCaller's). That trap is
+  the other server's: this one's terminate/2 is still skipped on
+  shutdown.
+  """
+  use GenServer
+
+  def start_link(path), do: GenServer.start_link(__MODULE__, path)
+
+  def start_other(state), do: {:ok, :proc_lib.spawn_link(__MODULE__, :run_other, [state])}
+
+  def run_other(state) do
+    Process.flag(:trap_exit, true)
+    :gen_server.enter_loop(Argus.Test.Fixtures.OtherLoop, [], state)
+  end
+
+  @impl true
+  def init(path), do: {:ok, path}
+
+  @impl true
+  def terminate(_reason, path), do: File.write!(path, "final")
+end
+
+defmodule Argus.Test.Fixtures.OtherLoop do
+  @moduledoc "The server LeaksBesideAnotherLoop's process enters."
+  @behaviour :gen_server
+
+  @impl true
+  def init(state), do: {:ok, state}
+
+  @impl true
+  def handle_call(_request, _from, state), do: {:reply, :ok, state}
+
+  @impl true
+  def handle_cast(_request, state), do: {:noreply, state}
+
+  @impl true
+  def handle_info(_message, state), do: {:noreply, state}
+end
+
+defmodule Argus.Test.Fixtures.LeaksEnteringLoop do
+  @moduledoc """
+  The twin of CleansUpEnteringLoop that never sets trap_exit: entering
+  the loop is no trap, and a supervisor's shutdown skips terminate/2.
+  """
+  @behaviour :gen_server
+
+  def start_link(path), do: {:ok, :proc_lib.spawn_link(__MODULE__, :init, [path])}
+
+  @impl true
+  def init(path), do: :gen_server.enter_loop(__MODULE__, [], path)
+
+  @impl true
+  def handle_call(_request, _from, path), do: {:reply, :ok, path}
+
+  @impl true
+  def handle_cast(_request, path), do: {:noreply, path}
+
+  @impl true
+  def terminate(_reason, path), do: File.write!(path, "final")
+end
+
 defmodule Argus.Test.Fixtures.CleansUpAfterScopedTrap do
   @moduledoc """
   A server whose init/1 traps exits only around a start, then clears the
