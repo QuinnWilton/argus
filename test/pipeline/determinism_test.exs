@@ -88,6 +88,12 @@ defmodule Argus.Pipeline.DeterminismTest do
   # A fresh VM that creates `atoms` in the given order before it loads a
   # single module of the pipeline, so the atoms of every literal it reads
   # sit in its atom table in that order.
+  #
+  # A bare `:peer`, not `Argus.Test.Peer`: that one's boot starts Logger,
+  # Mix and ExUnit, which loads four of `@beams` (Inspect.Opts and the
+  # others from Elixir) and creates their atoms in the same order in both
+  # VMs before this seeds them. Over Inspect.Opts alone, it passes with
+  # `sort_maps` taken out of `Argus.Extractor.Terms.spell/1`.
   defp extract_in_peer(paths, atoms, extractors) do
     {:ok, peer, _node} = :peer.start_link(%{connection: :standard_io})
 
