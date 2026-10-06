@@ -450,9 +450,7 @@ defmodule Argus.Analyses.TaskLibraryFlowTest do
     "defmodule Argus.Test.Generated.#{prefix}#{digest} do\n#{body}\nend\n"
   end
 
-  defp never_awaited(paths) do
-    {:ok, results} = Memo.analyze(paths, :mailbox)
-
+  defp never_awaited(results) do
     results
     |> Rows.where(:mailbox, "task_result_defect", kind: "never_awaited", drop: [:kind])
     |> Enum.flat_map(fn [func | _] ->
@@ -486,7 +484,9 @@ defmodule Argus.Analyses.TaskLibraryFlowTest do
         ]
       end)
 
-    reported = never_awaited(quietly_compile(module_source("Catalogue", functions)))
+    paths = quietly_compile(module_source("Catalogue", functions))
+    {:ok, results} = Memo.analyze(paths, :mailbox)
+    reported = never_awaited(results)
 
     lost = for {e, i} <- entries, MapSet.member?(reported, "collected_#{i}"), do: entry_name(e, i)
 
@@ -564,7 +564,8 @@ defmodule Argus.Analyses.TaskLibraryFlowTest do
             do: {"chain_#{i}", chain.start, chain_body(chain)}
 
       source = module_source("Chain", functions)
-      reported = never_awaited(quietly_compile(source))
+      {:ok, results} = Memo.analyze(quietly_compile(source), :mailbox)
+      reported = never_awaited(results)
 
       for {chain, i} <- Enum.with_index(chains) do
         reportable? = chain.fate == :dropped and not escapes_by_unknown_key?(chain)
