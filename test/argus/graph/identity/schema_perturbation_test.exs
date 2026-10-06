@@ -22,6 +22,10 @@ defmodule Argus.Graph.Identity.SchemaPerturbationTest do
   is changed too, that read's digest moves.
   """
   use ExUnit.Case, async: true
+  use Argus.Test.Peer
+
+  alias Argus.Test.FixtureSpread
+  alias Argus.Test.Peer
 
   @moduletag :identity_verify
   # Minutes under a full suite's load.
@@ -29,76 +33,18 @@ defmodule Argus.Graph.Identity.SchemaPerturbationTest do
 
   @probe :schema_perturbation_probe
 
-  # Runs in a fresh VM: installs the perturbed concern modules and
-  # compiles `Argus.Schema` again over them, then extracts.
-  @install ~S"""
-  Code.put_compiler_option(:ignore_module_conflict, true)
-
-  # Most concerns are unchanged when the final check moves one column.
-  # Keep their installed definitions; Schema still recompiles over the
-  # complete set below, including the one concern that did move.
-  for {mod, read, relations} <- concerns, mod.relations() != relations do
-    Code.compile_quoted(
-      quote do
-        defmodule unquote(mod) do
-          def relations,
-            do: Argus.Schema.Reads.record(unquote(read), unquote(Macro.escape(relations)))
-        end
-      end
-    )
-  end
-
-  Code.compile_string(schema_source, schema_file)
-  :ok
-  """
-
-  # Each module extracted afresh: every producer's rows per module, in
-  # `beams`' order, and what each read.
-  @extract ~S"""
-  extractions =
-    beams
-    |> Task.async_stream(
-      fn beam ->
-        {:ok, %{status: :ok} = extraction} =
-          Argus.Pipeline.extract_module(beam, producers: producers, trace_imprecision: true)
-
-        # Digests, not the rows: they cross the peer's standard I/O.
-        rows =
-          Map.new(extraction.facts, fn {producer, rows} ->
-            {producer, :crypto.hash(:sha256, :erlang.term_to_binary(rows, [:deterministic]))}
-          end)
-
-        %{rows: rows, reads: extraction.reads}
-      end,
-      timeout: :infinity
-    )
-    |> Enum.map(fn {:ok, extraction} -> extraction end)
-
-  %{
-    reads:
-      Map.new(producers, fn producer ->
-        {producer, extractions |> Enum.flat_map(& &1.reads[producer]) |> Enum.uniq() |> Enum.sort()}
-      end),
-    rows: Map.new(producers, fn producer -> {producer, Enum.map(extractions, & &1.rows[producer])} end)
-  }
-  """
-
-  @digests ~S"""
-  Map.new(reads, &{&1, Argus.Graph.Reads.entry_digest(&1)})
-  """
-
   test "a producer's rows do not move with any schema entry it did not read" do
-    beams = Argus.Test.FixtureSpread.beams(Argus.Test.FixtureSpread.all())
+    beams = FixtureSpread.beams(FixtureSpread.all())
     producers = Argus.Graph.Extraction.producers()
 
     # The rows here are extracted in a VM set up as the perturbed one is,
     # so that nothing but the schema tells them apart: not the modules
     # another test compiled into this one, nor its code path.
     {here, digests} =
-      with_peer(fn peer ->
-        here = eval(peer, @extract, beams: beams, producers: producers)
+      Peer.run(peer!(), fn ->
+        here = extract(beams, producers)
         reads = here.reads |> Map.values() |> Enum.concat() |> Enum.uniq()
-        {here, eval(peer, @digests, reads: reads)}
+        {here, digests(reads)}
       end)
 
     assert Enum.all?(producers, &(Map.fetch!(here.reads, &1) != [])),
@@ -111,78 +57,113 @@ defmodule Argus.Graph.Identity.SchemaPerturbationTest do
   end
 
   defp check_group(beams, group, reads, digests, here) do
-    with_peer(fn peer ->
-      perturbation = perturbed(reads)
-      :ok = eval(peer, @install, install(perturbation))
+    peer = peer!()
+    perturbation = perturbed(reads)
+    :ok = Peer.run(peer, fn -> install!(perturbation) end)
 
-      # The perturbed schema is the one the peer answers with.
-      names = for {_mod, _read, rels} <- perturbation.modules, rel <- rels, do: rel.name
-      assert Enum.sort(eval(peer, "Argus.Schema.names()", [])) == Enum.sort(names)
+    # The perturbed schema is the one the peer answers with.
+    names = for {_mod, _read, rels} <- perturbation.modules, rel <- rels, do: rel.name
+    assert Enum.sort(Peer.run(peer, &Argus.Schema.names/0)) == Enum.sort(names)
 
-      there = eval(peer, @extract, beams: beams, producers: group)
+    there = Peer.run(peer, fn -> extract(beams, group) end)
 
-      for {producer, rows} <- there.rows do
-        moved =
-          for {beam, there, here} <- Enum.zip([beams, rows, here.rows[producer]]),
-              there != here,
-              do: Path.basename(beam, ".beam")
+    for {producer, rows} <- there.rows do
+      moved =
+        for {beam, there, here} <- Enum.zip([beams, rows, here.rows[producer]]),
+            there != here,
+            do: Path.basename(beam, ".beam")
 
-        assert moved == [],
-               "#{inspect(producer)}'s rows moved with schema entries it did not " <>
-                 "record reading (it recorded #{inspect(reads)}), in #{inspect(moved)}"
-      end
+      assert moved == [],
+             "#{inspect(producer)}'s rows moved with schema entries it did not " <>
+               "record reading (it recorded #{inspect(reads)}), in #{inspect(moved)}"
+    end
 
-      for producer <- group, do: assert(Map.fetch!(there.reads, producer) == reads)
+    for producer <- group, do: assert(Map.fetch!(there.reads, producer) == reads)
 
-      # Nothing it read moved, so neither did its key.
-      assert eval(peer, @digests, reads: reads) == digests
+    # Nothing it read moved, so neither did its key.
+    assert Peer.run(peer, fn -> digests(reads) end) == digests
 
-      # And a read it made, changed, moves its key.
-      case Enum.find(reads, &String.starts_with?(&1, "columns ")) do
-        nil ->
-          :ok
+    # And a read it made, changed, moves its key.
+    case Enum.find(reads, &String.starts_with?(&1, "columns ")) do
+      nil ->
+        :ok
 
-        "columns " <> name = read ->
-          changed = perturbed(reads, String.to_existing_atom(name))
-          :ok = eval(peer, @install, install(changed))
-          moved = eval(peer, @digests, reads: reads)
-          assert moved[read] != digests[read]
-          assert Map.delete(moved, read) == Map.delete(digests, read)
-      end
-    end)
-  end
-
-  # A fresh VM on this one's code path, exactly: Mix leaves off it the
-  # OTP applications argus does not depend on, which a peer's own path
-  # holds, and the specs extractor reads what the path holds.
-  defp with_peer(fun) do
-    {:ok, peer, _node} = :peer.start_link(%{connection: :standard_io})
-
-    try do
-      # Bounded by the test's timeout: `:peer.call/4`'s five seconds is
-      # less than starting argus's applications took in a peer on a loaded
-      # machine, though the start does no work of argus's own.
-      true = :peer.call(peer, :code, :set_path, [:code.get_path()], :infinity)
-      {:ok, _} = :peer.call(peer, :application, :ensure_all_started, [:argus_beam], :infinity)
-      fun.(peer)
-    after
-      :peer.stop(peer)
+      "columns " <> name = read ->
+        changed = perturbed(reads, String.to_existing_atom(name))
+        :ok = Peer.run(peer, fn -> install!(changed) end)
+        moved = Peer.run(peer, fn -> digests(reads) end)
+        assert moved[read] != digests[read]
+        assert Map.delete(moved, read) == Map.delete(digests, read)
     end
   end
 
-  # Only the value comes back: the peer's connection is its standard
-  # I/O, and the script's binding holds every module's extraction.
-  defp eval(peer, script, binding) do
-    only_value = "elem(Code.eval_string(script, binding), 0)"
-    args = [only_value, [script: script, binding: binding]]
-    {value, _binding} = :peer.call(peer, Elixir.Code, :eval_string, args, 600_000)
-    value
+  # A fresh VM on this one's code path, exactly, running argus: the rows
+  # here and there are extracted in VMs set up alike.
+  defp peer! do
+    peer = Peer.start!(code_path: :this)
+    {:ok, _} = Peer.run(peer, fn -> Application.ensure_all_started(:argus_beam) end)
+    peer
   end
 
-  defp install(%{modules: modules}) do
-    schema_file = Argus.Schema.module_info(:compile)[:source] |> List.to_string()
-    [concerns: modules, schema_file: schema_file, schema_source: File.read!(schema_file)]
+  # ── In the peer ─────────────────────────────────────────────────────
+
+  # Installs the perturbed concern modules and compiles `Argus.Schema`
+  # again over them.
+  defp install!(%{modules: concerns}) do
+    Code.put_compiler_option(:ignore_module_conflict, true)
+
+    # Most concerns are unchanged when the final check moves one column.
+    # Keep their installed definitions; Schema still recompiles over the
+    # complete set below, including the one concern that did move.
+    for {mod, read, relations} <- concerns, mod.relations() != relations do
+      Code.compile_quoted(
+        quote do
+          defmodule unquote(mod) do
+            def relations,
+              do: Argus.Schema.Reads.record(unquote(read), unquote(Macro.escape(relations)))
+          end
+        end
+      )
+    end
+
+    schema_file = List.to_string(Argus.Schema.module_info(:compile)[:source])
+    Code.compile_string(File.read!(schema_file), schema_file)
+    :ok
   end
+
+  # Each module extracted afresh: every producer's rows per module, in
+  # `beams`' order, and what each read. Digests, not the rows: they cross
+  # the peer's standard I/O.
+  defp extract(beams, producers) do
+    extractions =
+      beams
+      |> Task.async_stream(
+        fn beam ->
+          {:ok, %{status: :ok} = extraction} =
+            Argus.Pipeline.extract_module(beam, producers: producers, trace_imprecision: true)
+
+          rows =
+            Map.new(extraction.facts, fn {producer, rows} ->
+              {producer, :crypto.hash(:sha256, :erlang.term_to_binary(rows, [:deterministic]))}
+            end)
+
+          %{rows: rows, reads: extraction.reads}
+        end,
+        timeout: :infinity
+      )
+      |> Enum.map(fn {:ok, extraction} -> extraction end)
+
+    %{
+      reads:
+        Map.new(producers, fn producer ->
+          reads = extractions |> Enum.flat_map(& &1.reads[producer]) |> Enum.uniq()
+          {producer, Enum.sort(reads)}
+        end),
+      rows: Map.new(producers, &{&1, Enum.map(extractions, fn e -> e.rows[&1] end)})
+    }
+  end
+
+  defp digests(reads), do: Map.new(reads, &{&1, Argus.Graph.Reads.entry_digest(&1)})
 
   # ── The perturbation ────────────────────────────────────────────────
 
