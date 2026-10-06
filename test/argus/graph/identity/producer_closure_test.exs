@@ -91,23 +91,23 @@ defmodule Argus.Graph.Identity.ProducerClosureTest do
   # The bases the extractors run over, kept untraced.
   bases = Map.new(beams, &{&1, extract.(&1, producers: [:base], keep_base: true).base})
 
+  # Counted from here on; each producer's count starts again at zero,
+  # which costs a twentieth of turning the counting off and on again.
+  for m <- mods, do: :erlang.trace_pattern({m, :_, :_}, true, [:call_count])
+
   run = fn producer, opts ->
-    for m <- mods, do: :erlang.trace_pattern({m, :_, :_}, true, [:call_count])
+    :erlang.trace_pattern({:_, :_, :_}, :restart, [:call_count])
 
     for beam <- beams do
       extract.(beam, [producers: [producer], trace_imprecision: true] ++ opts.(beam))
     end
 
-    executed =
-      Enum.filter(mods, fn m ->
-        Enum.any?(m.module_info(:functions), fn {f, a} ->
-          f not in [:module_info, :__info__] and
-            match?({:call_count, n} when n > 0, :erlang.trace_info({m, f, a}, :call_count))
-        end)
+    Enum.filter(mods, fn m ->
+      Enum.any?(m.module_info(:functions), fn {f, a} ->
+        f not in [:module_info, :__info__] and
+          match?({:call_count, n} when n > 0, :erlang.trace_info({m, f, a}, :call_count))
       end)
-
-    for m <- mods, do: :erlang.trace_pattern({m, :_, :_}, false, [:call_count])
-    executed
+    end)
   end
 
   Map.new(producers, fn
