@@ -7,7 +7,7 @@ defmodule Argus.Graph.CodeClosureTest do
   code computed. This runs each query alone — every query it reads
   already up to date, it registered again under another version, so it
   and nothing else executes — with call counting on
-  (`Roux.Code.Verify.executed/2`), cold against a store of its own so
+  (`Roux.Code.Verify.calls/2`), cold against a store of its own so
   extraction and the solver really run, and fails if a module of argus
   or of its dependencies executed outside that closure.
 
@@ -35,6 +35,7 @@ defmodule Argus.Graph.CodeClosureTest do
 
   alias Argus.Graph.Reads
   alias Argus.Test.{Graph, Peer}
+  alias Roux.Code.Verify
 
   @moduletag :souffle
   @moduletag timeout: 600_000
@@ -113,35 +114,43 @@ defmodule Argus.Graph.CodeClosureTest do
     log = Roux.QueryLog.start(db)
 
     try do
-      for {query, k} <- demands, reduce: %{} do
-        acc ->
-          # A store that has seen nothing: the extraction and the solve
-          # run, rather than finding what they would compute.
-          fresh!(db)
-          definition = Roux.Database.query_definition(db, query)
-          # Invalidate only this key. Changing the query's code version also
-          # invalidates its other keys, which would run inside later traces.
-          Roux.Dependencies.mutate(db, {query, k}, fn ->
-            Roux.Dependencies.forget(db, {query, k})
-            :ets.delete(db.memo_table, {query, k})
-          end)
+      # Counting turned on once, and each query read with the counts set
+      # back to zero.
+      Verify.counting(
+        fn session ->
+          for {query, k} <- demands, reduce: %{} do
+            acc ->
+              # A store that has seen nothing: the extraction and the solve
+              # run, rather than finding what they would compute.
+              fresh!(db)
+              definition = Roux.Database.query_definition(db, query)
+              # Invalidate only this key. Changing the query's code version also
+              # invalidates its other keys, which would run inside later traces.
+              Roux.Dependencies.mutate(db, {query, k}, fn ->
+                Roux.Dependencies.forget(db, {query, k})
+                :ets.delete(db.memo_table, {query, k})
+              end)
 
-          Roux.QueryLog.reset(log)
+              Roux.QueryLog.reset(log)
 
-          {_value, ran} =
-            Roux.Code.Verify.executed(fn -> Roux.Runtime.query(db, query, k) end,
-              modules: watched
-            )
+              {_value, calls} =
+                Verify.calls(session, fn -> Roux.Runtime.query(db, query, k) end)
 
-          assert k in Roux.QueryLog.executions(log, query)
+              ran = Verify.modules(calls)
 
-          closure = closure(definition.module, query) |> MapSet.union(by_value(db, {query, k}))
+              assert k in Roux.QueryLog.executions(log, query)
 
-          outside =
-            Enum.reject(ran, &(MapSet.member?(closure, &1) or MapSet.member?(allowed, &1)))
+              closure =
+                closure(definition.module, query) |> MapSet.union(by_value(db, {query, k}))
 
-          if outside == [], do: acc, else: Map.put(acc, query, outside)
-      end
+              outside =
+                Enum.reject(ran, &(MapSet.member?(closure, &1) or MapSet.member?(allowed, &1)))
+
+              if outside == [], do: acc, else: Map.put(acc, query, outside)
+          end
+        end,
+        modules: watched
+      )
     after
       Roux.QueryLog.stop(log)
     end
