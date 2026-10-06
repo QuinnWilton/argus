@@ -16,6 +16,12 @@ defmodule Argus.Graph.FreshVmTest do
   Those names are made at run time and only strings go to the peer:
   this module's own bytecode is loaded there, and a literal of one
   would make the atom.
+
+  Both tests run in one peer, which is fresh to each: neither makes an
+  atom or opens a store the other does, as every name and directory is
+  the test's own. A VM works out each query's code version once, the
+  dearest part of a run there, so the second test does not pay for it
+  again.
   """
 
   use ExUnit.Case, async: true
@@ -32,6 +38,10 @@ defmodule Argus.Graph.FreshVmTest do
   # machine, past ExUnit's default minute on a loaded four-core runner.
   @moduletag timeout: 300_000
 
+  setup_all do
+    %{peer: Peer.start!()}
+  end
+
   # A caller of `callee:go/0`, which nothing defines, compiled from forms.
   defp caller!(dir, callee) do
     forms = [
@@ -47,7 +57,7 @@ defmodule Argus.Graph.FreshVmTest do
     path
   end
 
-  test "a warm run in a fresh VM extracts nothing", %{tmp_dir: dir} do
+  test "a warm run in a fresh VM extracts nothing", %{tmp_dir: dir, peer: peer} do
     callee = String.to_atom("argus_fresh_vm_callee_#{System.unique_integer([:positive])}")
     path = caller!(dir, callee)
     store = Path.join(dir, "store")
@@ -55,12 +65,14 @@ defmodule Argus.Graph.FreshVmTest do
     assert extracted(store, path) == [:argus_fresh_vm_caller]
     assert extracted(store, path) == []
 
-    peer = Peer.start!()
     assert Peer.run(peer, fn -> extracted(store, path) end) == []
   end
 
   @tag :souffle
-  test "a line-only edit in a fresh VM places the kept findings again", %{tmp_dir: dir} do
+  test "a line-only edit in a fresh VM places the kept findings again", %{
+    tmp_dir: dir,
+    peer: peer
+  } do
     n = System.unique_integer([:positive])
     ebin = Path.join(dir, "ebin")
     File.mkdir_p!(ebin)
@@ -76,7 +88,6 @@ defmodule Argus.Graph.FreshVmTest do
     # Every line of B moves down by three; A is as it was.
     compile!(dir, ebin, "b.ex", leak("B#{n}", "leak_b_#{n}", 3))
 
-    peer = Peer.start!()
     warm = Peer.run(peer, fn -> session_run(state) end)
 
     assert warm.places == [{"a.ex", a_line}, {"b.ex", b_line + 3}]
