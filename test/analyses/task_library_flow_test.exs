@@ -18,6 +18,7 @@ defmodule Argus.Analyses.TaskLibraryFlowTest do
   @moduletag timeout: 600_000
 
   alias Argus.Extractors.TermFlow.Library
+  alias Argus.Test.BatchProperty
   alias Argus.Test.Memo
   alias Argus.Test.Rows
 
@@ -557,26 +558,30 @@ defmodule Argus.Analyses.TaskLibraryFlowTest do
     |> Enum.any?(fn {_mfa, from, expr, _to} -> from == :map and expr =~ ~r/\bk\b/ end)
   end
 
+  # A run's chains are functions of one module, solved together
+  # (`Argus.Test.BatchProperty`): a chain calls only the library, never
+  # another chain's function.
+  defp chains_source(chains),
+    do: module_source("Chain", for({name, c} <- chains, do: {name, c.start, chain_body(c)}))
+
+  defp assert_carried(chain, results) do
+    reported? = MapSet.size(never_awaited(results)) > 0
+    reportable? = chain.fate == :dropped and not escapes_by_unknown_key?(chain)
+
+    assert reported? == reportable?,
+           "chain (#{chain.fate}) through " <>
+             Enum.map_join(chain.steps, ", ", fn {{m, f, a}, _, _, _} ->
+               "#{inspect(m)}.#{f}/#{a}"
+             end) <>
+             "\n" <> chains_source([{"case_0", chain}])
+  end
+
   property "a chain of catalogued calls carries the task to what the chain does with it" do
-    check all(chains <- list_of(a_chain(), min_length: 4, max_length: 12), max_runs: 8) do
-      functions =
-        for {chain, i} <- Enum.with_index(chains),
-            do: {"chain_#{i}", chain.start, chain_body(chain)}
-
-      source = module_source("Chain", functions)
-      {:ok, results} = Memo.analyze(quietly_compile(source), :mailbox)
-      reported = never_awaited(results)
-
-      for {chain, i} <- Enum.with_index(chains) do
-        reportable? = chain.fate == :dropped and not escapes_by_unknown_key?(chain)
-
-        assert MapSet.member?(reported, "chain_#{i}") == reportable?,
-               "chain_#{i} (#{chain.fate}) through " <>
-                 Enum.map_join(chain.steps, ", ", fn {{m, f, a}, _, _, _} ->
-                   "#{inspect(m)}.#{f}/#{a}"
-                 end) <>
-                 "\n" <> source
-      end
-    end
+    BatchProperty.check_cases(a_chain(),
+      analysis: :mailbox,
+      count: 48,
+      source: &chains_source/1,
+      assert: &assert_carried/2
+    )
   end
 end
