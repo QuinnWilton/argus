@@ -99,6 +99,15 @@ normally `async: true`; isolate VM-wide state with `Argus.Test.Peer` or explain 
 a test must be synchronous. Deliberate rendering changes can update goldens with
 `ARGUS_RECORD_GOLDENS=1`; review the resulting diff.
 
+A check that reruns extraction per producer should run over
+`Argus.Test.FixtureSpread.spread/0`, and one that runs it once over everything over
+`all/0`, rather than keeping a list of its own. Count calls with `Roux.Code.Verify`
+sessions over `Argus.Test.CallCount.code/0`, in a peer from
+`Argus.Test.Peer.start!(code_path: :this)`, and run peer code as closures, not
+evaluated strings. Before running a second configuration, look for an equality that
+makes it redundant. For example, a producer over a kept base is handed the data it
+is handed afresh (`Argus.Pipeline.BaseTest`), so checking one of the two is enough.
+
 Commit subjects use `[component] brief description`; `.presubmit.exs` defines the
 checks. Keep user-facing release notes in `CHANGELOG.md`, with implementation detail
 in code and commit descriptions.
