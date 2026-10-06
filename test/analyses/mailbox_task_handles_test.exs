@@ -11,16 +11,10 @@ defmodule Argus.Analyses.MailboxTaskHandlesTest do
   use ExUnitProperties
   @moduletag :souffle
 
+  alias Argus.Test.BatchProperty
   alias Argus.Test.Fixtures.TaskHandles
   alias Argus.Test.Memo
   alias Argus.Test.Rows
-
-  # Generated code calls deprecated and odd functions on purpose: its
-  # compiler warnings are noise here.
-  defp quietly_compile(source) do
-    {paths, _warnings} = ExUnit.CaptureIO.with_io(:stderr, fn -> Memo.compile_beams(source) end)
-    paths
-  end
 
   defp never_awaited(results),
     do:
@@ -182,13 +176,15 @@ defmodule Argus.Analyses.MailboxTaskHandlesTest do
   defp fate_code(:returned), do: "tasks"
   defp fate_code(:stored), do: ":ets.insert(:tasks, {:tasks, tasks})"
 
+  # A run's cases are functions of one module, solved together
+  # (`Argus.Test.BatchProperty`): no case calls another's function or
+  # receives what another sends, and `:tasks` is a table only written,
+  # never read.
   defp module_source(cases) do
     body =
-      cases
-      |> Enum.with_index()
-      |> Enum.map_join("\n\n", fn {c, i} ->
+      Enum.map_join(cases, "\n\n", fn {name, c} ->
         """
-          def case_#{i}(xs, sup) do
+          def #{name}(xs, sup) do
             _ = sup
             tasks = #{tasks_code(c)}
             #{fate_code(c.fate)}
@@ -207,28 +203,22 @@ defmodule Argus.Analyses.MailboxTaskHandlesTest do
     """
   end
 
+  defp assert_reported_if_dropped(c, results) do
+    reported? = never_awaited(results) != []
+
+    assert reported? == c.fate in @dropped,
+           "#{if reported?, do: "reported", else: "not reported"}: #{inspect(c)}\n" <>
+             module_source([{"case_0", c}])
+  end
+
+  # A wrong case shrinks with a solve a step, past the default timeout.
+  @tag timeout: 300_000
   property "only the tasks a generated function drops are reported" do
-    check all(cases <- list_of(a_case(), min_length: 4, max_length: 10), max_runs: 6) do
-      paths = quietly_compile(module_source(cases))
-      {:ok, results} = Memo.analyze(paths, :mailbox)
-
-      reported =
-        results
-        |> never_awaited()
-        |> Enum.map(fn func -> Regex.run(~r/case_(\d+)\//, func) end)
-        |> Enum.reject(&is_nil/1)
-        |> MapSet.new(fn [_, i] -> String.to_integer(i) end)
-
-      expected =
-        cases
-        |> Enum.with_index()
-        |> MapSet.new(fn {c, i} -> {i, c.fate in @dropped} end)
-        |> Enum.filter(&elem(&1, 1))
-        |> MapSet.new(&elem(&1, 0))
-
-      assert reported == expected,
-             "reported #{inspect(Enum.sort(reported))}, expected #{inspect(Enum.sort(expected))}\n" <>
-               module_source(cases)
-    end
+    BatchProperty.check_cases(a_case(),
+      analysis: :mailbox,
+      count: 32,
+      source: &module_source/1,
+      assert: &assert_reported_if_dropped/2
+    )
   end
 end
