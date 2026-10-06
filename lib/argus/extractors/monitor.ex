@@ -117,8 +117,12 @@ defmodule Argus.Extractors.Monitor do
   named by the caller's first test on the result: a tuple test's pass
   edge, or the fail edge of a comparison with that one atom. A path that
   raises is not asked: the wait was for a caller that is unwinding. A
-  receive in a closure, and a wait in another module, are not seen, and
-  leave the call without a row.
+  receive in a closure is seen where a library call runs the closure on
+  every element of the refs (`Enum.each(refs, fn ref -> receive ...
+  end)`, `@every_element`), the refs traced back through a reorder (the
+  reverse a comprehension ends with) to the call that made them; any
+  other closure's, and a wait in another module, are not, and leave the
+  call without a row.
 
   ## A receive that takes its own monitor's :DOWN
 
@@ -1135,7 +1139,7 @@ defmodule Argus.Extractors.Monitor do
 
       handed =
         for {instr, idx} <- indexed,
-            pos <- released_positions(instr, ctx),
+            pos <- released_positions(instr, ctx, idx),
             do: origin_call(ctx.instrs, idx, {:x, pos})
 
       (pinned ++ cancelled ++ handed) |> Enum.reject(&is_nil/1) |> Enum.uniq() |> Enum.sort()
@@ -1143,7 +1147,9 @@ defmodule Argus.Extractors.Monitor do
   end
 
   # The call whose result `reg` holds at `at`, directly or as an element
-  # of it, on every path; nil when none or several.
+  # of it, on every path; nil when none or several. A library call that
+  # hands back its list's elements in another order (the reverse a
+  # comprehension ends with) is followed to the call that made the list.
   defp origin_call(instrs, at, reg) do
     Resolve.trace(instrs, at, register(reg), nil, fn
       {:param, _position}, _follow ->
@@ -1152,10 +1158,50 @@ defmodule Argus.Extractors.Monitor do
       {writer, {:get_tuple_element, src, _index, _dst}}, follow ->
         follow.(writer, src)
 
-      {writer, instr}, _follow ->
-        if Instr.call?(instr), do: writer
+      {writer, instr}, follow ->
+        cond do
+          reorder?(instr) -> follow.(writer, {:x, 0})
+          Instr.call?(instr) -> writer
+          true -> nil
+        end
     end)
   end
+
+  @reorders [
+    {:lists, :reverse, 1},
+    {Enum, :reverse, 1},
+    {Enum, :sort, 1},
+    {Enum, :uniq, 1},
+    {Enum, :to_list, 1}
+  ]
+
+  defp reorder?(instr) do
+    case match_remote_call(instr) do
+      {:ok, mod, fun, arity} -> {mod, fun, arity} in @reorders
+      :none -> false
+    end
+  end
+
+  # Library calls that run a fun on every element of a list, in the
+  # calling process, none skipped: {list position, fun position}. A fun
+  # of the module that releases the monitor its element names releases
+  # every monitor the list holds.
+  @every_element %{
+    {Enum, :each, 2} => {0, 1},
+    {Enum, :map, 2} => {0, 1},
+    {Enum, :flat_map, 2} => {0, 1},
+    {Enum, :filter, 2} => {0, 1},
+    {Enum, :reject, 2} => {0, 1},
+    {Enum, :count, 2} => {0, 1},
+    {Enum, :reduce, 3} => {0, 2},
+    {Enum, :map_reduce, 3} => {0, 2},
+    {:lists, :foreach, 2} => {1, 0},
+    {:lists, :map, 2} => {1, 0},
+    {:lists, :flatmap, 2} => {1, 0},
+    {:lists, :filter, 2} => {1, 0},
+    {:lists, :foldl, 3} => {2, 0},
+    {:lists, :foldr, 3} => {2, 0}
+  }
 
   # Every path from the call at `call` to the function's return passes a
   # wait for a :DOWN. A path that raises ends without returning, and one
@@ -1356,20 +1402,35 @@ defmodule Argus.Extractors.Monitor do
     collector_call?(instr, ctx) or
       (cancels_monitor?(instr) and origin_call(ctx.instrs, idx, {:x, 0}) in calls) or
       Enum.any?(
-        released_positions(instr, ctx),
+        released_positions(instr, ctx, idx),
         &(origin_call(ctx.instrs, idx, {:x, &1}) in calls)
       )
   end
 
   # The argument positions at which a local call hands a releaser the
   # ref it releases; [] for anything else.
-  defp released_positions(instr, ctx) do
+  defp released_positions(instr, ctx, idx) do
     case match_local_call(instr) do
       {:ok, mod, name, arity} when mod == ctx.mod ->
         Map.get(Map.get(ctx, :releasers, %{}), {name, arity}, [])
 
       _ ->
-        []
+        every_element_released(instr, ctx, idx)
+    end
+  end
+
+  # `Enum.each(refs, fn ref -> receive do {:DOWN, ^ref, ...} -> ... end end)`:
+  # the list position, when the fun the call runs on every element is a
+  # closure of the module that releases its element (parameter 0).
+  defp every_element_released(instr, ctx, idx) do
+    with {:ok, mod, fun, arity} <- match_remote_call(instr),
+         {:ok, {list, at}} <- Map.fetch(@every_element, {mod, fun, arity}),
+         {:closure, {closure_mod, name, closure_arity}} when closure_mod == ctx.mod <-
+           Resolve.fun_origin(ctx.instrs, idx, {:x, at}),
+         true <- 0 in Map.get(Map.get(ctx, :releasers, %{}), {name, closure_arity}, []) do
+      [list]
+    else
+      _ -> []
     end
   end
 

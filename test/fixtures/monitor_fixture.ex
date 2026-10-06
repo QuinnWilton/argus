@@ -62,6 +62,62 @@ defmodule Argus.Test.Fixtures.MonitorLeak do
     end
   end
 
+  defmodule MapsThenDrains do
+    @moduledoc """
+    Monitors taken in an Enum.map closure, whose every :DOWN a closure
+    Enum.each runs on the refs takes: released.
+    """
+    def drain(pids) do
+      refs = Enum.map(pids, fn pid -> Process.monitor(pid) end)
+      Enum.each(refs, fn ref -> receive(do: ({:DOWN, ^ref, :process, _, _} -> :ok)) end)
+    end
+  end
+
+  defmodule ForThenForeach do
+    @moduledoc "The same through a comprehension and :lists.foreach/2: released."
+    def drain(pids) do
+      refs = for pid <- pids, do: Process.monitor(pid)
+      :lists.foreach(fn ref -> receive(do: ({:DOWN, ^ref, :process, _, _} -> :ok)) end, refs)
+    end
+  end
+
+  defmodule MapsThenDemonitors do
+    @moduledoc "Monitors an Enum.map closure takes, each demonitored afterwards: released."
+    def watch_briefly(pids) do
+      refs = Enum.map(pids, fn pid -> Process.monitor(pid) end)
+      Enum.each(refs, fn ref -> Process.demonitor(ref, [:flush]) end)
+    end
+  end
+
+  defmodule MapsThenGivesUp do
+    @moduledoc """
+    Monitors an Enum.map closure takes, each waited for with a timeout: a
+    wait that gives up leaves its monitor live. Reported.
+    """
+    def drain(pids) do
+      refs = Enum.map(pids, fn pid -> Process.monitor(pid) end)
+
+      Enum.each(refs, fn ref ->
+        receive do
+          {:DOWN, ^ref, :process, _, _} -> :ok
+        after
+          100 -> :timeout
+        end
+      end)
+    end
+  end
+
+  defmodule MapsThenFindsOne do
+    @moduledoc """
+    Monitors an Enum.map closure takes, waited for by Enum.find, which
+    stops at the first: the rest stay live. Reported.
+    """
+    def first_down(pids) do
+      refs = Enum.map(pids, fn pid -> Process.monitor(pid) end)
+      Enum.find(refs, fn ref -> receive(do: ({:DOWN, ^ref, :process, _, _} -> true)) end)
+    end
+  end
+
   defmodule TaskGivesUp do
     @moduledoc "The leak's wait is the last thing a task does: the monitor ends with the task."
     def start(pid), do: Task.start(fn -> watch(pid) end)

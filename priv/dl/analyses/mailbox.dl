@@ -787,6 +787,26 @@ start_named(name) :- name = "open".
 released_by_run(s, f) :- monitor_call(s, f, _), monitor_released(s).
 released_by_run(s, f) :- monitor_call(s, f, _), collected_by_callers(f).
 
+// A closure handing its monitor back to a library call that keeps what it answers
+// (`refs = Enum.map(pids, fn pid -> Process.monitor(pid) end)`): released when, at
+// every such call, the function making it releases what the call answers
+// (`monitor_released_after`, which follows the list into a releasing closure run on
+// every element).
+released_by_run(s, g) :-
+  monitor_call(s, g, _),
+  hands_back_monitor(s, g),
+  element_fun(_, _, g, "kept"),
+  !run_unreleased(g).
+
+.decl hands_back_monitor(site: symbol, func: symbol)
+
+hands_back_monitor(s, g) :- monitor_call(s, g, _), tail_call(s).
+hands_back_monitor(s, g) :- monitor_call(s, g, _), answers_call(g, s, 0).
+
+.decl run_unreleased(func: symbol)
+
+run_unreleased(g) :- element_fun(c, f, g, _), !monitor_released_after(f, c).
+
 // Caller-released monitors
 //
 // A live monitor returned to a caller is safe when every entry path includes a call

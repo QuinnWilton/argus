@@ -21,6 +21,11 @@ defmodule Argus.Analyses.MailboxMonitorTest do
     M.LeaksThroughHelper,
     M.FlushesInHelper,
     M.InEach,
+    M.MapsThenDrains,
+    M.ForThenForeach,
+    M.MapsThenDemonitors,
+    M.MapsThenGivesUp,
+    M.MapsThenFindsOne,
     M.TaskGivesUp,
     M.SpawnsWatcher,
     M.TaskPolls,
@@ -106,6 +111,19 @@ defmodule Argus.Analyses.MailboxMonitorTest do
 
     test "a wait in a closure the caller runs", ctx do
       assert named?(funcs(ctx.all, "wait"), "MonitorLeak.InEach:-wait_all/1-fun-0-")
+    end
+
+    # The refs an Enum.map closure hands back are the caller's: released
+    # when a closure run on every one of them releases its element.
+    test "monitors a closure hands back, released by a closure run on each", ctx do
+      for mod <- ~w(MapsThenDrains ForThenForeach MapsThenDemonitors) do
+        refute named?(reported(ctx.all), "MonitorLeak.#{mod}"), mod
+      end
+    end
+
+    test "a closure that may give up on one, or a call that stops early, releases none", ctx do
+      assert named?(funcs(ctx.all, "wait"), "MonitorLeak.MapsThenGivesUp:-drain/1-fun-0-")
+      assert named?(reported(ctx.all), "MonitorLeak.MapsThenFindsOne")
     end
 
     test "a kill after the grace period, then a wait for the :DOWN, releases it", ctx do

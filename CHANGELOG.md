@@ -66,6 +66,11 @@ which a change appeared; older names and APIs may have changed since then.
   waiting on another.
 - "Task.async in library code" is noted only when the program collects that
   task, not any task.
+- Monitors taken in an `Enum.map` callback, such as `refs = Enum.map(pids, fn
+  pid -> Process.monitor(pid) end)`, and released by a later `Enum.each` that
+  receives each ref's `:DOWN` (or demonitors it), are no longer reported as
+  "Monitor left live". A wait that may give up (a receive with a timeout), or a
+  call that may stop early (`Enum.find/2`), still is.
 - A socket handed to another process by a helper (`defp give(sock, pid), do:
   :gen_tcp.controlling_process(sock, pid)`), from around a closure, or through a
   captured `&:gen_tcp.controlling_process/2`, now counts as handed off: its
