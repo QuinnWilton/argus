@@ -8,12 +8,17 @@ defmodule Argus.Graph.Identity.ProducerClosureTest do
   against what executed. The producers are split three ways, each part
   in a VM of its own, so the parts run side by side.
 
-  The kept bases (`Argus.Pipeline.Base`) are keyed on the base's code
-  too: the base runs here keeping them, and each extractor runs again
-  over them, within its closure and without the emitter — a kept base
-  holds the decoded facts, read back for the extractors that read them
-  (`Argus.Pipeline.typed_readers/0`), and one missing from that list
-  computes them again.
+  The base runs afresh, keeping the bases (`Argus.Pipeline.Base`), and
+  each extractor runs over them, within its closure and without the
+  emitter — a kept base holds the decoded facts, read back for the
+  extractors that read them (`Argus.Pipeline.typed_readers/0`), and one
+  missing from that list computes them again. An extractor run afresh is
+  not counted apart: it is handed the data it is handed over a kept base
+  (`Argus.Pipeline.BaseTest`), so it runs the code it runs there, beside
+  the base's own, which is in every closure (`Argus.Pipeline` roots each
+  one) and is counted in the base's run. (A register walk answered from
+  the reaching solutions the fresh base solved, and over a kept base
+  solved again, runs `Argus.Instr.Reaching`: the base's code too.)
 
   The closures leave the schema's modules out: a producer executes
   those outside its code key, and is keyed on the entries it read of
@@ -111,12 +116,8 @@ defmodule Argus.Graph.Identity.ProducerClosureTest do
   end
 
   Map.new(producers, fn
-    :base ->
-      {:base, %{fresh: run.(:base, fn _beam -> [keep_base: true] end), kept: []}}
-
-    extractor ->
-      fresh = run.(extractor, fn _beam -> [] end)
-      {extractor, %{fresh: fresh, kept: run.(extractor, &[base: bases[&1]])}}
+    :base -> {:base, run.(:base, fn _beam -> [keep_base: true] end)}
+    extractor -> {extractor, run.(extractor, &[base: bases[&1]])}
   end)
   """
 
@@ -145,16 +146,14 @@ defmodule Argus.Graph.Identity.ProducerClosureTest do
     for producer <- producers do
       {:ok, closure} = Code.closure(producer)
       closure = MapSet.new(closure, &elem(&1, 0))
-      %{fresh: ran, kept: over_kept} = Map.fetch!(executed, producer)
+      ran = Map.fetch!(executed, producer)
 
       assert ran != [], "#{inspect(producer)} executed nothing"
 
-      outside =
-        Enum.reject(ran ++ over_kept, &(MapSet.member?(closure, &1) or Reads.schema_module?(&1)))
-
+      outside = Enum.reject(ran, &(MapSet.member?(closure, &1) or Reads.schema_module?(&1)))
       assert outside == [], "#{inspect(producer)} runs code its key does not cover"
 
-      refute Argus.Pipeline.Emit in over_kept,
+      refute producer != :base and Argus.Pipeline.Emit in ran,
              "#{inspect(producer)} computes the decoded facts over a kept base: " <>
                "add it to Argus.Pipeline's @typed_readers"
     end
