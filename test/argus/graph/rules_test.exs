@@ -16,6 +16,9 @@ defmodule Argus.Graph.RulesTest do
     * an edit to code every producer runs (`Argus.Pipeline`, and what
       it reaches) extracts every module again, and solves nothing when
       the rows come out the same;
+    * nothing past the modules' facts reads the producers' code, so an
+      edit to it reaches a solve only through facts that come out
+      different;
     * a schema code change checks module traces against the entries they read;
     * an edit to the findings' prose rebuilds each analysis's findings,
       which come out the same (cutoff), and nothing past them runs;
@@ -215,6 +218,46 @@ defmodule Argus.Graph.RulesTest do
       assert staged(log) == []
       assert solved(log) == []
     end)
+  end
+
+  test "nothing past the modules' facts reads the producers' code", context do
+    in_graph(context, fn db, _log, _root ->
+      graph = Memo.reduce_dependencies(db, %{}, fn key, deps, acc -> Map.put(acc, key, deps) end)
+
+      roots =
+        for {{query, _} = key, _} <- graph,
+            query in [:solve, :stage, :findings, :located],
+            do: key
+
+      reached = reach(graph, roots, MapSet.new())
+
+      assert Enum.any?(roots, &match?({:solve, _}, &1))
+      assert Enum.any?(reached, &match?({:module_facts, _}, &1))
+
+      refute MapSet.member?(reached, {:producer_code, :all}),
+             "a solve, a stage or the findings read the producers' code past the modules' facts"
+
+      # Nor do they read the in-process facts, which a module's facts
+      # leave out.
+      refute Enum.any?(reached, &match?({:module_in_process, _}, &1)),
+             "a solve, a stage or the findings read the modules' in-process facts"
+    end)
+  end
+
+  # What `keys` read, and what that reads, not past a module's facts.
+  defp reach(_graph, [], seen), do: seen
+
+  defp reach(graph, [key | rest], seen) do
+    cond do
+      MapSet.member?(seen, key) ->
+        reach(graph, rest, seen)
+
+      match?({query, _} when query in [:module_facts, :module_in_process], key) ->
+        reach(graph, rest, MapSet.put(seen, key))
+
+      true ->
+        reach(graph, Map.get(graph, key, []) ++ rest, MapSet.put(seen, key))
+    end
   end
 
   # Sets a query's value as if it had just come out so, at a new
