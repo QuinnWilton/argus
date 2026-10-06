@@ -18,6 +18,9 @@ which a change appeared; older names and APIs may have changed since then.
   debugging and fixture assertions.
 - Create empty fact files for declared custom extractor outputs, including when
   the extractor emits no rows.
+- `shared_store_site_lift` derives only the sites and values a claim asks
+  about. On large projects it had enumerated every pairing, which made the
+  `races` analysis take minutes and gigabytes.
 
 ## 0.21.0 — 2026-10-06
 

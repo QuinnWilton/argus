@@ -83,34 +83,63 @@ shared_absence_return(f, r, value) :-
 // identities using the actual tested invocation, not a different call of the same
 // accessor. Local value identities distinguish even computed caller arguments.
 .decl shared_store_site_lift(site: symbol, source: symbol, value: symbol, lifted_source: symbol, lifted_value: symbol)
+
+// The identities a guard's check is translated for at a call site
+// (shared_checked_row): the only rows of the lift anything reads. Every rule of the
+// lift starts from one, which keeps it to the sites a check returns through: a
+// liftable or mapped source otherwise meets every parameter argument of the
+// program, a product of a hundred million rows on a mid-sized project.
+.decl shared_lift_demand(site: symbol, source: symbol, value: symbol)
+shared_lift_demand(site, ss, s) :-
+  call_site(site, _, m, n, a), g = cat(m, ":", n, "/", to_string(a)),
+  shared_claim.returns_check(g, _, ss, s, _, _).
+shared_lift_demand(site, ks, k) :-
+  call_site(site, _, m, n, a), g = cat(m, ":", n, "/", to_string(a)),
+  shared_claim.returns_check(g, _, _, _, ks, k).
 shared_store_site_lift(site, "literal", v, "literal", v) :-
+  shared_lift_demand(site, "literal", v),
   call_site(site, _, m, n, a), g = cat(m, ":", n, "/", to_string(a)),
   shared_claim.needs(g, "literal", v).
-shared_store_site_lift(site, "param", to_string(p), source, value) :-
-  shared_store_argument(site, _, _, p, "", source, value), source != "dynamic".
-shared_store_site_lift(site, "param", to_string(p), mapped, value) :-
+shared_store_site_lift(site, "param", pv, source, value) :-
+  shared_lift_demand(site, "param", pv),
+  shared_store_argument(site, _, _, p, "", source, value), source != "dynamic",
+  pv = to_string(p).
+shared_store_site_lift(site, "param", pv, mapped, value) :-
+  shared_lift_demand(site, "param", pv),
   shared_store_argument(site, _, _, p, t, source, value), t != "", source != "dynamic",
+  pv = to_string(p),
   mapped_store_source(t, source, mapped).
-shared_store_site_lift(site, mapped, to_string(p), mapped2, value) :-
+shared_store_site_lift(site, mapped, pv, mapped2, value) :-
+  shared_lift_demand(site, mapped, pv),
   mapped_store_source(t, "param", mapped),
   shared_store_argument(site, _, _, p, "", source, value), source != "dynamic",
+  pv = to_string(p),
   mapped_store_source(t, source, mapped2).
 shared_store_site_lift(site, mapped, v, mapped, v) :-
+  shared_lift_demand(site, mapped, v),
   call_site(site, _, m, n, a), g = cat(m, ":", n, "/", to_string(a)),
   shared_claim.needs(g, mapped, v), mapped_store_source(_, "literal", mapped).
-shared_store_site_lift(site, source, to_string(p), source, value) :-
+shared_store_site_lift(site, source, pv, source, value) :-
+  shared_lift_demand(site, source, pv),
   liftable(source), source != "param",
-  shared_store_argument(site, _, _, p, "", "param", value).
-shared_store_site_lift(site, mapped, to_string(p), mapped, value) :-
+  shared_store_argument(site, _, _, p, "", "param", value),
+  pv = to_string(p).
+shared_store_site_lift(site, mapped, pv, mapped, value) :-
+  shared_lift_demand(site, mapped, pv),
   mapped_store_source(_, source, mapped), liftable(source), source != "param",
-  shared_store_argument(site, _, _, p, "", "param", value).
+  shared_store_argument(site, _, _, p, "", "param", value),
+  pv = to_string(p).
 
-shared_store_site_lift(site, element, to_string(p), projected, v) :-
+shared_store_site_lift(site, element, pv, projected, v) :-
+  shared_lift_demand(site, element, pv),
   shared_store_argument(site, _, _, p, "", source, v),
+  pv = to_string(p),
   projected_store_source(element, source, projected).
-shared_store_site_lift(site, mapped, to_string(p), mapped2, v) :-
+shared_store_site_lift(site, mapped, pv, mapped2, v) :-
+  shared_lift_demand(site, mapped, pv),
   mapped_store_source(t, element, mapped),
   shared_store_argument(site, _, _, p, "", source, v),
+  pv = to_string(p),
   projected_store_source(element, source, projected),
   mapped_store_source(t, projected, mapped2).
 
