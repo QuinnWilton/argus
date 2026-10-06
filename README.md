@@ -66,7 +66,7 @@ project and downloads the specified Argus escript.
 
 ```erlang
 {plugins, [rebar3_argus]}.
-{argus_plugin, [{version, "0.20.1"}]}.
+{argus_plugin, [{version, "0.21.0"}]}.
 {argus, [{analyses, [default, ets]}]}.           % optional
 {provider_hooks, [{post, [{compile, argus}]}]}.  % optional: run after compilation
 ```
