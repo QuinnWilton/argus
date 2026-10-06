@@ -913,7 +913,7 @@ end
 defmodule Argus.Test.Fixtures.LeaksBesideAnotherLoop do
   @moduledoc """
   A server that never traps exits, and also starts a process that traps
-  and enters another module's loop (TrapsForItsCaller's). That trap is
+  and enters another module's loop (OtherLoop's). That trap is
   the other server's: this one's terminate/2 is still skipped on
   shutdown.
   """
