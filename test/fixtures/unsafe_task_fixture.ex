@@ -266,9 +266,7 @@ defmodule Argus.Test.Fixtures.LibraryPmap do
   def pmap(items, fun) do
     items
     |> Enum.map(fn item -> Task.async(fn -> fun.(item) end) end)
-    # A call, not `&Task.await/1`: a captured function is a fun literal the
-    # call graph does not follow, so it would read as never awaited.
-    |> Enum.map(fn task -> Task.await(task) end)
+    |> Enum.map(&Task.await/1)
   end
 end
 

@@ -296,6 +296,17 @@ on_process_table("process").
 
 runs_in_transaction(body, via) :- body_reach.reaches(body, via).
 
+// `func` starts a task running `runs` at `start` and waits on a task (runs_elsewhere.dl):
+// any task, since this analysis reads no points-to to tell which one.
+.decl awaits_task(func: symbol, start: symbol, runs: symbol)
+
+awaits_task(f, id, g) :-
+  process_start(id, f, _, "spawn", g),
+  call_site(id, f, m, a, _),
+  task_start_api(m, a, _),
+  call_site(_, f, "Task", w, _),
+  task_wait(w).
+
 // Forward from the transaction bodies only, and not past a start the
 // body does not wait for (runs_elsewhere, clientlib).
 .init body_reach = ForwardCallReachCut

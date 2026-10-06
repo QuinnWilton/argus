@@ -493,15 +493,21 @@ hands_down_ref(cancel, g, site) :-
 
 // ── A task never awaited ──
 
-// A linked task is neither collected nor returned, and no matching server callback
-// consumes its reply. Partial handlers can crash; logging catch-alls discard the
-// result.
+// A linked task whose handle value flow follows to every use, none of which awaits,
+// yields, shuts down or ignores it, and no matching server callback consumes its
+// reply. The handle is followed wherever it goes — out of the closure a comprehension
+// or an Enum callback starts it in, through lists and other terms, through calls and
+// returns, into a server's state — and a task whose handle goes where value flow
+// cannot follow (task_escapes, clientlib/task_handles.dl), such as an answer to a
+// caller outside the program, is not reported. Partial handlers can crash; logging
+// catch-alls discard the result.
 .decl unawaited_task(func: symbol, start: symbol)
 
 unawaited_task(func, start) :-
   starts_linked_task(func, start),
-  !collects_a_task(func),
-  !returns_task(func, start),
+  process_start(start, func, p, _, _),
+  !task_handled(_, _, _, p),
+  !task_escapes(p),
   !reply_taken(func).
 
 task_result_defect(func, start, "never_awaited") :- unawaited_task(func, start).
@@ -523,19 +529,6 @@ collects_a_task(func) :- await_reach.reaches(func).
 .init await_reach = CallReachSet
 
 await_reach.seed(func) :- remote_call(_, func, "Task", w, _), task_collect(w).
-
-// Every return forwards the started task, directly or through answers_call, making
-// collection the caller's responsibility. Partial returns or returning only the pid do
-// not qualify.
-.decl returns_task(func: symbol, start: symbol)
-
-returns_task(func, start) :-
-  starts_linked_task(func, start),
-  tail_call(start).
-
-returns_task(func, start) :-
-  starts_linked_task(func, start),
-  answers_call(func, start, 0).
 
 // A callback accepts the task reply: a reference-headed handle_info clause or
 // task-collection call in the starter's module, or a matching handler in the server
@@ -630,16 +623,18 @@ task_yield_site(owner, "yield_linked", id) :-
 // their callers, including process-module client APIs. Exclude callbacks and
 // same-module code reached on the server's own stack.
 
-// A library function starts and awaits a linked task in its caller's process, exposing
-// that caller to exits. Returning the task instead makes the link part of the explicit
-// API result.
+// A library function starts a linked task in its caller's process and the program
+// collects it, exposing that caller to exits. Answering the task to the caller instead
+// (an escape: task_escapes) makes the link part of the explicit API result.
 .decl linked_task_in_library(owner: symbol, start: symbol)
 
 linked_task_in_library(owner, start) :-
   starts_linked_task_in(owner, start),
   runs_in_callers(owner),
-  collects_a_task(owner),
-  !returns_task(owner, _).
+  process_start(start, _, p, _, _),
+  task_handled(_, _, op, p),
+  task_collect(op),
+  !task_escapes(p).
 
 task_result_defect(owner, start, "linked_in_library") :- linked_task_in_library(owner, start).
 
@@ -1622,18 +1617,29 @@ down_taken(h, id) :- down_type_at(id, "dynamic"), callback_takes_down(h, "handle
 // async_nolink messages
 //
 // An uncollected Task.Supervisor.async_nolink produces `{ref, result}` and then :DOWN,
-// or only :DOWN on failure. Locally collected tasks are excluded. Library-generated
+// or only :DOWN on failure. Tasks the program collects are excluded. Library-generated
 // starts belong to that library's protocol; handwritten starts remain checked even with
 // a library-generated handler.
 info_message(m, f, id, "{ref, …}", "task") :-
   mailbox_writer(id, f, "task_nolink"),
   runs_in_server(m, f),
-  !library_written(f).
+  !library_written(f),
+  !nolink_settled(id).
 
 info_message(m, f, id, "{:DOWN, …}", "task") :-
   mailbox_writer(id, f, "task_nolink"),
   runs_in_server(m, f),
-  !library_written(f).
+  !library_written(f),
+  !nolink_settled(id).
+
+// The program collects the task the async_nolink at `id` starts — wherever the
+// await, yield, shutdown or ignore is, so long as it is handed this task — or its
+// handle goes where value flow cannot follow (clientlib/task_handles.dl): its reply
+// and :DOWN are not known to reach handle_info/2.
+.decl nolink_settled(id: symbol)
+
+nolink_settled(id) :- process_start(id, _, p, _, _), task_handled(_, _, _, p).
+nolink_settled(id) :- process_start(id, _, p, _, _), task_escapes(p).
 
 // Messages arriving after timed receives
 //

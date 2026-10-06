@@ -235,6 +235,50 @@ defmodule Argus.Test.Fixtures.InitLock do
     def handle_info({ref, _}, %{task: %{ref: ref}} = state), do: {:noreply, state}
   end
 
+  defmodule AwaitedFromClosures do
+    @moduledoc """
+    Tasks a two-generator comprehension starts, in closures, and init/1
+    awaits: init/1 waits for the lock. Reported.
+    """
+    use GenServer
+
+    def init(names) do
+      tasks =
+        for name <- names, n <- [1, 2], do: Task.async(fn -> :global.set_lock({name, n}) end)
+
+      Task.await_many(tasks, :infinity)
+      {:ok, names}
+    end
+  end
+
+  defmodule AwaitedInHelper do
+    @moduledoc "A task init/1 starts and a helper awaits: init/1 waits for the lock. Reported."
+    use GenServer
+
+    def init(name) do
+      finish(Task.async(fn -> :global.set_lock({name, self()}) end))
+      {:ok, name}
+    end
+
+    defp finish(task), do: Task.await(task, :infinity)
+  end
+
+  defmodule AwaitsAnotherTask do
+    @moduledoc """
+    Control: init/1 starts a locking task it keeps in its state and awaits
+    a different one. Quiet: crediting any await would report it.
+    """
+    use GenServer
+
+    def init(name) do
+      locking = Task.async(fn -> :global.set_lock({name, self()}) end)
+      Task.async(fn -> :ok end) |> Task.await()
+      {:ok, %{name: name, task: locking}}
+    end
+
+    def handle_info({ref, _}, %{task: %{ref: ref}} = state), do: {:noreply, state}
+  end
+
   # ── Which clause init/1 enters ──────────────────────────────────────
 
   defmodule SharedHelper do

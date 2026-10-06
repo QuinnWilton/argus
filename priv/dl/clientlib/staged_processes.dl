@@ -57,6 +57,24 @@
 .decl kept_in_dictionary(table: symbol)
 .input kept_in_dictionary
 
+// The Task operation at `site` in `func` does `op` to the task `proc`,
+// and the tasks whose handle goes where value flow does not follow it
+// (clientlib/task_handles.dl).
+.decl task_handled(func: symbol, site: symbol, op: symbol, proc: symbol)
+.input task_handled
+
+.decl task_escapes(proc: symbol)
+.input task_escapes
+
+// `func` waits on the task started at `start`, which runs `runs`: an await, yield or
+// await_many it makes is handed that task (see runs_elsewhere.dl).
+.decl awaits_task(func: symbol, start: symbol, runs: symbol)
+
+awaits_task(f, start, g) :-
+  task_handled(f, _, op, p),
+  task_wait(op),
+  process_start(start, _, p, "spawn", g).
+
 // ── Derived here, over the staged rows ─────────────────────────────
 
 // Everything that goes to a process: a call, cast or send; signals.dl

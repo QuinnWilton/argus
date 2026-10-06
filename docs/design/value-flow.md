@@ -103,7 +103,10 @@ model. `task_op_source` records what each Task operation is handed.
 Any other call outside the program — an unmodeled library call, a send, a
 dynamic `fun.(...)` or `apply`, a call running a fun the table does not know —
 records what it is handed in `value_escape`. A rule needing to know a value's
-every use treats an escape as a use it cannot see.
+every use treats an escape as a use it cannot see (`clientlib/task_handles.dl`).
+`test/analyses/task_library_flow_test.exs` carries a task through every modeled
+call, both collected and dropped, and fails for a modeled call without an
+entry.
 
 ## Precision and coverage limits
 

@@ -1,0 +1,109 @@
+// Where a task's handle goes — derived in the points-to stage, from what each
+// source may point to, and staged for the analyses (staged_processes.dl).
+//
+// A Task.async (or Task.Supervisor.async/async_nolink) start allocates a
+// process, and the %Task{} it answers holds it under :pid (TermFlow). The
+// handle is that term, or any term holding it: a list of tasks, a tuple, a
+// server's state. It is handled where a Task operation is handed a term
+// holding it (task_op_source), and it escapes where value flow stops
+// following it: handed to code no summary describes (value_escape, or a
+// function the program does not define), enumerated as a map or tuple,
+// answered to a caller outside the program, or resolved coarsely by the
+// bounded stage. A task neither handled nor escaped is one whose every use
+// value flow saw, and none of them handles it.
+//
+// Included by points_to.dl after processes.dl, runs_elsewhere.dl and
+// pervasive.dl.
+
+// A task process: a start the Task API answers a %Task{} for.
+.decl task_process(proc: symbol)
+
+task_process(p) :-
+  process_start(id, f, p, "spawn", _),
+  call_site(id, f, m, a, _),
+  task_start_api(m, a, _).
+
+// The %Task{} a start answers (TermFlow names it by the start's site), or a
+// term holding it. The task's pid alone is no handle: nothing can await it.
+.decl task_handle(x: symbol, proc: symbol)
+
+task_handle(o, p) :-
+  task_process(p),
+  process_start(o, _, p, _, _),
+  value_object(_, o, "map", _, _).
+
+task_handle(o, p) :- field_pts(o, _, x), task_handle(x, p).
+
+// The Task operation at `site` in `func` does `op` to the task `proc`.
+.decl task_handled(func: symbol, site: symbol, op: symbol, proc: symbol)
+
+task_handled(f, id, op, p) :-
+  task_op_source(id, f, op, sk, s),
+  source_pts(f, sk, s, x),
+  task_handle(x, p).
+
+.output task_handled(filename="task_handled.facts")
+
+// The task's handle goes where value flow does not follow it.
+.decl task_escapes(proc: symbol)
+
+task_escapes(p) :-
+  value_escape(_, f, sk, s),
+  source_pts(f, sk, s, x),
+  task_handle(x, p).
+
+// A call into a function the program does not define: a module not
+// analyzed, or one only the runtime loads.
+task_escapes(p) :-
+  value_arg(_, f, g, _, "call", sk, s),
+  !function_def(g, _, _, _, _),
+  source_pts(f, sk, s, x),
+  task_handle(x, p).
+
+// Answered to a caller outside the program.
+task_escapes(p) :-
+  answers_outside(g),
+  returns_all(g, x),
+  task_handle(x, p).
+
+// A server callback's answer: its state is the next callback's
+// (processes.dl's state_pts), anything else in it — a reply — leaves.
+task_escapes(p) :-
+  state_out(_, g),
+  returns_all(g, t),
+  value_object(_, t, "tuple", tag, n),
+  state_slot(tag, n, sel),
+  field_pts(t, other, x),
+  other != sel,
+  task_handle(x, p).
+
+// The bounded stage resolved the task coarsely: what holds it is not
+// known exactly (pervasive.dl).
+task_escapes(p) :- task_process(p), pervasive(p).
+
+.output task_escapes(filename="task_escapes.facts")
+
+// A function whose answer goes to a caller value flow does not see.
+//
+// An exported function the program never calls, whose every way out hands back
+// a call's answer (answers_call, the must-return relation): its callers are
+// outside the program. One the program calls hands its answer to those calls,
+// which value flow follows, and one handing back something else on some way out
+// leaves a task it started there to nobody. A server callback's answer is the
+// server's (above).
+//
+// A fun run where no element_fun row says what its answer becomes.
+.decl answers_outside(func: symbol)
+
+answers_outside(g) :-
+  function_def(g, _, _, _, 1),
+  !state_out(_, g),
+  !called_in_program(g),
+  answers_call(g, _, _).
+
+answers_outside(g) :- closure_def(_, g), !element_fun(_, _, g, _).
+answers_outside(g) :- fun_handed(id, f, g, _), !element_fun(id, f, g, _).
+
+.decl called_in_program(func: symbol)
+
+called_in_program(g) :- call_edge(f, g), f != g.

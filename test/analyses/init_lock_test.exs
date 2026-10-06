@@ -39,6 +39,9 @@ defmodule Argus.Analyses.InitLockTest do
       InitLock.SpawnedLock,
       InitLock.AwaitedTask,
       InitLock.UnawaitedTask,
+      InitLock.AwaitedFromClosures,
+      InitLock.AwaitedInHelper,
+      InitLock.AwaitsAnotherTask,
       InitLock.SharedHelper,
       InitLock.SharedHelperEntered
     ]
@@ -161,6 +164,23 @@ defmodule Argus.Analyses.InitLockTest do
 
     test "a task awaited only in a later callback does not", %{by_module: by_module} do
       not_init_lock(by_module, InitLock.UnawaitedTask)
+    end
+
+    # The wait is on the task's own handle (task_handled), wherever the
+    # task starts and wherever the await is.
+    test "tasks started in a comprehension's closures and awaited by init/1 hold it",
+         %{by_module: by_module} do
+      f = init_lock(by_module, InitLock.AwaitedFromClosures)
+      assert f.title == "Cluster-wide lock during init"
+    end
+
+    test "a task a helper awaits holds init/1", %{by_module: by_module} do
+      f = init_lock(by_module, InitLock.AwaitedInHelper)
+      assert f.title == "Cluster-wide lock during init"
+    end
+
+    test "awaiting a different task does not", %{by_module: by_module} do
+      not_init_lock(by_module, InitLock.AwaitsAnotherTask)
     end
   end
 

@@ -69,9 +69,9 @@ defmodule Argus.Extractors.ErrorHandling do
     `:gen_statem.call`, `:erpc.call`, ...) the `try` at `id` guards
   - `mailbox_writer(id, func, kind)` — a call after which something other
     than a peer's request lands in this process's mailbox: `task` (a
-    Task.async reply, or an async_nolink collected in the same function),
-    `task_nolink` (an async_nolink whose reply and :DOWN reach
-    handle_info/2), `timer` (send_after / send_interval carrying a ref or
+    Task.async reply), `task_nolink` (an async_nolink's reply and :DOWN,
+    which reach handle_info/2 unless the program collects the task:
+    mailbox.dl decides from where its handle goes), `timer` (send_after / send_interval carrying a ref or
     a computed value), `timer_bare` (a timer whose message is a bare atom
     or literal, indistinguishable from an earlier instance), `cancel`
     (cancel_timer), `pubsub` (a subscription), `self` (the function sends
@@ -480,8 +480,10 @@ defmodule Argus.Extractors.ErrorHandling do
     {Task, :async, 1} => "task",
     {Task, :async, 3} => "task",
     {Task.Supervisor, :async, 2} => "task",
+    {Task.Supervisor, :async, 3} => "task",
     {Task.Supervisor, :async, 4} => "task",
     {Task.Supervisor, :async_nolink, 2} => "task_nolink",
+    {Task.Supervisor, :async_nolink, 3} => "task_nolink",
     {Task.Supervisor, :async_nolink, 4} => "task_nolink",
     # {"timer", msg, dest}: the registers holding the message and the
     # destination. Process.send_after(dest, msg, time) compiles to
@@ -539,13 +541,6 @@ defmodule Argus.Extractors.ErrorHandling do
         facts
         |> add_fact(:mailbox_writer, [id, ctx.func_id, "cancel"])
         |> add_fact(:timer_cancel, [id, ctx.func_id, source, key, to_string(param)])
-
-      {:ok, "task_nolink"} ->
-        add_fact(facts, :mailbox_writer, [
-          InstrId.mint(ctx.func_id, ctx.idx),
-          ctx.func_id,
-          if(collects_task?(ctx.instrs), do: "task", else: "task_nolink")
-        ])
 
       {:ok, kind} ->
         id = InstrId.mint(ctx.func_id, ctx.idx)
@@ -1586,31 +1581,6 @@ defmodule Argus.Extractors.ErrorHandling do
   defp bare_message?([]), do: true
   defp bare_message?([head | tail]), do: bare_message?(head) and bare_message?(tail)
   defp bare_message?(_msg), do: false
-
-  # An async_nolink task collected in the same function (await, yield,
-  # shutdown, ignore) leaves nothing for handle_info/2.
-  @task_collectors [
-    {Task, :await, 1},
-    {Task, :await, 2},
-    {Task, :yield, 1},
-    {Task, :yield, 2},
-    {Task, :yield_many, 1},
-    {Task, :yield_many, 2},
-    {Task, :shutdown, 1},
-    {Task, :shutdown, 2},
-    {Task, :ignore, 1},
-    {Task, :await_many, 1},
-    {Task, :await_many, 2}
-  ]
-
-  defp collects_task?(instrs) do
-    Enum.any?(instrs, fn instr ->
-      case match_remote_call(instr) do
-        {:ok, m, f, a} -> {m, f, a} in @task_collectors
-        _ -> false
-      end
-    end)
-  end
 
   # ── RPC results ────────────────────────────────────────────────────
 

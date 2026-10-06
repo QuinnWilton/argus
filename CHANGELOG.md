@@ -47,6 +47,25 @@ which a change appeared; older names and APIs may have changed since then.
   them as SQL injection and stopped checking the SQL their callers build, such
   as `MyRepo.query!("SELECT ... '#{name}'")`. A module's own default-argument
   functions also looked macro-generated. Both are fixed, on 1.19 and 1.20.
+- "Async task never awaited" now follows each task itself, not the function that
+  starts it (#10). Awaited tasks started in a comprehension or an `Enum`
+  callback, such as `tasks = for a <- as, b <- bs, do: Task.async(...)` followed
+  by `Task.await_many(tasks)`, are no longer reported; dropped ones are now
+  caught, such as `_ = Enum.map(urls, fn url -> Task.async(...) end)`, or tasks
+  started beside another task the function does await. A task handed somewhere
+  argus cannot follow (a send, an unmodeled call, a public function's return) is
+  not reported.
+- An `async_nolink` task's reply and `:DOWN` are reported as unhandled only when
+  that task is not collected: collecting it in a helper, or after `Enum.map`, no
+  longer triggers "No handle_info/2 clause", and collecting a different task no
+  longer hides it. `Task.Supervisor.async/3` and `async_nolink/3` are now
+  recognized.
+- Deadlock and startup checks treat a function as waiting on exactly the tasks
+  it awaits, wherever they were started: `init/1` awaiting tasks a comprehension
+  started now waits on their work, and awaiting one task no longer counts as
+  waiting on another.
+- "Task.async in library code" is noted only when the program collects that
+  task, not any task.
 - Processes spawned in an `Enum.map` callback and monitored afterwards, as in
   `Enum.each(pids, &Process.monitor/1)`, are no longer reported as "Unlinked
   process spawned".
@@ -128,6 +147,9 @@ Custom Datalog consumers must account for:
   map key that is not a literal is held under `@key`, and `**` reads any field.
 - `element_fun`'s `answers` column says whether the library call keeps or drops
   what the fun answers.
+- The points-to stage stages `task_handled` (which Task operation is handed
+  which task) and `task_escapes` (tasks whose handle goes where value flow
+  stops), from `clientlib/task_handles.dl`.
 - `answers_call` and the replacement of `monitor_started` with
   `monitor_answer`, which follows results through wrappers.
 - `clause_event`, the `statem_insert.content` column, and gen_statem clause tags

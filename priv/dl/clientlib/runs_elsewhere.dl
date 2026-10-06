@@ -116,16 +116,10 @@ hands_funs_off(f) :-
   (m = "Supervisor" ; m = "DynamicSupervisor").
 
 // Awaited task work still runs in another process, but holds the caller. Wait analyses
-// may cross this boundary. `start` is the async site. Collection is function-level: any
-// await, yield, or await_many is taken to collect the task.
-.decl awaits_task(func: symbol, start: symbol, runs: symbol)
-
-awaits_task(f, id, g) :-
-  process_start(id, f, _, "spawn", g),
-  call_site(id, f, m, a, _),
-  task_start_api(m, a, _),
-  call_site(_, f, "Task", w, _),
-  task_wait(w).
+// may cross this boundary through `awaits_task(func, start, runs)`: `func` waits on the
+// task started at `start`, which runs `runs`. staged_processes.dl derives it from the
+// task's handle, wherever it was started; effects.dl, which reads no points-to, from the
+// function starting a task and waiting on any.
 
 // Reply-producing task APIs send `{ref, result}` and :DOWN. Linked variants can also
 // crash the caller or deliver :EXIT when it traps. Unlinked variants leave replies and

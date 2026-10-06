@@ -33,7 +33,7 @@ defmodule Argus.Analysis.Extraction do
   @points_to_relations ~w(server_process instance supervised_process private_process process
                           named_pid process_call process_signal call_site_target self_call
                           source_process source_table coarse_table kept_in_dictionary
-                          points_to_mode)
+                          task_handled task_escapes points_to_mode)
 
   @doc """
   Derives the stage-0 relations into an existing facts directory.

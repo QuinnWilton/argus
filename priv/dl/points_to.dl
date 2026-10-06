@@ -32,6 +32,7 @@
 .include "clientlib/runs_elsewhere.dl"
 .include "clientlib/processes.dl"
 .include "clientlib/pervasive.dl"
+.include "clientlib/task_handles.dl"
 
 stage_mode("exact").
 
