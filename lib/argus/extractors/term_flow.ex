@@ -639,7 +639,7 @@ defmodule Argus.Extractors.TermFlow do
 
   # ── What an instruction writes ───────────────────────────────────────
 
-  defp new_result, do: %{writes: [], objs: [], read_objs: [], loads: []}
+  defp new_result, do: %{writes: [], objs: [], read_objs: [], loads: [], unseen: MapSet.new()}
 
   defp evaluate(idx, fun, state) do
     ctx = %{idx: idx, fun: fun, state: state}
@@ -1510,9 +1510,17 @@ defmodule Argus.Extractors.TermFlow do
   # directly (its field, a map's unknown-key field, and the base's field
   # when the term does not set it); a term from elsewhere becomes a load
   # the Datalog resolves; a pid has no fields.
+  #
+  # A read with an unknown key follows only the unknown-key field: what a
+  # map built here holds under a literal key it may return goes where
+  # value flow does not follow (`unseen`, emitted as `value_escape`).
   defp load(ctx, value, sel, id, r) do
     {sources, dependencies, loads} = Heap.read(ctx.state.objs, value, sel, id)
-    {sources, %{r | read_objs: dependencies ++ r.read_objs, loads: loads ++ r.loads}}
+    r = %{r | read_objs: dependencies ++ r.read_objs, loads: loads ++ r.loads}
+
+    if sel == "*",
+      do: {sources, %{r | unseen: MapSet.union(r.unseen, Heap.unseen(ctx.state.objs, value))}},
+      else: {sources, r}
   end
 
   # A map key as a field name: the inspected literal, or `*`.
@@ -1599,10 +1607,7 @@ defmodule Argus.Extractors.TermFlow do
       result = evaluate(idx, fun, ctx.state)
       at = Map.put(ctx, :idx, idx)
 
-      acc =
-        Enum.reduce(result.loads, acc, fn {id, sel, token}, inner ->
-          sources(inner, ctx, :value_load, [fun.func_id, id, sel], MapSet.new([token]))
-        end)
+      acc = emit_loads(acc, at, result)
 
       case Map.fetch(fun.sites, idx) do
         {:ok, site} -> emit_site(acc, at, ictx, site)
@@ -2252,10 +2257,19 @@ defmodule Argus.Extractors.TermFlow do
     end
   end
 
+  # The loads an evaluation made, and what its unknown-key reads could not
+  # see (`load/5`), escaped at this instruction.
   defp emit_loads(facts, at, r) do
-    Enum.reduce(r.loads, facts, fn {id, sel, token}, inner ->
+    r.loads
+    |> Enum.reduce(facts, fn {id, sel, token}, inner ->
       sources(inner, at, :value_load, [at.fun.func_id, id, sel], MapSet.new([token]))
     end)
+    |> sources(
+      at,
+      :value_escape,
+      [site(at.fun, at.idx), at.fun.func_id],
+      Map.get(r, :unseen, MapSet.new())
+    )
   end
 
   # ── Sources as rows ──────────────────────────────────────────────────

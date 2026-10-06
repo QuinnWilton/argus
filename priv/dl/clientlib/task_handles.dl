@@ -60,6 +60,18 @@ task_escapes(p) :-
   source_pts(f, sk, s, x),
   task_handle(x, p).
 
+// An unknown-key read of a map holding it under a literal key: the read follows only
+// the map's unknown-key field (processes.dl), so what it may return goes unfollowed.
+// TermFlow records the same for a map built where it is read (value_escape).
+task_escapes(p) :-
+  value_load(f, _, "*", sk, s),
+  source_pts(f, sk, s, o),
+  value_object(_, o, "map", _, _),
+  field_pts(o, sel, x),
+  sel != "*",
+  sel != "@key",
+  task_handle(x, p).
+
 // Answered to a caller outside the program.
 task_escapes(p) :-
   answers_outside(g),

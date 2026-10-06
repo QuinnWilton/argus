@@ -161,6 +161,13 @@ defmodule Argus.Test.Fixtures.TaskHandles.Escaped do
 
   def called_fun(fun, x), do: fun.(Task.async(fn -> x end))
 
+  # Put under a literal key, read back with an unknown one: the read
+  # follows only the map's unknown-key field.
+  def unknown_key(x, key) do
+    jobs = Map.put_new_lazy(%{}, :a, fn -> Task.async(fn -> x end) end)
+    Task.await(Map.get_lazy(jobs, key, fn -> nil end))
+  end
+
   # Library calls no summary describes.
   def chunked(xs) do
     tasks = Enum.map(xs, fn x -> Task.async(fn -> x end) end)

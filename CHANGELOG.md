@@ -55,6 +55,10 @@ which a change appeared; older names and APIs may have changed since then.
   started beside another task the function does await. A task handed somewhere
   argus cannot follow (a send, an unmodeled call, a public function's return) is
   not reported.
+- A task stored in a map under a literal key and read back with a dynamic one,
+  such as `Map.get(jobs, key)` after `Map.put(jobs, :a, Task.async(...))`, is no
+  longer reported as never awaited. argus cannot tell which value such a read
+  returns, so it treats the task as handed somewhere it cannot follow.
 - An `async_nolink` task's reply and `:DOWN` are reported as unhandled only when
   that task is not collected: collecting it in a helper, or after `Enum.map`, no
   longer triggers "No handle_info/2 clause", and collecting a different task no

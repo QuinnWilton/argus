@@ -29,6 +29,7 @@ defmodule Argus.Extractors.TermFlowHigherOrderTest do
         def kept(x), do: Process.put(:key, x)
         def kept_anywhere(key, x), do: Process.put(key, x)
         def keyed(key, x), do: %{key => x}
+        def unknown_key_read(key, x), do: Map.get(%{a: x}, key)
         def monitor_all(pids), do: Enum.each(pids, &Process.monitor/1)
         def updated_from(map, x), do: Enum.map(%{map | a: x}, fn {_k, v} -> v end)
         def updated_local(x, y), do: Enum.map(Map.put(%{a: x}, :b, y), fn {_k, v} -> v end)
@@ -184,5 +185,11 @@ defmodule Argus.Extractors.TermFlowHigherOrderTest do
 
     assert ["monitor_all/1", load, "[]", "param", "0"] in rows.value_load
     refute Enum.any?(rows.value_escape, &match?([_, "monitor_all/1" | _], &1))
+  end
+
+  test "an unknown-key read cannot see a literal key's value: it escapes", %{rows: rows} do
+    # Map.get(%{a: x}, key) reads only the unknown-key field, which holds
+    # nothing; x, under :a, may be what it answers.
+    assert Enum.any?(rows.value_escape, &match?([_, "unknown_key_read/2", "param", "1"], &1))
   end
 end

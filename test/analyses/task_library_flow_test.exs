@@ -547,6 +547,16 @@ defmodule Argus.Analyses.TaskLibraryFlowTest do
     Enum.join(lines ++ [tail], "\n    ")
   end
 
+  # A map holding the task under a literal key (`:a`), read later with
+  # the unknown key `k`: the read follows only the map's unknown-key
+  # field, so the task escapes there and is not reported, dropped or not.
+  defp escapes_by_unknown_key?(%{steps: steps}) do
+    steps
+    |> Enum.drop_while(fn {_mfa, _from, expr, to} -> not (to == :map and expr =~ ~r/:a\b/) end)
+    |> Enum.drop(1)
+    |> Enum.any?(fn {_mfa, from, expr, _to} -> from == :map and expr =~ ~r/\bk\b/ end)
+  end
+
   property "a chain of catalogued calls carries the task to what the chain does with it" do
     check all(chains <- list_of(a_chain(), min_length: 4, max_length: 12), max_runs: 8) do
       functions =
@@ -557,7 +567,9 @@ defmodule Argus.Analyses.TaskLibraryFlowTest do
       reported = never_awaited(quietly_compile(source))
 
       for {chain, i} <- Enum.with_index(chains) do
-        assert MapSet.member?(reported, "chain_#{i}") == (chain.fate == :dropped),
+        reportable? = chain.fate == :dropped and not escapes_by_unknown_key?(chain)
+
+        assert MapSet.member?(reported, "chain_#{i}") == reportable?,
                "chain_#{i} (#{chain.fate}) through " <>
                  Enum.map_join(chain.steps, ", ", fn {{m, f, a}, _, _, _} ->
                    "#{inspect(m)}.#{f}/#{a}"

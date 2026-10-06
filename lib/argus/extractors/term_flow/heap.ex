@@ -102,6 +102,34 @@ defmodule Argus.Extractors.TermFlow.Heap do
       else: own
   end
 
+  @doc """
+  What an unknown-key read (`*`) of the maps `value` names cannot see:
+  the values they, and the maps they are updated from, hold under literal
+  keys. The read follows `*` alone (above), so these go unfollowed.
+  """
+  @spec unseen(objects(), value()) :: value()
+  def unseen(objs, value), do: unseen(objs, MapSet.to_list(value), %{}, MapSet.new())
+
+  defp unseen(_objs, [], _seen, acc), do: acc
+
+  defp unseen(objs, [{:obj, key} | rest], seen, acc) when not is_map_key(seen, key) do
+    case Map.get(objs, key) do
+      %{shape: "map", fields: fields, base: base} ->
+        held =
+          for {sel, v} <- fields,
+              sel not in ["*", "@key"],
+              reduce: acc,
+              do: (a -> MapSet.union(a, v))
+
+        unseen(objs, MapSet.to_list(base) ++ rest, Map.put(seen, key, true), held)
+
+      _ ->
+        unseen(objs, rest, Map.put(seen, key, true), acc)
+    end
+  end
+
+  defp unseen(objs, [_token | rest], seen, acc), do: unseen(objs, rest, seen, acc)
+
   @doc "Objects transitively containing a source, excluding bare closures."
   @spec live(objects()) :: %{term() => true}
   def live(objs), do: live(objs, %{})
