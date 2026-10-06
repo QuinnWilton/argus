@@ -29,6 +29,16 @@ defmodule Argus.Graph.RulesTest do
   a rule edit by editing a copy of argus's Datalog tree (`:dl_root`).
   The query log's telemetry handlers are VM-wide, so the graphs run in
   this module's peer (`Argus.Test.Peer`).
+
+  The edits to extraction code, which run over a store of their own,
+  stop at the program's relations and never solve: a cold solve there
+  is most of such a check's run, and its edits solve nothing. A solve's
+  inputs are those relations' digests, and nothing past the modules'
+  facts reads the producers' code (checked on its own): such an edit
+  reaches a solve only through facts that come out different. So
+  "nothing past the facts runs, and the relations are as they were" is
+  "solves nothing", as the producers' code check shows down to the
+  solves.
   """
 
   use ExUnit.Case, async: true
@@ -64,9 +74,11 @@ defmodule Argus.Graph.RulesTest do
   # cold, with a copy of argus's Datalog tree to edit and a query log
   # attached, reset: it sees only what `fun` makes happen. `fun` takes the
   # database, the log, and the tree's root. The database takes the
-  # context's `db_opts` (`Argus.Test.Graph.new_db/2`).
+  # context's `db_opts` (`Argus.Test.Graph.new_db/2`); with `cold:
+  # :relations` the cold run stops at the program's relations, unsolved.
   defp in_graph(%{peer: peer, paths: paths} = context, fun) do
     opts = Map.get(context, :db_opts, [])
+    cold = Map.get(context, :cold, :findings)
 
     Peer.run(peer, fn ->
       root = Path.join(System.tmp_dir!(), "argus_dl_#{System.unique_integer([:positive])}")
@@ -76,7 +88,7 @@ defmodule Argus.Graph.RulesTest do
       try do
         db = Graph.new_db(paths, opts)
         log = QueryLog.start(db)
-        findings!(db)
+        if cold == :relations, do: relations!(db), else: findings!(db)
         QueryLog.reset(log)
 
         try do
@@ -99,6 +111,14 @@ defmodule Argus.Graph.RulesTest do
     end
 
     :ok
+  end
+
+  # The digest of each relation the program's modules have rows for: what
+  # a solve's inputs are named by (`Argus.Graph.Relations`).
+  defp relations!(db) do
+    relations = Roux.Runtime.query(db, :program_relations, :test)
+    assert [_ | _] = Map.keys(relations)
+    relations
   end
 
   # A declaration nothing reads: the program's text moves (a comment
@@ -287,13 +307,16 @@ defmodule Argus.Graph.RulesTest do
   # their own.
   test "an edit to one extractor re-runs that extractor alone, over each module's kept base",
        %{paths: paths} = context do
-    in_graph(Map.put(context, :db_opts, store: :temporary), fn db, log, _root ->
+    context = Map.merge(context, %{db_opts: [store: :temporary], cold: :relations})
+
+    in_graph(context, fn db, log, _root ->
       assert [_ | _] = Argus.Graph.Relations.rows(db, :test, :ets_new)
+      relations = relations!(db)
       {:ok, %{value: codes}} = Memo.get(db, {:producer_code, :all})
       edited = "edited #{System.unique_integer([:positive])} #{System.os_time()}"
       :ok = came_out!(db, {:producer_code, :all}, %{codes | Argus.Extractors.ETS => edited})
 
-      extracted = extracted(fn -> findings!(db) end)
+      extracted = extracted(fn -> relations!(db) end)
 
       assert length(QueryLog.executions(log, :module_facts)) == map_size(paths)
       # Inside each module's facts, that producer alone ran, over the base
@@ -302,14 +325,15 @@ defmodule Argus.Graph.RulesTest do
       assert extracted |> Enum.map(&elem(&1, 1)) |> Enum.uniq() == [[Argus.Extractors.ETS]]
       assert extracted |> Enum.map(&elem(&1, 2)) |> Enum.uniq() == [true]
       assert length(extracted) == map_size(paths)
-      # The same rows: nothing past them runs.
+      # The same rows: nothing past them runs, and a solve's inputs are
+      # as they were.
       assert QueryLog.executions(log, :module_semantic) == []
-      assert solved(log) == []
+      assert relations!(db) == relations
 
       # The next edit too.
       again = "#{edited} again"
       :ok = came_out!(db, {:producer_code, :all}, %{codes | Argus.Extractors.ETS => again})
-      extracted = extracted(fn -> findings!(db) end)
+      extracted = extracted(fn -> relations!(db) end)
 
       assert extracted |> Enum.map(&elem(&1, 1)) |> Enum.uniq() == [[Argus.Extractors.ETS]]
       assert extracted |> Enum.map(&elem(&1, 2)) |> Enum.uniq() == [true]
@@ -317,20 +341,23 @@ defmodule Argus.Graph.RulesTest do
       # Undone, the edit finds the rows the code made before, and runs
       # nothing.
       :ok = came_out!(db, {:producer_code, :all}, %{codes | Argus.Extractors.ETS => edited})
-      assert extracted(fn -> findings!(db) end) == []
+      assert extracted(fn -> relations!(db) end) == []
     end)
   end
 
   test "an edit to code every producer runs re-extracts every module, and solves nothing",
        %{paths: paths} = context do
-    in_graph(Map.put(context, :db_opts, store: :temporary), fn db, log, _root ->
+    context = Map.merge(context, %{db_opts: [store: :temporary], cold: :relations})
+
+    in_graph(context, fn db, log, _root ->
+      relations = relations!(db)
       {:ok, %{value: codes}} = Memo.get(db, {:producer_code, :all})
       # As an edit to `Argus.Pipeline` or to code it reaches moves every
       # producer's digest: digests no run has seen.
       run = "#{System.unique_integer([:positive])} #{System.os_time()}"
       :ok = came_out!(db, {:producer_code, :all}, Map.new(codes, &{elem(&1, 0), "edited #{run}"}))
 
-      extracted = extracted(fn -> findings!(db) end)
+      extracted = extracted(fn -> relations!(db) end)
 
       assert length(QueryLog.executions(log, :module_facts)) == map_size(paths)
       # Every applicable producer ran from the beam. Selectors need no local
@@ -354,10 +381,10 @@ defmodule Argus.Graph.RulesTest do
       end
 
       assert extracted |> Enum.map(&elem(&1, 2)) |> Enum.uniq() == [false]
-      # The same rows, the same packs: nothing past them runs.
+      # The same rows, the same packs: nothing past them runs, and a
+      # solve's inputs are as they were.
       assert QueryLog.executions(log, :module_semantic) == []
-      assert staged(log) == []
-      assert solved(log) == []
+      assert relations!(db) == relations
     end)
   end
 
