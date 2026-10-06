@@ -2,14 +2,16 @@ defmodule Argus.Graph.FreshVmTest do
   @moduledoc """
   A module's facts extracted in one VM are found again in a fresh one
   through the store (`Argus.Graph.Pack`'s trace), with nothing extracted
-  there: the trace holds no atom a fresh VM may not have made. A callee
-  outside the program is one: its name is only in the caller's atom
-  table, which nothing on the warm path reads, and `Roux.Blob` decodes
-  a trace only when every atom in it exists.
+  there: whatever the trace is checked against comes out the same
+  there. A callee outside the program is one such read: its specs read
+  as absent (`installed_specs`). Its name is only in the caller's atom
+  table, which nothing on the warm path reads; the fresh VM makes it as
+  it decodes the trace (`Roux.Blob` decodes without `:safe`).
 
-  So is a function a finding names, when its module was not extracted
-  again: an edit that only moves another module's lines places the
-  findings again from the kept ones, never building them anew.
+  The kept findings come back the same way: an edit that only moves
+  another module's lines places them again from the kept ones, never
+  building them anew, though the functions they name are atoms the
+  fresh VM had not made.
 
   Those names are made at run time and only strings go to the peer:
   this module's own bytecode is loaded there, and a literal of one
