@@ -32,81 +32,33 @@ defmodule Argus.Graph.Identity.ProducerClosureTest do
     async: true,
     parameterize: for(part <- 0..2, do: %{part: part, parts: 3})
 
+  use Argus.Test.Peer
+
   @moduletag :identity_verify
   # Minutes under a full suite's load.
   @moduletag timeout: 600_000
 
   alias Argus.Graph.Code
   alias Argus.Graph.Reads
-
-  # Runs in a fresh VM: call counts are VM-wide, and this one runs other
-  # tests beside it.
-  @measure ~S"""
-  # The code, not the fixtures it reads.
-  mods =
-    for app <- [:argus_beam, :beam_spy, :ctf],
-        mod <- Application.spec(app, :modules) || [],
-        not String.starts_with?(Atom.to_string(mod), ["Elixir.Argus.Test.", "Elixir.Inspect."]),
-        do: mod
-
-  Enum.each(mods, &Code.ensure_loaded/1)
-
-  extract = fn beam, opts ->
-    {:ok, %{status: :ok} = extraction} = Argus.Pipeline.extract_module(beam, opts)
-    extraction
-  end
-
-  # The bases the extractors run over, kept untraced.
-  bases = Map.new(beams, &{&1, extract.(&1, producers: [:base], keep_base: true).base})
-
-  # Counted from here on; each producer's count starts again at zero,
-  # which costs a twentieth of turning the counting off and on again.
-  for m <- mods, do: :erlang.trace_pattern({m, :_, :_}, true, [:call_count])
-
-  run = fn producer, opts ->
-    :erlang.trace_pattern({:_, :_, :_}, :restart, [:call_count])
-
-    for beam <- beams do
-      extract.(beam, [producers: [producer], trace_imprecision: true] ++ opts.(beam))
-    end
-
-    Enum.filter(mods, fn m ->
-      Enum.any?(m.module_info(:functions), fn {f, a} ->
-        f not in [:module_info, :__info__] and
-          match?({:call_count, n} when n > 0, :erlang.trace_info({m, f, a}, :call_count))
-      end)
-    end)
-  end
-
-  Map.new(producers, fn
-    :base -> {:base, run.(:base, fn _beam -> [keep_base: true] end)}
-    extractor -> {extractor, run.(extractor, &[base: bases[&1]])}
-  end)
-  """
+  alias Argus.Test.CallCount
+  alias Argus.Test.Peer
 
   test "every module a producer executes is in its closure", %{part: part, parts: parts} do
-    paths = Argus.Test.FixtureSpread.beams(Argus.Test.FixtureSpread.spread())
+    beams = Argus.Test.FixtureSpread.beams(Argus.Test.FixtureSpread.spread())
 
     producers =
       for {producer, i} <- Enum.with_index(Argus.Graph.Extraction.producers()),
           rem(i, parts) == part,
           do: producer
 
-    {:ok, peer, _node} = :peer.start_link(%{connection: :standard_io})
+    # Call counts are VM-wide, and this VM runs other tests beside this.
+    peer = Peer.start!(code_path: :this)
 
     executed =
-      try do
-        # Bounded by the test's timeout, not `:peer.call/4`'s five
-        # seconds, which starting the applications outlasted on a loaded
-        # machine.
-        :ok = :peer.call(peer, :code, :add_pathsa, [:code.get_path()], :infinity)
-        {:ok, _} = :peer.call(peer, :application, :ensure_all_started, [:argus_beam], :infinity)
-        binding = [beams: paths, producers: producers]
-        {executed, _} = :peer.call(peer, Elixir.Code, :eval_string, [@measure, binding], 300_000)
-        executed
-      after
-        :peer.stop(peer)
-      end
+      Peer.run(peer, fn ->
+        {:ok, _} = Application.ensure_all_started(:argus_beam)
+        executed(beams, producers)
+      end)
 
     for producer <- producers do
       {:ok, closure} = Code.closure(producer)
@@ -122,5 +74,34 @@ defmodule Argus.Graph.Identity.ProducerClosureTest do
              "#{inspect(producer)} computes the decoded facts over a kept base: " <>
                "add it to Argus.Pipeline's @typed_readers"
     end
+  end
+
+  # Runs in the peer: the modules each producer executes, the base
+  # afresh and each extractor over the bases it kept, uncounted.
+  defp executed(beams, producers) do
+    bases = Map.new(beams, &{&1, extract!(&1, producers: [:base], keep_base: true).base})
+
+    CallCount.counting(fn ->
+      Map.new(producers, fn producer ->
+        opts = fn
+          _beam when producer == :base -> [keep_base: true]
+          beam -> [base: bases[beam]]
+        end
+
+        {_, calls} =
+          CallCount.calls(fn ->
+            for beam <- beams,
+                do:
+                  extract!(beam, [producers: [producer], trace_imprecision: true] ++ opts.(beam))
+          end)
+
+        {producer, CallCount.modules(calls)}
+      end)
+    end)
+  end
+
+  defp extract!(beam, opts) do
+    {:ok, %{status: :ok} = extraction} = Argus.Pipeline.extract_module(beam, opts)
+    extraction
   end
 end
