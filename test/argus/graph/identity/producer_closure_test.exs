@@ -41,10 +41,12 @@ defmodule Argus.Graph.Identity.ProducerClosureTest do
   alias Argus.Graph.Code
   alias Argus.Graph.Reads
   alias Argus.Test.CallCount
+  alias Argus.Test.FixtureSpread
   alias Argus.Test.Peer
+  alias Roux.Code.Verify
 
   test "every module a producer executes is in its closure", %{part: part, parts: parts} do
-    beams = Argus.Test.FixtureSpread.beams(Argus.Test.FixtureSpread.spread())
+    beams = FixtureSpread.beams(FixtureSpread.spread())
 
     producers =
       for {producer, i} <- Enum.with_index(Argus.Graph.Extraction.producers()),
@@ -81,23 +83,27 @@ defmodule Argus.Graph.Identity.ProducerClosureTest do
   defp executed(beams, producers) do
     bases = Map.new(beams, &{&1, extract!(&1, producers: [:base], keep_base: true).base})
 
-    CallCount.counting(fn ->
-      Map.new(producers, fn producer ->
-        opts = fn
-          _beam when producer == :base -> [keep_base: true]
-          beam -> [base: bases[beam]]
-        end
+    Verify.counting(
+      fn session -> Map.new(producers, &{&1, executed(session, &1, beams, bases)}) end,
+      modules: CallCount.code()
+    )
+  end
 
-        {_, calls} =
-          CallCount.calls(fn ->
-            for beam <- beams,
-                do:
-                  extract!(beam, [producers: [producer], trace_imprecision: true] ++ opts.(beam))
-          end)
+  # The modules one producer executes over every beam, read within the
+  # session.
+  defp executed(session, producer, beams, bases) do
+    opts = fn
+      _beam when producer == :base -> [keep_base: true]
+      beam -> [base: bases[beam]]
+    end
 
-        {producer, CallCount.modules(calls)}
+    {_, calls} =
+      Verify.calls(session, fn ->
+        for beam <- beams,
+            do: extract!(beam, [producers: [producer], trace_imprecision: true] ++ opts.(beam))
       end)
-    end)
+
+    Verify.modules(calls)
   end
 
   defp extract!(beam, opts) do
