@@ -42,6 +42,11 @@ which a change appeared; older names and APIs may have changed since then.
 
 ### Fixed
 
+- On Elixir 1.20, Ecto's generated `Repo.query/1,2` (the default-argument
+  versions of `query/3`) were no longer recognized as generated: argus reported
+  them as SQL injection and stopped checking the SQL their callers build, such
+  as `MyRepo.query!("SELECT ... '#{name}'")`. A module's own default-argument
+  functions also looked macro-generated. Both are fixed, on 1.19 and 1.20.
 - Count a `trap_exit` set by a function a `proc_lib` start runs when that
   function goes on to enter its own module's loop
   (`gen_server:enter_loop(?MODULE, ...)` or `gen_statem:enter_loop/4,5,6`):

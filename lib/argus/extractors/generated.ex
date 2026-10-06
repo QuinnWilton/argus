@@ -57,8 +57,12 @@ defmodule Argus.Extractors.Generated do
   def extract(module_data) do
     mod = module_data.module
 
+    definitions = definitions(module_data)
+    index = Map.new(definitions, fn {fun, _kind, meta, clauses} -> {fun, {meta, clauses}} end)
+
     facts =
-      for {{name, arity}, _kind, meta, clauses} <- definitions(module_data),
+      for {{name, arity} = fun, _kind, _meta, _clauses} <- definitions,
+          {meta, clauses} = origin(index, fun),
           by = generated_by(meta, mod),
           by != nil,
           reduce: %{} do
@@ -138,6 +142,25 @@ defmodule Argus.Extractors.Generated do
   defp otp_header?(file) do
     Path.basename(file) in @generator_templates or
       Regex.match?(~r{/lib/[a-z][a-z0-9_]*-[0-9][^/]*/include/[^/]+\.hrl$}, file)
+  end
+
+  # A default-argument shim (`f/1` and `f/2` of `def f(a, b \\ 1, c \\ 2)`)
+  # is the compiler's: its body calls the definition it fills defaults
+  # for, and it was written wherever that definition was. Elixir 1.19
+  # gives it the definition's context; 1.20 its own, `:elixir_def`, for
+  # every shim, a module's own included.
+  defp origin(index, fun) do
+    {meta, clauses} = Map.fetch!(index, fun)
+
+    with :elixir_def <- Keyword.get(meta, :context),
+         [{_meta, _args, _guards, {:super, super, args}}] <- clauses,
+         true <- Keyword.get(super, :default, false),
+         {:def, name} <- Keyword.get(super, :super),
+         {:ok, target} <- Map.fetch(index, {name, length(args)}) do
+      target
+    else
+      _ -> {meta, clauses}
+    end
   end
 
   defp clause_generated?({meta, _args, _guards, _body}, mod), do: generated_by(meta, mod) != nil

@@ -25,6 +25,33 @@ defmodule Argus.Extractors.GeneratedTest do
     end
   end
 
+  describe "default-argument shims" do
+    # Elixir 1.20 gives every shim the compiler's own context
+    # (`:elixir_def`); a shim was written where its definition was.
+    test "a module's own definition's shims are its own" do
+      [{_mod, bin}] =
+        Code.compile_string("""
+        defmodule Argus.GeneratedTest.OwnDefaults do
+          def own(a, b \\\\ 1, c \\\\ 2), do: {a, b, c}
+        end
+        """)
+
+      {:ok, facts} = Argus.Pipeline.extract([bin], extractors: [Generated])
+      assert Map.get(facts, :macro_generated, []) == []
+      assert Map.get(facts, :macro_written, []) == []
+    end
+
+    test "a macro's definition's shims are the macro's" do
+      facts = facts(Argus.Test.Fixtures.SqlRepoGenerated)
+      mod = "Argus.Test.Fixtures.SqlRepoGenerated"
+
+      for fun <- ~w(query/1 query/2 query!/1 query!/2) do
+        assert ["#{mod}:#{fun}", "Ecto.Adapters.SQL"] in facts[:macro_generated], fun
+        assert ["#{mod}:#{fun}"] in facts[:macro_written], fun
+      end
+    end
+  end
+
   describe "an OTP header's functions" do
     test "a function under a -file naming an OTP header is that header's" do
       facts = facts(:header_catchall)
