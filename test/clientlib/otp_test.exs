@@ -1,22 +1,17 @@
 defmodule Argus.Clientlib.OtpTest do
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
   alias Argus.Pipeline
   alias Argus.Souffle
 
   @moduletag :tmp_dir
 
-  defp skip_without_souffle do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-  end
-
   defp priv_dl, do: Path.join(:code.priv_dir(:argus_beam), "dl")
 
   describe "otp.dl" do
     @tag :tmp_dir
     test "identifies init functions and GenServer sync API", %{tmp_dir: tmp_dir} do
-      skip_without_souffle()
-
       facts_dir = Path.join(tmp_dir, "facts")
 
       modules = [
@@ -76,8 +71,6 @@ defmodule Argus.Clientlib.OtpTest do
     test "a module a start names the callback module of runs as that behaviour", %{
       tmp_dir: tmp_dir
     } do
-      skip_without_souffle()
-
       facts_dir = Path.join(tmp_dir, "facts")
 
       # bless_server, bless_bare_sup and bless_statem start themselves

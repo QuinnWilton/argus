@@ -1,7 +1,7 @@
 defmodule Argus.Analyses.ExposureTlsTest do
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
-  alias Argus.Souffle
   alias Argus.Test.Fixtures.Tls, as: T
   alias Argus.Test.Memo
 
@@ -17,10 +17,6 @@ defmodule Argus.Analyses.ExposureTlsTest do
     T.ReturnsOptions
   ]
 
-  defp skip_without_souffle do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-  end
-
   defp funcs(relation) do
     assert {:ok, r} = Memo.analyze(@all, :exposure)
     r |> Map.get(relation, []) |> Enum.map(&hd/1) |> Enum.uniq() |> Enum.sort()
@@ -30,12 +26,10 @@ defmodule Argus.Analyses.ExposureTlsTest do
 
   describe "detection" do
     test "a module that forces verify_none is reported" do
-      skip_without_souffle()
       assert named?(funcs("disables_verification"), "ForcesNone")
     end
 
     test "literal options that never mention :verify are reported" do
-      skip_without_souffle()
       assert named?(funcs("relies_on_default_verification"), "DefaultsSilently")
     end
   end
@@ -47,7 +41,6 @@ defmodule Argus.Analyses.ExposureTlsTest do
     # a configuration surface. RedisStringSink forces :verify_none whenever
     # tls: true and offers nothing else.
     test "a module offering verification too is not reported" do
-      skip_without_souffle()
       names = funcs("disables_verification")
 
       assert named?(names, "ForcesNone")
@@ -62,7 +55,6 @@ defmodule Argus.Analyses.ExposureTlsTest do
     # asks its clients for no certificate: ejabberd's HTTP listener,
     # supavisor's client handler.
     test "a listener's or an accepted socket's verify_none is not reported" do
-      skip_without_souffle()
       names = funcs("disables_verification")
 
       refute named?(names, "Listener")
@@ -70,7 +62,6 @@ defmodule Argus.Analyses.ExposureTlsTest do
     end
 
     test "a listener that leaves verify out is not left to a client's default" do
-      skip_without_souffle()
       names = funcs("relies_on_default_verification")
 
       refute named?(names, "Listener")
@@ -78,7 +69,6 @@ defmodule Argus.Analyses.ExposureTlsTest do
     end
 
     test "options that also reach a connect, or leave the function, are reported" do
-      skip_without_souffle()
       names = funcs("disables_verification")
 
       assert named?(names, "ServesAndDials")
@@ -88,14 +78,11 @@ defmodule Argus.Analyses.ExposureTlsTest do
 
   describe "what is deliberately not reported" do
     test "verifying properly is silent" do
-      skip_without_souffle()
       assert funcs("disables_verification") |> named?("Verifies") == false
       assert funcs("relies_on_default_verification") |> named?("Verifies") == false
     end
 
     test "options built at runtime are not guessed at" do
-      skip_without_souffle()
-
       # A false "this is insecure" against code that configures itself
       # properly is the finding that gets an analysis switched off.
       refute named?(funcs("relies_on_default_verification"), "DynamicOpts")

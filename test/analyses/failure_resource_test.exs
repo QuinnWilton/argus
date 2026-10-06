@@ -2,7 +2,6 @@ defmodule Argus.Analyses.FailureResourceTest do
   use ExUnit.Case, async: true
 
   alias Argus.Analyses.Failure
-  alias Argus.Souffle
   alias Argus.Test.Batch
   alias Argus.Test.Fixtures.Handles
   alias Argus.Test.Rows
@@ -22,10 +21,6 @@ defmodule Argus.Analyses.FailureResourceTest do
     %{batch: Batch.solve(:failure, [@batched])}
   end
 
-  defp skip_without_souffle do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-  end
-
   # `{function, api}`, the fixture prefix dropped.
   defp dropped(%{batch: batch}, module) do
     assert {:ok, results} = Batch.analyze(batch, [module])
@@ -37,9 +32,9 @@ defmodule Argus.Analyses.FailureResourceTest do
   end
 
   describe "resource_dropped" do
-    test "a file opened for sendfile and never closed (thousand_island before 45e7b51)", ctx do
-      skip_without_souffle()
+    @describetag :souffle
 
+    test "a file opened for sendfile and never closed (thousand_island before 45e7b51)", ctx do
       assert dropped(ctx, Handles.Sendfile) == [
                {"Sendfile:ssl/4", ":file.open/2"},
                {"Sendfile:tcp/4", ":file.open/2"}
@@ -47,20 +42,14 @@ defmodule Argus.Analyses.FailureResourceTest do
     end
 
     test "a socket left open when the step after the connect fails", ctx do
-      skip_without_souffle()
-
       assert dropped(ctx, Handles.Connect) == [{"Connect:leaky/2", ":gen_tcp.connect/3"}]
     end
 
     test "a port commanded and dropped; one kept in the state is not", ctx do
-      skip_without_souffle()
-
       assert dropped(ctx, Handles.Ports) == [{"Ports:fire_and_forget/1", ":erlang.open_port/2"}]
     end
 
     test "the nearest shapes to each quieting condition still lose the handle", ctx do
-      skip_without_souffle()
-
       assert ctx |> dropped(Handles.Adversarial) |> Enum.map(&elem(&1, 0)) == [
                "Adversarial:badmatch_then_return/1",
                "Adversarial:compared/2",
@@ -75,8 +64,6 @@ defmodule Argus.Analyses.FailureResourceTest do
     end
 
     test "a returned answer, a raising path and a send hand nothing to lose", ctx do
-      skip_without_souffle()
-
       assert dropped(ctx, Handles.Quiet) == []
     end
   end

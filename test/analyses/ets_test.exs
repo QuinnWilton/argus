@@ -1,17 +1,11 @@
 defmodule Argus.Analyses.EtsTest do
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
-  alias Argus.Souffle
   alias Argus.Test.Memo
-
-  defp skip_without_souffle do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-  end
 
   describe "ets.dl" do
     test "detects ETS anti-patterns" do
-      skip_without_souffle()
-
       modules = [
         Argus.Test.Fixtures.EtsOwner,
         Argus.Test.Fixtures.EtsReader,
@@ -38,8 +32,6 @@ defmodule Argus.Analyses.EtsTest do
     end
 
     test "a table a non-process behaviour's init makes is its caller's" do
-      skip_without_souffle()
-
       modules = [Argus.Test.Fixtures.EtsStrategy, Argus.Test.Fixtures.EtsStrategyImpl]
       assert {:ok, results} = Memo.analyze(modules, :ets)
 
@@ -48,8 +40,6 @@ defmodule Argus.Analyses.EtsTest do
     end
 
     test "suppresses unprotected_owner for permanent supervisor children" do
-      skip_without_souffle()
-
       modules = [
         Argus.Test.Fixtures.EtsOwner,
         Argus.Test.Fixtures.EtsPermanentSupervisor
@@ -66,8 +56,6 @@ defmodule Argus.Analyses.EtsTest do
     end
 
     test "suppresses unprotected_owner for Erlang-style supervisor children" do
-      skip_without_souffle()
-
       modules = [
         Argus.Test.Fixtures.EtsOwner,
         Argus.Test.Fixtures.ErlangStyleEtsSupervisor
@@ -84,8 +72,6 @@ defmodule Argus.Analyses.EtsTest do
     end
 
     test "an OTP tuple child spec is a supervisor's child as a map spec is" do
-      skip_without_souffle()
-
       owner = fn modules ->
         {:ok, results} = Memo.analyze(modules, :ets)
         for [_name, ":tuple_spec_first" | _] <- results["ets_unprotected_owner"], do: :reported
@@ -99,8 +85,6 @@ defmodule Argus.Analyses.EtsTest do
     end
 
     test "a private table, and one the application's root supervisor holds, die with nothing" do
-      skip_without_souffle()
-
       owners = fn modules ->
         {:ok, results} = Memo.analyze(modules, :ets)
 
@@ -118,8 +102,6 @@ defmodule Argus.Analyses.EtsTest do
     end
 
     test "a table another process can read, or whose owner may restart, still dies with it" do
-      skip_without_souffle()
-
       tables = fn modules ->
         {:ok, results} = Memo.analyze(modules, :ets)
 
@@ -165,8 +147,6 @@ defmodule Argus.Analyses.EtsTest do
     end
 
     test "suppresses unprotected_owner for Application modules" do
-      skip_without_souffle()
-
       modules = [
         Argus.Test.Fixtures.EtsApplicationOwner
       ]
@@ -182,8 +162,6 @@ defmodule Argus.Analyses.EtsTest do
     end
 
     test "EtsOwner without supervisor still fires unprotected_owner" do
-      skip_without_souffle()
-
       modules = [Argus.Test.Fixtures.EtsOwner]
 
       assert {:ok, results} = Memo.analyze(modules, :ets)
@@ -198,8 +176,6 @@ defmodule Argus.Analyses.EtsTest do
 
   describe "a table's owner" do
     test "is the process on whose stack :ets.new runs, not the module that spells it" do
-      skip_without_souffle()
-
       modules = [
         Argus.Test.Fixtures.EtsTableHelper,
         Argus.Test.Fixtures.EtsHelperOwner,
@@ -220,8 +196,6 @@ defmodule Argus.Analyses.EtsTest do
     end
 
     test "a table its own module makes in its process is still its own" do
-      skip_without_souffle()
-
       assert {:ok, results} = Memo.analyze([Argus.Test.Fixtures.EtsUnnamed], :ets)
 
       assert [[":anon_table", "Argus.Test.Fixtures.EtsUnnamed", _]] =
@@ -232,8 +206,6 @@ defmodule Argus.Analyses.EtsTest do
     end
 
     test "a helper's table two processes may make is one finding" do
-      skip_without_souffle()
-
       modules = [
         Argus.Test.Fixtures.EtsTableHelper,
         Argus.Test.Fixtures.EtsHelperOwner,
@@ -254,8 +226,6 @@ defmodule Argus.Analyses.EtsTest do
 
   describe "on the one table identity" do
     test "two unnamed tables made under one atom are two tables" do
-      skip_without_souffle()
-
       modules = [Argus.Test.Fixtures.EtsTwinUnnamed, Argus.Test.Fixtures.EtsTwinUnnamedOther]
       assert {:ok, results} = Memo.analyze(modules, :ets)
 
@@ -266,8 +236,6 @@ defmodule Argus.Analyses.EtsTest do
     end
 
     test "an unnamed table handed by its reference to another module is shared with it" do
-      skip_without_souffle()
-
       modules = [Argus.Test.Fixtures.EtsHandedQueue, Argus.Test.Fixtures.EtsHandedQueueReader]
       assert {:ok, results} = Memo.analyze(modules, :ets)
 
@@ -281,8 +249,6 @@ defmodule Argus.Analyses.EtsTest do
     end
 
     test "a removal of another table the server keeps does not remove the log's rows" do
-      skip_without_souffle()
-
       assert {:ok, results} = Memo.analyze([Argus.Test.Fixtures.EtsGrowsBesideScratch], :ets)
 
       assert [[":scratch_log", "Argus.Test.Fixtures.EtsGrowsBesideScratch", _]] =
@@ -290,15 +256,11 @@ defmodule Argus.Analyses.EtsTest do
     end
 
     test "a removal of a table the callers hand in may be the log" do
-      skip_without_souffle()
-
       assert {:ok, results} = Memo.analyze([Argus.Test.Fixtures.EtsGrowsBesideHanded], :ets)
       assert Map.get(results, "ets_write_only_table", []) == []
     end
 
     test "a named table a helper makes under the name it is handed is read outside its owner" do
-      skip_without_souffle()
-
       assert {:ok, results} = Memo.analyze([Argus.Test.Fixtures.EtsHelperNamedOwner], :ets)
 
       assert [[":helper_acl", "Argus.Test.Fixtures.EtsHelperNamedOwner", reader, _, _]] =
@@ -310,8 +272,6 @@ defmodule Argus.Analyses.EtsTest do
 
   describe "ets_write_only_table" do
     test "a named table with inserts and no deletes is reported; bounded and warm caches are not" do
-      skip_without_souffle()
-
       modules = [
         Argus.Test.Fixtures.EtsGrowOnly,
         Argus.Test.Fixtures.EtsBounded,
@@ -327,8 +287,6 @@ defmodule Argus.Analyses.EtsTest do
     end
 
     test "a set table written only under literal keys holds one row per key" do
-      skip_without_souffle()
-
       modules = [Argus.Test.Fixtures.EtsSettings, Argus.Test.Fixtures.EtsSettingsBag]
       assert {:ok, results} = Memo.analyze(modules, :ets)
 
@@ -338,8 +296,6 @@ defmodule Argus.Analyses.EtsTest do
     end
 
     test "a keypos of 1 spelled out is the default; another keys the table elsewhere" do
-      skip_without_souffle()
-
       modules = [Argus.Test.Fixtures.EtsSettingsKeypos1, Argus.Test.Fixtures.EtsSettingsKeypos2]
       assert {:ok, results} = Memo.analyze(modules, :ets)
 

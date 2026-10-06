@@ -15,6 +15,7 @@ defmodule Argus.Graph.Identity.DeclaredDigestTest do
   declaration it loads moves its digest.
   """
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
   alias Argus.Souffle
   alias Argus.Souffle.Program

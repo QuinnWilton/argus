@@ -1,7 +1,7 @@
 defmodule Argus.Analyses.MailboxStatemTest do
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
-  alias Argus.Souffle
   alias Argus.Test.Batch
   alias Argus.Test.Rows
 
@@ -22,10 +22,6 @@ defmodule Argus.Analyses.MailboxStatemTest do
     %{batch: Batch.solve(:mailbox, [@batched])}
   end
 
-  defp skip_without_souffle do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-  end
-
   defp analyze(%{batch: batch}, modules) do
     assert {:ok, results} = Batch.analyze(batch, modules)
     results
@@ -35,8 +31,6 @@ defmodule Argus.Analyses.MailboxStatemTest do
 
   describe "unhandled_timeout" do
     test "a {:timeout, ...} action matched as :info is reported", ctx do
-      skip_without_souffle()
-
       results = analyze(ctx, [Argus.Test.Fixtures.TimeoutMismatchStatem])
 
       assert [[mod, "handle_event", "event_timeout"]] = statem_timeouts(results)
@@ -44,8 +38,6 @@ defmodule Argus.Analyses.MailboxStatemTest do
     end
 
     test "a handled timeout, and a state_timeout matched by its own state, are clean", ctx do
-      skip_without_souffle()
-
       results =
         analyze(ctx, [Argus.Test.Fixtures.TimeoutHandledStatem, Argus.Test.Fixtures.TimeoutStatem])
 
@@ -54,8 +46,6 @@ defmodule Argus.Analyses.MailboxStatemTest do
 
     test "a generic timeout handled as :timeout is reported; a {:timeout, name} head is not",
          ctx do
-      skip_without_souffle()
-
       results =
         analyze(ctx, [
           Argus.Test.Fixtures.GenericTimeoutMismatchStatem,
@@ -70,8 +60,6 @@ defmodule Argus.Analyses.MailboxStatemTest do
   describe "reply_defect: statem_unreplied" do
     test "only the clause that returns bare :keep_state_and_data without replying is reported",
          ctx do
-      skip_without_souffle()
-
       assert {:ok, results} =
                Batch.analyze(ctx.batch, [
                  Argus.Test.Fixtures.UnrepliedCallStatem,

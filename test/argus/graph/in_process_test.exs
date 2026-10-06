@@ -20,7 +20,6 @@ defmodule Argus.Graph.InProcessTest do
   @modules [Argus.Test.Fixtures.PidFlow.Hub, Argus.Test.Fixtures.PidFlow.Listener]
 
   setup %{tmp_dir: tmp} do
-    unless Argus.Souffle.available?(), do: flunk("souffle not installed")
     path = Path.join(tmp, "steps.dl")
 
     File.write!(path, """

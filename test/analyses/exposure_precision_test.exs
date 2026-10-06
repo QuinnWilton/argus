@@ -7,6 +7,7 @@ defmodule Argus.Analyses.ExposurePrecisionTest do
 
   @mods [S.BooleanToken, S.Values, Argus.Test.Support.HashedSecret]
 
+  @tag :souffle
   test "known boolean schema fields are metadata, while unknown and value types remain" do
     assert {:ok, results} = Memo.analyze(@mods, :exposure)
 
@@ -47,6 +48,7 @@ defmodule Argus.Analyses.ExposurePrecisionTest do
     assert raw.detail =~ "If it stores a live credential"
   end
 
+  @tag :souffle
   test "test-support hash warnings step down without hiding raw credential findings" do
     assert {:ok, results} = Argus.Findings.run(@mods, analyses: [:exposure])
     assert results.degraded == []

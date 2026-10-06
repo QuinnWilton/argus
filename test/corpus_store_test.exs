@@ -2,6 +2,7 @@ defmodule Argus.CorpusStoreTest do
   # Sync on purpose: the corpus's root is ARGUS_CORPUS_DIR, read from the
   # VM-wide environment.
   use ExUnit.Case, async: false
+  @moduletag :souffle
 
   alias Argus.Corpus
 
@@ -57,8 +58,6 @@ defmodule Argus.CorpusStoreTest do
   end
 
   test "a checkout keeps its manifest, and a second analysis only checks traces" do
-    unless Argus.Souffle.available?(), do: flunk("souffle not installed")
-
     _dir = fake_checkout!(root(), @pair)
     manifest = Corpus.manifest(Corpus.checkout(@pair, :pre))
 
@@ -71,8 +70,6 @@ defmodule Argus.CorpusStoreTest do
   end
 
   test "a worktree without a manifest starts from the newest another kept" do
-    unless Argus.Souffle.available?(), do: flunk("souffle not installed")
-
     _dir = fake_checkout!(root(), @pair)
     manifest = Corpus.manifest(Corpus.checkout(@pair, :pre))
 

@@ -6,15 +6,12 @@ defmodule Argus.Analyses.QuietShapesTest do
   """
 
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
   alias Argus.Test.Fixtures.Quiet
   alias Argus.Test.Fixtures.ShutdownSiblings, as: Sib
   alias Argus.Test.Memo
   alias Argus.Test.Rows
-
-  defp skip_without_souffle do
-    unless Argus.Souffle.available?(), do: flunk("souffle not installed")
-  end
 
   @modules [
     Quiet.SharedService,
@@ -85,8 +82,6 @@ defmodule Argus.Analyses.QuietShapesTest do
       end)
 
     test "#{analysis}: #{names} stay quiet on the near-miss shapes" do
-      skip_without_souffle()
-
       {:ok, results} = Memo.analyze(@modules, unquote(analysis))
 
       for relation <- unquote(Macro.escape(relations)) do
@@ -97,8 +92,6 @@ defmodule Argus.Analyses.QuietShapesTest do
   end
 
   test "a sibling call from terminate/2 guarded by catch :exit is not reported" do
-    skip_without_souffle()
-
     {:ok, r} =
       Memo.analyze(
         [Sib.Sup, Sib.Producer, Sib.Watchman, Sib.GuardedWatchman],

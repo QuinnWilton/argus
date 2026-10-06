@@ -1,14 +1,10 @@
 defmodule Argus.Analyses.BlockingSelfCallTest do
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
   alias Argus.Test.Fixtures.PidCalls
   alias Argus.Test.Memo
   alias Argus.Test.Rows
-
-  setup do
-    unless Argus.Souffle.available?(), do: flunk("souffle not installed")
-    :ok
-  end
 
   test "a call to self(), to the module's own name or through a helper is a self-call" do
     {:ok, r} = Memo.analyze([PidCalls.SelfCaller], :blocking)

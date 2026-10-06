@@ -2,21 +2,16 @@ defmodule Argus.Analyses.CouplingTest do
   use ExUnit.Case, async: true
 
   alias Argus.Analyses.Coupling
-  alias Argus.Souffle
   alias Argus.Test.Memo
   alias Argus.Test.Rows
-
-  defp skip_without_souffle do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-  end
 
   # Beams of `source`, written where Argus.analyze/2 can read them.
   defp compile_beams(source), do: Memo.compile_beams(source)
 
   describe "sibling_dependency: restart_isolation" do
-    test "analyzes coupling under one_for_one supervisors" do
-      skip_without_souffle()
+    @describetag :souffle
 
+    test "analyzes coupling under one_for_one supervisors" do
       modules = [
         Argus.Test.Fixtures.GoodSupervisor,
         Argus.Test.Fixtures.WorkerA,
@@ -29,8 +24,6 @@ defmodule Argus.Analyses.CouplingTest do
     end
 
     test "wrong_start_order ignores runtime-only call paths" do
-      skip_without_souffle()
-
       modules = [
         Argus.Test.Fixtures.RuntimeCallSupervisor,
         Argus.Test.Fixtures.RuntimeCallerWorker,
@@ -45,8 +38,6 @@ defmodule Argus.Analyses.CouplingTest do
     end
 
     test "linked coupled pairs are excluded (the hazard is mitigated)" do
-      skip_without_souffle()
-
       # Hand-authored facts pin the negation exactly: A's init/1 registers
       # with its sibling B, whose handler keeps it as an ETS row, under a
       # one_for_one supervisor — coupling; adding a process link between
@@ -62,8 +53,6 @@ defmodule Argus.Analyses.CouplingTest do
     end
 
     test "a link to a pid the points-to analysis resolves excludes the pair" do
-      skip_without_souffle()
-
       # LinkA joins LinkB when it starts, and links to LinkB's registered
       # pid: process_link's target is "dynamic", process_signal_source names it, and
       # the points-to analysis resolves the name to LinkB's server.
@@ -102,8 +91,6 @@ defmodule Argus.Analyses.CouplingTest do
     end
 
     test "a temporary spec the start hands over leaves the supervisor out" do
-      skip_without_souffle()
-
       # redix#334's fix: the Manager restarts its connections from :DOWN,
       # and each start's spec says restart: :temporary through
       # Supervisor.child_spec/2, so the supervisor never restarts one.
@@ -136,8 +123,6 @@ defmodule Argus.Analyses.CouplingTest do
     end
 
     test "a monitor of a started child the points-to analysis follows is a restart authority" do
-      skip_without_souffle()
-
       # The monitor reads the pid from state in a helper: monitor_call's
       # target is "dynamic", and the points-to analysis follows the field
       # back to the DynamicSupervisor.start_child that returned it.
@@ -177,8 +162,6 @@ defmodule Argus.Analyses.CouplingTest do
     end
 
     test "the coupling site is the caller's own step, not a call below it" do
-      skip_without_souffle()
-
       # A's init/1 reaches B through a helper module H. B's record/1 is a
       # default-argument head calling record/2, B's own function, which
       # makes the call B's handler keeps. The site is A's own step, its
@@ -213,8 +196,6 @@ defmodule Argus.Analyses.CouplingTest do
     end
 
     test "a registration made by a cast is a coupling, and a cast made on each use is not" do
-      skip_without_souffle()
-
       # B keeps what a cast brings as an ETS row. A casts it from init/1:
       # once, so B's restart loses it. A cast from a handler (A:h/0) is
       # made again on its next use.
@@ -248,8 +229,6 @@ defmodule Argus.Analyses.CouplingTest do
     end
 
     test "a read and a field reset are not what a restart loses" do
-      skip_without_souffle()
-
       # B's handler for A's request keeps nothing: no ETS write, no
       # monitor, no state it returns sets a field to what init/1 does not.
       read = Map.put(registered(), :ets_op, [])
@@ -287,8 +266,6 @@ defmodule Argus.Analyses.CouplingTest do
     end
 
     test "a restart_policy dependency inferred from reaching a sibling with a call somewhere is marked, and a prior can doubt it" do
-      skip_without_souffle()
-
       # A's handler reaches B's pure/1; B's ask/0 calls a server. No
       # resolved call from A to B: the module-level clause alone makes A,
       # a permanent child, depend on B, a temporary one, and the row says
@@ -335,6 +312,7 @@ defmodule Argus.Analyses.CouplingTest do
                coupling_rows(resolved)
     end
 
+    @tag souffle: false
     test "a doubted row is the same finding a severity step down, labelled and heuristic" do
       row = [
         "Sup",
@@ -365,6 +343,7 @@ defmodule Argus.Analyses.CouplingTest do
       assert plain.severity == :warning and plain.provenance == :structural
     end
 
+    @tag souffle: false
     test "a keeping inferred from code outside the program is a step down, and says so" do
       row = [
         "Sup",

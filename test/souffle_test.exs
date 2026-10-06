@@ -5,15 +5,6 @@ defmodule Argus.SouffleTest do
 
   @moduletag :tmp_dir
 
-  # Skip all tests if souffle is not installed.
-  setup do
-    unless Souffle.available?() do
-      ExUnit.configure(exclude: [tmp_dir: true])
-    end
-
-    :ok
-  end
-
   describe "available?/0" do
     test "returns a boolean" do
       assert is_boolean(Souffle.available?())
@@ -21,9 +12,9 @@ defmodule Argus.SouffleTest do
   end
 
   describe "input_relations/2" do
-    test "returns compiler diagnostics for a mismatched declaration", %{tmp_dir: tmp_dir} do
-      if not Souffle.available?(), do: flunk("souffle not installed")
+    @describetag :souffle
 
+    test "returns compiler diagnostics for a mismatched declaration", %{tmp_dir: tmp_dir} do
       rules_path = Path.join(tmp_dir, "bad_arity.dl")
 
       File.write!(rules_path, """
@@ -45,8 +36,6 @@ defmodule Argus.SouffleTest do
     end
 
     test "a shipped program resolves to the same inputs on every call" do
-      if not Souffle.available?(), do: flunk("souffle not installed")
-
       path = Argus.Analysis.stage0_rules_path()
 
       assert {:ok, [_ | _] = first} = Souffle.input_relations(path)
@@ -55,8 +44,6 @@ defmodule Argus.SouffleTest do
 
     @tag :tmp_dir
     test "a program outside priv/dl is read afresh on every call", %{tmp_dir: tmp_dir} do
-      if not Souffle.available?(), do: flunk("souffle not installed")
-
       rules_path = Path.join(tmp_dir, "grows.dl")
 
       File.write!(rules_path, """
@@ -84,10 +71,10 @@ defmodule Argus.SouffleTest do
   end
 
   describe "run/3" do
+    @describetag :souffle
+
     @tag :tmp_dir
     test "runs a trivial Datalog program", %{tmp_dir: tmp_dir} do
-      if not Souffle.available?(), do: flunk("souffle not installed")
-
       facts_dir = Path.join(tmp_dir, "facts")
       output_dir = Path.join(tmp_dir, "output")
       rules_path = Path.join(tmp_dir, "test.dl")
@@ -123,8 +110,6 @@ defmodule Argus.SouffleTest do
 
     @tag :tmp_dir
     test "returns error for invalid rules", %{tmp_dir: tmp_dir} do
-      if not Souffle.available?(), do: flunk("souffle not installed")
-
       facts_dir = Path.join(tmp_dir, "facts")
       rules_path = Path.join(tmp_dir, "bad.dl")
 
@@ -134,6 +119,7 @@ defmodule Argus.SouffleTest do
       assert {:error, {:souffle_error, _, _}} = Souffle.run(facts_dir, rules_path)
     end
 
+    @tag souffle: false
     @tag :tmp_dir
     test "returns souffle_not_found when binary missing", %{tmp_dir: tmp_dir} do
       facts_dir = Path.join(tmp_dir, "facts")
@@ -148,8 +134,6 @@ defmodule Argus.SouffleTest do
 
     @tag :tmp_dir
     test "returns souffle_error when output_dir does not exist", %{tmp_dir: tmp_dir} do
-      if not Souffle.available?(), do: flunk("souffle not installed")
-
       facts_dir = Path.join(tmp_dir, "facts")
       rules_path = Path.join(tmp_dir, "rules.dl")
 
@@ -170,8 +154,6 @@ defmodule Argus.SouffleTest do
 
     @tag :tmp_dir
     test "returns souffle_timeout when execution exceeds limit", %{tmp_dir: tmp_dir} do
-      if not Souffle.available?(), do: flunk("souffle not installed")
-
       facts_dir = Path.join(tmp_dir, "facts")
       output_dir = Path.join(tmp_dir, "output")
       rules_path = Path.join(tmp_dir, "slow.dl")

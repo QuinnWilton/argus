@@ -6,6 +6,7 @@ defmodule Argus.Soundness.UnsafeInputChildrenTest do
   (`Argus.Test.Soundness`).
   """
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
   import Argus.Test.Soundness, only: [fired: 2]
 

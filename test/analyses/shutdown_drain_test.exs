@@ -2,7 +2,6 @@ defmodule Argus.Analyses.ShutdownDrainTest do
   use ExUnit.Case, async: true
 
   alias Argus.Analyses.Shutdown
-  alias Argus.Souffle
   alias Argus.Test.Batch
   alias Argus.Test.Fixtures.Drain
   alias Argus.Test.Rows
@@ -23,10 +22,6 @@ defmodule Argus.Analyses.ShutdownDrainTest do
     %{batch: Batch.solve(:shutdown, [@batched])}
   end
 
-  defp skip_without_souffle do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-  end
-
   defp drains(%{batch: batch}, module) do
     assert {:ok, results} = Batch.analyze(batch, [module])
 
@@ -37,32 +32,26 @@ defmodule Argus.Analyses.ShutdownDrainTest do
   end
 
   describe "drain_keeps_fetching" do
-    test "a drain that clears the field the fetch waits on (broadway_sqs before 5b8f18a)", ctx do
-      skip_without_souffle()
+    @describetag :souffle
 
+    test "a drain that clears the field the fetch waits on (broadway_sqs before 5b8f18a)", ctx do
       assert drains(ctx, Drain.CancelsOnly) == [
                {"CancelsOnly", "CancelsOnly:handle_receive_messages/1", ":receive_timer"}
              ]
     end
 
     test "a draining flag the fetch can take closes it", ctx do
-      skip_without_souffle()
-
       assert drains(ctx, Drain.Flagged) == []
     end
 
     test "a flag never read, a counter demand undoes, a drain that does not cancel still fetch",
          ctx do
-      skip_without_souffle()
-
       for module <- [Drain.FlagUnread, Drain.CounterReset, Drain.NoCancel] do
         assert [{_, _, ":receive_timer"}] = drains(ctx, module), inspect(module)
       end
     end
 
     test "a cleared field no fetch tests opens nothing", ctx do
-      skip_without_souffle()
-
       assert drains(ctx, Drain.OtherField) == []
     end
   end

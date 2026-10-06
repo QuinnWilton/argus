@@ -1,5 +1,6 @@
 defmodule Argus.Analyses.MailboxUnhandledInfoTest do
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
   alias Argus.Analyses.Mailbox
   alias Argus.Test.Fixtures.UnhandledInfo, as: U
@@ -33,7 +34,6 @@ defmodule Argus.Analyses.MailboxUnhandledInfoTest do
   ]
 
   setup_all do
-    unless Argus.Souffle.available?(), do: flunk("souffle not installed")
     {:ok, results} = Memo.analyze(@all, :mailbox)
     short = &String.replace(&1, "Argus.Test.Fixtures.UnhandledInfo.", "")
 

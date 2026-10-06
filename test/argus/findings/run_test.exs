@@ -5,6 +5,7 @@ defmodule Argus.Findings.RunTest do
 
   @moduletag :tmp_dir
 
+  @tag :souffle
   test "an empty selection runs nothing and extracts nothing" do
     assert {:ok, %Findings{findings: [], ran: [], degraded: [], extraction_errors: []}} =
              Findings.run([:fake_module_never_read], analyses: [])
@@ -33,6 +34,7 @@ defmodule Argus.Findings.RunTest do
   end
 
   # The stage's failure is a warning as well as the degradation.
+  @tag :souffle
   @tag :capture_log
   test "a failed points-to stage degrades only the analyses that read it", %{tmp_dir: dir} do
     # A store of its own: a stage kept by another run would not run

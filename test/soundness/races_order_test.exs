@@ -7,6 +7,7 @@ defmodule Argus.Soundness.RacesOrderTest do
   still report.
   """
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
   import Argus.Test.Soundness, only: [fired: 2]
 

@@ -1,5 +1,6 @@
 defmodule Argus.Analyses.VerificationTest do
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
   alias Argus.Analyses.UnsafeInput
   alias Argus.Test.Fixtures.ResultChecks

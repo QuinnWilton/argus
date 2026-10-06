@@ -1,18 +1,12 @@
 defmodule Argus.Analyses.FailureStartChildTest do
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
-  alias Argus.Souffle
   alias Argus.Test.Memo
   alias Argus.Test.Rows
 
-  defp skip_without_souffle do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-  end
-
   describe "unchecked start_child" do
     test "detects unchecked start_child" do
-      skip_without_souffle()
-
       assert {:ok, results} =
                Memo.analyze([Argus.Test.Fixtures.UncheckedStartChild], :failure)
 
@@ -60,8 +54,6 @@ defmodule Argus.Analyses.FailureStartChildTest do
     end
 
     test "only a start whose supervisor may have a cap is reported" do
-      skip_without_souffle()
-
       # A literal cap, a cap the extractor cannot read, a capped partition
       # and a pid (which may be BoundedSup) are reported; a supervisor with
       # no max_children, and a partition of them, answer only {:ok, pid}.
@@ -73,8 +65,6 @@ defmodule Argus.Analyses.FailureStartChildTest do
     end
 
     test "a supervisor the start does not name is uncapped when none in view is capped" do
-      skip_without_souffle()
-
       # livebook's RuntimeServer: `Task.Supervisor.start_link()` kept in the
       # state, and a name the program does not start.
       assert unchecked_funcs([TaskCaps.RuntimeServer, TaskCaps.App]) ==

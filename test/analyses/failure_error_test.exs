@@ -1,7 +1,7 @@
 defmodule Argus.Analyses.FailureErrorTest do
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
-  alias Argus.Souffle
   alias Argus.Test.Batch
   alias Argus.Test.Memo
   alias Argus.Test.Rows
@@ -31,10 +31,6 @@ defmodule Argus.Analyses.FailureErrorTest do
     %{batch: Batch.solve(:failure, [@batched])}
   end
 
-  defp skip_without_souffle do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-  end
-
   defp analyze(%{batch: batch}, modules) do
     assert {:ok, results} = Batch.analyze(batch, modules)
     results
@@ -56,8 +52,6 @@ defmodule Argus.Analyses.FailureErrorTest do
 
   describe "unhandled_failure: rescue" do
     test "flags a bare rescue, not a filtered one", ctx do
-      skip_without_souffle()
-
       results =
         analyze(ctx, [Argus.Test.Fixtures.BareRescue, Argus.Test.Fixtures.FilteredRescue])
 
@@ -68,8 +62,6 @@ defmodule Argus.Analyses.FailureErrorTest do
     end
 
     test "a catch-all around what another process or a name decides is not flagged", ctx do
-      skip_without_souffle()
-
       results =
         analyze(ctx, [
           Argus.Test.Fixtures.BoundaryRescue,
@@ -96,8 +88,6 @@ defmodule Argus.Analyses.FailureErrorTest do
     end
 
     test "a catch-all an OTP header wrote into a generated parser is OTP's" do
-      skip_without_souffle()
-
       assert {:ok, results} = Memo.analyze([:header_catchall], :failure)
       funcs = results |> swallowed() |> Enum.map(&hd/1) |> Enum.sort()
 
@@ -107,8 +97,6 @@ defmodule Argus.Analyses.FailureErrorTest do
     end
 
     test "does not flag a handler that reifies the exception into a value", ctx do
-      skip_without_souffle()
-
       # catch kind, reason -> {:error, {kind, reason}} — the caller sees
       # the error; nothing is swallowed.
       results = analyze(ctx, [Argus.Test.Fixtures.ReifyingRescue])
@@ -117,8 +105,6 @@ defmodule Argus.Analyses.FailureErrorTest do
     end
 
     test "does not flag a handler that re-raises via raw_raise", ctx do
-      skip_without_souffle()
-
       # :erlang.raise(kind, reason, __STACKTRACE__) compiles to the
       # raw_raise opcode, not a call to :erlang.raise/3.
       results = analyze(ctx, [Argus.Test.Fixtures.ReraisingRescue])
@@ -129,8 +115,6 @@ defmodule Argus.Analyses.FailureErrorTest do
 
   describe "orphan_process: exit" do
     test "flags an exit signal sent from a GenServer callback", ctx do
-      skip_without_souffle()
-
       results = analyze(ctx, [Argus.Test.Fixtures.ExitingServer])
 
       assert Enum.any?(exits(results), fn [func, _target] ->
@@ -139,8 +123,6 @@ defmodule Argus.Analyses.FailureErrorTest do
     end
 
     test "an exit is one finding at its call, whichever callbacks run it", ctx do
-      skip_without_souffle()
-
       results = analyze(ctx, [Argus.Test.Fixtures.SharedKill])
 
       funcs =
@@ -163,8 +145,6 @@ defmodule Argus.Analyses.FailureErrorTest do
     end
 
     test "does not flag exit/1 (a self-crash), only exit signals to a target", ctx do
-      skip_without_souffle()
-
       # exit(:impossible_state) raises in the current process — let-it-
       # crash, supervision-visible — not an imperative kill of another
       # process.
@@ -174,16 +154,12 @@ defmodule Argus.Analyses.FailureErrorTest do
     end
 
     test "an exit to a process the server started itself is its own to stop", ctx do
-      skip_without_souffle()
-
       results = analyze(ctx, [Argus.Test.Fixtures.ExitSignals.OwnHelper])
 
       assert exits(results) == []
     end
 
     test "an exit to a supervisor's child names the child and its supervisor", ctx do
-      skip_without_souffle()
-
       alias Argus.Test.Fixtures.ExitSignals
 
       mods = [ExitSignals.Tree, ExitSignals.Worker, ExitSignals.Killer]
@@ -210,8 +186,6 @@ defmodule Argus.Analyses.FailureErrorTest do
     end
 
     test "does not flag Process.exit outside process callbacks", ctx do
-      skip_without_souffle()
-
       # ExitCaller is a plain module — exit calls there are not callback
       # hazards.
       results = analyze(ctx, [Argus.Test.Fixtures.ExitCaller])

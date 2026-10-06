@@ -8,6 +8,7 @@ defmodule Argus.Clientlib.DictionaryTest do
   first (clientlib/dictionary.dl's skips_default).
   """
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
   alias Argus.{Pipeline, Souffle}
   alias Argus.Test.Fixtures.Dictionary
@@ -24,8 +25,6 @@ defmodule Argus.Clientlib.DictionaryTest do
   defp priv_dl, do: Path.join(:code.priv_dir(:argus_beam), "dl")
 
   setup_all do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-
     tmp_dir =
       Path.join(System.tmp_dir!(), "dictionary_test_#{System.unique_integer([:positive])}")
 

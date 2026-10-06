@@ -1,8 +1,8 @@
 defmodule Argus.Analyses.ExposureSecretsTest do
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
   alias Argus.Analyses.Exposure
-  alias Argus.Souffle
   alias Argus.Test.Fixtures.Secret, as: S
   alias Argus.Test.Memo
 
@@ -13,10 +13,6 @@ defmodule Argus.Analyses.ExposureSecretsTest do
   @all [S.Exposed, S.PartlyRedacted, S.Redacted, S.Ordinary, S.SecretMetadata] ++
          @derived ++ Enum.map(@derived, &Module.concat(Inspect, &1))
 
-  defp skip_without_souffle do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-  end
-
   defp rows do
     assert {:ok, r} = Memo.analyze(@all, :exposure)
     Map.get(r, "unredacted_secret", [])
@@ -25,31 +21,24 @@ defmodule Argus.Analyses.ExposureSecretsTest do
   defp for_mod(fragment), do: Enum.filter(rows(), &String.contains?(hd(&1), fragment))
 
   test "an unredacted credential is reported" do
-    skip_without_souffle()
-
     fields = for_mod("Secret.Exposed") |> Enum.map(&Enum.at(&1, 1)) |> Enum.sort()
     assert fields == [":sendgrid_api_key", ":smtp_password"]
   end
 
   test "redacting discharges it" do
-    skip_without_souffle()
     assert for_mod("Secret.Redacted") == []
   end
 
   test "a field name that suggests nothing is not reported" do
-    skip_without_souffle()
     assert for_mod("Secret.Ordinary") == []
   end
 
   test "a field that holds a fact about a secret is not the secret" do
-    skip_without_souffle()
     fields = Enum.map(for_mod("Secret.SecretMetadata"), &Enum.at(&1, 1))
     assert fields == [":access_token"]
   end
 
   test "a schema that redacts something else is marked aware" do
-    skip_without_souffle()
-
     # The stronger finding: the pattern is known in this module and was not
     # applied to this field, so it is an oversight rather than an unfamiliar
     # API — and the finding says so.
@@ -58,8 +47,6 @@ defmodule Argus.Analyses.ExposureSecretsTest do
   end
 
   test "an embed compiled with no line is anchored at the schema that embeds it" do
-    skip_without_souffle()
-
     assert {:ok, r} =
              Memo.analyze([S.WithEmbed, S.WithEmbed.Totp, S.Exposed], :exposure)
 
@@ -85,8 +72,6 @@ defmodule Argus.Analyses.ExposureSecretsTest do
   end
 
   test "a token schema's token is a token; a bare token field elsewhere is not" do
-    skip_without_souffle()
-
     assert {:ok, r} = Memo.analyze([S.ResetToken, S.Ticker], :exposure)
 
     assert [[mod, ":token", "token", "unaware", "redact", _]] =
@@ -98,6 +83,7 @@ defmodule Argus.Analyses.ExposureSecretsTest do
              :warning
   end
 
+  @tag souffle: false
   test "severity separates a live third-party credential from a hash" do
     mod = Exposure
     cred = mod.finding(:unredacted_secret, ["M", ":api_key", "credential", "unaware", "redact"])
@@ -110,6 +96,7 @@ defmodule Argus.Analyses.ExposureSecretsTest do
     refute pass.detail =~ "A hash is not a plaintext password"
   end
 
+  @tag souffle: false
   test "the anchor is the schema's generated function, refined by the field's name" do
     finding =
       Exposure.finding(:unredacted_secret, [
@@ -127,8 +114,6 @@ defmodule Argus.Analyses.ExposureSecretsTest do
 
   describe "a derived Inspect" do
     test "except: hides the fields it lists and prints the one it forgot" do
-      skip_without_souffle()
-
       # :password and :jwt are excluded; :sendgrid_api_key is not, and the
       # place to fix it is the derive, where redact: true would do nothing.
       assert [[_m, ":sendgrid_api_key", "credential", "aware", "derive", _]] =
@@ -136,8 +121,6 @@ defmodule Argus.Analyses.ExposureSecretsTest do
     end
 
     test "only: prints what it names and nothing else" do
-      skip_without_souffle()
-
       assert for_mod("Secret.DerivedOnly") == []
 
       assert [[_m, ":api_key", "credential", "aware", "derive", _]] =
@@ -145,26 +128,21 @@ defmodule Argus.Analyses.ExposureSecretsTest do
     end
 
     test "Ecto's own derive for redact: true leaves the fix at redact: true" do
-      skip_without_souffle()
-
       assert [[_m, ":api_key", "credential", "aware", "redact", _]] =
                for_mod("Secret.EctoDerived")
     end
 
     test "redact: true under the schema's own derive hides nothing" do
-      skip_without_souffle()
-
       assert [[_m, ":password", "password", "unaware", "derive", _]] =
                for_mod("Secret.RedactOverridden")
     end
 
     test "without the impl module in view, redact: true is taken at its word" do
-      skip_without_souffle()
-
       assert {:ok, r} = Memo.analyze([S.RedactOverridden], :exposure)
       assert Map.get(r, "unredacted_secret", []) == []
     end
 
+    @tag souffle: false
     test "the finding sends the fix to the derive" do
       finding =
         Exposure.finding(:unredacted_secret, [

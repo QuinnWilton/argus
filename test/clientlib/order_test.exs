@@ -9,6 +9,7 @@ defmodule Argus.Clientlib.OrderTest do
   and the check is over the instructions, not over what it emitted.
   """
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
   alias Argus.{Cfg, InstrId, Pipeline, Souffle}
   alias Argus.Test.Fixtures.Order
@@ -20,8 +21,6 @@ defmodule Argus.Clientlib.OrderTest do
   # Every call and receive is asked about (a branch is never asked of),
   # so the rows are the whole relation.
   defp runs_after(modules, tmp_dir) do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-
     facts_dir = Path.join(tmp_dir, "facts")
     {:ok, _} = Pipeline.run(modules, facts_dir)
 

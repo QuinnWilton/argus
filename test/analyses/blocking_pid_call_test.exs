@@ -1,14 +1,10 @@
 defmodule Argus.Analyses.BlockingPidCallTest do
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
   alias Argus.Test.Fixtures.PidCalls
   alias Argus.Test.Memo
   alias Argus.Test.Rows
-
-  setup do
-    unless Argus.Souffle.available?(), do: flunk("souffle not installed")
-    :ok
-  end
 
   defp analyze do
     {:ok, r} =

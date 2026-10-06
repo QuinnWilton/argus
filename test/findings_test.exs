@@ -5,7 +5,6 @@ defmodule Argus.FindingsTest do
   alias Argus.Analyses.Mailbox
   alias Argus.Findings
   alias Argus.InstrId
-  alias Argus.Souffle
   alias Argus.Test.Fixtures
   alias Argus.Test.Memo
 
@@ -35,10 +34,6 @@ defmodule Argus.FindingsTest do
     :end_line
   ]
   @severities [:error, :warning, :info]
-
-  defp skip_without_souffle do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-  end
 
   # Every finding must have exactly the documented shape — Phase B
   # consumers (lowdown's analysis panel) pattern match on these keys.
@@ -82,9 +77,9 @@ defmodule Argus.FindingsTest do
   end
 
   describe "run/2 shape and anchors" do
-    test "unlinked_spawn findings carry instruction anchors" do
-      skip_without_souffle()
+    @describetag :souffle
 
+    test "unlinked_spawn findings carry instruction anchors" do
       assert {:ok, %Findings{} = result} =
                Memo.run_analyses([Fixtures.UnlinkedSpawner], analyses: [:failure])
 
@@ -104,8 +99,6 @@ defmodule Argus.FindingsTest do
     end
 
     test "supervision findings anchor at the tree definition with witness evidence" do
-      skip_without_souffle()
-
       # CastJoiner's init/1 subscribes to its sibling CastKeeper, which
       # keeps the subscriber in its state (test/fixtures/soundness/
       # coupling_soundness.ex).
@@ -148,8 +141,6 @@ defmodule Argus.FindingsTest do
     end
 
     test "ets findings span severities with module anchors where rows allow" do
-      skip_without_souffle()
-
       modules = [
         Fixtures.EtsOwner,
         Fixtures.EtsReader,
@@ -174,8 +165,6 @@ defmodule Argus.FindingsTest do
     end
 
     test "the concurrency hints anchor at the table's :ets.new" do
-      skip_without_souffle()
-
       {:ok, result} =
         Memo.run_analyses(
           [
@@ -200,8 +189,6 @@ defmodule Argus.FindingsTest do
     end
 
     test "unsafe_input findings carry instruction anchors and security severities" do
-      skip_without_souffle()
-
       modules = [
         Fixtures.UnsafeAtomCreation,
         Fixtures.UnsafeDeserialization,
@@ -240,6 +227,7 @@ defmodule Argus.FindingsTest do
       assert Enum.all?(exhaustion, &(&1.severity == :warning))
     end
 
+    @tag souffle: false
     test "a name argus retired is unknown" do
       assert {:error, {:unknown_analysis, :atom_safety}} =
                Memo.run_analyses([Fixtures.UnsafeAtomCreation],
@@ -248,8 +236,6 @@ defmodule Argus.FindingsTest do
     end
 
     test "a name asked for twice runs once" do
-      skip_without_souffle()
-
       assert {:ok, result} =
                Memo.run_analyses([Fixtures.UnsafeAtomCreation],
                  analyses: [:unsafe_input, :exposure, :unsafe_input]
@@ -259,8 +245,6 @@ defmodule Argus.FindingsTest do
     end
 
     test "a named set selects its analyses" do
-      skip_without_souffle()
-
       assert {:ok, result} =
                Memo.run_analyses([Fixtures.UnsafeAtomCreation], analyses: :security)
 
@@ -268,8 +252,6 @@ defmodule Argus.FindingsTest do
     end
 
     test "a call cycle is one error finding carrying its edges as related frames" do
-      skip_without_souffle()
-
       modules = [Fixtures.CycleServerA, Fixtures.CycleServerB]
 
       assert {:ok, result} = Memo.run_analyses(modules, analyses: [:blocking])
@@ -288,8 +270,6 @@ defmodule Argus.FindingsTest do
     end
 
     test ":all runs every builtin analysis except coverage" do
-      skip_without_souffle()
-
       assert {:ok, result} = Memo.run_analyses([Fixtures.UnlinkedSpawner])
 
       ran_names = Enum.map(result.ran, & &1.analysis) |> Enum.sort()
@@ -312,6 +292,7 @@ defmodule Argus.FindingsTest do
                Memo.run_analyses([:lists], analyses: :some)
     end
 
+    @tag :souffle
     test "empty analysis selection runs nothing" do
       assert {:ok, %Findings{findings: [], ran: [], degraded: []}} =
                Memo.run_analyses([:lists], analyses: [])
@@ -319,8 +300,8 @@ defmodule Argus.FindingsTest do
 
     # A store of its own: a solve another run kept would be read back
     # rather than run against the deadline.
+    @tag :souffle
     test "a failing analysis degrades with a note while the result still returns" do
-      skip_without_souffle()
       store = Path.join(System.tmp_dir!(), "argus-degrade-#{System.unique_integer([:positive])}")
       on_exit(fn -> File.rm_rf(store) end)
 
@@ -341,9 +322,8 @@ defmodule Argus.FindingsTest do
       assert detail =~ "timed out" or detail =~ "did not finish within :souffle_timeout"
     end
 
+    @tag :souffle
     test "extraction failure is a whole-call error" do
-      skip_without_souffle()
-
       assert {:error, {:not_found, :fake_module_xyz}} =
                Memo.run_analyses([:fake_module_xyz], analyses: [:failure])
     end

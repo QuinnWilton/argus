@@ -1,16 +1,12 @@
 defmodule Argus.Analyses.ReachPathFrameTest do
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
   alias Argus.Lines
-  alias Argus.Souffle
   alias Argus.Test.Fixtures.ReachPath
   alias Argus.Test.Memo
 
   @source Path.expand("../fixtures/reach_path_fixture.ex", __DIR__)
-
-  defp skip_without_souffle do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-  end
 
   # The line of the fixture's own source that holds `text`, found by the
   # text so the fixture can move freely.
@@ -40,7 +36,6 @@ defmodule Argus.Analyses.ReachPathFrameTest do
   end
 
   test "a lock in a helper: init/1's frame is the call that starts the path" do
-    skip_without_souffle()
     mods = [ReachPath.ClusterLock]
 
     [f] = Enum.filter(findings(mods, :startup), &(&1.title == "Cluster-wide lock during init"))
@@ -51,7 +46,6 @@ defmodule Argus.Analyses.ReachPathFrameTest do
   end
 
   test "of two calls that both reach the lock, the frame is the earlier" do
-    skip_without_souffle()
     mods = [ReachPath.TwoPaths]
 
     [f] = Enum.filter(findings(mods, :startup), &(&1.title == "Cluster-wide lock during init"))
@@ -61,7 +55,6 @@ defmodule Argus.Analyses.ReachPathFrameTest do
   end
 
   test "a receive in a helper: the init/1 frame is the call that reaches it" do
-    skip_without_souffle()
     mods = [ReachPath.WaitsInInit]
 
     reached_from = fn f ->
@@ -76,7 +69,6 @@ defmodule Argus.Analyses.ReachPathFrameTest do
   end
 
   test "a sibling called from a helper: terminate/2's frame is the call to the helper" do
-    skip_without_souffle()
     mods = [ReachPath.Tree, ReachPath.Writer, ReachPath.Directory]
 
     [f] =
@@ -90,7 +82,6 @@ defmodule Argus.Analyses.ReachPathFrameTest do
   end
 
   test "a sibling called in a closure written inside terminate/2 gets no head frame" do
-    skip_without_souffle()
     mods = [ReachPath.EachTree, ReachPath.EachWriter, ReachPath.Directory]
 
     [f] =

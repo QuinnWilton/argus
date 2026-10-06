@@ -1,12 +1,8 @@
 defmodule Argus.Analyses.CoverageTest do
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
-  alias Argus.Souffle
   alias Argus.Test.Memo
-
-  defp skip_without_souffle do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-  end
 
   # The fixture set is kept small on purpose: each module in this list is
   # designed to trigger exactly one of the shape-gap relations, and no
@@ -22,8 +18,6 @@ defmodule Argus.Analyses.CoverageTest do
 
   describe "coverage.dl — shape-gap queries" do
     test "coverage_supervisor_no_children matches Enum.map-built children" do
-      skip_without_souffle()
-
       assert {:ok, results} = Memo.analyze(@fixtures, :coverage)
 
       sups = results["coverage_supervisor_no_children"] || []
@@ -34,8 +28,6 @@ defmodule Argus.Analyses.CoverageTest do
     end
 
     test "coverage_ets_unused matches a named table with no ops" do
-      skip_without_souffle()
-
       assert {:ok, results} = Memo.analyze(@fixtures, :coverage)
 
       unused = results["coverage_ets_unused"] || []
@@ -43,8 +35,6 @@ defmodule Argus.Analyses.CoverageTest do
     end
 
     test "coverage_genserver_isolated matches a GenServer with no callers" do
-      skip_without_souffle()
-
       assert {:ok, results} = Memo.analyze(@fixtures, :coverage)
 
       isolated = results["coverage_genserver_isolated"] || []
@@ -57,8 +47,6 @@ defmodule Argus.Analyses.CoverageTest do
 
   describe "coverage.dl — traffic through pids" do
     test "a server called through the pid its start returns or a whereis finds is reached" do
-      skip_without_souffle()
-
       mods = [
         Argus.Test.Fixtures.CoveragePidServer,
         Argus.Test.Fixtures.CoverageNamedByPid,
@@ -74,8 +62,6 @@ defmodule Argus.Analyses.CoverageTest do
 
   describe "coverage.dl — imprecision passthrough" do
     test "imprecision_event fires for genserver_callee on dynamic targets" do
-      skip_without_souffle()
-
       assert {:ok, results} = Memo.analyze(@fixtures, :coverage)
 
       events = results["imprecision_event"] || []
@@ -90,8 +76,6 @@ defmodule Argus.Analyses.CoverageTest do
     end
 
     test "imprecision_event covers multiple categories across the fixture set" do
-      skip_without_souffle()
-
       assert {:ok, results} = Memo.analyze(@fixtures, :coverage)
 
       events = results["imprecision_event"] || []
@@ -101,8 +85,6 @@ defmodule Argus.Analyses.CoverageTest do
     end
 
     test "non-coverage analyses produce no imprecision_event rows" do
-      skip_without_souffle()
-
       # Run the same fixtures through a different analysis and verify
       # the imprecision fact file is empty — the tracing gate must be
       # off for non-coverage runs, otherwise we'd be paying for it on

@@ -23,11 +23,11 @@ defmodule Argus.Souffle.UncommentedTest do
     assert Program.uncommented("a(1). // why\n") == "a(1). // why"
   end
 
+  @tag :souffle
   @tag timeout: 120_000
   test "prose preserves every program's key and parsed rules; a rule edit does", %{
     tmp_dir: tmp
   } do
-    unless Souffle.available?(), do: flunk("souffle not installed")
     shipped = Argus.Dl.root()
     dl = Path.join(tmp, "dl")
     File.cp_r!(shipped, dl)

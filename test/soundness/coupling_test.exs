@@ -40,6 +40,7 @@ defmodule Argus.Soundness.CouplingTest do
     `ClauseReader`'s clause) keep nothing, so they do not fire.
   """
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
   import Argus.Test.Soundness, only: [fired: 2]
 

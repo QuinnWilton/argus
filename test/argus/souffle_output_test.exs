@@ -1,13 +1,12 @@
 defmodule Argus.SouffleOutputTest do
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
   alias Argus.Souffle
 
   @moduletag :tmp_dir
 
   test "solves and program inspection suppress compiler warnings", %{tmp_dir: dir} do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-
     program = Path.join(dir, "warning.dl")
 
     # The unused y deliberately produces a warning in both Souffle 2.4 and 2.5.
@@ -57,8 +56,6 @@ defmodule Argus.SouffleOutputTest do
   """
 
   test "empty symbol columns survive at either edge of a row", %{tmp_dir: dir} do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-
     facts = Path.join(dir, "facts")
     File.mkdir_p!(facts)
     program = Path.join(dir, "edges.dl")
@@ -83,8 +80,6 @@ defmodule Argus.SouffleOutputTest do
 
   describe "rows come back sorted, whatever order Souffle wrote them in" do
     setup %{tmp_dir: dir} do
-      unless Souffle.available?(), do: flunk("souffle not installed")
-
       program = Path.join(dir, "unsorted.dl")
       File.write!(program, @unsorted)
       %{program: program}

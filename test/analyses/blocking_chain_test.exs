@@ -1,13 +1,9 @@
 defmodule Argus.Analyses.BlockingChainTest do
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
-  alias Argus.Souffle
   alias Argus.Test.Memo
   alias Argus.Test.Rows
-
-  defp skip_without_souffle do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-  end
 
   # The rows of one kind, in the shape the rule has always produced.
   defp chains(results, "chain"),
@@ -51,7 +47,6 @@ defmodule Argus.Analyses.BlockingChainTest do
 
   describe "call_chain: which chains" do
     test "only the shortest chain between two servers is reported" do
-      skip_without_souffle()
       alias Argus.Test.Fixtures.ChainShapes, as: S
 
       {:ok, results} =
@@ -66,7 +61,6 @@ defmodule Argus.Analyses.BlockingChainTest do
     end
 
     test "a chain is anchored at the call that starts its shortest path" do
-      skip_without_souffle()
       alias Argus.Test.Fixtures.ChainShapes, as: S
 
       modules = [S.ShortA, S.ShortB, S.ShortC, S.ShortD]
@@ -89,7 +83,6 @@ defmodule Argus.Analyses.BlockingChainTest do
     end
 
     test "a chain through a synchronous call cycle is left to the cycle's finding" do
-      skip_without_souffle()
       alias Argus.Test.Fixtures.ChainShapes, as: S
 
       {:ok, results} = Memo.analyze([S.CycW, S.CycX, S.CycY, S.CycZ], :blocking)
@@ -101,7 +94,6 @@ defmodule Argus.Analyses.BlockingChainTest do
     end
 
     test "a chain beside a cycle through another clause of the same server is reported" do
-      skip_without_souffle()
       alias Argus.Test.Fixtures.ChainShapes, as: S
 
       {:ok, results} =
@@ -127,8 +119,6 @@ defmodule Argus.Analyses.BlockingChainTest do
 
   describe "call_chain" do
     test "detects chain risk at depth >= 2" do
-      skip_without_souffle()
-
       modules = [
         Argus.Test.Fixtures.TimeoutChain.ServerA,
         Argus.Test.Fixtures.TimeoutChain.ServerB,
@@ -150,8 +140,6 @@ defmodule Argus.Analyses.BlockingChainTest do
     end
 
     test "detects blocking cast handler" do
-      skip_without_souffle()
-
       modules = [
         Argus.Test.Fixtures.TimeoutChain.BlockingCastServer,
         Argus.Test.Fixtures.TimeoutChain.ServerC
@@ -169,7 +157,6 @@ defmodule Argus.Analyses.BlockingChainTest do
     end
 
     test "a blocking cast is anchored at the call that waits, one finding per server" do
-      skip_without_souffle()
       alias Argus.Test.Fixtures.TimeoutChain, as: T
 
       modules = [T.LaterClauseCastServer, T.ServerA, T.ServerB, T.ServerC]
@@ -188,7 +175,6 @@ defmodule Argus.Analyses.BlockingChainTest do
     end
 
     test "a cast handed on to handle_info/2 enters the clauses its tag selects" do
-      skip_without_souffle()
       alias Argus.Test.Fixtures.TimeoutChain, as: T
 
       waits =
@@ -209,7 +195,6 @@ defmodule Argus.Analyses.BlockingChainTest do
     end
 
     test "a forwarded literal that selects a waiting clause still waits" do
-      skip_without_souffle()
       alias Argus.Test.Fixtures.TimeoutChain, as: T
 
       # Two clauses for the literal, the second waiting; a second clause
@@ -225,8 +210,6 @@ defmodule Argus.Analyses.BlockingChainTest do
     end
 
     test "a GenStage's cast handler blocks as a GenServer's does" do
-      skip_without_souffle()
-
       {:ok, results} =
         Memo.analyze(
           [
@@ -240,8 +223,6 @@ defmodule Argus.Analyses.BlockingChainTest do
     end
 
     test "detects infinity timeout in chain" do
-      skip_without_souffle()
-
       modules = [
         Argus.Test.Fixtures.TimeoutChain.ServerA,
         Argus.Test.Fixtures.TimeoutChain.ServerB,
@@ -272,8 +253,6 @@ defmodule Argus.Analyses.BlockingChainTest do
     end
 
     test "runs without error on modules with no GenServer callbacks" do
-      skip_without_souffle()
-
       assert {:ok, results} = Memo.analyze([:maps], :blocking)
       assert Map.has_key?(results, "call_chain")
       assert Map.has_key?(results, "call_chain")
@@ -291,8 +270,6 @@ defmodule Argus.Analyses.BlockingChainTest do
         )
 
     test "a server that logs does not wait on the logger's servers" do
-      skip_without_souffle()
-
       # OTP's own logger: :logger.error/1 reaches logger_server's
       # :infinity call through the handler-removal path.
       {:ok, results} =
@@ -303,8 +280,6 @@ defmodule Argus.Analyses.BlockingChainTest do
     end
 
     test "a server that logs and also asks a peer still forms a chain through it" do
-      skip_without_souffle()
-
       {:ok, results} =
         Memo.analyze(
           [S.LogsAndAsks, S.CallsLogsAndAsks, S.Peer, :logger, :logger_backend, :logger_server],
@@ -323,8 +298,6 @@ defmodule Argus.Analyses.BlockingChainTest do
     end
 
     test "an :infinity hop into a server that answers at once ends the chain" do
-      skip_without_souffle()
-
       {:ok, results} =
         Memo.analyze([S.StopsProxy, S.Proxy, S.AsksWorker, S.Worker], :blocking)
 
@@ -337,8 +310,6 @@ defmodule Argus.Analyses.BlockingChainTest do
     end
 
     test "a server that logs and replies answers at once; one that logs and waits does not" do
-      skip_without_souffle()
-
       # A call into the logging API is a side path: its machinery waits on
       # its own servers, so it answers in time. The receive beside it does
       # not.
@@ -357,8 +328,6 @@ defmodule Argus.Analyses.BlockingChainTest do
     end
 
     test "a server that parks the request and replies later does not answer at once" do
-      skip_without_souffle()
-
       {:ok, results} = Memo.analyze([S.AsksDeferrer, S.Deferrer], :blocking)
 
       assert infinity(results) == [
@@ -370,8 +339,6 @@ defmodule Argus.Analyses.BlockingChainTest do
     end
 
     test "a task the server awaits holds the hop; one it only starts does not" do
-      skip_without_souffle()
-
       {:ok, results} =
         Memo.analyze([S.AsksAwaiter, S.Awaiter, S.AsksStarter, S.Starter], :blocking)
 
@@ -386,8 +353,6 @@ defmodule Argus.Analyses.BlockingChainTest do
 
   describe "no chain through a pure-function reach" do
     test "a handle_call reaching only a pure function is not a chain hop" do
-      skip_without_souffle()
-
       # ChainOuter.handle_call reaches only ChainMiddle.pure/1 (pure);
       # ChainMiddle really does sync-call ChainInner. The old
       # stateful_module_dep clause manufactured ChainOuter -> ChainMiddle
@@ -409,8 +374,6 @@ defmodule Argus.Analyses.BlockingChainTest do
 
   describe "call_chain: budget" do
     test "flags a caller whose budget is strictly smaller than the downstream hop" do
-      skip_without_souffle()
-
       modules = [
         Argus.Test.Fixtures.TimeoutChain.TightBudgetServer,
         Argus.Test.Fixtures.TimeoutChain.DeepServer,
@@ -429,8 +392,6 @@ defmodule Argus.Analyses.BlockingChainTest do
     end
 
     test "does not flag equal timeouts (the default-vs-default chain)" do
-      skip_without_souffle()
-
       # ServerA -> ServerB -> ServerC all use the GenServer.call default
       # (5000ms at every hop). Equal budgets are the universal
       # configuration, not a misconfiguration — must not be an :error.

@@ -104,8 +104,6 @@ defmodule Argus.Clientlib.BehavioursTest do
     @tag :souffle
     @tag :tmp_dir
     test "both spellings of gen_server reach the same canonical name", %{tmp_dir: tmp_dir} do
-      unless Souffle.available?(), do: flunk("souffle not installed")
-
       facts_dir = Path.join(tmp_dir, "facts")
       File.mkdir_p!(facts_dir)
 

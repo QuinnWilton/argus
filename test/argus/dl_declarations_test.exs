@@ -154,6 +154,8 @@ defmodule Argus.DlDeclarationsTest do
   end
 
   describe "analysis input sets" do
+    @describetag :souffle
+
     # Resolved from Souffle's own transformed RAM, so this is what each
     # analysis genuinely reads, not what it declares — declaring the whole
     # schema is free precisely because Souffle prunes input relations no
@@ -168,7 +170,6 @@ defmodule Argus.DlDeclarationsTest do
     @pins_file Path.expand("analysis_inputs.exs", __DIR__)
     @expected @pins_file |> Code.eval_file() |> elem(0) |> Map.new()
 
-    @tag :souffle
     test "each built-in analysis reads exactly the relations it is pinned to" do
       for mod <- Analysis.builtin_analysis_modules() do
         name = mod.name()
@@ -190,7 +191,6 @@ defmodule Argus.DlDeclarationsTest do
     # every solve's results, read as no rows by the finding builders. So
     # each declared output is one the program writes, as the transformed
     # RAM says (what actually executes, includes and all).
-    @tag :souffle
     test "every output relation an analysis declares is one its program writes" do
       unwritten =
         Analysis.builtin_analysis_modules()
@@ -219,13 +219,11 @@ defmodule Argus.DlDeclarationsTest do
       assert unwritten == []
     end
 
-    @tag :souffle
     test "the pin covers every built-in analysis" do
       names = Enum.map(Analysis.builtin_analysis_modules(), & &1.name())
       assert Enum.sort(names) == Enum.sort(Map.keys(@expected))
     end
 
-    @tag :souffle
     test "no analysis reads the instruction relation" do
       # `instruction` is the largest relation by far — 343k rows on a
       # 531-module project — and every row of it moves whenever any function

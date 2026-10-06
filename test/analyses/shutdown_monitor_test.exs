@@ -1,7 +1,7 @@
 defmodule Argus.Analyses.ShutdownMonitorTest do
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
-  alias Argus.Souffle
   alias Argus.Test.Fixtures.MonitorLeak, as: M
   alias Argus.Test.Memo
 
@@ -13,10 +13,6 @@ defmodule Argus.Analyses.ShutdownMonitorTest do
     M.DropsRef
   ]
 
-  defp skip_without_souffle do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-  end
-
   describe "over a server's lifetime" do
     defp servers do
       assert {:ok, r} = Memo.analyze(@servers, :shutdown)
@@ -24,8 +20,6 @@ defmodule Argus.Analyses.ShutdownMonitorTest do
     end
 
     test "terminating a monitored child without demonitor is reported" do
-      skip_without_souffle()
-
       r = servers()
 
       assert [[mod, site, kill_site]] = r["kills_monitored_child"]
@@ -35,8 +29,6 @@ defmodule Argus.Analyses.ShutdownMonitorTest do
     end
 
     test "a stop the server makes from a process it spawns is still its doing" do
-      skip_without_souffle()
-
       assert {:ok, r} = Memo.analyze([M.KillsMonitoredAside], :shutdown)
       assert [[mod, _site, kill_site]] = r["kills_monitored_child"]
       assert mod == "Argus.Test.Fixtures.MonitorLeak.KillsMonitoredAside"

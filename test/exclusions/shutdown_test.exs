@@ -5,8 +5,8 @@ defmodule Argus.Exclusions.ShutdownTest do
   Fixtures: test/fixtures/exclusions/shutdown.ex.
   """
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
-  alias Argus.Souffle
   alias Argus.Test.Batch
   alias Argus.Test.Rows
   alias Excl.Shutdown, as: S
@@ -31,7 +31,6 @@ defmodule Argus.Exclusions.ShutdownTest do
 
   # The set's rows of `relation`, with the `drop` columns removed.
   defp rows(%{batch: batch}, set, relation, drop) do
-    unless Souffle.available?(), do: flunk("souffle not installed")
     {:ok, results} = Batch.analyze(batch, set)
     Rows.where(results, :shutdown, relation, drop: drop)
   end

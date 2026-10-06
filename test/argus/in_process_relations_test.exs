@@ -11,9 +11,8 @@ defmodule Argus.InProcessRelationsTest do
   `Argus.DlDeclarationsTest`).
   """
 
+  @tag :souffle
   test "no built-in program reads an in-process-only relation" do
-    skip_without_souffle()
-
     programs = [
       Analysis.stage0_rules_path(),
       Analysis.points_to_rules_path(),
@@ -43,8 +42,4 @@ defmodule Argus.InProcessRelationsTest do
 
   defp rules_path(mod),
     do: Application.app_dir(:argus_beam, Path.join("priv/dl", mod.rules_file()))
-
-  defp skip_without_souffle do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-  end
 end

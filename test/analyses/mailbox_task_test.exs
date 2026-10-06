@@ -1,13 +1,9 @@
 defmodule Argus.Analyses.MailboxTaskTest do
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
-  alias Argus.Souffle
   alias Argus.Test.Memo
   alias Argus.Test.Rows
-
-  defp skip_without_souffle do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-  end
 
   defp tasks(results, kind),
     do: Rows.where(results, :mailbox, "task_result_defect", kind: kind, drop: [:kind])
@@ -16,8 +12,6 @@ defmodule Argus.Analyses.MailboxTaskTest do
 
   describe "task_result_defect: never_awaited" do
     test "detects leaked async task" do
-      skip_without_souffle()
-
       assert {:ok, results} =
                Memo.analyze([Argus.Test.Fixtures.LeakedTaskModule], :mailbox)
 
@@ -34,8 +28,6 @@ defmodule Argus.Analyses.MailboxTaskTest do
     end
 
     test "suppresses leaked_async_task for GenServer with handle_info/2" do
-      skip_without_souffle()
-
       modules = [
         Argus.Test.Fixtures.GenServerTaskConsumer,
         Argus.Test.Fixtures.LeakedTaskModule
@@ -57,8 +49,6 @@ defmodule Argus.Analyses.MailboxTaskTest do
     end
 
     test "suppresses leaked_async_task for any module defining handle_info/2" do
-      skip_without_souffle()
-
       modules = [
         Argus.Test.Fixtures.PlainTaskConsumer,
         Argus.Test.Fixtures.LeakedTaskModule
@@ -73,8 +63,6 @@ defmodule Argus.Analyses.MailboxTaskTest do
     end
 
     test "does not flag Task.Supervisor.async_nolink as leaked" do
-      skip_without_souffle()
-
       modules = [
         Argus.Test.Fixtures.SupervisedFireAndForget,
         Argus.Test.Fixtures.LeakedTaskModule
@@ -96,8 +84,6 @@ defmodule Argus.Analyses.MailboxTaskTest do
     end
 
     test "suppresses task factory (tail-position async)" do
-      skip_without_souffle()
-
       modules = [
         Argus.Test.Fixtures.TaskFactory,
         Argus.Test.Fixtures.LeakedTaskModule
@@ -120,8 +106,6 @@ defmodule Argus.Analyses.MailboxTaskTest do
     end
 
     test "suppresses leaked_async_task for LiveView with handle_info/2" do
-      skip_without_souffle()
-
       modules = [
         Argus.Test.Fixtures.LiveViewTaskConsumer,
         Argus.Test.Fixtures.LeakedTaskModule
@@ -143,8 +127,6 @@ defmodule Argus.Analyses.MailboxTaskTest do
     end
 
     test "suppresses leaked_async_task for gen_statem with handle_event/4" do
-      skip_without_souffle()
-
       modules = [
         Argus.Test.Fixtures.GenStatemTaskConsumer,
         Argus.Test.Fixtures.LeakedTaskModule
@@ -166,8 +148,6 @@ defmodule Argus.Analyses.MailboxTaskTest do
     end
 
     test "suppresses leaked_async_task when Task.shutdown is used" do
-      skip_without_souffle()
-
       modules = [
         Argus.Test.Fixtures.TaskShutdownUser,
         Argus.Test.Fixtures.LeakedTaskModule
@@ -189,8 +169,6 @@ defmodule Argus.Analyses.MailboxTaskTest do
     end
 
     test "runs without error on modules with no task calls" do
-      skip_without_souffle()
-
       assert {:ok, results} = Memo.analyze([:maps], :mailbox)
       assert Map.has_key?(results, "task_result_defect")
     end
@@ -198,8 +176,6 @@ defmodule Argus.Analyses.MailboxTaskTest do
 
   describe "linked tasks" do
     test "yield on a linked task is reported unless the process traps exits" do
-      skip_without_souffle()
-
       assert {:ok, results} =
                Memo.analyze(
                  [
@@ -230,8 +206,6 @@ defmodule Argus.Analyses.MailboxTaskTest do
     end
 
     test "Task.async in a plain library function is noted; a GenServer's is not" do
-      skip_without_souffle()
-
       assert {:ok, results} =
                Memo.analyze(
                  [Argus.Test.Fixtures.LibraryPmap, Argus.Test.Fixtures.GenServerTaskConsumer],
@@ -243,8 +217,6 @@ defmodule Argus.Analyses.MailboxTaskTest do
     end
 
     test "a process module's API runs in its caller; its own callbacks do not" do
-      skip_without_souffle()
-
       assert {:ok, results} =
                Memo.analyze(
                  [

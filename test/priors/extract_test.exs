@@ -5,8 +5,9 @@ defmodule Argus.Priors.ExtractTest do
   """
 
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
-  alias Argus.{Analysis, Souffle}
+  alias Argus.Analysis
   alias Argus.Test.Fixtures.Secret, as: S
 
   @moduletag :tmp_dir
@@ -39,10 +40,6 @@ defmodule Argus.Priors.ExtractTest do
     def ask(_request, _opts), do: {:error, :down}
   end
 
-  defp skip_without_souffle do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-  end
-
   defp rows(dir) do
     dir
     |> Path.join("prior_sensitive.facts")
@@ -52,14 +49,11 @@ defmodule Argus.Priors.ExtractTest do
   end
 
   test "priors off: the relation's file exists and is empty" do
-    skip_without_souffle()
     {:ok, dir} = Analysis.extract_facts([S.Heuristic], [:exposure])
     assert rows(dir) == []
   end
 
   test "priors on: the relation holds the question's rows", %{tmp_dir: cache} do
-    skip_without_souffle()
-
     {:ok, dir} =
       Analysis.extract_facts([S.Heuristic], [:exposure],
         priors: :live,
@@ -90,8 +84,6 @@ defmodule Argus.Priors.ExtractTest do
   end
 
   test "an oracle that fails leaves the relation empty and extraction succeeds", %{tmp_dir: cache} do
-    skip_without_souffle()
-
     {:ok, dir} =
       Analysis.extract_facts([S.Heuristic], [:exposure],
         priors: :live,

@@ -1,13 +1,9 @@
 defmodule Argus.Analyses.BlockingCycleTest do
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
-  alias Argus.Souffle
   alias Argus.Test.Fixtures.{CallCycle, PidFlow}
   alias Argus.Test.Memo
-
-  defp skip_without_souffle do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-  end
 
   # A "call" cycle between the two modules, in either order.
   defp cycle?(results, a, b) do
@@ -20,8 +16,6 @@ defmodule Argus.Analyses.BlockingCycleTest do
 
   describe "call_cycle.dl" do
     test "detects mutual sync-call cycle between fixture GenServers" do
-      skip_without_souffle()
-
       modules = [
         Argus.Test.Fixtures.CycleServerA,
         Argus.Test.Fixtures.CycleServerB
@@ -42,8 +36,6 @@ defmodule Argus.Analyses.BlockingCycleTest do
     end
 
     test "a cycle between servers that hold each other only by pid" do
-      skip_without_souffle()
-
       # A starts B with self(); each keeps the other's pid in its state and
       # calls it, so both GenServer.call targets are "dynamic" to sync_call.
       # Process points-to (clientlib/processes.dl) follows the pids back.
@@ -65,8 +57,6 @@ defmodule Argus.Analyses.BlockingCycleTest do
     end
 
     test "a cycle through a pid a subscriber sent in a message" do
-      skip_without_souffle()
-
       # The listener casts its own pid to the hub, which keeps it in its
       # state and calls it; the listener calls the hub back by name.
       hub = Argus.Test.Fixtures.PidFlow.Hub
@@ -84,8 +74,6 @@ defmodule Argus.Analyses.BlockingCycleTest do
     end
 
     test "a state holding two pids is not one bag of them" do
-      skip_without_souffle()
-
       # Front keeps Back and Side in one state map and calls only Back;
       # Side calls Front by name. With the state a bag, Front "called" Side
       # too and the pair looked like a deadlock, and C → A → B like a chain
@@ -102,8 +90,6 @@ defmodule Argus.Analyses.BlockingCycleTest do
     end
 
     test "a helper shared by two servers does not join their peers" do
-      skip_without_souffle()
-
       # UserA and UserB each call a private peer through SafeCall; TargetB
       # calls UserA back by name. With the helper's parameter every
       # caller's pid, UserA "called" TargetB too: a false cycle.
@@ -116,8 +102,6 @@ defmodule Argus.Analyses.BlockingCycleTest do
     end
 
     test "a name each caller hands a shared helper is that caller's target alone" do
-      skip_without_souffle()
-
       # NamedUserA and NamedUserB call their own targets through NamedCall;
       # NamedTargetB calls NamedUserA back by name. With the helper's
       # parameter every caller's name, NamedUserA "called" NamedTargetB.
@@ -130,8 +114,6 @@ defmodule Argus.Analyses.BlockingCycleTest do
     end
 
     test "a cycle through a helper both servers call each other by" do
-      skip_without_souffle()
-
       mods =
         for m <- [NamedCall, NamedPeerA, NamedPeerB],
             do: Module.concat(Argus.Test.Fixtures.PidFlow, m)
@@ -141,8 +123,6 @@ defmodule Argus.Analyses.BlockingCycleTest do
     end
 
     test "thin wrappers over one server module do not call each other" do
-      skip_without_souffle()
-
       # Plausible's Event and Session write buffers: each names an instance
       # of WriteBuffer after itself and forwards to its API. No process
       # calls another; the wrappers run no process at all.
@@ -155,8 +135,6 @@ defmodule Argus.Analyses.BlockingCycleTest do
     end
 
     test "a client function in a server module is not that server waiting" do
-      skip_without_souffle()
-
       # Producer.produce/1 calls Batcher, but it runs in its caller; only
       # Batcher's process calls Producer's (klife's Producer and Batcher).
       assert {:ok, results} = Memo.analyze([CallCycle.Producer, CallCycle.Batcher], :blocking)
@@ -164,15 +142,11 @@ defmodule Argus.Analyses.BlockingCycleTest do
     end
 
     test "a task the server waits for holds it in the cycle" do
-      skip_without_souffle()
-
       assert {:ok, results} = Memo.analyze([CallCycle.Awaiter, CallCycle.Awaited], :blocking)
       assert cycle?(results, CallCycle.Awaiter, CallCycle.Awaited)
     end
 
     test "a wait an unnamed channel makes only while it joins does not close a cycle" do
-      skip_without_souffle()
-
       # LiveView's upload channel registers with the view from join/3,
       # handing it self(); the view answers at once and calls the channel
       # later, through the pid it kept. Nothing else can reach the channel
@@ -182,15 +156,11 @@ defmodule Argus.Analyses.BlockingCycleTest do
     end
 
     test "a wait an unnamed server makes only in init/1 does not close a cycle" do
-      skip_without_souffle()
-
       assert {:ok, results} = Memo.analyze([CallCycle.Manager, CallCycle.Worker], :blocking)
       assert results["call_cycle"] == []
     end
 
     test "a server named while its init/1 waits can be called in it" do
-      skip_without_souffle()
-
       # NamedManager calls NamedWorker by name, which it holds from the
       # moment the start registers it: both can wait at once.
       assert {:ok, results} =
@@ -200,8 +170,6 @@ defmodule Argus.Analyses.BlockingCycleTest do
     end
 
     test "a peer that answers the start's request by calling back is a cycle" do
-      skip_without_souffle()
-
       # Greeter's :hello clause calls the Joiner whose init/1 is waiting
       # for that very reply: the start deadlocks every time.
       assert {:ok, results} = Memo.analyze([CallCycle.Greeter, CallCycle.Joiner], :blocking)
@@ -209,8 +177,6 @@ defmodule Argus.Analyses.BlockingCycleTest do
     end
 
     test "each direction points at the call into the other's client API" do
-      skip_without_souffle()
-
       alias Argus.Test.Fixtures.CallCycle.{ExtensionsHub, HubSocket}
 
       assert {:ok, results} = Memo.analyze([ExtensionsHub, HubSocket], :blocking)
@@ -238,15 +204,11 @@ defmodule Argus.Analyses.BlockingCycleTest do
     end
 
     test "runs without error on module with no cycles" do
-      skip_without_souffle()
-
       assert {:ok, results} = Memo.analyze([:maps], :blocking)
       assert Map.has_key?(results, "call_cycle")
     end
 
     test "detects gen_event sync_notify cycles via the gen_event extractor" do
-      skip_without_souffle()
-
       # Two :gen_event handler modules whose handle_event clauses
       # sync_notify each other. With the gen_event extractor wired into
       # call_cycle's extractor list, the resulting sync_call facts feed

@@ -10,6 +10,7 @@ defmodule Argus.Clientlib.PervasiveTest do
   every other leaf keeps exactly its own.
   """
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
   alias Argus.{Analysis, Pipeline, Souffle}
 
@@ -17,8 +18,6 @@ defmodule Argus.Clientlib.PervasiveTest do
   @staged Analysis.points_to_relations()
 
   setup_all do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-
     dir = Path.join(System.tmp_dir!(), "argus_pervasive_#{System.unique_integer([:positive])}")
     on_exit(fn -> File.rm_rf!(dir) end)
     facts_dir = Path.join(dir, "facts")

@@ -7,16 +7,11 @@ defmodule Argus.EvidenceFramesTest do
   """
 
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
   alias Argus.InstrId
-  alias Argus.Souffle
   alias Argus.Test.Fixtures
   alias Argus.Test.Memo
-
-  setup do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-    :ok
-  end
 
   defp findings(modules, analysis) do
     assert {:ok, %{findings: findings, degraded: []}} =

@@ -1,5 +1,6 @@
 defmodule Argus.Soundness.VerificationResultTest do
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
   alias Argus.Test.Fixtures.ResultChecks
   alias Argus.Test.Fixtures.Verification

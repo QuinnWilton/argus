@@ -1,8 +1,8 @@
 defmodule Argus.Analyses.ShutdownTest do
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
   alias Argus.Extractor.Helpers
-  alias Argus.Souffle
   alias Argus.Test.Fixtures.Shutdown, as: S
   alias Argus.Test.Memo
   alias Argus.Test.Rows
@@ -27,10 +27,6 @@ defmodule Argus.Analyses.ShutdownTest do
   # Every test reads the same solve of @all: solved once, read-only.
   setup_all do
     %{solved: Memo.analyze(@all, :shutdown)}
-  end
-
-  defp skip_without_souffle do
-    unless Souffle.available?(), do: flunk("souffle not installed")
   end
 
   defp results(%{solved: solved}) do
@@ -70,7 +66,6 @@ defmodule Argus.Analyses.ShutdownTest do
 
   describe "terminate_calls_sibling" do
     test "a call to a sibling from terminate/2 is reported; a cast is not" do
-      skip_without_souffle()
       alias Argus.Test.Fixtures.ShutdownSiblings, as: Sib
 
       {:ok, r} =
@@ -120,13 +115,10 @@ defmodule Argus.Analyses.ShutdownTest do
     @directory "Argus.Test.Fixtures.SiblingOrder.Directory"
 
     test "a sibling started after the caller is stopped first on shutdown" do
-      skip_without_souffle()
       assert kinds(O.CalleeStartsLater) == [{"call", @writer, @directory}]
     end
 
     test "a caller that does not trap exits is not terminated by the shutdown" do
-      skip_without_souffle()
-
       {:ok, r} =
         Memo.analyze([O.NonTrappingCalleeLater, O.NonTrappingWriter, O.Directory], :shutdown)
 
@@ -134,39 +126,31 @@ defmodule Argus.Analyses.ShutdownTest do
     end
 
     test "a sibling started before the caller is still up, under one_for_one" do
-      skip_without_souffle()
       assert kinds(O.CalleeStartsEarlier) == []
     end
 
     test "under rest_for_one, the earlier sibling's crash is what terminates the caller" do
-      skip_without_souffle()
       assert kinds(O.CalleeEarlierRestForOne) == [{"call_restart", @writer, @directory}]
     end
 
     test "a caller nested in an earlier branch finds a later sibling stopped" do
-      skip_without_souffle()
       assert kinds(O.NestedCallerFirst, [O.WriterSup]) == [{"call", @writer, @directory}]
     end
 
     test "a sibling nested in a later branch is stopped before the caller" do
-      skip_without_souffle()
       assert kinds(O.NestedCalleeLater, [O.DirectorySup]) == [{"call", @writer, @directory}]
     end
 
     test "under rest_for_one, an earlier child's crash takes down a later branch's caller" do
-      skip_without_souffle()
-
       assert kinds(O.NestedCallerRestForOne, [O.WriterSup]) ==
                [{"call_restart", @writer, @directory}]
     end
 
     test "a sibling nested in an earlier branch is restarted there, leaving the caller" do
-      skip_without_souffle()
       assert kinds(O.NestedCalleeRestForOne, [O.DirectorySup]) == []
     end
 
     test "an earlier sibling under a strategy argus cannot read is reported less surely" do
-      skip_without_souffle()
       assert kinds(O.CalleeEarlierUnknownStrategy) == [{"call_unordered", @writer, @directory}]
 
       {:ok, findings} =
@@ -205,7 +189,6 @@ defmodule Argus.Analyses.ShutdownTest do
     ]
 
     test "only a try covering the call, or the call toward it, guards it" do
-      skip_without_souffle()
       {:ok, r} = Memo.analyze(@guard_fixtures, :shutdown)
 
       callers =
@@ -244,7 +227,6 @@ defmodule Argus.Analyses.ShutdownTest do
     end
 
     test "the path starts at the call after the try, not the one inside it" do
-      skip_without_souffle()
       {:ok, r} = Memo.analyze(@guard_fixtures, :shutdown)
       mod = "Argus.Test.Fixtures.SiblingGuard.TryElsewhere"
       terminate = mod <> ":terminate/2"
@@ -267,7 +249,6 @@ defmodule Argus.Analyses.ShutdownTest do
 
   describe "foreign_dynamic_children" do
     test "children started under another tree are reported unless terminate/2 stops them" do
-      skip_without_souffle()
       alias Argus.Test.Fixtures.ForeignChildren, as: F
 
       {:ok, r} =
@@ -293,8 +274,6 @@ defmodule Argus.Analyses.ShutdownTest do
 
   describe "detection" do
     test "durable cleanup without trap_exit is reported", ctx do
-      skip_without_souffle()
-
       assert [[mod, behaviour, "io", api, via]] =
                only(results(ctx), "cleanup_never_runs", "Shutdown.Leaks")
 
@@ -305,8 +284,6 @@ defmodule Argus.Analyses.ShutdownTest do
     end
 
     test "cleanup several calls below terminate/2 is attributed to its site", ctx do
-      skip_without_souffle()
-
       assert [[_mod, _b, "io", _api, via]] =
                only(results(ctx), "cleanup_never_runs", "LeaksIndirect")
 
@@ -314,8 +291,6 @@ defmodule Argus.Analyses.ShutdownTest do
     end
 
     test "unclassified work in terminate/2 is reported separately", ctx do
-      skip_without_souffle()
-
       mods = modules(results(ctx), "cleanup_unclear")
 
       assert named?(mods, "Shutdown.Unclear"),
@@ -325,8 +300,6 @@ defmodule Argus.Analyses.ShutdownTest do
     end
 
     test "unbounded work is reported when the module does trap", ctx do
-      skip_without_souffle()
-
       assert [[mod, _b, "network", api, _via]] = rows(results(ctx), "terminate_may_be_truncated")
       assert mod =~ "Truncatable"
       assert api =~ "request"
@@ -338,8 +311,6 @@ defmodule Argus.Analyses.ShutdownTest do
     # trapping. If those twins were also reported, the analysis would be
     # detecting "has a terminate/2" and nothing else.
     test "the same cleanup is not reported when the module traps exits", ctx do
-      skip_without_souffle()
-
       mods = modules(results(ctx), "cleanup_never_runs")
 
       assert named?(mods, "Shutdown.Leaks")
@@ -349,7 +320,6 @@ defmodule Argus.Analyses.ShutdownTest do
 
   describe "only what a supervisor stop runs is cleanup it skips" do
     test "work terminate/2 does only for a crash is not reported", ctx do
-      skip_without_souffle()
       r = results(ctx)
 
       refute named?(modules(r, "cleanup_never_runs"), "CrashReportOnly"),
@@ -365,7 +335,6 @@ defmodule Argus.Analyses.ShutdownTest do
     end
 
     test "releasing what the process holds is not cleanup a shutdown loses", ctx do
-      skip_without_souffle()
       r = results(ctx)
 
       refute named?(modules(r, "cleanup_never_runs"), "ReleasesOwn"),
@@ -393,8 +362,6 @@ defmodule Argus.Analyses.ShutdownTest do
     # wpool. Right module, meaningless witness, and indistinguishable from
     # luck until read against source.
     test "cleanup is attributed within a few hops of terminate/2", ctx do
-      skip_without_souffle()
-
       assert [[_mod, _b, "io", api, via]] =
                only(results(ctx), "cleanup_never_runs", "LeaksIndirect")
 
@@ -405,7 +372,6 @@ defmodule Argus.Analyses.ShutdownTest do
 
   describe "what is deliberately not reported" do
     test "logging is not cleanup", ctx do
-      skip_without_souffle()
       r = results(ctx)
 
       refute named?(modules(r, "cleanup_never_runs"), "LogsOnly")
@@ -413,7 +379,6 @@ defmodule Argus.Analyses.ShutdownTest do
     end
 
     test "reads have nothing to lose by being skipped", ctx do
-      skip_without_souffle()
       r = results(ctx)
 
       refute named?(modules(r, "cleanup_never_runs"), "ReadsOnly")
@@ -421,14 +386,10 @@ defmodule Argus.Analyses.ShutdownTest do
     end
 
     test "cleanup outside terminate/2 is not this analysis's business", ctx do
-      skip_without_souffle()
-
       refute named?(modules(results(ctx), "cleanup_never_runs"), "CleansUpElsewhere")
     end
 
     test "a module with classified cleanup is not also reported as unclear", ctx do
-      skip_without_souffle()
-
       # Otherwise the precise finding and the vague one would name the same
       # module, and the vague one adds nothing.
       assert named?(modules(results(ctx), "cleanup_never_runs"), "Shutdown.Leaks")
@@ -437,6 +398,8 @@ defmodule Argus.Analyses.ShutdownTest do
   end
 
   describe "findings" do
+    @describetag souffle: false
+
     test "each relation renders a finding naming the module and the fix" do
       mod = Argus.Analyses.Shutdown
 

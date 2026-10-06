@@ -62,11 +62,6 @@ defmodule Argus.ExtractorCoverageTest do
   # instrumentation, not an analysis input anyone reasons from.
   @instrumentation MapSet.new([:imprecision])
 
-  setup do
-    unless Souffle.available?(), do: ExUnit.configure(exclude: [souffle: true])
-    :ok
-  end
-
   @tag :souffle
   test "every Layer-2 relation an analysis reads is produced by one of its extractors" do
     layer_1 = Schema.layer_1() |> Enum.map(& &1.name) |> MapSet.new()

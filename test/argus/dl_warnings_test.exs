@@ -8,8 +8,6 @@ defmodule Argus.DlWarningsTest do
 
   @tag timeout: 120_000
   test "shipped analyses and stages compile without warnings", %{tmp_dir: dir} do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-
     dl = Argus.Dl.root()
 
     programs =

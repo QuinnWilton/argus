@@ -1,5 +1,6 @@
 defmodule Argus.Analyses.MailboxUnreceivedTest do
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
   alias Argus.Analyses.Mailbox
   alias Argus.Test.Fixtures.UnreceivedMessage, as: U
@@ -21,7 +22,6 @@ defmodule Argus.Analyses.MailboxUnreceivedTest do
   ]
 
   defp rows do
-    unless Argus.Souffle.available?(), do: flunk("souffle not installed")
     {:ok, results} = Memo.analyze(@all, :mailbox)
 
     for [mod, func, _site, message, runs, starter, _spawn, _recv] <-
@@ -58,8 +58,6 @@ defmodule Argus.Analyses.MailboxUnreceivedTest do
   end
 
   test "a state's list of subscribers and its worker are different processes" do
-    unless Argus.Souffle.available?(), do: flunk("souffle not installed")
-
     # Relay sends :event to its first subscriber and :flush to the worker
     # it spawned; with the state one bag of pids, :event "reached" the
     # worker, whose receive takes only :flush.
@@ -70,6 +68,7 @@ defmodule Argus.Analyses.MailboxUnreceivedTest do
     assert results["unreceived_message"] == []
   end
 
+  @tag souffle: false
   test "the finding anchors at the send and relates the receive and the spawn" do
     f =
       Mailbox.finding(:unreceived_message, [

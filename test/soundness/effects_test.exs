@@ -7,11 +7,11 @@ defmodule Argus.Soundness.EffectsTest do
   (soundness review 2, test/fixtures/soundness/effects_fixture.ex).
   """
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
   import Argus.Test.Soundness.Case
 
   setup_all do
-    unless Argus.Souffle.available?(), do: raise("souffle not installed")
     %{sev: severities(modules("effects_fixture.ex"), [:effects])}
   end
 

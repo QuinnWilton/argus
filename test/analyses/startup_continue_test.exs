@@ -1,13 +1,9 @@
 defmodule Argus.Analyses.StartupContinueTest do
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
-  alias Argus.Souffle
   alias Argus.Test.Memo
   alias Argus.Test.Rows
-
-  defp skip_without_souffle do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-  end
 
   defp continue_to_later(results),
     do:
@@ -19,8 +15,6 @@ defmodule Argus.Analyses.StartupContinueTest do
 
   describe "blocks_on_peer: continue" do
     test "detects mutual handle_continue cycle (Pattern 1)" do
-      skip_without_souffle()
-
       modules = [
         Argus.Test.Fixtures.ContinueCycleServerA,
         Argus.Test.Fixtures.ContinueCycleServerB,
@@ -43,8 +37,6 @@ defmodule Argus.Analyses.StartupContinueTest do
     end
 
     test "detects continue calling later-started sibling (Pattern 2)" do
-      skip_without_souffle()
-
       modules = [
         Argus.Test.Fixtures.ContinueLateCallerServer,
         Argus.Test.Fixtures.ContinueLateTargetServer,
@@ -63,8 +55,6 @@ defmodule Argus.Analyses.StartupContinueTest do
     end
 
     test "a later-sibling continue is anchored at its call, not the function's first clause" do
-      skip_without_souffle()
-
       modules = [
         Argus.Test.Fixtures.ContinueLateCallerServer,
         Argus.Test.Fixtures.ContinueLateTargetServer,
@@ -89,8 +79,6 @@ defmodule Argus.Analyses.StartupContinueTest do
     end
 
     test "detects continue calling its own supervisor before the tree is up (Pattern 3)" do
-      skip_without_souffle()
-
       modules = [
         Argus.Test.Fixtures.ContinueParentCallerServer,
         Argus.Test.Fixtures.ContinueParentLaterSibling,
@@ -118,8 +106,6 @@ defmodule Argus.Analyses.StartupContinueTest do
     end
 
     test "does NOT flag the last child calling its supervisor from continue" do
-      skip_without_souffle()
-
       modules = [
         Argus.Test.Fixtures.ContinueLastChildCaller,
         Argus.Test.Fixtures.ContinueParentLaterSibling,
@@ -131,8 +117,6 @@ defmodule Argus.Analyses.StartupContinueTest do
     end
 
     test "does NOT flag the safe sibling order (target started first)" do
-      skip_without_souffle()
-
       modules = [
         Argus.Test.Fixtures.ContinueLateCallerServer,
         Argus.Test.Fixtures.ContinueLateTargetServer,
@@ -147,8 +131,6 @@ defmodule Argus.Analyses.StartupContinueTest do
     end
 
     test "does NOT flag external targets in disjoint supervision trees" do
-      skip_without_souffle()
-
       modules = [
         Argus.Test.Fixtures.SafeContinueExternalCaller,
         Argus.Test.Fixtures.SafeContinueExternalTarget,
@@ -164,8 +146,6 @@ defmodule Argus.Analyses.StartupContinueTest do
     end
 
     test "does NOT flag continue using cast (cast is async)" do
-      skip_without_souffle()
-
       modules = [
         Argus.Test.Fixtures.SafeContinueCastCaller,
         Argus.Test.Fixtures.SafeContinueCastTarget,
@@ -177,8 +157,6 @@ defmodule Argus.Analyses.StartupContinueTest do
     end
 
     test "flags defensive try/catch as a deferral defect" do
-      skip_without_souffle()
-
       modules = [
         Argus.Test.Fixtures.DefensiveContinueCaller,
         Argus.Test.Fixtures.DefensiveContinueTarget,
@@ -201,8 +179,6 @@ defmodule Argus.Analyses.StartupContinueTest do
 
   describe "deferral_defect: init_timeout" do
     test "an init returning {:ok, state, 0} is reported; a {:continue, _} is not" do
-      skip_without_souffle()
-
       assert {:ok, results} =
                Memo.analyze(
                  [
@@ -223,8 +199,6 @@ defmodule Argus.Analyses.StartupContinueTest do
     end
 
     test "the finding names the return's timeout for a reader of the source" do
-      skip_without_souffle()
-
       assert {:ok, %{findings: findings}} =
                Memo.run_analyses([Argus.Test.Fixtures.TimeoutDeferredInit], analyses: [:startup])
 

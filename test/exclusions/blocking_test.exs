@@ -5,8 +5,8 @@ defmodule Argus.Exclusions.BlockingTest do
   Fixtures: test/fixtures/exclusions/blocking.ex.
   """
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
-  alias Argus.Souffle
   alias Argus.Test.Batch
   alias Argus.Test.Rows
   alias Excl.Blocking, as: B
@@ -55,7 +55,6 @@ defmodule Argus.Exclusions.BlockingTest do
   end
 
   defp results(%{batch: batch}, set) do
-    unless Souffle.available?(), do: flunk("souffle not installed")
     {:ok, results} = Batch.analyze(batch, set)
     results
   end

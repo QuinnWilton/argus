@@ -62,6 +62,8 @@ defmodule Mix.Tasks.Compile.ArgusSouffleGateTest do
   end
 
   describe "souffle gate" do
+    @describetag :souffle
+
     defp without_souffle(fun) do
       original = System.get_env("PATH")
 
@@ -83,7 +85,6 @@ defmodule Mix.Tasks.Compile.ArgusSouffleGateTest do
       end
     end
 
-    @tag :souffle
     test "souffle: :warn degrades with one notice and poisons nothing", %{peer: peer} do
       project = checkout!([], :depot_nosolver)
 
@@ -157,7 +158,6 @@ defmodule Mix.Tasks.Compile.ArgusSouffleGateTest do
       for {key, %{value: {:error, _}}} <- manifest_entries(), do: key
     end
 
-    @tag :souffle
     test "a failed solve degrades once and is never replayed", %{peer: peer} do
       project = checkout!([], :depot_badsolve)
 
@@ -192,7 +192,6 @@ defmodule Mix.Tasks.Compile.ArgusSouffleGateTest do
       end)
     end
 
-    @tag :souffle
     test "a failed stage 0 degrades the analyses that read it, and heals", %{peer: peer} do
       project = checkout!([], :depot_badstage0)
 
@@ -218,6 +217,7 @@ defmodule Mix.Tasks.Compile.ArgusSouffleGateTest do
       end)
     end
 
+    @tag souffle: false
     test "souffle: :require makes the missing solver an error", %{peer: peer} do
       project = checkout!([souffle: :require], :depot_require)
 

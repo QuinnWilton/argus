@@ -2,7 +2,6 @@ defmodule Argus.Analyses.MailboxStaticRenderTest do
   use ExUnit.Case, async: true
 
   alias Argus.Analyses.Mailbox
-  alias Argus.Souffle
   alias Argus.Test.Batch
   alias Argus.Test.Fixtures.StaticRender
   alias Argus.Test.Rows
@@ -30,10 +29,6 @@ defmodule Argus.Analyses.MailboxStaticRenderTest do
     %{batch: Batch.solve(:mailbox, [@batched])}
   end
 
-  defp skip_without_souffle do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-  end
-
   # `{entry, function, kind}`, the fixture prefix dropped.
   defp registrations(%{batch: batch}, modules) do
     assert {:ok, results} = Batch.analyze(batch, List.wrap(modules))
@@ -47,33 +42,27 @@ defmodule Argus.Analyses.MailboxStaticRenderTest do
   end
 
   describe "static_render_registration" do
-    test "a subscription in mount/3 with no connected? test (livebook before a05d6c5)", ctx do
-      skip_without_souffle()
+    @describetag :souffle
 
+    test "a subscription in mount/3 with no connected? test (livebook before a05d6c5)", ctx do
       assert registrations(ctx, StaticRender.Subscribes) == [
                {"Subscribes:mount/3", "Subscribes:mount/3", "subscribe"}
              ]
     end
 
     test "an interval armed in mount/3 (Logflare before ec7331b)", ctx do
-      skip_without_souffle()
-
       assert registrations(ctx, StaticRender.Ticks) == [
                {"Ticks:mount/3", "Ticks:mount/3", "timer"}
              ]
     end
 
     test "a subscription through the socket's endpoint, an apply", ctx do
-      skip_without_souffle()
-
       assert registrations(ctx, StaticRender.EndpointSubscribes) == [
                {"EndpointSubscribes:mount/3", "EndpointSubscribes:mount/3", "subscribe"}
              ]
     end
 
     test "the nearest shapes to each quieting condition still register", ctx do
-      skip_without_souffle()
-
       for {modules, func} <- [
             {[StaticRender.Adversarial.ElseArm], "Adversarial.ElseArm:mount/3"},
             {[StaticRender.Adversarial.Unless], "Adversarial.Unless:mount/3"},
@@ -93,22 +82,16 @@ defmodule Argus.Analyses.MailboxStaticRenderTest do
     end
 
     test "behind connected?/1, in the callback or around the call into a helper", ctx do
-      skip_without_souffle()
-
       assert registrations(ctx, StaticRender.Guarded) == []
     end
 
     test "a connected? test that decides something else guards nothing", ctx do
-      skip_without_souffle()
-
       assert registrations(ctx, StaticRender.AskedElsewhere) == [
                {"AskedElsewhere:mount/3", "AskedElsewhere:subscribe_all/0", "subscribe"}
              ]
     end
 
     test "a LiveComponent's update/2 monitoring; a handle_event/3 is connected only", ctx do
-      skip_without_souffle()
-
       assert registrations(ctx, StaticRender.Component) == [
                {"Component:update/2", "Component:update/2", "monitor"}
              ]

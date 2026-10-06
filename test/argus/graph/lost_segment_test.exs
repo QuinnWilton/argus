@@ -23,8 +23,6 @@ defmodule Argus.Graph.LostSegmentTest do
   @lost Argus.Test.Fixtures.LeakedTaskModule
 
   setup %{tmp_dir: tmp} do
-    unless Argus.Souffle.available?(), do: flunk("souffle not installed")
-
     # A store of its own, where a first run extracted the modules and
     # kept each one's trace; then the base segment of one is gone.
     store = Path.join(tmp, "store")

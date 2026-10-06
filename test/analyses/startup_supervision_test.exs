@@ -1,13 +1,9 @@
 defmodule Argus.Analyses.StartupSupervisionTest do
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
-  alias Argus.Souffle
   alias Argus.Test.Memo
   alias Argus.Test.Rows
-
-  defp skip_without_souffle do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-  end
 
   defp later_siblings(results),
     do:
@@ -19,8 +15,6 @@ defmodule Argus.Analyses.StartupSupervisionTest do
 
   describe "startup.dl" do
     test "analyzes supervisor fixtures" do
-      skip_without_souffle()
-
       modules = [
         Argus.Test.Fixtures.GoodSupervisor,
         Argus.Test.Fixtures.BadOrderSupervisor,
@@ -36,8 +30,6 @@ defmodule Argus.Analyses.StartupSupervisionTest do
 
   describe "blocks_on_peer: a later sibling" do
     test "flags a child whose init sync-calls a later-started sibling" do
-      skip_without_souffle()
-
       modules = [
         Argus.Test.Fixtures.ProcessDepSupervisor,
         Argus.Test.Fixtures.InitProcessCaller,
@@ -53,8 +45,6 @@ defmodule Argus.Analyses.StartupSupervisionTest do
     end
 
     test "a call of unknown place is anchored at the call in init/1, not at its head" do
-      skip_without_souffle()
-
       # Without the supervisor, InitDepWorker's place is unknown: the
       # finding is a note, on the GenServer.call a line below `def init`.
       modules = [Argus.Test.Fixtures.InitProcessCaller, Argus.Test.Fixtures.InitDepWorker]
@@ -74,8 +64,6 @@ defmodule Argus.Analyses.StartupSupervisionTest do
     end
 
     test "a simple_one_for_one template child's init does not run while the tree boots" do
-      skip_without_souffle()
-
       modules = [
         :boot_order_sup,
         :boot_order_pool_sup,
@@ -95,8 +83,6 @@ defmodule Argus.Analyses.StartupSupervisionTest do
     end
 
     test "a child the boot starts, statically or from an init, is ordered in the boot" do
-      skip_without_souffle()
-
       # A static child two levels down an earlier branch; a template child
       # an earlier sibling's init/1 asks the pool for; a DynamicSupervisor
       # child an earlier sibling's init/1 starts. Each init runs before
@@ -149,8 +135,6 @@ defmodule Argus.Analyses.StartupSupervisionTest do
     end
 
     test "does not flag init calling only a pure function in the sibling's module" do
-      skip_without_souffle()
-
       # The Horde.RegistryImpl -> NodeListener.make_members shape: init
       # reaches a function DEFINED in the dependency's module, but it is a
       # pure function — no dependency on the dependency's process, so no
@@ -173,8 +157,6 @@ defmodule Argus.Analyses.StartupSupervisionTest do
     alias Argus.Test.Fixtures.SupervisionShapes, as: Shapes
 
     test "state written after Supervisor.start_link is noted; before it is not" do
-      skip_without_souffle()
-
       {:ok, r} =
         Memo.analyze([Shapes.LateWarmup, Shapes.EarlyWarmup, Shapes.Conn], :startup)
 

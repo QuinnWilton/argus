@@ -1,14 +1,10 @@
 defmodule Argus.Analyses.FailureConsistencyTest do
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
   alias Argus.Analyses.Failure
-  alias Argus.Souffle
   alias Argus.Test.Fixtures.Consistency, as: C
   alias Argus.Test.Memo
-
-  defp skip_without_souffle do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-  end
 
   defp rows(modules) do
     {:ok, results} = Memo.analyze(modules, :failure)
@@ -20,34 +16,28 @@ defmodule Argus.Analyses.FailureConsistencyTest do
 
   describe "result_checked" do
     test "the one site that discards a result five others match is reported, with the counts" do
-      skip_without_souffle()
       assert [{func, callee, "result_checked", 5, 1}] = rows([C.DeviantIgnore])
       assert func =~ "DeviantIgnore:f/2"
       assert callee =~ "DynamicSupervisor:start_child/2"
     end
 
     test "two agreeing sites are not a convention" do
-      skip_without_souffle()
       assert rows([C.WeakBelief]) == []
     end
 
     test "three against three is a convention either way" do
-      skip_without_souffle()
       assert rows([C.NoMajority]) == []
     end
 
     test "a callee outside the process APIs is not this analysis's business" do
-      skip_without_souffle()
       assert rows([C.OutsideScope]) == []
     end
 
     test "a callee whose spec names no failure value has no result to check" do
-      skip_without_souffle()
       assert rows([C.TotalCallee]) == []
     end
 
     test "a discarded start result is startup's finding, not reported here again" do
-      skip_without_souffle()
       assert rows([C.StartIgnored]) == []
 
       {:ok, startup} = Memo.analyze([C.StartIgnored], :startup)
@@ -56,12 +46,10 @@ defmodule Argus.Analyses.FailureConsistencyTest do
     end
 
     test "a site that returns the result is neither agreeing nor deviant" do
-      skip_without_souffle()
       assert rows([C.TailReturns]) == []
     end
 
     test "the population is the whole program, not the module" do
-      skip_without_souffle()
       # WeakBelief's two checks join DeviantIgnore's five: seven against two.
       found = rows([C.DeviantIgnore, C.WeakBelief])
       assert length(found) == 2
@@ -75,41 +63,35 @@ defmodule Argus.Analyses.FailureConsistencyTest do
 
   describe "exception_guarded" do
     test "the one bare call among four guarded ones is reported" do
-      skip_without_souffle()
       assert [{func, callee, "exception_guarded", 4, 1}] = rows([C.DeviantBare])
       assert func =~ "DeviantBare:e/1"
       assert callee =~ "GenServer:call/2"
     end
 
     test "a send to a name elsewhere cannot fail; one to a local name can" do
-      skip_without_souffle()
       assert rows([C.RemoteSends]) == []
       assert [{func, _, "exception_guarded", 3, 1}] = rows([C.LocalSends])
       assert func =~ "LocalSends:d/1"
     end
 
     test "an ETS call in the process that owns the table cannot fail on a missing table" do
-      skip_without_souffle()
       assert rows([C.OwnerDeletes]) == []
       assert [{func, _, "exception_guarded", 3, 1}] = rows([C.ClientDeletes])
       assert func =~ "ClientDeletes:drop/1"
     end
 
     test "a lookup_element of a row the owner seeds and nothing removes cannot fail" do
-      skip_without_souffle()
       assert rows([C.SeededRows]) == []
       assert [{func, _, "exception_guarded", 3, 1}] = rows([C.UnseededRows])
       assert func =~ "UnseededRows:methods/0"
     end
 
     test "a table the owner makes only when asked can be missing in the owner" do
-      skip_without_souffle()
       assert [{func, _, "exception_guarded", 3, 1}] = rows([C.LazyOwner])
       assert func =~ "LazyOwner:handle_call/3"
     end
 
     test "a row seeded only when an option asks can be missing" do
-      skip_without_souffle()
       assert [{func, _, "exception_guarded", 3, 1}] = rows([C.ConditionalSeed])
       assert func =~ "ConditionalSeed:d/0"
     end
@@ -117,29 +99,24 @@ defmodule Argus.Analyses.FailureConsistencyTest do
 
   describe "what guards a call" do
     test "a try whose handler takes nothing guards nothing" do
-      skip_without_souffle()
       assert rows([C.AfterOnly]) == []
     end
 
     test "a handler that takes another class, or re-raises, guards nothing" do
-      skip_without_souffle()
       assert rows([C.WrongClass]) == []
     end
 
     test "a handler that raises what it caught again guards nothing" do
-      skip_without_souffle()
       assert rows([C.ReraiseOnly]) == []
     end
 
     test "a site under a try that lets the call's class through is the deviant" do
-      skip_without_souffle()
       assert [{func, callee, "exception_guarded", 3, 1}] = rows([C.HiddenDeviant])
       assert func =~ "HiddenDeviant:d/1"
       assert callee =~ "update_counter/3"
     end
 
     test "Erlang's catch takes every class" do
-      skip_without_souffle()
       # `ec`: three `catch` sites and a bare one; `mx`: three try sites and
       # one `catch`, all guarded.
       assert [{":consistency_catch:d/1", ":ets:update_counter/3", "exception_guarded", 3, 1}] =
@@ -162,7 +139,6 @@ defmodule Argus.Analyses.FailureConsistencyTest do
     end
 
     test "a site no try covers, here or on some way in, is called bare" do
-      skip_without_souffle()
       assert {{"exit", "none", ""}, f} = stands([C.DeviantBare])
 
       assert f.title == "Call made bare where other call sites catch its exit"
@@ -178,7 +154,6 @@ defmodule Argus.Analyses.FailureConsistencyTest do
     end
 
     test "a site in a try that takes nothing says so" do
-      skip_without_souffle()
       assert {{"error", "try", ""}, f} = stands([C.HiddenDeviant])
 
       assert f.title ==
@@ -193,7 +168,6 @@ defmodule Argus.Analyses.FailureConsistencyTest do
     end
 
     test "a site in a try that takes another class names what it takes" do
-      skip_without_souffle()
       assert {{"error", "try", "exit"}, f} = stands([C.WrongClassDeviant])
       assert f.detail =~ "inside a try that catches only :exit; the call raises an error"
       assert f.at_label == "in a try that catches only :exit"
@@ -201,7 +175,6 @@ defmodule Argus.Analyses.FailureConsistencyTest do
     end
 
     test "a site every way into which passes a try of another class says so" do
-      skip_without_souffle()
       assert {{"error", "callers", ""}, f} = stands([C.CallersWrongClass])
 
       assert f.title == "Call with its error uncaught where other call sites catch it"
@@ -216,12 +189,10 @@ defmodule Argus.Analyses.FailureConsistencyTest do
 
   describe "a guard the callers hold" do
     test "a private helper called only inside a try is guarded by it" do
-      skip_without_souffle()
       assert rows([C.CallerGuards]) == []
     end
 
     test "a belief its callers hold is shown as theirs" do
-      skip_without_souffle()
       assert [{func, _, "exception_guarded", 3, 1}] = rows([C.GuardedByCallers])
       assert func =~ "GuardedByCallers:d/1"
 
@@ -236,18 +207,15 @@ defmodule Argus.Analyses.FailureConsistencyTest do
     end
 
     test "a closure run inside a try, in the same process, is guarded by it" do
-      skip_without_souffle()
       assert rows([C.ClosureInTry]) == []
     end
 
     test "a closure handed to another process is not" do
-      skip_without_souffle()
       assert [{func, _, "exception_guarded", 3, 1}] = rows([C.TaskInTry])
       assert func =~ "TaskInTry:-d/1-fun-0-/1"
     end
 
     test "a helper with one bare way in is the deviant" do
-      skip_without_souffle()
       assert [{func, _, "exception_guarded", 3, 1}] = rows([C.HelperOutsideTry])
       assert func =~ "HelperOutsideTry:bump/1"
     end
@@ -262,7 +230,6 @@ defmodule Argus.Analyses.FailureConsistencyTest do
     end
 
     test "is the callee's sites on the same literal target" do
-      skip_without_souffle()
       assert targets([C.PerTarget]) == []
 
       # Four call sites on :gvar, not one helper called four times: pooled
@@ -278,13 +245,10 @@ defmodule Argus.Analyses.FailureConsistencyTest do
     end
 
     test "is never the other targets' sites, however many agree" do
-      skip_without_souffle()
       assert targets([C.SequinLiteral]) == []
     end
 
     test "is the module's processes for a client call on the pid it is handed" do
-      skip_without_souffle()
-
       assert [{func, "4", "1", "processes of Argus.Test.Fixtures.Consistency.DeviantBare"}] =
                targets([C.DeviantBare])
 
@@ -292,23 +256,18 @@ defmodule Argus.Analyses.FailureConsistencyTest do
     end
 
     test "is the target's own sites once any of them agrees" do
-      skip_without_souffle()
       assert targets([C.OwnSplit]) == []
     end
 
     test "spans targets only for a callee that fails on a missing row" do
-      skip_without_souffle()
       assert targets([C.TableMissing]) == []
     end
 
     test "is none when the site's target is unknown" do
-      skip_without_souffle()
       assert targets([C.UnknownTargetBare]) == []
     end
 
     test "is what a helper returns when the helper builds the target" do
-      skip_without_souffle()
-
       assert [{func, "3", "1", "what Argus.Test.Fixtures.Consistency.ViaClient:via/1 returns"}] =
                targets([C.ViaClient])
 
@@ -316,8 +275,6 @@ defmodule Argus.Analyses.FailureConsistencyTest do
     end
 
     test "draws the evidence from the deviant's own population" do
-      skip_without_souffle()
-
       {:ok, result} =
         Memo.run_analyses([C.SameTargetBare, C.OtherTable], analyses: [:failure])
 
@@ -329,16 +286,15 @@ defmodule Argus.Analyses.FailureConsistencyTest do
 
   describe "macro-generated code" do
     test "a site another module's macro wrote is not the program's" do
-      skip_without_souffle()
       assert rows([C.GeneratedBare]) == []
     end
 
     test "the same site written by hand is the deviant" do
-      skip_without_souffle()
       assert [{func, _, "exception_guarded", 4, 1}] = rows([C.WrittenBare])
       assert func =~ "WrittenBare:stop/1"
     end
 
+    @tag souffle: false
     test "the extractor names the macro's module" do
       {:ok, facts} =
         Argus.Pipeline.extract([C.GeneratedBare], extractors: [Argus.Extractors.Generated])
@@ -368,11 +324,13 @@ defmodule Argus.Analyses.FailureConsistencyTest do
       ])
     end
 
+    @tag souffle: false
     test "is how unlikely the deviation is: seven to one warns, three to one informs" do
       assert finding(7, 1).severity == :warning
       assert finding(3, 1).severity == :info
     end
 
+    @tag souffle: false
     test "one title whatever the counts, which the detail says" do
       assert finding(5, 1).title == "Result ignored where other call sites check it"
       assert finding(9, 3).title == "Result ignored where other call sites check it"
@@ -396,6 +354,7 @@ defmodule Argus.Analyses.FailureConsistencyTest do
       assert guarded.detail =~ "9 of the 12 call sites in this program catch its exit"
     end
 
+    @tag souffle: false
     test "names the counts and the callee, and anchors the deviant site" do
       f = finding(5, 1)
       assert f.detail =~ "start_child/2"
@@ -405,7 +364,6 @@ defmodule Argus.Analyses.FailureConsistencyTest do
     end
 
     test "shows a few of the sites that follow the convention" do
-      skip_without_souffle()
       {:ok, result} = Memo.run_analyses([C.DeviantIgnore], analyses: [:failure])
 
       assert [f] = Enum.filter(result.findings, &(&1.title =~ "Result ignored"))

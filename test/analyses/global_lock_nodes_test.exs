@@ -9,15 +9,11 @@ defmodule Argus.Analyses.GlobalLockNodesTest do
   """
 
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
-  alias Argus.Souffle
   alias Argus.Test.Fixtures.GlobalNodes
   alias Argus.Test.Fixtures.ReachPath
   alias Argus.Test.Memo
-
-  defp skip_without_souffle do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-  end
 
   defp findings(modules, analysis) do
     assert {:ok, %{findings: findings}} =
@@ -39,8 +35,6 @@ defmodule Argus.Analyses.GlobalLockNodesTest do
 
   describe "startup: a lock during init" do
     test "[node() | Node.list()] is cluster-wide" do
-      skip_without_souffle()
-
       f = init_lock(GlobalNodes.Cluster)
       assert f.title == "Cluster-wide lock during init"
       assert f.severity == :error
@@ -48,8 +42,6 @@ defmodule Argus.Analyses.GlobalLockNodesTest do
     end
 
     test "set_lock/1, with no node list, is cluster-wide" do
-      skip_without_souffle()
-
       f = init_lock(GlobalNodes.Default)
       assert f.title == "Cluster-wide lock during init"
       assert f.severity == :error
@@ -57,8 +49,6 @@ defmodule Argus.Analyses.GlobalLockNodesTest do
     end
 
     test "[node()] is a lock during init, one severity lower" do
-      skip_without_souffle()
-
       f = init_lock(GlobalNodes.Local)
       assert f.title == "Lock during init"
       assert f.severity == :warning
@@ -67,8 +57,6 @@ defmodule Argus.Analyses.GlobalLockNodesTest do
     end
 
     test "a node list passed in stays cluster-wide and says it was not read" do
-      skip_without_souffle()
-
       f = init_lock(GlobalNodes.Unknown)
       assert f.title == "Cluster-wide lock during init"
       assert f.severity == :error
@@ -79,8 +67,6 @@ defmodule Argus.Analyses.GlobalLockNodesTest do
 
   describe "startup: the talk's lesson" do
     test "ClusterLock, [node() | Node.list()], is cluster-wide" do
-      skip_without_souffle()
-
       f = init_lock(ReachPath.ClusterLock)
       assert f.title == "Cluster-wide lock during init"
       assert f.at_label == "cluster-wide lock reached from init/1"
@@ -88,8 +74,6 @@ defmodule Argus.Analyses.GlobalLockNodesTest do
     end
 
     test "the same lesson over [node()] is a lock during init" do
-      skip_without_souffle()
-
       f = init_lock(ReachPath.LocalLock)
       assert f.title == "Lock during init"
       assert f.severity == :warning
@@ -99,8 +83,6 @@ defmodule Argus.Analyses.GlobalLockNodesTest do
 
   describe "blocking: a lock outside init" do
     setup do
-      skip_without_souffle()
-
       by_func =
         [GlobalNodes.Shapes]
         |> findings(:blocking)

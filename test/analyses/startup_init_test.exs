@@ -1,13 +1,9 @@
 defmodule Argus.Analyses.StartupInitTest do
   use ExUnit.Case, async: true
+  @moduletag :souffle
 
-  alias Argus.Souffle
   alias Argus.Test.Memo
   alias Argus.Test.Rows
-
-  defp skip_without_souffle do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-  end
 
   # Synchronous calls from init whose place in the tree is unknown, in
   # the [mod, callee, kind] shape the rule has always produced.
@@ -33,8 +29,6 @@ defmodule Argus.Analyses.StartupInitTest do
 
   describe "blocks_on_peer: init" do
     test "detects sync call in init/1 for fixture" do
-      skip_without_souffle()
-
       modules = [
         Argus.Test.Fixtures.SyncInitServer,
         Argus.Test.Fixtures.WorkerA
@@ -53,8 +47,6 @@ defmodule Argus.Analyses.StartupInitTest do
     end
 
     test "supervisor management calls from init are reported" do
-      skip_without_souffle()
-
       assert {:ok, results} =
                Memo.analyze([Argus.Test.Fixtures.StartsChildrenInInit], :startup)
 
@@ -69,8 +61,6 @@ defmodule Argus.Analyses.StartupInitTest do
     end
 
     test "a call the tree-order argument accepts is still reported when the callee's handler blocks" do
-      skip_without_souffle()
-
       modules = [
         Argus.Test.Fixtures.WatcherAppTree,
         Argus.Test.Fixtures.BlockingWatcher,
@@ -94,8 +84,6 @@ defmodule Argus.Analyses.StartupInitTest do
     end
 
     test "the blocking handler's site is its :infinity call, not every call" do
-      skip_without_souffle()
-
       modules = [
         Argus.Test.Fixtures.InfiniteAppTree,
         Argus.Test.Fixtures.InfiniteWatcher,
@@ -117,8 +105,6 @@ defmodule Argus.Analyses.StartupInitTest do
     end
 
     test "a handler's :infinity call blocks it whatever API spells the call" do
-      skip_without_souffle()
-
       modules = [
         Argus.Test.Fixtures.StatemCallAppTree,
         Argus.Test.Fixtures.StatemCallWatcher,
@@ -139,8 +125,6 @@ defmodule Argus.Analyses.StartupInitTest do
     end
 
     test "a handler that only starts children is bounded and not reported" do
-      skip_without_souffle()
-
       modules = [
         Argus.Test.Fixtures.StarterAppTree,
         Argus.Test.Fixtures.StartingWatcher,
@@ -153,8 +137,6 @@ defmodule Argus.Analyses.StartupInitTest do
     end
 
     test "a sibling started earlier by a GenServer-defined tree is safe" do
-      skip_without_souffle()
-
       # The Broadway shape: the tree lives in a GenServer's init/1, the
       # producer's init calls the rate limiter, and the rate limiter is an
       # earlier child of the same rest_for_one supervisor.
@@ -176,8 +158,6 @@ defmodule Argus.Analyses.StartupInitTest do
     end
 
     test "a call behind a branch in init is reported as conditional" do
-      skip_without_souffle()
-
       modules = [
         Argus.Test.Fixtures.ConditionalInitServer,
         Argus.Test.Fixtures.SyncInitServer,
@@ -194,8 +174,6 @@ defmodule Argus.Analyses.StartupInitTest do
     end
 
     test "a head match or a badmatch is no branch: its other side raises" do
-      skip_without_souffle()
-
       modules = [Argus.Test.Fixtures.HeadMatchInitServer, Argus.Test.Fixtures.WorkerA]
       assert {:ok, results} = Memo.analyze(modules, :startup)
 
@@ -204,8 +182,6 @@ defmodule Argus.Analyses.StartupInitTest do
     end
 
     test "each peer's call is judged by its own branch" do
-      skip_without_souffle()
-
       modules = [
         Argus.Test.Fixtures.MixedInitServer,
         Argus.Test.Fixtures.WorkerA,
@@ -226,8 +202,6 @@ defmodule Argus.Analyses.StartupInitTest do
     end
 
     test "a plug's init/1 is not a process's" do
-      skip_without_souffle()
-
       # Plug.init/1 runs in whoever builds the pipeline; only a process
       # behaviour's init/1 holds up a start.
       modules = [Argus.Test.Fixtures.PidFlow.PlugLike, Argus.Test.Fixtures.PidFlow.Hub]
@@ -239,8 +213,6 @@ defmodule Argus.Analyses.StartupInitTest do
     end
 
     test "filters safe sibling ordering (dep starts before caller)" do
-      skip_without_souffle()
-
       modules = [
         Argus.Test.Fixtures.SafeOrderSupervisor,
         Argus.Test.Fixtures.SyncInitServer,
@@ -259,8 +231,6 @@ defmodule Argus.Analyses.StartupInitTest do
     end
 
     test "filters cross-supervisor calls (disjoint supervisor trees)" do
-      skip_without_souffle()
-
       modules = [
         Argus.Test.Fixtures.DisjointSupervisor,
         Argus.Test.Fixtures.CallerSupervisor,
@@ -279,8 +249,6 @@ defmodule Argus.Analyses.StartupInitTest do
     end
 
     test "preserves deadlock risk when dep starts after caller" do
-      skip_without_souffle()
-
       modules = [
         Argus.Test.Fixtures.DeadlockOrderSupervisor,
         Argus.Test.Fixtures.SyncInitServer,

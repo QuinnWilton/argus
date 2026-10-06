@@ -2,7 +2,6 @@ defmodule Argus.Analyses.EtsPublishOrderTest do
   use ExUnit.Case, async: true
 
   alias Argus.Analyses.Races
-  alias Argus.Souffle
   alias Argus.Test.Batch
   alias Argus.Test.Fixtures.PublishOrder, as: P
 
@@ -35,10 +34,6 @@ defmodule Argus.Analyses.EtsPublishOrderTest do
     %{batch: Batch.solve(:races, [@batched])}
   end
 
-  defp skip_without_souffle do
-    unless Souffle.available?(), do: flunk("souffle not installed")
-  end
-
   defp published(%{batch: batch}, modules) do
     {:ok, results} = Batch.analyze(batch, modules)
 
@@ -49,9 +44,9 @@ defmodule Argus.Analyses.EtsPublishOrderTest do
   end
 
   describe "ets_publish_order" do
-    test "two unnamed tables told apart by the map field they are kept under", ctx do
-      skip_without_souffle()
+    @describetag :souffle
 
+    test "two unnamed tables told apart by the map field they are kept under", ctx do
       assert [{"intern/2", forward, reverse, "intern/2", "intern/2", "resolve/2"}] =
                published(ctx, [P.MapFields])
 
@@ -60,27 +55,20 @@ defmodule Argus.Analyses.EtsPublishOrderTest do
     end
 
     test "the same tables written row first, value second, stay quiet", ctx do
-      skip_without_souffle()
       assert published(ctx, [P.ReverseFirst]) == []
     end
 
     test "two named tables, the id handed out by a lookup of the first", ctx do
-      skip_without_souffle()
-
       assert [{"register/2", ":users_by_name", ":users_by_id", _, _, "name_of/1"}] =
                published(ctx, [P.NamedTables])
     end
 
     test "update_counter/3 on the missing row raises as lookup_element/3 does", ctx do
-      skip_without_souffle()
-
       assert [{"open/2", ":sessions", ":session_hits", _, _, "hit/1"}] =
                published(ctx, [P.CountedById])
     end
 
     test "unnamed tables in a tuple, known by the :ets.new/2 that made each", ctx do
-      skip_without_souffle()
-
       assert [{"register/2", first, second, "register/2", "register/2", "name_of/2"}] =
                published(ctx, [P.LocalPair])
 
@@ -91,8 +79,6 @@ defmodule Argus.Analyses.EtsPublishOrderTest do
     end
 
     test "one field name in two maps is two tables when each was made apart", ctx do
-      skip_without_souffle()
-
       assert [{"register/3", first, second, _, _, "name_of/2"}] =
                published(ctx, [P.SameFieldTwoMaps])
 
@@ -100,8 +86,6 @@ defmodule Argus.Analyses.EtsPublishOrderTest do
     end
 
     test "the row a helper writes after the value is published", ctx do
-      skip_without_souffle()
-
       assert [{"add/1", ":people_by_name", ":people_by_id", "add/1", "index/2", "name_of/1"}] =
                published(ctx, [P.HelperCompletes])
 
@@ -109,7 +93,6 @@ defmodule Argus.Analyses.EtsPublishOrderTest do
     end
 
     test "a reader that is never handed a value from the first table stays quiet", ctx do
-      skip_without_souffle()
       assert published(ctx, [P.KeyFromElsewhere]) == []
 
       assert [{"add/1", ":boats_by_name", ":boats_by_id", _, _, "name_at/1"}] =
@@ -117,36 +100,28 @@ defmodule Argus.Analyses.EtsPublishOrderTest do
     end
 
     test "a reader with a default, or one that rescues the miss, stays quiet", ctx do
-      skip_without_souffle()
       assert published(ctx, [P.DefaultedReader, P.RescuedReader]) == []
     end
 
     test "a reader that rescues only other code after the read is reported", ctx do
-      skip_without_souffle()
-
       assert [{"register/2", ":peers_by_name", ":peers_by_id", _, _, "name_of/2"}] =
                published(ctx, [P.UnrelatedRescueReader])
     end
 
     test "a reader that rescues another exception is reported", ctx do
-      skip_without_souffle()
-
       assert [{"register/2", ":nodes_by_name", ":nodes_by_id", _, _, "name_of/1"}] =
                published(ctx, [P.WrongRescueReader])
     end
 
     test "a private reader whose one caller rescues the miss stays quiet", ctx do
-      skip_without_souffle()
       assert published(ctx, [P.CallerRescuesReader]) == []
     end
 
     test "private tables, and protected ones only their owner touches, stay quiet", ctx do
-      skip_without_souffle()
       assert published(ctx, [P.PrivateTables, P.OwnerOnly]) == []
     end
 
     test "two tables keyed by the same thing are not a publication", ctx do
-      skip_without_souffle()
       assert published(ctx, [P.SameKey]) == []
     end
   end
