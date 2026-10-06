@@ -40,6 +40,13 @@ defmodule Argus.Test.Peer do
   store (`ARGUS_CACHE_DIR`, as this VM's), unless `store: :own` gives it
   one of its own, removed with it: for a test that must see its solver
   run rather than a solve kept by another.
+
+  `code_path: :this` gives it this VM's code path, exactly, in place of
+  argus's runtime applications': for a test comparing what argus does
+  there with what it does here. Mix leaves off this VM's path the OTP
+  applications argus does not depend on, which a peer's own path holds,
+  and the specs extractor reads what the path holds (and walks all of
+  it, through the code server, for a module the path does not hold).
   """
   @spec start!(keyword()) :: pid()
   def start!(opts \\ []) do
@@ -71,6 +78,12 @@ defmodule Argus.Test.Peer do
       })
 
     :ok = call(peer, __MODULE__, :boot, [Code.compiler_options()])
+
+    case Keyword.get(opts, :code_path) do
+      :this -> true = call(peer, :code, :set_path, [:code.get_path()])
+      nil -> :ok
+    end
+
     ExUnit.Callbacks.on_exit(fn -> Files.rm_rf!(tmp) end)
     peer
   end
