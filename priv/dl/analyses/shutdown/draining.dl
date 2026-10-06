@@ -1,0 +1,75 @@
+// Broadway draining that re-enables fetching
+//
+// Since Broadway 1.1, demand continues during draining. Clearing the poll-reference
+// field can satisfy the fetcher's nil guard and restart fetching before shutdown.
+// Report when prepare_for_draining/1 resets a field tested by handle_demand's
+// same-module reach, with no other updated literal field acting as a drain guard. Timer
+// cancellation is not required: clearing the field alone can enable fetching.
+.decl drain_keeps_fetching(mod: symbol, drain: symbol, gate: symbol, key: symbol)
+.output drain_keeps_fetching
+
+// Broadway drain clears the field used by fetch, but fetch checks no drain flag.
+// Subsequent demand can restart fetching.
+.decl fetch_during_drain(mod: symbol, drain: symbol, gate: symbol, key: symbol)
+
+fetch_during_drain(mod, drain, gate, key) :-
+  prepares_for_draining(mod, drain),
+  clears_field(drain, key),
+  fetches_while_nil(mod, gate, key),
+  !fetch_takes_drain_flag(mod, drain).
+
+// `drain` is the Broadway producer's prepare_for_draining/1.
+.decl prepares_for_draining(mod: symbol, drain: symbol)
+
+prepares_for_draining(mod, drain) :-
+  behaves_as(mod, "Broadway.Producer"),
+  function_def(drain, mod, "prepare_for_draining", 1, _).
+
+// The drain returns a state with `key` reset to nil (field_reset,
+// vocabulary.dl): the value the fetch's clause asks for.
+.decl clears_field(drain: symbol, key: symbol) inline
+
+clears_field(drain, key) :- field_reset(drain, key, "nil", _).
+
+// `gate`, which handle_demand/2 reaches in the module, tests `key`
+// against nil (field_nil_test): the fetch runs while the field is nil.
+.decl fetches_while_nil(mod: symbol, gate: symbol, key: symbol)
+
+fetches_while_nil(mod, gate, key) :-
+  demand_reaches(mod, gate),
+  field_nil_test(gate, key).
+
+// A function reached by handle_demand/2 checks a literal-valued field set by drain,
+// such as draining: true.
+.decl fetch_takes_drain_flag(mod: symbol, drain: symbol)
+
+fetch_takes_drain_flag(mod, drain) :-
+  prepares_for_draining(mod, drain),
+  sets_to_literal(drain, key),
+  demand_reaches(mod, g),
+  field_value_test(g, key, _).
+
+// The drain returns a state with `key` set to a literal other than nil.
+.decl sets_to_literal(drain: symbol, key: symbol) inline
+
+sets_to_literal(drain, key) :-
+  returned_update(drain, key, v, _),
+  v != "nil",
+  v != "dynamic".
+
+// handle_demand/2 of the producer `mod` reaches `func` in the module, in
+// its process.
+.decl demand_reaches(mod: symbol, func: symbol) inline
+
+demand_reaches(mod, func) :-
+  function_def(h, mod, "handle_demand", 2, _),
+  demand_reach.reaches(h, func).
+
+.init demand_reach = ForwardIntraModuleSameProcessReach
+
+demand_reach.root(f, f) :-
+  behaves_as(m, "Broadway.Producer"),
+  function_def(f, m, "handle_demand", 2, _).
+
+drain_keeps_fetching(mod, drain, gate, key) :-
+  fetch_during_drain(mod, drain, gate, key).

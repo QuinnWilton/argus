@@ -12,6 +12,28 @@ defmodule Argus.Project.Mix do
 
   @behaviour Argus.Project
 
+  @doc """
+  Compile before a one-shot analysis or debug capture.
+
+  Keep Argus and its dependencies on Mix's code path. An Argus compiler
+  diagnostic means findings are available to report; an error from another
+  compiler means the BEAMs are stale and must not be analyzed.
+  """
+  @spec compile!() :: :ok
+  def compile! do
+    case Mix.Task.run("compile", ["--no-prune-code-paths", "--return-errors"]) do
+      {:error, diagnostics} ->
+        if Enum.any?(diagnostics, &(&1.severity == :error and &1.compiler_name != "argus")) do
+          Mix.raise("argus: the project does not compile; fix the errors above first")
+        end
+
+      _ok_or_noop ->
+        :ok
+    end
+
+    :ok
+  end
+
   @impl true
   def detect?(root), do: File.regular?(Path.join(root, "mix.exs"))
 

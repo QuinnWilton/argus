@@ -56,13 +56,17 @@ defmodule Argus.Analysis.Extraction do
   being written. Idempotent, and safe beside another derivation into
   the same directory: re-running replaces each file with the same
   content for the same inputs.
+
+  `:rules_path` selects an editable copy of the stage program for a debug
+  reproduction. It defaults to the shipped program and changes no global state.
   """
   @spec derive_stage0(Path.t(), keyword()) :: :ok | {:error, term()}
   def derive_stage0(facts_dir, opts \\ []) do
     # stage0.dl names its outputs `.facts`, so the directory they land in
     # is directly reusable as a fact directory.
     result =
-      with {:ok, _results, aside} <- solve_aside(facts_dir, stage0_rules_path(), opts) do
+      with {:ok, _results, aside} <-
+             solve_aside(facts_dir, Keyword.get(opts, :rules_path, stage0_rules_path()), opts) do
         try do
           publish(aside, facts_dir, @stage0_relations)
         after
@@ -185,6 +189,10 @@ defmodule Argus.Analysis.Extraction do
   reports (its overflow, its pervasive leaves) is read back, never left
   among the facts. Idempotent, and safe beside another derivation into
   the same directory.
+
+  `:rules_path` and `:bounded_rules_path` select copied stage programs for a
+  debug reproduction. Both default to the shipped programs. The same budget
+  policy and publication contract apply to those copies.
   """
   @spec derive_points_to(Path.t(), keyword()) :: :ok | {:error, term()}
   def derive_points_to(facts_dir, opts \\ []) do
@@ -201,8 +209,8 @@ defmodule Argus.Analysis.Extraction do
       case Stages.points_to(
              solve,
              {facts_dir, []},
-             points_to_rules_path(),
-             points_to_bounded_rules_path()
+             Keyword.get(opts, :rules_path, points_to_rules_path()),
+             Keyword.get(opts, :bounded_rules_path, points_to_bounded_rules_path())
            ) do
         {:ok, {_dir, [aside | _] = asides}, _mode} ->
           {publish(aside, facts_dir, @points_to_relations), asides}

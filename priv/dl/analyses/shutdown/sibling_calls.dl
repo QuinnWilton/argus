@@ -1,0 +1,371 @@
+// Synchronous sibling calls during terminate
+//
+// Reverse shutdown order can leave a sibling unavailable, causing :noproc and aborting
+// remaining cleanup. A matching try may cover the peer call or a helper on its path.
+// Accept a general exit catch or tuple `{:noproc, _}`; bare :noproc matches stop
+// failures, not GenServer.call's wrapped reason.
+.decl exit_guarded(call: symbol)
+
+exit_guarded(call) :- covered_by_catch(call, _, _, "exit").
+
+exit_guarded(call) :-
+  try_covers(t, f, call, "try"),
+  catch_tuple_tag(t, f, "exit", ":noproc").
+
+// For dependencies or fun edges without a call site, any matching exit handler in the
+// function suppresses the finding. This fallback may over-suppress.
+.decl catches_exit(func: symbol)
+
+catches_exit(f) :- catches_class(f, "exit").
+catches_exit(f) :- catch_tuple_tag(_, f, "exit", ":noproc").
+
+// A synchronous dependency on another module's server. Exclude private connections the
+// module started for itself (private_dep).
+.decl waits_on(func: symbol, mod: symbol) inline
+
+waits_on(f, m) :- sync_dep(f, m), !private_dep(f, m).
+
+// The call that invokes a function value, either through a receiving API such as
+// Enum.each or a resolved apply.
+.decl fun_site(func: symbol, callee: symbol, id: symbol)
+
+fun_site(f, g, id) :- fun_handed(id, f, g, _).
+fun_site(f, g, id) :- resolved_apply(id, f, g).
+
+// The call waiting on mod, resolved directly, by message tag, or through a passed
+// synchronous-API fun. For a fun, use its receiving call for try coverage.
+.decl wait_site(func: symbol, mod: symbol, id: symbol)
+
+wait_site(f, m, id) :- sync_site(f, m, id).
+
+wait_site(f, m, id) :-
+  genserver_sync_api(g, m),
+  fun_site(f, g, id),
+  !call_instr(f, g, _),
+  function_def(f, fm, _, _, _),
+  fm != m.
+
+wait_site(f, m, id) :-
+  tag_resolved_site(id, f, "call", m),
+  sync_call_site(id, f, t, _),
+  unresolved_target(t).
+
+// Shutdown call paths
+//
+// Follow at most three same-process calls reachable for :shutdown, stopping at
+// exit-catching handlers. `pos` tracks the reason parameter; `first` records
+// terminate's first call site. For fun edges, test the receiving call's coverage
+// (`fun_site`); use function-wide catches only when no such site exists. Spawned funs
+// are outside terminate's exception scope. Funs enter without a tracked reason.
+.decl stop_path(terminate: symbol, func: symbol, pos: number, depth: number, first: symbol)
+
+stop_path(t, t, 0, 0, "") :- is_terminate(t, _).
+
+stop_path(t, g, arg, 1, call) :-
+  stop_path(t, t, 0, 0, _),
+  stop_call_edge(t, 0, g, arg, call).
+
+stop_path(t, g, -1, 1, "") :-
+  stop_path(t, t, 0, 0, _),
+  stop_fun_edge(t, 0, g).
+
+stop_path(t, h, arg, d + 1, first) :-
+  stop_path(t, g, pos, d, first),
+  d > 0,
+  d < 3,
+  stop_call_edge(g, pos, h, arg, _).
+
+stop_path(t, h, -1, d + 1, first) :-
+  stop_path(t, g, pos, d, first),
+  d > 0,
+  d < 3,
+  stop_fun_edge(g, pos, h).
+
+// An unguarded shutdown-path call from func to callee, forwarding the shutdown reason
+// from pos to arg when applicable.
+.decl stop_call_edge(func: symbol, pos: number, callee: symbol, arg: number, call: symbol)
+
+stop_call_edge(f, pos, g, arg, call) :-
+  stop_path(_, f, pos, _, _),
+  call_instr(f, g, call),
+  runs_holding(f, pos, call),
+  !exit_guarded(call),
+  hands_holding(f, pos, call, arg).
+
+// A site-less fun edge runs during shutdown if its receiving call is reached,
+// unguarded, and same-process. Without such a call, require no function-wide exit
+// handler.
+.decl stop_fun_edge(func: symbol, pos: number, callee: symbol)
+
+stop_fun_edge(f, pos, g) :-
+  stop_path(_, f, pos, _, _),
+  fun_site(f, g, call),
+  !call_instr(f, g, _),
+  runs_holding(f, pos, call),
+  !exit_guarded(call),
+  !starts_a_process(call),
+  !runs_elsewhere(f, g).
+
+stop_fun_edge(f, pos, g) :-
+  stop_path(_, f, pos, _, _),
+  call_edge(f, g),
+  !call_instr(f, g, _),
+  !fun_site(f, g, _),
+  !catches_exit(f),
+  !runs_elsewhere(f, g).
+
+// An unguarded synchronous wait reached on the shutdown path. Use an empty site when
+// only a function-level dependency is available and no exit catch exists there.
+// Reason-aware client APIs count only if their :shutdown path waits.
+.decl stop_wait(terminate: symbol, func: symbol, mod: symbol, site: symbol)
+
+stop_wait(t, f, m, id) :-
+  stop_path(t, f, pos, _, _),
+  waits_on(f, m),
+  wait_site(f, m, id),
+  runs_holding(f, pos, id),
+  !exit_guarded(id),
+  !api_handed(f, pos, id, m, _, _).
+
+stop_wait(t, f, m, id) :-
+  stop_path(t, f, pos, _, _),
+  waits_on(f, m),
+  wait_site(f, m, id),
+  runs_holding(f, pos, id),
+  !exit_guarded(id),
+  api_handed(f, pos, id, m, g, arg),
+  api_waits_holding(g, arg, m).
+
+stop_wait(t, f, m, "") :-
+  stop_path(t, f, _, _, _),
+  waits_on(f, m),
+  !wait_site(f, m, _),
+  !catches_exit(f).
+
+// The call at `id`, where `func` holds the reason in `pos`, hands it to
+// mod's client API `api` (genserver_sync_api) as argument `arg`.
+.decl api_handed(func: symbol, pos: number, id: symbol, mod: symbol, api: symbol, arg: number)
+
+api_handed(f, pos, id, m, g, arg) :-
+  stop_path(_, f, pos, _, _),
+  shutdown_handed(id, f, pos, arg),
+  call_instr(f, g, id),
+  genserver_sync_api(g, m).
+
+// Follow mod's client API with :shutdown in parameter pos. Retain only selected calls
+// while forwarding the reason; calls losing it enter with all clauses possible.
+.decl api_waits_holding(func: symbol, pos: number, mod: symbol)
+
+// What api_waits_holding is asked of: the APIs a stop's call hands the
+// reason to, and what they hand it on to.
+.decl holding_asked(func: symbol, pos: number, mod: symbol)
+
+holding_asked(g, arg, m) :- api_handed(_, _, _, m, g, arg).
+
+holding_asked(h, arg, m) :-
+  holding_asked(g, pos, m),
+  call_instr(g, h, id),
+  runs_holding(g, pos, id),
+  shutdown_handed(id, g, pos, arg).
+
+api_waits_holding(g, pos, m) :-
+  holding_asked(g, pos, m),
+  function_def(g, m, _, _, _),
+  sync_call_site(id, g, _, _),
+  runs_holding(g, pos, id),
+  !calls_other_server(g, m).
+
+api_waits_holding(g, pos, m) :-
+  holding_asked(g, pos, m),
+  call_instr(g, h, id),
+  runs_holding(g, pos, id),
+  hands_holding(g, pos, id, -1),
+  sync_caller_in(h, m).
+
+api_waits_holding(g, pos, m) :-
+  holding_asked(g, pos, m),
+  call_instr(g, h, id),
+  runs_holding(g, pos, id),
+  shutdown_handed(id, g, pos, arg),
+  api_waits_holding(h, arg, m).
+
+api_waits_holding(g, pos, m) :-
+  holding_asked(g, pos, m),
+  call_edge(g, h),
+  !call_instr(g, h, _),
+  sync_caller_in(h, m).
+
+// `func` is a function of mod's that makes a synchronous call, or reaches
+// one (reaches_sync_caller_in, calls.dl), whatever it holds.
+.decl sync_caller_in(func: symbol, mod: symbol)
+
+sync_caller_in(h, m) :-
+  function_def(h, m, _, _, _),
+  sync_call(h, _),
+  !calls_other_server(h, m).
+
+sync_caller_in(h, m) :- reaches_sync_caller_in(h, m).
+
+// Sibling teardown output. `phase = terminate` describes waits on possibly stopped
+// siblings; `handler` describes stopping a sibling still owned by its supervisor.
+// `handler` identifies the callback, `via` the waiting function, `site` its direct
+// unguarded call when known, and `sup_site` their common supervision site.
+.decl teardown_touches_sibling(mod: symbol, sibling: symbol, phase: symbol, kind: symbol, via: symbol, sup: symbol, handler: symbol, site: symbol, sup_site: symbol)
+.output teardown_touches_sibling
+
+// When the sibling is already gone
+//
+// `call`: reverse shutdown order stops later sibling branches first.
+// `call_restart`: an earlier direct child crashes under rest_for_one or one_for_all,
+// triggering this module's teardown. A crash contained by a nested supervisor does not
+// qualify.
+// Use the common supervisor's branch order, and require exit trapping so terminate runs
+// on :shutdown. Unknown order or strategy yields the less certain `call_unordered`.
+// Limits: unmodeled brutal_kill specs can produce false reports; escalated failures
+// from nested supervisors can be missed. Tests of transformed shutdown reasons and
+// opaque calls lose the tracked reason and retain every reachable call.
+
+// terminate/2 calls a sibling with no try taking the exit, its process
+// traps exits, and the supervisor's shutdown stops that sibling first.
+.decl call_to_stopped_sibling(mod: symbol, terminate: symbol, via: symbol, sibling: symbol, sup: symbol)
+
+call_to_stopped_sibling(mod, terminate, via, sibling, sup) :-
+  terminate_waits_unguarded(mod, terminate, via, sibling),
+  server_traps(mod),
+  stops_before(sup, sibling, mod).
+
+// A trapping server's terminate/2 calls an earlier sibling without catching exits.
+// Under rest_for_one, that sibling's crash triggers this cleanup after the sibling is
+// gone.
+.decl call_to_crashed_sibling(mod: symbol, terminate: symbol, via: symbol, sibling: symbol, sup: symbol)
+
+call_to_crashed_sibling(mod, terminate, via, sibling, sup) :-
+  terminate_waits_unguarded(mod, terminate, via, sibling),
+  server_traps(mod),
+  stops_before(sup, mod, sibling),
+  crash_restarts_later(sup, sibling).
+
+// A trapping server's terminate/2 calls a sibling without catching exits, and
+// supervision order or strategy does not establish whether the sibling remains alive.
+.decl call_to_sibling_in_unknown_order(mod: symbol, terminate: symbol, via: symbol, sibling: symbol, sup: symbol)
+
+call_to_sibling_in_unknown_order(mod, terminate, via, sibling, sup) :-
+  terminate_waits_unguarded(mod, terminate, via, sibling),
+  server_traps(mod),
+  order_unsettled(sup, sibling, mod).
+
+// During shutdown, mod waits on other without catching exits. `via` identifies
+// terminate/2 or the helper making the wait.
+.decl terminate_waits_unguarded(mod: symbol, terminate: symbol, via: symbol, other: symbol)
+
+terminate_waits_unguarded(mod, t, via, other) :-
+  is_terminate(t, mod),
+  stop_wait(t, via, other, _).
+
+// `later` sits in a branch of sup listed after one that holds
+// `earlier`: the branch is `later` itself, or a supervisor above it.
+.decl started_after(sup: symbol, later: symbol, earlier: symbol)
+
+started_after(sup, later, earlier) :-
+  starts_before(sup, earlier, later, _, _),
+  later != earlier.
+
+// sup's shutdown stops `first` before `other`: first's branch was
+// started after other's, and never before it.
+.decl stops_before(sup: symbol, first: symbol, other: symbol)
+
+stops_before(sup, first, other) :-
+  started_after(sup, first, other),
+  !started_after(sup, other, first).
+
+// A strategy under which a child's crash makes the supervisor terminate
+// the children started after it.
+.decl restarts_later_siblings(sup: symbol)
+
+restarts_later_siblings(sup) :- supervisor(sup, "rest_for_one").
+restarts_later_siblings(sup) :- supervisor(sup, "one_for_all").
+
+// `child`'s crash makes sup terminate the children started after it:
+// child is sup's own, under rest_for_one or one_for_all.
+.decl crash_restarts_later(sup: symbol, child: symbol)
+
+crash_restarts_later(sup, child) :-
+  supervisor_child(sup, _, child, _, _),
+  restarts_later_siblings(sup).
+
+// sup's strategy is one argus read: one_for_one, rest_for_one or
+// one_for_all.
+.decl strategy_known(sup: symbol)
+
+strategy_known(sup) :- supervisor(sup, "one_for_one").
+strategy_known(sup) :- restarts_later_siblings(sup).
+
+// Shutdown order is uncertain when module placements overlap or an earlier direct
+// sibling's restart effect depends on an unread supervisor strategy.
+.decl order_unsettled(sup: symbol, sibling: symbol, mod: symbol)
+
+order_unsettled(sup, sibling, mod) :-
+  started_after(sup, sibling, mod),
+  started_after(sup, mod, sibling).
+
+order_unsettled(sup, sibling, mod) :-
+  stops_before(sup, mod, sibling),
+  supervisor_child(sup, _, sibling, _, _),
+  !strategy_known(sup).
+
+teardown_touches_sibling(mod, sibling, "terminate", "call", via, sup, func, site, sup_site) :-
+  call_to_stopped_sibling(mod, func, via, sibling, sup),
+  stop_wait(func, via, sibling, site),
+  supervisor_site_or_empty(sup, sup_site).
+
+teardown_touches_sibling(mod, sibling, "terminate", "call_restart", via, sup, func, site, sup_site) :-
+  call_to_crashed_sibling(mod, func, via, sibling, sup),
+  stop_wait(func, via, sibling, site),
+  supervisor_site_or_empty(sup, sup_site).
+
+teardown_touches_sibling(mod, sibling, "terminate", "call_unordered", via, sup, func, site, sup_site) :-
+  call_to_sibling_in_unknown_order(mod, func, via, sibling, sup),
+  stop_wait(func, via, sibling, site),
+  supervisor_site_or_empty(sup, sup_site).
+
+// Anchor at the earliest terminate call toward the sibling wait. With no call
+// instruction, use terminate itself unless the anonymous helper's location already
+// supplies the anchor.
+.decl terminate_path(handler: symbol, via: symbol, call: symbol)
+.output terminate_path
+
+.decl terminate_step(handler: symbol, via: symbol, call: symbol)
+
+terminate_step(t, via, call) :-
+  teardown_touches_sibling(_, _, "terminate", _, via, _, t, _, _),
+  stop_path(t, via, _, _, call),
+  call != "".
+
+.decl terminate_stepped(handler: symbol, via: symbol)
+
+terminate_stepped(t, via) :- terminate_step(t, via, _).
+
+terminate_path(t, via, call) :- terminate_step(t, via, call).
+
+terminate_path(t, via, "") :-
+  teardown_touches_sibling(_, _, "terminate", _, via, _, t, _, _),
+  via != t,
+  !closure_in_terminate(t, via),
+  !terminate_stepped(t, via).
+
+// The helper is an anonymous function written inside terminate/2
+// (`M:-terminate/2-fun-0-/1`): its line is inside terminate/2's source.
+.decl closure_in_terminate(handler: symbol, via: symbol)
+
+closure_in_terminate(t, via) :-
+  teardown_touches_sibling(_, _, "terminate", _, via, _, t, _, _),
+  function_def(t, m, n, a, _),
+  contains(cat(m, ":-", n, "/", to_string(a), "-fun-"), via).
+
+// A supervisor the facts place without the instruction that defines its
+// tree anchors with an empty site: every rule's `sup` has a row here.
+.decl supervisor_site_or_empty(sup: symbol, site: symbol)
+
+supervisor_site_or_empty(sup, site) :- supervisor_site(sup, site).
+supervisor_site_or_empty(sup, "") :- sibling(sup, _, _), !supervisor_site(sup, _).
+supervisor_site_or_empty(sup, "") :- dynamic_child(sup, _, _), !supervisor_site(sup, _).

@@ -1,0 +1,95 @@
+// Children placed in another supervision tree
+//
+// Dynamic children outside the starter's subtree can survive its shutdown and keep
+// using stopped services. Check whether terminate explicitly stops them.
+.decl foreign_dynamic_children(mod: symbol, sup: symbol, via: symbol, site: symbol, sup_site: symbol)
+.output foreign_dynamic_children
+
+// A process starts children onto a supervisor in another tree, and its
+// terminate/2 does not stop them: they outlive the process's own tree.
+.decl children_left_behind(mod: symbol, sup: symbol, start: symbol)
+
+children_left_behind(mod, sup, start) :-
+  starts_children_under(mod, sup, start),
+  started_from_outside(start, sup),
+  in_another_tree(mod, sup),
+  !terminate_stops_children(mod).
+
+// Attribute child starts to the process whose callbacks reach them, including shared
+// helpers. Dynamic supervisor pids have no known tree because these arguments are not
+// resolved by points-to.
+.decl starts_children_under(mod: symbol, sup: symbol, start: symbol)
+
+starts_children_under(mod, sup, start) :-
+  dynamic_child(sup, _, start),
+  sup != "dynamic",
+  starter_process(mod, start).
+
+// An entry of `mod`'s process (process_entry) reaches `start`
+// (reaches_child_start, clientlib/supervision.dl).
+.decl starter_process(mod: symbol, start: symbol)
+
+starter_process(mod, s) :- process_entry(mod, c), reaches_child_start(c, s).
+
+// Require a start function outside the supervisor's module. Its own start API may
+// intentionally offer shared child ownership to callers.
+.decl started_from_outside(start: symbol, sup: symbol)
+
+started_from_outside(start, sup) :-
+  dynamic_child(sup, _, start),
+  function_def(start, m, _, _, _),
+  m != sup.
+
+// `sup` sits in a tree `mod` is no member of. A supervisor named through
+// a registry (`Oban.Registry.via(Foreman)`) is no tree member.
+.decl in_another_tree(mod: symbol, sup: symbol)
+
+in_another_tree(mod, sup) :-
+  starts_children_under(mod, sup, _),
+  mod != sup,
+  tree_member(root, sup),
+  !tree_member(root, mod).
+
+// A tree's members by module, and by the registered name a child spec
+// gave them (`{DynamicSupervisor, name: Pool}` is a child named Pool).
+.decl tree_member(root: symbol, member: symbol)
+
+tree_member(root, mod) :- child_subtree(root, _, mod).
+tree_member(root, name) :- supervisor_child_name(root, _, name).
+
+tree_member(root, name) :-
+  child_subtree(root, _, mid),
+  supervisor_child_name(mid, _, name).
+
+// Any reachable supervisor stop or child termination suppresses the finding, even if
+// its target is unknown.
+.decl terminate_stops_children(mod: symbol)
+
+terminate_stops_children(mod) :-
+  terminate_callback(func, mod, _),
+  (via = func ; teardown_reach.reaches(func, via, _)),
+  sup_management_call(_, via, _, op, _),
+  stopping_sup_op(op).
+
+// What terminate/2 reaches within three calls, whatever its reason.
+.init teardown_reach = ForwardBoundedCallReach
+
+teardown_reach.root(func, func) :- terminate_callback(func, _, _).
+teardown_reach.limit(3).
+
+foreign_dynamic_children(mod, sup, start, site, sup_site) :-
+  children_left_behind(mod, sup, start),
+  dynamic_start_site_or_empty(start, site),
+  supervisor_site_or_empty(sup, sup_site).
+
+// The DynamicSupervisor.start_child call in `func`.
+.decl dynamic_start_site(func: symbol, id: symbol)
+
+dynamic_start_site(f, id) :- call_site(id, f, "DynamicSupervisor", "start_child", _).
+
+// A start with no DynamicSupervisor.start_child instruction (a
+// Task.Supervisor start) anchors at its function, the site empty.
+.decl dynamic_start_site_or_empty(func: symbol, site: symbol)
+
+dynamic_start_site_or_empty(f, id) :- dynamic_start_site(f, id).
+dynamic_start_site_or_empty(f, "") :- dynamic_child(_, _, f), !dynamic_start_site(f, _).

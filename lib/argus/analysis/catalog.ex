@@ -5,7 +5,8 @@ defmodule Argus.Analysis.Catalog do
 
   Discovery reads the `:argus_beam` application's module list, keeping the
   modules that export the behaviour's required callbacks, sorted by
-  name. Nothing is cached: every lookup reads the module list again.
+  name. Discovery is cached once per VM; the application's module list is
+  fixed when it loads. Relation definitions are read through their accessors.
 
   `Argus.Analysis` delegates its lookup functions here
   (`builtin_analyses/0`, `fetch_module/1`, `output_relations/1`, ...);

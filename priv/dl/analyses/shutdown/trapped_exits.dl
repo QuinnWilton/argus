@@ -1,0 +1,103 @@
+// Unhandled trapped exits
+//
+// `kind` distinguishes no handle_info, no :EXIT clause, and no matching receive in a
+// manual loop. `witness` sets trap_exit; builders deduplicate by module and kind.
+.decl unhandled_exit_signal(mod: symbol, kind: symbol, witness: symbol)
+.output unhandled_exit_signal
+
+// A trapping server defines no handle_info for EXIT messages. This heuristic counts any
+// handle_info arity as a handler.
+.decl exit_without_handler(mod: symbol, trap: symbol)
+
+exit_without_handler(mod, trap) :-
+  module_traps(trap, mod),
+  hands_exits_to_handle_info(mod),
+  !has_handle_info(mod).
+
+// Behaviours delivering trapped exits to handle_info/2, as classified by
+// `gen_server_like`. Other frameworks use their own callbacks or hidden receives;
+// gen_statem uses state functions or handle_event/4 and must not be checked for
+// handle_info.
+.decl hands_exits_to_handle_info(mod: symbol) inline
+
+hands_exits_to_handle_info(mod) :- gen_server_like(mod).
+
+unhandled_exit_signal(mod, "no_handler", trap) :-
+  exit_without_handler(mod, trap).
+
+// Partial handle_info without an exit clause
+//
+// A trapping server with neither an :EXIT match nor catch-all crashes on trapped exits.
+// `callback_tag` counts any atom comparison, so unrelated :EXIT mentions can suppress
+// the finding. `trap_exit_without_exit_clause` excludes gen_statem.
+unhandled_exit_signal(mod, "no_exit_clause", trap) :-
+  trap_exit_without_exit_clause(mod, trap).
+
+// Manual loops ignoring trapped exits
+//
+// For processes outside behaviours, check all reachable receives for :EXIT or an
+// unrestricted tag. Unmatched exits remain queued, repeatedly scanned, and may leave
+// parent shutdown unanswered.
+
+// A process no behaviour runs traps exits, and none of the receives its
+// loop runs can take the {:EXIT, ...}.
+.decl exit_without_receive(mod: symbol, trap: symbol)
+
+exit_without_receive(mod, trap) :-
+  traps_in_own_loop(mod, trap),
+  trap_loop_receives(trap),
+  !trap_loop_takes_exit(trap),
+  !trap_loop_hides_receives(trap).
+
+// The trap at `trap`, a function of `mod`'s, is one no behaviour's loop
+// answers (trap_loop_candidate).
+.decl traps_in_own_loop(mod: symbol, trap: symbol) inline
+
+traps_in_own_loop(mod, trap) :-
+  trap_loop_candidate(trap),
+  function_def(trap, mod, _, _, _).
+
+// A trap outside behaviour-managed process stacks, including manual spawn/proc_lib
+// loops. Exclude gen_statem; its mailbox is handled through state callbacks.
+.decl trap_loop_candidate(func: symbol)
+
+trap_loop_candidate(func) :-
+  trap_exit(_, func, mod),
+  !trap_on_process_stack(func),
+  !statem_process(mod).
+
+// Find loops reached on the same stack after trapping setup, including loops in spawned
+// entry functions.
+.init trap_loop_caller = SameProcessReach
+
+trap_loop_caller.seed(f, f) :- trap_loop_candidate(f).
+
+.init trap_loop = ForwardSameProcessReachCut
+
+trap_loop.cut(f, g) :- side_call(f, g).
+trap_loop.root(f, f) :- trap_loop_candidate(f).
+
+trap_loop.root(f, r) :-
+  trap_loop_candidate(f),
+  trap_loop_caller.reaches(r, f),
+  process_start(_, _, _, "spawn", r).
+
+// The loop runs a receive. One that runs none (grpc's Mint adapter traps
+// for its caller) is not asked.
+.decl trap_loop_receives(trap: symbol)
+
+trap_loop_receives(f) :- trap_loop.reaches(f, g), recv_start(_, g, _, _).
+
+// Some receive the loop runs can take an {:EXIT, ...} (recv_takes_exit).
+.decl trap_loop_takes_exit(trap: symbol)
+
+trap_loop_takes_exit(f) :- trap_loop.reaches(f, g), recv_takes_exit(_, g).
+
+// The loop runs code whose receives are not the program's to read
+// (hides_receives, clientlib/receive.dl).
+.decl trap_loop_hides_receives(trap: symbol)
+
+trap_loop_hides_receives(f) :- trap_loop.reaches(f, g), hides_receives(g).
+
+unhandled_exit_signal(mod, "no_receive_clause", trap) :-
+  exit_without_receive(mod, trap).

@@ -3,6 +3,22 @@
 Notable changes and upgrade notes for Argus. Entries describe the release in
 which a change appeared; older names and APIs may have changed since then.
 
+## Unreleased
+
+- Add a Breeze terminal explorer with `mix argus.debug explore`: search relations,
+  filter and page through rows, inspect column and producer descriptions, follow
+  IDs and rule references to source, and browse retained successful solves.
+  Save each new solve's metadata for accurate historical inspection. Breeze is
+  an optional dependency for projects using Argus.
+- Add `mix argus.debug` and `Argus.Debug` for retaining editable analysis bundles,
+  inspecting relations by named columns, probing intermediate rules, resolving
+  IDs to source, and rerunning solves. Add executable contributor walkthroughs.
+- Separate CFG-derived extraction from pipeline lifecycle management and organize
+  shutdown rules by defect family. Share named-column row selection between
+  debugging and fixture assertions.
+- Create empty fact files for declared custom extractor outputs, including when
+  the extractor emits no rows.
+
 ## 0.21.0 — 2026-10-06
 
 ### Added

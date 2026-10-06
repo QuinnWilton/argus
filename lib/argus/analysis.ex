@@ -333,7 +333,7 @@ defmodule Argus.Analysis do
   Runs a single analysis's Datalog rules against an existing facts directory.
 
   The facts directory must contain `.facts` files for every relation the
-  analysis declares as input — `extract_facts/3` guarantees this when the
+  compiled program reads as input — `extract_facts/3` guarantees this when the
   analysis was included in its analyses list.
 
   Returns `{:ok, results}` or `{:error, reason}`.

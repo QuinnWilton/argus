@@ -17,23 +17,10 @@ defmodule Argus.Test.Rows do
   @spec where(map(), atom(), String.t(), keyword()) :: [[String.t()]]
   def where(results, analysis, relation, opts) do
     {drop, where} = Keyword.pop(opts, :drop, [])
-    fields = fields!(analysis, relation)
-
-    index = fn column ->
-      Enum.find_index(fields, &(&1 == column)) || raise "no column #{column}"
-    end
-
-    keep = for {f, i} <- Enum.with_index(fields), f not in drop, do: i
 
     results
     |> Map.get(relation, [])
-    |> Enum.filter(fn row ->
-      Enum.all?(where, fn
-        {column, allowed} when is_list(allowed) -> Enum.at(row, index.(column)) in allowed
-        {column, value} -> Enum.at(row, index.(column)) == value
-      end)
-    end)
-    |> Enum.map(fn row -> Enum.map(keep, &Enum.at(row, &1)) end)
+    |> Argus.Relation.select(fields!(analysis, relation), where: where, drop: drop)
   end
 
   defp fields!(analysis, relation) do

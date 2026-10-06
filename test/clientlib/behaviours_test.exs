@@ -24,7 +24,7 @@ defmodule Argus.Clientlib.BehavioursTest do
     test "no rule matches a declared behaviour string directly" do
       offenders =
         priv_dl()
-        |> Path.join("{analyses,clientlib}/*.dl")
+        |> Path.join("{analyses,clientlib}/**/*.dl")
         |> Path.wildcard()
         |> Enum.reject(&(Path.basename(&1) == "behaviours.dl"))
         |> Enum.flat_map(fn path ->
@@ -63,7 +63,7 @@ defmodule Argus.Clientlib.BehavioursTest do
 
       offenders =
         priv_dl()
-        |> Path.join("{analyses,clientlib}/*.dl")
+        |> Path.join("{analyses,clientlib}/**/*.dl")
         |> Path.wildcard()
         |> Enum.reject(&(Path.basename(&1) == "behaviours.dl"))
         |> Enum.flat_map(fn path ->

@@ -137,8 +137,10 @@ dependencies too. Dynamic calls and runtime configuration can leave gaps or
 produce findings that do not apply to a particular deployment.
 
 Use the [bug-class catalog](docs/bug-classes.md) to understand each finding's
-evidence and limits. For contributors, the [analysis model](docs/design/analysis-model.md)
-and [rule guide](docs/design/rule-style.md) explain the implementation.
+evidence and limits. Start with the [contributor guide](CONTRIBUTING.md) to capture
+a finding, inspect its rules and facts, or run a small extension. The
+[analysis model](docs/design/analysis-model.md) and
+[rule guide](docs/design/rule-style.md) explain the implementation contracts.
 
 ## License
 

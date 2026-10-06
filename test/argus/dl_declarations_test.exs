@@ -85,7 +85,7 @@ defmodule Argus.DlDeclarationsTest do
     test "no analysis recurses over the call graph itself" do
       offenders =
         priv_dl()
-        |> Path.join("analyses/*.dl")
+        |> Path.join("analyses/**/*.dl")
         |> Path.wildcard()
         |> Enum.flat_map(fn path ->
           path

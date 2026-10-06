@@ -1,6 +1,7 @@
 # Writing and changing rules
 
-[Bug-class catalog](../bug-classes.md) · [Shared model](analysis-model.md)
+[Bug-class catalog](../bug-classes.md) · [Shared model](analysis-model.md) ·
+[Runnable debugging and extension workflows](../../CONTRIBUTING.md)
 
 A detection rule should explain the defect to someone who understands the bug but
 has not learned Argus's extractor internals. Keep reporting, detection and supporting

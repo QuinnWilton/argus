@@ -1,0 +1,10 @@
+// The external extractor's schema. Built-in facts belong in Argus.Schema;
+// external custom relations may declare their schema alongside their program.
+.decl clock_read(site: symbol, func: symbol)
+.input clock_read
+
+// Report a clock read, preserving its caller and concrete source anchor.
+.decl clock_use(site: symbol, func: symbol)
+.output clock_use
+
+clock_use(site, func) :- clock_read(site, func).

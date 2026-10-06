@@ -21,8 +21,10 @@ defmodule Argus.Extractor do
         end
       end
 
-  An analysis names its extractors in `extractors/0`; pass extra ones via
-  the `:extractors` option to `Argus.Analysis.extract_facts/3`.
+  A built-in analysis names its extractors in `extractors/0`. For standalone
+  experiments, pass custom producers through `:extractors` to
+  `Argus.Pipeline.run/3` or `Argus.Debug.capture!/4`. See the runnable extension
+  in `examples/contributor/` and CONTRIBUTING.md for built-in registration.
   """
 
   @typedoc """
@@ -55,7 +57,7 @@ defmodule Argus.Extractor do
         }
 
   @doc """
-  Relations `extract/1` can emit. Each must be declared in the schema and
+  Relations `extract/1` can emit. Built-in relations must be declared in the schema and
   consumed by a rule; `Argus.ExtractorRelationsTest` checks this contract.
   """
   @callback relations() :: [atom()]

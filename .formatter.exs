@@ -1,5 +1,6 @@
 # Used by "mix format"
 [
-  import_deps: [:presubmit],
-  inputs: ["{mix,.formatter}.exs", "{config,lib,test}/**/*.{ex,exs}"]
+  plugins: [Breeze.HTMLFormatter],
+  import_deps: [:presubmit, :breeze],
+  inputs: ["{mix,.formatter}.exs", "{config,examples,lib,test}/**/*.{ex,exs}"]
 ]

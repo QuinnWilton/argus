@@ -1,0 +1,47 @@
+// ══ A permanent child that stops itself ═════════════════════════════
+
+// Permanent children stopping normally
+//
+// A permanent child restarts even after :normal or :shutdown, potentially undoing
+// intentional drain-and-stop behavior. Check literal stop reasons only; emit per stop
+// site and deduplicate by supervisor and child.
+.decl permanent_child_stops_normally(sup: symbol, child: symbol, reason: symbol, site: symbol, sup_site: symbol)
+.output permanent_child_stops_normally
+
+// A permanent child stops itself with :normal or :shutdown, and its
+// supervisor starts it straight back.
+.decl normal_stop_of_permanent_child(sup: symbol, child: symbol, reason: symbol, stop: symbol)
+
+normal_stop_of_permanent_child(sup, child, reason, stop) :-
+  restarts_always(sup, child),
+  stops_itself(child, stop, reason),
+  normal_reason(reason).
+
+// sup restarts `child` whatever its exit reason: it runs under :permanent
+// (restart_policy: its spec's, or a shorthand's own child_spec/1's).
+.decl restarts_always(sup: symbol, child: symbol)
+
+restarts_always(sup, child) :-
+  supervisor(sup, _),
+  restart_policy(sup, child, "permanent").
+
+// A runtime callback returns a literal stop reason. Exclude terminate returns and init
+// failures: the latter never create a child for supervision to restart.
+.decl stops_itself(child: symbol, stop: symbol, reason: symbol)
+
+stops_itself(child, stop, reason) :-
+  function_def(func, child, name, _, _),
+  name != "terminate",
+  !init_function(child, func),
+  callback_stop_reason(stop, func, reason).
+
+// A reason a process stops with to go away for good.
+.decl normal_reason(reason: symbol)
+
+normal_reason(":normal").
+normal_reason(":shutdown").
+
+// A supervisor with no site of its own is not reported.
+permanent_child_stops_normally(sup, child, reason, site, sup_site) :-
+  normal_stop_of_permanent_child(sup, child, reason, site),
+  supervisor_site(sup, sup_site).

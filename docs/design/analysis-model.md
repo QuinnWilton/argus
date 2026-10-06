@@ -1,6 +1,6 @@
 # Shared analysis model
 
-[Bug-class catalog](../bug-classes.md)
+[Bug-class catalog](../bug-classes.md) · [Contributor workflows](../../CONTRIBUTING.md)
 
 Argus extracts facts from compiled BEAM code, resolves shared call and value-flow
 relations, then evaluates the individual analyses. Missing facts and approximations

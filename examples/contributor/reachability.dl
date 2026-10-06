@@ -1,0 +1,40 @@
+// An inline helper, a detached spawn and a task the caller waits for.
+// These are illustrative execution facts, not BEAM extraction.
+.decl call_edge(func: symbol, callee: symbol)
+.decl runs_elsewhere(func: symbol, callee: symbol)
+.decl awaits_task(func: symbol, site: symbol, callee: symbol)
+call_edge("entry", "inline_helper").
+call_edge("entry", "spawned_helper").
+call_edge("entry", "awaited_helper").
+runs_elsewhere("entry", "spawned_helper").
+runs_elsewhere("entry", "awaited_helper").
+awaits_task("entry", "await-site", "awaited_helper").
+
+.include "../../priv/dl/clientlib/reach.dl"
+
+.decl asked(func: symbol, target: symbol)
+asked("inline_helper", "inline").
+asked("spawned_helper", "spawned").
+asked("awaited_helper", "awaited").
+
+// .comp defines reusable relations and rules; .init creates an instance.
+// Backward seed(func, target) finds callers of that function. Each instance
+// has its own seed and reaches relations.
+.init calls = CallReach
+.init own = SameProcessReach
+.init held = HoldingReach
+calls.seed(f, t) :- asked(f, t).
+own.seed(f, t) :- asked(f, t).
+held.seed(f, t) :- asked(f, t).
+
+.decl reachable(kind: symbol, target: symbol)
+.output reachable
+reachable("call", t) :- calls.reaches("entry", t).
+reachable("same_process", t) :- own.reaches("entry", t).
+reachable("held", t) :- held.reaches("entry", t).
+
+// Forward root(root_identity, first_function) enumerates reached functions.
+// The root reaches itself.
+.init forward = ForwardCallReach
+forward.root("entry", "entry").
+.output forward.reaches

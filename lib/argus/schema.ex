@@ -279,7 +279,7 @@ defmodule Argus.Schema do
   What `read` (`t:Argus.Schema.Reads.read/0`) names now: the answer the
   accessor that recorded it gives today, asked again (and recorded
   again). How a store checks the reads a producer made
-  (`Argus.Schema.Reads.digest/1`); a read no accessor makes names
+  (`Argus.Graph.Reads.entry_digest/1`); a read no accessor makes names
   `{:unknown_read, read}`.
 
   A read's relation name that is no atom in this VM names no relation:

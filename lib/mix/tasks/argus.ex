@@ -57,31 +57,8 @@ defmodule Mix.Tasks.Argus do
         IO.write(Argus.CLI.list())
 
       :analyze ->
-        compile!()
+        Argus.Project.Mix.compile!()
         analyze(options)
-    end
-  end
-
-  # Without --no-prune-code-paths, a project that declares an explicit
-  # `applications:` list has every dependency outside that list — argus
-  # and its own deps included — pruned from the code path by the compile
-  # step, and the analysis below fails to load Argus.Config.
-  #
-  # With --return-errors, an :error status comes back instead of exiting.
-  # The compiler chain ends with argus's own compiler, whose status is
-  # :error whenever a finding reaches `fail_on` — exactly the findings
-  # this task exists to report, so that status must not stop it. An error
-  # from any other compiler means the ebin is not the source's, and there
-  # is nothing sound to analyze.
-  defp compile! do
-    case Mix.Task.run("compile", ["--no-prune-code-paths", "--return-errors"]) do
-      {:error, diagnostics} ->
-        if Enum.any?(diagnostics, &(&1.severity == :error and &1.compiler_name != "argus")) do
-          Mix.raise("argus: the project does not compile; fix the errors above first")
-        end
-
-      _ok_or_noop ->
-        :ok
     end
   end
 

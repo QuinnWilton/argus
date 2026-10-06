@@ -1,0 +1,66 @@
+// ══ Teardown that hurts a monitored child ═══════════════════════════
+
+// Stopping a monitored child
+//
+// A server stops a pid while retaining its monitor. The resulting :DOWN can enter
+// crash-recovery logic and undo the deliberate stop. Require no release of that monitor
+// on the path to the kill.
+.decl kills_monitored_child(mod: symbol, site: symbol, kill_site: symbol)
+.output kills_monitored_child
+
+// The server stops a monitored process without releasing its monitor. The resulting
+// DOWN reaches the handler intended for unexpected crashes.
+.decl kill_of_monitored_child(mod: symbol, monitor: symbol, kill: symbol)
+
+kill_of_monitored_child(mod, monitor, kill) :-
+  server_monitors(mod, monitor),
+  server_kills(mod, kill),
+  kills_what_it_monitors(monitor, kill),
+  !released_with_kill(kill).
+
+// The monitor belongs to the server's stack. Monitors created in detached tasks or
+// spawns belong to those processes instead.
+.decl server_monitors(mod: symbol, monitor: symbol)
+
+server_monitors(mod, monitor) :- server_side(mod, f), monitor_call(monitor, f, _).
+
+// The server causes the stop, directly or through a spawned process. DOWN still goes to
+// the server that owns the monitor.
+.decl server_kills(mod: symbol, kill: symbol)
+
+server_kills(mod, kill) :- server_caused(mod, g), kill_call(kill, g).
+
+// A stop of a process: a supervisor's terminate_child, GenServer.stop.
+.decl kill_call(site: symbol, func: symbol)
+
+kill_call(x, g) :- sup_call(x, g, _, "terminate_child", _).
+kill_call(x, g) :- remote_call(x, g, "GenServer", "stop", _).
+
+// Pair a kill with a monitor when their targets overlap or either is unresolved.
+// Distinct resolved processes do not qualify.
+.decl kills_what_it_monitors(monitor: symbol, kill: symbol)
+
+kills_what_it_monitors(m, k) :-
+  signal_target(m, _, "monitor", p),
+  signal_target(k, _, "stop", p).
+
+kills_what_it_monitors(m, k) :-
+  monitor_call(m, f, _),
+  kill_call(k, _),
+  !signal_target(m, f, "monitor", _).
+
+kills_what_it_monitors(m, k) :-
+  monitor_call(m, _, _),
+  kill_call(k, g),
+  !signal_target(k, g, "stop", _).
+
+// A demonitor in the kill's function, a caller, or a callee can release the monitor on
+// that path. Unrelated callbacks do not qualify.
+.decl released_with_kill(kill: symbol)
+
+released_with_kill(k) :- kill_call(k, g), demonitor_call(_, g, _).
+released_with_kill(k) :- kill_call(k, g), call_edge(c, g), demonitor_call(_, c, _).
+released_with_kill(k) :- kill_call(k, g), call_edge(g, h), demonitor_call(_, h, _).
+
+kills_monitored_child(mod, site, kill_site) :-
+  kill_of_monitored_child(mod, site, kill_site).

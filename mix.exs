@@ -69,6 +69,9 @@ defmodule Argus.MixProject do
       {:telemetry, "~> 1.0"},
       # Findings rendered as source frames.
       {:pentiment, "~> 0.2"},
+      # Interactive debug bundles. Consumers opt in; normal analysis does not
+      # start a terminal session or Breeze's application.
+      {:breeze, "~> 0.5.5", optional: true, runtime: false},
       # Pentiment's lexers: syntax highlighting of the frames on a terminal.
       # Optional, because a hard dependency collides with the `only: :dev`
       # or `only: :docs` restriction most projects put on makeup through
@@ -118,7 +121,8 @@ defmodule Argus.MixProject do
       name: "argus_beam",
       licenses: ["MIT"],
       links: %{"GitHub" => @source_url},
-      files: ~w(lib priv/dl mix.exs README.md LICENSE CHANGELOG.md .formatter.exs)
+      files:
+        ~w(lib priv/dl docs/bug-classes.md docs/analyses docs/design examples/contributor mix.exs README.md CONTRIBUTING.md LICENSE CHANGELOG.md .formatter.exs)
     ]
   end
 
@@ -128,7 +132,7 @@ defmodule Argus.MixProject do
       source_ref: "v#{@version}",
       source_url: @source_url,
       extras:
-        ["README.md", "docs/bug-classes.md", "CHANGELOG.md"] ++
+        ["README.md", "CONTRIBUTING.md", "docs/bug-classes.md", "CHANGELOG.md"] ++
           Enum.map(Path.wildcard("docs/{analyses,design}/*.md"), fn path ->
             {path, filename: String.replace(Path.rootname(path), "/", "-")}
           end),
@@ -141,7 +145,7 @@ defmodule Argus.MixProject do
 
   defp dialyzer do
     [
-      plt_add_apps: [:mix],
+      plt_add_apps: [:mix, :breeze],
       plt_file: {:no_warn, "priv/plts/dialyzer.plt"}
     ]
   end
