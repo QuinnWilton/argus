@@ -9,10 +9,13 @@ defmodule Argus.Graph.Identity.SchemaPerturbationTest do
   every entry it did not read changed — its fields renamed and retyped,
   a field added, its documentation, its in-process flag and its layer
   changed, relations reordered, one removed and one added — and its rows
-  must come out byte for byte as they do here, computed afresh and over
-  kept bases alike. A producer that read the schema some way that
-  records nothing (memoized it, smuggled it out of a module attribute,
-  read it in another process) fails here.
+  must come out byte for byte as they do here. A producer that read the
+  schema some way that records nothing (memoized it, smuggled it out of
+  a module attribute, read it in another process) fails here.
+
+  The rows are computed afresh. Over a kept base a producer is handed
+  the data it is handed afresh (`Argus.Pipeline.BaseTest`), and a kept
+  base holds no schema, so its rows there are these.
 
   And the other way: in that VM, the reads it recorded digest as they do
   here (the perturbation moves none of its keys), and once one of them
@@ -49,45 +52,34 @@ defmodule Argus.Graph.Identity.SchemaPerturbationTest do
   :ok
   """
 
-  # Each module extracted afresh, keeping its base, then over the base
-  # kept: every producer's rows per module, in `beams`' order, and what
-  # each read.
+  # Each module extracted afresh: every producer's rows per module, in
+  # `beams`' order, and what each read.
   @extract ~S"""
-  # Each task is handed what it extracts over: a closure over `fresh`
-  # would copy all of it into every task.
-  each = fn inputs, opts ->
-    inputs
+  extractions =
+    beams
     |> Task.async_stream(
-      fn {beam, more} ->
+      fn beam ->
         {:ok, %{status: :ok} = extraction} =
-          Argus.Pipeline.extract_module(beam, [trace_imprecision: true] ++ opts ++ more)
+          Argus.Pipeline.extract_module(beam, producers: producers, trace_imprecision: true)
 
-        {beam, extraction}
+        # Digests, not the rows: they cross the peer's standard I/O.
+        rows =
+          Map.new(extraction.facts, fn {producer, rows} ->
+            {producer, :crypto.hash(:sha256, :erlang.term_to_binary(rows, [:deterministic]))}
+          end)
+
+        %{rows: rows, reads: extraction.reads}
       end,
       timeout: :infinity
     )
-    |> Map.new(fn {:ok, pair} -> pair end)
-  end
-
-  fresh = each.(Enum.map(beams, &{&1, []}), producers: producers, keep_base: true)
-  bases = Enum.map(beams, &{&1, [base: fresh[&1].base]})
-  over = each.(bases, producers: producers -- [:base])
-
-  # Digests, not the rows: they cross the peer's standard I/O.
-  rows = fn extractions, producer ->
-    Enum.map(beams, fn beam ->
-      rows = :erlang.term_to_binary(extractions[beam].facts[producer], [:deterministic])
-      :crypto.hash(:sha256, rows)
-    end)
-  end
+    |> Enum.map(fn {:ok, extraction} -> extraction end)
 
   %{
     reads:
       Map.new(producers, fn producer ->
-        {producer, beams |> Enum.flat_map(&fresh[&1].reads[producer]) |> Enum.uniq() |> Enum.sort()}
+        {producer, extractions |> Enum.flat_map(& &1.reads[producer]) |> Enum.uniq() |> Enum.sort()}
       end),
-    fresh: Map.new(producers, &{&1, rows.(fresh, &1)}),
-    over: Map.new(producers -- [:base], &{&1, rows.(over, &1)})
+    rows: Map.new(producers, fn producer -> {producer, Enum.map(extractions, & &1.rows[producer])} end)
   }
   """
 
@@ -129,14 +121,14 @@ defmodule Argus.Graph.Identity.SchemaPerturbationTest do
 
       there = eval(peer, @extract, beams: beams, producers: group)
 
-      for mode <- [:fresh, :over], {producer, rows} <- Map.fetch!(there, mode) do
+      for {producer, rows} <- there.rows do
         moved =
-          for {beam, there, here} <- Enum.zip([beams, rows, here[mode][producer]]),
+          for {beam, there, here} <- Enum.zip([beams, rows, here.rows[producer]]),
               there != here,
-              do: beam
+              do: Path.basename(beam, ".beam")
 
         assert moved == [],
-               "#{inspect(producer)}'s rows (#{mode}) moved with schema entries it did not " <>
+               "#{inspect(producer)}'s rows moved with schema entries it did not " <>
                  "record reading (it recorded #{inspect(reads)}), in #{inspect(moved)}"
       end
 
