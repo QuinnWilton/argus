@@ -1,0 +1,39 @@
+[package]
+name = "argus_flowlog_engine"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Hosts one FlowLog program's incremental dataflow for argus."
+
+# A workspace of its own: argus copies this crate into a cache directory
+# per program, and builds each copy with this lockfile (`--locked`).
+[workspace]
+
+# argus renames the binary per program, so programs built into one shared
+# target directory never overwrite each other's executable.
+[[bin]]
+name = "argus-flowlog-engine"
+path = "src/main.rs"
+
+[dependencies]
+flowlog-runtime = { git = "https://github.com/QuinnWilton/flowlog", rev = "269a3b08d46a9dab2ca779ca7f8373aa74b12050" }
+itoa = "1.0"
+libc = "0.2"
+mimalloc = "0.1"
+rustc-hash = "2.0"
+serde_json = "1.0"
+
+[profile.release]
+opt-level = 2
+# Generated programs are tens of thousands of lines of Differential
+# Dataflow, and compiling one is most of a first run's cost: cross-unit
+# LTO alone took 331s to 208s on argus's largest analysis when turned off.
+# Many codegen units let LLVM use every core.
+lto = "off"
+codegen-units = 64
+# Each program's crate is built once, from a directory of its own:
+# incremental artifacts would only fill the cache.
+incremental = false
+# A panic is reported by the exit status and the engine's log; no unwinding
+# leaves a half-applied transaction behind.
+panic = "abort"

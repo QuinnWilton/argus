@@ -1,0 +1,23 @@
+[package]
+name = "argus_flowlog_tool"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Inspects FlowLog programs and generates the engines argus runs them in."
+
+# A workspace of its own: argus builds this crate in a cache directory,
+# never inside a parent project's workspace.
+[workspace]
+
+[[bin]]
+name = "argus-flowlog-tool"
+path = "src/main.rs"
+
+[dependencies]
+flowlog-build = { git = "https://github.com/QuinnWilton/flowlog", rev = "269a3b08d46a9dab2ca779ca7f8373aa74b12050" }
+flowlog-common = { git = "https://github.com/QuinnWilton/flowlog", rev = "269a3b08d46a9dab2ca779ca7f8373aa74b12050" }
+flowlog-parser = { git = "https://github.com/QuinnWilton/flowlog", rev = "269a3b08d46a9dab2ca779ca7f8373aa74b12050" }
+serde_json = "1.0"
+
+[profile.release]
+opt-level = 2
