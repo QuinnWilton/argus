@@ -79,6 +79,12 @@ defmodule Argus.Test.Fixtures.UncheckedStartChild do
   def start_mapped(sup, jobs),
     do: Enum.map(jobs, fn job -> Task.Supervisor.start_child(sup, fn -> job end) end)
 
+  # The same, and the list dropped.
+  def start_mapped_dropped(sup, jobs) do
+    _ = Enum.map(jobs, fn job -> Task.Supervisor.start_child(sup, fn -> job end) end)
+    :ok
+  end
+
   # Unchecked: the start's clause matches nothing after it; the branch
   # is in the next clause, later in the function but never after it.
   def start_then_other_clause(sup, :fire) do

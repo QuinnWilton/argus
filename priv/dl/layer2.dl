@@ -711,15 +711,15 @@
 .decl redacted_field(mod: symbol, field: symbol)
 .input redacted_field
 
+// Call to a function returning a tagged tuple, or to Task.Supervisor.start_child, whose result every way on loses (`Argus.Extractor.ResultFate`): read on no path, here or in the callers it is handed back to, whole or in a term built of it — a closure Enum.each runs, a comprehension whose list is dropped, a helper whose callers drop it.
+//
+.decl result_lost(id: symbol, func: symbol, callee: symbol)
+.input result_lost
+
 // How a non-runtime call's result is used when the function never compares with `:badrpc`: shape-matched with a possible clause-less exit, boolean-tested, or returned. Extends `rpc_result` to wrappers. Excludes compiler-generated callees and predicates ending in `?`, whose RPC sites are reported directly.
 //
 .decl result_tested(id: symbol, func: symbol, callee: symbol, how: symbol)
 .input result_tested
-
-// Tail call to a function returning a tagged tuple: the result is the caller's to match. `clientlib/closures.dl`'s `answer_dropped` says when no caller does.
-//
-.decl returned_error_result(id: symbol, func: symbol, callee: symbol)
-.input returned_error_result
 
 // A returned state field derived from the result of call `site`. Records the whole result, tuple element `{i}`, a deeper `part`, or dependence through another call's `argument`. Local calls follow `returns_from`. Used to locate stored monitor records and removal results (`Argus.Extractor.StateFields`).
 //

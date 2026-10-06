@@ -22,6 +22,27 @@ defmodule Argus.Analyses.StartupStartResultTest do
       # drops what it answers, checked by the caller when it keeps it.
       assert Enum.any?(funcs, &String.contains?(&1, "-each_ignored_start/1-fun-"))
       refute Enum.any?(funcs, &String.contains?(&1, "mapped_checked_start"))
+
+      # Kept by the call running the closure, then lost: dropped by the
+      # caller, by an Enum.each closure handing it back, by a helper's
+      # caller; or looked at only as truthy (Enum.any?).
+      for name <- ~w(mapped_dropped_start comprehension_dropped_start any_ignored_start
+                     nested_dropped_start start_all) do
+        assert Enum.any?(funcs, &String.contains?(&1, "-#{name}/1-fun-")), name
+      end
+
+      # Its elements matched afterwards: checked.
+      refute Enum.any?(funcs, &String.contains?(&1, "mapped_matched_start"))
+
+      # Consed onto the list a comprehension or fold builds, the list
+      # dropped; matched or handed out, checked.
+      for name <- ~w(two_generators_dropped_start filtered_dropped_start reduce_dropped_start) do
+        assert Enum.any?(funcs, &String.contains?(&1, "-#{name}/")), name
+      end
+
+      for name <- ~w(two_generators_matched_start filtered_returned_start) do
+        refute Enum.any?(funcs, &String.contains?(&1, name)), name
+      end
     end
 
     test "matches the delimited function name, not a substring" do

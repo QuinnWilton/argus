@@ -562,16 +562,17 @@ starts_supervised_task(start, func) :-
   remote_call(start, func, "Task.Supervisor", "start_child", _).
 
 // Treat a start result tail-returned to a caller that receives it, or a branch reachable
-// after the start, as checked. A closure whose answer the library call running it drops
-// (answer_dropped) returns it to no one.
+// after the start, as checked. One handed back and lost every way it goes on
+// (result_lost: a closure Enum.each runs, an Enum.map whose list is dropped) returns
+// it to no one.
 // Control-flow reach excludes unrelated clauses, but the branch need not actually
 // inspect the result.
 .decl start_result_checked(start: symbol)
 
 start_result_checked(start) :-
-  starts_supervised_task(start, f),
+  starts_supervised_task(start, _),
   tail_call(start),
-  !answer_dropped(f).
+  !result_lost(start, _, _).
 
 start_result_checked(start) :-
   after_start.runs_after(start, test),

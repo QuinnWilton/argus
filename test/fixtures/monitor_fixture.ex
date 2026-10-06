@@ -678,6 +678,24 @@ defmodule Argus.Test.Fixtures.MonitorLeak do
       do: {:noreply, Map.delete(state, pid)}
   end
 
+  defmodule FilterDropsRefs do
+    @moduledoc "Enum.filter looks at each ref only for truthiness: every ref is gone."
+    use GenServer
+
+    @impl true
+    def init(_), do: {:ok, %{}}
+
+    @impl true
+    def handle_call({:watch, pids}, _from, state) do
+      _ = Enum.filter(pids, fn pid -> Process.monitor(pid) end)
+      {:reply, :ok, state}
+    end
+
+    @impl true
+    def handle_info({:DOWN, _ref, :process, pid, _}, state),
+      do: {:noreply, Map.delete(state, pid)}
+  end
+
   defmodule ForeachDropsRefs do
     @moduledoc "The Erlang order: the fun is built, the list read, then lists:foreach runs."
     use GenServer

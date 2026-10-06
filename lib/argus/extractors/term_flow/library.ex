@@ -499,6 +499,101 @@ defmodule Argus.Extractors.TermFlow.Library do
     }
   end
 
+  @doc """
+  The calls that run a fun: `%{mfa => {fun_position, kept?}}`, `kept?`
+  when what the call answers holds what the fun answers.
+  """
+  @spec runs() :: %{mfa() => {non_neg_integer(), boolean()}}
+  def runs do
+    for {mfa, model} <- models(), {at, answer} <- run_of(model), into: %{} do
+      {mfa, {at, answer_kept?(answer)}}
+    end
+  end
+
+  defp run_of({:run, at, _params, answer, _others}), do: [{at, answer}]
+  defp run_of({:fun_or, _at, running, _plain}), do: run_of(running)
+  defp run_of(_spec), do: []
+
+  # Calls running a fun on elements that may stop, or skip some: a fun
+  # they run is not run on every element. A stream runs nothing until it
+  # is enumerated.
+  @partial [
+    {Enum, :find, 2},
+    {Enum, :find, 3},
+    {Enum, :find_value, 2},
+    {Enum, :find_value, 3},
+    {Enum, :find_index, 2},
+    {Enum, :any?, 2},
+    {Enum, :all?, 2},
+    {Enum, :take_while, 2},
+    {Enum, :drop_while, 2},
+    {Enum, :split_while, 2},
+    {Enum, :reduce, 2},
+    {Enum, :reduce_while, 3},
+    {Enum, :scan, 2},
+    {Enum, :map_every, 3},
+    {Enum, :flat_map_reduce, 3},
+    {Enum, :zip_with, 3},
+    {:lists, :any, 2},
+    {:lists, :all, 2},
+    {:lists, :search, 2},
+    {:lists, :takewhile, 2},
+    {:lists, :dropwhile, 2},
+    {:lists, :splitwith, 2},
+    {:lists, :zipwith, 3}
+  ]
+
+  @doc """
+  The calls that run a fun on every element of a list, the element its
+  first parameter: `%{mfa => {list_position, fun_position}}`. Whatever
+  the fun does to its element is done to every element.
+  """
+  @spec every_element() :: %{mfa() => {non_neg_integer(), non_neg_integer()}}
+  def every_element do
+    for {{mod, _, _} = mfa, model} <- models(),
+        mod != Stream,
+        mfa not in @partial,
+        {:run, at, [{:elements, {:arg, list}} | _], _answer, _others} <- run_models(model),
+        into: %{},
+        do: {mfa, {list, at}}
+  end
+
+  defp run_models({:fun_or, _at, running, _plain}), do: [running]
+  defp run_models({:run, _, _, _, _} = model), do: [model]
+  defp run_models(_spec), do: []
+
+  @doc """
+  The argument positions a call hands back in what it answers, whole or
+  in part: `Enum.reverse/1`'s list, `Map.put/3`'s map and value. Only for
+  a call answering by a spec (not one running a fun) and not an
+  inspection (`:none`).
+  """
+  @spec carried_args(mfa()) :: [non_neg_integer()]
+  def carried_args(mfa) do
+    case Map.fetch(models(), mfa) do
+      {:ok, {:run, _, _, _, _}} -> []
+      {:ok, {:fun_or, _, _, _}} -> []
+      {:ok, spec} -> spec |> args_in() |> Enum.uniq() |> Enum.sort()
+      :error -> []
+    end
+  end
+
+  defp args_in({:arg, n}), do: [n]
+  defp args_in({:into, elements, at}), do: [at | args_in(elements)]
+  defp args_in(spec) when is_tuple(spec), do: spec |> Tuple.to_list() |> Enum.flat_map(&args_in/1)
+  defp args_in(specs) when is_list(specs), do: Enum.flat_map(specs, &args_in/1)
+  defp args_in(_other), do: []
+
+  @doc "Whether an answer spec holds what the fun the call runs answers."
+  @spec answer_kept?(spec() | [spec()] | term()) :: boolean()
+  def answer_kept?(:result), do: true
+
+  def answer_kept?(spec) when is_tuple(spec),
+    do: spec |> Tuple.to_list() |> Enum.any?(&answer_kept?/1)
+
+  def answer_kept?(specs) when is_list(specs), do: Enum.any?(specs, &answer_kept?/1)
+  def answer_kept?(_other), do: false
+
   @doc "Every modeled call: a value spec, or what a call running a fun does."
   @spec models() :: %{mfa() => model()}
   def models do

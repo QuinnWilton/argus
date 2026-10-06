@@ -1690,7 +1690,7 @@ defmodule Argus.Extractors.TermFlow do
   defp emit_library(facts, at, ictx) do
     case Map.fetch(at.fun.library, at.idx) do
       {:ok, %{runs: runs, params: params, answer: answer} = call} ->
-        answers = if uses_result?(answer), do: "kept", else: "dropped"
+        answers = if Library.answer_kept?(answer), do: "kept", else: "dropped"
         facts = run_rows(facts, at, ictx, {runs, answers}, params, [1])
 
         # A further fun's answers are the call's own business (a key fun's
@@ -1766,15 +1766,6 @@ defmodule Argus.Extractors.TermFlow do
   end
 
   defp run_rows(facts, _at, _ictx, _runs, _params, _path), do: facts
-
-  # Whether a `Library` answer spec holds what the fun the call runs answers.
-  defp uses_result?(:result), do: true
-
-  defp uses_result?(spec) when is_tuple(spec),
-    do: spec |> Tuple.to_list() |> Enum.any?(&uses_result?/1)
-
-  defp uses_result?(specs) when is_list(specs), do: Enum.any?(specs, &uses_result?/1)
-  defp uses_result?(_other), do: false
 
   defp emit_task_op(facts, at, ictx, mfa) do
     case Map.fetch(@task_ops, mfa) do

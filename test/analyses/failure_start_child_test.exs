@@ -32,7 +32,8 @@ defmodule Argus.Analyses.FailureStartChildTest do
       # A tail call in a closure Enum.each runs returns to nobody; one in an
       # Enum.map closure returns to the caller.
       assert Enum.any?(funcs, &String.contains?(&1, "-start_each/2-fun-"))
-      refute Enum.any?(funcs, &String.contains?(&1, "start_mapped"))
+      refute Enum.any?(funcs, &String.contains?(&1, "-start_mapped/2-fun-"))
+      assert Enum.any?(funcs, &String.contains?(&1, "-start_mapped_dropped/2-fun-"))
 
       # A branch later in the function, in another clause, does not run
       # after the start: the result is still dropped.

@@ -33,9 +33,10 @@ defmodule Argus.Extractors.ErrorHandling do
     the finding (Engler et al., "Bugs as deviant behavior").
   - `ignored_error_result(id, func, callee)` — call to known ok/error API where
     result is not pattern matched
-  - `returned_error_result(id, func, callee)` — call to known ok/error API
-    whose result the function returns: its caller's to match (when the
-    caller is a library call dropping what the function answers, nobody's)
+  - `result_lost(id, func, callee)` — a call to a known ok/error API (or
+    Task.Supervisor.start_child) whose result every way it goes on loses:
+    read on no path, here or in the callers it is handed back to, whole
+    or in a term built of it (`Argus.Extractor.ResultFate`)
   - `catch_class(id, func, class, span_end)` — some path through the
     handler of the try (or Erlang `catch`) at `id` catches `class` and
     does not raise again (`*`: with no class test)
@@ -117,6 +118,7 @@ defmodule Argus.Extractors.ErrorHandling do
   alias Argus.Extractor.Helpers
   alias Argus.Extractor.Identity
   alias Argus.Extractor.Resolve
+  alias Argus.Extractor.ResultFate
   alias Argus.Extractor.Runtime
   alias Argus.Extractor.StateFields
   alias Argus.Extractors.CallbackTag.MessageClauses
@@ -204,7 +206,7 @@ defmodule Argus.Extractors.ErrorHandling do
       :catch_inner_tag,
       :exit_call,
       :ignored_error_result,
-      :returned_error_result,
+      :result_lost,
       :mailbox_writer,
       :recv_pattern,
       :recv_shape,
@@ -269,6 +271,7 @@ defmodule Argus.Extractors.ErrorHandling do
 
       facts
       |> error_handling_call(mod_str, ctx, mfa)
+      |> maybe_result_lost(module_data, ctx, mfa)
       |> maybe_mailbox_writer(ctx, mfa, module_data.functions)
       |> maybe_rpc_result(ctx, mfa)
       |> maybe_call_result(ctx, mfa)
@@ -2078,17 +2081,40 @@ defmodule Argus.Extractors.ErrorHandling do
   # 3. Non-tail call where the next instruction reads/tests/saves x0 —
   #    result IS actively used. No fact, no imprecision.
   # 4. None of the above — the heuristic gives up. Emit imprecision event.
+  # A start whose result is lost every way it goes on
+  # (`Argus.Extractor.ResultFate`): in place, or handed back — whole, or in
+  # the list a comprehension conses — to a closure Enum.each runs, an
+  # Enum.map whose list is dropped, a helper whose callers drop it.
+  @lost_starts [
+    {Task.Supervisor, :start_child, 2},
+    {Task.Supervisor, :start_child, 3},
+    {Task.Supervisor, :start_child, 4}
+  ]
+
+  defp maybe_result_lost(facts, module_data, ctx, {mod, func, arity} = mfa) do
+    asked? = MapSet.member?(@ok_error_apis, mfa) or mfa in @lost_starts
+
+    if asked? and ResultFate.lost?(module_data, ctx) do
+      add_fact(facts, :result_lost, [
+        InstrId.mint(ctx.func_id, ctx.idx),
+        ctx.func_id,
+        "#{inspect(mod)}.#{func}/#{arity}"
+      ])
+    else
+      facts
+    end
+  end
+
   defp maybe_ignored_result(facts, ctx, mod, func, arity) do
     if MapSet.member?(@ok_error_apis, {mod, func, arity}) do
       instr = Enum.at(ctx.instrs, ctx.idx)
       after_call = Enum.drop(ctx.instrs, ctx.idx + 1)
 
       cond do
-        # Tail calls return their result to the caller — not ignored here.
+        # Tail calls return their result to the caller — not ignored
+        # here (maybe_result_lost/4 asks the callers).
         Instr.tail_call?(instr) ->
-          id = InstrId.mint(ctx.func_id, ctx.idx)
-          callee = "#{inspect(mod)}.#{func}/#{arity}"
-          add_fact(facts, :returned_error_result, [id, ctx.func_id, callee])
+          facts
 
         # Non-tail call where x0 is immediately overwritten.
         result_ignored?(after_call) ->

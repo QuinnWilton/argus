@@ -9,21 +9,27 @@ defmodule Argus.Extractor.ResultFate do
   every return hands back) passes the question to the function's
   callers in the module: lost when one use loses it — a call that drops
   it, a tail call whose own caller does (a few hops up), or a fun made
-  of the function handed to a call that discards what the fun answers
-  (`Enum.each/2`), or maps it into a list that is then dropped. An
-  exported function's callers are outside the module, one with no use in
-  the module is called from elsewhere, and a fun kept or handed anywhere
-  else may keep what it answers: each keeps the answer, the direction
-  that keeps a "lost" fact honest.
+  of the function handed to a library call that drops what the fun
+  answers (`Enum.each/2`), or keeps it in a list that is then dropped
+  (`Enum.map/2`). An exported function's callers are outside the module,
+  one with no use in the module is called from elsewhere, and a fun
+  kept or handed anywhere else may keep what it answers: each keeps the
+  answer, the direction that keeps a "lost" fact honest.
 
-  `Argus.Extractors.Monitor` asks it of monitor refs.
+  The library calls that run a fun, and whether they keep what it
+  answers, are `Argus.Extractors.TermFlow.Library`'s.
+
+  Monitor refs (`Argus.Extractors.Monitor`) and start results
+  (`Argus.Extractors.ErrorHandling`) ask it.
   """
 
   import Argus.Extractor.Helpers,
-    only: [cfg: 2, cfg: 3, match_local_call: 1, match_remote_call: 1, register: 1]
+    only: [cfg: 2, match_local_call: 1, match_remote_call: 1, register: 1]
 
-  alias Argus.Cfg.Walk
+  alias Argus.Cfg.Block
+  alias Argus.Cfg.Function, as: Graph
   alias Argus.Extractor.Resolve
+  alias Argus.Extractors.TermFlow.Library
   alias Argus.Instr
   alias Argus.InstrId
 
@@ -34,6 +40,31 @@ defmodule Argus.Extractor.ResultFate do
           required(:idx) => non_neg_integer(),
           optional(atom()) => term()
         }
+
+  # Library calls running a fun, by whether they hand back what it
+  # answers: {position the fun is handed in, kept?}.
+  @runs Library.runs()
+
+  @max_hops 4
+
+  @x0 {:x, 0}
+
+  @doc "Whether the answer of the call at `ctx.idx` is lost (above)."
+  @spec lost?(map(), ctx()) :: boolean()
+  def lost?(module_data, ctx), do: lost?(module_data, ctx, [])
+
+  defp lost?(module_data, ctx, seen) do
+    fate =
+      if Instr.tail_call?(Enum.at(ctx.instrs, ctx.idx)),
+        do: :returned,
+        else: fate(cfg(module_data, ctx), ctx.instrs, ctx.idx + 1)
+
+    case fate do
+      :kept -> false
+      :dropped -> true
+      :returned -> returned_lost?(module_data, ctx.func_id, seen)
+    end
+  end
 
   @doc """
   The call whose result `reg` holds at `at`, directly or as an element
@@ -52,77 +83,44 @@ defmodule Argus.Extractor.ResultFate do
 
       {writer, instr}, follow ->
         cond do
-          reorder?(instr) -> follow.(writer, {:x, 0})
+          0 in carried(instr) -> follow.(writer, {:x, 0})
           Instr.call?(instr) -> writer
           true -> nil
         end
     end)
   end
 
-  @reorders [
-    {:lists, :reverse, 1},
-    {Enum, :reverse, 1},
-    {Enum, :sort, 1},
-    {Enum, :uniq, 1},
-    {Enum, :to_list, 1}
-  ]
+  # The library calls handing back (part of) an argument in what they
+  # answer: `%{mfa => [position]}` (`TermFlow.Library`).
+  @carried for {mfa, _model} <- Library.models(),
+               args = Library.carried_args(mfa),
+               args != [],
+               into: %{},
+               do: {mfa, args}
 
-  defp reorder?(instr) do
+  defp carried(instr) do
     case match_remote_call(instr) do
-      {:ok, mod, fun, arity} -> {mod, fun, arity} in @reorders
-      :none -> false
+      {:ok, mod, fun, arity} -> Map.get(@carried, {mod, fun, arity}, [])
+      :none -> []
     end
   end
 
-  # A monitor made as a tail call, or whose ref every return answers,
-  # hands its ref to whoever called the function: `Enum.map(pids, &Process.monitor(&1))` compiles to a closure
-  # whose last instruction is the monitor, and the list Enum.map returns
-  # holds every ref (exq's WorkerDrainer awaits them all). Nothing
-  # follows the call in its own function, so the walk below would find
-  # the ref read nowhere; the question is the callers' instead.
-  @doc "Whether the answer of the call at `ctx.idx` is lost (above)."
-  @spec lost?(map(), ctx()) :: boolean()
-  def lost?(module_data, ctx) do
-    if Instr.tail_call?(Enum.at(ctx.instrs, ctx.idx)) or returns_ref?(ctx.instrs, ctx.idx),
-      do: returned_ref_lost?(module_data, ctx.func_id, []),
-      else: ref_dropped?(cfg(module_data, ctx), ctx.instrs, ctx.idx + 1)
-  end
-
-  # Every return of the function answers the ref the monitor at `idx`
-  # took, as a tail call to it would: `ref = Process.monitor(pid); send(pid,
-  # :stop); ...; ref`. Whether it is lost is the callers' question.
-  defp returns_ref?(instrs, idx) do
-    returns = for {:return, at} <- Enum.with_index(instrs), do: at
-    returns != [] and Enum.all?(returns, &(origin_call(instrs, &1, {:x, 0}) == idx))
-  end
-
-  # Whether every use the module shows of the function `func_id`, which
-  # returns a monitor's ref, loses it: a call that drops its result (or
-  # a tail call whose own caller does, a few hops up), or a closure or
-  # local capture of it handed to a call that discards what the fun
-  # returns (`lists:foreach/2`, `Enum.each/2`). An exported function's
-  # callers are outside the module, one with no use in it is called from
-  # elsewhere, and a fun kept or handed anywhere else may keep what it
-  # returns: each keeps the ref, the direction that keeps the fact honest.
-  @max_hops 4
-
-  defp returned_ref_lost?(module_data, func_id, seen) do
+  defp returned_lost?(module_data, func_id, seen) do
     with {:ok, %{func: name, arity: arity}} <- InstrId.parse_func(func_id),
          false <- func_id in seen or length(seen) >= @max_hops,
          false <- {String.to_atom(name), arity} in module_data.exports,
          [_ | _] = uses <- uses_of(module_data, String.to_atom(name), arity) do
       seen = [func_id | seen]
-      # One use that loses it is one monitor per call nothing can
-      # release, whatever the others keep (review 2, item 26: 206ec0cd
-      # asked every use).
-      Enum.any?(uses, &use_loses_ref?(module_data, &1, seen))
+      # One use that loses it is one answer per call nothing reads,
+      # whatever the others keep.
+      Enum.any?(uses, &use_loses?(module_data, &1, seen))
     else
       _ -> false
     end
   end
 
   # Each place in the module that calls the function or makes a fun of
-  # it: `{:call, caller_id, caller, index}` or `{:fun, caller, index}`.
+  # it: `{:call | :fun, ctx, {caller, arity}}`.
   defp uses_of(%{module: mod, functions: functions}, name, arity) do
     for {:function, caller, caller_arity, _entry, instrs} <- functions,
         {instr, idx} <- Enum.with_index(instrs),
@@ -141,147 +139,179 @@ defmodule Argus.Extractor.ResultFate do
     end
   end
 
-  defp use_loses_ref?(module_data, {:call, ctx, {caller, arity}}, seen) do
-    if Instr.tail_call?(Enum.at(ctx.instrs, ctx.idx)),
-      do: returned_ref_lost?(module_data, ctx.func_id, seen),
-      else: ref_dropped?(cfg(module_data, caller, arity), ctx.instrs, ctx.idx + 1)
-  end
+  defp use_loses?(module_data, {:call, ctx, _caller}, seen), do: lost?(module_data, ctx, seen)
 
-  defp use_loses_ref?(module_data, {:fun, ctx, {caller, arity}}, _seen) do
-    case handed_to_discarding_call?(ctx.instrs, ctx.idx) do
-      true -> true
-      # `Enum.map(pids, &Process.monitor/1)` whose list of refs is dropped.
-      {:mapped, at} -> ref_dropped?(cfg(module_data, caller, arity), ctx.instrs, at + 1)
-      false -> false
+  defp use_loses?(module_data, {:fun, ctx, _caller}, seen) do
+    case handed_to_run(ctx.instrs, ctx.idx) do
+      :drops -> true
+      # `Enum.map(pids, &Process.monitor/1)` whose list is lost in turn.
+      {:keeps, at} -> lost?(module_data, %{ctx | idx: at}, seen)
+      nil -> false
     end
   end
 
-  # Calls that run a fun and return what it returns, collected: the refs
-  # are lost when the list is.
-  @mapping_calls %{{:lists, :map, 2} => 0, {Enum, :map, 2} => 1}
-
-  # Calls that run a fun for its effects and throw away what it returns,
-  # with the argument position the fun is handed in.
-  @discarding_calls %{
-    {:lists, :foreach, 2} => 0,
-    {:maps, :foreach, 2} => 0,
-    {Enum, :each, 2} => 1
-  }
-
   # Follows the fun `make_fun3` at `idx` writes through the registers to
-  # the call it is handed to, and asks whether that call is one that
-  # discards what the fun returns, handed the fun where it takes one. A
-  # call it is not handed to is stepped over (the fun waits in a `y`
-  # register while ejabberd's init reads the table it will fold over).
-  # Anything else — a branch, a store, another call taking it — keeps it.
-  defp handed_to_discarding_call?(instrs, idx) do
+  # the call it is handed to: a library call running it that drops what
+  # it answers (:drops), or keeps it in its own answer ({:keeps, index}
+  # of that call). A call it is not handed to is stepped over (the fun
+  # waits in a `y` register while ejabberd's init reads the table it will
+  # fold over). Anything else — a branch, a store, another call taking
+  # it — keeps it (nil).
+  defp handed_to_run(instrs, idx) do
     {:make_fun3, _target, _index, _uniq, dst, _env} = Enum.at(instrs, idx)
 
     instrs
+    |> Enum.with_index()
     |> Enum.drop(idx + 1)
-    |> Enum.reduce_while([register(dst)], fn instr, holding ->
+    |> Enum.reduce_while([register(dst)], fn {instr, at}, holding ->
       cond do
         holding == [] ->
-          {:halt, false}
+          {:halt, nil}
 
-        (verdict = handed_verdict(instr, holding)) != nil ->
+        (verdict = run_verdict(instr, at, holding)) != nil ->
           {:halt, verdict}
 
         (Instr.call?(instr) or Instr.tail_call?(instr)) and
             Enum.any?(Instr.uses(instr), &(&1 in holding)) ->
-          {:halt, false}
+          {:halt, nil}
 
         Instr.tail_call?(instr) or not Instr.falls_through?(instr) or Instr.targets(instr) != [] ->
-          {:halt, false}
+          {:halt, nil}
 
         true ->
           {:cont, Instr.carry(instr, holding)}
       end
     end)
     |> case do
-      {:mapped, instr} -> {:mapped, mapped_index(instrs, idx, instr)}
-      other -> other == true
+      verdict when verdict == :drops or is_tuple(verdict) -> verdict
+      _ -> nil
     end
   end
 
-  # A call the fun is handed to that discards what it returns (true), or
-  # maps it into a list ({:mapped, instr}); nil for any other instruction.
-  defp handed_verdict(instr, holding) do
-    cond do
-      (Instr.call?(instr) or Instr.tail_call?(instr)) and discarding_call?(instr, holding) -> true
-      Instr.call?(instr) and mapping_call?(instr, holding) -> {:mapped, instr}
-      true -> nil
-    end
-  end
-
-  defp mapped_index(instrs, idx, instr) do
-    instrs
-    |> Enum.with_index()
-    |> Enum.drop(idx + 1)
-    |> Enum.find_value(fn {i, at} -> if i == instr, do: at end)
-  end
-
-  defp mapping_call?(instr, holding) do
-    with {:ok, mod, name, arity} <- match_remote_call(instr),
-         {:ok, pos} <- Map.fetch(@mapping_calls, {mod, name, arity}) do
-      {:x, pos} in holding
+  # A library call the fun is handed to, where it takes one: :drops when
+  # it drops what the fun answers, {:keeps, at} when its own answer holds
+  # it.
+  defp run_verdict(instr, at, holding) do
+    with true <- Instr.call?(instr) or Instr.tail_call?(instr),
+         {:ok, mod, name, arity} <- match_remote_call(instr),
+         {:ok, {pos, kept?}} <- Map.fetch(@runs, {mod, name, arity}),
+         true <- {:x, pos} in holding do
+      if kept?, do: {:keeps, at}, else: :drops
     else
+      _ -> nil
+    end
+  end
+
+  # Follows the answer forward from `start` along every path, by the
+  # registers holding it (`Instr.carry/2`: moves, swaps, trims; a call
+  # clobbers every x register). An instruction reading a register that
+  # holds it keeps it — a test, a store, a call handed it — except a term
+  # built of it (a list cell, a tuple, a map), which then holds it too,
+  # and a library call handing back the argument it is in, whose answer
+  # then holds it. A return of a register holding it hands it back; a path
+  # on which no register holds it any more has dropped it. The fate:
+  # :kept when any path keeps it, else :returned when any path hands it
+  # back, else :dropped. Anything the walk cannot read keeps it — a fact
+  # claiming an answer is lost must be sure — and without a graph (a
+  # module whose facts could not be decoded) it is kept.
+  defp fate(nil, _instrs, _start), do: :kept
+
+  defp fate(fun, instrs, start) do
+    state = %{fun: fun, instrs: List.to_tuple(instrs)}
+    walk_fate([{start, @x0}], state, %{}, :dropped)
+  end
+
+  defp walk_fate([], _state, _visited, fate), do: fate
+
+  defp walk_fate([{idx, reg} = point | rest], state, visited, fate) do
+    if idx >= tuple_size(state.instrs) or Map.has_key?(visited, point) do
+      walk_fate(rest, state, visited, fate)
+    else
+      visited = Map.put(visited, point, true)
+
+      case step(elem(state.instrs, idx), reg) do
+        :kept -> :kept
+        :returned -> walk_fate(rest, state, visited, :returned)
+        :gone -> walk_fate(rest, state, visited, fate)
+        {:held, regs} -> walk_fate(next_points(state, idx, regs) ++ rest, state, visited, fate)
+      end
+    end
+  end
+
+  defp next_points(state, idx, regs), do: for(at <- next(state, idx), reg <- regs, do: {at, reg})
+
+  # What one instruction does with the answer in `reg`.
+  defp step(:return, @x0), do: :returned
+  defp step(:return, _reg), do: :gone
+  defp step({:func_info, _, _, _}, _reg), do: :gone
+
+  defp step(instr, reg) do
+    cond do
+      not Instr.known?(instr) ->
+        :kept
+
+      reg not in Instr.uses(instr) ->
+        untouched(instr, reg)
+
+      builds_term?(instr) ->
+        {:held, Enum.uniq(Instr.defs(instr) ++ Instr.carry(instr, [reg]))}
+
+      (pos = arg_position(reg)) != nil and pos in carried(instr) ->
+        handed_back(instr, reg)
+
+      copies?(instr, reg) ->
+        {:held, Instr.carry(instr, [reg])}
+
+      true ->
+        :kept
+    end
+  end
+
+  # An instruction not reading the register: it stops holding the answer
+  # when written or clobbered; a tail call ends the path, as a return of
+  # something else does.
+  defp untouched(instr, reg) do
+    if Instr.tail_call?(instr), do: :gone, else: held_or_gone(Instr.carry(instr, [reg]))
+  end
+
+  # A library call handing back the argument holding the answer: its
+  # answer (x0) holds it, and a register it does not clobber still does.
+  defp handed_back(instr, reg) do
+    if Instr.tail_call?(instr),
+      do: :returned,
+      else: held_or_gone(Enum.uniq([@x0 | Instr.carry(instr, [reg])]))
+  end
+
+  # A move, swap or trim copying the register elsewhere.
+  defp copies?(instr, reg),
+    do: Enum.any?(Instr.defs(instr), &(Instr.copy_source(instr, &1) == reg))
+
+  defp held_or_gone([]), do: :gone
+  defp held_or_gone(regs), do: {:held, regs}
+
+  defp builds_term?(instr) do
+    case instr do
+      {:put_list, _, _, _} -> true
+      {:put_tuple2, _, _} -> true
+      {op, _, _, _, _, _} when op in [:put_map_assoc, :put_map_exact] -> true
       _ -> false
     end
   end
 
-  defp discarding_call?(instr, holding) do
-    with {:ok, mod, name, arity} <- match_remote_call(instr),
-         {:ok, pos} <- Map.fetch(@discarding_calls, {mod, name, arity}) do
-      {:x, pos} in holding
-    else
-      _ -> false
-    end
-  end
+  defp arg_position({:x, n}), do: n
+  defp arg_position(_reg), do: nil
 
-  @x0 {:x, 0}
+  # Inside a block the next instruction follows; at the block's last
+  # instruction its out-edges lead to their blocks' first instructions.
+  defp next(state, idx) do
+    case Graph.block_at(state.fun, idx) do
+      %Block{range: {_first, last}} = block when last == idx ->
+        for {to, _kind} <- block.succs,
+            %Block{range: {first, _}} = Map.fetch!(state.fun.blocks, to),
+            do: first
 
-  # Walks forward from the call along every path. Each instruction either
-  # reads {x,0} (the ref is kept, and the answer is no), writes it without
-  # reading (this path is done, the ref is gone on it), touches it not at
-  # all (keep looking), or is something with x0 in a position whose
-  # meaning is unknown — and that is "kept": a fact claiming a ref is gone
-  # must be sure. Dropped when no path reaches a read. Without a graph
-  # (a module whose facts could not be decoded) the ref counts as kept.
-  defp ref_dropped?(nil, _instrs, _start), do: false
-
-  defp ref_dropped?(fun, instrs, start) do
-    result =
-      Walk.explore(fun, instrs, [start],
-        on_instr: fn
-          {:func_info, _, _, _}, _idx ->
-            :prune
-
-          instr, _idx ->
-            case classify(instr) do
-              :reads -> {:halt, :kept}
-              :unknown -> {:halt, :kept}
-              :writes -> :prune
-              :neutral -> :continue
-            end
-        end
-      )
-
-    match?({:done, _}, result)
-  end
-
-  # What an instruction does with the ref in {x,0}. `test_heap` with no
-  # live registers and `deallocate` say what the compiler knows of x0's
-  # liveness: dead at the first, about to be returned at the second.
-  defp classify({:test_heap, _words, 0}), do: :writes
-  defp classify({:deallocate, _}), do: :reads
-
-  defp classify(instr) do
-    cond do
-      not Instr.known?(instr) -> :unknown
-      @x0 in Instr.uses(instr) -> :reads
-      Instr.defines?(instr, @x0) -> :writes
-      true -> :neutral
+      _ ->
+        [idx + 1]
     end
   end
 end

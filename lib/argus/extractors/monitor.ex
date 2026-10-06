@@ -147,6 +147,7 @@ defmodule Argus.Extractors.Monitor do
   alias Argus.Extractor.StateFields
   alias Argus.Extractors.Monitor.ExitSignal
   alias Argus.Extractors.Monitor.Flush
+  alias Argus.Extractors.TermFlow.Library
   alias Argus.Instr
   alias Argus.Instr.Reaching
   alias Argus.InstrId
@@ -938,25 +939,10 @@ defmodule Argus.Extractors.Monitor do
   end
 
   # Library calls that run a fun on every element of a list, in the
-  # calling process, none skipped: {list position, fun position}. A fun
-  # of the module that releases the monitor its element names releases
-  # every monitor the list holds.
-  @every_element %{
-    {Enum, :each, 2} => {0, 1},
-    {Enum, :map, 2} => {0, 1},
-    {Enum, :flat_map, 2} => {0, 1},
-    {Enum, :filter, 2} => {0, 1},
-    {Enum, :reject, 2} => {0, 1},
-    {Enum, :count, 2} => {0, 1},
-    {Enum, :reduce, 3} => {0, 2},
-    {Enum, :map_reduce, 3} => {0, 2},
-    {:lists, :foreach, 2} => {1, 0},
-    {:lists, :map, 2} => {1, 0},
-    {:lists, :flatmap, 2} => {1, 0},
-    {:lists, :filter, 2} => {1, 0},
-    {:lists, :foldl, 3} => {2, 0},
-    {:lists, :foldr, 3} => {2, 0}
-  }
+  # calling process, none skipped: {list position, fun position}
+  # (`TermFlow.Library`). A fun of the module that releases the monitor
+  # its element names releases every monitor the list holds.
+  @every_element Library.every_element()
 
   # Every path from the call at `call` to the function's return passes a
   # wait for a :DOWN. A path that raises ends without returning, and one

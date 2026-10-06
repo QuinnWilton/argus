@@ -287,6 +287,65 @@ defmodule Argus.Test.Fixtures.IgnoredResultModule do
 
   # Enum.map keeps the answers: the caller has every start's result.
   def mapped_checked_start(names), do: Enum.map(names, fn n -> Agent.start_link(fn -> n end) end)
+
+  # Enum.map keeps them, and the list is then dropped.
+  def mapped_dropped_start(names) do
+    _ = Enum.map(names, fn n -> Agent.start_link(fn -> n end) end)
+    :ok
+  end
+
+  def comprehension_dropped_start(names) do
+    _ = for n <- names, do: Agent.start_link(fn -> n end)
+    :ok
+  end
+
+  # Enum.any? looks at each result only for truthiness: both are truthy.
+  def any_ignored_start(names), do: Enum.any?(names, fn n -> Agent.start_link(fn -> n end) end)
+
+  # The list an Enum.map hands back to an Enum.each closure, dropped there.
+  def nested_dropped_start(groups) do
+    Enum.each(groups, fn names -> Enum.map(names, fn n -> Agent.start_link(fn -> n end) end) end)
+  end
+
+  # A helper hands its list back; its only caller drops it.
+  def helper_dropped_start(names) do
+    _ = start_all(names)
+    :ok
+  end
+
+  # The list's elements matched afterwards: checked.
+  def mapped_matched_start(names) do
+    results = Enum.map(names, fn n -> Agent.start_link(fn -> n end) end)
+    Enum.each(results, fn {:ok, _pid} -> :ok end)
+  end
+
+  defp start_all(names), do: Enum.map(names, fn n -> Agent.start_link(fn -> n end) end)
+
+  # Each start consed onto the list a comprehension builds, the list
+  # dropped: two generators, a filter, a hand-written fold.
+  def two_generators_dropped_start(names, ids) do
+    _ = for n <- names, i <- ids, do: Agent.start_link(fn -> {n, i} end)
+    :ok
+  end
+
+  def filtered_dropped_start(names) do
+    _ = for n <- names, n != :skip, do: Agent.start_link(fn -> n end)
+    :ok
+  end
+
+  def reduce_dropped_start(names) do
+    _ = Enum.reduce(names, [], fn n, acc -> [Agent.start_link(fn -> n end) | acc] end)
+    :ok
+  end
+
+  # The same lists, matched or handed out: checked.
+  def two_generators_matched_start(names, ids) do
+    results = for n <- names, i <- ids, do: Agent.start_link(fn -> {n, i} end)
+    Enum.each(results, fn {:ok, _pid} -> :ok end)
+  end
+
+  def filtered_returned_start(names),
+    do: for(n <- names, n != :skip, do: Agent.start_link(fn -> n end))
 end
 
 defmodule Argus.Test.Fixtures.RawTrapExit do

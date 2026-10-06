@@ -49,6 +49,7 @@ defmodule Argus.Analyses.MailboxMonitorTest do
     M.MapsRefs,
     M.EachDropsRefs,
     M.ForeachDropsRefs,
+    M.FilterDropsRefs,
     M.HelperKeepsRef,
     M.HelperDropsRef,
     M.DrainsOnTerminate,
@@ -347,6 +348,8 @@ defmodule Argus.Analyses.MailboxMonitorTest do
       # throws the ref away, lose it as surely as a bare monitor does.
       assert named?(dropped, "EachDropsRefs")
       assert named?(dropped, "ForeachDropsRefs")
+      # Any library call that drops what its fun answers (TermFlow.Library).
+      assert named?(dropped, "FilterDropsRefs")
       assert named?(dropped, "HelperDropsRef")
 
       # Quiet: the refs are mapped into a set, or kept in the state.

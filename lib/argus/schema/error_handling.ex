@@ -564,7 +564,7 @@ defmodule Argus.Schema.ErrorHandling do
         doc: "Call to function returning tagged tuple where result is not pattern matched."
       },
       %{
-        name: :returned_error_result,
+        name: :result_lost,
         layer: 2,
         fields: [
           {:id, :symbol, "instruction ID"},
@@ -572,8 +572,11 @@ defmodule Argus.Schema.ErrorHandling do
           {:callee, :symbol, "called function returning {:ok,_}|{:error,_}"}
         ],
         doc: """
-        Tail call to a function returning a tagged tuple: the result is the caller's to \
-        match. `clientlib/closures.dl`'s `answer_dropped` says when no caller does.
+        Call to a function returning a tagged tuple, or to Task.Supervisor.start_child, \
+        whose result every way on loses (`Argus.Extractor.ResultFate`): read on no \
+        path, here or in the callers it is handed back to, whole or in a term built of \
+        it — a closure Enum.each runs, a comprehension whose list is dropped, a helper \
+        whose callers drop it.
         """
       }
     ])

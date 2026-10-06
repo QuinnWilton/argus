@@ -984,9 +984,10 @@ ignored_start(func, callee) :-
 
 ignores_result(func, callee) :- ignored_error_result(_, func, callee).
 
-// Handed back by a closure a library call runs and whose answer it drops
-// (`Enum.each(names, fn n -> Agent.start_link(...) end)`).
-ignores_result(func, callee) :- returned_error_result(_, func, callee), answer_dropped(func).
+// Lost every way it goes on, here or handed back (result_lost): a closure Enum.each
+// runs (`Enum.each(names, fn n -> Agent.start_link(...) end)`), a comprehension whose
+// list is dropped.
+ignores_result(func, callee) :- result_lost(_, func, callee).
 
 // Match delimited `.start_link/` and `.start/` names in rendered callees, avoiding
 // names such as restart_link. Souffle uses `contains(needle, haystack)`.

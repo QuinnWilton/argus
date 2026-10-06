@@ -76,10 +76,17 @@ which a change appeared; older names and APIs may have changed since then.
   captured `&:gen_tcp.controlling_process/2`, now counts as handed off: its
   close messages are no longer reported as unhandled. Ports handed off with
   `port_connect` likewise.
-- A start in an `Enum.each` callback, such as `Enum.each(names, fn n ->
-  Agent.start_link(fn -> n end) end)`, is now reported as "Start result ignored"
-  (and a capped `Task.Supervisor.start_child` as unchecked): `Enum.each` throws
-  each result away. An `Enum.map` callback's results are the caller's to check.
+- Start results thrown away are reported as "Start result ignored" (and a capped
+  `Task.Supervisor.start_child` as unchecked) wherever they are discarded: in an
+  `Enum.each` or `Enum.any?` callback, or in a list from `Enum.map`, a
+  comprehension (any number of generators, or a filter) or a fold that the
+  caller, or a helper's caller, drops, such as `_ = for a <- as, b <- bs, do:
+  Agent.start_link(...)`. A list whose elements are matched, or that a public
+  function returns, is the caller's to check.
+- A monitor ref thrown away by any library call that ignores its callback's
+  result, such as `Enum.filter(pids, fn pid -> Process.monitor(pid) end)`, is
+  now reported as dropped, not only one thrown away by `Enum.each` or
+  `:lists.foreach`.
 - Processes spawned in an `Enum.map` callback and monitored afterwards, as in
   `Enum.each(pids, &Process.monitor/1)`, are no longer reported as "Unlinked
   process spawned".
@@ -161,8 +168,9 @@ Custom Datalog consumers must account for:
   map key that is not a literal is held under `@key`, and `**` reads any field.
 - `element_fun`'s `answers` column says whether the library call keeps or drops
   what the fun answers.
-- `returned_error_result` (ErrorHandling): a tail call to an ok/error API whose
-  result the function hands back to its caller.
+- `result_lost` (ErrorHandling): a call to an ok/error API (or
+  `Task.Supervisor.start_child`) whose result is never read, in place or
+  wherever it is handed back (`Argus.Extractor.ResultFate`).
 - The points-to stage stages `task_handled` (which Task operation is handed
   which task) and `task_escapes` (tasks whose handle goes where value flow
   stops), from `clientlib/task_handles.dl`.
