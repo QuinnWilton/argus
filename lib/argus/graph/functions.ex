@@ -456,7 +456,7 @@ defmodule Argus.Graph.Functions do
 
   defp encoded_lines(bytes) do
     size = byte_size(bytes) - 1
-    <<content::binary-size(size), "\n">> = bytes
+    <<content::binary-size(^size), "\n">> = bytes
     :binary.split(content, "\n", [:global])
   end
 end

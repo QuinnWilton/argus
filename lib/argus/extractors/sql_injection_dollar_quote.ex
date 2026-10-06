@@ -158,8 +158,6 @@ defmodule Argus.Extractors.SqlInjection.DollarQuote do
 
   defp full_operand(_segment), do: nil
 
-  defp agree([], _fun), do: nil
-
   defp agree([first | rest], fun) do
     value = fun.(first)
     if value != nil and Enum.all?(rest, &(fun.(&1) == value)), do: value

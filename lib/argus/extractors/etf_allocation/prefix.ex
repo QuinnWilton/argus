@@ -233,7 +233,7 @@ defmodule Argus.Extractors.EtfAllocation.Prefix do
 
   defp check([{:"=:=", _, bits, expected} | rest], offset)
        when bits > 0 and bits <= 16 - offset do
-    <<_::size(offset), actual::size(bits), _::bitstring>> = <<@prefix::16>>
+    <<_::size(^offset), actual::size(^bits), _::bitstring>> = <<@prefix::16>>
     if actual == expected, do: check(rest, offset + bits), else: :fail
   end
 

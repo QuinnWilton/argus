@@ -144,7 +144,7 @@ defmodule Argus.Extractors.TermValidation.Proof do
             Map.put(acc, reg, if(made == :unknown, do: {:unknown, at, reg}, else: made))
           end)
 
-        %{st | regs: regs, valid: st.valid and supported?(instr, st, role)}
+        %{st | regs: regs, valid: supported?(instr, st, role)}
     end
   end
 
