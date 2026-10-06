@@ -2,14 +2,15 @@ defmodule Argus.Graph.Identity.SchemaPerturbationTest do
   @moduledoc """
   A producer's rows are kept on the schema entries it recorded reading
   (`schema_entry`, `Argus.Graph.Reads`), not on the schema's code.
-  `Argus.Graph.Identity.SchemaReadsTest` checks that every accessor records what it returns; this checks the
-  claim itself, whatever path the data took: each producer runs over the
-  fixtures in a VM of its own whose schema has every entry it did not
-  read changed — its fields renamed and retyped, a field added, its
-  documentation, its in-process flag and its layer changed, relations
-  reordered, one removed and one added — and its
-  rows must come out byte for byte as they do here, computed afresh and
-  over kept bases alike. A producer that read the schema some way that
+  `Argus.Graph.Identity.SchemaReadsTest` checks that every accessor
+  records what it returns; this checks the claim itself, whatever path
+  the data took: each producer runs over every fixture
+  (`Argus.Test.FixtureSpread.all/0`) in a VM of its own whose schema has
+  every entry it did not read changed — its fields renamed and retyped,
+  a field added, its documentation, its in-process flag and its layer
+  changed, relations reordered, one removed and one added — and its rows
+  must come out byte for byte as they do here, computed afresh and over
+  kept bases alike. A producer that read the schema some way that
   records nothing (memoized it, smuggled it out of a module attribute,
   read it in another process) fails here.
 
@@ -22,23 +23,6 @@ defmodule Argus.Graph.Identity.SchemaPerturbationTest do
   @moduletag :identity_verify
   # Minutes under a full suite's load.
   @moduletag timeout: 600_000
-
-  # Every fixture (extracting them all takes a second), and runtime
-  # modules for shapes they do not have: the check reaches only the paths
-  # the modules exercise.
-  @modules for(
-             mod <- Application.spec(:argus_beam, :modules),
-             String.starts_with?(Atom.to_string(mod), "Elixir.Argus.Test.Fixtures."),
-             do: mod
-           )
-           |> Enum.sort()
-           |> Kernel.++([
-             Inspect.Argus.Test.Fixtures.DerivedInspect.OneField,
-             Logger.Formatter,
-             URI,
-             :gen_server,
-             :supervisor
-           ])
 
   @probe :schema_perturbation_probe
 
@@ -111,31 +95,9 @@ defmodule Argus.Graph.Identity.SchemaPerturbationTest do
   Map.new(reads, &{&1, Argus.Graph.Reads.entry_digest(&1)})
   """
 
-  setup_all do
-    [{_mod, endpoint}] =
-      Code.compile_string("""
-      defmodule Argus.Graph.Identity.SchemaPerturbationTest.Endpoint do
-        def __sockets__, do: [{"/live", Phoenix.LiveView.Socket, [websocket: [], longpoll: []]}]
-      end
-      """)
-
-    %{beams: Enum.map(@modules, &to_string(:code.which(&1))) ++ [endpoint]}
-  end
-
-  defp producers do
-    {:ok, all} = Argus.Analysis.set(:all)
-
-    extractors =
-      Enum.flat_map(all ++ [:coverage], fn name ->
-        {:ok, mod} = Argus.Analysis.fetch_module(name)
-        mod.extractors()
-      end)
-
-    [:base | Enum.uniq([Argus.Extractors.CallArgs | extractors])]
-  end
-
-  test "a producer's rows do not move with any schema entry it did not read", %{beams: beams} do
-    producers = producers()
+  test "a producer's rows do not move with any schema entry it did not read" do
+    beams = Argus.Test.FixtureSpread.beams(Argus.Test.FixtureSpread.all())
+    producers = Argus.Graph.Extraction.producers()
 
     # The rows here are extracted in a VM set up as the perturbed one is,
     # so that nothing but the schema tells them apart: not the modules

@@ -5,8 +5,11 @@ defmodule Argus.Graph.Identity.ProducerClosureTest do
   executes must be in its closure, or an edit to that module would leave
   stale rows in place. The closures are read from import tables; this
   runs each producer with call counting on and checks the reading
-  against what executed. The producers are split three ways, each part
-  in a VM of its own, so the parts run side by side.
+  against what executed, over a spread of the fixtures
+  (`Argus.Test.FixtureSpread.spread/0`): a module a producer executes
+  only for a fixture outside it goes unchecked. The producers are split
+  three ways, each part in a VM of its own, so the parts run side by
+  side.
 
   The base runs afresh, keeping the bases (`Argus.Pipeline.Base`), and
   each extractor runs over them, within its closure and without the
@@ -35,46 +38,6 @@ defmodule Argus.Graph.Identity.ProducerClosureTest do
 
   alias Argus.Graph.Code
   alias Argus.Graph.Reads
-
-  @beams for(
-           mod <- Application.spec(:argus_beam, :modules),
-           String.starts_with?(Atom.to_string(mod), "Elixir.Argus.Test.Fixtures."),
-           do: mod
-         )
-         |> Enum.sort()
-         |> Enum.take_every(19)
-         |> Kernel.++([
-           Argus.Test.Fixtures.Specs,
-           Argus.Test.Fixtures.Router,
-           Argus.Test.Fixtures.ParamFlow.Returns,
-           Argus.Test.Fixtures.SecurityValues,
-           Argus.Test.Fixtures.ResultChecks,
-           Argus.Test.Fixtures.CodeInjection,
-           Argus.Test.Fixtures.SqlInjection,
-           Argus.Test.Fixtures.SqlComments,
-           Argus.Test.Fixtures.PathTraversal,
-           Argus.Test.Fixtures.HtmlInjection,
-           Argus.Test.Fixtures.EtfAllocation,
-           :term_validation_fixture,
-           Argus.Test.Fixtures.SharedStoreClaim.Helpers,
-           Argus.Test.Fixtures.SharedStoreClaim.Atomic,
-           Argus.Test.Fixtures.Tls.ForcesNone,
-           Inspect.Argus.Test.Fixtures.DerivedInspect.OneField,
-           Logger.Formatter,
-           :gen_server
-         ])
-
-  defp producers do
-    {:ok, all} = Argus.Analysis.set(:all)
-
-    extractors =
-      Enum.flat_map(all ++ [:coverage], fn name ->
-        {:ok, mod} = Argus.Analysis.fetch_module(name)
-        mod.extractors()
-      end)
-
-    [:base | Enum.uniq([Argus.Extractors.CallArgs | extractors])]
-  end
 
   # Runs in a fresh VM: call counts are VM-wide, and this one runs other
   # tests beside it.
@@ -122,10 +85,12 @@ defmodule Argus.Graph.Identity.ProducerClosureTest do
   """
 
   test "every module a producer executes is in its closure", %{part: part, parts: parts} do
-    paths = Enum.map(@beams, &to_string(:code.which(&1)))
+    paths = Argus.Test.FixtureSpread.beams(Argus.Test.FixtureSpread.spread())
 
     producers =
-      for {producer, i} <- Enum.with_index(producers()), rem(i, parts) == part, do: producer
+      for {producer, i} <- Enum.with_index(Argus.Graph.Extraction.producers()),
+          rem(i, parts) == part,
+          do: producer
 
     {:ok, peer, _node} = :peer.start_link(%{connection: :standard_io})
 

@@ -4,7 +4,8 @@ defmodule Argus.Graph.Identity.DeclaredDigestTest do
   through `Argus.Souffle.Program.declared_digest/2`): of the generated
   declaration files, only the declarations of the relations Souffle
   loads for it. This checks that claim against the solver, for every
-  shipped program over the fixtures' facts: in a copy of `priv/dl`
+  shipped program over the facts of every fixture
+  (`Argus.Test.FixtureSpread.all/0`): in a copy of `priv/dl`
   whose generated files have every other declaration changed — fields
   renamed, prose rewritten, and where no rule names it retyped and
   widened; a relation added — the program loads the same relations and
@@ -28,13 +29,11 @@ defmodule Argus.Graph.Identity.DeclaredDigestTest do
   @generated ~w(base.dl layer2.dl priors.dl)
 
   setup_all do
-    modules =
-      for mod <- Application.spec(:argus_beam, :modules),
-          String.starts_with?(Atom.to_string(mod), "Elixir.Argus.Test.Fixtures."),
-          do: mod
-
     {:ok, analyses} = Argus.Analysis.set(:all)
-    {:ok, facts} = Argus.Analysis.extract_facts(modules, analyses ++ [:coverage])
+
+    {:ok, facts} =
+      Argus.Analysis.extract_facts(Argus.Test.FixtureSpread.all(), analyses ++ [:coverage])
+
     on_exit(fn -> File.rm_rf!(Path.dirname(facts)) end)
 
     dl = Path.join(:code.priv_dir(:argus_beam), "dl")

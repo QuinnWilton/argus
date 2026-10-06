@@ -12,47 +12,6 @@ defmodule Argus.Pipeline.ExtractModuleTest do
 
   @moduletag :tmp_dir
 
-  # A spread of the fixtures, the ones a few extractors need (named, so
-  # that a fixture added elsewhere cannot move them out of the spread), and
-  # some runtime modules for shapes the fixtures do not have: every
-  # extractor emits rows for some of them (the test checks). The spread is
-  # one in twenty by a portable hash of the name, so adding a fixture does
-  # not move the others in or out (every twentieth by sorted name did).
-  @modules for(
-             mod <- Application.spec(:argus_beam, :modules),
-             String.starts_with?(Atom.to_string(mod), "Elixir.Argus.Test.Fixtures."),
-             :erlang.phash2(mod, 20) == 0,
-             do: mod
-           )
-           |> Enum.sort()
-           |> Kernel.++([
-             Argus.Test.Fixtures.SimpleStatem,
-             Argus.Test.Fixtures.Specs,
-             Argus.Test.Fixtures.Router,
-             Argus.Test.Fixtures.Secret.Typed,
-             Argus.Test.Fixtures.Tls.ForcesNone,
-             Argus.Test.Fixtures.DerivedInspect.OneField,
-             Inspect.Argus.Test.Fixtures.DerivedInspect.OneField,
-             Mix.ArgusFixtures.Seed,
-             Logger.Formatter,
-             URI,
-             :gen_server,
-             :supervisor
-           ])
-
-  # A Phoenix endpoint's socket table, which no fixture compiles (the
-  # Endpoint extractor reads it).
-  setup_all do
-    [{_mod, endpoint}] =
-      Code.compile_string("""
-      defmodule Argus.Pipeline.ExtractModuleTest.Endpoint do
-        def __sockets__, do: [{"/live", Phoenix.LiveView.Socket, [websocket: [], longpoll: []]}]
-      end
-      """)
-
-    %{modules: @modules ++ [endpoint]}
-  end
-
   defp extract!(module, producers, opts \\ []) do
     {:ok, extraction} = Pipeline.extract_module(module, [producers: producers] ++ opts)
     extraction
@@ -106,14 +65,15 @@ defmodule Argus.Pipeline.ExtractModuleTest do
          %{tmp_dir: tmp} do
       # `dynamic_call`: in each module, the emitter's `call_fun`/`apply`
       # rows, then Purity's `dot_dispatch` ones.
-      {:ok, _} = Pipeline.run(@modules, tmp, extractors: [Argus.Extractors.Purity])
+      modules = Argus.Test.FixtureSpread.spread()
+      {:ok, _} = Pipeline.run(modules, tmp, extractors: [Argus.Extractors.Purity])
       rows = tmp |> Path.join("dynamic_call.facts") |> File.read!() |> Argus.Tsv.decode()
       assert Enum.any?(rows, &(List.last(&1) == "dot_dispatch"))
 
       # Each module's rows in input order, as extracting it alone gives
       # them: the emitter's first, then Purity's.
       each =
-        for module <- @modules do
+        for module <- modules do
           {:ok, facts} = Pipeline.extract([module], extractors: [Argus.Extractors.Purity])
           facts |> Map.get(:dynamic_call, []) |> Enum.reverse()
         end

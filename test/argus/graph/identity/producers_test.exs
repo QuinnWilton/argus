@@ -6,7 +6,8 @@ defmodule Argus.Graph.Identity.ProducersTest do
   a base computed afresh. That is what lets the query graph keep each
   producer's rows apart in a module's pack and, after an extractor
   edit, run that extractor alone over the kept base
-  (`Argus.Graph.Pack`).
+  (`Argus.Graph.Pack`). The modules are a spread of the fixtures
+  (`Argus.Test.FixtureSpread.spread/0`).
   """
   use ExUnit.Case, async: true
 
@@ -15,60 +16,6 @@ defmodule Argus.Graph.Identity.ProducersTest do
   @moduletag :identity_verify
   # Minutes under a full suite's load.
   @moduletag timeout: 600_000
-  @moduletag timeout: 600_000
-
-  # A spread of the fixtures, the ones a few extractors need (named, so
-  # that a fixture added elsewhere cannot move them out of the spread),
-  # and some runtime modules for shapes the fixtures do not have: every
-  # extractor emits rows for some of them (the test checks). The spread
-  # is one in twenty by a portable hash of the name, so adding a fixture
-  # does not move the others in or out.
-  @modules for(
-             mod <- Application.spec(:argus_beam, :modules),
-             String.starts_with?(Atom.to_string(mod), "Elixir.Argus.Test.Fixtures."),
-             :erlang.phash2(mod, 20) == 0,
-             do: mod
-           )
-           |> Enum.sort()
-           |> Kernel.++([
-             Argus.Test.Fixtures.SimpleStatem,
-             Argus.Test.Fixtures.Specs,
-             Argus.Test.Fixtures.Router,
-             Argus.Test.Fixtures.ParamFlow.Returns,
-             Argus.Test.Fixtures.SecurityValues,
-             Argus.Test.Fixtures.ResultChecks,
-             Argus.Test.Fixtures.CodeInjection,
-             Argus.Test.Fixtures.SqlInjection,
-             Argus.Test.Fixtures.SqlComments,
-             Argus.Test.Fixtures.PathTraversal,
-             Argus.Test.Fixtures.HtmlInjection,
-             Argus.Test.Fixtures.EtfAllocation,
-             :term_validation_fixture,
-             Argus.Test.Fixtures.SharedStoreClaim.Helpers,
-             Argus.Test.Fixtures.SharedStoreClaim.Atomic,
-             Argus.Test.Fixtures.Secret.Typed,
-             Argus.Test.Fixtures.Tls.ForcesNone,
-             Argus.Test.Fixtures.DerivedInspect.OneField,
-             Inspect.Argus.Test.Fixtures.DerivedInspect.OneField,
-             Mix.ArgusFixtures.Seed,
-             Logger.Formatter,
-             URI,
-             :gen_server,
-             :supervisor
-           ])
-
-  # A Phoenix endpoint's socket table, which no fixture compiles (the
-  # Endpoint extractor reads it).
-  setup_all do
-    [{_mod, endpoint}] =
-      Code.compile_string("""
-      defmodule Argus.Graph.Identity.ProducersTest.Endpoint do
-        def __sockets__, do: [{"/live", Phoenix.LiveView.Socket, [websocket: [], longpoll: []]}]
-      end
-      """)
-
-    %{modules: @modules ++ [endpoint]}
-  end
 
   defp producers, do: Argus.Graph.Extraction.producers()
 
@@ -78,9 +25,9 @@ defmodule Argus.Graph.Identity.ProducersTest do
     extraction
   end
 
-  test "a producer extracted alone gives the rows it gives beside the others, over a kept base too",
-       %{modules: modules} do
+  test "a producer extracted alone gives the rows it gives beside the others, over a kept base too" do
     producers = producers()
+    modules = Argus.Test.FixtureSpread.spread()
 
     wrote =
       modules
