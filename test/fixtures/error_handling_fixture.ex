@@ -281,6 +281,12 @@ defmodule Argus.Test.Fixtures.IgnoredResultModule do
       {:error, reason} -> raise "failed: #{inspect(reason)}"
     end
   end
+
+  # Enum.each drops what its fun answers: each start's result reaches no one.
+  def each_ignored_start(names), do: Enum.each(names, fn n -> Agent.start_link(fn -> n end) end)
+
+  # Enum.map keeps the answers: the caller has every start's result.
+  def mapped_checked_start(names), do: Enum.map(names, fn n -> Agent.start_link(fn -> n end) end)
 end
 
 defmodule Argus.Test.Fixtures.RawTrapExit do

@@ -562,6 +562,19 @@ defmodule Argus.Schema.ErrorHandling do
           {:callee, :symbol, "called function returning {:ok,_}|{:error,_}"}
         ],
         doc: "Call to function returning tagged tuple where result is not pattern matched."
+      },
+      %{
+        name: :returned_error_result,
+        layer: 2,
+        fields: [
+          {:id, :symbol, "instruction ID"},
+          {:func, :symbol, "containing function ID"},
+          {:callee, :symbol, "called function returning {:ok,_}|{:error,_}"}
+        ],
+        doc: """
+        Tail call to a function returning a tagged tuple: the result is the caller's to \
+        match. `clientlib/closures.dl`'s `answer_dropped` says when no caller does.
+        """
       }
     ])
   end

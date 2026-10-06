@@ -716,6 +716,11 @@
 .decl result_tested(id: symbol, func: symbol, callee: symbol, how: symbol)
 .input result_tested
 
+// Tail call to a function returning a tagged tuple: the result is the caller's to match. `clientlib/closures.dl`'s `answer_dropped` says when no caller does.
+//
+.decl returned_error_result(id: symbol, func: symbol, callee: symbol)
+.input returned_error_result
+
 // A returned state field derived from the result of call `site`. Records the whole result, tuple element `{i}`, a deeper `part`, or dependence through another call's `argument`. Local calls follow `returns_from`. Used to locate stored monitor records and removal results (`Argus.Extractor.StateFields`).
 //
 .decl returned_field_from(func: symbol, key: symbol, site: symbol, how: symbol)

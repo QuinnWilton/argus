@@ -71,6 +71,10 @@ which a change appeared; older names and APIs may have changed since then.
   captured `&:gen_tcp.controlling_process/2`, now counts as handed off: its
   close messages are no longer reported as unhandled. Ports handed off with
   `port_connect` likewise.
+- A start in an `Enum.each` callback, such as `Enum.each(names, fn n ->
+  Agent.start_link(fn -> n end) end)`, is now reported as "Start result ignored"
+  (and a capped `Task.Supervisor.start_child` as unchecked): `Enum.each` throws
+  each result away. An `Enum.map` callback's results are the caller's to check.
 - Processes spawned in an `Enum.map` callback and monitored afterwards, as in
   `Enum.each(pids, &Process.monitor/1)`, are no longer reported as "Unlinked
   process spawned".
@@ -152,6 +156,8 @@ Custom Datalog consumers must account for:
   map key that is not a literal is held under `@key`, and `**` reads any field.
 - `element_fun`'s `answers` column says whether the library call keeps or drops
   what the fun answers.
+- `returned_error_result` (ErrorHandling): a tail call to an ok/error API whose
+  result the function hands back to its caller.
 - The points-to stage stages `task_handled` (which Task operation is handed
   which task) and `task_escapes` (tasks whose handle goes where value flow
   stops), from `clientlib/task_handles.dl`.

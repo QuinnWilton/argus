@@ -561,14 +561,17 @@ unchecked_result(func, start, "Task.Supervisor.start_child", "") :-
 starts_supervised_task(start, func) :-
   remote_call(start, func, "Task.Supervisor", "start_child", _).
 
-// Treat a tail-returned start result or a branch reachable after the start as checked.
+// Treat a start result tail-returned to a caller that receives it, or a branch reachable
+// after the start, as checked. A closure whose answer the library call running it drops
+// (answer_dropped) returns it to no one.
 // Control-flow reach excludes unrelated clauses, but the branch need not actually
 // inspect the result.
 .decl start_result_checked(start: symbol)
 
 start_result_checked(start) :-
-  starts_supervised_task(start, _),
-  tail_call(start).
+  starts_supervised_task(start, f),
+  tail_call(start),
+  !answer_dropped(f).
 
 start_result_checked(start) :-
   after_start.runs_after(start, test),

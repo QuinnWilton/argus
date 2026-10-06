@@ -33,6 +33,9 @@ defmodule Argus.Extractors.ErrorHandling do
     the finding (Engler et al., "Bugs as deviant behavior").
   - `ignored_error_result(id, func, callee)` — call to known ok/error API where
     result is not pattern matched
+  - `returned_error_result(id, func, callee)` — call to known ok/error API
+    whose result the function returns: its caller's to match (when the
+    caller is a library call dropping what the function answers, nobody's)
   - `catch_class(id, func, class, span_end)` — some path through the
     handler of the try (or Erlang `catch`) at `id` catches `class` and
     does not raise again (`*`: with no class test)
@@ -201,6 +204,7 @@ defmodule Argus.Extractors.ErrorHandling do
       :catch_inner_tag,
       :exit_call,
       :ignored_error_result,
+      :returned_error_result,
       :mailbox_writer,
       :recv_pattern,
       :recv_shape,
@@ -2080,9 +2084,11 @@ defmodule Argus.Extractors.ErrorHandling do
       after_call = Enum.drop(ctx.instrs, ctx.idx + 1)
 
       cond do
-        # Tail calls return their result to the caller — not ignored.
+        # Tail calls return their result to the caller — not ignored here.
         Instr.tail_call?(instr) ->
-          facts
+          id = InstrId.mint(ctx.func_id, ctx.idx)
+          callee = "#{inspect(mod)}.#{func}/#{arity}"
+          add_fact(facts, :returned_error_result, [id, ctx.func_id, callee])
 
         # Non-tail call where x0 is immediately overwritten.
         result_ignored?(after_call) ->

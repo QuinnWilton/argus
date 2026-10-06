@@ -71,6 +71,14 @@ defmodule Argus.Test.Fixtures.UncheckedStartChild do
     Task.Supervisor.start_child(sup, fn -> :background end)
   end
 
+  # Tail position in an Enum.each closure: Enum.each drops it.
+  def start_each(sup, jobs),
+    do: Enum.each(jobs, fn job -> Task.Supervisor.start_child(sup, fn -> job end) end)
+
+  # Tail position in an Enum.map closure: the caller has every result.
+  def start_mapped(sup, jobs),
+    do: Enum.map(jobs, fn job -> Task.Supervisor.start_child(sup, fn -> job end) end)
+
   # Unchecked: the start's clause matches nothing after it; the branch
   # is in the next clause, later in the function but never after it.
   def start_then_other_clause(sup, :fire) do

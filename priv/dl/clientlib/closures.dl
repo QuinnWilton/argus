@@ -27,3 +27,15 @@ handed_closure(site, f, c) :-
   call_site(site, f, _, _, _),
   !fun_handed(site, f, _, _),
   sole_closure(f, c).
+
+// A closure whose every library call running it drops what it answers (element_fun
+// "dropped": Enum.each/2, :lists.foreach/2, Enum.any?/2, ...): a result it hands back
+// reaches no one. A closure is known by the name the compiler gives it
+// (`Mod:-fun/1-fun-0-/1`), not by closure_def, which an edit to the body around it
+// moves: a named function captured (`&start/1`) may also be called for its answer.
+.decl answer_dropped(func: symbol)
+
+answer_dropped(g) :-
+  element_fun(_, _, g, "dropped"),
+  match(".*:-.*-fun-[0-9]+-/[0-9]+", g),
+  !element_fun(_, _, g, "kept").

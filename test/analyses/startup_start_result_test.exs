@@ -17,6 +17,11 @@ defmodule Argus.Analyses.StartupStartResultTest do
 
       assert Enum.any?(funcs, &String.contains?(&1, "ignored_start"))
       refute Enum.any?(funcs, &String.contains?(&1, "checked_start"))
+
+      # Returned by a closure: ignored when the library call running it
+      # drops what it answers, checked by the caller when it keeps it.
+      assert Enum.any?(funcs, &String.contains?(&1, "-each_ignored_start/1-fun-"))
+      refute Enum.any?(funcs, &String.contains?(&1, "mapped_checked_start"))
     end
 
     test "matches the delimited function name, not a substring" do
