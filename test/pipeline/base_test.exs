@@ -91,6 +91,44 @@ defmodule Argus.Pipeline.BaseTest do
     end
   end
 
+  # An extractor handing the test the module data it runs over.
+  defmodule Handed do
+    @moduledoc false
+    def extract(data) do
+      [test | _] = Process.get(:"$callers")
+      send(test, {:handed, data})
+      %{}
+    end
+  end
+
+  defp handed(path, producers, opts) do
+    {:ok, %{status: :ok} = extraction} =
+      Pipeline.extract_module(path, [producers: producers] ++ opts)
+
+    assert_received {:handed, data}
+    # Each run looks up installed specs in a memo of its own.
+    assert %Argus.Specs.Memo{} = data.installed_specs
+    {Map.delete(data, :installed_specs), extraction}
+  end
+
+  # What lets `Argus.Graph.Identity.ProducerClosureTest` count only an
+  # extractor run over a kept base: handed the same data, it runs the same
+  # code as it does fresh, beside the base's own, which the base's run counts.
+  test "an extractor over a kept base is handed the module data it is handed fresh" do
+    reader = hd(Pipeline.typed_readers())
+
+    for mod <- @modules, readers <- [[], [reader]] do
+      path = path(mod)
+      {fresh, extraction} = handed(path, [Handed | readers], keep_base: true)
+      {over, _} = handed(path, [Handed | readers], base: extraction.base)
+
+      # The decoded facts are read back for an extractor that reads them;
+      # any other computes them (`Argus.Extractor.Helpers.typed/1`).
+      fresh = if readers == [], do: Map.delete(fresh, :typed), else: fresh
+      assert over == fresh, "#{inspect(mod)} beside #{inspect(readers)}"
+    end
+  end
+
   test "the base's own rows are the emitter's, whatever base is handed in" do
     for mod <- @modules do
       {:ok, fresh} = Pipeline.extract_module(path(mod), producers: [:base], keep_base: true)
