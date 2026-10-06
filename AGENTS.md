@@ -31,7 +31,7 @@ reverse dependency tracking until a Roux release includes them.
 | Change | Additional checks |
 |---|---|
 | Analysis rules | Positive fixtures and nearby counterexamples in `test/analyses/` and `test/soundness/`; add a corpus pair for a new bug class. |
-| Batched fixtures or rules they exercise | `ARGUS_VERIFY_BATCH=1 mix test <test-file>` compares batch slices with separate solves. |
+| Batched fixtures or properties, or rules they exercise | `ARGUS_VERIFY_BATCH=1 mix test <test-file>` compares batch slices with separate solves. |
 | Schema, cache keys or producer dependencies | `mix test --include identity_verify --exclude corpus`; use `ARGUS_NO_CACHE=1` to compare fresh results when needed. |
 | Query graph or incrementality | `mix test --only parity`. |
 | Frontends or packaging | `mix test --include escript --include rebar3 --include gleam --exclude corpus` with the relevant tools installed. |
@@ -93,10 +93,11 @@ finding counts; do not update expected output merely to make a failure disappear
 
 ## Test and commit conventions
 
-Use `Argus.Test.Memo` for shared solves and `Argus.Test.Batch` for disjoint fixture
-sets. Tests are normally `async: true`; isolate VM-wide state with `Argus.Test.Peer`
-or explain why a test must be synchronous. Deliberate rendering changes can update
-goldens with `ARGUS_RECORD_GOLDENS=1`; review the resulting diff.
+Use `Argus.Test.Memo` for shared solves, `Argus.Test.Batch` for disjoint fixture
+sets, and `Argus.Test.BatchProperty` for a property's generated cases. Tests are
+normally `async: true`; isolate VM-wide state with `Argus.Test.Peer` or explain why
+a test must be synchronous. Deliberate rendering changes can update goldens with
+`ARGUS_RECORD_GOLDENS=1`; review the resulting diff.
 
 Commit subjects use `[component] brief description`; `.presubmit.exs` defines the
 checks. Keep user-facing release notes in `CHANGELOG.md`, with implementation detail
