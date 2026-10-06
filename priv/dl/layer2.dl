@@ -309,6 +309,11 @@
 .decl effect_decided(func: symbol, kind: symbol, source: symbol)
 .input effect_decided
 
+// A library call (`Enum.map/2`, `Enum.reduce/3`, `Map.new/2`, `:lists.foldl/3`, ...) running `fun` on each element in the calling process (`Argus.Extractors.TermFlow.Library`). `fun` is handed the elements (a map's `{key, value}` pairs, a fold's accumulator) as `element` value_args; when the call's answer holds what `fun` answers, a `value_result` row names `fun` as its callee. Otherwise (`Enum.each/2`, `Enum.filter/2`, ...) what `fun` answers is dropped.
+//
+.decl element_fun(id: symbol, caller: symbol, fun: symbol, answers: symbol)
+.input element_fun
+
 // Every path reaching this call excludes ETF's 131,80 compressed prefix for the exact bytes decoded. A local predicate's accepted result may establish the exclusion when compressed input cannot return that result. Binary match contexts require a known restored zero position to retain byte identity. Byte-size caps and decoded-term shape checks alone do not establish this.
 //
 .decl etf_compression_rejected(id: symbol, func: symbol)
@@ -1131,6 +1136,11 @@
 .decl table_use(id: symbol, func: symbol, src_kind: symbol, src: symbol)
 .input table_use
 
+// A possible source for the task, or the term holding the tasks, a Task operation is handed, including one the library runs on each element of a list (`Enum.map(tasks, &Task.await/1)`).
+//
+.decl task_op_source(id: symbol, func: symbol, op: symbol, src_kind: symbol, src: symbol)
+.input task_op_source
+
 // A Task.Supervisor start and its cap, from child specs, PartitionSupervisor options, or direct start/child-spec calls. Records capped and uncapped starts. A cap can produce `{:error, :max_children}`; an unavailable supervisor instead exits the caller. No row means the start is not visible.
 //
 .decl task_supervisor_cap(sup: symbol, limit: symbol)
@@ -1264,7 +1274,7 @@
 .decl upload_path_use(id: symbol, func: symbol, api: symbol, source: symbol, shape: symbol)
 .input upload_path_use
 
-// A possible source for callee parameter `arg_pos`: project call, init argument, spawn argument, child-spec argument, or trailing closure capture. OTP and Elixir internals are excluded, except remote-pid inputs to global conflict resolvers and per-element funs run by `Enum` or `:lists`.
+// A possible source for callee parameter `arg_pos`: project call, init argument, spawn argument, child-spec argument, trailing closure capture, or (`element`) what a library call running the program's fun hands it: an element, a pair, an accumulator (`element_fun`). OTP and Elixir internals are otherwise excluded, except remote-pid inputs to global conflict resolvers.
 //
 .decl value_arg(id: symbol, caller: symbol, callee: symbol, arg_pos: symbol, via: symbol, src_kind: symbol, src: symbol)
 .input value_arg
@@ -1273,6 +1283,11 @@
 //
 .decl value_base(func: symbol, obj: symbol, src_kind: symbol, src: symbol)
 .input value_base
+
+// A source handed where value flow does not follow it: an argument of a library call `Argus.Extractors.TermFlow.Library` does not model (a send, `:ets.insert/2`, `Agent.update/2`, `Enum.chunk_while/4`, a call running a fun the table does not know), or of a dynamic `fun.(...)` or `apply`. What holds it may be kept, sent or dropped where no summary says.
+//
+.decl value_escape(id: symbol, func: symbol, src_kind: symbol, src: symbol)
+.input value_escape
 
 // The field `sel` of `obj` may hold the source.
 .decl value_field(func: symbol, obj: symbol, sel: symbol, src_kind: symbol, src: symbol)

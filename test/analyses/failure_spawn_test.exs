@@ -57,5 +57,23 @@ defmodule Argus.Analyses.FailureSpawnTest do
       refute Enum.any?(funcs, &String.contains?(&1, "Watched:monitored/0"))
       refute Enum.any?(funcs, &String.contains?(&1, "Watched:linked/0"))
     end
+
+    test "spawns a closure makes are watched by a monitor or link on each pid, captured or not" do
+      assert {:ok, results} = Memo.analyze([Argus.Test.Fixtures.SpawnsMapped], :failure)
+
+      funcs =
+        results
+        |> Rows.where(:failure, "orphan_process",
+          kind: "spawn",
+          drop: [:kind, :target, :callback]
+        )
+        |> Enum.map(fn [func, _id] -> func end)
+
+      assert Enum.any?(funcs, &String.contains?(&1, "unwatched_mapped/1"))
+
+      for name <- ~w(monitored_capture/1 monitored_closure/1 linked_comprehension/1) do
+        refute Enum.any?(funcs, &String.contains?(&1, name)), name
+      end
+    end
   end
 end

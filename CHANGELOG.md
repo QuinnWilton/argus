@@ -47,6 +47,9 @@ which a change appeared; older names and APIs may have changed since then.
   them as SQL injection and stopped checking the SQL their callers build, such
   as `MyRepo.query!("SELECT ... '#{name}'")`. A module's own default-argument
   functions also looked macro-generated. Both are fixed, on 1.19 and 1.20.
+- Processes spawned in an `Enum.map` callback and monitored afterwards, as in
+  `Enum.each(pids, &Process.monitor/1)`, are no longer reported as "Unlinked
+  process spawned".
 - Count a `trap_exit` set by a function a `proc_lib` start runs when that
   function goes on to enter its own module's loop
   (`gen_server:enter_loop(?MODULE, ...)` or `gen_statem:enter_loop/4,5,6`):
@@ -115,6 +118,16 @@ which a change appeared; older names and APIs may have changed since then.
 
 Custom Datalog consumers must account for:
 
+- New TermFlow relations: `element_fun` (the program's fun a library call runs
+  on each element), `task_op_source` (what a Task operation is handed) and
+  `value_escape` (a value handed where value flow cannot follow it). TermFlow
+  now follows every value through the standard library's collection calls
+  (`Argus.Extractors.TermFlow.Library`), emitting `element` `value_arg`s,
+  `value_result`s naming the fun a call runs, and objects for what calls answer.
+  Enumerating a map yields `{key, value}` pairs (`pair <map>` in points-to), a
+  map key that is not a literal is held under `@key`, and `**` reads any field.
+- `element_fun`'s `answers` column says whether the library call keeps or drops
+  what the fun answers.
 - `answers_call` and the replacement of `monitor_started` with
   `monitor_answer`, which follows results through wrappers.
 - `clause_event`, the `statem_insert.content` column, and gen_statem clause tags

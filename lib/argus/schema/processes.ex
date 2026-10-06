@@ -40,9 +40,10 @@ defmodule Argus.Schema.Processes do
         ],
         doc: """
         A possible source for callee parameter `arg_pos`: project call, init argument, \
-        spawn argument, child-spec argument, or trailing closure capture. OTP and Elixir \
-        internals are excluded, except remote-pid inputs to global conflict resolvers \
-        and per-element funs run by `Enum` or `:lists`.
+        spawn argument, child-spec argument, trailing closure capture, or (`element`) \
+        what a library call running the program's fun hands it: an element, a pair, an \
+        accumulator (`element_fun`). OTP and Elixir internals are otherwise excluded, \
+        except remote-pid inputs to global conflict resolvers.
         """
       },
       %{
@@ -322,6 +323,59 @@ defmodule Argus.Schema.Processes do
         doc: """
         A source stored under `key` in the running process's dictionary. Reads of the \
         same `dict` source in that process may resolve to it (`clientlib/processes.dl`).
+        """
+      },
+      %{
+        name: :element_fun,
+        layer: 2,
+        fields: [
+          {:id, :instr_id, "instruction ID of the library call"},
+          {:caller, :func_id, "function making the call"},
+          {:fun, :func_id, "the program's function the call runs: a closure or a capture"},
+          {:answers, :symbol,
+           "kept: the call's answer holds what fun answers; dropped: the call drops it"}
+        ],
+        doc: """
+        A library call (`Enum.map/2`, `Enum.reduce/3`, `Map.new/2`, `:lists.foldl/3`, \
+        ...) running `fun` on each element in the calling process \
+        (`Argus.Extractors.TermFlow.Library`). `fun` is handed the elements (a map's \
+        `{key, value}` pairs, a fold's accumulator) as `element` value_args; when the \
+        call's answer holds what `fun` answers, a `value_result` row names `fun` as its \
+        callee. Otherwise (`Enum.each/2`, `Enum.filter/2`, ...) what `fun` answers is \
+        dropped.
+        """
+      },
+      %{
+        name: :task_op_source,
+        layer: 2,
+        fields: [
+          {:id, :instr_id, "instruction ID of the Task call"},
+          {:func, :func_id, "function making it"},
+          {:op, :symbol, "await, await_many, yield, yield_many, shutdown or ignore"},
+          {:src_kind, :symbol, "as in value_arg"},
+          {:src, :symbol, "as in value_arg"}
+        ],
+        doc: """
+        A possible source for the task, or the term holding the tasks, a Task operation \
+        is handed, including one the library runs on each element of a list \
+        (`Enum.map(tasks, &Task.await/1)`).
+        """
+      },
+      %{
+        name: :value_escape,
+        layer: 2,
+        fields: [
+          {:id, :instr_id, "instruction ID of the call or send"},
+          {:func, :func_id, "function making it"},
+          {:src_kind, :symbol, "as in value_arg"},
+          {:src, :symbol, "as in value_arg"}
+        ],
+        doc: """
+        A source handed where value flow does not follow it: an argument of a library \
+        call `Argus.Extractors.TermFlow.Library` does not model (a send, `:ets.insert/2`, \
+        `Agent.update/2`, `Enum.chunk_while/4`, a call running a fun the table does not \
+        know), or of a dynamic `fun.(...)` or `apply`. What holds it may be kept, sent \
+        or dropped where no summary says.
         """
       },
       %{

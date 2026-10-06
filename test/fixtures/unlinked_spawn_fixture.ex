@@ -48,3 +48,38 @@ defmodule Argus.Test.Fixtures.ProcLibWorker do
     end
   end
 end
+
+defmodule Argus.Test.Fixtures.SpawnsMapped do
+  @moduledoc """
+  Spawns an Enum.map or comprehension closure makes, watched afterwards by
+  the enclosing function on each pid: value flow follows the pids out of
+  the closure, through the list, into the monitor or link, a captured one
+  included. Only the spawns nothing watches are unwatched.
+  """
+
+  def monitored_capture(n) do
+    pids = Enum.map(1..n, fn _ -> spawn(fn -> loop() end) end)
+    Enum.each(pids, &Process.monitor/1)
+    pids
+  end
+
+  def monitored_closure(n) do
+    pids = Enum.map(1..n, fn _ -> spawn(fn -> loop() end) end)
+    Enum.each(pids, fn pid -> Process.monitor(pid) end)
+    pids
+  end
+
+  def linked_comprehension(n) do
+    pids = for _ <- 1..n, _ <- [1, 2], do: spawn(fn -> loop() end)
+    Enum.each(pids, &Process.link/1)
+    pids
+  end
+
+  def unwatched_mapped(n) do
+    pids = Enum.map(1..n, fn _ -> spawn(fn -> loop() end) end)
+    Enum.each(pids, fn pid -> send(pid, :go) end)
+    pids
+  end
+
+  defp loop, do: receive(do: (_ -> loop()))
+end

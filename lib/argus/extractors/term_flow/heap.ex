@@ -91,6 +91,9 @@ defmodule Argus.Extractors.TermFlow.Heap do
     do: walk(rest, objs, sel, id, seen, result)
 
   @spec own_field(object(), String.t()) :: value()
+  defp own_field(obj, "**"),
+    do: obj.fields |> Map.values() |> Enum.reduce(MapSet.new(), &MapSet.union/2)
+
   defp own_field(obj, sel) do
     own = Map.get(obj.fields, sel, MapSet.new())
 

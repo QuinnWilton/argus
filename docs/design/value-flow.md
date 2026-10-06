@@ -74,6 +74,37 @@ describe process operations. Table, dictionary and remote-PID
 relations expose their respective operations. Exact columns and consumers are
 specified in `lib/argus/schema/` and `priv/dl/clientlib/`.
 
+## Library calls
+
+`Argus.Extractors.TermFlow.Library` says what each collection call of `Enum`,
+`Stream`, `List`, `Map`, `Keyword`, `MapSet`, `Tuple`, `:lists`, `:maps` and the
+container BIFs answers, as a spec over its arguments: an element of one, a new
+list of another's elements, a tuple, a map built from pairs, and so on. Value
+flow follows a value through a modeled call by that spec, and a call that only
+inspects (`Enum.count/1`, `Map.has_key?/2`) answers nothing and keeps nothing.
+
+Enumeration is uniform: a list yields its `[]` field, a map its `{key, value}`
+pairs, and a MapSet — modeled as the list of its members — its members. A map
+holds a key that is not a literal under the pseudo-field `@key`, so a pair's
+key is what was put there. A pair is allocated at the call for a map built in
+the function, and for a map from elsewhere points-to stands one for it
+(`pair <map>`, `clientlib/processes.dl`). `**` reads any field
+(`Tuple.to_list/1`). A stream is the list it would enumerate.
+
+A call running a fun on each element (`Enum.map/2`, `Enum.reduce/3`,
+`Map.new/2`, `:maps.fold/3`, ...) names the program's fun it runs in
+`element_fun`: the fun's parameters receive the elements, pairs or accumulator
+as `element` `value_arg`s, and when the call's answer holds what the fun
+answers, a `value_result` names the fun as the callee — `Enum.map/2`'s answer
+is a list of those answers, a fold's the answer itself. A library function
+captured as the fun (`&Task.await/1`, `&List.wrap/1`) is applied by its own
+model. `task_op_source` records what each Task operation is handed.
+
+Any other call outside the program — an unmodeled library call, a send, a
+dynamic `fun.(...)` or `apply`, a call running a fun the table does not know —
+records what it is handed in `value_escape`. A rule needing to know a value's
+every use treats an escape as a use it cannot see.
+
 ## Precision and coverage limits
 
 - Branches join alternatives without path predicates. Repeated allocations at
@@ -83,8 +114,13 @@ specified in `lib/argus/schema/` and `priv/dl/clientlib/`.
   an unsupported result, or a not-yet-discovered source during solving.
 - Only explicit structural instructions and recognized library operations
   preserve provenance. Unresolved calls, dynamic apply and unmodeled runtime
-  results can lose it. Closure tokens identify spawned functions but are not
-  emitted as general values. This is not complete higher-order value flow.
+  results can lose it; `value_escape` records where a library call or a
+  dynamic call is handed a value, so a consumer can tell a lost value from a
+  dropped one. Closure tokens identify spawned functions but are not emitted
+  as general values: a fun is followed only where a modeled library call runs
+  it in the calling process. This is not complete higher-order value flow.
+- Library models over-approximate what an answer holds: `Enum.take/2` holds
+  every element, a map update every field its base held, a MapSet is a list.
 - A map read with an unknown key reads only the unknown-key field `*`, rather
   than every literal field. This intentionally sacrifices coverage. Unknown
   writes can alias every literal read. Literal map keys are spelled as terms,

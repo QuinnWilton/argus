@@ -123,6 +123,8 @@ reads_name(f, n) :- process_register_source(_, f, _, "name", n).
 reads_name(f, n) :- value_field(f, _, _, "name", n).
 reads_name(f, n) :- value_base(f, _, "name", n).
 reads_name(f, n) :- process_signal_source(_, f, _, "name", n).
+reads_name(f, n) :- task_op_source(_, f, _, "name", n).
+reads_name(f, n) :- value_escape(_, f, "name", n).
 
 source_pts(f, "proc", p, p) :- process_start(_, f, p, _, _), !pervasive(p).
 
@@ -156,6 +158,16 @@ source_pts(f, "result", c, x) :-
   fresh_return(g, x),
   value_return(f, "result", c),
   !pervasive(x).
+
+// A library call running the program's fun on elements (element_fun) answers what the
+// fun answers, its parameters included: they are the elements and accumulator this call
+// hands it, and captures, both entries of the fun (returns_all), not a caller's
+// arguments to resolve per call.
+source_pts(f, "result", c, x) :-
+  element_fun(c, f, g, _),
+  value_result(c, f, g),
+  returns_all(g, x),
+  !fresh_return(g, x).
 
 source_pts(f, "result", c, cat("start ", c)) :-
   kept_fresh(c, f, x),
@@ -220,6 +232,28 @@ reads_field(o, sel, x) :-
   field_pts(o, "*", x).
 .plan 1:(3,2,1)
 
+// Enumerating a map yields its {key, value} pairs: an element read (`[]`) of a map
+// is a pair the map stands for, `pair <map>`, its key what the map holds under `@key`
+// (keys that are not literals) and its value any other field. `**` reads any field
+// (Tuple.to_list/1).
+reads_field(o, "[]", cat("pair ", o)) :-
+  field_read(o, "[]"),
+  value_object(_, o, "map", _, _),
+  holds_leaf(o).
+
+field_pts(cat("pair ", o), "{0}", x) :-
+  field_read(o, "[]"),
+  value_object(_, o, "map", _, _),
+  field_pts(o, "@key", x).
+
+field_pts(cat("pair ", o), "{1}", x) :-
+  field_read(o, "[]"),
+  value_object(_, o, "map", _, _),
+  field_pts(o, sel, x),
+  sel != "@key".
+
+reads_field(o, "**", x) :- field_read(o, "**"), field_pts(o, _, x).
+
 field_pts(o, sel, x) :- value_field(f, o, sel, sk, s), source_pts(f, sk, s, x).
 .plan 0:(2,1)
 
@@ -255,6 +289,13 @@ returns_pts(g, x) :-
 
 returns_pts(g, x) :- value_return(g, "result", c), value_result(c, g, h), returns_pts(h, x).
 .plan 0:(3,2,1)
+
+// Returning what a library call running a fun answers returns what that call resolves
+// to here, the fun's parameters included (source_pts above).
+returns_pts(g, x) :-
+  value_return(g, "result", c),
+  element_fun(c, g, _, _),
+  source_pts(g, "result", c, x).
 
 // What the callee allocated while it ran (fresh_return) is the caller's
 // result by whichever of these rules it also arrives.
@@ -374,6 +415,8 @@ reads_dict(f, k) :- process_signal_source(_, f, _, "dict", k).
 reads_dict(f, k) :- value_load(f, _, _, "dict", k).
 reads_dict(f, k) :- table_use(_, f, "dict", k).
 reads_dict(f, k) :- dict_put(_, f, _, "dict", k).
+reads_dict(f, k) :- task_op_source(_, f, _, "dict", k).
+reads_dict(f, k) :- value_escape(_, f, "dict", k).
 reads_dict(f, k) :- value_result(_, f, g), returns_key(g, k).
 
 // Seed same-process dictionary reachability from reads and writes whose keys have a

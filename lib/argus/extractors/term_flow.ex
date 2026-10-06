@@ -28,6 +28,7 @@ defmodule Argus.Extractors.TermFlow do
   alias Argus.Extractor.ValueFlow
   alias Argus.Extractors.ApiCalls
   alias Argus.Extractors.TermFlow.Heap
+  alias Argus.Extractors.TermFlow.Library
   alias Argus.Instr
   alias Argus.InstrId
   alias Argus.Pipeline.Normalize
@@ -211,39 +212,57 @@ defmodule Argus.Extractors.TermFlow do
     {:erlang, :process_display, 2}
   ]
 
-  # Library calls that run a fun on each element of a list: {list
-  # position, fun position}. The fun's first parameter is the element.
-  @element_calls %{
-    {Enum, :each, 2} => {0, 1},
-    {Enum, :map, 2} => {0, 1},
-    {Enum, :filter, 2} => {0, 1},
-    {Enum, :reject, 2} => {0, 1},
-    {Enum, :find, 2} => {0, 1},
-    {Enum, :any?, 2} => {0, 1},
-    {Enum, :all?, 2} => {0, 1},
-    {Enum, :count, 2} => {0, 1},
-    {Enum, :flat_map, 2} => {0, 1},
-    {Enum, :split_with, 2} => {0, 1},
-    {Enum, :group_by, 2} => {0, 1},
-    {Enum, :sort_by, 2} => {0, 1},
-    {Enum, :reduce, 3} => {0, 2},
-    {Enum, :map_reduce, 3} => {0, 2},
-    {Enum, :flat_map_reduce, 3} => {0, 2},
-    {:lists, :foreach, 2} => {1, 0},
-    {:lists, :map, 2} => {1, 0},
-    {:lists, :filter, 2} => {1, 0},
-    {:lists, :filtermap, 2} => {1, 0},
-    {:lists, :flatmap, 2} => {1, 0},
-    {:lists, :partition, 2} => {1, 0},
-    {:lists, :any, 2} => {1, 0},
-    {:lists, :all, 2} => {1, 0},
-    {:lists, :foldl, 3} => {2, 0},
-    {:lists, :foldr, 3} => {2, 0}
+  # What the standard library's collection calls answer (TermFlow.Library).
+  @library Library.models()
+
+  # The Task operations on a task the caller started, by what they do
+  # with it: the task (or tasks) is the first argument.
+  @task_ops %{
+    {Task, :await, 1} => "await",
+    {Task, :await, 2} => "await",
+    {Task, :await_many, 1} => "await_many",
+    {Task, :await_many, 2} => "await_many",
+    {Task, :yield, 1} => "yield",
+    {Task, :yield, 2} => "yield",
+    {Task, :yield_many, 1} => "yield_many",
+    {Task, :yield_many, 2} => "yield_many",
+    {Task, :shutdown, 1} => "shutdown",
+    {Task, :shutdown, 2} => "shutdown",
+    {Task, :ignore, 1} => "ignore"
   }
 
-  # Library calls that hand back their list argument's elements in
-  # another order.
-  @reorders [{Enum, :reverse, 1}, {:lists, :reverse, 1}, {Enum, :sort, 1}, {Enum, :uniq, 1}]
+  # An exit signal, a monitor or a link, with the register naming the
+  # process it goes to; and a stop: a gen behaviour's stop of the process,
+  # or a supervisor's terminate_child of the child's pid (a
+  # `Supervisor.terminate_child/2` of a child id names no process, and
+  # resolves to none).
+  @signals %{
+    {Process, :exit, 2} => {"exit", {:x, 0}},
+    {:erlang, :exit, 2} => {"exit", {:x, 0}},
+    {GenServer, :stop, 1} => {"stop", {:x, 0}},
+    {GenServer, :stop, 2} => {"stop", {:x, 0}},
+    {GenServer, :stop, 3} => {"stop", {:x, 0}},
+    {:gen_server, :stop, 1} => {"stop", {:x, 0}},
+    {:gen_server, :stop, 3} => {"stop", {:x, 0}},
+    {:gen_statem, :stop, 1} => {"stop", {:x, 0}},
+    {:gen_statem, :stop, 3} => {"stop", {:x, 0}},
+    {:proc_lib, :stop, 1} => {"stop", {:x, 0}},
+    {:proc_lib, :stop, 3} => {"stop", {:x, 0}},
+    {Agent, :stop, 1} => {"stop", {:x, 0}},
+    {Agent, :stop, 2} => {"stop", {:x, 0}},
+    {Agent, :stop, 3} => {"stop", {:x, 0}},
+    {DynamicSupervisor, :terminate_child, 2} => {"stop", {:x, 1}},
+    {Supervisor, :terminate_child, 2} => {"stop", {:x, 1}},
+    {:supervisor, :terminate_child, 2} => {"stop", {:x, 1}},
+    {Process, :monitor, 1} => {"monitor", {:x, 0}},
+    {Process, :monitor, 2} => {"monitor", {:x, 0}},
+    {:erlang, :monitor, 2} => {"monitor", {:x, 1}},
+    {:erlang, :monitor, 3} => {"monitor", {:x, 1}},
+    {Process, :link, 1} => {"link", {:x, 0}},
+    {:erlang, :link, 1} => {"link", {:x, 0}},
+    {Process, :unlink, 1} => {"unlink", {:x, 0}},
+    {:erlang, :unlink, 1} => {"unlink", {:x, 0}}
+  }
 
   # The registrations that take a conflict resolver: `:global` calls it
   # with the name and the two pids that hold it, on two nodes.
@@ -282,7 +301,10 @@ defmodule Argus.Extractors.TermFlow do
       :table_alloc,
       :table_use,
       :dict_op,
-      :dict_put
+      :dict_put,
+      :element_fun,
+      :task_op_source,
+      :value_escape
     ]
 
   @impl true
@@ -382,6 +404,59 @@ defmodule Argus.Extractors.TermFlow do
         start -> Map.put(acc, idx, Map.put(start, :proc, "#{start.kind} #{site(fun, idx)}"))
       end
     end)
+  end
+
+  # %{idx => call}: every library call `Library` models, with the funs a
+  # call running funs runs: one of the program's (its function ID), the
+  # library's (`{:library, mfa}`), or not known (nil). A model needing a
+  # literal the call does not have is no model: the call escapes.
+  defp library_calls(fun) do
+    for {idx, %{mfa: mfa, instrs: instrs} = site} <- fun.sites,
+        not project?(site),
+        {:ok, model} <- [Map.fetch(@library, mfa)],
+        call = library_call(model, instrs, idx),
+        into: %{},
+        do: {idx, call}
+  end
+
+  defp library_call({:fun_or, at, running, plain}, instrs, idx) do
+    case Resolve.fun_origin(instrs, idx, {:x, at}) do
+      {kind, _fun} when kind in [:closure, :external] -> library_call(running, instrs, idx)
+      _ -> library_call(plain, instrs, idx)
+    end
+  end
+
+  defp library_call({:run, at, params, answer, others} = model, instrs, idx) do
+    %{
+      model: model,
+      runs: fun_runs(instrs, idx, at),
+      params: params,
+      answer: answer,
+      others:
+        for({pos, params} <- others, do: %{runs: fun_runs(instrs, idx, pos), params: params})
+    }
+  end
+
+  defp library_call({:setelement, at, _tuple, _value} = model, instrs, idx) do
+    case Resolve.resolve_register(instrs, idx, {:x, at}) do
+      {:ok, n} when is_integer(n) and n > 0 -> %{model: model}
+      _ -> nil
+    end
+  end
+
+  defp library_call(model, _instrs, _idx), do: %{model: model}
+
+  defp fun_runs(instrs, idx, at) do
+    case Resolve.fun_origin(instrs, idx, {:x, at}) do
+      {:closure, closure} ->
+        callee(closure)
+
+      {:external, {mod, _name, _arity} = called} ->
+        if Runtime.module?(mod), do: {:library, called}, else: callee(called)
+
+      _ ->
+        nil
+    end
   end
 
   defp start(fun, idx, mfa, instrs) do
@@ -536,7 +611,7 @@ defmodule Argus.Extractors.TermFlow do
   # ── One function ────────────────────────────────────────────────────
 
   defp function_facts(facts, fun) do
-    fun = Map.put(fun, :starts, starts(fun))
+    fun = fun |> Map.put(:starts, starts(fun)) |> Map.put(:library, library_calls(fun))
     idxs = Enum.to_list(0..(tuple_size(fun.code) - 1)//1)
 
     {outs, state} =
@@ -655,6 +730,8 @@ defmodule Argus.Extractors.TermFlow do
       |> Enum.reduce({%{}, MapSet.new()}, fn [key, value], {fields, keys} ->
         sel = selector(key)
         fields = Map.update(fields, sel, val(ctx, value), &MapSet.union(&1, val(ctx, value)))
+        # A key not a literal is a value the map holds: under `@key`.
+        fields = if sel == "*", do: add_field(fields, "@key", val(ctx, key)), else: fields
         keys = if sel == "*", do: keys, else: MapSet.put(keys, sel)
         {fields, keys}
       end)
@@ -740,31 +817,11 @@ defmodule Argus.Extractors.TermFlow do
   # the call is otherwise known to answer, the `remote` source of its
   # site: in the shape the answer takes.
   defp call(ctx, %{mfa: mfa, instrs: instrs} = site, r) do
-    r = plain_call(ctx, site, r)
+    r = plain_call(ctx, site, r) |> library_answer(ctx)
 
-    cond do
-      shape = remote_answer(instrs, ctx.idx, mfa) ->
-        remote_result(ctx, shape, r)
-
-      mfa in @reorders ->
-        reordered(ctx, r)
-
-      true ->
-        r
-    end
-  end
-
-  # A list handed back in another order holds the same elements: of them,
-  # only a pid of another node is carried (`remote_elements/2`), so what
-  # points-to follows is unchanged.
-  defp reordered(ctx, r) do
-    case ctx |> val({:x, 0}) |> elements(ctx, %{}) |> Enum.filter(&match?({:remote, _}, &1)) do
-      [] ->
-        r
-
-      remote ->
-        {list, r} = remote_list(ctx, MapSet.new(remote), r)
-        %{r | writes: add_to_write(r.writes, "x0", list)}
+    case remote_answer(instrs, ctx.idx, mfa) do
+      nil -> r
+      shape -> remote_result(ctx, shape, r)
     end
   end
 
@@ -874,6 +931,316 @@ defmodule Argus.Extractors.TermFlow do
     remote_list(ctx, pair, r)
   end
 
+  # What a call `Library` models answers, written into x0 beside what
+  # the call is otherwise known to answer. A call running one of the
+  # program's funs answers with the fun's answers as this call's `result`
+  # source, whose callee is the fun (`answering/2`); one running a
+  # library function the table models applies that model to what the
+  # function is handed. The funs' parameters are evaluated here too, so
+  # the terms they build (a map's pairs) are committed for emission.
+  defp library_answer(r, ctx) do
+    case Map.fetch(ctx.fun.library, ctx.idx) do
+      {:ok, %{runs: runs, params: params, answer: answer} = call} ->
+        {values, r} = lib_values(ctx, params, run_env(ctx, runs), [1], r)
+
+        r =
+          call.others
+          |> Enum.with_index()
+          |> Enum.reduce(r, fn {other, j}, r ->
+            ctx |> lib_values(other.params, direct(ctx), [2, j], r) |> elem(1)
+          end)
+
+        case run_result(ctx, runs, values, r) do
+          {:ok, result, r} ->
+            {value, r} = lib_value(ctx, answer, %{direct(ctx) | result: result}, [0], r)
+            %{r | writes: add_to_write(r.writes, "x0", value)}
+
+          :unknown ->
+            r
+        end
+
+      {:ok, %{model: model}} ->
+        {value, r} = lib_value(ctx, model, direct(ctx), [0], r)
+        %{r | writes: add_to_write(r.writes, "x0", value)}
+
+      :error ->
+        r
+    end
+  end
+
+  # What the fun a library call runs answers.
+  defp run_result(ctx, runs, _values, r) when is_binary(runs),
+    do: {:ok, MapSet.new([{:result, ctx.idx}]), r}
+
+  defp run_result(ctx, {:library, called}, values, r) do
+    cond do
+      acts_on_elements?(called) ->
+        {:ok, MapSet.new(), r}
+
+      model = plain_model(called) ->
+        args = %{direct(ctx) | arg: fn n -> Enum.at(values, n, MapSet.new()) end, literal: false}
+        {value, r} = lib_value(ctx, model, args, [3], r)
+        {:ok, value, r}
+
+      true ->
+        :unknown
+    end
+  end
+
+  defp run_result(_ctx, _runs, _values, _r), do: :unknown
+
+  # A library function captured as the fun whose effect on each element
+  # is recorded where it is (a Task operation, a signal, a probe), not
+  # what it answers.
+  defp acts_on_elements?(called),
+    do: Map.has_key?(@task_ops, called) or Map.has_key?(@signals, called) or called in @probes
+
+  # The library function's own model, when it is a spec: one running a
+  # fun of its own is not applied to an element.
+  defp plain_model(called) do
+    case Map.fetch(@library, called) do
+      {:ok, {:run, _, _, _, _}} -> nil
+      {:ok, {:fun_or, _, _, _}} -> nil
+      {:ok, model} -> model
+      :error -> nil
+    end
+  end
+
+  # The arguments of the call itself, read from its registers.
+  defp direct(ctx),
+    do: %{arg: &val(ctx, {:x, &1}), result: MapSet.new(), literal: true}
+
+  # The same, and what one of the program's funs the call runs answers: a
+  # fold's accumulator is handed it back.
+  defp run_env(ctx, runs) when is_binary(runs),
+    do: %{direct(ctx) | result: MapSet.new([{:result, ctx.idx}])}
+
+  defp run_env(ctx, _runs), do: direct(ctx)
+
+  defp lib_values(ctx, specs, env, path, r) do
+    {values, r} =
+      specs
+      |> Enum.with_index()
+      |> Enum.reduce({[], r}, fn {spec, i}, {acc, r} ->
+        {value, r} = lib_value(ctx, spec, env, path ++ [i], r)
+        {[value | acc], r}
+      end)
+
+    {Enum.reverse(values), r}
+  end
+
+  # The value a `Library` spec stands for at this call. Terms it builds
+  # are allocated at the call, keyed by the spec's path, so evaluation
+  # and emission name the same ones.
+  defp lib_value(_ctx, {:arg, n}, env, _path, r), do: {env.arg.(n), r}
+  defp lib_value(_ctx, :result, env, _path, r), do: {env.result, r}
+  defp lib_value(_ctx, :none, _env, _path, r), do: {MapSet.new(), r}
+
+  defp lib_value(ctx, {:union, specs}, env, path, r) do
+    {values, r} = lib_values(ctx, specs, env, path, r)
+    {Enum.reduce(values, MapSet.new(), &MapSet.union/2), r}
+  end
+
+  defp lib_value(ctx, {:elements, spec}, env, path, r) do
+    {value, r} = lib_value(ctx, spec, env, path ++ [0], r)
+    elements(ctx, value, path, r)
+  end
+
+  defp lib_value(ctx, {:read, spec, sel}, env, path, r) do
+    {value, r} = lib_value(ctx, spec, env, path ++ [0], r)
+    load(ctx, value, sel, lib_load_id(ctx, path, sel), r)
+  end
+
+  defp lib_value(ctx, {:list, spec}, env, path, r) do
+    {value, r} = lib_value(ctx, spec, env, path ++ [0], r)
+    lib_object(ctx, path, %{shape: "list", fields: %{"[]" => value}, base: MapSet.new()}, r)
+  end
+
+  defp lib_value(ctx, {:cons, head, tail}, env, path, r) do
+    {[head, tail], r} = lib_values(ctx, [head, tail], env, path, r)
+    lib_object(ctx, path, %{shape: "list", fields: %{"[]" => head}, base: tail}, r)
+  end
+
+  defp lib_value(ctx, {:tuple, specs, tag}, env, path, r) do
+    {fields, r} =
+      specs
+      |> Enum.with_index()
+      |> Enum.reduce({%{}, r}, fn
+        {nil, _i}, acc ->
+          acc
+
+        {spec, i}, {fields, r} ->
+          {value, r} = lib_value(ctx, spec, env, path ++ [i], r)
+          {Map.put(fields, "{#{i}}", value), r}
+      end)
+
+    obj = %{shape: "tuple", fields: fields, base: MapSet.new(), tag: tag, arity: length(specs)}
+    lib_object(ctx, path, obj, r)
+  end
+
+  defp lib_value(ctx, {:map, keys, values}, env, path, r) do
+    {[keys, values], r} = lib_values(ctx, [keys, values], env, path, r)
+
+    lib_object(
+      ctx,
+      path,
+      %{shape: "map", fields: %{"@key" => keys, "*" => values}, base: MapSet.new()},
+      r
+    )
+  end
+
+  defp lib_value(ctx, {:put, map, at, value}, env, path, r) do
+    {[map, value], r} = lib_values(ctx, [map, value], env, path, r)
+    sel = if env.literal, do: literal_selector(ctx.fun.instrs, ctx.idx, at), else: "*"
+    key = if sel == "*" and env.literal, do: val(ctx, {:x, at}), else: MapSet.new()
+
+    obj = %{
+      shape: "map",
+      fields: %{sel => value, "@key" => key},
+      base: map,
+      keys: if(sel == "*", do: [], else: [sel])
+    }
+
+    lib_object(ctx, path, obj, r)
+  end
+
+  defp lib_value(ctx, {:field, map, at}, env, path, r) do
+    {map, r} = lib_value(ctx, map, env, path ++ [0], r)
+    sel = if env.literal, do: literal_selector(ctx.fun.instrs, ctx.idx, at), else: "*"
+    load(ctx, map, sel, lib_load_id(ctx, path, sel), r)
+  end
+
+  defp lib_value(ctx, {:index, tuple, at}, env, path, r) do
+    {tuple, r} = lib_value(ctx, tuple, env, path ++ [0], r)
+
+    sel =
+      case env.literal and Resolve.resolve_register(ctx.fun.instrs, ctx.idx, {:x, at}) do
+        {:ok, n} when is_integer(n) and n > 0 -> "{#{n - 1}}"
+        _ -> "**"
+      end
+
+    load(ctx, tuple, sel, lib_load_id(ctx, path, sel), r)
+  end
+
+  defp lib_value(ctx, {:setelement, at, tuple, value}, env, path, r) do
+    {[tuple, value], r} = lib_values(ctx, [tuple, value], env, path, r)
+    {:ok, n} = Resolve.resolve_register(ctx.fun.instrs, ctx.idx, {:x, at})
+    sel = "{#{n - 1}}"
+    obj = %{shape: "tuple", fields: %{sel => value}, base: tuple, keys: [sel]}
+    lib_object(ctx, path, obj, r)
+  end
+
+  defp lib_value(ctx, {:into, elements, at}, env, path, r) do
+    target =
+      if env.literal,
+        do: Resolve.resolve_register(ctx.fun.instrs, ctx.idx, {:x, at}),
+        else: :dynamic
+
+    spec =
+      case target do
+        {:ok, []} ->
+          {:list, elements}
+
+        {:ok, map} when map == %{} ->
+          {:map, {:read, elements, "{0}"}, {:read, elements, "{1}"}}
+
+        _ ->
+          {:union,
+           [
+             {:list, elements},
+             {:map, {:read, elements, "{0}"}, {:read, elements, "{1}"}},
+             {:arg, at}
+           ]}
+      end
+
+    lib_value(ctx, spec, env, path ++ [0], r)
+  end
+
+  defp lib_object(ctx, path, obj, r) do
+    key = {ctx.idx, {:lib, path}}
+
+    obj =
+      obj
+      |> Map.update(:keys, MapSet.new(), &MapSet.new/1)
+      |> Map.put_new(:tag, "")
+      |> Map.put_new(:arity, 0)
+      |> Map.update!(:fields, fn fields ->
+        Map.reject(fields, fn {_sel, v} -> MapSet.size(v) == 0 end)
+      end)
+
+    {obj_token(key), object(r, key, obj)}
+  end
+
+  defp lib_load_id(ctx, path, sel),
+    do: site(ctx.fun, ctx.idx) <> " " <> sel <> " @" <> Enum.map_join(path, ".", &path_step/1)
+
+  # What enumerating `value` yields: a list's elements, a map's
+  # {key, value} pairs — a pair this call allocates for a map built here,
+  # one points-to stands for (`pair <map>`) for a map from elsewhere,
+  # read as the `[]` load of it.
+  defp elements(ctx, value, path, r) do
+    {maps, others} =
+      Enum.split_with(value, fn
+        {:obj, key} -> match?(%{shape: "map"}, Map.get(ctx.state.objs, key))
+        _ -> false
+      end)
+
+    {listed, r} = load(ctx, MapSet.new(others), "[]", lib_load_id(ctx, path, "[]"), r)
+
+    Enum.reduce(maps, {listed, r}, fn {:obj, key}, {acc, r} ->
+      {pairs, r} = map_pairs(ctx, key, path, r, %{})
+      {MapSet.union(acc, pairs), r}
+    end)
+  end
+
+  defp map_pairs(ctx, key, path, r, seen) do
+    obj = Map.fetch!(ctx.state.objs, key)
+    r = %{r | read_objs: [key | r.read_objs]}
+    seen = Map.put(seen, key, true)
+    {keys, fields} = Map.pop(obj.fields, "@key", MapSet.new())
+    values = fields |> Map.values() |> Enum.reduce(MapSet.new(), &MapSet.union/2)
+
+    {pair, r} =
+      lib_object(
+        ctx,
+        path ++ [{:pair, obj_id(ctx.fun, key)}],
+        %{
+          shape: "tuple",
+          fields: %{"{0}" => keys, "{1}" => values},
+          base: MapSet.new(),
+          arity: 2
+        },
+        r
+      )
+
+    # The base's pairs too: a map built here, by its own pairs; anything
+    # else, by the `[]` load points-to resolves.
+    {local, other} =
+      obj.base
+      |> Enum.reject(fn token -> match?({:obj, base} when is_map_key(seen, base), token) end)
+      |> Enum.split_with(fn
+        {:obj, base} -> match?(%{shape: "map"}, Map.get(ctx.state.objs, base))
+        _token -> false
+      end)
+
+    {inherited, r} =
+      Enum.reduce(local, {MapSet.new(), r}, fn {:obj, base}, {acc, r} ->
+        {more, r} = map_pairs(ctx, base, path, r, seen)
+        {MapSet.union(acc, more), r}
+      end)
+
+    {loaded, r} =
+      load(
+        ctx,
+        MapSet.new(other),
+        "[]",
+        lib_load_id(ctx, path ++ [{:base, obj_id(ctx.fun, key)}], "[]"),
+        r
+      )
+
+    {pair |> MapSet.union(inherited) |> MapSet.union(loaded), r}
+  end
+
   defp add_to_write(writes, reg, value) do
     case List.keyfind(writes, reg, 0) do
       nil -> [{reg, value} | writes]
@@ -915,19 +1282,7 @@ defmodule Argus.Extractors.TermFlow do
         ok_tuple(ctx, value, r)
 
       Map.has_key?(@field_writes, mfa) ->
-        {term, key, value} = Map.fetch!(@field_writes, mfa)
-        sel = literal_selector(instrs, idx, key)
-
-        obj = %{
-          shape: "map",
-          fields: %{sel => val(ctx, {:x, value})},
-          base: val(ctx, {:x, term}),
-          keys: if(sel == "*", do: MapSet.new(), else: MapSet.new([sel])),
-          tag: "",
-          arity: 0
-        }
-
-        r |> object(idx, obj) |> write({:x, 0}, obj_token(idx))
+        field_write(ctx, instrs, Map.fetch!(@field_writes, mfa), r)
 
       mfa in @replying_calls ->
         write(r, {:x, 0}, MapSet.new([{:reply, idx}]))
@@ -938,6 +1293,25 @@ defmodule Argus.Extractors.TermFlow do
       true ->
         r
     end
+  end
+
+  # Map.put/3 and :maps.put/3: the map with the field set, its key held
+  # under `@key` when it is not a literal.
+  defp field_write(ctx, instrs, {term, key, value}, r) do
+    sel = literal_selector(instrs, ctx.idx, key)
+    fields = %{sel => val(ctx, {:x, value})}
+    fields = if sel == "*", do: add_field(fields, "@key", val(ctx, {:x, key})), else: fields
+
+    obj = %{
+      shape: "map",
+      fields: fields,
+      base: val(ctx, {:x, term}),
+      keys: if(sel == "*", do: MapSet.new(), else: MapSet.new([sel])),
+      tag: "",
+      arity: 0
+    }
+
+    r |> object(ctx.idx, obj) |> write({:x, 0}, obj_token(ctx.idx))
   end
 
   # What a lookup of the name in x0 returns: the pid registered under it.
@@ -1122,6 +1496,12 @@ defmodule Argus.Extractors.TermFlow do
 
   defp object(r, key, obj), do: %{r | objs: [{key, obj} | r.objs]}
 
+  defp add_field(fields, sel, value) do
+    if MapSet.size(value) == 0,
+      do: fields,
+      else: Map.update(fields, sel, value, &MapSet.union(&1, value))
+  end
+
   defp obj_token(key), do: MapSet.new([{:obj, key}])
 
   defp load_id(ctx, sel), do: site(ctx.fun, ctx.idx) <> " " <> sel
@@ -1234,7 +1614,23 @@ defmodule Argus.Extractors.TermFlow do
   defp emit_other(facts, at, ictx, :return),
     do: sources(facts, at, :value_return, [at.fun.func_id], val(ictx, {:x, 0}))
 
-  defp emit_other(facts, at, ictx, :send), do: send_row(facts, at, ictx)
+  defp emit_other(facts, at, ictx, :send) do
+    facts
+    |> send_row(at, ictx)
+    |> sources(at, :value_escape, [site(at.fun, at.idx), at.fun.func_id], val(ictx, {:x, 1}))
+  end
+
+  # A fun called or a function applied where the call names neither: its
+  # arguments go where no summary says.
+  defp emit_other(facts, at, ictx, {:call_fun, arity}), do: escape_args(facts, at, ictx, arity)
+
+  defp emit_other(facts, at, ictx, {:call_fun2, _tag, arity, _fun}),
+    do: escape_args(facts, at, ictx, arity)
+
+  defp emit_other(facts, at, ictx, {:apply, arity}), do: escape_args(facts, at, ictx, arity)
+
+  defp emit_other(facts, at, ictx, {:apply_last, arity, _dealloc}),
+    do: escape_args(facts, at, ictx, arity)
 
   defp emit_other(
          facts,
@@ -1278,9 +1674,167 @@ defmodule Argus.Extractors.TermFlow do
     |> emit_remote(at, mfa)
     |> emit_probe(at, ictx, mfa)
     |> emit_resolver(at, mfa)
-    |> emit_elements(at, ictx, mfa)
+    |> emit_library(at, ictx)
+    |> emit_task_op(at, ictx, mfa)
+    |> emit_escape(at, ictx, site)
     |> emit_tail(at, ictx, site)
   end
+
+  # ── Funs run on elements, Task operations and escapes ───────────────
+
+  # A library call running funs on elements (`Library`'s `:run`): each
+  # of the program's funs it runs is handed its parameters as `element`
+  # value_args; a Task operation the library's fun is does to what it is
+  # handed. Any other fun, or one not known, leaves the call's arguments
+  # to `emit_escape/4`.
+  defp emit_library(facts, at, ictx) do
+    case Map.fetch(at.fun.library, at.idx) do
+      {:ok, %{runs: runs, params: params, answer: answer} = call} ->
+        answers = if uses_result?(answer), do: "kept", else: "dropped"
+        facts = run_rows(facts, at, ictx, {runs, answers}, params, [1])
+
+        # A further fun's answers are the call's own business (a key fun's
+        # keys): not known to be dropped.
+        call.others
+        |> Enum.with_index()
+        |> Enum.reduce(facts, fn {other, j}, acc ->
+          run_rows(acc, at, ictx, {other.runs, "kept"}, other.params, [2, j])
+        end)
+
+      _ ->
+        facts
+    end
+  end
+
+  defp run_rows(facts, at, ictx, {runs, answers}, params, path) when is_binary(runs) do
+    id = site(at.fun, at.idx)
+    func = at.fun.func_id
+    {values, r} = lib_values(ictx, params, run_env(ictx, runs), path, new_result())
+
+    values
+    |> Enum.with_index()
+    |> Enum.reduce(
+      facts |> add_fact(:element_fun, [id, func, runs, answers]) |> emit_loads(at, r),
+      fn {value, i}, acc ->
+        sources(acc, at, :value_arg, [id, func, runs, to_string(i), "element"], value)
+      end
+    )
+  end
+
+  defp run_rows(facts, at, ictx, {{:library, called}, _answers}, [_ | _] = params, path) do
+    {values, r} = lib_values(ictx, params, direct(ictx), path, new_result())
+
+    cond do
+      Map.has_key?(@task_ops, called) ->
+        facts |> emit_loads(at, r) |> task_op_rows(at, Map.fetch!(@task_ops, called), hd(values))
+
+      # A signal captured as the fun (`&Process.monitor/1`) goes to each
+      # element it is handed.
+      Map.has_key?(@signals, called) ->
+        {signal, {:x, n}} = Map.fetch!(@signals, called)
+        target = Enum.at(values, n, MapSet.new())
+
+        facts
+        |> emit_loads(at, r)
+        |> sources(
+          at,
+          :process_signal_source,
+          [site(at.fun, at.idx), at.fun.func_id, signal],
+          target
+        )
+
+      # A local-only BIF captured as the fun is itself the probe, at this
+      # call, of each element.
+      called in @probes ->
+        value =
+          values
+          |> hd()
+          |> MapSet.filter(&match?({kind, _} when kind in [:remote, :param, :result, :load], &1))
+
+        facts
+        |> emit_loads(at, r)
+        |> sources(
+          at,
+          :process_probe_source,
+          [site(at.fun, at.idx), at.fun.func_id, spell(called)],
+          value
+        )
+
+      true ->
+        facts
+    end
+  end
+
+  defp run_rows(facts, _at, _ictx, _runs, _params, _path), do: facts
+
+  # Whether a `Library` answer spec holds what the fun the call runs answers.
+  defp uses_result?(:result), do: true
+
+  defp uses_result?(spec) when is_tuple(spec),
+    do: spec |> Tuple.to_list() |> Enum.any?(&uses_result?/1)
+
+  defp uses_result?(specs) when is_list(specs), do: Enum.any?(specs, &uses_result?/1)
+  defp uses_result?(_other), do: false
+
+  defp emit_task_op(facts, at, ictx, mfa) do
+    case Map.fetch(@task_ops, mfa) do
+      {:ok, op} -> task_op_rows(facts, at, op, val(ictx, {:x, 0}))
+      :error -> facts
+    end
+  end
+
+  defp task_op_rows(facts, at, op, value),
+    do: sources(facts, at, :task_op_source, [site(at.fun, at.idx), at.fun.func_id, op], value)
+
+  # Every argument of a call outside the program that value flow does not
+  # follow through: the term it is handed may be kept, sent or dropped
+  # where no summary says.
+  defp emit_escape(facts, at, ictx, %{mfa: {_mod, _fun, arity} = mfa} = site) do
+    if project?(site) or followed?(at, ictx, mfa),
+      do: facts,
+      else: escape_args(facts, at, ictx, arity)
+  end
+
+  defp escape_args(facts, at, ictx, arity) do
+    Enum.reduce(0..(arity - 1)//1, facts, fn pos, acc ->
+      sources(
+        acc,
+        at,
+        :value_escape,
+        [site(at.fun, at.idx), at.fun.func_id],
+        val(ictx, {:x, pos})
+      )
+    end)
+  end
+
+  defp followed?(at, ictx, mfa) do
+    cond do
+      Map.has_key?(@task_ops, mfa) -> true
+      Map.has_key?(@field_reads, mfa) or Map.has_key?(@wrapped_field_reads, mfa) -> true
+      Map.has_key?(@field_writes, mfa) or Map.has_key?(@lookups, mfa) -> true
+      Map.has_key?(@dictionary_ops, mfa) -> kept_in_dictionary?(at, ictx, mfa)
+      true -> followed_library?(Map.get(at.fun.library, at.idx))
+    end
+  end
+
+  # A put under a key not known is a value no `dict_put` row keeps.
+  defp kept_in_dictionary?(at, _ictx, mfa) do
+    Map.fetch!(@dictionary_ops, mfa) != "put" or
+      dictionary_key(at.fun.instrs, at.idx, {:x, 0}) != "dynamic"
+  end
+
+  defp followed_library?(%{runs: runs, others: others}),
+    do: Enum.all?([runs | Enum.map(others, & &1.runs)], &followed_fun?/1)
+
+  defp followed_library?(%{model: _model}), do: true
+  defp followed_library?(nil), do: false
+
+  defp followed_fun?(runs) when is_binary(runs), do: true
+
+  defp followed_fun?({:library, called}),
+    do: acts_on_elements?(called) or plain_model(called) != nil
+
+  defp followed_fun?(_runs), do: false
 
   # ── Pids of other nodes ──────────────────────────────────────────────
   #
@@ -1437,77 +1991,6 @@ defmodule Argus.Extractors.TermFlow do
     end
   end
 
-  # A fun run on each element of a list that holds pids of other nodes:
-  # a closure or a function of the program is handed each as its first
-  # parameter; a local-only BIF captured as the fun is itself the probe,
-  # at this call.
-  defp emit_elements(facts, at, ictx, mfa) do
-    with {:ok, {list, fun}} <- Map.fetch(@element_calls, mfa),
-         [_ | _] = remote <- remote_elements(ictx, val(ictx, {:x, list})) do
-      id = site(at.fun, at.idx)
-
-      case Resolve.fun_origin(at.fun.instrs, at.idx, {:x, fun}) do
-        {:closure, {mod, name, arity}} ->
-          element_args(facts, at, Normalize.func_id(mod, name, arity), remote)
-
-        {:external, {mod, name, arity} = called} ->
-          cond do
-            called in @probes ->
-              emit_rows(facts, :process_probe_source, [id, at.fun.func_id, spell(called)], remote)
-
-            Runtime.module?(mod) ->
-              facts
-
-            true ->
-              element_args(facts, at, Normalize.func_id(mod, name, arity), remote)
-          end
-
-        _ ->
-          facts
-      end
-    else
-      _ -> facts
-    end
-  end
-
-  defp element_args(facts, at, callee, remote) do
-    id = site(at.fun, at.idx)
-
-    Enum.reduce(remote, facts, fn {"remote", src}, acc ->
-      add_fact(acc, :value_arg, [id, at.fun.func_id, callee, "0", "element", "remote", src])
-    end)
-  end
-
-  # The `remote` sources among the elements of the lists this function
-  # built or was answered with, as rows.
-  defp remote_elements(ictx, value) do
-    value
-    |> elements(ictx, %{})
-    |> Enum.flat_map(fn
-      {:remote, idx} -> [{"remote", site(ictx.fun, idx)}]
-      _ -> []
-    end)
-    |> Enum.uniq()
-    |> Enum.sort()
-  end
-
-  defp elements(value, ictx, seen) do
-    Enum.flat_map(value, fn
-      {:obj, key} ->
-        case {Map.has_key?(seen, key), Map.get(ictx.state.objs, key)} do
-          {false, %{shape: "list", fields: fields, base: tail}} ->
-            seen = Map.put(seen, key, true)
-            MapSet.to_list(Map.get(fields, "[]", MapSet.new())) ++ elements(tail, ictx, seen)
-
-          _ ->
-            []
-        end
-
-      _ ->
-        []
-    end)
-  end
-
   defp spell({mod, fun, arity}), do: Exception.format_mfa(mod, fun, arity)
 
   # An ETS table is an object too, allocated by the `:ets.new/2` that made
@@ -1641,39 +2124,6 @@ defmodule Argus.Extractors.TermFlow do
       _ -> value
     end
   end
-
-  # An exit signal, a monitor or a link, with the register naming the
-  # process it goes to; and a stop: a gen behaviour's stop of the process,
-  # or a supervisor's terminate_child of the child's pid (a
-  # `Supervisor.terminate_child/2` of a child id names no process, and
-  # resolves to none).
-  @signals %{
-    {Process, :exit, 2} => {"exit", {:x, 0}},
-    {:erlang, :exit, 2} => {"exit", {:x, 0}},
-    {GenServer, :stop, 1} => {"stop", {:x, 0}},
-    {GenServer, :stop, 2} => {"stop", {:x, 0}},
-    {GenServer, :stop, 3} => {"stop", {:x, 0}},
-    {:gen_server, :stop, 1} => {"stop", {:x, 0}},
-    {:gen_server, :stop, 3} => {"stop", {:x, 0}},
-    {:gen_statem, :stop, 1} => {"stop", {:x, 0}},
-    {:gen_statem, :stop, 3} => {"stop", {:x, 0}},
-    {:proc_lib, :stop, 1} => {"stop", {:x, 0}},
-    {:proc_lib, :stop, 3} => {"stop", {:x, 0}},
-    {Agent, :stop, 1} => {"stop", {:x, 0}},
-    {Agent, :stop, 2} => {"stop", {:x, 0}},
-    {Agent, :stop, 3} => {"stop", {:x, 0}},
-    {DynamicSupervisor, :terminate_child, 2} => {"stop", {:x, 1}},
-    {Supervisor, :terminate_child, 2} => {"stop", {:x, 1}},
-    {:supervisor, :terminate_child, 2} => {"stop", {:x, 1}},
-    {Process, :monitor, 1} => {"monitor", {:x, 0}},
-    {Process, :monitor, 2} => {"monitor", {:x, 0}},
-    {:erlang, :monitor, 2} => {"monitor", {:x, 1}},
-    {:erlang, :monitor, 3} => {"monitor", {:x, 1}},
-    {Process, :link, 1} => {"link", {:x, 0}},
-    {:erlang, :link, 1} => {"link", {:x, 0}},
-    {Process, :unlink, 1} => {"unlink", {:x, 0}},
-    {:erlang, :unlink, 1} => {"unlink", {:x, 0}}
-  }
 
   defp emit_signal(facts, at, ictx, mfa) do
     case Map.fetch(@signals, mfa) do
@@ -1834,12 +2284,28 @@ defmodule Argus.Extractors.TermFlow do
   defp emit_results(facts, ctx, value) do
     Enum.reduce(value, facts, fn
       {:result, idx}, acc ->
-        %{mfa: mfa} = Map.fetch!(ctx.fun.sites, idx)
-        add_fact(acc, :value_result, [site(ctx.fun, idx), ctx.fun.func_id, callee(mfa)])
+        add_fact(acc, :value_result, [
+          site(ctx.fun, idx),
+          ctx.fun.func_id,
+          answering(ctx.fun, idx)
+        ])
 
       _token, acc ->
         acc
     end)
+  end
+
+  # The function whose answer a call's result is: the callee, or the fun
+  # of the program a library call runs on a list's elements.
+  defp answering(fun, idx) do
+    case Map.get(fun.library, idx) do
+      %{runs: runs} when is_binary(runs) ->
+        runs
+
+      _ ->
+        %{mfa: mfa} = Map.fetch!(fun.sites, idx)
+        callee(mfa)
+    end
   end
 
   defp convert(ctx, value) do
@@ -1910,13 +2376,19 @@ defmodule Argus.Extractors.TermFlow do
 
   defp emit_row(facts, :table_use, row), do: add_fact(facts, :table_use, row)
   defp emit_row(facts, :dict_put, row), do: add_fact(facts, :dict_put, row)
+  defp emit_row(facts, :task_op_source, row), do: add_fact(facts, :task_op_source, row)
+  defp emit_row(facts, :value_escape, row), do: add_fact(facts, :value_escape, row)
 
   # ── Names ────────────────────────────────────────────────────────────
 
   defp site(fun, idx), do: InstrId.mint(fun.func_id, idx)
 
   # A term a call builds inside its result has a second name at the site.
-  defp obj_id(fun, {idx, n}), do: site(fun, idx) <> "/" <> Integer.to_string(n)
+  defp obj_id(fun, {idx, n}) when is_integer(n), do: site(fun, idx) <> "/" <> Integer.to_string(n)
+
+  defp obj_id(fun, {idx, {:lib, path}}),
+    do: site(fun, idx) <> "/" <> Enum.map_join(path, ".", &path_step/1)
+
   defp obj_id(fun, idx), do: site(fun, idx)
 
   # A local call, or a remote call into a module outside the runtime
@@ -1931,6 +2403,9 @@ defmodule Argus.Extractors.TermFlow do
   end
 
   defp callee({mod, fun, arity}), do: Normalize.func_id(mod, fun, arity)
+
+  defp path_step({kind, id}), do: "#{kind}(#{id})"
+  defp path_step(n), do: to_string(n)
 
   defp table(fun, idx), do: "table " <> site(fun, idx)
 end
