@@ -21,6 +21,8 @@ defmodule Argus.Analyses.MailboxSocketTest do
     [F.LogsTheRest],
     [F.HandsTheRestOn],
     [F.HandsOff],
+    [F.HandsOffInHelper],
+    [F.HandsOffFromClosures],
     [F.WaitsForIt],
     [F.InetTcp],
     [F.InetUdp],
@@ -103,6 +105,8 @@ defmodule Argus.Analyses.MailboxSocketTest do
 
     test "a socket handed to another process sends its messages there", ctx do
       assert closes(ctx, [F.HandsOff]) == []
+      assert closes(ctx, [F.HandsOffInHelper]) == []
+      assert closes(ctx, [F.HandsOffFromClosures]) == []
     end
 
     test "a receive in the callback that takes the close is quiet", ctx do

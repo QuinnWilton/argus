@@ -299,6 +299,56 @@ defmodule Argus.Test.Fixtures.Sockets do
     def handle_info(:tick, state), do: {:noreply, state}
   end
 
+  defmodule HandsOffInHelper do
+    @moduledoc "Connects active, then a helper hands the socket to a worker. Quiet."
+    use GenServer
+
+    def start_link(port), do: GenServer.start_link(__MODULE__, port)
+
+    @impl true
+    def init(port), do: {:ok, %{port: port}}
+
+    @impl true
+    def handle_call({:connect, worker}, _from, state) do
+      {:ok, socket} = :gen_tcp.connect(~c"localhost", state.port, [:binary, active: true])
+      give(socket, worker)
+      {:reply, :ok, state}
+    end
+
+    @impl true
+    def handle_info(:tick, state), do: {:noreply, state}
+
+    defp give(socket, worker), do: :ok = :gen_tcp.controlling_process(socket, worker)
+  end
+
+  defmodule HandsOffFromClosures do
+    @moduledoc """
+    Connects active sockets in an Enum.map closure; the callback then hands
+    each to a worker. Quiet.
+    """
+    use GenServer
+
+    def start_link(port), do: GenServer.start_link(__MODULE__, port)
+
+    @impl true
+    def init(port), do: {:ok, %{port: port}}
+
+    @impl true
+    def handle_call({:connect, workers}, _from, state) do
+      sockets =
+        Enum.map(workers, fn _ ->
+          {:ok, socket} = :gen_tcp.connect(~c"localhost", state.port, [:binary, active: true])
+          socket
+        end)
+
+      Enum.zip_with(sockets, workers, &:gen_tcp.controlling_process/2)
+      {:reply, :ok, state}
+    end
+
+    @impl true
+    def handle_info(:tick, state), do: {:noreply, state}
+  end
+
   defmodule WaitsForIt do
     @moduledoc "Arms one packet and waits for it, close included, in the callback: quiet."
     use GenServer

@@ -1712,10 +1712,19 @@ info_message(m, f, id, msg, "node") :- node_events(id, f, msg), runs_in_server(m
 port_opened(id, f) :- remote_call(id, f, ":erlang", "open_port", 2).
 port_opened(id, f) :- remote_call(id, f, "Port", "open", 2).
 
+// `func`, a function it calls in its process, or the function a closure of it is
+// written in hands a port to another process.
 .decl hands_port_off(func: symbol)
 
-hands_port_off(f) :- remote_call(_, f, ":erlang", "port_connect", 2).
-hands_port_off(f) :- remote_call(_, f, "Port", "connect", 2).
+hands_port_off(f) :- port_handoff.reaches(f).
+hands_port_off(f) :- enclosing_function(f, owner), port_handoff.reaches(owner).
+
+.init port_handoff = SameProcessReachSet
+
+port_handoff.seed(f) :- remote_call(_, f, ":erlang", "port_connect", 2).
+port_handoff.seed(f) :- remote_call(_, f, "Port", "connect", 2).
+port_handoff.seed(f) :- fun_handed(_, f, ":erlang:port_connect/2", _).
+port_handoff.seed(f) :- fun_handed(_, f, "Port:connect/2", _).
 
 info_message(m, f, id, "{port, {:data, …}}", "port") :-
   port_opened(id, f),
@@ -1771,11 +1780,20 @@ socket_activation(c, id, t) :-
 
 socket_opened(f, t) :- socket_active(_, f, t, _, _), (t = "tcp" ; t = "ssl").
 
-// A function that hands a socket to another process.
+// `func`, a function it calls in its process (a helper), or the function a closure of
+// it is written in hands a socket to another process.
 .decl hands_socket_off(func: symbol)
 
-hands_socket_off(f) :- remote_call(_, f, ":gen_tcp", "controlling_process", 2).
-hands_socket_off(f) :- remote_call(_, f, ":ssl", "controlling_process", 2).
+hands_socket_off(f) :- socket_handoff.reaches(f).
+hands_socket_off(f) :- enclosing_function(f, owner), socket_handoff.reaches(owner).
+
+.init socket_handoff = SameProcessReachSet
+
+socket_handoff.seed(f) :- remote_call(_, f, ":gen_tcp", "controlling_process", 2).
+socket_handoff.seed(f) :- remote_call(_, f, ":ssl", "controlling_process", 2).
+// Captured and handed to a call that runs it (`Enum.zip_with(sockets, pids, &...)`).
+socket_handoff.seed(f) :- fun_handed(_, f, ":gen_tcp:controlling_process/2", _).
+socket_handoff.seed(f) :- fun_handed(_, f, ":ssl:controlling_process/2", _).
 
 // The kinds of socket a server's process connects.
 .decl server_holds(server: symbol, transport: symbol)

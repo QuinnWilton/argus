@@ -66,6 +66,11 @@ which a change appeared; older names and APIs may have changed since then.
   waiting on another.
 - "Task.async in library code" is noted only when the program collects that
   task, not any task.
+- A socket handed to another process by a helper (`defp give(sock, pid), do:
+  :gen_tcp.controlling_process(sock, pid)`), from around a closure, or through a
+  captured `&:gen_tcp.controlling_process/2`, now counts as handed off: its
+  close messages are no longer reported as unhandled. Ports handed off with
+  `port_connect` likewise.
 - Processes spawned in an `Enum.map` callback and monitored afterwards, as in
   `Enum.each(pids, &Process.monitor/1)`, are no longer reported as "Unlinked
   process spawned".
