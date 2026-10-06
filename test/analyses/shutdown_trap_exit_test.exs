@@ -66,6 +66,35 @@ defmodule Argus.Analyses.ShutdownTrapExitTest do
     end
   end
 
+  describe "a proc_lib start that enters the server loop" do
+    test "traps for the server it becomes" do
+      skip_without_souffle()
+
+      results =
+        analyze([
+          Argus.Test.Fixtures.CleansUpEnteringLoop,
+          Argus.Test.Fixtures.LeaksEnteringLoop,
+          Argus.Test.Fixtures.LeaksBesideAnotherLoop,
+          Argus.Test.Fixtures.OtherLoop
+        ])
+
+      never_runs =
+        for [mod, _b, "never_runs" | _] <- Map.get(results, "cleanup_defect", []),
+            uniq: true,
+            do: mod
+
+      # init/1 runs in the process proc_lib starts, and enter_loop makes
+      # that process the server: its trap is the server's. A trap before
+      # entering another module's loop is that server's, not this one's.
+      assert never_runs == [
+               "Argus.Test.Fixtures.LeaksBesideAnotherLoop",
+               "Argus.Test.Fixtures.LeaksEnteringLoop"
+             ]
+
+      assert exit_rows(results, "no_exit_clause") == []
+    end
+  end
+
   describe "a trap the process clears, or sets on one path" do
     test "a trap init/1 clears before it returns leaves the server not trapping" do
       skip_without_souffle()

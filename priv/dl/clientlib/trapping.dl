@@ -174,13 +174,33 @@ trap_on_process_stack(func) :-
 process_trap_reach.seed(func, func) :- trap_exit(_, func, _), !traps_elsewhere(func).
 
 // The trap_exit call is in a closure or fun handed to a process start
-// that the module never calls itself (runs_elsewhere).
+// that the module never calls itself (runs_elsewhere), and that process
+// does not become the module's own server.
 .decl traps_elsewhere(func: symbol)
 
 traps_elsewhere(func) :-
   trap_exit(_, func, _),
   runs_elsewhere(_, func),
-  !call_instr(_, func, _).
+  !call_instr(_, func, _),
+  !enters_own_loop(func).
+
+// `func`'s own stack enters the gen_server or gen_statem loop of
+// `func`'s module (`proc_lib:spawn_link(?MODULE, init, [...])` whose
+// init/1 calls `gen_server:enter_loop(?MODULE, ...)`, as ranch protocols
+// do): the process proc_lib starts becomes that module's server, and a
+// trap it sets is the server's. A loop of another module, or one whose
+// module is not a literal, leaves the trap elsewhere.
+.decl enters_own_loop(func: symbol)
+
+enters_own_loop(f) :-
+  function_def(f, mod, _, _, _),
+  enters_loop_of.reaches(f, mod).
+
+.init enters_loop_of = SameProcessReach
+
+enters_loop_of.seed(g, mod) :-
+  call_arg(g, callee, 0, mod),
+  match(":gen_(server|statem):enter_loop/[0-9]+", callee).
 
 // A trapping module's handle_info/2 has no clause accepting EXIT messages. `witness`
 // identifies the function setting trap_exit. Exclude gen_statem, which delivers these
