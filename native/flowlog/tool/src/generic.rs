@@ -49,7 +49,9 @@ use flowlog_runtime::differential_dataflow::lattice::Lattice;
 use flowlog_runtime::differential_dataflow::operators::arrange::Arranged;
 use flowlog_runtime::differential_dataflow::operators::arrange::TraceAgent;
 use flowlog_runtime::differential_dataflow::operators::iterate::Variable;
-use flowlog_runtime::differential_dataflow::trace::implementations::ValSpine;
+use flowlog_runtime::differential_dataflow::trace::implementations::{
+    KeyBuilder, KeySpine, ValSpine,
+};
 use flowlog_runtime::differential_dataflow::trace::wrappers::enter::TraceEnter;
 use flowlog_runtime::intern;
 use flowlog_runtime::lasso::Key;
@@ -760,13 +762,15 @@ struct Recursion {
 }
 
 impl Recursion {
-    /// The collections the loop's body arranges to join on.
+    /// The collections the loop's body arranges by key: to join on, and
+    /// the rows an antijoin keeps.
     fn joined(&self) -> HashSet<u64> {
         self.body
             .iter()
             .flat_map(|step| match step {
                 Step::Join { left, right, .. } => vec![*left, *right],
-                Step::Map { .. } | Step::Antijoin { .. } => vec![],
+                Step::Antijoin { right, .. } => vec![*right],
+                Step::Map { .. } => vec![],
             })
             .collect()
     }
@@ -1377,16 +1381,39 @@ fn build_step<'scope, T: Time>(env: &mut Env<'scope, T>, step: &'static Step) {
         } => {
             // The keys a left row holds, each once: an antijoin subtracts
             // the semijoin, which a key held twice would subtract twice.
-            let keys = env.get(*left).map(|(k, _)| k).distinct_core::<Diff>();
-            let kept = env.get(*right).antijoin(keys).map(move |(k, v)| {
-                let ctx = Ctx {
-                    key: &k,
-                    value: &v,
-                    left: &[],
-                    right: &[],
-                };
-                (project(key, &ctx), project(value, &ctx))
-            });
+            // The semijoin reads the distinct keys' own arrangement, and
+            // the arrangement of `right` the scope's joins share: the
+            // differential antijoin arranges both again, a copy of every
+            // row it keeps (a tenth to a quarter of a program's rows).
+            let keys = env
+                .get(*left)
+                .map(|(k, _)| k)
+                .arrange_by_self()
+                .reduce_abelian::<_, KeyBuilder<Row, T, Diff>, KeySpine<Row, T, Diff>, _, _>(
+                    "Distinct",
+                    |_key, _input, output| output.push(((), 1)),
+                    |rows, key, updates| {
+                        rows.clear();
+                        rows.extend(updates.drain(..).map(|(v, t, r)| ((key.clone(), v), t, r)));
+                    },
+                );
+            let held = |k: &Row, v: &Row, _: &()| Some((k.clone(), v.clone()));
+            let semijoin = match env.arrangement(*right) {
+                Arr::Own(arranged) => arranged.join_core(keys, held),
+                Arr::Entered(arranged) => arranged.join_core(keys, held),
+            };
+            let kept = env
+                .get(*right)
+                .concat(semijoin.negate())
+                .map(move |(k, v)| {
+                    let ctx = Ctx {
+                        key: &k,
+                        value: &v,
+                        left: &[],
+                        right: &[],
+                    };
+                    (project(key, &ctx), project(value, &ctx))
+                });
             env.bind(*output, kept);
         }
     }
