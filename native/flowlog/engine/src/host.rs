@@ -143,35 +143,131 @@ impl<'a> Fields<'a> {
     }
 }
 
-/// One input's change in a commit: its index, the lines it gained, and
-/// the lines it lost.
-/// What an engine holds of an input: its distinct lines, counted and
-/// summed by hash, which any order of the same lines gives. The engine
-/// keeps no line itself: a commit that changes the input names the file
-/// it was last committed from, checked against this, and the engine
-/// diffs the two.
+/// What an engine holds of an input: the lines of the file it was last
+/// committed from, counted and summed by hash, which any order of the
+/// same lines gives. The engine keeps no line itself: a commit that
+/// changes the input names that file, checked against this, and the
+/// engine diffs the two.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct Held {
     lines: usize,
     sum: u128,
 }
 
+fn line_hash(line: &[u8]) -> u128 {
+    use std::hash::{BuildHasher, Hasher};
+    let mut low = rustc_hash::FxBuildHasher.build_hasher();
+    low.write(line);
+    let mut high = rustc_hash::FxBuildHasher.build_hasher();
+    high.write_u64(0x9e37_79b9_7f4a_7c15);
+    high.write(line);
+    u128::from(high.finish()) << 64 | u128::from(low.finish())
+}
+
 impl Held {
-    fn of(lines: &FxHashSet<&[u8]>) -> Self {
-        use std::hash::{BuildHasher, Hasher};
-        let mut sum = 0u128;
-        for line in lines {
-            let mut low = rustc_hash::FxBuildHasher.build_hasher();
-            low.write(line);
-            let mut high = rustc_hash::FxBuildHasher.build_hasher();
-            high.write_u64(0x9e37_79b9_7f4a_7c15);
-            high.write(line);
-            sum = sum.wrapping_add(u128::from(high.finish()) << 64 | u128::from(low.finish()));
+    fn of(bytes: &[u8]) -> Self {
+        let mut held = Held::default();
+        for line in lines(bytes) {
+            held.add(line);
         }
-        Held {
-            lines: lines.len(),
-            sum,
+        held
+    }
+
+    fn add(&mut self, line: &[u8]) {
+        self.lines += 1;
+        self.sum = self.sum.wrapping_add(line_hash(line));
+    }
+
+    fn remove(&mut self, line: &[u8]) {
+        self.lines -= 1;
+        self.sum = self.sum.wrapping_sub(line_hash(line));
+    }
+}
+
+/// How an input's file moved: what the engine held of the previous one,
+/// what it holds of the fresh one, and the distinct lines the fresh one
+/// gained and lost.
+struct Diff<'a> {
+    previous: Held,
+    fresh: Held,
+    added: Vec<&'a [u8]>,
+    removed: Vec<&'a [u8]>,
+}
+
+/// The lines `fresh` gains and loses against `previous`, each once.
+///
+/// argus writes a relation's file module by module, in a stable order, so
+/// an edit moves one stretch of it: the lines both files begin and end
+/// with are the same, and only the stretch between is compared, as sets.
+/// A line that stretch gains or loses but that the files share elsewhere
+/// is neither; one pass over the previous file finds those, and hashes
+/// it to check it against what the engine holds.
+fn diff<'a>(previous: &'a [u8], fresh: &'a [u8]) -> Diff<'a> {
+    let boundary = |bytes: &[u8], at: usize| at == 0 || bytes[at - 1] == b'\n';
+    let mut head = previous
+        .iter()
+        .zip(fresh)
+        .take_while(|(a, b)| a == b)
+        .count();
+    if head == previous.len() && head == fresh.len() {
+        let held = Held::of(previous);
+        return Diff {
+            previous: held,
+            fresh: held,
+            added: Vec::new(),
+            removed: Vec::new(),
+        };
+    }
+    while !boundary(previous, head) {
+        head -= 1;
+    }
+    let room = (previous.len() - head).min(fresh.len() - head);
+    let mut tail = previous[head..]
+        .iter()
+        .rev()
+        .zip(fresh[head..].iter().rev())
+        .take(room)
+        .take_while(|(a, b)| a == b)
+        .count();
+    while tail > 0
+        && !(boundary(previous, previous.len() - tail) && boundary(fresh, fresh.len() - tail))
+    {
+        tail -= 1;
+    }
+    let (old_middle, new_middle) = (
+        &previous[head..previous.len() - tail],
+        &fresh[head..fresh.len() - tail],
+    );
+    let old_lines: FxHashSet<&[u8]> = lines(old_middle).into_iter().collect();
+    let new_lines: FxHashSet<&[u8]> = lines(new_middle).into_iter().collect();
+    let mut added: FxHashSet<&[u8]> = new_lines.difference(&old_lines).copied().collect();
+    let mut removed: FxHashSet<&[u8]> = old_lines.difference(&new_lines).copied().collect();
+
+    // The previous file whole, hashed; its shared lines, against the
+    // stretch's changes.
+    let mut held = Held::default();
+    let mut at = 0;
+    for line in lines(previous) {
+        held.add(line);
+        let shared = at < head || at >= previous.len() - tail;
+        if shared && (!added.is_empty() || !removed.is_empty()) {
+            added.remove(line);
+            removed.remove(line);
         }
+        at += line.len() + 1;
+    }
+    let mut fresh_held = held;
+    for line in lines(old_middle) {
+        fresh_held.remove(line);
+    }
+    for line in lines(new_middle) {
+        fresh_held.add(line);
+    }
+    Diff {
+        previous: held,
+        fresh: fresh_held,
+        added: added.into_iter().collect(),
+        removed: removed.into_iter().collect(),
     }
 }
 
@@ -540,42 +636,47 @@ impl<D: Dataflow> Engine<D> {
         // What each replaced input holds afterwards, recorded only once the
         // commit succeeded.
         let mut holds: Vec<(usize, Held)> = Vec::with_capacity(contents.len());
-        // Each input's lines as the engine holds them: its `previous` file's,
-        // checked against what the engine holds, or none.
-        let mut held_lines: Vec<FxHashSet<&[u8]>> = Vec::with_capacity(contents.len());
-        for (index, _, previous) in &contents {
-            let held: FxHashSet<&[u8]> = previous
-                .as_deref()
-                .map(|previous| lines(previous).into_iter().collect())
-                .unwrap_or_default();
-            if previous.is_some() && Some(Held::of(&held)) != self.inputs[*index] {
-                return Err((
-                    "stale_previous",
-                    format!(
-                        "input `{}`: the `previous` file is not what the engine holds",
-                        self.dataflow.inputs()[*index].name
-                    ),
-                ));
-            }
-            held_lines.push(held);
+        // Each input's change: against its `previous` file, checked against
+        // what the engine holds, or every line of a first load.
+        let mut diffs: Vec<Diff<'_>> = Vec::with_capacity(contents.len());
+        for (index, bytes, previous) in &contents {
+            let diff = match previous {
+                Some(previous) => {
+                    let diff = diff(previous, bytes);
+                    if Some(diff.previous) != self.inputs[*index] {
+                        return Err((
+                            "stale_previous",
+                            format!(
+                                "input `{}`: the `previous` file is not what the engine holds",
+                                self.dataflow.inputs()[*index].name
+                            ),
+                        ));
+                    }
+                    diff
+                }
+                None => {
+                    let fresh: FxHashSet<&[u8]> = lines(bytes).into_iter().collect();
+                    Diff {
+                        previous: Held::default(),
+                        fresh: Held::of(bytes),
+                        added: fresh.into_iter().collect(),
+                        removed: Vec::new(),
+                    }
+                }
+            };
+            diffs.push(diff);
         }
         self.dataflow.begin();
-        for ((index, bytes, _), held) in contents.iter().zip(&held_lines) {
-            let fresh: FxHashSet<&[u8]> = lines(bytes).into_iter().collect();
-            let added: Vec<&[u8]> = fresh
-                .iter()
-                .copied()
-                .filter(|line| !held.contains(*line))
-                .collect();
-            // Every fresh line held, and as many lines as held: the same set.
-            let removed: Vec<&[u8]> = if added.is_empty() && fresh.len() == held.len() {
-                Vec::new()
-            } else {
-                held.iter()
-                    .copied()
-                    .filter(|line| !fresh.contains(line))
-                    .collect()
-            };
+        for (
+            (index, _, _),
+            Diff {
+                fresh,
+                added,
+                removed,
+                ..
+            },
+        ) in contents.iter().zip(diffs)
+        {
             let stage = |dataflow: &mut D, lines: &[&[u8]], insert| {
                 if lines.is_empty() {
                     return Ok(());
@@ -591,9 +692,9 @@ impl<D: Dataflow> Engine<D> {
             staged |= !added.is_empty() || !removed.is_empty();
             counts.insert(
                 self.dataflow.inputs()[*index].name.to_string(),
-                json!({"rows": fresh.len(), "added": added.len(), "removed": removed.len()}),
+                json!({"rows": fresh.lines, "added": added.len(), "removed": removed.len()}),
             );
-            holds.push((*index, Held::of(&fresh)));
+            holds.push((*index, fresh));
         }
 
         let staged_done = Instant::now();
@@ -671,4 +772,81 @@ fn write_output(path: &Path, rows: &FxHashSet<String>) -> std::io::Result<()> {
         file.write_all(b"\n")?;
     }
     file.flush()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A small deterministic generator: xorshift.
+    struct Rng(u64);
+
+    impl Rng {
+        fn next(&mut self, bound: u64) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0 % bound
+        }
+    }
+
+    fn file(lines: &[String], trailing: bool) -> Vec<u8> {
+        let mut bytes = lines.join("\n").into_bytes();
+        if trailing && !lines.is_empty() {
+            bytes.push(b'\n');
+        }
+        bytes
+    }
+
+    #[test]
+    fn a_diff_is_the_two_files_difference_as_sets() {
+        let mut rng = Rng(0x2545_f491_4f6c_dd1d);
+        for _ in 0..4000 {
+            // Few distinct lines, so that duplicates and lines shared with
+            // the unchanged stretches are common.
+            let line = |rng: &mut Rng| format!("r{}\t{}", rng.next(6), rng.next(3));
+            let previous: Vec<String> = (0..rng.next(12)).map(|_| line(&mut rng)).collect();
+            let mut fresh = previous.clone();
+            for _ in 0..rng.next(4) {
+                match rng.next(3) {
+                    0 if !fresh.is_empty() => {
+                        let at = rng.next(fresh.len() as u64) as usize;
+                        fresh.remove(at);
+                    }
+                    1 => {
+                        let at = rng.next(fresh.len() as u64 + 1) as usize;
+                        fresh.insert(at, line(&mut rng));
+                    }
+                    _ if !fresh.is_empty() => {
+                        let at = rng.next(fresh.len() as u64) as usize;
+                        fresh[at] = line(&mut rng);
+                    }
+                    _ => {}
+                }
+            }
+            let (a, b) = (rng.next(2) == 0, rng.next(2) == 0);
+            let (old_bytes, new_bytes) = (file(&previous, a), file(&fresh, b));
+            let d = diff(&old_bytes, &new_bytes);
+
+            let old_set: FxHashSet<&[u8]> = lines(&old_bytes).into_iter().collect();
+            let new_set: FxHashSet<&[u8]> = lines(&new_bytes).into_iter().collect();
+            let added: FxHashSet<&[u8]> = d.added.iter().copied().collect();
+            let removed: FxHashSet<&[u8]> = d.removed.iter().copied().collect();
+            let want_added: FxHashSet<&[u8]> = new_set.difference(&old_set).copied().collect();
+            let want_removed: FxHashSet<&[u8]> = old_set.difference(&new_set).copied().collect();
+            assert_eq!(added, want_added, "{previous:?} -> {fresh:?}");
+            assert_eq!(removed, want_removed, "{previous:?} -> {fresh:?}");
+            assert_eq!(added.len(), d.added.len(), "each line added once");
+            assert_eq!(removed.len(), d.removed.len(), "each line removed once");
+            assert_eq!(d.previous, Held::of(&old_bytes));
+            assert_eq!(d.fresh, Held::of(&new_bytes));
+        }
+    }
+
+    #[test]
+    fn what_an_engine_holds_does_not_depend_on_the_lines_order() {
+        assert_eq!(Held::of(b"a\nb\nc\n"), Held::of(b"c\na\nb"));
+        assert_ne!(Held::of(b"a\nb\n"), Held::of(b"a\nc\n"));
+        assert_ne!(Held::of(b"a\n"), Held::of(b"a\na\n"));
+    }
 }
