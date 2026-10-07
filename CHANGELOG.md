@@ -76,6 +76,12 @@ which a change appeared; older names and APIs may have changed since then.
   every one until the run ends (`Argus.FlowLog.Pool.keep/2`): on a
   544-module project its engines peak at 400 to 590 MB together instead of
   1.2 GB. A session kept open (an editor's) keeps them.
+- `mix argus.flowlog solve PROGRAM FACTS_DIR --profile` (and
+  `Argus.FlowLog.run/3`'s `:profile`) reports where a solve's memory and
+  time went: the arrangements holding the most updates and the operators
+  that ran the longest, each named by its relation or rule expression
+  (`σ(call_edge by 0)`, `(σ(a by 1) ⋈ σ(b by 0))`). It reports a solve a
+  `.limitsize` stopped too, as far as it got.
 - Engines report their starts and commits as telemetry
   (`[:argus, :flowlog, :engine, :start]` and `:commit`, with durations).
 - `ARGUS_FLOWLOG_BUILD_PROFILE=quick` builds the engine of a program argus

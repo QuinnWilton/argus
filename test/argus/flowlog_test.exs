@@ -198,6 +198,34 @@ defmodule Argus.FlowLogTest do
       assert read!(out, "source.facts") == [["a"], ["b"]]
     end
 
+    test "a profiled solve names what its arrangements hold and its operators took",
+         %{program: program, tmp_dir: tmp} do
+      facts =
+        facts!(Path.join(tmp, "facts"),
+          edge: [["a", "b"], ["b", "c"], ["c", "d"]],
+          blocked: [["d"]],
+          weight: [["a", "1"]]
+        )
+
+      report = Path.join(tmp, "profile.json")
+      assert {:ok, %{"reach" => reach}} = FlowLog.run(facts, program, profile: report)
+      assert length(reach) == 6
+
+      profile = report |> File.read!() |> :json.decode()
+      names = Enum.map(profile["arrangements"], & &1["name"])
+
+      # The relation the loop derives, its derivations, and an arrangement
+      # of the input it joins, keyed by its first column.
+      assert "reach" in names
+      assert "Derivations of reach" in names
+      assert Enum.any?(names, &String.starts_with?(&1, "Arrange σ(edge by 0)"))
+      # Six reach rows, each derived once or more.
+      assert %{"updates" => 6} = Enum.find(profile["arrangements"], &(&1["name"] == "reach"))
+      assert profile["arranged"] == Enum.sum(Enum.map(profile["arrangements"], & &1["updates"]))
+      assert [%{"name" => _, "seconds" => seconds} | _] = profile["operators"]
+      assert is_float(seconds)
+    end
+
     test "a relation held to a number of rows stops the solve as it grows past them",
          %{tmp_dir: tmp} do
       limited = Path.join(tmp, "limited.dl")

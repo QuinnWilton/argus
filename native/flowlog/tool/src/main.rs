@@ -4,7 +4,7 @@
 //! ```text
 //! argus-flowlog-tool inspect PROGRAM
 //! argus-flowlog-tool generate PROGRAM SRC_DIR DIGEST
-//! argus-flowlog-tool serve --program PROGRAM --digest DIGEST [--plan-cache FILE] [--workers N] [--log PATH]
+//! argus-flowlog-tool serve --program PROGRAM --digest DIGEST [--plan-cache FILE] [--profile FILE] [--workers N] [--log PATH]
 //! ```
 //!
 //! `inspect` and `generate` print the program's manifest as one JSON
@@ -41,6 +41,7 @@ use serde_json::json;
 mod generic;
 #[path = "../../engine/src/host.rs"]
 mod host;
+mod profile;
 
 use mimalloc::MiMalloc;
 
@@ -60,7 +61,7 @@ fn main() -> ExitCode {
                     .ok_or_else(|| format!("serve needs {name}"))
             };
             if let Some((flag, _)) = extra.iter().find(|(flag, _)| {
-                !["--program", "--digest", "--plan-cache"].contains(&flag.as_str())
+                !["--program", "--digest", "--plan-cache", "--profile"].contains(&flag.as_str())
             }) {
                 return Err(format!("serve takes no `{flag}`"));
             }
@@ -70,6 +71,7 @@ fn main() -> ExitCode {
                 flag("--digest")?,
                 workers,
                 cache.as_deref(),
+                flag("--profile").ok().map(PathBuf::from),
             )
         });
     }
@@ -90,7 +92,7 @@ fn main() -> ExitCode {
             eprintln!(
                 "usage: argus-flowlog-tool inspect PROGRAM\n       \
                  argus-flowlog-tool generate PROGRAM SRC_DIR DIGEST\n       \
-                 argus-flowlog-tool serve --program PROGRAM --digest DIGEST [--plan-cache FILE] [--workers N] [--log PATH]"
+                 argus-flowlog-tool serve --program PROGRAM --digest DIGEST [--plan-cache FILE] [--profile FILE] [--workers N] [--log PATH]"
             );
             ExitCode::from(2)
         }

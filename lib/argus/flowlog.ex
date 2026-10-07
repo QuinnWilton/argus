@@ -364,10 +364,18 @@ defmodule Argus.FlowLog do
     * `:timeout` — milliseconds the solve may run (default five minutes);
     * `:output_dir` — a directory to write the outputs into as well, each
       under the file name the program gives it;
-    * `:workers` — dataflow worker threads (default `default_workers/0`).
+    * `:workers` — dataflow worker threads (default `default_workers/0`);
+    * `:profile` — a file to write the solve's profile to, as JSON: what
+      each arrangement holds (`"arrangements"`, each `"name"` and its
+      `"updates"`) and how long each operator ran (`"operators"`, each
+      `"name"` and its `"seconds"`), each named by the relation or rule
+      expression it is of. The program runs in the generic engine, the
+      one that measures.
   """
   @spec run(Path.t(), Path.t(), keyword()) :: {:ok, result()} | {:error, term()}
   def run(facts_dir, rules_path, opts \\ []) do
+    opts = if opts[:profile], do: Keyword.put(opts, :engine, :generic), else: opts
+
     with {:ok, built} <- engine(rules_path, opts),
          {:ok, inputs} <- facts_inputs(facts_dir, built.manifest) do
       out = scratch_dir()
@@ -393,9 +401,11 @@ defmodule Argus.FlowLog do
   end
 
   defp start(built, opts) do
+    profile = if path = opts[:profile], do: ["--profile", Path.expand(path)], else: []
+
     Engine.start_link(
       executable: built.executable,
-      args: built.args,
+      args: built.args ++ profile,
       digest: built.digest,
       workers: Keyword.get(opts, :workers, default_workers()),
       log: Toolchain.run_log(built.toolchain, built.digest)

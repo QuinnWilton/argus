@@ -62,7 +62,11 @@ usual operators and functors, with these differences.
   the generic engine, which counts rows as it derives them.
 
 `mix argus.flowlog solve PROGRAM FACTS_DIR` runs a program over a directory of
-`<relation>.facts` files and reports a compile error with the rule it is in.
+`<relation>.facts` files and reports a compile error with the rule it is in. With
+`--profile` it also prints the arrangements holding the most updates, each
+named by its rule expression: a join holding millions of updates is the rule
+to restate, for instance by negating before a join that brings in columns the
+negation does not read.
 
 ## Names and comments
 

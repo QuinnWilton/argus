@@ -12,7 +12,7 @@ defmodule Mix.Tasks.Argus.Flowlog do
       mix argus.flowlog build            # the toolchain and every built-in engine
       mix argus.flowlog build PROGRAM... # the engines for these .dl programs
       mix argus.flowlog status           # Rust, the toolchain, and what is built
-      mix argus.flowlog solve PROGRAM FACTS_DIR [OUT_DIR]
+      mix argus.flowlog solve PROGRAM FACTS_DIR [OUT_DIR] [--profile]
                                          # one solve of a program over a facts directory
       mix argus.flowlog clean            # remove the toolchains and bundles this argus no longer uses
       mix argus.flowlog bundle OUT_DIR   # this platform's prebuilt engines, for a release
@@ -24,7 +24,12 @@ defmodule Mix.Tasks.Argus.Flowlog do
   `FACTS_DIR` (`<relation>.facts`, tab-separated, unless the program names
   another file), and prints each output's rows, or writes every output
   file into `OUT_DIR`: what a contributor runs on an edited rule or an
-  example (`examples/contributor`).
+  example (`examples/contributor`). With `--profile` it runs in the generic
+  engine and prints where the solve's memory and time went: the
+  arrangements holding the most updates and the operators that ran the
+  longest, each named by the relation or rule expression it is of (`σ` a
+  map of one, `⋈` a join, `▷` the rows an antijoin keeps); a rule whose
+  join holds millions of updates is the one to restate.
 
   `build` compiles engines, a large program's taking minutes; the
   analyses then run in them instead of the generic engine. Run it in CI
@@ -69,23 +74,13 @@ defmodule Mix.Tasks.Argus.Flowlog do
     status()
   end
 
-  def run(["solve", program, facts | out]) when length(out) <= 1 do
-    Mix.Task.run("app.config")
-    opts = [progress: &info/1] ++ Enum.map(out, &{:output_dir, Path.expand(&1)})
-    Enum.each(out, &File.mkdir_p!/1)
+  def run(["solve" | args]) do
+    case OptionParser.parse(args, strict: [profile: :boolean]) do
+      {switches, [program, facts | out], []} when length(out) <= 1 ->
+        solve(program, facts, out, Keyword.get(switches, :profile, false))
 
-    case FlowLog.run(Path.expand(facts), Path.expand(program), opts) do
-      {:ok, results} ->
-        for {relation, rows} <- Enum.sort(results) do
-          info("#{relation}: #{length(rows)} row(s)")
-          for row <- rows, do: info("  " <> Enum.join(row, "\t"))
-        end
-
-      {:error, %Argus.MissingRelationError{} = error} ->
-        Mix.raise("argus: " <> Exception.message(error))
-
-      {:error, reason} ->
-        Mix.raise("argus: " <> FlowLog.describe_error(reason))
+      _ ->
+        Mix.raise(usage())
     end
   end
 
@@ -140,11 +135,78 @@ defmodule Mix.Tasks.Argus.Flowlog do
     end
   end
 
-  def run(_args) do
-    Mix.raise(
-      "usage: mix argus.flowlog build [PROGRAM...] | status | solve PROGRAM FACTS_DIR [OUT_DIR] " <>
-        "| clean | bundle OUT_DIR | prebuilt BASE_URL OFFER.json..."
-    )
+  def run(_args), do: Mix.raise(usage())
+
+  defp usage do
+    "usage: mix argus.flowlog build [PROGRAM...] | status " <>
+      "| solve PROGRAM FACTS_DIR [OUT_DIR] [--profile] " <>
+      "| clean | bundle OUT_DIR | prebuilt BASE_URL OFFER.json..."
+  end
+
+  defp solve(program, facts, out, profile?) do
+    Mix.Task.run("app.config")
+    Enum.each(out, &File.mkdir_p!/1)
+
+    report =
+      if profile?,
+        do:
+          Path.join(System.tmp_dir!(), "argus-profile-#{System.unique_integer([:positive])}.json")
+
+    opts =
+      [progress: &info/1] ++
+        Enum.map(out, &{:output_dir, Path.expand(&1)}) ++
+        if(report, do: [profile: report], else: [])
+
+    try do
+      case FlowLog.run(Path.expand(facts), Path.expand(program), opts) do
+        {:ok, results} ->
+          for {relation, rows} <- Enum.sort(results) do
+            info("#{relation}: #{length(rows)} row(s)")
+            for row <- rows, do: info("  " <> Enum.join(row, "\t"))
+          end
+
+          if report, do: print_profile(report)
+
+        {:error, %Argus.MissingRelationError{} = error} ->
+          Mix.raise("argus: " <> Exception.message(error))
+
+        {:error, reason} ->
+          # A solve stopped part way (a `.limitsize`) still measured.
+          if report && File.regular?(report), do: print_profile(report)
+          Mix.raise("argus: " <> FlowLog.describe_error(reason))
+      end
+    after
+      if report, do: File.rm(report)
+    end
+  end
+
+  @arrangements 20
+  @operators 12
+
+  defp print_profile(report) do
+    profile = report |> File.read!() |> :json.decode()
+    info("")
+    info("profile: #{grouped(profile["arranged"])} updates held in arrangements")
+    info("  #{String.pad_leading("updates", 12)}  arrangement")
+
+    for %{"name" => name, "updates" => updates} <-
+          Enum.take(profile["arrangements"], @arrangements) do
+      info("  #{String.pad_leading(grouped(updates), 12)}  #{name}")
+    end
+
+    info("  #{String.pad_leading("seconds", 12)}  operator")
+
+    for %{"name" => name, "seconds" => seconds} <- Enum.take(profile["operators"], @operators) do
+      info("  #{String.pad_leading(:erlang.float_to_binary(seconds, decimals: 3), 12)}  #{name}")
+    end
+  end
+
+  defp grouped(n) do
+    n
+    |> Integer.to_string()
+    |> String.reverse()
+    |> String.replace(~r/(\d{3})(?=\d)/, "\\1,")
+    |> String.reverse()
   end
 
   defp status do

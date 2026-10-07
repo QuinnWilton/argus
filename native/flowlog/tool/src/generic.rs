@@ -20,6 +20,7 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::Path;
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -83,6 +84,9 @@ use crate::host::Dataflow;
 use crate::host::Fields;
 use crate::host::Refusal;
 use crate::host::Relation;
+use crate::profile::Profile;
+use flowlog_runtime::differential_dataflow::logging::DifferentialEventBuilder;
+use flowlog_runtime::timely::logging::TimelyEventBuilder;
 
 /// A row's slots, inline up to four: most keys are one or two columns.
 /// A row in flight between operators is one of these; an arranged one is
@@ -806,6 +810,10 @@ struct Plan {
     outputs: Vec<Output>,
     /// The relations the program holds to a number of rows (`.limitsize`).
     limits: Vec<Limit>,
+    /// What each collection is, to name the operators built of it: a
+    /// relation's name, or the expression of relations a step computes.
+    #[serde(default)]
+    labels: HashMap<u64, String>,
 }
 
 /// A relation the program holds to `rows` (`.limitsize R(n=rows)`): as it
@@ -1014,9 +1022,73 @@ impl Plan {
             strata,
             outputs,
             limits: limits(program),
+            labels: HashMap::new(),
         };
         plan.mark_earlier(program);
+        plan.label(program);
         Ok(plan)
+    }
+
+    /// Names every collection: a relation by its name, a step's output by
+    /// what it computes of its inputs (`σ` a map, by the positions of the
+    /// columns it is keyed by, `⋈` a join, `▷` the rows of one an antijoin
+    /// keeps), each named at most so long.
+    fn label(&mut self, program: &Program) {
+        const LONGEST: usize = 100;
+        let mut labels: HashMap<u64, String> = program
+            .relations()
+            .iter()
+            .map(|r| (r.fingerprint(), r.name().to_string()))
+            .collect();
+        let steps = self.strata.iter().flat_map(|stratum| {
+            stratum
+                .prelude
+                .iter()
+                .chain(stratum.recursion.iter().flat_map(|r| r.body.iter()))
+        });
+        for step in steps {
+            let name = |fp: &u64| match labels.get(fp) {
+                Some(label) if label.chars().count() > LONGEST => {
+                    format!("{}…", label.chars().take(LONGEST).collect::<String>())
+                }
+                Some(label) => label.clone(),
+                None => format!("0x{fp:016x}"),
+            };
+            let (output, label) = match step {
+                Step::Map {
+                    input, output, key, ..
+                } if !key.is_empty() => {
+                    // The columns it is keyed by, each by its position.
+                    let columns: Vec<String> = key
+                        .iter()
+                        .map(|expr| match expr {
+                            Expr::Col(Slot::Value(i)) => i.to_string(),
+                            Expr::Col(Slot::Key(i)) => format!("k{i}"),
+                            _ => "…".to_string(),
+                        })
+                        .collect();
+                    (
+                        *output,
+                        format!("σ({} by {})", name(input), columns.join(",")),
+                    )
+                }
+                Step::Map { input, output, .. } => (*output, format!("σ({})", name(input))),
+                Step::Join {
+                    left,
+                    right,
+                    output,
+                    ..
+                } => (*output, format!("({} ⋈ {})", name(left), name(right))),
+                Step::Antijoin {
+                    left,
+                    right,
+                    output,
+                    ..
+                } => (*output, format!("({} ▷ {})", name(right), name(left))),
+            };
+            labels.entry(output).or_insert(label);
+        }
+        self.labels = labels;
     }
 
     /// A head folds in its relation's earlier binding when an input or an
@@ -1462,15 +1534,25 @@ struct Env<'scope, T: Time> {
     collections: HashMap<u64, Coll<'scope, T>>,
     arranged: HashMap<u64, Arr<'scope, T>>,
     keys: HashMap<u64, Keys<'scope, T>>,
+    labels: &'static HashMap<u64, String>,
 }
 
 impl<'scope, T: Time> Env<'scope, T> {
-    fn new() -> Self {
+    fn new(labels: &'static HashMap<u64, String>) -> Self {
         Env {
             collections: HashMap::new(),
             arranged: HashMap::new(),
             keys: HashMap::new(),
+            labels,
         }
+    }
+
+    /// What the collection `fp` is, to name an operator by (`Plan::label`).
+    fn label(&self, fp: u64) -> String {
+        self.labels
+            .get(&fp)
+            .cloned()
+            .unwrap_or_else(|| format!("0x{fp:016x}"))
     }
 
     fn get(&self, fp: u64) -> Coll<'scope, T> {
@@ -1486,7 +1568,10 @@ impl<'scope, T: Time> Env<'scope, T> {
         }
         let arranged = Arr::Own(
             self.get(fp)
-                .arrange_named::<ValBatcher<Row, Row, T, Diff>, RowBuilder<T>, _>("Arrange"),
+                .arrange_named::<ValBatcher<Row, Row, T, Diff>, RowBuilder<T>, _>(&format!(
+                    "Arrange {}",
+                    self.label(fp)
+                )),
         );
         self.arranged.insert(fp, arranged.clone());
         arranged
@@ -1502,9 +1587,12 @@ impl<'scope, T: Time> Env<'scope, T> {
         let keys = self
             .get(fp)
             .map(|(k, _)| k)
-            .arrange_named::<KeyBatcher<Row, T, Diff>, KeyBuilder<T>, KeySpine<T>>("Arrange")
+            .arrange_named::<KeyBatcher<Row, T, Diff>, KeyBuilder<T>, KeySpine<T>>(&format!(
+                "Arrange the keys of {}",
+                self.label(fp)
+            ))
             .reduce_abelian::<_, KeyBuilder<T>, KeySpine<T>, _, _>(
-                "Distinct",
+                &format!("The distinct keys of {}", self.label(fp)),
                 |_key, _input, output| output.push(((), 1)),
                 |rows, key: RowRef<'_>, updates| {
                     rows.clear();
@@ -1534,6 +1622,35 @@ impl<'scope> Env<'scope, Epoch> {
             Arr::Entered(_) => unreachable!("an outer scope enters nothing"),
         }
     }
+}
+
+/// `collection` flat-mapped by `logic`, in an operator named `name`: a
+/// profile (`crate::profile`) reports the time each map took by it.
+fn flat_map_named<'scope, T: Time, I>(
+    collection: Coll<'scope, T>,
+    name: &str,
+    mut logic: impl FnMut(Kv) -> I + 'static,
+) -> Coll<'scope, T>
+where
+    I: IntoIterator<Item = Kv>,
+{
+    use flowlog_runtime::timely::dataflow::channels::pact::Pipeline;
+    use flowlog_runtime::timely::dataflow::operators::Operator;
+    collection
+        .inner
+        .unary(Pipeline, name, move |_, _| {
+            move |input, output| {
+                input.for_each_time(|time, data| {
+                    output.session(&time).give_iterator(
+                        data.flat_map(|batch| batch.drain(..))
+                            .flat_map(|(kv, t, r)| {
+                                logic(kv).into_iter().map(move |out| (out, t.clone(), r))
+                            }),
+                    );
+                });
+            }
+        })
+        .as_collection()
 }
 
 /// `left` joined with `right` on their keys, each match mapped by `logic`.
@@ -1567,7 +1684,8 @@ fn build_step<'scope, T: Time>(env: &mut Env<'scope, T>, step: &'static Step) {
             preds,
         } => {
             let shape = *shape;
-            let mapped = env.get(*input).flat_map(move |(k, v)| {
+            let name = env.label(*output);
+            let mapped = flat_map_named(env.get(*input), &name, move |(k, v)| {
                 let ctx = match shape {
                     Shape::Row => Ctx {
                         key: &[],
@@ -1669,9 +1787,12 @@ fn build_head<'scope, T>(
         first.concatenate(parts)
     };
     let deduped = union
-        .arrange_named::<KeyBatcher<Kv, T, Diff>, PairBuilder<T>, PairSpine<T>>("Arrange")
+        .arrange_named::<KeyBatcher<Kv, T, Diff>, PairBuilder<T>, PairSpine<T>>(&format!(
+            "Derivations of {}",
+            env.label(head.relation)
+        ))
         .reduce_abelian::<_, PairBuilder<T>, PairSpine<T>, _, _>(
-            "Distinct",
+            &env.label(head.relation),
             |_row, _input, output| output.push(((), 1)),
             |rows, row: PairRef<'_>, updates| {
                 rows.clear();
@@ -1780,7 +1901,7 @@ fn build<'scope>(
     probe: &mut ProbeHandle<Epoch>,
     watch: &Watch,
 ) -> Vec<InputSession<Epoch, Kv, Diff>> {
-    let mut env: Env<'scope, Epoch> = Env::new();
+    let mut env: Env<'scope, Epoch> = Env::new(&plan.labels);
     let mut sessions = Vec::with_capacity(plan.inputs.len());
     for input in &plan.inputs {
         let (session, collection) = scope.new_collection::<Kv, Diff>();
@@ -1821,7 +1942,7 @@ fn build<'scope>(
                     .map(|fp| (*fp, env.outer_arrangement(*fp)))
                     .collect();
                 let left = scope.scoped::<LoopTime, _, _>("Iterative", |inner| {
-                    let mut env_in: Env<'_, LoopTime> = Env::new();
+                    let mut env_in: Env<'_, LoopTime> = Env::new(&plan.labels);
                     // A head unions what entered, not its feedback variable,
                     // which shares the relation's fingerprint inside.
                     let mut entered = HashMap::new();
@@ -1929,6 +2050,7 @@ pub struct Generic {
     done: mpsc::Receiver<()>,
     sinks: Vec<Sink>,
     monitor: Arc<Monitor>,
+    profile: Option<Arc<Profile>>,
     workers: Option<JoinHandle<()>>,
 }
 
@@ -2111,12 +2233,15 @@ impl Generic {
     /// Starts the program at `program`'s dataflow on `workers` threads;
     /// `digest` is what `hello` reports. With a `cache`, the program is
     /// planned only when the cache holds no plan for it, and the plan is
-    /// kept there: the caller names one cache per program digest.
+    /// kept there: the caller names one cache per program digest. With a
+    /// `profile`, what its arrangements hold and its operators took is
+    /// written there after every commit (`crate::profile`).
     pub fn new(
         program: &Path,
         digest: String,
         workers: usize,
         cache: Option<&Path>,
+        profile: Option<PathBuf>,
     ) -> Result<Self, String> {
         let prepared = match cache.and_then(Prepared::load) {
             Some(prepared) => prepared,
@@ -2158,6 +2283,8 @@ impl Generic {
         let worker_sinks = sinks.clone();
         let monitor = Arc::new(Monitor::new(plan.limits.len()));
         let worker_monitor = Arc::clone(&monitor);
+        let profile = profile.map(Profile::new);
+        let worker_profile = profile.clone();
         let handle = std::thread::spawn(move || {
             let done_tx = Mutex::new(done_tx);
             let result = timely::execute(timely::Config::process(workers), move |worker| {
@@ -2167,6 +2294,17 @@ impl Generic {
                     .expect("each worker takes its own queue");
                 let done_tx = done_tx.lock().expect("the done channel").clone();
                 let mut probe = ProbeHandle::new();
+                // Loggers registered before the dataflow is built see every
+                // operator it builds.
+                if let Some(profile) = &worker_profile
+                    && let Some(mut register) = worker.log_register()
+                {
+                    register.insert::<DifferentialEventBuilder, _>(
+                        "differential/arrange",
+                        profile.arrangements(index),
+                    );
+                    register.insert::<TimelyEventBuilder, _>("timely", profile.operators(index));
+                }
                 let building = std::time::Instant::now();
                 let watch = Watch {
                     limits: &plan.limits,
@@ -2234,6 +2372,7 @@ impl Generic {
             done,
             sinks: sinks_in_order,
             monitor,
+            profile,
             workers: Some(handle),
         })
     }
@@ -2335,6 +2474,11 @@ impl Dataflow for Generic {
         }
         for _ in &self.commands {
             self.done.recv().expect("every worker finishes the commit");
+        }
+        if let Some(profile) = &self.profile
+            && let Err(error) = profile.write()
+        {
+            eprintln!("generic engine: cannot write the profile: {error}");
         }
         if let Some(index) = self.monitor.exceeded() {
             let limit = &self.plan.limits[index];
