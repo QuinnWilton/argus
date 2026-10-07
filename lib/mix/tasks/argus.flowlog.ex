@@ -2,9 +2,12 @@ defmodule Mix.Tasks.Argus.Flowlog do
   @shortdoc "Builds, inspects or cleans argus's FlowLog engines"
 
   @moduledoc """
-  argus solves its analyses on FlowLog engines it compiles with Rust, once
-  per version of their rules (`Argus.FlowLog.Toolchain`). This task does
-  that work ahead of a run, and looks after the cache it lives in.
+  argus solves its analyses on FlowLog engines (`Argus.FlowLog.engine/2`):
+  the generic engine, the toolchain's tool, which runs any program it
+  supports at once, or an engine compiled for the program, built with
+  Rust once per version of its rules (`Argus.FlowLog.Toolchain`) and up to
+  twice as fast on a large project. This task builds compiled engines
+  ahead of a run, and looks after the cache they live in.
 
       mix argus.flowlog build            # the toolchain and every built-in engine
       mix argus.flowlog build PROGRAM... # the engines for these .dl programs
@@ -16,17 +19,17 @@ defmodule Mix.Tasks.Argus.Flowlog do
       mix argus.flowlog prebuilt BASE_URL OFFER.json...
                                          # write priv/flowlog/prebuilt.json from bundles' offers
 
-  `solve` builds the program's engine if it must, loads every input from
+  `solve` runs the program in the engine `ARGUS_FLOWLOG_ENGINE` chooses
+  (the generic one, unless a compiled one is installed), loads every input from
   `FACTS_DIR` (`<relation>.facts`, tab-separated, unless the program names
   another file), and prints each output's rows, or writes every output
   file into `OUT_DIR`: what a contributor runs on an edited rule or an
   example (`examples/contributor`).
 
-  `build` is what a first `mix compile` (with the `:argus` compiler) or
-  `mix argus` would otherwise do as its analyses ask, a large program's
-  engine taking minutes; run it in CI before the analyses, or once after
-  upgrading argus. A program that does not compile, or that argus cannot
-  host, fails with FlowLog's diagnostic.
+  `build` compiles engines, a large program's taking minutes; the
+  analyses then run in them instead of the generic engine. Run it in CI
+  before the analyses, or once after upgrading argus. A program that does
+  not compile, or that argus cannot host, fails with FlowLog's diagnostic.
 
   `bundle` and `prebuilt` are a release's (`.github/workflows/release.yml`):
   each platform's build writes its bundle of the tool and every built-in
@@ -186,8 +189,9 @@ defmodule Mix.Tasks.Argus.Flowlog do
         "#{release} (#{rust.cargo})"
 
       {{:error, reason}, {:ok, _}} ->
-        "unavailable: argus's own analyses run on its prebuilt engines; " <>
-          "a program of your own needs Rust (#{Toolchain.describe(reason)})"
+        "unavailable: argus's own analyses run on its prebuilt engines, and a program " <>
+          "of your own in the generic engine; one that engine does not run needs Rust " <>
+          "(#{Toolchain.describe(reason)})"
 
       {{:error, reason}, {:error, _}} ->
         "unavailable: " <> Toolchain.describe(reason)

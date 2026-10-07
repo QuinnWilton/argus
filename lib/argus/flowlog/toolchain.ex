@@ -695,9 +695,10 @@ defmodule Argus.FlowLog.Toolchain do
   end
 
   def describe({:needs_rust, program}) do
-    "the FlowLog engine for #{program} is not one argus publishes prebuilt, and building " <>
-      "it needs Rust #{version_string(@min_rustc)} or newer: install it from https://rustup.rs " <>
-      "(or name its cargo with ARGUS_CARGO)"
+    "#{program} needs an engine compiled for it (argus publishes none prebuilt for it, and " <>
+      "the generic engine does not run it, or ARGUS_FLOWLOG_ENGINE=compiled asks for one), " <>
+      "and building it needs Rust #{version_string(@min_rustc)} or newer: install it from " <>
+      "https://rustup.rs (or name its cargo with ARGUS_CARGO)"
   end
 
   def describe({:build_failed, what, log, tail}) do
