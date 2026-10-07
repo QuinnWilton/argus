@@ -352,7 +352,7 @@ checksum = "aedcfb3409746eddb02b9e19ebda1c3394f759a152e48ee875a0844d1b955484"
 [[package]]
 name = "flowlog-build"
 version = "0.6.0"
-source = "git+https://github.com/QuinnWilton/flowlog?rev=269a3b08d46a9dab2ca779ca7f8373aa74b12050#269a3b08d46a9dab2ca779ca7f8373aa74b12050"
+source = "git+https://github.com/QuinnWilton/flowlog?rev=2393ede803b14710b8752de7e82041bb55b7da10#2393ede803b14710b8752de7e82041bb55b7da10"
 dependencies = [
  "clap",
  "codespan-reporting",
@@ -374,7 +374,7 @@ dependencies = [
 [[package]]
 name = "flowlog-codegen"
 version = "0.1.0"
-source = "git+https://github.com/QuinnWilton/flowlog?rev=269a3b08d46a9dab2ca779ca7f8373aa74b12050#269a3b08d46a9dab2ca779ca7f8373aa74b12050"
+source = "git+https://github.com/QuinnWilton/flowlog?rev=2393ede803b14710b8752de7e82041bb55b7da10#2393ede803b14710b8752de7e82041bb55b7da10"
 dependencies = [
  "codespan-reporting",
  "flowlog-common",
@@ -391,18 +391,19 @@ dependencies = [
 [[package]]
 name = "flowlog-common"
 version = "0.3.0"
-source = "git+https://github.com/QuinnWilton/flowlog?rev=269a3b08d46a9dab2ca779ca7f8373aa74b12050#269a3b08d46a9dab2ca779ca7f8373aa74b12050"
+source = "git+https://github.com/QuinnWilton/flowlog?rev=2393ede803b14710b8752de7e82041bb55b7da10#2393ede803b14710b8752de7e82041bb55b7da10"
 dependencies = [
  "codespan-reporting",
  "prettyplease",
  "proc-macro2",
+ "rustc-hash",
  "syn 3.0.6",
 ]
 
 [[package]]
 name = "flowlog-parser"
 version = "0.3.0"
-source = "git+https://github.com/QuinnWilton/flowlog?rev=269a3b08d46a9dab2ca779ca7f8373aa74b12050#269a3b08d46a9dab2ca779ca7f8373aa74b12050"
+source = "git+https://github.com/QuinnWilton/flowlog?rev=2393ede803b14710b8752de7e82041bb55b7da10#2393ede803b14710b8752de7e82041bb55b7da10"
 dependencies = [
  "codespan-reporting",
  "educe",
@@ -418,7 +419,7 @@ dependencies = [
 [[package]]
 name = "flowlog-planner"
 version = "0.2.0"
-source = "git+https://github.com/QuinnWilton/flowlog?rev=269a3b08d46a9dab2ca779ca7f8373aa74b12050#269a3b08d46a9dab2ca779ca7f8373aa74b12050"
+source = "git+https://github.com/QuinnWilton/flowlog?rev=2393ede803b14710b8752de7e82041bb55b7da10#2393ede803b14710b8752de7e82041bb55b7da10"
 dependencies = [
  "codespan-reporting",
  "flowlog-common",
@@ -433,7 +434,7 @@ dependencies = [
 [[package]]
 name = "flowlog-profiler"
 version = "0.3.0"
-source = "git+https://github.com/QuinnWilton/flowlog?rev=269a3b08d46a9dab2ca779ca7f8373aa74b12050#269a3b08d46a9dab2ca779ca7f8373aa74b12050"
+source = "git+https://github.com/QuinnWilton/flowlog?rev=2393ede803b14710b8752de7e82041bb55b7da10#2393ede803b14710b8752de7e82041bb55b7da10"
 dependencies = [
  "flowlog-common",
  "flowlog-parser",
@@ -444,7 +445,7 @@ dependencies = [
 [[package]]
 name = "flowlog-runtime"
 version = "0.5.0"
-source = "git+https://github.com/QuinnWilton/flowlog?rev=269a3b08d46a9dab2ca779ca7f8373aa74b12050#269a3b08d46a9dab2ca779ca7f8373aa74b12050"
+source = "git+https://github.com/QuinnWilton/flowlog?rev=2393ede803b14710b8752de7e82041bb55b7da10#2393ede803b14710b8752de7e82041bb55b7da10"
 dependencies = [
  "differential-dataflow",
  "itoa",
