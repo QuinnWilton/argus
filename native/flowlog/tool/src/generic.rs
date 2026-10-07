@@ -50,6 +50,7 @@ use flowlog_runtime::differential_dataflow::operators::arrange::Arranged;
 use flowlog_runtime::differential_dataflow::operators::arrange::TraceAgent;
 use flowlog_runtime::differential_dataflow::operators::iterate::Variable;
 use flowlog_runtime::differential_dataflow::trace::implementations::ValSpine;
+use flowlog_runtime::differential_dataflow::trace::wrappers::enter::TraceEnter;
 use flowlog_runtime::intern;
 use flowlog_runtime::lasso::Key;
 use flowlog_runtime::lasso::Spur;
@@ -60,6 +61,7 @@ use flowlog_runtime::timely::dataflow::operators::ToStream;
 use flowlog_runtime::timely::dataflow::operators::probe::Handle as ProbeHandle;
 use flowlog_runtime::timely::order::Product;
 use flowlog_runtime::timely::progress::Timestamp;
+use flowlog_runtime::timely::progress::timestamp::Refines;
 use serde::Deserialize;
 use serde::Serialize;
 use smallvec::SmallVec;
@@ -756,6 +758,19 @@ struct Recursion {
     leave: Vec<u64>,
 }
 
+impl Recursion {
+    /// The collections the loop's body arranges to join on.
+    fn joined(&self) -> HashSet<u64> {
+        self.body
+            .iter()
+            .flat_map(|step| match step {
+                Step::Join { left, right, .. } => vec![*left, *right],
+                Step::Map { .. } | Step::Antijoin { .. } => vec![],
+            })
+            .collect()
+    }
+}
+
 /// An input relation: its collection, and its inline facts.
 #[derive(Serialize, Deserialize)]
 struct InputPlan {
@@ -1135,16 +1150,37 @@ fn predicates(flow: &TransformationFlow, t: &Types<'_>) -> Result<Vec<Pred>, Str
 // =============================================================================
 
 type Coll<'scope, T> = VecCollection<'scope, T, Kv, Diff>;
-type Arr<'scope, T> = Arranged<'scope, TraceAgent<ValSpine<Row, Row, T, Diff>>>;
+type Trace<T> = TraceAgent<ValSpine<Row, Row, T, Diff>>;
+
+/// A scope's time: the outer epoch, or a loop's inside it.
+trait Time: Timestamp + Lattice + Ord + Refines<Epoch> {}
+impl<T: Timestamp + Lattice + Ord + Refines<Epoch>> Time for T {}
+
+/// An arrangement a join reads: one built in this scope, or one built
+/// outside a loop and entered into it, which the loop reads without
+/// arranging its rows again.
+enum Arr<'scope, T: Time> {
+    Own(Arranged<'scope, Trace<T>>),
+    Entered(Arranged<'scope, TraceEnter<Trace<Epoch>, T>>),
+}
+
+impl<T: Time> Clone for Arr<'_, T> {
+    fn clone(&self) -> Self {
+        match self {
+            Arr::Own(arranged) => Arr::Own(arranged.clone()),
+            Arr::Entered(arranged) => Arr::Entered(arranged.clone()),
+        }
+    }
+}
 
 /// The collections a scope has bound, by fingerprint, and the arrangements
-/// built of them so far.
-struct Env<'scope, T: Timestamp + Lattice + Ord> {
+/// built of them, or entered, so far.
+struct Env<'scope, T: Time> {
     collections: HashMap<u64, Coll<'scope, T>>,
     arranged: HashMap<u64, Arr<'scope, T>>,
 }
 
-impl<'scope, T: Timestamp + Lattice + Ord> Env<'scope, T> {
+impl<'scope, T: Time> Env<'scope, T> {
     fn new() -> Self {
         Env {
             collections: HashMap::new(),
@@ -1163,7 +1199,7 @@ impl<'scope, T: Timestamp + Lattice + Ord> Env<'scope, T> {
         if let Some(arranged) = self.arranged.get(&fp) {
             return arranged.clone();
         }
-        let arranged = self.get(fp).arrange_by_key();
+        let arranged = Arr::Own(self.get(fp).arrange_by_key());
         self.arranged.insert(fp, arranged.clone());
         arranged
     }
@@ -1174,15 +1210,44 @@ impl<'scope, T: Timestamp + Lattice + Ord> Env<'scope, T> {
     }
 }
 
+impl<'scope> Env<'scope, Epoch> {
+    /// `fp`'s arrangement in this outer scope, as a loop enters it.
+    fn outer_arrangement(&mut self, fp: u64) -> Arranged<'scope, Trace<Epoch>> {
+        match self.arrangement(fp) {
+            Arr::Own(arranged) => arranged,
+            Arr::Entered(_) => unreachable!("an outer scope enters nothing"),
+        }
+    }
+}
+
+/// `left` joined with `right` on their keys, each match mapped by `logic`.
+fn join<'scope, T: Time>(
+    left: Arr<'scope, T>,
+    right: Arr<'scope, T>,
+    logic: impl Fn(&Row, &Row, &Row) -> Option<Kv> + Clone + 'static,
+) -> Coll<'scope, T> {
+    match (left, right) {
+        (Arr::Own(l), Arr::Own(r)) => {
+            l.join_core(r, move |k: &Row, lv: &Row, rv: &Row| logic(k, lv, rv))
+        }
+        (Arr::Own(l), Arr::Entered(r)) => {
+            l.join_core(r, move |k: &Row, lv: &Row, rv: &Row| logic(k, lv, rv))
+        }
+        (Arr::Entered(l), Arr::Own(r)) => {
+            l.join_core(r, move |k: &Row, lv: &Row, rv: &Row| logic(k, lv, rv))
+        }
+        (Arr::Entered(l), Arr::Entered(r)) => {
+            l.join_core(r, move |k: &Row, lv: &Row, rv: &Row| logic(k, lv, rv))
+        }
+    }
+}
+
 fn project(exprs: &[Expr], ctx: &Ctx<'_>) -> Row {
     exprs.iter().map(|e| e.eval(ctx)).collect()
 }
 
 /// Builds `step` in `env`.
-fn build_step<'scope, T>(env: &mut Env<'scope, T>, step: &'static Step)
-where
-    T: Timestamp + Lattice + Ord,
-{
+fn build_step<'scope, T: Time>(env: &mut Env<'scope, T>, step: &'static Step) {
     match step {
         Step::Map {
             input,
@@ -1224,7 +1289,7 @@ where
             preds,
         } => {
             let (l, r) = (env.arrangement(*left), env.arrangement(*right));
-            let joined = l.join_core(r, move |k: &Row, lv: &Row, rv: &Row| {
+            let joined = join(l, r, move |k: &Row, lv: &Row, rv: &Row| {
                 let ctx = Ctx {
                     key: k,
                     value: lv,
@@ -1271,7 +1336,7 @@ fn build_head<'scope, T>(
     earlier: Option<Coll<'scope, T>>,
     seed: Option<Coll<'scope, T>>,
 ) where
-    T: Timestamp + Lattice + Ord,
+    T: Time,
 {
     let mut parts: Vec<Coll<'scope, T>> = earlier.into_iter().collect();
     parts.extend(head.parts.iter().map(|fp| env.get(*fp)));
@@ -1295,7 +1360,7 @@ fn build_aggregate<'scope, T>(
     seed: Option<Coll<'scope, T>>,
 ) -> Coll<'scope, T>
 where
-    T: Timestamp + Lattice + Ord,
+    T: Time,
 {
     let position = aggregate.position;
     // A group: the row without the aggregated column; its member, the
@@ -1372,6 +1437,16 @@ fn build<'scope>(
                     .iter()
                     .map(|fp| (*fp, env.get(*fp)))
                     .collect();
+                // What the loop joins on of what enters it is arranged out
+                // here, once, and entered: arranged inside, it would be
+                // arranged again, and held again, by the loop.
+                let joined = recursion.joined();
+                let entering_arranged: Vec<(u64, Arranged<'scope, Trace<Epoch>>)> = recursion
+                    .enter
+                    .iter()
+                    .filter(|fp| joined.contains(fp))
+                    .map(|fp| (*fp, env.outer_arrangement(*fp)))
+                    .collect();
                 let left = scope.scoped::<LoopTime, _, _>("Iterative", |inner| {
                     let mut env_in: Env<'_, LoopTime> = Env::new();
                     // A head unions what entered, not its feedback variable,
@@ -1381,6 +1456,11 @@ fn build<'scope>(
                         let collection = collection.clone().enter(inner);
                         entered.insert(*fp, collection.clone());
                         env_in.bind(*fp, collection);
+                    }
+                    for (fp, arranged) in &entering_arranged {
+                        env_in
+                            .arranged
+                            .insert(*fp, Arr::Entered(arranged.clone().enter(inner)));
                     }
                     let mut variables = Vec::new();
                     for fp in &recursion.feedback {
