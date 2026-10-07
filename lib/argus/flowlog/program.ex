@@ -29,6 +29,7 @@ defmodule Argus.FlowLog.Program do
 
   require Logger
 
+  alias Argus.FlowLog.Builder
   alias Argus.FlowLog.Prebuilt
   alias Argus.FlowLog.Toolchain
 
@@ -154,24 +155,16 @@ defmodule Argus.FlowLog.Program do
     * `:progress` — a function told of each build before it starts
       (default `Logger.info/1`), or `false`.
 
-  Builds take turns in a VM (`Toolchain.locked/2`), and Cargo serializes
+  Builds asked for while another runs wait for it, and are then built
+  together, whoever asked (`Argus.FlowLog.Builder`); Cargo serializes
   builds into the toolchain's target directory across VMs.
   """
   @spec engines(Toolchain.t(), [{Path.t(), String.t()}], keyword()) :: :ok | {:error, term()}
   def engines(%Toolchain{} = toolchain, programs, opts \\ []) do
     case missing(toolchain, programs) do
       [] -> :ok
-      todo -> first_failure(build(toolchain, [{todo, opts}]), todo)
+      todo -> Builder.build(toolchain, todo, opts)
     end
-  end
-
-  defp first_failure(results, programs) do
-    Enum.find_value(programs, :ok, fn program ->
-      case Map.fetch!(results, key(program)) do
-        :ok -> nil
-        {:error, _} = error -> error
-      end
-    end)
   end
 
   defp missing(toolchain, programs) do
@@ -214,9 +207,10 @@ defmodule Argus.FlowLog.Program do
   end
 
   @doc false
-  # Every program the requests name (each with the options of the
-  # request that asked for it), built under the VM's build lock. Each
-  # program's outcome, by its digest and profile.
+  # `Argus.FlowLog.Builder`'s batch: every program the requests name
+  # (each with the options of the request that asked for it), built
+  # under the VM's build lock. Each program's outcome, by its digest and
+  # profile.
   @spec build(Toolchain.t(), [{[build()], keyword()}]) ::
           %{{String.t(), profile()} => :ok | {:error, term()}}
   def build(%Toolchain{} = toolchain, requests) do

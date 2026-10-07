@@ -45,7 +45,9 @@ which a change appeared; older names and APIs may have changed since then.
   analyses without Rust. `ARGUS_FLOWLOG_PREBUILT=0` turns it off. `mix
   argus.flowlog bundle` and `prebuilt` make a release's bundles.
 - Engines missing from the cache are built in one Cargo build that compiles
-  them side by side (`ARGUS_FLOWLOG_BUILD_JOBS`).
+  them side by side (`ARGUS_FLOWLOG_BUILD_JOBS`), and so are the engines
+  asked for while another build runs, whoever asks for them
+  (`Argus.FlowLog.Builder`).
 - `ARGUS_FLOWLOG_BUILD_PROFILE=quick` builds the engine of a program argus
   does not ship (a rules file of your own) unoptimized: about three times
   faster to build, and about three and a half times slower to solve. argus's

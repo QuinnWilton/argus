@@ -89,11 +89,11 @@ formatters =
 if System.get_env("ARGUS_FLOWLOG_BUILD_PROFILE", "") == "",
   do: System.put_env("ARGUS_FLOWLOG_BUILD_PROFILE", "quick")
 
-# A test's own program builds its engine on first use, and the builds
-# take turns on the toolchain's one Cargo target: on a cold cache a test
-# may wait out others' builds before its own, minutes past ExUnit's
-# minute. Built once, an engine is kept for as long as its program does
-# not change, and a warm run builds nothing.
+# A test's own program builds its engine on first use. Builds asked for
+# while another runs are built together after it (`Argus.FlowLog.Builder`),
+# but on a cold cache a test may still wait out others' builds before its
+# own, minutes past ExUnit's minute. Built once, an engine is kept for as
+# long as its program does not change, and a warm run builds nothing.
 timeout = if Argus.FlowLog.available?(), do: 1_200_000, else: 60_000
 
 ExUnit.start(
