@@ -11,8 +11,10 @@ which a change appeared; older names and APIs may have changed since then.
   instead of Soufflé. Each program compiles once per version of its rules
   into an engine, a native Differential Dataflow executable, cached under
   `~/.cache/argus/flowlog` (`ARGUS_FLOWLOG_DIR`). The query graph keeps an
-  engine running between solves and sends it only the rows that changed, so
-  a rerun after a small edit costs in proportion to the edit. Building
+  engine running between solves, for as long as its database is open, and
+  sends it only the rows that changed, so a rerun after a small edit in the
+  same VM (an editor's session, `iex -S mix`) costs in proportion to the
+  edit. Building
   engines needs Rust 1.88 or newer (`cargo` on `PATH`, in `~/.cargo/bin`, or
   named by `ARGUS_CARGO`); Soufflé is no longer used.
 - Rename the `souffle:` configuration key to `engine:`, the

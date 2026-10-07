@@ -20,8 +20,10 @@ defmodule Argus.Graph.Solve do
     * `solve({program, analysis})` — the analysis's outputs, each file
       by its digest in the blob store: one `Argus.FlowLog.Solve`, keyed
       by the program's digest and its inputs', and committed (on a
-      miss) to the engine this VM keeps for the program and the
-      analysis, which takes only the inputs whose digests moved.
+      miss) to the engine this database keeps for the program and the
+      analysis, which takes only the inputs whose digests moved. The
+      engines stop when the database does (`Roux.Database.shutdown/1`,
+      or the exit of the process that opened it).
 
   A solve that fails — the engine's error or timeout, a stage it reads
   failing, an output the engine did not write — is a value, `{:error,
@@ -180,6 +182,7 @@ defmodule Argus.Graph.Solve do
           {:ok,
            %{
              lineage: {program, rules_program},
+             owner: db.supervisor,
              start: [
                executable: built.executable,
                digest: digest,

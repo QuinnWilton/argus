@@ -11,8 +11,8 @@ defmodule Argus.FlowLog.Solve do
   in this VM or another, and nothing is read or written for it.
 
   A solve that misses goes to an engine (`Argus.FlowLog.Pool`), the one
-  this VM keeps for the solve's lineage (a project and a program) or a
-  new one:
+  kept for the solve's lineage (a project and a program) and owner (the
+  database solving, whose exit stops it), or a new one:
 
     1. the engine is told only the inputs whose identity differs from
        what it holds, each by the store's file for it (or one the
@@ -52,10 +52,12 @@ defmodule Argus.FlowLog.Solve do
   What a solve needs of its engine:
 
     * `:lineage` — what the engine is kept by (a project, a program);
+    * `:owner` — the process whose exit stops the engine (the solving
+      database's);
     * `:start` — `Argus.FlowLog.Engine.start_link/1`'s options, the
       engine already built.
   """
-  @type engine_spec :: %{lineage: term(), start: keyword()}
+  @type engine_spec :: %{lineage: term(), owner: pid(), start: keyword()}
 
   @doc """
   The outputs of the solve `key` names, from the action cache or solved.
@@ -114,20 +116,20 @@ defmodule Argus.FlowLog.Solve do
   defp given(inputs) when is_list(inputs), do: {:ok, inputs}
   defp given(inputs) when is_function(inputs, 0), do: inputs.()
 
-  defp solve(store, %{lineage: lineage, start: start}, inputs, outputs, opts) do
+  defp solve(store, %{lineage: lineage, owner: owner, start: start}, inputs, outputs, opts) do
     timeout = Keyword.get(opts, :timeout, Argus.FlowLog.default_timeout())
-    pool_key = {store.root, lineage, Keyword.fetch!(start, :digest)}
+    pool_key = {owner, store.root, lineage, Keyword.fetch!(start, :digest)}
 
     # What the engine holds, the commit, and the outputs it leaves are
-    # one step: two solves of a lineage (two databases in a VM) take
-    # turns, and each tells the engine every input that differs from
-    # what the other left. A commit that fails (midway, by its timeout,
-    # by a crash) leaves the engine's state unknown, and the pool stops
-    # it: the next solve starts afresh.
+    # one step: two solves of a lineage take turns, and each tells the
+    # engine every input that differs from what the other left. A
+    # commit that fails (midway, by its timeout, by a crash) leaves the
+    # engine's state unknown, and the pool stops it: the next solve
+    # starts afresh.
     :global.trans(
       {{__MODULE__, pool_key}, self()},
       fn ->
-        Pool.with_engine(pool_key, fn -> {:ok, start} end, fn engine ->
+        Pool.with_engine(pool_key, owner, fn -> {:ok, start} end, fn engine ->
           Blob.scratch(store, fn dir -> commit(store, engine, dir, inputs, outputs, timeout) end)
         end)
       end,

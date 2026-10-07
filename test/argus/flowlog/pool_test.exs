@@ -1,8 +1,9 @@
 defmodule Argus.FlowLog.PoolTest do
   @moduledoc """
-  The pool never stops an engine in use: not when it outlives the idle
-  time, not to make room under the cap. An engine whose use failed, or
-  whose user exited holding it, stops.
+  An engine lives as long as its owner: it stops when the owner exits,
+  in use or not, and never otherwise while in use, not even to make
+  room under the cap. An engine whose use failed, or whose user exited
+  holding it, stops.
 
   The pool reads its limits once per VM, as it starts: each test runs in
   a peer of its own (`Argus.Test.Peer`), its limits set before first use.
@@ -49,21 +50,46 @@ defmodule Argus.FlowLog.PoolTest do
     end
   end
 
-  test "an engine in use outlives the idle time, and stops once unused",
+  # A process standing in for a database, alive until told to stop.
+  defp owner, do: spawn(fn -> receive(do: (:stop -> :ok)) end)
+
+  test "an owner's engines stop when it exits, and only its own",
        %{peer: peer, start: start} do
     Peer.run(peer, fn ->
-      limits([{"ARGUS_FLOWLOG_IDLE_MS", "100"}])
+      starts = fn -> {:ok, start} end
+      {gone, kept} = {owner(), owner()}
+      {:ok, a} = Pool.with_engine(:a, gone, starts, &{:ok, &1})
+      {:ok, b} = Pool.with_engine(:b, gone, starts, &{:ok, &1})
+      {:ok, c} = Pool.with_engine(:c, kept, starts, &{:ok, &1})
 
-      {:ok, engine} =
-        Pool.with_engine(:a, fn -> {:ok, start} end, fn engine ->
-          Process.sleep(400)
-          assert Process.alive?(engine)
-          assert Pool.keys() == [:a]
-          {:ok, engine}
+      # Unused, they are kept for as long as their owner is alive.
+      Process.sleep(200)
+      assert Enum.sort(Pool.keys()) == [:a, :b, :c]
+
+      send(gone, :stop)
+      assert eventually(fn -> Pool.keys() == [:c] end)
+      refute Process.alive?(a)
+      refute Process.alive?(b)
+      assert Process.alive?(c)
+    end)
+  end
+
+  test "an owner that exits stops its engine mid-use", %{peer: peer, start: start} do
+    Peer.run(peer, fn ->
+      parent = self()
+      db = owner()
+
+      spawn(fn ->
+        Pool.with_engine(:a, db, fn -> {:ok, start} end, fn engine ->
+          send(parent, {:engine, engine})
+          Process.sleep(:infinity)
         end)
+      end)
 
-      assert eventually(fn -> Pool.keys() == [] end)
-      refute Process.alive?(engine)
+      assert_receive {:engine, engine}, 30_000
+      send(db, :stop)
+      assert eventually(fn -> not Process.alive?(engine) end)
+      assert Pool.keys() == []
     end)
   end
 
@@ -72,18 +98,19 @@ defmodule Argus.FlowLog.PoolTest do
     Peer.run(peer, fn ->
       limits([{"ARGUS_FLOWLOG_ENGINES", "1"}])
       starts = fn -> {:ok, start} end
+      db = owner()
 
       # :a is in use while :b starts: the pool holds both, over its cap.
       {:ok, {a, b}} =
-        Pool.with_engine(:a, starts, fn a ->
-          Pool.with_engine(:b, starts, fn b ->
+        Pool.with_engine(:a, db, starts, fn a ->
+          Pool.with_engine(:b, db, starts, fn b ->
             assert Enum.sort(Pool.keys()) == [:a, :b]
             {:ok, {a, b}}
           end)
         end)
 
       # Neither is in use when :c starts: both stop to bring it under.
-      {:ok, _} = Pool.with_engine(:c, starts, &{:ok, &1})
+      {:ok, _} = Pool.with_engine(:c, db, starts, &{:ok, &1})
       assert Pool.keys() == [:c]
       refute Process.alive?(a)
       refute Process.alive?(b)
@@ -94,19 +121,20 @@ defmodule Argus.FlowLog.PoolTest do
        %{peer: peer, start: start} do
     Peer.run(peer, fn ->
       starts = fn -> {:ok, start} end
-      {:ok, first} = Pool.with_engine(:a, starts, &{:ok, &1})
-      assert {:ok, ^first} = Pool.with_engine(:a, starts, &{:ok, &1})
+      db = owner()
+      {:ok, first} = Pool.with_engine(:a, db, starts, &{:ok, &1})
+      assert {:ok, ^first} = Pool.with_engine(:a, db, starts, &{:ok, &1})
 
-      assert {:error, :failed} = Pool.with_engine(:a, starts, fn _ -> {:error, :failed} end)
+      assert {:error, :failed} = Pool.with_engine(:a, db, starts, fn _ -> {:error, :failed} end)
       refute Process.alive?(first)
       assert Pool.keys() == []
 
       assert_raise RuntimeError, "raised", fn ->
-        Pool.with_engine(:a, starts, fn _ -> raise "raised" end)
+        Pool.with_engine(:a, db, starts, fn _ -> raise "raised" end)
       end
 
       assert Pool.keys() == []
-      {:ok, second} = Pool.with_engine(:a, starts, &{:ok, &1})
+      {:ok, second} = Pool.with_engine(:a, db, starts, &{:ok, &1})
       assert second != first
     end)
   end
@@ -114,10 +142,11 @@ defmodule Argus.FlowLog.PoolTest do
   test "a user that exits holding an engine stops it", %{peer: peer, start: start} do
     Peer.run(peer, fn ->
       parent = self()
+      db = owner()
 
       user =
         spawn(fn ->
-          Pool.with_engine(:a, fn -> {:ok, start} end, fn engine ->
+          Pool.with_engine(:a, db, fn -> {:ok, start} end, fn engine ->
             send(parent, {:engine, engine})
             Process.sleep(:infinity)
           end)

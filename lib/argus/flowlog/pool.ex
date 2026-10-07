@@ -4,26 +4,23 @@ defmodule Argus.FlowLog.Pool do
   that changed little costs little: the engine that solved the program
   last still holds its dataflow, and takes only the rows that moved.
 
-  An engine is kept per lineage: a project (the graph's `program` key),
-  a store, and a Datalog program's digest. Two databases over the same
-  project in one VM (an editor session's, a recompile's) share it; they
-  serialize on it, and each commit names every input that differs from
-  what the engine holds, so neither can see the other's facts.
+  An engine is kept by a key (the graph's: a project, a program and its
+  digest) for an owner: a process whose life the engine's is part of,
+  the graph's database (`Roux.Database`'s supervisor). When the owner
+  exits, every engine kept for it stops, mid-commit or not: an editor's
+  session keeps its engines for as long as it is open, and a test's stop
+  with the test.
 
   Engines are processes linked to this one, which starts on first use
-  (`checkout/3`): argus has no application to supervise it, and runs
+  (`with_engine/4`): argus has no application to supervise it, and runs
   inside Mix tasks, an escript and other projects' VMs alike. When this
   process stops, every engine stops with it, and every engine's OS
   process with its port.
 
   A VM keeps at most `:max_engines` engines (default 32, or
   `ARGUS_FLOWLOG_ENGINES`); starting one more stops the least recently
-  used. An engine unused for `:idle_ms` (default ten minutes, or
-  `ARGUS_FLOWLOG_IDLE_MS`) stops: a VM about to exit loses nothing, and
-  a long-lived one (an editor's) does not hold memory it stopped using.
-  Neither stops an engine in use (`with_engine/3`): a commit may run
-  longer than the idle time, and the pool may briefly hold more than
-  its cap.
+  used one that is not in use, so an engine in use is never stopped for
+  room, and the pool may briefly hold more than its cap.
   """
 
   use GenServer
@@ -31,7 +28,6 @@ defmodule Argus.FlowLog.Pool do
   alias Argus.FlowLog.Engine
 
   @default_max 32
-  @default_idle_ms 600_000
 
   @typedoc "What an engine is kept by."
   @type key :: term()
@@ -39,7 +35,7 @@ defmodule Argus.FlowLog.Pool do
   @doc """
   Runs `fun` with the engine kept for `key`, started with `start` (a
   function returning `Engine.start_link/1`'s options, or an error) when
-  none is.
+  none is. An engine started here stops when `owner` exits.
 
   The engine is in use until `fun` returns, or its caller exits. When
   `fun` returns an error the engine's state is unknown, and it stops:
@@ -47,14 +43,16 @@ defmodule Argus.FlowLog.Pool do
   """
   @spec with_engine(
           key(),
+          pid(),
           (-> {:ok, keyword()} | {:error, term()}),
           (Engine.t() -> {:ok, result} | {:error, term()})
         ) :: {:ok, result} | {:error, term()}
         when result: var
-  def with_engine(key, start, fun) do
+  def with_engine(key, owner, start, fun) when is_pid(owner) do
     pool = ensure_started()
+    checkout = {:checkout, key, owner, start, self()}
 
-    with {:ok, pid, lease} <- GenServer.call(pool, {:checkout, key, start, self()}, :infinity) do
+    with {:ok, pid, lease} <- GenServer.call(pool, checkout, :infinity) do
       result =
         try do
           fun.(pid)
@@ -122,8 +120,9 @@ defmodule Argus.FlowLog.Pool do
        by_pid: %{},
        # A lease (the monitor of the process using an engine) to its key.
        leases: %{},
-       max: env_int("ARGUS_FLOWLOG_ENGINES", @default_max),
-       idle_ms: env_int("ARGUS_FLOWLOG_IDLE_MS", @default_idle_ms)
+       # An owner's monitor to its pid and the keys of its engines.
+       owners: %{},
+       max: env_int("ARGUS_FLOWLOG_ENGINES", @default_max)
      }}
   end
 
@@ -135,7 +134,7 @@ defmodule Argus.FlowLog.Pool do
   end
 
   @impl GenServer
-  def handle_call({:checkout, key, start, user}, _from, state) do
+  def handle_call({:checkout, key, owner, start, user}, _from, state) do
     found =
       case Map.fetch(state.engines, key) do
         {:ok, %{pid: pid}} = found -> if Process.alive?(pid), do: found, else: :error
@@ -148,7 +147,7 @@ defmodule Argus.FlowLog.Pool do
         {:reply, {:ok, entry.pid, lease}, state}
 
       :error ->
-        case start_engine(drop(state, key), key, start) do
+        case start_engine(drop(state, key), key, owner, start) do
           {:ok, entry, state} ->
             {lease, state} = lease(state, key, entry, user)
             {:reply, {:ok, entry.pid, lease}, state}
@@ -172,20 +171,17 @@ defmodule Argus.FlowLog.Pool do
 
   def handle_call(:keys, _from, state), do: {:reply, Map.keys(state.engines), state}
 
+  # An owner that exits takes its engines with it. A user that exits
+  # holding its lease left the engine mid-commit.
   @impl GenServer
-  def handle_info({:idle, key, ref}, state) do
-    case Map.fetch(state.engines, key) do
-      {:ok, %{timer: {_, ^ref}, users: users}} when map_size(users) == 0 ->
-        {:noreply, stop_engine(state, key)}
+  def handle_info({:DOWN, ref, :process, _pid, _reason}, state) do
+    case Map.pop(state.owners, ref) do
+      {{_owner, keys}, owners} ->
+        {:noreply, Enum.reduce(keys, %{state | owners: owners}, &stop_engine(&2, &1))}
 
-      _ ->
-        {:noreply, state}
+      {nil, _} ->
+        {:noreply, release(state, ref, :discard)}
     end
-  end
-
-  # A user that exits holding its lease left the engine mid-commit.
-  def handle_info({:DOWN, lease, :process, _pid, _reason}, state) do
-    {:noreply, release(state, lease, :discard)}
   end
 
   def handle_info({:EXIT, pid, _reason}, state) do
@@ -200,14 +196,26 @@ defmodule Argus.FlowLog.Pool do
   # Started from this process, so the engine is linked to it. A build
   # (the engine binary) happens in `start`, before this call: the pool
   # never waits on Cargo.
-  defp start_engine(state, key, start) do
+  defp start_engine(state, key, owner, start) do
     with {:ok, opts} <- start.(),
          {:ok, pid} <- Engine.start_link(opts) do
-      state = evict(state)
-      entry = %{pid: pid, used: System.monotonic_time(), timer: nil, users: %{}}
+      state = state |> evict() |> own(owner, key)
+      entry = %{pid: pid, owner: owner, used: System.monotonic_time(), users: %{}}
       state = %{state | by_pid: Map.put(state.by_pid, pid, key)}
       state = touch(state, key, entry)
       {:ok, state.engines[key], state}
+    end
+  end
+
+  # The owner's monitor, taken with its first engine.
+  defp own(state, owner, key) do
+    case Enum.find(state.owners, fn {_ref, {pid, _keys}} -> pid == owner end) do
+      {ref, {^owner, keys}} ->
+        %{state | owners: Map.put(state.owners, ref, {owner, MapSet.put(keys, key)})}
+
+      nil ->
+        ref = Process.monitor(owner)
+        %{state | owners: Map.put(state.owners, ref, {owner, MapSet.new([key])})}
     end
   end
 
@@ -242,10 +250,7 @@ defmodule Argus.FlowLog.Pool do
   end
 
   defp touch(state, key, entry) do
-    if timer = entry.timer, do: Process.cancel_timer(elem(timer, 0))
-    ref = make_ref()
-    timer = Process.send_after(self(), {:idle, key, ref}, state.idle_ms)
-    entry = %{entry | used: System.monotonic_time(), timer: {timer, ref}}
+    entry = %{entry | used: System.monotonic_time()}
     %{state | engines: Map.put(state.engines, key, entry)}
   end
 
@@ -264,8 +269,7 @@ defmodule Argus.FlowLog.Pool do
 
   defp stop_engine(state, key) do
     case Map.fetch(state.engines, key) do
-      {:ok, %{pid: pid} = entry} ->
-        if timer = entry.timer, do: Process.cancel_timer(elem(timer, 0))
+      {:ok, %{pid: pid}} ->
         Process.unlink(pid)
         Engine.stop(pid)
         drop(state, key)
@@ -275,10 +279,32 @@ defmodule Argus.FlowLog.Pool do
     end
   end
 
+  # An owner left with no engine is no longer watched.
   defp drop(state, key) do
     case Map.pop(state.engines, key) do
-      {nil, _} -> state
-      {%{pid: pid}, engines} -> %{state | engines: engines, by_pid: Map.delete(state.by_pid, pid)}
+      {nil, _} ->
+        state
+
+      {%{pid: pid, owner: owner}, engines} ->
+        %{state | engines: engines, by_pid: Map.delete(state.by_pid, pid)}
+        |> disown(owner, key)
+    end
+  end
+
+  defp disown(state, owner, key) do
+    case Enum.find(state.owners, fn {_ref, {pid, _keys}} -> pid == owner end) do
+      {ref, {^owner, keys}} ->
+        keys = MapSet.delete(keys, key)
+
+        if MapSet.size(keys) == 0 do
+          Process.demonitor(ref, [:flush])
+          %{state | owners: Map.delete(state.owners, ref)}
+        else
+          %{state | owners: Map.put(state.owners, ref, {owner, keys})}
+        end
+
+      nil ->
+        state
     end
   end
 end
