@@ -26,6 +26,15 @@ defmodule Argus.FlowLog.Engine do
   output directory. This process remembers what each input was last
   committed as (`snapshot/1`), so a caller sends only the relations whose
   identity moved.
+
+  ## Telemetry
+
+    * `[:argus, :flowlog, :engine, :start]` — an engine started and
+      answered `hello`: `%{duration: native_time}`, `%{digest: digest}`;
+    * `[:argus, :flowlog, :engine, :commit]` — a commit the engine
+      answered: `%{duration: native_time}`, `%{digest: digest, inputs:
+      count, written: count}` (the inputs it was told of, the outputs it
+      wrote).
   """
 
   use GenServer
@@ -130,6 +139,7 @@ defmodule Argus.FlowLog.Engine do
 
   @impl GenServer
   def init(opts) do
+    started = System.monotonic_time()
     executable = Keyword.fetch!(opts, :executable)
     digest = Keyword.fetch!(opts, :digest)
     workers = Keyword.get(opts, :workers, 1)
@@ -153,6 +163,7 @@ defmodule Argus.FlowLog.Engine do
     state = %{
       port: port,
       log: Keyword.get(opts, :log),
+      digest: digest,
       held: %{},
       outputs: %{},
       manifest: nil
@@ -160,6 +171,12 @@ defmodule Argus.FlowLog.Engine do
 
     case request(state, %{op: "hello"}, 30_000) do
       {:ok, %{"protocol" => @protocol, "digest" => ^digest} = hello} ->
+        :telemetry.execute(
+          [:argus, :flowlog, :engine, :start],
+          %{duration: System.monotonic_time() - started},
+          %{digest: digest}
+        )
+
         {:ok, %{state | manifest: hello}}
 
       {:ok, %{"protocol" => @protocol, "digest" => other}} ->
@@ -178,9 +195,16 @@ defmodule Argus.FlowLog.Engine do
   @impl GenServer
   def handle_call({:commit, out_dir, inputs, identities, rewrite}, _from, state) do
     request = %{op: "commit", out: out_dir, inputs: inputs, rewrite: rewrite}
+    started = System.monotonic_time()
 
     case request(state, request, :infinity) do
       {:ok, reply} ->
+        :telemetry.execute(
+          [:argus, :flowlog, :engine, :commit],
+          %{duration: System.monotonic_time() - started},
+          %{digest: state.digest, inputs: map_size(inputs), written: length(reply["written"])}
+        )
+
         result = %{
           epoch: reply["epoch"],
           written: reply["written"],

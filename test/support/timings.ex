@@ -8,6 +8,10 @@ defmodule Argus.Test.Timings do
   On with `ARGUS_TEST_TIMINGS=N` (the N slowest; `test_helper.exs` adds
   it beside the CLI formatter), so CI's log shows which tests came near
   their timeout and how near.
+
+  It also counts what the suite's FlowLog engines did in this VM (a
+  peer's are its own): how many started and commits they answered, and
+  the time each took in all (`Argus.FlowLog.Engine`'s telemetry).
   """
 
   use GenServer
@@ -20,7 +24,24 @@ defmodule Argus.Test.Timings do
         _ -> 20
       end
 
-    {:ok, %{count: count, tests: []}}
+    # Slots: starts, start time, commits, commit time (native units).
+    engines = :counters.new(4, [:write_concurrency])
+
+    :telemetry.attach_many(
+      {__MODULE__, self()},
+      [[:argus, :flowlog, :engine, :start], [:argus, :flowlog, :engine, :commit]],
+      &__MODULE__.count_engine/4,
+      engines
+    )
+
+    {:ok, %{count: count, tests: [], engines: engines}}
+  end
+
+  @doc false
+  def count_engine([:argus, :flowlog, :engine, event], %{duration: duration}, _meta, engines) do
+    slot = if event == :start, do: 1, else: 3
+    :counters.add(engines, slot, 1)
+    :counters.add(engines, slot + 1, duration)
   end
 
   @impl true
@@ -40,13 +61,21 @@ defmodule Argus.Test.Timings do
 
     IO.puts(
       "\nThe #{length(slowest)} slowest tests, as they ran beside the others:\n" <>
-        Enum.join(lines, "\n")
+        Enum.join(lines, "\n") <> "\n\n" <> engines(state.engines)
     )
 
     {:noreply, state}
   end
 
   def handle_cast(_event, state), do: {:noreply, state}
+
+  defp engines(counters) do
+    [starts, start_time, commits, commit_time] = Enum.map(1..4, &:counters.get(counters, &1))
+    seconds = &Float.round(System.convert_time_unit(&1, :native, :millisecond) / 1000, 1)
+
+    "FlowLog engines: #{starts} started (#{seconds.(start_time)} s in all), " <>
+      "#{commits} commits (#{seconds.(commit_time)} s in all)"
+  end
 
   defp format_ms(us), do: String.pad_leading("#{div(us, 1000)} ms", 10)
 
