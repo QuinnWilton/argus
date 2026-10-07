@@ -70,8 +70,10 @@ use crate::host::Dataflow;
 use crate::host::Fields;
 use crate::host::Relation;
 
-/// A row's slots, inline up to six.
-pub type Row = SmallVec<[u32; 6]>;
+/// A row's slots, inline up to four: most keys are one or two columns,
+/// and every arranged update holds a key and a value. Four used a tenth
+/// less memory than six on argus's largest programs, as fast.
+pub type Row = SmallVec<[u32; 4]>;
 /// Every collection's data: a key and a value. A row collection's key is
 /// empty, and so is a key-only collection's value.
 type Kv = (Row, Row);
