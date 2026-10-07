@@ -1509,18 +1509,12 @@ defmodule Argus.Extractors.Supervision do
   # A key's value in options the reader rebuilt: the first pair's, before
   # anything it cannot know; the default when the options are known whole
   # and hold no such pair.
-  defp lookup(opts, key, default) when is_list(opts) do
-    Enum.reduce_while(opts, {:absent, opts}, fn
-      {^key, value}, _acc -> {:halt, {:found, value}}
-      {k, _value}, acc when is_atom(k) and k != :dynamic -> {:cont, acc}
-      _unknown, _acc -> {:halt, :unknown}
-    end)
-    |> case do
-      {:found, value} -> value
-      {:absent, opts} -> if Terms.proper_list?(opts), do: default, else: @unknown
-      :unknown -> @unknown
-    end
-  end
+  defp lookup([{key, value} | _rest], key, _default), do: value
+
+  defp lookup([{k, _value} | rest], key, default) when is_atom(k) and k != :dynamic,
+    do: lookup(rest, key, default)
+
+  defp lookup([], _key, default), do: default
 
   defp lookup(opts, key, default) when is_map(opts) do
     case Map.fetch(opts, key) do
@@ -1529,6 +1523,8 @@ defmodule Argus.Extractors.Supervision do
     end
   end
 
+  # An entry the reader cannot know, or an improper list's tail (options
+  # built as `[{k, v} | rest]` over a `rest` it did not rebuild).
   defp lookup(_opts, _key, _default), do: @unknown
 
   # Keyword.merge/2, put/3 and put_new/3 (and Map's) over options the
