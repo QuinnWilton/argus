@@ -61,10 +61,16 @@ coarse(f, "obj", o, ("below", (sel, kind, tag, ar)), x) :-
   coarse_shape(o, kind, tag, ar).
 
 // The field a leaf sits under or below, with the tag and selector as columns of their
-// own: a negation reads columns, not a value taken apart from a tuple.
+// own: a negation reads columns, not a value taken apart from a tuple. Only for the
+// sources an update copies (coarse_base): over every source it would copy all of
+// `coarse`, on Ash's deps 3.3 million rows of which the updates read a fraction.
 .decl coarse_field(func: symbol, src_kind: symbol, src: symbol, tag: symbol, sel: symbol, x: symbol)
 
-coarse_field(f, sk, s, t, sel, x) :- coarse(f, sk, s, r, x), r = (t, at), at = (sel, _, _, _).
+coarse_field(f, sk, s, t, sel, x) :- coarse_base(f, sk, s), coarse(f, sk, s, r, x), r = (t, at), at = (sel, _, _, _).
+
+.decl coarse_base(func: symbol, src_kind: symbol, src: symbol)
+
+coarse_base(f, sk, s) :- stage_mode("bounded"), value_base(f, _, sk, s).
 
 // An update keeps the fields it does not set, as fields of its own shape.
 coarse(f, "obj", o, ("under", (sel, kind, tag, ar)), x) :-
@@ -172,10 +178,19 @@ coarse(f, "result", c, ("under", ("{1}", "", "", "")), cat("start ", c)) :-
   kept_fresh(c, f, x),
   start_object(x, _).
 
-coarse_ret_all(g, r, x) :- coarse_ret(g, r, x).
-coarse_ret_all(g, r, x) :- coarse_fresh(g, r, x).
-coarse_ret_all(g, r, x) :- passes(g, j), coarse(g, "param", j, r, x).
-coarse_ret_all(g, r, x) :- returns_key(g, k), coarse(g, "dict", k, r, x).
+coarse_ret_all(g, r, x) :- coarse_returns_read(g), coarse_ret(g, r, x).
+coarse_ret_all(g, r, x) :- coarse_returns_read(g), coarse_fresh(g, r, x).
+coarse_ret_all(g, r, x) :- coarse_returns_read(g), passes(g, j), coarse(g, "param", j, r, x).
+coarse_ret_all(g, r, x) :- coarse_returns_read(g), returns_key(g, k), coarse(g, "dict", k, r, x).
+
+// The functions whose every return a rule reads: a server's state (coarse_slot) and a
+// call's reply. The rest of the program's returns are half a million rows on Ash's
+// deps that nothing reads.
+.decl coarse_returns_read(func: symbol)
+
+coarse_returns_read(g) :- stage_mode("bounded"), state_out(_, g).
+coarse_returns_read(g) :- stage_mode("bounded"), statem_data_out(_, g).
+coarse_returns_read(h) :- stage_mode("bounded"), function_def(h, _, "handle_call", 3, _).
 
 // Resolve a state slot to its returned tuple field. Use the exact value for a direct
 // field leaf, or somewhere for deeper or unknown contents.
