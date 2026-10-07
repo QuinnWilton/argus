@@ -1892,6 +1892,15 @@ fn build<'scope>(
 // The engine
 // =============================================================================
 
+/// Hands the memory this thread freed back to the system. The allocator
+/// returns freed pages lazily, as later allocations run; an engine kept
+/// idle between commits makes none, and held what its first commit freed:
+/// on Ash's dependencies, a fifth to a third of its footprint.
+fn release_freed() {
+    // SAFETY: `mi_collect` reads and writes only the allocator's own state.
+    unsafe { libmimalloc_sys::mi_collect(true) }
+}
+
 /// The fewest lines of an input one thread parses: fewer are parsed on
 /// the committing thread, where a thread's start would cost more.
 const PARSED_TOGETHER: usize = 16_384;
@@ -2193,6 +2202,7 @@ impl Generic {
                     worker.step_while(|| {
                         probe.less_than(&epoch) && worker_monitor.exceeded().is_none()
                     });
+                    release_freed();
                     if done_tx.send(()).is_err() {
                         break;
                     }
@@ -2291,6 +2301,10 @@ impl Dataflow for Generic {
             self.staged.push((self.input_index[index], rows?, diff));
         }
         Ok(())
+    }
+
+    fn settle(&mut self) {
+        release_freed();
     }
 
     fn commit(&mut self, changes: &mut Changes) -> Result<(), Refusal> {

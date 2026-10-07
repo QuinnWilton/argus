@@ -326,6 +326,10 @@ pub trait Dataflow {
     /// changed lines with their signed weights; or refuses, leaving the
     /// dataflow part way through the epoch, so that it takes no other.
     fn commit(&mut self, changes: &mut Changes) -> Result<(), Refusal>;
+
+    /// Called once a request's reply is written and everything it read is
+    /// dropped: the engine may idle until the next request.
+    fn settle(&mut self) {}
 }
 
 /// Why a dataflow stopped a commit part way: `kind` for argus to act on
@@ -376,6 +380,10 @@ pub fn main<D: Dataflow>(
             || replies.flush().is_err()
         {
             std::process::exit(0);
+        }
+        // The reply is out: the engine settles while the caller reads it.
+        if let Ok(engine) = &mut engine {
+            engine.dataflow.settle();
         }
     }
     std::process::exit(0)

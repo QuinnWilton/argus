@@ -21,6 +21,7 @@ flowlog-planner = { git = "https://github.com/QuinnWilton/flowlog", rev = "09b7e
 flowlog-runtime = { git = "https://github.com/QuinnWilton/flowlog", rev = "09b7eb1bd17b731f04dc0d198ef39bedbd8f8c01" }
 itoa = "1.0"
 libc = "0.2"
+libmimalloc-sys = { version = "0.1", features = ["extended"] }
 mimalloc = "0.1"
 rustc-hash = "2.0"
 serde = { version = "1.0", features = ["derive", "rc"] }
