@@ -705,6 +705,211 @@ enum Step {
     },
 }
 
+/// `share_maps` over one scope's steps: the outputs of the maps folded
+/// into another, whose steps go.
+fn share_in_scope(mut steps: Vec<&mut Step>, elsewhere: &HashSet<u64>) -> HashSet<u64> {
+    let json = |value: &dyn erased::Json| value.json();
+    // Each map's readers, and whether only joins and antijoins read it.
+    let mut joined_only: HashMap<u64, bool> = HashMap::new();
+    for step in &steps {
+        match &**step {
+            Step::Map { input, .. } => {
+                joined_only.insert(*input, false);
+            }
+            Step::Join { left, right, .. } | Step::Antijoin { left, right, .. } => {
+                joined_only.entry(*left).or_insert(true);
+                joined_only.entry(*right).or_insert(true);
+            }
+        }
+    }
+    // The maps by what they read, key and filter.
+    let mut groups: HashMap<String, Vec<usize>> = HashMap::new();
+    for (index, step) in steps.iter().enumerate() {
+        if let Step::Map {
+            input,
+            output,
+            shape,
+            key,
+            preds,
+            ..
+        } = &**step
+            && joined_only.get(output) == Some(&true)
+            && !elsewhere.contains(output)
+        {
+            let group = format!("{input}|{shape:?}|{}|{}", json(key), json(preds));
+            groups.entry(group).or_default().push(index);
+        }
+    }
+    // Each folded map's output: the shared one's, and where each of its
+    // value columns is in the shared one's.
+    let mut folded: HashMap<u64, (u64, Vec<usize>)> = HashMap::new();
+    for members in groups.values().filter(|members| members.len() > 1) {
+        let mut union: Vec<Expr> = Vec::new();
+        let mut spelled: Vec<String> = Vec::new();
+        let mut positions: Vec<Vec<usize>> = Vec::new();
+        for &index in members {
+            let Step::Map { value, .. } = &mut *steps[index] else {
+                unreachable!("a group holds maps")
+            };
+            let mut at = Vec::with_capacity(value.len());
+            for expr in value.drain(..) {
+                let text = expr.json();
+                match spelled.iter().position(|t| *t == text) {
+                    Some(found) => at.push(found),
+                    None => {
+                        at.push(union.len());
+                        spelled.push(text);
+                        union.push(expr);
+                    }
+                }
+            }
+            positions.push(at);
+        }
+        let shared = match &*steps[members[0]] {
+            Step::Map { output, .. } => *output,
+            _ => unreachable!("a group holds maps"),
+        };
+        for (&index, at) in members.iter().zip(positions) {
+            let Step::Map { output, value, .. } = &mut *steps[index] else {
+                unreachable!("a group holds maps")
+            };
+            folded.insert(*output, (shared, at));
+            if *output == shared {
+                *value = std::mem::take(&mut union);
+            }
+        }
+    }
+    if folded.is_empty() {
+        return HashSet::new();
+    }
+    for step in &mut steps {
+        match &mut **step {
+            Step::Join {
+                left,
+                right,
+                key,
+                value,
+                preds,
+                ..
+            } => {
+                let left_at = folded.get(left).cloned();
+                let right_at = folded.get(right).cloned();
+                let mut remap = |slot: &mut Slot| match slot {
+                    Slot::Left(i) | Slot::Value(i) => {
+                        if let Some((_, at)) = &left_at {
+                            *i = at[*i];
+                        }
+                    }
+                    Slot::Right(i) => {
+                        if let Some((_, at)) = &right_at {
+                            *i = at[*i];
+                        }
+                    }
+                    Slot::Key(_) => {}
+                };
+                for expr in key.iter_mut().chain(value.iter_mut()) {
+                    expr.slots_mut(&mut remap);
+                }
+                for pred in preds.iter_mut() {
+                    pred.slots_mut(&mut remap);
+                }
+                if let Some((shared, _)) = left_at {
+                    *left = shared;
+                }
+                if let Some((shared, _)) = right_at {
+                    *right = shared;
+                }
+            }
+            Step::Antijoin {
+                left,
+                right,
+                key,
+                value,
+                ..
+            } => {
+                if let Some((shared, at)) = folded.get(right).cloned() {
+                    let mut remap = |slot: &mut Slot| {
+                        if let Slot::Value(i) = slot {
+                            *i = at[*i];
+                        }
+                    };
+                    for expr in key.iter_mut().chain(value.iter_mut()) {
+                        expr.slots_mut(&mut remap);
+                    }
+                    *right = shared;
+                }
+                // The keys an antijoin reads are the shared map's too.
+                if let Some((shared, _)) = folded.get(left) {
+                    *left = *shared;
+                }
+            }
+            Step::Map { .. } => {}
+        }
+    }
+    folded
+        .into_iter()
+        .filter(|(output, (shared, _))| output != shared)
+        .map(|(output, _)| output)
+        .collect()
+}
+
+/// Spelling a plan's parts out, to compare them.
+mod erased {
+    pub trait Json {
+        fn json(&self) -> String;
+    }
+
+    impl<T: serde::Serialize> Json for T {
+        fn json(&self) -> String {
+            serde_json::to_string(self).expect("a plan's parts serialize")
+        }
+    }
+}
+use erased::Json as _;
+
+impl Expr {
+    /// Every column this expression reads, to rewrite.
+    fn slots_mut(&mut self, f: &mut impl FnMut(&mut Slot)) {
+        match self {
+            Expr::Col(slot) => f(slot),
+            Expr::Const(_) => {}
+            Expr::Fold(first, rest) => {
+                first.slots_mut(f);
+                for (_, expr) in rest {
+                    expr.slots_mut(f);
+                }
+            }
+            Expr::Strlen(e) | Expr::Ord(e) | Expr::ToString(e, _) | Expr::ToNumber(e) => {
+                e.slots_mut(f)
+            }
+            Expr::Proj(e, _) => e.slots_mut(f),
+            Expr::Substr(a, b, c) => {
+                a.slots_mut(f);
+                b.slots_mut(f);
+                c.slots_mut(f);
+            }
+            Expr::Cat(parts) | Expr::Tuple(parts) => {
+                for part in parts {
+                    part.slots_mut(f);
+                }
+            }
+        }
+    }
+}
+
+impl Pred {
+    /// Every column this filter reads, to rewrite.
+    fn slots_mut(&mut self, f: &mut impl FnMut(&mut Slot)) {
+        match self {
+            Pred::Compare(_, _, a, b) | Pred::Contains(_, a, b) | Pred::Match(_, a, b) => {
+                a.slots_mut(f);
+                b.slots_mut(f);
+            }
+            Pred::MatchLiteral(_, _, e) => e.slots_mut(f),
+        }
+    }
+}
+
 impl std::fmt::Debug for Shape {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
@@ -1025,8 +1230,59 @@ impl Plan {
             labels: HashMap::new(),
         };
         plan.mark_earlier(program);
+        plan.share_maps();
         plan.label(program);
         Ok(plan)
+    }
+
+    /// Maps of one collection by the same key and filters, whose outputs
+    /// only joins and antijoins read, as one: each was arranged apart,
+    /// the same rows by the same key held once per value it kept. The
+    /// shared map keeps every column any of them kept, and each reader is
+    /// remapped to its columns there. A row the union keeps apart joins
+    /// more than once, which the heads' deduplication absorbs.
+    fn share_maps(&mut self) {
+        let mut outer: Vec<&mut Step> = Vec::new();
+        let mut loops: Vec<Vec<&mut Step>> = Vec::new();
+        // An output a head, a loop or the program reads is not only a
+        // join's.
+        let mut elsewhere: HashSet<u64> = HashSet::new();
+        for stratum in &self.strata {
+            for head in &stratum.heads {
+                elsewhere.extend(head.parts.iter().copied());
+            }
+            if let Some(recursion) = &stratum.recursion {
+                elsewhere.extend(recursion.enter.iter().copied());
+                elsewhere.extend(recursion.feedback.iter().copied());
+                elsewhere.extend(recursion.leave.iter().copied());
+            }
+        }
+        elsewhere.extend(self.outputs.iter().map(|o| o.relation));
+        for stratum in &mut self.strata {
+            outer.extend(stratum.prelude.iter_mut());
+            if let Some(recursion) = &mut stratum.recursion {
+                loops.push(recursion.body.iter_mut().collect());
+            }
+        }
+        // A scope's maps go from that scope only: a loop's body may compute
+        // what an outer scope does, under the same fingerprint.
+        let outer_dropped = share_in_scope(outer, &elsewhere);
+        let loops_dropped: Vec<HashSet<u64>> = loops
+            .into_iter()
+            .map(|body| share_in_scope(body, &elsewhere))
+            .collect();
+        let kept = |dropped: &HashSet<u64>| {
+            let dropped = dropped.clone();
+            move |step: &Step| !matches!(step, Step::Map { output, .. } if dropped.contains(output))
+        };
+        let mut loops_dropped = loops_dropped.into_iter();
+        for stratum in &mut self.strata {
+            stratum.prelude.retain(kept(&outer_dropped));
+            if let Some(recursion) = &mut stratum.recursion {
+                let dropped = loops_dropped.next().expect("a dropped set per loop");
+                recursion.body.retain(kept(&dropped));
+            }
+        }
     }
 
     /// Names every collection: a relation by its name, a step's output by
