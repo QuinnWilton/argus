@@ -58,8 +58,9 @@ which a change appeared; older names and APIs may have changed since then.
   toolchain. On a 544-module project it gives the compiled engines' results
   on every built-in program, its first solve within 1 to 2.4 times theirs
   and a one-row edit as fast. It keeps each program's plan by digest, so it
-  starts again in milliseconds. `ARGUS_FLOWLOG_ENGINE=compiled` builds an
-  engine for every program instead; the generic engine has no averages,
+  starts again in milliseconds. `ARGUS_FLOWLOG_ENGINE=compiled` (or
+  `Argus.FlowLog.engine/2`'s `:engine`) builds an engine for every program
+  instead; the generic engine has no averages,
   user-defined functions, or columns other than symbols, numbers, booleans
   and tuples of them, and a program using one is built.
 - Engines report their starts and commits as telemetry

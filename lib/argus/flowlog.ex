@@ -178,7 +178,8 @@ defmodule Argus.FlowLog do
         }
 
   @doc """
-  The engine a program runs in, as `ARGUS_FLOWLOG_ENGINE` chooses it:
+  The engine a program runs in, as the `:engine` option chooses it, or
+  else `ARGUS_FLOWLOG_ENGINE`:
 
     * `auto` (the default) — the program's compiled engine when it is
       installed or a release's bundle holds it, else the generic engine,
@@ -186,7 +187,8 @@ defmodule Argus.FlowLog do
     * `compiled` — the compiled engine, built when missing;
     * `generic` — the generic engine; a program it refuses is an error.
 
-  Any other value raises `ArgumentError`, naming the variable.
+  Any other value raises `ArgumentError`, naming the variable. `opts`
+  also take `:progress` (`Argus.FlowLog.Program.engines/3`).
   """
   @spec engine(Path.t(), keyword()) :: {:ok, built()} | {:error, term()}
   def engine(rules_path, opts \\ []) do
@@ -196,7 +198,7 @@ defmodule Argus.FlowLog do
          {:ok, manifest} <- manifest(path, opts),
          digest = program_digest(path, Enum.map(manifest.inputs, & &1.name)),
          {:ok, kind, executable, args} <-
-           runner(engine_mode(), toolchain, path, digest, manifest, opts) do
+           runner(engine_mode(opts), toolchain, path, digest, manifest, opts) do
       {:ok,
        %{
          toolchain: toolchain,
@@ -209,7 +211,20 @@ defmodule Argus.FlowLog do
     end
   end
 
-  defp engine_mode do
+  defp engine_mode(opts) do
+    case Keyword.fetch(opts, :engine) do
+      {:ok, mode} when mode in [:auto, :compiled, :generic] ->
+        mode
+
+      {:ok, other} ->
+        raise ArgumentError, "engine: takes :auto, :compiled or :generic, not #{inspect(other)}"
+
+      :error ->
+        env_engine_mode()
+    end
+  end
+
+  defp env_engine_mode do
     case System.get_env("ARGUS_FLOWLOG_ENGINE", "") do
       value when value in ["", "auto"] ->
         :auto

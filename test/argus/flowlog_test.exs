@@ -17,7 +17,6 @@ defmodule Argus.FlowLogTest do
 
   alias Argus.FlowLog
   alias Argus.FlowLog.Engine
-  alias Argus.FlowLog.Program
 
   @program """
   .decl edge(x: symbol, y: symbol) mutable
@@ -50,11 +49,11 @@ defmodule Argus.FlowLogTest do
     File.mkdir_p!(dir)
     path = Path.join(dir, "graph.dl")
     File.write!(path, @program)
-    {:ok, %{kind: :generic} = built} = FlowLog.engine(path, progress: false)
+    {:ok, %{kind: :generic} = built} = FlowLog.engine(path, engine: :generic, progress: false)
     # The same program's compiled engine, run in place of the generic one.
-    :ok = FlowLog.prebuild([path], progress: false)
-    exe = Program.installed(built.toolchain, built.digest, Program.profile(path))
-    compiled = %{built | kind: :compiled, executable: exe, args: []}
+    {:ok, %{kind: :compiled} = compiled} =
+      FlowLog.engine(path, engine: :compiled, progress: false)
+
     on_exit(fn -> File.rm_rf!(dir) end)
     %{program: path, built: built, engines: %{generic: built, compiled: compiled}}
   end
