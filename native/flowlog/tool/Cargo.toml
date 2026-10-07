@@ -23,6 +23,7 @@ itoa = "1.0"
 libc = "0.2"
 mimalloc = "0.1"
 rustc-hash = "2.0"
+serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = "1.0"
 smallvec = { version = "1.13", features = ["serde", "union", "const_generics"] }
 

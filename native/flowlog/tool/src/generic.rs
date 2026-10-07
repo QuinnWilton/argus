@@ -60,6 +60,8 @@ use flowlog_runtime::timely::dataflow::operators::ToStream;
 use flowlog_runtime::timely::dataflow::operators::probe::Handle as ProbeHandle;
 use flowlog_runtime::timely::order::Product;
 use flowlog_runtime::timely::progress::Timestamp;
+use serde::Deserialize;
+use serde::Serialize;
 use smallvec::SmallVec;
 
 use crate::host::Changes;
@@ -84,7 +86,7 @@ type LoopTime = Product<Epoch, u32>;
 // =============================================================================
 
 /// What a slot holds.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 enum Ty {
     Num,
     Str,
@@ -153,17 +155,57 @@ fn tuple_field(slot: u32, index: usize) -> u32 {
     tuples().lock().expect("the tuple table").fields[slot as usize][index]
 }
 
-fn constant(c: &Constant) -> Result<u32, String> {
-    let text = c.text();
-    Ok(match c.ty() {
-        DataType::Int32 => slot_of_number(
-            text.parse()
-                .map_err(|_| format!("`{text}` is not a 32-bit number"))?,
-        ),
-        DataType::String => slot_of_symbol(text),
-        DataType::Bool => u32::from(text == "True"),
-        other => return Err(format!("the generic engine has no `{other}` constants")),
-    })
+/// A constant as the plan keeps it: by value, for a symbol's slot is its
+/// key in this process's interner, which a cached plan cannot carry.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+enum Lit {
+    Num(i32),
+    Sym(String),
+    Bool(bool),
+}
+
+impl Lit {
+    fn of(c: &Constant) -> Result<Self, String> {
+        let text = c.text();
+        Ok(match c.ty() {
+            DataType::Int32 => Lit::Num(
+                text.parse()
+                    .map_err(|_| format!("`{text}` is not a 32-bit number"))?,
+            ),
+            DataType::String => Lit::Sym(text.to_string()),
+            DataType::Bool => Lit::Bool(text == "True"),
+            other => return Err(format!("the generic engine has no `{other}` constants")),
+        })
+    }
+
+    fn slot(&self) -> u32 {
+        match self {
+            Lit::Num(n) => slot_of_number(*n),
+            Lit::Sym(text) => slot_of_symbol(text),
+            Lit::Bool(b) => u32::from(*b),
+        }
+    }
+}
+
+/// A constant and its slot, interned on first use.
+#[derive(Debug, Serialize, Deserialize)]
+struct Const {
+    lit: Lit,
+    #[serde(skip)]
+    slot: OnceLock<u32>,
+}
+
+impl Const {
+    fn new(lit: Lit) -> Self {
+        Const {
+            lit,
+            slot: OnceLock::new(),
+        }
+    }
+
+    fn slot(&self) -> u32 {
+        *self.slot.get_or_init(|| self.lit.slot())
+    }
 }
 
 /// `a` against `b`, both of type `ty`, as the compiled engine orders them:
@@ -191,7 +233,7 @@ fn order(ty: &Ty, a: u32, b: u32) -> std::cmp::Ordering {
 
 /// Where an expression reads a column: the data's key or value, or a join's
 /// left or right value. A row's columns are its value.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 enum Slot {
     Key(usize),
     Value(usize),
@@ -219,7 +261,7 @@ impl Ctx<'_> {
 }
 
 /// The input shape a step's column references resolve against.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Serialize, Deserialize)]
 enum Shape {
     /// A row: `KV((_, i))` is column `i`, whichever flag it carries.
     Row,
@@ -277,12 +319,48 @@ impl Types<'_> {
     }
 }
 
-#[derive(Debug)]
+/// FlowLog's arithmetic operators, as a plan keeps them.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+enum Arith {
+    Plus,
+    Minus,
+    Multiply,
+    Divide,
+    Modulo,
+    Power,
+    BitAnd,
+    BitOr,
+    BitXor,
+    ShiftLeft,
+    ShiftRight,
+    ShiftRightUnsigned,
+}
+
+impl Arith {
+    fn of(op: &ArithmeticOperator) -> Self {
+        match op {
+            ArithmeticOperator::Plus => Arith::Plus,
+            ArithmeticOperator::Minus => Arith::Minus,
+            ArithmeticOperator::Multiply => Arith::Multiply,
+            ArithmeticOperator::Divide => Arith::Divide,
+            ArithmeticOperator::Modulo => Arith::Modulo,
+            ArithmeticOperator::Power => Arith::Power,
+            ArithmeticOperator::BitAnd => Arith::BitAnd,
+            ArithmeticOperator::BitOr => Arith::BitOr,
+            ArithmeticOperator::BitXor => Arith::BitXor,
+            ArithmeticOperator::ShiftLeft => Arith::ShiftLeft,
+            ArithmeticOperator::ShiftRight => Arith::ShiftRight,
+            ArithmeticOperator::ShiftRightUnsigned => Arith::ShiftRightUnsigned,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 enum Expr {
     Col(Slot),
-    Const(u32),
+    Const(Const),
     /// Numbers folded left to right, as FlowLog evaluates them.
-    Fold(Box<Expr>, Vec<(ArithmeticOperator, Expr)>),
+    Fold(Box<Expr>, Vec<(Arith, Expr)>),
     Strlen(Box<Expr>),
     Substr(Box<Expr>, Box<Expr>, Box<Expr>),
     Ord(Box<Expr>),
@@ -306,7 +384,7 @@ fn compile(arg: &ArithmeticArgument, types: &Types<'_>) -> Result<(Expr, Ty), St
                 "the generic engine computes `{op:?}` on numbers only"
             ));
         }
-        steps.push((op.clone(), expr));
+        steps.push((Arith::of(op), expr));
     }
     if ty != Ty::Num {
         return Err("the generic engine computes arithmetic on numbers only".into());
@@ -321,7 +399,7 @@ fn compile_factor(factor: &FactorArgument, types: &Types<'_>) -> Result<(Expr, T
             let (slot, ty) = types.slot(arg)?;
             (Expr::Col(slot), ty)
         }
-        FactorArgument::Const(c) => (Expr::Const(constant(c)?), Ty::of(c.ty())?),
+        FactorArgument::Const(c) => (Expr::Const(Const::new(Lit::of(c)?)), Ty::of(c.ty())?),
         FactorArgument::Group(inner) => compile(inner, types)?,
         FactorArgument::Builtin { op, args } => match (op, args.as_slice()) {
             (BuiltinOperator::Strlen, [s]) => (Expr::Strlen(boxed(s)?.0), Ty::Num),
@@ -397,23 +475,23 @@ fn cat_parts(
     Ok(())
 }
 
-fn arith(op: &ArithmeticOperator, a: i32, b: i32) -> i32 {
+fn arith(op: Arith, a: i32, b: i32) -> i32 {
     use flowlog_runtime::arith;
     match op {
-        ArithmeticOperator::Plus => a.wrapping_add(b),
-        ArithmeticOperator::Minus => a.wrapping_sub(b),
-        ArithmeticOperator::Multiply => a.wrapping_mul(b),
+        Arith::Plus => a.wrapping_add(b),
+        Arith::Minus => a.wrapping_sub(b),
+        Arith::Multiply => a.wrapping_mul(b),
         // A compiled engine's division by zero, or of the least number by
         // -1, panics and aborts the engine; so does this one.
-        ArithmeticOperator::Divide => a / b,
-        ArithmeticOperator::Modulo => a % b,
-        ArithmeticOperator::BitAnd => a & b,
-        ArithmeticOperator::BitOr => a | b,
-        ArithmeticOperator::BitXor => a ^ b,
-        ArithmeticOperator::Power => arith::pow(a, b),
-        ArithmeticOperator::ShiftLeft => arith::bshl(a, b),
-        ArithmeticOperator::ShiftRight => arith::bshr(a, b),
-        ArithmeticOperator::ShiftRightUnsigned => arith::bshru(a, b),
+        Arith::Divide => a / b,
+        Arith::Modulo => a % b,
+        Arith::BitAnd => a & b,
+        Arith::BitOr => a | b,
+        Arith::BitXor => a ^ b,
+        Arith::Power => arith::pow(a, b),
+        Arith::ShiftLeft => arith::bshl(a, b),
+        Arith::ShiftRight => arith::bshr(a, b),
+        Arith::ShiftRightUnsigned => arith::bshru(a, b),
     }
 }
 
@@ -421,11 +499,11 @@ impl Expr {
     fn eval(&self, ctx: &Ctx<'_>) -> u32 {
         match self {
             Expr::Col(slot) => ctx.read(*slot),
-            Expr::Const(value) => *value,
+            Expr::Const(c) => c.slot(),
             Expr::Fold(init, steps) => {
                 let mut acc = number(init.eval(ctx));
                 for (op, operand) in steps {
-                    acc = arith(op, acc, number(operand.eval(ctx)));
+                    acc = arith(*op, acc, number(operand.eval(ctx)));
                 }
                 slot_of_number(acc)
             }
@@ -468,16 +546,45 @@ impl Expr {
     }
 }
 
+/// An equality or an ordering.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+enum Cmp {
+    Eq,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+}
+
+/// A literal pattern, compiled on first use: one that does not compile
+/// matches nothing.
+#[derive(Debug, Serialize, Deserialize)]
+struct Pattern {
+    text: String,
+    #[serde(skip)]
+    regex: OnceLock<Option<Regex>>,
+}
+
+impl Pattern {
+    fn regex(&self) -> Option<&Regex> {
+        self.regex
+            .get_or_init(|| Regex::new(&format!("^(?:{})$", self.text)).ok())
+            .as_ref()
+    }
+}
+
 /// A step's filter.
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 enum Pred {
     /// An equality or ordering between two values of type `Ty`.
-    Compare(ComparisonOperator, Ty, Expr, Expr),
+    Compare(Cmp, Ty, Expr, Expr),
     /// `right` contains `left`'s text, or does not.
     Contains(bool, Expr, Expr),
-    /// `right` matches `left`'s pattern whole, or does not. A literal
-    /// pattern compiles once; one that does not compile matches nothing.
-    Match(bool, Option<Regex>, Expr, Expr),
+    /// `right` matches a literal pattern whole, or does not.
+    MatchLiteral(bool, Pattern, Expr),
+    /// `right` matches `left`'s pattern whole, or does not.
+    Match(bool, Expr, Expr),
 }
 
 fn compile_compare(
@@ -490,19 +597,22 @@ fn compile_compare(
     let (r, _) = compile(right, types)?;
     Ok(match op {
         ComparisonOperator::Contains { negated } => Pred::Contains(*negated, l, r),
-        ComparisonOperator::Match { negated } => {
-            let literal = match (&left.init, left.rest.is_empty()) {
-                (FactorArgument::Const(c), true) if c.ty() == &DataType::String => {
-                    Some(Regex::new(&format!("^(?:{})$", c.text())).ok())
-                }
-                _ => None,
-            };
-            match literal {
-                Some(regex) => Pred::Match(*negated, regex, Expr::Const(0), r),
-                None => Pred::Match(*negated, None, l, r),
+        ComparisonOperator::Match { negated } => match (&left.init, left.rest.is_empty()) {
+            (FactorArgument::Const(c), true) if c.ty() == &DataType::String => {
+                let pattern = Pattern {
+                    text: c.text().to_string(),
+                    regex: OnceLock::new(),
+                };
+                Pred::MatchLiteral(*negated, pattern, r)
             }
-        }
-        other => Pred::Compare(other.clone(), ty, l, r),
+            _ => Pred::Match(*negated, l, r),
+        },
+        ComparisonOperator::Equal => Pred::Compare(Cmp::Eq, ty, l, r),
+        ComparisonOperator::NotEqual => Pred::Compare(Cmp::Ne, ty, l, r),
+        ComparisonOperator::LessThan => Pred::Compare(Cmp::Lt, ty, l, r),
+        ComparisonOperator::LessEqualThan => Pred::Compare(Cmp::Le, ty, l, r),
+        ComparisonOperator::GreaterThan => Pred::Compare(Cmp::Gt, ty, l, r),
+        ComparisonOperator::GreaterEqualThan => Pred::Compare(Cmp::Ge, ty, l, r),
     })
 }
 
@@ -513,25 +623,24 @@ impl Pred {
             Pred::Compare(op, ty, l, r) => {
                 let (a, b) = (l.eval(ctx), r.eval(ctx));
                 match op {
-                    ComparisonOperator::Equal => a == b,
-                    ComparisonOperator::NotEqual => a != b,
-                    ComparisonOperator::LessThan => order(ty, a, b) == Less,
-                    ComparisonOperator::LessEqualThan => order(ty, a, b) != Greater,
-                    ComparisonOperator::GreaterThan => order(ty, a, b) == Greater,
-                    ComparisonOperator::GreaterEqualThan => order(ty, a, b) != Less,
-                    ComparisonOperator::Contains { .. } | ComparisonOperator::Match { .. } => {
-                        unreachable!("string constraints compile apart")
-                    }
+                    Cmp::Eq => a == b,
+                    Cmp::Ne => a != b,
+                    Cmp::Lt => order(ty, a, b) == Less,
+                    Cmp::Le => order(ty, a, b) != Greater,
+                    Cmp::Gt => order(ty, a, b) == Greater,
+                    Cmp::Ge => order(ty, a, b) != Less,
                 }
             }
             Pred::Contains(negated, needle, haystack) => {
                 symbol(haystack.eval(ctx)).contains(symbol(needle.eval(ctx))) != *negated
             }
-            Pred::Match(negated, Some(regex), _, haystack) => {
-                regex.is_match(symbol(haystack.eval(ctx))) != *negated
+            Pred::MatchLiteral(negated, pattern, haystack) => {
+                pattern
+                    .regex()
+                    .is_some_and(|re| re.is_match(symbol(haystack.eval(ctx))))
+                    != *negated
             }
-            Pred::Match(negated, None, Expr::Const(0), _) => *negated,
-            Pred::Match(negated, None, pattern, haystack) => {
+            Pred::Match(negated, pattern, haystack) => {
                 let pattern = format!("^(?:{})$", symbol(pattern.eval(ctx)));
                 Regex::new(&pattern).is_ok_and(|re| re.is_match(symbol(haystack.eval(ctx))))
                     != *negated
@@ -546,7 +655,7 @@ impl Pred {
 
 /// One step of the plan, compiled: what it reads, what it computes, and
 /// the collection it binds.
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 enum Step {
     /// A map and filter over one collection.
     Map {
@@ -588,7 +697,7 @@ impl std::fmt::Debug for Shape {
 
 /// A relation a stratum binds: the union of its earlier binding (when it
 /// has one) and its head collections, deduplicated, then aggregated.
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 struct Head {
     relation: u64,
     earlier: bool,
@@ -596,9 +705,18 @@ struct Head {
     aggregate: Option<Aggregate>,
 }
 
-#[derive(Debug)]
+/// The aggregates the generic engine computes.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+enum Agg {
+    Count,
+    Sum,
+    Min,
+    Max,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 struct Aggregate {
-    op: AggregationOperator,
+    op: Agg,
     position: usize,
     arity: usize,
 }
@@ -607,11 +725,7 @@ impl Aggregate {
     /// A count or sum with no group answers zero over no rows, as the
     /// compiled engine's does.
     fn seeded(&self) -> bool {
-        self.arity == 1
-            && matches!(
-                self.op,
-                AggregationOperator::Count | AggregationOperator::Sum
-            )
+        self.arity == 1 && matches!(self.op, Agg::Count | Agg::Sum)
     }
 }
 
@@ -623,7 +737,7 @@ impl Stratum {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 struct Stratum {
     prelude: Vec<Step>,
     /// A recursive stratum's loop: what enters it, its feedback relations,
@@ -632,7 +746,7 @@ struct Stratum {
     heads: Vec<Head>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 struct Recursion {
     enter: Vec<u64>,
     feedback: Vec<u64>,
@@ -641,17 +755,20 @@ struct Recursion {
 }
 
 /// An input relation: its collection, and its inline facts.
+#[derive(Serialize, Deserialize)]
 struct InputPlan {
     relation: u64,
-    facts: Vec<Row>,
+    facts: Vec<Vec<Lit>>,
 }
 
+#[derive(Serialize, Deserialize)]
 struct Output {
     relation: u64,
 }
 
 /// The program, planned and compiled: what every worker builds its
 /// dataflow from.
+#[derive(Serialize, Deserialize)]
 struct Plan {
     inputs: Vec<InputPlan>,
     strata: Vec<Stratum>,
@@ -692,8 +809,8 @@ impl Plan {
                     .map(|fact| {
                         fact.columns
                             .iter()
-                            .map(constant)
-                            .collect::<Result<Row, _>>()
+                            .map(Lit::of)
+                            .collect::<Result<Vec<_>, _>>()
                     })
                     .collect::<Result<Vec<_>, _>>()?,
                 None => Vec::new(),
@@ -749,22 +866,19 @@ impl Plan {
                         let ty = row.get(*position).cloned().ok_or_else(|| {
                             "planner error: an aggregate past the relation's end".to_string()
                         })?;
-                        match (op, &ty) {
-                            (AggregationOperator::Count, _)
-                            | (
-                                AggregationOperator::Min
-                                | AggregationOperator::Max
-                                | AggregationOperator::Sum,
-                                Ty::Num,
-                            ) => {}
+                        let op = match (op, &ty) {
+                            (AggregationOperator::Count, _) => Agg::Count,
+                            (AggregationOperator::Sum, Ty::Num) => Agg::Sum,
+                            (AggregationOperator::Min, Ty::Num) => Agg::Min,
+                            (AggregationOperator::Max, Ty::Num) => Agg::Max,
                             (op, ty) => {
                                 return Err(format!(
-                                    "the generic engine has no `{op:?}` over {ty:?} columns"
+                                    "the generic engine has no `{op}` over {ty:?} columns"
                                 ));
                             }
-                        }
+                        };
                         Some(Aggregate {
-                            op: *op,
+                            op,
                             position: *position,
                             arity: *arity,
                         })
@@ -994,17 +1108,17 @@ fn predicates(flow: &TransformationFlow, t: &Types<'_>) -> Result<Vec<Pred>, Str
         for (arg, c) in constraints.constant_eq_constraints().iter() {
             let (slot, ty) = t.slot(arg)?;
             preds.push(Pred::Compare(
-                ComparisonOperator::Equal,
+                Cmp::Eq,
                 ty,
                 Expr::Col(slot),
-                Expr::Const(constant(c)?),
+                Expr::Const(Const::new(Lit::of(c)?)),
             ));
         }
         for (a, b) in constraints.variable_eq_constraints().iter() {
             let (slot_a, ty) = t.slot(a)?;
             let (slot_b, _) = t.slot(b)?;
             preds.push(Pred::Compare(
-                ComparisonOperator::Equal,
+                Cmp::Eq,
                 ty,
                 Expr::Col(slot_a),
                 Expr::Col(slot_b),
@@ -1200,13 +1314,12 @@ where
                 .iter()
                 .filter_map(|(value, diff)| value.map(|v| (v, *diff)));
             let answer = match op {
-                AggregationOperator::Count => Some(values.map(|(_, d)| d).sum::<i32>()),
-                AggregationOperator::Sum => Some(values.fold(0_i32, |sum, (v, d)| {
+                Agg::Count => Some(values.map(|(_, d)| d).sum::<i32>()),
+                Agg::Sum => Some(values.fold(0_i32, |sum, (v, d)| {
                     sum.wrapping_add(number(v).wrapping_mul(d))
                 })),
-                AggregationOperator::Min => values.map(|(v, _)| number(v)).min(),
-                AggregationOperator::Max => values.map(|(v, _)| number(v)).max(),
-                AggregationOperator::Avg => unreachable!("the plan refuses averages"),
+                Agg::Min => values.map(|(v, _)| number(v)).min(),
+                Agg::Max => values.map(|(v, _)| number(v)).max(),
             };
             if let Some(answer) = answer {
                 output.push((slot_of_number(answer), 1));
@@ -1370,10 +1483,59 @@ pub fn check(program: &Program) -> Result<(), String> {
     Plan::new(program, &planner).map(|_| ())
 }
 
-impl Generic {
-    /// Plans the program at `program` and starts its dataflow on
-    /// `workers` threads; `digest` is what `hello` reports.
-    pub fn new(program: &Path, digest: String, workers: usize) -> Result<Self, String> {
+/// A relation the host exchanges, as a prepared program keeps it.
+#[derive(Serialize, Deserialize)]
+struct IoSpec {
+    name: String,
+    file: String,
+    /// Each column's type, `symbol` or `number`.
+    columns: Vec<String>,
+}
+
+impl IoSpec {
+    fn of(io: &crate::Io) -> Self {
+        IoSpec {
+            name: io.name.clone(),
+            file: io.file.clone(),
+            columns: io
+                .columns
+                .iter()
+                .map(|c| c.host().name().to_string())
+                .collect(),
+        }
+    }
+
+    fn relation(&self) -> Result<(String, String, Vec<Column>), String> {
+        let columns = self
+            .columns
+            .iter()
+            .map(|c| match c.as_str() {
+                "symbol" => Ok(Column::Symbol),
+                "number" => Ok(Column::Number),
+                other => Err(format!("a cached plan names a `{other}` column")),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok((self.name.clone(), self.file.clone(), columns))
+    }
+}
+
+/// A program as `serve` runs it: its relations as the host addresses them,
+/// and its plan. It is what `--plan-cache` keeps, so an engine started
+/// again for the same program digest neither parses nor plans it.
+#[derive(Serialize, Deserialize)]
+struct Prepared {
+    inputs: Vec<IoSpec>,
+    outputs: Vec<IoSpec>,
+    /// Each host input's index among the plan's inputs.
+    input_index: Vec<usize>,
+    /// Each host output's index among the plan's outputs.
+    output_order: Vec<usize>,
+    plan: Plan,
+}
+
+impl Prepared {
+    /// Parses and plans the program at `program`.
+    fn plan(program: &Path) -> Result<Self, String> {
         let started = std::time::Instant::now();
         let path = program
             .to_str()
@@ -1386,21 +1548,13 @@ impl Generic {
         };
         let parsed = flowlog_parser::parse(path, &[] as &[&Path], &mut sources, &mut config)
             .map_err(|error| crate::render(&error.into(), &sources))?;
-        let parsed_at = started.elapsed();
         let (inputs, outputs) = crate::interface(&parsed).map_err(|failure| match failure {
             crate::Failure::Program(text) => text,
             crate::Failure::Usage => unreachable!("interface reports programs only"),
         })?;
         let planner = ProgramPlanner::from_program(&parsed, &mut None)
             .map_err(|error| crate::render(&error, &sources))?;
-        let planned_at = started.elapsed();
-        let plan: &'static Plan = Box::leak(Box::new(Plan::new(&parsed, &planner)?));
-        // The engine's log says what its start cost, for a slow one.
-        eprintln!(
-            "generic engine: {} parsed in {parsed_at:?}, planned by {planned_at:?}, compiled by {:?}",
-            program.display(),
-            started.elapsed()
-        );
+        let plan = Plan::new(&parsed, &planner)?;
 
         // The host addresses inputs and outputs as the interface lists them.
         let input_index = inputs
@@ -1431,6 +1585,87 @@ impl Generic {
                     .ok_or_else(|| format!("planner error: output `{}` has no collection", io.name))
             })
             .collect::<Result<Vec<_>, _>>()?;
+        // The engine's log says what its start cost, for a slow one.
+        eprintln!(
+            "generic engine: {} planned in {:?}",
+            program.display(),
+            started.elapsed()
+        );
+        Ok(Prepared {
+            inputs: inputs.iter().map(IoSpec::of).collect(),
+            outputs: outputs.iter().map(IoSpec::of).collect(),
+            input_index,
+            output_order,
+            plan,
+        })
+    }
+
+    /// The prepared program kept at `cache`, or `None` when there is none
+    /// or it does not read back whole.
+    fn load(cache: &Path) -> Option<Self> {
+        let bytes = std::fs::read(cache).ok()?;
+        match serde_json::from_slice(&bytes) {
+            Ok(prepared) => Some(prepared),
+            Err(error) => {
+                eprintln!(
+                    "generic engine: ignoring the plan at {}: {error}",
+                    cache.display()
+                );
+                None
+            }
+        }
+    }
+
+    /// Keeps this at `cache`, written beside it and renamed into place, so
+    /// a reader sees a whole plan or none. A plan that cannot be kept is
+    /// planned again next time.
+    fn store(&self, cache: &Path) {
+        let staged = cache.with_extension(format!("{}.tmp", std::process::id()));
+        let written = cache
+            .parent()
+            .map_or(Ok(()), std::fs::create_dir_all)
+            .and_then(|()| serde_json::to_vec(self).map_err(std::io::Error::other))
+            .and_then(|bytes| std::fs::write(&staged, bytes))
+            .and_then(|()| std::fs::rename(&staged, cache));
+        if let Err(error) = written {
+            let _ = std::fs::remove_file(&staged);
+            eprintln!(
+                "generic engine: cannot keep the plan at {}: {error}",
+                cache.display()
+            );
+        }
+    }
+}
+
+impl Generic {
+    /// Starts the program at `program`'s dataflow on `workers` threads;
+    /// `digest` is what `hello` reports. With a `cache`, the program is
+    /// planned only when the cache holds no plan for it, and the plan is
+    /// kept there: the caller names one cache per program digest.
+    pub fn new(
+        program: &Path,
+        digest: String,
+        workers: usize,
+        cache: Option<&Path>,
+    ) -> Result<Self, String> {
+        let prepared = match cache.and_then(Prepared::load) {
+            Some(prepared) => prepared,
+            None => {
+                let prepared = Prepared::plan(program)?;
+                if let Some(cache) = cache {
+                    prepared.store(cache);
+                }
+                prepared
+            }
+        };
+        let Prepared {
+            inputs,
+            outputs,
+            input_index,
+            output_order,
+            plan,
+        } = prepared;
+        let plan: &'static Plan = Box::leak(Box::new(plan));
         let sinks: Vec<Sink> = plan
             .outputs
             .iter()
@@ -1471,7 +1706,7 @@ impl Generic {
                 if index == 0 {
                     for (session, input) in sessions.iter_mut().zip(&plan.inputs) {
                         for fact in &input.facts {
-                            session.update((Row::new(), fact.clone()), 1);
+                            session.update((Row::new(), fact.iter().map(Lit::slot).collect()), 1);
                         }
                     }
                 }
@@ -1499,21 +1734,18 @@ impl Generic {
             }
         });
 
-        let columns = |io: &crate::Io| io.columns.iter().map(|c| c.host()).collect::<Vec<_>>();
+        let inputs = inputs
+            .iter()
+            .map(IoSpec::relation)
+            .collect::<Result<Vec<_>, _>>()?;
+        let outputs = outputs
+            .iter()
+            .map(IoSpec::relation)
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(Generic {
             digest,
-            inputs: leak_relations(
-                inputs
-                    .iter()
-                    .map(|io| (io.name.clone(), io.file.clone(), columns(io)))
-                    .collect(),
-            ),
-            outputs: leak_relations(
-                outputs
-                    .iter()
-                    .map(|io| (io.name.clone(), io.file.clone(), columns(io)))
-                    .collect(),
-            ),
+            inputs: leak_relations(inputs),
+            outputs: leak_relations(outputs),
             input_index,
             plan,
             staged: Vec::new(),

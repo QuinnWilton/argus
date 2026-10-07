@@ -263,9 +263,13 @@ defmodule Argus.FlowLog do
          do: {:ok, :compiled, exe, []}
   end
 
-  defp generic(toolchain, path, digest),
-    do:
-      {:ok, :generic, Toolchain.tool(toolchain), ["serve", "--program", path, "--digest", digest]}
+  # The generic engine keeps the program's plan beside where its compiled
+  # engine would be, so a later start for the same digest plans nothing.
+  defp generic(toolchain, path, digest) do
+    cache = Path.join([Toolchain.engines(toolchain), digest, "generic.plan"])
+    args = ["serve", "--program", path, "--digest", digest, "--plan-cache", cache]
+    {:ok, :generic, Toolchain.tool(toolchain), args}
+  end
 
   @doc """
   argus's own programs: the two shared stages' (three files: the

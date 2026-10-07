@@ -4,7 +4,7 @@
 //! ```text
 //! argus-flowlog-tool inspect PROGRAM
 //! argus-flowlog-tool generate PROGRAM SRC_DIR DIGEST
-//! argus-flowlog-tool serve --program PROGRAM --digest DIGEST [--workers N] [--log PATH]
+//! argus-flowlog-tool serve --program PROGRAM --digest DIGEST [--plan-cache FILE] [--workers N] [--log PATH]
 //! ```
 //!
 //! `inspect` and `generate` print the program's manifest as one JSON
@@ -59,13 +59,18 @@ fn main() -> ExitCode {
                     .map(|(_, value)| value.clone())
                     .ok_or_else(|| format!("serve needs {name}"))
             };
-            if let Some((flag, _)) = extra
-                .iter()
-                .find(|(flag, _)| flag != "--program" && flag != "--digest")
-            {
+            if let Some((flag, _)) = extra.iter().find(|(flag, _)| {
+                !["--program", "--digest", "--plan-cache"].contains(&flag.as_str())
+            }) {
                 return Err(format!("serve takes no `{flag}`"));
             }
-            generic::Generic::new(Path::new(&flag("--program")?), flag("--digest")?, workers)
+            let cache = flag("--plan-cache").ok().map(PathBuf::from);
+            generic::Generic::new(
+                Path::new(&flag("--program")?),
+                flag("--digest")?,
+                workers,
+                cache.as_deref(),
+            )
         });
     }
     let args: Vec<String> = args.collect();
@@ -85,7 +90,7 @@ fn main() -> ExitCode {
             eprintln!(
                 "usage: argus-flowlog-tool inspect PROGRAM\n       \
                  argus-flowlog-tool generate PROGRAM SRC_DIR DIGEST\n       \
-                 argus-flowlog-tool serve --program PROGRAM --digest DIGEST [--workers N] [--log PATH]"
+                 argus-flowlog-tool serve --program PROGRAM --digest DIGEST [--plan-cache FILE] [--workers N] [--log PATH]"
             );
             ExitCode::from(2)
         }
