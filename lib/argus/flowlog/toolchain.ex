@@ -504,6 +504,25 @@ defmodule Argus.FlowLog.Toolchain do
     end
   end
 
+  # Runs the command it is given, and stops it, with the compilers it
+  # started, when its standard input closes: the BEAM holds that pipe open
+  # for as long as the port lives, so a VM that exits or is killed mid-build
+  # does not leave Cargo and its rustc processes compiling. The watcher
+  # reads a copy of standard input, as a background job's own is /dev/null.
+  @guard """
+  exec 3<&0
+  "$@" </dev/null &
+  child=$!
+  ( while read -r _ <&3; do :; done
+    pkill -TERM -P "$child" 2>/dev/null
+    kill -TERM "$child" 2>/dev/null ) &
+  watcher=$!
+  wait "$child"
+  status=$?
+  kill "$watcher" 2>/dev/null
+  exit "$status"
+  """
+
   @doc """
   Builds the binaries `bins` of the crate at `crate` into the toolchain's
   shared target directory (each then at `built/3`): `:ok`, or
@@ -513,7 +532,8 @@ defmodule Argus.FlowLog.Toolchain do
   built.
 
   `profile` is the Cargo profile, `:release` or the engine template's
-  `:quick`. Cargo runs `build_jobs/0` compiles at once.
+  `:quick`. Cargo runs `build_jobs/0` compiles at once, and stops, with
+  them, when this VM does.
   """
   @spec cargo_build(t(), Path.t(), [String.t()], Path.t(), term(), :release | :quick) ::
           :ok | {:error, reason()}
@@ -542,7 +562,11 @@ defmodule Argus.FlowLog.Toolchain do
     ]
 
     {output, status} =
-      System.cmd(toolchain.cargo, args, env: env, stderr_to_stdout: true, cd: crate)
+      System.cmd("/bin/sh", ["-c", @guard, "argus-cargo", toolchain.cargo | args],
+        env: env,
+        stderr_to_stdout: true,
+        cd: crate
+      )
 
     File.write!(log, output)
 
