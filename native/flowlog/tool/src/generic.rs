@@ -20,6 +20,7 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::Path;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::OnceLock;
@@ -46,18 +47,26 @@ use flowlog_runtime::differential_dataflow::VecCollection;
 use flowlog_runtime::differential_dataflow::input::Input as _;
 use flowlog_runtime::differential_dataflow::input::InputSession;
 use flowlog_runtime::differential_dataflow::lattice::Lattice;
+use flowlog_runtime::differential_dataflow::operators::arrange::Arrange;
 use flowlog_runtime::differential_dataflow::operators::arrange::Arranged;
 use flowlog_runtime::differential_dataflow::operators::arrange::TraceAgent;
 use flowlog_runtime::differential_dataflow::operators::iterate::Variable;
-use flowlog_runtime::differential_dataflow::trace::implementations::{
-    KeyBuilder, KeySpine, ValSpine,
+use flowlog_runtime::differential_dataflow::trace::implementations::containers::BatchContainer;
+use flowlog_runtime::differential_dataflow::trace::implementations::ord_neu::{
+    OrdKeyBatch, OrdKeyBuilder, OrdValBatch, OrdValBuilder,
 };
+use flowlog_runtime::differential_dataflow::trace::implementations::spine_fueled::Spine;
+use flowlog_runtime::differential_dataflow::trace::implementations::{
+    KeyBatcher, OffsetList, ValBatcher,
+};
+use flowlog_runtime::differential_dataflow::trace::rc_blanket_impls::RcBuilder;
 use flowlog_runtime::differential_dataflow::trace::wrappers::enter::TraceEnter;
 use flowlog_runtime::intern;
 use flowlog_runtime::lasso::Key;
 use flowlog_runtime::lasso::Spur;
 use flowlog_runtime::regex::Regex;
 use flowlog_runtime::timely;
+use flowlog_runtime::timely::container::PushInto;
 use flowlog_runtime::timely::dataflow::Scope;
 use flowlog_runtime::timely::dataflow::operators::ToStream;
 use flowlog_runtime::timely::dataflow::operators::probe::Handle as ProbeHandle;
@@ -75,9 +84,9 @@ use crate::host::Fields;
 use crate::host::Refusal;
 use crate::host::Relation;
 
-/// A row's slots, inline up to four: most keys are one or two columns,
-/// and every arranged update holds a key and a value. Four used a tenth
-/// less memory than six on argus's largest programs, as fast.
+/// A row's slots, inline up to four: most keys are one or two columns.
+/// A row in flight between operators is one of these; an arranged one is
+/// held end to end with its batch's others (`Rows`, `Pairs`).
 pub type Row = SmallVec<[u32; 4]>;
 /// Every collection's data: a key and a value. A row collection's key is
 /// empty, and so is a key-only collection's value.
@@ -1219,7 +1228,208 @@ fn predicates(flow: &TransformationFlow, t: &Types<'_>) -> Result<Vec<Pred>, Str
 // =============================================================================
 
 type Coll<'scope, T> = VecCollection<'scope, T, Kv, Diff>;
-type Trace<T> = TraceAgent<ValSpine<Row, Row, T, Diff>>;
+
+/// A row as an arrangement holds it: its slots, borrowed from the batch
+/// that holds every row's slots end to end. Ordered as a `Row` is, so a
+/// batch sorted by rows is sorted by these.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct RowRef<'a>(&'a [u32]);
+
+impl<'a> PartialEq<&'a Row> for RowRef<'a> {
+    fn eq(&self, other: &&'a Row) -> bool {
+        self.0 == other.as_slice()
+    }
+}
+
+/// A batch's rows, end to end: four bytes a slot and four a row. A `Row`
+/// in a vector takes 24 bytes, and one of more than four slots another
+/// allocation; arranged rows are most of what an engine holds.
+#[derive(Default)]
+struct Rows {
+    ends: Vec<u32>,
+    slots: Vec<u32>,
+}
+
+impl Rows {
+    fn push_slots(&mut self, slots: &[u32]) {
+        self.slots.extend_from_slice(slots);
+        let end = u32::try_from(self.slots.len()).expect("a batch holds fewer than 2^32 slots");
+        self.ends.push(end);
+    }
+}
+
+impl PushInto<Row> for Rows {
+    fn push_into(&mut self, row: Row) {
+        self.push_slots(&row);
+    }
+}
+
+impl BatchContainer for Rows {
+    type Owned = Row;
+    type ReadItem<'a> = RowRef<'a>;
+
+    fn into_owned(item: RowRef<'_>) -> Row {
+        Row::from_slice(item.0)
+    }
+
+    fn clone_onto(item: RowRef<'_>, other: &mut Row) {
+        other.clear();
+        other.extend_from_slice(item.0);
+    }
+
+    fn push_ref(&mut self, item: RowRef<'_>) {
+        self.push_slots(item.0);
+    }
+
+    fn push_own(&mut self, item: &Row) {
+        self.push_slots(item);
+    }
+
+    fn clear(&mut self) {
+        self.ends.clear();
+        self.slots.clear();
+    }
+
+    fn with_capacity(size: usize) -> Self {
+        Rows {
+            ends: Vec::with_capacity(size),
+            slots: Vec::with_capacity(size * 2),
+        }
+    }
+
+    fn merge_capacity(a: &Self, b: &Self) -> Self {
+        Rows {
+            ends: Vec::with_capacity(a.ends.len() + b.ends.len()),
+            slots: Vec::with_capacity(a.slots.len() + b.slots.len()),
+        }
+    }
+
+    fn reborrow<'b, 'a: 'b>(item: RowRef<'a>) -> RowRef<'b> {
+        item
+    }
+
+    fn index(&self, index: usize) -> RowRef<'_> {
+        let start = match index {
+            0 => 0,
+            _ => self.ends[index - 1] as usize,
+        };
+        RowRef(&self.slots[start..self.ends[index] as usize])
+    }
+
+    fn len(&self) -> usize {
+        self.ends.len()
+    }
+}
+
+/// A key and value as an arrangement of whole updates holds them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct PairRef<'a>(&'a [u32], &'a [u32]);
+
+impl<'a> PartialEq<&'a Kv> for PairRef<'a> {
+    fn eq(&self, other: &&'a Kv) -> bool {
+        self.0 == other.0.as_slice() && self.1 == other.1.as_slice()
+    }
+}
+
+/// A batch's key and value pairs, end to end, as `Rows` holds rows: what
+/// a relation's deduplication arranges, every row the relation derives.
+#[derive(Default)]
+struct Pairs {
+    splits: Vec<u32>,
+    ends: Vec<u32>,
+    slots: Vec<u32>,
+}
+
+impl Pairs {
+    fn push_slots(&mut self, key: &[u32], value: &[u32]) {
+        self.slots.extend_from_slice(key);
+        let split = u32::try_from(self.slots.len()).expect("a batch holds fewer than 2^32 slots");
+        self.slots.extend_from_slice(value);
+        let end = u32::try_from(self.slots.len()).expect("a batch holds fewer than 2^32 slots");
+        self.splits.push(split);
+        self.ends.push(end);
+    }
+}
+
+impl PushInto<Kv> for Pairs {
+    fn push_into(&mut self, (key, value): Kv) {
+        self.push_slots(&key, &value);
+    }
+}
+
+impl BatchContainer for Pairs {
+    type Owned = Kv;
+    type ReadItem<'a> = PairRef<'a>;
+
+    fn into_owned(item: PairRef<'_>) -> Kv {
+        (Row::from_slice(item.0), Row::from_slice(item.1))
+    }
+
+    fn clone_onto(item: PairRef<'_>, other: &mut Kv) {
+        other.0.clear();
+        other.0.extend_from_slice(item.0);
+        other.1.clear();
+        other.1.extend_from_slice(item.1);
+    }
+
+    fn push_ref(&mut self, item: PairRef<'_>) {
+        self.push_slots(item.0, item.1);
+    }
+
+    fn push_own(&mut self, item: &Kv) {
+        self.push_slots(&item.0, &item.1);
+    }
+
+    fn clear(&mut self) {
+        self.splits.clear();
+        self.ends.clear();
+        self.slots.clear();
+    }
+
+    fn with_capacity(size: usize) -> Self {
+        Pairs {
+            splits: Vec::with_capacity(size),
+            ends: Vec::with_capacity(size),
+            slots: Vec::with_capacity(size * 3),
+        }
+    }
+
+    fn merge_capacity(a: &Self, b: &Self) -> Self {
+        Pairs {
+            splits: Vec::with_capacity(a.ends.len() + b.ends.len()),
+            ends: Vec::with_capacity(a.ends.len() + b.ends.len()),
+            slots: Vec::with_capacity(a.slots.len() + b.slots.len()),
+        }
+    }
+
+    fn reborrow<'b, 'a: 'b>(item: PairRef<'a>) -> PairRef<'b> {
+        item
+    }
+
+    fn index(&self, index: usize) -> PairRef<'_> {
+        let start = match index {
+            0 => 0,
+            _ => self.ends[index - 1] as usize,
+        };
+        let (split, end) = (self.splits[index] as usize, self.ends[index] as usize);
+        PairRef(&self.slots[start..split], &self.slots[split..end])
+    }
+
+    fn len(&self) -> usize {
+        self.ends.len()
+    }
+}
+
+/// How an engine's arrangements lay out their updates: rows end to end.
+type RowLayout<T> = (Rows, Rows, Vec<T>, Vec<Diff>, OffsetList);
+type KeyLayout<T> = (Rows, Vec<()>, Vec<T>, Vec<Diff>, OffsetList);
+type Trace<T> = TraceAgent<Spine<Rc<OrdValBatch<RowLayout<T>>>>>;
+type RowBuilder<T> = RcBuilder<OrdValBuilder<RowLayout<T>, Vec<((Row, Row), T, Diff)>>>;
+type KeySpine<T> = Spine<Rc<OrdKeyBatch<KeyLayout<T>>>>;
+type KeyBuilder<T> = RcBuilder<OrdKeyBuilder<KeyLayout<T>, Vec<((Row, ()), T, Diff)>>>;
+type PairLayout<T> = (Pairs, Vec<()>, Vec<T>, Vec<Diff>, OffsetList);
+type PairSpine<T> = Spine<Rc<OrdKeyBatch<PairLayout<T>>>>;
+type PairBuilder<T> = RcBuilder<OrdKeyBuilder<PairLayout<T>, Vec<((Kv, ()), T, Diff)>>>;
 
 /// A scope's time: the outer epoch, or a loop's inside it.
 trait Time: Timestamp + Lattice + Ord + Refines<Epoch> {}
@@ -1244,7 +1454,7 @@ impl<T: Time> Clone for Arr<'_, T> {
 
 /// The distinct keys of a collection, arranged: what an antijoin's rows
 /// are checked against.
-type Keys<'scope, T> = Arranged<'scope, TraceAgent<KeySpine<Row, T, Diff>>>;
+type Keys<'scope, T> = Arranged<'scope, TraceAgent<KeySpine<T>>>;
 
 /// The collections a scope has bound, by fingerprint, and the arrangements
 /// built of them, or entered, so far.
@@ -1274,7 +1484,10 @@ impl<'scope, T: Time> Env<'scope, T> {
         if let Some(arranged) = self.arranged.get(&fp) {
             return arranged.clone();
         }
-        let arranged = Arr::Own(self.get(fp).arrange_by_key());
+        let arranged = Arr::Own(
+            self.get(fp)
+                .arrange_named::<ValBatcher<Row, Row, T, Diff>, RowBuilder<T>, _>("Arrange"),
+        );
         self.arranged.insert(fp, arranged.clone());
         arranged
     }
@@ -1289,13 +1502,17 @@ impl<'scope, T: Time> Env<'scope, T> {
         let keys = self
             .get(fp)
             .map(|(k, _)| k)
-            .arrange_by_self()
-            .reduce_abelian::<_, KeyBuilder<Row, T, Diff>, KeySpine<Row, T, Diff>, _, _>(
+            .arrange_named::<KeyBatcher<Row, T, Diff>, KeyBuilder<T>, KeySpine<T>>("Arrange")
+            .reduce_abelian::<_, KeyBuilder<T>, KeySpine<T>, _, _>(
                 "Distinct",
                 |_key, _input, output| output.push(((), 1)),
-                |rows, key, updates| {
+                |rows, key: RowRef<'_>, updates| {
                     rows.clear();
-                    rows.extend(updates.drain(..).map(|(v, t, r)| ((key.clone(), v), t, r)));
+                    rows.extend(
+                        updates
+                            .drain(..)
+                            .map(|(v, t, r)| ((Row::from_slice(key.0), v), t, r)),
+                    );
                 },
             );
         self.keys.insert(fp, keys.clone());
@@ -1323,21 +1540,14 @@ impl<'scope> Env<'scope, Epoch> {
 fn join<'scope, T: Time>(
     left: Arr<'scope, T>,
     right: Arr<'scope, T>,
-    logic: impl Fn(&Row, &Row, &Row) -> Option<Kv> + Clone + 'static,
+    logic: impl Fn(&[u32], &[u32], &[u32]) -> Option<Kv> + Clone + 'static,
 ) -> Coll<'scope, T> {
+    let logic = move |k: RowRef<'_>, lv: RowRef<'_>, rv: RowRef<'_>| logic(k.0, lv.0, rv.0);
     match (left, right) {
-        (Arr::Own(l), Arr::Own(r)) => {
-            l.join_core(r, move |k: &Row, lv: &Row, rv: &Row| logic(k, lv, rv))
-        }
-        (Arr::Own(l), Arr::Entered(r)) => {
-            l.join_core(r, move |k: &Row, lv: &Row, rv: &Row| logic(k, lv, rv))
-        }
-        (Arr::Entered(l), Arr::Own(r)) => {
-            l.join_core(r, move |k: &Row, lv: &Row, rv: &Row| logic(k, lv, rv))
-        }
-        (Arr::Entered(l), Arr::Entered(r)) => {
-            l.join_core(r, move |k: &Row, lv: &Row, rv: &Row| logic(k, lv, rv))
-        }
+        (Arr::Own(l), Arr::Own(r)) => l.join_core(r, logic),
+        (Arr::Own(l), Arr::Entered(r)) => l.join_core(r, logic),
+        (Arr::Entered(l), Arr::Own(r)) => l.join_core(r, logic),
+        (Arr::Entered(l), Arr::Entered(r)) => l.join_core(r, logic),
     }
 }
 
@@ -1388,7 +1598,7 @@ fn build_step<'scope, T: Time>(env: &mut Env<'scope, T>, step: &'static Step) {
             preds,
         } => {
             let (l, r) = (env.arrangement(*left), env.arrangement(*right));
-            let joined = join(l, r, move |k: &Row, lv: &Row, rv: &Row| {
+            let joined = join(l, r, move |k: &[u32], lv: &[u32], rv: &[u32]| {
                 let ctx = Ctx {
                     key: k,
                     value: lv,
@@ -1414,7 +1624,9 @@ fn build_step<'scope, T: Time>(env: &mut Env<'scope, T>, step: &'static Step) {
             // differential antijoin arranges both again, a copy of every row
             // it keeps (a tenth to a quarter of a program's rows).
             let keys = env.keys(*left);
-            let held = |k: &Row, v: &Row, _: &()| Some((k.clone(), v.clone()));
+            let held = |k: RowRef<'_>, v: RowRef<'_>, _: &()| {
+                Some((Row::from_slice(k.0), Row::from_slice(v.0)))
+            };
             let semijoin = match env.arrangement(*right) {
                 Arr::Own(arranged) => arranged.join_core(keys, held),
                 Arr::Entered(arranged) => arranged.join_core(keys, held),
@@ -1456,7 +1668,21 @@ fn build_head<'scope, T>(
     } else {
         first.concatenate(parts)
     };
-    let deduped = union.distinct_core::<Diff>();
+    let deduped = union
+        .arrange_named::<KeyBatcher<Kv, T, Diff>, PairBuilder<T>, PairSpine<T>>("Arrange")
+        .reduce_abelian::<_, PairBuilder<T>, PairSpine<T>, _, _>(
+            "Distinct",
+            |_row, _input, output| output.push(((), 1)),
+            |rows, row: PairRef<'_>, updates| {
+                rows.clear();
+                rows.extend(
+                    updates
+                        .drain(..)
+                        .map(|(v, t, r)| ((Pairs::into_owned(row), v), t, r)),
+                );
+            },
+        )
+        .as_collection(|row: PairRef<'_>, _: &()| Pairs::into_owned(row));
     let bound = match &head.aggregate {
         None => deduped,
         Some(aggregate) => build_aggregate(deduped, aggregate, seed),
@@ -2110,5 +2336,71 @@ impl Drop for Generic {
         if let Some(handle) = self.workers.take() {
             let _ = handle.join();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rows() -> Vec<Row> {
+        let mut rows: Vec<Row> = vec![
+            Row::new(),
+            Row::from_slice(&[0]),
+            Row::from_slice(&[0, 1]),
+            Row::from_slice(&[1]),
+            Row::from_slice(&[1, 0, 0, 0, 0, 7]),
+            Row::from_slice(&[u32::MAX]),
+            Row::from_slice(&[2, 3, 4, 5]),
+        ];
+        rows.sort();
+        rows
+    }
+
+    #[test]
+    fn rows_read_back_what_was_pushed_in_order() {
+        let rows = rows();
+        let mut held = Rows::with_capacity(0);
+        for row in &rows {
+            held.push_own(row);
+        }
+        assert_eq!(held.len(), rows.len());
+        for (index, row) in rows.iter().enumerate() {
+            assert_eq!(Rows::into_owned(held.index(index)), *row);
+            assert!(held.index(index) == row);
+        }
+        // A batch is searched by its borrowed rows: they must order as the
+        // owned rows it was sorted by.
+        for a in 0..rows.len() {
+            for b in 0..rows.len() {
+                assert_eq!(held.index(a).cmp(&held.index(b)), rows[a].cmp(&rows[b]));
+            }
+        }
+    }
+
+    #[test]
+    fn pairs_read_back_what_was_pushed_in_order() {
+        let rows = rows();
+        let mut pairs: Vec<Kv> = rows
+            .iter()
+            .flat_map(|k| rows.iter().map(move |v| (k.clone(), v.clone())))
+            .collect();
+        pairs.sort();
+        let mut held = Pairs::with_capacity(0);
+        for pair in &pairs {
+            held.push_into(pair.clone());
+        }
+        assert_eq!(held.len(), pairs.len());
+        for (index, pair) in pairs.iter().enumerate() {
+            assert_eq!(Pairs::into_owned(held.index(index)), *pair);
+            assert!(held.index(index) == pair);
+        }
+        for a in (0..pairs.len()).step_by(3) {
+            for b in (0..pairs.len()).step_by(5) {
+                assert_eq!(held.index(a).cmp(&held.index(b)), pairs[a].cmp(&pairs[b]));
+            }
+        }
+        held.clear();
+        assert_eq!(held.len(), 0);
     }
 }
