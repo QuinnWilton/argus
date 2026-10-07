@@ -21,11 +21,15 @@ defmodule Argus.Test.FailingEngine do
     {:ok, toolchain} = Argus.FlowLog.toolchain(progress: false)
     engines = Argus.FlowLog.Toolchain.engines(toolchain)
 
-    digests =
+    built =
       for program <- List.wrap(programs) do
-        {:ok, %{digest: digest}} = Argus.FlowLog.engine(Argus.Dl.path(program), progress: false)
-        digest
+        {:ok, %{digest: digest, executable: real}} =
+          Argus.FlowLog.engine(Argus.Dl.path(program), progress: false)
+
+        {digest, real}
       end
+
+    digests = Enum.map(built, &elem(&1, 0))
 
     root =
       Path.join(System.tmp_dir!(), "argus_failing_engine_#{System.unique_integer([:positive])}")
@@ -42,10 +46,11 @@ defmodule Argus.Test.FailingEngine do
       File.ln_s!(Path.join(engines, engine), Path.join([dir, "engines", engine]))
     end
 
-    for digest <- digests do
+    # The stub is installed as the release engine, which a program of
+    # either profile runs (`Argus.FlowLog.Program.installed/3`).
+    for {digest, real} <- built do
       stub = Path.join([dir, "engines", digest, "engine"])
       File.mkdir_p!(Path.dirname(stub))
-      real = Argus.FlowLog.Program.executable(toolchain, digest)
 
       script =
         case Keyword.fetch(opts, :stub) do

@@ -15,9 +15,10 @@ defmodule Argus.FlowLog.Program do
   nor a number) is `{:error, {:flowlog_program, path, diagnostic}}`, the
   diagnostic rendered against the program's source.
 
-  An engine is built once per program digest and kept under the
-  toolchain's `engines/<digest>/`: its executable, and the manifest it
-  was built from. Building generates the program's crate from the engine
+  An engine is built once per program digest and profile (`t:profile/0`)
+  and kept under the toolchain's `engines/<digest>/`: its executable
+  (`engine`, or `engine-quick` unoptimized), and the manifest it was
+  built from. Building generates the program's crate from the engine
   template in a scratch directory, compiles it into the toolchain's
   shared target directory, and installs the executable by rename; the
   crate is removed whatever happens. A program's digest must name
@@ -92,6 +93,45 @@ defmodule Argus.FlowLog.Program do
         do: %{name: name, file: file, columns: columns}
   end
 
+  @typedoc """
+  How an engine is compiled. `:release` is optimized: every program argus
+  ships is built so, and every other one unless `ARGUS_FLOWLOG_BUILD_PROFILE`
+  says `quick`. `:quick` leaves the program's own code unoptimized: it
+  compiles about three times faster and solves about three and a half
+  times slower, which suits a program solved over a handful of rows.
+  """
+  @type profile :: :release | :quick
+
+  @typedoc "A program to build: its path, its digest, and its profile."
+  @type build :: {Path.t(), String.t(), profile()}
+
+  @doc """
+  The profile the engine of the program at `rules_path` is built with:
+  `:release` for argus's own programs, and otherwise what
+  `ARGUS_FLOWLOG_BUILD_PROFILE` says (`release`, the default, or
+  `quick`). Raises `ArgumentError` naming the variable when it says
+  anything else.
+  """
+  @spec profile(Path.t()) :: profile()
+  def profile(rules_path) do
+    if shipped?(Path.expand(rules_path)), do: :release, else: requested_profile()
+  end
+
+  defp requested_profile do
+    case System.get_env("ARGUS_FLOWLOG_BUILD_PROFILE", "") do
+      value when value in ["", "release"] ->
+        :release
+
+      "quick" ->
+        :quick
+
+      other ->
+        raise ArgumentError,
+              "ARGUS_FLOWLOG_BUILD_PROFILE is #{inspect(other)}; it takes release (the default) " <>
+                "or quick"
+    end
+  end
+
   @doc """
   The engine executable for the program at `rules_path`, whose digest is
   `digest`: installed, or built now (`engines/3`, as a batch of one).
@@ -100,7 +140,7 @@ defmodule Argus.FlowLog.Program do
           {:ok, Path.t()} | {:error, term()}
   def engine(%Toolchain{} = toolchain, rules_path, digest, opts \\ []) do
     with :ok <- engines(toolchain, [{rules_path, digest}], opts),
-         do: {:ok, executable(toolchain, digest)}
+         do: {:ok, installed(toolchain, digest, profile(rules_path))}
   end
 
   @doc """
@@ -120,68 +160,127 @@ defmodule Argus.FlowLog.Program do
   @spec engines(Toolchain.t(), [{Path.t(), String.t()}], keyword()) :: :ok | {:error, term()}
   def engines(%Toolchain{} = toolchain, programs, opts \\ []) do
     case missing(toolchain, programs) do
-      [] ->
-        :ok
-
-      _ ->
-        Toolchain.locked(:build, fn ->
-          case missing(toolchain, programs) do
-            [] -> :ok
-            todo -> build(toolchain, todo, opts)
-          end
-        end)
+      [] -> :ok
+      todo -> first_failure(build(toolchain, [{todo, opts}]), todo)
     end
+  end
+
+  defp first_failure(results, programs) do
+    Enum.find_value(programs, :ok, fn program ->
+      case Map.fetch!(results, key(program)) do
+        :ok -> nil
+        {:error, _} = error -> error
+      end
+    end)
   end
 
   defp missing(toolchain, programs) do
     programs
-    |> Enum.uniq_by(fn {_path, digest} -> digest end)
-    |> Enum.reject(fn {_path, digest} -> File.regular?(executable(toolchain, digest)) end)
-    |> Enum.map(fn {path, digest} -> {Path.expand(path), digest} end)
+    |> Enum.map(fn {path, digest} ->
+      path = Path.expand(path)
+      {path, digest, profile(path)}
+    end)
+    |> Enum.uniq_by(&key/1)
+    |> Enum.reject(fn {_path, digest, profile} -> installed(toolchain, digest, profile) end)
   end
 
-  @doc "Where the engine for `digest` is installed."
-  @spec executable(Toolchain.t(), String.t()) :: Path.t()
-  def executable(toolchain, digest),
+  @doc """
+  Where the engine for `digest` built with `profile` (default `:release`)
+  is installed, whether or not it is.
+  """
+  @spec executable(Toolchain.t(), String.t(), profile()) :: Path.t()
+  def executable(toolchain, digest, profile \\ :release)
+
+  def executable(toolchain, digest, :release),
     do: Path.join([Toolchain.engines(toolchain), digest, "engine"])
+
+  def executable(toolchain, digest, :quick),
+    do: Path.join([Toolchain.engines(toolchain), digest, "engine-quick"])
+
+  @doc """
+  The installed engine for `digest` that a program built with `profile`
+  runs, or `nil`. A `:quick` program runs the release engine when one is
+  installed: it solves the same, and faster. A `:release` program never
+  runs a quick one.
+  """
+  @spec installed(Toolchain.t(), String.t(), profile()) :: Path.t() | nil
+  def installed(toolchain, digest, profile) do
+    usable = if profile == :quick, do: [:release, :quick], else: [:release]
+
+    Enum.find_value(usable, fn candidate ->
+      path = executable(toolchain, digest, candidate)
+      if File.regular?(path), do: path
+    end)
+  end
+
+  @doc false
+  # Every program the requests name (each with the options of the
+  # request that asked for it), built under the VM's build lock. Each
+  # program's outcome, by its digest and profile.
+  @spec build(Toolchain.t(), [{[build()], keyword()}]) ::
+          %{{String.t(), profile()} => :ok | {:error, term()}}
+  def build(%Toolchain{} = toolchain, requests) do
+    Toolchain.locked(:build, fn ->
+      {done, todo} =
+        requests
+        |> Enum.flat_map(fn {programs, opts} -> Enum.map(programs, &{&1, opts}) end)
+        |> Enum.uniq_by(fn {program, _opts} -> key(program) end)
+        |> Enum.split_with(fn {{_path, digest, profile}, _opts} ->
+          installed(toolchain, digest, profile)
+        end)
+
+      done
+      |> Map.new(fn {program, _opts} -> {key(program), :ok} end)
+      |> Map.merge(build_missing(toolchain, todo))
+    end)
+  end
+
+  defp key({_path, digest, profile}), do: {digest, profile}
 
   # The built-in programs a release's bundle holds an engine for are
   # installed from it; the rest are compiled, which a toolchain without
   # Rust cannot do.
-  defp build(toolchain, programs, opts) do
-    {installed, rest} = from_bundle(toolchain, programs, opts)
+  defp build_missing(_toolchain, []), do: %{}
+
+  defp build_missing(toolchain, programs) do
+    {installed, rest} = from_bundle(toolchain, programs)
 
     cond do
       rest == [] ->
-        Enum.find(installed, :ok, &match?({:error, _}, &1))
+        installed
 
       toolchain.kind == :prebuilt ->
-        [{path, _digest} | _] = rest
-        {:error, {:needs_rust, display(path)}}
+        Map.merge(
+          installed,
+          Map.new(rest, fn {{path, _, _} = program, _opts} ->
+            {key(program), {:error, {:needs_rust, display(path)}}}
+          end)
+        )
 
       true ->
-        compile_all(toolchain, rest, opts)
+        Map.merge(installed, compile_all(toolchain, rest))
     end
   end
 
-  defp from_bundle(toolchain, programs, opts) do
-    {shipped, others} = Enum.split_with(programs, fn {path, _} -> shipped?(path) end)
+  defp from_bundle(toolchain, programs) do
+    {shipped, others} = Enum.split_with(programs, fn {{path, _, _}, _opts} -> shipped?(path) end)
+    opts = with [{_program, opts} | _] <- shipped, do: opts
 
     case if(shipped == [], do: {:error, :none}, else: Prebuilt.fetch(opts)) do
       {:ok, bundle} ->
         {bundled, unbundled} =
-          Enum.split_with(shipped, fn {_path, digest} ->
+          Enum.split_with(shipped, fn {{_path, digest, _profile}, _opts} ->
             match?({:ok, _, _}, Prebuilt.engine(bundle, digest))
           end)
 
         installed =
-          for {_path, digest} <- bundled do
+          Map.new(bundled, fn {{_path, digest, :release} = program, _opts} ->
             {:ok, engine, manifest} = Prebuilt.engine(bundle, digest)
             dir = Path.join(Toolchain.engines(toolchain), digest)
             File.mkdir_p!(dir)
             Toolchain.install(manifest, Path.join(dir, "manifest.json"))
-            Toolchain.install(engine, executable(toolchain, digest))
-          end
+            {key(program), Toolchain.install(engine, executable(toolchain, digest))}
+          end)
 
         {installed, unbundled ++ others}
 
@@ -193,20 +292,31 @@ defmodule Argus.FlowLog.Program do
                 Prebuilt.describe(reason)
             )
 
-        {[], programs}
+        {%{}, programs}
     end
   end
 
   defp shipped?(path), do: String.starts_with?(path, Argus.Dl.shipped() <> "/")
 
-  defp compile_all(toolchain, programs, opts) do
-    for {path, _digest} <- programs do
+  # One Cargo build per profile: a build compiles every binary with one.
+  defp compile_all(toolchain, programs) do
+    for {{path, _digest, profile}, opts} <- programs do
       Toolchain.announce(
         opts,
-        "building the FlowLog engine for #{display(path)} (once per version of its rules)"
+        "building the FlowLog engine for #{display(path)} (once per version of its rules" <>
+          if(profile == :quick, do: ", unoptimized)", else: ")")
       )
     end
 
+    programs
+    |> Enum.map(fn {program, _opts} -> program end)
+    |> Enum.group_by(fn {_path, _digest, profile} -> profile end)
+    |> Enum.reduce(%{}, fn {profile, group}, acc ->
+      Map.merge(acc, compile_profile(toolchain, profile, group))
+    end)
+  end
+
+  defp compile_profile(toolchain, profile, programs) do
     crate =
       Path.join(
         Toolchain.tmp(toolchain),
@@ -215,8 +325,8 @@ defmodule Argus.FlowLog.Program do
 
     try do
       {generated, failed} = generate_all(toolchain, crate, programs)
-      built = if generated == [], do: [], else: compile(toolchain, crate, generated)
-      Enum.find(failed ++ built, :ok, &match?({:error, _}, &1))
+      built = if generated == [], do: [], else: compile(toolchain, crate, profile, generated)
+      Map.new(failed ++ built)
     after
       File.rm_rf(crate)
     end
@@ -228,7 +338,8 @@ defmodule Argus.FlowLog.Program do
     host = Path.join([Toolchain.src(toolchain), "engine", "src"])
 
     {generated, failed} =
-      Enum.reduce(programs, {[], []}, fn {path, digest}, {generated, failed} ->
+      Enum.reduce(programs, {[], []}, fn {path, digest, _profile} = program,
+                                         {generated, failed} ->
         bin = bin_name(digest)
         dir = Path.join([crate, "src", "bin", bin])
         File.mkdir_p!(dir)
@@ -237,40 +348,40 @@ defmodule Argus.FlowLog.Program do
             do: File.cp!(Path.join(host, file), Path.join(dir, file))
 
         case generate(toolchain, path, dir, digest) do
-          {:ok, manifest} -> {[{path, digest, bin, manifest} | generated], failed}
-          {:error, _} = error -> {generated, [error | failed]}
+          {:ok, manifest} -> {[{program, bin, manifest} | generated], failed}
+          {:error, _} = error -> {generated, [{key(program), error} | failed]}
         end
       end)
 
     {Enum.reverse(generated), Enum.reverse(failed)}
   end
 
-  defp compile(toolchain, crate, generated) do
-    bins = Enum.map(generated, fn {_path, _digest, bin, _manifest} -> bin end)
+  defp compile(toolchain, crate, profile, generated) do
+    bins = Enum.map(generated, fn {_program, bin, _manifest} -> bin end)
     :ok = scaffold(toolchain, crate, bins)
     log = Toolchain.build_log(toolchain, batch_name(generated))
 
-    case Toolchain.cargo_build(toolchain, crate, bins, log, {:engines, length(bins)}) do
+    case Toolchain.cargo_build(toolchain, crate, bins, log, {:engines, length(bins)}, profile) do
       :ok ->
-        Enum.map(generated, &install(toolchain, &1))
+        Enum.map(generated, &{key(elem(&1, 0)), install(toolchain, profile, &1)})
 
       {:error, {:build_failed, _what, log, tail}} ->
         # Built with --keep-going: what compiled is installed, and what
         # did not is a failure named by its program.
-        Enum.map(generated, fn {path, _digest, bin, _manifest} = program ->
-          if File.regular?(Toolchain.built(toolchain, bin)),
-            do: install(toolchain, program),
-            else: {:error, {:build_failed, {:engine, display(path)}, log, tail}}
+        Enum.map(generated, fn {{path, _, _} = program, bin, _manifest} = built ->
+          if File.regular?(Toolchain.built(toolchain, bin, profile)),
+            do: {key(program), install(toolchain, profile, built)},
+            else: {key(program), {:error, {:build_failed, {:engine, display(path)}, log, tail}}}
         end)
     end
   end
 
-  defp install(toolchain, {_path, digest, bin, manifest}) do
+  defp install(toolchain, profile, {{_path, digest, _profile}, bin, manifest}) do
     dir = Path.join(Toolchain.engines(toolchain), digest)
     File.mkdir_p!(dir)
     File.write!(Path.join(dir, "manifest.json"), :json.encode(manifest_json(manifest)))
-    built = Toolchain.built(toolchain, bin)
-    Toolchain.install(built, executable(toolchain, digest))
+    built = Toolchain.built(toolchain, bin, profile)
+    Toolchain.install(built, executable(toolchain, digest, profile))
     File.rm(built)
     :ok
   end
@@ -280,10 +391,13 @@ defmodule Argus.FlowLog.Program do
   defp bin_name(digest), do: "engine-#{binary_part(digest, 0, min(16, byte_size(digest)))}"
 
   # A build's log is named for the programs it built.
-  defp batch_name([{_path, digest, _bin, _manifest}]), do: digest
+  defp batch_name([{{_path, digest, _profile}, _bin, _manifest}]), do: digest
 
   defp batch_name(generated) do
-    :crypto.hash(:sha256, Enum.map(generated, fn {_path, digest, _bin, _manifest} -> digest end))
+    :crypto.hash(
+      :sha256,
+      Enum.map(generated, fn {{_path, digest, _}, _bin, _manifest} -> digest end)
+    )
     |> Base.encode16(case: :lower)
   end
 

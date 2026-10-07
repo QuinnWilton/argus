@@ -46,6 +46,11 @@ which a change appeared; older names and APIs may have changed since then.
   argus.flowlog bundle` and `prebuilt` make a release's bundles.
 - Engines missing from the cache are built in one Cargo build that compiles
   them side by side (`ARGUS_FLOWLOG_BUILD_JOBS`).
+- `ARGUS_FLOWLOG_BUILD_PROFILE=quick` builds the engine of a program argus
+  does not ship (a rules file of your own) unoptimized: about three times
+  faster to build, and about three and a half times slower to solve. argus's
+  own programs are always built optimized. argus's test suite builds its
+  tests' programs so.
 
 ### Other changes
 

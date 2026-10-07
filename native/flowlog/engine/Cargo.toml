@@ -40,3 +40,16 @@ incremental = false
 # A panic is reported by the exit status and the engine's log; no unwinding
 # leaves a half-applied transaction behind.
 panic = "abort"
+
+# For programs that are solved over a handful of rows, such as a test's
+# (`ARGUS_FLOWLOG_BUILD_PROFILE=quick`): the program's own crate is not
+# optimized, and its dependencies are, as in release. Measured on stage
+# 0: the engine compiled in 3.0s instead of 8.4s, with a seventh of the
+# CPU time, and solved 47 MB of facts in 0.59s instead of 0.17s.
+# opt-level 1 compiled only 15% faster than release.
+[profile.quick]
+inherits = "release"
+opt-level = 0
+
+[profile.quick.package."*"]
+opt-level = 2

@@ -506,20 +506,23 @@ defmodule Argus.FlowLog.Toolchain do
 
   @doc """
   Builds the binaries `bins` of the crate at `crate` into the toolchain's
-  shared target directory (each then at `built/2`): `:ok`, or
+  shared target directory (each then at `built/3`): `:ok`, or
   `{:error, {:build_failed, what, log, tail}}` with Cargo's output kept
   at `log`. Uses the crate's lockfile as it stands (`--locked`), and
   goes on past a binary that fails (`--keep-going`), so the others are
   built.
 
-  Cargo runs `build_jobs/0` compiles at once.
+  `profile` is the Cargo profile, `:release` or the engine template's
+  `:quick`. Cargo runs `build_jobs/0` compiles at once.
   """
-  @spec cargo_build(t(), Path.t(), [String.t()], Path.t(), term()) :: :ok | {:error, reason()}
-  def cargo_build(toolchain, crate, bins, log, what) do
+  @spec cargo_build(t(), Path.t(), [String.t()], Path.t(), term(), :release | :quick) ::
+          :ok | {:error, reason()}
+  def cargo_build(toolchain, crate, bins, log, what, profile \\ :release) do
     args =
       [
         "build",
-        "--release",
+        "--profile",
+        Atom.to_string(profile),
         "--locked",
         "--keep-going",
         "--jobs",
@@ -549,9 +552,10 @@ defmodule Argus.FlowLog.Toolchain do
     end
   end
 
-  @doc "Where `cargo_build/5` leaves the binary `bin`."
-  @spec built(t(), String.t()) :: Path.t()
-  def built(toolchain, bin), do: Path.join([target(toolchain), "release", bin])
+  @doc "Where `cargo_build/6` leaves the binary `bin` it built with `profile`."
+  @spec built(t(), String.t(), :release | :quick) :: Path.t()
+  def built(toolchain, bin, profile \\ :release),
+    do: Path.join([target(toolchain), Atom.to_string(profile), bin])
 
   @doc """
   How many compiles a build runs at once: `ARGUS_FLOWLOG_BUILD_JOBS`, or
