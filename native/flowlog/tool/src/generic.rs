@@ -1242,11 +1242,16 @@ impl<T: Time> Clone for Arr<'_, T> {
     }
 }
 
+/// The distinct keys of a collection, arranged: what an antijoin's rows
+/// are checked against.
+type Keys<'scope, T> = Arranged<'scope, TraceAgent<KeySpine<Row, T, Diff>>>;
+
 /// The collections a scope has bound, by fingerprint, and the arrangements
 /// built of them, or entered, so far.
 struct Env<'scope, T: Time> {
     collections: HashMap<u64, Coll<'scope, T>>,
     arranged: HashMap<u64, Arr<'scope, T>>,
+    keys: HashMap<u64, Keys<'scope, T>>,
 }
 
 impl<'scope, T: Time> Env<'scope, T> {
@@ -1254,6 +1259,7 @@ impl<'scope, T: Time> Env<'scope, T> {
         Env {
             collections: HashMap::new(),
             arranged: HashMap::new(),
+            keys: HashMap::new(),
         }
     }
 
@@ -1273,8 +1279,32 @@ impl<'scope, T: Time> Env<'scope, T> {
         arranged
     }
 
+    /// The keys `fp`'s rows hold, each once: an antijoin subtracts the
+    /// semijoin, which a key held twice would subtract twice. Built once
+    /// for every antijoin that negates the same collection.
+    fn keys(&mut self, fp: u64) -> Keys<'scope, T> {
+        if let Some(keys) = self.keys.get(&fp) {
+            return keys.clone();
+        }
+        let keys = self
+            .get(fp)
+            .map(|(k, _)| k)
+            .arrange_by_self()
+            .reduce_abelian::<_, KeyBuilder<Row, T, Diff>, KeySpine<Row, T, Diff>, _, _>(
+                "Distinct",
+                |_key, _input, output| output.push(((), 1)),
+                |rows, key, updates| {
+                    rows.clear();
+                    rows.extend(updates.drain(..).map(|(v, t, r)| ((key.clone(), v), t, r)));
+                },
+            );
+        self.keys.insert(fp, keys.clone());
+        keys
+    }
+
     fn bind(&mut self, fp: u64, collection: Coll<'scope, T>) {
         self.arranged.remove(&fp);
+        self.keys.remove(&fp);
         self.collections.insert(fp, collection);
     }
 }
@@ -1379,24 +1409,11 @@ fn build_step<'scope, T: Time>(env: &mut Env<'scope, T>, step: &'static Step) {
             key,
             value,
         } => {
-            // The keys a left row holds, each once: an antijoin subtracts
-            // the semijoin, which a key held twice would subtract twice.
-            // The semijoin reads the distinct keys' own arrangement, and
-            // the arrangement of `right` the scope's joins share: the
-            // differential antijoin arranges both again, a copy of every
-            // row it keeps (a tenth to a quarter of a program's rows).
-            let keys = env
-                .get(*left)
-                .map(|(k, _)| k)
-                .arrange_by_self()
-                .reduce_abelian::<_, KeyBuilder<Row, T, Diff>, KeySpine<Row, T, Diff>, _, _>(
-                    "Distinct",
-                    |_key, _input, output| output.push(((), 1)),
-                    |rows, key, updates| {
-                        rows.clear();
-                        rows.extend(updates.drain(..).map(|(v, t, r)| ((key.clone(), v), t, r)));
-                    },
-                );
+            // The semijoin reads the distinct keys' own arrangement, and the
+            // arrangement of `right` the scope's joins share: the
+            // differential antijoin arranges both again, a copy of every row
+            // it keeps (a tenth to a quarter of a program's rows).
+            let keys = env.keys(*left);
             let held = |k: &Row, v: &Row, _: &()| Some((k.clone(), v.clone()));
             let semijoin = match env.arrangement(*right) {
                 Arr::Own(arranged) => arranged.join_core(keys, held),
