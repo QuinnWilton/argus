@@ -32,8 +32,15 @@ defmodule Argus.Test.FailingEngine do
 
     digests = Enum.map(built, &elem(&1, 0))
 
+    # The VM's pid too: `unique_integer/1` starts again in every VM, and a
+    # root a killed run left behind must not be taken for this one's.
     root =
-      Path.join(System.tmp_dir!(), "argus_failing_engine_#{System.unique_integer([:positive])}")
+      Path.join(
+        System.tmp_dir!(),
+        "argus_failing_engine_#{:os.getpid()}_#{System.unique_integer([:positive])}"
+      )
+
+    File.rm_rf!(root)
 
     dir = Path.join(root, Path.basename(toolchain.dir))
     File.mkdir_p!(Path.join(dir, "engines"))
