@@ -24,11 +24,14 @@ rustc-hash = "2.0"
 serde_json = "1.0"
 
 [profile.release]
-opt-level = 2
 # Generated programs are tens of thousands of lines of Differential
-# Dataflow, and compiling one is most of a first run's cost: cross-unit
-# LTO alone took 331s to 208s on argus's largest analysis when turned off.
-# Many codegen units let LLVM use every core.
+# Dataflow, and compiling one is most of a first run's cost. Measured on
+# argus's largest analysis (races): turning cross-unit LTO off took its
+# build from 331s to 208s; opt-level 1 built only 10% faster than 2 and
+# solved 5% slower, and 3 matched 2; 16 and 256 codegen units built
+# slower than 64. Most of the time is LLVM over operators instantiated
+# once per row type, which no profile setting changes.
+opt-level = 2
 lto = "off"
 codegen-units = 64
 # Each program's crate is built once, from a directory of its own:
