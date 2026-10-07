@@ -64,7 +64,12 @@ defmodule Argus.FlowLogTest do
 
   defp start!(built) do
     {:ok, engine} =
-      Engine.start_link(executable: built.executable, digest: built.digest, workers: 2)
+      Engine.start_link(
+        executable: built.executable,
+        args: built.args,
+        digest: built.digest,
+        workers: 2
+      )
 
     on_exit(fn -> Engine.stop(engine) end)
     engine
@@ -403,7 +408,11 @@ defmodule Argus.FlowLogTest do
       Process.flag(:trap_exit, true)
 
       assert {:error, {:flowlog_stale_engine, _, "another", digest}} =
-               Engine.start_link(executable: built.executable, digest: "another")
+               Engine.start_link(
+                 executable: built.executable,
+                 args: built.args,
+                 digest: "another"
+               )
 
       assert digest == built.digest
     end
@@ -440,7 +449,13 @@ defmodule Argus.FlowLogTest do
 
       owner =
         spawn(fn ->
-          {:ok, engine} = Engine.start_link(executable: built.executable, digest: built.digest)
+          {:ok, engine} =
+            Engine.start_link(
+              executable: built.executable,
+              args: built.args,
+              digest: built.digest
+            )
+
           send(parent, {:os_pid, Engine.os_pid(engine)})
           Process.sleep(:infinity)
         end)

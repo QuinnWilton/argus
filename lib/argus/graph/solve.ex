@@ -185,6 +185,7 @@ defmodule Argus.Graph.Solve do
              owner: db.supervisor,
              start: [
                executable: built.executable,
+               args: built.args,
                digest: digest,
                workers: Map.get(solver, :workers, Argus.FlowLog.default_workers()),
                log: Argus.FlowLog.Toolchain.run_log(built.toolchain, digest)

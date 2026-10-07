@@ -14,7 +14,8 @@ defmodule Argus.Test.FailingEngine do
   @doc """
   Runs `fun` with the engine of each of `programs` (paths under argus's
   rules) failing; `stub:` replaces the failing script with one of the
-  caller's, given the real engine's path (a proxy that runs it, say).
+  caller's, given the real engine's command line, its executable and its
+  arguments (a proxy that runs it, say).
   """
   @spec with(Path.t() | [Path.t()], (-> result), keyword()) :: result when result: var
   def with(programs, fun, opts \\ []) do
@@ -23,10 +24,10 @@ defmodule Argus.Test.FailingEngine do
 
     built =
       for program <- List.wrap(programs) do
-        {:ok, %{digest: digest, executable: real}} =
+        {:ok, %{digest: digest, executable: executable, args: args}} =
           Argus.FlowLog.engine(Argus.Dl.path(program), progress: false)
 
-        {digest, real}
+        {digest, [executable | args]}
       end
 
     digests = Enum.map(built, &elem(&1, 0))
@@ -90,12 +91,13 @@ defmodule Argus.Test.FailingEngine do
   end
 
   @doc """
-  A stub (for `with/3`'s `stub:`) that runs the real engine at `real`
-  behind a proxy on the protocol's descriptors: every commit runs the
-  shell `before` hook first and `after_commit` once the engine replied,
-  each with `$out` the commit's output directory.
+  A stub (for `with/3`'s `stub:`) that runs the real engine, `real` its
+  command line as `with/3` gives it, behind a proxy on the protocol's
+  descriptors: every commit runs the shell `before` hook first and
+  `after_commit` once the engine replied, each with `$out` the commit's
+  output directory.
   """
-  @spec proxy(Path.t(), String.t(), String.t()) :: String.t()
+  @spec proxy([String.t()], String.t(), String.t()) :: String.t()
   def proxy(real, before \\ "", after_commit \\ "") do
     """
     #!/usr/bin/env python3
@@ -105,7 +107,7 @@ defmodule Argus.Test.FailingEngine do
     def setup():
         os.dup2(child_req_r, 3)
         os.dup2(child_rep_w, 4)
-    engine = subprocess.Popen([#{inspect(real)}] + sys.argv[1:], preexec_fn=setup, pass_fds=(3, 4))
+    engine = subprocess.Popen(#{inspect(real)} + sys.argv[1:], preexec_fn=setup, pass_fds=(3, 4))
     os.close(child_req_r)
     os.close(child_rep_w)
     def read_frame(fd):

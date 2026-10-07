@@ -37,27 +37,20 @@ exclude = if Argus.Dirs.keep?(), do: [:identity_verify], else: [:cache, :identit
 # installs Rust in every job that tests, so there a missing toolchain is
 # an error, never a silently smaller suite.
 #
-# Every built-in program's engine is built here, before any test runs:
-# a large program's engine takes minutes to compile, far past a test's
-# timeout, and is built once per version of its rules (the build cache,
-# `ARGUS_FLOWLOG_DIR`, outlives the suite). A test that compiles a
-# program of its own or an edited copy of argus's builds its engine
-# itself. `ARGUS_TEST_PREBUILD=0` skips the prebuild, for running a test
-# file that builds only its own programs.
+# The toolchain is built here, before any test runs: its first build
+# takes minutes, far past a test's timeout. Programs then run in the
+# generic engine (`Argus.FlowLog.engine/2`), which needs no build, unless
+# their compiled engine is installed already (`mix argus.flowlog build`
+# installs argus's own). A test of compiled engines builds them itself.
 exclude =
   cond do
-    Argus.FlowLog.available?() and System.get_env("ARGUS_TEST_PREBUILD") == "0" ->
-      exclude
-
     Argus.FlowLog.available?() ->
-      case Argus.FlowLog.prebuild(Argus.FlowLog.builtin_programs(),
-             progress: &IO.puts(:stderr, &1)
-           ) do
-        :ok ->
+      case Argus.FlowLog.toolchain(progress: &IO.puts(:stderr, &1)) do
+        {:ok, _toolchain} ->
           exclude
 
         {:error, reason} ->
-          raise "building the FlowLog engines failed: " <> Argus.FlowLog.describe_error(reason)
+          raise "building the FlowLog toolchain failed: " <> Argus.FlowLog.describe_error(reason)
       end
 
     System.get_env("CI") ->

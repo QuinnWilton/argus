@@ -32,7 +32,7 @@ defmodule Argus.FlowLog.PoolTest do
     File.write!(path, @program)
     {:ok, built} = Argus.FlowLog.engine(path, progress: false)
     on_exit(fn -> File.rm_rf!(dir) end)
-    %{start: [executable: built.executable, digest: built.digest, workers: 1]}
+    %{start: [executable: built.executable, args: built.args, digest: built.digest, workers: 1]}
   end
 
   setup do

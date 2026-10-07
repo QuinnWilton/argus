@@ -8,15 +8,17 @@ which a change appeared; older names and APIs may have changed since then.
 ### Changed
 
 - Argus solves its rules with [FlowLog](https://github.com/flowlog-rs/flowlog)
-  instead of Soufflé. Each program compiles once per version of its rules
-  into an engine, a native Differential Dataflow executable, cached under
-  `~/.cache/argus/flowlog` (`ARGUS_FLOWLOG_DIR`). The query graph keeps an
-  engine running between solves, for as long as its database is open, and
-  sends it only the rows that changed, so a rerun after a small edit in the
-  same VM (an editor's session, `iex -S mix`) costs in proportion to the
-  edit. Building
-  engines needs Rust 1.88 or newer (`cargo` on `PATH`, in `~/.cargo/bin`, or
-  named by `ARGUS_CARGO`); Soufflé is no longer used.
+  instead of Soufflé, on Differential Dataflow. A program runs in the generic
+  engine, which plans it as it starts and needs no build, or in an engine
+  compiled for it, a native executable cached under `~/.cache/argus/flowlog`
+  (`ARGUS_FLOWLOG_DIR`) once built (`ARGUS_FLOWLOG_ENGINE` chooses). The
+  query graph keeps an engine running between solves, for as long as its
+  database is open, and sends it only the rows that changed, so a rerun
+  after a small edit in the same VM (an editor's session, `iex -S mix`) costs
+  in proportion to the edit. Building the toolchain, or an engine, needs Rust
+  1.88 or newer (`cargo` on `PATH`, in `~/.cargo/bin`, or named by
+  `ARGUS_CARGO`); a release's prebuilt bundle carries the toolchain and
+  argus's own engines. Soufflé is no longer used.
 - Rename the `souffle:` configuration key to `engine:`, the
   `:souffle_missing` notice to `:engine_unavailable`, and
   `Argus.Driver.Result.souffle_missing?/1` to `engine_unavailable?/1`. The old
@@ -50,6 +52,15 @@ which a change appeared; older names and APIs may have changed since then.
   them side by side (`ARGUS_FLOWLOG_BUILD_JOBS`), and so are the engines
   asked for while another build runs, whoever asks for them
   (`Argus.FlowLog.Builder`).
+- The generic engine (`argus-flowlog-tool serve`) runs any program argus can
+  host without compiling it: argus's own, an edited copy, or a rules file of
+  your own, at once and without Rust where a release's bundle supplies the
+  toolchain. On a 544-module project it gives the compiled engines' results
+  on every built-in program, its first solve within 1 to 2.4 times theirs
+  and a one-row edit as fast. `ARGUS_FLOWLOG_ENGINE=compiled` builds an
+  engine for every program instead; the generic engine has no averages,
+  user-defined functions, or columns other than symbols, numbers, booleans
+  and tuples of them, and a program using one is built.
 - Engines report their starts and commits as telemetry
   (`[:argus, :flowlog, :engine, :start]` and `:commit`, with durations).
 - `ARGUS_FLOWLOG_BUILD_PROFILE=quick` builds the engine of a program argus

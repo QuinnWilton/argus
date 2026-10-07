@@ -59,6 +59,8 @@ defmodule Argus.FlowLog.Engine do
   Starts an engine and checks it. Options:
 
     * `:executable` (required) — the engine binary;
+    * `:args` — what it is run with before the host's own flags: the
+      generic engine's `serve` and its program (default none);
     * `:digest` (required) — the program digest it must report;
     * `:workers` — dataflow worker threads (default 1);
     * `:log` — the file the engine logs to.
@@ -145,7 +147,8 @@ defmodule Argus.FlowLog.Engine do
     workers = Keyword.get(opts, :workers, 1)
 
     args =
-      ["--workers", Integer.to_string(workers)] ++
+      Keyword.get(opts, :args, []) ++
+        ["--workers", Integer.to_string(workers)] ++
         case Keyword.get(opts, :log) do
           nil -> []
           log -> ["--log", log]

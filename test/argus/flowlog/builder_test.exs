@@ -86,6 +86,8 @@ defmodule Argus.FlowLog.BuilderTest do
       System.put_env("ARGUS_FLOWLOG_DIR", root)
       System.put_env("ARGUS_CARGO", cargo)
       System.put_env("ARGUS_FLOWLOG_BUILD_PROFILE", "quick")
+      # Compiled engines, built rather than run generically.
+      System.put_env("ARGUS_FLOWLOG_ENGINE", "compiled")
       {:ok, toolchain} = FlowLog.toolchain(progress: false)
 
       running = Task.async(fn -> FlowLog.engine(first, progress: false) end)

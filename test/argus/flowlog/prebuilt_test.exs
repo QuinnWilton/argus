@@ -27,8 +27,10 @@ defmodule Argus.FlowLog.PrebuiltTest do
 
     on_exit(fn -> File.rm_rf!(dir) end)
 
+    # Stage 0's compiled engine, the one a release bundles.
     stage0 = Argus.Dl.path("stage0.dl")
-    {:ok, built} = FlowLog.engine(stage0, progress: false)
+    :ok = FlowLog.prebuild([stage0], progress: false)
+    {:ok, %{kind: :compiled} = built} = FlowLog.engine(stage0, progress: false)
     engine = Program.executable(built.toolchain, built.digest)
 
     {:ok, offer_path} =
@@ -76,11 +78,15 @@ defmodule Argus.FlowLog.PrebuiltTest do
 
   defp sha256(path), do: :crypto.hash(:sha256, File.read!(path)) |> Base.encode16(case: :lower)
 
-  test "without Rust, argus's own programs solve from the bundle, and others say Rust is needed",
+  test "without Rust, argus's own programs solve from the bundle, and others in the generic engine",
        %{peer: peer, root: root, tmp_dir: tmp, stage0: stage0} = context do
     offer = offered(context)
     facts = empty_facts!(Path.join(tmp, "facts"), stage0)
+    File.write!(Path.join(facts, "edge.facts"), "a\tb\nb\tc\n")
     custom = Path.join(tmp, "custom.dl")
+    # The generic engine computes no averages: this program needs its own
+    # engine built.
+    unhosted = Path.join(tmp, "unhosted.dl")
 
     File.write!(custom, """
     .decl edge(a: symbol, b: symbol) mutable
@@ -88,6 +94,14 @@ defmodule Argus.FlowLog.PrebuiltTest do
     .decl node(a: symbol)
     .output node
     node(a) :- edge(a, _).
+    """)
+
+    File.write!(unhosted, """
+    .decl edge(a: symbol, b: symbol) mutable
+    .input edge
+    .decl mean(n: number)
+    .output mean
+    mean(average(n)) :- edge(a, _), n = strlen(a).
     """)
 
     Peer.run(peer, fn ->
@@ -99,8 +113,11 @@ defmodule Argus.FlowLog.PrebuiltTest do
       assert {:ok, results} = FlowLog.run(facts, stage0)
       assert is_map(results)
 
-      # Not argus's own, so not bundled: the reason names it.
-      assert {:error, {:needs_rust, ^custom}} = FlowLog.run(facts, custom)
+      # Not argus's own, so not bundled: the release's tool runs it.
+      assert {:ok, %{"node" => [["a"], ["b"]]}} = FlowLog.run(facts, custom)
+
+      # One the generic engine refuses needs Rust, and the reason names it.
+      assert {:error, {:needs_rust, ^unhosted}} = FlowLog.run(facts, unhosted)
     end)
   end
 

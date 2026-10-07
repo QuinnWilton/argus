@@ -74,6 +74,11 @@ defmodule Argus.FlowLog do
   def describe_error({:build_failed, _, _, _} = reason), do: Toolchain.describe(reason)
   def describe_error({:needs_rust, _} = reason), do: Toolchain.describe(reason)
 
+  def describe_error({:generic_refused, path, refusal}),
+    do:
+      "the generic engine does not run #{path} (#{refusal}); unset ARGUS_FLOWLOG_ENGINE " <>
+        "to build it"
+
   def describe_error({:flowlog_program, path, diagnostic}),
     do: "#{path} does not compile:\n#{diagnostic}"
 
@@ -157,29 +162,110 @@ defmodule Argus.FlowLog do
     end
   end
 
-  @doc """
-  The engine executable for a program: built when missing. Returns the
-  toolchain, the program's digest, its manifest and the executable.
+  @typedoc """
+  The engine a program runs in: compiled for it (built, or installed from
+  a release's bundle), or the generic engine, the toolchain's tool run as
+  `serve` with the program (`args`), which plans the program as it starts
+  and needs no build.
   """
-  @spec engine(Path.t(), keyword()) ::
-          {:ok,
-           %{
-             toolchain: Toolchain.t(),
-             digest: String.t(),
-             manifest: Program.manifest(),
-             executable: Path.t()
-           }}
-          | {:error, term()}
+  @type built :: %{
+          toolchain: Toolchain.t(),
+          digest: String.t(),
+          manifest: Program.manifest(),
+          kind: :compiled | :generic,
+          executable: Path.t(),
+          args: [String.t()]
+        }
+
+  @doc """
+  The engine a program runs in, as `ARGUS_FLOWLOG_ENGINE` chooses it:
+
+    * `auto` (the default) — the program's compiled engine when it is
+      installed or a release's bundle holds it, else the generic engine,
+      which runs at once; a program the generic engine refuses is built;
+    * `compiled` — the compiled engine, built when missing;
+    * `generic` — the generic engine; a program it refuses is an error.
+
+  Any other value raises `ArgumentError`, naming the variable.
+  """
+  @spec engine(Path.t(), keyword()) :: {:ok, built()} | {:error, term()}
   def engine(rules_path, opts \\ []) do
     path = Path.expand(rules_path)
 
     with {:ok, toolchain} <- toolchain(opts),
          {:ok, manifest} <- manifest(path, opts),
          digest = program_digest(path, Enum.map(manifest.inputs, & &1.name)),
-         {:ok, executable} <- Program.engine(toolchain, path, digest, opts) do
-      {:ok, %{toolchain: toolchain, digest: digest, manifest: manifest, executable: executable}}
+         {:ok, kind, executable, args} <-
+           runner(engine_mode(), toolchain, path, digest, manifest, opts) do
+      {:ok,
+       %{
+         toolchain: toolchain,
+         digest: digest,
+         manifest: manifest,
+         kind: kind,
+         executable: executable,
+         args: args
+       }}
     end
   end
+
+  defp engine_mode do
+    case System.get_env("ARGUS_FLOWLOG_ENGINE", "") do
+      value when value in ["", "auto"] ->
+        :auto
+
+      "compiled" ->
+        :compiled
+
+      "generic" ->
+        :generic
+
+      other ->
+        raise ArgumentError,
+              "ARGUS_FLOWLOG_ENGINE is #{inspect(other)}; it takes auto (the default), " <>
+                "compiled or generic"
+    end
+  end
+
+  defp runner(:compiled, toolchain, path, digest, _manifest, opts),
+    do: compiled(toolchain, path, digest, opts)
+
+  defp runner(:generic, toolchain, path, digest, manifest, _opts) do
+    if manifest.generic,
+      do: generic(toolchain, path, digest),
+      else: {:error, {:generic_refused, path, manifest.generic_refusal}}
+  end
+
+  defp runner(:auto, toolchain, path, digest, manifest, opts) do
+    with :none <- installed(toolchain, path, digest, opts) do
+      if manifest.generic,
+        do: generic(toolchain, path, digest),
+        else: compiled(toolchain, path, digest, opts)
+    end
+  end
+
+  # A compiled engine already installed, or in a release's bundle.
+  defp installed(toolchain, path, digest, opts) do
+    case Program.installed(toolchain, digest, Program.profile(path)) do
+      nil ->
+        case Program.bundled(toolchain, path, digest, opts) do
+          {:ok, exe} -> {:ok, :compiled, exe, []}
+          :none -> :none
+        end
+
+      exe ->
+        {:ok, :compiled, exe, []}
+    end
+  end
+
+  defp compiled(toolchain, path, digest, opts) do
+    with {:ok, exe} <- Program.engine(toolchain, path, digest, opts),
+         do: {:ok, :compiled, exe, []}
+  end
+
+  defp generic(toolchain, path, digest),
+    do:
+      {:ok, :generic, Toolchain.tool(toolchain), ["serve", "--program", path, "--digest", digest]}
 
   @doc """
   argus's own programs: the two shared stages' (three files: the
@@ -282,6 +368,7 @@ defmodule Argus.FlowLog do
   defp start(built, opts) do
     Engine.start_link(
       executable: built.executable,
+      args: built.args,
       digest: built.digest,
       workers: Keyword.get(opts, :workers, default_workers()),
       log: Toolchain.run_log(built.toolchain, built.digest)

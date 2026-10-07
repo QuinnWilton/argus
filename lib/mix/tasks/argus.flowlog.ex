@@ -206,9 +206,11 @@ defmodule Mix.Tasks.Argus.Flowlog do
       {:ok, manifest} ->
         digest = FlowLog.program_digest(path, Enum.map(manifest.inputs, & &1.name))
 
-        if Program.installed(toolchain, digest, Program.profile(path)),
-          do: "built",
-          else: "not built"
+        cond do
+          Program.installed(toolchain, digest, Program.profile(path)) -> "built"
+          manifest.generic -> "not built: runs in the generic engine"
+          true -> "not built"
+        end
 
       {:error, reason} ->
         "does not compile: " <> FlowLog.describe_error(reason)

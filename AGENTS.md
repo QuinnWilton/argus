@@ -1,9 +1,10 @@
 # Working on Argus
 
 Argus extracts facts from compiled BEAM files and runs Datalog analyses on
-FlowLog engines (`Argus.FlowLog`): each program compiled to a Differential Dataflow
-executable that the query graph keeps between solves and feeds only the rows that
-changed.
+FlowLog engines (`Argus.FlowLog`): Differential Dataflow programs that the query
+graph keeps between solves and feeds only the rows that changed. A program runs
+in the generic engine (the toolchain's tool, `serve`), which plans it as it
+starts, or in an engine compiled for it, once built.
 The Hex package and OTP application are `argus_beam`; modules use `Argus`.
 
 ## Setup and checks
@@ -15,13 +16,12 @@ missing toolchain is an error). Tag a new test that solves with `@tag :flowlog`,
 or its `describe` or module with `@describetag`/`@moduletag`; where most of a
 module or `describe` solves, tag it and opt the rest out with `flowlog: false`.
 
-`mix test` builds every built-in program's engine before the first test
-(`mix argus.flowlog build` does the same); a cold build takes many minutes, a
-warm one nothing. A rule edit rebuilds the engines of the programs that include
-it, and an edit under `native/flowlog` rebuilds the toolchain and every engine.
-`ARGUS_TEST_PREBUILD=0` skips the prebuild for a test file whose programs are
-its own. A test of its own program pays for that engine's build once, so give it
-a timeout to match.
+`mix test` builds the toolchain before the first test: minutes the first time,
+and after an edit under `native/flowlog`, and nothing otherwise. Programs then
+run in the generic engine, so a rule edit needs no build: an edited rule runs
+on the next solve. `mix argus.flowlog build` compiles argus's own programs'
+engines, which then run in their place (`ARGUS_FLOWLOG_ENGINE=generic` keeps
+the generic engine; `compiled` builds every program's engine, minutes each).
 
 ```sh
 mix deps.get

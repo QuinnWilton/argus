@@ -38,12 +38,15 @@ defmodule Argus.FlowLog.Program do
 
   @typedoc """
   What a program reads and writes, and (from `inspect/2`) every relation
-  with its columns' names and types, for a debugging probe to name.
+  with its columns' names and types, for a debugging probe to name, and
+  whether the generic engine runs it (`generic`).
   """
   @type manifest :: %{
           required(:inputs) => [relation()],
           required(:outputs) => [relation()],
-          optional(:relations) => [%{name: String.t(), columns: [map()]}]
+          optional(:relations) => [%{name: String.t(), columns: [map()]}],
+          optional(:generic) => boolean(),
+          optional(:generic_refusal) => String.t() | nil
         }
 
   @doc """
@@ -68,7 +71,9 @@ defmodule Argus.FlowLog.Program do
                  for(
                    %{"name" => name, "columns" => columns} <- Map.get(manifest, "relations", []),
                    do: %{name: name, columns: columns}
-                 )
+                 ),
+               generic: Map.get(manifest, "generic") == true,
+               generic_refusal: Map.get(manifest, "generic_refusal")
              }}
 
           {:ok, %{"ok" => false, "diagnostic" => diagnostic}} ->
@@ -204,6 +209,34 @@ defmodule Argus.FlowLog.Program do
       path = executable(toolchain, digest, candidate)
       if File.regular?(path), do: path
     end)
+  end
+
+  @doc """
+  The release engine of argus's own program at `rules_path`, installed
+  from the release's bundle when the bundle holds it (`:none` when it
+  does not, or the program is not argus's own). Never compiles.
+  """
+  @spec bundled(Toolchain.t(), Path.t(), String.t(), keyword()) :: {:ok, Path.t()} | :none
+  def bundled(%Toolchain{} = toolchain, rules_path, digest, opts \\ []) do
+    path = Path.expand(rules_path)
+
+    cond do
+      exe = installed(toolchain, digest, :release) ->
+        {:ok, exe}
+
+      not shipped?(path) ->
+        :none
+
+      true ->
+        Toolchain.locked(:build, fn ->
+          {installed, _rest} = from_bundle(toolchain, [{{path, digest, :release}, opts}])
+
+          case Map.get(installed, {digest, :release}) do
+            :ok -> {:ok, executable(toolchain, digest)}
+            _ -> :none
+          end
+        end)
+    end
   end
 
   @doc false

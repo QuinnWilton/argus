@@ -18,19 +18,23 @@ involved.
 ## Install and run
 
 Argus runs its analyses on [FlowLog](https://github.com/flowlog-rs/flowlog)
-engines: compiled Datalog that keeps its results up to date as your code changes, so
-a recompile re-derives only what an edit reached. The Mix integration requires
+engines: incremental Datalog that keeps its results up to date as your code changes,
+so a recompile re-derives only what an edit reached. The Mix integration requires
 Elixir 1.19 or later; prebuilt escripts require Erlang/OTP 28.
 
 On macOS and Linux (arm64 or x86_64), a release ships its engines prebuilt: the
 first run downloads them once (about 70 MB, checked against the SHA-256 the package
-names) and needs no Rust. Elsewhere, or for a rules file of your own, argus builds
-the engines with [Rust](https://rustup.rs) 1.88 or later, once per version of the
-rules: a few minutes, side by side on every core. `ARGUS_FLOWLOG_PREBUILT=0` turns
-the download off, so argus builds everything itself.
+names) and needs no Rust, for argus's own analyses and for rules files of your own,
+which run in the generic engine the download carries. Elsewhere, argus builds its
+toolchain with [Rust](https://rustup.rs) 1.88 or later, once: a few minutes. Every
+program then runs at once in the generic engine, and `mix argus.flowlog build`
+compiles engines for argus's own, which solve a large project up to twice as fast.
+`ARGUS_FLOWLOG_PREBUILT=0` turns the download off, so argus builds everything itself.
 
 Build or fetch the engines ahead of time, in CI for instance, with
 `mix argus.flowlog build`, and see what is installed with `mix argus.flowlog status`.
+`ARGUS_FLOWLOG_ENGINE=generic` runs every program in the generic engine, and
+`compiled` builds an engine for every program, rules files of your own included.
 They live in `~/.cache/argus/flowlog` (`ARGUS_FLOWLOG_DIR` names another directory,
 `ARGUS_CARGO` another `cargo`); `mix argus.flowlog clean` removes those of earlier
 releases.
