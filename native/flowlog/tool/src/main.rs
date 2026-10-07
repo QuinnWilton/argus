@@ -4,16 +4,23 @@
 //! ```text
 //! argus-flowlog-tool inspect PROGRAM
 //! argus-flowlog-tool generate PROGRAM SRC_DIR DIGEST
+//! argus-flowlog-tool serve --program PROGRAM --digest DIGEST [--workers N] [--log PATH]
 //! ```
 //!
-//! Both print the program's manifest as one JSON object on stdout and exit
-//! 0, or print `{"ok": false, "diagnostic": ...}` and exit 1 when the program
-//! does not compile or is not one argus can host. `inspect`'s manifest also
-//! lists every relation with its columns (`relations`), for a debugging
-//! probe to name. `inspect` runs FlowLog's
-//! front end and planner only; `generate` also writes the engine's
-//! `program.rs` (FlowLog's library-mode module) and `glue.rs` (the typed
-//! dispatch between the engine host and that module) into `SRC_DIR`.
+//! `inspect` and `generate` print the program's manifest as one JSON
+//! object on stdout and exit 0, or print `{"ok": false, "diagnostic": ...}`
+//! and exit 1 when the program does not compile or is not one argus can
+//! host. `inspect`'s manifest also lists every relation with its columns
+//! (`relations`), for a debugging probe to name, and says whether `serve`
+//! runs the program (`generic`, and when it does not, `generic_refusal`).
+//! `inspect` runs FlowLog's front end and planner only; `generate` also
+//! writes the engine's `program.rs` (FlowLog's library-mode module) and
+//! `glue.rs` (the typed dispatch between the engine host and that module)
+//! into `SRC_DIR`.
+//!
+//! `serve` is the generic engine (`generic`): the program, planned when
+//! it starts and run without compiling it, behind the protocol every
+//! engine speaks (`host`, the engine template's).
 
 use std::fmt::Write as _;
 use std::fs;
@@ -31,8 +38,37 @@ use flowlog_parser::Relation;
 use serde_json::Value;
 use serde_json::json;
 
+mod generic;
+#[path = "../../engine/src/host.rs"]
+mod host;
+
+use mimalloc::MiMalloc;
+
+#[global_allocator]
+static GLOBAL: MiMalloc = MiMalloc;
+
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let mut args = std::env::args().skip(1).peekable();
+    if args.peek().is_some_and(|cmd| cmd == "serve") {
+        args.next();
+        host::main(args, |workers, extra| {
+            let flag = |name: &str| {
+                extra
+                    .iter()
+                    .find(|(flag, _)| flag == name)
+                    .map(|(_, value)| value.clone())
+                    .ok_or_else(|| format!("serve needs {name}"))
+            };
+            if let Some((flag, _)) = extra
+                .iter()
+                .find(|(flag, _)| flag != "--program" && flag != "--digest")
+            {
+                return Err(format!("serve takes no `{flag}`"));
+            }
+            generic::Generic::new(Path::new(&flag("--program")?), flag("--digest")?, workers)
+        });
+    }
+    let args: Vec<String> = args.collect();
     let result = match args.as_slice() {
         [cmd, program] if cmd == "inspect" => inspect(Path::new(program)),
         [cmd, program, src_dir, digest] if cmd == "generate" => {
@@ -48,7 +84,8 @@ fn main() -> ExitCode {
         Err(Failure::Usage) => {
             eprintln!(
                 "usage: argus-flowlog-tool inspect PROGRAM\n       \
-                 argus-flowlog-tool generate PROGRAM SRC_DIR DIGEST"
+                 argus-flowlog-tool generate PROGRAM SRC_DIR DIGEST\n       \
+                 argus-flowlog-tool serve --program PROGRAM --digest DIGEST [--workers N] [--log PATH]"
             );
             ExitCode::from(2)
         }
@@ -82,6 +119,13 @@ impl Column {
         }
     }
 
+    fn host(self) -> host::Column {
+        match self {
+            Column::Symbol => host::Column::Symbol,
+            Column::Number => host::Column::Number,
+        }
+    }
+
     fn variant(self) -> &'static str {
         match self {
             Column::Symbol => "Column::Symbol",
@@ -100,9 +144,9 @@ struct Io {
 }
 
 fn parse(program: &Path) -> Result<(Program, SourceMap), Failure> {
-    let path = program
-        .to_str()
-        .ok_or_else(|| Failure::Program(format!("non-UTF-8 program path: {}", program.display())))?;
+    let path = program.to_str().ok_or_else(|| {
+        Failure::Program(format!("non-UTF-8 program path: {}", program.display()))
+    })?;
     let mut sources = SourceMap::new();
     let mut config = Config {
         program: path.to_string(),
@@ -150,9 +194,10 @@ fn interface(program: &Program) -> Result<(Vec<Io>, Vec<Io>), Failure> {
 
     let mut outputs = Vec::new();
     for rel in program.output_idbs() {
-        let file = rel
-            .output_sink()
-            .map_or_else(|| format!("{}.csv", rel.raw_name()), |sink| sink.filename().to_string());
+        let file = rel.output_sink().map_or_else(
+            || format!("{}.csv", rel.raw_name()),
+            |sink| sink.filename().to_string(),
+        );
         if let Some(io) = io(rel, file, "output", &mut problems) {
             outputs.push(io);
         }
@@ -262,6 +307,15 @@ fn inspect(program: &Path) -> Result<Value, Failure> {
     let _ = fs::remove_dir_all(plan(program)?);
     let mut value = manifest(&inputs, &outputs);
     value["relations"] = Value::Array(relations(&parsed));
+    // Whether `serve` runs the program, or why it does not: argus builds
+    // an engine for a program the generic engine refuses.
+    match generic::check(&parsed) {
+        Ok(()) => value["generic"] = Value::Bool(true),
+        Err(reason) => {
+            value["generic"] = Value::Bool(false);
+            value["generic_refusal"] = Value::String(reason);
+        }
+    }
     Ok(value)
 }
 
@@ -302,11 +356,16 @@ fn generate(program: &Path, src_dir: &Path, digest: &str) -> Result<Value, Failu
     let stem = program
         .file_stem()
         .and_then(|s| s.to_str())
-        .ok_or_else(|| Failure::Program(format!("program path has no stem: {}", program.display())))?;
+        .ok_or_else(|| {
+            Failure::Program(format!("program path has no stem: {}", program.display()))
+        })?;
     let generated = out.join(format!("{stem}.rs"));
     let write = |name: &str, contents: &str| {
         fs::write(src_dir.join(name), contents).map_err(|e| {
-            Failure::Program(format!("cannot write {}: {e}", src_dir.join(name).display()))
+            Failure::Program(format!(
+                "cannot write {}: {e}",
+                src_dir.join(name).display()
+            ))
         })
     };
     let module = fs::read_to_string(&generated)
@@ -323,10 +382,19 @@ fn generate(program: &Path, src_dir: &Path, digest: &str) -> Result<Value, Failu
 /// is the same for every program.
 fn glue(inputs: &[Io], outputs: &[Io], digest: &str) -> String {
     let mut s = String::new();
-    let _ = writeln!(s, "// GENERATED by argus-flowlog-tool for one program; do not edit.\n");
-    let _ = writeln!(s, "use crate::host::Changes;\nuse crate::host::Column;\nuse crate::host::Dataflow;");
+    let _ = writeln!(
+        s,
+        "// GENERATED by argus-flowlog-tool for one program; do not edit.\n"
+    );
+    let _ = writeln!(
+        s,
+        "use crate::host::Changes;\nuse crate::host::Column;\nuse crate::host::Dataflow;"
+    );
     let _ = writeln!(s, "use crate::host::Fields;\nuse crate::host::Relation;");
-    let _ = writeln!(s, "use crate::program::IncrementalEngine;\nuse crate::program::IncrementalResults;\n");
+    let _ = writeln!(
+        s,
+        "use crate::program::IncrementalEngine;\nuse crate::program::IncrementalResults;\n"
+    );
     let _ = writeln!(s, "pub const DIGEST: &str = {digest:?};\n");
     let _ = writeln!(
         s,
