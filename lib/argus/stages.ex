@@ -4,9 +4,10 @@ defmodule Argus.Stages do
   exact program, and the bounded one in its place when the exact
   fixpoint outgrows its budget (`Argus.Analysis.Extraction.derive_points_to/2`
   says why). Which one runs is a function of the facts, never of time:
-  each program counts its fixpoint's rows once it is complete and writes
-  `points_to_overflow`, the relations that reached the budget
-  (`priv/dl/points_to.dl`).
+  each program counts its fixpoint's rows and writes `points_to_overflow`,
+  the relations that reached the budget (`priv/dl/points_to.dl`), or its
+  engine stops it as one of them grows past (`{:limitsize, ...}`), which
+  reads as the same overflow.
 
   A facts directory's derivation (`Argus.Analysis.Extraction`) and the
   query graph (`Argus.Graph.Solve`, over the blob store) each solve the
@@ -52,6 +53,11 @@ defmodule Argus.Stages do
           {:error, reason} -> {:error, reason, solved}
         end
 
+      # The engine stopped the fixpoint as a relation grew past its
+      # budget: the same overflow, met sooner.
+      {:error, {:limitsize, relation, rows, limit}} ->
+        bounded(solve, acc, bounded_path, [{relation, rows, limit}])
+
       {:error, reason} ->
         {:error, reason, acc}
     end
@@ -75,6 +81,9 @@ defmodule Argus.Stages do
           {:error, reason} ->
             {:error, reason, solved}
         end
+
+      {:error, {:limitsize, relation, rows, limit}} ->
+        {:error, {:over_budget, [{relation, rows, limit}]}, acc}
 
       {:error, reason} ->
         {:error, reason, acc}

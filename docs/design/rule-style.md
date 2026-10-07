@@ -56,9 +56,10 @@ usual operators and functors, with these differences.
   relation of its own and negate that.
 - A rule needs at least one positive atom; restate a body made only of
   negations or constraints with the atom that ranges over its variables.
-- There is no `.limitsize` or `.plan`. An engine plans its own joins; a budget is
-  a relation the caller reads once the fixpoint is done, as `points_to_budget`
-  is.
+- There is no `.plan`: an engine plans its own joins. `.limitsize R(n=N)`
+  stops a solve as `R` grows past `N` rows, and the solve fails as
+  `{:limitsize, relation, rows, limit}`. A program that declares one runs in
+  the generic engine, which counts rows as it derives them.
 
 `mix argus.flowlog solve PROGRAM FACTS_DIR` runs a program over a directory of
 `<relation>.facts` files and reports a compile error with the rule it is in.

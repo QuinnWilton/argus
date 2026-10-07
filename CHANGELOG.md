@@ -29,11 +29,13 @@ which a change appeared; older names and APIs may have changed since then.
 - Rename `Argus.Schema.souffle_decls/0` to `datalog_decls/0`. Input
   declarations end in `mutable`; a custom rules file's inputs must too.
 - Custom rules use FlowLog's dialect: no ADTs, `inline` relations,
-  subsumption, body aggregates, `.limitsize` or `.plan`. The
-  [rule guide](docs/design/rule-style.md#the-dialect) lists the differences.
-- The points-to stage decides whether it outgrew its row budget by counting
-  the finished fixpoint, instead of stopping Soufflé at a size limit. The
-  stage chosen depends only on the facts.
+  subsumption, body aggregates or `.plan`. `.limitsize` stops a solve as a
+  relation grows past its limit, and a program that declares one runs in the
+  generic engine. The [rule guide](docs/design/rule-style.md#the-dialect)
+  lists the differences.
+- The points-to stage still stops its exact program at the row budget
+  (`.limitsize`) and falls back to the bounded one. The stage chosen depends
+  only on the facts.
 - `.facts` files escape a byte that is not part of valid UTF-8 as `\xHH`
   (`Argus.Tsv`), because engines hold symbols as UTF-8 text. `Argus.Tsv.decode/1`
   restores the bytes.

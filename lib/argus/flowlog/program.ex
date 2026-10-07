@@ -39,14 +39,16 @@ defmodule Argus.FlowLog.Program do
   @typedoc """
   What a program reads and writes, and (from `inspect/2`) every relation
   with its columns' names and types, for a debugging probe to name, and
-  whether the generic engine runs it (`generic`).
+  whether the generic engine runs it (`generic`), and the relations it
+  holds to a number of rows (`limitsize`, its `.limitsize` directives).
   """
   @type manifest :: %{
           required(:inputs) => [relation()],
           required(:outputs) => [relation()],
           optional(:relations) => [%{name: String.t(), columns: [map()]}],
           optional(:generic) => boolean(),
-          optional(:generic_refusal) => String.t() | nil
+          optional(:generic_refusal) => String.t() | nil,
+          optional(:limitsize) => [{String.t(), non_neg_integer()}]
         }
 
   @doc """
@@ -73,7 +75,13 @@ defmodule Argus.FlowLog.Program do
                    do: %{name: name, columns: columns}
                  ),
                generic: Map.get(manifest, "generic") == true,
-               generic_refusal: Map.get(manifest, "generic_refusal")
+               generic_refusal: Map.get(manifest, "generic_refusal"),
+               limitsize:
+                 for(
+                   %{"relation" => relation, "rows" => rows} <-
+                     Map.get(manifest, "limitsize", []),
+                   do: {relation, rows}
+                 )
              }}
 
           {:ok, %{"ok" => false, "diagnostic" => diagnostic}} ->

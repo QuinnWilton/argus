@@ -46,16 +46,41 @@ defmodule Argus.Test.FailingEngine do
     File.mkdir_p!(Path.join(dir, "engines"))
     File.chmod!(root, 0o700)
 
-    for entry <- ~w(bin sources target logs crates) do
+    for entry <- ~w(sources target logs crates) do
       File.ln_s!(Path.join(toolchain.dir, entry), Path.join(dir, entry))
     end
+
+    # The tool, which is also the generic engine: run as `serve` for one
+    # of these programs, it runs the stub instead, so the program fails
+    # in whichever kind of engine argus picks for it.
+    tool = Path.join([dir, "bin", "argus-flowlog-tool"])
+    File.mkdir_p!(Path.dirname(tool))
+
+    File.write!(tool, """
+    #!/bin/sh
+    if [ "$1" = serve ]; then
+      digest=""
+      previous=""
+      for arg in "$@"; do
+        [ "$previous" = "--digest" ] && digest="$arg"
+        previous="$arg"
+      done
+      case "$digest" in
+        #{Enum.join(digests, "|")}) shift; exec "#{Path.join(dir, "engines")}/$digest/engine" "$@" ;;
+      esac
+    fi
+    exec "#{Argus.FlowLog.Toolchain.tool(toolchain)}" "$@"
+    """)
+
+    File.chmod!(tool, 0o755)
 
     for engine <- File.ls!(engines), engine not in digests do
       File.ln_s!(Path.join(engines, engine), Path.join([dir, "engines", engine]))
     end
 
     # The stub is installed as the release engine, which a program of
-    # either profile runs (`Argus.FlowLog.Program.installed/3`).
+    # either profile runs (`Argus.FlowLog.Program.installed/3`), and which
+    # the tool runs in the generic engine's place.
     for {digest, real} <- built do
       stub = Path.join([dir, "engines", digest, "engine"])
       File.mkdir_p!(Path.dirname(stub))

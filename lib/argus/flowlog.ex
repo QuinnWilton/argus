@@ -74,6 +74,9 @@ defmodule Argus.FlowLog do
   def describe_error({:build_failed, _, _, _} = reason), do: Toolchain.describe(reason)
   def describe_error({:needs_rust, _} = reason), do: Toolchain.describe(reason)
 
+  def describe_error({:limitsize, relation, rows, limit}),
+    do: "#{relation} outgrew its limit of #{limit} rows (.limitsize), with #{rows} and growing"
+
   def describe_error({:generic_refused, path, refusal}),
     do:
       "the generic engine does not run #{path} (#{refusal}); unset ARGUS_FLOWLOG_ENGINE " <>
@@ -183,7 +186,9 @@ defmodule Argus.FlowLog do
 
     * `auto` (the default) — the program's compiled engine when it is
       installed or a release's bundle holds it, else the generic engine,
-      which runs at once; a program the generic engine refuses is built;
+      which runs at once; a program the generic engine refuses is built,
+      and one that holds a relation to a number of rows (`.limitsize`)
+      runs generically, as only the generic engine stops it as it grows;
     * `compiled` — the compiled engine, built when missing;
     * `generic` — the generic engine; a program it refuses is an error.
 
@@ -250,6 +255,9 @@ defmodule Argus.FlowLog do
       do: generic(toolchain, path, digest),
       else: {:error, {:generic_refused, path, manifest.generic_refusal}}
   end
+
+  defp runner(:auto, toolchain, path, digest, %{generic: true, limitsize: [_ | _]}, _opts),
+    do: generic(toolchain, path, digest)
 
   defp runner(:auto, toolchain, path, digest, manifest, opts) do
     with :none <- installed(toolchain, path, digest, opts) do

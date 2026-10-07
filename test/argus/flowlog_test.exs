@@ -196,6 +196,33 @@ defmodule Argus.FlowLogTest do
       assert read!(out, "source.facts") == [["a"], ["b"]]
     end
 
+    test "a relation held to a number of rows stops the solve as it grows past them",
+         %{tmp_dir: tmp} do
+      limited = Path.join(tmp, "limited.dl")
+
+      File.write!(limited, """
+      .decl edge(x: symbol, y: symbol) mutable
+      .input edge
+      .decl reach(x: symbol, y: symbol)
+      reach(x, y) :- edge(x, y).
+      reach(x, z) :- reach(x, y), edge(y, z).
+      .output reach
+      .limitsize reach(n=3)
+      """)
+
+      # A chain of twenty: 190 pairs reach each other, far past three.
+      chain = for i <- 1..19, do: ["n#{i}", "n#{i + 1}"]
+      facts = facts!(Path.join(tmp, "facts"), edge: chain)
+
+      assert {:error, {:limitsize, "reach", rows, 3}} = FlowLog.run(facts, limited)
+      assert rows > 3
+      assert FlowLog.describe_error({:limitsize, "reach", rows, 3}) =~ "reach outgrew its limit"
+
+      # Under the limit, the program solves as any other.
+      facts = facts!(Path.join(tmp, "small"), edge: [["a", "b"]])
+      assert {:ok, %{"reach" => [["a", "b"]]}} = FlowLog.run(facts, limited)
+    end
+
     test "a missing input file is an error, never an empty relation", %{
       program: program,
       tmp_dir: tmp

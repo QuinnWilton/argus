@@ -107,8 +107,7 @@ defmodule Argus.Analysis.PointsToBudgetTest do
     # hold in all: the copy scales that down with the budget.
     rules =
       rules_copy!(dir, %{
-        "points_to.dl" =>
-          &String.replace(&1, "points_to_budget(500000).", "points_to_budget(#{@budget})."),
+        "points_to.dl" => &String.replace(&1, "500000", "#{@budget}"),
         "clientlib/pervasive.dl" => &String.replace(&1, "n > 1000,", "n > 20,")
       })
 
@@ -119,8 +118,7 @@ defmodule Argus.Analysis.PointsToBudgetTest do
   end
 
   # Both stages held to a budget every program here outgrows.
-  defp tiny_budget(text),
-    do: String.replace(text, "points_to_budget(500000).", "points_to_budget(10).")
+  defp tiny_budget(text), do: String.replace(text, "500000", "10")
 
   # The exact stage says it outgrew its budget, whatever it found; the
   # bounded one (which includes it) runs as it would.

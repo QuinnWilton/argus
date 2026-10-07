@@ -262,6 +262,13 @@ defmodule Argus.FlowLog.Engine do
           %{"ok" => true} = reply ->
             {:ok, reply}
 
+          %{
+            "ok" => false,
+            "kind" => "limitsize",
+            "detail" => %{"relation" => relation, "rows" => rows, "limit" => limit}
+          } ->
+            {:error, {:limitsize, relation, rows, limit}}
+
           %{"ok" => false, "kind" => kind, "message" => message} ->
             {:error, {:flowlog_error, kind, message}}
         end
