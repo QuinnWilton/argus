@@ -17,6 +17,8 @@ defmodule Argus.FlowLogTest do
 
   alias Argus.FlowLog
   alias Argus.FlowLog.Engine
+  alias Argus.FlowLog.Solve
+  alias Roux.Blob
 
   @program """
   .decl edge(x: symbol, y: symbol) mutable
@@ -397,6 +399,30 @@ defmodule Argus.FlowLogTest do
         assert length(written) == 4
       end
 
+      test "a previous file that is not what the engine holds is refused",
+           %{built: built, tmp_dir: tmp} do
+        engine = start!(built)
+        v1 = facts!(Path.join(tmp, "v1"), edge: [["a", "b"]], blocked: [], weight: [])
+        v2 = facts!(Path.join(tmp, "v2"), edge: [["a", "b"], ["b", "c"]])
+        inputs = Map.new(~w(edge blocked weight), &{&1, Path.join(v1, "#{&1}.facts")})
+        assert {:ok, _} = Engine.commit(engine, tmp, inputs, %{}, 60_000)
+
+        # The engine holds v1's edges: v2's own file is not what it diffs.
+        stale = %{"edge" => {Path.join(v2, "edge.facts"), Path.join(v2, "edge.facts")}}
+
+        assert {:error, {:flowlog_error, "stale_previous", message}} =
+                 Engine.commit(engine, tmp, stale, %{}, 60_000)
+
+        assert message =~ "edge"
+
+        # Named with the file it was committed from, the change applies.
+        out = Path.join(tmp, "out")
+        File.mkdir_p!(out)
+        fresh = %{"edge" => {Path.join(v2, "edge.facts"), Path.join(v1, "edge.facts")}}
+        assert {:ok, _} = Engine.commit(engine, out, fresh, %{}, 60_000)
+        assert read!(out, "reach.csv") == [["a", "b"], ["a", "c"], ["b", "c"]]
+      end
+
       test "the first commit must load every input", %{built: built, tmp_dir: tmp} do
         engine = start!(built)
         v1 = facts!(Path.join(tmp, "v1"), edge: [["a", "b"]])
@@ -469,6 +495,47 @@ defmodule Argus.FlowLogTest do
 
         assert digest == built.digest
       end
+    end
+  end
+
+  describe "a solve through the store" do
+    @describetag :tmp_dir
+
+    # An engine keeps no copy of its inputs: the store's entry of what it
+    # holds is diffed against the next. One collected since cannot be.
+    test "a held input whose entry the store lost is solved by a new engine",
+         %{built: built, tmp_dir: tmp} do
+      store = Blob.open!(Path.join(tmp, "store"))
+      put = fn rows -> elem(Blob.put(store, Argus.Tsv.encode(rows)), 1) end
+      {edge1, edge2} = {put.([["a", "b"]]), put.([["a", "b"], ["b", "c"]])}
+      {blocked, weight} = {put.([]), put.([])}
+      outputs = ~w(heaviest.csv open.csv reach.csv source.facts)
+
+      spec = fn ->
+        {:ok,
+         %{
+           lineage: {__MODULE__, tmp},
+           owner: self(),
+           start: [executable: built.executable, args: built.args, digest: built.digest]
+         }}
+      end
+
+      inputs = fn edge ->
+        [
+          {"edge", {:cas, edge}, {:edge, edge}},
+          {"blocked", {:cas, blocked}, :blocked},
+          {"weight", {:cas, weight}, :weight}
+        ]
+      end
+
+      assert {:ok, _} = Solve.run(store, :first, inputs.(edge1), outputs, spec, [])
+      File.rm!(Blob.path(store, edge1))
+
+      assert {:ok, %{"reach.csv" => reach}} =
+               Solve.run(store, :second, inputs.(edge2), outputs, spec, [])
+
+      assert {:ok, [["a", "b"], ["a", "c"], ["b", "c"]]} =
+               Solve.rows(store, "reach.csv", reach)
     end
   end
 
