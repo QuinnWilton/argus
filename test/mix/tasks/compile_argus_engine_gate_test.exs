@@ -87,8 +87,6 @@ defmodule Mix.Tasks.Compile.ArgusEngineGateTest do
       Manifest.memo_entries(manifest, Argus.Graph.store())
     end
 
-    defp manifest_keys, do: Enum.map(manifest_entries(), &elem(&1, 0))
-
     # An entry kept by digest in another store reads as missing here: no
     # error is, being transient.
     defp manifest_errors do
