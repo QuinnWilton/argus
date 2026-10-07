@@ -16,8 +16,11 @@ defmodule Argus.FlowLog.Solve do
 
     1. the engine is told only the inputs whose identity differs from
        what it holds, each by the store's file for it (or one the
-       caller's `fill` function writes), and diffs their rows itself;
-       a new engine is told every input;
+       caller's `fill` function writes) and the file of what it holds,
+       placed again from the source it was committed from, and diffs
+       the two itself; a new engine is told every input. An engine
+       keeps no copy of its inputs' files: a held input whose file the
+       store has since collected is told to a new engine instead;
     2. the engine applies the difference as one epoch of its dataflow,
        bounded by `:timeout`, and writes each output it changed, whole
        and sorted, into a scratch directory of the store's;
@@ -126,16 +129,25 @@ defmodule Argus.FlowLog.Solve do
     # commit that fails (midway, by its timeout, by a crash) leaves the
     # engine's state unknown, and the pool stops it: the next solve
     # starts afresh.
-    :global.trans(
-      {{__MODULE__, pool_key}, self()},
-      fn ->
-        Pool.with_engine(pool_key, owner, fn -> {:ok, start} end, fn engine ->
-          Blob.scratch(store, fn dir -> commit(store, engine, dir, inputs, outputs, timeout) end)
-        end)
-      end,
-      [node()],
-      :infinity
-    )
+    once = fn ->
+      :global.trans(
+        {{__MODULE__, pool_key}, self()},
+        fn ->
+          Pool.with_engine(pool_key, owner, fn -> {:ok, start} end, fn engine ->
+            Blob.scratch(store, fn dir -> commit(store, engine, dir, inputs, outputs, timeout) end)
+          end)
+        end,
+        [node()],
+        :infinity
+      )
+    end
+
+    # A held input whose file the store has lost cannot be diffed: the
+    # failed commit stopped the engine, and a new one is told every input.
+    case once.() do
+      {:error, {:flowlog_previous_missing, _relation}} -> once.()
+      result -> result
+    end
   end
 
   defp commit(store, engine, dir, inputs, outputs, timeout) do
@@ -150,17 +162,52 @@ defmodule Argus.FlowLog.Solve do
          changed =
            for(
              {name, source, identity} <- inputs,
-             Map.get(held, name) != identity,
+             held_identity(held, name) != identity,
              do: {name, source, identity}
            ),
          {:ok, paths} <- place_all(store, changed, fills),
-         identities = Map.new(changed, fn {name, _source, identity} -> {name, identity} end),
+         {:ok, prior} <- place_held(store, changed, held, Path.join(dir, "held")),
+         entries =
+           Map.new(paths, fn {name, path} ->
+             {name, if(prior[name], do: {path, prior[name]}, else: path)}
+           end),
+         # What the engine holds of each input: its identity, and the
+         # source of the file it was committed from, to diff the next one.
+         identities =
+           Map.new(changed, fn {name, source, identity} -> {name, {identity, source}} end),
          {:ok, _report} <-
-           Engine.commit(engine, out, paths, identities, timeout, rewrite: rewrite),
+           Engine.commit(engine, out, entries, identities, timeout, rewrite: rewrite),
          {:ok, solved} <- adopt_outputs(store, outputs, out, if(rewrite, do: %{}, else: previous)) do
       :ok = Engine.put_outputs(engine, solved)
       {:ok, solved}
     end
+  end
+
+  defp held_identity(held, name) do
+    case Map.fetch(held, name) do
+      {:ok, {identity, _source}} -> identity
+      :error -> :none
+    end
+  end
+
+  # The file of what the engine holds of each changed input it holds,
+  # placed again from its source.
+  defp place_held(store, changed, held, dir) do
+    File.mkdir_p!(dir)
+
+    Enum.reduce_while(changed, {:ok, %{}}, fn {name, _source, _identity}, {:ok, acc} ->
+      case Map.fetch(held, name) do
+        :error ->
+          {:cont, {:ok, acc}}
+
+        {:ok, {_identity, source}} ->
+          case place(store, source, Path.join(dir, name)) do
+            {:ok, path} -> {:cont, {:ok, Map.put(acc, name, path)}}
+            {:error, {:missing_entry, _}} -> {:halt, {:error, {:flowlog_previous_missing, name}}}
+            {:error, reason} -> {:halt, {:error, {:input_failed, name, reason}}}
+          end
+      end
+    end)
   end
 
   defp place_all(store, inputs, dir) do

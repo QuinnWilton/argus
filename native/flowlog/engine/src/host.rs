@@ -145,7 +145,35 @@ impl<'a> Fields<'a> {
 
 /// One input's change in a commit: its index, the lines it gained, and
 /// the lines it lost.
-type Delta = (usize, Vec<Box<[u8]>>, Vec<Box<[u8]>>);
+/// What an engine holds of an input: its distinct lines, counted and
+/// summed by hash, which any order of the same lines gives. The engine
+/// keeps no line itself: a commit that changes the input names the file
+/// it was last committed from, checked against this, and the engine
+/// diffs the two.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Held {
+    lines: usize,
+    sum: u128,
+}
+
+impl Held {
+    fn of(lines: &FxHashSet<&[u8]>) -> Self {
+        use std::hash::{BuildHasher, Hasher};
+        let mut sum = 0u128;
+        for line in lines {
+            let mut low = rustc_hash::FxBuildHasher.build_hasher();
+            low.write(line);
+            let mut high = rustc_hash::FxBuildHasher.build_hasher();
+            high.write_u64(0x9e37_79b9_7f4a_7c15);
+            high.write(line);
+            sum = sum.wrapping_add(u128::from(high.finish()) << 64 | u128::from(low.finish()));
+        }
+        Held {
+            lines: lines.len(),
+            sum,
+        }
+    }
+}
 
 /// A commit's output deltas: each output's changed lines with their signed
 /// weight, by output index.
@@ -341,7 +369,7 @@ struct Engine<D: Dataflow> {
     epoch: u64,
     /// Each input's rows as the engine holds them, by `self.dataflow.inputs()`
     /// index; `None` before the first commit loads it.
-    inputs: Vec<Option<FxHashSet<Box<[u8]>>>>,
+    inputs: Vec<Option<Held>>,
     /// Each output's rows, by `self.dataflow.outputs()` index.
     outputs: Vec<FxHashSet<String>>,
     /// Why a commit stopped part way, after which none is taken.
@@ -431,9 +459,10 @@ impl<D: Dataflow> Engine<D> {
 
         // Which input each named file replaces, all checked before any is
         // read: an unknown relation, or a first commit missing one, fails
-        // the commit whole.
-        let mut replaced: Vec<(usize, &str)> = Vec::with_capacity(named.len());
-        for (name, path) in named {
+        // the commit whole. An input the engine holds is named with the
+        // file it was last committed from (`previous`), to diff against.
+        let mut replaced: Vec<(usize, &str, Option<&str>)> = Vec::with_capacity(named.len());
+        for (name, entry) in named {
             let index = self
                 .dataflow
                 .inputs()
@@ -445,17 +474,43 @@ impl<D: Dataflow> Engine<D> {
                         format!("the program has no input `{name}`"),
                     )
                 })?;
-            let path = path
-                .as_str()
-                .ok_or_else(|| ("bad_request", format!("input `{name}` names no file")))?;
-            replaced.push((index, path));
+            let (path, previous) = match entry {
+                Value::String(path) => (path.as_str(), None),
+                Value::Object(entry) => (
+                    entry
+                        .get("path")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| ("bad_request", format!("input `{name}` names no file")))?,
+                    entry.get("previous").and_then(Value::as_str),
+                ),
+                _ => return Err(("bad_request", format!("input `{name}` names no file"))),
+            };
+            match (self.inputs[index].is_some(), previous) {
+                (true, None) => {
+                    return Err((
+                        "bad_request",
+                        format!(
+                            "the engine holds input `{name}`: name the file it was last \
+                             committed from (`previous`)"
+                        ),
+                    ));
+                }
+                (false, Some(_)) => {
+                    return Err((
+                        "bad_request",
+                        format!("the engine holds no `{name}` to diff a `previous` file against"),
+                    ));
+                }
+                _ => {}
+            }
+            replaced.push((index, path, previous));
         }
         let missing: Vec<&str> = self
             .dataflow
             .inputs()
             .iter()
             .enumerate()
-            .filter(|(i, _)| self.inputs[*i].is_none() && !replaced.iter().any(|(r, _)| r == i))
+            .filter(|(i, _)| self.inputs[*i].is_none() && !replaced.iter().any(|(r, _, _)| r == i))
             .map(|(_, r)| r.name)
             .collect();
         if !missing.is_empty() {
@@ -468,27 +523,45 @@ impl<D: Dataflow> Engine<D> {
             ));
         }
 
-        let contents: Vec<(usize, Vec<u8>)> = replaced
+        let read = |path: &str| {
+            fs::read(path).map_err(|e| ("read_failed", format!("cannot read {path}: {e}")))
+        };
+        let contents: Vec<(usize, Vec<u8>, Option<Vec<u8>>)> = replaced
             .iter()
-            .map(|&(index, path)| {
-                fs::read(path)
-                    .map(|bytes| (index, bytes))
-                    .map_err(|e| ("read_failed", format!("cannot read {path}: {e}")))
+            .map(|&(index, path, previous)| {
+                Ok((index, read(path)?, previous.map(read).transpose()?))
             })
-            .collect::<Result<_, _>>()?;
+            .collect::<Result<_, (&'static str, String)>>()?;
 
         let read_done = Instant::now();
         let first = self.epoch == 0;
         let mut staged = false;
         let mut counts = serde_json::Map::new();
-        // What each replaced input gained and lost, applied to the held rows
-        // only once the commit succeeded.
-        let mut deltas: Vec<Delta> = Vec::with_capacity(contents.len());
+        // What each replaced input holds afterwards, recorded only once the
+        // commit succeeded.
+        let mut holds: Vec<(usize, Held)> = Vec::with_capacity(contents.len());
+        // Each input's lines as the engine holds them: its `previous` file's,
+        // checked against what the engine holds, or none.
+        let mut held_lines: Vec<FxHashSet<&[u8]>> = Vec::with_capacity(contents.len());
+        for (index, _, previous) in &contents {
+            let held: FxHashSet<&[u8]> = previous
+                .as_deref()
+                .map(|previous| lines(previous).into_iter().collect())
+                .unwrap_or_default();
+            if previous.is_some() && Some(Held::of(&held)) != self.inputs[*index] {
+                return Err((
+                    "stale_previous",
+                    format!(
+                        "input `{}`: the `previous` file is not what the engine holds",
+                        self.dataflow.inputs()[*index].name
+                    ),
+                ));
+            }
+            held_lines.push(held);
+        }
         self.dataflow.begin();
-        for (index, bytes) in &contents {
+        for ((index, bytes, _), held) in contents.iter().zip(&held_lines) {
             let fresh: FxHashSet<&[u8]> = lines(bytes).into_iter().collect();
-            let empty = FxHashSet::default();
-            let held = self.inputs[*index].as_ref().unwrap_or(&empty);
             let added: Vec<&[u8]> = fresh
                 .iter()
                 .copied()
@@ -499,7 +572,7 @@ impl<D: Dataflow> Engine<D> {
                 Vec::new()
             } else {
                 held.iter()
-                    .map(|line| &**line)
+                    .copied()
                     .filter(|line| !fresh.contains(line))
                     .collect()
             };
@@ -520,11 +593,7 @@ impl<D: Dataflow> Engine<D> {
                 self.dataflow.inputs()[*index].name.to_string(),
                 json!({"rows": fresh.len(), "added": added.len(), "removed": removed.len()}),
             );
-            deltas.push((
-                *index,
-                added.into_iter().map(Box::from).collect(),
-                removed.into_iter().map(Box::from).collect(),
-            ));
+            holds.push((*index, Held::of(&fresh)));
         }
 
         let staged_done = Instant::now();
@@ -542,12 +611,8 @@ impl<D: Dataflow> Engine<D> {
             self.dataflow.abort();
         }
         let dataflow_done = Instant::now();
-        for (index, added, removed) in deltas {
-            let held = self.inputs[index].get_or_insert_with(FxHashSet::default);
-            for line in &removed {
-                held.remove(line);
-            }
-            held.extend(added);
+        for (index, held) in holds {
+            self.inputs[index] = Some(held);
         }
 
         let mut written = Vec::new();

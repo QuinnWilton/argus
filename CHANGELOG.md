@@ -65,6 +65,12 @@ which a change appeared; older names and APIs may have changed since then.
   instead; the generic engine has no averages,
   user-defined functions, or columns other than symbols, numbers, booleans
   and tuples of them, and a program using one is built.
+- An engine keeps no copy of its inputs' files: a commit names the file each
+  changed input was last committed from (`Argus.FlowLog.Engine.commit/6`
+  takes `{path, previous}`), which the engine checks against a digest and
+  diffs. A held input whose file the store has collected is loaded by a new
+  engine. On Ash's dependencies each analysis's engine holds 8 to 24 per cent
+  less.
 - Engines report their starts and commits as telemetry
   (`[:argus, :flowlog, :engine, :start]` and `:commit`, with durations).
 - `ARGUS_FLOWLOG_BUILD_PROFILE=quick` builds the engine of a program argus

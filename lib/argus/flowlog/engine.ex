@@ -19,13 +19,17 @@ defmodule Argus.FlowLog.Engine do
   digest argus asked for (`hello`). A stale engine, or one built from
   other sources, is refused.
 
-  An engine holds every input relation's rows as of its last commit.
-  `commit/3` names the inputs that changed, each by a file of all its
-  rows (`Argus.Tsv`); the engine diffs, applies the difference as one
-  epoch, and writes each output whose rows changed into the commit's
-  output directory. This process remembers what each input was last
-  committed as (`snapshot/1`), so a caller sends only the relations whose
-  identity moved.
+  An engine holds every input relation's rows as of its last commit, in
+  its dataflow; of the files they came from it keeps only a digest.
+  `commit/6` names the inputs that changed, each by a file of all its
+  rows (`Argus.Tsv`) and, for an input the engine holds, the file it was
+  last committed from: the engine checks that file against its digest
+  (a stale one fails the commit as `"stale_previous"`), diffs the two,
+  applies the difference as one epoch, and writes each output whose rows
+  changed into the commit's output directory. This process remembers
+  what each input was last committed as (`snapshot/1`), so a caller sends
+  only the relations whose identity moved, and the file each was last
+  committed from, which it names for a caller that names none.
 
   ## Telemetry
 
@@ -68,8 +72,16 @@ defmodule Argus.FlowLog.Engine do
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
 
+  @typedoc """
+  An input a commit replaces: the file of all its rows, or that file and
+  the one the input was last committed from, when that one may have
+  moved since (a scratch file, gone); a bare file is diffed against the
+  last one this process committed it from.
+  """
+  @type input :: Path.t() | {Path.t(), previous :: Path.t()}
+
   @doc """
-  Commits `inputs` (`%{relation => path}`), writing changed outputs into
+  Commits `inputs` (`%{relation => input}`), writing changed outputs into
   `out_dir`; `identities` (`%{relation => term}`) are what this process
   remembers the inputs as afterwards. A commit that does not finish
   within `timeout` kills the engine and is `{:error, :flowlog_timeout}`.
@@ -77,7 +89,7 @@ defmodule Argus.FlowLog.Engine do
   @spec commit(
           t(),
           Path.t(),
-          %{String.t() => Path.t()},
+          %{String.t() => input()},
           %{String.t() => term()},
           timeout(),
           keyword()
@@ -168,6 +180,7 @@ defmodule Argus.FlowLog.Engine do
       log: Keyword.get(opts, :log),
       digest: digest,
       held: %{},
+      files: %{},
       outputs: %{},
       manifest: nil
     }
@@ -197,7 +210,12 @@ defmodule Argus.FlowLog.Engine do
 
   @impl GenServer
   def handle_call({:commit, out_dir, inputs, identities, rewrite}, _from, state) do
-    request = %{op: "commit", out: out_dir, inputs: inputs, rewrite: rewrite}
+    files = Map.new(inputs, fn {name, input} -> {name, file(input)} end)
+
+    wire =
+      Map.new(inputs, fn {name, input} -> {name, wire(input, Map.get(state.files, name))} end)
+
+    request = %{op: "commit", out: out_dir, inputs: wire, rewrite: rewrite}
     started = System.monotonic_time()
 
     case request(state, request, :infinity) do
@@ -216,7 +234,12 @@ defmodule Argus.FlowLog.Engine do
           micros: reply["micros"]
         }
 
-        {:reply, {:ok, result}, %{state | held: Map.merge(state.held, identities)}}
+        {:reply, {:ok, result},
+         %{
+           state
+           | held: Map.merge(state.held, identities),
+             files: Map.merge(state.files, files)
+         }}
 
       {:error, {:flowlog_engine_exit, _, _} = reason} ->
         {:stop, :normal, {:error, reason}, state}
@@ -250,6 +273,15 @@ defmodule Argus.FlowLog.Engine do
   end
 
   def handle_info(_message, state), do: {:noreply, state}
+
+  defp file({path, _previous}), do: path
+  defp file(path), do: path
+
+  # An input as the engine reads it: a file, with the one it was last
+  # committed from when the engine holds it.
+  defp wire({path, previous}, _last), do: %{path: path, previous: previous}
+  defp wire(path, nil), do: path
+  defp wire(path, last), do: %{path: path, previous: last}
 
   # One request and its reply. The engine answers requests in order, one
   # at a time, and only this process talks to it.
