@@ -71,6 +71,11 @@ which a change appeared; older names and APIs may have changed since then.
   diffs. A held input whose file the store has collected is loaded by a new
   engine. On Ash's dependencies each analysis's engine holds 8 to 24 per cent
   less.
+- A run that ends with its session (a compile, `mix argus`, an escript,
+  `Argus.Run`) stops each engine as its solve returns, rather than holding
+  every one until the run ends (`Argus.FlowLog.Pool.keep/2`): on a
+  544-module project its engines peak at 400 to 590 MB together instead of
+  1.2 GB. A session kept open (an editor's) keeps them.
 - Engines report their starts and commits as telemetry
   (`[:argus, :flowlog, :engine, :start]` and `:commit`, with durations).
 - `ARGUS_FLOWLOG_BUILD_PROFILE=quick` builds the engine of a program argus

@@ -155,6 +155,8 @@ defmodule Argus.Run do
     with {:ok, beams} <- Disassemble.resolve_paths(modules) do
       manifest = Keyword.get(opts, :manifest)
       session = Graph.open(store: Keyword.get(opts, :store), manifest: manifest)
+      # The session ends with the run, which solves each program once.
+      :ok = Argus.FlowLog.Pool.keep(session.db.supervisor, false)
 
       try do
         db = session.db

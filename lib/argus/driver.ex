@@ -95,6 +95,8 @@ defmodule Argus.Driver do
     force? = Keyword.get(opts, :force, false)
 
     session = Graph.open(store: Keyword.get(opts, :store), manifest: manifest, force: force?)
+    # The session ends with the run, which solves each program once.
+    :ok = Argus.FlowLog.Pool.keep(session.db.supervisor, false)
 
     try do
       db = session.db

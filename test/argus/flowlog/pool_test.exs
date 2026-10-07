@@ -74,6 +74,43 @@ defmodule Argus.FlowLog.PoolTest do
     end)
   end
 
+  test "an owner that keeps no engine has each stop as its use returns",
+       %{peer: peer, start: start} do
+    Peer.run(peer, fn ->
+      starts = fn -> {:ok, start} end
+      {once, kept} = {owner(), owner()}
+      :ok = Pool.keep(once, false)
+      {:ok, a} = Pool.with_engine(:a, once, starts, &{:ok, &1})
+      {:ok, c} = Pool.with_engine(:c, kept, starts, &{:ok, &1})
+
+      assert eventually(fn -> Pool.keys() == [:c] end)
+      refute Process.alive?(a)
+      assert Process.alive?(c)
+
+      # The next use starts another, and keeping is the owner's to set again.
+      :ok = Pool.keep(once, true)
+      {:ok, b} = Pool.with_engine(:a, once, starts, &{:ok, &1})
+      assert b != a
+      Process.sleep(200)
+      assert Enum.sort(Pool.keys()) == [:a, :c]
+    end)
+  end
+
+  test "an owner's setting goes with it", %{peer: peer, start: start} do
+    Peer.run(peer, fn ->
+      once = owner()
+      :ok = Pool.keep(once, false)
+      send(once, :stop)
+      assert eventually(fn -> not Process.alive?(once) end)
+
+      # Another owner keeps its engines, as an owner does by default.
+      {:ok, _} = Pool.with_engine(:a, owner(), fn -> {:ok, start} end, &{:ok, &1})
+      Process.sleep(200)
+      assert Pool.keys() == [:a]
+      assert :sys.get_state(Pool).unkept == %{}
+    end)
+  end
+
   test "an owner that exits stops its engine mid-use", %{peer: peer, start: start} do
     Peer.run(peer, fn ->
       parent = self()

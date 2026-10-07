@@ -17,6 +17,11 @@ defmodule Argus.FlowLog.Pool do
   process stops, every engine stops with it, and every engine's OS
   process with its port.
 
+  A session that ends with its run (a compile, `mix argus`, an escript)
+  solves each program once, so it keeps none (`keep/2`): its engines
+  stop as each solve returns, rather than every one of the run's being
+  held until it ends.
+
   A VM keeps at most `:max_engines` engines (default 32, or
   `ARGUS_FLOWLOG_ENGINES`); starting one more stops the least recently
   used one that is not in use, so an engine in use is never stopped for
@@ -66,6 +71,18 @@ defmodule Argus.FlowLog.Pool do
       :ok = GenServer.call(pool, {:checkin, lease, outcome}, :infinity)
       result
     end
+  end
+
+  @doc """
+  Whether the engines `owner` uses are kept once a solve returns them
+  (by default, they are). An owner that keeps none starts an engine for
+  each solve, and it stops as the solve returns: what a session that
+  solves each program once wants, its run's engines never all alive at
+  once. The setting lasts as long as `owner`.
+  """
+  @spec keep(pid(), boolean()) :: :ok
+  def keep(owner, keep?) when is_pid(owner) and is_boolean(keep?) do
+    GenServer.call(ensure_started(), {:keep, owner, keep?}, :infinity)
   end
 
   @doc "Stops the engine kept for `key`, if any."
@@ -122,6 +139,8 @@ defmodule Argus.FlowLog.Pool do
        leases: %{},
        # An owner's monitor to its pid and the keys of its engines.
        owners: %{},
+       # The owners that keep no engine, each to its monitor.
+       unkept: %{},
        max: env_int("ARGUS_FLOWLOG_ENGINES", @default_max)
      }}
   end
@@ -163,6 +182,24 @@ defmodule Argus.FlowLog.Pool do
     {:reply, :ok, release(state, lease, outcome)}
   end
 
+  def handle_call({:keep, owner, false}, _from, state) do
+    case state.unkept do
+      %{^owner => _} -> {:reply, :ok, state}
+      unkept -> {:reply, :ok, %{state | unkept: Map.put(unkept, owner, Process.monitor(owner))}}
+    end
+  end
+
+  def handle_call({:keep, owner, true}, _from, state) do
+    case Map.pop(state.unkept, owner) do
+      {nil, _} ->
+        {:reply, :ok, state}
+
+      {ref, unkept} ->
+        Process.demonitor(ref, [:flush])
+        {:reply, :ok, %{state | unkept: unkept}}
+    end
+  end
+
   def handle_call({:discard, key}, _from, state), do: {:reply, :ok, stop_engine(state, key)}
 
   def handle_call(:close_all, _from, state) do
@@ -180,7 +217,10 @@ defmodule Argus.FlowLog.Pool do
         {:noreply, Enum.reduce(keys, %{state | owners: owners}, &stop_engine(&2, &1))}
 
       {nil, _} ->
-        {:noreply, release(state, ref, :discard)}
+        case Enum.find(state.unkept, fn {_owner, monitor} -> monitor == ref end) do
+          {owner, _} -> {:noreply, %{state | unkept: Map.delete(state.unkept, owner)}}
+          nil -> {:noreply, release(state, ref, :discard)}
+        end
     end
   end
 
@@ -237,7 +277,8 @@ defmodule Argus.FlowLog.Pool do
         state = %{state | leases: leases}
 
         case Map.fetch(state.engines, key) do
-          {:ok, %{pid: ^pid} = entry} when outcome == :keep ->
+          {:ok, %{pid: ^pid, owner: owner} = entry}
+          when outcome == :keep and not is_map_key(state.unkept, owner) ->
             touch(state, key, %{entry | users: Map.delete(entry.users, lease)})
 
           {:ok, %{pid: ^pid}} ->
