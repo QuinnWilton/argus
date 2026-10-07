@@ -31,9 +31,15 @@ defmodule Argus.Analysis.PointsToBudgetTest do
 
   @moduletag :tmp_dir
 
-  # Past the budget (500,000 rows): 800 × 700 = 560,000 parameter rows.
-  @over {800, 700}
-  @within {40, 30}
+  # The budget a copy of the rules holds the stages to, and heaps within
+  # and past it: the same rules over a few hundred rows instead of half a
+  # million, so the tests solve in milliseconds.
+  @budget 1_000
+  @within {20, 15}
+  @over {40, 30}
+  # Past the shipped budget (500,000 rows): 800 × 700 = 560,000 parameter
+  # rows, for an exact fixpoint slow enough to outlive a short timeout.
+  @slow {800, 700}
 
   @proc "spawn M:start/0#1"
 
@@ -92,6 +98,26 @@ defmodule Argus.Analysis.PointsToBudgetTest do
     root
   end
 
+  # Both stages held to `@budget` rows, as the paths a derivation takes.
+  defp budgeted!(tmp) do
+    dir = Path.join(tmp, "budgeted")
+    File.mkdir_p!(dir)
+
+    # A leaf is pervasive past a thousand holders, as many as these heaps
+    # hold in all: the copy scales that down with the budget.
+    rules =
+      rules_copy!(dir, %{
+        "points_to.dl" =>
+          &String.replace(&1, "points_to_budget(500000).", "points_to_budget(#{@budget})."),
+        "clientlib/pervasive.dl" => &String.replace(&1, "n > 1000,", "n > 20,")
+      })
+
+    [
+      rules_path: Path.join(rules, "points_to.dl"),
+      bounded_rules_path: Path.join(rules, "points_to_bounded.dl")
+    ]
+  end
+
   # Both stages held to a budget every program here outgrows.
   defp tiny_budget(text),
     do: String.replace(text, "points_to_budget(500000).", "points_to_budget(10).")
@@ -125,7 +151,7 @@ defmodule Argus.Analysis.PointsToBudgetTest do
   test "a program within the budget runs the exact stage", %{tmp_dir: tmp} do
     dir = merged_heap!(Path.join(tmp, "within"), @within)
 
-    assert :ok = Analysis.derive_points_to(dir)
+    assert :ok = Analysis.derive_points_to(dir, budgeted!(tmp))
     assert rows(dir, "points_to_mode") == [["exact"]]
     {callers, _} = @within
     assert length(rows(dir, "process_call")) == callers
@@ -134,8 +160,9 @@ defmodule Argus.Analysis.PointsToBudgetTest do
   test "a program whose fixpoint outgrows the budget runs bounded, its pervasive leaf coarsely",
        %{tmp_dir: tmp} do
     dir = merged_heap!(Path.join(tmp, "over"), @over)
+    budgeted = budgeted!(tmp)
 
-    log = capture_log(fn -> assert :ok = Analysis.derive_points_to(dir) end)
+    log = capture_log(fn -> assert :ok = Analysis.derive_points_to(dir, budgeted) end)
 
     assert log =~ "outgrew its budget (source_pts reached"
     assert log =~ "resolving 1 pervasive leaves coarsely (#{@proc})"
@@ -155,12 +182,14 @@ defmodule Argus.Analysis.PointsToBudgetTest do
   @tag :capture_log
   test "which stage runs is a function of the facts, not of the engine's speed",
        %{tmp_dir: tmp} do
+    budgeted = budgeted!(tmp)
+
     for {name, size} <- [within: @within, over: @over] do
       fast = merged_heap!(Path.join(tmp, "#{name}-fast"), size)
       slowed = merged_heap!(Path.join(tmp, "#{name}-slow"), size)
 
-      assert :ok = Analysis.derive_points_to(fast, workers: 4)
-      assert :ok = Analysis.derive_points_to(slowed, workers: 1)
+      assert :ok = Analysis.derive_points_to(fast, [workers: 4] ++ budgeted)
+      assert :ok = Analysis.derive_points_to(slowed, [workers: 1] ++ budgeted)
       assert staged(slowed) == staged(fast), "#{name}: a slower engine staged other rows"
     end
   end
@@ -189,7 +218,7 @@ defmodule Argus.Analysis.PointsToBudgetTest do
   test "a stage that runs out of time fails and stages nothing", %{tmp_dir: tmp} do
     # Over the budget, the exact fixpoint alone takes far longer than this.
     log =
-      fails_as_found!(tmp, "late", @over, fn dir ->
+      fails_as_found!(tmp, "late", @slow, fn dir ->
         assert {:error, {:points_to, :flowlog_timeout}} =
                  Analysis.derive_points_to(dir, timeout: 50)
       end)
