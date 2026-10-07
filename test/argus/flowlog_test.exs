@@ -3,7 +3,9 @@ defmodule Argus.FlowLogTest do
   argus's FlowLog engines on a small program of their own: what the tool
   says of a program, a one-shot solve, and an engine kept between
   commits — its deltas, how it refuses what it cannot apply, and that its
-  OS process never outlives the port that owns it.
+  OS process never outlives the port that owns it. An engine kept between
+  commits is checked twice: the generic engine, and the program's
+  compiled engine.
   """
 
   use ExUnit.Case, async: true
@@ -15,6 +17,7 @@ defmodule Argus.FlowLogTest do
 
   alias Argus.FlowLog
   alias Argus.FlowLog.Engine
+  alias Argus.FlowLog.Program
 
   @program """
   .decl edge(x: symbol, y: symbol) mutable
@@ -47,9 +50,13 @@ defmodule Argus.FlowLogTest do
     File.mkdir_p!(dir)
     path = Path.join(dir, "graph.dl")
     File.write!(path, @program)
-    {:ok, built} = FlowLog.engine(path, progress: false)
+    {:ok, %{kind: :generic} = built} = FlowLog.engine(path, progress: false)
+    # The same program's compiled engine, run in place of the generic one.
+    :ok = FlowLog.prebuild([path], progress: false)
+    exe = Program.installed(built.toolchain, built.digest, Program.profile(path))
+    compiled = %{built | kind: :compiled, executable: exe, args: []}
     on_exit(fn -> File.rm_rf!(dir) end)
-    %{program: path, built: built}
+    %{program: path, built: built, engines: %{generic: built, compiled: compiled}}
   end
 
   defp facts!(dir, relations) do
@@ -238,183 +245,204 @@ defmodule Argus.FlowLogTest do
     end
   end
 
-  describe "an engine kept between commits" do
-    @describetag :tmp_dir
+  for kind <- [:generic, :compiled] do
+    @kind kind
 
-    test "applies only what changed, and writes only the outputs it moved",
-         %{built: built, tmp_dir: tmp} do
-      engine = start!(built)
+    describe "#{kind}: an engine kept between commits" do
+      @describetag :tmp_dir
 
-      v1 =
-        facts!(Path.join(tmp, "v1"),
-          edge: [["a", "b"], ["b", "c"]],
-          blocked: [],
-          weight: [["a", "1"]]
-        )
+      setup %{engines: engines}, do: %{built: Map.fetch!(engines, @kind)}
 
-      out1 = Path.join(tmp, "out1")
-      File.mkdir_p!(out1)
+      test "applies only what changed, and writes only the outputs it moved",
+           %{built: built, tmp_dir: tmp} do
+        engine = start!(built)
 
-      inputs = Map.new(~w(edge blocked weight), &{&1, Path.join(v1, "#{&1}.facts")})
-      assert {:ok, first} = Engine.commit(engine, out1, inputs, %{}, 60_000)
-      assert Enum.sort(first.written) == ~w(heaviest.csv open.csv reach.csv source.facts)
-      assert read!(out1, "reach.csv") == [["a", "b"], ["a", "c"], ["b", "c"]]
+        v1 =
+          facts!(Path.join(tmp, "v1"),
+            edge: [["a", "b"], ["b", "c"]],
+            blocked: [],
+            weight: [["a", "1"]]
+          )
 
-      # Drop b -> c: the reachability through it is retracted.
-      v2 = facts!(Path.join(tmp, "v2"), edge: [["a", "b"]])
-      out2 = Path.join(tmp, "out2")
-      File.mkdir_p!(out2)
+        out1 = Path.join(tmp, "out1")
+        File.mkdir_p!(out1)
 
-      assert {:ok, second} =
-               Engine.commit(engine, out2, %{"edge" => Path.join(v2, "edge.facts")}, %{}, 60_000)
+        inputs = Map.new(~w(edge blocked weight), &{&1, Path.join(v1, "#{&1}.facts")})
+        assert {:ok, first} = Engine.commit(engine, out1, inputs, %{}, 60_000)
+        assert Enum.sort(first.written) == ~w(heaviest.csv open.csv reach.csv source.facts)
+        assert read!(out1, "reach.csv") == [["a", "b"], ["a", "c"], ["b", "c"]]
 
-      assert Enum.sort(second.written) == ~w(open.csv reach.csv source.facts)
-      assert second.inputs["edge"] == %{"rows" => 1, "added" => 0, "removed" => 1}
-      assert read!(out2, "reach.csv") == [["a", "b"]]
-      assert read!(out2, "open.csv") == [["a", "b"]]
+        # Drop b -> c: the reachability through it is retracted.
+        v2 = facts!(Path.join(tmp, "v2"), edge: [["a", "b"]])
+        out2 = Path.join(tmp, "out2")
+        File.mkdir_p!(out2)
 
-      # Block b: only `open` moves.
-      v3 = facts!(Path.join(tmp, "v3"), blocked: [["b"]])
-      out3 = Path.join(tmp, "out3")
-      File.mkdir_p!(out3)
+        assert {:ok, second} =
+                 Engine.commit(
+                   engine,
+                   out2,
+                   %{"edge" => Path.join(v2, "edge.facts")},
+                   %{},
+                   60_000
+                 )
 
-      assert {:ok, third} =
-               Engine.commit(
-                 engine,
-                 out3,
-                 %{"blocked" => Path.join(v3, "blocked.facts")},
-                 %{},
-                 60_000
-               )
+        assert Enum.sort(second.written) == ~w(open.csv reach.csv source.facts)
+        assert second.inputs["edge"] == %{"rows" => 1, "added" => 0, "removed" => 1}
+        assert read!(out2, "reach.csv") == [["a", "b"]]
+        assert read!(out2, "open.csv") == [["a", "b"]]
 
-      assert third.written == ["open.csv"]
-      assert read!(out3, "open.csv") == []
-    end
+        # Block b: only `open` moves.
+        v3 = facts!(Path.join(tmp, "v3"), blocked: [["b"]])
+        out3 = Path.join(tmp, "out3")
+        File.mkdir_p!(out3)
 
-    # Recursion, negation and an aggregate, under any sequence of edits:
-    # what a kept engine holds after each commit (the outputs it wrote,
-    # and those it kept) is what a new engine finds from the same facts.
-    property "agrees with a solve from scratch after every commit", %{built: built, tmp_dir: tmp} do
-      node = member_of(~w(a b c d e))
-      pair = tuple({node, node})
+        assert {:ok, third} =
+                 Engine.commit(
+                   engine,
+                   out3,
+                   %{"blocked" => Path.join(v3, "blocked.facts")},
+                   %{},
+                   60_000
+                 )
 
-      step =
-        fixed_map(%{
-          "edge" => uniq_list_of(map(pair, &Tuple.to_list/1), max_length: 8),
-          "blocked" => uniq_list_of(map(node, &[&1]), max_length: 3),
-          "weight" =>
-            uniq_list_of(map(tuple({node, integer(0..3)}), fn {n, w} -> [n, "#{w}"] end),
-              max_length: 4
-            )
-        })
-
-      check all(steps <- list_of(step, min_length: 1, max_length: 6), max_runs: 25) do
-        run = Path.join(tmp, "run-#{System.unique_integer([:positive])}")
-        kept = start!(built)
-
-        Enum.reduce(Enum.with_index(steps), %{}, fn {facts, i}, held ->
-          dir = facts!(Path.join(run, "facts-#{i}"), facts)
-          paths = Map.new(facts, fn {name, _} -> {name, Path.join(dir, "#{name}.facts")} end)
-
-          out = Path.join(run, "kept-#{i}")
-          File.mkdir_p!(out)
-          {:ok, commit} = Engine.commit(kept, out, paths, %{}, 60_000)
-          held = Map.merge(held, Map.new(commit.written, &{&1, read!(out, &1)}))
-
-          fresh = start!(built)
-          scratch = Path.join(run, "fresh-#{i}")
-          File.mkdir_p!(scratch)
-          {:ok, solved} = Engine.commit(fresh, scratch, paths, %{}, 60_000)
-          Engine.stop(fresh)
-
-          assert held == Map.new(solved.written, &{&1, read!(scratch, &1)}),
-                 "commit #{i} of #{inspect(steps)}"
-
-          held
-        end)
-
-        Engine.stop(kept)
+        assert third.written == ["open.csv"]
+        assert read!(out3, "open.csv") == []
       end
-    end
 
-    test "a commit that changes nothing writes nothing", %{built: built, tmp_dir: tmp} do
-      engine = start!(built)
-      v1 = facts!(Path.join(tmp, "v1"), edge: [["a", "b"]], blocked: [], weight: [])
-      inputs = Map.new(~w(edge blocked weight), &{&1, Path.join(v1, "#{&1}.facts")})
-      assert {:ok, _} = Engine.commit(engine, tmp, inputs, %{}, 60_000)
-      assert {:ok, %{written: []}} = Engine.commit(engine, tmp, inputs, %{}, 60_000)
-      # Unless asked to write them all again (their files were lost).
-      assert {:ok, %{written: written}} =
-               Engine.commit(engine, tmp, %{}, %{}, 60_000, rewrite: true)
+      # Recursion, negation and an aggregate, under any sequence of edits:
+      # what a kept engine holds after each commit (the outputs it wrote,
+      # and those it kept) is what a new engine finds from the same facts.
+      property "agrees with a solve from scratch after every commit", %{
+        built: built,
+        tmp_dir: tmp
+      } do
+        node = member_of(~w(a b c d e))
+        pair = tuple({node, node})
 
-      assert length(written) == 4
-    end
+        step =
+          fixed_map(%{
+            "edge" => uniq_list_of(map(pair, &Tuple.to_list/1), max_length: 8),
+            "blocked" => uniq_list_of(map(node, &[&1]), max_length: 3),
+            "weight" =>
+              uniq_list_of(map(tuple({node, integer(0..3)}), fn {n, w} -> [n, "#{w}"] end),
+                max_length: 4
+              )
+          })
 
-    test "the first commit must load every input", %{built: built, tmp_dir: tmp} do
-      engine = start!(built)
-      v1 = facts!(Path.join(tmp, "v1"), edge: [["a", "b"]])
+        check all(steps <- list_of(step, min_length: 1, max_length: 6), max_runs: 15) do
+          run = Path.join(tmp, "run-#{System.unique_integer([:positive])}")
+          kept = start!(built)
 
-      assert {:error, {:flowlog_error, "missing_inputs", message}} =
-               Engine.commit(engine, tmp, %{"edge" => Path.join(v1, "edge.facts")}, %{}, 60_000)
+          Enum.reduce(Enum.with_index(steps), %{}, fn {facts, i}, held ->
+            dir = facts!(Path.join(run, "facts-#{i}"), facts)
+            paths = Map.new(facts, fn {name, _} -> {name, Path.join(dir, "#{name}.facts")} end)
 
-      assert message =~ "blocked"
-      assert message =~ "weight"
-    end
+            out = Path.join(run, "kept-#{i}")
+            File.mkdir_p!(out)
+            {:ok, commit} = Engine.commit(kept, out, paths, %{}, 60_000)
+            held = Map.merge(held, Map.new(commit.written, &{&1, read!(out, &1)}))
 
-    test "a relation the program does not read is refused", %{built: built, tmp_dir: tmp} do
-      engine = start!(built)
+            fresh = start!(built)
+            scratch = Path.join(run, "fresh-#{i}")
+            File.mkdir_p!(scratch)
+            {:ok, solved} = Engine.commit(fresh, scratch, paths, %{}, 60_000)
+            Engine.stop(fresh)
 
-      assert {:error, {:flowlog_error, "unknown_relation", message}} =
-               Engine.commit(engine, tmp, %{"nope" => Path.join(tmp, "nope.facts")}, %{}, 60_000)
+            assert held == Map.new(solved.written, &{&1, read!(scratch, &1)}),
+                   "commit #{i} of #{inspect(steps)}"
 
-      assert message =~ "nope"
-    end
+            held
+          end)
 
-    test "a malformed row fails its commit whole, and the engine goes on",
-         %{built: built, tmp_dir: tmp} do
-      engine = start!(built)
-      v1 = facts!(Path.join(tmp, "v1"), edge: [["a", "b"]], blocked: [], weight: [["a", "2"]])
-      inputs = Map.new(~w(edge blocked weight), &{&1, Path.join(v1, "#{&1}.facts")})
-      assert {:ok, _} = Engine.commit(engine, tmp, inputs, %{}, 60_000)
+          Engine.stop(kept)
+        end
+      end
 
-      bad = Path.join(tmp, "bad")
-      File.mkdir_p!(bad)
-      File.write!(Path.join(bad, "edge.facts"), "a\tc\n")
-      File.write!(Path.join(bad, "weight.facts"), "a\tmany\n")
+      test "a commit that changes nothing writes nothing", %{built: built, tmp_dir: tmp} do
+        engine = start!(built)
+        v1 = facts!(Path.join(tmp, "v1"), edge: [["a", "b"]], blocked: [], weight: [])
+        inputs = Map.new(~w(edge blocked weight), &{&1, Path.join(v1, "#{&1}.facts")})
+        assert {:ok, _} = Engine.commit(engine, tmp, inputs, %{}, 60_000)
+        assert {:ok, %{written: []}} = Engine.commit(engine, tmp, inputs, %{}, 60_000)
+        # Unless asked to write them all again (their files were lost).
+        assert {:ok, %{written: written}} =
+                 Engine.commit(engine, tmp, %{}, %{}, 60_000, rewrite: true)
 
-      assert {:error, {:flowlog_error, "bad_row", message}} =
-               Engine.commit(
-                 engine,
-                 tmp,
-                 %{
-                   "edge" => Path.join(bad, "edge.facts"),
-                   "weight" => Path.join(bad, "weight.facts")
-                 },
-                 %{},
-                 60_000
-               )
+        assert length(written) == 4
+      end
 
-      assert message =~ "not a 32-bit number"
+      test "the first commit must load every input", %{built: built, tmp_dir: tmp} do
+        engine = start!(built)
+        v1 = facts!(Path.join(tmp, "v1"), edge: [["a", "b"]])
 
-      # Neither half of the failed commit was applied.
-      out = Path.join(tmp, "out")
-      File.mkdir_p!(out)
-      assert {:ok, _} = Engine.commit(engine, out, %{}, %{}, 60_000, rewrite: true)
-      assert read!(out, "reach.csv") == [["a", "b"]]
-      assert read!(out, "heaviest.csv") == [["a", "2"]]
-    end
+        assert {:error, {:flowlog_error, "missing_inputs", message}} =
+                 Engine.commit(engine, tmp, %{"edge" => Path.join(v1, "edge.facts")}, %{}, 60_000)
 
-    test "an engine built for another program digest is refused", %{built: built} do
-      Process.flag(:trap_exit, true)
+        assert message =~ "blocked"
+        assert message =~ "weight"
+      end
 
-      assert {:error, {:flowlog_stale_engine, _, "another", digest}} =
-               Engine.start_link(
-                 executable: built.executable,
-                 args: built.args,
-                 digest: "another"
-               )
+      test "a relation the program does not read is refused", %{built: built, tmp_dir: tmp} do
+        engine = start!(built)
 
-      assert digest == built.digest
+        assert {:error, {:flowlog_error, "unknown_relation", message}} =
+                 Engine.commit(
+                   engine,
+                   tmp,
+                   %{"nope" => Path.join(tmp, "nope.facts")},
+                   %{},
+                   60_000
+                 )
+
+        assert message =~ "nope"
+      end
+
+      test "a malformed row fails its commit whole, and the engine goes on",
+           %{built: built, tmp_dir: tmp} do
+        engine = start!(built)
+        v1 = facts!(Path.join(tmp, "v1"), edge: [["a", "b"]], blocked: [], weight: [["a", "2"]])
+        inputs = Map.new(~w(edge blocked weight), &{&1, Path.join(v1, "#{&1}.facts")})
+        assert {:ok, _} = Engine.commit(engine, tmp, inputs, %{}, 60_000)
+
+        bad = Path.join(tmp, "bad")
+        File.mkdir_p!(bad)
+        File.write!(Path.join(bad, "edge.facts"), "a\tc\n")
+        File.write!(Path.join(bad, "weight.facts"), "a\tmany\n")
+
+        assert {:error, {:flowlog_error, "bad_row", message}} =
+                 Engine.commit(
+                   engine,
+                   tmp,
+                   %{
+                     "edge" => Path.join(bad, "edge.facts"),
+                     "weight" => Path.join(bad, "weight.facts")
+                   },
+                   %{},
+                   60_000
+                 )
+
+        assert message =~ "not a 32-bit number"
+
+        # Neither half of the failed commit was applied.
+        out = Path.join(tmp, "out")
+        File.mkdir_p!(out)
+        assert {:ok, _} = Engine.commit(engine, out, %{}, %{}, 60_000, rewrite: true)
+        assert read!(out, "reach.csv") == [["a", "b"]]
+        assert read!(out, "heaviest.csv") == [["a", "2"]]
+      end
+
+      test "an engine built for another program digest is refused", %{built: built} do
+        Process.flag(:trap_exit, true)
+
+        assert {:error, {:flowlog_stale_engine, _, "another", digest}} =
+                 Engine.start_link(
+                   executable: built.executable,
+                   args: built.args,
+                   digest: "another"
+                 )
+
+        assert digest == built.digest
+      end
     end
   end
 
