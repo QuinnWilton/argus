@@ -1892,6 +1892,10 @@ fn build<'scope>(
 // The engine
 // =============================================================================
 
+/// The fewest lines of an input one thread parses: fewer are parsed on
+/// the committing thread, where a thread's start would cost more.
+const PARSED_TOGETHER: usize = 16_384;
+
 enum Command {
     /// Load these batches at the current epoch, then advance to `epoch`.
     /// Each worker is handed its own share of the rows, and loads them.
@@ -2251,21 +2255,41 @@ impl Dataflow for Generic {
             .inputs
             .get(index)
             .ok_or_else(|| format!("no input relation at index {index}"))?;
-        let mut rows = Vec::with_capacity(lines.len());
-        for line in lines {
-            let mut fields = Fields::new(relation, line)?;
-            let mut row = Row::new();
-            for column in relation.columns {
-                row.push(match column {
-                    Column::Symbol => slot_of_symbol(&fields.symbol()?),
-                    Column::Number => slot_of_number(fields.number()?),
-                });
+        let parse = |lines: &[&[u8]]| -> Result<Vec<Row>, String> {
+            let mut rows = Vec::with_capacity(lines.len());
+            for line in lines {
+                let mut fields = Fields::new(relation, line)?;
+                let mut row = Row::new();
+                for column in relation.columns {
+                    row.push(match column {
+                        Column::Symbol => slot_of_symbol(&fields.symbol()?),
+                        Column::Number => slot_of_number(fields.number()?),
+                    });
+                }
+                fields.end()?;
+                rows.push(row);
             }
-            fields.end()?;
-            rows.push(row);
+            Ok(rows)
+        };
+        // Parsing and interning a large input is most of a first commit:
+        // its lines are parsed a share on each of the engine's threads, as
+        // the interner takes symbols from any thread.
+        let threads = self.commands.len().max(1);
+        let chunk = lines.len().div_ceil(threads).max(PARSED_TOGETHER);
+        let parts: Vec<Result<Vec<Row>, String>> = std::thread::scope(|scope| {
+            let handles: Vec<_> = lines
+                .chunks(chunk)
+                .map(|part| scope.spawn(move || parse(part)))
+                .collect();
+            handles
+                .into_iter()
+                .map(|handle| handle.join().expect("a parsing thread finishes"))
+                .collect()
+        });
+        let diff = if insert { 1 } else { -1 };
+        for rows in parts {
+            self.staged.push((self.input_index[index], rows?, diff));
         }
-        self.staged
-            .push((self.input_index[index], rows, if insert { 1 } else { -1 }));
         Ok(())
     }
 
