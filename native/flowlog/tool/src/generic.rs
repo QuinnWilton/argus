@@ -2062,7 +2062,7 @@ fn build_head<'scope, T>(
         .as_collection(|row: PairRef<'_>, _: &()| Pairs::into_owned(row));
     let bound = match &head.aggregate {
         None => deduped,
-        Some(aggregate) => build_aggregate(deduped, aggregate, seed),
+        Some(aggregate) => build_aggregate(deduped, aggregate, seed, &env.label(head.relation)),
     };
     // A limited relation's rows, counted as they are derived: inside a
     // loop, every iteration's changes, which sum to its rows so far.
@@ -2107,6 +2107,7 @@ fn build_aggregate<'scope, T>(
     rows: Coll<'scope, T>,
     aggregate: &'static Aggregate,
     seed: Option<Coll<'scope, T>>,
+    relation: &str,
 ) -> Coll<'scope, T>
 where
     T: Time,
@@ -2124,7 +2125,8 @@ where
         _ => members,
     };
     let op = aggregate.op;
-    let reduced = members.reduce(
+    let reduced = members.reduce_named(
+        &format!("The groups of {relation}"),
         move |_group: &Row, input: &[(&Option<u32>, Diff)], output: &mut Vec<(u32, Diff)>| {
             let values = input
                 .iter()
