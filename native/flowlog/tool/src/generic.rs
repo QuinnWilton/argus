@@ -1894,9 +1894,10 @@ fn build<'scope>(
 
 enum Command {
     /// Load these batches at the current epoch, then advance to `epoch`.
+    /// Each worker is handed its own share of the rows, and loads them.
     Commit {
         epoch: Epoch,
-        batches: Arc<Vec<(usize, Vec<Row>, Diff)>>,
+        batches: Vec<(usize, Vec<Row>, Diff)>,
     },
 }
 
@@ -2174,11 +2175,9 @@ impl Generic {
                     }
                 }
                 while let Ok(Command::Commit { epoch, batches }) = commands.recv() {
-                    if index == 0 {
-                        for (input, rows, diff) in batches.iter() {
-                            for row in rows {
-                                sessions[*input].update((Row::new(), row.clone()), *diff);
-                            }
+                    for (input, rows, diff) in batches {
+                        for row in rows {
+                            sessions[input].update((Row::new(), row), diff);
                         }
                     }
                     for session in &mut sessions {
@@ -2272,12 +2271,27 @@ impl Dataflow for Generic {
 
     fn commit(&mut self, changes: &mut Changes) -> Result<(), Refusal> {
         self.epoch += 1;
-        let batches = Arc::new(std::mem::take(&mut self.staged));
-        for sender in &self.commands {
+        // Every worker loads a share of the rows, moved to it: the
+        // exchange sends each row to its worker anyway, and no row is
+        // held twice.
+        let workers = self.commands.len();
+        let mut shares: Vec<Vec<(usize, Vec<Row>, Diff)>> =
+            (0..workers).map(|_| Vec::new()).collect();
+        for (input, rows, diff) in std::mem::take(&mut self.staged) {
+            let share = rows.len().div_ceil(workers).max(1);
+            let mut rows = rows.into_iter();
+            for worker in &mut shares {
+                let part: Vec<Row> = rows.by_ref().take(share).collect();
+                if !part.is_empty() {
+                    worker.push((input, part, diff));
+                }
+            }
+        }
+        for (sender, batches) in self.commands.iter().zip(shares) {
             sender
                 .send(Command::Commit {
                     epoch: self.epoch,
-                    batches: Arc::clone(&batches),
+                    batches,
                 })
                 .expect("the generic engine's workers are running");
         }
