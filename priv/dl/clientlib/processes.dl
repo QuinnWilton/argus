@@ -264,7 +264,20 @@ kept_instance(c, cat("start ", c)) :- kept_fresh(c, _, _).
 
 // An update keeps the fields it does not set; a cons cell's tail holds
 // the rest of the elements.
-field_pts(o, sel, x) :- update_base(o, b), field_pts(b, sel, x), !value_sets(o, sel).
+field_pts(o, sel, x) :- update_keeps(o, b, sel), field_pts(b, sel, x).
+
+// The fields an update keeps of its base, by selector: negated per
+// selector, before the base's values join, rather than per value held
+// there. Negated after the join, the engine held every value the base's
+// fields held to check it: on Ash's deps 4.8 million rows, a fifth of
+// the exact stage's.
+.decl update_keeps(obj: symbol, base: symbol, sel: symbol)
+
+update_keeps(o, b, sel) :- update_base(o, b), field_sel(b, sel), !value_sets(o, sel).
+
+.decl field_sel(obj: symbol, sel: symbol)
+
+field_sel(o, sel) :- field_pts(o, sel, _).
 
 // The term an update copies the fields it does not set from.
 .decl update_base(obj: symbol, base: symbol)
