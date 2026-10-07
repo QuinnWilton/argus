@@ -5,7 +5,7 @@ defmodule Argus.Exclusions.UnsafeInputTest do
   Fixtures: test/fixtures/exclusions/unsafe_input.ex.
   """
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
   alias Argus.Test.Batch
   alias Argus.Test.Rows

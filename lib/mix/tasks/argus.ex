@@ -25,8 +25,9 @@ defmodule Mix.Tasks.Argus do
   A finding at or above the compiler's `fail_on` fails `mix compile`, not
   this task: it is reported here like any other, and `--fail-above` is
   the gate. A project that does not compile is an error, and so is a
-  missing souffle binary: a one-shot run without a solver has nothing to
-  say (the compiler degrades with a notice instead).
+  machine that cannot build the FlowLog engines (no Rust): a one-shot
+  run without them has nothing to say (the compiler degrades with a
+  notice instead).
 
   Project configuration (`argus:` — severity overrides, ignores)
   applies to this task too; positional analyses and
@@ -69,11 +70,8 @@ defmodule Mix.Tasks.Argus do
     result =
       Argus.Driver.run(config, force: options.force)
 
-    if Argus.Driver.Result.souffle_missing?(result) do
-      Mix.raise(
-        "argus: souffle binary not found on PATH — install souffle " <>
-          "(https://souffle-lang.github.io) to run the analyses"
-      )
+    if Argus.Driver.Result.engine_unavailable?(result) do
+      Mix.raise("argus: " <> Argus.FlowLog.not_found_message())
     end
 
     notices = Argus.Report.Notice.from_result(result, config, cwd)

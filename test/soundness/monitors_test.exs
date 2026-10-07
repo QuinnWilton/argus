@@ -11,7 +11,7 @@ defmodule Argus.Soundness.MonitorsTest do
   ref taken without asking the state.
   """
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
   import Argus.Test.Soundness, only: [fired: 2]
 

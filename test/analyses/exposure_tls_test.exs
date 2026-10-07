@@ -1,6 +1,6 @@
 defmodule Argus.Analyses.ExposureTlsTest do
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
   alias Argus.Test.Fixtures.Tls, as: T
   alias Argus.Test.Memo

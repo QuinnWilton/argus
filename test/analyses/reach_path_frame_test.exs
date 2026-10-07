@@ -1,6 +1,6 @@
 defmodule Argus.Analyses.ReachPathFrameTest do
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
   alias Argus.Lines
   alias Argus.Test.Fixtures.ReachPath

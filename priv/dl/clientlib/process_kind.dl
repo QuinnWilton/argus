@@ -27,7 +27,7 @@ partial_handle_info(mod, func) :-
   !callback_total(func, "handle_info").
 
 // Some clause of the handle_info/2 compares :EXIT: it takes some exits.
-.decl takes_some_exits(handler: symbol) inline
+.decl takes_some_exits(handler: symbol)
 
 takes_some_exits(h) :- callback_tag(h, "handle_info", ":EXIT").
 

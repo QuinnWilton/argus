@@ -271,11 +271,11 @@ supervisor_call_during_init(mod, call) :-
 // The call is Supervisor.start_child/2 or one of its relatives, a
 // GenServer.call into a supervisor (sup_management_call,
 // clientlib/supervision.dl).
-.decl manages_supervisor(call: symbol) inline
+.decl manages_supervisor(call: symbol)
 
 manages_supervisor(call) :- sup_management_call(call, _, _, _, _).
 
-blocks_on_peer(mod, "init", target, "sup", "", "", call, cat(api, ".", op)) :-
+blocks_on_peer(mod, "init", target, "sup", "", "", call, cat(api, cat(".", op))) :-
   supervisor_call_during_init(mod, call),
   sup_management_call(call, _, api, op, target).
 
@@ -402,7 +402,7 @@ receives_without_timeout(f, id) :-
 
 // The receive accepts its monitored peer's DOWN or, while trapping exits, its linked
 // peer's EXIT.
-.decl ends_with_peer(recv: symbol) inline
+.decl ends_with_peer(recv: symbol)
 
 ends_with_peer(recv) :- down_bounded(recv).
 ends_with_peer(recv) :- ends_with_linked_exit(recv).
@@ -411,7 +411,7 @@ ends_with_peer(recv) :- ends_with_linked_exit(recv).
 // the wait, accounting for preceding sets and clears.
 .decl ends_with_linked_exit(recv: symbol)
 
-ends_with_linked_exit(recv) :- exit_pinned(recv, f), trapping_at(f, recv).
+ends_with_linked_exit(recv) :- exit_pinned(recv, f), (flag_set_before(f, recv) ; entered_trapping(f), !cleared_before(recv)).
 
 init_effect(mod, "receive", waiter, recv) :-
   endless_receive_during_init(mod, waiter, recv).
@@ -522,7 +522,7 @@ connect_without_retry(mod, api) :-
 
 // A connect reached on the function's own process stack. Do not stop at init_ack: a
 // post-ack connection failure can still crash-loop the newly started child.
-.decl connects_in_process(func: symbol, api: symbol) inline
+.decl connects_in_process(func: symbol, api: symbol)
 
 connects_in_process(f, api) :- connect_reach.reaches(f, api).
 
@@ -576,14 +576,14 @@ depends_during_startup(mod, dep, kind, witness) :- init_window_dep(mod, dep, kin
 
 // `later` starts after `earlier` under `sup`, in another branch of its
 // child list (boots_before, clientlib/supervision.dl).
-.decl starts_after(later: symbol, earlier: symbol, sup: symbol) inline
+.decl starts_after(later: symbol, earlier: symbol, sup: symbol)
 
 starts_after(later, earlier, sup) :- boots_before(sup, earlier, later, _, _).
 
 // The tree `sup` starts is defined at `site` (supervisor_site): the
 // finding anchors there, and a supervisor with no known site is not
 // reported.
-.decl tree_defined_at(sup: symbol, site: symbol) inline
+.decl tree_defined_at(sup: symbol, site: symbol)
 
 tree_defined_at(sup, site) :- supervisor_site(sup, site).
 
@@ -616,7 +616,7 @@ starts_tree(start, sup) :-
   call_site(site, start, "Supervisor", "start_link", _).
 
 // The module is in the tree sup starts (boot_subtree).
-.decl in_tree(mod: symbol, sup: symbol) inline
+.decl in_tree(mod: symbol, sup: symbol)
 
 in_tree(mod, sup) :- boot_subtree(sup, _, mod).
 
@@ -630,7 +630,7 @@ starts_after_tree(start, site, dep) :-
 
 // mod's init/1 holds its start on a synchronous call to `dep`, made in
 // `witness` (init_dep "call"; calls_during_init without the witness).
-.decl calls_during_init_by(mod: symbol, dep: symbol, witness: symbol) inline
+.decl calls_during_init_by(mod: symbol, dep: symbol, witness: symbol)
 
 calls_during_init_by(mod, dep, witness) :- init_dep(mod, dep, "call", witness).
 
@@ -654,7 +654,7 @@ later_sibling_call_during_continue(worker, sibling, sup, call) :-
 // The worker's handle_continue/2 makes a synchronous call to `target` at
 // `call` (continue_wait, clientlib/entries.dl; `call` empty when the
 // site is not known).
-.decl continue_calls(worker: symbol, target: symbol, call: symbol) inline
+.decl continue_calls(worker: symbol, target: symbol, call: symbol)
 
 continue_calls(worker, target, call) :- continue_wait(worker, target, call).
 
@@ -690,19 +690,19 @@ calls_supervisor_during_continue(worker, sup, call) :-
 // identifies api.op; the management-call site anchors it.
 .decl manages_supervisor_during_continue(worker: symbol, sup: symbol, call: symbol, detail: symbol)
 
-manages_supervisor_during_continue(worker, sup, call, cat(api, ".", op)) :-
+manages_supervisor_during_continue(worker, sup, call, cat(api, cat(".", op))) :-
   init_continues_to(worker, _),
   handle_continue_clause(worker, _, f),
   sup_management_call(call, f, api, op, sup).
 
-manages_supervisor_during_continue(worker, sup, call, cat(api, ".", op)) :-
+manages_supervisor_during_continue(worker, sup, call, cat(api, cat(".", op))) :-
   init_continues_to(worker, _),
   handle_continue_clause(worker, _, f),
   own_stack.reaches(f, call),
   sup_management_call(call, _, api, op, sup).
 
 // The worker is one of sup's own children.
-.decl supervises(sup: symbol, worker: symbol) inline
+.decl supervises(sup: symbol, worker: symbol)
 
 supervises(sup, worker) :- supervisor(sup, _), supervisor_child(sup, _, worker, _, _).
 
@@ -740,13 +740,13 @@ parent_call_after_ack(worker, sup, call) :-
 // or downstream of a post-ack edge. detail identifies api.op.
 .decl manages_supervisor_after_ack(worker: symbol, sup: symbol, call: symbol, detail: symbol)
 
-manages_supervisor_after_ack(worker, sup, call, cat(api, ".", op)) :-
+manages_supervisor_after_ack(worker, sup, call, cat(api, cat(".", op))) :-
   init_function(worker, i),
   before_ack.reaches(i, f),
   sup_management_call(call, f, api, op, sup),
   start_acked(call, f).
 
-manages_supervisor_after_ack(worker, sup, call, cat(api, ".", op)) :-
+manages_supervisor_after_ack(worker, sup, call, cat(api, cat(".", op))) :-
   init_function(worker, i),
   after_ack.reaches(i, g),
   sup_management_call(call, g, api, op, sup).
@@ -795,7 +795,7 @@ init_timeout_deferral(mod, site) :-
   returns_timeout(init, site).
 
 // The callback returns a timeout at `site` (callback_timeout "init").
-.decl returns_timeout(init: symbol, site: symbol) inline
+.decl returns_timeout(init: symbol, site: symbol)
 
 returns_timeout(init, site) :- callback_timeout(site, init, "init", _).
 
@@ -887,7 +887,7 @@ lock_in_init_closure(init, lock) :-
   init_lock(init, lock),
   global_op(lock, holder, _, _, _),
   function_def(init, m, n, a, _),
-  contains(cat(m, ":-", n, "/", to_string(a), "-fun-"), holder).
+  contains(cat(m, cat(":-", cat(n, cat("/", cat(to_string(a), "-fun-"))))), holder).
 
 // ── Distributed operations in init ───────────────────────────────
 
@@ -939,7 +939,7 @@ write_after_tree_starts(func, call, callee) :-
 
 // After Supervisor.start_link returns, `func` calls `callee` at `call`
 // (post_start_call).
-.decl calls_after_tree_starts(func: symbol, call: symbol, callee: symbol) inline
+.decl calls_after_tree_starts(func: symbol, call: symbol, callee: symbol)
 
 calls_after_tree_starts(func, call, callee) :- post_start_call(func, call, callee).
 
@@ -976,11 +976,13 @@ start_link_site_or_empty(f, "") :- post_start_call(f, _, _), !call_site(_, f, "S
 
 ignored_start(func, callee) :-
   ignores_result(func, callee),
-  starts_process(callee).
+  // Delimited `.start_link/` and `.start/` names in the rendered callee, so names
+  // such as restart_link do not match (`contains(needle, haystack)`).
+  (contains(".start_link/", callee) ; contains(".start/", callee)).
 
 // The function calls `callee`, which returns a tagged tuple, and does not
 // match the result (ignored_error_result).
-.decl ignores_result(func: symbol, callee: symbol) inline
+.decl ignores_result(func: symbol, callee: symbol)
 
 ignores_result(func, callee) :- ignored_error_result(_, func, callee).
 
@@ -988,13 +990,6 @@ ignores_result(func, callee) :- ignored_error_result(_, func, callee).
 // runs (`Enum.each(names, fn n -> Agent.start_link(...) end)`), a comprehension whose
 // list is dropped.
 ignores_result(func, callee) :- result_lost(_, func, callee).
-
-// Match delimited `.start_link/` and `.start/` names in rendered callees, avoiding
-// names such as restart_link. Souffle uses `contains(needle, haystack)`.
-.decl starts_process(callee: symbol) inline
-
-starts_process(callee) :- contains(".start_link/", callee).
-starts_process(callee) :- contains(".start/", callee).
 
 .decl ignored_start_result(func: symbol, callee: symbol)
 .output ignored_start_result

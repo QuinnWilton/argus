@@ -17,8 +17,17 @@ involved.
 
 ## Install and run
 
-Install [Soufflé](https://souffle-lang.github.io/install) on your `PATH`. The Mix
+Install [Rust](https://rustup.rs) 1.88 or later. Argus compiles its analyses into
+[FlowLog](https://github.com/flowlog-rs/flowlog) engines with it, once per version
+of the rules: an incremental Datalog engine that keeps its results up to date as
+your code changes, so a recompile re-derives only what an edit reached. The Mix
 integration requires Elixir 1.19 or later; prebuilt escripts require Erlang/OTP 28.
+
+The first run builds the engines, which takes several minutes and a few gigabytes
+of memory for the largest analyses; later runs reuse them. Build them ahead of
+time, in CI for instance, with `mix argus.flowlog build`, and see what is built
+with `mix argus.flowlog status`. The engines live in `~/.cache/argus/flowlog`
+(`ARGUS_FLOWLOG_DIR` names another directory, `ARGUS_CARGO` another `cargo`).
 
 ### Mix
 

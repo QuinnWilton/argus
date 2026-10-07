@@ -1,6 +1,6 @@
 defmodule Argus.Analyses.BlockingPidCallTest do
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
   alias Argus.Test.Fixtures.PidCalls
   alias Argus.Test.Memo

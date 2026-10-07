@@ -1,11 +1,12 @@
-defmodule Argus.Souffle.Stages do
+defmodule Argus.Stages do
   @moduledoc """
   How the process points-to stage is solved, whoever solves it: the
   exact program, and the bounded one in its place when the exact
   fixpoint outgrows its budget (`Argus.Analysis.Extraction.derive_points_to/2`
   says why). Which one runs is a function of the facts, never of time:
-  Souffle stops a fixpoint at the budget however fast it runs, and each
-  program writes `points_to_overflow`, the relations that reached it.
+  each program counts its fixpoint's rows once it is complete and writes
+  `points_to_overflow`, the relations that reached the budget
+  (`priv/dl/points_to.dl`).
 
   A facts directory's derivation (`Argus.Analysis.Extraction`) and the
   query graph (`Argus.Graph.Solve`, over the blob store) each solve the
@@ -124,10 +125,10 @@ defmodule Argus.Souffle.Stages do
   defp failure_summary({:over_budget, over}),
     do: "the stage outgrew its budget even bounded (#{budget_summary(over)})"
 
-  defp failure_summary(:souffle_timeout),
-    do: "the stage did not finish within :souffle_timeout"
+  defp failure_summary(:flowlog_timeout),
+    do: "the stage did not finish within the solve's timeout (:timeout)"
 
-  defp failure_summary(reason), do: "the stage failed: #{inspect(reason)}"
+  defp failure_summary(reason), do: "the stage failed: " <> Argus.FlowLog.describe_error(reason)
 
   defp budget_summary(over) do
     Enum.map_join(over, ", ", fn {relation, rows, budget} ->

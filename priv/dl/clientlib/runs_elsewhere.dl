@@ -101,9 +101,7 @@ held_closure(f, g) :-
 
 .decl held_closures(func: symbol, n: number)
 
-held_closures(f, n) :-
-  held_closure(f, _),
-  n = count : { held_closure(f, _) }.
+held_closures(f, count(g)) :- held_closure(f, g).
 
 .decl hands_funs_off(func: symbol)
 

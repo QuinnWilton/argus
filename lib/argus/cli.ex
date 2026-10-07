@@ -12,7 +12,7 @@ defmodule Argus.CLI do
 
   Exit status: 0 done; 1 more findings than `--fail-above`; 2 a usage,
   project or configuration error; 3 the analyses could not run or did
-  not finish (no souffle, an analysis that degraded, a crash).
+  not finish (no engines, an analysis that degraded, a crash).
   """
 
   alias Argus.CLI.Options
@@ -80,10 +80,10 @@ defmodule Argus.CLI do
          {:ok, kind} <- kind(root, options),
          {:ok, project} <- load(kind, root, options),
          {:ok, config} <- config(root, kind, options) do
-      if Argus.Souffle.available?() do
+      if Argus.FlowLog.available?() do
         drive(project, config, options, cwd)
       else
-        error(3, Notice.souffle_missing(:require).message)
+        error(3, Notice.engine_unavailable(:require).message)
       end
     else
       {:error, status, message} -> error(status, message)
@@ -373,33 +373,28 @@ defmodule Argus.CLI do
     end
   end
 
-  @doc "argus's version, the runtime's, and the solver's."
+  @doc "argus's version, the runtime's, and the engine toolchain's."
   @spec version() :: String.t()
   def version do
     _ = Application.load(:argus_beam)
     vsn = Application.spec(:argus_beam, :vsn) || ~c"unknown"
+    flowlog = "FlowLog #{binary_part(Argus.FlowLog.Native.flowlog_revision(), 0, 12)}"
 
-    souffle =
-      case Argus.Souffle.executable() do
-        nil -> "souffle not found on PATH"
-        bin -> "souffle #{souffle_version(bin)}"
+    rust =
+      case Argus.FlowLog.Toolchain.rust() do
+        {:ok, %{rustc_version: version}} ->
+          case Regex.run(~r/^rustc (\S+)/m, version) do
+            [_, release] -> "rustc #{release}"
+            nil -> "rustc (unrecognized version)"
+          end
+
+        {:error, {:rust_too_old, found, _needed}} ->
+          "rustc #{found} (too old)"
+
+        {:error, _} ->
+          "no Rust toolchain"
       end
 
-    "argus #{vsn} (Erlang/OTP #{System.otp_release()}, Elixir #{System.version()}, #{souffle})"
-  end
-
-  defp souffle_version(bin) do
-    case System.cmd(bin, ["--version"], stderr_to_stdout: true) do
-      {out, 0} ->
-        case Regex.run(~r/^Version:\s*(\S+)/m, out) do
-          [_, version] -> version
-          nil -> "(unrecognized version)"
-        end
-
-      _ ->
-        "(unrecognized version)"
-    end
-  rescue
-    ErlangError -> "(cannot run)"
+    "argus #{vsn} (Erlang/OTP #{System.otp_release()}, Elixir #{System.version()}, #{flowlog}, #{rust})"
   end
 end

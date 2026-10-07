@@ -170,7 +170,7 @@ runs_only_on_the_way_out(c) :- terminate_helper2(c).
 
 // The cancel is in the handle_info/2 clause of the timer's own message:
 // the message is the one being handled, not one left behind.
-.decl handles_that_message(cancel: symbol, message: symbol) inline
+.decl handles_that_message(cancel: symbol, message: symbol)
 
 handles_that_message(cancel, msg) :- cancel_clause(cancel, _, msg).
 
@@ -212,7 +212,7 @@ timer_cancel_without_flush(mod, func, func, "", message, cancel, arm) :-
 // Pair a local cancellation with the exact arming site supplying its reference.
 // Handling the same message is not an exemption: this timer was armed after the current
 // message arrived.
-.decl cancels_timer_kept_in_local(cancel: symbol, arm: symbol) inline
+.decl cancels_timer_kept_in_local(cancel: symbol, arm: symbol)
 
 cancels_timer_kept_in_local(cancel, arm) :-
   timer_cancel(cancel, c, "local", arm, _),
@@ -340,14 +340,14 @@ timer_cancel_under_test(mod, key, cancel_site, cancel) :-
 
 // The cancel_timer `cancel` takes the ref kept under `key` (cancel_site
 // above).
-.decl cancels_timer_kept_under(cancel: symbol, key: symbol) inline
+.decl cancels_timer_kept_under(cancel: symbol, key: symbol)
 
 cancels_timer_kept_under(cancel, key) :- cancel_site(_, key, cancel).
 
 // A rearm storing its reference under key and carrying message. Require that it can
 // follow cancellation; an init-only arm followed by a later cancellation merely stops
 // the timer.
-.decl rearms_timer_kept_under(rearm: symbol, key: symbol, message: symbol) inline
+.decl rearms_timer_kept_under(rearm: symbol, key: symbol, message: symbol)
 
 rearms_timer_kept_under(rearm, key, msg) :- rearm_site(rearm, _, key, msg).
 
@@ -522,7 +522,7 @@ starts_linked_task(func, id) :-
 
 // `func`, or a function it calls, awaits, yields or shuts down a task
 // (task_collect): any task, not only the one it starts.
-.decl collects_a_task(func: symbol) inline
+.decl collects_a_task(func: symbol)
 
 collects_a_task(func) :- await_reach.reaches(func).
 
@@ -606,7 +606,7 @@ yields_on_task(owner, id) :- remote_call(id, g, "Task", "yield_many", _), enclos
 // callback context. A trapping module's client API does not imply its callers trap.
 .decl starts_trapping(start: symbol)
 
-starts_trapping(start) :- starts_linked_task(f, start), trapping_at(f, start).
+starts_trapping(start) :- starts_linked_task(f, start), (flag_set_before(f, start) ; entered_trapping(f), !cleared_before(start)).
 
 // ── Evidence: where a task is yielded ─────────────────────────────────
 .decl task_yield_site(func: symbol, kind: symbol, site: symbol)
@@ -709,7 +709,7 @@ monitor_leak(mod, func, monitor, "dropped") :-
   monitor_in(monitor, mod, func).
 
 // The monitor call `monitor` is in `func`, of `mod`.
-.decl monitor_in(monitor: symbol, mod: symbol, func: symbol) inline
+.decl monitor_in(monitor: symbol, mod: symbol, func: symbol)
 
 monitor_in(s, m, f) :- monitor_call(s, f, _), function_def(f, m, _, _, _).
 
@@ -770,15 +770,9 @@ starts_process(o) :- process_start(o, _, _, _, _).
 starts_process(o) :-
   remote_call(o, _, m, name, _),
   !program_module(m),
-  start_named(name).
-
-// A function named like a start: `start*`, `spawn*`, or a client
-// library's `open` (`:gun.open`).
-.decl start_named(name: symbol) inline
-
-start_named(name) :- match("start.*", name).
-start_named(name) :- match("spawn.*", name).
-start_named(name) :- name = "open".
+  // Named like a start: `start*`, `spawn*`, or a client library's `open`
+  // (`:gun.open`).
+  (match("start.*", name) ; match("spawn.*", name) ; name = "open").
 
 // Every return path consumes DOWN or demonitors the reference, or every incoming path
 // passes a caller that releases it after the call.
@@ -879,7 +873,7 @@ unasked.guarded(c) :- once_site(c, _).
 taken_without_asking_state(s) :- unasked.reaches(r, s), again_root(r, _).
 
 // The monitor's ref is thrown away (monitor_ref_dropped).
-.decl throws_ref_away(monitor: symbol) inline
+.decl throws_ref_away(monitor: symbol)
 
 throws_ref_away(s) :- monitor_ref_dropped(s, _).
 
@@ -904,7 +898,9 @@ monitor_record_holding(s, m, k, held) :-
   kept_through(s, g, piece, held),
   answered_at(h, g, c),
   returned_field_from(h, k, c, how),
-  keeps_piece(piece, how),
+  // The returned field retains the monitor only when it holds the relevant whole
+  // result or tuple piece. Unrelated or deeper pieces do not establish retention.
+  (how = "whole" ; how = "argument" ; piece != "", how = piece ; piece = "", how != "part"),
   function_def(h, m, _, _, _).
 
 .decl monitor_record(site: symbol, mod: symbol, record: symbol)
@@ -922,15 +918,6 @@ kept_through(s, h, "", held) :-
   kept_through(s, g, _, held),
   answered_at(h, g, c),
   returns_from(h, c).
-
-// A returned field retains the monitor only when it contains the relevant whole result
-// or tuple piece. Unrelated or deeper pieces do not establish retention.
-.decl keeps_piece(piece: symbol, how: symbol) inline
-
-keeps_piece(p, how) :- how = "whole", p = p.
-keeps_piece(p, how) :- how = "argument", p = p.
-keeps_piece(p, how) :- p != "", how = p.
-keeps_piece(p, how) :- p = "", how != "part".
 
 // A call returns callee's result directly or through a higher-order consumer whose
 // result contains the passed fun's return, such as a fold.
@@ -1009,7 +996,7 @@ record_drop(m, k, h, h, tag) :-
   emptied(v).
 
 record_drop(m, cat("table ", t), h, h, tag) :-
-  consulted_store(_, m, cat("table ", t)),
+  consulted_store(_, m, store), store = cat("table ", t),
   again_root(h, _),
   function_def(h, m, _, _, _),
   ets_op(x, h, t, op, _),
@@ -1018,7 +1005,7 @@ record_drop(m, cat("table ", t), h, h, tag) :-
   !down_clause(h, tag).
 
 record_drop(m, cat("table ", t), g, h, tag) :-
-  consulted_store(_, m, cat("table ", t)),
+  consulted_store(_, m, store), store = cat("table ", t),
   again_root(h, _),
   function_def(h, m, _, _, _),
   call_instr(h, g, c),
@@ -1186,13 +1173,13 @@ reply_defect(mod, sender, "", cat("unhandled_", kind), tag) :-
 
 // The call or cast at `request` sends `tag` to its module's own server
 // (to_own_server, below).
-.decl sends_own_server(request: symbol, kind: symbol, tag: symbol) inline
+.decl sends_own_server(request: symbol, kind: symbol, tag: symbol)
 
 sends_own_server(request, kind, tag) :- call_tag(request, _, kind, tag), to_own_server(_, request).
 
 // A request of `kind` from `request` enters `handler`: the sender's
 // module's handle_call/3 for a call, its handle_cast/2 for a cast.
-.decl request_enters(request: symbol, kind: symbol, handler: symbol) inline
+.decl request_enters(request: symbol, kind: symbol, handler: symbol)
 
 request_enters(request, kind, h) :-
   call_tag(request, sender, kind, _),
@@ -1384,7 +1371,7 @@ spawned_reach.root(r, r) :- sends_to_spawned(_, _, r, _).
 
 process_receive(r, id) :- spawned_reach.reaches(r, g), recv_pattern(id, g, _).
 
-.decl runs_a_receive(runs: symbol) inline
+.decl runs_a_receive(runs: symbol)
 
 runs_a_receive(r) :- process_receive(r, _).
 
@@ -1516,25 +1503,25 @@ unhandled_info(mod, g, r, msg, "late", m, h, "state_crash") :-
 
 // `func` sends `server` `message` at `site` (info_message, below), from
 // any source but a timed receive's leftover.
-.decl sent_to_server(server: symbol, func: symbol, site: symbol, message: symbol, source: symbol) inline
+.decl sent_to_server(server: symbol, func: symbol, site: symbol, message: symbol, source: symbol)
 
 sent_to_server(m, f, id, msg, source) :- info_message(m, f, id, msg, source), source != "late".
 
 // What a timed receive at `recv` in `func` leaves behind for `server`
 // (info_message's source "late").
-.decl left_by_timed_receive(server: symbol, func: symbol, recv: symbol, message: symbol) inline
+.decl left_by_timed_receive(server: symbol, func: symbol, recv: symbol, message: symbol)
 
 left_by_timed_receive(m, g, r, msg) :- info_message(m, g, r, msg, "late").
 
 // The exit of a process `func` links to at `link`, in a server that
 // traps exits (info_message's source "exit").
-.decl trapped_exit(server: symbol, func: symbol, link: symbol, message: symbol) inline
+.decl trapped_exit(server: symbol, func: symbol, link: symbol, message: symbol)
 
 trapped_exit(m, f, id, msg) :- info_message(m, f, id, msg, "exit").
 
 // A timer `func` arms at `arm` for the server it runs in (info_message's
 // source "timer").
-.decl timer_to_itself(server: symbol, func: symbol, arm: symbol, message: symbol) inline
+.decl timer_to_itself(server: symbol, func: symbol, arm: symbol, message: symbol)
 
 timer_to_itself(m, f, id, msg) :- info_message(m, f, id, msg, "timer").
 
@@ -1581,7 +1568,7 @@ info_message(m, f, id, lit, "timer") :-
   timer_tag(id, _, _),
   runs_in_server(m, f).
 
-info_message(m, f, id, cat("{", tag, ", …}"), "timer") :-
+info_message(m, f, id, cat("{", cat(tag, ", …}")), "timer") :-
   timer_arm(id, f, "self", "dynamic", _, _),
   timer_tag(id, tag, _),
   runs_in_server(m, f).
@@ -2296,7 +2283,7 @@ cancel_call(f, s, key) :- helper_cancels_field(f, s, _, key).
 has_clause(s) :- clause_call(s, _, _).
 
 // Inline so consumers restrict the pair to a cancellation and an arming site.
-.decl same_clause(func: symbol, first: symbol, then: symbol) inline
+.decl same_clause(func: symbol, first: symbol, then: symbol)
 
 same_clause(f, s, t) :-
   clause_call(s, f, tag),
@@ -2393,19 +2380,19 @@ static_render_registration(m, e, f, id, kind) :-
 
 // The callback runs on the static render as well as the connected one
 // (static_render_callback, clientlib/live_view.dl).
-.decl runs_on_static_render(entry: symbol) inline
+.decl runs_on_static_render(entry: symbol)
 
 runs_on_static_render(e) :- static_render_callback(_, e).
 
 // The call at `registration` registers the process for later messages
 // (process_registration).
-.decl registers_process(registration: symbol) inline
+.decl registers_process(registration: symbol)
 
 registers_process(id) :- process_registration(id, _, _).
 
 // `entry` reaches the registration in its own process along calls not on
 // a true arm of connected?/1 (render_reach).
-.decl reaches_unconnected(entry: symbol, registration: symbol) inline
+.decl reaches_unconnected(entry: symbol, registration: symbol)
 
 reaches_unconnected(e, id) :- render_reach.reaches(e, id).
 
@@ -2454,18 +2441,18 @@ repeated_subscription(m, e, f, id) :-
 
 // A callback that runs again and again, whenever its request or message
 // comes (again_root, runs.dl).
-.decl callback_runs_again(entry: symbol) inline
+.decl callback_runs_again(entry: symbol)
 
 callback_runs_again(e) :- again_root(e, "callback").
 
 // The call at `subscription` subscribes (subscription_call).
-.decl subscribes(subscription: symbol) inline
+.decl subscribes(subscription: symbol)
 
 subscribes(id) :- subscription_call(id, _, "subscribe").
 
 // `entry` reaches the subscription on its own stack without crossing a once-only site
 // or state-dependent call. See repeat_reach.
-.decl reached_every_run(entry: symbol, subscription: symbol) inline
+.decl reached_every_run(entry: symbol, subscription: symbol)
 
 reached_every_run(e, id) :- repeat_reach.reaches(e, id).
 

@@ -1,5 +1,5 @@
 defmodule Mix.Tasks.Argus.Gen.Dl do
-  @shortdoc "Regenerates the Souffle fact declarations from Argus.Schema"
+  @shortdoc "Regenerates the Datalog fact declarations from Argus.Schema"
 
   @moduledoc """
   Writes `priv/dl/base.dl`, `priv/dl/layer2.dl` and `priv/dl/priors.dl`
@@ -7,7 +7,7 @@ defmodule Mix.Tasks.Argus.Gen.Dl do
 
   Fact declarations are positional: `.decl remote_call(id: symbol, mod:
   symbol, ...)` has to agree with the column order `Argus.Pipeline.Emit`
-  writes. Souffle cannot check that — a field swapped between two `symbol`
+  writes. FlowLog cannot check that — a field swapped between two `symbol`
   columns parses fine and silently joins the wrong values — so the
   declarations were the one part of the schema with no mechanical link back
   to it, maintained by hand in 95 places across 19 files.
@@ -44,7 +44,7 @@ defmodule Mix.Tasks.Argus.Gen.Dl do
 
         stale ->
           Mix.raise("""
-          Generated Souffle declarations are stale:
+          Generated Datalog declarations are stale:
 
           #{Enum.map_join(stale, "\n", fn {_, path, why} -> "  #{path} — #{why}" end)}
 
@@ -56,7 +56,7 @@ defmodule Mix.Tasks.Argus.Gen.Dl do
 
   defp process({layer, filename}, check?) do
     path = target_path(filename)
-    expected = Schema.souffle_decls(layer)
+    expected = Schema.datalog_decls(layer)
 
     cond do
       not check? ->

@@ -22,7 +22,7 @@ defmodule Argus.Analyses.FailureRpcTargetTest do
   end
 
   describe "rpc_undefined" do
-    @describetag :souffle
+    @describetag :flowlog
 
     test "an rpc to a function its module does not export, direct or through a wrapper" do
       assert undefined() == [

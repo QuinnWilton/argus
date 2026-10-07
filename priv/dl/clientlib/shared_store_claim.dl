@@ -17,26 +17,26 @@ store_identity_source("literal").
 // Projecting an element from one exact caller value retains that value's identity.
 // The finite source vocabulary is taken from arguments, never recursively projected.
 .decl projected_store_source(element: symbol, base: symbol, projected: symbol)
-projected_store_source(e, s, cat(e, " of ", s)) :-
+projected_store_source(e, s, cat(e, cat(" of ", s))) :-
   liftable(e), e != "param", shared_store_argument(_, _, _, _, "", s, _),
   s != "dynamic", s != "param".
 store_identity_source(projected) :- projected_store_source(_, _, projected).
 
 .decl mapped_store_source(transform: symbol, source: symbol, mapped: symbol)
-mapped_store_source(t, s, cat("mapped ", t, " ", s)) :-
+mapped_store_source(t, s, cat("mapped ", cat(t, cat(" ", s)))) :-
   shared_store_transform(t), store_identity_source(s).
 
 shared_claim.lift(f, g, "param", to_string(n), s, v) :-
-  shared_claim.needs(g, "param", to_string(n)),
+  shared_claim.needs(g, "param", n_text), n_text = to_string(n),
   shared_store_argument(_, f, g, n, "", s, v), s != "dynamic".
 
 shared_claim.lift(f, g, "param", to_string(n), mapped, v) :-
-  shared_claim.needs(g, "param", to_string(n)),
+  shared_claim.needs(g, "param", n_text), n_text = to_string(n),
   shared_store_argument(_, f, g, n, t, s, v), t != "", s != "dynamic",
   mapped_store_source(t, s, mapped).
 
 shared_claim.lift(f, g, mapped, to_string(n), mapped2, v) :-
-  shared_claim.needs(g, mapped, to_string(n)),
+  shared_claim.needs(g, mapped, n_text), n_text = to_string(n),
   mapped_store_source(t, "param", mapped),
   shared_store_argument(_, f, g, n, "", s, v), s != "dynamic",
   mapped_store_source(t, s, mapped2).
@@ -48,16 +48,16 @@ shared_claim.lift(f, g, mapped, v, mapped, v) :-
 // The source of a tuple element passed intact through another wrapper remains that
 // element of the wrapper's argument. This is common for {StoreModule, options}.
 shared_claim.lift(f, g, mapped, to_string(n), mapped, to_string(p)) :-
-  shared_claim.needs(g, mapped, to_string(n)),
+  shared_claim.needs(g, mapped, n_text), n_text = to_string(n),
   mapped_store_source(_, s, mapped), s != "param", liftable(s),
   call_arg_forward(f, g, n, p).
 
 shared_claim.lift(f, g, element, to_string(n), projected, v) :-
-  shared_claim.needs(g, element, to_string(n)),
+  shared_claim.needs(g, element, n_text), n_text = to_string(n),
   shared_store_argument(_, f, g, n, "", source, v),
   projected_store_source(element, source, projected).
 shared_claim.lift(f, g, mapped, to_string(n), mapped2, v) :-
-  shared_claim.needs(g, mapped, to_string(n)),
+  shared_claim.needs(g, mapped, n_text), n_text = to_string(n),
   mapped_store_source(t, element, mapped),
   shared_store_argument(_, f, g, n, "", source, v),
   projected_store_source(element, source, projected),
@@ -70,7 +70,7 @@ shared_claim.lift(f, g, mapped, to_string(n), mapped2, v) :-
 shared_absence_value(f, "site", r, r, "nil") :- shared_store_op(r, f, "get", _, _, _, _).
 shared_absence_value(f, "call", site, r, v) :-
   shared_absence_return(g, r, v), shared_claim.carries(f, "call", g, r, _, _, _, _),
-  call_site(site, f, m, n, a), g = cat(m, ":", n, "/", to_string(a)).
+  call_site(site, f, m, n, a), g = cat(m, cat(":", cat(n, cat("/", to_string(a))))).
 
 .decl shared_absence_return(func: symbol, read: symbol, value: symbol)
 shared_absence_return(f, r, returned) :-
@@ -90,15 +90,13 @@ shared_absence_return(f, r, value) :-
 // liftable or mapped source otherwise meets every parameter argument of the
 // program, a product of a hundred million rows on a mid-sized project.
 .decl shared_lift_demand(site: symbol, source: symbol, value: symbol)
-shared_lift_demand(site, ss, s) :-
-  call_site(site, _, m, n, a), g = cat(m, ":", n, "/", to_string(a)),
-  shared_claim.returns_check(g, _, ss, s, _, _).
-shared_lift_demand(site, ks, k) :-
-  call_site(site, _, m, n, a), g = cat(m, ":", n, "/", to_string(a)),
-  shared_claim.returns_check(g, _, _, _, ks, k).
+shared_lift_demand(site, ss, s), shared_lift_demand(site, ks, k) :-
+  call_site(site, _, m, n, a), g = cat(m, cat(":", cat(n, cat("/", to_string(a))))),
+  shared_claim.returns_check(g, _, ss, s, ks, k).
+
 shared_store_site_lift(site, "literal", v, "literal", v) :-
   shared_lift_demand(site, "literal", v),
-  call_site(site, _, m, n, a), g = cat(m, ":", n, "/", to_string(a)),
+  call_site(site, _, m, n, a), g = cat(m, cat(":", cat(n, cat("/", to_string(a))))),
   shared_claim.needs(g, "literal", v).
 shared_store_site_lift(site, "param", pv, source, value) :-
   shared_lift_demand(site, "param", pv),
@@ -117,7 +115,7 @@ shared_store_site_lift(site, mapped, pv, mapped2, value) :-
   mapped_store_source(t, source, mapped2).
 shared_store_site_lift(site, mapped, v, mapped, v) :-
   shared_lift_demand(site, mapped, v),
-  call_site(site, _, m, n, a), g = cat(m, ":", n, "/", to_string(a)),
+  call_site(site, _, m, n, a), g = cat(m, cat(":", cat(n, cat("/", to_string(a))))),
   shared_claim.needs(g, mapped, v), mapped_store_source(_, "literal", mapped).
 shared_store_site_lift(site, source, pv, source, value) :-
   shared_lift_demand(site, source, pv),
@@ -146,7 +144,7 @@ shared_store_site_lift(site, mapped, pv, mapped2, v) :-
 .decl shared_checked_row(func: symbol, kind: symbol, source: symbol, read: symbol, ss: symbol, store: symbol, ks: symbol, key: symbol)
 shared_checked_row(f, "site", r, r, ss, s, ks, k) :- shared_store_op(r, f, "get", ss, s, ks, k).
 shared_checked_row(f, "call", site, r, ss2, s2, ks2, k2) :-
-  call_site(site, f, m, n, a), g = cat(m, ":", n, "/", to_string(a)),
+  call_site(site, f, m, n, a), g = cat(m, cat(":", cat(n, cat("/", to_string(a))))),
   shared_claim.returns_check(g, r, ss, s, ks, k),
   shared_store_site_lift(site, ss, s, ss2, s2),
   shared_store_site_lift(site, ks, k, ks2, k2).
@@ -162,7 +160,7 @@ shared_absent_mark(f, r, w, site) :-
   shared_absence_value(f, kind, src, r, value),
   shared_checked_row(f, kind, src, r, ss, s, ks, k),
   shared_store_gate(site, f, kind, src, value),
-  call_site(site, f, m, n, a), g = cat(m, ":", n, "/", to_string(a)),
+  call_site(site, f, m, n, a), g = cat(m, cat(":", cat(n, cat("/", to_string(a))))),
   shared_claim.acts_if(g, w, _, _, _, _, _, _).
 
 // The lock applies to exactly this closure's store and key. Isolation of another
@@ -173,8 +171,7 @@ shared_claim_locked(f, r, w) :-
 
 .init shared_claim_values = PairCarries
 // This consumer only asks whether the verdict returns the cached value; it has
-// no fresh-fill sources. Define that component input as empty explicitly.
-shared_claim_values.fresh("", "") :- false.
+// no fresh-fill sources, so the component's `fresh` input has no rules and is empty.
 shared_claim_values.pair(f, r, w) :- shared_claim.meets(f, r, w, _, _, _, _).
 shared_claim_values.read_in(r, f) :- shared_store_op(r, f, "get", _, _, _, _).
 shared_claim_values.write_in(w, f) :- shared_store_op(w, f, "put", _, _, _, _).

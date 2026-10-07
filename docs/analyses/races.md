@@ -147,8 +147,9 @@ race.
 
 `RunsConcurrently` uses process entries, instance multiplicity, requests and external
 callers. `single_process` needs one known instance and no competing caller path.
-`runs_beside` asks whether another process can reach the rival while the pair runs;
-`runs_beside_up` restricts that other process to work after startup. A helper called
+`beside_single_process` asks whether another process can reach the rival while the
+pair runs; the rules that weigh rival writes restrict that other process to work after
+startup (`up_reaches`). A helper called
 by both the owner and a janitor belongs to both processes.
 
 Startup-only writes are often treated as preceding normal work, but later sibling

@@ -68,7 +68,7 @@ instance(cat("start ", c), b) :- kept_fresh(c, _, x), fresh_base(x, b).
 
 instance(cat("child ", cat(s, cat("#", to_string(pos)))), b) :-
   supervisor_child(s, pos, m, _, _),
-  fresh_return(cat(m, ":start_link/1"), x),
+  fresh_return(start_mfa, x), start_mfa = cat(m, ":start_link/1"),
   fresh_base(x, b).
 
 server_process(i, m) :- instance(i, b), process_start(_, _, b, "server", m).
@@ -132,7 +132,6 @@ source_pts(f, "proc", p, p) :- process_start(_, f, p, _, _), !pervasive(p).
 // term. Every field_pts row points to a leaf or such a term, so it also proves that its
 // containing term is relevant.
 source_pts(f, "obj", o, o) :- value_object(f, o, _, _, _), holds_leaf(o).
-.plan 0:(2,1)
 
 .decl holds_leaf(obj: symbol)
 
@@ -141,7 +140,6 @@ holds_leaf(o) :- field_pts(o, _, _).
 source_pts(f, "param", k, x) :- param_pts(f, k, x).
 // A callee's result; a factory's fresh value is renamed where it is kept.
 source_pts(f, "result", c, x) :- value_result(c, f, g), returns_pts(g, x), !fresh_return(g, x).
-.plan 0:(2,1)
 
 // A callee that hands its parameter back returns, at this call, what
 // this call passed it (see "Returns" below).
@@ -151,7 +149,6 @@ source_pts(f, "result", c, x) :-
   value_arg(c, f, g, j, "call", sk, s),
   source_pts(f, sk, s, x),
   !fresh_return(g, x).
-.plan 0:(4,3,1,2)
 
 source_pts(f, "result", c, x) :-
   value_result(c, f, g),
@@ -169,20 +166,19 @@ source_pts(f, "result", c, x) :-
   returns_all(g, x),
   !fresh_return(g, x).
 
-source_pts(f, "result", c, cat("start ", c)) :-
+source_pts(f, "result", c, i) :-
   kept_fresh(c, f, x),
   process_start(_, _, x, _, _),
-  !pervasive(cat("start ", c)).
+  kept_instance(c, i),
+  !pervasive(i).
 
 source_pts(f, "result", c, cat("result ", c)) :- kept_fresh(c, f, x), start_object(x, _).
 source_pts(f, "name", n, p) :- reads_name(f, n), named_pid(n, p), !pervasive(p).
 source_pts(f, "dict", k, x) :- dict_read(f, k, g, sk, s), source_pts(g, sk, s, x).
-.plan 0:(2,1)
 
 // A helper returning a dictionary entry returns the value held by the caller's process
 // at that call.
 source_pts(f, "result", c, x) :- value_result(c, f, g), returns_key(g, k), source_pts(f, "dict", k, x).
-.plan 0:(3,1,2)
 source_pts(f, "self", "self", p) :- self_pid(f, p), !pervasive(p).
 
 // ETS tables are allocation leaves named "table <site>". They are neither processes nor
@@ -202,14 +198,12 @@ source_pts(f, "reply", id, x) :-
 
 // A load reads a field of whatever its base points to.
 source_pts(f, "load", l, x) :- load_base(f, l, sel, o), reads_field(o, sel, x).
-.plan 1:(2,1)
 
 // Index field loads by their source term, so new field facts join only that term's
 // loads.
 .decl load_base(func: symbol, load: symbol, sel: symbol, obj: symbol)
 
 load_base(f, l, sel, o) :- value_load(f, l, sel, bk, bs), source_pts(f, bk, bs, o).
-.plan 0:(2,1)
 
 // A field read sees the named field and unknown-key writes. Unknown-key reads see only
 // unknown-key writes, avoiding merges of every struct field. Derive results only for
@@ -230,7 +224,6 @@ reads_field(o, sel, x) :-
   field_read(o, sel),
   value_object(_, o, "map", _, _),
   field_pts(o, "*", x).
-.plan 1:(3,2,1)
 
 // Enumerating a map yields its {key, value} pairs: an element read (`[]`) of a map
 // is a pair the map stands for, `pair <map>`, its key what the map holds under `@key`
@@ -255,24 +248,28 @@ field_pts(cat("pair ", o), "{1}", x) :-
 reads_field(o, "**", x) :- field_read(o, "**"), field_pts(o, _, x).
 
 field_pts(o, sel, x) :- value_field(f, o, sel, sk, s), source_pts(f, sk, s, x).
-.plan 0:(2,1)
 
 // A kept `{:ok, pid}` holds its own instance.
-field_pts(cat("result ", c), "{1}", cat("start ", c)) :-
+field_pts(cat("result ", c), "{1}", i) :-
   kept_fresh(c, _, x),
   start_object(x, _),
-  !pervasive(cat("start ", c)).
+  kept_instance(c, i),
+  !pervasive(i).
+
+// The instance a kept start holds, named by the start's call site. A relation of
+// its own so the negation above reads a column, not a computed value.
+.decl kept_instance(call: symbol, instance: symbol)
+
+kept_instance(c, cat("start ", c)) :- kept_fresh(c, _, _).
 
 // An update keeps the fields it does not set; a cons cell's tail holds
 // the rest of the elements.
 field_pts(o, sel, x) :- update_base(o, b), field_pts(b, sel, x), !value_sets(o, sel).
-.plan 1:(2,1)
 
 // The term an update copies the fields it does not set from.
 .decl update_base(obj: symbol, base: symbol)
 
 update_base(o, b) :- value_base(f, o, bk, bs), source_pts(f, bk, bs, b).
-.plan 0:(2,1)
 
 // Fresh returns
 //
@@ -285,10 +282,8 @@ returns_pts(g, x) :-
   k != "result",
   k != "dict",
   source_pts(g, k, s, x).
-.plan 0:(2,1)
 
 returns_pts(g, x) :- value_return(g, "result", c), value_result(c, g, h), returns_pts(h, x).
-.plan 0:(3,2,1)
 
 // Returning what a library call running a fun answers returns what that call resolves
 // to here, the fun's parameters included (source_pts above).
@@ -308,7 +303,6 @@ returns_pts(g, x) :-
   value_arg(c, g, h, i, "call", sk, s),
   sk != "param",
   source_pts(g, sk, s, x).
-.plan 0:(5,4,2,1,3)
 
 // `func` may return its parameter `pos` as it was passed: directly, or
 // as a callee's result that hands back what `func` passed it there.
@@ -328,7 +322,6 @@ passes(g, j) :-
 
 returns_all(g, x) :- returns_pts(g, x).
 returns_all(g, x) :- passes(g, j), param_pts(g, j, x).
-.plan 0:(2,1)
 returns_all(g, x) :- returns_key(g, k), source_pts(g, "dict", k, x).
 
 // `entry_pts` contains runtime-supplied arguments: init, spawn, child-spec, closure
@@ -338,7 +331,6 @@ returns_all(g, x) :- returns_key(g, k), source_pts(g, "dict", k, x).
 .decl entry_pts(func: symbol, pos: symbol, x: symbol)
 
 entry_pts(g, k, x) :- entry_arg(f, g, k, sk, s), source_pts(f, sk, s, x).
-.plan 0:(2,1)
 
 // Process-start arguments passed to entry functions. Keep these non-call value_arg rows
 // separate from ordinary call arguments.
@@ -348,7 +340,6 @@ entry_arg(f, g, k, sk, s) :- value_arg(_, f, g, k, via, sk, s), via != "call".
 
 param_pts(g, k, x) :- entry_pts(g, k, x).
 param_pts(g, k, x) :- value_arg(_, f, g, k, "call", sk, s), source_pts(f, sk, s, x).
-.plan 0:(2,1)
 
 // A registration (register/2, :global.register_name/2, Registry.register/3,
 // or a start with a literal name) stores the pid it resolves to.
@@ -617,14 +608,12 @@ process_call(f, a, id, kind, p) :-
   targets_param(g, k, kind, id),
   source_pts(f, sk, s, p),
   process(p).
-.plan 0:(2,1,3,4)
 
 process_call(f, a, id, kind, p) :-
   value_arg(a, f, g, k, "call", "param", j),
   targets_param(g, k, kind, id),
   entry_pts(f, j, p),
   process(p).
-.plan 0:(2,1,3,4)
 
 // A helper reading a field of its parameter: the caller's term's field.
 process_call(f, a, id, kind, p) :-
@@ -633,7 +622,6 @@ process_call(f, a, id, kind, p) :-
   targets_field(g, k, sel, kind, id),
   source_field_pts(f, sk, s, sel, p),
   process(p).
-.plan 0:(2,1,3,4)
 
 process_call(f, a, id, kind, p) :-
   value_arg(a, f, g, k, "call", "param", j),
@@ -641,7 +629,6 @@ process_call(f, a, id, kind, p) :-
   entry_pts(f, j, o),
   reads_field(o, sel, p),
   process(p).
-.plan 0:(2,1,3,4,5), 1:(2,1,3,4,5)
 
 // The call, cast or send at `id` in `func` may target `proc`, whoever
 // supplies it.

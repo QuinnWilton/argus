@@ -1,10 +1,10 @@
 defmodule Argus.DlDeclarationsTest do
   @moduledoc """
-  Guards the link between `Argus.Schema` and the Souffle declarations.
+  Guards the link between `Argus.Schema` and the Datalog declarations.
 
   Fact declarations are positional. `.decl remote_call(id: symbol, mod:
   symbol, ...)` has to agree with the column order `Argus.Pipeline.Emit`
-  writes, and Souffle cannot check that — two `symbol` columns swapped
+  writes, and FlowLog cannot check that — two `symbol` columns swapped
   parse fine and silently join the wrong values, producing findings that
   are wrong rather than absent. Before these files were generated, the
   declarations were the one part of the schema with no mechanical link
@@ -14,23 +14,23 @@ defmodule Argus.DlDeclarationsTest do
 
   use ExUnit.Case, async: true
 
-  alias Argus.{Analysis, Schema, Souffle}
+  alias Argus.{Analysis, Schema}
 
   defp priv_dl, do: Path.join(:code.priv_dir(:argus_beam), "dl")
 
   describe "generated declaration files" do
     test "base.dl matches Argus.Schema.layer_1/0" do
-      assert File.read!(Path.join(priv_dl(), "base.dl")) == Schema.souffle_decls(:layer_1),
+      assert File.read!(Path.join(priv_dl(), "base.dl")) == Schema.datalog_decls(:layer_1),
              "priv/dl/base.dl is stale — run `mix argus.gen.dl` and commit the result"
     end
 
     test "layer2.dl matches Argus.Schema.layer_2/0" do
-      assert File.read!(Path.join(priv_dl(), "layer2.dl")) == Schema.souffle_decls(:layer_2),
+      assert File.read!(Path.join(priv_dl(), "layer2.dl")) == Schema.datalog_decls(:layer_2),
              "priv/dl/layer2.dl is stale — run `mix argus.gen.dl` and commit the result"
     end
 
     test "priors.dl matches Argus.Schema.layer_3/0" do
-      assert File.read!(Path.join(priv_dl(), "priors.dl")) == Schema.souffle_decls(:layer_3),
+      assert File.read!(Path.join(priv_dl(), "priors.dl")) == Schema.datalog_decls(:layer_3),
              "priv/dl/priors.dl is stale — run `mix argus.gen.dl` and commit the result"
     end
 
@@ -38,7 +38,7 @@ defmodule Argus.DlDeclarationsTest do
       declared =
         [:layer_1, :layer_2, :layer_3]
         |> Enum.flat_map(fn layer ->
-          Regex.scan(~r/^\.decl\s+([a-z_0-9]+)\(/m, Schema.souffle_decls(layer))
+          Regex.scan(~r/^\.decl\s+([a-z_0-9]+)\(/m, Schema.datalog_decls(layer))
           |> Enum.map(fn [_, name] -> String.to_atom(name) end)
         end)
 
@@ -115,8 +115,9 @@ defmodule Argus.DlDeclarationsTest do
   describe "partial functors" do
     # `to_number` and `substr` abort the whole program on input they cannot
     # handle, rather than failing the one rule. A guard in a sibling
-    # conjunct does not protect them: Souffle promises no conjunct order,
-    # and the magic-set transform demonstrably reorders — seven of sixteen
+    # conjunct does not protect them: a planner promises no conjunct order
+    # (FlowLog's pushes filters and semijoins down; Souffle's magic-set
+    # transform reordered too) — seven of sixteen
     # analyses aborted with `to_number("mic")` before the forwarding
     # encoding moved out of a string and into its own number column.
     #
@@ -149,17 +150,18 @@ defmodule Argus.DlDeclarationsTest do
                Enum.join(offenders, "\n") <>
                "\n\nEncode the structure as a column instead of parsing it back " <>
                "out of a string. A guard in a sibling conjunct is not a " <>
-               "precondition — Souffle may schedule the functor first."
+               "precondition — the planner may schedule the functor first."
     end
   end
 
   describe "analysis input sets" do
-    @describetag :souffle
+    @describetag :flowlog
 
-    # Resolved from Souffle's own transformed RAM, so this is what each
-    # analysis genuinely reads, not what it declares — declaring the whole
-    # schema is free precisely because Souffle prunes input relations no
-    # rule touches, and this test is the evidence for that claim.
+    # Resolved from the program's manifest (FlowLog's front end, after it
+    # prunes), so this is what each analysis genuinely reads, not what it
+    # declares — declaring the whole schema is free precisely because
+    # FlowLog prunes input relations no rule touches, and this test is the
+    # evidence for that claim.
     #
     # Pinned deliberately. These sets are the unit of incremental work: a
     # consumer re-solves an analysis when any relation here changes, so an
@@ -189,22 +191,16 @@ defmodule Argus.DlDeclarationsTest do
     # when it has no rows, and nothing for one it does not: a relation an
     # analysis declares and its program never outputs is absent from
     # every solve's results, read as no rows by the finding builders. So
-    # each declared output is one the program writes, as the transformed
-    # RAM says (what actually executes, includes and all).
+    # each declared output is one the program writes, as its manifest says
+    # (what the engine actually writes, includes and all).
     test "every output relation an analysis declares is one its program writes" do
       unwritten =
         Analysis.builtin_analysis_modules()
         |> Task.async_stream(
           fn mod ->
             {:ok, rules} = Analysis.Catalog.rules_path(mod.name())
-            {ram, 0} = System.cmd(Souffle.executable(), ["--show=transformed-ram", rules])
-
-            written =
-              for [_io, name, attrs] <-
-                    Regex.scan(~r/IO\s+([a-zA-Z_][a-zA-Z0-9_]*)\s+\(([^)]*)\)/, ram),
-                  attrs =~ ~s(operation="output"),
-                  into: MapSet.new(),
-                  do: name
+            {:ok, manifest} = Argus.FlowLog.manifest(rules)
+            written = MapSet.new(manifest.outputs, &Path.rootname(&1.file))
 
             declared = Enum.map(mod.output_relations(), &Atom.to_string(&1.name))
             {mod.name(), Enum.reject(declared, &MapSet.member?(written, &1))}

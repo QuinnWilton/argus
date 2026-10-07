@@ -14,7 +14,7 @@ defmodule Argus.Analyses.TaskLibraryFlowTest do
 
   use ExUnit.Case, async: true
   use ExUnitProperties
-  @moduletag :souffle
+  @moduletag :flowlog
   @moduletag timeout: 600_000
 
   alias Argus.Extractors.TermFlow.Library

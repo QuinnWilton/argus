@@ -1,13 +1,11 @@
-defmodule Argus.Souffle.ProgramTest do
+defmodule Argus.Dl.ProgramTest do
   @moduledoc """
-  A Datalog program as a solve reads it (`Argus.Souffle.Program`), what
-  it reads (`Argus.Souffle.input_relations/2`), and the solver's version
-  (`Argus.Souffle.version/1`).
+  A Datalog program as a solve reads it (`Argus.Dl.Program`), and what
+  it reads (`Argus.FlowLog.input_relations/2`).
   """
   use ExUnit.Case, async: true
 
-  alias Argus.Souffle
-  alias Argus.Souffle.Program
+  alias Argus.Dl.Program
 
   @moduletag :tmp_dir
 
@@ -21,7 +19,7 @@ defmodule Argus.Souffle.ProgramTest do
     """)
 
     File.write!(Path.join(dir, "p.dl"), """
-    .decl edge(x: symbol, y: symbol)
+    .decl edge(x: symbol, y: symbol) mutable
     .input edge
     .decl path(x: symbol, y: symbol)
     .output path
@@ -35,39 +33,26 @@ defmodule Argus.Souffle.ProgramTest do
   end
 
   describe "input files" do
-    @describetag :souffle
+    @describetag :flowlog
 
     test "are the files the program reads, named by a filename it gives",
          %{tmp_dir: tmp} do
       rules = Path.join(tmp, "q.dl")
 
       File.write!(rules, """
-      .decl a(x: symbol)
+      .decl a(x: symbol) mutable
       .input a
-      .decl b(x: symbol)
+      .decl b(x: symbol) mutable
       .input b(filename="other.facts")
-      .decl unused(x: symbol)
+      .decl unused(x: symbol) mutable
       .input unused
       .decl out(x: symbol)
       .output out
       out(x) :- a(x), b(x).
       """)
 
-      assert {:ok, ["a.facts", "other.facts"]} = Souffle.input_files(rules)
-      assert {:ok, ["a", "b"]} = Souffle.input_relations(rules)
-    end
-  end
-
-  describe "version/1" do
-    test "is what the solver says, once per VM for each binary", %{tmp_dir: tmp} do
-      # A stub that prints its arguments: not a link to echo, which
-      # coreutils' echo answers `--version` with its own.
-      bin = Path.join(tmp, "souffle")
-      File.write!(bin, "#!/bin/sh\nprintf '%s\\n' \"$*\"\n")
-      File.chmod!(bin, 0o755)
-
-      assert Souffle.version(bin) == "--version\n"
-      assert Souffle.version(bin) == Souffle.version(bin)
+      assert {:ok, ["a.facts", "other.facts"]} = Argus.FlowLog.input_files(rules)
+      assert {:ok, ["a", "b"]} = Argus.FlowLog.input_relations(rules)
     end
   end
 

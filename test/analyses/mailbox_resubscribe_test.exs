@@ -49,7 +49,7 @@ defmodule Argus.Analyses.MailboxResubscribeTest do
   end
 
   describe "repeated_subscription" do
-    @describetag :souffle
+    @describetag :flowlog
 
     test "a server that subscribes on every tick; subscribing in init/1 is once", ctx do
       assert repeated(ctx, [Resubscribe.Ticker]) == [
@@ -83,7 +83,7 @@ defmodule Argus.Analyses.MailboxResubscribeTest do
   end
 
   describe "repeated_subscription, beside its quieting condition" do
-    @describetag :souffle
+    @describetag :flowlog
 
     test "an unsubscribe only at stop, in another callback or another entry's helper leaves it",
          ctx do

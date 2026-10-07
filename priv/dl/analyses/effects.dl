@@ -188,7 +188,7 @@ higher_order_pure(func) :-
   reaches_opaque(func, "dynamic_call", "call_fun", _, _).
 
 // A call instruction and call-graph edge from `caller` to declared-pure `callee`.
-.decl calls_declared_pure(site: symbol, caller: symbol, callee: symbol) inline
+.decl calls_declared_pure(site: symbol, caller: symbol, callee: symbol)
 
 calls_declared_pure(site, caller, callee) :-
   call_edge(caller, callee),
@@ -278,7 +278,7 @@ irreversible_write_in_transaction(opened, caller, repo, category, api, via, site
 // A write outside the database's control, using the durable effect categories in
 // `clientlib/effect_model.dl`. Excludes logging and read-only effects such as
 // configuration, dictionary, clock, or random reads.
-.decl irreversible_write(site: symbol, func: symbol, api: symbol, category: symbol) inline
+.decl irreversible_write(site: symbol, func: symbol, api: symbol, category: symbol)
 
 irreversible_write(site, func, api, category) :-
   impure_call(site, func, api, category, "write"),
@@ -286,13 +286,13 @@ irreversible_write(site, func, api, category) :-
 
 // An effect of this category is on the process table: a message, a
 // start, a name.
-.decl on_process_table(category: symbol) inline
+.decl on_process_table(category: symbol)
 
 on_process_table("process").
 
 // Transaction work includes the body, same-process callees, and tasks it awaits.
 // Awaited external requests hold the transaction and connection until completion.
-.decl runs_in_transaction(body: symbol, via: symbol) inline
+.decl runs_in_transaction(body: symbol, via: symbol)
 
 runs_in_transaction(body, via) :- body_reach.reaches(body, via).
 
@@ -332,7 +332,7 @@ starts_on(caller, fun) :-
 // funs. External writes still count after detachment. Process-table effects in detached
 // work are covered by the start finding and are not reported again. Call-graph reach
 // alone does not establish when a stored fun runs.
-.decl runs_from_transaction(body: symbol, via: symbol) inline
+.decl runs_from_transaction(body: symbol, via: symbol)
 
 runs_from_transaction(body, via) :- started_reach.reaches(body, via).
 

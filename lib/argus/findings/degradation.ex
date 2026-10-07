@@ -33,19 +33,19 @@ defmodule Argus.Findings.Degradation do
 
   @doc "The sentence a `degraded` entry explains `reason` with."
   @spec detail(atom(), term()) :: String.t()
-  def detail(name, :souffle_timeout) do
-    "The #{name} analysis timed out in Souffle and was skipped. " <>
-      "Raise :souffle_timeout to include it."
+  def detail(name, :flowlog_timeout) do
+    "The #{name} analysis timed out in its engine and was skipped. " <>
+      "Raise :timeout to include it."
   end
 
-  def detail(name, {:souffle_error, exit_code, _output}) do
-    "The #{name} analysis failed: Souffle exited with status #{exit_code}."
+  def detail(name, {:flowlog_unavailable, reason}) do
+    "The #{name} analysis did not run: " <> Argus.FlowLog.Toolchain.describe(reason)
   end
 
-  def detail(name, {:points_to, :souffle_timeout}) do
+  def detail(name, {:points_to, :flowlog_timeout}) do
     "The #{name} analysis did not run: the process points-to it reads " <>
-      "(priv/dl/points_to.dl) did not finish within :souffle_timeout. " <>
-      "Raise :souffle_timeout to include it."
+      "(priv/dl/points_to.dl) did not finish within :timeout. " <>
+      "Raise :timeout to include it."
   end
 
   def detail(name, {:points_to, {:over_budget, over}}) do
@@ -60,10 +60,10 @@ defmodule Argus.Findings.Degradation do
 
   def detail(name, {:points_to, reason}) do
     "The #{name} analysis did not run: the process points-to it reads " <>
-      "(priv/dl/points_to.dl) could not be derived: #{inspect(reason)}."
+      "(priv/dl/points_to.dl) could not be derived: #{Argus.FlowLog.describe_error(reason)}."
   end
 
   def detail(name, reason) do
-    "The #{name} analysis did not run: #{inspect(reason)}."
+    "The #{name} analysis did not run: #{Argus.FlowLog.describe_error(reason)}."
   end
 end

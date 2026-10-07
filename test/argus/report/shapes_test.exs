@@ -60,7 +60,7 @@ defmodule Argus.Report.ShapesTest do
   test "the notices, in one wording", %{result: result, config: config, cwd: cwd} do
     notices = Report.Notice.from_result(result, config, cwd)
 
-    assert [%{kind: :souffle_missing, severity: :info}, %{kind: :degraded} | rest] = notices
+    assert [%{kind: :engine_unavailable, severity: :info}, %{kind: :degraded} | rest] = notices
 
     assert Enum.map(rest, & &1.kind) ==
              [:extraction_error, :extraction_error, :extraction_error, :duplicate]

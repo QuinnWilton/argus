@@ -2,9 +2,9 @@ defmodule Argus.Analysis.PointsToBudgetTest do
   @moduledoc """
   Which points-to stage runs is a function of the facts
   (`Argus.Analysis.Extraction.derive_points_to/2`): the exact stage
-  within its row budget (`priv/dl/points_to.dl`'s `.limitsize`), the
-  bounded one past it, and a failure, never a switch of stage, when the
-  solver runs out of time.
+  within its row budget (`priv/dl/points_to.dl`'s `points_to_budget`,
+  counted over the finished fixpoint), the bounded one past it, and a
+  failure, never a switch of stage, when the engine runs out of time.
 
   The programs are TermFlow's summaries written by hand: a merge
   function `merge/1` whose parameter every caller hands a term holding
@@ -15,12 +15,17 @@ defmodule Argus.Analysis.PointsToBudgetTest do
   outgrew the exact stage on Ash. A call in `merge/1` on the term's
   field reaches the process from every caller.
   """
-  use ExUnit.Case, async: true
-  @moduletag :souffle
+  # Not async: two tests solve copies of the stage programs as argus's own
+  # (`:dl_root`, application-wide) or under a failing engine
+  # (`Argus.Test.FailingEngine`, a VM-wide variable).
+  use ExUnit.Case, async: false
+  @moduletag :flowlog
+  # The copies' engines are built once per version of the rules.
+  @moduletag timeout: 1_800_000
 
   import ExUnit.CaptureLog
 
-  alias Argus.{Analysis, Souffle}
+  alias Argus.Analysis
   alias Argus.Test.Files
   alias Argus.Test.Fixtures.PidFlow
 
@@ -36,7 +41,7 @@ defmodule Argus.Analysis.PointsToBudgetTest do
   # for the merged heap's summaries.
   defp merged_heap!(dir, {callers, helpers}) do
     File.mkdir_p!(dir)
-    {:ok, inputs} = Souffle.input_files(Analysis.points_to_rules_path())
+    {:ok, inputs} = Argus.FlowLog.input_files(Analysis.points_to_rules_path())
     for file <- inputs, do: File.write!(Path.join(dir, file), "")
 
     merge = "M:merge/1"
@@ -72,43 +77,33 @@ defmodule Argus.Analysis.PointsToBudgetTest do
     File.write!(Path.join(dir, relation <> ".facts"), Argus.Tsv.encode(rows))
   end
 
-  # A solver that sleeps before every run.
-  defp slowed!(dir, seconds) do
-    bin = Path.join(dir, "souffle-slowed")
+  # A copy of argus's rules under `dir`, its stage programs edited by
+  # `edit` (`%{relative_path => fun(text) -> text}`): what an engine
+  # built for them answers.
+  defp rules_copy!(dir, edits) do
+    root = Path.join(dir, "dl")
+    File.cp_r!(Argus.Dl.root(), root)
 
-    File.write!(bin, """
-    #!/bin/sh
-    sleep #{seconds}
-    exec #{System.find_executable("souffle")} "$@"
-    """)
+    for {file, edit} <- edits do
+      path = Path.join(root, file)
+      File.write!(path, edit.(File.read!(path)))
+    end
 
-    File.chmod!(bin, 0o755)
-    bin
+    root
   end
 
-  # A solver that says every solve of `program` (a pattern of its file
-  # name) outgrew the budget, whatever it found.
-  defp overflowing!(dir, program) do
-    bin = Path.join(dir, "souffle-overflowing")
+  # Both stages held to a budget every program here outgrows.
+  defp tiny_budget(text),
+    do: String.replace(text, "points_to_budget(500000).", "points_to_budget(10).")
 
-    File.write!(bin, """
-    #!/bin/sh
-    out=""
-    last=""
-    prev=""
-    for arg in "$@"; do
-      if [ "$prev" = "-D" ]; then out="$arg"; fi
-      prev="$arg"
-      last="$arg"
-    done
-    #{System.find_executable("souffle")} "$@" || exit $?
-    case "$out:$last" in
-      ?*:*#{program}) printf 'source_pts\\t500000\\t500000\\n' > "$out/points_to_overflow.csv" ;;
-    esac
-    """)
+  # The exact stage says it outgrew its budget, whatever it found; the
+  # bounded one (which includes it) runs as it would.
+  defp exact_overflows(text) do
+    text <>
+      """
 
-    File.chmod!(bin, 0o755)
-    bin
+      points_to_overflow("source_pts", 1, 0) :- stage_mode("exact"), !stage_mode("bounded").
+      """
   end
 
   defp staged(dir) do
@@ -158,17 +153,15 @@ defmodule Argus.Analysis.PointsToBudgetTest do
   end
 
   @tag :capture_log
-  test "which stage runs is a function of the facts, not of the solver's speed",
+  test "which stage runs is a function of the facts, not of the engine's speed",
        %{tmp_dir: tmp} do
-    slow = slowed!(tmp, 1)
-
     for {name, size} <- [within: @within, over: @over] do
       fast = merged_heap!(Path.join(tmp, "#{name}-fast"), size)
       slowed = merged_heap!(Path.join(tmp, "#{name}-slow"), size)
 
-      assert :ok = Analysis.derive_points_to(fast)
-      assert :ok = Analysis.derive_points_to(slowed, souffle_bin: slow)
-      assert staged(slowed) == staged(fast), "#{name}: a slower solver staged other rows"
+      assert :ok = Analysis.derive_points_to(fast, workers: 4)
+      assert :ok = Analysis.derive_points_to(slowed, workers: 1)
+      assert staged(slowed) == staged(fast), "#{name}: a slower engine staged other rows"
     end
   end
 
@@ -176,9 +169,9 @@ defmodule Argus.Analysis.PointsToBudgetTest do
   # it: rows an earlier derivation staged over the same facts are the
   # answer, and another derivation into the directory may be reading
   # them. `fail` derives into a directory and returns the log.
-  defp fails_as_found!(tmp, name, fail) do
-    fresh = merged_heap!(Path.join(tmp, name), @within)
-    staged_dir = merged_heap!(Path.join(tmp, name <> "-staged"), @within)
+  defp fails_as_found!(tmp, name, size \\ @within, fail) do
+    fresh = merged_heap!(Path.join(tmp, name), size)
+    staged_dir = merged_heap!(Path.join(tmp, name <> "-staged"), size)
     assert :ok = Analysis.derive_points_to(staged_dir)
     before = staged(staged_dir)
 
@@ -194,25 +187,31 @@ defmodule Argus.Analysis.PointsToBudgetTest do
   end
 
   test "a stage that runs out of time fails and stages nothing", %{tmp_dir: tmp} do
-    slow = slowed!(tmp, 5)
-
+    # Over the budget, the exact fixpoint alone takes far longer than this.
     log =
-      fails_as_found!(tmp, "late", fn dir ->
-        assert {:error, {:points_to, :souffle_timeout}} =
-                 Analysis.derive_points_to(dir, souffle_bin: slow, souffle_timeout: 500)
+      fails_as_found!(tmp, "late", @over, fn dir ->
+        assert {:error, {:points_to, :flowlog_timeout}} =
+                 Analysis.derive_points_to(dir, timeout: 50)
       end)
 
-    assert log =~ "did not finish within :souffle_timeout"
+    assert log =~ "did not finish within the solve's timeout"
   end
 
   test "a stage that outgrows the budget even bounded fails and stages nothing",
        %{tmp_dir: tmp} do
-    overflowing = overflowing!(tmp, "points_to*.dl")
+    rules = rules_copy!(tmp, %{"points_to.dl" => &tiny_budget/1})
+
+    copies = [
+      rules_path: Path.join(rules, "points_to.dl"),
+      bounded_rules_path: Path.join(rules, "points_to_bounded.dl")
+    ]
 
     log =
       fails_as_found!(tmp, "over-bounded", fn dir ->
-        assert {:error, {:points_to, {:over_budget, [{"source_pts", 500_000, 500_000}]}}} =
-                 Analysis.derive_points_to(dir, souffle_bin: overflowing)
+        assert {:error, {:points_to, {:over_budget, over}}} =
+                 Analysis.derive_points_to(dir, copies)
+
+        assert Enum.any?(over, &match?({"source_pts", rows, 10} when rows >= 10, &1))
       end)
 
     assert log =~ "outgrew its budget even bounded"
@@ -221,22 +220,6 @@ defmodule Argus.Analysis.PointsToBudgetTest do
   describe "through a store" do
     @describetag :cache
 
-    # A solver that answers what a warm run asks and fails any solve.
-    defp no_solves!(dir) do
-      bin = Path.join(dir, "souffle-no-solves")
-
-      File.write!(bin, """
-      #!/bin/sh
-      case " $* " in
-        *" -F "*) echo "no solves here" >&2; exit 4 ;;
-      esac
-      exec #{System.find_executable("souffle")} "$@"
-      """)
-
-      File.chmod!(bin, 0o755)
-      bin
-    end
-
     test "the stage's mode is kept with its outputs, and a warm run solves neither stage",
          %{tmp_dir: tmp} do
       store = Path.join(tmp, "store")
@@ -244,8 +227,8 @@ defmodule Argus.Analysis.PointsToBudgetTest do
       modules =
         for name <- ~w(SafeCall UserA UserB TargetA TargetB), do: Module.concat(PidFlow, name)
 
-      extract = fn bin ->
-        {:ok, dir} = Analysis.extract_facts(modules, [:startup], store: store, souffle_bin: bin)
+      extract = fn ->
+        {:ok, dir} = Analysis.extract_facts(modules, [:startup], store: store)
 
         try do
           {rows(dir, "points_to_mode"), rows(dir, "process_call")}
@@ -260,13 +243,26 @@ defmodule Argus.Analysis.PointsToBudgetTest do
 
       # The exact solve says it outgrew the budget: the bounded one runs,
       # and over these modules finds nothing pervasive.
-      cold = capture_log(fn -> send(self(), extract.(overflowing!(tmp, "points_to.dl"))) end)
-      assert_received {[["bounded"]], ^exact}
-      assert cold =~ "ran it bounded"
+      Application.put_env(
+        :argus_beam,
+        :dl_root,
+        rules_copy!(tmp, %{"points_to.dl" => &exact_overflows/1})
+      )
 
-      warm = capture_log(fn -> send(self(), extract.(no_solves!(tmp))) end)
-      assert_received {[["bounded"]], ^exact}
-      assert warm =~ "ran it bounded"
+      try do
+        cold = capture_log(fn -> send(self(), extract.()) end)
+        assert_received {[["bounded"]], ^exact}
+        assert cold =~ "ran it bounded"
+
+        # Neither stage's engine can run now: a warm run reads both back.
+        Argus.Test.FailingEngine.with(["points_to.dl", "points_to_bounded.dl"], fn ->
+          warm = capture_log(fn -> send(self(), extract.()) end)
+          assert_received {[["bounded"]], ^exact}
+          assert warm =~ "ran it bounded"
+        end)
+      after
+        Application.delete_env(:argus_beam, :dl_root)
+      end
     end
   end
 end

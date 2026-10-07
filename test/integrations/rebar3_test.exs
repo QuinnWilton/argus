@@ -12,7 +12,7 @@ defmodule Argus.Integrations.Rebar3Test do
 
   use ExUnit.Case, async: false
   @moduletag :rebar3
-  @moduletag :souffle
+  @moduletag :flowlog
   @moduletag timeout: 600_000
 
   alias Argus.Test.Projects

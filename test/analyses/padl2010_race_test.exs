@@ -6,7 +6,7 @@ defmodule Argus.Analyses.Padl2010RaceTest do
   `test/fixtures/erl/` keep the paper's code.
   """
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
   alias Argus.Test.Batch
 

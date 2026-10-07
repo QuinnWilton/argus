@@ -16,7 +16,7 @@ defmodule Argus.Soundness.GatedOnceTest do
   away"). The timer loop rule reads the same sites.
   """
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
   import Argus.Test.Soundness, only: [fired: 2]
 

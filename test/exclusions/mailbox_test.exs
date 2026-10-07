@@ -5,7 +5,7 @@ defmodule Argus.Exclusions.MailboxTest do
   Fixtures: test/fixtures/exclusions/mailbox.ex.
   """
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
   import Argus.Test.Soundness, only: [fired: 2]
 

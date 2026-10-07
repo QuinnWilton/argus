@@ -42,14 +42,15 @@ defmodule Argus.Findings do
 
   The promise is degrade-, never crash-, and never silently:
 
-  - Souffle missing from PATH → `{:error, :souffle_not_found}` up front.
+  - No Rust to build the FlowLog engines with → `{:error,
+    {:flowlog_unavailable, reason}}` up front (`Argus.FlowLog.Toolchain`).
   - Fact extraction failing (unknown module, unreadable `.beam`) →
     `{:error, reason}` — nothing could have run.
-  - A single analysis erroring (rules bug, Souffle timeout) → a
+  - A single analysis erroring (rules bug, engine timeout) → a
     `degraded` entry naming the analysis and why, while every other
     analysis still runs and reports. Stage 0 failing grounds every
     analysis, so each gets that entry; the points-to stage failing
-    (past `:souffle_timeout`, or past its row budget even bounded) grounds
+    (past `:timeout`, or past its row budget even bounded) grounds
     the analyses that read it. A points-to stage that runs bounded is no
     failure: which stage runs is a function of the facts, not of time
     (`Argus.Analysis.Extraction.derive_points_to/2`), and a warning says
@@ -240,8 +241,8 @@ defmodule Argus.Findings do
     an edit runs only what the edit reached (`Argus.Run`).
   - `:concurrency` — analyses placed side by side (default: the
     scheduler count, capped at 4).
-  - `:souffle_bin`, `:souffle_timeout` — the solver, and how long a
-    solve may run.
+  - `:timeout` — how long a solve's commit may run (default five
+    minutes); `:workers` — dataflow threads per engine.
   - `:priors`, `:priors_opts` — the layer-3 priors (`Argus.Priors`).
 
   The batch pipeline's options went with it in 0.20 (`:facts_dir`,

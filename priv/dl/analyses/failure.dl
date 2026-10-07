@@ -67,13 +67,13 @@ remote_pid_probe(func, anchor, probe, bif, api, kind) :-
 
 // The BIF at `probe`, in `prober`, acts on a process of this node only,
 // and raises badarg on another node's pid (process_probe_source, remote_pids.dl).
-.decl probes_local_process(probe: symbol, prober: symbol) inline
+.decl probes_local_process(probe: symbol, prober: symbol)
 
 probes_local_process(probe, prober) :- process_probe_source(probe, prober, _, _, _).
 
 // `func` passes a possibly remote PID from origin to a BIF, directly or through
 // remote_probe. `anchor` is the BIF or the call into its helper.
-.decl hands_remote_pid(func: symbol, anchor: symbol, probe: symbol, origin: symbol) inline
+.decl hands_remote_pid(func: symbol, anchor: symbol, probe: symbol, origin: symbol)
 
 hands_remote_pid(func, anchor, probe, origin) :- remote_probe(func, anchor, probe, origin).
 
@@ -121,17 +121,17 @@ rpc_undefined(func, anchor, rpc, callee, "private") :-
 // The module is among the analyzed BEAMs, so its definitions and exports are known.
 // Assumes the same release on every node. Unseen modules cannot establish a missing RPC
 // target; `defines` already implies visibility for private-target checks.
-.decl code_is_known(module: symbol) inline
+.decl code_is_known(module: symbol)
 
 code_is_known(module) :- program_module(module).
 
 // The module defines the function, exported or not.
-.decl defines(module: symbol, func: symbol) inline
+.decl defines(module: symbol, func: symbol)
 
 defines(module, func) :- function_def(func, module, _, _, _).
 
 // The module exports the function.
-.decl exports(module: symbol, func: symbol) inline
+.decl exports(module: symbol, func: symbol)
 
 exports(module, func) :- function_def(func, module, _, _, 1).
 
@@ -157,13 +157,13 @@ resource_dropped(func, open, api, drop) :-
 
 // The call at `open`, in `func`, opens a file, socket or port that some
 // path from it drops (handle_dropped).
-.decl opens_handle(open: symbol, func: symbol) inline
+.decl opens_handle(open: symbol, func: symbol)
 
 opens_handle(open, func) :- handle_dropped(open, func, _, _).
 
 // A returning path drops the opened handle without closing, returning, storing or
 // transferring it. Reads, writes, sends and tests alone do not release it.
-.decl loses_handle(open: symbol, drop: symbol) inline
+.decl loses_handle(open: symbol, drop: symbol)
 
 loses_handle(open, drop) :- handle_dropped(open, _, _, drop).
 
@@ -184,14 +184,14 @@ unhandled_failure(func, try, "rescue", "", guard_end) :-
 
 // The try at `try` catches every exception without filtering or
 // re-raising (bare_rescue).
-.decl discards_every_exception(try: symbol, func: symbol) inline
+.decl discards_every_exception(try: symbol, func: symbol)
 
 discards_every_exception(try, func) :- bare_rescue(try, func, _).
 
 // A try covering only boundary operations or logging, directly or through a client API,
 // handles expected external failures. Library-generated catch-alls are also excluded
 // through `library_written`.
-.decl protects_only_boundaries(try: symbol, func: symbol) inline
+.decl protects_only_boundaries(try: symbol, func: symbol)
 
 protects_only_boundaries(try, func) :- try_boundary(try, func).
 protects_only_boundaries(try, func) :- boundary_through_api(try, func).
@@ -258,7 +258,7 @@ exit_target_owner(func, child, sup, sup_site) :-
 
 // An exit/2 signal to another process. Exclude exit/1, represented by target self: it
 // raises locally and remains visible to supervision.
-.decl sends_exit_signal(exit: symbol, func: symbol, target: symbol) inline
+.decl sends_exit_signal(exit: symbol, func: symbol, target: symbol)
 
 sends_exit_signal(exit, func, target) :- exit_call(exit, func, target), target != "self".
 
@@ -301,7 +301,7 @@ unhandled_failure(func, call, "erpc_transport", "", guard_end) :-
   erpc_call_api(callee).
 
 // The try guards an :erpc.call at `call` (try_call).
-.decl guards_erpc_call(try: symbol, func: symbol, call: symbol) inline
+.decl guards_erpc_call(try: symbol, func: symbol, call: symbol)
 
 guards_erpc_call(try, func, call) :-
   try_call(try, func, callee, call, _),
@@ -314,18 +314,18 @@ erpc_call_api(":erpc:call/5").
 
 // A clause of the handler takes an error tagged :exception: the remote
 // function raised, and :erpc re-raises it here.
-.decl unwraps_remote_exception(try: symbol, func: symbol) inline
+.decl unwraps_remote_exception(try: symbol, func: symbol)
 
 unwraps_remote_exception(try, func) :- catch_tag(try, func, "error", ":exception").
 
 // A clause names :erpc: it takes the transport failure.
-.decl takes_transport_failure(try: symbol, func: symbol) inline
+.decl takes_transport_failure(try: symbol, func: symbol)
 
 takes_transport_failure(try, func) :- catch_tag(try, func, "error", ":erpc").
 
 // After comparing :exception the handler reaches a case with no clause
 // for some reason: the one it did not name raises there.
-.decl falls_through_after_exception(try: symbol, func: symbol) inline
+.decl falls_through_after_exception(try: symbol, func: symbol)
 
 falls_through_after_exception(try, func) :- catch_falls_through(try, func, ":exception").
 
@@ -371,7 +371,7 @@ unhandled_failure(func, rpc, "erpc", "boolean", "") :-
 
 // The rpc at `rpc` (`variant`) answers {:badrpc, _} itself when the
 // node is gone (badrpc_variant).
-.decl may_answer_badrpc(rpc: symbol, func: symbol, variant: symbol) inline
+.decl may_answer_badrpc(rpc: symbol, func: symbol, variant: symbol)
 
 may_answer_badrpc(rpc, func, variant) :-
   rpc_call(rpc, func, variant, _),
@@ -389,7 +389,7 @@ badrpc_variant("multicall").
 
 // The answer is matched by shape in a function that compares nothing to
 // :badrpc and has a clause-less exit (rpc_result "case").
-.decl matched_by_shape(rpc: symbol, func: symbol) inline
+.decl matched_by_shape(rpc: symbol, func: symbol)
 
 matched_by_shape(rpc, func) :- rpc_result(rpc, func, "case").
 
@@ -404,14 +404,14 @@ used_as_boolean(rpc, func) :-
   named_as_predicate(func).
 
 // The function's name ends in `?`: its callers test what it returns.
-.decl named_as_predicate(func: symbol) inline
+.decl named_as_predicate(func: symbol)
 
 named_as_predicate(func) :-
   function_def(func, _, name, _, _),
   match(".*\\?", name).
 
 // An :erpc call that waits for its answer.
-.decl erpc_call(rpc: symbol, func: symbol) inline
+.decl erpc_call(rpc: symbol, func: symbol)
 
 erpc_call(rpc, func) :- rpc_call(rpc, func, "erpc", _).
 
@@ -490,7 +490,7 @@ predicate_function(func) :-
 
 // The caller matches the wrapper's result, got at `call`, by shape, in a
 // function with a clause-less exit (result_tested "case").
-.decl matches_result_by_shape(call: symbol, caller: symbol, wrapper: symbol) inline
+.decl matches_result_by_shape(call: symbol, caller: symbol, wrapper: symbol)
 
 matches_result_by_shape(call, caller, wrapper) :- result_tested(call, caller, wrapper, "case").
 
@@ -595,7 +595,7 @@ unchecked_result(func, lookup, "Process.whereis", name) :-
 
 // The Process.whereis at `lookup` looks up the literal `name`, and its
 // result is used without a test against nil (name_lookup "unchecked").
-.decl used_untested(lookup: symbol, func: symbol, name: symbol) inline
+.decl used_untested(lookup: symbol, func: symbol, name: symbol)
 
 used_untested(lookup, func, name) :- name_lookup(lookup, func, "whereis", _, "literal", name, "unchecked").
 
@@ -656,19 +656,19 @@ orphan_process(func, start, "start", "", "") :-
 
 // A spawn with variant `spawn`, excluding linked or monitored starts. `spawn_call`
 // already records its caller, avoiding an `instruction` join.
-.decl bare_spawn(spawn: symbol, func: symbol) inline
+.decl bare_spawn(spawn: symbol, func: symbol)
 
 bare_spawn(spawn, func) :- spawn_call(spawn, func, _, _, _, "spawn", _, _, _, _).
 
 // A proc_lib.start waits for init_ack but leaves subsequent work unlinked and
 // unmonitored. A successful acknowledgement does not supervise the continuing process.
-.decl proc_lib_start(start: symbol, func: symbol) inline
+.decl proc_lib_start(start: symbol, func: symbol)
 
 proc_lib_start(start, func) :- spawn_call(start, func, _, _, _, "start", _, _, _, _).
 
 // The started process continues running after acknowledgement, so a successful start
 // does not imply that its work is complete.
-.decl lives_past_ack(start: symbol, func: symbol) inline
+.decl lives_past_ack(start: symbol, func: symbol)
 
 lives_past_ack(start, func) :-
   process_start(start, func, _, "spawn", started),
@@ -712,7 +712,10 @@ ignored_where_most_are_used(func, site, callee, used, ignored, scope) :-
   !returns_no_failure(callee),
   times_used(callee, scope, used),
   times_ignored(callee, scope, ignored),
-  clear_majority(used, ignored),
+  // A clear majority: three or more sites that agree, and the deviants a
+  // quarter or fewer of the population.
+  used >= 3,
+  ignored * 4 <= used + ignored,
   !reported_elsewhere(site).
 
 // An unguarded call deviates from a clear majority of comparable sites that handle the
@@ -723,7 +726,9 @@ bare_where_most_are_guarded(func, site, callee, guarded, bare, scope) :-
   called_bare(site, func, callee, scope),
   times_guarded(callee, scope, guarded),
   times_bare(callee, scope, bare),
-  clear_majority(guarded, bare).
+  // A clear majority, as above.
+  guarded >= 3,
+  bare * 4 <= guarded + bare.
 
 inconsistent_handling(func, site, callee, "result_checked", used, ignored, scope, "", "", "") :-
   ignored_where_most_are_used(func, site, callee, used, ignored, scope).
@@ -794,7 +799,7 @@ site_scope(site, cat("processes of ", m)) :-
   process_behaviour(b, "loop").
 
 // A target a local helper returns: what that helper builds.
-site_scope(site, cat("what ", g, " returns")) :-
+site_scope(site, cat("what ", cat(g, " returns"))) :-
   call_result(site, f, _, _, "exit", ""),
   process_call_source(site, f, _, "result", r),
   local_call(r, f, g, _).
@@ -1026,30 +1031,18 @@ starts_process(f) :- hands_funs_off(f).
 
 .decl fate_count(callee: symbol, scope: symbol, fate: symbol, n: number)
 
-fate_count(callee, t, fate, n) :-
-  program_site(_, _, callee, fate, _, t),
-  n = count : { program_site(_, _, callee, fate, _, t) }.
+fate_count(callee, t, fate, count((a, b, g))) :- program_site(a, b, callee, fate, g, t).
 
 .decl guard_count(callee: symbol, scope: symbol, guard: symbol, n: number)
 
-guard_count(callee, t, guard, n) :-
-  program_site(_, _, callee, _, guard, t),
-  n = count : { program_site(_, _, callee, _, guard, t) }.
-
-// The program's belief is its clear majority: three or more sites that
-// agree, and the deviants a quarter or fewer of the population.
-.decl clear_majority(agree: number, deviate: number) inline
-
-clear_majority(agree, deviate) :-
-  agree >= 3,
-  deviate * 4 <= agree + deviate.
+guard_count(callee, t, guard, count((a, b, fate))) :- program_site(a, b, callee, fate, guard, t).
 
 // How many of the callee's sites in `scope` bind its result, drop it,
 // guard the call with a try, or make it bare.
-.decl times_used(callee: symbol, scope: symbol, n: number) inline
-.decl times_ignored(callee: symbol, scope: symbol, n: number) inline
-.decl times_guarded(callee: symbol, scope: symbol, n: number) inline
-.decl times_bare(callee: symbol, scope: symbol, n: number) inline
+.decl times_used(callee: symbol, scope: symbol, n: number)
+.decl times_ignored(callee: symbol, scope: symbol, n: number)
+.decl times_guarded(callee: symbol, scope: symbol, n: number)
+.decl times_bare(callee: symbol, scope: symbol, n: number)
 
 times_used(c, t, n) :- fate_count(c, t, "used", n).
 times_ignored(c, t, n) :- fate_count(c, t, "ignored", n).
@@ -1058,8 +1051,8 @@ times_bare(c, t, n) :- guard_count(c, t, "bare", n).
 
 // The one site in question, its result dropped or the call made bare,
 // and the population (`scope`) it is judged in.
-.decl result_ignored(site: symbol, func: symbol, callee: symbol, scope: symbol) inline
-.decl called_bare(site: symbol, func: symbol, callee: symbol, scope: symbol) inline
+.decl result_ignored(site: symbol, func: symbol, callee: symbol, scope: symbol)
+.decl called_bare(site: symbol, func: symbol, callee: symbol, scope: symbol)
 
 result_ignored(site, f, c, scope) :-
   program_site(site, f, c, "ignored", _, _),
@@ -1148,7 +1141,7 @@ caught_upto(site, i + 1, c) :-
   class_order(i, c),
   deviant_catches(site, c).
 
-caught_upto(site, i + 1, cat(s, " ", c)) :-
+caught_upto(site, i + 1, cat(s, cat(" ", c))) :-
   caught_upto(site, i, s),
   s != "",
   class_order(i, c),

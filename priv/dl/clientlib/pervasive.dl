@@ -14,8 +14,8 @@
 // under that field, and Deep has unknown path. Fields retain term shape, but individual
 // terms are merged per source. Stores move leaves down; loads move them up or retain
 // Deep. Uses accept Top or Deep.
-.type CoarseField = [sel: symbol, kind: symbol, tag: symbol, arity: symbol]
-.type Reach = Top {} | Under {at: CoarseField} | Below {at: CoarseField} | Deep {}
+.type CoarseField = (sel: symbol, kind: symbol, tag: symbol, arity: symbol)
+.type Reach = (tag: symbol, at: CoarseField)
 
 .decl leaf(x: symbol)
 
@@ -34,62 +34,89 @@ leaf(t) :- stage_mode("bounded"), table_alloc(_, _, t).
 coarse_shape(o, kind, tag, ar) :- stage_mode("bounded"), value_object(_, o, kind, tag, ar).
 
 .decl coarse_top(r: Reach)
+.decl coarse_top_tag(tag: symbol)
 
-coarse_top($Top()).
-coarse_top($Deep()).
+coarse_top_tag("top").
+coarse_top_tag("deep").
 
-coarse(f, "proc", p, $Top(), p) :- stage_mode("bounded"), process_start(_, f, p, _, _).
-coarse(f, "self", "self", $Top(), p) :- stage_mode("bounded"), self_pid(f, p).
-coarse(f, "table", t, $Top(), t) :- stage_mode("bounded"), table_alloc(_, f, t).
-coarse(f, "name", n, $Top(), p) :- reads_name(f, n), coarse_named(n, p).
+coarse_top(r) :- coarse_top_tag(t), r = (t, ("", "", "", "")).
+
+coarse(f, "proc", p, ("top", ("", "", "", "")), p) :- stage_mode("bounded"), process_start(_, f, p, _, _).
+coarse(f, "self", "self", ("top", ("", "", "", "")), p) :- stage_mode("bounded"), self_pid(f, p).
+coarse(f, "table", t, ("top", ("", "", "", "")), t) :- stage_mode("bounded"), table_alloc(_, f, t).
+coarse(f, "name", n, ("top", ("", "", "", "")), p) :- reads_name(f, n), coarse_named(n, p).
 coarse(f, "dict", k, r, x) :- dict_read(f, k, g, sk, s), coarse(g, sk, s, r, x).
 
 // A store: one field further down.
-coarse(f, "obj", o, $Under([sel, kind, tag, ar]), x) :-
+coarse(f, "obj", o, ("under", (sel, kind, tag, ar)), x) :-
   value_field(f, o, sel, sk, s),
   coarse(f, sk, s, r, x),
-  r = $Top(),
+  r = ("top", ("", "", "", "")),
   coarse_shape(o, kind, tag, ar).
 
-coarse(f, "obj", o, $Below([sel, kind, tag, ar]), x) :-
+coarse(f, "obj", o, ("below", (sel, kind, tag, ar)), x) :-
   value_field(f, o, sel, sk, s),
   coarse(f, sk, s, r, x),
-  r != $Top(),
+  r != ("top", ("", "", "", "")),
   coarse_shape(o, kind, tag, ar).
+
+// The field a leaf sits under or below, with the tag and selector as columns of their
+// own: a negation reads columns, not a value taken apart from a tuple.
+.decl coarse_field(func: symbol, src_kind: symbol, src: symbol, tag: symbol, sel: symbol, x: symbol)
+
+coarse_field(f, sk, s, t, sel, x) :- coarse(f, sk, s, r, x), r = (t, at), at = (sel, _, _, _).
 
 // An update keeps the fields it does not set, as fields of its own shape.
-coarse(f, "obj", o, $Under([sel, kind, tag, ar]), x) :-
+coarse(f, "obj", o, ("under", (sel, kind, tag, ar)), x) :-
   value_base(f, o, bk, bs),
-  coarse(f, bk, bs, $Under([sel, _, _, _]), x),
+  coarse_field(f, bk, bs, "under", sel, x),
   !value_sets(o, sel),
   coarse_shape(o, kind, tag, ar).
 
-coarse(f, "obj", o, $Below([sel, kind, tag, ar]), x) :-
+coarse(f, "obj", o, ("below", (sel, kind, tag, ar)), x) :-
   value_base(f, o, bk, bs),
-  coarse(f, bk, bs, $Below([sel, _, _, _]), x),
+  coarse_field(f, bk, bs, "below", sel, x),
   !value_sets(o, sel),
   coarse_shape(o, kind, tag, ar).
 
-coarse(f, "obj", o, $Deep(), x) :- value_base(f, o, bk, bs), coarse(f, bk, bs, $Deep(), x).
+coarse(f, "obj", o, ("deep", ("", "", "", "")), x) :- value_base(f, o, bk, bs), coarse(f, bk, bs, reach_1, x),
+  reach_1 = ("deep", ("", "", "", "")).
 
 // A load: the field, or a map's field under a key not known.
-coarse(f, "load", l, $Top(), x) :-
+coarse(f, "load", l, ("top", ("", "", "", "")), x) :-
   value_load(f, l, sel, bk, bs),
-  coarse(f, bk, bs, $Under([sel, _, _, _]), x).
+  coarse(f, bk, bs, reach_1, x),
+  reach_1 = (reach_1_tag, reach_1_at),
+  reach_1_at = (sel, _, _, _),
+  reach_1_tag = "under".
 
-coarse(f, "load", l, $Top(), x) :-
+coarse(f, "load", l, ("top", ("", "", "", "")), x) :-
   value_load(f, l, _, bk, bs),
-  coarse(f, bk, bs, $Under(["*", "map", _, _]), x).
+  coarse(f, bk, bs, reach_1, x),
+  reach_1 = (reach_1_tag, reach_1_at),
+  reach_1_at = (reach_1_at_sel, reach_1_at_kind, _, _),
+  reach_1_tag = "under",
+  reach_1_at_sel = "*",
+  reach_1_at_kind = "map".
 
-coarse(f, "load", l, $Deep(), x) :-
+coarse(f, "load", l, ("deep", ("", "", "", "")), x) :-
   value_load(f, l, sel, bk, bs),
-  coarse(f, bk, bs, $Below([sel, _, _, _]), x).
+  coarse(f, bk, bs, reach_1, x),
+  reach_1 = (reach_1_tag, reach_1_at),
+  reach_1_at = (sel, _, _, _),
+  reach_1_tag = "below".
 
-coarse(f, "load", l, $Deep(), x) :-
+coarse(f, "load", l, ("deep", ("", "", "", "")), x) :-
   value_load(f, l, _, bk, bs),
-  coarse(f, bk, bs, $Below(["*", "map", _, _]), x).
+  coarse(f, bk, bs, reach_1, x),
+  reach_1 = (reach_1_tag, reach_1_at),
+  reach_1_at = (reach_1_at_sel, reach_1_at_kind, _, _),
+  reach_1_tag = "below",
+  reach_1_at_sel = "*",
+  reach_1_at_kind = "map".
 
-coarse(f, "load", l, $Deep(), x) :- value_load(f, l, _, bk, bs), coarse(f, bk, bs, $Deep(), x).
+coarse(f, "load", l, ("deep", ("", "", "", "")), x) :- value_load(f, l, _, bk, bs), coarse(f, bk, bs, reach_1, x),
+  reach_1 = ("deep", ("", "", "", "")).
 
 // Separate call parameters from entry arguments and fresh returns. Forwarded parameters
 // retain each call's argument. Factory values are renamed through direct or forwarded
@@ -135,12 +162,12 @@ coarse(f, "result", c, r, x) :-
   value_arg(c, f, g, j, "call", sk, s),
   coarse(f, sk, s, r, x).
 
-coarse(f, "result", c, $Top(), cat("start ", c)) :-
+coarse(f, "result", c, ("top", ("", "", "", "")), cat("start ", c)) :-
   stage_mode("bounded"),
   kept_fresh(c, f, x),
   process_start(_, _, x, _, _).
 
-coarse(f, "result", c, $Under(["{1}", "", "", ""]), cat("start ", c)) :-
+coarse(f, "result", c, ("under", ("{1}", "", "", "")), cat("start ", c)) :-
   stage_mode("bounded"),
   kept_fresh(c, f, x),
   start_object(x, _).
@@ -158,9 +185,18 @@ coarse_ret_all(g, r, x) :- returns_key(g, k), coarse(g, "dict", k, r, x).
 coarse_slot_wanted(tag, n, sel) :- stage_mode("bounded"), state_slot(tag, n, sel).
 coarse_slot_wanted(tag, n, sel) :- stage_mode("bounded"), statem_data_slot(tag, n, sel).
 
-coarse_slot(g, tag, n, sel, $Top(), x) :- coarse_ret_all(g, $Under([sel, "tuple", tag, n]), x).
-coarse_slot(g, tag, n, sel, $Deep(), x) :- coarse_ret_all(g, $Below([sel, "tuple", tag, n]), x).
-coarse_slot(g, tag, n, sel, $Deep(), x) :- coarse_slot_wanted(tag, n, sel), coarse_ret_all(g, $Deep(), x).
+coarse_slot(g, tag, n, sel, ("top", ("", "", "", "")), x) :- coarse_ret_all(g, reach_1, x),
+  reach_1 = (reach_1_tag, reach_1_at),
+  reach_1_at = (sel, reach_1_at_kind, tag, n),
+  reach_1_tag = "under",
+  reach_1_at_kind = "tuple".
+coarse_slot(g, tag, n, sel, ("deep", ("", "", "", "")), x) :- coarse_ret_all(g, reach_1, x),
+  reach_1 = (reach_1_tag, reach_1_at),
+  reach_1_at = (sel, reach_1_at_kind, tag, n),
+  reach_1_tag = "below",
+  reach_1_at_kind = "tuple".
+coarse_slot(g, tag, n, sel, ("deep", ("", "", "", "")), x) :- coarse_slot_wanted(tag, n, sel), coarse_ret_all(g, reach_1, x),
+  reach_1 = ("deep", ("", "", "", "")).
 
 coarse_entry(f, k, r, x) :-
   state_in(m, f, k),
@@ -189,23 +225,36 @@ coarse_entry(h, "1", r, x) :-
   server_process(p, m),
   statem_event_clause(m, h, _).
 
-coarse(f, "reply", id, $Top(), x) :-
+coarse(f, "reply", id, ("top", ("", "", "", "")), x) :-
   coarse_target(id, f, "call", p),
   server_process(p, m),
   function_def(h, m, "handle_call", 3, _),
-  coarse_ret_all(h, $Under(["{1}", "tuple", ":reply", _]), x).
+  coarse_ret_all(h, reach_1, x),
+  reach_1 = (reach_1_tag, reach_1_at),
+  reach_1_at = (reach_1_at_sel, reach_1_at_kind, reach_1_at_tag, _),
+  reach_1_tag = "under",
+  reach_1_at_sel = "{1}",
+  reach_1_at_kind = "tuple",
+  reach_1_at_tag = ":reply".
 
-coarse(f, "reply", id, $Deep(), x) :-
+coarse(f, "reply", id, ("deep", ("", "", "", "")), x) :-
   coarse_target(id, f, "call", p),
   server_process(p, m),
   function_def(h, m, "handle_call", 3, _),
-  coarse_ret_all(h, $Below(["{1}", "tuple", ":reply", _]), x).
+  coarse_ret_all(h, reach_1, x),
+  reach_1 = (reach_1_tag, reach_1_at),
+  reach_1_at = (reach_1_at_sel, reach_1_at_kind, reach_1_at_tag, _),
+  reach_1_tag = "below",
+  reach_1_at_sel = "{1}",
+  reach_1_at_kind = "tuple",
+  reach_1_at_tag = ":reply".
 
-coarse(f, "reply", id, $Deep(), x) :-
+coarse(f, "reply", id, ("deep", ("", "", "", "")), x) :-
   coarse_target(id, f, "call", p),
   server_process(p, m),
   function_def(h, m, "handle_call", 3, _),
-  coarse_ret_all(h, $Deep(), x).
+  coarse_ret_all(h, reach_1, x),
+  reach_1 = ("deep", ("", "", "", "")).
 
 // Names, as the coarse pass resolves them.
 coarse_named(n, p) :- process_register_source(_, f, n, k, s), coarse(f, k, s, r, p), coarse_top(r), process(p).
@@ -243,23 +292,40 @@ coarse_asked(f, sk, s, sel) :-
 
 .decl coarse_reads(func: symbol, src_kind: symbol, src: symbol, sel: symbol, r: Reach, x: symbol)
 
-coarse_reads(f, sk, s, sel, $Top(), x) :-
+coarse_reads(f, sk, s, sel, ("top", ("", "", "", "")), x) :-
   coarse_asked(f, sk, s, sel),
-  coarse(f, sk, s, $Under([sel, _, _, _]), x).
+  coarse(f, sk, s, reach_1, x),
+  reach_1 = (reach_1_tag, reach_1_at),
+  reach_1_at = (sel, _, _, _),
+  reach_1_tag = "under".
 
-coarse_reads(f, sk, s, sel, $Top(), x) :-
+coarse_reads(f, sk, s, sel, ("top", ("", "", "", "")), x) :-
   coarse_asked(f, sk, s, sel),
-  coarse(f, sk, s, $Under(["*", "map", _, _]), x).
+  coarse(f, sk, s, reach_1, x),
+  reach_1 = (reach_1_tag, reach_1_at),
+  reach_1_at = (reach_1_at_sel, reach_1_at_kind, _, _),
+  reach_1_tag = "under",
+  reach_1_at_sel = "*",
+  reach_1_at_kind = "map".
 
-coarse_reads(f, sk, s, sel, $Deep(), x) :-
+coarse_reads(f, sk, s, sel, ("deep", ("", "", "", "")), x) :-
   coarse_asked(f, sk, s, sel),
-  coarse(f, sk, s, $Below([sel, _, _, _]), x).
+  coarse(f, sk, s, reach_1, x),
+  reach_1 = (reach_1_tag, reach_1_at),
+  reach_1_at = (sel, _, _, _),
+  reach_1_tag = "below".
 
-coarse_reads(f, sk, s, sel, $Deep(), x) :-
+coarse_reads(f, sk, s, sel, ("deep", ("", "", "", "")), x) :-
   coarse_asked(f, sk, s, sel),
-  coarse(f, sk, s, $Below(["*", "map", _, _]), x).
+  coarse(f, sk, s, reach_1, x),
+  reach_1 = (reach_1_tag, reach_1_at),
+  reach_1_at = (reach_1_at_sel, reach_1_at_kind, _, _),
+  reach_1_tag = "below",
+  reach_1_at_sel = "*",
+  reach_1_at_kind = "map".
 
-coarse_reads(f, sk, s, sel, $Deep(), x) :- coarse_asked(f, sk, s, sel), coarse(f, sk, s, $Deep(), x).
+coarse_reads(f, sk, s, sel, ("deep", ("", "", "", "")), x) :- coarse_asked(f, sk, s, sel), coarse(f, sk, s, reach_1, x),
+  reach_1 = ("deep", ("", "", "", "")).
 
 .decl coarse_entry_asked(func: symbol, pos: symbol, sel: symbol)
 
@@ -275,23 +341,40 @@ coarse_entry_asked(f, j, sel) :-
 
 .decl coarse_entry_reads(func: symbol, pos: symbol, sel: symbol, r: Reach, x: symbol)
 
-coarse_entry_reads(f, k, sel, $Top(), x) :-
+coarse_entry_reads(f, k, sel, ("top", ("", "", "", "")), x) :-
   coarse_entry_asked(f, k, sel),
-  coarse_entry(f, k, $Under([sel, _, _, _]), x).
+  coarse_entry(f, k, reach_1, x),
+  reach_1 = (reach_1_tag, reach_1_at),
+  reach_1_at = (sel, _, _, _),
+  reach_1_tag = "under".
 
-coarse_entry_reads(f, k, sel, $Top(), x) :-
+coarse_entry_reads(f, k, sel, ("top", ("", "", "", "")), x) :-
   coarse_entry_asked(f, k, sel),
-  coarse_entry(f, k, $Under(["*", "map", _, _]), x).
+  coarse_entry(f, k, reach_1, x),
+  reach_1 = (reach_1_tag, reach_1_at),
+  reach_1_at = (reach_1_at_sel, reach_1_at_kind, _, _),
+  reach_1_tag = "under",
+  reach_1_at_sel = "*",
+  reach_1_at_kind = "map".
 
-coarse_entry_reads(f, k, sel, $Deep(), x) :-
+coarse_entry_reads(f, k, sel, ("deep", ("", "", "", "")), x) :-
   coarse_entry_asked(f, k, sel),
-  coarse_entry(f, k, $Below([sel, _, _, _]), x).
+  coarse_entry(f, k, reach_1, x),
+  reach_1 = (reach_1_tag, reach_1_at),
+  reach_1_at = (sel, _, _, _),
+  reach_1_tag = "below".
 
-coarse_entry_reads(f, k, sel, $Deep(), x) :-
+coarse_entry_reads(f, k, sel, ("deep", ("", "", "", "")), x) :-
   coarse_entry_asked(f, k, sel),
-  coarse_entry(f, k, $Below(["*", "map", _, _]), x).
+  coarse_entry(f, k, reach_1, x),
+  reach_1 = (reach_1_tag, reach_1_at),
+  reach_1_at = (reach_1_at_sel, reach_1_at_kind, _, _),
+  reach_1_tag = "below",
+  reach_1_at_sel = "*",
+  reach_1_at_kind = "map".
 
-coarse_entry_reads(f, k, sel, $Deep(), x) :- coarse_entry_asked(f, k, sel), coarse_entry(f, k, $Deep(), x).
+coarse_entry_reads(f, k, sel, ("deep", ("", "", "", "")), x) :- coarse_entry_asked(f, k, sel), coarse_entry(f, k, reach_1, x),
+  reach_1 = ("deep", ("", "", "", "")).
 
 // What a use may reach: process_call's rules, read through the coarse
 // pass.
@@ -376,7 +459,12 @@ coarse_holder(f, sk, s, x) :- coarse(f, sk, s, _, x).
 
 .decl leaf_spread(x: symbol, n: number)
 
-leaf_spread(x, n) :- leaf(x), n = count : { coarse_holder(_, _, _, x) }.
+.decl leaf_holders(x: symbol, n: number)
+
+leaf_holders(x, count((f, sk, s))) :- coarse_holder(f, sk, s, x).
+
+leaf_spread(x, n) :- leaf(x), leaf_holders(x, n).
+leaf_spread(x, 0) :- leaf(x), !leaf_holders(x, _).
 
 // Every source of the program, as TermFlow names them.
 .decl pid_source(func: symbol, src_kind: symbol, src: symbol)
@@ -389,7 +477,12 @@ pid_source(f, "result", c) :- stage_mode("bounded"), value_result(c, f, _).
 
 .decl pid_sources(n: number)
 
-pid_sources(n) :- stage_mode("bounded"), n = count : { pid_source(_, _, _) }.
+.decl pid_source_rows(n: number)
+
+pid_source_rows(count((f, sk, s))) :- pid_source(f, sk, s).
+
+pid_sources(n) :- stage_mode("bounded"), pid_source_rows(n).
+pid_sources(0) :- stage_mode("bounded"), !pid_source_rows(_).
 
 .decl pervasive(x: symbol)
 

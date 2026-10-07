@@ -68,7 +68,7 @@ defmodule Argus.Graph.FreshVmTest do
     assert Peer.run(peer, fn -> extracted(store, path) end) == []
   end
 
-  @tag :souffle
+  @tag :flowlog
   test "a line-only edit in a fresh VM places the kept findings again", %{
     tmp_dir: dir,
     peer: peer

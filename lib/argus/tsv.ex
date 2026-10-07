@@ -1,23 +1,29 @@
 defmodule Argus.Tsv do
   @moduledoc """
-  The tab-separated text of `.facts` files and of Souffle's outputs.
+  The tab-separated text of `.facts` files and of an engine's outputs.
 
-  Souffle reads a field as the raw bytes between two tabs, and a row as
-  the bytes up to a newline, with no quoting and no escapes of its own. A
-  value holding either character therefore moves every column after it:
-  `def unquote(:"a\\tb")()` used to write a six-column `function_def` row
-  into a five-column relation, and Souffle refused the whole program's
-  facts over it. So every field is escaped on the way out and unescaped
+  An engine reads a field as the raw bytes between two tabs, and a row as
+  the bytes up to a newline, with no quoting and no escapes of its own
+  (`native/flowlog/engine`). A value holding either character therefore
+  moves every column after it: `def unquote(:"a\\tb")()` used to write a
+  six-column `function_def` row into a five-column relation, and the
+  solver refused the whole program's facts over it. So every field is escaped on the way out and unescaped
   on the way back in:
 
-  | character       | written as |
-  | --------------- | ---------- |
-  | `\\`            | `\\\\`     |
-  | tab             | `\\t`      |
-  | newline         | `\\n`      |
-  | carriage return | `\\r`      |
+  | character                     | written as |
+  | ----------------------------- | ---------- |
+  | `\\`                          | `\\\\`     |
+  | tab                           | `\\t`      |
+  | newline                       | `\\n`      |
+  | carriage return               | `\\r`      |
+  | a byte that is not UTF-8 text | `\\xHH`    |
 
-  Souffle carries the escaped spelling through untouched, as an opaque
+  An engine's symbols are UTF-8 text, and it refuses a row that is not.
+  A field is any binary, though (a literal's bytes, an atom's name), so a
+  byte that no valid UTF-8 sequence holds is written as its two
+  upper-case hex digits.
+
+  An engine carries the escaped spelling through untouched, as an opaque
   symbol, so a derived row holds it as well and `decode/1` restores the
   value. The escape works character by character, so a rule that
   concatenates escaped symbols builds the escape of the concatenation;
@@ -25,8 +31,8 @@ defmodule Argus.Tsv do
   a symbol's length, sees the difference, and no shipped rule does
   either on a value that could hold one of these characters.
 
-  A field that holds none of the four characters — nearly every field —
-  is written and read as it is.
+  A field that holds none of these characters and only ASCII — nearly
+  every field — is written and read as it is.
   """
 
   @doc """
@@ -41,7 +47,7 @@ defmodule Argus.Tsv do
   def encode_row(row), do: [row |> Enum.map(&escape/1) |> Enum.intersperse("\t"), "\n"]
 
   @doc """
-  The rows of a `.facts` or Souffle output file's `content`, each field
+  The rows of a `.facts` or engine output file's `content`, each field
   unescaped.
 
   Only the newline that ends the last row is dropped: an empty line in
@@ -70,17 +76,19 @@ defmodule Argus.Tsv do
   end
 
   @doc "A field as it is written, with its special characters escaped."
-  @spec escape(String.t()) :: String.t()
+  @spec escape(binary()) :: String.t()
   def escape(field) when is_binary(field) do
     if special?(field), do: escape_all(field, []), else: field
   end
 
-  # A byte scan rather than `:binary.match/2` over the four characters: a list
+  # A byte scan rather than `:binary.match/2` over the characters: a list
   # pattern is compiled on every call, and every field of every fact row
   # comes through here — on 650k rows the compiles were five sixths of
   # encoding them. A compiled pattern cannot be a module literal, and the
   # fields are short enough that scanning them is as fast as matching one.
-  defp special?(<<byte, _::binary>>) when byte in [?\\, ?\t, ?\n, ?\r], do: true
+  defp special?(<<byte, _::binary>>) when byte in [?\\, ?\t, ?\n, ?\r] or byte >= 0x80,
+    do: true
+
   defp special?(<<_, rest::binary>>), do: special?(rest)
   defp special?(<<>>), do: false
 
@@ -89,14 +97,26 @@ defmodule Argus.Tsv do
   defp escape_all(<<"\t", rest::binary>>, acc), do: escape_all(rest, ["\\t" | acc])
   defp escape_all(<<"\n", rest::binary>>, acc), do: escape_all(rest, ["\\n" | acc])
   defp escape_all(<<"\r", rest::binary>>, acc), do: escape_all(rest, ["\\r" | acc])
-  defp escape_all(<<byte, rest::binary>>, acc), do: escape_all(rest, [byte | acc])
+
+  defp escape_all(<<byte, rest::binary>>, acc) when byte < 0x80,
+    do: escape_all(rest, [byte | acc])
+
+  # A whole UTF-8 sequence (never a surrogate or an overlong form, which
+  # the match refuses as an engine's reader does) is text as it stands.
+  defp escape_all(<<char::utf8, rest::binary>>, acc), do: escape_all(rest, [<<char::utf8>> | acc])
+
+  defp escape_all(<<byte, rest::binary>>, acc),
+    do: escape_all(rest, [["\\x", hex(div(byte, 16)), hex(rem(byte, 16))] | acc])
+
+  defp hex(digit) when digit < 10, do: ?0 + digit
+  defp hex(digit), do: ?A + digit - 10
 
   @doc """
-  The value a written field stands for. A backslash before any character
-  other than the four this module escapes cannot have been written by
+  The value a written field stands for. A backslash before anything
+  other than what this module escapes cannot have been written by
   `escape/1`, and is kept as it stands.
   """
-  @spec unescape(String.t()) :: String.t()
+  @spec unescape(String.t()) :: binary()
   def unescape(field) when is_binary(field) do
     case :binary.match(field, "\\") do
       :nomatch -> field
@@ -109,5 +129,13 @@ defmodule Argus.Tsv do
   defp unescape_all(<<"\\t", rest::binary>>, acc), do: unescape_all(rest, ["\t" | acc])
   defp unescape_all(<<"\\n", rest::binary>>, acc), do: unescape_all(rest, ["\n" | acc])
   defp unescape_all(<<"\\r", rest::binary>>, acc), do: unescape_all(rest, ["\r" | acc])
+
+  defp unescape_all(<<"\\x", high, low, rest::binary>>, acc)
+       when (high in ?0..?9 or high in ?A..?F) and (low in ?0..?9 or low in ?A..?F),
+       do: unescape_all(rest, [unhex(high) * 16 + unhex(low) | acc])
+
   defp unescape_all(<<byte, rest::binary>>, acc), do: unescape_all(rest, [byte | acc])
+
+  defp unhex(digit) when digit in ?0..?9, do: digit - ?0
+  defp unhex(digit), do: digit - ?A + 10
 end

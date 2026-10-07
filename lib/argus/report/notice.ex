@@ -8,8 +8,9 @@ defmodule Argus.Report.Notice do
 
   The kinds:
 
-    * `:souffle_missing` — no solver on `PATH`, so nothing was solved;
-    * `:degraded` — an analysis failed and reported nothing (its solver
+    * `:engine_unavailable` — this machine cannot build or run the
+      FlowLog engines (no Rust, or one too old), so nothing was solved;
+    * `:degraded` — an analysis failed and reported nothing (its engine
       failed or timed out, a stage it reads failed, its rules and argus's
       code are out of step);
     * `:extraction_error` — a step of extraction failed on a module, and
@@ -30,7 +31,7 @@ defmodule Argus.Report.Notice do
   defstruct @enforce_keys
 
   @type kind ::
-          :souffle_missing
+          :engine_unavailable
           | :degraded
           | :extraction_error
           | :duplicate
@@ -44,20 +45,18 @@ defmodule Argus.Report.Notice do
           message: String.t()
         }
 
-  @souffle_url "https://souffle-lang.github.io"
-
   @doc """
   The notices of a driver run: its own (`Argus.Driver.Result` notices)
   and one for each analysis that degraded, in that order. `config`
-  decides how loud a missing solver is (`souffle: :warn` makes it an
-  `:info`, `:require` an `:error`); `cwd` is what the paths in a
-  duplicate's notice are relative to.
+  decides how loud a machine without the engines is (`engine: :warn`
+  makes it an `:info`, `:require` an `:error`); `cwd` is what the paths
+  in a duplicate's notice are relative to.
   """
   @spec from_result(Result.t(), Argus.Config.t(), String.t()) :: [t()]
   def from_result(%Result{} = result, %Argus.Config{} = config, cwd) do
-    {souffle, rest} = Enum.split_with(result.notices, &(&1 == :souffle_missing))
+    {unavailable, rest} = Enum.split_with(result.notices, &(&1 == :engine_unavailable))
 
-    Enum.map(souffle, fn :souffle_missing -> souffle_missing(config.souffle) end) ++
+    Enum.map(unavailable, fn :engine_unavailable -> engine_unavailable(config.engine) end) ++
       Enum.map(Result.degraded(result), &degraded/1) ++
       Enum.map(rest, &of(&1, cwd))
   end
@@ -67,26 +66,28 @@ defmodule Argus.Report.Notice do
   defp of({:points_to_bounded, leaves}, _cwd), do: points_to_bounded(leaves)
 
   @doc """
-  No solver on `PATH`. Under `souffle: :warn` (the default) the run
-  goes on without the Datalog analyses; under `:require` it fails.
+  The engines cannot be built here (`Argus.FlowLog.Toolchain`). Under
+  `engine: :warn` (the default) the run goes on without the Datalog
+  analyses; under `:require` it fails. The message says what is missing
+  and how to install it.
   """
-  @spec souffle_missing(:warn | :require) :: t()
-  def souffle_missing(:warn) do
+  @spec engine_unavailable(:warn | :require) :: t()
+  def engine_unavailable(:warn) do
     notice(
-      :souffle_missing,
+      :engine_unavailable,
       :info,
-      "souffle binary not found on PATH; Datalog analyses skipped. " <>
-        "Install souffle (#{@souffle_url}), or set souffle: :require " <>
-        "in argus's configuration to make this an error."
+      "Datalog analyses skipped: " <>
+        Argus.FlowLog.not_found_message() <>
+        " Set engine: :require in argus's configuration to make this an error."
     )
   end
 
-  def souffle_missing(:require) do
+  def engine_unavailable(:require) do
     notice(
-      :souffle_missing,
+      :engine_unavailable,
       :error,
-      "souffle binary not found on PATH, and argus is configured with " <>
-        "souffle: :require. Install souffle (#{@souffle_url}) to run the analyses."
+      "argus is configured with engine: :require, and cannot run its analyses: " <>
+        Argus.FlowLog.not_found_message()
     )
   end
 
@@ -96,7 +97,7 @@ defmodule Argus.Report.Notice do
     notice(
       :degraded,
       :warning,
-      "the #{analysis} analysis degraded and reported nothing: #{inspect(reason)}"
+      "the #{analysis} analysis degraded and reported nothing: " <> describe(reason)
     )
   end
 
@@ -205,4 +206,7 @@ defmodule Argus.Report.Notice do
 
   defp notice(kind, severity, message),
     do: %__MODULE__{kind: kind, severity: severity, message: message}
+
+  defp describe({:points_to, reason}), do: "its points-to stage failed: " <> describe(reason)
+  defp describe(reason), do: Argus.FlowLog.describe_error(reason)
 end

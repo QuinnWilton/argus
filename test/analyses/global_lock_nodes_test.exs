@@ -9,7 +9,7 @@ defmodule Argus.Analyses.GlobalLockNodesTest do
   """
 
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
   alias Argus.Test.Fixtures.GlobalNodes
   alias Argus.Test.Fixtures.ReachPath

@@ -34,6 +34,35 @@ Each line contributes one part of the argument. If a detection rule needs many
 extractor details or unrelated conditions, give those concepts supporting relations.
 Do not add an abstraction solely to meet a line-count target.
 
+## The dialect
+
+The rules are written in [FlowLog](https://github.com/flowlog-rs/flowlog)'s
+dialect of Soufflé's language: declarations, components, `#include` and the
+usual operators and functors, with these differences.
+
+- An input's declaration ends in `mutable` (`.decl edge(a: symbol, b: symbol)
+  mutable`), so that an engine kept between solves can retract its rows as well
+  as add them. `mix argus.gen.dl` writes the
+  schema's declarations this way.
+- There are no ADTs, records, `inline` relations or subsumption. A tagged value
+  is a tuple whose first field is the tag, such as `("top", field)`, and a
+  "keep only the best row" rule is a head aggregate.
+- Aggregates appear only in a rule's head: `count_of(x, count(y)) :- ...`. To
+  aggregate inside a body, give the aggregate its own relation and join it.
+- An atom's arguments are variables, constants or `_`. Bind an expression first,
+  as in `next = n + 1, reaches(next)`.
+- A negated atom's variables are bound by the rule's positive atoms, not taken
+  apart from a tuple. When a negation needs part of a value, give that part a
+  relation of its own and negate that.
+- A rule needs at least one positive atom; restate a body made only of
+  negations or constraints with the atom that ranges over its variables.
+- There is no `.limitsize` or `.plan`. An engine plans its own joins; a budget is
+  a relation the caller reads once the fixpoint is done, as `points_to_budget`
+  is.
+
+`mix argus.flowlog solve PROGRAM FACTS_DIR` runs a program over a directory of
+`<relation>.facts` files and reports a compile error with the rule it is in.
+
 ## Names and comments
 
 - Use names that state the property: fails_if_row_missing, runs_in_another_process.
@@ -41,7 +70,7 @@ Do not add an abstraction solely to meet a line-count target.
 - Use nouns for entities and detected defects, such as EtsRow or missing_row_race.
 - Reuse a shared concept from clientlib when it means the same thing. Keep distinct
   concepts separate, especially possible versus guaranteed properties.
-- Souffle relation names cannot be overloaded by arity; choose an unambiguous name.
+- Relation names cannot be overloaded by arity; choose an unambiguous name.
 - Start a comment with what the relation means. Add only the assumptions, unknown
   cases or implementation reason a reader needs to use it correctly.
 - Put historical examples, measurements and discarded approaches in the change

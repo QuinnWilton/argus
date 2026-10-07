@@ -6,7 +6,7 @@ pid_use(id, f, kind, sk, s) :- process_signal_source(id, f, kind, sk, s).
 
 // Signal kinds (exit, monitor, link, unlink) are not call kinds, so a
 // call's rows are the same with or without these.
-.decl process_signal(func: symbol, anchor: symbol, site: symbol, signal: symbol, proc: symbol)
+.decl process_signal(func: symbol, anchor: symbol, site: symbol, signal: symbol, proc: symbol) mutable
 .input process_signal
 
 process_call(f, a, id, signal, p) :- process_signal(f, a, id, signal, p).

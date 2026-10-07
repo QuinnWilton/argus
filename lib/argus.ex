@@ -1,11 +1,13 @@
 defmodule Argus do
   @moduledoc """
-  BEAM program analysis via Souffle Datalog.
+  BEAM program analysis via incremental Datalog (FlowLog).
 
-  Argus extracts facts from BEAM bytecode and feeds them to Souffle Datalog
-  rules for whole-program, multi-module analysis. The pipeline is:
+  Argus extracts facts from BEAM bytecode and feeds them to Datalog rules
+  for whole-program, multi-module analysis, each program compiled by
+  FlowLog into a Differential Dataflow engine that keeps its results up
+  to date as the facts change (`Argus.FlowLog`). The pipeline is:
 
-      .beam files → normalize → emit facts → Souffle rules → results
+      .beam files → normalize → emit facts → FlowLog engines → results
 
   ## Quick start
 
@@ -28,7 +30,7 @@ defmodule Argus do
   produces higher-level semantic facts by interpreting OTP patterns, supervision
   trees, and other BEAM-specific constructs.
 
-  Both layers feed into Souffle, which evaluates Datalog rules and returns
+  Both layers feed the engines, which evaluate Datalog rules and return
   derived relations as results.
   """
 

@@ -9,7 +9,7 @@ defmodule Argus.Graph.RelatedTest do
 
   alias Argus.Test.Graph
 
-  @moduletag :souffle
+  @moduletag :flowlog
   @moduletag timeout: 300_000
 
   test "an unreceived message's receive frame lands on the receive" do

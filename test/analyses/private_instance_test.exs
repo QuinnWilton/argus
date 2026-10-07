@@ -1,6 +1,6 @@
 defmodule Argus.Analyses.PrivateInstanceTest do
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
   alias Argus.Test.Fixtures.PrivateConn, as: P
   alias Argus.Test.Memo

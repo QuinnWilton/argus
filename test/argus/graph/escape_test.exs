@@ -9,7 +9,7 @@ defmodule Argus.Graph.EscapeTest do
 
   alias Argus.Test.Graph
 
-  @moduletag :souffle
+  @moduletag :flowlog
   @moduletag :tmp_dir
   @moduletag timeout: 300_000
 
@@ -51,7 +51,7 @@ defmodule Argus.Graph.EscapeTest do
     {:ok, %{outputs: %{"call_edge.facts" => digest}}} =
       Argus.Graph.Solve.stage(db, {:test, :stage0})
 
-    {:ok, rows} = Argus.Souffle.Solve.rows(db.blob, "call_edge.facts", digest)
+    {:ok, rows} = Argus.FlowLog.Solve.rows(db.blob, "call_edge.facts", digest)
     names = List.flatten(rows)
 
     assert Enum.any?(names, &String.contains?(&1, "tab\there"))

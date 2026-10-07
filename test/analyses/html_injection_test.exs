@@ -1,6 +1,6 @@
 defmodule Argus.Analyses.HtmlInjectionTest do
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
   alias Argus.Analyses.UnsafeInput.HtmlInjection
   alias Argus.Test.Fixtures.HtmlInjection, as: Fixture

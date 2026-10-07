@@ -29,12 +29,23 @@ jobs:
           elixir-version: "1.19.4"
           otp-version: "28.3"
 
-      - name: Install Souffle
+      - name: Install Rust
+        # argus compiles its FlowLog engines with Rust (`Argus.FlowLog.Toolchain`).
         run: |
-          sudo wget https://souffle-lang.github.io/ppa/souffle-key.public -O /usr/share/keyrings/souffle-archive-keyring.gpg
-          echo "deb [signed-by=/usr/share/keyrings/souffle-archive-keyring.gpg] https://souffle-lang.github.io/ppa/ubuntu/ stable main" | sudo tee /etc/apt/sources.list.d/souffle.list
-          sudo apt-get update
-          sudo apt-get install -y souffle
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Restore the FlowLog engines
+        # Built once per version of argus's native sources and rules; the
+        # test helper builds whatever is missing before any test runs.
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/argus/flowlog
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-flowlog-${{ hashFiles('native/flowlog/**', 'priv/dl/**', 'test/**/*.exs', 'test/**/*.ex') }}
+          restore-keys: ${{ runner.os }}-flowlog-
 
       - name: Restore dependencies cache
         uses: actions/cache@v4

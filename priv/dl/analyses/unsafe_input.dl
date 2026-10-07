@@ -320,7 +320,7 @@ named_flow(c, q, r, t, name) :-
 sink_flow_reaches(c, q, t) :-
   named_flow(f, ap, np, t, name),
   call_arg_derived(c, f, ap, q),
-  call_arg(c, f, np, cat("\"", cat(name, "\""))).
+  call_arg(c, f, np, quoted), quoted = cat("\"", cat(name, "\"")).
 
 sink_flow_seed(func, pos, id) :-
   sink_call(id, func, _, k, _),
@@ -436,7 +436,7 @@ exposed_to_callers(id, func) :- sink_call(id, func, _, _, _), called_from_api(fu
 exposed_to_callers(id, func) :- sink_call(id, func, _, "deserialization", _).
 
 // An exported function reaches `func` on its calls.
-.decl called_from_api(func: symbol) inline
+.decl called_from_api(func: symbol)
 
 called_from_api(func) :- export_reach.reaches(func).
 
@@ -683,7 +683,7 @@ unbounded_children_from_request(sup, child, via, kind) :-
   unbounded_request_child(sup, child, via, kind).
 
 // `via` starts a `child` under the dynamic supervisor `sup`.
-.decl starts_child(via: symbol, sup: symbol, child: symbol) inline
+.decl starts_child(via: symbol, sup: symbol, child: symbol)
 
 starts_child(via, sup, child) :- dynamic_child(sup, child, via).
 

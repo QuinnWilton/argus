@@ -1,6 +1,6 @@
 defmodule Argus.Analyses.ShutdownMonitorTest do
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
   alias Argus.Test.Fixtures.MonitorLeak, as: M
   alias Argus.Test.Memo

@@ -1,6 +1,6 @@
 defmodule Argus.Analyses.EtsCheckActTest do
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
   alias Argus.Analyses.Races
   alias Argus.Test.Batch
@@ -426,7 +426,7 @@ defmodule Argus.Analyses.EtsCheckActTest do
   end
 
   describe "finding" do
-    @describetag souffle: false
+    @describetag flowlog: false
 
     test "anchors the write, relates the read, and names the atomic forms" do
       row = [

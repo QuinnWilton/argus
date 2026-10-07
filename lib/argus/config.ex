@@ -22,7 +22,7 @@ defmodule Argus.Config do
             ignore: [modules: [~r/^MyApp\\.Gen/], files: ["lib/legacy/**"]],
             include_deps: false,
             fail_on: :error,
-            souffle: :warn
+            engine: :warn
           ]
         ]
       end
@@ -58,7 +58,14 @@ defmodule Argus.Config do
   analysis that reports it, and a name argus retired in 0.17 and
   stopped reading in 0.20 (`:sync_call_in_init`, `:supervision`) names
   the concerns its findings went to. Configuration under scry's name
-  (`scry:`, or the `:scry` compiler) raises with the rename.
+  (`scry:`, or the `:scry` compiler) raises with the rename, and so does
+  `souffle:`, which 0.22 renamed `engine:` when argus moved from Souffle
+  to FlowLog.
+
+  `engine:` says how loud a machine that cannot run the engines is (no
+  Rust, or one too old to build them; `Argus.FlowLog.Toolchain`):
+  `:warn` (the default) reports it and skips the analyses, `:require`
+  fails the run.
   """
 
   alias Argus.ConfigError
@@ -70,7 +77,7 @@ defmodule Argus.Config do
     :ignore_files,
     :include_deps,
     :fail_on,
-    :souffle,
+    :engine,
     :priors
   ]
   defstruct @enforce_keys
@@ -90,7 +97,7 @@ defmodule Argus.Config do
           ignore_files: [String.t()],
           include_deps: boolean(),
           fail_on: :error | :warning,
-          souffle: :warn | :require,
+          engine: :warn | :require,
           priors: priors()
         }
 
@@ -103,7 +110,7 @@ defmodule Argus.Config do
   @type origin :: :inline | :cli | {:mix, Path.t()} | {:rebar3, Path.t()} | {:file, Path.t()}
 
   @severities [:error, :warning, :info]
-  @keys [:analyses, :severity, :ignore, :include_deps, :fail_on, :souffle, :priors]
+  @keys [:analyses, :severity, :ignore, :include_deps, :fail_on, :engine, :priors]
   @ignore_keys [:modules, :files]
 
   # Keys the rebar3 plugin reads from `{argus_plugin, [...]}`: written
@@ -144,7 +151,7 @@ defmodule Argus.Config do
       ignore_files: ignore_files!(ctx, Keyword.get(ignore, :files, [])),
       include_deps: boolean!(ctx, :include_deps, Keyword.get(raw, :include_deps, false)),
       fail_on: enum!(ctx, [:fail_on], Keyword.get(raw, :fail_on, :error), [:error, :warning]),
-      souffle: enum!(ctx, [:souffle], Keyword.get(raw, :souffle, :warn), [:warn, :require]),
+      engine: enum!(ctx, [:engine], Keyword.get(raw, :engine, :warn), [:warn, :require]),
       priors: priors!(ctx, Keyword.get(raw, :priors, :off))
     }
   end
@@ -172,7 +179,24 @@ defmodule Argus.Config do
       else: fail(ctx, key, value, "#{expected}, got: #{show(ctx, value)}")
   end
 
-  defp unknown_keys!(ctx, key, keyword, known) do
+  defp unknown_keys!(ctx, [], keyword, known) do
+    if Keyword.has_key?(keyword, :souffle) do
+      fail(
+        ctx,
+        [:souffle],
+        :souffle,
+        "#{show(ctx, :souffle)} was renamed #{show(ctx, :engine)} in 0.22, when argus moved " <>
+          "from Souffle to FlowLog engines; it takes the same values (:warn or :require)",
+        known
+      )
+    end
+
+    unknown_keys(ctx, [], keyword, known)
+  end
+
+  defp unknown_keys!(ctx, key, keyword, known), do: unknown_keys(ctx, key, keyword, known)
+
+  defp unknown_keys(ctx, key, keyword, known) do
     case Enum.find(Keyword.keys(keyword), &(&1 not in known)) do
       nil ->
         :ok

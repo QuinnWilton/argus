@@ -5,7 +5,7 @@ defmodule Argus.Priors.ExtractTest do
   """
 
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
   alias Argus.Analysis
   alias Argus.Test.Fixtures.Secret, as: S

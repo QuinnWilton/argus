@@ -4,19 +4,19 @@
 // after otp.dl.
 
 // init/1 of a behaviour module: the callback its supervisor waits on.
-.decl is_init(func: symbol) inline
+.decl is_init(func: symbol)
 
 is_init(f) :- init_function(_, f).
 
 // terminate/2 of a module whose behaviour runs one.
-.decl is_terminate(func: symbol, mod: symbol) inline
+.decl is_terminate(func: symbol, mod: symbol)
 
 is_terminate(f, m) :- terminate_callback(f, m, _).
 
 // A global lock with infinity or positive retries; zero tries once, and dynamic is
 // unknown. Node scope is cluster for connected/default node lists, local for
 // `[node()]`, or unknown. Positive retries back off before returning false.
-.decl retrying_lock(site: symbol, func: symbol, op: symbol, retries: symbol, nodes: symbol) inline
+.decl retrying_lock(site: symbol, func: symbol, op: symbol, retries: symbol, nodes: symbol)
 
 retrying_lock(site, f, op, retries, nodes) :-
   global_op(site, f, op, retries, nodes),
@@ -26,7 +26,7 @@ retrying_lock(site, f, op, retries, nodes) :-
 // A :global lock with unbounded retries. Treat :infinity and unknown retry counts as
 // unbounded, matching the default commonly forwarded by wrappers. Treat an unknown node
 // list as the cluster.
-.decl lock_until_granted(site: symbol, func: symbol, op: symbol, retries: symbol, nodes: symbol) inline
+.decl lock_until_granted(site: symbol, func: symbol, op: symbol, retries: symbol, nodes: symbol)
 
 lock_until_granted(site, f, op, retries, nodes) :-
   global_op(site, f, op, retries, nodes),
@@ -34,7 +34,7 @@ lock_until_granted(site, f, op, retries, nodes) :-
 
 // A :global lock with finite positive retries. Failed attempts back off up to eight
 // seconds; exhaustion returns false.
-.decl bounded_lock(site: symbol, func: symbol, op: symbol, retries: symbol, nodes: symbol) inline
+.decl bounded_lock(site: symbol, func: symbol, op: symbol, retries: symbol, nodes: symbol)
 
 bounded_lock(site, f, op, retries, nodes) :-
   retrying_lock(site, f, op, retries, nodes),
@@ -42,38 +42,38 @@ bounded_lock(site, f, op, retries, nodes) :-
 
 // A :global call with infinite or unknown retries, treated as waiting until the lock is
 // granted. See lock_until_granted.
-.decl retries_until_locked(lock: symbol) inline
+.decl retries_until_locked(lock: symbol)
 
 retries_until_locked(lock) :- lock_until_granted(lock, _, _, _, _).
 
 // A :global call that retries a bounded number of times, then gives up
 // (bounded_lock).
-.decl gives_up_after_retries(lock: symbol) inline
+.decl gives_up_after_retries(lock: symbol)
 
 gives_up_after_retries(lock) :- bounded_lock(lock, _, _, _, _).
 
 // A :global call whose node list holds other nodes, or may (not
 // "local"): each try waits on them.
-.decl waits_on_other_nodes(lock: symbol) inline
+.decl waits_on_other_nodes(lock: symbol)
 
 waits_on_other_nodes(lock) :- global_op(lock, _, _, _, nodes), nodes != "local".
 
 // An :ets.new/2 site whose options include named_table. Its name, rather than the
 // returned reference, identifies the table.
-.decl named_site(site: symbol) inline
+.decl named_site(site: symbol)
 
 named_site(site) :- ets_option(site, "named_table", "true").
 
 // The table made at `site` names a heir, which takes it over when its
 // owner exits.
-.decl has_heir(site: symbol) inline
+.decl has_heir(site: symbol)
 
 has_heir(site) :- ets_option(site, "heir", "true").
 
 
 // A callback return resetting field `key` to nil, undefined, or false in clause `tag`.
 // Used to detect forgotten monitor records and drain logic re-enabling a fetch guard.
-.decl field_reset(func: symbol, key: symbol, value: symbol, tag: symbol) inline
+.decl field_reset(func: symbol, key: symbol, value: symbol, tag: symbol)
 
 field_reset(f, k, v, tag) :-
   returned_update(f, k, v, tag),

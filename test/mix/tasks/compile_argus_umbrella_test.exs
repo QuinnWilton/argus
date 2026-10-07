@@ -14,8 +14,10 @@ defmodule Mix.Tasks.Compile.ArgusUmbrellaTest do
 
   alias Argus.Test.{Fixture, Peer}
 
-  @moduletag timeout: 300_000
-  @moduletag :souffle
+  # An umbrella's compile in a peer: minutes on a runner whose cores
+  # Cargo is also building engines on.
+  @moduletag timeout: 900_000
+  @moduletag :flowlog
 
   @fixture Path.expand("../../projects/umbrella", __DIR__)
 

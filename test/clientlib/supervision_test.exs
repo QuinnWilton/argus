@@ -1,9 +1,8 @@
 defmodule Argus.Clientlib.SupervisionTest do
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
   alias Argus.Pipeline
-  alias Argus.Souffle
 
   @moduletag :tmp_dir
 
@@ -46,7 +45,7 @@ defmodule Argus.Clientlib.SupervisionTest do
       rules_path = Path.join(tmp_dir, "test_supervision.dl")
       File.write!(rules_path, rules)
 
-      assert {:ok, results} = Souffle.run(facts_dir, rules_path)
+      assert {:ok, results} = Argus.FlowLog.run(facts_dir, rules_path)
 
       # GoodSupervisor has WorkerA and WorkerB as children.
       assert Map.has_key?(results, "child_subtree")

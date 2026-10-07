@@ -1,6 +1,6 @@
 defmodule Argus.Analyses.AtomPrecisionTest do
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
   alias Argus.Test.Fixtures.AtomPrecision, as: Fixture
   alias Argus.Test.Memo

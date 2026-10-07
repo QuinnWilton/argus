@@ -4,8 +4,9 @@ defmodule Argus.Test.Batch do
   at a time as if each had been solved alone.
 
   A test module whose tests each solve their own small set pays the
-  solver's start-up once per test; most of a races solve is Souffle
-  compiling the program. `solve/2` in `setup_all` solves the union once,
+  engine's start-up and initial load once per test; the incremental
+  engine a lineage keeps is fast, but a fresh solve of races still builds
+  every arrangement. `solve/2` in `setup_all` solves the union once,
   and `analyze/2` hands a test the rows its own set accounts for: a row
   belongs to a set when every fixture module of the batch it names is
   in the set, and it names at least one.

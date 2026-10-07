@@ -21,7 +21,7 @@ catches_exit(f) :- catch_tuple_tag(_, f, "exit", ":noproc").
 
 // A synchronous dependency on another module's server. Exclude private connections the
 // module started for itself (private_dep).
-.decl waits_on(func: symbol, mod: symbol) inline
+.decl waits_on(func: symbol, mod: symbol)
 
 waits_on(f, m) :- sync_dep(f, m), !private_dep(f, m).
 
@@ -88,9 +88,9 @@ stop_path(t, h, -1, d + 1, first) :-
 stop_call_edge(f, pos, g, arg, call) :-
   stop_path(_, f, pos, _, _),
   call_instr(f, g, call),
-  runs_holding(f, pos, call),
+  (shutdown_runs(call, f, pos) ; !shutdown_chooses(f, pos)),
   !exit_guarded(call),
-  hands_holding(f, pos, call, arg).
+  (shutdown_handed(call, f, pos, arg) ; arg = -1, !shutdown_handed(call, f, pos, _)).
 
 // A site-less fun edge runs during shutdown if its receiving call is reached,
 // unguarded, and same-process. Without such a call, require no function-wide exit
@@ -101,7 +101,7 @@ stop_fun_edge(f, pos, g) :-
   stop_path(_, f, pos, _, _),
   fun_site(f, g, call),
   !call_instr(f, g, _),
-  runs_holding(f, pos, call),
+  (shutdown_runs(call, f, pos) ; !shutdown_chooses(f, pos)),
   !exit_guarded(call),
   !starts_a_process(call),
   !runs_elsewhere(f, g).
@@ -123,7 +123,7 @@ stop_wait(t, f, m, id) :-
   stop_path(t, f, pos, _, _),
   waits_on(f, m),
   wait_site(f, m, id),
-  runs_holding(f, pos, id),
+  (shutdown_runs(id, f, pos) ; !shutdown_chooses(f, pos)),
   !exit_guarded(id),
   !api_handed(f, pos, id, m, _, _).
 
@@ -131,7 +131,7 @@ stop_wait(t, f, m, id) :-
   stop_path(t, f, pos, _, _),
   waits_on(f, m),
   wait_site(f, m, id),
-  runs_holding(f, pos, id),
+  (shutdown_runs(id, f, pos) ; !shutdown_chooses(f, pos)),
   !exit_guarded(id),
   api_handed(f, pos, id, m, g, arg),
   api_waits_holding(g, arg, m).
@@ -165,27 +165,27 @@ holding_asked(g, arg, m) :- api_handed(_, _, _, m, g, arg).
 holding_asked(h, arg, m) :-
   holding_asked(g, pos, m),
   call_instr(g, h, id),
-  runs_holding(g, pos, id),
+  (shutdown_runs(id, g, pos) ; !shutdown_chooses(g, pos)),
   shutdown_handed(id, g, pos, arg).
 
 api_waits_holding(g, pos, m) :-
   holding_asked(g, pos, m),
   function_def(g, m, _, _, _),
   sync_call_site(id, g, _, _),
-  runs_holding(g, pos, id),
+  (shutdown_runs(id, g, pos) ; !shutdown_chooses(g, pos)),
   !calls_other_server(g, m).
 
 api_waits_holding(g, pos, m) :-
   holding_asked(g, pos, m),
   call_instr(g, h, id),
-  runs_holding(g, pos, id),
-  hands_holding(g, pos, id, -1),
+  (shutdown_runs(id, g, pos) ; !shutdown_chooses(g, pos)),
+  (shutdown_handed(id, g, pos, -1) ; -1 = -1, !shutdown_handed(id, g, pos, _)),
   sync_caller_in(h, m).
 
 api_waits_holding(g, pos, m) :-
   holding_asked(g, pos, m),
   call_instr(g, h, id),
-  runs_holding(g, pos, id),
+  (shutdown_runs(id, g, pos) ; !shutdown_chooses(g, pos)),
   shutdown_handed(id, g, pos, arg),
   api_waits_holding(h, arg, m).
 
@@ -360,7 +360,7 @@ terminate_path(t, via, "") :-
 closure_in_terminate(t, via) :-
   teardown_touches_sibling(_, _, "terminate", _, via, _, t, _, _),
   function_def(t, m, n, a, _),
-  contains(cat(m, ":-", n, "/", to_string(a), "-fun-"), via).
+  contains(cat(m, cat(":-", cat(n, cat("/", cat(to_string(a), "-fun-"))))), via).
 
 // A supervisor the facts place without the instruction that defines its
 // tree anchors with an empty site: every rule's `sup` has a row here.

@@ -10,7 +10,7 @@
 
 // A :global call on init/1's stack holds up supervisor startup. This complements RPC
 // tracking in init_phase.dl.
-.decl global_call_during_init(init: symbol, site: symbol) inline
+.decl global_call_during_init(init: symbol, site: symbol)
 
 global_call_during_init(init, site) :- init_function(_, init), global_path(init, _, site).
 
@@ -33,7 +33,7 @@ global_path(f, id, site) :-
   literal_first(f, g, a),
   global_path(g, s, site),
   clause_of(g, s, c),
-  literal_enters_clause(g, a, c).
+  (c = a ; c = "any" ; clause_event(g, c, a, _)).
 
 global_path(f, "", site) :-
   call_edge(f, g),

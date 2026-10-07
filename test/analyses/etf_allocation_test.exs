@@ -1,6 +1,6 @@
 defmodule Argus.Analyses.EtfAllocationTest do
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
   alias Argus.Analyses.UnsafeInput.EtfAllocation
   alias Argus.Test.Fixtures.EtfAllocation, as: Fixture

@@ -5,7 +5,7 @@ defmodule Argus.Soundness.StateMachineTest do
   before the suppression (`Argus.Test.Soundness`).
   """
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
   import Argus.Test.Soundness, only: [fired: 2]
 

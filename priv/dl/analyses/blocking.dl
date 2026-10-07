@@ -67,48 +67,45 @@ clause_dep(mod, clause, to, request) :-
 // include asynchronous edges, and infer server dependencies from unrelated functions in
 // a module. Chains require synchronous calls reached by handle_call.
 
-// Map request tags to matching handler clauses, including catch-alls. An unknown
-// request tag may enter every clause.
-.decl request_enters_clause(request: symbol, clause: symbol) inline
-
-request_enters_clause(request, clause) :- request = clause.
-request_enters_clause(_request, clause) :- clause = "any".
-request_enters_clause(request, _clause) :- request = "any".
-
 .decl requested(mod: symbol, request: symbol)
 
 requested(to, request) :- clause_dep(_, _, to, request).
 
+// Map request tags to matching handler clauses, including catch-alls. An unknown
+// request tag may enter every clause.
 .decl enters(mod: symbol, request: symbol, clause: symbol)
 
 enters(m, request, clause) :-
   requested(m, request),
   clause_dep(m, clause, _, _),
-  request_enters_clause(request, clause).
+  (request = clause ; clause = "any" ; request = "any").
 
 // ── Timeout chain computation ────────────────────────────────────────
 
 // A request into clause `clause` of `from` reaches `to`'s server through
-// `depth` handle_call hops.
-.decl request_chain(from: symbol, clause: symbol, to: symbol, depth: number)
+// `depth` handle_call hops, for every depth up to ten.
+.decl request_chain_at(from: symbol, clause: symbol, to: symbol, depth: number)
 
 // Base case: the clause itself calls `to` (depth 1).
-request_chain(from, clause, to, 1) :-
+request_chain_at(from, clause, to, 1) :-
   clause_dep(from, clause, to, _),
   gen_server_like(to).
 
 // Extend through the clause entered in the next server. Stop at request cycles, which
-// `call_cycle` reports separately. Keep only the shortest chain from a clause to each
-// server.
-request_chain(from, clause, to, d + 1) :-
+// `call_cycle` reports separately.
+request_chain_at(from, clause, to, d + 1) :-
   clause_dep(from, clause, mid, request),
   enters(mid, request, mid_clause),
   !chain_cycle_clause(mid, mid_clause),
-  request_chain(mid, mid_clause, to, d),
+  request_chain_at(mid, mid_clause, to, d),
   from != to,
   d < 10.
 
-request_chain(from, clause, to, d1) <= request_chain(from, clause, to, d2) :- d2 <= d1.
+// The shortest chain from a clause to each server. A longer chain extends to longer
+// chains only, so the shortest is the one extending the shortest.
+.decl request_chain(from: symbol, clause: symbol, to: symbol, depth: number)
+
+request_chain(from, clause, to, min(d)) :- request_chain_at(from, clause, to, d).
 
 // One request following another, and the clauses on a cycle of them.
 .decl clause_step(mod: symbol, clause: symbol, to: symbol, to_clause: symbol)
@@ -131,9 +128,7 @@ chain_cycle_clause(m, c) :- clause_reach(m, c, m, c).
 // `depth` handle_call hops: the shortest chain, from any clause of from.
 .decl waits_through_chain(from: symbol, to: symbol, depth: number)
 
-waits_through_chain(from, to, d) :- request_chain(from, _, to, d).
-
-waits_through_chain(from, to, d1) <= waits_through_chain(from, to, d2) :- d2 <= d1.
+waits_through_chain(from, to, min(d)) :- request_chain(from, _, to, d).
 
 // ── Output: timeout chain risk ───────────────────────────────────────
 
@@ -143,12 +138,8 @@ waits_through_chain(from, to, d1) <= waits_through_chain(from, to, d2) :- d2 <= 
 
 nested_call_chain(from, to, depth) :-
   waits_through_chain(from, to, depth),
-  passes_through_another_server(depth).
-
-// The chain has a server between its two ends: two hops or more.
-.decl passes_through_another_server(depth: number) inline
-
-passes_through_another_server(depth) :- depth >= 2.
+  // A server between the chain's two ends: two hops or more.
+  depth >= 2.
 
 // Call chains containing a hop inferred from tag attribution. These inferred hops are
 // weaker evidence than directly resolved calls.
@@ -251,19 +242,19 @@ blocking_cast_handler(mod, handler, to) :-
   requests_through_a_clause_it_enters(handler, to).
 
 // `handler` is `mod`'s handle_cast/2.
-.decl handles_casts(mod: symbol, handler: symbol) inline
+.decl handles_casts(mod: symbol, handler: symbol)
 
 handles_casts(mod, h) :- handle_cast_function(mod, h).
 
 // The handler waits on another module's server, on its own stack or in
 // a task it awaits (handler_dep's "call" kind, clientlib/entries.dl).
-.decl waits_on_server(handler: symbol, to: symbol) inline
+.decl waits_on_server(handler: symbol, to: symbol)
 
 waits_on_server(h, to) :- handler_dep(_, "handle_cast", to, "call", h).
 
 // The handler can reach this wait through clauses selected by its literal arguments.
 // Uses `site_request`; `reaches_sync_dep` does not distinguish dispatcher clauses.
-.decl requests_through_a_clause_it_enters(handler: symbol, to: symbol) inline
+.decl requests_through_a_clause_it_enters(handler: symbol, to: symbol)
 
 requests_through_a_clause_it_enters(h, to) :- site_request(h, _, to, _).
 
@@ -306,14 +297,9 @@ handle_call_waits_on(mod, to, ms) :-
 insufficient_timeout(caller, callee, caller_ms, callee_ms) :-
   handle_call_waits_on(caller, callee, caller_ms),
   handle_call_waits_on(callee, _, callee_ms),
-  runs_out_before(caller_ms, callee_ms).
-
-// The caller's known finite timeout is strictly shorter than the callee's. Exclude
-// infinity (-1), unknown (0), and equal timeouts. Equality commonly represents two
-// default 5-second budgets, so it is not reported.
-.decl runs_out_before(caller_ms: number, callee_ms: number) inline
-
-runs_out_before(caller_ms, callee_ms) :-
+  // The caller's known finite timeout is strictly shorter than the callee's.
+  // Exclude infinity (-1), unknown (0), and equal timeouts. Equality commonly
+  // represents two default 5-second budgets, so it is not reported.
   caller_ms > 0,
   callee_ms > 0,
   caller_ms < callee_ms.
@@ -334,7 +320,7 @@ infinite_wait_in_chain(caller, server) :-
   !answers_straight_away(server).
 
 // The handle_call/3's wait on the server has an :infinity timeout.
-.decl handle_call_waits_forever_on(mod: symbol, to: symbol) inline
+.decl handle_call_waits_forever_on(mod: symbol, to: symbol)
 
 handle_call_waits_forever_on(mod, to) :- handle_call_waits_on(mod, to, -1).
 
@@ -539,7 +525,7 @@ calls_back(b, a, w) :-
   process_dep(a, b, w, "start"),
   reaches_sync_request(w, b, request),
   clause_dep(b, clause, a, _),
-  request_enters_clause(request, clause).
+  (request = clause ; clause = "any" ; request = "any").
 
 // Process a waits on process b at w, either during normal operation or during startup
 // when the start can participate in a cycle.
@@ -556,18 +542,14 @@ process_waits_on(a, b, w) :- calls_back(b, a, w).
 continue_cycle(a, b, a_wait, b_wait) :-
   continues_into_wait_on(a, b, a_wait),
   continues_into_wait_on(b, a, b_wait),
-  once_per_pair(a, b).
+  // The pair is taken in one order, so it is reported once.
+  a < b.
 
 // A handle_continue/2 that init/1 continues to waits on another module's
 // server at `w` (continue_dep, clientlib/entries.dl).
-.decl continues_into_wait_on(mod: symbol, to: symbol, w: symbol) inline
+.decl continues_into_wait_on(mod: symbol, to: symbol, w: symbol)
 
 continues_into_wait_on(mod, to, w) :- continue_dep(mod, to, w).
-
-// The pair is taken in one order, so it is reported once.
-.decl once_per_pair(a: symbol, b: symbol) inline
-
-once_per_pair(a, b) :- a < b.
 
 call_cycle(a, b, a_wait, b_wait, "continue", site_a, site_b) :-
   continue_cycle(a, b, a_wait, b_wait),
@@ -658,25 +640,24 @@ back_to(a, y) :-
 
 serialization_bottleneck(server, callers) :-
   caller_count(server, callers),
-  too_many_callers(callers).
+  // Five or more: this separates normal centralized services (one to four
+  // callers) from true serialization bottlenecks.
+  callers >= 5.
 
 // How many modules have a function that waits on the server's process
 // (module_sync_dep, clientlib/calls.dl).
 .decl caller_count(server: symbol, callers: number)
 
-caller_count(server, n) :-
-  gen_server_like(server),
-  n = count : { sync_caller(_, server) }.
+.decl sync_callers(server: symbol, callers: number)
+
+sync_callers(server, count(c)) :- sync_caller(c, server).
+
+caller_count(server, n) :- gen_server_like(server), sync_callers(server, n).
+caller_count(server, 0) :- gen_server_like(server), !sync_callers(server, _).
 
 .decl sync_caller(caller_mod: symbol, target_mod: symbol)
 
 sync_caller(caller_mod, target_mod) :- module_sync_dep(caller_mod, target_mod, _).
-
-// Five or more: this separates normal centralized services (one to four
-// callers) from true serialization bottlenecks.
-.decl too_many_callers(callers: number) inline
-
-too_many_callers(n) :- n >= 5.
 
 // Count of distinct caller modules for each such server.
 .decl sync_call_fan_in(target_mod: symbol, cnt: number)
@@ -770,12 +751,12 @@ receive_in_callback(receive, func, callback, behaviour, proximity, "true") :-
 
 // The receive in `func` has no `after`: it waits until its message
 // comes.
-.decl waits_without_timeout(receive: symbol, func: symbol) inline
+.decl waits_without_timeout(receive: symbol, func: symbol)
 
 waits_without_timeout(receive, func) :- recv_start(receive, func, 1, _).
 
 // The receive in `func` has an `after`: it can end without its message.
-.decl waits_with_timeout(receive: symbol, func: symbol) inline
+.decl waits_with_timeout(receive: symbol, func: symbol)
 
 waits_with_timeout(receive, func) :- recv_start(receive, func, 0, _).
 
@@ -797,21 +778,21 @@ ends_when_peer_exits(receive, callback) :-
 // peer's exit ends the wait; see exit_pinned and trapping_at.
 .decl trapped_exit_ends(id: symbol, func: symbol)
 
-trapped_exit_ends(id, f) :- exit_pinned(id, f), trapping_at(f, id).
+trapped_exit_ends(id, f) :- exit_pinned(id, f), (flag_set_before(f, id) ; entered_trapping(f), !cleared_before(id)).
 
 // ── The cancel_timer flush idiom ─────────────────────────────────
 
 // A blocking receive that runs only where cancel_timer/1 said the timer
 // had already fired, and takes its message, is no hang (flush_receive,
 // clientlib/timer_flush.dl).
-.decl takes_fired_timer_message(receive: symbol) inline
+.decl takes_fired_timer_message(receive: symbol)
 
 takes_fired_timer_message(receive) :- flush_receive(receive).
 
 // A bounded receive flushing a cancelled timer's message (`flush_poll`). Exempt at any
 // timeout because facts distinguish bounded from unbounded receives but do not retain
 // the timeout value.
-.decl polls_cancelled_timer(receive: symbol) inline
+.decl polls_cancelled_timer(receive: symbol)
 
 polls_cancelled_timer(receive) :- flush_poll(receive).
 
@@ -868,7 +849,7 @@ socket_reach.seed(h, h) :- waits_on_socket_forever(_, _, _, h).
 
 // `holder` runs on `server`'s callback stack outside init/1. socket_reach excludes
 // detached functions.
-.decl runs_in_callback_of(holder: symbol, server: symbol) inline
+.decl runs_in_callback_of(holder: symbol, server: symbol)
 
 runs_in_callback_of(h, m) :-
   otp_callback(c, m, name, _),
@@ -919,13 +900,13 @@ wait_found(func, call, "rpc", variant, "caller", "") :-
   rpc_infinity_caller(func, call, _).
 
 // An :rpc call a function makes, and which of the rpc functions it is.
-.decl makes_rpc(func: symbol, call: symbol, variant: symbol) inline
+.decl makes_rpc(func: symbol, call: symbol, variant: symbol)
 
 makes_rpc(f, call, variant) :- rpc_call(call, f, variant, _).
 
 // An RPC waits indefinitely when its timeout is omitted, explicitly :infinity, or
 // passed as :infinity through a parameter.
-.decl no_timeout(call: symbol) inline
+.decl no_timeout(call: symbol)
 
 no_timeout(call) :- rpc_call(call, _, _, -1).
 no_timeout(call) :- rpc_infinity_caller(_, call, _).
@@ -1214,7 +1195,7 @@ rpc_in_callback(func, call, variant) :-
 
 // A handle_call, handle_cast, handle_info or handle_continue of a
 // server (handler_function, clientlib/callbacks.dl).
-.decl handles_messages(func: symbol) inline
+.decl handles_messages(func: symbol)
 
 handles_messages(func) :- handler_function(_, func).
 
@@ -1248,7 +1229,7 @@ bounded_lock_wait(func, lock) :-
   !during_init(lock).
 
 // A :global.set_lock or :global.trans call `func` makes.
-.decl takes_global_lock(func: symbol, lock: symbol) inline
+.decl takes_global_lock(func: symbol, lock: symbol)
 
 takes_global_lock(func, lock) :- global_op(lock, func, _, _, _).
 
@@ -1288,12 +1269,12 @@ partial_noproc_catch(func, try, callee, call, guard_end) :-
 // The try at `try` in `func` guards a synchronous call to a peer
 // (peer_call, clientlib/calls.dl): GenServer.call, :gen_server.call,
 // :gen_statem.call.
-.decl calls_peer_in_try(try: symbol, func: symbol, callee: symbol) inline
+.decl calls_peer_in_try(try: symbol, func: symbol, callee: symbol)
 
 calls_peer_in_try(try, func, callee) :- try_call(try, func, callee, _, _), peer_call(callee).
 
 // A handler of the try takes the exit :noproc: the peer may not exist.
-.decl catches_noproc(try: symbol, func: symbol) inline
+.decl catches_noproc(try: symbol, func: symbol)
 
 catches_noproc(try, func) :- catch_tag(try, func, "exit", ":noproc").
 
@@ -1325,7 +1306,11 @@ answers_at(name, p) :- named_process(m, name), prior_answers("server", m, _, _, 
 
 .decl answering_peer(target: symbol, permille: number)
 
-answering_peer(t, p) :- answers_at(t, _), p = max q : answers_at(t, q), p >= 800.
+.decl answers_at_most(target: symbol, permille: number)
+
+answers_at_most(t, max(q)) :- answers_at(t, q).
+
+answering_peer(t, p) :- answers_at_most(t, p), p >= 800.
 
 .decl answered_chain(from: symbol, to: symbol, kind: symbol)
 

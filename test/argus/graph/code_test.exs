@@ -47,7 +47,7 @@ defmodule Argus.Graph.CodeTest do
     for producer <- producers(),
         {:ok, closure} = Code.closure(producer),
         mod <- [
-          Argus.Souffle,
+          Argus.FlowLog,
           Argus.Analysis,
           Argus.Analysis.Sets,
           Argus.Analysis.Catalog,

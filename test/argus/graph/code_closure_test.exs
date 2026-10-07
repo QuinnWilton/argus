@@ -37,7 +37,7 @@ defmodule Argus.Graph.CodeClosureTest do
   alias Argus.Test.{Graph, Peer}
   alias Roux.Code.Verify
 
-  @moduletag :souffle
+  @moduletag :flowlog
   @moduletag timeout: 600_000
 
   @analysis :coupling

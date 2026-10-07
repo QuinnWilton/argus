@@ -8,7 +8,7 @@ defmodule Argus.CLI.Options do
       argus [analyze] [DIR] [options]   analyze the built project in DIR (default .)
       argus list                        the analyses and the named sets
       argus gc [--grace S] [--keep S]   collect the blob store
-      argus version                     argus's, the runtime's and souffle's versions
+      argus version                     argus's, the runtime's and the engine toolchain's versions
       argus help                        this text
 
   `mix argus` takes the analyses as positional arguments
@@ -301,7 +301,7 @@ defmodule Argus.CLI.Options do
 
     Exit status: 0 done, 1 findings over --fail-above, 2 a usage, project
     or configuration error, 3 the analyses could not run or did not finish
-    (no souffle, an analysis that degraded).
+    (no Rust to build the engines with, an analysis that degraded).
 
     The blob store is $ARGUS_CACHE_DIR, else $XDG_CACHE_HOME/argus/store,
     else ~/.cache/argus/store; `argus gc` collects it.

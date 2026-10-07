@@ -7,7 +7,7 @@ defmodule Argus.Analysis.ExtractionTest do
 
   @moduletag :tmp_dir
 
-  @tag :souffle
+  @tag :flowlog
   test "an extraction is staged: stage 0 is in the directory it returns" do
     assert {:ok, facts_dir} = Analysis.extract_facts([:lists], [:startup])
 
@@ -21,7 +21,7 @@ defmodule Argus.Analysis.ExtractionTest do
   end
 
   describe "through a store" do
-    @describetag :souffle
+    @describetag :flowlog
 
     @describetag :cache
 
@@ -40,7 +40,7 @@ defmodule Argus.Analysis.ExtractionTest do
   end
 
   describe "the points-to stage" do
-    @tag :souffle
+    @tag :flowlog
     test "is derived when an analysis reads it, and only then" do
       assert {:ok, reads} = Analysis.extract_facts([:lists], [:startup])
       assert {:ok, reads_not} = Analysis.extract_facts([:lists], [:effects])
@@ -61,7 +61,7 @@ defmodule Argus.Analysis.ExtractionTest do
       end
     end
 
-    @tag :souffle
+    @tag :flowlog
     test "is read by the analyses that ask about processes" do
       assert Extraction.reads_points_to?(:startup)
       assert Extraction.reads_points_to?(:races)
@@ -74,7 +74,7 @@ defmodule Argus.Analysis.ExtractionTest do
       assert File.ls!(dir) == []
     end
 
-    @tag :souffle
+    @tag :flowlog
     test "is not derived for analyses that do not read it", %{tmp_dir: dir} do
       assert :ok = Extraction.ensure_points_to(dir, [:effects, :structure], [])
       assert File.ls!(dir) == []

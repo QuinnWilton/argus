@@ -1,6 +1,6 @@
 defmodule Argus.Analyses.SingletonShapesTest do
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
   alias Argus.Test.Fixtures.{CatchShapes, EtsOwners, InitAck, InitRecv}
   alias Argus.Test.Memo

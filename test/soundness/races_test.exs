@@ -14,7 +14,7 @@ defmodule Argus.Soundness.RacesTest do
   counter-examples come first; review 2's probes are kept at the end.
   """
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
   import Argus.Test.Soundness, only: [fired: 2]
 

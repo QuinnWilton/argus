@@ -1,6 +1,6 @@
 defmodule Argus.Analyses.ShutdownTest do
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
   alias Argus.Extractor.Helpers
   alias Argus.Test.Fixtures.Shutdown, as: S
@@ -398,7 +398,7 @@ defmodule Argus.Analyses.ShutdownTest do
   end
 
   describe "findings" do
-    @describetag souffle: false
+    @describetag flowlog: false
 
     test "each relation renders a finding naming the module and the fix" do
       mod = Argus.Analyses.Shutdown

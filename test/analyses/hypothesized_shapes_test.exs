@@ -1,6 +1,6 @@
 defmodule Argus.Analyses.HypothesizedShapesTest do
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
   alias Argus.Test.Fixtures.Hypothesized, as: H
   alias Argus.Test.Memo
@@ -228,7 +228,7 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
     assert {:ok, _} = Argus.InstrId.parse(arm_site)
   end
 
-  @tag souffle: false
+  @tag flowlog: false
   test "a local timer's finding says the stale message outlives the call" do
     row = [
       "M",

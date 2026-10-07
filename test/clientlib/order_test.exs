@@ -9,9 +9,9 @@ defmodule Argus.Clientlib.OrderTest do
   and the check is over the instructions, not over what it emitted.
   """
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
-  alias Argus.{Cfg, InstrId, Pipeline, Souffle}
+  alias Argus.{Cfg, InstrId, Pipeline}
   alias Argus.Test.Fixtures.Order
 
   @moduletag :tmp_dir
@@ -61,7 +61,7 @@ defmodule Argus.Clientlib.OrderTest do
 
     out = Path.join(tmp_dir, "out")
     File.mkdir_p!(out)
-    {:ok, results} = Souffle.run(facts_dir, rules_path, output_dir: out)
+    {:ok, results} = Argus.FlowLog.run(facts_dir, rules_path, output_dir: out)
     results
   end
 

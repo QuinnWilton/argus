@@ -27,7 +27,7 @@ prepares_for_draining(mod, drain) :-
 
 // The drain returns a state with `key` reset to nil (field_reset,
 // vocabulary.dl): the value the fetch's clause asks for.
-.decl clears_field(drain: symbol, key: symbol) inline
+.decl clears_field(drain: symbol, key: symbol)
 
 clears_field(drain, key) :- field_reset(drain, key, "nil", _).
 
@@ -50,7 +50,7 @@ fetch_takes_drain_flag(mod, drain) :-
   field_value_test(g, key, _).
 
 // The drain returns a state with `key` set to a literal other than nil.
-.decl sets_to_literal(drain: symbol, key: symbol) inline
+.decl sets_to_literal(drain: symbol, key: symbol)
 
 sets_to_literal(drain, key) :-
   returned_update(drain, key, v, _),
@@ -59,7 +59,7 @@ sets_to_literal(drain, key) :-
 
 // handle_demand/2 of the producer `mod` reaches `func` in the module, in
 // its process.
-.decl demand_reaches(mod: symbol, func: symbol) inline
+.decl demand_reaches(mod: symbol, func: symbol)
 
 demand_reaches(mod, func) :-
   function_def(h, mod, "handle_demand", 2, _),

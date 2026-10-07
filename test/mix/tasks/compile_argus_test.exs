@@ -19,7 +19,7 @@ defmodule Mix.Tasks.Compile.ArgusTest do
   alias Roux.QueryLog
 
   @moduletag timeout: 300_000
-  @moduletag :souffle
+  @moduletag :flowlog
 
   # Its own store: the suite's keeps the edited beams' packs from an
   # earlier run, and these tests assert the extractions an edit causes.

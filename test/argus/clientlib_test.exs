@@ -8,12 +8,11 @@ defmodule Argus.ClientlibTest do
   named here are empty, and the points-to stage is derived from them.
   """
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
   @moduletag :tmp_dir
 
   alias Argus.Schema
-  alias Argus.Souffle
 
   @program ~S"""
   .decl out(kind: symbol, a: symbol, b: symbol)
@@ -109,7 +108,7 @@ defmodule Argus.ClientlibTest do
       ~s(.include "#{lib}/imports.dl"\n.include "#{lib}/otp.dl"\n) <> @program
     )
 
-    {:ok, %{"out" => rows}} = Souffle.run(facts, program)
+    {:ok, %{"out" => rows}} = Argus.FlowLog.run(facts, program)
 
     out =
       rows

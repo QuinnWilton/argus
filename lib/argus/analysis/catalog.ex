@@ -78,7 +78,7 @@ defmodule Argus.Analysis.Catalog do
   end
 
   @doc """
-  The Souffle program an analysis runs: a built-in's `rules_file/0`
+  The FlowLog program an analysis runs: a built-in's `rules_file/0`
   under `priv/dl/`, or a custom program's own path. Either must exist.
   """
   @spec rules_path(Analysis.analysis()) :: {:ok, Path.t()} | {:error, term()}

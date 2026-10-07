@@ -1,6 +1,6 @@
 defmodule Argus.Analyses.RegistryRaceTest do
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
   alias Argus.Analyses.Races
   alias Argus.Test.Batch
@@ -191,7 +191,7 @@ defmodule Argus.Analyses.RegistryRaceTest do
   end
 
   describe "finding" do
-    @describetag souffle: false
+    @describetag flowlog: false
 
     test "anchors the start, relates the lookup, and says what to do" do
       row = [

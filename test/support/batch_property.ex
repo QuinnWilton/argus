@@ -3,7 +3,7 @@ defmodule Argus.Test.BatchProperty do
   A property over generated code whose cases are solved together, once
   per run, rather than once each.
 
-  Most of a small solve is fixed cost: Souffle's start on the program,
+  Most of a small solve is fixed cost: an engine's start on the program,
   and the compiling and extracting of each module. So `check_cases/2`
   draws `count` cases from the generator, each from a seed of its own
   (`StreamData.seeded/2`, the seeds picked under the test's ExUnit

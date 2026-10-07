@@ -1,17 +1,17 @@
 defmodule Argus.InProcessRelationsTest do
   use ExUnit.Case, async: true
 
-  alias Argus.{Analysis, Schema, Souffle}
+  alias Argus.{Analysis, Schema}
 
   @moduledoc """
   `Argus.Schema.in_process_only/0` names the relations
   `Argus.Analysis.extract_facts/3` leaves out of the directory it stages.
-  That is only sound while no Souffle program reads them, which this test
-  asks Souffle itself (the pruned RAM is the oracle, as in
+  That is only sound while no program reads them, which this test asks
+  FlowLog itself (the pruned manifest is the oracle, as in
   `Argus.DlDeclarationsTest`).
   """
 
-  @tag :souffle
+  @tag :flowlog
   test "no built-in program reads an in-process-only relation" do
     programs = [
       Analysis.stage0_rules_path(),
@@ -23,7 +23,7 @@ defmodule Argus.InProcessRelationsTest do
     in_process = MapSet.new(Schema.in_process_only(), &to_string/1)
 
     for program <- programs do
-      assert {:ok, inputs} = Souffle.input_relations(program)
+      assert {:ok, inputs} = Argus.FlowLog.input_relations(program)
       read = inputs |> MapSet.new() |> MapSet.intersection(in_process) |> Enum.sort()
 
       assert read == [],

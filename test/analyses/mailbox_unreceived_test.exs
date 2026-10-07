@@ -1,6 +1,6 @@
 defmodule Argus.Analyses.MailboxUnreceivedTest do
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
   alias Argus.Analyses.Mailbox
   alias Argus.Test.Fixtures.UnreceivedMessage, as: U
@@ -68,7 +68,7 @@ defmodule Argus.Analyses.MailboxUnreceivedTest do
     assert results["unreceived_message"] == []
   end
 
-  @tag souffle: false
+  @tag flowlog: false
   test "the finding anchors at the send and relates the receive and the spawn" do
     f =
       Mailbox.finding(:unreceived_message, [

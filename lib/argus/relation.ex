@@ -3,7 +3,7 @@ defmodule Argus.Relation do
   Select raw relation rows by column name, without converting values or IDs.
 
   Both debug inspection and fixture assertions use this contract. Field names
-  may be strings or atoms; values remain the strings Soufflé reads and writes.
+  may be strings or atoms; values remain the strings the engines read and write.
   Selection preserves row order. Unknown columns and malformed rows raise
   rather than silently selecting the wrong tuple.
   """

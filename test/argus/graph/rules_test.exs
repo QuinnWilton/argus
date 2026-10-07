@@ -49,7 +49,7 @@ defmodule Argus.Graph.RulesTest do
   alias Argus.Test.{Graph, Peer}
   alias Roux.{Input, Memo, QueryLog}
 
-  @moduletag :souffle
+  @moduletag :flowlog
   @moduletag timeout: 300_000
 
   @analyses [:coupling, :mailbox]

@@ -10,7 +10,7 @@ defmodule Argus.DriverCrashTest do
   alias Argus.Test.Graph
   alias Roux.Memo
 
-  @moduletag :souffle
+  @moduletag :flowlog
   @moduletag timeout: 300_000
 
   test "a raising analysis is degraded, not the run" do

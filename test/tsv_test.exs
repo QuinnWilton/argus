@@ -2,7 +2,6 @@ defmodule Argus.TsvTest do
   use ExUnit.Case, async: true
   use ExUnitProperties
 
-  alias Argus.Souffle
   alias Argus.Tsv
 
   @moduletag :tmp_dir
@@ -33,16 +32,31 @@ defmodule Argus.TsvTest do
       end
     end
 
-    property "escape replaces exactly the four special characters" do
+    property "escape replaces exactly the special characters and the bytes that are not text" do
       check all(value <- field()) do
         reference =
           value
-          |> String.replace("\\", "\\\\")
-          |> String.replace("\t", "\\t")
-          |> String.replace("\n", "\\n")
-          |> String.replace("\r", "\\r")
+          |> String.chunk(:valid)
+          |> Enum.map_join(fn chunk ->
+            if String.valid?(chunk) do
+              chunk
+              |> String.replace("\\", "\\\\")
+              |> String.replace("\t", "\\t")
+              |> String.replace("\n", "\\n")
+              |> String.replace("\r", "\\r")
+            else
+              for <<byte <- chunk>>, into: "", do: "\\x" <> Base.encode16(<<byte>>)
+            end
+          end)
 
         assert Tsv.escape(value) == reference
+      end
+    end
+
+    # An engine's symbols are UTF-8 text: it refuses a row that is not.
+    property "an escaped field is UTF-8 text, whatever bytes it held" do
+      check all(value <- field()) do
+        assert String.valid?(Tsv.escape(value))
       end
     end
 
@@ -69,14 +83,14 @@ defmodule Argus.TsvTest do
     end
   end
 
-  describe "through Souffle" do
-    @describetag :souffle
+  describe "through an engine" do
+    @describetag :flowlog
 
     property "a copied relation comes back as it was written", %{tmp_dir: tmp_dir} do
       rules = Path.join(tmp_dir, "copy.dl")
 
       File.write!(rules, """
-      .decl r(a: symbol, b: symbol, c: symbol)
+      .decl r(a: symbol, b: symbol, c: symbol) mutable
       .input r
       .decl o(a: symbol, b: symbol, c: symbol)
       .output o
@@ -91,19 +105,19 @@ defmodule Argus.TsvTest do
         File.mkdir_p!(facts_dir)
         File.write!(Path.join(facts_dir, "r.facts"), Tsv.encode(rows))
 
-        assert {:ok, %{"o" => out}} = Souffle.run(facts_dir, rules)
-        # Souffle has set semantics and its own order.
+        assert {:ok, %{"o" => out}} = Argus.FlowLog.run(facts_dir, rules)
+        # An engine has set semantics and writes its rows sorted.
         assert Enum.sort(out) == rows |> Enum.uniq() |> Enum.sort()
       end
     end
   end
 
   describe "names no fact file could hold" do
-    @describetag :souffle
+    @describetag :flowlog
 
     # A function named with a tab used to write a six-column function_def
-    # row, and Souffle refused the whole directory over it.
-    test "reach Souffle and come back whole", %{tmp_dir: tmp_dir} do
+    # row, and the solver refused the whole directory over it.
+    test "reach an engine and come back whole", %{tmp_dir: tmp_dir} do
       names = [:"a\tb", :"c\nd", :"e\\f", :"g\rh", :"\\t"]
 
       defs =
@@ -127,7 +141,7 @@ defmodule Argus.TsvTest do
       rules = Path.join(tmp_dir, "names.dl")
 
       File.write!(rules, """
-      .decl function_def(func: symbol, mod: symbol, name: symbol, arity: number, exported: number)
+      .decl function_def(func: symbol, mod: symbol, name: symbol, arity: number, exported: number) mutable
       .input function_def
       .decl name(name: symbol)
       .output name
@@ -135,7 +149,7 @@ defmodule Argus.TsvTest do
       """)
 
       try do
-        assert {:ok, %{"name" => rows}} = Souffle.run(facts_dir, rules)
+        assert {:ok, %{"name" => rows}} = Argus.FlowLog.run(facts_dir, rules)
         found = List.flatten(rows)
 
         for name <- names, do: assert(Atom.to_string(name) in found)

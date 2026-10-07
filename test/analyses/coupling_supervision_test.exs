@@ -1,6 +1,6 @@
 defmodule Argus.Analyses.CouplingSupervisionTest do
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
   alias Argus.Test.Fixtures.SupervisionShapes, as: Shapes
   alias Argus.Test.Memo
@@ -50,7 +50,7 @@ defmodule Argus.Analyses.CouplingSupervisionTest do
         ],
         # Map specs: the restart is the one they state.
         supervisor_child_form: [["Sup", "0", "explicit"], ["Sup", "1", "explicit"]],
-        function_def: [["P:call_s/0", "P", "call_s", "0", "1", "1"]],
+        function_def: [["P:call_s/0", "P", "call_s", "0", "1"]],
         sync_call: [["P:call_s/0", "S"]]
       }
     end

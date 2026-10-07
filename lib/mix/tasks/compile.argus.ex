@@ -19,7 +19,7 @@ defmodule Mix.Tasks.Compile.Argus do
   Cross-VM incrementality comes from `Roux.Lang.Manifest`: extraction
   and solve memos persist per run, so a warm `mix compile` re-runs
   nothing for unchanged beams, a comment-only edit re-extracts one
-  module and re-runs zero Souffle solves (the semantic-facts cutoff
+  module and re-runs zero solves (the semantic-facts cutoff
   seam), and prior findings re-emit from memo hits on every run —
   including `:noop` runs, matching the Elixir compiler's
   `--all-warnings` behavior.
@@ -28,8 +28,11 @@ defmodule Mix.Tasks.Compile.Argus do
   `Argus.Config` (a `scry:` key, or the `:scry` compiler, raises with the
   rename). A finding's severity is its analysis's unless the
   configuration overrides it; a finding at or above `fail_on` (`:error`
-  by default; `:warning` for CI) fails the build, and `souffle:
-  :require` makes a missing solver an error instead of a notice.
+  by default; `:warning` for CI) fails the build, and `engine:
+  :require` makes a machine that cannot build the FlowLog engines (no
+  Rust) an error instead of a notice. The first run on a machine builds
+  the engines its analyses need (`Argus.FlowLog.Toolchain`); `mix
+  argus.flowlog build` does it ahead of time.
   """
 
   use Mix.Task.Compiler

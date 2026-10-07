@@ -1,6 +1,6 @@
 defmodule Argus.Analyses.UnsafeInputTest do
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
   alias Argus.Analyses.UnsafeInput
   alias Argus.Test.Batch
@@ -123,7 +123,7 @@ defmodule Argus.Analyses.UnsafeInputTest do
       assert Enum.any?(safe.help, &(&1 =~ "non_executable_binary_to_term"))
     end
 
-    @tag souffle: false
+    @tag flowlog: false
     test "a request-reachable deserialization carries the same class" do
       row = fn safety ->
         [
@@ -526,7 +526,7 @@ defmodule Argus.Analyses.UnsafeInputTest do
   end
 
   describe "severity" do
-    @describetag souffle: false
+    @describetag flowlog: false
 
     test "tracks proximity rather than sink type" do
       row = fn prox ->
@@ -720,7 +720,7 @@ defmodule Argus.Analyses.UnsafeInputTest do
   end
 
   describe "sink_endpoint" do
-    @tag souffle: false
+    @tag flowlog: false
     test "is a related frame naming the HTTP method and path rather than the callback" do
       frame =
         UnsafeInput.evidence(:sink_endpoint, ["M:f/1#3", "get", "/public/x/:id", "W.Controller"])

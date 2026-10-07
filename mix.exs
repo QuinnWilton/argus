@@ -29,8 +29,8 @@ defmodule Argus.MixProject do
       # depend on (they are what the analyses detect).
       elixirc_options: [no_warn_undefined: [:ssl, :mnesia, :telemetry, Plug.Crypto]],
       description:
-        "Whole-program BEAM analysis via Souffle Datalog: supervision, GenServer " <>
-          "and OTP bug detectors over compiled beams (the Argus modules).",
+        "Whole-program BEAM analysis via incremental Datalog (FlowLog): supervision, " <>
+          "GenServer and OTP bug detectors over compiled beams (the Argus modules).",
       package: package(),
       source_url: @source_url,
       homepage_url: @source_url,
@@ -109,7 +109,9 @@ defmodule Argus.MixProject do
   # The `argus` escript (`Argus.CLI`): argus over a rebar3, Gleam or
   # erlang.mk project, or bare ebins, with Elixir inside it. Built in
   # :prod (`mix escript.build`), so the dev and test dependencies stay
-  # out; the Datalog rules travel in its code (`Argus.Dl.Embedded`).
+  # out; the Datalog rules travel in its code (`Argus.Dl.Embedded`), and
+  # so do the FlowLog toolchain's sources it builds its engines from
+  # (`Argus.FlowLog.Native`).
   defp escript do
     [main_module: Argus.CLI, name: "argus", app: nil]
   end
@@ -122,7 +124,10 @@ defmodule Argus.MixProject do
       licenses: ["MIT"],
       links: %{"GitHub" => @source_url},
       files:
-        ~w(lib priv/dl docs/bug-classes.md docs/analyses docs/design examples/contributor mix.exs README.md CONTRIBUTING.md LICENSE CHANGELOG.md .formatter.exs)
+        ~w(lib priv/dl native/flowlog/tool/Cargo.toml native/flowlog/tool/Cargo.lock native/flowlog/tool/src
+           native/flowlog/engine/Cargo.toml native/flowlog/engine/Cargo.lock native/flowlog/engine/src/main.rs
+           native/flowlog/engine/src/host.rs docs/bug-classes.md docs/analyses docs/design examples/contributor
+           mix.exs README.md CONTRIBUTING.md LICENSE CHANGELOG.md .formatter.exs)
     ]
   end
 

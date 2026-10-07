@@ -25,13 +25,14 @@ defmodule Argus.Graph.Inputs do
       modification time, inode) of every beam in that directory: it
       moves when a beam there is rebuilt, and a reader of a module's
       specs there looks at them again (`Argus.Graph.Reads`).
-    * `solver` (`:all`) — `%{bin: path, version: banner, timeout: ms}`,
-      or nil without one: nothing is solved.
+    * `solver` (`:all`) — `%{version: digest, timeout: ms, workers: n}`:
+      the FlowLog toolchain's sources' digest, a commit's timeout and an
+      engine's workers.
     * `dl_tree` (a directory) — each Datalog file under it and its
       content's digest: what a program is read from
       (`Argus.Graph.Programs`).
     * `priors` (`{program, relation}`) — a layer-3 relation's rows as
-      the text Souffle reads, empty when priors are off.
+      the text an engine reads, empty when priors are off.
 
   Durability: `program`, `beam` and `priors` move with the project and
   are `:medium`; the rest move with the toolchain and are `:high`, so a

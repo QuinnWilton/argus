@@ -28,24 +28,49 @@ end)
 # gleam`.
 exclude = if Argus.Dirs.keep?(), do: [:identity_verify], else: [:cache, :identity_verify]
 
-# A test that solves (`@tag :souffle`, or its `@describetag` and
-# `@moduletag`) needs the souffle binary on PATH. Without it those tests
-# are excluded, said once here, and the rest of the suite still runs. A
-# module or describe that mostly solves tags itself and opts the rest
-# out (`souffle: false`), which is why the filter is `souffle: true`. CI
-# installs souffle in every job that tests, so there a missing souffle is
+# A test that solves (`@tag :flowlog`, or its `@describetag` and
+# `@moduletag`) needs FlowLog engines, which argus builds with Rust
+# (`Argus.FlowLog.Toolchain`). Without Rust those tests are excluded,
+# said once here, and the rest of the suite still runs. A module or
+# describe that mostly solves tags itself and opts the rest out
+# (`flowlog: false`), which is why the filter is `flowlog: true`. CI
+# installs Rust in every job that tests, so there a missing toolchain is
 # an error, never a silently smaller suite.
+#
+# Every built-in program's engine is built here, before any test runs:
+# a large program's engine takes minutes to compile, far past a test's
+# timeout, and is built once per version of its rules (the build cache,
+# `ARGUS_FLOWLOG_DIR`, outlives the suite). A test that compiles a
+# program of its own or an edited copy of argus's builds its engine
+# itself. `ARGUS_TEST_PREBUILD=0` skips the prebuild, for running a test
+# file that builds only its own programs.
 exclude =
   cond do
-    Argus.Souffle.available?() ->
+    Argus.FlowLog.available?() and System.get_env("ARGUS_TEST_PREBUILD") == "0" ->
       exclude
 
+    Argus.FlowLog.available?() ->
+      case Argus.FlowLog.prebuild(Argus.FlowLog.builtin_programs(),
+             progress: &IO.puts(:stderr, &1)
+           ) do
+        :ok ->
+          exclude
+
+        {:error, reason} ->
+          raise "building the FlowLog engines failed: " <> Argus.FlowLog.describe_error(reason)
+      end
+
     System.get_env("CI") ->
-      raise "souffle is not on PATH: CI runs the :souffle tests"
+      raise "the FlowLog toolchain is unavailable, and CI runs the :flowlog tests: " <>
+              Argus.FlowLog.not_found_message()
 
     true ->
-      IO.puts(:stderr, "souffle is not on PATH: the :souffle tests are excluded")
-      [{:souffle, true} | exclude]
+      IO.puts(
+        :stderr,
+        "no Rust toolchain: the :flowlog tests are excluded (#{Argus.FlowLog.not_found_message()})"
+      )
+
+      [{:flowlog, true} | exclude]
   end
 
 # `ARGUS_TEST_TIMINGS=N` prints the N slowest tests as they ran beside the
@@ -56,4 +81,15 @@ formatters =
     do: [ExUnit.CLIFormatter, Argus.Test.Timings],
     else: [ExUnit.CLIFormatter]
 
-ExUnit.start(exclude: [:parity, :escript, :rebar3, :gleam | exclude], formatters: formatters)
+# A test's own program (some forty across the suite) builds its engine
+# on first use, and the builds take turns on the toolchain's one Cargo
+# target: on a cold cache a test may wait out others' builds before its
+# own, minutes past ExUnit's minute. Built once, an engine is kept for as
+# long as its program does not change, and a warm run builds nothing.
+timeout = if Argus.FlowLog.available?(), do: 1_200_000, else: 60_000
+
+ExUnit.start(
+  exclude: [:parity, :escript, :rebar3, :gleam | exclude],
+  formatters: formatters,
+  timeout: timeout
+)

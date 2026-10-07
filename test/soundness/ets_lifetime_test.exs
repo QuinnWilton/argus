@@ -27,7 +27,7 @@ defmodule Argus.Soundness.EtsLifetimeTest do
   taken as the owner's own and missed.
   """
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
   import Argus.Test.Soundness, only: [fired: 2]
 

@@ -99,7 +99,7 @@ defmodule Argus.Extractors.CallArgsTest do
     # Forwardings go to call_arg_forward with the forwarded position as a
     # real number column, not into call_arg's value as the string "arg:N".
     # The string form made Datalog decode it with the PARTIAL functor
-    # to_number, which Souffle was free to schedule ahead of its guard.
+    # to_number, which a planner is free to schedule ahead of its guard.
 
     test "records parameter 0 forwarded to GenServer.call" do
       facts = extract(Argus.Test.Fixtures.CallArgsForwarder)

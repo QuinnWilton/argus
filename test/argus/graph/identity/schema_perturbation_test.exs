@@ -236,7 +236,7 @@ defmodule Argus.Graph.Identity.SchemaPerturbationTest do
             Enum.filter(Argus.Schema.all(), &(&1.layer == layer))
           )
 
-        ["souffle_decls", _layer] ->
+        ["datalog_decls", _layer] ->
           whole(%{cover | membership: true}, Argus.Schema.all())
 
         ["fetch", name] ->

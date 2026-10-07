@@ -14,7 +14,7 @@ defmodule Argus.EscriptTest do
 
   use ExUnit.Case, async: false
   @moduletag :escript
-  @moduletag :souffle
+  @moduletag :flowlog
   @moduletag timeout: 600_000
 
   import ExUnit.CaptureIO

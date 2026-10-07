@@ -9,7 +9,7 @@ defmodule Argus.Analyses.MailboxTaskHandlesTest do
 
   use ExUnit.Case, async: true
   use ExUnitProperties
-  @moduletag :souffle
+  @moduletag :flowlog
 
   alias Argus.Test.BatchProperty
   alias Argus.Test.Fixtures.TaskHandles

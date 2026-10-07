@@ -18,7 +18,7 @@ exit_without_handler(mod, trap) :-
 // `gen_server_like`. Other frameworks use their own callbacks or hidden receives;
 // gen_statem uses state functions or handle_event/4 and must not be checked for
 // handle_info.
-.decl hands_exits_to_handle_info(mod: symbol) inline
+.decl hands_exits_to_handle_info(mod: symbol)
 
 hands_exits_to_handle_info(mod) :- gen_server_like(mod).
 
@@ -51,7 +51,7 @@ exit_without_receive(mod, trap) :-
 
 // The trap at `trap`, a function of `mod`'s, is one no behaviour's loop
 // answers (trap_loop_candidate).
-.decl traps_in_own_loop(mod: symbol, trap: symbol) inline
+.decl traps_in_own_loop(mod: symbol, trap: symbol)
 
 traps_in_own_loop(mod, trap) :-
   trap_loop_candidate(trap),

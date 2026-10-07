@@ -207,7 +207,7 @@ table_dies_with_owner(table, owner, owner_mod, create) :-
 
 // A private table is inaccessible to other processes. Its contents die with its owner,
 // so no external reader can observe its disappearance.
-.decl private_table(create: symbol) inline
+.decl private_table(create: symbol)
 
 private_table(create) :- ets_option(create, "access", "private").
 
@@ -317,7 +317,7 @@ touches_made_table(id, create) :-
 
 makes_table(create, table) :- ets_new(create, _, table), table != "dynamic".
 
-.decl made_for_concurrent_reads(create: symbol) inline
+.decl made_for_concurrent_reads(create: symbol)
 
 made_for_concurrent_reads(create) :- ets_option(create, "read_concurrency", "true").
 
@@ -327,12 +327,12 @@ made_for_concurrent_reads(create) :- ets_option(create, "read_concurrency", "tru
 made_for_concurrent_writes(create) :- ets_option(create, "write_concurrency", "true").
 made_for_concurrent_writes(create) :- ets_option(create, "write_concurrency", "auto").
 
-.decl ordered_set(create: symbol) inline
+.decl ordered_set(create: symbol)
 
 ordered_set(create) :- ets_option(create, "type", "ordered_set").
 
 // The module that makes the table at `create`.
-.decl made_in(create: symbol, mod: symbol) inline
+.decl made_in(create: symbol, mod: symbol)
 
 made_in(create, mod) :- ets_new(create, func, _), function_def(func, mod, _, _, _).
 

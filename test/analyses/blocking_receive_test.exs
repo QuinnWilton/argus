@@ -1,6 +1,6 @@
 defmodule Argus.Analyses.BlockingReceiveTest do
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
   alias Argus.Analyses.Blocking
   alias Argus.Test.Batch
@@ -240,7 +240,7 @@ defmodule Argus.Analyses.BlockingReceiveTest do
       end
     end
 
-    @tag souffle: false
+    @tag flowlog: false
     test "the finding says what bounds the wait, not that it has a timeout" do
       attrs =
         Blocking.finding(:receive_in_callback, [
@@ -314,7 +314,7 @@ defmodule Argus.Analyses.BlockingReceiveTest do
   end
 
   describe "recv_start facts" do
-    @tag souffle: false
+    @tag flowlog: false
     test "blocking is decided by following the fail label, on real OTP code" do
       # gen_server's own loop uses wait_timeout; timer's interval loop uses
       # a bare wait. If this ever collapses to one value the analysis
@@ -333,7 +333,7 @@ defmodule Argus.Analyses.BlockingReceiveTest do
   end
 
   describe "the anchor" do
-    @tag souffle: false
+    @tag flowlog: false
     test "every placement anchors at the receive keyword, not the function's first clause" do
       # A receive's loop_rec carries no line, so the bytecode puts it on
       # the function head, which for a multi-clause function is another

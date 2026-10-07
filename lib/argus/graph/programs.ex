@@ -9,18 +9,19 @@ defmodule Argus.Graph.Programs do
 
     * `program_files(program)` — the program's files, each by the name
       it is included by, its path under its tree and its content's
-      digest (`Argus.Souffle.Program.program_files/1`): reads the tree's
+      digest (`Argus.Dl.Program.program_files/1`): reads the tree's
       `dl_tree` input (`tree/1`), so any edit under it walks every
       program's includes again, and only a program that includes the
       edited file comes out different.
     * `program_io(program)` — what the program reads and writes, as
-      Souffle resolves them (`Argus.Souffle.ram_io/2`), kept in the blob
-      store's action cache by the program's files and the solver's
-      version: a warm run starts no solver to ask.
+      FlowLog resolves them (`Argus.FlowLog.manifest/2`), kept in the
+      blob store's action cache by the program's files and the
+      toolchain's sources: a warm run asks no tool, and needs no Rust.
     * `program_digest(program)` — the program as a solve of it loads it
-      (`Argus.Souffle.Program.declared_digest/2`: of a generated file of
-      declarations, only the relations it loads) with the solver's
-      version: what every solve of it is keyed on.
+      (`Argus.FlowLog.program_digest/2`: of a generated file of
+      declarations, only the relations it loads, and the toolchain's
+      sources, which pin FlowLog): what every solve of it is keyed on,
+      and what its engine is built for.
 
   Each is `{:ok, value}` or `{:error, reason}`: a program whose file is
   missing, or that the solver rejects, fails every solve that reads it
@@ -32,7 +33,7 @@ defmodule Argus.Graph.Programs do
     around: {Argus.Graph.Reads, :around}
 
   alias Argus.Analysis.Catalog
-  alias Argus.Souffle.Program
+  alias Argus.Dl.Program
   alias Roux.Runtime
 
   @typedoc "A program the graph solves."
@@ -145,11 +146,21 @@ defmodule Argus.Graph.Programs do
       Roux.Stamp.memo(
         {__MODULE__, :io, files, solver.version},
         [],
-        fn ->
-          Argus.Souffle.ram_io(solver.bin, path)
-        end,
+        fn -> io(path) end,
         store: db.blob
       )
+    end
+  end
+
+  # The manifest in the shape a solve reads it: each relation by its name
+  # and the file it is read from or written to.
+  defp io(path) do
+    with {:ok, manifest} <- Argus.FlowLog.manifest(path) do
+      {:ok,
+       %{
+         inputs: Enum.map(manifest.inputs, &{&1.name, &1.file}),
+         outputs: Enum.map(manifest.outputs, &{&1.name, &1.file})
+       }}
     end
   end
 
@@ -162,15 +173,13 @@ defmodule Argus.Graph.Programs do
 
       try do
         # The files by their digests: a program read once per VM.
-        declared =
-          Roux.Stamp.memo(
-            {__MODULE__, :declared, files, relations},
-            [],
-            fn -> Program.declared_digest(path, relations) end,
-            store: db.blob
-          )
-
-        {:ok, sha(:erlang.term_to_binary({declared, solver.version}, [:deterministic]))}
+        {:ok,
+         Roux.Stamp.memo(
+           {__MODULE__, :digest, files, relations, solver.version},
+           [],
+           fn -> Argus.FlowLog.program_digest(path, relations) end,
+           store: db.blob
+         )}
       rescue
         # A file of the program went missing since its files were read.
         error in File.Error -> {:error, {:unreadable, error.path}}
@@ -178,13 +187,18 @@ defmodule Argus.Graph.Programs do
     end
   end
 
-  @doc "The solver the graph's `solver` input names, or `{:error, :souffle_not_found}`."
+  @doc """
+  The engine settings the graph's `solver` input names: `%{version:,
+  timeout:, workers:}`, the version naming the FlowLog toolchain's
+  sources (`Argus.FlowLog.Native.digest/0`).
+  """
   @spec solver(Roux.Database.t()) ::
-          {:ok, %{bin: String.t(), version: String.t(), timeout: timeout()}} | {:error, term()}
+          {:ok, %{version: String.t(), timeout: timeout(), workers: pos_integer()}}
+          | {:error, term()}
   def solver(db) do
     case Runtime.input(db, :solver, :all, default: nil) do
-      %{bin: _, version: _} = solver -> {:ok, solver}
-      nil -> {:error, :souffle_not_found}
+      %{version: _} = solver -> {:ok, solver}
+      nil -> {:error, :solver_unset}
     end
   end
 

@@ -7,7 +7,7 @@ defmodule Argus.EvidenceFramesTest do
   """
 
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
   alias Argus.InstrId
   alias Argus.Test.Fixtures

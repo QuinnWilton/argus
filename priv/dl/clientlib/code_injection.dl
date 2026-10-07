@@ -31,7 +31,7 @@ template_gate_at(id, caller, param, value, outer, value) :-
   template_source_need(callee, _, param, value, _, _), param >= 0,
   code_call(id, caller, callee),
   call_arg_param(id, caller, param, outer),
-  code_arg_identity(id, caller, param, "param", to_string(outer)),
+  code_arg_identity(id, caller, param, "param", outer_text), outer_text = to_string(outer),
   !template_gate_conflict(id, caller, outer, value).
 template_gate_at(id, caller, param, value, outer_param, outer_value) :-
   template_source_need(callee, _, param, value, _, _), param >= 0,

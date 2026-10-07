@@ -14,7 +14,7 @@ defmodule Argus.Project.DriverTest do
   alias Argus.Test.Projects
 
   @moduletag :tmp_dir
-  @moduletag :souffle
+  @moduletag :flowlog
   @moduletag timeout: 300_000
 
   defp run(root, kind, config_overrides \\ []) do

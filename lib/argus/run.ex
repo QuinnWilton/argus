@@ -20,8 +20,8 @@ defmodule Argus.Run do
 
   ## Options
 
-  Besides `:analyses`, `:souffle_bin`, `:souffle_timeout`,
-  `:concurrency`, `:priors` and `:priors_opts` (`Argus.Findings.run/2`):
+  Besides `:analyses`, `:timeout`, `:workers`, `:concurrency`,
+  `:priors` and `:priors_opts` (`Argus.Findings.run/2`):
 
     * `:store` — the blob store: a `Roux.Blob`, or the root of one.
     * `:manifest` — where the graph is kept between calls: the call
@@ -34,8 +34,8 @@ defmodule Argus.Run do
       manifest, unless given (`Argus.Graph.Environment.stamps/1`, read
       once for many calls in one VM).
 
-  The batch pipeline's options went with it in 0.20: each raises,
-  naming what replaces it (`check_options!/1`).
+  The batch pipeline's options went with it in 0.20, and Souffle's with
+  it in 0.22: each raises, naming what replaces it (`check_options!/1`).
   """
 
   alias Argus.Analysis
@@ -57,7 +57,7 @@ defmodule Argus.Run do
     {selection, opts} = Keyword.pop(opts, :analyses, :all)
 
     with {:ok, requests} <- Sets.resolve(selection),
-         :ok <- ensure_souffle(opts) do
+         :ok <- ensure_engine() do
       names = Enum.map(requests, & &1.name())
 
       if names == [] do
@@ -124,13 +124,18 @@ defmodule Argus.Run do
         "rows, extract with Argus.Pipeline.extract/2 and solve with Argus.Analysis.run_rules/3",
     relations:
       "a solve reads every relation its program reads: for a facts directory, use " <>
-        "Argus.Analysis.extract_facts/3"
+        "Argus.Analysis.extract_facts/3",
+    souffle_bin:
+      "argus solves on FlowLog engines since 0.22, built with the Rust toolchain " <>
+        "(Argus.FlowLog.Toolchain): drop `souffle_bin:`",
+    souffle_timeout: "argus solves on FlowLog engines since 0.22: `timeout:` bounds a solve"
   ]
 
   @doc """
   Raises `ArgumentError` for an option the batch pipeline took and 0.20
   removed with it (`:backend`, `:facts_dir`, `:cache`, `:solve_cache`,
-  `:extractors`, `:relations`), naming what replaces it.
+  `:extractors`, `:relations`), or one Souffle took and 0.22 removed
+  (`:souffle_bin`, `:souffle_timeout`), naming what replaces it.
 
       iex> Argus.Run.check_options!(analyses: [:mailbox], store: "store")
       :ok
@@ -174,7 +179,7 @@ defmodule Argus.Run do
           Graph.set_environment(
             db,
             [trees: trees, stamps: stamps] ++
-              Keyword.take(opts, [:souffle_bin, :souffle_timeout])
+              Keyword.take(opts, [:timeout, :workers])
           )
 
         :ok = Graph.set_priors(db, @program, priors(opts))
@@ -269,11 +274,10 @@ defmodule Argus.Run do
     %Findings{findings: findings, ran: ran, degraded: degraded}
   end
 
-  defp ensure_souffle(opts) do
-    cond do
-      Keyword.has_key?(opts, :souffle_bin) -> :ok
-      Argus.Souffle.available?() -> :ok
-      true -> {:error, :souffle_not_found}
+  defp ensure_engine do
+    case Argus.FlowLog.Toolchain.rust() do
+      {:ok, _} -> :ok
+      {:error, reason} -> {:error, {:flowlog_unavailable, reason}}
     end
   end
 
@@ -290,7 +294,7 @@ defmodule Argus.Run do
     in_process = Argus.Schema.in_process_only()
     traced? = :coverage in analyses
 
-    with {:ok, read} <- in_process_read(analyses, in_process, opts) do
+    with {:ok, read} <- in_process_read(analyses, in_process) do
       materialize(db, analyses, opts, (Argus.Schema.names() -- in_process) ++ read, traced?)
     end
   end
@@ -322,11 +326,11 @@ defmodule Argus.Run do
   end
 
   # The in-process relations the custom programs among `analyses` read,
-  # as the solver resolves each program's inputs.
-  defp in_process_read(analyses, in_process, opts) do
+  # as FlowLog resolves each program's inputs.
+  defp in_process_read(analyses, in_process) do
     for({:custom, path} <- analyses, do: path)
     |> Enum.reduce_while({:ok, []}, fn path, {:ok, read} ->
-      case Argus.Souffle.input_relations(path, Keyword.take(opts, [:souffle_bin])) do
+      case Argus.FlowLog.input_relations(path) do
         {:ok, names} ->
           {:cont, {:ok, read ++ Enum.filter(in_process, &(Atom.to_string(&1) in names))}}
 

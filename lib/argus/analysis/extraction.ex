@@ -22,8 +22,7 @@ defmodule Argus.Analysis.Extraction do
 
   alias Argus.Analysis
   alias Argus.Analysis.Catalog
-  alias Argus.Souffle
-  alias Argus.Souffle.Stages
+  alias Argus.Stages
 
   # The relations stage 0 writes; a directory holding every one is staged.
   @stage0_relations ~w(call_edge call_site unconditional_call_edge call_tag fun_handed_to)
@@ -90,7 +89,7 @@ defmodule Argus.Analysis.Extraction do
 
     case File.mkdir(aside) do
       :ok ->
-        case Souffle.run(facts_dir, rules_path, Keyword.put(opts, :output_dir, aside)) do
+        case Argus.FlowLog.run(facts_dir, rules_path, Keyword.put(opts, :output_dir, aside)) do
           {:ok, results} ->
             {:ok, results, aside}
 
@@ -112,7 +111,7 @@ defmodule Argus.Analysis.Extraction do
   # Never solved in place: a directory can have several readers and
   # writers at once. scry names its fact directories by their content,
   # so every solve over the same facts derives the same stage into the
-  # same one. Souffle opens an output truncated and writes it where it
+  # same one. An engine opens an output truncated and writes it where it
   # stands, so a reader there would see a file cut short; and a stage's
   # reports, read back and removed from there, would be removed from
   # under another derivation that has written them and not yet read
@@ -169,16 +168,17 @@ defmodule Argus.Analysis.Extraction do
   instead (`points_to_bounded_rules_path/0`): the leaves a coarse pass
   finds pervasive (held by more than one source in a hundred) are
   resolved by that pass, a superset of their exact rows, and every
-  other one exactly. Souffle stops a fixpoint at the budget however
-  fast it runs, so which stage runs is a function of the facts: the
-  same facts run the same stage on any machine, under any load, afresh
-  or from a store. `points_to_mode.facts` says which one wrote the
-  relations, and a warning names the leaves a bounded stage resolved
-  coarsely. Ash outgrows the budget in six seconds and runs bounded in
-  ten.
+  other one exactly. The budget is decided over the finished fixpoint,
+  so which stage runs is a function of the facts: the same facts run
+  the same stage on any machine, under any load, afresh or from a store.
+  `points_to_mode.facts` says which one wrote the relations, and a
+  warning names the leaves a bounded stage resolved coarsely. Nothing
+  stops an exact fixpoint early, so a program that outgrows the budget
+  pays for its exact fixpoint once before the bounded one runs, within
+  the solve's timeout.
 
   A stage that outgrows the budget even bounded, or does not finish
-  within `:souffle_timeout`, fails with a warning, `{:error,
+  within `:timeout`, fails with a warning, `{:error,
   {:points_to, reason}}`, and the analyses that read it degrade
   (`Argus.Findings.run/2`): time can fail the stage, never change what
   it answers.
@@ -244,10 +244,10 @@ defmodule Argus.Analysis.Extraction do
   def points_to_relations, do: @points_to_relations
 
   @doc """
-  Whether an analysis reads what the points-to stage writes, as Souffle
-  resolves its inputs (`:souffle_bin` as `Argus.Analysis.input_relations/2`
-  takes it). An analysis whose inputs cannot be resolved is taken to
-  read it: deriving the stage then reports the real trouble.
+  Whether an analysis reads what the points-to stage writes, as FlowLog
+  resolves its inputs (`Argus.Analysis.input_relations/2`). An analysis
+  whose inputs cannot be resolved is taken to read it: deriving the
+  stage then reports the real trouble.
   """
   @spec reads_points_to?(Analysis.analysis(), keyword()) :: boolean()
   def reads_points_to?(analysis, opts \\ []) do

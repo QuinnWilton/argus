@@ -54,6 +54,10 @@ The baseline commit is `b710a68f851d892e427a9723bfca343ba508496e`.
 All commands below used Elixir 1.19.4, OTP 28.3, Soufflé 2.5, and
 `ARGUS_ROUX_PATH=/Users/quinn/dev/beam_box/roux`. They exercise the interfaces in
 CONTRIBUTING.md; this is reproducibility evidence, not a human usability study.
+Since 0.22 argus solves with FlowLog: in place of `souffle -D DIR PROGRAM`, run
+`mix argus.flowlog solve PROGRAM FACTS_DIR DIR` (the reachability example's facts
+are in `examples/contributor/reachability`, and `forward.reaches` is written as
+`forward_reaches`).
 
 ### A — PR #8
 

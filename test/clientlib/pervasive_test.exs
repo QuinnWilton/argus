@@ -10,9 +10,9 @@ defmodule Argus.Clientlib.PervasiveTest do
   every other leaf keeps exactly its own.
   """
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
-  alias Argus.{Analysis, Pipeline, Souffle}
+  alias Argus.{Analysis, Pipeline}
 
   # The staged relations, each a `.facts` file both stages write.
   @staged Analysis.points_to_relations()
@@ -74,7 +74,7 @@ defmodule Argus.Clientlib.PervasiveTest do
   defp solve(dir, facts_dir, name, rules_path) do
     output_dir = Path.join(dir, name)
     File.mkdir_p!(output_dir)
-    {:ok, results} = Souffle.run(facts_dir, rules_path, output_dir: output_dir)
+    {:ok, results} = Argus.FlowLog.run(facts_dir, rules_path, output_dir: output_dir)
     Map.merge(results, read_staged(output_dir))
   end
 

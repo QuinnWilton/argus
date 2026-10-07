@@ -1,8 +1,8 @@
 defmodule Argus.Clientlib.ProcessesTest do
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
-  alias Argus.{Analysis, Pipeline, Souffle}
+  alias Argus.{Analysis, Pipeline}
   alias Argus.Test.Fixtures.PidFlow
 
   @modules [
@@ -139,7 +139,7 @@ defmodule Argus.Clientlib.ProcessesTest do
     File.mkdir_p!(output_dir)
     # A program of its own output directory: the stage's `.output`s write
     # files named like the facts, which must not land in facts_dir.
-    {:ok, results} = Souffle.run(facts_dir, rules_path, output_dir: output_dir)
+    {:ok, results} = Argus.FlowLog.run(facts_dir, rules_path, output_dir: output_dir)
     Map.take(results, outputs)
   end
 

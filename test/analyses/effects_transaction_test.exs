@@ -1,6 +1,6 @@
 defmodule Argus.Analyses.EffectsTransactionTest do
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
   alias Argus.Purity.Effects
   alias Argus.Test.Fixtures.Transaction, as: T
@@ -159,7 +159,7 @@ defmodule Argus.Analyses.EffectsTransactionTest do
   end
 
   describe "the read/write distinction" do
-    @tag souffle: false
+    @tag flowlog: false
     test "reads and writes in the same module are told apart" do
       # The model dimension this analysis rests on. Without it every
       # Application.get_env/2 in a transaction is a finding, and the real
@@ -174,7 +174,7 @@ defmodule Argus.Analyses.EffectsTransactionTest do
       assert {:impure, :ets, :write} = Effects.classify(":ets", "insert")
     end
 
-    @tag souffle: false
+    @tag flowlog: false
     test "an unlisted effect defaults to write" do
       # The safe direction: a false "irreversible" costs a look, a false
       # "harmless" costs the bug.

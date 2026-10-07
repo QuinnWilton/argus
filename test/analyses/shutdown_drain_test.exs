@@ -32,7 +32,7 @@ defmodule Argus.Analyses.ShutdownDrainTest do
   end
 
   describe "drain_keeps_fetching" do
-    @describetag :souffle
+    @describetag :flowlog
 
     test "a drain that clears the field the fetch waits on (broadway_sqs before 5b8f18a)", ctx do
       assert drains(ctx, Drain.CancelsOnly) == [

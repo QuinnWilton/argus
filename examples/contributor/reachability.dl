@@ -1,14 +1,12 @@
-// An inline helper, a detached spawn and a task the caller waits for.
-// These are illustrative execution facts, not BEAM extraction.
-.decl call_edge(func: symbol, callee: symbol)
-.decl runs_elsewhere(func: symbol, callee: symbol)
-.decl awaits_task(func: symbol, site: symbol, callee: symbol)
-call_edge("entry", "inline_helper").
-call_edge("entry", "spawned_helper").
-call_edge("entry", "awaited_helper").
-runs_elsewhere("entry", "spawned_helper").
-runs_elsewhere("entry", "awaited_helper").
-awaits_task("entry", "await-site", "awaited_helper").
+// An inline helper, a detached spawn and a task the caller waits for: the
+// illustrative execution facts in reachability/, not BEAM extraction. An
+// input is `mutable`: the engine keeps its results as the facts change.
+.decl call_edge(func: symbol, callee: symbol) mutable
+.input call_edge
+.decl runs_elsewhere(func: symbol, callee: symbol) mutable
+.input runs_elsewhere
+.decl awaits_task(func: symbol, site: symbol, callee: symbol) mutable
+.input awaits_task
 
 .include "../../priv/dl/clientlib/reach.dl"
 
@@ -37,4 +35,8 @@ reachable("held", t) :- held.reaches("entry", t).
 // The root reaches itself.
 .init forward = ForwardCallReach
 forward.root("entry", "entry").
-.output forward.reaches
+
+// An instance's relation is read through a relation of the program's own.
+.decl forward_reaches(root: symbol, func: symbol)
+.output forward_reaches
+forward_reaches(r, f) :- forward.reaches(r, f).

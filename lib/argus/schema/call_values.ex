@@ -148,7 +148,7 @@ defmodule Argus.Schema.CallValues do
         doc: """
         A caller parameter passed unchanged to a callee argument. Used for \
         interprocedural constant propagation. Positions are numeric columns to avoid \
-        partial string functors, which can abort when Souffle reorders conjuncts.
+        partial string functors, which a solver may evaluate before their guards.
         """
       },
       %{

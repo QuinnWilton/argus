@@ -1,6 +1,6 @@
 defmodule Argus.Analyses.StructureTest do
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
   alias Argus.Test.Fixtures.SupervisionShapes, as: Shapes
   alias Argus.Test.Memo

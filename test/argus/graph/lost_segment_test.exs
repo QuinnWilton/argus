@@ -14,7 +14,7 @@ defmodule Argus.Graph.LostSegmentTest do
   alias Argus.Test.Graph
   alias Roux.Blob
 
-  @moduletag :souffle
+  @moduletag :flowlog
   @moduletag :tmp_dir
   @moduletag timeout: 120_000
 

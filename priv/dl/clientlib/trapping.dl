@@ -67,12 +67,10 @@ cleared_between(t, s) :-
 
 // ── Is the process trapping at this point ───────────────────────────
 
-// At site, trap_exit was set earlier locally or inherited on entry, with no intervening
-// clear.
-.decl trapping_at(func: symbol, site: symbol) inline
-
-trapping_at(f, s) :- flag_set_before(f, s).
-trapping_at(f, s) :- entered_trapping(f), !cleared_before(s).
+// The process traps exits at a site in `func` when the flag was set earlier there
+// (`flag_set_before`), or was inherited on entry (`entered_trapping`) with no clear
+// before the site (`!cleared_before`). Rules that ask state the disjunction
+// themselves: the site is one they bind, and no relation ranges over every site.
 
 // `func` sets the flag before `site`, and nothing clears it between.
 .decl flag_set_before(func: symbol, site: symbol)
@@ -100,12 +98,12 @@ entered_trapping(i) :-
 entered_trapping(h) :-
   call_instr(g, h, c),
   !runs_elsewhere(g, h),
-  trapping_at(g, c).
+  (flag_set_before(g, c) ; entered_trapping(g), !cleared_before(c)).
 
 entered_trapping(h) :-
   fun_handed(c, g, h, _),
   !runs_elsewhere(g, h),
-  trapping_at(g, c).
+  (flag_set_before(g, c) ; entered_trapping(g), !cleared_before(c)).
 
 // A closure or fun handed nowhere the facts say runs where its maker is.
 entered_trapping(h) :-

@@ -7,7 +7,7 @@ defmodule Argus.Analyses.MailboxMonitorTest do
   still live.
   """
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
   alias Argus.Test.Fixtures.MonitorLeak, as: M
   alias Argus.Test.Memo

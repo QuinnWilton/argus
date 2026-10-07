@@ -9,18 +9,12 @@
 // reason, so all calls remain reachable. Closure/reference edges without sites are also
 // followed. Tuple shutdown reasons describe different stop paths.
 
-// The call at `id` in `func` runs when func holds the reason in `pos`.
-.decl runs_holding(func: symbol, pos: number, id: symbol) inline
-
-runs_holding(f, pos, id) :- shutdown_runs(id, f, pos).
-runs_holding(f, pos, _id) :- !shutdown_chooses(f, pos).
-
-// The call at id forwards the reason from func's parameter pos to callee argument arg.
-// Use -1 if it does not forward the reason.
-.decl hands_holding(func: symbol, pos: number, id: symbol, arg: number) inline
-
-hands_holding(f, pos, id, arg) :- shutdown_handed(id, f, pos, arg).
-hands_holding(f, pos, id, -1) :- !shutdown_handed(id, f, pos, _).
+// The rules below and in sibling_calls.dl state two conditions inline. The call at
+// `id` in `func` runs when func holds the reason in `pos`:
+// `(shutdown_runs(id, func, pos) ; !shutdown_chooses(func, pos))`. It forwards the
+// reason from func's parameter `pos` to callee argument `arg`, or `arg = -1` when it
+// does not: `(shutdown_handed(id, func, pos, arg) ; arg = -1,
+// !shutdown_handed(id, func, pos, _))`.
 
 // Cleanup that matters on supervisor shutdown
 //
@@ -32,7 +26,7 @@ hands_holding(f, pos, id, -1) :- !shutdown_handed(id, f, pos, _).
 runs_on_shutdown(t, g) :-
   terminate_callback(t, _, _),
   call_instr(t, g, id),
-  runs_holding(t, 0, id).
+  (shutdown_runs(id, t, 0) ; !shutdown_chooses(t, 0)).
 
 runs_on_shutdown(t, g) :-
   terminate_callback(t, _, _),
@@ -74,7 +68,7 @@ does_cleanup(terminate, write) :-
 writes_on_shutdown(t, id) :-
   terminate_callback(t, _, _),
   impure_call(id, t, _, _, "write"),
-  runs_holding(t, 0, id).
+  (shutdown_runs(id, t, 0) ; !shutdown_chooses(t, 0)).
 
 writes_on_shutdown(t, id) :-
   terminate_callback(t, _, _),
@@ -84,7 +78,7 @@ writes_on_shutdown(t, id) :-
 
 // The call's effect leaves the process and stays done when it exits
 // (durable_effect, effect_model.dl).
-.decl outlasts_process(call: symbol) inline
+.decl outlasts_process(call: symbol)
 
 outlasts_process(id) :- impure_call(id, _, _, category, _), durable_effect(category).
 
@@ -179,7 +173,7 @@ unclear_cleanup(mod, terminate, work) :-
 does_unclassified_work(t, id) :-
   terminate_callback(t, _, _),
   unknown_call(id, t, _, _),
-  runs_holding(t, 0, id).
+  (shutdown_runs(id, t, 0) ; !shutdown_chooses(t, 0)).
 
 does_unclassified_work(t, id) :-
   terminate_callback(t, _, _),
@@ -214,7 +208,7 @@ truncated_cleanup(mod, terminate, cleanup) :-
 
 // The call has no bound of its own inside the shutdown timeout: network
 // and port calls (slow_effect, effect_model.dl).
-.decl unbounded(call: symbol) inline
+.decl unbounded(call: symbol)
 
 unbounded(id) :- impure_call(id, _, _, category, _), slow_effect(category).
 

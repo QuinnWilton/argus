@@ -5,6 +5,43 @@ which a change appeared; older names and APIs may have changed since then.
 
 ## Unreleased
 
+### Changed
+
+- Argus solves its rules with [FlowLog](https://github.com/flowlog-rs/flowlog)
+  instead of Soufflé. Each program compiles once per version of its rules
+  into an engine, a native Differential Dataflow executable, cached under
+  `~/.cache/argus/flowlog` (`ARGUS_FLOWLOG_DIR`). The query graph keeps an
+  engine running between solves and sends it only the rows that changed, so
+  a rerun after a small edit costs in proportion to the edit. Building
+  engines needs Rust 1.88 or newer (`cargo` on `PATH`, in `~/.cargo/bin`, or
+  named by `ARGUS_CARGO`); Soufflé is no longer used.
+- Rename the `souffle:` configuration key to `engine:`, the
+  `:souffle_missing` notice to `:engine_unavailable`, and
+  `Argus.Driver.Result.souffle_missing?/1` to `engine_unavailable?/1`. The old
+  key is rejected with a message naming the new one.
+- Remove the `:souffle_bin` and `:souffle_timeout` options; use `:timeout`
+  and `:workers` (engine threads, `ARGUS_FLOWLOG_WORKERS`). A solve that
+  runs out of time fails as `:flowlog_timeout`.
+- Rename `Argus.Schema.souffle_decls/0` to `datalog_decls/0`. Input
+  declarations end in `mutable`; a custom rules file's inputs must too.
+- Custom rules use FlowLog's dialect: no ADTs, `inline` relations,
+  subsumption, body aggregates, `.limitsize` or `.plan`. The
+  [rule guide](docs/design/rule-style.md#the-dialect) lists the differences.
+- The points-to stage decides whether it outgrew its row budget by counting
+  the finished fixpoint, instead of stopping Soufflé at a size limit. The
+  stage chosen depends only on the facts.
+- `.facts` files escape a byte that is not part of valid UTF-8 as `\xHH`
+  (`Argus.Tsv`), because engines hold symbols as UTF-8 text. `Argus.Tsv.decode/1`
+  restores the bytes.
+
+### Added
+
+- `mix argus.flowlog build`, `status`, `solve` and `clean`: build engines
+  ahead of time, show the toolchain and what is built, run a program over a
+  facts directory, and remove the toolchains this argus no longer uses.
+
+### Other changes
+
 - Add a Breeze terminal explorer with `mix argus.debug explore`: search relations,
   filter and page through rows, inspect column and producer descriptions, follow
   IDs and rule references to source, and browse retained successful solves.

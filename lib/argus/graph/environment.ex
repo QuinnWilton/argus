@@ -3,8 +3,9 @@ defmodule Argus.Graph.Environment do
   The values of the graph's environment inputs (`Argus.Graph.Inputs`),
   as a frontend computes them before a run: never inside a query.
 
-    * `solver/2` — the solver on `PATH`, its version and the timeout a
-      solve has; nil without one.
+    * `solver/2` — the engine settings: the FlowLog toolchain's version
+      (its sources' digest), the timeout a solve has and the workers an
+      engine runs.
     * `code_index/2` — each directory the specs are read from (the
       specs source's, or the code path's) outside OTP and Elixir (and
       the build's consolidated protocols), named by itself.
@@ -23,52 +24,31 @@ defmodule Argus.Graph.Environment do
   Record.defrecordp(:file_info, Record.extract(:file_info, from_lib: "kernel/include/file.hrl"))
 
   @doc """
-  The solver on `PATH`: `%{bin:, version:, timeout:}`, or nil. Its
-  version is asked once for each binary (`Roux.Stamp`), kept in `store`
-  across VMs unless the binary is a script (a version manager's shim can
-  run another solver without moving).
+  The engine settings: `%{version:, timeout:, workers:}`. The version is
+  the FlowLog toolchain's (`Argus.FlowLog.Native.digest/0`), which every
+  program's digest carries; whether Rust is installed is no part of it,
+  and is asked only by a solve that misses the store
+  (`Argus.FlowLog.Toolchain`).
 
-  `:souffle_timeout` in `opts` sets the timeout (default
-  `Argus.Souffle.default_timeout/0`).
+  `:timeout` in `opts` sets the timeout (default
+  `Argus.FlowLog.default_timeout/0`), and `:workers` the dataflow
+  workers (default `Argus.FlowLog.default_workers/0`). The old
+  `:souffle_bin` and `:souffle_timeout` options raise.
   """
   @spec solver(Blob.t() | nil, keyword()) ::
-          %{bin: String.t(), version: String.t(), timeout: timeout()} | nil
-  def solver(store, opts \\ []) do
-    case Keyword.get(opts, :souffle_bin, Argus.Souffle.executable()) do
-      nil ->
-        nil
-
-      bin ->
-        kept = if script?(bin), do: nil, else: store
-
-        version =
-          Roux.Stamp.memo({__MODULE__, :solver_version, bin}, [bin], fn -> ask_version(bin) end,
-            store: kept
-          )
-
-        %{
-          bin: bin,
-          version: version,
-          timeout: Keyword.get(opts, :souffle_timeout, Argus.Souffle.default_timeout())
-        }
+          %{version: String.t(), timeout: timeout(), workers: pos_integer()}
+  def solver(_store, opts \\ []) do
+    for old <- [:souffle_bin, :souffle_timeout], Keyword.has_key?(opts, old) do
+      raise ArgumentError,
+            "#{inspect(old)}: argus solves on FlowLog engines since 0.22; " <>
+              "use :timeout for a solve's timeout"
     end
-  end
 
-  defp ask_version(bin) do
-    case System.cmd(bin, ["--version"], stderr_to_stdout: true) do
-      {out, 0} -> out
-      {out, status} -> {:error, {:souffle_version, status, out}}
-    end
-  rescue
-    error -> {:error, {:souffle_version, Exception.message(error)}}
-  end
-
-  defp script?(bin) do
-    case File.open(bin, [:read, :binary], &IO.binread(&1, 2)) do
-      {:ok, "#!"} -> true
-      {:ok, _} -> false
-      {:error, _} -> true
-    end
+    %{
+      version: Argus.FlowLog.Native.digest(),
+      timeout: Keyword.get(opts, :timeout, Argus.FlowLog.default_timeout()),
+      workers: Keyword.get(opts, :workers, Argus.FlowLog.default_workers())
+    }
   end
 
   @doc """

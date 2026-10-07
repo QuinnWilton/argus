@@ -7,18 +7,23 @@ pieces as you need them.
 
 ## Get started
 
-Use Elixir 1.19 and OTP 28. Install [Soufflé](https://souffle-lang.github.io/install),
-the program that evaluates Argus's Datalog rules, and check that `souffle` is on
-your `PATH`.
+Use Elixir 1.19 and OTP 28, and install [Rust](https://rustup.rs) 1.88 or newer.
+Argus evaluates its Datalog rules with [FlowLog](https://github.com/flowlog-rs/flowlog),
+which compiles each program into an engine, a native executable. Argus builds and
+caches the engines itself.
 
 ```sh
 mix deps.get
+mix argus.flowlog build
 mix test test/analyses/exposure_tls_test.exs --exclude corpus
 ```
 
-This runs a small set of TLS tests. `--exclude corpus` avoids fetching and
-compiling external projects. Keep that flag while working on a local example.
-Tests that need Soufflé are skipped locally if it is missing.
+`mix argus.flowlog build` builds every shipped program's engine once per version
+of its rules (the first build takes several minutes); `mix argus.flowlog status`
+shows what is built and where. The second command runs a small set of TLS tests.
+`--exclude corpus` avoids fetching and compiling external projects. Keep that flag
+while working on a local example. Tests that need FlowLog are skipped locally if
+Rust is missing.
 
 If you are working with unreleased Roux changes, set
 `ARGUS_ROUX_PATH=/path/to/roux` before running Mix commands.
@@ -63,7 +68,7 @@ page through matching rows. Press `?` for the other keys and `q` to quit.
 `b` shows the bundle manifest, including the solver, optional priors, application
 sources and relation producers. `t` lists retained runs; newer captures save each
 successful run's column definitions and rule copy for historical inspection.
-The explorer reads existing bundles without needing Soufflé. After editing rules
+The explorer reads existing bundles without building an engine. After editing rules
 or running a solve in another terminal, press `R` to load its latest results.
 If you use Argus as a dependency in another project, add
 `{:breeze, "~> 0.5.5"}` to that project's dependencies to enable the explorer.
@@ -177,7 +182,7 @@ a rule that catches `ForcesNone` but also catches `OffersChoice` is too broad.
 
 Put fixture modules in `test/fixtures/` and assertions in `test/analyses/`.
 `test/analyses/exposure_tls_test.exs` is a small example to copy. It uses
-`Argus.Test.Memo.analyze/2` to share repeated solves. Add `@moduletag :souffle` to
+`Argus.Test.Memo.analyze/2` to share repeated solves. Add `@moduletag :flowlog` to
 a test module that solves rules; tests normally use `async: true`.
 
 Start with the affected test file. When it passes, run:
@@ -211,10 +216,13 @@ creates an instance; its `seed` or `root` rows tell it where to start. There is 
 small executable example in `examples/contributor/reachability.dl`:
 
 ```sh
-mkdir -p tmp/reach
-souffle -D tmp/reach examples/contributor/reachability.dl
-cat tmp/reach/reachable.csv tmp/reach/forward.reaches.csv
+mix argus.flowlog solve examples/contributor/reachability.dl \
+  examples/contributor/reachability tmp/reach
 ```
+
+The second argument is the directory of input facts, one tab-separated
+`<relation>.facts` file per input; the command prints each output relation and
+writes it to `tmp/reach/<relation>.csv`.
 
 The example compares an ordinary helper call, a detached spawn and an awaited
 task. Call reach includes all three; same-process reach includes only the helper;

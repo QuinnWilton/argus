@@ -1,8 +1,8 @@
 defmodule Argus.Clientlib.TagResolutionTest do
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
-  alias Argus.{Analysis, Pipeline, Souffle}
+  alias Argus.{Analysis, Pipeline}
   alias Argus.Test.Memo
 
   @moduletag :tmp_dir
@@ -33,7 +33,7 @@ defmodule Argus.Clientlib.TagResolutionTest do
 
     rules_path = Path.join(tmp_dir, "tags.dl")
     File.write!(rules_path, rules)
-    {:ok, results} = Souffle.run(facts_dir, rules_path)
+    {:ok, results} = Argus.FlowLog.run(facts_dir, rules_path)
     results
   end
 

@@ -23,7 +23,7 @@ defmodule Mix.Tasks.Compile.ArgusManifestTest do
   alias Roux.QueryLog
 
   @moduletag timeout: 300_000
-  @moduletag :souffle
+  @moduletag :flowlog
 
   # The two analyses with findings on the fixture: these are about what
   # a warm run re-does, not about the default set's goldens (which

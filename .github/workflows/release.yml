@@ -51,4 +51,4 @@ jobs:
         run: >-
           gh release create "v${{ inputs.version }}" argus argus.sha256
           --draft --title "argus ${{ inputs.version }}"
-          --notes "The argus escript (needs Erlang/OTP 28 and souffle on PATH). Check it with: sha256sum -c <(echo \"$(cat argus.sha256)  argus\")"
+          --notes "The argus escript (needs Erlang/OTP 28, and Rust 1.88 or newer to build its FlowLog engines on first use: https://rustup.rs). Check it with: sha256sum -c <(echo \"$(cat argus.sha256)  argus\")"

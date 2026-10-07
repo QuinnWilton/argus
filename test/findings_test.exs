@@ -77,7 +77,7 @@ defmodule Argus.FindingsTest do
   end
 
   describe "run/2 shape and anchors" do
-    @describetag :souffle
+    @describetag :flowlog
 
     test "unlinked_spawn findings carry instruction anchors" do
       assert {:ok, %Findings{} = result} =
@@ -227,7 +227,7 @@ defmodule Argus.FindingsTest do
       assert Enum.all?(exhaustion, &(&1.severity == :warning))
     end
 
-    @tag souffle: false
+    @tag flowlog: false
     test "a name argus retired is unknown" do
       assert {:error, {:unknown_analysis, :atom_safety}} =
                Memo.run_analyses([Fixtures.UnsafeAtomCreation],
@@ -292,7 +292,7 @@ defmodule Argus.FindingsTest do
                Memo.run_analyses([:lists], analyses: :some)
     end
 
-    @tag :souffle
+    @tag :flowlog
     test "empty analysis selection runs nothing" do
       assert {:ok, %Findings{findings: [], ran: [], degraded: []}} =
                Memo.run_analyses([:lists], analyses: [])
@@ -300,7 +300,7 @@ defmodule Argus.FindingsTest do
 
     # A store of its own: a solve another run kept would be read back
     # rather than run against the deadline.
-    @tag :souffle
+    @tag :flowlog
     test "a failing analysis degrades with a note while the result still returns" do
       store = Path.join(System.tmp_dir!(), "argus-degrade-#{System.unique_integer([:positive])}")
       on_exit(fn -> File.rm_rf(store) end)
@@ -308,7 +308,7 @@ defmodule Argus.FindingsTest do
       assert {:ok, result} =
                Memo.run_analyses([Fixtures.UnlinkedSpawner],
                  analyses: [:failure],
-                 souffle_timeout: 1,
+                 timeout: 1,
                  store: store
                )
 
@@ -316,13 +316,13 @@ defmodule Argus.FindingsTest do
       assert result.ran == []
 
       # Its own solve, or the points-to stage it reads, whichever the
-      # solver reached first (a stage derived earlier in this VM is kept).
+      # engine reached first (a stage derived earlier in this VM is kept).
       assert [%{analysis: :failure, reason: reason, detail: detail}] = result.degraded
-      assert reason in [:souffle_timeout, {:points_to, :souffle_timeout}]
-      assert detail =~ "timed out" or detail =~ "did not finish within :souffle_timeout"
+      assert reason in [:flowlog_timeout, {:points_to, :flowlog_timeout}]
+      assert detail =~ "timed out" or detail =~ "did not finish within :timeout"
     end
 
-    @tag :souffle
+    @tag :flowlog
     test "extraction failure is a whole-call error" do
       assert {:error, {:not_found, :fake_module_xyz}} =
                Memo.run_analyses([:fake_module_xyz], analyses: [:failure])

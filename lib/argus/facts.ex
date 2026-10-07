@@ -3,7 +3,7 @@ defmodule Argus.Facts do
   Schema-driven typed decoding of raw fact rows for in-process consumers.
 
   `Argus.Pipeline.Emit` produces facts as lists of string fields — the right
-  shape for Souffle `.facts` files, but stringly for Elixir consumers. This
+  shape for `.facts` files, but stringly for Elixir consumers. This
   module decodes those rows against the relations' columns
   (`Argus.Schema.columns/1`, its one read of the schema): each row becomes
   a map keyed by the schema's field names, with values decoded by field

@@ -1,6 +1,6 @@
 defmodule Argus.Analyses.BlockingRpcTest do
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
   alias Argus.Analyses.Blocking
   alias Argus.Test.Batch
@@ -61,7 +61,7 @@ defmodule Argus.Analyses.BlockingRpcTest do
   describe "unbounded_wait: rpc prose" do
     # A peer that goes away is noticed within net_ticktime (erpc monitors
     # it); forever is a connected peer whose callee never answers.
-    @tag souffle: false
+    @tag flowlog: false
     test "says what waits forever, and what only waits for net_ticktime" do
       attrs =
         Blocking.finding(:unbounded_wait, [
@@ -83,7 +83,7 @@ defmodule Argus.Analyses.BlockingRpcTest do
   end
 
   describe "unbounded_wait: rpc help" do
-    @describetag souffle: false
+    @describetag flowlog: false
 
     defp help(variant) do
       [help] =

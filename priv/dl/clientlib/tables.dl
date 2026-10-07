@@ -13,7 +13,7 @@
 // unresolved operations use may_touch_any_table.
 // Requires imports.dl, otp.dl, and vocabulary.dl.
 
-.type EtsTable = [kind: symbol, ident: symbol]
+.type EtsTable = (kind: symbol, ident: symbol)
 
 // ── Tables as objects ───────────────────────────────────────────────
 
@@ -71,7 +71,7 @@ name_at_param(f, p, name) :-
   table_param_needed(f, p),
   call_arg_forward(c, f, n, m),
   p = to_string(n),
-  name_at_param(c, to_string(m), name).
+  name_at_param(c, m_text, name), m_text = to_string(m).
 
 // Resolve the allocation whose reference reaches a parameter, directly from a caller's
 // matching ets_tid_arg or through forwarding.
@@ -87,7 +87,7 @@ tid_at_param(f, p, n) :-
   table_param_needed(f, p),
   call_arg_forward(c, f, k, m),
   p = to_string(k),
-  tid_at_param(c, to_string(m), n).
+  tid_at_param(c, m_text, n), m_text = to_string(m).
 
 // A visible caller supplies its own value to this parameter, directly or through a
 // forwarding chain.
@@ -100,7 +100,7 @@ table_filled_in_view(f, p) :-
   table_param_needed(f, p),
   call_arg_forward(c, f, n, m),
   p = to_string(n),
-  table_filled_in_view(c, to_string(m)).
+  table_filled_in_view(c, m_text), m_text = to_string(m).
 
 // An external caller supplies this parameter through library_face entry `way_in`, at
 // `way_in_pos`, then wrappers forward it to `func`. Runtime callback state is excluded;
@@ -116,7 +116,7 @@ param_from_outside(f, p, w, q) :-
   table_param_needed(f, p),
   call_arg_forward(c, f, n, m),
   p = to_string(n),
-  param_from_outside(c, to_string(m), w, q).
+  param_from_outside(c, m_text, w, q), m_text = to_string(m).
 
 // Tables supplied through a parameter: propagated literal names, known allocation
 // references, or an external handed-in table with no visible caller supplying it.
@@ -126,7 +126,7 @@ param_from_outside(f, p, w, q) :-
 param_table(f, p, "named", name) :- name_at_param(f, p, name).
 param_table(f, p, k, t) :- tid_at_param(f, p, n), site_table(n, k, t).
 
-param_table(f, p, "handed_in", cat("param ", q, " of ", w)) :-
+param_table(f, p, "handed_in", cat("param ", cat(q, cat(" of ", w)))) :-
   param_from_outside(f, p, w, q),
   !table_filled_in_view(f, p).
 
@@ -148,7 +148,7 @@ known_table(id, k, t) :-
 known_table(id, k, t) :-
   ets_op(id, f, _, _, _),
   ets_op_param(id, p),
-  param_table(f, to_string(p), k, t).
+  param_table(f, p_text, k, t), p_text = to_string(p).
 
 // Points-to table identities for an operand. Coarse bounded-stage results are
 // supersets, so they cannot establish a specific table identity.
@@ -172,7 +172,7 @@ ets_table(id, k, t) :- known_table(id, k, t).
 has_known_table(id) :- known_table(id, _, _).
 
 // Nothing better: the map field of a parameter it was read under.
-ets_table(id, "field", cat(mod, " ", path)) :-
+ets_table(id, "field", cat(mod, cat(" ", path))) :-
   ets_table_path(id, "param", _, path),
   path != "",
   ets_op(id, f, _, _, _),

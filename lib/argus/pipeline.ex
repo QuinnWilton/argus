@@ -78,7 +78,7 @@ defmodule Argus.Pipeline do
   # decoded facts: `Argus.Cfg`, `Argus.Dataflow` and the extractors that
   # take `module_data.typed` (Dependence, ParamFlow, TermFlow). Decoding
   # every relation was a fifth of extraction time, most of it for
-  # relations only Souffle reads.
+  # relations only the engines read.
   @typed_relations ~w(
     instruction next def use jump branch select_branch label_at bs_start
     try_start bif_call function_def function_entry tail_call remote_call
@@ -132,8 +132,8 @@ defmodule Argus.Pipeline do
   `.beam` files, or raw beam data binaries. Returns `{:ok, output_dir}`
   or `{:error, reason}`.
 
-  Every schema relation gets a file (Souffle fails on a missing `.input`
-  file), but `relations:` limits which ones receive rows — the ones
+  Every schema relation gets a file (a missing input file is an error,
+  `Argus.MissingRelationError`), but `relations:` limits which ones receive rows — the ones
   named, or with `{:except, names}` every one but those: the rest stay
   empty. The query graph uses it to keep apart the relations that exist
   only for the in-process control-flow and dataflow passes
@@ -483,7 +483,7 @@ defmodule Argus.Pipeline do
       # same value. With `ordered: false` the reduce sees workers in
       # completion order, and `merge_facts/2` concatenates, so row order
       # varied run to run — measured at 8 distinct results from 8
-      # extractions of the same 40 modules. Souffle has set semantics
+      # extractions of the same 40 modules. Datalog has set semantics
       # and never noticed, but any consumer that memoizes, hashes or
       # diffs facts did: planchette had to sort every relation itself to
       # get value equality. Ordering costs a little buffering (a worker
@@ -905,10 +905,10 @@ defmodule Argus.Pipeline do
   Writes extracted facts to `.facts` files in `output_dir` (one
   tab-separated file per relation).
 
-  Empty files are materialized for every schema relation so Souffle never
-  fails on a missing `.input` file. Callers that merge per-module fact
-  maps themselves (rather than going through `run/3`) can use this to
-  produce a Souffle-ready facts directory from in-memory facts.
+  Empty files are materialized for every schema relation, so a solve never
+  finds an input file missing. Callers that merge per-module fact maps
+  themselves (rather than going through `run/3`) can use this to produce
+  a solvable facts directory from in-memory facts.
 
   Expects raw-format facts (string rows, as returned by `extract/2` with
   the default `format: :raw`). The directory must already exist.
@@ -919,8 +919,8 @@ defmodule Argus.Pipeline do
       path = Path.join(output_dir, "#{relation}.facts")
 
       # An explicitly-empty relation produces a zero-byte file, not a
-      # lone newline: Souffle reads the blank line as a tuple with
-      # missing columns and aborts with "Values missing in line 1".
+      # lone newline: an engine reads the blank line as a row of one
+      # empty column and refuses it for a wider relation.
       case File.write(path, Argus.Tsv.encode(Enum.reverse(rows))) do
         :ok -> {:cont, :ok}
         {:error, reason} -> {:halt, {:error, {:write_failed, path, reason}}}
@@ -932,8 +932,8 @@ defmodule Argus.Pipeline do
     end
   end
 
-  # Empty files for every schema relation, so Souffle never fails on a
-  # missing .input file. Existing files are left alone: the directory is
+  # Empty files for every schema relation, so a solve never finds an
+  # input file missing. Existing files are left alone: the directory is
   # listed once, where asking after each file was most of a small
   # extraction's time.
   defp touch_relations(output_dir, extractors \\ []) do

@@ -23,7 +23,7 @@ defmodule Argus.Findings.Rows do
   that agree on the relation's declared `:key` fields describe the same
   finding. Keeps the lexicographically least row of each group — a
   deterministic representative, so finding counts and anchors never
-  depend on Souffle's row order or on how many sites witness the same
+  depend on an engine's row order or on how many sites witness the same
   defect. Relations without a `:key` pass through unchanged.
 
   A key chosen by the value of a discriminating column

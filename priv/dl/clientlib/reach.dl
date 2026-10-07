@@ -68,8 +68,8 @@
   .decl seed(func: symbol, pos: symbol, target: symbol)
   .decl reaches(func: symbol, pos: symbol, target: symbol)
   reaches(f, p, t) :- seed(f, p, t).
-  reaches(f, p, t) :- call_arg_reads(f, g, k, "param", p), reaches(g, to_string(k), t).
-  reaches(f, to_string(p), t) :- call_arg_derived(f, g, k, p), reaches(g, to_string(k), t).
+  reaches(f, p, t) :- call_arg_reads(f, g, k, "param", p), reaches(g, k_text, t), k_text = to_string(k).
+  reaches(f, to_string(p), t) :- call_arg_derived(f, g, k, p), reaches(g, k_text, t), k_text = to_string(k).
 }
 
 // ── Backward, as a set: which functions reach any seed ───────────────

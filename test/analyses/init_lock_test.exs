@@ -11,7 +11,7 @@ defmodule Argus.Analyses.InitLockTest do
   """
 
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
   alias Argus.Test.Fixtures.InitLock
   alias Argus.Test.Memo

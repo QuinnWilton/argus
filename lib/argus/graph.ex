@@ -24,7 +24,7 @@ defmodule Argus.Graph do
            │
       analysis_inputs({p, a}) ─ program_digest(a) ← program_io(a) ← program_files(a)
            │
-      solve({p, a})              one Souffle solve, kept by its key
+      solve({p, a})              one engine commit, kept by its key
            │
       findings({p, a})           line-free (store: :blob)
            │
@@ -157,8 +157,8 @@ defmodule Argus.Graph do
   end
 
   @doc """
-  Sets what the graph runs on beyond the program's beams: the solver
-  (nil when there is none, and nothing is solved), the code path's
+  Sets what the graph runs on beyond the program's beams: the engine
+  settings (`Argus.Graph.Environment.solver/2`), the code path's
   index and each directory's stamp, the Datalog trees the programs are
   read from, and the project's root. Returns whether any of them moved.
 
@@ -170,7 +170,8 @@ defmodule Argus.Graph do
       path;
     * `:trees` — the Datalog trees besides argus's own (a custom
       program's directory);
-    * `:souffle_timeout` — milliseconds a solve may run;
+    * `:timeout` — milliseconds a solve's commit may run;
+    * `:workers` — dataflow worker threads per engine;
     * `:own_ebins` — the directories whose every beam is an input (a
       project's own ebins): not stamped (`Environment.code_index/2`);
     * `:stamps` — each directory's stamp (`app_code`): true (the

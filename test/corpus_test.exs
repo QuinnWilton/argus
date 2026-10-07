@@ -24,7 +24,7 @@ defmodule Argus.CorpusTest do
   alias Argus.Corpus
 
   @moduletag :corpus
-  @moduletag :souffle
+  @moduletag :flowlog
   @moduletag timeout: :infinity
 
   @only (case System.get_env("ARGUS_CORPUS_ONLY") do

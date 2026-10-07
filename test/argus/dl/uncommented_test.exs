@@ -1,15 +1,15 @@
-defmodule Argus.Souffle.UncommentedTest do
+defmodule Argus.Dl.UncommentedTest do
   @moduledoc """
-  Comment-only edits preserve every shipped program's cache key and parsed
-  rules. Compare the complete syntax tree Souffle reads, including declarations
-  and components, independently of any input dataset.
+  Comment-only edits preserve every shipped program's cache key and the
+  dataflow FlowLog compiles it to. Compare the engine module the tool
+  generates (`argus-flowlog-tool generate`), which covers declarations,
+  components and every rule, independently of any input dataset.
   """
   use ExUnit.Case, async: true
 
-  alias Argus.Souffle
-  alias Argus.Souffle.Program
+  alias Argus.Dl.Program
 
-  doctest Argus.Souffle.Program, only: [uncommented: 1]
+  doctest Argus.Dl.Program, only: [uncommented: 1]
 
   @moduletag :tmp_dir
 
@@ -23,7 +23,7 @@ defmodule Argus.Souffle.UncommentedTest do
     assert Program.uncommented("a(1). // why\n") == "a(1). // why"
   end
 
-  @tag :souffle
+  @tag :flowlog
   @tag timeout: 120_000
   test "prose preserves every program's key and parsed rules; a rule edit does", %{
     tmp_dir: tmp
@@ -71,15 +71,21 @@ defmodule Argus.Souffle.UncommentedTest do
     refute parsed(races) == original
   end
 
+  # The engine module FlowLog generates for the program: what it would
+  # build, rule for rule.
   defp parsed(program) do
-    # Optimized RAM assigns generated aggregate names in an unstable order.
-    # The initial AST retains the complete rules without optimizer artifacts.
-    {ast, status} =
-      System.cmd(Souffle.executable(), ["--wno=all", "--show=initial-ast", program],
-        stderr_to_stdout: true
-      )
+    {:ok, toolchain} = Argus.FlowLog.toolchain(progress: false)
+    out = Path.join(System.tmp_dir!(), "argus_parsed_#{System.unique_integer([:positive])}")
+    File.mkdir_p!(out)
 
-    assert status == 0, "#{program} failed to parse:\n#{ast}"
-    ast
+    try do
+      {output, status} =
+        System.cmd(Argus.FlowLog.Toolchain.tool(toolchain), ["generate", program, out, "digest"])
+
+      assert status == 0, "#{program} failed to compile:\n#{output}"
+      File.read!(Path.join(out, "program.rs"))
+    after
+      File.rm_rf!(out)
+    end
   end
 end

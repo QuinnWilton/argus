@@ -62,7 +62,7 @@ defmodule Argus.Analyses.EffectsPurityTest do
   end
 
   describe "verified" do
-    @describetag :souffle
+    @describetag :flowlog
 
     test "arithmetic, recursion through a private helper, and pure closures" do
       %{verified: verified} = run()
@@ -79,7 +79,7 @@ defmodule Argus.Analyses.EffectsPurityTest do
   end
 
   describe "violated" do
-    @describetag :souffle
+    @describetag :flowlog
 
     test "an effect in the function itself, with the right category" do
       %{violated: violated} = run()
@@ -132,7 +132,7 @@ defmodule Argus.Analyses.EffectsPurityTest do
   end
 
   describe "unprovable" do
-    @describetag :souffle
+    @describetag :flowlog
 
     test "a call through a fun value cannot be verified" do
       %{unprovable: unprovable, violated: violated} = run([P.Unprovable])
@@ -188,7 +188,7 @@ defmodule Argus.Analyses.EffectsPurityTest do
   end
 
   describe "higher-order contracts" do
-    @describetag :souffle
+    @describetag :flowlog
 
     # A declared-pure function that calls the fun it is given cannot be
     # verified in isolation — its purity is whatever the caller handed it.
@@ -251,7 +251,7 @@ defmodule Argus.Analyses.EffectsPurityTest do
   end
 
   describe "scope" do
-    @describetag :souffle
+    @describetag :flowlog
 
     test "functions that claim nothing are never reported" do
       %{verified: v, violated: vi, unprovable: u} = run()

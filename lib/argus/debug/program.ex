@@ -1,7 +1,7 @@
 defmodule Argus.Debug.Program do
   @moduledoc false
 
-  alias Argus.Souffle.Program
+  alias Argus.Dl.Program
 
   # Copy the shipped tree with familiar paths. Custom programs keep their include
   # closure in a separate directory, with rewritten relative includes so a bundle
@@ -67,61 +67,27 @@ defmodule Argus.Debug.Program do
     path
   end
 
-  defp run_copy!(root, program, run, probes) do
+  defp run_copy!(root, program, run, _probes) do
     File.cp_r!(Path.join(root, "rules"), Path.join(run, "rules"))
-
-    # Materialize only requested predicates in this run's private copy. Other
-    # inline definitions may rely on variables supplied by their callers and
-    # must stay inline. Caller-bound predicates need a grounded consumer probe.
-    requested = MapSet.new(probes, fn name -> name |> String.split(".") |> List.last() end)
-
-    for path <- Path.wildcard(Path.join(run, "rules/**/*.dl")), probes != [] do
-      content =
-        Regex.replace(~r/^(\s*\.decl\s+([\w.]+)\s*\([^)]*\))([^\n]*)/m, File.read!(path), fn _,
-                                                                                             declaration,
-                                                                                             name,
-                                                                                             qualifiers ->
-          qualifiers =
-            if MapSet.member?(requested, name),
-              do: Regex.replace(~r/\binline\b/, qualifiers, ""),
-              else: qualifiers
-
-          declaration <> qualifiers
-        end)
-
-      File.write!(path, content)
-    end
-
     program
   end
 
-  # The solver expands components and resolves types. Source matching below is
-  # only navigation; it never determines a production dependency or cache key.
-  @spec columns!(Path.t(), Path.t(), Path.t(), Path.t()) :: %{String.t() => [map()]}
-  def columns!(bin, path, run, snapshot \\ "program.ast") do
-    args = ["--show=transformed-ast", "--wno=all", path]
+  # FlowLog expands components and resolves types; the tool reports every
+  # relation's columns after it has (`Argus.FlowLog.manifest/2`). Source
+  # matching below is only navigation; it never determines a production
+  # dependency or cache key.
+  @spec columns!(Path.t(), Path.t(), Path.t()) :: %{String.t() => [map()]}
+  def columns!(path, run, snapshot \\ "program.relations.json") do
+    case Argus.FlowLog.manifest(path) do
+      {:ok, %{relations: relations}} ->
+        File.write!(Path.join(run, snapshot), JSON.encode!(relations))
+        Map.new(relations, &{&1.name, &1.columns})
 
-    case System.cmd(bin, args, stderr_to_stdout: true) do
-      {ast, 0} ->
-        File.write!(Path.join(run, snapshot), ast)
-
-        ~r/^\.decl\s+([\w.]+)\s*\(([^)]*)\)/m
-        |> Regex.scan(ast)
-        |> Map.new(fn [_, name, fields] ->
-          columns =
-            for field <- String.split(fields, ",", trim: true) do
-              [column, type] = String.split(field, ":", parts: 2)
-              %{"name" => String.trim(column), "type" => String.trim(type)}
-            end
-
-          {name, columns}
-        end)
-
-      {message, status} ->
+      {:error, reason} ->
         raise ArgumentError,
-              "Soufflé could not compile the debug program (#{status}):\n#{message}\n" <>
-                "Inline predicates that depend on caller-bound variables cannot be " <>
-                "enumerated independently; probe a grounded consumer instead."
+              "FlowLog could not compile the debug program:\n" <>
+                Argus.FlowLog.describe_error(reason) <>
+                "\nA probe must name a relation whose columns are symbols or numbers."
     end
   end
 

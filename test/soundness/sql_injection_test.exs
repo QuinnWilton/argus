@@ -1,6 +1,6 @@
 defmodule Argus.Soundness.SqlInjectionTest do
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
   alias Argus.Test.Fixtures.SqlComments
   alias Argus.Test.Fixtures.SqlInjection

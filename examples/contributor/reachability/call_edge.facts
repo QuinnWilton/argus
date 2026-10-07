@@ -1,0 +1,3 @@
+entry	inline_helper
+entry	spawned_helper
+entry	awaited_helper

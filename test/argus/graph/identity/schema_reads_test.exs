@@ -37,7 +37,7 @@ defmodule Argus.Graph.Identity.SchemaReadsTest do
   defp arguments(Schema, :fetch, 1), do: relation_names()
   defp arguments(Schema, :columns, 1), do: relation_names()
 
-  defp arguments(Schema, :souffle_decls, 1),
+  defp arguments(Schema, :datalog_decls, 1),
     do: Enum.map([:layer_1, :layer_2, :layer_3, :all], &[&1])
 
   # Every read the other exports record, and one naming a relation that

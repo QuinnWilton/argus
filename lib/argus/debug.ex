@@ -19,7 +19,7 @@ defmodule Argus.Debug do
 
   alias Argus.Analysis
   alias Argus.Debug.Program
-  alias Argus.{Lines, Relation, Schema, Souffle, Tsv}
+  alias Argus.{Lines, Relation, Schema, Tsv}
   alias Argus.Pipeline.Disassemble
 
   @doc """
@@ -27,8 +27,10 @@ defmodule Argus.Debug do
 
   The destination must not exist. `:extractors` adds custom producers to the
   built-ins; their empty outputs are retained too. `:probes` names intermediate
-  relations. `:souffle_bin`, `:souffle_timeout` and `:concurrency` are forwarded
-  to the existing implementations. Captures contain no optional classifier
+  relations. `:timeout`, `:workers` and `:concurrency` are forwarded to the
+  existing implementations. Each run compiles its program's FlowLog engine
+  unless one was built for the same rules before (`Argus.FlowLog.Program`):
+  an edited rule costs a build. Captures contain no optional classifier
   priors; `prior_*` inputs are empty and this is recorded in the manifest.
 
   Returns the absolute bundle path. Failure leaves the newly created bundle
@@ -38,7 +40,7 @@ defmodule Argus.Debug do
   @spec capture!([Disassemble.module_input()], Analysis.analysis(), Path.t(), keyword()) ::
           Path.t()
   def capture!(modules, analysis, destination, opts \\ []) do
-    bin = solver!(opts)
+    _ = toolchain!()
     {:ok, rules} = analysis_path!(analysis)
     beams = unwrap!(Disassemble.resolve_paths(modules), "resolve BEAM inputs")
     root = Path.expand(destination)
@@ -67,7 +69,7 @@ defmodule Argus.Debug do
       "analysis" => if(is_atom(analysis), do: Atom.to_string(analysis), else: nil),
       "program" => program,
       "priors" => "none; prior_* relations are empty",
-      "solver" => Souffle.version(bin),
+      "solver" => "FlowLog " <> Argus.FlowLog.Native.flowlog_revision(),
       "sources" => sources(beams),
       "schema" => Map.new(Schema.all(), &{Atom.to_string(&1.name), definition(&1)}),
       "outputs" => output_definitions(analysis),
@@ -91,16 +93,16 @@ defmodule Argus.Debug do
   def solve!(root, opts \\ []) do
     root = Path.expand(root)
     manifest = manifest!(root)
-    bin = solver!(opts)
+    _ = toolchain!()
     previous = latest(root)
     probes = Keyword.get(opts, :probes, Map.get(previous, "probes", []))
     relative = new_run!(root)
     run = Path.join(root, relative)
     path = Program.wrapper!(root, manifest["program"], run, probes)
-    columns = Program.columns!(bin, path, run)
+    columns = Program.columns!(path, run)
     facts = Path.join(run, "facts")
     File.cp_r!(facts_path(root, previous), facts)
-    solver_opts = Keyword.take(opts, [:souffle_bin, :souffle_timeout])
+    solver_opts = Keyword.take(opts, [:timeout, :workers])
 
     stage_columns =
       if Keyword.get(opts, :restage, false) do
@@ -111,12 +113,12 @@ defmodule Argus.Debug do
           "derive stage 0"
         )
 
-        stages = Program.columns!(bin, stage0, run, "stage0.ast")
+        stages = Program.columns!(stage0, run, "stage0.relations.json")
 
         if Analysis.Extraction.reads_points_to?({:custom, path}, solver_opts) do
           restage_points_to!(run, facts, solver_opts)
           points_to = Path.join(run, "rules/points_to.dl")
-          Map.merge(stages, Program.columns!(bin, points_to, run, "points_to.ast"))
+          Map.merge(stages, Program.columns!(points_to, run, "points_to.relations.json"))
         else
           stages
         end
@@ -125,7 +127,7 @@ defmodule Argus.Debug do
       end
 
     outputs =
-      unwrap!(Souffle.run(facts, path, [output_dir: run] ++ solver_opts), "solve rules")
+      unwrap!(Argus.FlowLog.run(facts, path, [output_dir: run] ++ solver_opts), "solve rules")
 
     snapshot = %{
       "directory" => relative,
@@ -430,10 +432,12 @@ defmodule Argus.Debug do
     end)
   end
 
-  defp solver!(opts),
-    do:
-      Keyword.get(opts, :souffle_bin) || Souffle.executable() ||
-        raise(ArgumentError, Souffle.not_found_message())
+  defp toolchain! do
+    case Argus.FlowLog.toolchain() do
+      {:ok, toolchain} -> toolchain
+      {:error, reason} -> raise ArgumentError, Argus.FlowLog.describe_error(reason)
+    end
+  end
 
   defp analysis_path!(analysis) do
     case Analysis.Catalog.rules_path(analysis) do

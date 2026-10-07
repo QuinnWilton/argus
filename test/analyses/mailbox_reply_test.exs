@@ -1,6 +1,6 @@
 defmodule Argus.Analyses.MailboxReplyTest do
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
   alias Argus.Test.Fixtures.Reply, as: R
   alias Argus.Test.Memo
@@ -127,7 +127,7 @@ defmodule Argus.Analyses.MailboxReplyTest do
   end
 
   describe "the extractor" do
-    @describetag souffle: false
+    @describetag flowlog: false
 
     alias Argus.Extractors.Reply
 

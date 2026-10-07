@@ -6,7 +6,7 @@ defmodule Argus.Soundness.ToolingTest do
   test/fixtures/soundness/tooling_fixture.ex and lib/).
   """
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
   import Argus.Test.Soundness.Case
 

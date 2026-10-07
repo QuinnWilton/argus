@@ -30,7 +30,7 @@ lost_registration(sup, caller, keeper) :-
 
 // sup is a one_for_one supervisor and the two modules sit in different
 // branches of it, so the restart of one leaves the other running.
-.decl restarted_apart(sup: symbol, a: symbol, b: symbol) inline
+.decl restarted_apart(sup: symbol, a: symbol, b: symbol)
 
 restarted_apart(sup, a, b) :-
   supervisor(sup, "one_for_one"),
@@ -42,7 +42,7 @@ restarted_apart(sup, a, b) :-
 // monitor, state, dictionary, or external code (`holds_in`). Per-use requests are
 // excluded. Restarting either side alone can lose the relationship or leave an old
 // registration.
-.decl registers_with(caller: symbol, keeper: symbol) inline
+.decl registers_with(caller: symbol, keeper: symbol)
 
 registers_with(caller, keeper) :- holds_in(caller, keeper, _, _, _, _).
 
@@ -263,7 +263,7 @@ leaves_down("temporary").
 
 // `witness` in `from` depends on `to` through a call, cast, or stateful module
 // dependency. `basis` records the evidence; see stateful_module_dep.
-.decl depends_on(from: symbol, to: symbol, witness: symbol) inline
+.decl depends_on(from: symbol, to: symbol, witness: symbol)
 
 depends_on(from, to, witness) :- stateful_module_dep(from, to, witness).
 
@@ -365,7 +365,7 @@ restarts_only_later_children(sup) :- supervisor(sup, "rest_for_one").
 
 // `mod` runs in the branch of sup's child at `pos`: the child or any
 // module below it.
-.decl runs_in_child(sup: symbol, pos: number, mod: symbol) inline
+.decl runs_in_child(sup: symbol, pos: number, mod: symbol)
 
 runs_in_child(sup, pos, mod) :-
   supervisor_child(sup, pos, branch, _, _),
@@ -399,7 +399,7 @@ starts_under_earlier_child(start, sup, owner_pos, holder_pos, "inferred") :-
   sole_earlier_sibling_of_kind(sup, holder_pos, api, owner_pos).
 
 // sup's child at `pos` is `mod`.
-.decl child_at(sup: symbol, pos: number, mod: symbol) inline
+.decl child_at(sup: symbol, pos: number, mod: symbol)
 
 child_at(sup, pos, mod) :- supervisor_child(sup, pos, mod, _, _).
 

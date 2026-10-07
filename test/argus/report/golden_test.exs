@@ -30,7 +30,7 @@ defmodule Argus.Report.GoldenTest do
   alias Argus.Test.{Fixture, Peer, ReportShapes}
 
   @moduletag timeout: 300_000
-  @moduletag :souffle
+  @moduletag :flowlog
 
   @goldens Path.expand("depot", __DIR__)
 

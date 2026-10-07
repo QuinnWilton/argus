@@ -3,7 +3,7 @@ defmodule Argus.Analysis do
   The analysis behaviour, and the entry points for running one.
 
   An analysis is a module implementing this behaviour: its name, a
-  Souffle program under `priv/dl/`, the extractors whose facts the
+  FlowLog program under `priv/dl/`, the extractors whose facts the
   program reads, and its output relations. Each built-in analysis owns
   one concern — what goes wrong (`:startup`, `:mailbox`, `:races`, ...);
   mechanism, phase and proximity are columns of a relation, never
@@ -99,7 +99,6 @@ defmodule Argus.Analysis do
   alias Argus.Analysis.Catalog
   alias Argus.Analysis.Extraction
   alias Argus.Analysis.Sets
-  alias Argus.Souffle
 
   # Behaviour callbacks.
 
@@ -305,27 +304,24 @@ defmodule Argus.Analysis do
   def run(modules, analysis, opts \\ []), do: Argus.Run.analyze(modules, analysis, opts)
 
   @doc """
-  The relations an analysis actually reads, as Souffle resolves them.
+  The relations an analysis actually reads, as FlowLog resolves them.
 
-  Derived from the transformed RAM program — the form that actually
-  executes — rather than the source `.dl`. That distinction matters: the
-  parsed AST lists every declared input including ones later pruned as
-  unused, so reading the source over-approximates, and following
-  `.include` by hand under-approximates (Souffle resolves includes
-  relative to the including file). The RAM's `operation="input"` entries
-  are the set Souffle will genuinely open.
+  Read from the program's manifest (`Argus.FlowLog.manifest/2`), which
+  FlowLog's front end and planner produce after pruning every relation
+  no output reaches: the source over-approximates (declared inputs that
+  are never read survive in it), and following `.include` by hand
+  under-approximates. The manifest's inputs are the relations the
+  engine genuinely loads.
 
   Incremental consumers use this to project a per-analysis fact directory,
   so an analysis only re-solves when a relation it truly reads has moved.
-
-  `:souffle_bin` names the solver to ask (default: the one on `PATH`).
 
   Returns `{:ok, [relation_name]}` or `{:error, reason}`.
   """
   @spec input_relations(analysis(), keyword()) :: {:ok, [String.t()]} | {:error, term()}
   def input_relations(analysis, opts \\ []) do
     with {:ok, rules_path} <- Catalog.rules_path(analysis) do
-      Souffle.input_relations(rules_path, Keyword.take(opts, [:souffle_bin]))
+      Argus.FlowLog.input_relations(rules_path, Keyword.take(opts, [:progress]))
     end
   end
 
@@ -343,12 +339,12 @@ defmodule Argus.Analysis do
     with {:ok, rules_path} <- Catalog.rules_path(analysis),
          :ok <- Extraction.ensure_stage0(facts_dir, opts),
          :ok <- Extraction.ensure_points_to(facts_dir, [analysis], opts) do
-      Souffle.run(facts_dir, rules_path, opts)
+      Argus.FlowLog.run(facts_dir, rules_path, opts)
     end
   end
 
   @doc """
-  Restricts raw Souffle results to the relations a built-in analysis
+  Restricts raw engine results to the relations a built-in analysis
   declares as its outputs.
 
   Intermediate clientlib relations (`call_reachable`, `sync_dep`, ...) are

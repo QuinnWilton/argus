@@ -42,7 +42,7 @@ defmodule Argus.Analyses.MailboxStaticRenderTest do
   end
 
   describe "static_render_registration" do
-    @describetag :souffle
+    @describetag :flowlog
 
     test "a subscription in mount/3 with no connected? test (livebook before a05d6c5)", ctx do
       assert registrations(ctx, StaticRender.Subscribes) == [

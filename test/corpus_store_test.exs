@@ -2,7 +2,7 @@ defmodule Argus.CorpusStoreTest do
   # Sync on purpose: the corpus's root is ARGUS_CORPUS_DIR, read from the
   # VM-wide environment.
   use ExUnit.Case, async: false
-  @moduletag :souffle
+  @moduletag :flowlog
 
   alias Argus.Corpus
 

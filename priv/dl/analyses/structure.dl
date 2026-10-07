@@ -92,7 +92,7 @@ permanent_consumer_template(sup, child) :-
   restart_policy(sup, child, "permanent").
 
 // The module declares the ConsumerSupervisor behaviour.
-.decl is_consumer_supervisor(mod: symbol) inline
+.decl is_consumer_supervisor(mod: symbol)
 
 is_consumer_supervisor(mod) :- behaves_as(mod, "ConsumerSupervisor").
 
@@ -141,7 +141,7 @@ global_name_without_resolver(func, name, register) :-
 
 // :global.register_name/2 or /3 at `register`, the registration
 // instruction, in `func`.
-.decl registers_globally(register: symbol, func: symbol, name: symbol) inline
+.decl registers_globally(register: symbol, func: symbol, name: symbol)
 
 registers_globally(register, func, name) :- global_register(register, func, name, _).
 

@@ -5,7 +5,7 @@ defmodule Argus.Exclusions.StructureTest do
   Fixtures: test/fixtures/exclusions/structure.ex.
   """
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
   alias Argus.Test.Batch
   alias Argus.Test.Rows

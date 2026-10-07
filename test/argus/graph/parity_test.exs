@@ -25,7 +25,7 @@ defmodule Argus.Graph.ParityTest do
 
   # A dozen fresh runs of every analysis: out of the default run, in CI
   # and before any change to the shared layer (`mix test --include parity`).
-  @moduletag :souffle
+  @moduletag :flowlog
   @moduletag :parity
   @moduletag timeout: 600_000
 

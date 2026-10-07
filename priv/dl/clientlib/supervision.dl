@@ -59,7 +59,7 @@ child_restart(sup, pos, child, restart) :-
 
 child_restart(sup, pos, child, restart) :-
   supervisor_child(sup, pos, child, "own", _),
-  own_restart(sup, child, to_string(pos), restart).
+  own_restart(sup, child, pos_text, restart), pos_text = to_string(pos).
 
 // A dynamic child's restart comes from its explicit spec or override, otherwise its
 // shorthand module's child_spec. A known map lacking restart uses permanent.
@@ -264,7 +264,7 @@ child_creating_op("async_nolink").
 
 // Walk backward from dynamic child-start functions to all callers, restricting
 // traversal to code that can reach those starts.
-.decl reaches_child_start(func: symbol, start: symbol) inline
+.decl reaches_child_start(func: symbol, start: symbol)
 
 reaches_child_start(f, start) :- child_start_reach.reaches(f, start).
 

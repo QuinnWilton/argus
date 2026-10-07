@@ -1,6 +1,6 @@
 defmodule Argus.Analyses.MailboxMessageTest do
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
   alias Argus.Test.Fixtures.MessageContract, as: M
   alias Argus.Test.Memo

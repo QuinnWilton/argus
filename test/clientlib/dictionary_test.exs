@@ -8,9 +8,9 @@ defmodule Argus.Clientlib.DictionaryTest do
   first (clientlib/dictionary.dl's skips_default).
   """
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
-  alias Argus.{Pipeline, Souffle}
+  alias Argus.Pipeline
   alias Argus.Test.Fixtures.Dictionary
 
   @modules [
@@ -63,12 +63,13 @@ defmodule Argus.Clientlib.DictionaryTest do
 
     .decl skipped(func: symbol, op_func: symbol, name: symbol)
     .output skipped
-    skipped(f, g, name) :- skips_default(f, op, ["named", name]), ets_op(op, g, _, _, _).
+    skipped(f, g, name) :-
+      skips_default(f, op, table), table = (kind, name), kind = "named", ets_op(op, g, _, _, _).
     """)
 
     out = Path.join(tmp_dir, "out")
     File.mkdir_p!(out)
-    {:ok, results} = Souffle.run(facts_dir, rules_path, output_dir: out)
+    {:ok, results} = Argus.FlowLog.run(facts_dir, rules_path, output_dir: out)
     %{r: results}
   end
 

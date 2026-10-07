@@ -6,7 +6,7 @@ defmodule Argus.Soundness.ExposureTest do
   exposure_fixture.ex).
   """
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
   import Argus.Test.Soundness.Case
 

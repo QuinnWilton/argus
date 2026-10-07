@@ -11,7 +11,7 @@
 // Constant propagation
 //
 // Propagate literal arguments through forwarded numeric parameter positions. Avoid
-// partial to_number/substr functors: Souffle may reorder guards past them.
+// partial to_number/substr functors: an engine may evaluate them before their guards.
 // dl_declarations_test enforces this.
 .decl resolved_arg(func: symbol, arg_pos: number, value: symbol)
 
@@ -239,9 +239,7 @@ tag_handler(mod, "cast", tag) :-
 
 .decl tag_handler_count(kind: symbol, tag: symbol, n: number)
 
-tag_handler_count(kind, tag, n) :-
-  tag_handler(_, kind, tag),
-  n = count : { tag_handler(_, kind, tag) }.
+tag_handler_count(kind, tag, count(h)) :- tag_handler(h, kind, tag).
 
 // Generic tags such as :get and :stop cannot identify a server, even if only one
 // matching handler is visible.
@@ -287,9 +285,7 @@ referred_handler(fm, kind, tag, mod) :-
 
 .decl referred_handler_count(from_mod: symbol, kind: symbol, tag: symbol, n: number)
 
-referred_handler_count(fm, kind, tag, n) :-
-  referred_handler(fm, kind, tag, _),
-  n = count : { referred_handler(fm, kind, tag, _) }.
+referred_handler_count(fm, kind, tag, count(h)) :- referred_handler(fm, kind, tag, h).
 
 // Use tag inference only if points-to did not resolve this site. A concrete target
 // overrides a conflicting tag guess and is not marked inferred.
@@ -607,14 +603,6 @@ forwards_untagged(f, g) :-
 
 literal_entry(f, g, a) :- site_demand(f), literal_first(f, g, a).
 
-// A known first argument selects its literal clause, a catch-all, or a gen_statem
-// clause with that event type. Event content does not narrow the first argument.
-.decl literal_enters_clause(func: symbol, value: symbol, clause: symbol) inline
-
-literal_enters_clause(_func, a, c) :- c = a.
-literal_enters_clause(_func, _a, c) :- c = "any".
-literal_enters_clause(f, a, c) :- clause_event(f, c, a, _).
-
 site_demand(g) :- site_demand(f), call_instr(f, g, _), literal_entry(f, g, _).
 
 .decl site_request(func: symbol, site: symbol, mod: symbol, tag: symbol)
@@ -637,7 +625,9 @@ site_request(f, id, m, tag) :-
   literal_entry(f, g, a),
   site_request(g, s, m, tag),
   site_clause(g, s, c),
-  literal_enters_clause(g, a, c).
+  // A known first argument selects its literal clause, a catch-all, or a gen_statem
+  // clause with that event type. Event content does not narrow the first argument.
+  (c = a ; c = "any" ; clause_event(g, c, a, _)).
 
 site_request(f, id, m, tag) :-
   site_demand(f),

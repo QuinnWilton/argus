@@ -13,8 +13,8 @@
 // changing which functions it calls leaves call_edge byte-identical, so a memoizing driver can stop there instead of
 // re-solving every analysis.
 //
-// Outputs are written as `.facts` (Souffle's fact-file extension and the
-// same tab-separated format it reads) so the directory can be handed
+// Outputs are written as `.facts` (the fact-file extension and the same
+// tab-separated format inputs are read in) so the directory can be handed
 // straight back to an analysis run with no renaming step.
 
 .include "base.dl"
@@ -26,7 +26,7 @@
 // shipped analysis takes the closure either: each walks call_edge from
 // the functions it cares about, bounded (clientlib/reach.dl), and
 // `call_reachable` in clientlib/imports.dl is left to clients, which
-// Souffle drops from any program that does not read it.
+// FlowLog prunes from any program that does not read it.
 .decl call_edge(caller: symbol, callee: symbol)
 .include "clientlib/callgraph_rules.dl"
 .output call_edge(filename="call_edge.facts")
@@ -152,7 +152,7 @@ call_tag(id, caller, "cast", tag) :-
 fun_handed_to(f, g, callee) :-
   fun_handed(id, f, g, _),
   remote_call(id, f, mod, func, arity),
-  callee = cat(mod, ":", func, "/", to_string(arity)).
+  callee = cat(mod, cat(":", cat(func, cat("/", to_string(arity))))).
 
 fun_handed_to(f, g, callee) :-
   fun_handed(id, f, g, _),

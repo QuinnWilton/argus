@@ -1,6 +1,6 @@
 defmodule Argus.Analyses.MailboxTimerLoopTest do
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
   alias Argus.Test.Fixtures.TimerLoop, as: T
   alias Argus.Test.Memo

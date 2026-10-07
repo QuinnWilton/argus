@@ -77,7 +77,7 @@ defmodule Argus.RunFactsTest do
   end
 
   for analyses <- [[:startup, :races], [:coverage], [:mailbox, :ets, :effects]] do
-    @tag :souffle
+    @tag :flowlog
     test "for #{inspect(analyses)}, every file holds the pipeline's rows" do
       analyses = unquote(analyses)
 

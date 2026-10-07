@@ -6,7 +6,7 @@ defmodule Argus.Graph.Solve do
       derived once for every analysis that reads it.
     * `stage({program, :points_to})` — process points-to, the exact
       program or, when it outgrows its budget, the bounded one
-      (`Argus.Souffle.Stages`), over stage 0's call graph.
+      (`Argus.Stages`), over stage 0's call graph.
     * `stage_output({program, stage, file})` — the digest of one file a
       stage wrote: the second and third cutoff seams. An edit that moves
       instructions but no call leaves the call graph byte-identical, and
@@ -18,11 +18,13 @@ defmodule Argus.Graph.Solve do
       neither never waits for one, nor degrades with it), any other
       relation from `relation` (`Argus.Graph.Relations`).
     * `solve({program, analysis})` — the analysis's outputs, each file
-      by its digest in the blob store: one `Argus.Souffle.Solve`, keyed
-      by the program's digest and its inputs'.
+      by its digest in the blob store: one `Argus.FlowLog.Solve`, keyed
+      by the program's digest and its inputs', and committed (on a
+      miss) to the engine this VM keeps for the program and the
+      analysis, which takes only the inputs whose digests moved.
 
-  A solve that fails — the solver's error or timeout, a stage it reads
-  failing, an output the solver did not write — is a value, `{:error,
+  A solve that fails — the engine's error or timeout, a stage it reads
+  failing, an output the engine did not write — is a value, `{:error,
   reason}`, and a transient one: it is not kept in a manifest, and
   neither is anything that read it, so the next run solves again. A
   failed call graph degrades every analysis with the stage's reason, a
@@ -34,8 +36,9 @@ defmodule Argus.Graph.Solve do
     code: [exclude: &Argus.Graph.Reads.schema_module?/1],
     around: {Argus.Graph.Reads, :around}
 
+  alias Argus.FlowLog.Solve
   alias Argus.Graph.{Programs, Relations}
-  alias Argus.Souffle.{Solve, Stages}
+  alias Argus.Stages
   alias Roux.Blob
   alias Roux.Runtime
 
@@ -150,7 +153,7 @@ defmodule Argus.Graph.Solve do
   defp inputs(db, program, inputs) do
     Enum.reduce_while(inputs, {:ok, []}, fn {relation, file}, {:ok, acc} ->
       case input(db, program, relation, file) do
-        {:ok, source} -> {:cont, {:ok, [{file, source} | acc]}}
+        {:ok, source} -> {:cont, {:ok, [{relation, file, source} | acc]}}
         {:error, _} = error -> {:halt, error}
       end
     end)
@@ -160,20 +163,37 @@ defmodule Argus.Graph.Solve do
     end
   end
 
-  # Which binary runs the solver, and how long it may run, decide no
-  # output: the program's digest carries the solver's version, which
-  # does. Read without an edge, so a solver moved or a timeout raised
-  # solves nothing again.
+  # How long a commit may run and how many workers an engine has decide
+  # no output: the program's digest carries the toolchain's, which does.
+  # Read without an edge, so a timeout raised solves nothing again.
   defp run(db, program, rules_program, digest, io, inputs) do
     {:ok, solver} = Runtime.untracked(fn -> Programs.solver(db) end)
     {:ok, path} = Programs.rules_path(rules_program)
-    key = {digest, Enum.map(inputs, fn {file, source} -> {file, identity(source)} end)}
+    key = {digest, Enum.map(inputs, fn {_name, file, source} -> {file, identity(source)} end)}
     outputs = io.outputs |> Enum.map(&elem(&1, 1)) |> Enum.uniq() |> Enum.sort()
 
+    engine = fn ->
+      with {:ok, built} <- Argus.FlowLog.engine(path) do
+        if built.digest != digest do
+          {:error, {:flowlog_stale_engine, built.executable, digest, built.digest}}
+        else
+          {:ok,
+           %{
+             lineage: {program, rules_program},
+             start: [
+               executable: built.executable,
+               digest: digest,
+               workers: Map.get(solver, :workers, Argus.FlowLog.default_workers()),
+               log: Argus.FlowLog.Toolchain.run_log(built.toolchain, digest)
+             ]
+           }}
+        end
+      end
+    end
+
     result =
-      Solve.run(db.blob, key, path, fn -> placed(db, program, inputs) end, outputs,
-        bin: solver.bin,
-        timeout: Map.get(solver, :timeout, Argus.Souffle.default_timeout())
+      Solve.run(db.blob, key, fn -> placed(db, program, inputs) end, outputs, engine,
+        timeout: Map.get(solver, :timeout, Argus.FlowLog.default_timeout())
       )
 
     with {:ok, written} <- result do
@@ -185,27 +205,28 @@ defmodule Argus.Graph.Solve do
   defp identity({:cas, digest}), do: {:cas, digest}
   defp identity({:relation, _relation, digest}), do: {:relation, digest}
 
-  # Each input as the solve places it: a stage's output by its entry, and
+  # Each input as the engine reads it, by relation name with the
+  # identity its content goes by: a stage's output by its entry, and
   # every relation of the program's facts assembled (or remembered) in
   # one pass.
   defp placed(db, program, inputs) do
     relations =
-      for {_file, {:relation, relation, digest}} <- inputs,
+      for {_name, _file, {:relation, relation, digest}} <- inputs,
           is_atom(relation),
           do: {relation, digest}
 
     with {:ok, files} <- Relations.files(db, program, relations) do
       {:ok,
        Enum.map(inputs, fn
-         {file, {:cas, digest}} ->
+         {name, file, {:cas, digest} = source} ->
            :ok = present!(db, program, file, digest)
-           {file, {:cas, digest}}
+           {name, source, identity(source)}
 
-         {file, {:relation, relation, _digest}} when is_atom(relation) ->
-           {file, {:cas, Map.fetch!(files, relation)}}
+         {name, _file, {:relation, relation, _digest} = source} when is_atom(relation) ->
+           {name, {:cas, Map.fetch!(files, relation)}, identity(source)}
 
-         {file, {:relation, _unknown, _digest}} ->
-           {file, {:fill, &File.write(&1, "")}}
+         {name, _file, {:relation, _unknown, _digest} = source} ->
+           {name, {:fill, &File.write(&1, "")}, identity(source)}
        end)}
     end
   end

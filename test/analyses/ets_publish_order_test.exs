@@ -44,7 +44,7 @@ defmodule Argus.Analyses.EtsPublishOrderTest do
   end
 
   describe "ets_publish_order" do
-    @describetag :souffle
+    @describetag :flowlog
 
     test "two unnamed tables told apart by the map field they are kept under", ctx do
       assert [{"intern/2", forward, reverse, "intern/2", "intern/2", "resolve/2"}] =

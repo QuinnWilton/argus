@@ -1,6 +1,6 @@
 defmodule Argus.Analyses.MailboxUnhandledInfoTest do
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
   alias Argus.Analyses.Mailbox
   alias Argus.Test.Fixtures.UnhandledInfo, as: U

@@ -1,6 +1,6 @@
 defmodule Argus.DebugTest do
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
   @moduletag :tmp_dir
 
   alias Argus.Debug
@@ -131,7 +131,7 @@ defmodule Argus.DebugTest do
       custom_bundle(
         tmp,
         """
-        .decl tutorial_site(func: symbol)
+        .decl tutorial_site(func: symbol) mutable
         .input tutorial_site
         .output tutorial_site
         """,
@@ -229,25 +229,25 @@ defmodule Argus.DebugTest do
     assert File.read!(Path.join(root, "bundle.json")) == before
   end
 
-  test "an inline relation can be probed without editing its declaration", %{tmp_dir: tmp} do
+  test "a relation the program does not output can be probed without editing it", %{
+    tmp_dir: tmp
+  } do
     root =
       custom_bundle(
         tmp,
         """
-        .decl intermediate(value: symbol) inline
-        intermediate("kept").
-        .decl caller_bound(value: symbol) inline
-        caller_bound(x) :- x = x.
-        .decl result(value: symbol)
-        result(x) :- intermediate(x), caller_bound(x).
+        .include #{JSON.encode!(Argus.Dl.path("base.dl"))}
+        .decl intermediate(func: symbol)
+        intermediate(f) :- function_def(f, _, "init", _, _).
+        .decl result(func: symbol)
+        result(f) :- intermediate(f).
         .output result
         """,
         probes: ["intermediate"]
       )
 
-    assert Debug.rows!(root, "intermediate").rows == [["kept"]]
-    assert Debug.rows!(root, "result").rows == [["kept"]]
-    assert File.read!(Path.join(root, Debug.manifest!(root)["program"])) =~ "inline"
+    assert [_ | _] = rows = Debug.rows!(root, "intermediate").rows
+    assert Debug.rows!(root, "result").rows == rows
   end
 
   test "CLI row output keeps headers and gives an actionable filter error", %{tmp_dir: tmp} do

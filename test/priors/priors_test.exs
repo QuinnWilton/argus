@@ -5,7 +5,7 @@ defmodule Argus.PriorsTest do
   """
 
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
   alias Argus.Test.Fixtures.Secret, as: S
 
@@ -134,7 +134,7 @@ defmodule Argus.PriorsTest do
     assert Enum.any?(afresh.findings, &(&1.provenance == :heuristic))
   end
 
-  @tag souffle: false
+  @tag flowlog: false
   test "an unknown mode is refused" do
     assert_raise ArgumentError, ~r/:cached_only or :live/, fn ->
       Argus.Findings.run(@mods, analyses: [:exposure], priors: :sometimes)

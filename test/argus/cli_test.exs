@@ -30,7 +30,9 @@ defmodule Argus.CLITest do
       assert %{status: 0, stdout: ^usage} = run(["--help"])
 
       assert %{status: 0, stdout: version} = run(["version"])
-      assert version =~ ~r/^argus \S+ \(Erlang\/OTP \d+, Elixir [\d.]+, souffle/
+
+      assert version =~
+               ~r/^argus \S+ \(Erlang\/OTP \d+, Elixir [\d.]+, FlowLog [0-9a-f]{12}, rustc/
 
       assert %{status: 0, stdout: list} = run(["list"])
       assert list =~ "* coupling"
@@ -90,7 +92,7 @@ defmodule Argus.CLITest do
   end
 
   describe "analyze" do
-    @describetag :souffle
+    @describetag :flowlog
     @describetag timeout: 300_000
 
     setup %{tmp_dir: dir} do

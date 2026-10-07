@@ -14,7 +14,7 @@ defmodule Argus.Graph.InProcessTest do
   alias Argus.Analysis
   alias Argus.Test.Files
 
-  @moduletag :souffle
+  @moduletag :flowlog
   @moduletag :tmp_dir
 
   @modules [Argus.Test.Fixtures.PidFlow.Hub, Argus.Test.Fixtures.PidFlow.Listener]

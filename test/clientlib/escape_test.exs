@@ -6,9 +6,9 @@ defmodule Argus.Clientlib.EscapeTest do
   elsewhere in the function.
   """
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
-  alias Argus.{Pipeline, Souffle}
+  alias Argus.Pipeline
   alias Argus.Test.Fixtures.Escape
 
   @modules [
@@ -76,7 +76,7 @@ defmodule Argus.Clientlib.EscapeTest do
 
     out = Path.join(tmp_dir, "out")
     File.mkdir_p!(out)
-    {:ok, results} = Souffle.run(facts_dir, rules_path, output_dir: out)
+    {:ok, results} = Argus.FlowLog.run(facts_dir, rules_path, output_dir: out)
 
     short = fn m -> m |> String.split(".") |> List.last() end
     rows = fn name -> MapSet.new(results[name], fn [m, r] -> {short.(m), r} end) end

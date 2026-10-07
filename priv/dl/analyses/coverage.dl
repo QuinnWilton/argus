@@ -36,7 +36,7 @@ supervisor_without_known_children(sup) :-
 coverage_supervisor_no_children(sup) :- supervisor_without_known_children(sup).
 
 // The supervision extractor recorded a strategy for `sup`.
-.decl recognised_supervisor(sup: symbol) inline
+.decl recognised_supervisor(sup: symbol)
 
 recognised_supervisor(sup) :- supervisor(sup, _).
 
@@ -105,7 +105,7 @@ coverage_ets_unused(name) :- named_table_without_known_use(name).
 
 // Table creation with a literal name. Exclude "dynamic", which denotes an unknown name
 // and must not join unrelated tables.
-.decl makes_named_table(name: symbol) inline
+.decl makes_named_table(name: symbol)
 
 makes_named_table(name) :- ets_new(_, _, name), name != "dynamic".
 
@@ -144,7 +144,7 @@ coverage_named_process_unreachable(name, mod) :-
 // A process of `mod` is registered under `name`. "dynamic" names can't
 // be meaningfully joined with callers, so reporting them unreached would
 // be vacuous.
-.decl registers_literal_name(mod: symbol, name: symbol) inline
+.decl registers_literal_name(mod: symbol, name: symbol)
 
 registers_literal_name(mod, name) :- named_process(mod, name), name != "dynamic".
 

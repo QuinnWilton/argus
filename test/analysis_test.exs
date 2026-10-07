@@ -138,7 +138,7 @@ defmodule Argus.AnalysisTest do
   # -- Custom analysis ---------------------------------------------------------
 
   describe "custom analysis" do
-    @tag :souffle
+    @tag :flowlog
     test "custom analysis with user rules" do
       tmp = System.tmp_dir!()
       rules_path = Path.join(tmp, "argus_custom_test.dl")

@@ -1,6 +1,6 @@
 defmodule Argus.Analyses.FailureErrorTest do
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
   alias Argus.Test.Batch
   alias Argus.Test.Memo

@@ -22,8 +22,9 @@ defmodule Argus.Driver do
   never analyzed, but their specs are read by their callers'
   extraction, which depends on their beams.
 
-  Without a solver nothing is solved: no analysis is demanded, and the
-  result says so (`:souffle_missing`). What failed is never kept — a
+  Without the engines (no Rust to build them: `Argus.FlowLog.available?/0`)
+  nothing is solved: no analysis is demanded, and the result says so
+  (`:engine_unavailable`). What failed is never kept — a
   solve that failed, a module extraction lost to a timeout, and every
   query that read one (`transient:`, `Roux.Query`) — so the next run
   tries it again.
@@ -135,7 +136,7 @@ defmodule Argus.Driver do
           specs_source: Argus.Specs.Source.new(project)
         )
 
-      solver? = Argus.Souffle.available?()
+      solver? = Argus.FlowLog.available?()
 
       {located, notices} =
         if solver? do
@@ -143,7 +144,7 @@ defmodule Argus.Driver do
           located = Graph.located(db, @program, config.analyses)
           {located, extraction_notices(db, discovered) ++ points_to_notices(db)}
         else
-          {%{}, [:souffle_missing]}
+          {%{}, [:engine_unavailable]}
         end
 
       {status, _session} = Roux.Session.commit(session, meta)

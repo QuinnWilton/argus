@@ -32,7 +32,7 @@ defmodule Argus.Analyses.FailureResourceTest do
   end
 
   describe "resource_dropped" do
-    @describetag :souffle
+    @describetag :flowlog
 
     test "a file opened for sendfile and never closed (thousand_island before 45e7b51)", ctx do
       assert dropped(ctx, Handles.Sendfile) == [

@@ -2,7 +2,7 @@ defmodule Argus.Test.Peer do
   @moduledoc """
   A second BEAM for the tests that drive VM-wide state — the Mix project
   stack, the working directory, `PATH`, application env, telemetry
-  handlers, the souffle scratch root — so those tests can run `async:
+  handlers, the FlowLog cache root — so those tests can run `async:
   true` beside each other instead of one at a time.
 
   Each peer is its own OS process, started from this VM's code path, with
@@ -60,7 +60,7 @@ defmodule Argus.Test.Peer do
         nil -> Argus.Graph.store_root()
       end
 
-    # No scheduler busy-waiting: a peer mostly waits on souffle, and a
+    # No scheduler busy-waiting: a peer mostly waits on its engines, and a
     # dozen of them spinning at once take the CPU the solves need.
     args =
       [~c"+sbwt", ~c"none", ~c"+sbwtdcpu", ~c"none", ~c"+sbwtdio", ~c"none"] ++

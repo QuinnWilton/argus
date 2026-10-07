@@ -1,8 +1,9 @@
-defmodule Mix.Tasks.Compile.ArgusSouffleGateTest do
+defmodule Mix.Tasks.Compile.ArgusEngineGateTest do
   @moduledoc """
-  The souffle gate: a missing solver, a failed solve and a failed stage
-  0, each against its own fixture checkout, in this module's peer
-  (`Argus.Test.Peer`) — `PATH` is VM-wide, and here it moves.
+  The engine gate: a machine without Rust, a failed solve and a failed
+  stage 0, each against its own fixture checkout, in this module's peer
+  (`Argus.Test.Peer`): `ARGUS_CARGO` and `ARGUS_FLOWLOG_DIR` are VM-wide,
+  and here they move.
   """
 
   use ExUnit.Case, async: true
@@ -61,89 +62,25 @@ defmodule Mix.Tasks.Compile.ArgusSouffleGateTest do
         do: code
   end
 
-  describe "souffle gate" do
-    @describetag :souffle
+  describe "engine gate" do
+    @describetag :flowlog
 
-    defp without_souffle(fun) do
-      original = System.get_env("PATH")
-
-      masked =
-        original
-        |> String.split(":")
-        |> Enum.reject(fn dir ->
-          souffle = Path.join(dir, "souffle")
-          File.exists?(souffle)
-        end)
-        |> Enum.join(":")
-
-      System.put_env("PATH", masked)
+    defp env(name, value, fun) do
+      original = System.get_env(name)
+      System.put_env(name, value)
 
       try do
         fun.()
       after
-        System.put_env("PATH", original)
+        if original, do: System.put_env(name, original), else: System.delete_env(name)
       end
     end
 
-    test "souffle: :warn degrades with one notice and poisons nothing", %{peer: peer} do
-      project = checkout!([], :depot_nosolver)
+    # A cargo that is not there: argus cannot build an engine, nor run one
+    # (`ARGUS_CARGO`, when set, is the only cargo it uses).
+    defp without_rust(fun), do: env("ARGUS_CARGO", "/nonexistent/cargo", fun)
 
-      in_project(peer, project, fn log ->
-        without_souffle(fn ->
-          assert {:ok, diagnostics} = compile!()
-
-          [notice] = Enum.filter(diagnostics, &(&1.compiler_name == "argus"))
-          assert notice.severity == :information
-          assert notice.message =~ "souffle binary not found"
-          assert QueryLog.executions(log, :solve) == []
-        end)
-
-        # No solve memo — not even an error one — reached the manifest.
-        refute Enum.any?(manifest_keys(), &match?({:solve, _}, &1))
-
-        # Souffle back on PATH: the solver input moves, analyses run, the
-        # findings appear — the degraded run healed completely.
-        assert {:ok, diagnostics} = compile!()
-        diags = Enum.filter(diagnostics, &(&1.compiler_name == "argus"))
-        assert length(diags) == 3
-        assert QueryLog.executions(log, :solve) != []
-      end)
-    end
-
-    # A souffle that fails whenever it runs a program whose path ends in
-    # `failing` — but still answers `--version` and resolves a program's
-    # inputs (`--show`), so only the run itself breaks.
-    defp with_failing_souffle(failing, fun) do
-      real = System.find_executable("souffle")
-
-      dir =
-        Path.join(
-          System.tmp_dir!(),
-          "argus_failing_souffle_#{System.unique_integer([:positive])}"
-        )
-
-      File.mkdir_p!(dir)
-      wrapper = Path.join(dir, "souffle")
-
-      File.write!(wrapper, """
-      #!/bin/sh
-      case "$1" in --show*|--version) exec #{real} "$@";; esac
-      for arg in "$@"; do
-        case "$arg" in *#{failing}) echo "injected failure" >&2; exit 1;; esac
-      done
-      exec #{real} "$@"
-      """)
-
-      File.chmod!(wrapper, 0o755)
-      original = System.get_env("PATH")
-      System.put_env("PATH", dir <> ":" <> original)
-
-      try do
-        fun.()
-      after
-        System.put_env("PATH", original)
-      end
-    end
+    defp with_failing_engine(program, fun), do: Argus.Test.FailingEngine.with(program, fun)
 
     defp manifest_entries do
       {:ok, manifest} = Manifest.load(Argus.Driver.manifest_file())
@@ -162,7 +99,7 @@ defmodule Mix.Tasks.Compile.ArgusSouffleGateTest do
       project = checkout!([], :depot_badsolve)
 
       in_project(peer, project, fn log ->
-        with_failing_souffle("analyses/mailbox.dl", fn ->
+        with_failing_engine("analyses/mailbox.dl", fn ->
           {:ok, diagnostics} = compile!()
           diags = Enum.filter(diagnostics, &(&1.compiler_name == "argus"))
 
@@ -174,7 +111,7 @@ defmodule Mix.Tasks.Compile.ArgusSouffleGateTest do
         # The failure never reached the manifest...
         assert manifest_errors() == []
 
-        # ...so the next run, with nothing edited and a working solver,
+        # ...so the next run, with nothing edited and a working engine,
         # solves the analysis again instead of replaying the failure.
         QueryLog.reset(log)
         {_status, diagnostics} = compile!()
@@ -196,7 +133,7 @@ defmodule Mix.Tasks.Compile.ArgusSouffleGateTest do
       project = checkout!([], :depot_badstage0)
 
       in_project(peer, project, fn log ->
-        with_failing_souffle("stage0.dl", fn ->
+        with_failing_engine("stage0.dl", fn ->
           {:ok, diagnostics} = compile!()
           diags = Enum.filter(diagnostics, &(&1.compiler_name == "argus"))
 
@@ -217,17 +154,17 @@ defmodule Mix.Tasks.Compile.ArgusSouffleGateTest do
       end)
     end
 
-    @tag souffle: false
-    test "souffle: :require makes the missing solver an error", %{peer: peer} do
-      project = checkout!([souffle: :require], :depot_require)
+    @tag flowlog: false
+    test "engine: :require makes a machine without Rust an error", %{peer: peer} do
+      project = checkout!([engine: :require], :depot_require)
 
       in_project(peer, project, fn _log ->
-        without_souffle(fn ->
+        without_rust(fn ->
           assert {:error, diagnostics} = compile!()
 
           [notice] = Enum.filter(diagnostics, &(&1.compiler_name == "argus"))
           assert notice.severity == :error
-          assert notice.message =~ "souffle binary not found"
+          assert notice.message =~ "engine: :require"
         end)
       end)
     end

@@ -121,7 +121,7 @@ defmodule Argus.PipelineTest do
   end
 
   describe "write_facts/2" do
-    test "writes an in-memory fact map to a Souffle-ready directory", %{tmp_dir: tmp_dir} do
+    test "writes an in-memory fact map to a solvable directory", %{tmp_dir: tmp_dir} do
       {:ok, facts} = Pipeline.extract([:lists])
 
       assert :ok = Pipeline.write_facts(facts, tmp_dir)
@@ -131,7 +131,7 @@ defmodule Argus.PipelineTest do
       assert Enum.any?(rows, fn [_func, mod | _] -> mod == ":lists" end)
 
       # Every schema relation gets a file, even when no facts were
-      # extracted for it — Souffle fails on missing .input files.
+      # extracted for it — a missing input file is an error.
       for name <- Argus.Schema.names() do
         assert File.exists?(Path.join(tmp_dir, "#{name}.facts")),
                "missing .facts file for #{name}"

@@ -1,5 +1,5 @@
 // Dependencies of init, request handlers, and continuations. Keep separate relations
-// per entry so Souffle can prune unused phases and their input facts. Requires otp.dl,
+// per entry so FlowLog can prune unused phases and their input facts. Requires otp.dl,
 // especially callbacks, calls, and init_phase.
 
 // A synchronous pre-ack init dependency holds startup. Post-ack calls do not. Keep

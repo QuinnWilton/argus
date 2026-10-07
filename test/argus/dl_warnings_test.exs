@@ -1,41 +1,30 @@
 defmodule Argus.DlWarningsTest do
+  @moduledoc """
+  Every shipped program compiles through FlowLog's front end and planner,
+  and is one argus can host (`Argus.FlowLog.Program.inspect/2`): every
+  input `mutable`, every input and output column a symbol or a number.
+
+  FlowLog reports the relations a program never reaches as it prunes them;
+  argus's programs include the whole schema and rely on that pruning, so
+  it is no warning here.
+  """
   use ExUnit.Case, async: true
 
-  alias Argus.Souffle
+  @moduletag :flowlog
 
-  @moduletag :souffle
-  @moduletag :tmp_dir
-
-  @tag timeout: 120_000
-  test "shipped analyses and stages compile without warnings", %{tmp_dir: dir} do
+  @tag timeout: 300_000
+  test "shipped analyses and stages compile, and argus can host them" do
     dl = Argus.Dl.root()
 
-    programs =
-      Path.wildcard(Path.join(dl, "analyses/*.dl")) ++
-        Enum.map(~w(stage0.dl points_to.dl points_to_bounded.dl), &Path.join(dl, &1))
-
-    # Runtime calls suppress warnings. Generate C++ with warnings enabled here:
-    # this checks the full program without input facts or a C++ compiler.
-    results =
-      Task.async_stream(
-        programs,
-        fn program ->
-          generated = Path.join(dir, Path.basename(program, ".dl") <> ".cpp")
-
-          {diagnostics, status} =
-            System.cmd(Souffle.executable(), ["--warn=all", "-g", generated, program],
-              stderr_to_stdout: true
-            )
-
-          {Path.relative_to(program, dl), status, diagnostics}
-        end,
-        max_concurrency: 4,
-        timeout: 120_000
-      )
-
-    Enum.each(results, fn {:ok, {program, status, diagnostics}} ->
-      assert status == 0, "#{program} failed to compile:\n#{diagnostics}"
-      assert diagnostics == "", "#{program} emitted diagnostics:\n#{diagnostics}"
+    Argus.FlowLog.builtin_programs()
+    |> Task.async_stream(
+      fn program -> {Path.relative_to(program, dl), Argus.FlowLog.manifest(program)} end,
+      max_concurrency: 4,
+      timeout: 300_000
+    )
+    |> Enum.each(fn {:ok, {program, result}} ->
+      assert {:ok, %{inputs: [_ | _], outputs: [_ | _]}} = result,
+             "#{program} does not compile:\n#{inspect(result)}"
     end)
   end
 end

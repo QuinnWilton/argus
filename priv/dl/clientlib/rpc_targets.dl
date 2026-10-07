@@ -13,8 +13,8 @@ forwards_to_rpc(wrapper, pos, rpc) :- rpc_mfa_param(rpc, wrapper, pos).
 forwards_to_rpc(wrapper, pos, rpc) :-
   forwards_to_rpc(inner, inner_pos, rpc),
   call_arg_forward(wrapper, inner, inner_pos, pos),
-  call_arg_forward(wrapper, inner, inner_pos + 1, pos + 1),
-  call_arg_forward(wrapper, inner, inner_pos + 2, pos + 2).
+  call_arg_forward(wrapper, inner, inner_at, at), inner_at = inner_pos + 1, at = pos + 1,
+  call_arg_forward(wrapper, inner, inner_next, next), inner_next = inner_pos + 2, next = pos + 2.
 
 // Resolve literal RPC module/function targets at the RPC or a forwarding wrapper call.
 // `anchor` identifies that local call.

@@ -5,7 +5,7 @@ defmodule Argus.Soundness.FailureTest do
   rule gives it without the suppression (round sound2c).
   """
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
   alias Argus.Test.Memo
 

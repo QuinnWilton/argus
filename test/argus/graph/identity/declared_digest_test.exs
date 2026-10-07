@@ -1,25 +1,26 @@
 defmodule Argus.Graph.Identity.DeclaredDigestTest do
   @moduledoc """
   A solve is keyed on the program as it reads it (`Argus.Graph.Programs`,
-  through `Argus.Souffle.Program.declared_digest/2`): of the generated
-  declaration files, only the declarations of the relations Souffle
-  loads for it. This checks that claim against the solver, for every
-  shipped program over the facts of every fixture
-  (`Argus.Test.FixtureSpread.all/0`): in a copy of `priv/dl`
-  whose generated files have every other declaration changed — fields
-  renamed, prose rewritten, and where no rule names it retyped and
-  widened; a relation added — the program loads the same relations and
-  writes the same files, byte for byte, and its digest does not move.
+  through `Argus.Dl.Program.declared_digest/2`): of the generated
+  declaration files, only the declarations of the relations FlowLog
+  loads for it. The same digest names the engine built for it, so a
+  program whose digest holds runs an engine built from another version
+  of its files. This checks that claim against FlowLog, for every
+  shipped program: in a copy of `priv/dl` whose generated files have
+  every other declaration changed — fields renamed, prose rewritten, and
+  where no rule names it retyped and widened; a relation added — the
+  program loads the same relations, FlowLog generates the same dataflow
+  for it, byte for byte (so the engine built for either is the other's),
+  and its digest does not move.
   A declaration a pruned rule names, retyped, no longer compiles, and
   resolving the program's inputs says so before any solve is keyed (so
   no kept solve stands in for the failure). And a change to a
   declaration it loads moves its digest.
   """
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
-  alias Argus.Souffle
-  alias Argus.Souffle.Program
+  alias Argus.Dl.Program
 
   @moduletag :tmp_dir
   @moduletag :identity_verify
@@ -83,12 +84,12 @@ defmodule Argus.Graph.Identity.DeclaredDigestTest do
   test "a program a changed declaration no longer compiles fails before a solve is keyed",
        %{tmp_dir: tmp, facts: facts, dl: dl, programs: programs} do
     # A relation a rule of the program names that it does not load: a
-    # rule Souffle prunes, but only after checking it (unless it lies in
+    # rule FlowLog prunes, but only after checking it (unless it lies in
     # a component the program never instantiates: those are tried in
     # turn until one breaks).
     broken =
       Enum.find_value(programs, fn program ->
-        {:ok, kept} = Souffle.input_relations(program)
+        {:ok, kept} = Argus.FlowLog.input_relations(program)
         relative = Path.relative_to(program, dl)
 
         program
@@ -104,19 +105,19 @@ defmodule Argus.Graph.Identity.DeclaredDigestTest do
               relative
             )
 
-          if match?({:error, _}, Souffle.input_relations(broken)), do: broken
+          if match?({:error, _}, Argus.FlowLog.input_relations(broken)), do: broken
         end)
       end)
 
     assert broken, "no declaration a program does not load breaks it: nothing to check"
-    assert {:error, _} = Souffle.run(facts, broken)
+    assert {:error, _} = Argus.FlowLog.run(facts, broken)
   end
 
-  defp check(program, facts, dl, tmp) do
+  defp check(program, _facts, dl, tmp) do
     name = Path.basename(program, ".dl")
     relative = Path.relative_to(program, dl)
-    {:ok, kept} = Souffle.input_relations(program)
-    {:ok, original} = solve(facts, program, Path.join([tmp, name, "original"]))
+    {:ok, kept} = Argus.FlowLog.input_relations(program)
+    original = generated(program)
     digest = Program.declared_digest(program, kept)
 
     # Every declaration it does not load renamed and reworded — retyped
@@ -133,8 +134,8 @@ defmodule Argus.Graph.Identity.DeclaredDigestTest do
 
     assert Program.declared_digest(perturbed, kept) == digest, name
     refute Program.declared_digest(perturbed, :all) == Program.declared_digest(program, :all)
-    assert {:ok, ^kept} = Souffle.input_relations(perturbed)
-    assert {:ok, ^original} = solve(facts, perturbed, Path.join([tmp, name, "out"])), name
+    assert {:ok, ^kept} = Argus.FlowLog.input_relations(perturbed)
+    assert generated(perturbed) == original, name
 
     # A declaration it loads moves its key.
     if loaded = Enum.find(kept, &generated?(dl, &1)) do
@@ -152,12 +153,21 @@ defmodule Argus.Graph.Identity.DeclaredDigestTest do
     end)
   end
 
-  # The files a solve writes, by name.
-  defp solve(facts, program, out) do
+  # The dataflow FlowLog generates for the program: what its engine is
+  # compiled from.
+  defp generated(program) do
+    {:ok, toolchain} = Argus.FlowLog.toolchain(progress: false)
+    out = Path.join(System.tmp_dir!(), "argus_generated_#{System.unique_integer([:positive])}")
     File.mkdir_p!(out)
 
-    with {:ok, _results} <- Souffle.run(facts, program, output_dir: out) do
-      {:ok, Map.new(File.ls!(out), &{&1, File.read!(Path.join(out, &1))})}
+    try do
+      {output, status} =
+        System.cmd(Argus.FlowLog.Toolchain.tool(toolchain), ["generate", program, out, "digest"])
+
+      assert status == 0, "#{program} failed to compile:\n#{output}"
+      File.read!(Path.join(out, "program.rs"))
+    after
+      File.rm_rf!(out)
     end
   end
 
@@ -207,7 +217,7 @@ defmodule Argus.Graph.Identity.DeclaredDigestTest do
       File.write!(
         path,
         "// Perturbed header.\n\n#{body}\n// A relation no program reads.\n" <>
-          ".decl #{probe}(x: symbol)\n.input #{probe}\n"
+          ".decl #{probe}(x: symbol) mutable\n.input #{probe}\n"
       )
     end
   end
@@ -215,7 +225,8 @@ defmodule Argus.Graph.Identity.DeclaredDigestTest do
   defp rename(_relation, decl), do: rename(decl)
 
   defp rename(decl) do
-    [_, name, fields] = Regex.run(~r/^\.decl (\w+)\((.*)\)$/, decl)
+    [_, name, fields, qualifier] =
+      Enum.take(Regex.run(~r/^\.decl (\w+)\((.*)\)( mutable)?$/, decl) ++ [""], 4)
 
     fields =
       fields
@@ -225,11 +236,12 @@ defmodule Argus.Graph.Identity.DeclaredDigestTest do
         "#{field}_p: #{type}"
       end)
 
-    ".decl #{name}(#{fields})"
+    ".decl #{name}(#{fields})#{qualifier}"
   end
 
   defp retype(decl) do
-    [_, name, fields] = Regex.run(~r/^\.decl (\w+)\((.*)\)$/, decl)
+    [_, name, fields, qualifier] =
+      Enum.take(Regex.run(~r/^\.decl (\w+)\((.*)\)( mutable)?$/, decl) ++ [""], 4)
 
     fields =
       fields
@@ -241,6 +253,6 @@ defmodule Argus.Graph.Identity.DeclaredDigestTest do
         end
       end)
 
-    ".decl #{name}(#{Enum.join(fields ++ ["widened: number"], ", ")})"
+    ".decl #{name}(#{Enum.join(fields ++ ["widened: number"], ", ")})#{qualifier}"
   end
 end

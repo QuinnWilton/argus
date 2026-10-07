@@ -9,15 +9,17 @@ defmodule Argus.Analysis.SharedStageTest do
   `derive_points_to/2` solve into a directory of their own and rename
   each output into place.
 
-  Each solver here is the real one behind a script that holds a
-  derivation where its race needs it, so each interleaving happens on
-  every run.
+  Each engine here is the real one behind a proxy that holds a
+  derivation where its race needs it (`Argus.Test.FailingEngine.proxy/3`),
+  so each interleaving happens on every run. Not async: the proxies
+  live in a cache root named by a VM-wide variable.
   """
 
-  use ExUnit.Case, async: true
-  @moduletag :souffle
+  use ExUnit.Case, async: false
+  @moduletag :flowlog
 
   alias Argus.Analysis
+  alias Argus.Test.FailingEngine
   alias Argus.Test.Files
   alias Argus.Test.Fixtures.PidFlow
 
@@ -35,35 +37,14 @@ defmodule Argus.Analysis.SharedStageTest do
     dir
   end
 
-  # The real solver, run by a script: a solve (`-F` among its arguments,
-  # not a question such as `--version`) first runs `before`, then the
-  # solver, then `after_solve`; `$out` is its output directory. Each
-  # script names the marks it leaves and waits for in `marks`.
-  defp solver!(tmp, name, before, after_solve) do
-    bin = Path.join(tmp, name)
-
-    File.write!(bin, """
-    #!/bin/sh
-    case " $* " in
-      *" -F "*) ;;
-      *) exec #{System.find_executable("souffle")} "$@" ;;
-    esac
-    out=""
-    prev=""
-    for arg in "$@"; do
-      if [ "$prev" = "-D" ]; then out="$arg"; fi
-      prev="$arg"
-    done
-    #{before}
-    #{System.find_executable("souffle")} "$@" || exit $?
-    #{after_solve}
-    """)
-
-    File.chmod!(bin, 0o755)
-    bin
+  # Runs `fun` with the engines of `programs` behind a proxy that runs
+  # `before` ahead of every commit and `after_commit` once it is done,
+  # `$out` the commit's output directory.
+  defp proxied(programs, before, after_commit, fun) do
+    FailingEngine.with(programs, fun, stub: &FailingEngine.proxy(&1, before, after_commit))
   end
 
-  # Until `mark` names a file in `marks`, on the solver's side.
+  # Until `mark` names a file in `marks`, on the engine's side.
   defp wait_sh(marks, mark), do: ~s(while [ ! -e "#{marks}/#{mark}" ]; do sleep 0.01; done)
 
   # Until `mark` names a file in `marks`, on this side.
@@ -73,7 +54,7 @@ defmodule Argus.Analysis.SharedStageTest do
         :ok
 
       tries == 0 ->
-        flunk("the solver never reached #{mark}")
+        flunk("the engine never reached #{mark}")
 
       true ->
         Process.sleep(10)
@@ -84,7 +65,7 @@ defmodule Argus.Analysis.SharedStageTest do
   defp marks!(tmp) do
     marks = Path.join(tmp, "marks")
     File.mkdir_p!(marks)
-    # Whatever the test's outcome, no solver is left waiting.
+    # Whatever the test's outcome, no engine is left waiting.
     on_exit(fn -> File.write(Path.join(marks, "go"), "") end)
     marks
   end
@@ -99,23 +80,24 @@ defmodule Argus.Analysis.SharedStageTest do
     dir = facts!()
     marks = marks!(tmp)
 
-    # The first solver to finish holds, its outputs written, until told
-    # to exit: the other derivation runs whole in between, reading its
+    # The first commit to finish holds, its outputs written, until told
+    # to go on: the other derivation runs whole in between, reading its
     # report and taking it away. `mkdir` is the test-and-set.
-    bin =
-      solver!(tmp, "souffle-holding", "", """
-      if mkdir "#{marks}/held" 2>/dev/null; then
-        touch "#{marks}/holding"
-        #{wait_sh(marks, "go")}
-      fi
-      """)
+    hold = """
+    if mkdir "#{marks}/held" 2>/dev/null; then
+      touch "#{marks}/holding"
+      #{wait_sh(marks, "go")}
+    fi
+    """
 
-    first = Task.async(fn -> Analysis.derive_points_to(dir, souffle_bin: bin) end)
-    await_mark!(marks, "holding")
+    proxied(["points_to.dl", "points_to_bounded.dl"], "", hold, fn ->
+      first = Task.async(fn -> Analysis.derive_points_to(dir) end)
+      await_mark!(marks, "holding")
 
-    assert :ok = Analysis.derive_points_to(dir, souffle_bin: bin)
-    File.write!(Path.join(marks, "go"), "")
-    assert :ok = Task.await(first, 60_000)
+      assert :ok = Analysis.derive_points_to(dir)
+      File.write!(Path.join(marks, "go"), "")
+      assert :ok = Task.await(first, 60_000)
+    end)
 
     assert File.read!(Path.join(dir, "points_to_mode.facts")) == "exact\n"
     # Neither report is left among the facts.
@@ -137,24 +119,29 @@ defmodule Argus.Analysis.SharedStageTest do
       derive = fn opts -> apply(Analysis, unquote(derive), [dir, opts]) end
       before = staged(dir, relations)
 
-      # A solver opens each of its outputs truncated before it writes
-      # it: this one opens them all, then holds before it solves.
+      # An engine opens each of its outputs truncated before it writes
+      # it: this one's proxy opens them all, then holds before it solves.
       truncates = Enum.map_join(relations, "\n", &~s(: > "$out/#{&1}.facts"))
 
-      bin =
-        solver!(
-          tmp,
-          "souffle-opening",
-          truncates <> "\ntouch \"#{marks}/opened\"\n" <> wait_sh(marks, "go"),
-          ""
-        )
+      programs =
+        if unquote(derive) == :derive_stage0,
+          do: ["stage0.dl"],
+          else: ["points_to.dl", "points_to_bounded.dl"]
 
-      again = Task.async(fn -> derive.(souffle_bin: bin) end)
-      await_mark!(marks, "opened")
+      proxied(
+        programs,
+        truncates <> "\ntouch \"#{marks}/opened\"\n" <> wait_sh(marks, "go"),
+        "",
+        fn ->
+          again = Task.async(fn -> derive.([]) end)
+          await_mark!(marks, "opened")
 
-      assert staged(dir, relations) == before
-      File.write!(Path.join(marks, "go"), "")
-      assert :ok = Task.await(again, 60_000)
+          assert staged(dir, relations) == before
+          File.write!(Path.join(marks, "go"), "")
+          assert :ok = Task.await(again, 60_000)
+        end
+      )
+
       assert staged(dir, relations) == before
     end
   end

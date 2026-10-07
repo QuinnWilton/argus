@@ -16,7 +16,7 @@ defmodule Mix.Tasks.Compile.ArgusPriorsTest do
   alias Argus.Test.{Fixture, Peer}
 
   @moduletag timeout: 300_000
-  @moduletag :souffle
+  @moduletag :flowlog
 
   # Coupling reads the priors (`prior_talks_to_process`); with mailbox,
   # every finding the fixture has. The questions are asked whatever the

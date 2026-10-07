@@ -48,7 +48,7 @@ defmodule Mix.Tasks.Compile.ArgusConfigTest do
   end
 
   describe "config" do
-    @describetag :souffle
+    @describetag :flowlog
 
     test "fail_on: :warning promotes findings to a build failure", %{peer: peer} do
       project = checkout!([fail_on: :warning], :depot_failon)
@@ -110,7 +110,7 @@ defmodule Mix.Tasks.Compile.ArgusConfigTest do
       end)
     end
 
-    @tag souffle: false
+    @tag flowlog: false
     test "invalid config aborts the compile with the valid options", %{peer: peer} do
       project = checkout!([analyses: [:nonsense]], :depot_badcfg)
 

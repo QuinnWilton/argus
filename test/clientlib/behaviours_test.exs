@@ -13,14 +13,12 @@ defmodule Argus.Clientlib.BehavioursTest do
 
   use ExUnit.Case, async: true
 
-  alias Argus.Souffle
-
   @canonical_dl "clientlib/behaviours.dl"
 
   defp priv_dl, do: Path.join(:code.priv_dir(:argus_beam), "dl")
 
   describe "every rule asks the canonical question" do
-    # Static, so it holds without Souffle and without a corpus.
+    # Static, so it holds without an engine and without a corpus.
     test "no rule matches a declared behaviour string directly" do
       offenders =
         priv_dl()
@@ -101,7 +99,7 @@ defmodule Argus.Clientlib.BehavioursTest do
   end
 
   describe "canonicalisation" do
-    @tag :souffle
+    @tag :flowlog
     @tag :tmp_dir
     test "both spellings of gen_server reach the same canonical name", %{tmp_dir: tmp_dir} do
       facts_dir = Path.join(tmp_dir, "facts")
@@ -138,7 +136,7 @@ defmodule Argus.Clientlib.BehavioursTest do
       rules_path = Path.join(tmp_dir, "beh.dl")
       File.write!(rules_path, rules)
 
-      assert {:ok, results} = Souffle.run(facts_dir, rules_path)
+      assert {:ok, results} = Argus.FlowLog.run(facts_dir, rules_path)
       rows = Map.get(results, "behaves_as", [])
 
       assert ["Elixir.A", "GenServer"] in rows

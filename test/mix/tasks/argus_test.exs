@@ -17,7 +17,7 @@ defmodule Mix.Tasks.ArgusTest do
   alias Roux.QueryLog
 
   @moduletag timeout: 300_000
-  @moduletag :souffle
+  @moduletag :flowlog
 
   # The two analyses with findings on the fixture (the five the reports
   # count); `--list` marks the default set whatever the config says.
@@ -51,7 +51,7 @@ defmodule Mix.Tasks.ArgusTest do
         end)
 
       assert QueryLog.executions(log, :module_extraction) == []
-      assert QueryLog.executions(log, :souffle_solve) == []
+      assert QueryLog.executions(log, :solve) == []
 
       assert output =~ "warning[argus.coupling]"
       assert output =~ "warning[argus.mailbox]"

@@ -9,7 +9,7 @@ defmodule Argus.Analyses.CouplingTest do
   defp compile_beams(source), do: Memo.compile_beams(source)
 
   describe "sibling_dependency: restart_isolation" do
-    @describetag :souffle
+    @describetag :flowlog
 
     test "analyzes coupling under one_for_one supervisors" do
       modules = [
@@ -312,7 +312,7 @@ defmodule Argus.Analyses.CouplingTest do
                coupling_rows(resolved)
     end
 
-    @tag souffle: false
+    @tag flowlog: false
     test "a doubted row is the same finding a severity step down, labelled and heuristic" do
       row = [
         "Sup",
@@ -343,7 +343,7 @@ defmodule Argus.Analyses.CouplingTest do
       assert plain.severity == :warning and plain.provenance == :structural
     end
 
-    @tag souffle: false
+    @tag flowlog: false
     test "a keeping inferred from code outside the program is a step down, and says so" do
       row = [
         "Sup",

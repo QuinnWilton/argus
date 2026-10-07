@@ -78,7 +78,7 @@ defmodule Argus.Analyses.MnesiaCheckActTest do
   defp short(id), do: id |> String.split("#") |> hd() |> String.split(":") |> List.last()
 
   describe "mnesia_check_act" do
-    @describetag :souffle
+    @describetag :flowlog
 
     test "a dirty read, one added, a dirty write of the same record", ctx do
       assert races(ctx, [C.MnesiaCounter]) == [

@@ -15,7 +15,7 @@ defmodule Argus.Graph.StoreRaceTest do
   """
 
   use ExUnit.Case, async: false
-  @moduletag :souffle
+  @moduletag :flowlog
 
   @moduletag :cache
   @moduletag :tmp_dir

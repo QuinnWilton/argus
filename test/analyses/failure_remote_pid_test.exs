@@ -42,7 +42,7 @@ defmodule Argus.Analyses.FailureRemotePidTest do
   defp funcs(rows), do: rows |> Enum.map(&elem(&1, 0)) |> Enum.sort()
 
   describe "remote_pid_probe" do
-    @describetag :souffle
+    @describetag :flowlog
 
     test "a :global lookup's pid handed to Process.alive?/1 (aprs.me before 37c9ac7)", ctx do
       assert [

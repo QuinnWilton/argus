@@ -147,7 +147,7 @@ unset_on_the_way(f, op, k) :-
 // fallback.
 .decl skips_default(func: symbol, op: symbol, table: EtsTable)
 
-skips_default(f, op, ["named", name]) :-
+skips_default(f, op, ("named", name)) :-
   default_of_key(op, name, k),
   reaches_default_at(f, op, _),
   !unset_on_the_way(f, op, k).

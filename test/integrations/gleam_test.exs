@@ -8,7 +8,7 @@ defmodule Argus.Integrations.GleamTest do
 
   use ExUnit.Case, async: true
   @moduletag :gleam
-  @moduletag :souffle
+  @moduletag :flowlog
   @moduletag :tmp_dir
   @moduletag timeout: 300_000
 

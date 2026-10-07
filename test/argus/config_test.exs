@@ -149,7 +149,13 @@ defmodule Argus.ConfigTest do
     end
 
     test "prints like Mix.Error, without a stacktrace" do
-      assert %Argus.ConfigError{mix: true} = error(souffle: :maybe)
+      assert %Argus.ConfigError{mix: true} = error(engine: :maybe)
+    end
+
+    test "souffle: names the key it was renamed to" do
+      e = error(souffle: :require)
+      assert e.message =~ "was renamed"
+      assert e.message =~ "engine"
     end
   end
 

@@ -4,7 +4,7 @@ defmodule Argus.MissingRelationError do
 
   Every writer of a relation file leaves one for each relation it is
   responsible for, empty when the relation has no rows:
-  `Argus.Pipeline.run/3` for every schema relation, Souffle for every
+  `Argus.Pipeline.run/3` for every schema relation, an engine for every
   relation a program outputs, a kept solve for each file its manifest
   names. So an absent file is never an empty relation. It is a
   directory changed under its reader, or one that is not what the

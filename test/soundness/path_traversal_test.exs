@@ -3,7 +3,7 @@ defmodule Argus.Soundness.PathTraversalTest do
   alias Argus.Test.Fixtures.PathTraversal
   alias Argus.Test.Memo
 
-  @tag :souffle
+  @tag :flowlog
   test "the actual filename's basename as final file component is protected" do
     {:ok, results} = Memo.analyze([PathTraversal], :unsafe_input)
     funcs = for [_, func, _, _, _] <- results["upload_filename_path_traversal"], do: func

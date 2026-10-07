@@ -8,7 +8,7 @@
 // site_block/block_flow rather than rebuilding an instruction-level CFG.
 .include "../base.dl"
 
-// Generated Layer-2 declarations from Argus.Schema. Include the full layer; Souffle
+// Generated Layer-2 declarations from Argus.Schema. Include the full layer; FlowLog
 // prunes unused relations and their inputs.
 .include "../layer2.dl"
 
@@ -17,26 +17,26 @@
 .include "../priors.dl"
 
 // Call graph, derived once by stage0.dl.
-.decl call_edge(caller: symbol, callee: symbol)
+.decl call_edge(caller: symbol, callee: symbol) mutable
 .input call_edge
 
 // Stage-0 call sites cover project calls, GenServer calls and selected library calls,
 // providing finding anchors without reading remote_call.
-.decl call_site(id: symbol, caller: symbol, callee_mod: symbol, callee_func: symbol, arity: number)
+.decl call_site(id: symbol, caller: symbol, callee_mod: symbol, callee_func: symbol, arity: number) mutable
 .input call_site
 
 // Stage-0 as well: call-graph edges with at least one site that is not
 // control-dependent on a branch in the caller.
-.decl unconditional_call_edge(caller: symbol, callee: symbol)
+.decl unconditional_call_edge(caller: symbol, callee: symbol) mutable
 .input unconditional_call_edge
 
 // The message tag each GenServer.call/cast site sends (stage 0).
-.decl call_tag(id: symbol, caller: symbol, kind: symbol, tag: symbol)
+.decl call_tag(id: symbol, caller: symbol, kind: symbol, tag: symbol) mutable
 .input call_tag
 
 // The function each call handed a fun calls (stage 0, from fun_handed):
 // the caller, the fun, and the callee (`mod:func/arity`).
-.decl fun_handed_to(caller: symbol, fun: symbol, callee: symbol)
+.decl fun_handed_to(caller: symbol, fun: symbol, callee: symbol) mutable
 .input fun_handed_to
 
 // The staged instruction where func calls project function callee. Use it to anchor
@@ -49,7 +49,7 @@ call_instr(f, g, id) :-
   function_def(g, _, _, _, _).
 
 // A function and the module it is defined in.
-.decl in_module(func: symbol, mod: symbol) inline
+.decl in_module(func: symbol, mod: symbol)
 
 in_module(f, m) :- function_def(f, m, _, _, _).
 
@@ -81,6 +81,4 @@ in_module(f, m) :- function_def(f, m, _, _, _).
 // a pure higher-order function is recognised by.
 .decl closure_count(func: symbol, n: number)
 
-closure_count(func, n) :-
-  closure_def(func, _),
-  n = count : { closure_def(func, _) }.
+closure_count(func, count(c)) :- closure_def(func, c).

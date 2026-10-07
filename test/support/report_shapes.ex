@@ -35,7 +35,7 @@ defmodule Argus.Test.ReportShapes do
   @spec notices() :: [Argus.Driver.Result.notice()]
   def notices do
     [
-      :souffle_missing,
+      :engine_unavailable,
       {:extraction_error,
        %{module: Shapes.Lost, name: "Shapes.Lost", step: "module", reason: "bad chunk"}},
       {:extraction_error,
@@ -67,7 +67,7 @@ defmodule Argus.Test.ReportShapes do
       mailbox: {:ok, [guarded(shapes), receiving(shapes), clauses(shapes), catching(shapes)]},
       ets: {:ok, [schema(shapes), ignored(), twin(shapes, "first"), twin(shapes, "second")]},
       startup: {:ok, [heuristic(other), not_source()]},
-      effects: {:error, {:souffle, :effects, :timeout}}
+      effects: {:error, :flowlog_timeout}
     }
   end
 

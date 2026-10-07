@@ -50,18 +50,18 @@ lookup_then_claim_race(func, lookup, claim, name) :-
 
 // A process name's key and source, such as a literal or caller parameter, shared by the
 // lookup and claim.
-.type ProcessName = [key_source: symbol, key: symbol]
+.type ProcessName = (key_source: symbol, key: symbol)
 
 // The lookup's absence result controls the claim, possibly across helpers. For
 // start_child's hidden name, require an explicit nil check.
 .decl decides_claim(func: symbol, lookup: symbol, claim: symbol, name: ProcessName)
 
-decides_claim(f, c, a, [ks, k]) :-
+decides_claim(f, c, a, (ks, k)) :-
   names.meets(f, c, a, _, _, ks, k),
   name_act(a, _, api),
   api != "start_child".
 
-decides_claim(f, c, a, [ks, k]) :-
+decides_claim(f, c, a, (ks, k)) :-
   names.meets(f, c, a, _, _, ks, k),
   name_lookup(c, _, _, _, _, _, "checked").
 
@@ -130,7 +130,7 @@ loser_taken(f, a) :-
 // Registry.register, and raising APIs, whose losing outcomes have different effects.
 .decl act_callee(act: symbol, callee: symbol)
 
-act_callee(a, cat(m, ":", n, "/", to_string(ar))) :-
+act_callee(a, cat(m, cat(":", cat(n, cat("/", to_string(ar)))))) :-
   name_act(a, _, _),
   remote_call(a, _, m, n, ar).
 
@@ -216,7 +216,7 @@ claimed_by_another_process(a, f) :- other_claimant(f, a).
 .output registry_race
 
 registry_race(mod, func, lookup_api, create_api, key_source, key, lookup, claim) :-
-  lookup_then_claim_race(func, lookup, claim, [key_source, key]),
+  lookup_then_claim_race(func, lookup, claim, row), row = (key_source, key),
   name_lookup(lookup, _, lookup_api, _, _, _, _),
   name_act(claim, _, create_api),
   function_def(func, mod, _, _, _).
@@ -274,16 +274,16 @@ rows.act(write, func, table_kind, table, key_kind, key) :-
 
 // A read whose answer a caller can decide on, and a write that is not
 // one of the atomic forms.
-.decl deciding_read(read: symbol, func: symbol) inline
-.decl plain_write(write: symbol, func: symbol) inline
+.decl deciding_read(read: symbol, func: symbol)
+.decl plain_write(write: symbol, func: symbol)
 
 deciding_read(r, f) :- ets_op(r, f, _, op, "read"), deciding_read_op(op).
 plain_write(w, f) :- ets_op(w, f, _, op, "write"), plain_write_op(op).
 
 // An operation's table and key, the table in its own function's terms
 // (ets_table_ident) or as clientlib/tables.dl knows it (ets_table).
-.decl local_table_and_key(op: symbol, table_kind: symbol, table: symbol, key_kind: symbol, key: symbol) inline
-.decl table_and_key(op: symbol, table_kind: symbol, table: symbol, key_kind: symbol, key: symbol) inline
+.decl local_table_and_key(op: symbol, table_kind: symbol, table: symbol, key_kind: symbol, key: symbol)
+.decl table_and_key(op: symbol, table_kind: symbol, table: symbol, key_kind: symbol, key: symbol)
 
 local_table_and_key(op, ts, t, ks, k) :- ets_table_ident(op, ts, t), op_key(op, ks, k).
 table_and_key(op, tk, t, ks, k) :- ets_table(op, tk, t), op_key(op, ks, k).
@@ -322,10 +322,14 @@ ets_accessor(g, w, "fixed") :- lone_ets_op(g, w), op_key(w, "literal", _).
 
 .decl lone_ets_op(func: symbol, op: symbol)
 
+.decl ets_op_rows(func: symbol, n: number)
+
+ets_op_rows(g, count((w, name, a, b))) :- ets_op(w, g, name, a, b).
+
 lone_ets_op(g, w) :-
   ets_op(w, g, name, _, _),
   name != "dynamic",
-  count : { ets_op(_, g, _, _, _) } = 1,
+  ets_op_rows(g, 1),
   !other_shared_op(g).
 
 .decl other_shared_op(func: symbol)
@@ -366,7 +370,7 @@ reported_at(f, op, op) :- rows.meets(f, _, op, _, _, _, _), !accessor_call(f, op
 // tables when func has already set the dictionary key (`skips_default`).
 .decl decides_write(func: symbol, read: symbol, write: symbol, row: EtsRow)
 
-decides_write(f, r, w, [table, ks, k]) :-
+decides_write(f, r, w, (table, ks, k)) :-
   rows.meets(f, r, w, ts, t, ks, k),
   table_in(f, ts, t, table),
   !skips_default(f, r, table),
@@ -375,14 +379,14 @@ decides_write(f, r, w, [table, ks, k]) :-
 // The table a pair meets on in `func`, from how func's terms name it.
 .decl table_in(func: symbol, source: symbol, ident: symbol, table: EtsTable)
 
-table_in(f, ts, t, [k, t]) :- rows.meets(f, _, _, ts, t, _, _), table_source(k, ts).
-table_in(f, "param", p, [k, t]) :- rows.meets(f, _, _, "param", p, _, _), param_table(f, p, k, t).
+table_in(f, ts, t, (k, t)) :- rows.meets(f, _, _, ts, t, _, _), table_source(k, ts).
+table_in(f, "param", p, (k, t)) :- rows.meets(f, _, _, "param", p, _, _), param_table(f, p, k, t).
 
 // The same pairs, by the table and the key alone: what the rivals and
 // the harms below are asked of.
 .decl reads_then_writes(func: symbol, read: symbol, write: symbol, table: EtsTable, key: symbol)
 
-reads_then_writes(f, r, w, table, k) :- decides_write(f, r, w, [table, _, k]).
+reads_then_writes(f, r, w, table, k) :- decides_write(f, r, w, row), row = (table, _, k).
 
 // Externally supplied tables
 //
@@ -407,7 +411,7 @@ rival_table(table) :- reads_then_writes(_, _, _, table, _).
 // The tables a write or a counter bump may touch (clientlib/tables.dl).
 .decl ets_op_table(id: symbol, table: EtsTable)
 
-ets_op_table(id, [k, t]) :- ets_table(id, k, t), ets_op(id, _, _, _, _).
+ets_op_table(id, (k, t)) :- ets_table(id, k, t), ets_op(id, _, _, _, _).
 
 // A write of a table some pair touches, in the function holding it.
 .decl table_write(write: symbol, func: symbol, table: EtsTable)
@@ -527,7 +531,7 @@ computed_in_view(ks) :- rival_write(_, _, _, ks, _), match("element [0-9]+", ks)
 // table it is on.
 .decl pair_key(func: symbol, table: EtsTable, key_kind: symbol, key: symbol)
 
-pair_key(f, table, ks, k) :- decides_write(f, _, _, [table, ks, k]).
+pair_key(f, table, ks, k) :- decides_write(f, _, _, row), row = (table, ks, k).
 
 .decl pair_key_of(func: symbol, read: symbol, write: symbol, key_kind: symbol, key: symbol)
 
@@ -567,7 +571,10 @@ concurrent(f, h, w2) :-
   runs.entry_reaches(m, f),
   rival_write(w2, h, table, _, _),
   table_write(w2, g, _),
-  runs.runs_beside_up(m, f, h, g).
+  // Another process runs h toward g after startup while m runs f.
+  (runs.up_reaches(m2, h), m2 != m, !runs.handed_off(m2, m, f), !runs.handed_off(m, m2, g) ;
+   runs.seed(g), request_entry(e, _), runs.walk.reaches(e, h) ;
+   runs.seed(g), runs.outside_reaches(h)).
 
 runs.seed(g) :- table_write(_, g, _).
 
@@ -755,7 +762,7 @@ unique_api("Kernel.make_ref/0").
 mints(g) :-
   impure_call(id, _, _, "random", _),
   remote_call(id, _, m, n, a),
-  g = cat(m, ":", n, "/", to_string(a)).
+  g = cat(m, cat(":", cat(n, cat("/", to_string(a))))).
 
 mints(g) :- function_def(g, _, _, _, _), impure_call(_, g, _, "random", _).
 mints(g) :- function_def(g, _, _, _, _), impure_call(_, g, api, _, _), unique_api(api).
@@ -986,7 +993,7 @@ changing_source("call", g) :- fill_source("call", g), reads_state(g).
 .decl reads_state(func: symbol)
 
 reads_state(g) :- fill_source("call", g), unknown_call(_, _, _, g).
-reads_state(g) :- fill_source("call", g), protocol_dispatch(id, _, _), remote_call(id, _, m, n, a), g = cat(m, ":", n, "/", to_string(a)).
+reads_state(g) :- fill_source("call", g), protocol_dispatch(id, _, _), remote_call(id, _, m, n, a), g = cat(m, cat(":", cat(n, cat("/", to_string(a))))).
 
 reads_state(g) :-
   fill_source("call", g),
@@ -994,7 +1001,7 @@ reads_state(g) :-
   category != "time",
   category != "random",
   remote_call(id, _, m, n, a),
-  g = cat(m, ":", n, "/", to_string(a)).
+  g = cat(m, cat(":", cat(n, cat("/", to_string(a))))).
 
 reads_state(g) :- state_reader(g).
 
@@ -1007,7 +1014,7 @@ state_reader(g) :- impure_call(_, g, _, category, "read"), category != "time", c
 state_reader(g) :- ets_op(_, g, _, _, "read").
 state_reader(g) :- mnesia_op(_, g, _, "read", _, _, _, _).
 state_reader(g) :- local_call(_, g, h, _), state_reader(h).
-state_reader(g) :- remote_call(_, g, m, n, a), h = cat(m, ":", n, "/", to_string(a)), function_def(h, _, _, _, _), state_reader(h).
+state_reader(g) :- remote_call(_, g, m, n, a), h = cat(m, cat(":", cat(n, cat("/", to_string(a))))), function_def(h, _, _, _, _), state_reader(h).
 
 // ets_harm_by(f, r, w, kind, w2, h): rival write w2 through h witnesses harm kind for
 // read/write pair (r, w), meeting in f.
@@ -1143,26 +1150,26 @@ held_row(w) :-
 
 // A write another process makes, as made by calling `func`: the
 // function that names its key (rival, above).
-.type RivalWrite = [write: symbol, func: symbol]
+.type RivalWrite = (write: symbol, func: symbol)
 
 // The table is public or supplied by external callers, allowing writes from multiple
 // caller processes.
 .decl on_public_table(row: EtsRow)
 
-on_public_table([[tk, t], ks, k]) :- decides_write(_, _, _, [[tk, t], ks, k]), table_public(tk, t).
-on_public_table([["handed_in", t], ks, k]) :- decides_write(_, _, _, [["handed_in", t], ks, k]).
+on_public_table(((tk, t), ks, k)) :- decides_write(_, _, _, row), row = (table_id, ks, k), table_id = (tk, t), table_public(tk, t).
+on_public_table((("handed_in", t), ks, k)) :- decides_write(_, _, _, row), row = (table_id, ks, k), table_id = (table_kind, t), table_kind = "handed_in".
 
 // A competing process can write the same row between the paired read and write, either
 // by running the pair again or executing another write.
-.decl lands_between(rival: RivalWrite, read: symbol, write: symbol, func: symbol) inline
+.decl lands_between(rival: RivalWrite, read: symbol, write: symbol, func: symbol)
 
-lands_between([w2, h], r, w, f) :- rival(f, r, w, w2, h).
+lands_between((w2, h), r, w, f) :- rival(f, r, w, w2, h).
 
 // The rival's interleaving causes harm that neither serial ordering produces.
 // ets_harm_by supplies the witness.
-.decl harms(rival: RivalWrite, read: symbol, write: symbol, func: symbol, harm: symbol) inline
+.decl harms(rival: RivalWrite, read: symbol, write: symbol, func: symbol, harm: symbol)
 
-harms([w2, h], r, w, f, k) :- ets_harm_by(f, r, w, k, w2, h).
+harms((w2, h), r, w, f, k) :- ets_harm_by(f, r, w, k, w2, h).
 
 // A read controls or feeds a same-row write on shared writable storage, and an
 // intervening rival causes harm. `func` is where read and write meet.
@@ -1179,7 +1186,7 @@ read_then_write_race(func, read, write, row, harm) :-
 .decl ets_race(mod: symbol, func: symbol, name: symbol, key: symbol, read: symbol, write: symbol, kind: symbol)
 
 ets_race(mod, func, name, key, read_at, write_at, harm) :-
-  read_then_write_race(func, read, write, [table, _, key], harm),
+  read_then_write_race(func, read, write, row, harm), row = (table, _, key),
   table_shown_as(func, table, name),
   reported_at(func, read, read_at),
   reported_at(func, write, write_at),
@@ -1189,17 +1196,17 @@ ets_race(mod, func, name, key, read_at, write_at, harm) :-
 // receiving zero-based parameter for externally supplied tables.
 .decl table_shown_as(func: symbol, table: EtsTable, name: symbol)
 
-table_shown_as(f, ["named", t], t) :- decides_write(f, _, _, [["named", t], _, _]).
+table_shown_as(f, ("named", t), t) :- decides_write(f, _, _, row), row = (table_id, _, _), table_id = (table_kind, t), table_kind = "named".
 
-table_shown_as(f, [tk, t], name) :-
-  decides_write(f, _, _, [[tk, t], _, _]),
+table_shown_as(f, (tk, t), name) :-
+  decides_write(f, _, _, row), row = (table_id, _, _), table_id = (tk, t),
   tk != "named",
   tk != "handed_in",
   table_made_at(tk, t, n),
   ets_new(n, _, name).
 
-table_shown_as(f, ["handed_in", t], cat("param ", p)) :-
-  decides_write(f, _, _, [["handed_in", t], _, _]),
+table_shown_as(f, ("handed_in", t), cat("param ", p)) :-
+  decides_write(f, _, _, row), row = (table_id, _, _), table_id = (table_kind, t), table_kind = "handed_in",
   param_table(f, p, "handed_in", t).
 
 // How much an interleaving costs, strongest first: the finding is
@@ -1221,9 +1228,7 @@ ets_harm_rank("stale_fill", 8).
 // branches of one race; keep the strongest finding and attach other sites as evidence.
 .decl ets_best_rank(func: symbol, read: symbol, write: symbol, rank: number)
 
-ets_best_rank(f, r, w, n) :-
-  ets_race(_, f, _, _, r, w, _),
-  n = min m : { ets_race(_, f, _, _, r, w, k), ets_harm_rank(k, m) }.
+ets_best_rank(f, r, w, min(m)) :- ets_race(_, f, _, _, r, w, k), ets_harm_rank(k, m).
 
 .init ets_writes = OnePerWrite
 
@@ -1250,9 +1255,11 @@ same_race(f, w, w2) :- ets_writes.also_writes(w, w2, f).
 
 .decl race_rank(func: symbol, read: symbol, write: symbol, rank: number)
 
-race_rank(f, r, w, n) :-
-  ets_writes.reported(f, r, w, _),
-  n = min m : { same_race(f, w, w2), ets_best_rank(f, r, w2, m) }.
+.decl same_race_rank(func: symbol, read: symbol, write: symbol, rank: number)
+
+same_race_rank(f, r, w, min(m)) :- same_race(f, w, w2), ets_best_rank(f, r, w2, m).
+
+race_rank(f, r, w, n) :- ets_writes.reported(f, r, w, _), same_race_rank(f, r, w, n).
 
 // Related race sites: additional writes, other deciding/feeding reads, and conflicting
 // rival writes, each with its reporting function.
@@ -1295,13 +1302,13 @@ publish_order_race(writer, publish, complete, reader, reader_func) :-
 
 // The reader targets the completing write's shared table and can leak a missing-row
 // exception. A matching local or all-caller rescue suppresses the crash.
-.decl looks_up_row_of(reader: symbol, complete: symbol) inline
+.decl looks_up_row_of(reader: symbol, complete: symbol)
 
 looks_up_row_of(r, w2) :- readable_elsewhere(w2, bk, b), ets_table(r, bk, b).
 
 // A read of the published table hands its values out, and the reader's
 // key may be one of them (key_may_come_from, below).
-.decl finds_published_value(reader: symbol, publish: symbol) inline
+.decl finds_published_value(reader: symbol, publish: symbol)
 
 finds_published_value(r, w1) :-
   ets_table(w1, ak, a),
@@ -1321,7 +1328,7 @@ same_stack_site(c, f, g) :- local_call(c, f, g, _).
 
 same_stack_site(c, f, g) :-
   remote_call(c, f, m, n, a),
-  g = cat(m, ":", n, "/", to_string(a)),
+  g = cat(m, cat(":", cat(n, cat("/", to_string(a))))),
   function_def(g, _, _, _, _).
 
 .decl object_insert(w: symbol, func: symbol)
@@ -1443,7 +1450,7 @@ hands_out(r) :- ets_op(r, _, _, op, "read"), op != "lookup", op != "member", op 
 
 // The operation may access a table readable by another process.
 // table_readable_elsewhere resolves field tables through their extracted names.
-.decl readable_elsewhere(id: symbol, kind: symbol, ident: symbol) inline
+.decl readable_elsewhere(id: symbol, kind: symbol, ident: symbol)
 
 readable_elsewhere(id, k, t) :- ets_table(id, k, t), table_readable_elsewhere(k, t).
 
@@ -1575,7 +1582,7 @@ ets_publish_order(mod, writer, pub_kind, pub_table, row_kind, row_table, publish
   table_of(complete, row_kind, row_table),
   table_of(reader, row_kind, row_table).
 
-.decl table_of(op: symbol, table_kind: symbol, table: symbol) inline
+.decl table_of(op: symbol, table_kind: symbol, table: symbol)
 
 table_of(op, tk, t) :- ets_table(op, tk, t).
 
@@ -1606,7 +1613,7 @@ missing.act(act, func, source, table, key_kind, key) :-
 // EtsTable identity columns, keeping kind handling inside the helpers.
 
 // A read that decides whether a row is there.
-.decl checks_row_exists(check: symbol) inline
+.decl checks_row_exists(check: symbol)
 
 checks_row_exists(check) :- deciding_read(check, _).
 
@@ -1644,16 +1651,16 @@ reads_completed_row(r, g) :-
 // A table accessible from another process. Tables created outside the facts, under
 // unresolved names, or supplied externally are assumed shared; no visible allocation
 // proves them private.
-.decl shared_table(act: symbol, table: EtsTable) inline
+.decl shared_table(act: symbol, table: EtsTable)
 
-shared_table(act, [tk, t]) :- readable_elsewhere(act, tk, t).
-shared_table(act, [tk, t]) :- ets_table(act, tk, t), table_made_out_of_view(tk, t).
+shared_table(act, (tk, t)) :- readable_elsewhere(act, tk, t).
+shared_table(act, (tk, t)) :- ets_table(act, tk, t), table_made_out_of_view(tk, t).
 
 // An operation that deletes rows of the table: take, delete,
 // delete_object, select_delete, match_delete, or deleting them all.
 .decl removes_rows(remover: symbol, table: EtsTable)
 
-removes_rows(d, [tk, t]) :-
+removes_rows(d, (tk, t)) :-
   ets_op(d, _, _, op, _),
   ets_removal_op(op),
   ets_table(d, tk, t).
@@ -1662,7 +1669,7 @@ removes_rows(d, [tk, t]) :-
 .decl found_row_act(func: symbol, table: EtsTable)
 
 found_row_act(func, table) :-
-  decides(func, _, act, [table, _, _]),
+  decides(func, _, act, row), row = (table, _, _),
   fails_if_row_missing(act, func),
   shared_table(act, table).
 
@@ -1670,7 +1677,7 @@ found_row_act(func, table) :-
 .decl found_key(key_kind: symbol, key: symbol)
 
 found_key(ks, k) :-
-  decides(func, _, act, [table, ks, k]),
+  decides(func, _, act, row), row = (table, ks, k),
   fails_if_row_missing(act, func),
   shared_table(act, table).
 
@@ -1703,27 +1710,34 @@ keyed_apart(d, ks, k) :-
   ks != "any".
 
 // A row is a table plus a key, represented using CheckThenAct's key kind and value.
-.type EtsRow = [table: EtsTable, key_kind: symbol, key: symbol]
+.type EtsRow = (table: EtsTable, key_kind: symbol, key: symbol)
 
 // In `func`, the check's result decides whether the use runs, on one row
 // (CheckThenAct's meets, followed across calls).
 .decl decides(func: symbol, check: symbol, use: symbol, row: EtsRow)
 
-decides(func, check, use, [[tk, t], ks, k]) :-
+decides(func, check, use, ((tk, t), ks, k)) :-
   missing.meets(func, check, use, source, t, ks, k),
   table_source(tk, source).
 
 // The use's table is one other processes can reach.
-.decl on_shared_table(use: symbol) inline
+.decl on_shared_table(use: symbol)
 
-on_shared_table(use) :- ets_table(use, tk, t), shared_table(use, [tk, t]).
+on_shared_table(use) :- ets_table(use, tk, t), shared_table(use, table_id), table_id = (tk, t).
 
 // A removal on the row's table whose key can be the row's key.
-.decl removes_row(remove: symbol, row: EtsRow) inline
+.decl removes_row(remove: symbol, row: EtsRow)
 
-removes_row(remove, [table, ks, k]) :-
+removes_row(remove, row) :-
+  decided_row(row, table, ks, k),
   removes_rows(remove, table),
   !keyed_apart(remove, ks, k).
+
+// A row some check decides, with its table and key as columns of their own, so a
+// negation can read them.
+.decl decided_row(row: EtsRow, table: EtsTable, key_kind: symbol, key: symbol)
+
+decided_row(row, table, ks, k) :- decides(_, _, _, row), row = (table, ks, k).
 
 // The removal may run in another process: the pair is multi-process, or a separate
 // process reaches the remover. Without ordering, it can occur between check and use.
@@ -1756,7 +1770,7 @@ missing_row_race(func, check, use, remove, row) :-
 .output ets_missing_row
 
 ets_missing_row(mod, func, table_kind, table, check, use, remove) :-
-  missing_row_race(func, check, use, remove, [[table_kind, table], _, _]),
+  missing_row_race(func, check, use, remove, row), row = (table_id, _, _), table_id = (table_kind, table),
   in_module(func, mod).
 
 // Mnesia dirty check-then-act
@@ -1772,26 +1786,26 @@ ets_missing_row(mod, func, table_kind, table, check, use, remove) :-
 // a harm witness. func is the pair's meeting function.
 .decl dirty_read_then_write_race(func: symbol, read: symbol, write: symbol, record: MnesiaRecord, harm: symbol)
 
-dirty_read_then_write_race(func, read, write, [table, key], harm) :-
-  decides_dirty_write(func, read, write, [table, key]),
+dirty_read_then_write_race(func, read, write, (table, key), harm) :-
+  decides_dirty_write(func, read, write, row), row = (table, key),
   written_by_another_process(table, func),
   !serialized_by_lock(func, table),
   harms_record(func, read, write, harm).
 
 // A Mnesia record uses a cluster-wide table name and key. Mnesia and ETS identities
 // remain separate even when their table names match.
-.type MnesiaRecord = [table: symbol, key: symbol]
+.type MnesiaRecord = (table: symbol, key: symbol)
 
 // In `func`, the dirty read's result decides whether the dirty write
 // runs, or feeds what it stores, on one record (reads_then_writes_record,
 // below).
-.decl decides_dirty_write(func: symbol, read: symbol, write: symbol, record: MnesiaRecord) inline
+.decl decides_dirty_write(func: symbol, read: symbol, write: symbol, record: MnesiaRecord)
 
-decides_dirty_write(f, r, w, [t, k]) :- reads_then_writes_record(f, r, w, t, k).
+decides_dirty_write(f, r, w, (t, k)) :- reads_then_writes_record(f, r, w, t, k).
 
 // What the interleaving costs, by a witness (record_race_kind, below):
 // asked only of the pairs another process can interleave.
-.decl harms_record(func: symbol, read: symbol, write: symbol, harm: symbol) inline
+.decl harms_record(func: symbol, read: symbol, write: symbol, harm: symbol)
 
 harms_record(f, r, w, k) :- record_race_kind(f, r, w, k).
 
@@ -1841,7 +1855,7 @@ record_table_at_param(f, p, name) :-
   record_table_needed(f, p),
   call_arg_forward(c, f, n, m),
   p = to_string(n),
-  record_table_at_param(c, to_string(m), name).
+  record_table_at_param(c, m_text, name), m_text = to_string(m).
 
 // A whole record's first tuple element names its Mnesia table. Resolve that element
 // through forwarding callers.
@@ -1864,7 +1878,7 @@ table_at_record(f, p, t) :-
   record_param_needed(f, p),
   call_arg_forward(c, f, n, m),
   p = to_string(n),
-  table_at_record(c, to_string(m), t).
+  table_at_record(c, m_text, t), m_text = to_string(m).
 
 runs.seed(f) :- reads_then_writes_record(f, _, _, _, _).
 runs.seed(f) :- mnesia_op(_, f, _, "write", _, _, _, _).
@@ -1952,7 +1966,7 @@ racing_record_pair(f, r, w) :-
   !serialized_by_lock(f, t).
 
 // Which dirty operation a Mnesia call is.
-.decl dirty_op(site: symbol, op: symbol) inline
+.decl dirty_op(site: symbol, op: symbol)
 
 dirty_op(site, op) :- mnesia_op(site, _, op, _, _, _, _, _).
 
@@ -1978,7 +1992,10 @@ record_rival(f, r, w, w2, g) :-
   runs.single_process(f),
   runs.entry_reaches(m, f),
   mnesia_write_table(w2, g, t),
-  runs.runs_beside_up(m, f, g, g),
+  // Another process runs g after startup while m runs f.
+  (runs.up_reaches(m2, g), m2 != m, !runs.handed_off(m2, m, f), !runs.handed_off(m, m2, g) ;
+   runs.seed(g), request_entry(e, _), runs.walk.reaches(e, g) ;
+   runs.seed(g), runs.outside_reaches(g)),
   !records_apart(w, w2).
 
 writer_walk.seed(g, g) :- mnesia_write_table(_, g, _).
@@ -2003,7 +2020,7 @@ records_apart(w, w2) :-
 .decl minted_value(site: symbol)
 
 minted_value(made) :- remote_call(made, _, m, n, a), minting_call(m, n, a).
-minted_value(made) :- remote_call(made, _, m, n, a), mints(cat(m, ":", n, "/", to_string(a))).
+minted_value(made) :- remote_call(made, _, m, n, a), mints(mfa), mfa = cat(m, cat(":", cat(n, cat("/", to_string(a))))).
 minted_value(made) :- local_call(made, _, g, _), mints(g).
 
 // A writer that writes the record back from a read, or counts in it.
@@ -2254,9 +2271,7 @@ kind_rank("fill", 5).
 // Shared reads used by different meeting functions remain separate races.
 .decl read_rank(func: symbol, read: symbol, rank: number)
 
-read_rank(f, r, n) :-
-  dirty_read_then_write_race(f, r, _, _, _),
-  n = min m : { dirty_read_then_write_race(f, r, _, _, k), kind_rank(k, m) }.
+read_rank(f, r, min(m)) :- dirty_read_then_write_race(f, r, _, _, k), kind_rank(k, m).
 
 // Prefer the read local to the write over a farther caller's read. Retain the outer
 // read as evidence if its data is also written back.
@@ -2292,7 +2307,7 @@ record_writes.write_in(w, h) :- ranked_race(_, _, w, _, _), records.act(w, h, _,
 
 mnesia_check_act(mod, func, table, key, read, write, op, harm) :-
   record_writes.reported(func, read, write, harm),
-  dirty_read_then_write_race(func, read, write, [table, key], harm),
+  dirty_read_then_write_race(func, read, write, row, harm), row = (table, key),
   dirty_op(write, op),
   in_module(func, mod).
 

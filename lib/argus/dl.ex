@@ -4,7 +4,7 @@ defmodule Argus.Dl do
   directory every program, stage and include is read from.
 
   In a Mix build that is the application's `priv/dl`. An escript has no
-  priv directory — its code is an archive, and Souffle reads its
+  priv directory — its code is an archive, and FlowLog reads its
   programs and their `.include`s from files — so the rules travel inside
   the code (`Argus.Dl.Embedded`) and are unpacked, once per tree of
   rules, under the blob store (`Argus.Dirs.dl/0`): `<store>/dl/<digest

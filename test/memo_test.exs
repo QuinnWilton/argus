@@ -1,11 +1,14 @@
 defmodule Argus.Test.MemoTest do
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
   alias Argus.Test.Memo
 
   @moduletag :tmp_dir
-  @answer {:ok, %{"probe" => [["1"]]}}
+  # An engine keeps a program's answer as its inputs change, so the probe
+  # reads one: the module each function is defined in.
+  @modules [Argus.Test.Fixtures.OtherLoop]
+  @answer {:ok, %{"probe" => [["Argus.Test.Fixtures.OtherLoop"]]}}
 
   setup %{tmp_dir: tmp} do
     program = Path.join(tmp, "probe.dl")
@@ -44,7 +47,7 @@ defmodule Argus.Test.MemoTest do
           send(parent, {:ready, self()})
 
           receive do
-            :go -> Memo.analyze([], {:custom, program})
+            :go -> Memo.analyze(@modules, {:custom, program})
           end
         end)
       end
@@ -55,30 +58,37 @@ defmodule Argus.Test.MemoTest do
     end
 
     Enum.each(tasks, &send(&1.pid, :go))
-    assert Enum.map(tasks, &Task.await(&1, 30_000)) == List.duplicate(@answer, 8)
+    # The first solve builds the probe's engine: the test's own timeout
+    # bounds the wait.
+    assert Enum.map(tasks, &Task.await(&1, :infinity)) == List.duplicate(@answer, 8)
     assert_received :solving
     refute_received :solving
 
-    assert Memo.analyze([], {:custom, program}) == @answer
+    assert Memo.analyze(@modules, {:custom, program}) == @answer
     refute_received :solving
   end
 
   test "calls with options bypass the shared answer", %{program: program} do
     write_program(program)
-    assert Memo.analyze([], {:custom, program}) == @answer
+    assert Memo.analyze(@modules, {:custom, program}) == @answer
     assert_received :solving
 
-    assert Memo.analyze([], {:custom, program}, timeout: 30_000) == @answer
+    assert Memo.analyze(@modules, {:custom, program}, timeout: 30_000) == @answer
     assert_received :solving
   end
 
   test "failures are retried", %{program: program} do
-    assert {:error, _} = Memo.analyze([], {:custom, program})
+    assert {:error, _} = Memo.analyze(@modules, {:custom, program})
     write_program(program)
-    assert Memo.analyze([], {:custom, program}) == @answer
+    assert Memo.analyze(@modules, {:custom, program}) == @answer
   end
 
   defp write_program(path) do
-    File.write!(path, ".decl probe(x: number)\n.output probe\nprobe(1).\n")
+    File.write!(path, """
+    .include #{JSON.encode!(Argus.Dl.path("base.dl"))}
+    .decl probe(mod: symbol)
+    .output probe
+    probe(m) :- function_def(_, m, _, _, _).
+    """)
   end
 end

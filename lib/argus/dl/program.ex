@@ -1,17 +1,17 @@
-defmodule Argus.Souffle.Program do
+defmodule Argus.Dl.Program do
   @moduledoc """
   A Datalog program as a solve reads it: its files (the program and
-  every file it `.include`s, transitively, resolved as Souffle resolves
+  every file it `.include`s, transitively, resolved as FlowLog resolves
   an include, relative to the including file), and digests of them
   that name what decides a solve's outputs.
 
   `declared_digest/2` counts a file of declarations alone (argus's
   generated `base.dl`, `layer2.dl`, `priors.dl`) only by the
-  declarations of the relations the program loads: Souffle prunes an
-  input no rule that reaches an output reads, before it loads anything,
+  declarations of the relations the program loads: FlowLog prunes an
+  input no rule that reaches an output reads before it plans anything,
   so a relation added to the schema, or another relation's prose,
-  moves no program's digest. The query graph keys each program on it
-  (`Argus.Graph.Programs`).
+  moves no program's digest, and builds no engine again. The query graph
+  keys each program on it (`Argus.Graph.Programs`, `Argus.FlowLog.program_digest/2`).
   """
 
   # How long `stamped/2` trusts its files without a look, and the size
@@ -21,7 +21,7 @@ defmodule Argus.Souffle.Program do
 
   @doc """
   A digest of a Datalog program: its own source and every file it
-  includes, transitively, resolved the way Souffle resolves an include
+  includes, transitively, resolved the way FlowLog resolves an include
   (relative to the including file). Each file is named as the program
   spells it, so the digest is the same wherever the tree is checked out.
   """
@@ -66,14 +66,14 @@ defmodule Argus.Souffle.Program do
   (`declarations/1`), counts only by the declarations of `relations`,
   in order, and not by its comments.
 
-  Souffle prunes an input relation no rule that reaches an output
-  reads, before it loads anything: a declaration it prunes decides
-  nothing a solve writes. A declaration that no longer compiles beside
-  the rest — a pruned rule that joins a relation whose type changed, a
-  name that is now declared twice — fails the program, and that is
-  caught before a solve is keyed: the relations it loads are resolved
-  again (`Argus.Souffle.input_relations/2`) under `relations = :all`,
-  which every declaration moves. `Argus.Graph.Identity.DeclaredDigestTest`
+  FlowLog prunes an input relation no rule that reaches an output
+  reads, before it plans anything: a declaration it prunes decides
+  nothing a solve writes, and no line of the engine built for it. A
+  declaration that no longer compiles beside the rest (a pruned rule
+  that joins a relation whose type changed, a name that is now declared
+  twice) fails the program, and that is caught before a solve is keyed:
+  the relations it loads are resolved again (`Argus.FlowLog.manifest/2`)
+  under `relations = :all`, which every declaration moves. `Argus.Graph.Identity.DeclaredDigestTest`
   changes every declaration a shipped program does not load and
   checks that its outputs, byte for byte, and this digest do not move.
   """
@@ -134,19 +134,19 @@ defmodule Argus.Souffle.Program do
   @doc ~S"""
   A program file's text as a solve reads it: without the lines that are
   a line comment alone (after any indentation), and without blank lines
-  — what an edit to a rule's prose touches. Souffle's preprocessor drops
-  every such line, so a solve of the file writes what a solve of its
-  text as given writes.
+  — what an edit to a rule's prose touches. FlowLog skips every such
+  line, so a solve of the file writes what a solve of its text as given
+  writes.
 
-  A file that splices lines (a backslash ending a line, or the trigraph
-  for one) is its text as given: a comment or blank line after a splice
-  is part of the line before it. A comment line that opens or closes a
-  block comment is kept.
+  A file holding a backslash at the end of a line, or the trigraph for
+  one, is kept as given: it is not a program FlowLog reads differently,
+  but a key over it may as well be conservative. A comment line that
+  opens or closes a block comment is kept.
 
-      iex> Argus.Souffle.Program.uncommented("a(1).\n// why\n\n  // indented\nb(2).\n")
+      iex> Argus.Dl.Program.uncommented("a(1).\n// why\n\n  // indented\nb(2).\n")
       "a(1).\nb(2)."
 
-      iex> Argus.Souffle.Program.uncommented("a(1). \\\n// spliced\nb(2).")
+      iex> Argus.Dl.Program.uncommented("a(1). \\\n// spliced\nb(2).")
       "a(1). \\\n// spliced\nb(2)."
   """
   @spec uncommented(String.t()) :: String.t()
@@ -175,11 +175,11 @@ defmodule Argus.Souffle.Program do
   other file.
 
   A line is blank, a line comment, `.decl name(field: type, ...)` or
-  `.input name` right after its own `.decl` — and nothing else, not a
-  qualifier, an attribute or another comment: anything this does not
-  read is text a key holds whole. A comment ending in a backslash (or
-  the trigraph for one) splices the next line into it in Souffle's
-  preprocessor, so it is not read as a comment.
+  `.input name` right after its own `.decl` — and nothing else, not an
+  attribute or another comment: anything this does not read is text a
+  key holds whole. The `mutable` qualifier `mix argus.gen.dl` gives every
+  fact relation is part of its declaration's line. A comment ending in a
+  backslash (or the trigraph for one) is not read as a comment either.
   """
   @spec declarations(String.t()) :: {:ok, [{String.t(), String.t()}]} | :error
   def declarations(content) do
@@ -216,7 +216,8 @@ defmodule Argus.Souffle.Program do
 
   defp declaration_line(line) do
     cond do
-      match = Regex.run(~r/^\.decl ([A-Za-z_][A-Za-z0-9_]*)\([A-Za-z0-9_:, ]*\)$/, line) ->
+      match =
+          Regex.run(~r/^\.decl ([A-Za-z_][A-Za-z0-9_]*)\([A-Za-z0-9_:, ]*\)( mutable)?$/, line) ->
         {:decl, Enum.at(match, 1)}
 
       match = Regex.run(~r/^\.input ([A-Za-z_][A-Za-z0-9_]*)$/, line) ->

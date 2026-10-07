@@ -6,7 +6,7 @@ defmodule Argus.Analyses.QuietShapesTest do
   """
 
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
   alias Argus.Test.Fixtures.Quiet
   alias Argus.Test.Fixtures.ShutdownSiblings, as: Sib

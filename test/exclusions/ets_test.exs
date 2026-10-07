@@ -5,7 +5,7 @@ defmodule Argus.Exclusions.EtsTest do
   Fixtures: test/fixtures/exclusions/ets.ex and test/fixtures/erl/excl_ets_*.erl.
   """
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
   alias Argus.Test.Batch
   alias Argus.Test.Rows

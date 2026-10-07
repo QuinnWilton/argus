@@ -124,7 +124,7 @@ module_identity("module field").
   carries(f, "call", g, c, rs, r, ks, k) :-
     carries(f, kind, src, c, rs, r, ks, k),
     call_arg_depends(f, g, n, kind, src),
-    returns_depends(g, "param", to_string(n)).
+    returns_depends(g, "param", n_text), n_text = to_string(n).
 
   .decl returns_check(g: symbol, c: symbol, rs: symbol, r: symbol, ks: symbol, k: symbol)
 
@@ -157,7 +157,7 @@ module_identity("module field").
     reach_needed(h),
     act(a, h, rs, r, ks, k),
     site_depends(a, h, "call", g),
-    returns_depends(g, "param", to_string(n)),
+    returns_depends(g, "param", n_text), n_text = to_string(n),
     call_arg_depends(h, g, n, "param", p).
 
   // Everything a callee reaches, h reaches.
@@ -169,7 +169,6 @@ module_identity("module field").
     lift(h, g, ks, k, ks2, k2).
   // Each semi-naive version starts from its new tuples: a new act of g
   // looks up g's callers, a new lift its (h, g) edge.
-  .plan 1:(3,2,1,4,5), 2:(4,2,3,1,5), 3:(5,2,3,1,4)
 
   // h's parameter decides the call.
   acts_if(h, a, "param", p, rs2, r2, ks2, k2) :-
@@ -178,7 +177,6 @@ module_identity("module field").
     acts_if(g, a, _, _, rs, r, ks, k),
     lift(h, g, rs, r, rs2, r2),
     lift(h, g, ks, k, ks2, k2).
-  .plan 1:(3,2,1,4,5), 2:(4,2,3,1,5), 3:(5,2,3,1,4)
 
   // Propagate parameter dependence from relevant callee acts, joining arguments by
   // callee and position. Self-calls cover loop iterations without scanning every
@@ -189,13 +187,12 @@ module_identity("module field").
     reach_needed(h),
     lift(h, g, rs, r, rs2, r2),
     lift(h, g, ks, k, ks2, k2).
-  .plan 1:(3,2,1,4,5), 2:(4,2,1,3,5), 3:(5,2,1,3,4)
 
   // Identity-source compatibility
   //
   // Compute source compatibility once over sources present in checks, acts, and lifted
-  // identities. Separate relations avoid Souffle expanding repeated disjunctions into
-  // many copies of the same joins.
+  // identities. Separate relations avoid expanding repeated disjunctions into many
+  // copies of the same joins (each branch of a disjunction is a rule of its own).
 
   .decl source(s: symbol)
 
@@ -254,30 +251,23 @@ module_identity("module field").
     acts_if(g, a, _, _, rs, r, ks, k),
     lift(f, g, rs, r, rs2, r2),
     lift(f, g, ks, k, ks2, k2).
-  .plan 1:(3,2,1,4,5), 2:(4,2,1,3,5), 3:(5,2,1,3,4)
 
   // The carrier is handed to a callee whose act depends on it.
   decides(f, kind, src, a, rs2, r2, ks2, k2) :-
     carrier(f, kind, src),
     call_arg_depends(f, g, n, kind, src),
-    acts_if(g, a, "param", to_string(n), rs, r, ks, k),
+    acts_if(g, a, "param", n_text, rs, r, ks, k), n_text = to_string(n),
     lift(f, g, rs, r, rs2, r2),
     lift(f, g, ks, k, ks2, k2).
-  .plan 1:(3,2,1,4,5), 2:(4,2,1,3,5), 3:(5,2,1,3,4)
-
-  // Identities agree when both are known and equal, or either is any. Use positive
-  // comparisons so recursive rules need no negation.
-  .decl agrees(s: symbol, v: symbol, s2: symbol, v2: symbol) inline
-
-  agrees(s, v, s, v) :- s != "dynamic".
-  agrees(s, _v, s2, _v2) :- either_any(s, s2).
 
   .decl met(f: symbol, c: symbol, a: symbol, rs: symbol, r: symbol, ks: symbol, k: symbol)
 
   met(f, c, a, rs, r, ks, k) :-
     joined(f, c, a, rs, r, ks, k, rs2, r2, ks2, k2),
-    agrees(rs, r, rs2, r2),
-    agrees(ks, k, ks2, k2).
+    // Identities agree when both are known and equal, or either is any. Use
+    // positive comparisons so recursive rules need no negation.
+    (rs2 = rs, r2 = r, rs != "dynamic" ; either_any(rs, rs2)),
+    (ks2 = ks, k2 = k, ks != "dynamic" ; either_any(ks, ks2)).
 
   // Lift both identities together through callers until they agree or can no longer be
   // substituted from parameters.
@@ -299,8 +289,8 @@ module_identity("module field").
 
   met(h, c, a, xs, x, ys, y) :-
     lifted(h, c, a, xs, x, ys, y, xs2, x2, ys2, y2),
-    agrees(xs, x, xs2, x2),
-    agrees(ys, y, ys2, y2).
+    (xs2 = xs, x2 = x, xs != "dynamic" ; either_any(xs, xs2)),
+    (ys2 = ys, y2 = y, ys != "dynamic" ; either_any(ys, ys2)).
 
   deferred(h, c, a, xs, x, ys, y, xs2, x2, ys2, y2) :-
     lifted(h, c, a, xs, x, ys, y, xs2, x2, ys2, y2),
@@ -344,7 +334,7 @@ module_identity("module field").
 
   .decl best_rank(write: symbol, rank: number)
 
-  best_rank(w, n) :- race(_, _, w, _, _), n = min m : { race(_, _, w, _, m) }.
+  best_rank(w, min(m)) :- race(_, _, w, _, m).
 
   .decl best(func: symbol, read: symbol, write: symbol, kind: symbol)
 
@@ -395,7 +385,7 @@ delivers_message(f) :- sends_message(_, f).
 
 delivers_message(f) :-
   call_site(_, f, m, n, a),
-  c = cat(m, ":", n, "/", to_string(a)),
+  c = cat(m, cat(":", cat(n, cat("/", to_string(a))))),
   (peer_call(c) ; peer_cast(c)).
 
 .comp DecisionSends {
@@ -467,7 +457,7 @@ delivers_message(f) :-
     map_needed(g),
     returns_depends(g, "call", g2),
     call_arg_depends(g, g2, n, "param", q),
-    maps_param(g2, to_string(n)).
+    maps_param(g2, n_text), n_text = to_string(n).
 
   .decl made(func: symbol, kind: symbol, src: symbol)
 
@@ -532,12 +522,12 @@ delivers_message(f) :-
   value(f, "call", g, r) :-
     value(f, kind, src, r),
     call_arg_reads(f, g, n, kind, src),
-    returns_reads(g, "param", to_string(n)).
+    returns_reads(g, "param", n_text), n_text = to_string(n).
 
   value(f, "call", g, r) :-
     value(f, kind, src, r),
     call_arg_reads(f, g, n, kind, src),
-    maps_param(g, to_string(n)).
+    maps_param(g, n_text), n_text = to_string(n).
 
   // A helper's result depends on a parameter through value construction or control
   // flow, directly or through further helpers.
@@ -555,7 +545,7 @@ delivers_message(f) :-
     map_needed(g),
     returns_depends(g, "call", g2),
     call_arg_depends(g, g2, n, "param", q),
-    maps_param(g2, to_string(n)).
+    maps_param(g2, n_text), n_text = to_string(n).
 
   // Track a read-derived value from the meeting function through forwarded parameters
   // down to the write.
@@ -591,7 +581,7 @@ delivers_message(f) :-
     site_reads(w, h, "call", g),
     call_arg_reads(h, g, n, "param", p),
     path_param(f, r, h, p),
-    returns_reads(g, "param", to_string(n)).
+    returns_reads(g, "param", n_text), n_text = to_string(n).
 
   carries(f, r, w) :-
     pair(f, r, w),
@@ -599,7 +589,7 @@ delivers_message(f) :-
     site_reads(w, h, "call", g),
     call_arg_reads(h, g, n, "param", p),
     path_param(f, r, h, p),
-    maps_param(g, to_string(n)).
+    maps_param(g, n_text), n_text = to_string(n).
 
   // Where the pairs meet, a value made of their read.
   .decl answers(func: symbol, read: symbol)

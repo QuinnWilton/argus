@@ -38,7 +38,7 @@ defmodule Mix.Tasks.Argus.Debug do
   `explore` opens a Breeze TUI for an existing bundle. Search relations, filter
   and page through rows, follow IDs and rule references to source, and browse
   retained runs. Press `?` for keys and `q` to quit. It reads the bundle without
-  compiling the analyzed project or requiring Soufflé. In a consuming project,
+  compiling the analyzed project or building an engine. In a consuming project,
   add `{:breeze, "~> 0.5.5"}` to your dependencies to enable the optional TUI.
   If Argus was compiled before Breeze was added, run
   `mix deps.compile argus_beam --force` once.

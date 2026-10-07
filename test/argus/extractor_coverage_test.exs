@@ -3,10 +3,10 @@ defmodule Argus.ExtractorCoverageTest do
   Guards the link between what an analysis reads and what its extractors
   produce.
 
-  An analysis lists its inputs implicitly — Souffle reports which relations
+  An analysis lists its inputs implicitly — FlowLog reports which relations
   its rules actually join — and its extractors explicitly, in
   `extractors/0`. Nothing checked that the second covers the first, and the
-  gap is silent in the worst way: Souffle happily reads an empty `.facts`
+  gap is silent in the worst way: an engine happily reads an empty `.facts`
   file, every rule touching that relation derives nothing, and the analysis
   reports a clean zero indistinguishable from a codebase with no such bug.
 
@@ -34,7 +34,7 @@ defmodule Argus.ExtractorCoverageTest do
 
   use ExUnit.Case, async: true
 
-  alias Argus.{Analysis, Schema, Souffle}
+  alias Argus.{Analysis, Schema}
 
   # Which relations each extractor can emit, as it declares them; the
   # declaration is held to the source by Argus.ExtractorRelationsTest.
@@ -62,7 +62,7 @@ defmodule Argus.ExtractorCoverageTest do
   # instrumentation, not an analysis input anyone reasons from.
   @instrumentation MapSet.new([:imprecision])
 
-  @tag :souffle
+  @tag :flowlog
   test "every Layer-2 relation an analysis reads is produced by one of its extractors" do
     layer_1 = Schema.layer_1() |> Enum.map(& &1.name) |> MapSet.new()
     # A prior is filled by a question, not an extractor; that pairing is
@@ -71,7 +71,7 @@ defmodule Argus.ExtractorCoverageTest do
     priors = Schema.layer_3() |> Enum.map(& &1.name) |> MapSet.new()
     outputs = extractor_outputs()
     staged = Analysis.points_to_relations()
-    {:ok, stage_reads} = Souffle.input_relations(Analysis.points_to_rules_path())
+    {:ok, stage_reads} = Argus.FlowLog.input_relations(Analysis.points_to_rules_path())
 
     gaps =
       for mod <- Analysis.builtin_analysis_modules(),

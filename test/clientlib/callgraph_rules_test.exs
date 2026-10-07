@@ -1,9 +1,8 @@
 defmodule Argus.Clientlib.CallgraphRulesTest do
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
   alias Argus.Pipeline
-  alias Argus.Souffle
 
   @moduletag :tmp_dir
 
@@ -27,7 +26,7 @@ defmodule Argus.Clientlib.CallgraphRulesTest do
       rules_path = Path.join(tmp_dir, "test_callgraph.dl")
       File.write!(rules_path, rules)
 
-      assert {:ok, results} = Souffle.run(facts_dir, rules_path)
+      assert {:ok, results} = Argus.FlowLog.run(facts_dir, rules_path)
       assert Map.has_key?(results, "call_edge")
 
       edges = results["call_edge"]
@@ -57,7 +56,7 @@ defmodule Argus.Clientlib.CallgraphRulesTest do
       rules_path = Path.join(tmp_dir, "test_closure_callgraph.dl")
       File.write!(rules_path, rules)
 
-      assert {:ok, results} = Souffle.run(facts_dir, rules_path)
+      assert {:ok, results} = Argus.FlowLog.run(facts_dir, rules_path)
       edges = results["call_edge"]
 
       # spans_telemetry/1 builds a closure pointing at a lifted body whose

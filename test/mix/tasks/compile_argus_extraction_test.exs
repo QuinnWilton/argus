@@ -16,7 +16,7 @@ defmodule Mix.Tasks.Compile.ArgusExtractionTest do
   alias Argus.Test.{Fixture, Peer}
   alias Roux.QueryLog
 
-  @moduletag :souffle
+  @moduletag :flowlog
   @moduletag timeout: 300_000
 
   # The two analyses with findings on the fixture (five of them).

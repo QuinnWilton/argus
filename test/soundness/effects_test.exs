@@ -7,7 +7,7 @@ defmodule Argus.Soundness.EffectsTest do
   (soundness review 2, test/fixtures/soundness/effects_fixture.ex).
   """
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
   import Argus.Test.Soundness.Case
 

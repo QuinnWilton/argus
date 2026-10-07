@@ -48,18 +48,17 @@ stage_mode("exact").
 // field rows after thirteen minutes, all of OTP and a 7,104-module
 // deps tree run past ten.
 //
-// Souffle stops a fixpoint once a relation `.limitsize` names holds that
-// many rows. The rows only grow, so a stop means the whole fixpoint
-// holds at least that many, and a fixpoint that ends below the budget is
-// complete: whether a program outgrows it is a function of the program
-// and its facts, not of how fast the solver ran. points_to_overflow
-// names the relations that reached it; their outputs are then partial,
-// and the caller runs the bounded stage in their place. The bounded
-// stage is held to the same budget (it includes this file), and a
-// program that outgrows even that has no points-to: the analyses that
-// read it degrade.
-.limitsize source_pts(n=500000)
-.limitsize field_pts(n=500000)
+// The budget is decided over the finished fixpoint: a relation holding
+// at least that many rows overflows, so whether a program outgrows it is
+// a function of the program and its facts, not of how fast the engine
+// ran. points_to_overflow names the relations that reached it, and the
+// caller runs the bounded stage in their place. The bounded stage is
+// held to the same budget (it includes this file), and a program that
+// outgrows even that has no points-to: the analyses that read it
+// degrade. Nothing stops the exact fixpoint early, so a program that
+// grows past the budget pays for its whole fixpoint once; the solve's
+// timeout bounds that, and an engine kept between solves (Argus.FlowLog)
+// pays it only when the facts change.
 
 .decl points_to_budget(rows: number)
 
@@ -67,15 +66,17 @@ points_to_budget(500000).
 
 .decl points_to_overflow(relation: symbol, rows: number, budget: number)
 
-points_to_overflow("source_pts", n, b) :-
-  points_to_budget(b),
-  n = count : { source_pts(_, _, _, _) },
-  n >= b.
+.decl source_pts_rows(n: number)
 
-points_to_overflow("field_pts", n, b) :-
-  points_to_budget(b),
-  n = count : { field_pts(_, _, _) },
-  n >= b.
+source_pts_rows(count((f, k, s, x))) :- source_pts(f, k, s, x).
+
+.decl field_pts_rows(n: number)
+
+field_pts_rows(count((o, sel, x))) :- field_pts(o, sel, x).
+
+points_to_overflow("source_pts", n, b) :- points_to_budget(b), source_pts_rows(n), n >= b.
+
+points_to_overflow("field_pts", n, b) :- points_to_budget(b), field_pts_rows(n), n >= b.
 
 .output points_to_overflow(filename="points_to_overflow.csv")
 
@@ -84,7 +85,7 @@ points_to_overflow("field_pts", n, b) :-
 // stage resolved coarsely go beside it too (none in this stage).
 .decl points_to_mode(mode: symbol)
 
-points_to_mode("exact") :- !stage_mode("bounded").
+points_to_mode("exact") :- stage_mode("exact"), !stage_mode("bounded").
 points_to_mode("bounded") :- stage_mode("bounded").
 
 .output points_to_mode(filename="points_to_mode.facts")

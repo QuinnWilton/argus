@@ -16,7 +16,7 @@ defmodule Argus.Stage0Test do
   """
 
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
   alias Argus.Analysis
   alias Argus.Pipeline
@@ -183,7 +183,7 @@ defmodule Argus.Stage0Test do
       assert length(supervision_relations) > 8
     end
 
-    @tag souffle: false
+    @tag flowlog: false
     test "unknown analyses error rather than returning an empty set" do
       assert {:error, {:unknown_analysis, :nope}} = Analysis.input_relations(:nope)
     end

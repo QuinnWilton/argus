@@ -4,9 +4,9 @@ defmodule Argus.Driver.Result do
 
     * `located` — each analysis run: its findings placed in the source
       (`Argus.Located`), or why it degraded and reported nothing (the
-      solver failed or timed out, a stage it reads failed, its rules
+      engine failed or timed out, a stage it reads failed, its rules
       and argus's code are out of step). An analysis the run did not
-      solve (no solver, `souffle: :warn`) is not there.
+      solve (no engines here, `engine: :warn`) is not there.
     * `notices` — what a reader of the findings should know about the
       run that is not a finding (`t:notice/0`). An analysis that
       degraded is not among them: `located` says so.
@@ -15,7 +15,8 @@ defmodule Argus.Driver.Result do
 
   ## Notices
 
-    * `:souffle_missing` — no solver on `PATH`: nothing was solved.
+    * `:engine_unavailable` — the FlowLog engines cannot be built or run
+      on this machine (`Argus.FlowLog.Toolchain`): nothing was solved.
     * `{:extraction_error, error}` — a step of extraction failed on a
       module (`step: "module"` when the module could not be extracted at
       all): the analyses ran without those facts, and a finding that
@@ -42,7 +43,7 @@ defmodule Argus.Driver.Result do
   @type duplicate :: %{module: module(), used: String.t(), shadowed: [String.t()]}
 
   @type notice ::
-          :souffle_missing
+          :engine_unavailable
           | {:extraction_error, extraction_error()}
           | {:duplicate, duplicate()}
           | {:points_to_bounded, [String.t()]}
@@ -60,7 +61,7 @@ defmodule Argus.Driver.Result do
         do: %{analysis: analysis, reason: reason}
   end
 
-  @doc "Whether the run found no solver."
-  @spec souffle_missing?(t()) :: boolean()
-  def souffle_missing?(%__MODULE__{notices: notices}), do: :souffle_missing in notices
+  @doc "Whether the run could not solve: the engines are unavailable here."
+  @spec engine_unavailable?(t()) :: boolean()
+  def engine_unavailable?(%__MODULE__{notices: notices}), do: :engine_unavailable in notices
 end

@@ -10,7 +10,7 @@ defmodule Argus.Soundness.UnreadTest do
   itself, with the issue's repro, is test/analyses/shutdown_supervision_test.exs's.
   """
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
   import Argus.Test.Soundness, only: [fired: 2]
 
@@ -100,7 +100,7 @@ defmodule Argus.Soundness.UnreadTest do
   end
 
   describe "options the extractor knows in part" do
-    @describetag souffle: false
+    @describetag flowlog: false
 
     setup do
       {:ok, facts} =

@@ -1,6 +1,6 @@
 defmodule Argus.Soundness.TermValidationTest do
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
   alias Argus.Test.Memo
 

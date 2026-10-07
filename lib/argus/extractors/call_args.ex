@@ -147,7 +147,7 @@ defmodule Argus.Extractors.CallArgs do
   # A forwarded parameter goes to its own relation with a real number
   # column rather than into call_arg's value column as `"arg:N"`. The
   # string encoding forced Datalog to decode it with the PARTIAL functor
-  # `to_number`, guarded only by a sibling conjunct that Souffle is free to
+  # `to_number`, guarded only by a sibling conjunct that a planner is free to
   # schedule second — see Argus.Schema's call_arg_forward docs.
   defp emit_arg(facts, ctx, callee_id, pos) do
     case resolve_to_arg_or_atom(ctx.instrs, ctx.idx, {:x, pos}) do

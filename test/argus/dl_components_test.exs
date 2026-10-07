@@ -11,17 +11,15 @@ defmodule Argus.DlComponentsTest do
       other -> c                 (`other` lives in module N; the rest in M)
   """
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
   @moduletag :tmp_dir
 
-  alias Argus.Souffle
-
   @program ~S"""
-  .decl call_edge(a: symbol, b: symbol)
-  .decl closure_def(a: symbol, b: symbol)
-  .decl runs_elsewhere(a: symbol, b: symbol)
-  .decl function_def(func: symbol, mod: symbol, name: symbol, arity: number, exported: number)
+  .decl call_edge(a: symbol, b: symbol) mutable
+  .decl closure_def(a: symbol, b: symbol) mutable
+  .decl runs_elsewhere(a: symbol, b: symbol) mutable
+  .decl function_def(func: symbol, mod: symbol, name: symbol, arity: number, exported: number) mutable
   .input call_edge
   .input closure_def
   .input runs_elsewhere
@@ -89,7 +87,7 @@ defmodule Argus.DlComponentsTest do
     program = Path.join(dir, "components.dl")
     File.write!(program, @program)
 
-    {:ok, %{"out" => rows}} = Souffle.run(facts, program)
+    {:ok, %{"out" => rows}} = Argus.FlowLog.run(facts, program)
 
     {:ok,
      out:

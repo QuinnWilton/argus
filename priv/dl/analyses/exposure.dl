@@ -87,10 +87,14 @@ secret_rank("token", 3).
 // The field holds a secret, of the most severe kind its name names.
 .decl holds_secret(mod: symbol, field: symbol, kind: symbol)
 
+.decl strongest_secret(mod: symbol, field: symbol, rank: number)
+
+strongest_secret(mod, field, min(r)) :- named_for_secret(mod, field, other), secret_rank(other, r).
+
 holds_secret(mod, field, kind) :-
   named_for_secret(mod, field, kind),
   secret_rank(kind, rank),
-  rank = min r : { named_for_secret(mod, field, other), secret_rank(other, r) }.
+  strongest_secret(mod, field, rank).
 
 // Fields hidden from inspect/1. A visible derived Inspect implementation determines the
 // complete field list, overriding `redact: true`. Without a visible derive, trust the
@@ -258,7 +262,7 @@ unverified_tls(func, connect) :-
 disables_verification(func, id) :- unverified_tls(func, id).
 
 // The setting at `setting` in `func` gives `verify: :verify_none`.
-.decl turns_off_verification(setting: symbol, func: symbol) inline
+.decl turns_off_verification(setting: symbol, func: symbol)
 
 turns_off_verification(setting, func) :- tls_verification(setting, func, "none").
 
@@ -274,7 +278,7 @@ module_can_verify(mod) :- tls_verification(_, func, "peer"), in_module(func, mod
 
 // Server-only verify_none settings disable client-certificate requests and are exempt.
 // Settings also used by client connects, returned, or stored remain reportable.
-.decl server_setting(setting: symbol, func: symbol) inline
+.decl server_setting(setting: symbol, func: symbol)
 
 server_setting(setting, func) :- tls_server_side(setting, func).
 
@@ -292,7 +296,7 @@ client_connect_api(":ssl.connect/3").
 client_connect_api(":ssl.connect/4").
 
 // A TLS connect through `api` whose options are a literal list in the call.
-.decl literal_connect(connect: symbol, func: symbol, api: symbol) inline
+.decl literal_connect(connect: symbol, func: symbol, api: symbol)
 
 literal_connect(connect, func, api) :- tls_connect(connect, func, api, "literal").
 
@@ -317,6 +321,6 @@ unstated_verification(func, connect, api) :-
 relies_on_default_verification(func, id, api) :- unstated_verification(func, id, api).
 
 // The options at `connect` in `func` never mention `verify`.
-.decl leaves_out_verify(connect: symbol, func: symbol) inline
+.decl leaves_out_verify(connect: symbol, func: symbol)
 
 leaves_out_verify(connect, func) :- tls_verification(connect, func, "absent").

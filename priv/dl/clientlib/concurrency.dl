@@ -3,8 +3,8 @@
 // `single_process`. Functions with no process entry are caller-run APIs.
 // Spawned/task/agent bodies have separate roots; repeatable starts imply multiple
 // instances.
-// SameProcessReach keeps work on its execution stack. `runs_beside` identifies other
-// processes unless a proven handoff orders their work. External entries use ways_in.dl:
+// SameProcessReach keeps work on its execution stack. `beside_single_process` identifies
+// other processes unless a proven handoff orders their work. External entries use ways_in.dl:
 // exports of library-facing modules count, but unused exports of modules with visible
 // clients do not. This can miss APIs a library both uses and exposes.
 // Seed functions of interest and traverse backward. Requires imports.dl, otp.dl, and
@@ -68,37 +68,30 @@
   .decl outside_caller(func: symbol)
   outside_caller(c) :- library_face(c), !process_entry(_, c), !process_start(_, _, _, _, c).
 
-  // Another process can run g toward operation x while entry m runs f. Internal use of
-  // g by m does not exclude external use. A proven handoff suppresses overlap based on
-  // where the operation executes, even when its key is named at a caller.
-  .decl runs_beside(entry: symbol, func: symbol, other: symbol, at: symbol) inline
-  runs_beside(m, f, g, x) :-
+  // `func` runs only in one entry's process, while another process may run `other`
+  // concurrently (runs beside it): another entry reaches it, a request entry's walk
+  // does, or an outside caller does. Internal use of `other` by the same entry does
+  // not exclude external use. A proven handoff suppresses overlap based on where the
+  // operation executes, even when its key is named at a caller.
+  .decl beside_single_process(func: symbol, other: symbol)
+  beside_single_process(f, g) :-
+    single_process(f),
     entry_reaches(m, f),
     entry_reaches(m2, g),
     m2 != m,
     !handed_off(m2, m, f),
-    !handed_off(m, m2, x).
-  runs_beside(m, f, g, x) :- entry_reaches(m, f), seed(x), request_entry(e, _), walk.reaches(e, g).
-  runs_beside(m, f, g, x) :- entry_reaches(m, f), seed(x), outside_reaches(g).
+    !handed_off(m, m2, g).
+  beside_single_process(f, g) :-
+    single_process(f),
+    entry_reaches(_, f),
+    seed(g),
+    request_entry(e, _),
+    walk.reaches(e, g).
+  beside_single_process(f, g) :- single_process(f), entry_reaches(_, f), seed(g), outside_reaches(g).
 
-  // `func` runs only in entry m's process, while another process may execute other
-  // concurrently (runs_beside).
-  .decl beside_single_process(func: symbol, other: symbol) inline
-  beside_single_process(f, g) :- single_process(f), entry_reaches(m, f), runs_beside(m, f, g, g).
-
-  // Consider only rival work after startup. Init-only writes are assumed ordered before
-  // the pair's process; later-sibling init and isolated-restart overlap are known
-  // omissions.
-  .decl runs_beside_up(entry: symbol, func: symbol, other: symbol, at: symbol) inline
-  runs_beside_up(m, f, g, x) :-
-    entry_reaches(m, f),
-    up_reaches(m2, g),
-    m2 != m,
-    !handed_off(m2, m, f),
-    !handed_off(m, m2, x).
-  runs_beside_up(m, f, g, x) :- entry_reaches(m, f), seed(x), request_entry(e, _), walk.reaches(e, g).
-  runs_beside_up(m, f, g, x) :- entry_reaches(m, f), seed(x), outside_reaches(g).
-
+  // Rival work after startup (races.dl states "runs beside" over these in place of
+  // entry_reaches). Init-only writes are assumed ordered before the pair's process;
+  // later-sibling init and isolated-restart overlap are known omissions.
   // Work after startup: non-startup callbacks and all work in spawned processes.
   .decl up_reaches(entry: symbol, func: symbol)
   up_reaches(m, t) :- process_entry(m, c), !startup_callback(c), walk.reaches(c, t).
@@ -395,7 +388,7 @@
 message_tag(msg, t) :-
   clause_call(_, _, t),
   process_send_source(_, _, msg, _, _),
-  (msg = t ; msg = cat("{", t, ", …}")).
+  (msg = t ; msg = cat("{", cat(t, ", …}"))).
 
 // A state field has this value on every successful init/1 return. Read state_return for
 // fields tested by handlers.

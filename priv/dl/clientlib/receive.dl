@@ -18,7 +18,7 @@ timed_receive(func) :- recv_start(_, func, 0, _).
 
 // Execution whose receives are not visible: function-value calls, apply, gen behaviour
 // enter_loop calls, and MFA-based hibernation.
-.decl hides_receives(func: symbol) inline
+.decl hides_receives(func: symbol)
 
 hides_receives(g) :- dynamic_call(_, g, _).
 

@@ -1,9 +1,8 @@
 defmodule Argus.Clientlib.OtpTest do
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
   alias Argus.Pipeline
-  alias Argus.Souffle
 
   @moduletag :tmp_dir
 
@@ -43,7 +42,7 @@ defmodule Argus.Clientlib.OtpTest do
       rules_path = Path.join(tmp_dir, "test_otp.dl")
       File.write!(rules_path, rules)
 
-      assert {:ok, results} = Souffle.run(facts_dir, rules_path)
+      assert {:ok, results} = Argus.FlowLog.run(facts_dir, rules_path)
 
       # MyGenServer has init/1.
       assert Map.has_key?(results, "init_function")
@@ -101,7 +100,7 @@ defmodule Argus.Clientlib.OtpTest do
       rules_path = Path.join(tmp_dir, "started_as.dl")
       File.write!(rules_path, rules)
 
-      assert {:ok, results} = Souffle.run(facts_dir, rules_path)
+      assert {:ok, results} = Argus.FlowLog.run(facts_dir, rules_path)
 
       behaves = Map.get(results, "behaves_as", [])
       assert [":bless_server", "GenServer"] in behaves

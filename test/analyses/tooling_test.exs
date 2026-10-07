@@ -7,7 +7,7 @@ defmodule Argus.Analyses.ToolingTest do
   """
 
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
   alias Argus.Findings
   alias Argus.Test.Fixtures.Tooling.{DevSetup, Product}

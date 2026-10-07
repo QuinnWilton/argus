@@ -1,6 +1,6 @@
 defmodule Argus.Analyses.FailureConsistencyTest do
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
   alias Argus.Analyses.Failure
   alias Argus.Test.Fixtures.Consistency, as: C
@@ -294,7 +294,7 @@ defmodule Argus.Analyses.FailureConsistencyTest do
       assert func =~ "WrittenBare:stop/1"
     end
 
-    @tag souffle: false
+    @tag flowlog: false
     test "the extractor names the macro's module" do
       {:ok, facts} =
         Argus.Pipeline.extract([C.GeneratedBare], extractors: [Argus.Extractors.Generated])
@@ -324,13 +324,13 @@ defmodule Argus.Analyses.FailureConsistencyTest do
       ])
     end
 
-    @tag souffle: false
+    @tag flowlog: false
     test "is how unlikely the deviation is: seven to one warns, three to one informs" do
       assert finding(7, 1).severity == :warning
       assert finding(3, 1).severity == :info
     end
 
-    @tag souffle: false
+    @tag flowlog: false
     test "one title whatever the counts, which the detail says" do
       assert finding(5, 1).title == "Result ignored where other call sites check it"
       assert finding(9, 3).title == "Result ignored where other call sites check it"
@@ -354,7 +354,7 @@ defmodule Argus.Analyses.FailureConsistencyTest do
       assert guarded.detail =~ "9 of the 12 call sites in this program catch its exit"
     end
 
-    @tag souffle: false
+    @tag flowlog: false
     test "names the counts and the callee, and anchors the deviant site" do
       f = finding(5, 1)
       assert f.detail =~ "start_child/2"

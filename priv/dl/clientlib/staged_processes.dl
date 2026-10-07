@@ -5,65 +5,65 @@
 
 // Process identities: callback modules, individual start sites, supervised children,
 // privately retained instances and named processes.
-.decl server_process(proc: symbol, mod: symbol)
+.decl server_process(proc: symbol, mod: symbol) mutable
 .input server_process
 
-.decl instance(proc: symbol, base: symbol)
+.decl instance(proc: symbol, base: symbol) mutable
 .input instance
 
-.decl supervised_process(proc: symbol, sup: symbol, pos: number)
+.decl supervised_process(proc: symbol, sup: symbol, pos: number) mutable
 .input supervised_process
 
-.decl private_process(proc: symbol, func: symbol, site: symbol)
+.decl private_process(proc: symbol, func: symbol, site: symbol) mutable
 .input private_process
 
-.decl process(proc: symbol)
+.decl process(proc: symbol) mutable
 .input process
 
 // A registered name may hold a pid of `proc`.
-.decl named_pid(name: symbol, proc: symbol)
+.decl named_pid(name: symbol, proc: symbol) mutable
 .input named_pid
 
 // `func` calls, casts or sends info to proc at site, directly or through a
 // PID-receiving helper at anchor. Signals are staged separately.
-.decl process_call(func: symbol, anchor: symbol, site: symbol, api_kind: symbol, proc: symbol)
+.decl process_call(func: symbol, anchor: symbol, site: symbol, api_kind: symbol, proc: symbol) mutable
 .input process_call
 
 // The call, cast or send at `id` in `func` may target `proc`, whoever
 // supplies it.
-.decl call_site_target(id: symbol, func: symbol, api_kind: symbol, proc: symbol)
+.decl call_site_target(id: symbol, func: symbol, api_kind: symbol, proc: symbol) mutable
 .input call_site_target
 
 // A synchronous call that is provably to the calling process itself.
-.decl self_call(func: symbol, site: symbol)
+.decl self_call(func: symbol, site: symbol) mutable
 .input self_call
 
 // Possible process/table leaves for demanded sources: handler call targets and ETS
 // operands. Do not export intermediate terms or arbitrary source points-to rows. New
 // source demands must be added to points_to.dl.
-.decl source_process(func: symbol, src_kind: symbol, src: symbol, proc: symbol)
+.decl source_process(func: symbol, src_kind: symbol, src: symbol, proc: symbol) mutable
 .input source_process
 
-.decl source_table(func: symbol, src_kind: symbol, src: symbol, table: symbol)
+.decl source_table(func: symbol, src_kind: symbol, src: symbol, table: symbol) mutable
 .input source_table
 
 // The tables a bounded stage resolved coarsely: their source_table rows
 // are a superset (points_to.dl).
-.decl coarse_table(table: symbol)
+.decl coarse_table(table: symbol) mutable
 .input coarse_table
 
 // An unnamed table its process keeps in its dictionary and never hands
 // to another (points_to.dl).
-.decl kept_in_dictionary(table: symbol)
+.decl kept_in_dictionary(table: symbol) mutable
 .input kept_in_dictionary
 
 // The Task operation at `site` in `func` does `op` to the task `proc`,
 // and the tasks whose handle goes where value flow does not follow it
 // (clientlib/task_handles.dl).
-.decl task_handled(func: symbol, site: symbol, op: symbol, proc: symbol)
+.decl task_handled(func: symbol, site: symbol, op: symbol, proc: symbol) mutable
 .input task_handled
 
-.decl task_escapes(proc: symbol)
+.decl task_escapes(proc: symbol) mutable
 .input task_escapes
 
 // `func` waits on the task started at `start`, which runs `runs`: an await, yield or

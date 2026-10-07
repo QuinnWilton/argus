@@ -1,6 +1,6 @@
 defmodule Argus.Analyses.ExposureSecretsTest do
   use ExUnit.Case, async: true
-  @moduletag :souffle
+  @moduletag :flowlog
 
   alias Argus.Analyses.Exposure
   alias Argus.Test.Fixtures.Secret, as: S
@@ -83,7 +83,7 @@ defmodule Argus.Analyses.ExposureSecretsTest do
              :warning
   end
 
-  @tag souffle: false
+  @tag flowlog: false
   test "severity separates a live third-party credential from a hash" do
     mod = Exposure
     cred = mod.finding(:unredacted_secret, ["M", ":api_key", "credential", "unaware", "redact"])
@@ -96,7 +96,7 @@ defmodule Argus.Analyses.ExposureSecretsTest do
     refute pass.detail =~ "A hash is not a plaintext password"
   end
 
-  @tag souffle: false
+  @tag flowlog: false
   test "the anchor is the schema's generated function, refined by the field's name" do
     finding =
       Exposure.finding(:unredacted_secret, [
@@ -142,7 +142,7 @@ defmodule Argus.Analyses.ExposureSecretsTest do
       assert Map.get(r, "unredacted_secret", []) == []
     end
 
-    @tag souffle: false
+    @tag flowlog: false
     test "the finding sends the fix to the derive" do
       finding =
         Exposure.finding(:unredacted_secret, [
