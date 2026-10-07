@@ -199,8 +199,20 @@ pub trait Dataflow {
     /// line is decoded before any is staged, so a malformed one stages none.
     fn stage(&mut self, index: usize, lines: &[&[u8]], insert: bool) -> Result<(), String>;
     /// Applies what was staged as one epoch, recording each output's
-    /// changed lines with their signed weights.
-    fn commit(&mut self, changes: &mut Changes);
+    /// changed lines with their signed weights; or refuses, leaving the
+    /// dataflow part way through the epoch, so that it takes no other.
+    fn commit(&mut self, changes: &mut Changes) -> Result<(), Refusal>;
+}
+
+/// Why a dataflow stopped a commit part way: `kind` for argus to act on
+/// (`limitsize`: a relation outgrew the limit the program sets it), and
+/// a message for a person.
+pub struct Refusal {
+    pub kind: &'static str,
+    pub message: String,
+    /// What argus reads of the refusal, beside the message (for
+    /// `limitsize`: the relation, its rows, and its limit).
+    pub detail: Value,
 }
 
 /// Runs the server over `args` (the command line after the program
@@ -332,6 +344,10 @@ struct Engine<D: Dataflow> {
     inputs: Vec<Option<FxHashSet<Box<[u8]>>>>,
     /// Each output's rows, by `self.dataflow.outputs()` index.
     outputs: Vec<FxHashSet<String>>,
+    /// Why a commit stopped part way, after which none is taken.
+    poisoned: Option<String>,
+    /// The detail of the refusal the last commit answered with, if any.
+    refused: Option<Value>,
 }
 
 impl<D: Dataflow> Engine<D> {
@@ -343,6 +359,8 @@ impl<D: Dataflow> Engine<D> {
             epoch: 0,
             inputs: vec![None; inputs],
             outputs: vec![FxHashSet::default(); outputs],
+            poisoned: None,
+            refused: None,
         }
     }
 
@@ -351,7 +369,13 @@ impl<D: Dataflow> Engine<D> {
             Some("hello") => self.hello(),
             Some("commit") => match self.commit(request) {
                 Ok(reply) => reply,
-                Err((kind, message)) => failure(kind, message),
+                Err((kind, message)) => {
+                    let mut reply = failure(kind, message);
+                    if let Some(detail) = self.refused.take() {
+                        reply["detail"] = detail;
+                    }
+                    reply
+                }
             },
             Some(other) => failure("bad_request", format!("unknown op `{other}`")),
             None => failure("bad_request", "request has no `op`".to_string()),
@@ -383,6 +407,12 @@ impl<D: Dataflow> Engine<D> {
     }
 
     fn commit(&mut self, request: &Value) -> Result<Value, (&'static str, String)> {
+        if let Some(reason) = &self.poisoned {
+            return Err((
+                "poisoned",
+                format!("an earlier commit stopped part way ({reason}); start another engine"),
+            ));
+        }
         let started = Instant::now();
         let out_dir = request
             .get("out")
@@ -500,7 +530,13 @@ impl<D: Dataflow> Engine<D> {
         let staged_done = Instant::now();
         let mut changes = Changes::new(self.dataflow.outputs().len());
         if staged || first {
-            self.dataflow.commit(&mut changes);
+            if let Err(refusal) = self.dataflow.commit(&mut changes) {
+                // Part way through an epoch, the dataflow answers nothing
+                // reliably again: every later commit is refused too.
+                self.poisoned = Some(refusal.message.clone());
+                self.refused = Some(refusal.detail);
+                return Err((refusal.kind, refusal.message));
+            }
             self.epoch += 1;
         } else {
             self.dataflow.abort();

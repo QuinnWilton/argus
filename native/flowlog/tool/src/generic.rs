@@ -70,6 +70,7 @@ use crate::host::Changes;
 use crate::host::Column;
 use crate::host::Dataflow;
 use crate::host::Fields;
+use crate::host::Refusal;
 use crate::host::Relation;
 
 /// A row's slots, inline up to four: most keys are one or two columns,
@@ -790,6 +791,69 @@ struct Plan {
     inputs: Vec<InputPlan>,
     strata: Vec<Stratum>,
     outputs: Vec<Output>,
+    /// The relations the program holds to a number of rows (`.limitsize`).
+    limits: Vec<Limit>,
+}
+
+/// A relation the program holds to `rows` (`.limitsize R(n=rows)`): as it
+/// grows past them, the engine stops the commit, as Soufflé stops a solve,
+/// rather than derive a fixpoint the program has said it will not use.
+#[derive(Serialize, Deserialize)]
+struct Limit {
+    relation: u64,
+    name: String,
+    rows: i64,
+}
+
+/// The relations `program` holds to a number of rows (`.limitsize`), by
+/// name.
+pub fn limitsizes(program: &Program) -> Vec<(String, i64)> {
+    limits(program)
+        .into_iter()
+        .map(|limit| (limit.name, limit.rows))
+        .collect()
+}
+
+/// The relations `program` holds to a number of rows (`.limitsize`).
+fn limits(program: &Program) -> Vec<Limit> {
+    program
+        .relations()
+        .iter()
+        .filter_map(|relation| {
+            relation.limitsize().map(|rows| Limit {
+                relation: relation.fingerprint(),
+                name: relation.raw_name().to_string(),
+                rows: i64::try_from(rows).unwrap_or(i64::MAX),
+            })
+        })
+        .collect()
+}
+
+/// What the workers share while a commit runs: each limited relation's
+/// rows, and the first limit any of them passed.
+struct Monitor {
+    rows: Vec<std::sync::atomic::AtomicI64>,
+    exceeded: std::sync::atomic::AtomicUsize,
+}
+
+impl Monitor {
+    const NONE: usize = usize::MAX;
+
+    fn new(limits: usize) -> Self {
+        Monitor {
+            rows: (0..limits)
+                .map(|_| std::sync::atomic::AtomicI64::new(0))
+                .collect(),
+            exceeded: std::sync::atomic::AtomicUsize::new(Self::NONE),
+        }
+    }
+
+    fn exceeded(&self) -> Option<usize> {
+        match self.exceeded.load(std::sync::atomic::Ordering::Relaxed) {
+            Self::NONE => None,
+            index => Some(index),
+        }
+    }
 }
 
 fn column(data_type: &DataType) -> Result<Column, String> {
@@ -936,6 +1000,7 @@ impl Plan {
             inputs,
             strata,
             outputs,
+            limits: limits(program),
         };
         plan.mark_earlier(program);
         Ok(plan)
@@ -1335,6 +1400,7 @@ fn build_head<'scope, T>(
     head: &'static Head,
     earlier: Option<Coll<'scope, T>>,
     seed: Option<Coll<'scope, T>>,
+    watch: &Watch,
 ) where
     T: Time,
 {
@@ -1351,7 +1417,43 @@ fn build_head<'scope, T>(
         None => deduped,
         Some(aggregate) => build_aggregate(deduped, aggregate, seed),
     };
+    // A limited relation's rows, counted as they are derived: inside a
+    // loop, every iteration's changes, which sum to its rows so far.
+    let bound = match watch.limit(head.relation) {
+        None => bound,
+        Some((index, rows)) => {
+            let monitor = Arc::clone(&watch.monitor);
+            bound.inspect(move |(_, _, diff)| {
+                let held = monitor.rows[index]
+                    .fetch_add(i64::from(*diff), std::sync::atomic::Ordering::Relaxed)
+                    + i64::from(*diff);
+                if held > rows {
+                    let _ = monitor.exceeded.compare_exchange(
+                        Monitor::NONE,
+                        index,
+                        std::sync::atomic::Ordering::Relaxed,
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
+                }
+            })
+        }
+    };
     env.bind(head.relation, bound);
+}
+
+/// The plan's limits and the monitor counting against them.
+struct Watch {
+    limits: &'static [Limit],
+    monitor: Arc<Monitor>,
+}
+
+impl Watch {
+    fn limit(&self, relation: u64) -> Option<(usize, i64)> {
+        self.limits
+            .iter()
+            .position(|limit| limit.relation == relation)
+            .map(|index| (index, self.limits[index].rows))
+    }
 }
 
 fn build_aggregate<'scope, T>(
@@ -1406,6 +1508,7 @@ fn build<'scope>(
     plan: &'static Plan,
     sinks: &[Sink],
     probe: &mut ProbeHandle<Epoch>,
+    watch: &Watch,
 ) -> Vec<InputSession<Epoch, Kv, Diff>> {
     let mut env: Env<'scope, Epoch> = Env::new();
     let mut sessions = Vec::with_capacity(plan.inputs.len());
@@ -1428,7 +1531,7 @@ fn build<'scope>(
             None => {
                 for head in &stratum.heads {
                     let earlier = head.earlier.then(|| env.get(head.relation));
-                    build_head(&mut env, head, earlier, seed.clone());
+                    build_head(&mut env, head, earlier, seed.clone(), watch);
                 }
             }
             Some(recursion) => {
@@ -1481,7 +1584,7 @@ fn build<'scope>(
                         } else {
                             None
                         };
-                        build_head(&mut env_in, head, earlier, seed_in.clone());
+                        build_head(&mut env_in, head, earlier, seed_in.clone(), watch);
                     }
                     for (fp, variable) in variables {
                         variable.set(env_in.get(fp));
@@ -1541,6 +1644,7 @@ pub struct Generic {
     commands: Vec<mpsc::Sender<Command>>,
     done: mpsc::Receiver<()>,
     sinks: Vec<Sink>,
+    monitor: Arc<Monitor>,
     workers: Option<JoinHandle<()>>,
 }
 
@@ -1768,6 +1872,8 @@ impl Generic {
         ));
         let (done_tx, done) = mpsc::channel();
         let worker_sinks = sinks.clone();
+        let monitor = Arc::new(Monitor::new(plan.limits.len()));
+        let worker_monitor = Arc::clone(&monitor);
         let handle = std::thread::spawn(move || {
             let done_tx = Mutex::new(done_tx);
             let result = timely::execute(timely::Config::process(workers), move |worker| {
@@ -1778,8 +1884,13 @@ impl Generic {
                 let done_tx = done_tx.lock().expect("the done channel").clone();
                 let mut probe = ProbeHandle::new();
                 let building = std::time::Instant::now();
-                let mut sessions = worker
-                    .dataflow::<Epoch, _, _>(|scope| build(scope, plan, &worker_sinks, &mut probe));
+                let watch = Watch {
+                    limits: &plan.limits,
+                    monitor: Arc::clone(&worker_monitor),
+                };
+                let mut sessions = worker.dataflow::<Epoch, _, _>(|scope| {
+                    build(scope, plan, &worker_sinks, &mut probe, &watch)
+                });
                 if index == 0 {
                     eprintln!("generic engine: dataflow built in {:?}", building.elapsed());
                 }
@@ -1804,7 +1915,11 @@ impl Generic {
                         session.advance_to(epoch);
                         session.flush();
                     }
-                    worker.step_while(|| probe.less_than(&epoch));
+                    // A relation past its limit stops every worker: the
+                    // commit is refused, and the engine with it.
+                    worker.step_while(|| {
+                        probe.less_than(&epoch) && worker_monitor.exceeded().is_none()
+                    });
                     if done_tx.send(()).is_err() {
                         break;
                     }
@@ -1835,6 +1950,7 @@ impl Generic {
             commands: senders,
             done,
             sinks: sinks_in_order,
+            monitor,
             workers: Some(handle),
         })
     }
@@ -1884,7 +2000,7 @@ impl Dataflow for Generic {
         Ok(())
     }
 
-    fn commit(&mut self, changes: &mut Changes) {
+    fn commit(&mut self, changes: &mut Changes) -> Result<(), Refusal> {
         self.epoch += 1;
         let batches = Arc::new(std::mem::take(&mut self.staged));
         for sender in &self.commands {
@@ -1897,6 +2013,22 @@ impl Dataflow for Generic {
         }
         for _ in &self.commands {
             self.done.recv().expect("every worker finishes the commit");
+        }
+        if let Some(index) = self.monitor.exceeded() {
+            let limit = &self.plan.limits[index];
+            let rows = self.monitor.rows[index].load(std::sync::atomic::Ordering::Relaxed);
+            return Err(Refusal {
+                kind: "limitsize",
+                message: format!(
+                    "{} outgrew its limit of {} rows (.limitsize), with {rows} and growing",
+                    limit.name, limit.rows
+                ),
+                detail: serde_json::json!({
+                    "relation": limit.name,
+                    "rows": rows,
+                    "limit": limit.rows,
+                }),
+            });
         }
         for (index, sink) in self.sinks.iter().enumerate() {
             let updates = std::mem::take(&mut *sink.lock().expect("an output sink"));
@@ -1923,7 +2055,7 @@ impl Dataflow for Generic {
                 changes.record(index, line, diff.signum());
             }
         }
-        let _ = self.plan;
+        Ok(())
     }
 }
 

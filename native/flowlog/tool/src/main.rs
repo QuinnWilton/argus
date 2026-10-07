@@ -314,6 +314,14 @@ fn inspect(program: &Path) -> Result<Value, Failure> {
     value["relations"] = Value::Array(relations(&parsed));
     // Whether `serve` runs the program, or why it does not: argus builds
     // an engine for a program the generic engine refuses.
+    // The relations the program holds to a number of rows (`.limitsize`),
+    // which only the generic engine stops as they grow.
+    value["limitsize"] = Value::Array(
+        generic::limitsizes(&parsed)
+            .into_iter()
+            .map(|(relation, rows)| json!({"relation": relation, "rows": rows}))
+            .collect(),
+    );
     match generic::check(&parsed) {
         Ok(()) => value["generic"] = Value::Bool(true),
         Err(reason) => {
@@ -395,7 +403,10 @@ fn glue(inputs: &[Io], outputs: &[Io], digest: &str) -> String {
         s,
         "use crate::host::Changes;\nuse crate::host::Column;\nuse crate::host::Dataflow;"
     );
-    let _ = writeln!(s, "use crate::host::Fields;\nuse crate::host::Relation;");
+    let _ = writeln!(
+        s,
+        "use crate::host::Fields;\nuse crate::host::Refusal;\nuse crate::host::Relation;"
+    );
     let _ = writeln!(
         s,
         "use crate::program::IncrementalEngine;\nuse crate::program::IncrementalResults;\n"
@@ -415,7 +426,8 @@ fn glue(inputs: &[Io], outputs: &[Io], digest: &str) -> String {
          fn abort(&mut self) {{ self.engine.abort() }}\n    \
          fn stage(&mut self, index: usize, lines: &[&[u8]], insert: bool) -> Result<(), String> {{\n        \
          stage(&mut self.engine, index, lines, insert)\n    }}\n    \
-         fn commit(&mut self, changes: &mut Changes) {{ drain(self.engine.commit(), changes) }}\n}}\n"
+         fn commit(&mut self, changes: &mut Changes) -> Result<(), Refusal> {{\n        \
+         drain(self.engine.commit(), changes);\n        Ok(())\n    }}\n}}\n"
     );
     let table = |s: &mut String, name: &str, ios: &[Io]| {
         let _ = writeln!(s, "pub const {name}: &[Relation] = &[");
