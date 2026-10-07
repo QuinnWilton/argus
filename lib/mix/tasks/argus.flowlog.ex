@@ -11,7 +11,10 @@ defmodule Mix.Tasks.Argus.Flowlog do
       mix argus.flowlog status           # Rust, the toolchain, and what is built
       mix argus.flowlog solve PROGRAM FACTS_DIR [OUT_DIR]
                                          # one solve of a program over a facts directory
-      mix argus.flowlog clean            # remove the toolchains this argus no longer uses
+      mix argus.flowlog clean            # remove the toolchains and bundles this argus no longer uses
+      mix argus.flowlog bundle OUT_DIR   # this platform's prebuilt engines, for a release
+      mix argus.flowlog prebuilt BASE_URL OFFER.json...
+                                         # write priv/flowlog/prebuilt.json from bundles' offers
 
   `solve` builds the program's engine if it must, loads every input from
   `FACTS_DIR` (`<relation>.facts`, tab-separated, unless the program names
@@ -25,6 +28,13 @@ defmodule Mix.Tasks.Argus.Flowlog do
   upgrading argus. A program that does not compile, or that argus cannot
   host, fails with FlowLog's diagnostic.
 
+  `bundle` and `prebuilt` are a release's (`.github/workflows/release.yml`):
+  each platform's build writes its bundle of the tool and every built-in
+  engine with its offer (`Argus.FlowLog.Prebuilt`), and `prebuilt` names
+  them all, by URL and SHA-256, in the package argus publishes. A
+  machine of a platform with a bundle then needs no Rust for argus's own
+  analyses.
+
   The cache is `$ARGUS_FLOWLOG_DIR`, else `$XDG_CACHE_HOME/argus/flowlog`,
   else `~/.cache/argus/flowlog`; `ARGUS_CARGO` names the `cargo` to build
   with.
@@ -33,6 +43,9 @@ defmodule Mix.Tasks.Argus.Flowlog do
   use Mix.Task
 
   alias Argus.FlowLog
+  alias Argus.FlowLog.Native
+  alias Argus.FlowLog.Prebuilt
+  alias Argus.FlowLog.Program
   alias Argus.FlowLog.Toolchain
 
   @impl Mix.Task
@@ -50,57 +63,7 @@ defmodule Mix.Tasks.Argus.Flowlog do
 
   def run(["status"]) do
     Mix.Task.run("app.config")
-
-    case Toolchain.rust() do
-      {:ok, rust} ->
-        [release] = Regex.run(~r/^rustc .*$/m, rust.rustc_version)
-        Mix.shell().info("rust:      #{release} (#{rust.cargo})")
-
-      {:error, reason} ->
-        Mix.shell().info("rust:      unavailable: " <> Toolchain.describe(reason))
-    end
-
-    Mix.shell().info("flowlog:   #{Argus.FlowLog.Native.flowlog_revision()}")
-    Mix.shell().info("cache:     #{Toolchain.root()}")
-
-    case Toolchain.stale(current_key()) do
-      [] ->
-        :ok
-
-      stale ->
-        Mix.shell().info(
-          "stale:     #{length(stale)} toolchain(s) of other sources or another Rust " <>
-            "(#{megabytes(stale)} MB); `mix argus.flowlog clean` removes them"
-        )
-    end
-
-    case toolchain_status() do
-      :not_built ->
-        Mix.shell().info("toolchain: not built; `mix argus.flowlog build` builds it")
-
-      {:ok, toolchain} ->
-        Mix.shell().info("toolchain: #{toolchain.dir}")
-
-        for path <- FlowLog.builtin_programs() do
-          state =
-            case FlowLog.manifest(path) do
-              {:ok, manifest} ->
-                digest = FlowLog.program_digest(path, Enum.map(manifest.inputs, & &1.name))
-
-                if File.regular?(Argus.FlowLog.Program.executable(toolchain, digest)),
-                  do: "built",
-                  else: "not built"
-
-              {:error, reason} ->
-                "does not compile: " <> FlowLog.describe_error(reason)
-            end
-
-          Mix.shell().info("  #{Path.relative_to(path, Argus.Dl.root())}: #{state}")
-        end
-
-      {:error, reason} ->
-        Mix.shell().info("toolchain: unavailable: " <> FlowLog.describe_error(reason))
-    end
+    status()
   end
 
   def run(["solve", program, facts | out]) when length(out) <= 1 do
@@ -125,39 +88,160 @@ defmodule Mix.Tasks.Argus.Flowlog do
 
   def run(["clean"]) do
     Mix.Task.run("app.config")
-    stale = Toolchain.stale(current_key())
+    stale = Toolchain.stale(Toolchain.current_key()) ++ Prebuilt.stale()
     freed = megabytes(stale)
     Enum.each(stale, &File.rm_rf!/1)
 
     Mix.shell().info(
-      "argus: removed #{length(stale)} toolchain(s) (#{freed} MB) from #{Toolchain.root()}"
+      "argus: removed #{length(stale)} unused toolchain(s) and bundle(s) (#{freed} MB) " <>
+        "from #{Toolchain.root()}"
     )
+  end
+
+  def run(["bundle", out_dir]) do
+    Mix.Task.run("app.config")
+    # A bundle is what this machine builds, never what another release
+    # bundled.
+    System.put_env("ARGUS_FLOWLOG_PREBUILT", "0")
+    programs = FlowLog.builtin_programs()
+
+    with :ok <- FlowLog.prebuild(programs, progress: &info/1),
+         {:ok, toolchain} <- FlowLog.toolchain(progress: false),
+         {:ok, engines} <- bundled_engines(toolchain, programs),
+         {:ok, offer} <-
+           Prebuilt.write_bundle(
+             Toolchain.tool(toolchain),
+             engines,
+             Path.expand(out_dir)
+           ) do
+      info(
+        "argus: wrote #{Path.rootname(offer)} (#{length(engines)} engines) and its offer #{offer}"
+      )
+    else
+      {:error, reason} -> Mix.raise("argus: " <> describe(reason))
+    end
+  end
+
+  def run(["prebuilt", base_url | offers]) when offers != [] do
+    Mix.Task.run("app.config")
+    target = Path.join(["priv", "flowlog", "prebuilt.json"])
+
+    case Prebuilt.offer_json(offers, base_url) do
+      {:ok, json} ->
+        File.mkdir_p!(Path.dirname(target))
+        File.write!(target, json)
+        info("argus: wrote #{target} naming #{length(offers)} bundle(s)")
+
+      {:error, message} ->
+        Mix.raise("argus: " <> message)
+    end
   end
 
   def run(_args) do
     Mix.raise(
-      "usage: mix argus.flowlog build [PROGRAM...] | status | solve PROGRAM FACTS_DIR [OUT_DIR] | clean"
+      "usage: mix argus.flowlog build [PROGRAM...] | status | solve PROGRAM FACTS_DIR [OUT_DIR] " <>
+        "| clean | bundle OUT_DIR | prebuilt BASE_URL OFFER.json..."
     )
+  end
+
+  defp status do
+    info("rust:      " <> rust_status())
+    info("flowlog:   #{Native.flowlog_revision()}")
+    info("cache:     #{Toolchain.root()}")
+    info("prebuilt:  " <> prebuilt_status())
+
+    case Toolchain.stale(Toolchain.current_key()) do
+      [] ->
+        :ok
+
+      stale ->
+        info(
+          "stale:     #{length(stale)} toolchain(s) of other sources or another Rust " <>
+            "(#{megabytes(stale)} MB); `mix argus.flowlog clean` removes them"
+        )
+    end
+
+    case toolchain_status() do
+      :not_built ->
+        info("toolchain: not built; `mix argus.flowlog build` builds it")
+
+      {:ok, toolchain} ->
+        info("toolchain: #{toolchain.dir}")
+
+        for path <- FlowLog.builtin_programs(),
+            do:
+              info(
+                "  #{Path.relative_to(path, Argus.Dl.root())}: #{engine_status(toolchain, path)}"
+              )
+
+      {:error, reason} ->
+        info("toolchain: unavailable: " <> FlowLog.describe_error(reason))
+    end
+  end
+
+  defp rust_status do
+    case {Toolchain.rust(), Prebuilt.offer()} do
+      {{:ok, rust}, _} ->
+        [release] = Regex.run(~r/^rustc .*$/m, rust.rustc_version)
+        "#{release} (#{rust.cargo})"
+
+      {{:error, reason}, {:ok, _}} ->
+        "unavailable: argus's own analyses run on its prebuilt engines; " <>
+          "a program of your own needs Rust (#{Toolchain.describe(reason)})"
+
+      {{:error, reason}, {:error, _}} ->
+        "unavailable: " <> Toolchain.describe(reason)
+    end
+  end
+
+  defp prebuilt_status do
+    case Prebuilt.offer() do
+      {:ok, offer} -> "#{offer.url} (#{div(offer.bytes, 1_000_000)} MB)"
+      {:error, reason} -> "none: " <> Prebuilt.describe(reason)
+    end
+  end
+
+  defp engine_status(toolchain, path) do
+    case FlowLog.manifest(path) do
+      {:ok, manifest} ->
+        digest = FlowLog.program_digest(path, Enum.map(manifest.inputs, & &1.name))
+        if File.regular?(Program.executable(toolchain, digest)), do: "built", else: "not built"
+
+      {:error, reason} ->
+        "does not compile: " <> FlowLog.describe_error(reason)
+    end
   end
 
   defp info(message), do: Mix.shell().info(message)
 
-  # Status reports a toolchain; it never builds one (a build takes minutes).
+  defp describe(reason)
+       when is_tuple(reason) and elem(reason, 0) in [:download_failed, :bad_bundle],
+       do: Prebuilt.describe(reason)
+
+  defp describe(reason), do: FlowLog.describe_error(reason)
+
+  defp bundled_engines(toolchain, programs) do
+    Enum.reduce_while(programs, {:ok, []}, fn path, {:ok, acc} ->
+      case FlowLog.engine(path, progress: false) do
+        {:ok, built} ->
+          engine = Program.executable(toolchain, built.digest)
+          manifest = Path.join(Path.dirname(engine), "manifest.json")
+          program = Path.relative_to(path, Argus.Dl.root())
+          {:cont, {:ok, acc ++ [{program, built.digest, engine, manifest}]}}
+
+        {:error, _} = error ->
+          {:halt, error}
+      end
+    end)
+  end
+
+  # Status reports a toolchain; it never builds or downloads one.
   defp toolchain_status do
-    with key when is_binary(key) <- current_key(),
+    with key when is_binary(key) <- Toolchain.current_key(),
          true <- File.regular?(Path.join([Toolchain.root(), key, "bin", "argus-flowlog-tool"])) do
       FlowLog.toolchain(progress: false)
     else
       _ -> :not_built
-    end
-  end
-
-  # The toolchain this argus and this Rust use, which is kept; without a
-  # Rust, none is usable.
-  defp current_key do
-    case Toolchain.rust() do
-      {:ok, rust} -> Toolchain.key(rust)
-      {:error, _} -> nil
     end
   end
 

@@ -26,6 +26,9 @@ defmodule Argus.FlowLog.Program do
   `Argus.FlowLog.Engine` refuses it.
   """
 
+  require Logger
+
+  alias Argus.FlowLog.Prebuilt
   alias Argus.FlowLog.Toolchain
 
   @typedoc "One input or output relation of a program."
@@ -142,7 +145,61 @@ defmodule Argus.FlowLog.Program do
   def executable(toolchain, digest),
     do: Path.join([Toolchain.engines(toolchain), digest, "engine"])
 
+  # The built-in programs a release's bundle holds an engine for are
+  # installed from it; the rest are compiled, which a toolchain without
+  # Rust cannot do.
   defp build(toolchain, programs, opts) do
+    {installed, rest} = from_bundle(toolchain, programs, opts)
+
+    cond do
+      rest == [] ->
+        Enum.find(installed, :ok, &match?({:error, _}, &1))
+
+      toolchain.kind == :prebuilt ->
+        [{path, _digest} | _] = rest
+        {:error, {:needs_rust, display(path)}}
+
+      true ->
+        compile_all(toolchain, rest, opts)
+    end
+  end
+
+  defp from_bundle(toolchain, programs, opts) do
+    {shipped, others} = Enum.split_with(programs, fn {path, _} -> shipped?(path) end)
+
+    case if(shipped == [], do: {:error, :none}, else: Prebuilt.fetch(opts)) do
+      {:ok, bundle} ->
+        {bundled, unbundled} =
+          Enum.split_with(shipped, fn {_path, digest} ->
+            match?({:ok, _, _}, Prebuilt.engine(bundle, digest))
+          end)
+
+        installed =
+          for {_path, digest} <- bundled do
+            {:ok, engine, manifest} = Prebuilt.engine(bundle, digest)
+            dir = Path.join(Toolchain.engines(toolchain), digest)
+            File.mkdir_p!(dir)
+            Toolchain.install(manifest, Path.join(dir, "manifest.json"))
+            Toolchain.install(engine, executable(toolchain, digest))
+          end
+
+        {installed, unbundled ++ others}
+
+      {:error, reason} ->
+        if reason not in [:disabled, :none] and shipped != [],
+          do:
+            Logger.warning(
+              "argus: building the FlowLog engines instead: " <>
+                Prebuilt.describe(reason)
+            )
+
+        {[], programs}
+    end
+  end
+
+  defp shipped?(path), do: String.starts_with?(path, Argus.Dl.shipped() <> "/")
+
+  defp compile_all(toolchain, programs, opts) do
     for {path, _digest} <- programs do
       Toolchain.announce(
         opts,

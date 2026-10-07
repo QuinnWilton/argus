@@ -127,7 +127,8 @@ defmodule Argus.MixProject do
         ~w(lib priv/dl native/flowlog/tool/Cargo.toml native/flowlog/tool/Cargo.lock native/flowlog/tool/src
            native/flowlog/engine/Cargo.toml native/flowlog/engine/Cargo.lock native/flowlog/engine/src/main.rs
            native/flowlog/engine/src/host.rs docs/bug-classes.md docs/analyses docs/design examples/contributor
-           mix.exs README.md CONTRIBUTING.md LICENSE CHANGELOG.md .formatter.exs)
+           mix.exs README.md CONTRIBUTING.md LICENSE CHANGELOG.md .formatter.exs) ++
+          Enum.filter(["priv/flowlog/prebuilt.json"], &File.exists?/1)
     ]
   end
 

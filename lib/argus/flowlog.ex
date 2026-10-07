@@ -72,6 +72,7 @@ defmodule Argus.FlowLog do
   @spec describe_error(term()) :: String.t()
   def describe_error({:flowlog_unavailable, reason}), do: Toolchain.describe(reason)
   def describe_error({:build_failed, _, _, _} = reason), do: Toolchain.describe(reason)
+  def describe_error({:needs_rust, _} = reason), do: Toolchain.describe(reason)
 
   def describe_error({:flowlog_program, path, diagnostic}),
     do: "#{path} does not compile:\n#{diagnostic}"

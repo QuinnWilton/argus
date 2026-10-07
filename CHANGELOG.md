@@ -39,6 +39,13 @@ which a change appeared; older names and APIs may have changed since then.
 - `mix argus.flowlog build`, `status`, `solve` and `clean`: build engines
   ahead of time, show the toolchain and what is built, run a program over a
   facts directory, and remove the toolchains this argus no longer uses.
+- Releases ship prebuilt engines for macOS and Linux on arm64 and x86_64
+  (`Argus.FlowLog.Prebuilt`): argus downloads its platform's bundle once,
+  checks it against the SHA-256 the package names, and runs its own
+  analyses without Rust. `ARGUS_FLOWLOG_PREBUILT=0` turns it off. `mix
+  argus.flowlog bundle` and `prebuilt` make a release's bundles.
+- Engines missing from the cache are built in one Cargo build that compiles
+  them side by side (`ARGUS_FLOWLOG_BUILD_JOBS`).
 
 ### Other changes
 

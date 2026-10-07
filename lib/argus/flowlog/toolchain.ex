@@ -36,17 +36,24 @@ defmodule Argus.FlowLog.Toolchain do
   require Logger
 
   alias Argus.FlowLog.Native
+  alias Argus.FlowLog.Prebuilt
 
-  @enforce_keys [:dir, :key, :cargo, :rustc, :rustc_version]
-  defstruct [:dir, :key, :cargo, :rustc, :rustc_version]
+  @enforce_keys [:dir, :key, :kind, :cargo, :rustc, :rustc_version]
+  defstruct [:dir, :key, :kind, :cargo, :rustc, :rustc_version]
 
-  @typedoc "A toolchain: its directory, key, and the Rust that builds it."
+  @typedoc """
+  A toolchain: its directory, key, and the Rust that builds its engines
+  (`:rust`), or none (`:prebuilt`: the tool and the built-in programs'
+  engines come from a release's bundle, `Argus.FlowLog.Prebuilt`, and no
+  other engine can be built).
+  """
   @type t :: %__MODULE__{
           dir: Path.t(),
           key: String.t(),
-          cargo: Path.t(),
-          rustc: Path.t(),
-          rustc_version: String.t()
+          kind: :rust | :prebuilt,
+          cargo: Path.t() | nil,
+          rustc: Path.t() | nil,
+          rustc_version: String.t() | nil
         }
 
   @typedoc "Why a toolchain is not available."
@@ -54,7 +61,9 @@ defmodule Argus.FlowLog.Toolchain do
           {:rust_missing, String.t()}
           | {:rust_too_old, String.t(), String.t()}
           | {:untrusted_root, Path.t(), String.t()}
-          | {:build_failed, :tool | {:engine, String.t()}, Path.t(), String.t()}
+          | {:build_failed, :tool | {:engine, String.t()} | {:engines, pos_integer()}, Path.t(),
+             String.t()}
+          | {:needs_rust, String.t()}
 
   @min_rustc {1, 88, 0}
 
@@ -116,14 +125,77 @@ defmodule Argus.FlowLog.Toolchain do
     end
   end
 
+  # With Rust, a toolchain that builds; without it (or with one too old),
+  # the release's bundle when there is one for this machine, and the
+  # reason Rust is needed when there is not.
   defp ensure_uncached(memo, opts) do
-    with {:ok, rust} <- rust(),
-         {:ok, dir} <- toolchain_dir(rust),
-         toolchain =
-           struct!(__MODULE__, Map.put(rust, :dir, dir) |> Map.put(:key, Path.basename(dir))),
-         :ok <- ensure_tool(toolchain, opts) do
+    result =
+      case rust() do
+        {:ok, rust} ->
+          with {:ok, dir} <- toolchain_dir(key(rust)) do
+            toolchain =
+              struct!(__MODULE__, Map.merge(rust, %{dir: dir, key: key(rust), kind: :rust}))
+
+            with :ok <- ensure_tool(toolchain, opts), do: {:ok, toolchain}
+          end
+
+        {:error, rust_reason} ->
+          prebuilt(rust_reason, opts)
+      end
+
+    with {:ok, toolchain} <- result do
       :persistent_term.put(memo, toolchain)
       {:ok, toolchain}
+    end
+  end
+
+  defp prebuilt(rust_reason, opts) do
+    with {:ok, bundle} <- Prebuilt.fetch(opts),
+         {:ok, bundled} <- Prebuilt.tool(bundle),
+         {:ok, key} <- prebuilt_key(),
+         {:ok, dir} <- toolchain_dir(key) do
+      toolchain = %__MODULE__{
+        dir: dir,
+        key: key,
+        kind: :prebuilt,
+        cargo: nil,
+        rustc: nil,
+        rustc_version: nil
+      }
+
+      unless File.regular?(tool(toolchain)), do: install(bundled, tool(toolchain))
+      {:ok, toolchain}
+    else
+      {:error, {:untrusted_root, _, _}} = error -> error
+      _ -> {:error, rust_reason}
+    end
+  end
+
+  # A toolchain without Rust is named for its sources and its platform.
+  defp prebuilt_key do
+    with {:ok, triple} <- Prebuilt.platform() do
+      {:ok,
+       :crypto.hash(:sha256, :erlang.term_to_binary({Native.digest(), :prebuilt, triple}))
+       |> Base.encode16(case: :lower)
+       |> binary_part(0, 24)}
+    end
+  end
+
+  @doc """
+  The key of the toolchain this machine uses (`ensure/1`'s), computed
+  without building or downloading anything; `nil` when it has none.
+  """
+  @spec current_key() :: String.t() | nil
+  def current_key do
+    case rust() do
+      {:ok, rust} ->
+        key(rust)
+
+      {:error, _} ->
+        case prebuilt_key() do
+          {:ok, key} -> key
+          {:error, _} -> nil
+        end
     end
   end
 
@@ -265,8 +337,7 @@ defmodule Argus.FlowLog.Toolchain do
   # verbose version names its host triple and LLVM too). The root is
   # made by this module alone, owner-only, and refused when another
   # user could write it.
-  defp toolchain_dir(rust) do
-    key = key(rust)
+  defp toolchain_dir(key) do
     root = root()
 
     with :ok <- trusted_root(root) do
@@ -384,8 +455,32 @@ defmodule Argus.FlowLog.Toolchain do
       :ok
     else
       locked(:build, fn ->
-        if File.regular?(tool(toolchain)), do: :ok, else: build_tool(toolchain, opts)
+        cond do
+          File.regular?(tool(toolchain)) -> :ok
+          bundled_tool(toolchain, opts) == :ok -> :ok
+          true -> build_tool(toolchain, opts)
+        end
       end)
+    end
+  end
+
+  # The release's tool, when the package offers a bundle: what building
+  # the tool would make, without the minutes of building it.
+  defp bundled_tool(toolchain, opts) do
+    with {:ok, bundle} <- Prebuilt.fetch(opts),
+         {:ok, bundled} <- Prebuilt.tool(bundle) do
+      install(bundled, tool(toolchain))
+    else
+      {:error, reason} when reason not in [:disabled, :none] ->
+        Logger.warning(
+          "argus: building the FlowLog toolchain instead: " <>
+            Prebuilt.describe(reason)
+        )
+
+        :error
+
+      _ ->
+        :error
     end
   end
 
@@ -569,6 +664,12 @@ defmodule Argus.FlowLog.Toolchain do
 
   def describe({:untrusted_root, path, detail}) do
     Exception.message(%TrustError{path: path, detail: detail})
+  end
+
+  def describe({:needs_rust, program}) do
+    "the FlowLog engine for #{program} is not one argus publishes prebuilt, and building " <>
+      "it needs Rust #{version_string(@min_rustc)} or newer: install it from https://rustup.rs " <>
+      "(or name its cargo with ARGUS_CARGO)"
   end
 
   def describe({:build_failed, what, log, tail}) do

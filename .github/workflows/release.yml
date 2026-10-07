@@ -1,9 +1,16 @@
-# A DRAFT release: builds the argus escript and its sha256, and attaches
-# both to a draft GitHub release for a person to review and publish.
-# Run by hand only (Actions → Release → Run workflow): nothing triggers
-# it, and it publishes nothing on its own. The rebar3 plugin downloads
-# `argus` and `argus.sha256` from a published release's assets
-# ({argus_plugin, [{version, V}]}).
+# A DRAFT release: builds the argus escript and its sha256, and each
+# platform's bundle of prebuilt FlowLog engines (`mix argus.flowlog
+# bundle`), and attaches them all, with `prebuilt.json` naming the
+# bundles by URL and SHA-256, to a draft GitHub release for a person to
+# review and publish. Run by hand only (Actions → Release → Run
+# workflow): nothing triggers it, and it publishes nothing on its own.
+# The rebar3 plugin downloads `argus` and `argus.sha256` from a
+# published release's assets ({argus_plugin, [{version, V}]}).
+#
+# Before `mix hex.publish`, commit the draft's `prebuilt.json` as
+# `priv/flowlog/prebuilt.json` on the release's commit: argus reads it at
+# compile time, and it changes no program's digest, so the bundles stay
+# the package's. A package without it builds every engine with Rust.
 name: Release
 
 on:
@@ -17,8 +24,56 @@ permissions:
   contents: write
 
 jobs:
+  engines:
+    name: Prebuilt engines (${{ matrix.triple }})
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: macos-14
+            triple: aarch64-apple-darwin
+          - os: macos-13
+            triple: x86_64-apple-darwin
+          # The oldest glibc a hosted runner offers: a bundle runs on it
+          # and every newer one.
+          - os: ubuntu-22.04
+            triple: x86_64-unknown-linux-gnu
+          - os: ubuntu-22.04-arm
+            triple: aarch64-unknown-linux-gnu
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          elixir-version: "1.19.4"
+          otp-version: "28.3"
+
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+
+      - name: Install dependencies
+        run: mix deps.get
+
+      - name: Build the bundle
+        run: mix argus.flowlog bundle bundles
+        env:
+          MIX_ENV: prod
+          ARGUS_FLOWLOG_DIR: ${{ runner.temp }}/flowlog
+
+      - name: Check the bundle is this platform's
+        run: test -f "bundles/argus-flowlog-${{ matrix.triple }}.tar.gz"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: engines-${{ matrix.triple }}
+          path: bundles/
+          if-no-files-found: error
+
   escript:
     name: Build the escript
+    needs: engines
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -37,6 +92,23 @@ jobs:
       - name: Install dependencies
         run: mix deps.get
 
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: engines-*
+          path: bundles
+          merge-multiple: true
+
+      # Before the escript: argus compiles the offer in, so the escript
+      # fetches the bundles as the package does.
+      - name: Name the bundles
+        run: >-
+          mix argus.flowlog prebuilt
+          "https://github.com/${{ github.repository }}/releases/download/v${{ inputs.version }}"
+          bundles/*.tar.gz.json
+          && cp priv/flowlog/prebuilt.json prebuilt.json
+        env:
+          MIX_ENV: prod
+
       - name: Build the escript
         run: mix escript.build
         env:
@@ -49,6 +121,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: >-
-          gh release create "v${{ inputs.version }}" argus argus.sha256
+          gh release create "v${{ inputs.version }}" argus argus.sha256 prebuilt.json bundles/*.tar.gz
           --draft --title "argus ${{ inputs.version }}"
-          --notes "The argus escript (needs Erlang/OTP 28, and Rust 1.88 or newer to build its FlowLog engines on first use: https://rustup.rs). Check it with: sha256sum -c <(echo \"$(cat argus.sha256)  argus\")"
+          --notes "The argus escript (needs Erlang/OTP 28), and prebuilt FlowLog engines for macOS and Linux on arm64 and x86_64: argus's own analyses need no Rust there. A program of your own needs Rust 1.88 or newer (https://rustup.rs). Check the escript with: sha256sum -c <(echo \"$(cat argus.sha256)  argus\"). Before publishing the package, commit prebuilt.json as priv/flowlog/prebuilt.json."
