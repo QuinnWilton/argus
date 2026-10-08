@@ -69,6 +69,10 @@ defmodule Argus.Extractors.ErrorHandling do
     that try's handler
   - `try_covers_closure(id, func, closure)` — every read of the closure
     `closure`'s value is a call the try (or `catch`) at `id` covers
+  - `raise_source(func, via)` — what `func` can raise through outside
+    every try that takes all classes (`ErrorHandling.RaiseSources`): an
+    instruction of its own (`self`), a call through a fun or an apply
+    (`dynamic`), or a callee (`Mod:fun/arity`) whose raise would escape
   - `try_call(id, func, callee, call, guard_end)` — a peer call (`GenServer.call`,
     `:gen_statem.call`, `:erpc.call`, ...) the `try` at `id` guards
   - `mailbox_writer(id, func, kind)` — a call after which something other
@@ -125,6 +129,7 @@ defmodule Argus.Extractors.ErrorHandling do
   alias Argus.Extractors.ErrorHandling.Boundary
   alias Argus.Extractors.ErrorHandling.CatchClauses
   alias Argus.Extractors.ErrorHandling.ClauseHead
+  alias Argus.Extractors.ErrorHandling.RaiseSources
   alias Argus.Extractors.GenStatem
   alias Argus.Instr
   alias Argus.Instr.Reaching
@@ -235,7 +240,8 @@ defmodule Argus.Extractors.ErrorHandling do
       :try_wrapper_call,
       :boundary_function,
       :try_covers,
-      :try_covers_closure
+      :try_covers_closure,
+      :raise_source
     ]
 
   @impl true
@@ -261,6 +267,7 @@ defmodule Argus.Extractors.ErrorHandling do
       |> emit_cancel_clauses(module_data)
       |> emit_try_coverage(module_data)
       |> emit_boundary_functions(module_data)
+      |> emit_raise_sources(module_data)
 
     origins = Identity.origins_index(module_data)
 
@@ -1149,6 +1156,27 @@ defmodule Argus.Extractors.ErrorHandling do
       acc -> add_fact(acc, :boundary_function, [InstrId.func_id(mod, name, arity)])
     end
   end
+
+  # What each function can raise through (RaiseSources): its own code,
+  # a fun, or a callee. The graph is built only for a function with a
+  # try or catch, the one place it is read.
+  defp emit_raise_sources(facts, %{module: mod, functions: functions} = module_data) do
+    Enum.reduce(functions, facts, fn {:function, name, arity, _entry, instrs}, acc ->
+      fun =
+        if Enum.any?(instrs, &try_or_catch?/1),
+          do: Helpers.cfg(module_data, name, arity),
+          else: nil
+
+      func_id = InstrId.func_id(mod, name, arity)
+
+      instrs
+      |> RaiseSources.sources(fun)
+      |> Enum.reduce(acc, &add_fact(&2, :raise_source, [func_id, &1]))
+    end)
+  end
+
+  defp try_or_catch?({op, _reg, {:f, _label}}) when op in [:try, :catch], do: true
+  defp try_or_catch?(_instr), do: false
 
   defp emit_try_coverage(facts, module_data) do
     mod = module_data.module

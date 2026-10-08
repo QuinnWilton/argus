@@ -217,7 +217,8 @@ defmodule Argus.Test.Fixtures.YieldsLinkedTask do
   # redix#317: yield_many's {:exit, _} branch is dead — the link kills the
   # caller before it runs.
   def fan_out(work) do
-    tasks = Enum.map(work, fn item -> Task.async(fn -> item end) end)
+    tasks =
+      Enum.map(work, fn item -> Task.async(fn -> Application.fetch_env!(:probe, item) end) end)
 
     tasks
     |> Task.yield_many(1_000)
@@ -243,7 +244,7 @@ defmodule Argus.Test.Fixtures.TrapsAndYields do
 
   @impl true
   def handle_call(:work, _from, state) do
-    task = Task.async(fn -> :work end)
+    task = Task.async(fn -> Application.fetch_env!(:probe, :work) end)
     {:reply, Task.yield(task, 1_000), state}
   end
 
@@ -260,7 +261,7 @@ defmodule Argus.Test.Fixtures.TrapsButYieldsInClient do
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
 
   def fetch(item) do
-    task = Task.async(fn -> item end)
+    task = Task.async(fn -> Application.fetch_env!(:probe, item) end)
     Task.yield(task, 1_000)
   end
 
@@ -332,7 +333,10 @@ defmodule Argus.Test.Fixtures.TrapsAroundTasks do
   # exit reaches yield as {:exit, reason}.
   def fan_out(work) do
     Process.flag(:trap_exit, true)
-    tasks = Enum.map(work, fn item -> Task.async(fn -> item end) end)
+
+    tasks =
+      Enum.map(work, fn item -> Task.async(fn -> Application.fetch_env!(:probe, item) end) end)
+
     results = Task.yield_many(tasks, 1_000)
     Process.flag(:trap_exit, false)
     results
@@ -344,7 +348,7 @@ defmodule Argus.Test.Fixtures.TrapsInHelperBeforeTask do
   # The trap is set by a helper called before the task starts.
   def fetch(item) do
     trap_exits()
-    task = Task.async(fn -> item end)
+    task = Task.async(fn -> Application.fetch_env!(:probe, item) end)
     Task.yield(task, 1_000)
   end
 
@@ -356,7 +360,7 @@ defmodule Argus.Test.Fixtures.TrapsAfterTask do
   # Traps only after the task is started: a task that crashes first takes
   # the caller down before yield can report it.
   def fetch(item) do
-    task = Task.async(fn -> item end)
+    task = Task.async(fn -> Application.fetch_env!(:probe, item) end)
     Process.flag(:trap_exit, true)
     Task.yield(task, 1_000)
   end
@@ -379,7 +383,7 @@ defmodule Argus.Test.Fixtures.ClearsBeforeTask do
   @impl true
   def handle_call(:work, _from, state) do
     Process.flag(:trap_exit, false)
-    task = Task.async(fn -> :work end)
+    task = Task.async(fn -> Application.fetch_env!(:probe, :work) end)
     {:reply, Task.yield(task, 1_000), state}
   end
 

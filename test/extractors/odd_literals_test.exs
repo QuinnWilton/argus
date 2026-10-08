@@ -25,15 +25,16 @@ defmodule Argus.Extractors.OddLiteralsTest do
   end
 
   # The extractors that record what every function has (its calls'
-  # arguments, what its result depends on, its spec, whether its docs
-  # hide it, as PlainModule's `@moduledoc false` does): the rest read a
-  # shape, a process, a table, a socket, a security call, and have
-  # nothing to say of a module with none.
+  # arguments, what its result depends on, what it can raise through,
+  # its spec, whether its docs hide it, as PlainModule's `@moduledoc
+  # false` does): the rest read a shape, a process, a table, a socket, a
+  # security call, and have nothing to say of a module with none.
   @every_function [
     Argus.Extractors.CallArgs,
     Argus.Extractors.ClauseCall,
     Argus.Extractors.Dependence,
     Argus.Extractors.Docs,
+    Argus.Extractors.ErrorHandling,
     Argus.Extractors.LiveView,
     Argus.Extractors.ParamFlow,
     Argus.Extractors.ResultChecks,

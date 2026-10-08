@@ -130,3 +130,18 @@ sends_message(id, f) :- send_msg(id, f).
 sends_message(id, f) :- remote_call(id, f, ":erlang", "send", _).
 sends_message(id, f) :- remote_call(id, f, "Process", "send", _).
 
+
+// Library calls that do not raise for arguments of the types their specs
+// name. The resolver reports every failure in its result, {:error, posix}
+// for a name it cannot resolve, a family it does not support or an
+// address that is no address; Exception.normalize/3, which every `rescue`
+// calls on the error it takes, builds an exception for any reason.
+// Callees as raise_source spells them (Mod:fun/arity).
+.decl raises_nothing(callee: symbol)
+
+raises_nothing(":inet:gethostbyname/1").
+raises_nothing(":inet:gethostbyname/2").
+raises_nothing(":inet:getaddr/2").
+raises_nothing(":inet:getaddrs/2").
+raises_nothing(":inet:gethostbyaddr/1").
+raises_nothing("Exception:normalize/3").

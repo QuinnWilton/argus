@@ -115,3 +115,118 @@ defmodule Argus.Test.Fixtures.MailboxOpenRequestShape do
 
   defp execute(_conn, cmd), do: Application.get_env(:probe, :reader, cmd)
 end
+
+defmodule Argus.Test.Fixtures.MailboxYieldStopTask do
+  @moduledoc """
+  tm_mercury's reader: the stop task only sends the reader a stop and
+  waits for its answer. Nothing in it raises, so no crash comes down
+  the link, and the yield is a timeout and nothing more.
+  """
+
+  use GenServer
+
+  def init(_), do: {:ok, %{reader: nil}}
+
+  def handle_call(:stop_reader, _from, %{reader: pid} = state) do
+    task =
+      Task.async(fn ->
+        send(pid, {:stop, self()})
+
+        receive do
+          reply -> reply
+        end
+      end)
+
+    result =
+      case Task.yield(task, 5_000) || Task.shutdown(task) do
+        nil -> {:ok, :killed}
+        other -> other
+      end
+
+    {:reply, result, %{state | reader: nil}}
+  end
+end
+
+defmodule Argus.Test.Fixtures.MailboxYieldSafeCallback do
+  @moduledoc """
+  ash_onetime's admission: the task runs a helper whose whole body is
+  under `rescue` and `catch kind, reason`, so the task cannot exit
+  abnormally.
+  """
+
+  def timed_callback(module, function, arguments, timeout) do
+    task = Task.async(fn -> safe_callback(module, function, arguments) end)
+
+    case Task.yield(task, timeout) || Task.shutdown(task, :brutal_kill) do
+      {:ok, result} -> result
+      nil -> {:error, :timeout}
+    end
+  end
+
+  defp safe_callback(module, function, arguments) do
+    apply(module, function, arguments)
+  rescue
+    _exception -> {:error, :callback_failed}
+  catch
+    _kind, _reason -> {:error, :callback_failed}
+  end
+end
+
+defmodule Argus.Test.Fixtures.MailboxYieldResolve do
+  @moduledoc """
+  ash_hooks' SSRF guard: the task is one resolver call, which answers a
+  failure as `{:error, posix}`.
+  """
+
+  def bounded_resolve(charlist, family, timeout) do
+    task = Task.async(fn -> :inet.gethostbyname(charlist, family) end)
+
+    case Task.yield(task, timeout) || Task.shutdown(task, :brutal_kill) do
+      {:ok, {:ok, {:hostent, _, _, _, _, addresses}}} -> addresses
+      _failed_or_timeout -> []
+    end
+  end
+end
+
+defmodule Argus.Test.Fixtures.MailboxYieldRescueOnly do
+  @moduledoc """
+  MailboxYieldSafeCallback's twin: the helper rescues errors only, so
+  an exit or a throw from the callback crashes the task and, through
+  the link, the caller.
+  """
+
+  def timed_callback(module, function, arguments, timeout) do
+    task = Task.async(fn -> rescued_callback(module, function, arguments) end)
+
+    case Task.yield(task, timeout) || Task.shutdown(task, :brutal_kill) do
+      {:ok, result} -> result
+      nil -> {:error, :timeout}
+    end
+  end
+
+  defp rescued_callback(module, function, arguments) do
+    apply(module, function, arguments)
+  rescue
+    _exception -> {:error, :callback_failed}
+  end
+end
+
+defmodule Argus.Test.Fixtures.MailboxYieldNamedSend do
+  @moduledoc """
+  MailboxYieldStopTask's twin: the task sends to a registered name,
+  which raises when nothing holds it.
+  """
+
+  def stop_reader(timeout) do
+    task =
+      Task.async(fn ->
+        send(:mailbox_yield_reader, {:stop, self()})
+
+        receive do
+          reply -> reply
+        end
+      end)
+
+    Task.yield(task, timeout) || Task.shutdown(task)
+  end
+end

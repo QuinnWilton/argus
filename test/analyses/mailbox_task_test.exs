@@ -200,6 +200,32 @@ defmodule Argus.Analyses.MailboxTaskTest do
              ]
     end
 
+    test "yield on a linked task that cannot fail is not reported" do
+      assert {:ok, results} =
+               Memo.analyze(
+                 [
+                   Argus.Test.Fixtures.MailboxYieldStopTask,
+                   Argus.Test.Fixtures.MailboxYieldSafeCallback,
+                   Argus.Test.Fixtures.MailboxYieldResolve,
+                   Argus.Test.Fixtures.MailboxYieldRescueOnly,
+                   Argus.Test.Fixtures.MailboxYieldNamedSend
+                 ],
+                 :mailbox
+               )
+
+      # A body that only sends to a pid and receives, one wholly under a
+      # handler taking every class, and one resolver call that answers
+      # its failures cannot crash the task (tm_mercury, ash_onetime,
+      # ash_hooks). A helper that rescues errors alone lets an exit
+      # through, and a send to a name raises when nothing holds it.
+      funcs = results |> tasks("yield_linked") |> Enum.map(&hd/1) |> Enum.sort()
+
+      assert funcs == [
+               "Argus.Test.Fixtures.MailboxYieldNamedSend:stop_reader/1",
+               "Argus.Test.Fixtures.MailboxYieldRescueOnly:timed_callback/4"
+             ]
+    end
+
     test "Task.async in a plain library function is noted; a GenServer's is not" do
       assert {:ok, results} =
                Memo.analyze(

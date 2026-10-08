@@ -195,6 +195,21 @@ defmodule Argus.Schema.ErrorHandling do
         """
       },
       %{
+        name: :raise_source,
+        layer: 2,
+        fields: [
+          {:func, :func_id, "the function"},
+          {:via, :symbol, "'self', 'dynamic', or a callee (Mod:fun/arity)"}
+        ],
+        doc: """
+        A way `func` can raise that no try taking every class covers: an instruction of \
+        its own, a failing clause head included (`self`), a call through a fun or an \
+        apply (`dynamic`), or a call to `via`, which raises out of `func` when it raises. \
+        A function with no row raises nothing; whether its callees do is the rules' \
+        question (`Argus.Extractors.ErrorHandling.RaiseSources`).
+        """
+      },
+      %{
         name: :rpc_result,
         layer: 2,
         fields: [

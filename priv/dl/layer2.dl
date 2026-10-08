@@ -686,6 +686,11 @@
 .decl quoted_call(func: symbol, mod: symbol, name: symbol, arity: number, context: symbol) mutable
 .input quoted_call
 
+// A way `func` can raise that no try taking every class covers: an instruction of its own, a failing clause head included (`self`), a call through a fun or an apply (`dynamic`), or a call to `via`, which raises out of `func` when it raises. A function with no row raises nothing; whether its callees do is the rules' question (`Argus.Extractors.ErrorHandling.RaiseSources`).
+//
+.decl raise_source(func: symbol, via: symbol) mutable
+.input raise_source
+
 // A receive clause accepting every reason for `:DOWN` from a monitor created in the same function. The pinned reference must come from that monitor on every path, with no intervening demonitor. Other restrictions on the message disqualify it. The receive cannot outlast the monitored process.
 //
 .decl recv_down(id: symbol, func: symbol, monitor: symbol) mutable

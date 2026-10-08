@@ -239,6 +239,36 @@ defmodule Argus.Extractors.ErrorHandlingTest do
     end
   end
 
+  describe "extract/1 — raise_source" do
+    alias Argus.Test.Fixtures.MailboxYieldNamedSend
+    alias Argus.Test.Fixtures.MailboxYieldRescueOnly
+    alias Argus.Test.Fixtures.MailboxYieldSafeCallback
+    alias Argus.Test.Fixtures.MailboxYieldStopTask
+
+    defp raise_sources(mod, func) do
+      {:ok, facts} = Argus.Pipeline.extract([mod], extractors: [ErrorHandling])
+      for [f, via] <- facts[:raise_source], f == inspect(mod) <> ":" <> func, do: via
+    end
+
+    test "a body that sends to a pid and receives raises nothing" do
+      assert raise_sources(MailboxYieldStopTask, "-handle_call/3-fun-0-/1") == []
+    end
+
+    test "a send to a literal name raises on its own" do
+      assert raise_sources(MailboxYieldNamedSend, "-stop_reader/1-fun-0-/0") == ["self"]
+    end
+
+    test "a try taking every class covers its calls; the handler's own calls are the function's" do
+      assert raise_sources(MailboxYieldSafeCallback, "safe_callback/3") ==
+               ["Exception:normalize/3"]
+    end
+
+    test "a rescue alone covers nothing: the apply raises through, and the handler re-raises" do
+      sources = raise_sources(MailboxYieldRescueOnly, "rescued_callback/3")
+      assert ":erlang:apply/3" in sources
+    end
+  end
+
   describe "extract/1 — try_covers" do
     alias Argus.Extractor.Helpers
     alias Argus.Test.Fixtures.SiblingGuard, as: G

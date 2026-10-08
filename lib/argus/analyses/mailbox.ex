@@ -11,9 +11,10 @@ defmodule Argus.Analyses.Mailbox do
     (`event_timeout`, `generic_timeout`, `state_timeout`) no clause of the
     machine takes.
   - `task_result_defect(func, site, kind)` — a `Task.async`
-    `never_awaited`, `yield_linked` (collected with `Task.yield` in a
-    process that does not trap exits) or `linked_in_library` (started in
-    library code that links it to an unknown caller).
+    `never_awaited`, `yield_linked` (a task that can fail, collected
+    with `Task.yield` in a process that does not trap exits) or
+    `linked_in_library` (started in library code that links it to an
+    unknown caller).
   - `monitor_leak(mod, func, site, how)` — a monitor that code which runs
     again takes again before the one before it is released: a `wait`
     that returns with it live, a record the server drops while it keeps

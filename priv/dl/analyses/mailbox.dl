@@ -582,7 +582,63 @@ takes_task_reply(h) :- callback_open(h, "handle_info", "tuple", -1).
 yield_on_linked_task(owner, start) :-
   starts_linked_task_in(owner, start),
   yields_on_task(owner, _),
-  !starts_trapping(start).
+  !starts_trapping(start),
+  task_can_fail(start).
+
+// The task started at `start` can exit abnormally, which the link carries
+// to its caller. A body that only sends and receives (tm_mercury's stop
+// task), that runs wholly under a handler taking every class (ash_onetime's
+// safe_callback), or that makes one call reporting failure in its result
+// (ash_hooks' :inet.gethostbyname/2) cannot. A start whose body is not
+// known can.
+.decl task_can_fail(start: symbol)
+
+task_can_fail(start) :-
+  starts_linked_task(_, start),
+  process_start(start, _, _, _, f),
+  task_body_fails(f).
+
+task_can_fail(start) :-
+  starts_linked_task(_, start),
+  process_start(start, _, _, _, f),
+  !function_def(f, _, _, _, _).
+
+task_can_fail(start) :-
+  starts_linked_task(_, start),
+  !process_start(start, _, _, _, _).
+
+// Code a linked task runs that a raise can escape from: the function the
+// task starts on, and the callees of its calls no catch-all covers
+// (raise_source).
+.decl task_body(func: symbol)
+
+task_body(f) :-
+  starts_linked_task(_, start),
+  process_start(start, _, _, _, f),
+  function_def(f, _, _, _, _).
+
+task_body(g) :-
+  task_body(f),
+  raise_source(f, g),
+  function_def(g, _, _, _, _).
+
+// A function of a task's body raises out of itself: an instruction of its
+// own, a call through a fun, a library call that may raise, or a call to
+// a function of the program that does.
+.decl task_body_fails(func: symbol)
+
+task_body_fails(f) :- task_body(f), raise_source(f, "self").
+task_body_fails(f) :- task_body(f), raise_source(f, "dynamic").
+
+task_body_fails(f) :-
+  task_body(f),
+  raise_source(f, g),
+  g != "self",
+  g != "dynamic",
+  !function_def(g, _, _, _, _),
+  !raises_nothing(g).
+
+task_body_fails(f) :- task_body(f), raise_source(f, g), task_body_fails(g).
 
 task_result_defect(owner, start, "yield_linked") :- yield_on_linked_task(owner, start).
 
