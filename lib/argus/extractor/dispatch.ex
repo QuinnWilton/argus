@@ -99,8 +99,7 @@ defmodule Argus.Extractor.Dispatch do
   def total_on?(instrs, register) do
     tuple = List.to_tuple(instrs)
     labels = Instr.labels(instrs)
-    # The code starts after func_info; what precedes it is the failure exit.
-    start = (Enum.find_index(instrs, &match?({:func_info, _, _, _}, &1)) || -1) + 1
+    start = entry_index(instrs)
     path = %{tracked: MapSet.new([register]), tested: false, passed: false}
     {found?, _seen} = walk_head(start, path, tuple, labels, MapSet.new())
     found?

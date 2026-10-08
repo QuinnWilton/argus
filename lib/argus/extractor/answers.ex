@@ -47,9 +47,6 @@ defmodule Argus.Extractor.Answers do
   @typedoc "An answer: the call's instruction index and how many payloads down."
   @type answer :: {non_neg_integer(), 0 | 1}
 
-  # Calls that never return: a tail call to one raises instead.
-  @raising [error: 1, error: 2, exit: 1, throw: 1, raise: 3, nif_error: 1]
-
   # How many writes one question reads before it gives up: a function's
   # code is finite, but a chain of projections and re-wraps through a loop
   # is cut short rather than followed around it.
@@ -158,17 +155,9 @@ defmodule Argus.Extractor.Answers do
   defp exit_answers(_instrs, instr, idx) do
     cond do
       not Instr.tail_call?(instr) -> []
-      raising?(instr) -> []
+      Instr.raising_tail_call?(instr) -> []
       match?({:apply_last, _, _}, instr) -> :none
       true -> [{idx, 0}]
     end
   end
-
-  defp raising?({:call_ext_only, _arity, {:extfunc, :erlang, name, arity}}),
-    do: {name, arity} in @raising
-
-  defp raising?({:call_ext_last, _arity, {:extfunc, :erlang, name, arity}, _dealloc}),
-    do: {name, arity} in @raising
-
-  defp raising?(_instr), do: false
 end

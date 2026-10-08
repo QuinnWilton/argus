@@ -237,7 +237,7 @@ defmodule Argus.Extractors.CallbackTag.MessageClauses do
   # Every body a path through the clause heads enters, with the path.
   @spec entries([tuple()], Instr.reg()) :: [{non_neg_integer(), path()}]
   defp entries(instrs, register) do
-    start = (Enum.find_index(instrs, &match?({:func_info, _, _, _}, &1)) || -1) + 1
+    start = Dispatch.entry_index(instrs)
     entries_from(instrs, start, register)
   end
 

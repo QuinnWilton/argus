@@ -105,6 +105,22 @@ defmodule Argus.Instr do
 
   def tail_call?(_instr), do: false
 
+  @raising [error: 1, error: 2, exit: 1, throw: 1, raise: 3, nif_error: 1]
+
+  @doc """
+  Whether `instr` is a tail call to an `:erlang` function that raises
+  rather than returns (`error/1`, `exit/1`, `throw/1`, ...): no value
+  leaves the function through it.
+  """
+  @spec raising_tail_call?(instr()) :: boolean()
+  def raising_tail_call?({:call_ext_only, _arity, {:extfunc, :erlang, name, arity}}),
+    do: {name, arity} in @raising
+
+  def raising_tail_call?({:call_ext_last, _arity, {:extfunc, :erlang, name, arity}, _dealloc}),
+    do: {name, arity} in @raising
+
+  def raising_tail_call?(_instr), do: false
+
   @doc """
   Whether an instruction named `op` (an atom, or the string an
   `instruction` fact's `op` column holds) is a tail call — what a reader

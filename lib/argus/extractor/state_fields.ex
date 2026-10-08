@@ -266,7 +266,7 @@ defmodule Argus.Extractor.StateFields do
         instr == :return ->
           merge(acc, made_of(instrs, idx, {:x, 0}))
 
-        Instr.tail_call?(instr) and not raising?(instr) ->
+        Instr.tail_call?(instr) and not Instr.raising_tail_call?(instr) ->
           acc = %{acc | whole: MapSet.put(acc.whole, idx)}
 
           if remote?(instr),
@@ -432,15 +432,4 @@ defmodule Argus.Extractor.StateFields do
   defp remote?({op, _, _}) when op in [:call_ext, :call_ext_only], do: true
   defp remote?({:call_ext_last, _, _, _}), do: true
   defp remote?(_instr), do: false
-
-  # Calls that never return: a tail call to one raises instead.
-  @raising [error: 1, error: 2, exit: 1, throw: 1, raise: 3, nif_error: 1]
-
-  defp raising?({:call_ext_only, _arity, {:extfunc, :erlang, name, arity}}),
-    do: {name, arity} in @raising
-
-  defp raising?({:call_ext_last, _arity, {:extfunc, :erlang, name, arity}, _dealloc}),
-    do: {name, arity} in @raising
-
-  defp raising?(_instr), do: false
 end
