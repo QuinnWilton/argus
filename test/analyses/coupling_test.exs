@@ -11,7 +11,9 @@ defmodule Argus.Analyses.CouplingTest do
   describe "sibling_dependency: restart_isolation" do
     @describetag :flowlog
 
-    test "analyzes coupling under one_for_one supervisors" do
+    test "siblings that never name each other depend on nothing under one_for_one" do
+      # WorkerB's one call goes to a server its caller names, not to
+      # WorkerA.
       modules = [
         Argus.Test.Fixtures.GoodSupervisor,
         Argus.Test.Fixtures.WorkerA,
@@ -19,8 +21,7 @@ defmodule Argus.Analyses.CouplingTest do
       ]
 
       assert {:ok, results} = Memo.analyze(modules, :coupling)
-
-      assert Map.has_key?(results, "sibling_dependency")
+      assert results["sibling_dependency"] == []
     end
 
     test "wrong_start_order ignores runtime-only call paths" do

@@ -274,12 +274,6 @@ defmodule Argus.Analyses.UnsafeInputTest do
       assert proximity_for(rows, "level_two") == ["transitive"]
       assert Enum.all?(rows, fn [_, _, _, _, kind, _] -> kind == "oban_job" end)
     end
-
-    test "direct and adjacent are distinguished within one run" do
-      rows = atom_rows(:alone, [Taint.StoreSourcedPlug, Taint.StoreSourcedAdjacent])
-      assert proximity_for(rows, "StoreSourcedPlug") == ["direct"]
-      assert proximity_for(rows, "convert") == ["adjacent"]
-    end
   end
 
   describe "proven flow" do
@@ -381,9 +375,9 @@ defmodule Argus.Analyses.UnsafeInputTest do
       assert analyze(ctx, [Taint.FlowLiveView])["sink_without_request_path"] == []
     end
 
-    test "data from storage is a path, never a flow" do
+    test "data from storage is a path, never a flow", ctx do
       rows =
-        atom_rows(:alone, [
+        atom_rows(ctx, [
           Taint.StoreSourcedPlug,
           Taint.StoreSourcedAdjacent,
           Taint.StoreSourcedWorker
@@ -798,26 +792,18 @@ defmodule Argus.Analyses.UnsafeInputTest do
       |> Enum.sort()
     end
 
-    defp named?(list, f), do: Enum.any?(list, &String.contains?(&1, f))
+    test "a child a request starts and leaves running, under no ceiling, exactly", ctx do
+      assert callers(ctx) == [
+               # An uncapped supervisor a request drives.
+               inspect(U.PublicLive) <> ":handle_event/3",
+               # A task a request starts.
+               inspect(U.TaskLive) <> ":handle_event/3"
+             ]
 
-    test "an uncapped supervisor driven by a request is reported; a ceiling discharges it", ctx do
-      callers = callers(ctx)
-      assert named?(callers, "PublicLive")
-      refute named?(callers, "CappedLive"), "max_children is the whole fix"
-      refute named?(callers, "Internal")
-    end
-
-    test "a start the request then waits out is no child that outlives it", ctx do
-      callers = callers(ctx)
-      # Positive: PublicLive starts and returns.
-      assert named?(callers, "PublicLive")
-      refute named?(callers, "WaitsLive")
-    end
-
-    test "a task a request starts is reported; a stream the request enumerates is not", ctx do
-      callers = callers(ctx)
-      assert named?(callers, "TaskLive")
-      refute named?(callers, "StreamLive"), "async_stream lives no longer than its request"
+      # Quiet: CappedLive (max_children is the whole fix), Internal (no
+      # request drives it), WaitsLive (a start the request then waits
+      # out is no child that outlives it), StreamLive (async_stream lives
+      # no longer than its request).
     end
 
     test "the finding names the entry surface it came from", ctx do

@@ -222,10 +222,11 @@ defmodule Argus.Analyses.BlockingRpcTest do
     end
 
     # The effect model records `x.field`'s helper as a dot_dispatch
-    # dynamic_call when it runs: the answer must not turn on that.
-    test "is judged alike when every analysis's extractors run" do
+    # dynamic_call when it runs: the answer must not turn on that. The
+    # effects analysis runs it; the rest of :all adds nothing it reads.
+    test "is judged alike when the effect model's extractors run too" do
       modules = [Argus.Test.Fixtures.RpcClosures, Argus.Test.Fixtures.RpcClosures.Directory]
-      {:ok, results} = Memo.run_analyses(modules, analyses: :all)
+      {:ok, results} = Memo.run_analyses(modules, analyses: [:blocking, :effects])
 
       funcs =
         for %{analysis: :blocking, title: "RPC without a bounded timeout", mfa: {_, f, a}} <-

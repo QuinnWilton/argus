@@ -203,11 +203,6 @@ defmodule Argus.Analyses.BlockingCycleTest do
       assert Enum.any?(sites, fn {w, _} -> String.ends_with?(w, "HubSocket:handle_info/2") end)
     end
 
-    test "runs without error on module with no cycles" do
-      assert {:ok, results} = Memo.analyze([:maps], :blocking)
-      assert Map.has_key?(results, "call_cycle")
-    end
-
     test "detects gen_event sync_notify cycles via the gen_event extractor" do
       # Two :gen_event handler modules whose handle_event clauses
       # sync_notify each other. With the gen_event extractor wired into

@@ -199,6 +199,8 @@ defmodule Argus.Analyses.EffectsPurityTest do
       assert {:ok, r} =
                Memo.analyze([P.HigherOrder, P.GoodCaller, P.BadCaller], :effects)
 
+      # The one row is BadCaller's: GoodCaller hands transform/2 a pure
+      # closure, which is not reported.
       assert [[caller, callee, closure, "io", "IO.puts/1"]] =
                Rows.where(r, :effects, "impure_closure_to_pure", drop: [:site, :effect_site])
 
@@ -228,11 +230,6 @@ defmodule Argus.Analyses.EffectsPurityTest do
       logs = Enum.find(findings, &(&1.mfa == {P.DirectEffects, :logs, 1}))
       assert logs.at_label == "declared pure here"
       assert [%{label: "I/O here", instr: %Argus.InstrId{func: "logs", arity: 1}}] = logs.related
-    end
-
-    test "passing a pure closure is not reported" do
-      assert {:ok, r} = Memo.analyze([P.HigherOrder, P.GoodCaller], :effects)
-      assert Map.get(r, "impure_closure_to_pure", []) == []
     end
 
     test "the higher-order function is recognised through its lifted closure" do

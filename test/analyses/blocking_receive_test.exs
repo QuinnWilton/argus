@@ -43,6 +43,9 @@ defmodule Argus.Analyses.BlockingReceiveTest do
     CallbackReceive.StatemStateReceive
   ]
 
+  # Every batched fixture in one solve: a suppression written too broadly
+  # silences a real bug here, beside every shape it suppresses, and the
+  # tests reading the batch fail.
   setup_all do
     %{batch: Batch.solve(:blocking, [@batched])}
   end
@@ -59,8 +62,6 @@ defmodule Argus.Analyses.BlockingReceiveTest do
     {Rows.where(results, :blocking, "receive_in_callback", bounded: "false", drop: [:bounded]),
      Rows.where(results, :blocking, "receive_in_callback", bounded: "true", drop: [:bounded])}
   end
-
-  defp funcs(rows), do: Enum.map(rows, fn [_id, func, _cb, _beh, _prox] -> func end)
 
   # The receives a :DOWN bounds, beside the blocking and timed ones.
   defp run_down(source, modules) do
@@ -286,31 +287,6 @@ defmodule Argus.Analyses.BlockingReceiveTest do
   end
 
   describe "the suppressions are not blanket" do
-    test "a real bug is still found when analysed alongside every suppressed shape" do
-      # Guards the failure mode where a suppression is written too broadly
-      # and silences the analysis: all six fixtures at once must yield
-      # exactly the three genuine placements.
-      {blocking, bounded} =
-        run(:alone, [
-          CallbackReceive.BlockingInCallback,
-          CallbackReceive.BlockingInHelper,
-          CallbackReceive.BoundedInCallback,
-          CallbackReceive.SpawnedReceive,
-          CallbackReceive.TimerFlush,
-          CallbackReceive.PlainProcess
-        ])
-
-      blocking_funcs = funcs(blocking)
-      assert length(blocking_funcs) == 2
-      assert Enum.any?(blocking_funcs, &(&1 =~ "BlockingInCallback"))
-      assert Enum.any?(blocking_funcs, &(&1 =~ "wait_for_it"))
-
-      refute Enum.any?(blocking_funcs, &(&1 =~ "SpawnedReceive"))
-      refute Enum.any?(blocking_funcs, &(&1 =~ "TimerFlush"))
-      refute Enum.any?(blocking_funcs, &(&1 =~ "PlainProcess"))
-
-      assert length(bounded) == 1
-    end
   end
 
   describe "recv_start facts" do

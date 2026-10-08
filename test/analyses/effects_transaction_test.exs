@@ -39,6 +39,8 @@ defmodule Argus.Analyses.EffectsTransactionTest do
       assert [[caller, repo, "network", api, via]] = for_module(findings(), "Unsafe:create/1")
 
       assert caller =~ "Unsafe:create/1"
+      # FakeRepo only declares @behaviour Ecto.Repo: an app's own repo can
+      # be called anything, and is found by its behaviour.
       assert repo =~ "FakeRepo"
       assert api =~ "httpc.request"
       assert via =~ "-create/1-fun-0-", "should name the closure, not the enclosing function"
@@ -92,13 +94,6 @@ defmodule Argus.Analyses.EffectsTransactionTest do
       # connection checked out and doing nothing.
       assert [[_caller, _repo, "process", api, _via]] = for_module(findings(), "Sleeps:create/1")
       assert api =~ "sleep"
-    end
-
-    test "the repo is found by behaviour, not by being called Repo" do
-      # FakeRepo only declares @behaviour Ecto.Repo. An app's own repo can
-      # be called anything, so matching on the name would miss most of them.
-      assert [[_c, repo, _cat, _api, _v] | _] = for_module(findings(), "Unsafe:create/1")
-      assert repo =~ "FakeRepo"
     end
   end
 

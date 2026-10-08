@@ -50,11 +50,5 @@ defmodule Argus.Analyses.BlockingFanInTest do
       assert "Argus.Test.Fixtures.BottleneckCallerA" in caller_mods
       assert "Argus.Test.Fixtures.BottleneckCallerE" in caller_mods
     end
-
-    test "runs without error on modules with no sync calls" do
-      assert {:ok, results} = Memo.analyze([:maps], :blocking)
-      assert Map.has_key?(results, "bottleneck_caller")
-      assert Map.has_key?(results, "sync_call_fan_in")
-    end
   end
 end

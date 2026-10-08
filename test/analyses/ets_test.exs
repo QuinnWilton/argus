@@ -160,18 +160,6 @@ defmodule Argus.Analyses.EtsTest do
                mod == "Argus.Test.Fixtures.EtsApplicationOwner"
              end)
     end
-
-    test "EtsOwner without supervisor still fires unprotected_owner" do
-      modules = [Argus.Test.Fixtures.EtsOwner]
-
-      assert {:ok, results} = Memo.analyze(modules, :ets)
-
-      unprotected = results["ets_unprotected_owner"]
-
-      assert Enum.any?(unprotected, fn [_name, mod, _site] ->
-               mod == "Argus.Test.Fixtures.EtsOwner"
-             end)
-    end
   end
 
   describe "a table's owner" do

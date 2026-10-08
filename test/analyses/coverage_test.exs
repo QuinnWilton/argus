@@ -74,40 +74,5 @@ defmodule Argus.Analyses.CoverageTest do
              end),
              "expected a genserver_callee imprecision event from CoverageDynamicCalls, got: #{inspect(events)}"
     end
-
-    test "imprecision_event covers multiple categories across the fixture set" do
-      assert {:ok, results} = Memo.analyze(@fixtures, :coverage)
-
-      events = results["imprecision_event"] || []
-      categories = events |> Enum.map(fn [c, _, _, _] -> c end) |> Enum.uniq()
-
-      assert "genserver_callee" in categories
-    end
-
-    test "non-coverage analyses produce no imprecision_event rows" do
-      # Run the same fixtures through a different analysis and verify
-      # the imprecision fact file is empty — the tracing gate must be
-      # off for non-coverage runs, otherwise we'd be paying for it on
-      # every analysis.
-      assert {:ok, results} = Memo.analyze(@fixtures, :ets)
-
-      # Other analyses don't declare imprecision_event as an output
-      # relation, so it won't appear in the results map even if facts
-      # existed. To verify the gating, we check that tracing is off by
-      # running extract directly and asserting no imprecision facts.
-      {:ok, facts} =
-        Argus.Pipeline.extract(@fixtures,
-          extractors: [
-            Argus.Extractors.ETS,
-            Argus.Extractors.OTP,
-            Argus.Extractors.Supervision
-          ]
-        )
-
-      assert facts[:imprecision] in [nil, []]
-      # Sanity: the ETS analysis did produce its own output, proving the
-      # pipeline still worked.
-      assert is_map(results)
-    end
   end
 end

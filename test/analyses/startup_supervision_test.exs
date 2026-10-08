@@ -14,7 +14,10 @@ defmodule Argus.Analyses.StartupSupervisionTest do
       )
 
   describe "startup.dl" do
-    test "analyzes supervisor fixtures" do
+    test "a start order no init/1 depends on blocks no peer" do
+      # BadOrderSupervisor starts WorkerB before WorkerA, but WorkerB
+      # calls a server only at run time, and only one its caller names:
+      # no init waits on a sibling, in either order.
       modules = [
         Argus.Test.Fixtures.GoodSupervisor,
         Argus.Test.Fixtures.BadOrderSupervisor,
@@ -23,8 +26,7 @@ defmodule Argus.Analyses.StartupSupervisionTest do
       ]
 
       assert {:ok, results} = Memo.analyze(modules, :startup)
-
-      assert Map.has_key?(results, "blocks_on_peer")
+      assert results["blocks_on_peer"] == []
     end
   end
 

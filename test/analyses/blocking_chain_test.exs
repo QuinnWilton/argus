@@ -221,12 +221,6 @@ defmodule Argus.Analyses.BlockingChainTest do
 
       assert [["Argus.Test.Fixtures.TimeoutChain.BlockingCastStage", _]] = chains(results, "cast")
     end
-
-    test "runs without error on modules with no GenServer callbacks" do
-      assert {:ok, results} = Memo.analyze([:maps], :blocking)
-      assert Map.has_key?(results, "call_chain")
-      assert Map.has_key?(results, "call_chain")
-    end
   end
 
   describe "waits that are not the program's" do

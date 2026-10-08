@@ -167,11 +167,6 @@ defmodule Argus.Analyses.MailboxTaskTest do
                String.contains?(func, "fire_and_forget")
              end)
     end
-
-    test "runs without error on modules with no task calls" do
-      assert {:ok, results} = Memo.analyze([:maps], :mailbox)
-      assert Map.has_key?(results, "task_result_defect")
-    end
   end
 
   describe "linked tasks" do

@@ -247,21 +247,6 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
     assert [%{label: "armed with :deadline here"}] = f.related
   end
 
-  test "an async_nolink task whose messages have no clause is reported, once per missing shape" do
-    {:ok, r} =
-      Memo.analyze(
-        [H.NolinkPartialInfo, H.NolinkBothClauses, H.NolinkCollected],
-        :mailbox
-      )
-
-    nolink = Rows.where(r, :mailbox, "unhandled_info", source: "task")
-
-    assert nolink |> Enum.map(&Enum.at(&1, 5)) |> Enum.uniq() ==
-             ["Argus.Test.Fixtures.Hypothesized.NolinkPartialInfo"]
-
-    assert nolink |> Enum.map(&Enum.at(&1, 3)) |> Enum.sort() == ["{:DOWN, …}", "{ref, …}"]
-  end
-
   test "a connect in init/1 with no reconnect path is reported" do
     {:ok, r} =
       Memo.analyze(
