@@ -451,6 +451,20 @@ defmodule Argus.FlowLogTest do
         assert read!(out, "reach.csv") == [["a", "b"], ["a", "c"], ["b", "c"]]
       end
 
+      test "an engine says the memory it holds and has held at most",
+           %{built: built, tmp_dir: tmp} do
+        engine = start!(built)
+        v1 = facts!(Path.join(tmp, "v1"), edge: [["a", "b"]], blocked: [], weight: [])
+        inputs = Map.new(~w(edge blocked weight), &{&1, Path.join(v1, "#{&1}.facts")})
+        assert {:ok, _} = Engine.commit(engine, tmp, inputs, %{}, 60_000)
+
+        assert {:ok, %{bytes: bytes, peak_bytes: peak}} = Engine.usage(engine)
+        assert bytes > 0
+        assert peak >= bytes
+        # Asking commits nothing: the engine still takes the next commit.
+        assert {:ok, %{written: []}} = Engine.commit(engine, tmp, inputs, %{}, 60_000)
+      end
+
       test "the first commit must load every input", %{built: built, tmp_dir: tmp} do
         engine = start!(built)
         v1 = facts!(Path.join(tmp, "v1"), edge: [["a", "b"]])

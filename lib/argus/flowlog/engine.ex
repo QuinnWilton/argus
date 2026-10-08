@@ -130,6 +130,24 @@ defmodule Argus.FlowLog.Engine do
   @spec put_outputs(t(), %{String.t() => term()}) :: :ok
   def put_outputs(engine, outputs), do: GenServer.call(engine, {:put_outputs, outputs}, :infinity)
 
+  @typedoc """
+  The physical memory an engine holds now and has held at most, in bytes:
+  on macOS its footprint (what `vmmap` and Activity Monitor report),
+  elsewhere its resident set.
+  """
+  @type usage :: %{bytes: non_neg_integer(), peak_bytes: non_neg_integer()}
+
+  @doc """
+  The memory the engine holds (`t:usage/0`), or an error when the engine
+  is down or its platform reports none.
+  """
+  @spec usage(t()) :: {:ok, usage()} | {:error, term()}
+  def usage(engine) do
+    GenServer.call(engine, :usage, :infinity)
+  catch
+    :exit, {reason, _} -> {:error, {:flowlog_engine_down, reason}}
+  end
+
   @doc "The engine's OS process id, for diagnostics."
   @spec os_pid(t()) :: non_neg_integer() | nil
   def os_pid(engine), do: GenServer.call(engine, :os_pid, :infinity)
@@ -256,6 +274,19 @@ defmodule Argus.FlowLog.Engine do
     do: {:reply, :ok, %{state | outputs: outputs}}
 
   def handle_call(:manifest, _from, state), do: {:reply, state.manifest, state}
+
+  def handle_call(:usage, _from, state) do
+    case request(state, %{op: "usage"}, 30_000) do
+      {:ok, %{"bytes" => bytes, "peak_bytes" => peak}} ->
+        {:reply, {:ok, %{bytes: bytes, peak_bytes: peak}}, state}
+
+      {:error, {:flowlog_engine_exit, _, _} = reason} ->
+        {:stop, :normal, {:error, reason}, state}
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
+  end
 
   def handle_call(:os_pid, _from, state) do
     os_pid =

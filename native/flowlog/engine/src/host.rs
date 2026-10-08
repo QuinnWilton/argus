@@ -19,6 +19,9 @@
 //! into the commit's output directory; the first commit, and one that asks
 //! (`"rewrite": true`), writes them all.
 //!
+//! A `usage` request answers the memory the engine holds now and has held
+//! at most (`memory`), which a benchmark reads after a solve.
+//!
 //! The engine exits as soon as the port closes, whatever it is doing: a
 //! reader thread watches the request descriptor, so a BEAM that timed a
 //! solve out, died or halted never leaves an engine running.
@@ -463,6 +466,32 @@ fn read_requests(mut requests: File, tx: &mpsc::Sender<Vec<u8>>) {
     }
 }
 
+/// The physical memory this process holds now and has held at most, in
+/// bytes: on macOS its footprint (the pages it alone holds, what `vmmap`
+/// and Activity Monitor report; its resident set also counts pages
+/// mimalloc gave back that the system has not yet taken), elsewhere its
+/// resident set.
+#[cfg(target_os = "macos")]
+fn memory() -> Option<(u64, u64)> {
+    let mut info: libc::rusage_info_v4 = unsafe { std::mem::zeroed() };
+    let buffer = (&mut info as *mut libc::rusage_info_v4).cast();
+    let status = unsafe { libc::proc_pid_rusage(libc::getpid(), libc::RUSAGE_INFO_V4, buffer) };
+    (status == 0).then_some((info.ri_phys_footprint, info.ri_lifetime_max_phys_footprint))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn memory() -> Option<(u64, u64)> {
+    let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
+    if unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) } != 0 {
+        return None;
+    }
+    let page = u64::try_from(unsafe { libc::sysconf(libc::_SC_PAGESIZE) }).ok()?;
+    let statm = std::fs::read_to_string("/proc/self/statm").ok()?;
+    let resident: u64 = statm.split_whitespace().nth(1)?.parse().ok()?;
+    // `ru_maxrss` is in kilobytes on Linux.
+    Some((resident * page, u64::try_from(usage.ru_maxrss).ok()? * 1024))
+}
+
 fn failure(kind: &str, message: String) -> Value {
     json!({"ok": false, "kind": kind, "message": message})
 }
@@ -499,6 +528,15 @@ impl<D: Dataflow> Engine<D> {
     fn handle(&mut self, request: &Value) -> Value {
         match request.get("op").and_then(Value::as_str) {
             Some("hello") => self.hello(),
+            Some("usage") => match memory() {
+                Some((bytes, peak_bytes)) => {
+                    json!({"ok": true, "bytes": bytes, "peak_bytes": peak_bytes})
+                }
+                None => failure(
+                    "unsupported",
+                    "this platform reports no process memory".to_string(),
+                ),
+            },
             Some("commit") => match self.commit(request) {
                 Ok(reply) => reply,
                 Err((kind, message)) => {
