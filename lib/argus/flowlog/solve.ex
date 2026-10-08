@@ -163,7 +163,6 @@ defmodule Argus.FlowLog.Solve do
   defp commit(store, engine, dir, inputs, outputs, timeout) do
     fills = Path.join(dir, "inputs")
     out = Path.join(dir, "out")
-    File.mkdir_p!(fills)
     File.mkdir_p!(out)
 
     with {:ok, {held, previous}} <- Engine.snapshot(engine),
@@ -176,7 +175,10 @@ defmodule Argus.FlowLog.Solve do
              do: {name, source, identity}
            ),
          {:ok, paths} <- place_all(store, changed, fills),
-         {:ok, prior} <- place_held(store, changed, held, Path.join(dir, "held")),
+         {:ok, prior} <-
+           place_all(store, held_sources(changed, held), Path.join(dir, "held"),
+             missing: :flowlog_previous_missing
+           ),
          entries =
            Map.new(paths, fn {name, path} ->
              {name, if(prior[name], do: {path, prior[name]}, else: path)}
@@ -215,31 +217,30 @@ defmodule Argus.FlowLog.Solve do
     end
   end
 
-  # The file of what the engine holds of each changed input it holds,
-  # placed again from its source.
-  defp place_held(store, changed, held, dir) do
-    File.mkdir_p!(dir)
-
-    Enum.reduce_while(changed, {:ok, %{}}, fn {name, _source, _identity}, {:ok, acc} ->
-      case Map.fetch(held, name) do
-        :error ->
-          {:cont, {:ok, acc}}
-
-        {:ok, {_identity, source}} ->
-          case place(store, source, Path.join(dir, name)) do
-            {:ok, path} -> {:cont, {:ok, Map.put(acc, name, path)}}
-            {:error, {:missing_entry, _}} -> {:halt, {:error, {:flowlog_previous_missing, name}}}
-            {:error, reason} -> {:halt, {:error, {:input_failed, name, reason}}}
-          end
-      end
-    end)
+  # What the engine holds of each changed input it holds: the source of
+  # the file it was committed from.
+  defp held_sources(changed, held) do
+    for {name, _source, _identity} <- changed,
+        {:ok, {identity, source}} <- [Map.fetch(held, name)],
+        do: {name, source, identity}
   end
 
-  defp place_all(store, inputs, dir) do
+  # Each input's file, by name. `missing:` names the error of an input
+  # whose store entry is gone, which is otherwise an input that failed.
+  defp place_all(store, inputs, dir, opts \\ []) do
+    File.mkdir_p!(dir)
+    missing = Keyword.get(opts, :missing)
+
     Enum.reduce_while(inputs, {:ok, %{}}, fn {name, source, _identity}, {:ok, acc} ->
       case place(store, source, Path.join(dir, name)) do
-        {:ok, path} -> {:cont, {:ok, Map.put(acc, name, path)}}
-        {:error, reason} -> {:halt, {:error, {:input_failed, name, reason}}}
+        {:ok, path} ->
+          {:cont, {:ok, Map.put(acc, name, path)}}
+
+        {:error, {:missing_entry, _}} when missing != nil ->
+          {:halt, {:error, {missing, name}}}
+
+        {:error, reason} ->
+          {:halt, {:error, {:input_failed, name, reason}}}
       end
     end)
   end
