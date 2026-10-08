@@ -127,6 +127,14 @@ which a change appeared; older names and APIs may have changed since then.
 
 ### Other changes
 
+- Extraction precision fixes: an init/1 that spawns on another node is a remote
+  wait at startup (Elixir compiles `Node.spawn` to the `:erlang` spawns that
+  take a node, which were not read); `:rpc.multicall/4` is told
+  `multicall(Nodes, M, F, A)` from `multicall(M, F, A, Timeout)` by any
+  argument that says which, and a call that says neither names no parameter
+  its timeout; a gen_statem's `{:ok, state, data}` and a gen_event handler's
+  `{:ok, reply, state}` arm no idle timeout; and `length/1` of a list built
+  onto a tail nothing resolved is unknown, not its cells' count.
 - Add a Breeze terminal explorer with `mix argus.debug explore`: search relations,
   filter and page through rows, inspect column and producer descriptions, follow
   IDs and rule references to source, and browse retained successful solves.
