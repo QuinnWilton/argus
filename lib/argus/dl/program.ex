@@ -47,7 +47,7 @@ defmodule Argus.Dl.Program do
 
     digest =
       Enum.reduce(files, :crypto.hash_init(:sha256), fn {spelled, file}, hash ->
-        content = File.read!(file)
+        content = Argus.RawFile.read!(file)
 
         hash
         |> :crypto.hash_update(<<byte_size(spelled)::32>> <> spelled)
@@ -120,7 +120,7 @@ defmodule Argus.Dl.Program do
 
     parts =
       Enum.map(files, fn {spelled, file} ->
-        content = File.read!(file)
+        content = Argus.RawFile.read!(file)
 
         case declarations(content) do
           {:ok, blocks} -> {:declarations, spelled, blocks}
@@ -275,7 +275,7 @@ defmodule Argus.Dl.Program do
   # solver) is replaced, not edited, which moves its inode or size.
   defp stamps(files) do
     Enum.map(files, fn file ->
-      case File.stat(file, time: :posix) do
+      case Argus.RawFile.stat(file) do
         {:ok, %File.Stat{mtime: mtime, size: size, inode: inode}} when size <= @content_stamp ->
           {mtime, size, inode, content_stamp(file)}
 
@@ -289,7 +289,7 @@ defmodule Argus.Dl.Program do
   end
 
   defp content_stamp(file) do
-    case File.read(file) do
+    case Argus.RawFile.read(file) do
       {:ok, content} -> :crypto.hash(:sha256, content)
       {:error, reason} -> reason
     end
@@ -313,7 +313,7 @@ defmodule Argus.Dl.Program do
     else
       included =
         ~r/^\s*[.#]include\s+"([^"]+)"/m
-        |> Regex.scan(File.read!(path))
+        |> Regex.scan(Argus.RawFile.read!(path))
         |> Enum.map(fn [_, rel] -> {rel, Path.expand(rel, Path.dirname(path))} end)
 
       walk(included ++ rest, Map.put(seen, path, true), [{spelled, path} | acc])

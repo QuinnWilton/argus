@@ -61,8 +61,7 @@ defmodule Argus.Priors.Cache do
   def get(dir \\ root(), generation, key) do
     path = path(dir, generation, key)
 
-    with true <- File.exists?(path),
-         {:ok, json} <- File.read(path),
+    with {:ok, json} <- Argus.RawFile.read(path),
          {:ok, decoded} <- JSON.decode(json) do
       {:ok, entry_from_json(decoded)}
     else
@@ -83,8 +82,8 @@ defmodule Argus.Priors.Cache do
 
     path = path(dir, generation, key)
 
-    with :ok <- File.mkdir_p(Path.dirname(path)) do
-      File.write(path, JSON.encode!(entry))
+    with :ok <- Argus.RawFile.mkdir_p(Path.dirname(path)) do
+      File.write(path, JSON.encode!(entry), [:raw])
     end
   end
 

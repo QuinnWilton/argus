@@ -95,7 +95,7 @@ defmodule Argus.Analysis.Catalog do
       {:ok, mod} ->
         path = priv_dl(mod.rules_file())
 
-        if File.exists?(path) do
+        if File.exists?(path, [:raw]) do
           {:ok, path}
         else
           {:error, {:rules_not_found, path}}

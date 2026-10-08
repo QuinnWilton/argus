@@ -956,7 +956,7 @@ defmodule Argus.Pipeline do
       else
         path = Path.join(output_dir, file)
 
-        case File.write(path, "") do
+        case File.write(path, "", [:raw]) do
           :ok -> {:cont, :ok}
           {:error, reason} -> {:halt, {:error, {:write_failed, path, reason}}}
         end

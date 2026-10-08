@@ -197,7 +197,7 @@ defmodule Argus.FlowLog.Solve do
     inputs
     |> Enum.map(fn
       {_name, {:cas, digest}, _identity} ->
-        case File.stat(Blob.path(store, digest)) do
+        case Argus.RawFile.stat(Blob.path(store, digest)) do
           {:ok, %File.Stat{size: size}} -> size
           {:error, _} -> 0
         end
@@ -265,7 +265,7 @@ defmodule Argus.FlowLog.Solve do
       path = Path.join(dir, file)
 
       cond do
-        File.regular?(path) ->
+        File.regular?(path, [:raw]) ->
           case Blob.adopt(store, path) do
             {:ok, digest} -> {:cont, {:ok, Map.put(acc, file, digest)}}
             {:error, reason} -> {:halt, {:error, {:adopt_failed, file, reason}}}

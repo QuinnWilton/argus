@@ -86,7 +86,7 @@ defmodule Argus.Graph.Programs do
 
     # Each file's digest kept in the VM while its stamp holds: a session
     # per API call reads argus's hundred programs' stamps, not their text.
-    for file <- Path.wildcard(Path.join(root, "**/*.dl")), into: %{} do
+    for file <- Argus.RawFile.files(root, ".dl"), into: %{} do
       digest = Roux.Stamp.memo({__MODULE__, :sha, file}, [file], fn -> sha(File.read!(file)) end)
       {Path.relative_to(file, root), digest}
     end

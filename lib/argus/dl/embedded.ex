@@ -70,13 +70,20 @@ defmodule Argus.Dl.Embedded do
       staging =
         Path.join(base, ".#{@digest}.#{:os.getpid()}.#{System.unique_integer([:positive])}")
 
-      File.mkdir_p!(staging)
+      files = files()
+      Argus.RawFile.mkdir_p!(staging)
 
       try do
-        for {relative, content} <- files() do
-          path = Path.join(staging, relative)
-          File.mkdir_p!(Path.dirname(path))
-          File.write!(path, content)
+        # Each directory made once and the files written directly: one
+        # by one through the file server, a tree of a hundred files and
+        # dozens of directories queued every other file read of the VM.
+        files
+        |> Enum.map(fn {relative, _} -> Path.dirname(Path.join(staging, relative)) end)
+        |> Enum.uniq()
+        |> Enum.each(&Argus.RawFile.mkdir_p!/1)
+
+        for {relative, content} <- files do
+          File.write!(Path.join(staging, relative), content, [:raw])
         end
 
         install(staging, target)

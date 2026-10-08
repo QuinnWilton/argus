@@ -79,7 +79,7 @@ defmodule Argus.Graph.Environment do
         not String.starts_with?(dir, otp),
         not String.starts_with?(dir, elixir),
         "consolidated" not in Path.split(dir),
-        File.dir?(dir),
+        File.dir?(dir, [:raw]),
         into: %{},
         do: {dir, dir}
   end

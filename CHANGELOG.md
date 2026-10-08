@@ -82,6 +82,14 @@ which a change appeared; older names and APIs may have changed since then.
   analysis's over no rows at all. Over 96 modules the engines of every
   analysis keep 1.15 GB instead of 2.1 GB; over 18, 490 MB instead of 1.66 GB.
   `ARGUS_FLOWLOG_WORKERS` and `:workers` still name a count.
+- Argus reads its rules, a solve's facts and outputs, the beams it
+  disassembles and its priors cache directly (`Argus.RawFile`) rather than
+  through the VM's file server, the one process that otherwise serves every
+  file read of the VM in turn. Runs side by side in one VM (an editor's, a
+  test suite's) queued there; a beam is read once instead of three times.
+  The `rustc` and `cargo` found for a `PATH` are kept for the VM, as the
+  toolchain already was, so a run no longer searches the `PATH` and runs
+  `rustc -vV` to learn whether it can solve.
 - `mix argus.flowlog solve PROGRAM FACTS_DIR --profile` (and
   `Argus.FlowLog.run/3`'s `:profile`) reports where a solve's memory and
   time went: the arrangements holding the most updates and the operators

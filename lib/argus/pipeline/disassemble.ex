@@ -74,12 +74,26 @@ defmodule Argus.Pipeline.Disassemble do
   """
   @spec disassemble_path(String.t() | binary()) :: {:ok, module_data()} | {:error, term()}
   def disassemble_path(path) do
-    with {:ok, data} <- BeamSpy.BeamFile.disassemble(path) do
+    # Read once, past the file server, for all three readers: each reads
+    # a path again, through it.
+    with {:ok, bytes} <- beam_bytes(path),
+         {:ok, data} <- BeamSpy.BeamFile.disassemble(bytes) do
       {:ok,
        data
        |> Map.put(:beam, path)
-       |> Map.put(:imports, fetch_imports(path))
-       |> Map.put(:line_table, fetch_line_table(path))}
+       |> Map.put(:imports, fetch_imports(bytes))
+       |> Map.put(:line_table, fetch_line_table(bytes))}
+    end
+  end
+
+  defp beam_bytes(path) do
+    if BeamSpy.BeamFile.beam_data?(path) do
+      {:ok, path}
+    else
+      case Argus.RawFile.read(path) do
+        {:ok, bytes} -> {:ok, bytes}
+        {:error, reason} -> {:error, {:file_error, reason}}
+      end
     end
   end
 

@@ -425,7 +425,7 @@ defmodule Argus.FlowLog do
     with {:ok, built} <- engine(rules_path, opts),
          {:ok, inputs} <- facts_inputs(facts_dir, built.manifest) do
       out = scratch_dir()
-      bytes = inputs |> Map.values() |> Enum.map(&File.stat!(&1).size) |> Enum.sum()
+      bytes = inputs |> Map.values() |> Enum.map(&input_size/1) |> Enum.sum()
       opts = Keyword.put(opts, :workers, workers(Keyword.get(opts, :workers, :auto), bytes))
 
       try do
@@ -473,13 +473,20 @@ defmodule Argus.FlowLog do
     Enum.reduce_while(manifest.inputs, {:ok, %{}}, fn %{name: name, file: file}, {:ok, acc} ->
       path = Path.join(facts_dir, file)
 
-      if File.regular?(path) do
+      if File.regular?(path, [:raw]) do
         {:cont, {:ok, Map.put(acc, name, path)}}
       else
         {:halt,
          {:error, %Argus.MissingRelationError{relation: name, path: path, reason: :enoent}}}
       end
     end)
+  end
+
+  defp input_size(path) do
+    case Argus.RawFile.stat(path) do
+      {:ok, %File.Stat{size: size}} -> size
+      {:error, reason} -> raise File.Error, reason: reason, action: "read file stats", path: path
+    end
   end
 
   # The outputs a caller reads back: every `.csv` one. A program names an
@@ -491,7 +498,7 @@ defmodule Argus.FlowLog do
     |> Enum.reduce_while({:ok, %{}}, fn %{name: name, file: file}, {:ok, acc} ->
       path = Path.join(dir, file)
 
-      case File.read(path) do
+      case Argus.RawFile.read(path) do
         {:ok, content} ->
           {:cont, {:ok, Map.put(acc, Path.rootname(file), decode_output(content))}}
 
