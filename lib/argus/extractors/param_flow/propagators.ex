@@ -182,11 +182,6 @@ defmodule Argus.Extractors.ParamFlow.Propagators do
     end
   end
 
-  @doc "Whether the `:erlang` BIF `fun` hands some operand's data to its result."
-  @deprecated "Use bif_positions/2, which says which operand"
-  @spec bif?(String.t()) :: boolean()
-  def bif?(fun), do: Enum.any?(Map.keys(@bifs), &match?({^fun, _}, &1))
-
   @doc """
   The operand positions of the `:erlang` BIF `fun`/`arity` whose data
   reaches its result — `map_get(Key, Map)` carries its map — or `nil` when

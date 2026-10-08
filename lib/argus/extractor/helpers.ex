@@ -56,7 +56,7 @@ defmodule Argus.Extractor.Helpers do
           Argus.Pipeline.Emit.facts(),
           (Argus.Pipeline.Emit.facts(), instr_ctx(), tuple() -> Argus.Pipeline.Emit.facts())
         ) :: Argus.Pipeline.Emit.facts()
-  def scan_functions(mod, functions, facts \\ %{}, handler) do
+  def scan_functions(mod, functions, facts, handler) do
     Enum.reduce(functions, facts, fn {:function, name, arity, _entry, instrs}, acc ->
       func_id = Normalize.func_id(mod, name, arity)
 

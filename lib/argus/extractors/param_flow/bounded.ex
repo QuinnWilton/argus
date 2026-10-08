@@ -18,8 +18,8 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
   A membership test against a list the function takes as a parameter
   bounds the value only where every caller hands a literal list: hexpm's
   `safe_to_atom(bin, allowed)`, whose callers pass `@sort_params`. Such a
-  bound is `{:param, q}`, and the rule asks the callers (`literal_lists/4`
-  says which calls pass one).
+  bound is `{:param, q}`, and the rule asks the callers whether each
+  passes one (`Argus.Extractors.ParamFlow`'s `call_arg_allowlist`).
 
   A forward dataflow over the function's control-flow graph, meeting on
   every edge into a block (a register is bounded where it is bounded on
@@ -206,10 +206,6 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
   %{reg => bound}}`, the bounded registers there. An index the analysis
   does not reach (an unreachable block) maps to no bound.
   """
-  @spec at(CfgFunction.t(), [Instr.instr()], arity(), [non_neg_integer()]) ::
-          %{non_neg_integer() => bounds()}
-  @spec at(CfgFunction.t(), [Instr.instr()], arity(), [non_neg_integer()], bounds()) ::
-          %{non_neg_integer() => bounds()}
   @spec at(
           CfgFunction.t(),
           [Instr.instr()],
@@ -218,8 +214,8 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
           bounds(),
           return_bounds()
         ) :: %{non_neg_integer() => bounds()}
-  def at(%CfgFunction{} = fun, instrs, arity, idxs, entry \\ %{}, returns \\ %{}) do
-    states_at(fun, instrs, arity, idxs, & &1.bounded, entry, returns)
+  def at(%CfgFunction{} = fun, instrs, arity, idxs, entry, returns) do
+    states_at(fun, instrs, arity, idxs, entry, returns)
   end
 
   @doc false
@@ -233,10 +229,6 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
   of them. Only blocks that can reach the requested sink are considered.
   A fixed instruction-step budget returns no proof if exhausted.
   """
-  @spec correlated_at(CfgFunction.t(), [Instr.instr()], arity(), [non_neg_integer()]) ::
-          %{non_neg_integer() => bounds()}
-  @spec correlated_at(CfgFunction.t(), [Instr.instr()], arity(), [non_neg_integer()], bounds()) ::
-          %{non_neg_integer() => bounds()}
   @spec correlated_at(
           CfgFunction.t(),
           [Instr.instr()],
@@ -245,7 +237,7 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
           bounds(),
           return_bounds()
         ) :: %{non_neg_integer() => bounds()}
-  def correlated_at(fun, instrs, arity, idxs, entry \\ %{}, returns \\ %{}) do
+  def correlated_at(fun, instrs, arity, idxs, entry, returns) do
     tuple = List.to_tuple(instrs)
 
     Map.new(idxs, fn idx ->
@@ -371,20 +363,9 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
     Enum.reduce(tail, head, &meet_bounds/2)
   end
 
-  @doc """
-  The literal lists at `idxs`: `%{idx => %{reg => bound}}`, the registers
-  holding a list the program wrote (`{:values, n}`) or the function's own
-  list parameter (`{:param, q}`) before each instruction.
-  """
-  @spec literal_lists(CfgFunction.t(), [tuple()], non_neg_integer(), [non_neg_integer()]) ::
-          %{non_neg_integer() => %{reg() => bound()}}
-  def literal_lists(%CfgFunction{} = fun, instrs, arity, idxs) do
-    states_at(fun, instrs, arity, idxs, & &1.lists, %{}, %{})
-  end
+  defp states_at(_fun, _instrs, _arity, [], _entry, _returns), do: %{}
 
-  defp states_at(_fun, _instrs, _arity, [], _pick, _entry, _returns), do: %{}
-
-  defp states_at(fun, instrs, arity, idxs, pick, entry, returns) do
+  defp states_at(fun, instrs, arity, idxs, entry, returns) do
     tuple = List.to_tuple(instrs)
     ins = solve(fun, tuple, entry_state(arity, entry, returns))
 
@@ -394,7 +375,7 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
           case Map.fetch(ins, id) do
             {:ok, state} ->
               state = Enum.reduce(first..(idx - 1)//1, state, &step(elem(tuple, &1), &2))
-              {idx, pick.(state)}
+              {idx, state.bounded}
 
             :error ->
               {idx, %{}}

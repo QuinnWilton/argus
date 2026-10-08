@@ -464,17 +464,15 @@ defmodule Argus.Extractor.Resolve do
   Unlike the other walks here, a join keeps every arm's answers: the
   value is one of them, and `cfg.table || @default` is the parameter's
   field or the literal, so both are answers. An arm that cannot be
-  followed — a key that is not a literal, a local root without
-  `func_id` — contributes nothing, and the answer is `[]` when none can.
+  followed — a key that is not a literal — contributes nothing, and the answer is `[]` when none can.
   Two operands in one function that share an answer may hold the same
   value; two read from one root under different keys are read from
   different fields, which is how a function tells apart two tables it
   was handed in one map, as `Argus.Extractors.ETS` does for
   `ets_table_path`.
   """
-  @spec access_paths([term()], non_neg_integer(), register(), String.t() | nil) ::
-          [access_path()]
-  def access_paths(instrs, idx, register, func_id \\ nil) do
+  @spec access_paths([term()], non_neg_integer(), register(), String.t()) :: [access_path()]
+  def access_paths(instrs, idx, register, func_id) do
     walk(fn -> paths(instrs, idx, Instr.register(register), [], func_id) end)
   end
 
@@ -531,8 +529,6 @@ defmodule Argus.Extractor.Resolve do
     do: [{"literal", Terms.spell(value), ""}]
 
   defp literal_root(_other), do: []
-
-  defp local_root(_at, _keys, nil), do: []
 
   defp local_root(at, keys, func_id),
     do: [{"local", InstrId.mint(func_id, at), Enum.join(keys, ".")}]

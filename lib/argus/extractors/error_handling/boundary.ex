@@ -167,7 +167,7 @@ defmodule Argus.Extractors.ErrorHandling.Boundary do
   """
   @spec region?(Enumerable.t(non_neg_integer()), tuple(), %{pos_integer() => pos_integer()}) ::
           boolean()
-  def region?(visited, table, line_table \\ %{}) do
+  def region?(visited, table, line_table) do
     instrs = Enum.map(visited, &elem(table, &1))
 
     (Enum.any?(instrs, &boundary?/1) and Enum.all?(instrs, &(boundary?(&1) or inert?(&1)))) or

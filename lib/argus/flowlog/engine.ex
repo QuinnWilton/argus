@@ -268,7 +268,6 @@ defmodule Argus.FlowLog.Engine do
   def handle_call({:put_outputs, outputs}, _from, state),
     do: {:reply, :ok, %{state | outputs: outputs}}
 
-
   def handle_call(:usage, _from, state) do
     case request(state, %{op: "usage"}, 30_000) do
       {:ok, %{"bytes" => bytes, "peak_bytes" => peak}} ->
