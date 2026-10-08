@@ -45,13 +45,6 @@ defmodule Argus.Extractors.ETSTest do
     end
   end
 
-  describe "keypos" do
-    test "a table keyed past the first element says which" do
-      facts = ETS.extract(disassemble(Argus.Test.Fixtures.CheckThenAct.RecordTable))
-      assert Enum.any?(facts[:ets_option], &match?([_, "keypos", "2"], &1))
-    end
-  end
-
   describe "keys a value's maker names" do
     defp keys(mod) do
       facts = ETS.extract(disassemble(mod))
@@ -115,148 +108,107 @@ defmodule Argus.Extractors.ETSTest do
   end
 
   describe "extract/1" do
-    test "detects ets_new for named table" do
-      facts = ETS.extract(disassemble(Argus.Test.Fixtures.EtsOwner))
+    alias Argus.Test.Fixtures, as: F
 
-      assert Map.has_key?(facts, :ets_new)
-      rows = facts[:ets_new]
-      assert rows != []
+    # A module's ets_new rows, by function, each with the ets_option rows
+    # its id carries: [func, name, [[key, value], ...]].
+    defp tables(mod) do
+      facts = ETS.extract(disassemble(mod))
+      news = Map.get(facts, :ets_new, [])
+      options = Map.get(facts, :ets_option, [])
+      ids = for [id, _func, _name] <- news, do: id
 
-      names = Enum.map(rows, fn [_id, _func, name] -> name end)
-      assert ":my_cache" in names
+      # An option belongs to a creation site.
+      assert Enum.reject(options, fn [id | _] -> id in ids end) == []
+
+      news
+      |> Enum.map(fn [id, func, name] ->
+        assert id =~ ~r/^#{Regex.escape(func)}#\d+$/
+        [short(func), name, Enum.sort(for [^id, key, value] <- options, do: [key, value])]
+      end)
+      |> Enum.sort()
     end
 
-    test "extracts ets options" do
-      facts = ETS.extract(disassemble(Argus.Test.Fixtures.EtsOwner))
-
-      assert Map.has_key?(facts, :ets_option)
-      options = facts[:ets_option]
-
-      keys = Enum.map(options, fn [_id, key, _val] -> key end)
-      assert "type" in keys
-      assert "access" in keys
-      assert "named_table" in keys
-
-      # Verify specific values.
-      assert Enum.any?(options, fn [_, k, v] -> k == "type" and v == "set" end)
-      assert Enum.any?(options, fn [_, k, v] -> k == "access" and v == "public" end)
-      assert Enum.any?(options, fn [_, k, v] -> k == "named_table" and v == "true" end)
+    # A module's ets_op rows, by function: [func, table, op, kind].
+    defp ops(mod) do
+      ETS.extract(disassemble(mod))
+      |> Map.get(:ets_op, [])
+      |> Enum.map(fn [id, func | rest] ->
+        assert id =~ ~r/^#{Regex.escape(func)}#\d+$/
+        [short(func) | rest]
+      end)
+      |> Enum.sort()
     end
 
-    test "extracts concurrency and heir options from well-configured table" do
-      facts = ETS.extract(disassemble(Argus.Test.Fixtures.EtsWellConfigured))
+    test "each table made, with the options its list spells" do
+      assert tables(F.EtsOwner) == [
+               [
+                 "init/1",
+                 ":my_cache",
+                 [["access", "public"], ["named_table", "true"], ["type", "set"]]
+               ]
+             ]
 
-      assert Map.has_key?(facts, :ets_option)
-      options = facts[:ets_option]
+      assert tables(F.EtsWellConfigured) == [
+               [
+                 "init/1",
+                 ":safe",
+                 [
+                   ["access", "public"],
+                   ["heir", "true"],
+                   ["named_table", "true"],
+                   ["read_concurrency", "true"],
+                   ["type", "set"],
+                   ["write_concurrency", "true"]
+                 ]
+               ]
+             ]
 
-      assert Enum.any?(options, fn [_, k, v] -> k == "read_concurrency" and v == "true" end)
-      assert Enum.any?(options, fn [_, k, v] -> k == "write_concurrency" and v == "true" end)
-      assert Enum.any?(options, fn [_, k, v] -> k == "heir" and v == "true" end)
+      # A table keyed past the first element says which; one that names
+      # no type has no type row.
+      assert tables(F.CheckThenAct.RecordTable) == [
+               [
+                 "start/0",
+                 ":accts",
+                 [["access", "public"], ["keypos", "2"], ["named_table", "true"]]
+               ]
+             ]
     end
 
-    test "detects ets read operations" do
-      facts = ETS.extract(disassemble(Argus.Test.Fixtures.EtsReader))
-
-      assert Map.has_key?(facts, :ets_op)
-      ops = facts[:ets_op]
-      assert ops != []
-
-      assert Enum.any?(ops, fn [_, _, _, op, kind] -> op == "lookup" and kind == "read" end)
-    end
-
-    test "detects ets write operations" do
-      facts = ETS.extract(disassemble(Argus.Test.Fixtures.EtsWriter))
-
-      assert Map.has_key?(facts, :ets_op)
-      ops = facts[:ets_op]
-      assert ops != []
-
-      assert Enum.any?(ops, fn [_, _, _, op, kind] -> op == "insert" and kind == "write" end)
-    end
-
-    test "extracts table reference from read operations" do
-      facts = ETS.extract(disassemble(Argus.Test.Fixtures.EtsReader))
-
-      ops = facts[:ets_op]
-      refs = Enum.map(ops, fn [_, _, ref, _, _] -> ref end)
-      assert ":my_cache" in refs
-    end
-
-    test "maps ops on a table ref back to the same-function :ets.new name" do
-      facts = ETS.extract(disassemble(Argus.Test.Fixtures.EtsRefOps))
-
-      ops = facts[:ets_op]
-
-      # `table = :ets.new(:ref_table, ...)` then insert/lookup via the
-      # ref: both ops inherit the creation site's table name.
-      build_refs =
-        for [_, func, ref, op, _] <- ops, func =~ ":build/0", do: {op, ref}
-
-      assert {"insert", ":ref_table"} in build_refs
-      assert {"lookup", ":ref_table"} in build_refs
-
-      # The ref survives an intervening call in a y register; the walk
-      # follows the move chain across it.
-      across_refs =
-        for [_, func, ref, op, _] <- ops, func =~ "build_across_call", do: {op, ref}
-
-      assert {"insert", ":ref_table_two"} in across_refs
-    end
-
-    test "resolves parameter table references as dynamic, not stale atoms" do
-      facts = ETS.extract(disassemble(Argus.Test.Fixtures.EtsParamTable))
-
-      assert Map.has_key?(facts, :ets_op)
-      ops = facts[:ets_op]
-
-      # All table references should be "dynamic" — not ":ok" or other
-      # stale values leaked from the preceding clause's return path.
-      refs = Enum.map(ops, fn [_, _, ref, _, _] -> ref end)
-
-      assert Enum.all?(refs, &(&1 == "dynamic")),
-             "expected all refs to be dynamic, got: #{inspect(refs)}"
-
-      refute ":ok" in refs
-    end
-
-    test "classifies delete_all_objects as write" do
-      facts = ETS.extract(disassemble(Argus.Test.Fixtures.EtsAdminOps))
-
-      assert Map.has_key?(facts, :ets_op)
-      ops = facts[:ets_op]
-
-      assert Enum.any?(ops, fn [_, _, _, op, kind] ->
-               op == "delete_all_objects" and kind == "write"
-             end)
-    end
-
-    test "classifies match_delete as a write, as select_delete is" do
-      facts = ETS.extract(disassemble(Argus.Test.Fixtures.EtsAdminOps))
-
-      assert Enum.any?(facts[:ets_op], fn [_, _, _, op, kind] ->
-               op == "match_delete" and kind == "write"
-             end)
-    end
-
-    test "classifies give_away, rename, setopts as write" do
-      facts = ETS.extract(disassemble(Argus.Test.Fixtures.EtsAdminOps))
-
-      ops = facts[:ets_op]
-
-      for op_name <- ~w(give_away rename setopts) do
-        assert Enum.any?(ops, fn [_, _, _, op, kind] -> op == op_name and kind == "write" end),
-               "expected #{op_name} to be classified as write"
+    test "each op with its table and kind" do
+      for {mod, rows} <- [
+            {F.EtsReader, [["lookup/1", ":my_cache", "lookup", "read"]]},
+            {F.EtsWriter, [["put/2", ":my_cache", "insert", "write"]]},
+            # An op on a table reference names the table the same
+            # function's :ets.new made, across a call that parks the
+            # reference in a y register too.
+            {F.EtsRefOps,
+             [
+               ["build/0", ":ref_table", "insert", "write"],
+               ["build/0", ":ref_table", "lookup", "read"],
+               ["build_across_call/0", ":ref_table_two", "insert", "write"]
+             ]},
+            # A parameter is dynamic, not the :ok the clause before it
+            # leaves in x0.
+            {F.EtsParamTable,
+             [
+               ["insert/2", "dynamic", "insert", "write"],
+               ["lookup/1", "dynamic", "lookup", "read"]
+             ]},
+            # Each admin op changes the table but safe_fixtable, which
+            # only pins a traversal.
+            {F.EtsAdminOps,
+             [
+               ["delete_all/1", "dynamic", "delete_all_objects", "write"],
+               ["delete_matching/1", "dynamic", "match_delete", "write"],
+               ["fix_table/1", "dynamic", "safe_fixtable", "read"],
+               ["give_away/2", "dynamic", "give_away", "write"],
+               ["rename_table/2", "dynamic", "rename", "write"],
+               ["set_opts/1", "dynamic", "setopts", "write"]
+             ]}
+          ] do
+        assert {mod, ops(mod)} == {mod, rows}
       end
-    end
-
-    test "classifies safe_fixtable as read" do
-      facts = ETS.extract(disassemble(Argus.Test.Fixtures.EtsAdminOps))
-
-      ops = facts[:ets_op]
-
-      assert Enum.any?(ops, fn [_, _, _, op, kind] ->
-               op == "safe_fixtable" and kind == "read"
-             end)
     end
   end
 
