@@ -8,26 +8,32 @@ defmodule Argus.Extractors.ProcessRegistryTest do
     data
   end
 
+  # Rows whose first column is an instruction id, by function: the id is
+  # matched against its function rather than spelled, since its index
+  # moves with the compiler.
+  defp by_function(rows) do
+    rows
+    |> Enum.map(fn [id, func | rest] ->
+      assert id =~ ~r/^#{Regex.escape(func)}#\d+$/
+      [func |> String.split(":") |> List.last() | rest]
+    end)
+    |> Enum.sort()
+  end
+
   describe "extract/1 — process registration" do
-    test "detects Process.register" do
+    test "Process.register and :erlang.register claim a name for the enclosing module" do
       facts = ProcessRegistry.extract(disassemble(Argus.Test.Fixtures.ProcessRegisterer))
+      mod = "Argus.Test.Fixtures.ProcessRegisterer"
 
-      assert Map.has_key?(facts, :process_register)
-      rows = facts[:process_register]
+      assert by_function(facts[:process_register]) == [
+               ["erlang_register/1", ":my_erlang_proc", "register"],
+               ["register_name/1", ":my_process", "register"]
+             ]
 
-      assert Enum.any?(rows, fn [_, _, name, method] ->
-               name == ":my_process" and method == "register"
-             end)
-    end
-
-    test "detects :erlang.register" do
-      facts = ProcessRegistry.extract(disassemble(Argus.Test.Fixtures.ProcessRegisterer))
-
-      rows = facts[:process_register]
-
-      assert Enum.any?(rows, fn [_, _, name, method] ->
-               name == ":my_erlang_proc" and method == "register"
-             end)
+      assert Enum.sort(facts[:named_process]) == [
+               [mod, ":my_erlang_proc"],
+               [mod, ":my_process"]
+             ]
     end
   end
 
@@ -103,65 +109,27 @@ defmodule Argus.Extractors.ProcessRegistryTest do
   end
 
   describe "extract/1 — whereis" do
-    test "detects Process.whereis" do
+    test "each lookup, checked where its result is compared against nil or :undefined" do
       facts = ProcessRegistry.extract(disassemble(Argus.Test.Fixtures.WhereisModule))
 
-      assert Map.has_key?(facts, :name_lookup)
-      rows = facts[:name_lookup]
-      assert rows != []
-
-      assert Enum.all?(rows, fn [_id, _func, api, "", _source, _key, _checked] ->
-               api == "whereis"
-             end)
-    end
-
-    test "detects :erlang.whereis" do
-      facts = ProcessRegistry.extract(disassemble(Argus.Test.Fixtures.WhereisModule))
-
-      rows = facts[:name_lookup]
-      assert length(rows) >= 2
-    end
-
-    test "marks a result compared against nil or :undefined as checked" do
-      facts = ProcessRegistry.extract(disassemble(Argus.Test.Fixtures.WhereisModule))
-
-      by_func =
-        Map.new(facts[:name_lookup], fn [_id, func, _api, _scope, _source, _key, checked] ->
-          {func |> String.split(":") |> List.last(), checked}
-        end)
-
-      assert by_func["checked_whereis/1"] == "checked"
-      assert by_func["checked_erlang_whereis/1"] == "checked"
-      assert by_func["checked_after_call/1"] == "checked"
-      assert by_func["unchecked_whereis/1"] == "unchecked"
-      assert by_func["find_process/1"] == "unchecked"
-    end
-
-    test "a comparison whose boolean is a value checks, as a test does" do
-      facts = ProcessRegistry.extract(disassemble(Argus.Test.Fixtures.WhereisModule))
-
-      by_func =
-        Map.new(facts[:name_lookup], fn [_id, func, _api, _scope, _source, _key, checked] ->
-          {func |> String.split(":") |> List.last(), checked}
-        end)
-
-      assert by_func["started?/1"] == "checked"
-      assert by_func["alive?/1"] == "checked"
-    end
-
-    test "a comparison with self() checks when the pid is not read where they differ" do
-      facts = ProcessRegistry.extract(disassemble(Argus.Test.Fixtures.WhereisModule))
-
-      by_func =
-        Map.new(facts[:name_lookup], fn [_id, func, _api, _scope, _source, _key, checked] ->
-          {func |> String.split(":") |> List.last(), checked}
-        end)
-
-      assert by_func["dispatch/2"] == "checked"
-      assert by_func["registered_self?/1"] == "checked"
-
-      assert by_func["dispatch_by_pid/2"] == "unchecked",
-             "the branch where the pid is not self() sends to it, and it may be nil"
+      assert by_function(facts[:name_lookup]) == [
+               # A comparison whose boolean is a value checks, as a test does.
+               ["alive?/1", "whereis", "", "param", "0", "checked"],
+               # The pid survives a call on the stack.
+               ["checked_after_call/1", "whereis", "", "param", "0", "checked"],
+               ["checked_erlang_whereis/1", "whereis", "", "param", "0", "checked"],
+               ["checked_whereis/1", "whereis", "", "param", "0", "checked"],
+               # A comparison with self() checks when the pid is not read
+               # where they differ; dispatch_by_pid/2 sends to it there,
+               # and it may be nil.
+               ["dispatch/2", "whereis", "", "param", "0", "checked"],
+               ["dispatch_by_pid/2", "whereis", "", "param", "0", "unchecked"],
+               ["erlang_whereis/1", "whereis", "", "param", "0", "unchecked"],
+               ["find_process/1", "whereis", "", "param", "0", "unchecked"],
+               ["registered_self?/1", "whereis", "", "param", "0", "checked"],
+               ["started?/1", "whereis", "", "param", "0", "checked"],
+               ["unchecked_whereis/1", "whereis", "", "param", "0", "unchecked"]
+             ]
     end
   end
 
@@ -189,19 +157,6 @@ defmodule Argus.Extractors.ProcessRegistryTest do
   end
 
   describe "extract/1 — named_process" do
-    test "emits named_process for direct register/2 with the enclosing module" do
-      facts = ProcessRegistry.extract(disassemble(Argus.Test.Fixtures.ProcessRegisterer))
-
-      assert Map.has_key?(facts, :named_process)
-      rows = facts[:named_process]
-
-      # Direct Process.register(self(), :my_process) — emit
-      # named_process(<enclosing module>, :my_process).
-      assert Enum.any?(rows, fn [mod, name] ->
-               mod == "Argus.Test.Fixtures.ProcessRegisterer" and name == ":my_process"
-             end)
-    end
-
     test "a statically unknowable name records imprecision, never \":dynamic\"" do
       # `name: Keyword.fetch!(opts, :name)` resolves the options list
       # partially — the name slot holds the :dynamic placeholder atom.
