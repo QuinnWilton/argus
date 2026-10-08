@@ -46,6 +46,24 @@ defmodule Argus.RawFileTest do
     end
   end
 
+  property "cp_r! copies a tree as File.cp_r! does", %{tmp_dir: tmp} do
+    check all(entries <- tree(3), max_runs: 25) do
+      root = Path.join(tmp, "t#{System.unique_integer([:positive])}")
+      write!(Path.join(root, "src"), entries)
+
+      RawFile.cp_r!(Path.join(root, "src"), Path.join(root, "raw"))
+      File.cp_r!(Path.join(root, "src"), Path.join(root, "file"))
+
+      assert contents(Path.join(root, "raw")) == contents(Path.join(root, "file"))
+    end
+  end
+
+  defp contents(dir) do
+    for path <- Path.wildcard(Path.join(dir, "**"), match_dot: true), into: %{} do
+      {Path.relative_to(path, dir), if(File.dir?(path), do: :dir, else: File.read!(path))}
+    end
+  end
+
   test "stat, read and ls agree with File's, and say why they cannot", %{tmp_dir: tmp} do
     path = Path.join(tmp, "a.dl")
     File.write!(path, "content")
@@ -64,6 +82,10 @@ defmodule Argus.RawFileTest do
 
     assert_raise File.Error, ~r/could not read file .*missing": no such file/, fn ->
       RawFile.read!(missing)
+    end
+
+    assert_raise File.Error, ~r/could not copy .*missing/, fn ->
+      RawFile.cp_r!(missing, Path.join(tmp, "copy"))
     end
   end
 

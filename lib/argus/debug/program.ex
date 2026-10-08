@@ -9,7 +9,8 @@ defmodule Argus.Debug.Program do
   @spec copy!(Path.t(), Path.t()) :: Path.t()
   def copy!(path, destination) do
     root = Path.expand(Argus.Dl.root())
-    File.cp_r!(root, Path.join(destination, "rules"))
+    # Past the file server: a hundred files a capture, and again each run.
+    Argus.RawFile.cp_r!(root, Path.join(destination, "rules"))
 
     if String.starts_with?(Path.expand(path), root <> "/") do
       "rules/" <> Path.relative_to(path, root)
@@ -68,7 +69,7 @@ defmodule Argus.Debug.Program do
   end
 
   defp run_copy!(root, program, run, _probes) do
-    File.cp_r!(Path.join(root, "rules"), Path.join(run, "rules"))
+    Argus.RawFile.cp_r!(Path.join(root, "rules"), Path.join(run, "rules"))
     program
   end
 

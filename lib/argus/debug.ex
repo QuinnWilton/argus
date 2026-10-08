@@ -101,7 +101,7 @@ defmodule Argus.Debug do
     path = Program.wrapper!(root, manifest["program"], run, probes)
     columns = Program.columns!(path, run)
     facts = Path.join(run, "facts")
-    File.cp_r!(facts_path(root, previous), facts)
+    Argus.RawFile.cp_r!(facts_path(root, previous), facts)
     solver_opts = Keyword.take(opts, [:timeout, :workers])
 
     stage_columns =

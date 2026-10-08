@@ -86,7 +86,8 @@ which a change appeared; older names and APIs may have changed since then.
   disassembles and its priors cache directly (`Argus.RawFile`) rather than
   through the VM's file server, the one process that otherwise serves every
   file read of the VM in turn. Runs side by side in one VM (an editor's, a
-  test suite's) queued there; a beam is read once instead of three times.
+  test suite's) queued there; a beam is read once instead of three times, and
+  `mix argus.debug` copies a bundle's rules and facts directly.
   The `rustc` and `cargo` found for a `PATH` are kept for the VM, as the
   toolchain already was, so a run no longer searches the `PATH` and runs
   `rustc -vV` to learn whether it can solve.

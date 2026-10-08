@@ -83,6 +83,40 @@ defmodule Argus.RawFile do
   end
 
   @doc """
+  `File.cp_r!/2` of a tree of directories and regular files, copied
+  directly: each directory made, each file read and written, overwriting
+  one there. A link is followed, so the copy holds what it names. Raises
+  `File.Error` naming the path that failed.
+  """
+  @spec cp_r!(Path.t(), Path.t()) :: :ok
+  def cp_r!(source, destination) do
+    case stat(source) do
+      {:ok, %File.Stat{type: :directory}} ->
+        mkdir_p!(destination)
+
+        case ls(source) do
+          {:ok, names} ->
+            Enum.each(names, &cp_r!(Path.join(source, &1), Path.join(destination, &1)))
+
+          {:error, reason} ->
+            raise File.Error, reason: reason, action: "list directory", path: source
+        end
+
+      {:ok, %File.Stat{type: :regular}} ->
+        case File.write(destination, read!(source), [:raw]) do
+          :ok -> :ok
+          {:error, reason} -> raise File.Error, reason: reason, action: "write", path: destination
+        end
+
+      {:ok, %File.Stat{type: type}} ->
+        raise File.Error, reason: {:unsupported, type}, action: "copy", path: source
+
+      {:error, reason} ->
+        raise File.Error, reason: reason, action: "copy", path: source
+    end
+  end
+
+  @doc """
   Every regular file under `root` whose name ends in `extension`, as
   `Path.wildcard(Path.join(root, "**/*" <> extension))` gives them:
   sorted, and leaving out a name that starts with a dot. A directory
