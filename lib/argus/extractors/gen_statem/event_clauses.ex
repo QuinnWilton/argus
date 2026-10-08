@@ -65,7 +65,7 @@ defmodule Argus.Extractors.GenStatem.EventClauses do
   """
   @spec analyse(Function.t() | nil, [tuple()]) :: t()
   def analyse(fun, instrs) do
-    labels = Dispatch.labels(instrs)
+    labels = Instr.labels(instrs)
     func_info = Dispatch.func_info_label(instrs)
     context = context_registers(instrs)
 

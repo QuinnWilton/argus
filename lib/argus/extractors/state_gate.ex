@@ -281,7 +281,7 @@ defmodule Argus.Extractors.StateGate do
 
   defp field_walks(instrs, pos) do
     tuple = List.to_tuple(instrs)
-    labels = Dispatch.labels(instrs)
+    labels = Instr.labels(instrs)
     entry = Dispatch.entry_index(instrs)
 
     tests =
@@ -625,7 +625,7 @@ defmodule Argus.Extractors.StateGate do
 
   defp closed?(ctx, %{instrs: instrs, site: site, pos: pos, key: key, admitted: admitted}) do
     tuple = List.to_tuple(instrs)
-    labels = Dispatch.labels(instrs)
+    labels = Instr.labels(instrs)
     starts = [site | handlers_around(instrs, tuple, labels, site)]
     reached = reach(tuple, labels, starts, &free/2)
 
@@ -684,7 +684,7 @@ defmodule Argus.Extractors.StateGate do
   defp clause_outs(fa, ctx, pos, key) do
     instrs = Map.fetch!(ctx.bodies, fa)
     tuple = List.to_tuple(instrs)
-    labels = Dispatch.labels(instrs)
+    labels = Instr.labels(instrs)
     reached = reach(tuple, labels, [Dispatch.entry_index(instrs)], &free/2)
     tags = Dispatch.argument_tags(instrs, {:x, 0})
 
@@ -731,7 +731,7 @@ defmodule Argus.Extractors.StateGate do
       true ->
         visiting = Map.put(visiting, {fa, pos, level}, true)
         tuple = List.to_tuple(instrs)
-        labels = Dispatch.labels(instrs)
+        labels = Instr.labels(instrs)
         reached = reach(tuple, labels, [Dispatch.entry_index(instrs)], &free/2)
 
         if Enum.any?(Map.keys(reached), &throws?(instrs, &1, elem(tuple, &1))) do

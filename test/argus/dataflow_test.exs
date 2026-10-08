@@ -347,7 +347,7 @@ defmodule Argus.DataflowTest do
     defp naive(instrs, arity) do
       code = List.to_tuple(instrs)
       n = tuple_size(code)
-      labels = for {{:label, l}, i} <- Enum.with_index(instrs), into: %{}, do: {l, i}
+      labels = Argus.Instr.labels(instrs)
 
       preds =
         for i <- 0..(n - 1)//1,

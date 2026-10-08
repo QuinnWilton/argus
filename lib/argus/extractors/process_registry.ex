@@ -472,12 +472,8 @@ defmodule Argus.Extractors.ProcessRegistry do
   @type_bifs [:is_atom, :is_pid, :is_port, :is_list]
 
   defp nil_checked?(instrs, idx) do
-    labels = label_index(instrs)
+    labels = Instr.labels(instrs)
     checked_walk(Enum.drop(instrs, idx + 1), [{:x, 0}], [], {instrs, labels})
-  end
-
-  defp label_index(instrs) do
-    for {{:label, l}, i} <- Enum.with_index(instrs), into: %{}, do: {l, i}
   end
 
   # Before the deciding test the value is followed through the registers

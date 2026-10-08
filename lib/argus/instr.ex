@@ -208,6 +208,12 @@ defmodule Argus.Instr do
   def slot({kind, _n} = reg) when kind in [:x, :y], do: reg
   def slot(_operand), do: nil
 
+  @doc "Each label of the function's `instrs` and the index it sits at."
+  @spec labels([tuple()]) :: %{pos_integer() => non_neg_integer()}
+  def labels(instrs) do
+    for {{:label, l}, idx} <- Enum.with_index(instrs), into: %{}, do: {l, idx}
+  end
+
   # --- the table --------------------------------------------------------
 
   defp field(instr, n, unknown) do

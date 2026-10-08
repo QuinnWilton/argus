@@ -906,7 +906,7 @@ defmodule Argus.Extractors.ErrorHandling do
   # test as the guard).
   defp emit_nil_tests(facts, func_id, instrs) do
     tuple = List.to_tuple(instrs)
-    labels = for {{:label, l}, i} <- Enum.with_index(instrs), into: %{}, do: {l, i}
+    labels = Instr.labels(instrs)
 
     instrs
     |> Enum.with_index()
@@ -1465,7 +1465,7 @@ defmodule Argus.Extractors.ErrorHandling do
   # following each test's failure label from the loop_rec; a body
   # reached without a test on the message is a catch-all.
   defp emit_recv_patterns(facts, func_id, instrs) do
-    labels = for {{:label, l}, i} <- Enum.with_index(instrs), into: %{}, do: {l, i}
+    labels = Instr.labels(instrs)
 
     instrs
     |> Enum.with_index()

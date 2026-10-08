@@ -133,7 +133,8 @@ which a change appeared; older names and APIs may have changed since then.
   `resolve_register/3`, `spell/1` and the rest moved by concern in 0.20):
   call `Argus.Extractor.Facts`, `Resolve`, `Identity`, `Terms` and `Shapes`
   directly. `Argus.Extractor.Helpers.register/1` went too: it is
-  `Argus.Instr.register/1`.
+  `Argus.Instr.register/1`. `Argus.Extractor.Dispatch.labels/1` is
+  `Argus.Instr.labels/1`.
 - Functions nothing called: `Argus.Pipeline.rows_iodata/1` (use
   `Argus.Tsv.encode/1`), `Argus.Pipeline.Writer.append/2`,
   `Argus.Priors.derive/2` and `read_facts/2`, `Argus.Specs.shapes/2`,

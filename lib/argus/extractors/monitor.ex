@@ -248,7 +248,7 @@ defmodule Argus.Extractors.Monitor do
         receives ->
           func_id = InstrId.func_id(mod, name, arity)
           code = List.to_tuple(instrs)
-          labels = labels(instrs)
+          labels = Instr.labels(instrs)
           loops? = Enum.any?(instrs, &(match_local_call(&1) == {:ok, mod, name, arity}))
           demonitors? = Enum.any?(instrs, &cancels_monitor?/1)
           head = Enum.find_index(instrs, &match?({:func_info, _, _, _}, &1))
@@ -598,16 +598,12 @@ defmodule Argus.Extractors.Monitor do
         []
 
       loops ->
-        ctx = %{instrs: instrs, code: List.to_tuple(instrs), labels: labels(instrs)}
+        ctx = %{instrs: instrs, code: List.to_tuple(instrs), labels: Instr.labels(instrs)}
 
         for loop <- loops,
             {:ok, monitor} <- [awaited_monitor(ctx, loop, graph)],
             do: {loop, monitor}
     end
-  end
-
-  defp labels(instrs) do
-    for {{:label, l}, i} <- Enum.with_index(instrs), into: %{}, do: {l, i}
   end
 
   # The monitor call whose :DOWN the receive at `loop` takes: the path
@@ -1429,7 +1425,7 @@ defmodule Argus.Extractors.Monitor do
 
   defp down_takers(instrs) do
     tuple = List.to_tuple(instrs)
-    labels = for {{:label, l}, idx} <- Enum.with_index(instrs), into: %{}, do: {l, idx}
+    labels = Instr.labels(instrs)
 
     for {{:loop_rec, _fail, _dst}, loop} <- Enum.with_index(instrs),
         start = %{idx: loop + 1, msg: [{:x, 0}], tags: [], refs: [], tag: nil, ref: :any},
@@ -1441,7 +1437,7 @@ defmodule Argus.Extractors.Monitor do
 
   defp exit_takers(instrs) do
     tuple = List.to_tuple(instrs)
-    labels = for {{:label, l}, idx} <- Enum.with_index(instrs), into: %{}, do: {l, idx}
+    labels = Instr.labels(instrs)
 
     for {{:loop_rec, _fail, _dst}, loop} <- Enum.with_index(instrs),
         start = %{idx: loop + 1, msg: [{:x, 0}], tags: [], refs: [], tag: nil, ref: :any},
@@ -1467,7 +1463,7 @@ defmodule Argus.Extractors.Monitor do
   # leave it with the monitor live. Each walk above prunes a path there.
   defp down_takes(instrs) do
     tuple = List.to_tuple(instrs)
-    labels = for {{:label, l}, idx} <- Enum.with_index(instrs), into: %{}, do: {l, idx}
+    labels = Instr.labels(instrs)
 
     for {{:loop_rec, {:f, fail}, _dst}, loop} <- Enum.with_index(instrs),
         blocking <- [blocking?(tuple, Map.get(labels, fail))],

@@ -75,7 +75,7 @@ defmodule Argus.Extractors.StateGate.Absent do
       []
     else
       tuple = List.to_tuple(instrs)
-      labels = Dispatch.labels(instrs)
+      labels = Instr.labels(instrs)
       entry = Dispatch.entry_index(instrs)
       sites = for {instr, idx} <- Enum.with_index(instrs), site?(instr), do: idx
 

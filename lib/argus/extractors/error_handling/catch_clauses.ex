@@ -126,7 +126,7 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
   @spec analyse([tuple()], non_neg_integer()) :: summary()
   def analyse(instrs, label) do
     tuple = List.to_tuple(instrs)
-    labels = label_index(instrs)
+    labels = Instr.labels(instrs)
 
     case Map.fetch(labels, label) do
       :error ->
@@ -176,7 +176,7 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
   @spec reach([tuple()], non_neg_integer()) :: [non_neg_integer()]
   def reach(instrs, start) do
     tuple = List.to_tuple(instrs)
-    labels = label_index(instrs)
+    labels = Instr.labels(instrs)
     {seen, _acc} = walk(start, new_path(), tuple, labels, MapSet.new(), new_acc(start))
     seen |> Enum.map(&elem(&1, 0)) |> Enum.uniq() |> Enum.sort()
   end
@@ -215,15 +215,6 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
       handled: MapSet.new(),
       last: start
     }
-  end
-
-  defp label_index(instrs) do
-    instrs
-    |> Enum.with_index()
-    |> Enum.reduce(%{}, fn
-      {{:label, l}, idx}, acc -> Map.put(acc, l, idx)
-      _, acc -> acc
-    end)
   end
 
   # Depth-first from an instruction index; a position is re-entered only

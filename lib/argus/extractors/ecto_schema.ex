@@ -47,6 +47,7 @@ defmodule Argus.Extractors.EctoSchema do
 
   @behaviour Argus.Extractor
 
+  alias Argus.Instr
   import Argus.Extractor.Facts, only: [add_fact: 3]
   import Argus.Extractor.Terms, only: [list_elements: 1]
 
@@ -68,7 +69,7 @@ defmodule Argus.Extractors.EctoSchema do
 
       instrs ->
         mod_str = inspect(mod)
-        labels = label_index(instrs)
+        labels = Instr.labels(instrs)
         dispatch = dispatch_table(instrs, {:x, 0})
         types = field_types(find_function(functions, 2))
 
@@ -112,7 +113,7 @@ defmodule Argus.Extractors.EctoSchema do
   defp field_types(nil), do: %{}
 
   defp field_types(instrs) do
-    labels = label_index(instrs)
+    labels = Instr.labels(instrs)
 
     with label when is_integer(label) <- Map.get(dispatch_table(instrs, {:x, 0}), :type),
          {:ok, idx} <- Map.fetch(labels, label),
@@ -167,10 +168,6 @@ defmodule Argus.Extractors.EctoSchema do
       [{:atom, key}, {:f, label}] -> [{key, label}]
       _ -> []
     end)
-  end
-
-  defp label_index(instrs) do
-    for {{:label, l}, idx} <- Enum.with_index(instrs), into: %{}, do: {l, idx}
   end
 
   # An improper list is no list of fields.

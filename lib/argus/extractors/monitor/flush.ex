@@ -28,6 +28,7 @@ defmodule Argus.Extractors.Monitor.Flush do
   alias Argus.Cfg.Function
   alias Argus.Cfg.Walk
   alias Argus.Extractor.Dispatch
+  alias Argus.Instr
 
   import Argus.Extractor.Helpers, only: [match_remote_call: 1]
   import Argus.Instr, only: [register: 1]
@@ -49,7 +50,7 @@ defmodule Argus.Extractors.Monitor.Flush do
 
     with [_ | _] = loops <- for({{:loop_rec, _, _}, idx} <- indexed, do: idx),
          [_ | _] = cancels <- for({instr, idx} <- indexed, cancel?(instr), do: idx) do
-      ctx = %{code: List.to_tuple(instrs), labels: labels(indexed)}
+      ctx = %{code: List.to_tuple(instrs), labels: Instr.labels(instrs)}
 
       for cancel <- cancels,
           {:ok, test, falses, others} <- [false_side(ctx, cancel)],
@@ -81,10 +82,6 @@ defmodule Argus.Extractors.Monitor.Flush do
       {:ok, mod, :cancel_timer, arity} -> mod in [:erlang, Process] and arity in [1, 2]
       _ -> false
     end
-  end
-
-  defp labels(indexed) do
-    for {{:label, l}, i} <- indexed, into: %{}, do: {l, i}
   end
 
   # The test that compares the cancel's result with `false`, and where

@@ -98,21 +98,12 @@ defmodule Argus.Extractor.Dispatch do
   @spec total_on?([tuple()], {:x, non_neg_integer()}) :: boolean()
   def total_on?(instrs, register) do
     tuple = List.to_tuple(instrs)
-    labels = label_index(instrs)
+    labels = Instr.labels(instrs)
     # The code starts after func_info; what precedes it is the failure exit.
     start = (Enum.find_index(instrs, &match?({:func_info, _, _, _}, &1)) || -1) + 1
     path = %{tracked: MapSet.new([register]), tested: false, passed: false}
     {found?, _seen} = walk_head(start, path, tuple, labels, MapSet.new())
     found?
-  end
-
-  defp label_index(instrs) do
-    instrs
-    |> Enum.with_index()
-    |> Enum.reduce(%{}, fn
-      {{:label, l}, idx}, acc -> Map.put(acc, l, idx)
-      _, acc -> acc
-    end)
   end
 
   # The path state: the registers holding the message or a projection of
@@ -498,7 +489,7 @@ defmodule Argus.Extractor.Dispatch do
   # established none) some path reaches it with.
   defp channel_tags(instrs, registers) do
     tuple = List.to_tuple(instrs)
-    labels = labels(instrs)
+    labels = Instr.labels(instrs)
     chans = Enum.map(registers, &%{msg: [&1], tag_regs: [], tag: nil})
     start = %{idx: entry_index(instrs), chans: chans}
     # `seen` is a map, not a MapSet: dialyzer loses the MapSet's opacity
@@ -633,7 +624,7 @@ defmodule Argus.Extractor.Dispatch do
         ) :: MapSet.t(non_neg_integer())
   def reached_with(instrs, register, value, avoid \\ []) when is_atom(value) do
     tuple = List.to_tuple(instrs)
-    labels = labels(instrs)
+    labels = Instr.labels(instrs)
 
     # `seen` and `reached` are maps, not MapSets, for the reason
     # argument_tags/2's `seen` is: dialyzer loses the opacity through the
@@ -661,7 +652,7 @@ defmodule Argus.Extractor.Dispatch do
     walk_fixed(
       [{entry_index(instrs), [register]}],
       List.to_tuple(instrs),
-      labels(instrs),
+      Instr.labels(instrs),
       value,
       %{},
       %{}
@@ -873,10 +864,4 @@ defmodule Argus.Extractor.Dispatch do
   end
 
   defp held?(operand, regs), do: slot(operand) in regs
-
-  @doc "Label → instruction index for the function."
-  @spec labels([tuple()]) :: %{non_neg_integer() => non_neg_integer()}
-  def labels(instrs) do
-    for {{:label, l}, idx} <- Enum.with_index(instrs), into: %{}, do: {l, idx}
-  end
 end

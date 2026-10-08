@@ -218,7 +218,7 @@ defmodule Argus.Extractors.CallbackTag.MessageClauses do
   @spec catch_all_drops?([tuple()], Instr.reg()) :: boolean()
   def catch_all_drops?(instrs, register) do
     tuple = List.to_tuple(instrs)
-    labels = Dispatch.labels(instrs)
+    labels = Instr.labels(instrs)
 
     case for({idx, %{tested: false} = path} <- entries(instrs, register), do: {idx, path}) do
       [] ->
@@ -243,7 +243,7 @@ defmodule Argus.Extractors.CallbackTag.MessageClauses do
 
   defp entries_from(instrs, start, register) do
     tuple = List.to_tuple(instrs)
-    labels = Dispatch.labels(instrs)
+    labels = Instr.labels(instrs)
 
     path = %{
       tracked: %{Instr.register(register) => :msg},

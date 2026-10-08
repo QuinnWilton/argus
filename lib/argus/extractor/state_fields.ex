@@ -289,7 +289,7 @@ defmodule Argus.Extractor.StateFields do
   @spec reachable_from([Instr.instr()], non_neg_integer()) :: MapSet.t(non_neg_integer())
   def reachable_from(instrs, idx) do
     code = List.to_tuple(instrs)
-    labels = for {{:label, l}, i} <- Enum.with_index(instrs), into: %{}, do: {l, i}
+    labels = Instr.labels(instrs)
     code |> successors(labels, idx) |> reach(code, labels, %{}) |> Map.keys() |> MapSet.new()
   end
 
