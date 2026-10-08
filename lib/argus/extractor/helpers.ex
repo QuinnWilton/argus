@@ -240,15 +240,9 @@ defmodule Argus.Extractor.Helpers do
   def typed(%{typed: typed}) when is_map(typed), do: typed
   def typed(%{typed: nil}), do: nil
 
-  def typed(%{module: mod, exports: exports, attributes: attributes, functions: functions} = data) do
-    mod
-    |> Argus.Pipeline.Emit.emit_module(
-      exports,
-      Map.get(data, :imports, []),
-      attributes,
-      functions,
-      Map.get(data, :line_table, %{})
-    )
+  def typed(%{module: _, functions: _} = data) do
+    data
+    |> Argus.Pipeline.Emit.emit()
     |> Map.take(Argus.Pipeline.typed_relations())
     |> Argus.Facts.decode()
   rescue

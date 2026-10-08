@@ -180,7 +180,7 @@ defmodule Argus.InstrTest do
     end
 
     test "the emitter records the fail edges Instr names, and each marker's line" do
-      facts = Emit.emit_module(:nrec, [{:get, 1, 4}], [], [], [@function])
+      facts = Emit.emit_module(:nrec, [{:get, 1, 4}], [@function])
 
       for {id, instr} <- Normalize.normalize_function(:nrec, @function) do
         assert labels(facts, id) == Enum.sort(Instr.targets(instr)), inspect(instr)
@@ -295,7 +295,7 @@ defmodule Argus.InstrTest do
             do: {mod, function}
 
       check all({mod, function} <- member_of(functions), max_runs: 200) do
-        facts = Emit.emit_module(mod, [], [], [], [function])
+        facts = Emit.emit_module(mod, [], [function])
         normalized = Normalize.normalize_function(mod, function)
         last = normalized |> List.last() |> elem(0)
 

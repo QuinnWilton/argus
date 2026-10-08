@@ -606,15 +606,7 @@ defmodule Argus.Pipeline do
     with {:ok, data} <- disassemble(path) do
       mod_str = inspect(data.module)
 
-      base_facts =
-        Emit.emit_module(
-          data.module,
-          data.exports,
-          data.imports,
-          data.attributes,
-          data.functions,
-          data.line_table
-        )
+      base_facts = Emit.emit(data)
 
       # Decoded once — the relations the in-process passes read — for the
       # derived relations and for the control-flow graphs the extractors

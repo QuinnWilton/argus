@@ -32,15 +32,7 @@ defmodule Argus.Pipeline.TypedRelationsTest do
     for module <- @modules do
       {:ok, data} = Disassemble.disassemble_path(to_string(:code.which(module)))
 
-      raw =
-        Emit.emit_module(
-          data.module,
-          data.exports,
-          data.imports,
-          data.attributes,
-          data.functions,
-          data.line_table
-        )
+      raw = Emit.emit(data)
 
       full = module_data(data, Argus.Facts.decode(raw))
 

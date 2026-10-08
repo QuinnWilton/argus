@@ -26,14 +26,8 @@ defmodule Argus.Pipeline.BaseTest do
     {:ok, data} = Disassemble.disassemble_path(path)
 
     typed =
-      data.module
-      |> Emit.emit_module(
-        data.exports,
-        data.imports,
-        data.attributes,
-        data.functions,
-        data.line_table
-      )
+      data
+      |> Emit.emit()
       |> Map.take(Pipeline.typed_relations())
       |> Argus.Facts.decode()
 

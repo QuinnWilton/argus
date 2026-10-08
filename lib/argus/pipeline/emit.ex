@@ -26,18 +26,30 @@ defmodule Argus.Pipeline.Emit do
   @type facts :: %{atom() => [[String.t()]]}
 
   @doc """
-  Emits facts for a single module's disassembly data.
-
-  Takes the module name, the list of exports (for marking exported functions),
-  the list of imports and the attributes (which no relation reads: the
-  extractors that need an attribute read the chunk), the function
-  definitions, and the module's Line-chunk table (`BeamSpy.Source.parse_line_table/1`, used to
-  resolve line markers to real source lines for `line_info`:
-  `Argus.Pipeline.Disassemble.marker_line/2`).
-  Returns a map of relation name to list of fact rows.
+  `emit_module/4` of a module's disassembly
+  (`Argus.Pipeline.Disassemble.disassemble_path/1`): its exports and Line
+  table when it has them, none when it does not.
   """
-  @spec emit_module(atom(), list(), list(), keyword(), list(), map()) :: facts()
-  def emit_module(module, exports, _imports, _attributes, functions, line_table \\ %{}) do
+  @spec emit(map()) :: facts()
+  def emit(%{module: module, functions: functions} = data) do
+    emit_module(
+      module,
+      Map.get(data, :exports, []),
+      functions,
+      Map.get(data, :line_table, %{})
+    )
+  end
+
+  @doc """
+  Emits facts for a single module: its name, its exports (which mark the
+  functions exported), its function definitions, and its Line-chunk
+  table (`BeamSpy.Source.parse_line_table/1`), which resolves line
+  markers to source lines for `line_info`
+  (`Argus.Pipeline.Disassemble.marker_line/2`). Returns a map of relation
+  name to fact rows.
+  """
+  @spec emit_module(atom(), list(), list(), map()) :: facts()
+  def emit_module(module, exports, functions, line_table \\ %{}) do
     mod_str = inspect(module)
 
     facts = %{}

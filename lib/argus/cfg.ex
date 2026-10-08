@@ -110,18 +110,13 @@ defmodule Argus.Cfg do
   a pipeline module whose graphs are already attached.
   """
   @spec build_for(map(), atom(), arity()) :: Function.t() | nil
-  def build_for(%{module: mod, functions: functions} = data, name, arity) do
-    facts =
-      Argus.Pipeline.Emit.emit_module(
-        mod,
-        Map.get(data, :exports, []),
-        Map.get(data, :imports, []),
-        Map.get(data, :attributes, []),
-        functions,
-        Map.get(data, :line_table, %{})
-      )
-
-    facts |> Argus.Facts.decode() |> build() |> Map.get({Argus.InstrId.name(name), arity})
+  def build_for(%{module: _, functions: _} = data, name, arity) do
+    data
+    |> Argus.Pipeline.Emit.emit()
+    |> Map.take(Argus.Pipeline.typed_relations())
+    |> Argus.Facts.decode()
+    |> build()
+    |> Map.get({Argus.InstrId.name(name), arity})
   end
 
   # Collect one relation into %{fa => %{key => value}} via a row shaper that

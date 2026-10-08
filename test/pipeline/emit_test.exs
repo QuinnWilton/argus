@@ -19,14 +19,7 @@ defmodule Argus.Pipeline.EmitTest do
     exports = Keyword.get(opts, :exports, [{name, arity, entry}])
     line_table = Keyword.get(opts, :line_table, %{})
 
-    Emit.emit_module(
-      mod,
-      exports,
-      [],
-      [],
-      [{:function, name, arity, entry, instructions}],
-      line_table
-    )
+    Emit.emit_module(mod, exports, [{:function, name, arity, entry, instructions}], line_table)
   end
 
   describe "module-level facts" do
@@ -43,8 +36,6 @@ defmodule Argus.Pipeline.EmitTest do
         Emit.emit_module(
           MyMod,
           [{:public_fn, 0, 1}],
-          [],
-          [],
           [
             {:function, :public_fn, 0, 1, [{:label, 1}, :return]},
             {:function, :private_fn, 0, 2, [{:label, 2}, :return]}
@@ -57,11 +48,6 @@ defmodule Argus.Pipeline.EmitTest do
 
       assert List.last(public) == "1"
       assert List.last(private) == "0"
-    end
-
-    test "emits no row for the module's attributes" do
-      facts = Emit.emit_module(MyMod, [], [], [behaviour: [GenServer], odd: [:a | :b]], [])
-      refute Map.has_key?(facts, :module_attribute)
     end
   end
 
