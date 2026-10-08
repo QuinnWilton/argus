@@ -23,7 +23,10 @@ defmodule Argus.Findings.Tooling do
 
   - `mix` and `test_support` are structural (`Argus.Extractors.Tooling`:
     a module under `Mix.`, or compiled from a `test/support/` directory or
-    a `test/` directory within a `lib/`). The finding keeps its
+    a `test/` directory within a `lib/`), or a helper only such modules
+    reach on calls, with no export the program leaves for callers it
+    does not see (`tooling_helper` in `clientlib/tooling.dl`), which takes
+    the basis of the module it is reached from. The finding keeps its
     provenance; its help says what the module is.
   - `prior` is the tooling prior's (`Argus.Priors.Questions.Tooling`, at
     0.9 or more): the finding is heuristic, and its confidence is the

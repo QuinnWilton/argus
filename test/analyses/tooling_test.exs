@@ -118,6 +118,46 @@ defmodule Argus.Analyses.ToolingTest do
     assert key.(findings([])) == key.(findings(priors(dir)))
   end
 
+  describe "helpers only tooling calls" do
+    alias Argus.Test.Fixtures.{
+      ContractToolingApi,
+      ContractToolingDeep,
+      ContractToolingHelper,
+      ContractToolingProduct,
+      ContractToolingShared
+    }
+
+    @helper_mods [
+      Mix.ArgusFixtures.ContractTooling,
+      ContractToolingHelper,
+      ContractToolingDeep,
+      ContractToolingShared,
+      ContractToolingProduct,
+      ContractToolingApi
+    ]
+
+    test "a module only Mix tasks or their helpers call steps down, as a Mix helper" do
+      assert {:ok, %Findings{degraded: []} = r} =
+               Findings.run(@helper_mods, analyses: [:unsafe_input])
+
+      by_module =
+        r.findings
+        |> Enum.filter(&(&1.title =~ "Dynamic code execution"))
+        |> Enum.group_by(& &1.module, & &1.severity)
+
+      for mod <- [ContractToolingHelper, ContractToolingDeep] do
+        assert by_module[mod] != nil and Enum.all?(by_module[mod], &(&1 == :warning)),
+               "#{inspect(mod)}: #{inspect(by_module[mod])}"
+      end
+
+      # The product calls the shared module, and the API module has an
+      # export nothing in the program calls: both stay product.
+      for mod <- [ContractToolingShared, ContractToolingApi] do
+        assert by_module[mod] == [:error], "#{inspect(mod)}: #{inspect(by_module[mod])}"
+      end
+    end
+  end
+
   describe "the tooling rows" do
     defp tooling_rows(facts) do
       assert {:ok, results} = Memo.run_rules(facts, :structure)
@@ -147,6 +187,47 @@ defmodule Argus.Analyses.ToolingTest do
 
       assert tooling_rows(facts) == [
                ["App.DevSetup", "prior", "940"],
+               ["Mix.Tasks.Seed", "mix", "1000"]
+             ]
+    end
+
+    test "a helper only named modules reach takes their basis; a way in for others keeps it out" do
+      facts = %{
+        function_def: [
+          ["Mix.Tasks.Seed:run/1", "Mix.Tasks.Seed", "run", "1", "1"],
+          ["App.ConnCase:setup/1", "App.ConnCase", "setup", "1", "1"],
+          ["App.Helper:run/1", "App.Helper", "run", "1", "1"],
+          ["App.Helper:step/1", "App.Helper", "step", "1", "0"],
+          ["App.Deep:run/1", "App.Deep", "run", "1", "1"],
+          ["App.Fixtures:build/0", "App.Fixtures", "build", "0", "1"],
+          ["App.Api:run/1", "App.Api", "run", "1", "1"],
+          ["App.Api:version/0", "App.Api", "version", "0", "1"],
+          ["App.Inner:run/1", "App.Inner", "run", "1", "1"],
+          ["App.Prior:run/0", "App.Prior", "run", "0", "1"]
+        ],
+        local_call: [["i0", "App.Helper:run/1", "App.Helper:step/1", "1"]],
+        remote_call: [
+          ["i1", "Mix.Tasks.Seed:run/1", "App.Helper", "run", "1"],
+          ["i2", "App.Helper:step/1", "App.Deep", "run", "1"],
+          ["i3", "Mix.Tasks.Seed:run/1", "App.Api", "run", "1"],
+          ["i4", "App.Api:run/1", "App.Inner", "run", "1"],
+          ["i5", "App.ConnCase:setup/1", "App.Fixtures", "build", "0"],
+          ["i6", "Mix.Tasks.Seed:run/1", "App.Prior", "run", "0"]
+        ],
+        tooling_module: [["Mix.Tasks.Seed", "mix"], ["App.ConnCase", "test_support"]],
+        # The structure's answer wins over the prior's.
+        prior_tooling: [["App.Prior", "development", "950", "950"]]
+      }
+
+      # App.Deep is reached through App.Helper's private step, App.Fixtures
+      # from test support. App.Api has an export nothing calls, so it and
+      # App.Inner, which it calls, are the product's.
+      assert tooling_rows(facts) == [
+               ["App.ConnCase", "test_support", "1000"],
+               ["App.Deep", "mix", "1000"],
+               ["App.Fixtures", "test_support", "1000"],
+               ["App.Helper", "mix", "1000"],
+               ["App.Prior", "mix", "1000"],
                ["Mix.Tasks.Seed", "mix", "1000"]
              ]
     end

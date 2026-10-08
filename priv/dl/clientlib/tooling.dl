@@ -14,15 +14,66 @@ tooling(m, basis, p) :- tooling_named(m, basis, p), !product_reached(m).
 .decl tooling_named(mod: symbol, basis: symbol, permille: number)
 
 tooling_named(m, basis, 1000) :- tooling_module(m, basis).
+tooling_named(m, basis, 1000) :- tooling_helper(m, basis).
 
 tooling_named(m, "prior", p) :-
   prior_tooling(m, _, _, p),
   p >= 900,
-  !tooling_module(m, _).
+  !tooling_module(m, _),
+  !tooling_helper(m, _).
 
 .decl named_tooling(mod: symbol)
 
 named_tooling(m) :- tooling_named(m, _, _).
+
+// A helper Mix tasks (or test support) share, outside the `Mix.` namespace or the
+// test directories: ex_quality's `ExQuality.Stages.Credo`, which only
+// `Mix.Tasks.Quality` runs. A module the structure names reaches it on calls, through
+// modules that are helpers themselves, and nothing the product runs does. The product
+// is entered where the program has an export nothing in it calls (`api_export`, so
+// not reflection or `module_info`): a library's API, a callback a behaviour runs, a
+// way in for callers argus does not see. Such a module, and every module it calls, is
+// product, even where the program's own callers are all tooling. Unlike
+// `library_face`, an unused export of a module the program uses still counts: the
+// step-down needs every way in to be tooling's. It carries the basis of the named
+// module it is reached from.
+.decl tooling_helper(mod: symbol, basis: symbol)
+
+tooling_helper(m, basis) :-
+  tooling_reached(m, basis),
+  !tooling_module(m, _),
+  !product_entered(m).
+
+// A module a module the structure names calls, directly or through other modules.
+.decl tooling_reached(mod: symbol, basis: symbol)
+
+tooling_reached(m, basis) :- tooling_module(from, basis), module_calls(from, m).
+
+tooling_reached(m, basis) :-
+  tooling_reached(from, basis),
+  module_calls(from, m),
+  !tooling_module(m, _).
+
+// A module the product runs: one the structure does not name with an export the
+// program never calls, or a module such a module calls in turn.
+.decl product_entered(mod: symbol)
+
+product_entered(m) :-
+  api_export(f),
+  !call_edge(_, f),
+  function_def(f, m, _, _, _),
+  !tooling_module(m, _).
+
+product_entered(m) :- product_entered(from), module_calls(from, m).
+
+// Some function of `from` calls one of `to`, another module.
+.decl module_calls(from: symbol, to: symbol)
+
+module_calls(from, to) :-
+  call_edge(c, g),
+  function_def(c, from, _, _, _),
+  function_def(g, to, _, _, _),
+  from != to.
 
 // A named module a module of the product calls, or one such a module
 // calls in turn.
