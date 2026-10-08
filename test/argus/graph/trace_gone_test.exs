@@ -49,9 +49,12 @@ defmodule Argus.Graph.TraceGoneTest do
     end
   end
 
+  # Telemetry handlers are the VM's: another test extracting the same
+  # fixture at the same moment is not this one's extraction.
   @doc false
-  def handle([:argus, :graph, :pack], _measurements, %{module: @module}, config),
-    do: send(config.test, :extracted)
+  def handle([:argus, :graph, :pack], _measurements, %{module: @module} = meta, config)
+      when meta.database == config.database,
+      do: send(config.test, :extracted)
 
   def handle([:roux, :query, :start], _, %{query_name: :schema_entry} = meta, config) do
     if meta.database == config.database and Process.put(config.once, true) == nil,
