@@ -4,7 +4,7 @@ defmodule Argus.DebugTest do
   @moduletag :tmp_dir
 
   alias Argus.Debug
-  alias Argus.Test.Memo
+  alias Argus.Test.{Files, Memo}
 
   defmodule EmptyExtractor do
     @behaviour Argus.Extractor
@@ -34,6 +34,12 @@ defmodule Argus.DebugTest do
       Path.join(tmp, "bundle"),
       opts
     )
+  end
+
+  # One bundle for the tests that only read it; a test that edits, moves
+  # or solves a bundle again captures its own.
+  setup_all do
+    %{shared: custom_bundle(Files.tmp_dir!("argus_debug"))}
   end
 
   test "PR #8 inspection preserves graph outputs and exposes process-local intermediates", %{
@@ -194,9 +200,8 @@ defmodule Argus.DebugTest do
   end
 
   test "bounded rows use named columns, reject unknown filters and distinguish truncation", %{
-    tmp_dir: tmp
+    shared: root
   } do
-    root = custom_bundle(tmp)
     table = Debug.rows!(root, "function_def", limit: 1)
     assert length(table.rows) == 1
     assert table.more?
@@ -218,8 +223,7 @@ defmodule Argus.DebugTest do
     end
   end
 
-  test "capture refuses an existing destination without changing its contents", %{tmp_dir: tmp} do
-    root = custom_bundle(tmp)
+  test "capture refuses an existing destination without changing its contents", %{shared: root} do
     before = File.read!(Path.join(root, "bundle.json"))
 
     assert_raise ArgumentError, ~r/already exists/, fn ->
@@ -250,9 +254,7 @@ defmodule Argus.DebugTest do
     assert Debug.rows!(root, "result").rows == rows
   end
 
-  test "CLI row output keeps headers and gives an actionable filter error", %{tmp_dir: tmp} do
-    root = custom_bundle(tmp)
-
+  test "CLI row output keeps headers and gives an actionable filter error", %{shared: root} do
     output =
       ExUnit.CaptureIO.capture_io(fn ->
         Mix.Tasks.Argus.Debug.run(["rows", root, "function_def", "--where", "name=init"])
