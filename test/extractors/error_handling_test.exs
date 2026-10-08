@@ -9,13 +9,25 @@ defmodule Argus.Extractors.ErrorHandlingTest do
     data
   end
 
+  # Rows whose first column is an instruction id, by function: the id is
+  # matched against its function rather than spelled, since its index
+  # moves with the compiler.
+  defp by_function(rows) do
+    rows
+    |> Enum.map(fn [id, func | rest] ->
+      assert id =~ ~r/^#{Regex.escape(func)}#\d+$/
+      [func |> String.split(":") |> List.last() | rest]
+    end)
+    |> Enum.sort()
+  end
+
   describe "extract/1 — bare rescue" do
     test "detects bare catch that swallows all exceptions" do
       facts = ErrorHandling.extract(disassemble(Argus.Test.Fixtures.BareRescue))
 
-      assert Map.has_key?(facts, :bare_rescue)
-      rows = facts[:bare_rescue]
-      assert rows != []
+      # A bare disassembly carries no Line table, so the handler's span
+      # has no end.
+      assert by_function(facts[:bare_rescue]) == [["swallow_all/1", ""]]
     end
 
     test "does not flag rescue with exception class filtering" do
@@ -171,55 +183,40 @@ defmodule Argus.Extractors.ErrorHandlingTest do
       assert guard_end == ""
     end
 
-    test "with the Line table, the span ends on the catch's highest line" do
-      beam = to_string(:code.which(Argus.Test.Fixtures.CatchShapes.NoprocLogged))
+    # The catch's last marked line is three below the call in both: in
+    # NoprocLogged the try is in tail position; in NoprocThenMore it is
+    # not, and the span stops at the catch's send/2 (the literal after it
+    # has no marker), not at the send/2 seven lines further on. A catch
+    # whose body is a literal gets no line of its own from the compiler;
+    # the span then stays on the call.
+    test "with the Line table, the span ends on the catch's last marked line" do
+      for mod <- [
+            Argus.Test.Fixtures.CatchShapes.NoprocLogged,
+            Argus.Test.Fixtures.CatchShapes.NoprocThenMore
+          ] do
+        {:ok, facts} =
+          Argus.Pipeline.extract([to_string(:code.which(mod))],
+            format: :typed,
+            extractors: [ErrorHandling]
+          )
 
-      {:ok, facts} =
-        Argus.Pipeline.extract([beam], format: :typed, extractors: [ErrorHandling])
+        lines = Map.new(facts.line_info, &{{&1.id.func, &1.id.arity, &1.id.idx}, &1.line})
 
-      lines = Map.new(facts.line_info, &{{&1.id.func, &1.id.arity, &1.id.idx}, &1.line})
+        line_of = fn
+          %Argus.InstrId{} = i ->
+            lines[{i.func, i.arity, i.idx}]
 
-      line_of = fn
-        %Argus.InstrId{} = i ->
-          lines[{i.func, i.arity, i.idx}]
+          id ->
+            {:ok, i} = Argus.InstrId.parse(id)
+            lines[{i.func, i.arity, i.idx}]
+        end
 
-        id ->
-          {:ok, i} = Argus.InstrId.parse(id)
-          lines[{i.func, i.arity, i.idx}]
+        assert [%{id: try_id, call: call, guard_end: guard_end}] = facts.try_call
+        assert {mod, line_of.(guard_end)} == {mod, line_of.(call) + 3}
+
+        # The handler's own row ends its span at the same place.
+        assert [%{span_end: ^guard_end}] = Enum.filter(facts.catch_class, &(&1.id == try_id))
       end
-
-      assert [%{call: call, guard_end: guard_end}] = facts.try_call
-      # The catch's last body line is three below the call in the fixture.
-      # (A catch whose body is a literal gets no line of its own from the
-      # compiler; the span then stays on the call.)
-      assert line_of.(guard_end) == line_of.(call) + 3
-    end
-
-    test "the span stops at the catch when the try is not in tail position" do
-      beam = to_string(:code.which(Argus.Test.Fixtures.CatchShapes.NoprocThenMore))
-
-      {:ok, facts} =
-        Argus.Pipeline.extract([beam], format: :typed, extractors: [ErrorHandling])
-
-      lines = Map.new(facts.line_info, &{{&1.id.func, &1.id.arity, &1.id.idx}, &1.line})
-
-      line_of = fn
-        %Argus.InstrId{} = i ->
-          lines[{i.func, i.arity, i.idx}]
-
-        id ->
-          {:ok, i} = Argus.InstrId.parse(id)
-          lines[{i.func, i.arity, i.idx}]
-      end
-
-      assert [%{call: call, guard_end: guard_end}] = facts.try_call
-      # The catch's last marked line (its send/2; the literal after it has
-      # no marker), not the send/2 seven lines further on.
-      assert line_of.(guard_end) == line_of.(call) + 3
-
-      # The handler's own row ends its span at the same place.
-      assert [%{id: try_id}] = facts.try_call
-      assert [%{span_end: ^guard_end}] = Enum.filter(facts.catch_class, &(&1.id == try_id))
     end
   end
 
@@ -307,17 +304,6 @@ defmodule Argus.Extractors.ErrorHandlingTest do
   end
 
   describe "extract/1 — trap_exit" do
-    test "detects Process.flag(:trap_exit, true)" do
-      facts = ErrorHandling.extract(disassemble(Argus.Test.Fixtures.TrapExitModule))
-
-      assert Map.has_key?(facts, :trap_exit)
-      rows = facts[:trap_exit]
-      assert rows != []
-
-      mods = Enum.map(rows, fn [_, _, mod] -> mod end)
-      assert Enum.any?(mods, &String.contains?(&1, "TrapExitModule"))
-    end
-
     test "names the call, so a rule can ask what runs after it" do
       facts = ErrorHandling.extract(disassemble(Argus.Test.Fixtures.TrapExitModule))
 
@@ -328,55 +314,38 @@ defmodule Argus.Extractors.ErrorHandlingTest do
 
     test "a literal false is a clear, a computed flag is neither" do
       facts = ErrorHandling.extract(disassemble(Argus.Test.Fixtures.TrapScopedModule))
+      mod = "Argus.Test.Fixtures.TrapScopedModule"
 
-      funcs = fn rel -> for [_id, func, _mod] <- Map.get(facts, rel, []), do: func end
-
-      assert Enum.any?(funcs.(:trap_exit), &(&1 =~ "with_trap/1"))
-      assert Enum.any?(funcs.(:untrap_exit), &(&1 =~ "with_trap/1"))
-      refute Enum.any?(funcs.(:trap_exit) ++ funcs.(:untrap_exit), &(&1 =~ "restore/1"))
+      # restore/1's flag is computed: it is in neither relation.
+      assert by_function(facts[:trap_exit]) == [["with_trap/1", mod]]
+      assert by_function(facts[:untrap_exit]) == [["with_trap/1", mod]]
     end
   end
 
   describe "extract/1 — exit calls" do
-    test "detects Process.exit/2" do
+    test "Process.exit/2 names its target, :erlang.exit/1 exits the caller" do
       facts = ErrorHandling.extract(disassemble(Argus.Test.Fixtures.ExitCaller))
 
-      assert Map.has_key?(facts, :exit_call)
-      rows = facts[:exit_call]
-      assert rows != []
-    end
-
-    test "detects :erlang.exit/1" do
-      facts = ErrorHandling.extract(disassemble(Argus.Test.Fixtures.ExitCaller))
-
-      rows = facts[:exit_call]
-
-      assert Enum.any?(rows, fn [_, func, _] ->
-               String.contains?(func, "exit_self")
-             end)
+      assert by_function(facts[:exit_call]) == [
+               ["exit_self/0", "self"],
+               ["kill/1", "dynamic"]
+             ]
     end
   end
 
   describe "extract/1 — ignored error results" do
-    test "detects ignored GenServer.start_link result" do
+    test "a start whose result the next instruction overwrites; a matched one is not" do
       facts = ErrorHandling.extract(disassemble(Argus.Test.Fixtures.IgnoredResultModule))
 
-      ignored = Map.get(facts, :ignored_error_result, [])
-
-      assert Enum.any?(ignored, fn [_, func, callee] ->
-               String.contains?(func, "ignored_start") and
-                 String.contains?(callee, "start_link")
-             end)
-    end
-
-    test "does not flag checked GenServer.start_link result" do
-      facts = ErrorHandling.extract(disassemble(Argus.Test.Fixtures.IgnoredResultModule))
-
-      ignored = Map.get(facts, :ignored_error_result, [])
-
-      refute Enum.any?(ignored, fn [_, func, _] ->
-               String.contains?(func, "checked_start")
-             end)
+      # checked_start/0 matches its result. A start whose result is handed
+      # on (to Enum.each, a dropped Enum.map, a helper) is result_lost's
+      # to read; a comprehension whose list is dropped never conses it.
+      assert by_function(facts[:ignored_error_result]) == [
+               ["-comprehension_dropped_start/1-fun-1-/2", "Agent.start_link/1"],
+               ["-filtered_dropped_start/1-fun-1-/2", "Agent.start_link/1"],
+               ["-two_generators_dropped_start/2-fun-1-/3", "Agent.start_link/1"],
+               ["ignored_start/0", "GenServer.start_link/2"]
+             ]
     end
   end
 
