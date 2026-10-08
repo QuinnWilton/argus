@@ -8,11 +8,28 @@ defmodule Argus.Extractors.ApiCalls.DistributedTest do
     data
   end
 
+  # A relation's rows for a module, by function: the instruction id is
+  # matched against its function rather than spelled, since its index
+  # moves with the compiler.
+  defp sites(mod, relation) do
+    mod
+    |> disassemble()
+    |> ApiCalls.extract()
+    |> Map.get(relation, [])
+    |> Enum.map(fn [id, func | rest] ->
+      assert id =~ ~r/^#{Regex.escape(func)}#\d+$/
+      [func |> String.split(":") |> List.last() | rest]
+    end)
+    |> Enum.sort()
+  end
+
   # One module of every timeout shape, compiled once.
   setup_all do
     [{_mod, bin}] =
       Code.compile_string("""
       defmodule Argus.DistributedTest.Timeouts do
+        def rpc4(n, a), do: :rpc.call(n, M, :f, a)
+        def rpc5(n, a), do: :rpc.call(n, M, :f, a, 5000)
         def erpc4(n, a), do: :erpc.call(n, M, :f, a)
         def erpc5(n, a), do: :erpc.call(n, M, :f, a, 7000)
         def erpc2(n, f), do: :erpc.call(n, f)
@@ -71,43 +88,10 @@ defmodule Argus.Extractors.ApiCalls.DistributedTest do
     }
   end
 
-  describe "extract/1 — RPC calls" do
-    test "detects :rpc.call/4 with infinity timeout" do
-      facts = ApiCalls.extract(disassemble(Argus.Test.Fixtures.RpcCaller))
-
-      assert Map.has_key?(facts, :rpc_call)
-      rows = facts[:rpc_call]
-
-      assert Enum.any?(rows, fn [_, func, variant, timeout] ->
-               String.contains?(func, "call_no_timeout") and
-                 variant == "rpc" and timeout == "-1"
-             end)
-    end
-
-    test "detects :rpc.call/5 with explicit timeout" do
-      facts = ApiCalls.extract(disassemble(Argus.Test.Fixtures.RpcCaller))
-
-      rows = facts[:rpc_call]
-
-      assert Enum.any?(rows, fn [_, func, variant, timeout] ->
-               String.contains?(func, "call_with_timeout") and
-                 variant == "rpc" and timeout == "5000"
-             end)
-    end
-
-    test "detects :rpc.multicall" do
-      facts = ApiCalls.extract(disassemble(Argus.Test.Fixtures.RpcCaller))
-
-      rows = facts[:rpc_call]
-
-      assert Enum.any?(rows, fn [_, _, variant, _] ->
-               variant == "multicall"
-             end)
-    end
-  end
-
   describe "extract/1 — timeouts at the signatures' positions" do
-    test "erpc waits forever unless it names a timeout", %{rpc: rpc} do
+    test "rpc and erpc wait forever unless they name a timeout", %{rpc: rpc} do
+      assert rpc["rpc4/2"] == {"rpc", "-1"}
+      assert rpc["rpc5/2"] == {"rpc", "5000"}
       assert rpc["erpc4/2"] == {"erpc", "-1"}
       assert rpc["erpc5/2"] == {"erpc", "7000"}
       assert rpc["erpc2/2"] == {"erpc", "-1"}
@@ -193,63 +177,23 @@ defmodule Argus.Extractors.ApiCalls.DistributedTest do
   end
 
   describe "extract/1 — :global synchronization" do
-    test "records :global.set_lock/2 with infinity retries" do
-      facts = ApiCalls.extract(disassemble(Argus.Test.Fixtures.GlobalLockModule))
-
-      assert Map.has_key?(facts, :global_op)
-      ops = facts[:global_op]
-
-      assert Enum.any?(ops, fn [_id, func, op, retries, _nodes] ->
-               String.contains?(func, "lock_default") and
-                 op == "set_lock" and retries == "infinity"
-             end)
-    end
-
-    test "records :global.set_lock/3 with retries=0 as non-blocking" do
-      facts = ApiCalls.extract(disassemble(Argus.Test.Fixtures.GlobalLockModule))
-      ops = facts[:global_op]
-
-      assert Enum.any?(ops, fn [_id, func, op, retries, _nodes] ->
-               String.contains?(func, "try_lock_once") and
-                 op == "set_lock" and retries == "0"
-             end)
-    end
-
-    test "records :global.set_lock/3 with explicit infinity retries" do
-      facts = ApiCalls.extract(disassemble(Argus.Test.Fixtures.GlobalLockModule))
-      ops = facts[:global_op]
-
-      assert Enum.any?(ops, fn [_id, func, _op, retries, _nodes] ->
-               String.contains?(func, "lock_infinity") and retries == "infinity"
-             end)
-    end
-
-    test "records :global.set_lock/3 with positive integer retries" do
-      facts = ApiCalls.extract(disassemble(Argus.Test.Fixtures.GlobalLockModule))
-      ops = facts[:global_op]
-
-      assert Enum.any?(ops, fn [_id, func, _op, retries, _nodes] ->
-               String.contains?(func, "lock_with_retries") and retries == "5"
-             end)
-    end
-
-    test "records :global.trans/2 as blocking with infinity retries" do
-      facts = ApiCalls.extract(disassemble(Argus.Test.Fixtures.GlobalLockModule))
-      ops = facts[:global_op]
-
-      assert Enum.any?(ops, fn [_id, func, op, retries, _nodes] ->
-               String.contains?(func, "trans_default") and
-                 op == "trans" and retries == "infinity"
-             end)
-    end
-
-    test "records :global.del_lock as non-blocking" do
-      facts = ApiCalls.extract(disassemble(Argus.Test.Fixtures.GlobalLockModule))
-      ops = facts[:global_op]
-
-      assert Enum.any?(ops, fn [_id, _func, op, retries, _nodes] ->
-               op == "del_lock" and retries == "0"
-             end)
+    test "each lock, transaction and lookup with its retries and node list" do
+      assert sites(Argus.Test.Fixtures.GlobalLockModule, :global_op) == [
+               # del_lock never waits.
+               ["del/2", "del_lock", "0", "unknown"],
+               # set_lock/2 and trans/2 leave out their retries, which
+               # default to infinity; trans/2 its node list too, which is
+               # every known node.
+               ["lock_default/2", "set_lock", "infinity", "unknown"],
+               ["lock_infinity/2", "set_lock", "infinity", "unknown"],
+               ["lock_with_retries/2", "set_lock", "5", "unknown"],
+               ["trans_default/2", "trans", "infinity", "cluster"],
+               # Zero retries is one attempt that does not block.
+               ["trans_zero_retries/3", "trans", "0", "unknown"],
+               ["try_lock_once/2", "set_lock", "0", "unknown"],
+               # A lookup takes no node list.
+               ["whereis/1", "whereis_name", "0", ""]
+             ]
     end
   end
 
@@ -294,65 +238,40 @@ defmodule Argus.Extractors.ApiCalls.DistributedTest do
       assert {"cons_arg/2", "set_lock", "unknown"} in nodes
       assert {"named/1", "set_lock", "unknown"} in nodes
     end
-
-    test "a lookup and a send carry no node list" do
-      facts = ApiCalls.extract(disassemble(Argus.Test.Fixtures.GlobalLockModule))
-
-      assert [[_id, _func, "whereis_name", "0", ""]] =
-               Enum.filter(facts[:global_op], &(Enum.at(&1, 2) == "whereis_name"))
-    end
   end
 
   describe "extract/1 — global registration" do
-    test "detects :global.register_name" do
-      facts = ApiCalls.extract(disassemble(Argus.Test.Fixtures.GlobalRegisterModule))
-
-      assert Map.has_key?(facts, :global_register)
-      rows = facts[:global_register]
-      assert rows != []
+    test "each register_name with its name and arity" do
+      assert sites(Argus.Test.Fixtures.GlobalRegisterModule, :global_register) == [
+               ["register/2", "dynamic", "2"],
+               ["register_with_resolve/2", "dynamic", "3"]
+             ]
     end
   end
 
   describe "extract/1 — node operations" do
-    test "detects Node.connect" do
-      facts = ApiCalls.extract(disassemble(Argus.Test.Fixtures.NodeOperationsModule))
+    test "connect, disconnect and ping" do
+      rows = sites(Argus.Test.Fixtures.NodeOperationsModule, :node_operation)
 
-      assert Map.has_key?(facts, :node_operation)
-      rows = facts[:node_operation]
-      ops = Enum.map(rows, fn [_, _, op] -> op end)
-      assert "connect" in ops
-    end
-
-    test "detects Node.disconnect" do
-      facts = ApiCalls.extract(disassemble(Argus.Test.Fixtures.NodeOperationsModule))
-
-      rows = facts[:node_operation]
-      ops = Enum.map(rows, fn [_, _, op] -> op end)
-      assert "disconnect" in ops
-    end
-
-    test "detects Node.ping" do
-      facts = ApiCalls.extract(disassemble(Argus.Test.Fixtures.NodeOperationsModule))
-
-      rows = facts[:node_operation]
-      ops = Enum.map(rows, fn [_, _, op] -> op end)
-      assert "ping" in ops
+      # Node.list/0 compiles to :erlang.nodes/0, so its table entry never
+      # matches; list_nodes/0 is left out of the comparison.
+      assert Enum.reject(rows, &match?(["list_nodes/0" | _], &1)) == [
+               ["connect/1", "connect"],
+               ["disconnect/1", "disconnect"],
+               ["ping/1", "ping"]
+             ]
     end
   end
 
   describe "extract/1 — distributed stores" do
-    test "detects :mnesia operations" do
-      facts = ApiCalls.extract(disassemble(Argus.Test.Fixtures.MnesiaModule))
-
-      assert Map.has_key?(facts, :distributed_store_op)
-      rows = facts[:distributed_store_op]
-
-      stores = Enum.map(rows, fn [_, _, store, _] -> store end)
-      assert "mnesia" in stores
-
-      ops = Enum.map(rows, fn [_, _, _, op] -> op end)
-      assert "transaction" in ops
-      assert "read" in ops
+    test "each :mnesia operation, in a transaction's closure or not" do
+      assert sites(Argus.Test.Fixtures.MnesiaModule, :distributed_store_op) == [
+               ["-read_in_transaction/2-fun-0-/2", "mnesia", "read"],
+               ["dirty_read/2", "mnesia", "dirty_read"],
+               ["read_in_transaction/2", "mnesia", "transaction"],
+               ["read_outside_transaction/2", "mnesia", "read"],
+               ["write/2", "mnesia", "write"]
+             ]
     end
   end
 end
