@@ -133,15 +133,8 @@ defmodule Argus.Pipeline.Emit do
   # the wrong place is a nuisance or a hang, and it is only visible by
   # following a label, so it is resolved here.
   defp emit_receives(facts, func_id, normalized) do
-    labels =
-      normalized
-      |> Enum.with_index()
-      |> Enum.reduce(%{}, fn
-        {{_id, {:label, n}}, idx}, acc -> Map.put(acc, n, idx)
-        _, acc -> acc
-      end)
-
     instrs = Enum.map(normalized, fn {_id, instr} -> instr end)
+    labels = Instr.labels(instrs)
 
     Enum.reduce(normalized, facts, fn
       {id, {:loop_rec, {:f, fail}, _dst}}, acc ->
