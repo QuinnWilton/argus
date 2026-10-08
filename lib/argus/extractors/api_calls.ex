@@ -33,7 +33,8 @@ defmodule Argus.Extractors.ApiCalls do
   alias Argus.Extractor.Resolve
   alias Argus.InstrId
 
-  import Argus.Extractor.Helpers, only: [each_remote_call: 3, register: 1]
+  import Argus.Extractor.Helpers, only: [each_remote_call: 3]
+  import Argus.Instr, only: [register: 1]
   import Argus.Extractor.Facts, only: [add_fact: 3, track_dynamic: 5, track_imprecision: 4]
 
   import Argus.Extractor.Resolve,

@@ -343,12 +343,4 @@ defmodule Argus.Extractor.Helpers do
     {name, arity} = Normalize.func_id_name_arity(func_id)
     cfg(module_data, name, arity)
   end
-
-  @doc """
-  A register operand with its type annotation stripped: `{:tr, reg, type}`
-  becomes `reg`. Seven extractors carried a copy of this clause.
-  """
-  @spec register(term()) :: term()
-  def register({:tr, reg, _type}), do: reg
-  def register(other), do: other
 end

@@ -48,6 +48,7 @@ defmodule Argus.Extractors.DerivedInspect do
   @behaviour Argus.Extractor
 
   import Argus.Extractor.Facts, only: [add_fact: 3]
+  import Argus.Instr, only: [register: 1]
 
   # Where the derived inspect/2 hands the kept fields over: Inspect.Map
   # when nothing is filtered, Inspect.Any otherwise; `inspect/4` through
@@ -139,24 +140,21 @@ defmodule Argus.Extractors.DerivedInspect do
 
     Enum.flat_map(instrs, fn
       {:select_val, reg, _fail, {:list, cases}} ->
-        if untyped(reg) in registers, do: case_atoms(cases), else: []
+        if register(reg) in registers, do: case_atoms(cases), else: []
 
       {:test, op, _fail, [a, {:atom, field}]} when op in [:is_eq_exact, :is_ne_exact] ->
-        if untyped(a) in registers, do: [field], else: []
+        if register(a) in registers, do: [field], else: []
 
       _ ->
         []
     end)
   end
 
-  defp field_registers([{:atom, :field}, reg | _rest]), do: [untyped(reg)]
+  defp field_registers([{:atom, :field}, reg | _rest]), do: [register(reg)]
   defp field_registers([_key, _reg | rest]), do: field_registers(rest)
   defp field_registers(_), do: []
 
   defp case_atoms([{:atom, value}, _label | rest]), do: [value | case_atoms(rest)]
   defp case_atoms([_value, _label | rest]), do: case_atoms(rest)
   defp case_atoms(_), do: []
-
-  defp untyped({:tr, reg, _type}), do: reg
-  defp untyped(reg), do: reg
 end

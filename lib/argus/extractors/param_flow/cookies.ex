@@ -120,7 +120,7 @@ defmodule Argus.Extractors.ParamFlow.Cookies do
   # The key a get_map_elements pair reads into `dst`.
   defp key_of(pairs, dst) do
     Enum.find_value(Enum.chunk_every(pairs, 2), :none, fn [key, d] ->
-      if Helpers.register(d) == dst, do: literal_key(key)
+      if Instr.register(d) == dst, do: literal_key(key)
     end)
   end
 
@@ -165,7 +165,7 @@ defmodule Argus.Extractors.ParamFlow.Cookies do
   # the register it wrote), or `:none` when a parameter reaches it, no
   # write does, or two answers differ.
   defp agree(instrs, idx, reg, answer) do
-    case writers(instrs, idx, Helpers.register(reg), %{}) do
+    case writers(instrs, idx, Instr.register(reg), %{}) do
       {:ok, [_ | _] = writers} ->
         writers |> Enum.map(answer) |> Enum.uniq() |> one()
 
@@ -213,7 +213,7 @@ defmodule Argus.Extractors.ParamFlow.Cookies do
   defp literal_key(_operand), do: :none
 
   defp spell(operand) do
-    case Helpers.register(operand) do
+    case Instr.register(operand) do
       {kind, n} when kind in [:x, :y] -> "#{kind}#{n}"
       _ -> nil
     end

@@ -34,7 +34,7 @@ defmodule Argus.Extractors.Monitor.ExitSignal do
 
   alias Argus.Instr
 
-  import Argus.Extractor.Helpers, only: [register: 1]
+  import Argus.Instr, only: [register: 1]
 
   # The decision tree of a receive's heads is small; the bound keeps a
   # malformed one from walking forever.

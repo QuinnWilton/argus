@@ -132,7 +132,8 @@ which a change appeared; older names and APIs may have changed since then.
 - `Argus.Extractor.Helpers`'s deprecated delegates (`add_fact/3`,
   `resolve_register/3`, `spell/1` and the rest moved by concern in 0.20):
   call `Argus.Extractor.Facts`, `Resolve`, `Identity`, `Terms` and `Shapes`
-  directly.
+  directly. `Argus.Extractor.Helpers.register/1` went too: it is
+  `Argus.Instr.register/1`.
 - Functions nothing called: `Argus.Pipeline.rows_iodata/1` (use
   `Argus.Tsv.encode/1`), `Argus.Pipeline.Writer.append/2`,
   `Argus.Priors.derive/2` and `read_facts/2`, `Argus.Specs.shapes/2`,

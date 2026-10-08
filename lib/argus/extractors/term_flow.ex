@@ -33,7 +33,7 @@ defmodule Argus.Extractors.TermFlow do
   alias Argus.InstrId
   alias Argus.Pipeline.Normalize
 
-  import Argus.Extractor.Helpers, only: [register: 1]
+  import Argus.Instr, only: [register: 1]
   import Argus.Extractor.Facts, only: [add_fact: 3]
 
   # Starts that return `{:ok, pid}`: the register holding the callback

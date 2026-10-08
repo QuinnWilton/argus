@@ -153,13 +153,9 @@ defmodule Argus.Extractors.Monitor do
   alias Argus.InstrId
 
   import Argus.Extractor.Helpers,
-    only: [
-      cfg: 3,
-      each_remote_call: 3,
-      match_local_call: 1,
-      match_remote_call: 1,
-      register: 1
-    ]
+    only: [cfg: 3, each_remote_call: 3, match_local_call: 1, match_remote_call: 1]
+
+  import Argus.Instr, only: [register: 1]
 
   import Argus.Extractor.Facts, only: [add_fact: 3]
   import Argus.Extractor.Resolve, only: [resolve_atom: 3]

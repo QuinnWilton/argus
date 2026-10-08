@@ -23,8 +23,8 @@ defmodule Argus.Extractor.ResultFate do
   (`Argus.Extractors.ErrorHandling`) ask it.
   """
 
-  import Argus.Extractor.Helpers,
-    only: [cfg: 2, match_local_call: 1, match_remote_call: 1, register: 1]
+  import Argus.Extractor.Helpers, only: [cfg: 2, match_local_call: 1, match_remote_call: 1]
+  import Argus.Instr, only: [register: 1]
 
   alias Argus.Cfg.Block
   alias Argus.Cfg.Function, as: Graph

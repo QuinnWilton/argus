@@ -140,9 +140,10 @@ defmodule Argus.Extractors.ErrorHandling do
       instructions_from_label: 2,
       match_local_call: 1,
       match_remote_call: 1,
-      register: 1,
       scan_functions: 4
     ]
+
+  import Argus.Instr, only: [register: 1]
 
   import Argus.Extractor.Facts, only: [add_fact: 3, track_dynamic: 5, track_imprecision: 5]
   import Argus.Extractor.Identity, only: [key_identity: 4]

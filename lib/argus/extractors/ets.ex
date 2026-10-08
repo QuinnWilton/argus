@@ -72,7 +72,8 @@ defmodule Argus.Extractors.ETS do
   alias Argus.InstrId
   alias Argus.Pipeline.Normalize
 
-  import Argus.Extractor.Helpers, only: [each_remote_call: 3, match_remote_call: 1, register: 1]
+  import Argus.Extractor.Helpers, only: [each_remote_call: 3, match_remote_call: 1]
+  import Argus.Instr, only: [register: 1]
   import Argus.Extractor.Facts, only: [add_fact: 3, track_dynamic: 5, track_imprecision: 5]
   import Argus.Extractor.Identity, only: [key_identity: 4, tuple_element_identity: 5]
 

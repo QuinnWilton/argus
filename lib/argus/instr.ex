@@ -159,7 +159,7 @@ defmodule Argus.Instr do
     cond do
       register(dst) != reg -> nil
       src == nil -> {:literal, []}
-      true -> operand(src)
+      true -> register(src)
     end
   end
 
@@ -439,14 +439,11 @@ defmodule Argus.Instr do
   # The register operands among `operands`, typed ones unwrapped. A
   # literal is never looked into: a `{:literal, [x: 0]}` holds data.
   defp regs(operands) do
-    for operand <- operands, reg = operand(operand), register?(reg), do: reg
+    for operand <- operands, reg = register(operand), register?(reg), do: reg
   end
 
   defp register?({kind, n}) when kind in [:x, :y, :fr] and is_integer(n), do: true
   defp register?(_operand), do: false
-
-  defp operand({:tr, reg, _type}), do: reg
-  defp operand(other), do: other
 
   defp fail({:f, label}) when is_integer(label) and label > 0, do: [label]
   defp fail(_no_label), do: []

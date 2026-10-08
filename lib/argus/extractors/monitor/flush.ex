@@ -29,7 +29,8 @@ defmodule Argus.Extractors.Monitor.Flush do
   alias Argus.Cfg.Walk
   alias Argus.Extractor.Dispatch
 
-  import Argus.Extractor.Helpers, only: [match_remote_call: 1, register: 1]
+  import Argus.Extractor.Helpers, only: [match_remote_call: 1]
+  import Argus.Instr, only: [register: 1]
 
   # The result is looked for this many instructions after the call.
   @max_steps 16

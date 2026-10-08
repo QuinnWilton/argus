@@ -74,6 +74,7 @@ defmodule Argus.Extractors.Supervision do
     only: [call_result_origin: 3, keyword_value_register: 4, resolve_register: 3]
 
   import Argus.Extractor.Terms, only: [list_elements: 1, mentions?: 2]
+  import Argus.Instr, only: [register: 1]
 
   # The restart and type an OTP child spec states: what tells its tuple
   # form from any other 6-tuple.
@@ -1945,7 +1946,7 @@ defmodule Argus.Extractors.Supervision do
     consumed =
       MapSet.new(
         for {{:put_list, _head, tail, _dst}, idx} <- indexed,
-            reg = operand_register(tail),
+            reg = register(tail),
             match?({:x, _}, reg) or match?({:y, _}, reg),
             do: {reg, idx}
       )
@@ -1956,7 +1957,7 @@ defmodule Argus.Extractors.Supervision do
       indexed
       |> Enum.filter(&match?({{:put_list, _, _, _}, _}, &1))
       |> Enum.reject(fn {{:put_list, _, _, dst}, idx} ->
-        Enum.any?(consumed, fn {reg, at} -> reg == operand_register(dst) and at > idx end)
+        Enum.any?(consumed, fn {reg, at} -> reg == register(dst) and at > idx end)
       end)
       |> List.last()
 
@@ -1976,7 +1977,7 @@ defmodule Argus.Extractors.Supervision do
     do: extract_child_from_cons_operand(operand)
 
   defp cons_head(operand, instrs, idx, functions) do
-    case last_writer(instrs, idx, operand_register(operand)) do
+    case last_writer(instrs, idx, register(operand)) do
       {{:put_tuple2, _dst, {:list, elements}}, at} ->
         extract_child_from_tuple_elements(elements, instrs, at, functions)
 
@@ -1995,7 +1996,7 @@ defmodule Argus.Extractors.Supervision do
   defp cons_tail(nil, _instrs, _idx, _functions), do: []
 
   defp cons_tail(operand, instrs, idx, functions) do
-    case last_writer(instrs, idx, operand_register(operand)) do
+    case last_writer(instrs, idx, register(operand)) do
       {{:put_list, head, tail, _dst}, at} ->
         cons_head(head, instrs, at, functions) ++ cons_tail(tail, instrs, at, functions)
 
@@ -2038,12 +2039,12 @@ defmodule Argus.Extractors.Supervision do
     {feeds_list?, _aliases} =
       Enum.reduce_while(rest, {false, MapSet.new([dst])}, fn
         {:move, src, to}, {_, aliases} ->
-          if MapSet.member?(aliases, operand_register(src)),
+          if MapSet.member?(aliases, register(src)),
             do: {:cont, {false, MapSet.put(aliases, to)}},
             else: {:cont, {false, aliases}}
 
         {:put_list, head, _tail, _}, {_, aliases} ->
-          if MapSet.member?(aliases, operand_register(head)),
+          if MapSet.member?(aliases, register(head)),
             do: {:halt, {true, aliases}},
             else: {:cont, {false, aliases}}
 
@@ -2071,9 +2072,6 @@ defmodule Argus.Extractors.Supervision do
 
     feeds_list? or returned?
   end
-
-  defp operand_register({:tr, reg, _}), do: reg
-  defp operand_register(reg), do: reg
 
   defp extract_child_from_cons_operand({:atom, mod}) when is_atom(mod) do
     # Elixir modules only, as for tuples: a lowercase atom at the head of

@@ -126,7 +126,7 @@ defmodule Argus.Extractors.Dependence do
   alias Argus.Pipeline.Normalize
   alias Argus.Purity.Effects
 
-  import Argus.Extractor.Helpers, only: [register: 1]
+  import Argus.Instr, only: [register: 1]
   import Argus.Extractor.Facts, only: [add_fact: 3]
 
   # A fixpoint over a finite lattice converges; the bound only guards a bug.
