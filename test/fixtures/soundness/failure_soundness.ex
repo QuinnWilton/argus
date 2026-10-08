@@ -139,8 +139,6 @@ end
 
 defmodule S2c.Fail.LogWork do
   # Adversarial: work in Logger's own call arguments, a project call.
-  require Logger
-
   def run(x) do
     try do
       :logger.warning("~p", [S2c.Fail.LogWork.store!(x)])

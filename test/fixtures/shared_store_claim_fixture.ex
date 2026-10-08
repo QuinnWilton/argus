@@ -235,10 +235,11 @@ defmodule Argus.Test.Fixtures.SharedStoreClaim do
   defmodule SentinelLookup do
     @compile {:no_warn_undefined, ConCache}
     def lookup(cache, key) do
-      case ConCache.get(cache, key) do
-        nil -> :not_found
-        value -> value
-      end
+      value = ConCache.get(cache, key)
+      # Tested through an alias, so Elixir 1.20 does not narrow `value` and
+      # flag ChangedSentinel's nil clause; the bytecode is the same.
+      found = value
+      if found == nil, do: :not_found, else: value
     end
   end
 

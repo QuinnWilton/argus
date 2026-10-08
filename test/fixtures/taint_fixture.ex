@@ -164,12 +164,12 @@ defmodule Argus.Test.Fixtures.Taint do
                 c18 c19 c20 c21 c22 c23 c24 c25 c26 c27 c28 c29 c30 c31 c32 c33 c34)
 
     def handle_event("tab", %{"tab" => tab}, socket) do
-      if tab in ["info", "logs"], do: String.to_atom("tab_" <> tab)
+      _ = if tab in ["info", "logs"], do: String.to_atom("tab_" <> tab)
       {:noreply, socket}
     end
 
     def handle_event("sort", %{"by" => column}, socket) do
-      if column in @columns, do: String.to_atom(column)
+      _ = if column in @columns, do: String.to_atom(column)
       {:noreply, socket}
     end
   end
