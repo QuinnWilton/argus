@@ -127,6 +127,18 @@ which a change appeared; older names and APIs may have changed since then.
   on a loaded machine) is named, and its findings are neither compared nor
   taken.
 
+### Removed
+
+- `Argus.Extractor.Helpers`'s deprecated delegates (`add_fact/3`,
+  `resolve_register/3`, `spell/1` and the rest moved by concern in 0.20):
+  call `Argus.Extractor.Facts`, `Resolve`, `Identity`, `Terms` and `Shapes`
+  directly.
+- Functions nothing called: `Argus.Pipeline.rows_iodata/1` (use
+  `Argus.Tsv.encode/1`), `Argus.Pipeline.Writer.append/2`,
+  `Argus.Priors.derive/2` and `read_facts/2`, `Argus.Specs.shapes/2`,
+  `Argus.Cfg.Function.region/2`, `Argus.Instr.Reaching.prepare/2`,
+  `Argus.Purity.Effects.protocol_modules/0` and `pure_modules/0`.
+
 ### Other changes
 
 - Extraction precision fixes: an init/1 that spawns on another node is a remote

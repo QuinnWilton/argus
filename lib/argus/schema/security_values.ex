@@ -33,7 +33,7 @@ defmodule Argus.Schema.SecurityValues do
         doc: """
         An identity's root. A call root names its instruction, so two invocations of \
         the same API remain distinct. Local roots describe supported single writes \
-        but make no claim about their contents. Literals use Helpers.spell/1.
+        but make no claim about their contents. Literals use Terms.spell/1.
         """
       },
       %{
@@ -43,7 +43,7 @@ defmodule Argus.Schema.SecurityValues do
           {:value, :symbol, "projected value identity"},
           {:parent, :symbol, "identity of the containing value"},
           {:kind, :symbol, "map or tuple"},
-          {:key, :symbol, "Helpers.spell/1 map key or zero-based tuple index"}
+          {:key, :symbol, "Terms.spell/1 map key or zero-based tuple index"}
         ],
         doc: """
         An exact field projection, preserving the containing value's identity. Equal \

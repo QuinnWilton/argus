@@ -92,7 +92,7 @@ failure disappear.
 
 ## Correctness constraints
 
-- Facts must be deterministic across VMs. Use `Helpers.spell/1` for literal values
+- Facts must be deterministic across VMs. Use `Argus.Extractor.Terms.spell/1` for literal values
   and sort rows derived from atom-keyed maps or sets.
 - A missing relation file is an error, not an empty relation. Writers must create
   empty files for empty outputs. Stages write into private scratch directories and

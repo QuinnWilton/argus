@@ -835,7 +835,7 @@
 .decl security_value_field(value: symbol, parent: symbol, kind: symbol, key: symbol) mutable
 .input security_value_field
 
-// An identity's root. A call root names its instruction, so two invocations of the same API remain distinct. Local roots describe supported single writes but make no claim about their contents. Literals use Helpers.spell/1.
+// An identity's root. A call root names its instruction, so two invocations of the same API remain distinct. Local roots describe supported single writes but make no claim about their contents. Literals use Terms.spell/1.
 //
 .decl security_value_origin(value: symbol, func: symbol, kind: symbol, source: symbol) mutable
 .input security_value_origin
