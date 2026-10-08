@@ -39,91 +39,51 @@ defmodule Argus.Analyses.MailboxReplyTest do
     r |> never_replies() |> Enum.map(&hd/1) |> Enum.uniq() |> Enum.sort()
   end
 
-  defp named?(list, fragment), do: Enum.any?(list, &String.contains?(&1, fragment))
+  test "only a deferral that keeps no `from` is reported", ctx do
+    assert mods(results(ctx), "never_replies") ==
+             Enum.sort([
+               inspect(R.Forgets),
+               # Unrelated work between building the tuple and returning
+               # it does not keep `from`.
+               inspect(R.BuildsBeforeUnrelatedWork),
+               # One clause cannot vouch for another: handle_call/3
+               # compiles every clause into one function, so an answer per
+               # function lets the correct clauses hide the broken one, and
+               # a callback where exactly one clause forgets is the case
+               # that occurs. The fact is per return site for this.
+               inspect(R.MixedClauses)
+             ])
 
-  describe "detection" do
-    test "unrelated work between tuple construction and return does not keep from", ctx do
-      assert named?(mods(results(ctx), "never_replies"), "BuildsBeforeUnrelatedWork")
-    end
-
-    test "deferring without keeping `from` is reported", ctx do
-      assert [[mod, func, id]] =
-               results(ctx)
-               |> never_replies()
-               |> Enum.filter(&(hd(&1) =~ "Reply.Forgets"))
-
-      assert mod =~ "Reply.Forgets"
-      assert func =~ "handle_call/3"
-      assert id =~ "handle_call/3#", "should anchor the return site, not the function"
-    end
-
-    test "the return site is anchored, not the clause's first instruction", ctx do
-      assert [[_mod, func, id]] =
-               results(ctx)
-               |> never_replies()
-               |> Enum.filter(&(hd(&1) =~ "Reply.Forgets"))
-
-      assert String.starts_with?(id, func <> "#"),
-             "the anchor must sit inside the function it names"
-    end
+    # Deliberately not reported:
+    #   * KeepsFromAsState, BuildsBeforeReply, BuildsBeforeHandoff: using
+    #     `from` in or after building the tuple fulfils the contract.
+    #   * RepliesDirectly: replying directly promises nothing.
+    #   * DefersProperly: storing `from` and replying from another
+    #     callback is the point.
+    #   * HandsOff: handing `from` to another process is not this
+    #     analysis's business.
+    #   * StopsWithReply: {:stop, reason, reply, state} answers the caller.
+    #   * CastsAndInfos: handle_cast and handle_info return :noreply as a
+    #     matter of course.
+    #   * NotAGenServer: a handle_call outside a GenServer means nothing.
+    #   * StoresAndForgets: storing `from` and never replying hangs its
+    #     callers as surely as Forgets, but stating it needs escape
+    #     analysis this does not have (`from` leaves through a send, a
+    #     spawned closure, an ETS write, any call taking it), and the
+    #     heuristic version found nothing across some six thousand modules
+    #     before it was removed. Pinned so that its firing is a decision,
+    #     not a drift.
   end
 
-  describe "one clause cannot vouch for another" do
-    # The whole reason the fact is per return site. handle_call/3 compiles
-    # every clause into one function, so a function-level answer lets the
-    # correct clause hide the broken one — and a multi-clause callback where
-    # exactly one clause forgets is the case that actually occurs.
-    test "a broken clause is found alongside correct siblings", ctx do
-      assert named?(mods(results(ctx), "never_replies"), "MixedClauses"),
-             "the forgetful clause was masked by its well-behaved siblings"
-    end
-  end
+  test "a deferral is anchored at its return site, inside the function it names", ctx do
+    assert [[mod, func, id]] =
+             results(ctx)
+             |> never_replies()
+             |> Enum.filter(&(hd(&1) == inspect(R.Forgets)))
 
-  describe "what is deliberately not reported" do
-    test "using from in or after tuple construction fulfills the reply contract", ctx do
-      r = results(ctx)
-      refute named?(mods(r, "never_replies"), "KeepsFromAsState")
-      refute named?(mods(r, "never_replies"), "BuildsBeforeReply")
-      refute named?(mods(r, "never_replies"), "BuildsBeforeHandoff")
-    end
-
-    test "replying directly promises nothing", ctx do
-      refute named?(mods(results(ctx), "never_replies"), "RepliesDirectly")
-    end
-
-    test "storing `from` and replying from another callback is the point", ctx do
-      r = results(ctx)
-      refute named?(mods(r, "never_replies"), "DefersProperly")
-    end
-
-    test "handing `from` to another process is not this analysis's business", ctx do
-      r = results(ctx)
-      refute named?(mods(r, "never_replies"), "HandsOff")
-    end
-
-    test "{:stop, reason, reply, state} answers the caller", ctx do
-      refute named?(mods(results(ctx), "never_replies"), "StopsWithReply")
-    end
-
-    test "handle_cast and handle_info return :noreply as a matter of course", ctx do
-      r = results(ctx)
-      refute named?(mods(r, "never_replies"), "CastsAndInfos")
-    end
-
-    test "a handle_call outside a GenServer means nothing", ctx do
-      refute named?(mods(results(ctx), "never_replies"), "NotAGenServer")
-    end
-
-    test "storing `from` and never replying is a real bug this does not claim", ctx do
-      # StoresAndForgets hangs its callers exactly as surely as Forgets
-      # does. Stating it precisely needs escape analysis this does not have
-      # — `from` leaves through a send, a spawned closure, an ETS write, or
-      # any call that happens to take it as an argument — and the heuristic
-      # version found nothing across roughly six thousand modules before it
-      # was removed. Pinned so that if it ever starts firing, that is a
-      # decision someone made rather than a drift nobody noticed.
-      refute named?(mods(results(ctx), "never_replies"), "StoresAndForgets")
-    end
+    assert mod == inspect(R.Forgets)
+    assert func =~ "handle_call/3"
+    assert String.starts_with?(id, func <> "#"), "the anchor is the return site, not the head"
   end
 
   describe "the extractor" do

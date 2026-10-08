@@ -21,32 +21,20 @@ defmodule Argus.Analyses.MailboxMessageTest do
     |> Enum.map(&hd/1)
   end
 
-  defp named?(list, f), do: Enum.any?(list, &String.contains?(&1, f))
+  test "only a tag the module sends itself and cannot handle is reported", ctx do
+    assert Enum.uniq(mods(ctx)) == [inspect(M.Mismatch)]
 
-  test "a tag the module sends itself and cannot handle is reported", ctx do
-    assert named?(mods(ctx), "MessageContract.Mismatch")
-  end
-
-  test "halves that agree are silent", ctx do
-    refute named?(mods(ctx), "MessageContract.Agrees")
-  end
-
-  test "a catch-all means no tag can fail", ctx do
-    refute named?(mods(ctx), "MessageContract.CatchAll")
-  end
-
-  test "an unrelated atom near a cast is not attributed to it", ctx do
-    # The shape that made the first version unsound. It scanned backwards
-    # for the last write to {x,1} and found GenServer.reply's `:ok`,
-    # reporting :amqp_channel as casting :ok. def_use names the write that
-    # actually reaches the call, and here the message is a parameter, so
-    # there is no literal to attribute at all.
-    refute named?(mods(ctx), "MessageContract.StaleWrite")
-  end
-
-  test "a call points-to follows to another module's server is that server's business", ctx do
-    # Forwarder calls the Sink it started with :sweep; Sink names no tag,
-    # so only points-to says the call is not Forwarder's own.
-    refute named?(mods(ctx), "MessageContract.Forwarder")
+    # Silent:
+    #   * Agrees: its halves agree.
+    #   * CatchAll: a catch-all means no tag can fail.
+    #   * StaleWrite: an unrelated atom near a cast is not attributed to
+    #     it. The shape that made the first version unsound: it scanned
+    #     backwards for the last write to {x,1} and found
+    #     GenServer.reply's `:ok`, reporting :amqp_channel as casting :ok.
+    #     def_use names the write that reaches the call, and here the
+    #     message is a parameter, so there is no literal to attribute.
+    #   * Forwarder: it calls the Sink it started with :sweep; Sink names
+    #     no tag, so only points-to says the call is not Forwarder's own,
+    #     and the call is that server's business.
   end
 end

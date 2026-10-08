@@ -3,8 +3,11 @@ defmodule Argus.Analyses.MailboxUnhandledInfoTest do
   @moduletag :flowlog
 
   alias Argus.Analyses.Mailbox
+  alias Argus.Test.Fixtures, as: F
+  alias Argus.Test.Fixtures.Hypothesized, as: H
+  alias Argus.Test.Fixtures.LateMessage, as: L
   alias Argus.Test.Fixtures.UnhandledInfo, as: U
-  alias Argus.Test.Memo
+  alias Argus.Test.{Batch, Memo}
 
   @all [
     U.MemoryCheck,
@@ -33,7 +36,59 @@ defmodule Argus.Analyses.MailboxUnhandledInfoTest do
     U.MixedCatchAll
   ]
 
+  # The retired catch-all rule's probes (below), with the messages each
+  # is shown to be sent that fall through its clauses.
+  @probes [
+    # The runtime source: what it writes a server that monitors or traps.
+    # The ref pinned to the state, a state field compared: the program's.
+    {[F.MonitorsWithoutCatchall], []},
+    {[F.MonitorsDownWhenActive], []},
+    {[L.MonitorsInMacro, L.MonitorMacro], []},
+    # No link: the one :EXIT a GenServer gets, its parent's, it takes itself.
+    {[F.TrapsTakingNormalExits], []},
+    {[F.MonitorsPortTakingProcessDowns], [{"{:DOWN, …}", "monitor"}]},
+    {[F.MonitorsDownGuardedByReason], [{"{:DOWN, …}", "monitor"}]},
+    {[F.MonitorsNodesTakingDowns], [{"{:nodedown, …}", "node"}, {"{:nodeup, …}", "node"}]},
+    {[F.TrapsOpeningPort], [{"{port, {:data, …}}", "port"}]},
+    # The late-message source: a timer, a task, a self-send, a fun.
+    {[F.PartialInfoStage], [{":tick", "timer"}]},
+    {[L.StartTimerIdle], [{"{:timeout, …}", "timer"}]},
+    # A timer whose message the state holds shows no message.
+    {[F.PartialInfoServer], []},
+    {[F.InlineOrTaskPartialInfoServer], []},
+    # A self-sent :warm, a warmer's {:warm, nil}: each has its clause.
+    {[F.SelfSendPartialInfoServer], []},
+    {[L.Warmer, L.WarmerMacro], []},
+    # Code the server runs that it did not build shows no message.
+    {[F.AppliesPartialInfoServer], []},
+    {[L.RunsSentFun], []},
+    {[L.CallsInClosure], []},
+    {[L.HandsMixed], []},
+    # The task_nolink source, folded: a task's reply and :DOWN.
+    {[H.NolinkPartialInfo], [{"{:DOWN, …}", "task"}, {"{ref, …}", "task"}]},
+    {[L.NolinkInMacro, L.NolinkMacro], [{"{:DOWN, …}", "task"}]},
+    # The statem_info source: a state without the :info catch-all its
+    # siblings have, and no message shown to reach it.
+    {[F.AsymmetricInfoStatem], []},
+    # Its quiet neighbours stay quiet: every :DOWN and :EXIT taken, a
+    # timer's tag taken, a timer a task arms, a monitor a client
+    # function takes in its caller, nothing that writes the mailbox, a
+    # closure the server builds, the logger's handlers, a machine whose
+    # every state has the catch-all.
+    {[F.TrapsTakingEveryExit], []},
+    {[F.TaggedTimerServer], []},
+    {[F.HandledTimerServer], []},
+    {[F.TaskTimerPartialInfoServer], []},
+    {[F.ClientMonitorsServer], []},
+    {[F.TotalInfoServer], []},
+    {[F.QuietPartialInfoServer], []},
+    {[L.HandsClosure], []},
+    {[L.LogsOnTick], []},
+    {[F.SymmetricInfoStatem], []}
+  ]
+
   setup_all do
+    probes = Batch.solve(:mailbox, Enum.map(@probes, &elem(&1, 0)))
     {:ok, results} = Memo.analyze(@all, :mailbox)
     short = &String.replace(&1, "Argus.Test.Fixtures.UnhandledInfo.", "")
 
@@ -42,70 +97,50 @@ defmodule Argus.Analyses.MailboxUnhandledInfoTest do
             results["unhandled_info"],
           do: {short.(func), message, source, short.(server), fallback}
 
-    %{rows: rows, results: results}
+    %{rows: rows, results: results, probes: probes}
   end
 
-  test "a timer the server arms for itself with no clause for it is a crash", %{rows: rows} do
-    assert {"MemoryCheck:schedule_memory_check/0", ":memory_check", "timer", "MemoryCheck",
-            "crash"} in rows
+  test "every message a server is shown to be sent and no clause takes, exactly", %{rows: rows} do
+    assert Enum.sort(rows) ==
+             Enum.sort([
+               # A timer the server arms for itself, with no clause for it.
+               {"MemoryCheck:schedule_memory_check/0", ":memory_check", "timer", "MemoryCheck",
+                "crash"},
+               {"Reconnect:schedule_connect/0", ":connect", "timer", "Reconnect", "crash"},
+               # A gen envelope sent by hand is a call or a cast, not a
+               # message: only the plain send is one.
+               {"EnvelopeCaster:run/0", "{:refresh_now, …}", "send", "EnvelopeServer", "crash"},
+               # A monitor's :DOWN a catch-all drops.
+               {"Listeners:handle_call/3", "{:DOWN, …}", "monitor", "Listeners", "catch_all"},
+               # A timer message a logging catch-all takes, and one
+               # GenServer's default takes.
+               {"Repair:init/1", ":repair", "timer", "Repair", "catch_all"},
+               {"Ticker:init/1", ":tick", "send", "Ticker", "default"},
+               # A catch-all after a clause a `use` put first is the
+               # module's own.
+               {"MixedCatchAll:init/1", ":stray", "timer", "MixedCatchAll", "catch_all"},
+               # A send points-to follows to another module's server.
+               {"Pinger:run/0", ":ping", "send", "PingServer", "crash"},
+               # A gen_statem no state of which takes a message it is sent.
+               {"Poller:init/1", ":poll", "timer", "Poller", "state_crash"},
+               # A literal tuple, and one the site builds, told apart by
+               # their tag.
+               {"Retry:init/1", "{:retry, 3}", "timer", "Retry", "crash"},
+               {"Retry:handle_info/2", "{:backoff, …}", "timer", "Retry", "crash"},
+               # A receive in a closure a Task runs is the Task's, not the
+               # server's.
+               {"TaskReceives:init/1", ":tick", "timer", "TaskReceives", "crash"},
+               # A timer whose tag a clause takes in another shape is not
+               # taken; {:tock, :fast}, in the shape the clause takes, is.
+               {"TickArity:init/1", "{:tick, 1, :slow}", "timer", "TickArity", "crash"},
+               {"TickArity:init/1", "{:tick, …}", "timer", "TickArity", "crash"}
+             ])
 
-    assert {"Reconnect:schedule_connect/0", ":connect", "timer", "Reconnect", "crash"} in rows
-  end
-
-  test "a gen envelope sent by hand is a call or a cast, not a message", %{rows: rows} do
-    sent = for {"EnvelopeCaster:run/0", message, "send", _, _} <- rows, do: message
-    assert sent == ["{:refresh_now, …}"]
-  end
-
-  test "a monitor's :DOWN a catch-all drops", %{rows: rows} do
-    assert {"Listeners:handle_call/3", "{:DOWN, …}", "monitor", "Listeners", "catch_all"} in rows
-  end
-
-  test "a timer message a logging catch-all takes, and one GenServer's default takes",
-       %{rows: rows} do
-    assert {"Repair:init/1", ":repair", "timer", "Repair", "catch_all"} in rows
-    assert {"Ticker:init/1", ":tick", "send", "Ticker", "default"} in rows
-  end
-
-  test "a catch-all after a clause a `use` put first is the module's own", %{rows: rows} do
-    assert {"MixedCatchAll:init/1", ":stray", "timer", "MixedCatchAll", "catch_all"} in rows
-  end
-
-  test "a send points-to follows to another module's server", %{rows: rows} do
-    assert {"Pinger:run/0", ":ping", "send", "PingServer", "crash"} in rows
-  end
-
-  test "a gen_statem no state of which takes a message it is sent", %{rows: rows} do
-    assert {"Poller:init/1", ":poll", "timer", "Poller", "state_crash"} in rows
-  end
-
-  test "a literal tuple, and one the site builds, are told apart by their tag", %{rows: rows} do
-    assert {"Retry:init/1", "{:retry, 3}", "timer", "Retry", "crash"} in rows
-    assert {"Retry:handle_info/2", "{:backoff, …}", "timer", "Retry", "crash"} in rows
-  end
-
-  test "a receive in a closure a Task runs is the Task's, not the server's", %{rows: rows} do
-    assert {"TaskReceives:init/1", ":tick", "timer", "TaskReceives", "crash"} in rows
-  end
-
-  test "a timer whose tag a clause takes in another shape is not taken", %{rows: rows} do
-    assert {"TickArity:init/1", "{:tick, 1, :slow}", "timer", "TickArity", "crash"} in rows
-    assert {"TickArity:init/1", "{:tick, …}", "timer", "TickArity", "crash"} in rows
-    refute Enum.any?(rows, &match?({_, "{:tock, :fast}", _, _, _}, &1))
-  end
-
-  test "exactly those, and every quiet neighbour quiet", %{rows: rows} do
-    assert length(rows) == 14, inspect(rows, pretty: true)
-
-    quiet =
-      ~w(Handled Delegates OpenClause WaitsForDown Flushes Client PollerTakes WarmUp Unjudged
-         TerminateWaits)
-
-    refute Enum.any?(rows, fn {_, _, _, server, _} -> server in quiet end)
+    # Quiet: Handled, Delegates, OpenClause, WaitsForDown, Flushes,
+    # Client, PollerTakes, WarmUp, Unjudged, TerminateWaits.
   end
 
   test "a monitor's :DOWN is taken by a clause for every reason, whatever it asks of the ref" do
-    alias Argus.Test.Fixtures, as: F
     alias Argus.Test.Soundness.Witness, as: W
 
     # Clauses that split the reasons, a reason decided in the body, a port
@@ -125,7 +160,6 @@ defmodule Argus.Analyses.MailboxUnhandledInfoTest do
   end
 
   test "a wait with no after, a late reply taken, a task's messages taken, node events taken" do
-    alias Argus.Test.Fixtures.LateMessage
     alias Argus.Test.Soundness.Witness, as: W
 
     quiet = [
@@ -138,7 +172,7 @@ defmodule Argus.Analyses.MailboxUnhandledInfoTest do
       W.LateReplyTaken,
       W.LateCatchAll,
       W.SpawnPoll,
-      LateMessage.TimedCall,
+      L.TimedCall,
       W.NolinkTupleClause,
       Argus.Test.Fixtures.Hypothesized.NolinkBothClauses,
       Argus.Test.Fixtures.Hypothesized.NolinkCollected,
@@ -147,7 +181,7 @@ defmodule Argus.Analyses.MailboxUnhandledInfoTest do
       W.PortReadThere,
       W.PortDataTaken,
       W.StartTimerElsewhere,
-      LateMessage.StartTimer
+      L.StartTimer
     ]
 
     {:ok, results} = Memo.analyze(quiet, :mailbox)
@@ -158,73 +192,26 @@ defmodule Argus.Analyses.MailboxUnhandledInfoTest do
     # "handle_info/2 has no catch-all" (partial_handler, retired) reported
     # each of these for the catch-all it lacks. A missing catch-all is no
     # finding by itself: a message the program is shown to send that falls
-    # through it is, and a probe that shows none is quiet.
-    alias Argus.Test.Fixtures, as: F
-    alias Argus.Test.Fixtures.Hypothesized, as: H
-    alias Argus.Test.Fixtures.LateMessage, as: L
+    # through it is, and a probe that shows none is quiet. The probes
+    # (`@probes`, above) are solved together, one batch.
 
-    @probes [
-      # The runtime source: what it writes a server that monitors or traps.
-      # The ref pinned to the state, a state field compared: the program's.
-      {[F.MonitorsWithoutCatchall], []},
-      {[F.MonitorsDownWhenActive], []},
-      {[L.MonitorsInMacro, L.MonitorMacro], []},
-      # No link: the one :EXIT a GenServer gets, its parent's, it takes itself.
-      {[F.TrapsTakingNormalExits], []},
-      {[F.MonitorsPortTakingProcessDowns], [{"{:DOWN, …}", "monitor"}]},
-      {[F.MonitorsDownGuardedByReason], [{"{:DOWN, …}", "monitor"}]},
-      {[F.MonitorsNodesTakingDowns], [{"{:nodedown, …}", "node"}, {"{:nodeup, …}", "node"}]},
-      {[F.TrapsOpeningPort], [{"{port, {:data, …}}", "port"}]},
-      # The late-message source: a timer, a task, a self-send, a fun.
-      {[F.PartialInfoStage], [{":tick", "timer"}]},
-      {[L.StartTimerIdle], [{"{:timeout, …}", "timer"}]},
-      # A timer whose message the state holds shows no message.
-      {[F.PartialInfoServer], []},
-      {[F.InlineOrTaskPartialInfoServer], []},
-      # A self-sent :warm, a warmer's {:warm, nil}: each has its clause.
-      {[F.SelfSendPartialInfoServer], []},
-      {[L.Warmer, L.WarmerMacro], []},
-      # Code the server runs that it did not build shows no message.
-      {[F.AppliesPartialInfoServer], []},
-      {[L.RunsSentFun], []},
-      {[L.CallsInClosure], []},
-      {[L.HandsMixed], []},
-      # The task_nolink source, folded: a task's reply and :DOWN.
-      {[H.NolinkPartialInfo], [{"{:DOWN, …}", "task"}, {"{ref, …}", "task"}]},
-      {[L.NolinkInMacro, L.NolinkMacro], [{"{:DOWN, …}", "task"}]},
-      # The statem_info source: a state without the :info catch-all its
-      # siblings have, and no message shown to reach it.
-      {[F.AsymmetricInfoStatem], []},
-      # Its quiet neighbours stay quiet: every :DOWN and :EXIT taken, a
-      # timer's tag taken, a timer a task arms, a monitor a client
-      # function takes in its caller, nothing that writes the mailbox, a
-      # closure the server builds, the logger's handlers, a machine whose
-      # every state has the catch-all.
-      {[F.TrapsTakingEveryExit], []},
-      {[F.TaggedTimerServer], []},
-      {[F.HandledTimerServer], []},
-      {[F.TaskTimerPartialInfoServer], []},
-      {[F.ClientMonitorsServer], []},
-      {[F.TotalInfoServer], []},
-      {[F.QuietPartialInfoServer], []},
-      {[L.HandsClosure], []},
-      {[L.LogsOnTick], []},
-      {[F.SymmetricInfoStatem], []}
-    ]
+    test "each shows only the messages it is shown to be sent that fall through",
+         %{probes: probes} do
+      assert {:ok, all} = probes.result
+      refute Map.has_key?(all, "partial_handler")
 
-    for {modules, expected} <- @probes do
-      @modules modules
-      @expected expected
-      test "#{modules |> hd() |> inspect() |> String.replace("Argus.Test.Fixtures.", "")}" do
-        {:ok, results} = Memo.analyze(@modules, :mailbox)
+      wrong =
+        for {modules, expected} <- @probes,
+            {:ok, results} = Batch.analyze(probes, modules),
+            found =
+              Enum.sort(
+                for [_, _, _, message, source | _] <- results["unhandled_info"],
+                    do: {message, source}
+              ),
+            found != expected,
+            do: {modules, found: found, expected: expected}
 
-        found =
-          for [_, _, _, message, source | _] <- results["unhandled_info"],
-              do: {message, source}
-
-        assert Enum.sort(found) == @expected
-        refute Map.has_key?(results, "partial_handler")
-      end
+      assert wrong == []
     end
   end
 
