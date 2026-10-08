@@ -57,7 +57,8 @@ causes, detached execution included, walks its own forward reach from the entrie
 needs (`live_server_reach` in `monitored_children.dl` leaves out terminate/2).
 
 Points-to relations track starts, names, parameters, returns, fields, callback
-state and messages. They can distinguish some start instances and privately retained
+state and messages. A `start_link` of code outside the analyzed program (a dependency
+left out) counts as a start, out of sight, of the process its `{:ok, pid}` names. They can distinguish some start instances and privately retained
 processes, but many supervision and dependency questions remain module-based.
 Bounded points-to results are supersets; do not treat a coarse set as one exact identity.
 

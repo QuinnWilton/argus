@@ -57,6 +57,12 @@ defmodule Argus.Analyses.ShutdownMonitorTest do
       assert killers([SM.OwnerAndWatchers, SM.Lib]) == []
     end
 
+    test "nor can a stop of one a start_link outside the program started" do
+      # Lib left out, as volt's FileSystem dependency is: its start is
+      # out of sight, and the pid it answers still a process born there.
+      assert killers([SM.OwnerAndWatchers]) == []
+    end
+
     test "a stop of the monitored init argument itself is reported" do
       assert killers([SM.StopsOwner]) == ["Argus.Test.Fixtures.ShutdownMonitors.StopsOwner"]
     end

@@ -6,7 +6,10 @@ defmodule Argus.Test.Fixtures.ShutdownMonitors do
   """
 
   defmodule Lib do
-    @moduledoc "A library process OwnerAndWatchers start_links, as volt's file watchers."
+    @moduledoc """
+    A library process OwnerAndWatchers start_links, as volt's file
+    watchers: analyzed beside it, or left out as a dependency is.
+    """
     use GenServer
 
     def start_link(opts), do: GenServer.start_link(__MODULE__, opts)

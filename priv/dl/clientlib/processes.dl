@@ -39,10 +39,26 @@ start_object(t, b) :-
   value_object(_, t, "tuple", ":ok", "2"),
   value_field(_, t, "{1}", "proc", b).
 
+// A start_link of code outside the program (a dependency not analyzed): by OTP's
+// convention it answers `{:ok, pid}` of a process it starts, linked to its caller.
+// It stands as a factory whose start is out of sight, `outside <callee>` both its
+// result and its allocation, so each call that keeps the result names its own
+// instance as a factory's does. A program that holds the callee resolves it in its
+// code instead.
+.decl outside_start(callee: symbol)
+
+outside_start(g) :-
+  value_result(_, _, g),
+  !function_def(g, _, _, _, _),
+  match(".*:start_link/[0-9]+", g).
+
+start_object(cat("outside ", g), cat("outside ", g)) :- outside_start(g).
+
 // `func` returns `x`, allocated while it ran: its own start's result, or
 // its callee's returned as it is.
 .decl fresh_return(func: symbol, x: symbol)
 
+fresh_return(g, cat("outside ", g)) :- outside_start(g).
 fresh_return(g, t) :- value_return(g, "obj", t), start_object(t, _).
 fresh_return(g, b) :- value_return(g, "proc", b), process_start(_, g, b, _, _).
 fresh_return(g, x) :- value_return(g, "result", c), value_result(c, g, h), fresh_return(h, x).
