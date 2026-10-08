@@ -24,6 +24,37 @@ defmodule Argus.Extractors.OddLiteralsTest do
         do: mod
   end
 
+  # The extractors that record what every function has (its calls'
+  # arguments, what its result depends on, its spec): the rest read a
+  # shape, a process, a table, a socket, a security call, and have
+  # nothing to say of a module with none.
+  @every_function [
+    Argus.Extractors.CallArgs,
+    Argus.Extractors.ClauseCall,
+    Argus.Extractors.Dependence,
+    Argus.Extractors.LiveView,
+    Argus.Extractors.ParamFlow,
+    Argus.Extractors.ResultChecks,
+    Argus.Extractors.SecurityValues,
+    Argus.Extractors.SharedStore,
+    Argus.Extractors.ShutdownReason,
+    Argus.Extractors.Specs
+  ]
+
+  test "a module with one plain function gives every shape extractor nothing" do
+    {:ok, data} =
+      Argus.Pipeline.Disassemble.disassemble_path(
+        to_string(:code.which(Argus.Test.Fixtures.PlainModule))
+      )
+
+    wrote =
+      for extractor <- extractors(),
+          extractor.extract(data) |> Enum.any?(fn {_relation, rows} -> rows != [] end),
+          do: extractor
+
+    assert Enum.sort(wrote) == Enum.sort(@every_function)
+  end
+
   # Atoms the extractors look for, so that an odd term also takes the
   # branches that only a meaningful one reaches.
   @meaningful [

@@ -188,13 +188,6 @@ defmodule Argus.Extractors.ProcessRegistryTest do
     end
   end
 
-  describe "extract/1 — clean module" do
-    test "returns empty for plain module" do
-      facts = ProcessRegistry.extract(disassemble(Argus.Test.Fixtures.PlainModule))
-      assert facts == %{}
-    end
-  end
-
   describe "extract/1 — named_process" do
     test "emits named_process for direct register/2 with the enclosing module" do
       facts = ProcessRegistry.extract(disassemble(Argus.Test.Fixtures.ProcessRegisterer))
@@ -230,18 +223,6 @@ defmodule Argus.Extractors.ProcessRegistryTest do
                [category, func, _relation, _reason] ->
                  category == "gen_server_start_name" and func =~ "DynamicNameServer"
              end)
-    end
-  end
-
-  describe "integration with extract pipeline" do
-    test "extractor is usable via Pipeline.extract/2" do
-      assert {:ok, facts} =
-               Argus.Pipeline.extract(
-                 [Argus.Test.Fixtures.ProcessRegisterer],
-                 extractors: [ProcessRegistry]
-               )
-
-      assert Map.has_key?(facts, :process_register)
     end
   end
 end

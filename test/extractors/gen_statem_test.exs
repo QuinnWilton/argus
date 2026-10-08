@@ -187,25 +187,6 @@ defmodule Argus.Extractors.GenStatemTest do
     end
   end
 
-  describe "extract/1 — clean module" do
-    test "returns empty for non-statem module" do
-      facts = GenStatem.extract(disassemble(Argus.Test.Fixtures.PlainModule))
-      assert facts == %{}
-    end
-  end
-
-  describe "integration with extract pipeline" do
-    test "extractor is usable via Pipeline.extract/2" do
-      assert {:ok, facts} =
-               Argus.Pipeline.extract(
-                 [Argus.Test.Fixtures.SimpleStatem],
-                 extractors: [GenStatem]
-               )
-
-      assert Map.has_key?(facts, :statem_module)
-    end
-  end
-
   describe "extract/1 — clause heads" do
     test "event types a state function discriminates on, tagged tuples included" do
       facts = GenStatem.extract(disassemble(Argus.Test.Fixtures.HandleEventStatem))

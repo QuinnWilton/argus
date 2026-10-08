@@ -18,11 +18,6 @@ defmodule Argus.Extractors.GenEventTest do
                mod == "Argus.Test.Fixtures.MyEventHandler" and behaviour == ":gen_event"
              end)
     end
-
-    test "skips modules that don't implement :gen_event" do
-      facts = OTP.extract(disassemble(Argus.Test.Fixtures.PlainModule))
-      refute Map.has_key?(facts, :implements_behaviour)
-    end
   end
 
   describe "extract/1 — sync_call coverage" do

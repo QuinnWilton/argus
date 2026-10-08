@@ -53,11 +53,4 @@ defmodule Argus.Extractors.PortsTest do
              func =~ ~r/^Argus\.Test\.Fixtures\.PortUser:/
            end)
   end
-
-  test "returns no rows for a module that opens no ports" do
-    {:ok, data} =
-      BeamSpy.BeamFile.disassemble(to_string(:code.which(Argus.Test.Fixtures.PlainModule)))
-
-    assert ApiCalls.extract(data) == %{}
-  end
 end

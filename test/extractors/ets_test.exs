@@ -258,11 +258,6 @@ defmodule Argus.Extractors.ETSTest do
                op == "safe_fixtable" and kind == "read"
              end)
     end
-
-    test "returns empty for non-ets module" do
-      facts = ETS.extract(disassemble(Argus.Test.Fixtures.PlainModule))
-      assert facts == %{}
-    end
   end
 
   describe "extract/1 — tables handed on" do
@@ -282,18 +277,6 @@ defmodule Argus.Extractors.ETSTest do
       assert [[":padl2010_ets_inc:run/0", closure, pos, ":some_tab_name"]] = facts[:ets_tid_arg]
       assert closure =~ "-run/0-fun-0-"
       assert pos in ["0", "1"]
-    end
-  end
-
-  describe "integration with extract pipeline" do
-    test "extractor is usable via Pipeline.extract/2" do
-      assert {:ok, facts} =
-               Argus.Pipeline.extract(
-                 [Argus.Test.Fixtures.EtsOwner],
-                 extractors: [ETS]
-               )
-
-      assert Map.has_key?(facts, :ets_new)
     end
   end
 

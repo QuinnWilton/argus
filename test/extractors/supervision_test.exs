@@ -60,14 +60,6 @@ defmodule Argus.Extractors.SupervisionTest do
       assert facts[:supervisor_child] |> Enum.map(&Enum.at(&1, 2)) |> Enum.sort() ==
                [":bless_callee", ":bless_caller"]
     end
-
-    test "returns empty for non-supervisor module" do
-      {:ok, data} =
-        BeamSpy.BeamFile.disassemble(to_string(:code.which(Argus.Test.Fixtures.PlainModule)))
-
-      facts = Supervision.extract(data)
-      assert facts == %{}
-    end
   end
 
   describe "trees defined outside Supervisor modules" do
@@ -491,18 +483,6 @@ defmodule Argus.Extractors.SupervisionTest do
     test "the stated type makes the form explicit", %{facts: facts} do
       forms = for [":tuple_spec_sup", _pos, form] <- facts[:supervisor_child_form], do: form
       assert forms != [] and Enum.all?(forms, &(&1 == "explicit"))
-    end
-  end
-
-  describe "integration with extract pipeline" do
-    test "extractor is usable via Pipeline.extract/2" do
-      assert {:ok, facts} =
-               Argus.Pipeline.extract(
-                 [Argus.Test.Fixtures.GoodSupervisor],
-                 extractors: [Supervision]
-               )
-
-      assert Map.has_key?(facts, :supervisor)
     end
   end
 

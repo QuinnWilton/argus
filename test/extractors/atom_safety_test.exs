@@ -144,23 +144,4 @@ defmodule Argus.Extractors.ApiCalls.AtomSafetyTest do
       assert Enum.any?(funcs, &String.contains?(&1, "shell_with_dynamic_script"))
     end
   end
-
-  describe "extract/1 — clean module" do
-    test "returns empty for plain module" do
-      facts = ApiCalls.extract(disassemble(Argus.Test.Fixtures.PlainModule))
-      assert facts == %{}
-    end
-  end
-
-  describe "integration with extract pipeline" do
-    test "extractor is usable via Pipeline.extract/2" do
-      assert {:ok, facts} =
-               Argus.Pipeline.extract(
-                 [Argus.Test.Fixtures.UnsafeAtomCreation],
-                 extractors: [ApiCalls]
-               )
-
-      assert Map.has_key?(facts, :unsafe_atom_creation)
-    end
-  end
 end

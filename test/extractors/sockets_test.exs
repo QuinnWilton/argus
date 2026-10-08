@@ -86,8 +86,4 @@ defmodule Argus.Extractors.SocketsTest do
                [{"handle_event/4", ":ssl.handshake/3", "bounded", "-1"}]
     end
   end
-
-  test "a module with no sockets has no rows" do
-    assert facts(Argus.Test.Fixtures.PlainModule) == %{}
-  end
 end

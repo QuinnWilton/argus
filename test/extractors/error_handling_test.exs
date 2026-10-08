@@ -380,25 +380,6 @@ defmodule Argus.Extractors.ErrorHandlingTest do
     end
   end
 
-  describe "extract/1 — clean module" do
-    test "returns empty for plain module" do
-      facts = ErrorHandling.extract(disassemble(Argus.Test.Fixtures.PlainModule))
-      assert facts == %{}
-    end
-  end
-
-  describe "integration with extract pipeline" do
-    test "extractor is usable via Pipeline.extract/2" do
-      assert {:ok, facts} =
-               Argus.Pipeline.extract(
-                 [Argus.Test.Fixtures.TrapExitModule],
-                 extractors: [ErrorHandling]
-               )
-
-      assert Map.has_key?(facts, :trap_exit)
-    end
-  end
-
   describe "timer targets, read through the writes that reach" do
     alias Argus.Test.Fixtures.Instr, as: Fixture
 

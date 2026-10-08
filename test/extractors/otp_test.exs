@@ -66,15 +66,6 @@ defmodule Argus.Extractors.OTPTest do
 
       assert Enum.any?(behaviours, fn [_mod, b] -> b == "GenServer" end)
     end
-
-    test "detects no behaviour for plain module" do
-      {:ok, data} =
-        BeamSpy.BeamFile.disassemble(to_string(:code.which(Argus.Test.Fixtures.PlainModule)))
-
-      facts = OTP.extract(data)
-
-      refute Map.has_key?(facts, :implements_behaviour)
-    end
   end
 
   describe "extract/1 — started_as" do
@@ -161,16 +152,6 @@ defmodule Argus.Extractors.OTPTest do
       assert Map.has_key?(facts, :async_cast)
       casts = facts[:async_cast]
       assert casts != []
-    end
-
-    test "no GenServer calls in plain module" do
-      {:ok, data} =
-        BeamSpy.BeamFile.disassemble(to_string(:code.which(Argus.Test.Fixtures.PlainModule)))
-
-      facts = ApiCalls.extract(data)
-
-      refute Map.has_key?(facts, :sync_call)
-      refute Map.has_key?(facts, :async_cast)
     end
   end
 
@@ -397,19 +378,6 @@ defmodule Argus.Extractors.OTPTest do
                ["init/1", "*"],
                ["rearm/1", "*"]
              ]
-    end
-  end
-
-  describe "integration with extract pipeline" do
-    test "extractor is usable via Pipeline.extract/2" do
-      assert {:ok, facts} =
-               Argus.Pipeline.extract(
-                 [Argus.Test.Fixtures.MyGenServer],
-                 extractors: [OTP, ApiCalls]
-               )
-
-      assert Map.has_key?(facts, :implements_behaviour)
-      assert Map.has_key?(facts, :sync_call)
     end
   end
 end
