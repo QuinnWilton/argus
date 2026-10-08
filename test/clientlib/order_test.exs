@@ -12,9 +12,16 @@ defmodule Argus.Clientlib.OrderTest do
   @moduletag :flowlog
 
   alias Argus.{Cfg, InstrId, Pipeline}
+  alias Argus.Test.Files
   alias Argus.Test.Fixtures.Order
 
-  @moduletag :tmp_dir
+  @modules [Order, GenServer, :gen_server]
+
+  # One solve every test reads: the shapes are the fixture's own rows,
+  # which the library modules beside it do not move.
+  setup_all do
+    %{results: runs_after(@modules, Files.tmp_dir!("argus_order"))}
+  end
 
   defp priv_dl, do: Path.join(:code.priv_dir(:argus_beam), "dl")
 
@@ -66,8 +73,7 @@ defmodule Argus.Clientlib.OrderTest do
   end
 
   describe "the shapes" do
-    setup %{tmp_dir: tmp_dir} do
-      results = runs_after([Order], tmp_dir)
+    setup %{results: results} do
       name = Map.new(results["callee"], fn [id, func] -> {id, func} end)
 
       pairs =
@@ -118,9 +124,7 @@ defmodule Argus.Clientlib.OrderTest do
     end
   end
 
-  test "agrees with Cfg.Function.precedes?/3 from every call and receive", %{tmp_dir: tmp_dir} do
-    modules = [Order, GenServer, :gen_server]
-    results = runs_after(modules, tmp_dir)
+  test "agrees with Cfg.Function.precedes?/3 from every call and receive", %{results: results} do
     ordered = MapSet.new(results["runs_after"], fn [a, z] -> {a, z} end)
     emitted = MapSet.new(results["site"], fn [id, kind] -> {id, kind} end)
     instructions = MapSet.new(results["instruction_of"], fn [id, kind] -> {id, kind} end)
@@ -128,7 +132,7 @@ defmodule Argus.Clientlib.OrderTest do
     # Nothing but those kinds, each row its instruction's kind.
     assert MapSet.subset?(emitted, instructions)
 
-    for module <- modules do
+    for module <- @modules do
       {:ok, typed} = Pipeline.extract([module], format: :typed)
       cfgs = Cfg.build(typed)
 

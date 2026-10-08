@@ -10,9 +10,8 @@ defmodule Argus.ClientlibTest do
   use ExUnit.Case, async: true
   @moduletag :flowlog
 
-  @moduletag :tmp_dir
-
   alias Argus.Schema
+  alias Argus.Test.Files
 
   @program ~S"""
   .decl out(kind: symbol, a: symbol, b: symbol)
@@ -75,7 +74,9 @@ defmodule Argus.ClientlibTest do
     "local_call" => [~w(c1 M:init/1 M:helper/0 0), ~w(c2 M:handle_call/3 M:helper/0 0)]
   }
 
-  setup %{tmp_dir: dir} do
+  # One solve the tests all read.
+  setup_all do
+    dir = Files.tmp_dir!("argus_clientlib")
     facts = Path.join(dir, "facts")
     File.mkdir_p!(facts)
 
