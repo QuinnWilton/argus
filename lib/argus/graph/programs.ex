@@ -61,7 +61,7 @@ defmodule Argus.Graph.Programs do
   """
   @spec tree(program()) :: tree()
   def tree({:custom, path}), do: {:program, Path.expand(path)}
-  def tree(_builtin), do: Catalog.priv_dl("") |> Path.expand()
+  def tree(_builtin), do: Argus.Dl.path("") |> Path.expand()
 
   @doc """
   The `dl_tree` input for a tree: each Datalog file under argus's

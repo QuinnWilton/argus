@@ -21,7 +21,6 @@ defmodule Argus.Analysis.Extraction do
   """
 
   alias Argus.Analysis
-  alias Argus.Analysis.Catalog
   alias Argus.Stages
 
   # The relations stage 0 writes; a directory holding every one is staged.
@@ -138,7 +137,7 @@ defmodule Argus.Analysis.Extraction do
 
   @doc "The path to the stage-0 rules file."
   @spec stage0_rules_path() :: Path.t()
-  def stage0_rules_path, do: Catalog.priv_dl("stage0.dl")
+  def stage0_rules_path, do: Argus.Dl.path("stage0.dl")
 
   @doc "The relations stage 0 writes."
   @spec stage0_relations() :: [String.t()]
@@ -229,7 +228,7 @@ defmodule Argus.Analysis.Extraction do
 
   @doc "The path to the points-to stage's rules file."
   @spec points_to_rules_path() :: Path.t()
-  def points_to_rules_path, do: Catalog.priv_dl("points_to.dl")
+  def points_to_rules_path, do: Argus.Dl.path("points_to.dl")
 
   @doc """
   The path to the bounded points-to stage's rules file: what
@@ -237,7 +236,7 @@ defmodule Argus.Analysis.Extraction do
   consumer that keys the stage on its programs keys it on this one too.
   """
   @spec points_to_bounded_rules_path() :: Path.t()
-  def points_to_bounded_rules_path, do: Catalog.priv_dl("points_to_bounded.dl")
+  def points_to_bounded_rules_path, do: Argus.Dl.path("points_to_bounded.dl")
 
   @doc "The relations the points-to stage writes."
   @spec points_to_relations() :: [String.t()]

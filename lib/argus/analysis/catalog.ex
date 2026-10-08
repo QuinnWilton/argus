@@ -95,7 +95,7 @@ defmodule Argus.Analysis.Catalog do
   def rules_path(name) when is_atom(name) do
     case fetch(name) do
       {:ok, mod} ->
-        path = priv_dl(mod.rules_file())
+        path = Argus.Dl.path(mod.rules_file())
 
         if File.exists?(path, [:raw]) do
           {:ok, path}
@@ -107,14 +107,6 @@ defmodule Argus.Analysis.Catalog do
         {:error, {:unknown_analysis, name}}
     end
   end
-
-  @doc """
-  A file under the Datalog tree (`Argus.Dl.root/0`): the shipped rules,
-  or the directory the `:dl_root` application variable names (a copy a
-  test edits a rule in, in a VM of its own).
-  """
-  @spec priv_dl(String.t()) :: Path.t()
-  def priv_dl(filename), do: Argus.Dl.path(filename)
 
   defp analysis_name?(mod) do
     case Atom.to_string(mod) do

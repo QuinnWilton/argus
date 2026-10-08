@@ -65,7 +65,7 @@ defmodule Argus.Analysis.CatalogTest do
     test "a built-in's program is its rules file under priv/dl" do
       {:ok, mod} = Catalog.fetch(:startup)
       assert {:ok, path} = Catalog.rules_path(:startup)
-      assert path == Catalog.priv_dl(mod.rules_file())
+      assert path == Argus.Dl.path(mod.rules_file())
       assert File.exists?(path)
     end
 

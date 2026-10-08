@@ -82,7 +82,7 @@ defmodule Argus.Graph.RulesTest do
 
     Peer.run(peer, fn ->
       root = Path.join(System.tmp_dir!(), "argus_dl_#{System.unique_integer([:positive])}")
-      File.cp_r!(Argus.Analysis.Catalog.priv_dl(""), root)
+      File.cp_r!(Argus.Dl.path(""), root)
       Application.put_env(:argus_beam, :dl_root, root)
 
       try do
