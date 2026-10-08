@@ -23,11 +23,6 @@
 .decl bs_start(id: symbol, fail: number) mutable
 .input bs_start
 
-// A call with a `test` or `loop_rec` later in the same function. Computed by the emitter to avoid joins on `instruction`. This is only a coarse proxy for checking the call's result: the branch may belong to an unrelated clause.
-//
-.decl call_followed_by_branch(id: symbol) mutable
-.input call_followed_by_branch
-
 // A closure constructed by `parent_func` with target `closure_func`. Adds a call-graph edge so reachability includes closure bodies. Emitted only for concrete `{Mod, Func, Arity}` targets of `make_fun3`; raw-label targets are omitted.
 //
 .decl closure_def(parent_func: symbol, closure_func: symbol) mutable

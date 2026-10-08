@@ -227,13 +227,6 @@ defmodule Argus.DlDeclarationsTest do
       # offset. Any analysis reading it re-solves on every body edit
       # anywhere in the project, and serializes tens of megabytes to do so.
       #
-      # Fourteen `instruction(...)` uses in the rule corpus are now zero.
-      # Twelve were decoding a call's containing function out of its
-      # instruction ID; the call relations carry `caller` themselves now.
-      # The last two compared instruction INDEXES to ask whether a branch
-      # follows a call, which the emitter answers directly as
-      # `call_followed_by_branch`.
-      #
       # `instruction` is still emitted and still used — Argus.Cfg,
       # Argus.Dataflow and gloss all need it — but no Datalog rule does, so
       # it no longer gates any analysis's incrementality.

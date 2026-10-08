@@ -205,18 +205,6 @@ defmodule Argus.Schema.Bytecode do
         doc: "Built-in function call."
       },
       %{
-        name: :call_followed_by_branch,
-        layer: 1,
-        fields: [
-          {:id, :instr_id, "call instruction ID"}
-        ],
-        doc: """
-        A call with a `test` or `loop_rec` later in the same function. Computed by the \
-        emitter to avoid joins on `instruction`. This is only a coarse proxy for \
-        checking the call's result: the branch may belong to an unrelated clause.
-        """
-      },
-      %{
         name: :conditional_call,
         layer: 1,
         fields: [
