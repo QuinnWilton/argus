@@ -30,7 +30,7 @@ defmodule Argus.Findings do
     not.
 
   `build/2` turns a solve's rows into findings for embedders that solve
-  the rules themselves (scry, planchette); `dedupe_rows/2` is the row
+  the rules themselves; `dedupe_rows/2` is the row
   identity it applies.
 
   The code lives in submodules, delegated to from here:
@@ -288,8 +288,7 @@ defmodule Argus.Findings do
   `results` maps relation names (strings) to rows. Rows of a relation
   with a `:key` are deduplicated to one per finding; rows of an evidence
   relation become related frames of the finding they join instead of
-  findings. Embedders that solve the rules themselves (scry, planchette)
-  build through this so their findings equal `run/2`'s field for field.
+  findings. Embedders that solve the rules themselves build through this so their findings equal `run/2`'s field for field.
 
   Relations the analysis does not declare as outputs (the intermediate
   relations a custom program also writes, say) are ignored, so the raw

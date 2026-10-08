@@ -109,7 +109,7 @@ defmodule Argus.Analysis.Extraction do
   # old one or the new, never one being written.
   #
   # Never solved in place: a directory can have several readers and
-  # writers at once. scry names its fact directories by their content,
+  # writers at once. A caller may name fact directories by their content,
   # so every solve over the same facts derives the same stage into the
   # same one. An engine opens an output truncated and writes it where it
   # stands, so a reader there would see a file cut short; and a stage's
