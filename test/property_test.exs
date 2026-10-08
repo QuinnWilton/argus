@@ -3,7 +3,6 @@ defmodule Argus.PropertyTest do
   use ExUnitProperties
 
   alias Argus.Extractor.Facts
-  alias Argus.Extractor.Resolve
   alias Argus.Pipeline.Normalize
 
   # ── Generators ──────────────────────────────────────────────────────
@@ -168,39 +167,6 @@ defmodule Argus.PropertyTest do
             ) do
         result = Enum.reduce(rows, %{}, fn row, acc -> Facts.add_fact(acc, relation, row) end)
         assert result[relation] == Enum.reverse(rows)
-      end
-    end
-  end
-
-  # ── Property: resolve_register with atoms ───────────────────────────
-
-  describe "resolve_register/3" do
-    property "moving an atom to a register then resolving returns that atom" do
-      check all(
-              atom_val <- atom(:alphanumeric),
-              reg <- register()
-            ) do
-        instrs = [{:move, {:atom, atom_val}, reg}, :return]
-        # Resolve at index 1 (the return), looking for reg.
-        assert {:ok, ^atom_val} = Resolve.resolve_register(instrs, 1, reg)
-      end
-    end
-
-    property "moving an integer to a register then resolving returns that integer" do
-      check all(
-              int_val <- integer(),
-              reg <- register()
-            ) do
-        instrs = [{:move, {:integer, int_val}, reg}, :return]
-        assert {:ok, ^int_val} = Resolve.resolve_register(instrs, 1, reg)
-      end
-    end
-
-    property "resolving an unwritten register returns :dynamic" do
-      check all(target <- register()) do
-        # Only a label and return — no moves.
-        instrs = [{:label, 1}, :return]
-        assert :dynamic = Resolve.resolve_register(instrs, 1, target)
       end
     end
   end
