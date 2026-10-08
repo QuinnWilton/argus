@@ -89,6 +89,13 @@ which a change appeared; older names and APIs may have changed since then.
   faster to build, and about three and a half times slower to solve. argus's
   own programs are always built optimized. argus's test suite builds its
   tests' programs so.
+- `mix argus.corpus diff` lists every finding a change added or removed
+  across the corpus's checkouts since their baselines, by title, with each
+  checkout's function and line; `mix argus.corpus accept` takes the findings
+  as they are as the new baseline. The first run of a checkout records its
+  baseline, and the corpus test says in brief what moved after each run.
+  `ARGUS_CORPUS_ONLY` narrows `fetch`, `tally`, `diff` and `accept` as it
+  does the test.
 
 ### Other changes
 

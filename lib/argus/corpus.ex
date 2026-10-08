@@ -120,6 +120,30 @@ defmodule Argus.Corpus do
     end
   end
 
+  @doc """
+  The issues `ARGUS_CORPUS_ONLY` narrows a run to (substrings of an
+  issue's name, comma-separated), or nil when it names none.
+  """
+  @spec only() :: [String.t()] | nil
+  def only do
+    case System.get_env("ARGUS_CORPUS_ONLY") do
+      nil -> nil
+      s -> s |> String.split(",", trim: true) |> Enum.map(&String.trim/1)
+    end
+  end
+
+  @doc "The pairs `only/0` keeps: every pair when it names none."
+  @spec selected() :: [pair()]
+  def selected do
+    case only() do
+      nil ->
+        pairs()
+
+      only ->
+        Enum.filter(pairs(), fn pair -> Enum.any?(only, &String.contains?(pair.issue, &1)) end)
+    end
+  end
+
   @doc "The checkout for one side of a pair: `:pre` or `:fix`."
   @spec checkout(pair(), :pre | :fix) :: checkout() | nil
   def checkout(pair, side) do

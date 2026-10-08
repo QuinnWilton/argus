@@ -22,15 +22,13 @@ defmodule Argus.CorpusTest do
   use ExUnit.Case, async: true
 
   alias Argus.Corpus
+  alias Argus.Corpus.Baseline
 
   @moduletag :corpus
   @moduletag :flowlog
   @moduletag timeout: :infinity
 
-  @only (case System.get_env("ARGUS_CORPUS_ONLY") do
-           nil -> nil
-           s -> s |> String.split(",", trim: true) |> Enum.map(&String.trim/1)
-         end)
+  @only Corpus.only()
 
   # Whether this run checks the corpus at all: its repositories are asked
   # whether they can be fetched only then.
@@ -89,21 +87,44 @@ defmodule Argus.CorpusTest do
       )
     end
 
-    results =
+    analyzed =
       @selected
       |> Corpus.checkouts()
       |> Corpus.analyze_all(&slim/1)
-      |> Map.new(fn {co, result} -> {co.name, result} end)
 
-    %{results: results}
+    say_changes(analyzed)
+    %{results: Map.new(analyzed, fn {co, result} -> {co.name, result} end)}
   end
 
+  # What a rule's own pairs cannot say: every other finding the run moved
+  # since the checkouts' baselines (`Argus.Corpus.Baseline`). Said, not
+  # asserted: a change is meant to move findings, and its author decides
+  # which moves are right.
+  defp say_changes(analyzed) do
+    changed =
+      for {co, {:ok, results}} <- analyzed,
+          entries = Baseline.entries(co, results),
+          %{added: added, removed: removed} = changes <- [Baseline.compare(co, entries)],
+          added != [] or removed != [],
+          do: {co, changes}
+
+    if changed != [] do
+      IO.puts(
+        :stderr,
+        "\nCorpus findings moved since the baseline, in #{length(changed)} checkout(s) " <>
+          "(`mix argus.corpus diff` lists them; `mix argus.corpus accept` takes them):\n" <>
+          Enum.map_join(Baseline.report(changed), "\n", &("  " <> &1))
+      )
+    end
+  end
+
+  # What a baseline compares is kept too (`Argus.Corpus.Baseline.entries/2`).
   defp slim({:ok, %{findings: findings, degraded: degraded, extraction_errors: errors}}) do
     {:ok,
      %{
        degraded: degraded,
        extraction_errors: errors,
-       findings: Enum.map(findings, &Map.take(&1, [:analysis, :title, :module, :mfa]))
+       findings: Enum.map(findings, &Map.take(&1, Baseline.fields()))
      }}
   end
 

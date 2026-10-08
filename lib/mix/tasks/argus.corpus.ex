@@ -8,6 +8,8 @@ defmodule Mix.Tasks.Argus.Corpus do
       mix argus.corpus fetch          # clone and compile every pair, ahead of a test run
       mix argus.corpus tally          # every finding title, counted across all checkouts
       mix argus.corpus tally --title "owner may be restarting"   # the rows behind one title
+      mix argus.corpus diff           # every finding moved since the baseline, by title
+      mix argus.corpus accept         # take the findings as they are now as the baseline
 
   `fetch` is what `Argus.CorpusTest` does lazily; running it first keeps
   the test run itself short. A pair this machine cannot build (a
@@ -18,6 +20,15 @@ defmodule Mix.Tasks.Argus.Corpus do
   checkout once, `ARGUS_CORPUS_JOBS` at a time (`Argus.Corpus.jobs/0`),
   and its output does not depend on which finishes first.
 
+  `diff` is the same check made exact: every finding added or removed
+  since each checkout's baseline (`Argus.Corpus.Baseline`), the one the
+  first run recorded or `accept` last took. The corpus test says the
+  same in brief after each run. Take a baseline before changing a rule,
+  and `diff` after says what the change did to every tree, not only to
+  the pairs it was written for; `accept` once those moves are the
+  intended ones. `ARGUS_CORPUS_ONLY` narrows all three to some pairs'
+  checkouts.
+
   Every checkout's graph is kept in its manifest, over the shared blob
   store (`Argus.Corpus.manifest/1`); `argus gc` collects the store (the
   former `prune`), and every driver run collects it once a day.
@@ -25,9 +36,10 @@ defmodule Mix.Tasks.Argus.Corpus do
 
   use Mix.Task
 
-  @usage "usage: mix argus.corpus fetch | tally [--title SUBSTRING]"
+  @usage "usage: mix argus.corpus fetch | tally [--title SUBSTRING] | diff | accept"
 
   alias Argus.Corpus
+  alias Argus.Corpus.Baseline
 
   @impl Mix.Task
   def run(args) do
@@ -40,6 +52,12 @@ defmodule Mix.Tasks.Argus.Corpus do
       ["tally" | rest] ->
         tally(rest)
 
+      ["diff"] ->
+        diff()
+
+      ["accept"] ->
+        accept()
+
       ["prune" | _rest] ->
         Mix.raise("mix argus.corpus prune is gone: `argus gc` collects the blob store")
 
@@ -49,7 +67,7 @@ defmodule Mix.Tasks.Argus.Corpus do
   end
 
   defp fetch do
-    for pair <- Corpus.pairs(), side <- [:pre, :fix], Corpus.checkout(pair, side) do
+    for pair <- Corpus.selected(), side <- [:pre, :fix], Corpus.checkout(pair, side) do
       co = Corpus.checkout(pair, side)
 
       case Corpus.ensure(pair, side) do
@@ -62,12 +80,61 @@ defmodule Mix.Tasks.Argus.Corpus do
     :ok
   end
 
+  defp diff do
+    changed =
+      for {co, entries} <- analyzed_entries(),
+          changes = Baseline.compare(co, entries),
+          moved?(co, changes),
+          do: {co, changes}
+
+    case Baseline.report(changed, rows: true) do
+      [] -> Mix.shell().info("argus: no finding moved since the baseline")
+      lines -> Enum.each(lines, &Mix.shell().info(&1))
+    end
+  end
+
+  defp moved?(co, {:recorded, count}) do
+    Mix.shell().info("#{co.name}: no baseline; recorded its #{count} finding(s) as one")
+    false
+  end
+
+  defp moved?(_co, %{added: added, removed: removed}), do: added != [] or removed != []
+
+  defp accept do
+    accepted = analyzed_entries()
+    Enum.each(accepted, fn {co, entries} -> Baseline.write!(co, entries) end)
+    Mix.shell().info("argus: took #{length(accepted)} checkout(s)' findings as the baseline")
+  end
+
+  # Each selected checkout's entries; one that cannot be analyzed is said
+  # and left out, its baseline untouched.
+  defp analyzed_entries do
+    Corpus.selected()
+    |> Corpus.checkouts()
+    |> Corpus.analyze_all(fn
+      {:ok, results} -> {:ok, Map.take(results, [:findings])}
+      other -> other
+    end)
+    |> Enum.flat_map(fn
+      {co, {:ok, results}} ->
+        [{co, Baseline.entries(co, results)}]
+
+      {co, {:skip, why}} ->
+        Mix.shell().info("#{co.name}: skipped, #{why}")
+        []
+
+      {co, {:error, why}} ->
+        Mix.shell().error("#{co.name}: #{format_error(why)}")
+        []
+    end)
+  end
+
   defp tally(args) do
     {opts, _, _} = OptionParser.parse(args, strict: [title: :string])
     filter = Keyword.get(opts, :title)
 
     rows =
-      Corpus.pairs()
+      Corpus.selected()
       |> Corpus.checkouts()
       |> Corpus.analyze_all(&rows(&1, filter))
       |> Enum.flat_map(fn

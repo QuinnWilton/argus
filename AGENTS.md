@@ -48,8 +48,14 @@ reverse dependency tracking until a Roux release includes them.
 | Frontends or packaging | `mix test --include escript --include rebar3 --include gleam --exclude corpus` with the relevant tools installed. |
 
 For a focused corpus run, use `ARGUS_CORPUS_ONLY=redix#334 mix test --only corpus`
-with an ID from `test/corpus/pairs.exs`. `mix argus.corpus tally` checks changes in
-finding counts; do not update expected output merely to make a failure disappear.
+with an ID from `test/corpus/pairs.exs`. A rule's reach is every other finding in
+the corpus, not only its pairs': `mix argus.corpus diff` lists each finding added
+or removed since the checkouts' baselines (recorded by their first run; the corpus
+test prints the same in brief), and `mix argus.corpus accept` takes the current
+findings once the moves are intended. Accept before starting a change so the diff
+is the change's alone; `ARGUS_CORPUS_ONLY` narrows both, and a warm diff over a
+few checkouts takes seconds. Do not update expected output merely to make a
+failure disappear.
 
 ## Where to edit
 
