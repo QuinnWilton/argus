@@ -49,6 +49,7 @@ defmodule Argus.Extractors.CallbackTag do
   alias Argus.Extractors.CallbackTag.MessageClauses
   alias Argus.InstrId
 
+  import Argus.Instr, only: [slot: 1]
   import Argus.Extractor.Facts, only: [add_fact: 3]
 
   @callbacks %{
@@ -135,17 +136,17 @@ defmodule Argus.Extractors.CallbackTag do
       Enum.reduce_while(instrs, {false, MapSet.new()}, fn instr, {_, refs} ->
         case instr do
           {:get_tuple_element, src, 0, dst} ->
-            if reg(src) == {:x, 0},
-              do: {:cont, {false, MapSet.put(refs, reg(dst))}},
-              else: {:cont, {false, MapSet.delete(refs, reg(dst))}}
+            if slot(src) == {:x, 0},
+              do: {:cont, {false, MapSet.put(refs, slot(dst))}},
+              else: {:cont, {false, MapSet.delete(refs, slot(dst))}}
 
           {:test, :is_reference, _f, [r]} ->
-            if MapSet.member?(refs, reg(r)),
+            if MapSet.member?(refs, slot(r)),
               do: {:halt, {true, refs}},
               else: {:cont, {false, refs}}
 
           {:move, _src, dst} ->
-            {:cont, {false, MapSet.delete(refs, reg(dst))}}
+            {:cont, {false, MapSet.delete(refs, slot(dst))}}
 
           _ ->
             {:cont, {false, refs}}
@@ -154,11 +155,6 @@ defmodule Argus.Extractors.CallbackTag do
 
     if found?, do: add_fact(facts, :callback_ref_head, [func_id, callback]), else: facts
   end
-
-  defp reg({:tr, r, _}), do: reg(r)
-  defp reg({:x, _} = r), do: r
-  defp reg({:y, _} = r), do: r
-  defp reg(_), do: nil
 
   defp emit_total(facts, func_id, callback, instrs) do
     if Dispatch.total_on?(instrs, {:x, 0}),

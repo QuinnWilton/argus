@@ -74,7 +74,7 @@ defmodule Argus.Extractors.Supervision do
     only: [call_result_origin: 3, keyword_value_register: 4, resolve_register: 3]
 
   import Argus.Extractor.Terms, only: [list_elements: 1, mentions?: 2]
-  import Argus.Instr, only: [register: 1]
+  import Argus.Instr, only: [register: 1, slot: 1]
 
   # The restart and type an OTP child spec states: what tells its tuple
   # form from any other 6-tuple.
@@ -1072,7 +1072,7 @@ defmodule Argus.Extractors.Supervision do
   # `{ok, {Flags, Children}}`: the children are the second element of the
   # tuple the `ok` tuple holds.
   defp erlang_children(instrs, idx, inner) do
-    with reg when reg != nil <- element_register(inner),
+    with reg when reg != nil <- slot(inner),
          {at, children} <-
            Resolve.trace(instrs, idx, reg, nil, fn
              {at, {:put_tuple2, _dst, {:list, [_flags, children]}}}, _follow -> {at, children}
@@ -1090,7 +1090,7 @@ defmodule Argus.Extractors.Supervision do
   defp list_operand(_frame, _idx, {:literal, list}), do: literal_list(list)
 
   defp list_operand(frame, idx, operand) do
-    case element_register(operand) do
+    case slot(operand) do
       nil -> {:open, []}
       reg -> list_at(frame, idx, reg)
     end
@@ -1217,7 +1217,7 @@ defmodule Argus.Extractors.Supervision do
     do: spec_or_error(extract_child_from_cons_operand(operand))
 
   defp element_operand(frame, idx, operand) do
-    case element_register(operand) do
+    case slot(operand) do
       nil -> :error
       reg -> element_at(frame, idx, reg)
     end
@@ -1360,7 +1360,7 @@ defmodule Argus.Extractors.Supervision do
   defp value(_frame, _idx, nil), do: []
 
   defp value(frame, idx, operand) do
-    case element_register(operand) do
+    case slot(operand) do
       nil -> @unknown
       reg -> value_at(frame, idx, reg)
     end
@@ -2291,7 +2291,7 @@ defmodule Argus.Extractors.Supervision do
   defp operand_value(nil, _instrs, _idx), do: {:ok, []}
 
   defp operand_value(operand, instrs, idx) do
-    case element_register(operand) do
+    case slot(operand) do
       nil -> :error
       reg -> resolve_register(instrs, idx, reg)
     end
@@ -2388,7 +2388,7 @@ defmodule Argus.Extractors.Supervision do
   # Traced from the tuple's first element back to the Keyword.get/3 or
   # Map.get/3 whose result it holds, then to that call's third argument.
   defp defaulted_module([first | _rest], instrs, idx) do
-    with reg when reg != nil <- element_register(first),
+    with reg when reg != nil <- slot(first),
          {:ok, {getter, :get, 3}, origin} when getter in [Keyword, Map] <-
            call_result_origin(instrs, idx, reg),
          {:ok, mod} when is_atom(mod) <- resolve_register(instrs, origin, {:x, 2}),
@@ -2400,11 +2400,6 @@ defmodule Argus.Extractors.Supervision do
   end
 
   defp defaulted_module(_elements, _instrs, _idx), do: nil
-
-  defp element_register({:tr, reg, _type}), do: element_register(reg)
-  defp element_register({:x, _} = reg), do: reg
-  defp element_register({:y, _} = reg), do: reg
-  defp element_register(_other), do: nil
 
   # The child spec's opts is a register operand of the same tuple; trace its
   # `:name` value back to a via registration.

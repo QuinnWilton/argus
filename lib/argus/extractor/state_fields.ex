@@ -54,6 +54,7 @@ defmodule Argus.Extractor.StateFields do
   alias Argus.Extractor.Terms
   alias Argus.Instr
   alias Argus.Instr.Reaching
+  import Argus.Instr, only: [slot: 1]
 
   @typedoc "A write a value is made of: its instruction's index, or a parameter."
   @type origin :: non_neg_integer() | {:param, non_neg_integer()}
@@ -235,7 +236,7 @@ defmodule Argus.Extractor.StateFields do
   """
   @spec made_of([Instr.instr()], non_neg_integer(), term()) :: made()
   def made_of(instrs, at, operand) do
-    case register(operand) do
+    case slot(operand) do
       nil -> empty()
       reg -> walk([{at, reg, :whole}], instrs, %{}, empty(), @fuel)
     end
@@ -243,7 +244,7 @@ defmodule Argus.Extractor.StateFields do
 
   # What a call's argument is made of, as what the call answers holds it.
   defp argument_of(instrs, at, operand) do
-    case register(operand) do
+    case slot(operand) do
       nil -> empty()
       reg -> walk([{at, reg, :arg}], instrs, %{}, empty(), @fuel)
     end
@@ -391,7 +392,7 @@ defmodule Argus.Extractor.StateFields do
   # nothing (its callee's returns say), what a call was
   # through another call's arguments as an argument (and past one, an
   # argument it stays), anything else its operands as it is.
-  defp reads({:get_tuple_element, src, i, _dst}, w, :whole), do: [{w, register(src), {:piece, i}}]
+  defp reads({:get_tuple_element, src, i, _dst}, w, :whole), do: [{w, slot(src), {:piece, i}}]
 
   defp reads(instr, w, mode) do
     cond do
@@ -442,8 +443,4 @@ defmodule Argus.Extractor.StateFields do
     do: {name, arity} in @raising
 
   defp raising?(_instr), do: false
-
-  defp register({:tr, reg, _type}), do: register(reg)
-  defp register({kind, _n} = reg) when kind in [:x, :y], do: reg
-  defp register(_operand), do: nil
 end

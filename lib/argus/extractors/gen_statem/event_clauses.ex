@@ -48,6 +48,7 @@ defmodule Argus.Extractors.GenStatem.EventClauses do
   alias Argus.Cfg.Walk
   alias Argus.Extractor.Dispatch
   alias Argus.Instr
+  import Argus.Instr, only: [slot: 1]
 
   @x0 {:x, 0}
 
@@ -108,7 +109,7 @@ defmodule Argus.Extractors.GenStatem.EventClauses do
   # ── Event types ──────────────────────────────────────────────────────
 
   defp event_types_in({:test, :is_eq_exact, _f, [a, b]}) do
-    case {reg(a), reg(b)} do
+    case {slot(a), slot(b)} do
       {@x0, _} -> atom_type(b)
       {_, @x0} -> atom_type(a)
       _ -> []
@@ -116,11 +117,11 @@ defmodule Argus.Extractors.GenStatem.EventClauses do
   end
 
   defp event_types_in({:test, :is_tagged_tuple, _f, [src, _arity, {:atom, tag}]}) do
-    if reg(src) == @x0, do: ["{#{tag}}"], else: []
+    if slot(src) == @x0, do: ["{#{tag}}"], else: []
   end
 
   defp event_types_in({:select_val, src, _fail, {:list, entries}}) do
-    if reg(src) == @x0, do: for({:atom, a} <- entries, do: to_string(a)), else: []
+    if slot(src) == @x0, do: for({:atom, a} <- entries, do: to_string(a)), else: []
   end
 
   defp event_types_in(_instr), do: []
@@ -133,8 +134,8 @@ defmodule Argus.Extractors.GenStatem.EventClauses do
   @tag_window 4
 
   defp tagged_types([{:get_tuple_element, src, 0, dst} | rest]) do
-    if reg(src) == @x0,
-      do: tag_tests(rest, reg(dst), @tag_window) ++ tagged_types(rest),
+    if slot(src) == @x0,
+      do: tag_tests(rest, slot(dst), @tag_window) ++ tagged_types(rest),
       else: tagged_types(rest)
   end
 
@@ -146,7 +147,7 @@ defmodule Argus.Extractors.GenStatem.EventClauses do
   defp tag_tests([{:label, _} | _], _dst, _n), do: []
 
   defp tag_tests([{:test, :is_eq_exact, _f, [a, b]} | _], dst, _n) do
-    case {reg(a), reg(b)} do
+    case {slot(a), slot(b)} do
       {^dst, _} -> tag_of(b)
       {_, ^dst} -> tag_of(a)
       _ -> []
@@ -154,7 +155,7 @@ defmodule Argus.Extractors.GenStatem.EventClauses do
   end
 
   defp tag_tests([{:select_val, src, _fail, {:list, entries}} | _], dst, _n) do
-    if reg(src) == dst, do: for({:atom, a} <- entries, do: "{#{a}}"), else: []
+    if slot(src) == dst, do: for({:atom, a} <- entries, do: "{#{a}}"), else: []
   end
 
   defp tag_tests([instr | rest], dst, n) do
@@ -218,7 +219,7 @@ defmodule Argus.Extractors.GenStatem.EventClauses do
 
   defp follow?({op, src, _, _}, {:select_arm, _}, allowed, _fi)
        when op in [:select_val, :select_tuple_arity],
-       do: reg(src) in allowed
+       do: slot(src) in allowed
 
   defp follow?({op, _, {:f, fail}, _}, :select_fail, _allowed, fi)
        when op in [:select_val, :select_tuple_arity],
@@ -228,11 +229,6 @@ defmodule Argus.Extractors.GenStatem.EventClauses do
 
   # ── Registers ────────────────────────────────────────────────────────
 
-  defp reg({:tr, r, _type}), do: reg(r)
-  defp reg({:x, _} = r), do: r
-  defp reg({:y, _} = r), do: r
-  defp reg(_other), do: nil
-
   # Operands only: a literal's value is data (the literal `{:x, 1}` is not
   # the register), and lists are walked cell by cell so an improper tail
   # is asked like any element.
@@ -241,7 +237,7 @@ defmodule Argus.Extractors.GenStatem.EventClauses do
   defp regs_in([head | tail]), do: regs_in(head) ++ regs_in(tail)
 
   defp regs_in(term) when is_tuple(term) do
-    case reg(term) do
+    case slot(term) do
       nil -> term |> Tuple.to_list() |> Enum.flat_map(&regs_in/1)
       r -> [r]
     end

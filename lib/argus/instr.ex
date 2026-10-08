@@ -199,6 +199,15 @@ defmodule Argus.Instr do
   def register({:tr, reg, _type}), do: reg
   def register(other), do: other
 
+  @doc """
+  The `x` or `y` register `operand` names, its type annotation stripped,
+  or nil for any other operand: a literal, a float register, a label.
+  """
+  @spec slot(term()) :: {:x | :y, non_neg_integer()} | nil
+  def slot({:tr, reg, _type}), do: slot(reg)
+  def slot({kind, _n} = reg) when kind in [:x, :y], do: reg
+  def slot(_operand), do: nil
+
   # --- the table --------------------------------------------------------
 
   defp field(instr, n, unknown) do

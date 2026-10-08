@@ -42,6 +42,7 @@ defmodule Argus.Extractor.Answers do
   alias Argus.Extractor.Resolve
   alias Argus.Instr
   alias Argus.Instr.Reaching
+  import Argus.Instr, only: [slot: 1]
 
   @typedoc "An answer: the call's instruction index and how many payloads down."
   @type answer :: {non_neg_integer(), 0 | 1}
@@ -101,7 +102,7 @@ defmodule Argus.Extractor.Answers do
         down(instrs, at, src, fuel, 0, 1)
 
       {:put_tuple2, _dst, {:list, [{:atom, _tag}, payload]}} ->
-        case register(payload) do
+        case slot(payload) do
           nil -> :none
           reg -> down(instrs, at, reg, fuel, 1, 0)
         end
@@ -114,7 +115,7 @@ defmodule Argus.Extractor.Answers do
   # The answers of `reg` at `at`, each of which must be `from` payloads
   # down, moved to `to`.
   defp down(instrs, at, reg, fuel, from, to) do
-    with reg when reg != nil <- register(reg),
+    with reg when reg != nil <- slot(reg),
          {:ok, set, fuel} <- answers(instrs, at, reg, fuel),
          true <- Enum.all?(set, fn {_site, depth} -> depth == from end) do
       {:ok, Enum.map(set, fn {site, _depth} -> {site, to} end), fuel}
@@ -122,10 +123,6 @@ defmodule Argus.Extractor.Answers do
       _ -> :none
     end
   end
-
-  defp register({:tr, reg, _type}), do: register(reg)
-  defp register({kind, _n} = reg) when kind in [:x, :y], do: reg
-  defp register(_operand), do: nil
 
   @doc """
   The answers every way the function returns a value hands back, sorted:

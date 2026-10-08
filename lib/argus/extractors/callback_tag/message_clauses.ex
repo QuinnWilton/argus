@@ -59,6 +59,7 @@ defmodule Argus.Extractors.CallbackTag.MessageClauses do
 
   alias Argus.Extractor.Dispatch
   alias Argus.Instr
+  import Argus.Instr, only: [slot: 1]
 
   # Modules a catch-all may hand the message to without taking it:
   # logging it and printing it. Kernel.inspect/2 is named on its own.
@@ -280,7 +281,7 @@ defmodule Argus.Extractors.CallbackTag.MessageClauses do
   end
 
   defp step({:test, op, {:f, l}, args}, idx, path, tuple, labels, st) when is_list(args) do
-    kinds = for a <- args, k = Map.get(path.tracked, reg(a)), do: k
+    kinds = for a <- args, k = Map.get(path.tracked, slot(a)), do: k
 
     valued? =
       (op in @value_tests and Enum.any?(kinds, &(&1 in [:msg, :tag]))) or
@@ -303,14 +304,14 @@ defmodule Argus.Extractors.CallbackTag.MessageClauses do
   # hold map values, not the message.
   defp step({:get_map_elements, {:f, l}, src, {:list, kvs}}, idx, path, tuple, labels, st) do
     on_message? = tracked?(path, src)
-    tracked = kvs |> Enum.drop_every(2) |> Enum.reduce(path.tracked, &Map.delete(&2, reg(&1)))
+    tracked = kvs |> Enum.drop_every(2) |> Enum.reduce(path.tracked, &Map.delete(&2, slot(&1)))
     path = %{path | tracked: tracked}
     branch(idx, l, {on_message?, false, false}, path, path, tuple, labels, st)
   end
 
   defp step({op, src, {:f, fail}, {:list, pairs}}, _idx, path, tuple, labels, st)
        when op in [:select_val, :select_tuple_arity] do
-    kind = Map.get(path.tracked, reg(src))
+    kind = Map.get(path.tracked, slot(src))
 
     arm_path =
       if kind == nil,
@@ -345,21 +346,21 @@ defmodule Argus.Extractors.CallbackTag.MessageClauses do
     do: walk(idx + 1, %{path | tracked: track(path.tracked, src, dst, nil)}, tuple, labels, st)
 
   defp step({:swap, a, b}, idx, path, tuple, labels, st) do
-    ka = Map.get(path.tracked, reg(a))
-    kb = Map.get(path.tracked, reg(b))
-    tracked = path.tracked |> Map.delete(reg(a)) |> Map.delete(reg(b))
-    tracked = if ka, do: Map.put(tracked, reg(b), ka), else: tracked
-    tracked = if kb, do: Map.put(tracked, reg(a), kb), else: tracked
+    ka = Map.get(path.tracked, slot(a))
+    kb = Map.get(path.tracked, slot(b))
+    tracked = path.tracked |> Map.delete(slot(a)) |> Map.delete(slot(b))
+    tracked = if ka, do: Map.put(tracked, slot(b), ka), else: tracked
+    tracked = if kb, do: Map.put(tracked, slot(a), kb), else: tracked
     walk(idx + 1, %{path | tracked: tracked}, tuple, labels, st)
   end
 
   defp step({:get_tuple_element, src, i, dst}, idx, path, tuple, labels, st) do
-    kind = if Map.get(path.tracked, reg(src)) == :msg and i == 0, do: :tag, else: :part
+    kind = if Map.get(path.tracked, slot(src)) == :msg and i == 0, do: :tag, else: :part
 
     parts =
-      if Map.get(path.tracked, reg(src)) == :msg,
-        do: Map.put(path.parts, reg(dst), i),
-        else: Map.delete(path.parts, reg(dst))
+      if Map.get(path.tracked, slot(src)) == :msg,
+        do: Map.put(path.parts, slot(dst), i),
+        else: Map.delete(path.parts, slot(dst))
 
     path = %{path | tracked: track(path.tracked, src, dst, kind), parts: parts}
     walk(idx + 1, path, tuple, labels, st)
@@ -370,11 +371,11 @@ defmodule Argus.Extractors.CallbackTag.MessageClauses do
   # tag (vmq_tracer's trace clause). Another BIF is where the head ends.
   defp step({:bif, :element, {:f, _}, [{:integer, i}, src], dst}, idx, path, tuple, labels, st)
        when is_integer(i) and i >= 1 do
-    if Map.get(path.tracked, reg(src)) == :msg and reg(dst) != nil do
+    if Map.get(path.tracked, slot(src)) == :msg and slot(dst) != nil do
       path = %{
         path
-        | tracked: Map.put(path.tracked, reg(dst), if(i == 1, do: :tag, else: :part)),
-          parts: Map.put(path.parts, reg(dst), i - 1)
+        | tracked: Map.put(path.tracked, slot(dst), if(i == 1, do: :tag, else: :part)),
+          parts: Map.put(path.parts, slot(dst), i - 1)
       }
 
       walk(idx + 1, path, tuple, labels, st)
@@ -434,8 +435,8 @@ defmodule Argus.Extractors.CallbackTag.MessageClauses do
   # still holds it (a later write, a struct's module read into it, drops
   # it from `tracked` alone).
   defp element(path, operand) do
-    with :part <- Map.get(path.tracked, reg(operand)),
-         {:ok, i} <- Map.fetch(path.parts, reg(operand)) do
+    with :part <- Map.get(path.tracked, slot(operand)),
+         {:ok, i} <- Map.fetch(path.parts, slot(operand)) do
       {:ok, i}
     else
       _ -> :error
@@ -471,7 +472,7 @@ defmodule Argus.Extractors.CallbackTag.MessageClauses do
   # leaves none. `is_ne_exact` fails where the two are equal.
   defp shapes(op, [a, b], path) when op in [:is_eq_exact, :is_eq, :is_ne_exact, :is_ne] do
     equal =
-      case {Map.get(path.tracked, reg(a)), b, Map.get(path.tracked, reg(b)), a} do
+      case {Map.get(path.tracked, slot(a)), b, Map.get(path.tracked, slot(b)), a} do
         {:msg, value, _, _} -> literal_shape(value, path)
         {_, _, :msg, value} -> literal_shape(value, path)
         {:tag, {:atom, x}, _, _} -> %{path | shape_tag: x}
@@ -485,13 +486,13 @@ defmodule Argus.Extractors.CallbackTag.MessageClauses do
   end
 
   defp shapes(:is_tagged_tuple, [src, n, {:atom, x}], path) when is_integer(n) do
-    if Map.get(path.tracked, reg(src)) == :msg,
+    if Map.get(path.tracked, slot(src)) == :msg,
       do: {%{path | shape_tag: x, arity: n}, %{path | shape_tag: nil, arity: nil}},
       else: {path, path}
   end
 
   defp shapes(:test_arity, [src, n], path) when is_integer(n) do
-    if Map.get(path.tracked, reg(src)) == :msg,
+    if Map.get(path.tracked, slot(src)) == :msg,
       do: {%{path | arity: n}, %{path | shape_tag: nil, arity: nil}},
       else: {path, path}
   end
@@ -542,7 +543,7 @@ defmodule Argus.Extractors.CallbackTag.MessageClauses do
   end
 
   defp track(tracked, src, dst, kind) do
-    case {reg(src), reg(dst)} do
+    case {slot(src), slot(dst)} do
       {nil, _} ->
         tracked
 
@@ -557,11 +558,7 @@ defmodule Argus.Extractors.CallbackTag.MessageClauses do
     end
   end
 
-  defp tracked?(path, operand), do: Map.has_key?(path.tracked, reg(operand))
-
-  defp reg({:tr, r, _type}), do: reg(r)
-  defp reg({kind, _} = r) when kind in [:x, :y], do: r
-  defp reg(_other), do: nil
+  defp tracked?(path, operand), do: Map.has_key?(path.tracked, slot(operand))
 
   # ── The catch-all's body ──────────────────────────────────────────
 

@@ -63,6 +63,7 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
   """
 
   alias Argus.Instr
+  import Argus.Instr, only: [slot: 1]
 
   @x0 {:x, 0}
   @x1 {:x, 1}
@@ -268,7 +269,7 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
     {path, acc} = note(path, acc, instr)
 
     cond do
-      reg(a) == @x0 and path.class == nil and class_atom(b) != nil ->
+      slot(a) == @x0 and path.class == nil and class_atom(b) != nil ->
         # The clause begins here: the atoms compared before it belong to
         # the dispatch, not to this clause.
         clause = %{
@@ -318,7 +319,7 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
           op in @shape_tests ->
             shaped = %{
               tested
-              | tuple: path.tuple or (op in @tuple_tests and reg(hd(args)) == @x1)
+              | tuple: path.tuple or (op in @tuple_tests and slot(hd(args)) == @x1)
             }
 
             {shaped, tested}
@@ -352,7 +353,7 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
        ) do
     arms = Enum.chunk_every(pairs, 2)
 
-    if reg(src) == @x0 and path.class == nil do
+    if slot(src) == @x0 and path.class == nil do
       {seen, acc} =
         Enum.reduce(arms, {seen, acc}, fn [val, {:f, l}], {s, a} ->
           clause = %{
@@ -407,7 +408,7 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
        ) do
     path =
       if alias?(src, path),
-        do: %{path | tested: true, tuple: path.tuple or reg(src) == @x1},
+        do: %{path | tested: true, tuple: path.tuple or slot(src) == @x1},
         else: path
 
     {seen, acc} =
@@ -575,19 +576,19 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
   # `dst` takes the projection `step` of `src`: an element position, or
   # `:__struct__`.
   defp copy(path, src, dst, step) do
-    case {Map.fetch(path.paths, reg(src)), alias?(src, path)} do
+    case {Map.fetch(path.paths, slot(src)), alias?(src, path)} do
       {{:ok, at}, true} ->
         %{
           path
-          | aliases: MapSet.put(path.aliases, reg(dst)),
-            paths: Map.put(path.paths, reg(dst), at ++ [step])
+          | aliases: MapSet.put(path.aliases, slot(dst)),
+            paths: Map.put(path.paths, slot(dst), at ++ [step])
         }
 
       {:error, true} ->
         %{
           path
-          | aliases: MapSet.put(path.aliases, reg(dst)),
-            paths: Map.delete(path.paths, reg(dst))
+          | aliases: MapSet.put(path.aliases, slot(dst)),
+            paths: Map.delete(path.paths, slot(dst))
         }
 
       {_, false} ->
@@ -596,7 +597,7 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
   end
 
   defp forget(path, dst) do
-    case reg(dst) do
+    case slot(dst) do
       nil -> path
       r -> %{path | aliases: MapSet.delete(path.aliases, r), paths: Map.delete(path.paths, r)}
     end
@@ -618,7 +619,7 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
   end
 
   defp alias?(operand, path) do
-    case reg(operand) do
+    case slot(operand) do
       nil -> false
       r -> MapSet.member?(path.aliases, r)
     end
@@ -709,7 +710,7 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
 
   # Where in the reason the operand's value sits, or nil.
   defp place(operand, path) do
-    case reg(operand) do
+    case slot(operand) do
       nil -> nil
       r -> Map.get(path.paths, r)
     end
@@ -739,9 +740,4 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
 
   defp class_atom({:atom, c}) when c in @classes, do: c
   defp class_atom(_), do: nil
-
-  defp reg({:tr, r, _type}), do: reg(r)
-  defp reg({:x, _} = r), do: r
-  defp reg({:y, _} = r), do: r
-  defp reg(_), do: nil
 end

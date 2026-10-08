@@ -11,6 +11,7 @@ defmodule Argus.Extractor.Dispatch do
   """
 
   alias Argus.Instr
+  import Argus.Instr, only: [slot: 1]
 
   @doc """
   The label of the function's `func_info` instruction, or `nil`: the
@@ -217,8 +218,8 @@ defmodule Argus.Extractor.Dispatch do
 
     tracked =
       case {tracked?(a, tracked), tracked?(b, tracked)} do
-        {true, false} -> tracked |> forget(a) |> MapSet.put(reg(b))
-        {false, true} -> tracked |> forget(b) |> MapSet.put(reg(a))
+        {true, false} -> tracked |> forget(a) |> MapSet.put(slot(b))
+        {false, true} -> tracked |> forget(b) |> MapSet.put(slot(a))
         _ -> tracked
       end
 
@@ -313,14 +314,14 @@ defmodule Argus.Extractor.Dispatch do
   end
 
   defp forget(tracked, dst) do
-    case reg(dst) do
+    case slot(dst) do
       nil -> tracked
       r -> MapSet.delete(tracked, r)
     end
   end
 
   defp track(tracked, src, dst) do
-    case {reg(src), reg(dst)} do
+    case {slot(src), slot(dst)} do
       {nil, _} ->
         tracked
 
@@ -333,7 +334,7 @@ defmodule Argus.Extractor.Dispatch do
   end
 
   defp tracked?(operand, tracked) do
-    case reg(operand) do
+    case slot(operand) do
       nil -> false
       r -> MapSet.member?(tracked, r)
     end
@@ -356,18 +357,18 @@ defmodule Argus.Extractor.Dispatch do
   defp atoms_compared({:test, :is_eq_exact, _f, [a, b]}, register) do
     cond do
       register == :any -> atoms_in([a, b])
-      reg(a) == register -> atoms_in([b])
-      reg(b) == register -> atoms_in([a])
+      slot(a) == register -> atoms_in([b])
+      slot(b) == register -> atoms_in([a])
       true -> []
     end
   end
 
   defp atoms_compared({:test, :is_tagged_tuple, _f, [src, _arity, tag]}, register) do
-    if register == :any or reg(src) == register, do: atoms_in([tag]), else: []
+    if register == :any or slot(src) == register, do: atoms_in([tag]), else: []
   end
 
   defp atoms_compared({:select_val, src, _f, {:list, entries}}, register) do
-    if register == :any or reg(src) == register, do: atoms_in(entries), else: []
+    if register == :any or slot(src) == register, do: atoms_in(entries), else: []
   end
 
   defp atoms_compared(_instr, _register), do: []
@@ -388,12 +389,12 @@ defmodule Argus.Extractor.Dispatch do
     |> Enum.with_index()
     |> Enum.flat_map(fn
       {{:test, :is_eq_exact, _f, [a, b]}, idx} ->
-        if {reg(a), b} == {register, {:atom, atom}} or {a, reg(b)} == {{:atom, atom}, register},
+        if {slot(a), b} == {register, {:atom, atom}} or {a, slot(b)} == {{:atom, atom}, register},
           do: [idx + 1],
           else: []
 
       {{:select_val, src, _f, {:list, entries}}, _idx} ->
-        if reg(src) == register, do: arm_targets(entries, atom, labels), else: []
+        if slot(src) == register, do: arm_targets(entries, atom, labels), else: []
 
       _ ->
         []
@@ -590,7 +591,7 @@ defmodule Argus.Extractor.Dispatch do
       k ->
         chans =
           List.update_at(next.chans, k, fn chan ->
-            %{chan | tag_regs: Enum.sort(Enum.uniq([reg(dst) | chan.tag_regs]))}
+            %{chan | tag_regs: Enum.sort(Enum.uniq([slot(dst) | chan.tag_regs]))}
           end)
 
         [%{next | idx: state.idx + 1, chans: chans}]
@@ -871,16 +872,11 @@ defmodule Argus.Extractor.Dispatch do
     end
   end
 
-  defp held?(operand, regs), do: reg(operand) in regs
+  defp held?(operand, regs), do: slot(operand) in regs
 
   @doc "Label → instruction index for the function."
   @spec labels([tuple()]) :: %{non_neg_integer() => non_neg_integer()}
   def labels(instrs) do
     for {{:label, l}, idx} <- Enum.with_index(instrs), into: %{}, do: {l, idx}
   end
-
-  defp reg({:tr, r, _type}), do: reg(r)
-  defp reg({:x, _} = r), do: r
-  defp reg({:y, _} = r), do: r
-  defp reg(_other), do: nil
 end

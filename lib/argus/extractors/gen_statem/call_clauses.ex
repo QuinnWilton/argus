@@ -34,6 +34,7 @@ defmodule Argus.Extractors.GenStatem.CallClauses do
   """
 
   alias Argus.Cfg.{Block, Function}
+  import Argus.Instr, only: [slot: 1]
 
   @x0 {:x, 0}
   @stateful_tags %{keep_state: 2, next_state: 3, repeat_state: 2}
@@ -77,8 +78,8 @@ defmodule Argus.Extractors.GenStatem.CallClauses do
   # dispatch block, so the registers it landed in seed the path.
   defp call_heads(%Block{range: {first, last}, succs: succs}, instrs) do
     body = for idx <- first..last, do: elem(instrs, idx)
-    tags = for {:get_tuple_element, src, 0, dst} <- body, reg(src) == @x0, do: reg(dst)
-    from = for {:get_tuple_element, src, 1, dst} <- body, reg(src) == @x0, do: reg(dst)
+    tags = for {:get_tuple_element, src, 0, dst} <- body, slot(src) == @x0, do: slot(dst)
+    from = for {:get_tuple_element, src, 1, dst} <- body, slot(src) == @x0, do: slot(dst)
 
     for to <- call_arm_targets(elem(instrs, last), tags, succs), do: {to, from}
   end
@@ -92,15 +93,15 @@ defmodule Argus.Extractors.GenStatem.CallClauses do
   end
 
   defp call_arm_targets({:select_val, src, _f, _list}, tags, succs) do
-    if reg(src) in tags, do: for({to, {:select_arm, ":call"}} <- succs, do: to), else: []
+    if slot(src) in tags, do: for({to, {:select_arm, ":call"}} <- succs, do: to), else: []
   end
 
   defp call_arm_targets(_instr, _tags, _succs), do: []
 
   defp compares_tag_to_call?(a, b, tags),
     do:
-      (reg(a) in tags and literal_atom(b) == :call) or
-        (reg(b) in tags and literal_atom(a) == :call)
+      (slot(a) in tags and literal_atom(b) == :call) or
+        (slot(b) in tags and literal_atom(a) == :call)
 
   # Depth-first over blocks with the path state; a block is revisited only
   # with a state it has not been entered with (the state is finite, so the
@@ -164,23 +165,23 @@ defmodule Argus.Extractors.GenStatem.CallClauses do
   # the event was saved to (a clause with a multi-line body keeps it in
   # a y register and reads `from` from there).
   defp step({:get_tuple_element, src, 1, dst}, _idx, path) do
-    if reg(src) in path.event,
-      do: {:continue, %{forget(path, dst) | from: [reg(dst) | path.from]}},
+    if slot(src) in path.event,
+      do: {:continue, %{forget(path, dst) | from: [slot(dst) | path.from]}},
       else: {:continue, forget(path, dst)}
   end
 
   defp step({:move, src, dst}, _idx, path) do
     cond do
-      reg(src) in path.from ->
-        {:continue, %{forget(path, dst) | from: [reg(dst) | path.from]}}
+      slot(src) in path.from ->
+        {:continue, %{forget(path, dst) | from: [slot(dst) | path.from]}}
 
-      reg(src) in path.event ->
-        {:continue, %{forget(path, dst) | event: [reg(dst) | path.event]}}
+      slot(src) in path.event ->
+        {:continue, %{forget(path, dst) | event: [slot(dst) | path.event]}}
 
       literal_atom(src) == :postpone ->
         {:continue, %{path | replied: true}}
 
-      reg(dst) == @x0 and literal_atom(src) == :keep_state_and_data ->
+      slot(dst) == @x0 and literal_atom(src) == :keep_state_and_data ->
         {:continue, %{forget(path, dst) | x0: :bare}}
 
       true ->
@@ -201,7 +202,7 @@ defmodule Argus.Extractors.GenStatem.CallClauses do
       uses_from?([head | rest], path) ->
         {:continue, forget(%{path | kept: true}, dst)}
 
-      reg(dst) == @x0 and Map.get(@stateful_tags, literal_atom(head)) == length(rest) + 1 ->
+      slot(dst) == @x0 and Map.get(@stateful_tags, literal_atom(head)) == length(rest) + 1 ->
         # A state tuple of exactly the arity that carries no actions.
         {:continue, %{forget(path, dst) | x0: :bare}}
 
@@ -251,11 +252,11 @@ defmodule Argus.Extractors.GenStatem.CallClauses do
   defp forget(path, dst) do
     path = %{
       path
-      | from: List.delete(path.from, reg(dst)),
-        event: List.delete(path.event, reg(dst))
+      | from: List.delete(path.from, slot(dst)),
+        event: List.delete(path.event, slot(dst))
     }
 
-    if reg(dst) == @x0, do: %{path | x0: nil}, else: path
+    if slot(dst) == @x0, do: %{path | x0: nil}, else: path
   end
 
   defp unreplied_return?(path), do: path.x0 == :bare
@@ -268,25 +269,20 @@ defmodule Argus.Extractors.GenStatem.CallClauses do
   defp follow?(instr, :branch_fail), do: not call_head?(instr)
 
   defp follow?({op, src, _, _}, {:select_arm, _}) when op in [:select_val, :select_tuple_arity],
-    do: reg(src) != @x0
+    do: slot(src) != @x0
 
   defp follow?(_instr, _kind), do: true
 
-  defp call_head?({:test, :is_tagged_tuple, _f, [src, 2, {:atom, :call}]}), do: reg(src) == @x0
+  defp call_head?({:test, :is_tagged_tuple, _f, [src, 2, {:atom, :call}]}), do: slot(src) == @x0
   defp call_head?(_), do: false
 
-  defp x0_test?({:test, _op, _f, args}), do: @x0 in Enum.map(args, &reg/1)
-  defp x0_test?({:test, _op, _f, src, _fields}), do: reg(src) == @x0
+  defp x0_test?({:test, _op, _f, args}), do: @x0 in Enum.map(args, &slot/1)
+  defp x0_test?({:test, _op, _f, src, _fields}), do: slot(src) == @x0
   defp x0_test?(_), do: false
 
   # ── Registers and literals ──────────────────────────────────────────
 
-  defp uses_from?(terms, path), do: Enum.any?(terms, &(reg(&1) in path.from))
-
-  defp reg({:tr, r, _type}), do: reg(r)
-  defp reg({:x, _} = r), do: r
-  defp reg({:y, _} = r), do: r
-  defp reg(_other), do: nil
+  defp uses_from?(terms, path), do: Enum.any?(terms, &(slot(&1) in path.from))
 
   defp literal_atom({:atom, a}), do: a
   defp literal_atom(_), do: nil
