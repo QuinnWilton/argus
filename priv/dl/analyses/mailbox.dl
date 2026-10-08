@@ -2123,14 +2123,23 @@ self_timer_tag(mod, tag) :-
   function_def(f, mod, _, _, _).
 
 // What a call the clause of handle_info/2 for `tag` makes on every path
-// runs in the module.
-.init tick_path = ForwardIntraModuleSameProcessReach
+// runs in the module, on every path too: each step is a call its caller
+// makes on every path through it (unconditional_call_edge). An arm a
+// helper reaches only behind a branch, a retry on a failed start, is no
+// rearm of every tick's (attesto_phoenix's signal sweeper).
+.init tick_path = ForwardIntraModuleSameProcessReachCut
 
 tick_path.root(c, g) :-
   looping_server(mod, h),
   info_clause_always(c, h, tag),
   self_timer_tag(mod, tag),
   call_instr(h, g, c).
+
+tick_path.cut(g, h) :-
+  looping_server(mod, _),
+  function_def(g, mod, _, _, _),
+  call_edge(g, h),
+  !unconditional_call_edge(g, h).
 
 // A periodic rearm for lit on every continuing path of its handle_info clause, directly
 // or through an unconditionally completing helper. `via` identifies the clause's call.

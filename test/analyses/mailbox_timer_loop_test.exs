@@ -32,7 +32,9 @@ defmodule Argus.Analyses.MailboxTimerLoopTest do
     T.ContinueOnError,
     :timer_loop_reloader,
     :timer_loop_resend,
-    :timer_loop_domain_db
+    :timer_loop_domain_db,
+    Argus.Test.Fixtures.MailboxRetryChain,
+    Argus.Test.Fixtures.MailboxPeriodicChain
   ]
 
   setup_all do
@@ -43,7 +45,7 @@ defmodule Argus.Analyses.MailboxTimerLoopTest do
   defp reported(rows) do
     rows
     |> Enum.map(fn [mod, message, entry, _site, _arm, _loop, keeps] ->
-      {mod |> String.replace("Argus.Test.Fixtures.TimerLoop.", ""), message,
+      {mod |> String.replace(~r/^Argus\.Test\.Fixtures\.(TimerLoop\.)?/, ""), message,
        entry |> String.split(":") |> List.last(), keeps}
     end)
     |> Enum.uniq()
@@ -67,6 +69,9 @@ defmodule Argus.Analyses.MailboxTimerLoopTest do
              # One clause re-arms without cancelling the kept ref first,
              # the other cancels.
              {"KeptRefRearm", ":beat", "handle_info/2", ":beat_ref"},
+             # The loop re-arms through two helpers, each called on
+             # every path; the kick stores over the ref it keeps.
+             {"MailboxPeriodicChain", ":poll", "handle_cast/2", ":timer"},
              {"ReloadLoop", ":reload", "handle_cast/2", ""},
              # A kick sent to self() while the loop's timer is pending.
              {"SelfKick", ":report", "handle_cast/2", ""},
@@ -114,7 +119,10 @@ defmodule Argus.Analyses.MailboxTimerLoopTest do
           T.CastFromInit,
           T.BroadwayGuard,
           :timer_loop_resend,
-          :timer_loop_domain_db
+          :timer_loop_domain_db,
+          # attesto_phoenix's sweeper: re-armed only behind a case and
+          # an if, on a failed start, a retry and no loop.
+          Argus.Test.Fixtures.MailboxRetryChain
         ] do
       refute MapSet.member?(mods, inspect(quiet)), "#{inspect(quiet)} reported"
     end
