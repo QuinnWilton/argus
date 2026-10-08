@@ -28,13 +28,7 @@ defmodule Argus.Graph.Extraction do
   @spec module_facts(Roux.Database.t(), term()) :: {:ok, Argus.Graph.Pack.t()} | {:error, term()}
   defdelegate module_facts(db, key), to: Argus.Graph.FunctionPack
 
-  @spec module_in_process(Roux.Database.t(), term()) ::
-          {:ok, Argus.Graph.Pack.t()} | {:error, term()}
-  defdelegate module_in_process(db, key), to: Argus.Graph.FunctionPack
-
   @spec module_semantic(Roux.Database.t(), term()) ::
           {:ok, %{atom() => binary()}} | {:error, term()}
   defdelegate module_semantic(db, key), to: Argus.Graph.FunctionPack
-  @spec base_code(Roux.Database.t(), :all) :: term()
-  defdelegate base_code(db, key), to: Argus.Graph.FunctionPack
 end

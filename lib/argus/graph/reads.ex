@@ -26,9 +26,10 @@ defmodule Argus.Graph.Reads do
   ## Specs on the code path
 
   Extraction reads the specs of every remote module a module calls from
-  the code path (`Argus.Specs.installed/2`). What it read is recorded
-  (`record_installed/1`), and `around/2` demands `installed_specs(module)`
-  for each: a digest of what reading that module's specs can give
+  the code path (`Argus.Specs.installed/2`). The extraction cache
+  (`Argus.Graph.ExtractionCache`) keeps what it read, and a cached
+  extraction depends on `installed_specs(module)` for each: a digest of
+  what reading that module's specs can give
   (`Argus.Specs.interface_digest/1`), which reads the input that moves
   when its beam does — the program's own `beam`, or the `app_code` of
   the directory it lives in (`code_index`). A dependency rebuilt without
@@ -40,8 +41,6 @@ defmodule Argus.Graph.Reads do
 
   alias Argus.Schema
   alias Roux.Runtime
-
-  @installed_key {__MODULE__, :installed}
 
   @doc """
   Whether `module` is schema data: `Argus.Schema` or a module under it,
@@ -75,51 +74,23 @@ defmodule Argus.Graph.Reads do
 
   @doc """
   The `around:` hook of every query of the graph: runs `body` with a set
-  of schema reads and of installed-spec reads of its own, and makes the
-  running query depend on each (`schema_entry`, `installed_specs`). A
-  query demanded inside `body` records into its own sets, not this one:
-  what it read, the caller depends on through it.
+  of schema reads of its own, and makes the running query depend on
+  each (`schema_entry`). A query demanded inside `body` records into its
+  own set, not this one: what it read, the caller depends on through it.
   """
   @spec around(map(), (-> result)) :: result when result: term()
   def around(%{db: db}, body) do
-    outer = Process.put(@installed_key, %{})
-
-    {{result, reads}, installed} =
-      try do
-        read = Schema.Reads.isolated(body)
-        {read, Process.get(@installed_key, %{})}
-      after
-        restore(outer)
-      end
+    {result, reads} = Schema.Reads.isolated(body)
 
     # In a set of their own, dropped: digesting an entry reads it again,
     # and that read is this query's edge, not its caller's.
     {:ok, _} =
       Schema.Reads.isolated(fn ->
         Enum.each(reads, &schema_entry(db, &1))
-        installed |> Map.keys() |> Enum.sort() |> Enum.each(&installed_specs(db, &1))
         :ok
       end)
 
     result
-  end
-
-  defp restore(nil), do: Process.delete(@installed_key)
-  defp restore(outer), do: Process.put(@installed_key, outer)
-
-  @doc """
-  Records that the running query read the specs of `modules` from the
-  code path (made in another process on its behalf, as extraction's
-  are): `around/2` turns each into an edge.
-  """
-  @spec record_installed([module()]) :: :ok
-  def record_installed(modules) when is_list(modules) do
-    case Process.get(@installed_key) do
-      nil -> :ok
-      set -> Process.put(@installed_key, Enum.reduce(modules, set, &Map.put(&2, &1, true)))
-    end
-
-    :ok
   end
 
   # One entry of the schema, by the name its accessor recorded it under

@@ -9,9 +9,10 @@ defmodule Argus.Schema.Reads do
   `record/2` only checks the dictionary. Values are reread through \
   `Argus.Schema.reread/1` when computing cache keys.
 
-  Tracking is process-local. Workers must track their own reads and send them to the \
-  parent for `record_all/1`. Schema identity tests verify recorded values and confirm \
-  that changing unread entries leaves producer output unchanged.
+  Tracking is process-local. Workers track their own reads and return them with their \
+  results (an extraction's `:reads`, which the graph's extraction cache keeps). Schema \
+  identity tests verify recorded values and confirm that changing unread entries leaves \
+  producer output unchanged.
   """
 
   @typedoc """
@@ -34,20 +35,6 @@ defmodule Argus.Schema.Reads do
     end
 
     value
-  end
-
-  @doc """
-  Adds reads collected by another process to this process's innermost tracking set, if \
-  present.
-  """
-  @spec record_all([read()]) :: :ok
-  def record_all(reads) when is_list(reads) do
-    case Process.get(@key) do
-      nil -> :ok
-      set -> Process.put(@key, Enum.reduce(reads, set, &Map.put(&2, &1, true)))
-    end
-
-    :ok
   end
 
   @doc """

@@ -57,20 +57,6 @@ defmodule Argus.Graph.Code do
   def closure(producer),
     do: Roux.Code.closure(producer_roots(producer), exclude: &Reads.schema_module?/1)
 
-  @doc """
-  Whether a producer can read specs from the code path
-  (`Argus.Specs.installed/2`): its rows then depend on the specs it
-  read (`installed_specs`, `Argus.Graph.Reads`) as well as on the
-  module. A producer whose closure cannot be read may.
-  """
-  @spec reads_installed?(Argus.Pipeline.producer()) :: boolean()
-  def reads_installed?(producer) do
-    case closure(producer) do
-      {:ok, modules} -> List.keymember?(modules, Argus.Specs, 0)
-      {:error, _} -> true
-    end
-  end
-
   defquery :producer_code, key: :all, code: {__MODULE__, :roots, []} do
     for producer <- Extraction.producers(), into: %{} do
       {producer, digest(producer_roots(producer), db)}

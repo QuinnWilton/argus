@@ -76,10 +76,6 @@ defmodule Argus.Graph.FunctionPack do
     {:ok, %{pack | lost: true}}
   end
 
-  defquery :base_code, key: :all do
-    R.query(db, :extraction_code, :base)
-  end
-
   defquery :module_semantic, key: module do
     with {:ok, %{relations: relations}} <- R.query(db, :module_facts, module) do
       {:ok, Map.delete(relations, :line_info)}

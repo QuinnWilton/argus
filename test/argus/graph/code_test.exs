@@ -56,10 +56,6 @@ defmodule Argus.Graph.CodeTest do
         ] do
       refute List.keymember?(closure, mod, 0), "#{inspect(mod)} moves #{inspect(producer)}'s key"
     end
-
-    assert Code.reads_installed?(Argus.Extractors.Specs)
-    refute Code.reads_installed?(:base)
-    refute Code.reads_installed?(Argus.Extractors.ETS)
   end
 
   test "the schema's modules are left out, and what they call is walked" do
@@ -83,7 +79,7 @@ defmodule Argus.Graph.CodeTest do
     assert Code.producer_roots(Argus.Extractors.ETS) == [Argus.Pipeline, Argus.Extractors.ETS]
   end
 
-  test "a producer compiled in memory has no closure, and may read specs" do
+  test "a producer compiled in memory has no closure" do
     [{mod, _bin}] =
       Elixir.Code.compile_string("""
       defmodule Argus.Graph.CodeTest.InMemory do
@@ -92,6 +88,5 @@ defmodule Argus.Graph.CodeTest do
       """)
 
     assert {:error, {:no_beam, ^mod}} = Code.closure(mod)
-    assert Code.reads_installed?(mod)
   end
 end
