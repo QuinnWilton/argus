@@ -14,6 +14,11 @@ defmodule Mix.Tasks.Argus.Flowlog do
       mix argus.flowlog status           # Rust, the toolchain, and what is built
       mix argus.flowlog solve PROGRAM FACTS_DIR [OUT_DIR] [--profile]
                                          # one solve of a program over a facts directory
+      mix argus.flowlog facts OUT_DIR (--checkout NAME | --ebin DIR... | --beam FILE...)
+                                         # every fact and stage output argus's programs read
+      mix argus.flowlog bench FACTS_DIR [PROGRAM...] [--runs N] [--edits N]
+                              [--save FILE] [--against FILE] [--engine generic|compiled]
+                                         # time, memory and outputs of solves over FACTS_DIR
       mix argus.flowlog clean            # remove the toolchains and bundles this argus no longer uses
       mix argus.flowlog bundle OUT_DIR   # this platform's prebuilt engines, for a release
       mix argus.flowlog prebuilt BASE_URL OFFER.json...
@@ -30,6 +35,23 @@ defmodule Mix.Tasks.Argus.Flowlog do
   longest, each named by the relation or rule expression it is of (`σ` a
   map of one, `⋈` a join, `▷` the rows an antijoin keeps); a rule whose
   join holds millions of updates is the one to restate.
+
+  `facts` extracts a project's facts into `OUT_DIR` once, with every
+  stage's outputs (`Argus.Analysis.extract_facts/3` for every analysis):
+  a corpus checkout's (`--checkout ash-09f4259`, as `mix argus.corpus
+  fetch` names them), or the beams of ebin directories or files.
+
+  `bench` solves each program (default every built-in program whose
+  inputs `FACTS_DIR` holds) in fresh engines and prints how long the
+  solve took from scratch (the fastest of `--runs`, default 1), the
+  median of `--edits` one-row edits' commits (default 3: a row of the
+  largest input taken out and put back), the engine's peak memory and
+  what it kept, and its outputs (`Argus.FlowLog.Bench`). `--save` keeps
+  the measures as JSON, and `--against` compares with saved ones: each
+  change in time and memory, and whether every output is the same rows,
+  naming the relations that are not. Save before a change to an engine
+  or a rule meant only to make it faster, and compare after: the rows
+  must not move.
 
   `build` compiles engines, a large program's taking minutes; the
   analyses then run in them instead of the generic engine. Run it in CI
@@ -51,6 +73,7 @@ defmodule Mix.Tasks.Argus.Flowlog do
   use Mix.Task
 
   alias Argus.FlowLog
+  alias Argus.FlowLog.Bench
   alias Argus.FlowLog.Native
   alias Argus.FlowLog.Prebuilt
   alias Argus.FlowLog.Program
@@ -81,6 +104,28 @@ defmodule Mix.Tasks.Argus.Flowlog do
 
       _ ->
         Mix.raise(usage())
+    end
+  end
+
+  def run(["facts" | args]) do
+    case OptionParser.parse(args, strict: [checkout: :string, ebin: :keep, beam: :keep]) do
+      {opts, [out], []} when opts != [] -> facts(Path.expand(out), opts)
+      _ -> Mix.raise(usage())
+    end
+  end
+
+  def run(["bench" | args]) do
+    switches = [
+      runs: :integer,
+      edits: :integer,
+      save: :string,
+      against: :string,
+      engine: :string
+    ]
+
+    case OptionParser.parse(args, strict: switches) do
+      {opts, [facts | programs], []} -> bench(Path.expand(facts), programs, opts)
+      _ -> Mix.raise(usage())
     end
   end
 
@@ -140,6 +185,9 @@ defmodule Mix.Tasks.Argus.Flowlog do
   defp usage do
     "usage: mix argus.flowlog build [PROGRAM...] | status " <>
       "| solve PROGRAM FACTS_DIR [OUT_DIR] [--profile] " <>
+      "| facts OUT_DIR (--checkout NAME | --ebin DIR... | --beam FILE...) " <>
+      "| bench FACTS_DIR [PROGRAM...] [--runs N] [--edits N] [--save FILE] [--against FILE] " <>
+      "[--engine generic|compiled] " <>
       "| clean | bundle OUT_DIR | prebuilt BASE_URL OFFER.json..."
   end
 
@@ -179,6 +227,170 @@ defmodule Mix.Tasks.Argus.Flowlog do
       if report, do: File.rm(report)
     end
   end
+
+  defp facts(out, opts) do
+    Mix.Task.run("app.config")
+    beams = facts_beams(opts)
+    info("argus: extracting the facts of #{length(beams)} beams")
+
+    case Argus.Analysis.extract_facts(beams, Argus.Analysis.Catalog.names(), timeout: :infinity) do
+      {:ok, dir} ->
+        try do
+          File.rm_rf!(out)
+          File.mkdir_p!(Path.dirname(out))
+          File.cp_r!(dir, out)
+          info("argus: wrote #{length(File.ls!(out))} relations' facts into #{out}")
+        after
+          File.rm_rf(Path.dirname(dir))
+        end
+
+      {:error, reason} ->
+        Mix.raise("argus: extracting facts failed: #{inspect(reason)}")
+    end
+  end
+
+  defp facts_beams(opts) do
+    from_checkout =
+      case Keyword.get(opts, :checkout) do
+        nil -> []
+        name -> checkout_beams(name)
+      end
+
+    from_ebins =
+      for dir <- Keyword.get_values(opts, :ebin),
+          beam <- Path.wildcard(Path.join(Path.expand(dir), "*.beam")),
+          do: beam
+
+    beams =
+      from_checkout ++ from_ebins ++ Enum.map(Keyword.get_values(opts, :beam), &Path.expand/1)
+
+    if beams == [], do: Mix.raise("argus: no beams to extract facts from"), else: beams
+  end
+
+  defp checkout_beams(name) do
+    checkouts = Argus.Corpus.checkouts(Argus.Corpus.pairs())
+
+    case Enum.find(checkouts, fn {co, _pair, _side} -> co.name == name end) do
+      nil ->
+        Mix.raise(
+          "argus: no corpus checkout is named #{name}; they are named <repo>-<sha7>, " <>
+            "as `mix argus.corpus fetch` prints them"
+        )
+
+      {_co, pair, side} ->
+        case Argus.Corpus.ensure(pair, side) do
+          {:ok, beams} -> beams
+          {:skip, why} -> Mix.raise("argus: #{name} cannot be built here: #{why}")
+          {:error, why} -> Mix.raise("argus: #{name}: #{why}")
+        end
+    end
+  end
+
+  defp bench(facts, programs, opts) do
+    Mix.Task.run("app.config")
+
+    unless File.dir?(facts), do: Mix.raise("argus: #{facts} is not a directory of facts")
+
+    {ready, lacking} =
+      if programs == [],
+        do: Bench.programs(facts),
+        else: Bench.programs(facts, Enum.map(programs, &Path.expand/1))
+
+    for {path, missing} <- lacking do
+      info("#{Path.basename(path)}: not measured, #{facts} has no #{Enum.join(missing, ", ")}")
+    end
+
+    against = if path = opts[:against], do: Bench.read!(Path.expand(path))
+
+    measure_opts =
+      [runs: Keyword.get(opts, :runs, 1), edits: Keyword.get(opts, :edits, 3)] ++
+        engine_option(opts[:engine])
+
+    measures =
+      for program <- ready do
+        case Bench.measure(facts, program, measure_opts) do
+          {:ok, measure} ->
+            print_measure(measure, against)
+            measure
+
+          {:error, reason} ->
+            Mix.raise("argus: #{Path.basename(program)}: " <> FlowLog.describe_error(reason))
+        end
+      end
+
+    if path = opts[:save] do
+      Bench.write!(Path.expand(path), measures)
+      info("argus: saved #{length(measures)} measure(s) to #{path}")
+    end
+
+    if against, do: print_verdict(Bench.compare(against, measures))
+  end
+
+  defp engine_option(nil), do: []
+  defp engine_option("generic"), do: [engine: :generic]
+  defp engine_option("compiled"), do: [engine: :compiled]
+  defp engine_option(other), do: Mix.raise("argus: --engine is generic or compiled, not #{other}")
+
+  defp print_measure(measure, against) do
+    before = against && Enum.find(against, &(&1.program == measure.program))
+
+    cells = [
+      "cold " <>
+        change(
+          &seconds/1,
+          Bench.fastest(measure.cold_ms),
+          before && Bench.fastest(before.cold_ms)
+        ),
+      "edit " <>
+        change(&millis/1, Bench.median(measure.edit_ms), before && Bench.median(before.edit_ms)),
+      "peak " <> change(&mb/1, measure.peak_bytes, before && before.peak_bytes),
+      "kept " <> change(&mb/1, measure.bytes, before && before.bytes)
+    ]
+
+    outcome = if measure.outcome == "ok", do: "", else: "  " <> measure.outcome
+
+    info(
+      "#{String.pad_trailing(measure.program, 30)} #{measure.engine}  " <>
+        Enum.join(cells, "  ") <> "  #{map_size(measure.outputs)} outputs" <> outcome
+    )
+  end
+
+  defp change(format, nil, _before), do: format.(nil)
+  defp change(format, now, nil), do: format.(now)
+  defp change(format, now, before) when before == 0, do: format.(now)
+
+  defp change(format, now, before) do
+    percent = round((now / before - 1) * 100)
+    sign = if percent > 0, do: "+", else: ""
+    "#{format.(now)} (#{sign}#{percent}%)"
+  end
+
+  defp seconds(nil), do: "-"
+  defp seconds(ms), do: :erlang.float_to_binary(ms / 1000, decimals: 2) <> "s"
+  defp millis(nil), do: "-"
+  defp millis(ms), do: "#{round(ms)}ms"
+  defp mb(nil), do: "-"
+  defp mb(bytes), do: "#{div(bytes, 1_000_000)} MB"
+
+  defp print_verdict(comparisons) do
+    differing = Enum.reject(comparisons, &(&1.outputs == :same))
+
+    if differing == [] do
+      info(
+        "argus: every output is the same rows as the saved run's (#{length(comparisons)} programs)"
+      )
+    else
+      info("argus: outputs differ from the saved run's:")
+
+      for %{program: program, outputs: outputs} <- differing,
+          {relation, was, now} <- outputs do
+        info("  #{program}: #{relation}: #{rows(was)} -> #{rows(now)} rows")
+      end
+    end
+  end
+
+  defp rows(nil), do: "none"
+  defp rows(n), do: grouped(n)
 
   @arrangements 20
   @operators 12

@@ -381,7 +381,7 @@ defmodule Argus.FlowLog do
       out = scratch_dir()
 
       try do
-        with {:ok, engine} <- start(built, opts) do
+        with {:ok, engine} <- start_engine(built, opts) do
           try do
             timeout = Keyword.get(opts, :timeout, @default_timeout)
 
@@ -400,7 +400,14 @@ defmodule Argus.FlowLog do
     end
   end
 
-  defp start(built, opts) do
+  @doc """
+  Starts `built`'s engine (`engine/2`), linked to the caller, as `run/3`
+  starts it: with `:workers` threads (default `default_workers/0`),
+  logging to the toolchain's log for the program, and profiled into the
+  `:profile` file when one is named (a generic engine only).
+  """
+  @spec start_engine(built(), keyword()) :: {:ok, Engine.t()} | {:error, term()}
+  def start_engine(built, opts \\ []) do
     profile = if path = opts[:profile], do: ["--profile", Path.expand(path)], else: []
 
     Engine.start_link(

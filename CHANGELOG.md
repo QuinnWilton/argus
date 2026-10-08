@@ -89,6 +89,12 @@ which a change appeared; older names and APIs may have changed since then.
   faster to build, and about three and a half times slower to solve. argus's
   own programs are always built optimized. argus's test suite builds its
   tests' programs so.
+- `mix argus.flowlog bench FACTS_DIR` measures each program over a facts
+  directory in fresh engines: its time from scratch, its one-row edits' commits,
+  the engine's peak memory and what it kept, and a digest of every output.
+  `--save` keeps a run and `--against` compares with one, naming each output
+  whose rows moved (`Argus.FlowLog.Bench`). `mix argus.flowlog facts OUT_DIR`
+  extracts the facts it reads from a corpus checkout or from beams.
 - `Argus.FlowLog.Engine.usage/1` reports the memory an engine holds now and has
   held at most: its footprint on macOS, its resident set elsewhere.
 - `mix argus.corpus diff` lists every finding a change added or removed

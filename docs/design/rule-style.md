@@ -68,6 +68,13 @@ named by its rule expression: a join holding millions of updates is the rule
 to restate, for instance by negating before a join that brings in columns the
 negation does not read.
 
+A restatement must find the same rows. `mix argus.flowlog facts tmp/ash --checkout
+ash-09f4259` extracts a corpus project's facts once, with every stage's outputs;
+`mix argus.flowlog bench tmp/ash --save tmp/before.json` measures each program
+over them, and after the change `--against tmp/before.json` prints the change in
+time from scratch, in one-row edits and in the engine's peak and kept memory,
+and names each output whose rows moved.
+
 ## Names and comments
 
 - Use names that state the property: fails_if_row_missing, runs_in_another_process.

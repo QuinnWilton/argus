@@ -46,6 +46,8 @@ reverse dependency tracking until a Roux release includes them.
 | Schema, cache keys or producer dependencies | `mix test --include identity_verify --exclude corpus`; use `ARGUS_NO_CACHE=1` to compare fresh results when needed. |
 | Query graph or incrementality | `mix test --only parity`. |
 | Frontends or packaging | `mix test --include escript --include rebar3 --include gleam --exclude corpus` with the relevant tools installed. |
+| FlowLog toolchain (`native/flowlog`) | `mix test test/argus/flowlog` (and the suite) runs the tool crate's unit tests, `cargo fmt --check` and `cargo clippy -D warnings`, once per version of the sources; `test/argus/flowlog_test.exs` checks both engine kinds. |
+| A rule or engine change meant to be faster | `mix argus.flowlog bench FACTS_DIR --save before.json` before, `--against before.json` after: every output must be the same rows. `mix argus.flowlog facts DIR --checkout NAME` extracts a corpus project's facts. |
 
 For a focused corpus run, use `ARGUS_CORPUS_ONLY=redix#334 mix test --only corpus`
 with an ID from `test/corpus/pairs.exs`. A rule's reach is every other finding in
