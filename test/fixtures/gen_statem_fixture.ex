@@ -577,3 +577,19 @@ defmodule Argus.Test.Fixtures.DelegatedAbyssStatem do
   @impl true
   def terminate(_reason, _state, _data), do: :ok
 end
+
+defmodule Argus.Test.Fixtures.StatemDataFromArgs do
+  @moduledoc false
+  @behaviour :gen_statem
+
+  # {ok, State, Data} with Data the start's argument: a three-element :ok
+  # tuple whose last element no return spells, which is no timeout.
+  @impl true
+  def callback_mode, do: :handle_event_function
+
+  @impl true
+  def init(data), do: {:ok, :idle, data}
+
+  @impl true
+  def handle_event(:info, :tick, _state, data), do: {:keep_state, data}
+end

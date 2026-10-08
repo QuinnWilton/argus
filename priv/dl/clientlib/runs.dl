@@ -95,7 +95,7 @@ node_tag(k, t) :- clause_node(_, _, k, t).
 
 message_site_clause(s, h, t) :- clause_call(s, h, t).
 message_site_clause(s, h, t) :- continue_return(s, h, t, _), t != "*".
-message_site_clause(s, h, t) :- timeout_return(s, h, t), t != "*".
+message_site_clause(s, h, t) :- idle_timeout_return(s, h, t), t != "*".
 message_site_clause(s, h, t) :- statem_insert(s, h, t, _, _), t != "*".
 
 // self_message(site, func, kind, tag) identifies a message sent to func's own process;
@@ -163,7 +163,19 @@ self_message(id, f, "info", ":DOWN") :- mailbox_writer(id, f, "task_nolink").
 
 // Idle timeouts returned by callbacks, directly or through returned helper results. Do
 // not interpret arbitrary helper tuples as callback returns.
-self_message(id, f, "info", ":timeout") :- timeout_return(id, f, _), callback_result(f).
+self_message(id, f, "info", ":timeout") :- idle_timeout_return(id, f, _), callback_result(f).
+
+// A return that arms gen_server's idle timeout. timeout_return reads every
+// {:ok, _, X} a function returns as {ok, State, Timeout}, its module unseen; a
+// gen_statem's {ok, State, Data} and a gen_event handler's {ok, Reply, State}
+// have the same shape, and neither behaviour has an idle timeout.
+.decl idle_timeout_return(site: symbol, func: symbol, tag: symbol)
+
+idle_timeout_return(s, h, t) :-
+  timeout_return(s, h, t),
+  function_def(h, m, _, _, _),
+  !behaves_as(m, "GenStateMachine"),
+  !behaves_as(m, "GenEvent").
 
 .decl callback_result(func: symbol)
 
