@@ -481,15 +481,15 @@ fn memory() -> Option<(u64, u64)> {
 
 #[cfg(not(target_os = "macos"))]
 fn memory() -> Option<(u64, u64)> {
-    let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
-    if unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) } != 0 {
-        return None;
-    }
-    let page = u64::try_from(unsafe { libc::sysconf(libc::_SC_PAGESIZE) }).ok()?;
-    let statm = std::fs::read_to_string("/proc/self/statm").ok()?;
-    let resident: u64 = statm.split_whitespace().nth(1)?.parse().ok()?;
-    // `ru_maxrss` is in kilobytes on Linux.
-    Some((resident * page, u64::try_from(usage.ru_maxrss).ok()? * 1024))
+    // One snapshot, so the peak is never below the resident set: the
+    // kernel takes VmHWM as at least VmRSS, where `ru_maxrss` read before
+    // another file could fall behind the pages that read itself took.
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    let kilobytes = |field: &str| -> Option<u64> {
+        let rest = status.lines().find_map(|line| line.strip_prefix(field))?;
+        rest.trim().strip_suffix("kB")?.trim().parse::<u64>().ok()
+    };
+    Some((kilobytes("VmRSS:")? * 1024, kilobytes("VmHWM:")? * 1024))
 }
 
 fn failure(kind: &str, message: String) -> Value {
