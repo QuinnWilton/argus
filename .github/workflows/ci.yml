@@ -82,20 +82,25 @@ jobs:
           otp-version: ${{ matrix.otp }}
 
       - name: Install Rust
-        # argus compiles its FlowLog engines with Rust (`Argus.FlowLog.Toolchain`).
+        # argus compiles its FlowLog engines with Rust (`Argus.FlowLog.Toolchain`);
+        # the suite checks the toolchain's own sources with rustfmt and
+        # clippy (`Argus.FlowLog.NativeTest`).
         run: |
-          rustup toolchain install stable --profile minimal
+          rustup toolchain install stable --profile minimal --component rustfmt,clippy
           rustup default stable
 
       - name: Restore the FlowLog engines
         # Built once per version of argus's native sources and rules; the
-        # test helper builds whatever is missing before any test runs.
+        # test helper builds whatever is missing before any test runs. The
+        # tool crate's target/ is where the suite builds its unit tests
+        # and clippy's check.
         uses: actions/cache@v4
         with:
           path: |
             ~/.cache/argus/flowlog
             ~/.cargo/registry
             ~/.cargo/git
+            native/flowlog/tool/target
           key: ${{ runner.os }}-flowlog-${{ hashFiles('native/flowlog/**', 'priv/dl/**', 'test/**/*.exs', 'test/**/*.ex') }}
           restore-keys: ${{ runner.os }}-flowlog-
 
