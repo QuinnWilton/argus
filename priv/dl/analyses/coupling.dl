@@ -347,6 +347,7 @@ orphaned_children(sup, owner, owner_pos, holder, holder_pos, start, basis) :-
   restarts_only_later_children(sup),
   runs_in_child(sup, owner_pos, owner),
   starts_child(owner, start),
+  !adopts_running_child(start),
   starts_under_earlier_child(start, sup, owner_pos, holder_pos, basis),
   child_at(sup, holder_pos, holder).
 
@@ -373,6 +374,24 @@ starts_child(owner, start) :-
   function_def(func, owner, _, _, _),
   sup_management_call(start, func, _, op, _),
   child_creating_op(op).
+
+// The start takes `{:error, {:already_started, pid}}` for success: the
+// child is registered under a name, and a restarted owner adopts the one
+// its last incarnation started instead of starting a second. The function
+// making the start or its caller compares the error (start_error_compared,
+// anywhere in the function, as races.dl's start_error_handled reads it).
+// An anonymous child (a task, a worker without a name) is never
+// already started, so its start is not one of these.
+.decl adopts_running_child(start: symbol)
+
+adopts_running_child(start) :-
+  sup_management_call(start, f, _, _, _),
+  start_error_compared(f, ":already_started").
+
+adopts_running_child(start) :-
+  sup_management_call(start, f, _, _, _),
+  call_edge(g, f),
+  start_error_compared(g, ":already_started").
 
 // The process is started under an earlier sibling at holder_pos. `basis` uses
 // sibling_dependency's evidence categories; "resolved" means a literal registered

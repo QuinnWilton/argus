@@ -95,3 +95,103 @@ defmodule Argus.Test.Fixtures.StartupCalledCapture do
     end
   end
 end
+
+# A rest_for_one tree whose later child starts a named transport under
+# the earlier DynamicSupervisor, and takes `{:error, {:already_started,
+# pid}}` for success: a restarted runtime adopts the transport its last
+# incarnation started rather than starting a second.
+defmodule Argus.Test.Fixtures.StartupAdoptTransport do
+  @moduledoc false
+  use GenServer
+
+  def start_link(opts),
+    do: GenServer.start_link(__MODULE__, opts, name: Keyword.fetch!(opts, :name))
+
+  @impl true
+  def init(opts), do: {:ok, opts}
+end
+
+defmodule Argus.Test.Fixtures.StartupAdoptRuntime do
+  @moduledoc false
+  use GenServer
+
+  alias Argus.Test.Fixtures.StartupAdoptTransport
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+  @impl true
+  def init(_opts), do: {:ok, %{}}
+
+  @impl true
+  def handle_call(:ensure, _from, state) do
+    :ok = start_transport()
+    {:reply, :ok, state}
+  end
+
+  defp start_transport do
+    child = {StartupAdoptTransport, name: StartupAdoptTransport}
+
+    case DynamicSupervisor.start_child(Argus.Test.Fixtures.StartupAdoptRuntimeSup, child) do
+      {:ok, _pid} -> :ok
+      {:error, {:already_started, _pid}} -> :ok
+      {:error, reason} -> raise "could not start the transport: #{inspect(reason)}"
+    end
+  end
+end
+
+defmodule Argus.Test.Fixtures.StartupAdoptTree do
+  @moduledoc false
+  use Supervisor
+
+  def start_link(opts), do: Supervisor.start_link(__MODULE__, opts, name: __MODULE__)
+
+  @impl true
+  def init(_opts) do
+    children = [
+      {DynamicSupervisor, name: Argus.Test.Fixtures.StartupAdoptRuntimeSup},
+      Argus.Test.Fixtures.StartupAdoptRuntime
+    ]
+
+    Supervisor.init(children, strategy: :rest_for_one)
+  end
+end
+
+# The twin: the runtime starts an anonymous worker each time, so a
+# restarted runtime starts another beside the one left running.
+defmodule Argus.Test.Fixtures.StartupDuplicateRuntime do
+  @moduledoc false
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+  @impl true
+  def init(_opts), do: {:ok, %{}}
+
+  @impl true
+  def handle_call(:ensure, _from, state) do
+    {:ok, _pid} =
+      DynamicSupervisor.start_child(
+        Argus.Test.Fixtures.StartupDuplicateRuntimeSup,
+        {Agent, fn -> :transport end}
+      )
+
+    {:reply, :ok, state}
+  end
+end
+
+defmodule Argus.Test.Fixtures.StartupDuplicateTree do
+  @moduledoc false
+  use Supervisor
+
+  def start_link(opts), do: Supervisor.start_link(__MODULE__, opts, name: __MODULE__)
+
+  @impl true
+  def init(_opts) do
+    children = [
+      {DynamicSupervisor, name: Argus.Test.Fixtures.StartupDuplicateRuntimeSup},
+      Argus.Test.Fixtures.StartupDuplicateRuntime
+    ]
+
+    Supervisor.init(children, strategy: :rest_for_one)
+  end
+end

@@ -69,6 +69,8 @@ A later child starts work under an earlier sibling supervisor. `rest_for_one`
 restarts the later owner without restarting that earlier supervisor, so the old work
 survives and can be started again. A literal registered target is resolved evidence;
 a uniquely matching earlier supervisor can provide inferred evidence.
+A start that takes `{:error, {:already_started, pid}}` as success is excluded: its
+child is registered under a name, and the restarted owner adopts the surviving one.
 
 Place the work under the intended lifecycle owner or explicitly stop it when that
 owner ends. The analysis cannot establish all application-specific cleanup protocols.

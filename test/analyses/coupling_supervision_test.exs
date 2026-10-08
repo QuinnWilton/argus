@@ -33,6 +33,31 @@ defmodule Argus.Analyses.CouplingSupervisionTest do
                 "Task.Supervisor", "1", "0", "inferred"}
              ]
     end
+
+    # coupling.dl, orphaned_children: !adopts_running_child(start).
+    test "a later child that adopts its already started child is not reported" do
+      modules = [
+        Argus.Test.Fixtures.StartupAdoptTree,
+        Argus.Test.Fixtures.StartupAdoptRuntime,
+        Argus.Test.Fixtures.StartupAdoptTransport,
+        Argus.Test.Fixtures.StartupDuplicateTree,
+        Argus.Test.Fixtures.StartupDuplicateRuntime
+      ]
+
+      assert {:ok, results} = Memo.analyze(modules, :coupling)
+
+      assert [
+               [
+                 "Argus.Test.Fixtures.StartupDuplicateTree",
+                 "Argus.Test.Fixtures.StartupDuplicateRuntime",
+                 "DynamicSupervisor",
+                 "1",
+                 "0",
+                 _site,
+                 "resolved"
+               ]
+             ] = results["rest_for_one_orphaned_children"]
+    end
   end
 
   describe "sibling_dependency: restart_policy" do
