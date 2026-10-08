@@ -242,9 +242,31 @@ defmodule Argus.FlowLog.Toolchain do
 
   @doc """
   `cargo` and `rustc` (`t:rust/0`), or why they cannot build the toolchain.
+
+  Found once per VM for a `PATH`, `ARGUS_CARGO` and home, as `ensure/1`
+  keeps the toolchain: every run asks, and finding them is a search of
+  the `PATH` and a run of `rustc`. A search that finds none is not kept,
+  so a Rust installed while the VM runs is found.
   """
   @spec rust() :: {:ok, rust()} | {:error, reason()}
   def rust do
+    memo =
+      {__MODULE__, :rust, System.get_env("PATH"), System.get_env("ARGUS_CARGO"),
+       System.user_home()}
+
+    case :persistent_term.get(memo, nil) do
+      {:ok, _rust} = found ->
+        found
+
+      nil ->
+        with {:ok, _rust} = found <- find_rust() do
+          :persistent_term.put(memo, found)
+          found
+        end
+    end
+  end
+
+  defp find_rust do
     with {:ok, cargo} <- find_cargo(),
          {:ok, rustc} <- find_rustc(cargo),
          {:ok, version} <- rustc_version(rustc) do
@@ -299,7 +321,7 @@ defmodule Argus.FlowLog.Toolchain do
   end
 
   defp executable?(path) do
-    case File.stat(path) do
+    case Argus.RawFile.stat(path) do
       {:ok, %File.Stat{type: :regular, mode: mode}} -> Bitwise.band(mode, 0o111) != 0
       _ -> false
     end
