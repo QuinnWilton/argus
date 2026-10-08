@@ -16,7 +16,10 @@ defmodule Argus.Extractor.AnswerSides do
   """
 
   alias Argus.Cfg
+  alias Argus.Extractor.Helpers
   alias Argus.Instr
+  alias Argus.InstrId
+  alias Argus.Pipeline.Normalize
 
   @typedoc "A side of a test: its pass or fail edge, or every edge but to the labels'."
   @type side :: :branch_pass | :branch_fail | {:not_to, [non_neg_integer()]}
@@ -176,6 +179,138 @@ defmodule Argus.Extractor.AnswerSides do
       nil -> true
       block -> MapSet.member?(seen, block.id)
     end
+  end
+
+  @doc """
+  The blocks a walk reaches past `edges`: their targets, and every block
+  reachable from one.
+  """
+  @spec reach_from(Cfg.Function.t(), [edge()]) :: MapSet.t()
+  def reach_from(fun, edges) do
+    targets = edges |> Enum.map(&elem(&1, 1)) |> Enum.uniq()
+    # Each edge leads into a target, seen from the start: avoiding them
+    # changes nothing.
+    walk_until(targets, fun, MapSet.new(edges), %{}, MapSet.new(targets))
+  end
+
+  @doc """
+  `t:classify/0` for an answer that is a list of what was found, `[]`
+  where nothing was (`:ets.lookup/2`, `:mnesia.dirty_read/2`): the pass
+  edge of `is_nil` or of an equality with `[]` finds none, as does the
+  fail edge of `is_nonempty_list` or of an inequality with `[]`.
+  """
+  @spec empty_test(term(), [Instr.reg()]) :: {:present_on, side()} | :none
+  def empty_test({:test, :is_nil, _fail, [arg]}, regs),
+    do: if(Instr.register(arg) in regs, do: {:present_on, :branch_fail}, else: :none)
+
+  def empty_test({:test, :is_nonempty_list, _fail, [arg]}, regs),
+    do: if(Instr.register(arg) in regs, do: {:present_on, :branch_pass}, else: :none)
+
+  def empty_test({:test, op, _fail, args}, regs) when op in [:is_eq_exact, :is_eq] do
+    if compares_empty?(args, regs), do: {:present_on, :branch_fail}, else: :none
+  end
+
+  def empty_test({:test, op, _fail, args}, regs) when op in [:is_ne_exact, :is_ne] do
+    if compares_empty?(args, regs), do: {:present_on, :branch_pass}, else: :none
+  end
+
+  def empty_test(_instr, _regs), do: :none
+
+  defp compares_empty?(args, regs),
+    do: compares?(args, regs, nil) or compares?(args, regs, {:literal, []})
+
+  @doc """
+  `t:classify/0` for an answer that is `false` where nothing was found
+  (`:ets.member/2`): the fail edge of an equality with `false`, the pass
+  edge of an equality with `true` (and the other way round for an
+  inequality), every way out of a select but to the `false` arm's code.
+  """
+  @spec false_test(term(), [Instr.reg()]) :: {:present_on, side()} | :none
+  def false_test({:test, op, _fail, args}, regs) when op in [:is_eq_exact, :is_eq] do
+    cond do
+      compares?(args, regs, {:atom, false}) -> {:present_on, :branch_fail}
+      compares?(args, regs, {:atom, true}) -> {:present_on, :branch_pass}
+      true -> :none
+    end
+  end
+
+  def false_test({:test, op, _fail, args}, regs) when op in [:is_ne_exact, :is_ne] do
+    cond do
+      compares?(args, regs, {:atom, false}) -> {:present_on, :branch_pass}
+      compares?(args, regs, {:atom, true}) -> {:present_on, :branch_fail}
+      true -> :none
+    end
+  end
+
+  def false_test({:select_val, reg, _fail, {:list, cases}}, regs) do
+    labels = for [{:atom, false}, {:f, label}] <- Enum.chunk_every(cases, 2), do: label
+
+    if Instr.register(reg) in regs and labels != [],
+      do: {:present_on, {:not_to, labels}},
+      else: :none
+  end
+
+  def false_test(_instr, _regs), do: :none
+
+  @doc """
+  The pairs `{read, write}` of a function's reads and writes (instruction
+  IDs, by function) where no path from the side of the read's test that
+  found nothing reaches the write: the write follows the read only where
+  it found what it looked for. Each read comes with the `t:classify/0`
+  for its answer. A read whose answer is read some other way first, or
+  whose call does not fall through to a test (a tail call), has no pairs.
+  """
+  @spec found_writes(map(), [{String.t(), String.t(), classify()}], [{String.t(), String.t()}]) ::
+          [{String.t(), String.t()}]
+  def found_writes(module_data, reads, writes) do
+    writes_in = Enum.group_by(writes, &elem(&1, 0), &elem(&1, 1))
+
+    reads
+    |> Enum.filter(fn {func, _read, _classify} -> Map.has_key?(writes_in, func) end)
+    |> Enum.group_by(&elem(&1, 0), &Tuple.delete_at(&1, 0))
+    |> Enum.sort()
+    |> Enum.flat_map(fn {func, func_reads} ->
+      case function(module_data, func) do
+        {:ok, table, fun} ->
+          ws = writes_in |> Map.fetch!(func) |> Enum.uniq() |> Enum.sort()
+
+          for {read, classify} <- Enum.sort(func_reads),
+              write <- found_only(fun, table, read, classify, ws),
+              do: {read, write}
+
+        :error ->
+          []
+      end
+    end)
+  end
+
+  defp function(module_data, func) do
+    {name, arity} = Normalize.func_id_name_arity(func)
+
+    with instrs when is_list(instrs) <-
+           Helpers.find_function(module_data.functions, String.to_atom(name), arity),
+         %Cfg.Function{} = fun <- Helpers.cfg(module_data, name, arity) do
+      {:ok, List.to_tuple(instrs), fun}
+    else
+      _ -> :error
+    end
+  end
+
+  defp found_only(fun, table, read, classify, writes) do
+    at = instr_idx(read)
+
+    with true <- at < tuple_size(table) and Instr.falls_through?(elem(table, at)),
+         {:ok, [_ | _] = edges} <- side_edges(fun, table, at + 1, [{:x, 0}], :absent, classify) do
+      seen = reach_from(fun, edges)
+      for write <- writes, not reached?(fun, seen, instr_idx(write)), do: write
+    else
+      _ -> []
+    end
+  end
+
+  defp instr_idx(id) do
+    {:ok, %InstrId{idx: idx}} = InstrId.parse(id)
+    idx
   end
 
   @doc """

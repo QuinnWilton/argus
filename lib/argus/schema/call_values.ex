@@ -345,6 +345,20 @@ defmodule Argus.Schema.CallValues do
         """
       },
       %{
+        name: :mnesia_written_when_found,
+        layer: 2,
+        fields: [
+          {:read, :instr_id, "a Mnesia read (mnesia_op kind read)"},
+          {:write, :instr_id, "a Mnesia write (mnesia_op kind write) of the same function"}
+        ],
+        doc: """
+        No path from the side of a test of the read's answer that found no record \
+        reaches the write: the write follows the read only where it found the record \
+        (`Argus.Extractor.AnswerSides`). A read whose answer is not tested first has \
+        no rows.
+        """
+      },
+      %{
         name: :name_lookup,
         layer: 2,
         fields: [

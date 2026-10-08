@@ -91,6 +91,21 @@ defmodule Argus.Schema.OwnedResources do
         """
       },
       %{
+        name: :ets_written_when_found,
+        layer: 2,
+        fields: [
+          {:read, :instr_id, "a lookup, match, match_object, select or member (an ets_op)"},
+          {:write, :instr_id, "an ets_op of kind write in the same function"}
+        ],
+        doc: """
+        No path from the side of a test of the read's answer that found no row reaches \
+        the write: the write follows the read only where it found the row \
+        (`Argus.Extractor.AnswerSides`). An upsert refused only while the table is full \
+        and the key is new writes there; a claim writes where the read found none. A \
+        read whose answer is not tested first has no rows.
+        """
+      },
+      %{
         name: :port_open,
         layer: 2,
         fields: [

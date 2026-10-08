@@ -6,6 +6,7 @@ defmodule Argus.Analyses.EtsCheckActTest do
   alias Argus.Test.Batch
   alias Argus.Test.Fixtures.CheckThenAct, as: C
   alias Argus.Test.Fixtures.Dictionary, as: D
+  alias Argus.Test.Fixtures.RacesExposureClaim, as: Claims
   alias Argus.Test.Fixtures.RacesExposureRows, as: Rows
   alias Argus.Test.Memo
 
@@ -64,7 +65,10 @@ defmodule Argus.Analyses.EtsCheckActTest do
     D.CallerTable,
     D.SharedCallerTable,
     Rows.Sibling,
-    Rows.SameRow
+    Rows.SameRow,
+    Claims.Upsert,
+    Claims.Reserve,
+    Claims.TakeFree
   ]
 
   setup_all do
@@ -233,6 +237,20 @@ defmodule Argus.Analyses.EtsCheckActTest do
 
     test "a claim whose decision a caller acts on is reported", ctx do
       assert [{"claim/1", ":claims", "0"}] = races(ctx, [C.Claim])
+    end
+
+    test "an upsert past a lookup that found the row is no claim", ctx do
+      # phoenix_kit_ai's RequestCache.put/3: refused only while the table
+      # is full and the key is new, else an unconditional insert.
+      assert races(ctx, [Claims.Upsert]) == []
+    end
+
+    test "a claim decided by the same comparison writes where it found none", ctx do
+      assert [{"reserve/2", "claim"}] = kinds(ctx, [Claims.Reserve])
+    end
+
+    test "a found row taken by what it holds is still a claim", ctx do
+      assert [{"take/2", "claim"}] = kinds(ctx, [Claims.TakeFree])
     end
 
     test "a guard on what the row holds is reported, whatever the racers return", ctx do

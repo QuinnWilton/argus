@@ -4,6 +4,7 @@ defmodule Argus.Analyses.MnesiaCheckActTest do
   alias Argus.Analyses.Races
   alias Argus.Test.Batch
   alias Argus.Test.Fixtures.CheckThenAct, as: C
+  alias Argus.Test.Fixtures.RacesExposureClaim, as: Claims
   alias Argus.Test.Memo
 
   # Every test reads its fixtures' rows from one solve of them all
@@ -41,7 +42,9 @@ defmodule Argus.Analyses.MnesiaCheckActTest do
     C.MnesiaGetOrDefault,
     C.MnesiaTwoBranches,
     C.MnesiaSharedRead,
-    C.MnesiaChargeOnce
+    C.MnesiaChargeOnce,
+    Claims.MnesiaRefresh,
+    Claims.MnesiaTakeFree
   ]
 
   setup_all do
@@ -253,6 +256,14 @@ defmodule Argus.Analyses.MnesiaCheckActTest do
 
     test "a search that found nothing decides an insert that is never harmless", ctx do
       assert [{"record/2", _, _, "unique"}] = kinds(ctx, [C.MnesiaUniqueQuiet])
+    end
+
+    test "a write only where the read found the record is no claim", ctx do
+      refute Enum.any?(kinds(ctx, [Claims.MnesiaRefresh]), &(elem(&1, 3) == "claim"))
+    end
+
+    test "a found record taken by what it holds is still a claim", ctx do
+      assert [{"take/2", _, _, "claim"}] = kinds(ctx, [Claims.MnesiaTakeFree])
     end
 
     test "a get-or-create answers with the record: a fill, not a claim", ctx do

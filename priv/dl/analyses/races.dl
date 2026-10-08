@@ -1140,7 +1140,19 @@ ets_harm_by(f, r, w, "state_delete", w2, h) :-
 ets_harm_by(f, r, w, "claim", w2, h) :-
   makes_row(w),
   verdict_escapes(f, r),
-  decides_too(f, r, w, w2, h).
+  decides_too(f, r, w, w2, h),
+  !overwrites_found_row(f, r, w).
+
+// A claim takes the row where the read found none, or found it holding what lets it be
+// taken (a seat still `:free`). A write the read reaches only where it found the row,
+// decided by its presence alone, overwrites the row, whatever the caller is told: an
+// upsert refused while the table is full and the key is new.
+.decl overwrites_found_row(meet: symbol, read: symbol, write: symbol)
+
+overwrites_found_row(f, r, w) :-
+  reads_then_writes(f, r, w, _, _),
+  ets_written_when_found(r, w),
+  !tests_row_fields(f, r).
 
 ets_harm_by(f, r, w, "take", w2, h) :-
   ets_op(w, _, _, "delete", _),
@@ -2256,7 +2268,17 @@ record_race_kind(f, r, w, "claim") :-
   racing_record_pair(f, r, w),
   mnesia_op(w, _, "dirty_write", _, _, _, _, _),
   record_decision_escapes(f, r),
-  !record_carried.answers(f, r).
+  !record_carried.answers(f, r),
+  !overwrites_found_record(f, r, w).
+
+// A write reached only where the read found the record, decided by its presence alone,
+// overwrites it: not a claim (overwrites_found_row).
+.decl overwrites_found_record(meet: symbol, read: symbol, write: symbol)
+
+overwrites_found_record(f, r, w) :-
+  racing_record_pair(f, r, w),
+  mnesia_written_when_found(r, w),
+  !tests_record_fields(f, r).
 
 record_race_kind(f, r, w, "decides_more") :-
   racing_record_pair(f, r, w),

@@ -27,6 +27,11 @@ defmodule Argus.Extractors.Mnesia do
     through the function (`CfgFunction.precedes?/3`). Two writes
     ordered neither way are on paths that exclude each other: the two
     branches of an upsert, `[] -> write(new); [r] -> write(update(r))`.
+  - `mnesia_written_when_found(read, write)` — a read and a write of one
+    function, where every path from the read to the write passes the
+    side of a test of the read's answer that found records: the write
+    follows the read only where it found the record, never where it
+    found none (`Argus.Extractor.AnswerSides`)
 
   A closure handed to a dirty activity — `async_dirty/1`, `sync_dirty/1`,
   `ets/1`, or `activity/2` with one of those contexts — runs its plain
@@ -45,6 +50,7 @@ defmodule Argus.Extractors.Mnesia do
   @behaviour Argus.Extractor
 
   alias Argus.Cfg.Function, as: CfgFunction
+  alias Argus.Extractor.AnswerSides
   alias Argus.Extractor.CallSites
   alias Argus.Extractor.Helpers
   alias Argus.Extractor.Identity
@@ -108,7 +114,7 @@ defmodule Argus.Extractors.Mnesia do
   }
 
   @impl true
-  def relations, do: [:mnesia_op, :mnesia_write_order]
+  def relations, do: [:mnesia_op, :mnesia_write_order, :mnesia_written_when_found]
 
   @doc "Whether a remote call is a Mnesia read or write extracted here, for `Argus.Extractors.Dependence`."
   @spec site?(mfa()) :: boolean()
@@ -134,6 +140,20 @@ defmodule Argus.Extractors.Mnesia do
       handle_call(facts, ctx, mfa)
     end)
     |> emit_write_order(module_data)
+    |> emit_found_writes(module_data)
+  end
+
+  # The writes a function makes past its read only where the read found
+  # the record. Every read returns a list of the records it found: `[]`
+  # is none.
+  defp emit_found_writes(facts, module_data) do
+    ops = Map.get(facts, :mnesia_op, [])
+    reads = for [id, func, _op, "read" | _] <- ops, do: {func, id, &AnswerSides.empty_test/2}
+    writes = for [id, func, _op, "write" | _] <- ops, do: {func, id}
+
+    for {read, write} <- AnswerSides.found_writes(module_data, reads, writes), reduce: facts do
+      acc -> add_fact(acc, :mnesia_written_when_found, [read, write])
+    end
   end
 
   # The pairs of a function's writes one of which runs before the other

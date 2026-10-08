@@ -62,6 +62,10 @@ defmodule Argus.Extractors.ETS do
     a function of the module that makes it) passes the `:undefined` side
     of a test on the function's `:ets.whereis/1` or `:ets.info/1,2` of it;
     the witness is the first such lookup
+  - `ets_written_when_found(read, write)` — a read of rows (`lookup`,
+    `match`, `match_object`, `select`, `member`) and a write of one
+    function, where no path from the side of a test of the read's answer
+    that found no row reaches the write (`Argus.Extractor.AnswerSides`)
   """
 
   @behaviour Argus.Extractor
@@ -132,7 +136,8 @@ defmodule Argus.Extractors.ETS do
       :ets_effect_order,
       :ets_call_arg,
       :ets_read_when_present,
-      :ets_made_when_absent
+      :ets_made_when_absent,
+      :ets_written_when_found
     ]
 
   @doc "Whether a remote call is an ETS operation, for `Argus.Extractors.Dependence`."
@@ -155,7 +160,39 @@ defmodule Argus.Extractors.ETS do
     |> emit_effect_order(module_data, index)
     |> emit_present_reads(module_data)
     |> emit_absent_makes(module_data)
+    |> emit_found_writes(module_data)
   end
+
+  # ── Writes made where the read found the row ─────────────────────
+
+  # The writes a function makes past its read of a row only where the
+  # read found it: an upsert refused only while the table is full and
+  # the key is new (`size() >= max and lookup(t, k) == []`) writes past
+  # the lookup only on the side that found the row, where a claim writes
+  # on the side that found none. A lookup, match or select answers the
+  # rows it found, `[]` for none; member answers `false`.
+  @list_reads ~w(lookup match match_object select)
+  @boolean_reads ~w(member)
+
+  defp emit_found_writes(facts, module_data) do
+    ops = Map.get(facts, :ets_op, [])
+
+    reads =
+      for [id, func, _table, op, "read"] <- ops,
+          test = found_test(op),
+          test != nil,
+          do: {func, id, test}
+
+    writes = for [id, func, _table, _op, "write"] <- ops, do: {func, id}
+
+    for {read, write} <- AnswerSides.found_writes(module_data, reads, writes), reduce: facts do
+      acc -> add_fact(acc, :ets_written_when_found, [read, write])
+    end
+  end
+
+  defp found_test(op) when op in @list_reads, do: &AnswerSides.empty_test/2
+  defp found_test(op) when op in @boolean_reads, do: &AnswerSides.false_test/2
+  defp found_test(_op), do: nil
 
   # ── Reads made where the table is there ──────────────────────────
 

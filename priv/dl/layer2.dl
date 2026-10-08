@@ -405,6 +405,11 @@
 .decl ets_value(id: symbol, pos: number, source: symbol, value: symbol) mutable
 .input ets_value
 
+// No path from the side of a test of the read's answer that found no row reaches the write: the write follows the read only where it found the row (`Argus.Extractor.AnswerSides`). An upsert refused only while the table is full and the key is new writes there; a claim writes where the read found none. A read whose answer is not tested first has no rows.
+//
+.decl ets_written_when_found(read: symbol, write: symbol) mutable
+.input ets_written_when_found
+
 // Explicit Process.exit/2 or :erlang.exit/1,2 call.
 .decl exit_call(id: symbol, func: symbol, target: symbol) mutable
 .input exit_call
@@ -557,6 +562,11 @@
 //
 .decl mnesia_write_order(func: symbol, first: symbol, then: symbol) mutable
 .input mnesia_write_order
+
+// No path from the side of a test of the read's answer that found no record reaches the write: the write follows the read only where it found the record (`Argus.Extractor.AnswerSides`). A read whose answer is not tested first has no rows.
+//
+.decl mnesia_written_when_found(read: symbol, write: symbol) mutable
+.input mnesia_written_when_found
 
 // Every possible call result supplying the monitored pid, at payload `depth` (`Argus.Extractor.Answers`). Rows are all-or-nothing across paths. `clientlib/answers.dl` determines whether the calls start processes. Deeper nested pids, such as `{:error, {:already_started, pid}}`, leave the site without rows.
 //

@@ -41,7 +41,10 @@ able to affect that row.
 | `decides_more` | The decision also sends, starts work or changes other shared state. |
 | `stale_fill` | A delayed refill restores data invalidated or replaced by a rival. |
 
-Harmless duplicate defaults and deletes are excluded when no harm is witnessed.
+Harmless duplicate defaults and deletes are excluded when no harm is witnessed. A
+claim makes the row (or record) where the read found none, or takes one by what it
+holds; a write the read reaches only where it found the row, decided by presence
+alone, overwrites it and is not a claim.
 For counters and claims, prefer the appropriate atomic ETS operation. For larger
 updates, make ownership or serialization explicit. A lock is useful only if every
 competing path participates.
