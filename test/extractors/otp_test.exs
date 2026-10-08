@@ -59,12 +59,9 @@ defmodule Argus.Extractors.OTPTest do
       {:ok, data} =
         BeamSpy.BeamFile.disassemble(to_string(:code.which(Argus.Test.Fixtures.MyGenServer)))
 
-      facts = OTP.extract(data)
-
-      assert Map.has_key?(facts, :implements_behaviour)
-      behaviours = facts[:implements_behaviour]
-
-      assert Enum.any?(behaviours, fn [_mod, b] -> b == "GenServer" end)
+      assert OTP.extract(data)[:implements_behaviour] == [
+               ["Argus.Test.Fixtures.MyGenServer", "GenServer"]
+             ]
     end
   end
 
@@ -131,205 +128,108 @@ defmodule Argus.Extractors.OTPTest do
     end
   end
 
-  describe "extract/1 — GenServer.call/cast detection" do
-    test "detects GenServer.call in fixture" do
-      {:ok, data} =
-        BeamSpy.BeamFile.disassemble(to_string(:code.which(Argus.Test.Fixtures.MyGenServer)))
+  describe "extract/1 — process calls" do
+    alias Argus.Test.Fixtures, as: F
 
+    @process_call_relations [
+      :sync_call,
+      :sync_call_timeout,
+      :sync_call_site,
+      :async_cast,
+      :async_cast_site,
+      :sup_call
+    ]
+
+    # A module's process calls, one row per call: [func, "call", target,
+    # timeout], [func, "cast", target] or [func, api, op, target]. The
+    # relations that restate a call — sync_call is sync_call_timeout less
+    # its timeout, a site row is its call's row behind an instruction id —
+    # are checked against it here, so the table states each call once.
+    defp process_calls(mod) do
+      {:ok, data} = BeamSpy.BeamFile.disassemble(to_string(:code.which(mod)))
       facts = ApiCalls.extract(data)
+      rows = &(facts |> Map.get(&1, []) |> Enum.sort())
 
-      assert Map.has_key?(facts, :sync_call)
-      calls = facts[:sync_call]
-      assert calls != []
+      assert Map.keys(facts) -- @process_call_relations == []
+
+      assert rows.(:sync_call) ==
+               Enum.sort(for [f, t, _ms] <- rows.(:sync_call_timeout), do: [f, t])
+
+      assert unsited(rows.(:sync_call_site)) == rows.(:sync_call_timeout)
+      assert unsited(rows.(:async_cast_site)) == rows.(:async_cast)
+
+      Enum.sort(
+        for([f, t, ms] <- rows.(:sync_call_timeout), do: [short(f), "call", t, ms]) ++
+          for([f, t] <- rows.(:async_cast), do: [short(f), "cast", t]) ++
+          for([f, api, op, t] <- unsited(rows.(:sup_call)), do: [short(f), api, op, t])
+      )
     end
 
-    test "detects GenServer.cast in fixture" do
-      {:ok, data} =
-        BeamSpy.BeamFile.disassemble(to_string(:code.which(Argus.Test.Fixtures.MyGenServer)))
+    defp unsited(rows) do
+      rows
+      |> Enum.map(fn [id, func | rest] ->
+        assert id =~ ~r/^#{Regex.escape(func)}#\d+$/
+        [func | rest]
+      end)
+      |> Enum.sort()
+    end
 
-      facts = ApiCalls.extract(data)
+    defp short(func), do: func |> String.split(":") |> List.last()
 
-      assert Map.has_key?(facts, :async_cast)
-      casts = facts[:async_cast]
-      assert casts != []
+    test "each call with its target and its timeout" do
+      for {mod, calls} <- [
+            {F.MyGenServer,
+             [["get_value/1", "call", "dynamic", "5000"], ["set_value/2", "cast", "dynamic"]]},
+            # An Agent call is a GenServer.call with the same default.
+            {F.AgentCaller,
+             [
+               ["get_and_update/1", "call", "dynamic", "5000"],
+               ["get_state/1", "call", "dynamic", "5000"],
+               ["update_state/2", "call", "dynamic", "5000"]
+             ]},
+            {F.ErlangStyleCaller,
+             [["call_server/1", "call", "dynamic", "5000"], ["cast_server/1", "cast", "dynamic"]]},
+            # multi_call/2 has no timeout argument and waits forever.
+            {F.MultiCallModule, [["multi_call_nodes/2", "call", "dynamic", "-1"]]},
+            # A literal timeout is read in milliseconds, :infinity as -1.
+            {F.ExplicitTimeoutCaller,
+             [
+               ["call_with_default/1", "call", "dynamic", "5000"],
+               ["call_with_explicit/1", "call", "dynamic", "10000"],
+               ["call_with_infinity/1", "call", "dynamic", "-1"],
+               ["erlang_call_with_timeout/1", "call", "dynamic", "15000"]
+             ]},
+            # A literal {:via, Registry, {reg, key}} names the registry.
+            {F.ViaTupleCaller,
+             [
+               ["cast_to/2", "cast", "via:MyApp.Registry"],
+               ["get/1", "call", "via:MyApp.Registry", "5000"]
+             ]},
+            # A supervisor call is no GenServer call. :gen_statem.call/2
+            # waits forever; /3's timeout is a parameter, unread ("0").
+            {F.SupCaller,
+             [
+               ["add/1", "Supervisor", "start_child", "Argus.Test.Fixtures.GoodSupervisor"],
+               ["ask/2", "call", "dynamic", "-1"],
+               ["ask/3", "call", "dynamic", "0"],
+               ["drop/2", "DynamicSupervisor", "terminate_child", "dynamic"],
+               ["run/1", "Task.Supervisor", "async_nolink", "via:MyApp.Registry"]
+             ]}
+          ] do
+        assert {mod, process_calls(mod)} == {mod, calls}
+      end
     end
   end
 
-  describe "extract/1 — supervisor management calls" do
-    setup do
-      {:ok, data} =
-        BeamSpy.BeamFile.disassemble(to_string(:code.which(Argus.Test.Fixtures.SupCaller)))
-
-      %{facts: ApiCalls.extract(data)}
-    end
-
-    test "each call is recorded with its api, op and resolved target", %{facts: facts} do
-      rows = Enum.map(facts[:sup_call], fn [_id, _func, api, op, target] -> {api, op, target} end)
-
-      assert {"Supervisor", "start_child", "Argus.Test.Fixtures.GoodSupervisor"} in rows
-      assert {"DynamicSupervisor", "terminate_child", "dynamic"} in rows
-      assert {"Task.Supervisor", "async_nolink", "via:MyApp.Registry"} in rows
-    end
-
-    test ":gen_statem.call is a sync call whose default timeout is infinity", %{facts: facts} do
-      timeouts =
-        Enum.map(facts[:sync_call_timeout], fn [func, _callee, timeout] -> {func, timeout} end)
-
-      assert {"Argus.Test.Fixtures.SupCaller:ask/2", "-1"} in timeouts
-      assert {"Argus.Test.Fixtures.SupCaller:ask/3", "0"} in timeouts
-    end
-  end
-
-  describe "extract/1 — Agent sync call detection" do
-    test "detects Agent.get as sync_call" do
-      {:ok, data} =
-        BeamSpy.BeamFile.disassemble(to_string(:code.which(Argus.Test.Fixtures.AgentCaller)))
-
-      facts = ApiCalls.extract(data)
-
-      assert Map.has_key?(facts, :sync_call)
-      calls = facts[:sync_call]
-      assert length(calls) >= 3
-    end
-  end
-
-  describe "extract/1 — Erlang-style :gen_server detection" do
-    test "detects :gen_server.call as sync_call" do
-      {:ok, data} =
-        BeamSpy.BeamFile.disassemble(
-          to_string(:code.which(Argus.Test.Fixtures.ErlangStyleCaller))
-        )
-
-      facts = ApiCalls.extract(data)
-
-      assert Map.has_key?(facts, :sync_call)
-    end
-
-    test "detects :gen_server.cast as async_cast" do
-      {:ok, data} =
-        BeamSpy.BeamFile.disassemble(
-          to_string(:code.which(Argus.Test.Fixtures.ErlangStyleCaller))
-        )
-
-      facts = ApiCalls.extract(data)
-
-      assert Map.has_key?(facts, :async_cast)
-    end
-  end
-
-  describe "extract/1 — GenServer.multi_call detection" do
-    test "detects GenServer.multi_call as sync_call" do
-      {:ok, data} =
-        BeamSpy.BeamFile.disassemble(to_string(:code.which(Argus.Test.Fixtures.MultiCallModule)))
-
-      facts = ApiCalls.extract(data)
-
-      assert Map.has_key?(facts, :sync_call)
-    end
-  end
-
-  describe "extract/1 — sync_call_timeout emission" do
-    test "GenServer.call/2 emits timeout 5000" do
-      {:ok, data} =
-        BeamSpy.BeamFile.disassemble(
-          to_string(:code.which(Argus.Test.Fixtures.ExplicitTimeoutCaller))
-        )
-
-      facts = ApiCalls.extract(data)
-
-      assert Map.has_key?(facts, :sync_call_timeout)
-      timeouts = facts[:sync_call_timeout]
-
-      # call_with_default uses GenServer.call/2 → 5000.
-      assert Enum.any?(timeouts, fn [func, _callee, t] ->
-               String.contains?(func, "call_with_default") and t == "5000"
-             end)
-    end
-
-    test "GenServer.call/3 with integer literal emits resolved value" do
-      {:ok, data} =
-        BeamSpy.BeamFile.disassemble(
-          to_string(:code.which(Argus.Test.Fixtures.ExplicitTimeoutCaller))
-        )
-
-      facts = ApiCalls.extract(data)
-      timeouts = facts[:sync_call_timeout]
-
-      # call_with_explicit uses GenServer.call/3 with 10_000.
-      assert Enum.any?(timeouts, fn [func, _callee, t] ->
-               String.contains?(func, "call_with_explicit") and t == "10000"
-             end)
-    end
-
-    test "GenServer.call/3 with :infinity emits -1" do
-      {:ok, data} =
-        BeamSpy.BeamFile.disassemble(
-          to_string(:code.which(Argus.Test.Fixtures.ExplicitTimeoutCaller))
-        )
-
-      facts = ApiCalls.extract(data)
-      timeouts = facts[:sync_call_timeout]
-
-      # call_with_infinity uses GenServer.call/3 with :infinity.
-      assert Enum.any?(timeouts, fn [func, _callee, t] ->
-               String.contains?(func, "call_with_infinity") and t == "-1"
-             end)
-    end
-
-    test ":gen_server.call/3 with integer emits resolved value" do
-      {:ok, data} =
-        BeamSpy.BeamFile.disassemble(
-          to_string(:code.which(Argus.Test.Fixtures.ExplicitTimeoutCaller))
-        )
-
-      facts = ApiCalls.extract(data)
-      timeouts = facts[:sync_call_timeout]
-
-      # erlang_call_with_timeout uses :gen_server.call/3 with 15_000.
-      assert Enum.any?(timeouts, fn [func, _callee, t] ->
-               String.contains?(func, "erlang_call_with_timeout") and t == "15000"
-             end)
-    end
-
-    test "GenServer.multi_call emits -1 (infinity)" do
-      {:ok, data} =
-        BeamSpy.BeamFile.disassemble(to_string(:code.which(Argus.Test.Fixtures.MultiCallModule)))
-
-      facts = ApiCalls.extract(data)
-
-      assert Map.has_key?(facts, :sync_call_timeout)
-      timeouts = facts[:sync_call_timeout]
-      assert Enum.any?(timeouts, fn [_func, _callee, t] -> t == "-1" end)
-    end
-  end
-
-  describe "extract/1 — link/monitor detection" do
-    test "detects Process.link as process_link" do
+  describe "extract/1 — link detection" do
+    test "Process.link and :erlang.link are links; monitors are not" do
       {:ok, data} =
         BeamSpy.BeamFile.disassemble(
           to_string(:code.which(Argus.Test.Fixtures.LinkMonitorModule))
         )
 
-      facts = OTP.extract(data)
-
-      assert Map.has_key?(facts, :process_link)
-      links = facts[:process_link]
-      assert length(links) >= 2
-    end
-  end
-
-  describe "extract/1 — :via tuple resolution" do
-    test "still emits sync_call with a synthetic via:<RegistryInstance> callee tag" do
-      {:ok, data} =
-        BeamSpy.BeamFile.disassemble(to_string(:code.which(Argus.Test.Fixtures.ViaTupleCaller)))
-
-      facts = ApiCalls.extract(data)
-
-      sync_calls = facts[:sync_call]
-
-      assert Enum.any?(sync_calls, fn [_caller, callee] ->
-               callee == "via:MyApp.Registry"
-             end)
+      mod = "Argus.Test.Fixtures.LinkMonitorModule"
+      assert OTP.extract(data)[:process_link] == [[mod, "dynamic"], [mod, "dynamic"]]
     end
   end
 
