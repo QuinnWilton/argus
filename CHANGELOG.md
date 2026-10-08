@@ -127,6 +127,25 @@ which a change appeared; older names and APIs may have changed since then.
   on a loaded machine) is named, and its findings are neither compared nor
   taken.
 
+- Extractors `Argus.Extractors.Docs` (`doc_hidden`: the functions that
+  `@doc false`, a default argument's extra arities or a `@moduledoc false`
+  module hide) and `Argus.Extractors.Quoted` (`quoted_call`: the calls a
+  macro's quoted code makes, and whether each runs in a function the quote
+  defines or where the macro expands). New relations `call_tag_arity` and
+  `fun_built` (stage 0), `raise_source`, `command_fixed`,
+  `call_arg_config`, `sink_arg_config`, `decoded_bytes_value`,
+  `ets_key_element`, `ets_written_when_found` and
+  `mnesia_written_when_found`. Extractor helpers `Argus.Extractor.AnswerSides`,
+  `Argus.Extractor.Argv`, `Argus.Extractor.NeverReturns`,
+  `Argus.Extractors.ErrorHandling.RaiseSources` and
+  `Argus.Extractors.ParamFlow.Counters`, and the functions
+  `Argus.Extractor.Helpers.beam_source/1`,
+  `Argus.Extractor.Identity.key_elements/4` and `tuple_element_elements/5`,
+  `Argus.Extractors.ApiCalls.deserialization_sink?/1` and
+  `fixed_command?/3`, `Argus.Extractors.ProcessRegistry.returns_to/2`, and
+  `Argus.Extractors.ParamFlow.Propagators.element_call/1` and
+  `counted_call/1`.
+
 ### Removed
 
 - `Argus.Extractor.Helpers`'s deprecated delegates (`add_fact/3`,
@@ -162,6 +181,49 @@ which a change appeared; older names and APIs may have changed since then.
 
 ### Other changes
 
+- False-positive fixes from a triage of 53 Hex packages' findings:
+  - `unsafe_input`: an export hidden from the docs that the program itself
+    calls is not a way in (its callers decide), nor is a `__name__` hook
+    only a macro's expansion calls; a command whose arguments are literal
+    on every path (through joins, `++` and private helpers) is fixed, and
+    so is `mix` with a literal task that runs no code its arguments name;
+    bytes an authenticated decryption or MAC check (`Plug.Crypto`,
+    `Phoenix.Token`, `MessageEncryptor`, `MessageVerifier`) returned are
+    the server's; a sink only the application's config reaches is not the
+    request's; and a helper only Mix tasks or test support reach is
+    tooling.
+  - Bounded sinks: a bound survives any call on bounded values that reads
+    no state, dispatches no protocol and runs no code of its choosing
+    (String, Integer, Atom, Base and the like), though no longer a bound
+    that describes a fun; a key found in a literal map is bounded to its
+    keys; and the counter `Enum.with_index`, `Stream.with_index` or
+    `:lists.enumerate` pairs an element with is no caller's data.
+  - `mailbox`: a timer loop's rearm is followed only along calls made on
+    every path, so a retry armed behind a `case` is not periodic; a
+    clause open to a request's shape (`cmd when is_atom(cmd)`) takes the
+    module's own requests of that shape; and a yielded linked task is
+    reported only when its body can fail.
+  - `shutdown`: a stop reached only from `terminate/2` does not pair with
+    a monitor, nor does one a function hands to a spawned process after
+    it demonitors;
+    a dynamic child of a tree member is a member, with its own lifetime;
+    a server trapping exits needs an `{:EXIT, ...}` clause only beside a
+    link other than its parent's; and a `start_link` into code argus does
+    not analyze starts a process of its own.
+  - `startup` and `coupling`: DETS is local, not distributed; a stored
+    local capture is a fun, not a call; a start that compares
+    `:already_started` adopts its running child; a caller that makes its
+    registrations again on the keeper's restart loses none; and a task
+    started under a `Task.Supervisor` in `init/1` acknowledges first.
+  - `failure`: the level gate Elixir's `Logger` compiles is part of its log
+    call; a `whereis` a private function returns is judged at its
+    callers, a cast of it is no use that can fail, and a comparison with
+    a value that is never nil decides it; and a call to a local function
+    that never returns raises.
+  - `races` and `exposure`: ETS tuple keys of another arity or literal
+    are another row; a write that only the read finding the row decides
+    is an overwrite, not a claim; and a secret's name followed by a word
+    about it (`_jti`, `_id`, `_prefix`, `_last4`, ...) is metadata.
 - Extraction precision fixes: an init/1 that spawns on another node is a remote
   wait at startup (Elixir compiles `Node.spawn` to the `:erlang` spawns that
   take a node, which were not read); `:rpc.multicall/4` is told
