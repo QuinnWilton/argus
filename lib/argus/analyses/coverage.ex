@@ -15,10 +15,9 @@ defmodule Argus.Analyses.Coverage do
   ## How it's different from other analyses
 
   Unlike every other analysis in Argus, `coverage` opts the pipeline
-  into imprecision tracing. `Argus.Analysis.run/3` sets
-  `trace_imprecision: true` automatically when it sees this analysis
-  name, so the per-process flag in `Argus.Extractor.Helpers` flips on
-  inside each extractor worker. No other analysis populates the
+  into imprecision tracing. `Argus.Run` sets `trace_imprecision: true`
+  when this analysis is among those it runs, so the per-process flag
+  (`Argus.Extractor.Facts`) flips on inside each extractor worker. No other analysis populates the
   `imprecision` relation.
 
   ## Output relations

@@ -658,15 +658,15 @@ defmodule Argus.Analyses.Blocking do
   defp where("direct", callback), do: "and #{callback} is that callback"
   defp where(_helper, callback), do: "reached directly from the callback #{callback}"
 
-  # What a timeout does when it runs out differs by API: :rpc answers
-  # with a value, :erpc raises, a multicall names the node, and a yield
-  # has a timed form of its own. The help says the one the call gets.
-  @spec rpc_timeout_help(String.t()) :: String.t()
   defp socket_wait(":gen_tcp.connect/3"),
     do: "waits until the operating system gives up on the connect, minutes on Linux"
 
   defp socket_wait(_api), do: "waits with :infinity"
 
+  # What a timeout does when it runs out differs by API: :rpc answers
+  # with a value, :erpc raises, a multicall names the node, and a yield
+  # has a timed form of its own. The help says the one the call gets.
+  @spec rpc_timeout_help(String.t()) :: String.t()
   defp rpc_timeout_help(variant) when variant in ["rpc", "block_call"],
     do: "pass a timeout (the last argument) and take `{:badrpc, :timeout}` as a result"
 

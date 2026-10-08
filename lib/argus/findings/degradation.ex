@@ -3,8 +3,7 @@ defmodule Argus.Findings.Degradation do
   What an analysis that did not run as planned is reported with: a
   `degraded` entry of `Argus.Findings` (`t:Argus.Findings.degradation/0`),
   the reason as it came and a sentence saying what it means for the
-  findings. The same words whichever backend ran the analysis
-  (`Argus.Findings.run/2`, `Argus.Run`).
+  findings (`Argus.Run`).
   """
 
   @doc """

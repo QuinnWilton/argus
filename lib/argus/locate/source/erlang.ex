@@ -115,7 +115,7 @@ defmodule Argus.Locate.Source.Erlang do
   end
 
   @impl true
-  @spec block_end(String.t(), pos_integer(), Argus.Locate.Source.block() | nil) ::
+  @spec block_end(String.t(), pos_integer(), Argus.Findings.block() | nil) ::
           pos_integer() | nil
   def block_end(_path, _line, nil), do: nil
 

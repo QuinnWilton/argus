@@ -24,9 +24,6 @@ defmodule Argus.Locate.Source do
   or a file it cannot read, leaves the place as the bytecode put it.
   """
 
-  @typedoc "The block a finding says its anchor sits in (`Argus.Findings`)."
-  @type block :: :guard | :receive | :clause | :function
-
   @doc "The line of the file as it stands that the bytecode's `line` names."
   @callback line(path :: String.t(), line :: pos_integer()) :: pos_integer()
 
@@ -35,7 +32,11 @@ defmodule Argus.Locate.Source do
               pos_integer()
 
   @doc "The last line of the `block` the anchor at `line` sits in, or nil."
-  @callback block_end(path :: String.t(), line :: pos_integer(), block :: block() | nil) ::
+  @callback block_end(
+              path :: String.t(),
+              line :: pos_integer(),
+              block :: Argus.Findings.block() | nil
+            ) ::
               pos_integer() | nil
 
   @doc "The keyword of the guard the anchor at `line` sits in, or nil."
