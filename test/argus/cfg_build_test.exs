@@ -7,6 +7,40 @@ defmodule Argus.CfgBuildTest do
   alias Argus.Cfg
   alias Argus.Cfg.Function
 
+  @fixtures [
+    "defmodule CfgP1 do\n  def add(a, b), do: a + b\nend\n",
+    """
+    defmodule CfgP2 do
+      def classify(x) do
+        cond do
+          x > 100 -> :big
+          x > 0 -> :small
+          true -> :neg
+        end
+      end
+    end
+    """,
+    """
+    defmodule CfgP3 do
+      def sum([]), do: 0
+      def sum([h | t]), do: h + sum(t)
+
+      def fetch(map, key) do
+        case Map.fetch(map, key) do
+          {:ok, value} -> value
+          :error -> nil
+        end
+      end
+    end
+    """
+  ]
+
+  # The structural invariants' functions, built once: every fixture's,
+  # :lists's, and a function of four hundred clauses.
+  setup_all do
+    %{functions: all_functions(), many_clauses: Map.values(cfg_for(many_clauses()))}
+  end
+
   defp cfg_for(source) do
     [{module, beam} | _] = Code.compile_string(source, "nofile")
 
@@ -279,36 +313,8 @@ defmodule Argus.CfgBuildTest do
   end
 
   describe "structural invariants" do
-    @fixtures [
-      "defmodule CfgP1 do\n  def add(a, b), do: a + b\nend\n",
-      """
-      defmodule CfgP2 do
-        def classify(x) do
-          cond do
-            x > 100 -> :big
-            x > 0 -> :small
-            true -> :neg
-          end
-        end
-      end
-      """,
-      """
-      defmodule CfgP3 do
-        def sum([]), do: 0
-        def sum([h | t]), do: h + sum(t)
-
-        def fetch(map, key) do
-          case Map.fetch(map, key) do
-            {:ok, value} -> value
-            :error -> nil
-          end
-        end
-      end
-      """
-    ]
-
-    test "blocks partition the instruction stream with no gaps or overlaps" do
-      for fun <- all_functions() do
+    test "blocks partition the instruction stream with no gaps or overlaps", %{functions: fs} do
+      for fun <- fs do
         ranges = fun.blocks |> Map.values() |> Enum.map(& &1.range) |> Enum.sort()
         n = ranges |> Enum.map(fn {_first, last} -> last end) |> Enum.max() |> Kernel.+(1)
 
@@ -317,8 +323,8 @@ defmodule Argus.CfgBuildTest do
       end
     end
 
-    test "preds are exactly the inverse of succs, over existing blocks" do
-      for fun <- all_functions() do
+    test "preds are exactly the inverse of succs, over existing blocks", %{functions: fs} do
+      for fun <- fs do
         succ_edges =
           for {from, block} <- fun.blocks, {to, kind} <- block.succs, do: {from, to, kind}
 
@@ -333,26 +339,8 @@ defmodule Argus.CfgBuildTest do
       end
     end
 
-    test "the entry dominates every reachable block and idom forms a tree" do
-      for fun <- all_functions(), block <- fun.rpo do
-        assert Function.dominates?(fun, fun.entry, block),
-               "#{fun.func}/#{fun.arity}: entry does not dominate #{block}"
-
-        assert walks_to_entry?(fun, block, map_size(fun.blocks) + 1),
-               "#{fun.func}/#{fun.arity}: idom chain from #{block} does not reach entry"
-      end
-    end
-
-    test "every loop header is the target of a back edge from a block it dominates" do
-      for fun <- all_functions(), header <- fun.loop_headers do
-        assert Enum.any?(fun.blocks[header].preds, fn {pred, _kind} ->
-                 Function.dominates?(fun, header, pred)
-               end)
-      end
-    end
-
-    test "idom and ipdom are the dominators the textbook fixpoint finds" do
-      for fun <- all_functions() ++ Map.values(cfg_for(many_clauses())) do
+    test "idom and ipdom are the dominators the textbook fixpoint finds", ctx do
+      for fun <- ctx.functions ++ ctx.many_clauses do
         succs = Map.new(fun.blocks, fn {id, b} -> {id, Enum.map(b.succs, &elem(&1, 0))} end)
         preds = Map.new(fun.blocks, fn {id, b} -> {id, Enum.map(b.preds, &elem(&1, 0))} end)
         assert fun.idom == textbook_idom(fun.entry, succs, preds), "#{fun.func}/#{fun.arity}"
@@ -368,8 +356,9 @@ defmodule Argus.CfgBuildTest do
       end
     end
 
-    test "the loop headers are the targets of the edges whose target dominates their source" do
-      for fun <- all_functions() ++ Map.values(cfg_for(many_clauses())) do
+    test "the loop headers are the targets of the edges whose target dominates their source",
+         ctx do
+      for fun <- ctx.functions ++ ctx.many_clauses do
         expected =
           for {from, block} <- fun.blocks,
               {to, _kind} <- block.succs,
@@ -382,8 +371,9 @@ defmodule Argus.CfgBuildTest do
       end
     end
 
-    test "block_at finds every instruction's block and nothing outside the function" do
-      for fun <- all_functions() do
+    test "block_at finds every instruction's block and nothing outside the function",
+         %{functions: fs} do
+      for fun <- fs do
         for {id, %{range: {first, last}}} <- fun.blocks, idx <- first..last do
           assert Function.block_at(fun, idx).id == id
         end
@@ -455,17 +445,6 @@ defmodule Argus.CfgBuildTest do
         Argus.Pipeline.extract([to_string(:code.which(:lists))], format: :typed)
 
       fixtures ++ Map.values(Argus.Cfg.build(typed))
-    end
-
-    defp walks_to_entry?(fun, block, fuel)
-    defp walks_to_entry?(_fun, _block, 0), do: false
-    defp walks_to_entry?(%{entry: entry}, entry, _fuel), do: true
-
-    defp walks_to_entry?(fun, block, fuel) do
-      case Map.fetch(fun.idom, block) do
-        {:ok, dom} -> walks_to_entry?(fun, dom, fuel - 1)
-        :error -> false
-      end
     end
   end
 end

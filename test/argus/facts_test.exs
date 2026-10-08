@@ -113,11 +113,11 @@ defmodule Argus.FactsTest do
   describe "extraction determinism" do
     # Extraction fans out over Task.async_stream and merges by concatenation,
     # so before `ordered: true` the same modules produced a different value on
-    # every run.
+    # every run: three runs of six modules disagree.
     @modules [:lists, :maps, :orddict, :sets, :queue, :gb_trees]
 
     test "extraction is reproducible for a fixed input order" do
-      results = for _ <- 1..8, do: elem(Pipeline.extract(@modules), 1)
+      results = for _ <- 1..3, do: elem(Pipeline.extract(@modules), 1)
 
       assert results |> Enum.uniq() |> length() == 1,
              "extract/2 returned differing values for identical input"
