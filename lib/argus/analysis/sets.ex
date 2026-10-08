@@ -6,47 +6,26 @@ defmodule Argus.Analysis.Sets do
   An analysis answers "what goes wrong". Mechanism (rpc vs
   GenServer.call), phase (init vs terminate) and proximity (export vs
   request-direct) are columns on a relation, never separate analyses; a
-  defect has one owner. The concerns below are that axis, and every
-  built-in analysis is named after one.
+  defect has one owner, and every built-in analysis is named after the
+  concern it owns.
 
   A set names analyses a caller runs together: `:all` (every built-in
   but `:coverage`, which measures the extractor pipeline rather than the
-  analyzed code), `:default` (what scry runs without configuration),
+  analyzed code), `:default` (what the `:argus` compiler runs without configuration),
   `:security`, `:effects` and `:otp` (everything else). A selection is a
   set or a list of concern names; a name that is not a built-in is an
   unknown analysis.
 
-  `Argus.Analysis` delegates `concerns/0`, `sets/0` and `set/1` here.
+  `Argus.Analysis` delegates `sets/0` and `set/1` here.
   """
 
   alias Argus.Analysis.Catalog
 
-  @concerns [
-    :startup,
-    :shutdown,
-    :blocking,
-    :coupling,
-    :mailbox,
-    :failure,
-    :structure,
-    :races,
-    :state_machine,
-    :ets,
-    :effects,
-    :unsafe_input,
-    :exposure,
-    :coverage
-  ]
-
-  @doc "The concern vocabulary: every built-in analysis is named after one."
-  @spec concerns() :: [atom()]
-  def concerns, do: @concerns
-
   @doc """
   The named sets of analyses `Argus.run_analyses/2` accepts in place of a
   list: `:all` (every built-in but `:coverage`, which measures the
-  extractor pipeline rather than the code), `:default` (what scry runs
-  without configuration), `:security`, `:effects` and `:otp` (everything
+  extractor pipeline rather than the code), `:default` (what the `:argus`
+  compiler runs without configuration), `:security`, `:effects` and `:otp` (everything
   else).
   """
   @spec sets() :: %{atom() => [atom()]}
@@ -64,7 +43,7 @@ defmodule Argus.Analysis.Sets do
     }
   end
 
-  # What scry runs unconfigured: the OTP concerns whose findings are
+  # What the `:argus` compiler runs unconfigured: the OTP concerns whose findings are
   # structural and low-noise enough to report on every compile. effects,
   # ets, blocking and the security concerns are asked for by name.
   # unsafe_input stays out: a sink a request reaches is worth a compile's

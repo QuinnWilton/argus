@@ -140,6 +140,9 @@ which a change appeared; older names and APIs may have changed since then.
   module's disassembly.
 - `Argus.Pipeline.Normalize.func_id/3`, a delegate: call
   `Argus.InstrId.func_id/3`.
+- `Argus.Analysis.concerns/0` and `Argus.Analysis.Sets.concerns/0`, a list
+  kept by hand of the built-in analyses' names: call
+  `Argus.Analysis.builtin_analyses/0`.
 - Functions nothing called: `Argus.Pipeline.rows_iodata/1` (use
   `Argus.Tsv.encode/1`), `Argus.Pipeline.Writer.append/2`,
   `Argus.Priors.derive/2` and `read_facts/2`, `Argus.Specs.shapes/2`,

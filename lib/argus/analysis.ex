@@ -7,7 +7,7 @@ defmodule Argus.Analysis do
   program reads, and its output relations. Each built-in analysis owns
   one concern — what goes wrong (`:startup`, `:mailbox`, `:races`, ...);
   mechanism, phase and proximity are columns of a relation, never
-  another analysis. `concerns/0` lists them and `sets/0` names the
+  another analysis. `builtin_analyses/0` lists them and `sets/0` names the
   groups callers run together (`:all`, `:default`, `:security`,
   `:effects`, `:otp`).
 
@@ -16,8 +16,8 @@ defmodule Argus.Analysis do
   rows are then related frames of the finding they join, rendered by
   `c:evidence/2`, or `retier: :tooling`: its rows name the modules only
   developers' tools or tests run, and every finding anchored in one
-  steps down a level (`Argus.Findings.Tooling`; every built-in declares
-  it, from `clientlib/tooling.dl`). A relation keys its rows
+  steps down a level (`Argus.Findings.Tooling`; every built-in but
+  `:coverage` declares it, from `clientlib/tooling.dl`). A relation keys its rows
   (`t:row_key/0`) so the witnesses of one defect are one finding. `Argus.Findings` turns a
   solve's rows into findings and holds the helpers `c:finding/2`
   builds them with; a finding that rests on a prior (`Argus.Priors`) is
@@ -30,8 +30,7 @@ defmodule Argus.Analysis do
   - `run/3` (`Argus.analyze/3`) runs one analysis and returns its raw
     rows.
   - `extract_facts/3`, then `run_rules/3` per analysis, is the same run
-    in two steps, for a caller that keeps the facts directory (scry,
-    encore); `derive_stage0/2`, `derive_points_to/2`,
+    in two steps, for a caller that keeps the facts directory; `derive_stage0/2`, `derive_points_to/2`,
     `input_relations/1` and `filter_to_outputs/2` serve incremental
     consumers that project a directory per analysis.
 
@@ -183,15 +182,11 @@ defmodule Argus.Analysis do
 
   # ── Concerns and sets (Argus.Analysis.Sets) ─────────────────────────
 
-  @doc "The concern vocabulary: every built-in analysis is named after one."
-  @spec concerns() :: [atom()]
-  defdelegate concerns(), to: Sets
-
   @doc """
   The named sets of analyses `Argus.run_analyses/2` accepts in place of a
   list: `:all` (every built-in but `:coverage`, which measures the
-  extractor pipeline rather than the code), `:default` (what scry runs
-  without configuration), `:security`, `:effects` and `:otp` (everything
+  extractor pipeline rather than the code), `:default` (what the `:argus`
+  compiler runs without configuration), `:security`, `:effects` and `:otp` (everything
   else).
   """
   @spec sets() :: %{atom() => [atom()]}

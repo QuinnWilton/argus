@@ -12,10 +12,9 @@ defmodule Argus.Analysis.SetsTest do
     assert Enum.map(mods, & &1.name()) == names
   end
 
-  test "every concern but coverage is in :all, and every analysis is a concern" do
+  test "every analysis but coverage is in :all" do
     {:ok, all} = Sets.set(:all)
-    assert Enum.sort(all ++ [:coverage]) == Enum.sort(Sets.concerns())
-    assert Enum.sort(Catalog.names()) == Enum.sort(Sets.concerns())
+    assert Enum.sort(all ++ [:coverage]) == Enum.sort(Catalog.names())
   end
 
   test "the races concern is in the default set" do
