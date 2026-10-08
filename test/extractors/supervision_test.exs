@@ -4,61 +4,71 @@ defmodule Argus.Extractors.SupervisionTest do
   alias Argus.Extractors.Supervision
 
   describe "extract/1" do
-    test "detects supervisor module" do
-      {:ok, data} =
-        BeamSpy.BeamFile.disassemble(to_string(:code.which(Argus.Test.Fixtures.GoodSupervisor)))
+    alias Argus.Test.Fixtures, as: F
 
+    # A module's tree: its supervisor and supervisor_site rows, the site's
+    # instruction index (which moves with the compiler) spelled `#_`, and
+    # its supervisor_child rows.
+    defp anchored_tree(mod) do
+      {:ok, data} = BeamSpy.BeamFile.disassemble(to_string(:code.which(mod)))
       facts = Supervision.extract(data)
 
-      assert Map.has_key?(facts, :supervisor)
-      sups = facts[:supervisor]
-      assert length(sups) == 1
-      [mod_str, _strategy] = hd(sups)
-      assert mod_str == "Argus.Test.Fixtures.GoodSupervisor"
+      %{
+        supervisor: Map.get(facts, :supervisor, []),
+        site:
+          for [sup, site] <- Map.get(facts, :supervisor_site, []) do
+            [sup, String.replace(site, ~r/#\d+$/, "#_")]
+          end,
+        children: facts |> Map.get(:supervisor_child, []) |> Enum.sort()
+      }
     end
 
-    test "detects supervision strategy" do
-      {:ok, data} =
-        BeamSpy.BeamFile.disassemble(to_string(:code.which(Argus.Test.Fixtures.GoodSupervisor)))
-
-      facts = Supervision.extract(data)
-      [_mod, strategy] = hd(facts[:supervisor])
-      # The anchor site is a separate relation.
-      [_smod, site] = hd(facts[:supervisor_site])
-      assert strategy == "one_for_one"
-
-      # The site names the instruction that defines the tree, inside init/1.
-      assert site =~ ~r/^Argus\.Test\.Fixtures\.GoodSupervisor:init\/1#\d+$/
-    end
-
-    test "reads the strategy of a flags tuple built at run time" do
-      {:ok, data} = BeamSpy.BeamFile.disassemble(to_string(:code.which(:flags_runtime_sup)))
-      facts = Supervision.extract(data)
-
-      assert [":flags_runtime_sup", "one_for_all"] in facts[:supervisor]
-    end
-
-    test "extracts child specs" do
-      {:ok, data} =
-        BeamSpy.BeamFile.disassemble(to_string(:code.which(Argus.Test.Fixtures.GoodSupervisor)))
-
-      facts = Supervision.extract(data)
-      sup = "Argus.Test.Fixtures.GoodSupervisor"
-
-      assert Enum.sort(facts[:supervisor_child]) == [
-               [sup, "0", "Argus.Test.Fixtures.WorkerA", "own", "worker"],
-               [sup, "1", "Argus.Test.Fixtures.WorkerB", "own", "worker"]
-             ]
-    end
-
-    test "reads a supervisor that declares no behaviour and starts itself as one" do
-      {:ok, data} = BeamSpy.BeamFile.disassemble(to_string(:code.which(:bless_bare_sup)))
-      facts = Supervision.extract(data)
-
-      assert [":bless_bare_sup", "one_for_one"] in facts[:supervisor]
-
-      assert facts[:supervisor_child] |> Enum.map(&Enum.at(&1, 2)) |> Enum.sort() ==
-               [":bless_callee", ":bless_caller"]
+    test "each supervisor's strategy, the site that defines its tree, and its children" do
+      for {mod, sup, strategy, site, children} <- [
+            {F.GoodSupervisor, "Argus.Test.Fixtures.GoodSupervisor", "one_for_one", "init/1",
+             [
+               ["0", "Argus.Test.Fixtures.WorkerA", "own", "worker"],
+               ["1", "Argus.Test.Fixtures.WorkerB", "own", "worker"]
+             ]},
+            # The strategy of a flags tuple built at run time is still its
+            # literal first element.
+            {:flags_runtime_sup, ":flags_runtime_sup", "one_for_all", "init/1",
+             [["0", ":flags_runtime_child", "permanent", "worker"]]},
+            # A supervisor that declares no behaviour and starts itself as
+            # one.
+            {:bless_bare_sup, ":bless_bare_sup", "one_for_one", "init/1",
+             [
+               ["0", ":bless_caller", "permanent", "worker"],
+               ["1", ":bless_callee", "permanent", "worker"]
+             ]},
+            # An Application's tree is wired in start/2, not init/1.
+            {F.AppSupervisor, "Argus.Test.Fixtures.AppSupervisor", "one_for_one", "start/2",
+             [
+               ["0", "Argus.Test.Fixtures.WorkerA", "own", "worker"],
+               ["1", "Argus.Test.Fixtures.WorkerB", "own", "worker"]
+             ]},
+            # Map specs built with put_map_assoc keep their order and
+            # their restart and type.
+            {F.MapSpecSupervisor, "Argus.Test.Fixtures.MapSpecSupervisor", "one_for_one",
+             "init/1",
+             [
+               ["0", "Argus.Test.Fixtures.WorkerA", "permanent", "worker"],
+               ["1", "Argus.Test.Fixtures.WorkerB", "transient", "worker"]
+             ]},
+            # The child is the module a PartitionSupervisor wraps, not
+            # PartitionSupervisor.
+            {F.PartitionSupervisorParent, "Argus.Test.Fixtures.PartitionSupervisorParent",
+             "one_for_one", "init/1", [["0", "Argus.Test.Fixtures.WorkerA", "own", "worker"]]},
+            # A DynamicSupervisor has no static child specs.
+            {F.SelfAnchoringDynSup, "Argus.Test.Fixtures.SelfAnchoringDynSup", "one_for_one",
+             "init/1", []}
+          ] do
+        assert anchored_tree(mod) == %{
+                 supervisor: [[sup, strategy]],
+                 site: [[sup, "#{sup}:#{site}#_"]],
+                 children: for(child <- children, do: [sup | child])
+               }
+      end
     end
   end
 
@@ -85,31 +95,6 @@ defmodule Argus.Extractors.SupervisionTest do
   end
 
   describe "Application modules" do
-    test "detects application module as supervisor" do
-      {:ok, data} =
-        BeamSpy.BeamFile.disassemble(to_string(:code.which(Argus.Test.Fixtures.AppSupervisor)))
-
-      facts = Supervision.extract(data)
-
-      assert Map.has_key?(facts, :supervisor)
-      [mod_str, _strategy] = hd(facts[:supervisor])
-      assert mod_str == "Argus.Test.Fixtures.AppSupervisor"
-    end
-
-    test "detects strategy from Application start/2" do
-      {:ok, data} =
-        BeamSpy.BeamFile.disassemble(to_string(:code.which(Argus.Test.Fixtures.AppSupervisor)))
-
-      facts = Supervision.extract(data)
-      [_mod, strategy] = hd(facts[:supervisor])
-      # The anchor site is a separate relation.
-      [_smod, site] = hd(facts[:supervisor_site])
-      assert strategy == "one_for_one"
-
-      # Application trees are wired in start/2, not init/1.
-      assert site =~ ~r/^Argus\.Test\.Fixtures\.AppSupervisor:start\/2#\d+$/
-    end
-
     test "recovers children from a cons-built list with a runtime element" do
       {:ok, data} =
         BeamSpy.BeamFile.disassemble(to_string(:code.which(Argus.Test.Fixtures.MixedChildrenApp)))
@@ -132,118 +117,23 @@ defmodule Argus.Extractors.SupervisionTest do
                "Argus.Test.Fixtures.WorkerB"
              ]
     end
-
-    test "extracts children from Application start/2" do
-      {:ok, data} =
-        BeamSpy.BeamFile.disassemble(to_string(:code.which(Argus.Test.Fixtures.AppSupervisor)))
-
-      facts = Supervision.extract(data)
-      sup = "Argus.Test.Fixtures.AppSupervisor"
-
-      assert Enum.sort(facts[:supervisor_child]) == [
-               [sup, "0", "Argus.Test.Fixtures.WorkerA", "own", "worker"],
-               [sup, "1", "Argus.Test.Fixtures.WorkerB", "own", "worker"]
-             ]
-
-      assert facts[:supervisor_site] == [[sup, sup <> ":start/2#7"]]
-    end
-  end
-
-  describe "map-based child specs" do
-    setup do
-      {:ok, data} =
-        BeamSpy.BeamFile.disassemble(
-          to_string(:code.which(Argus.Test.Fixtures.MapSpecSupervisor))
-        )
-
-      %{facts: Supervision.extract(data)}
-    end
-
-    test "extracts children from map child specs", %{facts: facts} do
-      assert Map.has_key?(facts, :supervisor_child)
-      children = facts[:supervisor_child]
-      child_mods = Enum.map(children, fn [_, _, mod, _, _] -> mod end)
-
-      assert "Argus.Test.Fixtures.WorkerA" in child_mods
-      assert "Argus.Test.Fixtures.WorkerB" in child_mods
-    end
-
-    test "preserves correct child ordering", %{facts: facts} do
-      children = facts[:supervisor_child]
-
-      positions =
-        Map.new(children, fn [_, pos, mod, _, _] -> {mod, String.to_integer(pos)} end)
-
-      assert positions["Argus.Test.Fixtures.WorkerA"] < positions["Argus.Test.Fixtures.WorkerB"]
-    end
-
-    test "extracts restart and type metadata", %{facts: facts} do
-      children = facts[:supervisor_child]
-      worker_b = Enum.find(children, fn [_, _, mod, _, _] -> String.contains?(mod, "WorkerB") end)
-      assert worker_b
-      [_, _, _, restart, type] = worker_b
-      assert restart == "transient"
-      assert type == "worker"
-    end
-
-    test "detects supervisor behaviour and strategy", %{facts: facts} do
-      assert Map.has_key?(facts, :supervisor)
-      [mod_str, strategy] = hd(facts[:supervisor])
-      assert mod_str == "Argus.Test.Fixtures.MapSpecSupervisor"
-      assert strategy == "one_for_one"
-    end
-  end
-
-  describe "extract/1 — PartitionSupervisor" do
-    test "pierces PartitionSupervisor wrapper to extract the underlying child" do
-      {:ok, data} =
-        BeamSpy.BeamFile.disassemble(
-          to_string(:code.which(Argus.Test.Fixtures.PartitionSupervisorParent))
-        )
-
-      facts = Supervision.extract(data)
-      children = facts[:supervisor_child]
-
-      # The underlying WorkerA module should be the recorded child, not
-      # PartitionSupervisor itself.
-      assert Enum.any?(children, fn [_sup, _pos, child, _restart, _type] ->
-               child == "Argus.Test.Fixtures.WorkerA"
-             end)
-
-      refute Enum.any?(children, fn [_sup, _pos, child, _restart, _type] ->
-               child == "PartitionSupervisor"
-             end)
-    end
   end
 
   describe "extract/1 — dynamic_child" do
-    test "emits dynamic_child for DynamicSupervisor.start_child with bare module" do
+    test "a DynamicSupervisor.start_child's supervisor, child and caller" do
       {:ok, data} =
         BeamSpy.BeamFile.disassemble(to_string(:code.which(Argus.Test.Fixtures.DynSupSpawner)))
 
-      facts = Supervision.extract(data)
+      spawner = "Argus.Test.Fixtures.DynSupSpawner"
 
-      assert Map.has_key?(facts, :dynamic_child)
-      rows = facts[:dynamic_child]
-
-      assert Enum.any?(rows, fn [sup, child, _caller] ->
-               sup == "MyApp.WorkerSupervisor" and child == "MyApp.Worker"
-             end)
-    end
-
-    test "emits dynamic_child for DynamicSupervisor.start_child with {Module, args} tuple" do
-      {:ok, data} =
-        BeamSpy.BeamFile.disassemble(to_string(:code.which(Argus.Test.Fixtures.DynSupSpawner)))
-
-      facts = Supervision.extract(data)
-      rows = facts[:dynamic_child]
-
-      # spawn_worker_tuple/1 passes {MyApp.Worker, arg}.
-      assert Enum.any?(rows, fn [sup, child, caller] ->
-               sup == "MyApp.WorkerSupervisor" and
-                 child == "MyApp.Worker" and
-                 String.contains?(caller, "spawn_worker_tuple")
-             end)
+      assert Enum.sort(Supervision.extract(data)[:dynamic_child]) == [
+               # A bare module and a {Module, args} tuple name the same child.
+               ["MyApp.WorkerSupervisor", "MyApp.Worker", "#{spawner}:spawn_worker_atom/0"],
+               ["MyApp.WorkerSupervisor", "MyApp.Worker", "#{spawner}:spawn_worker_tuple/1"],
+               # A runtime supervisor in a module that is no supervisor has
+               # no self to anchor to.
+               ["dynamic", "MyApp.Worker", "#{spawner}:spawn_via_arg/1"]
+             ]
     end
   end
 
@@ -346,82 +236,48 @@ defmodule Argus.Extractors.SupervisionTest do
   end
 
   describe "extract/1 — DynamicSupervisor behaviour" do
-    test "records a `use DynamicSupervisor` module as a supervisor" do
-      {:ok, data} =
-        BeamSpy.BeamFile.disassemble(
-          to_string(:code.which(Argus.Test.Fixtures.SelfAnchoringDynSup))
-        )
-
-      facts = Supervision.extract(data)
-
-      assert [mod, strategy] = hd(facts[:supervisor])
-      assert [_smod, site] = hd(facts[:supervisor_site])
-      assert mod == "Argus.Test.Fixtures.SelfAnchoringDynSup"
-      assert strategy == "one_for_one"
-      assert site =~ ~r/^Argus\.Test\.Fixtures\.SelfAnchoringDynSup:init\/1#\d+$/
-
-      # A DynamicSupervisor has no static child specs.
-      refute Map.has_key?(facts, :supervisor_child)
-    end
-
     test "anchors an unresolved start_child to the enclosing supervisor module" do
       {:ok, data} =
         BeamSpy.BeamFile.disassemble(
           to_string(:code.which(Argus.Test.Fixtures.SelfAnchoringDynSup))
         )
 
-      facts = Supervision.extract(data)
+      sup = "Argus.Test.Fixtures.SelfAnchoringDynSup"
 
-      assert Enum.any?(facts[:dynamic_child], fn [sup, child, _caller] ->
-               sup == "Argus.Test.Fixtures.SelfAnchoringDynSup" and
-                 child == "Argus.Test.Fixtures.WorkerA"
-             end)
-    end
-
-    test "leaves an unresolved start_child in a non-supervisor module as \"dynamic\"" do
-      {:ok, data} =
-        BeamSpy.BeamFile.disassemble(to_string(:code.which(Argus.Test.Fixtures.DynSupSpawner)))
-
-      facts = Supervision.extract(data)
-
-      # spawn_via_arg/1 passes a runtime sup from a plain module — no self to
-      # anchor to, so the parent stays "dynamic".
-      assert Enum.any?(facts[:dynamic_child], fn [sup, child, caller] ->
-               sup == "dynamic" and child == "MyApp.Worker" and
-                 String.contains?(caller, "spawn_via_arg")
-             end)
+      assert Supervision.extract(data)[:dynamic_child] == [
+               [sup, "Argus.Test.Fixtures.WorkerA", "#{sup}:start_worker/2"]
+             ]
     end
   end
 
   describe "extract/1 — via-tuple (Registry) registration names" do
-    test "records a DynamicSupervisor child's via role as its registered name" do
-      {:ok, data} =
+    test "a child's via role is its name, and a start_child through a helper names the same" do
+      {:ok, nursery} =
         BeamSpy.BeamFile.disassemble(to_string(:code.which(Argus.Test.Fixtures.ViaNursery)))
 
-      facts = Supervision.extract(data)
-
-      names = Map.get(facts, :supervisor_child_name, [])
-
-      # The DynamicSupervisor registers under Registry.via(_, Foreman); the
-      # runtime registry name is dropped, the role is kept.
-      assert Enum.any?(names, fn [_sup, _pos, name] ->
-               name =~ ~r/\.via\(Foreman\)$/
-             end)
-    end
-
-    test "resolves a start_child via-target through a local helper to the same name" do
-      {:ok, data} =
+      {:ok, midwife} =
         BeamSpy.BeamFile.disassemble(to_string(:code.which(Argus.Test.Fixtures.ViaMidwife)))
 
-      facts = Supervision.extract(data)
+      sup = "Argus.Test.Fixtures.ViaNursery"
+      foreman = "Argus.Test.Fixtures.ViaApp.Registry.via(Foreman)"
 
-      # The Foreman via name here must equal the one ViaNursery registered,
-      # so the two anchor together downstream.
-      assert [[sup, "Argus.Test.Fixtures.ViaQueueSup", _caller]] =
-               Map.get(facts, :dynamic_child, [])
+      # Each child registers under Registry.via(_, role): the runtime
+      # registry name is dropped, the role is kept.
+      assert Enum.sort(Supervision.extract(nursery)[:supervisor_child_name]) == [
+               [sup, "0", foreman],
+               [sup, "1", "Argus.Test.Fixtures.ViaApp.Registry.via(Midwife)"]
+             ]
 
-      assert sup =~ ~r/\.via\(Foreman\)$/
-      refute sup == "dynamic"
+      # The start_child's target, read through a local helper, is the
+      # string the Nursery registered its DynamicSupervisor under, so the
+      # two anchor together downstream; Midwife's own role never does.
+      assert Supervision.extract(midwife)[:dynamic_child] == [
+               [
+                 foreman,
+                 "Argus.Test.Fixtures.ViaQueueSup",
+                 "Argus.Test.Fixtures.ViaMidwife:start_queue/1"
+               ]
+             ]
     end
 
     test "another module's helper is not resolved through a local one of the same name" do
@@ -430,25 +286,6 @@ defmodule Argus.Extractors.SupervisionTest do
 
       assert [["dynamic", "Argus.Test.Fixtures.ViaQueueSup", _caller]] =
                Map.get(Supervision.extract(data), :dynamic_child, [])
-    end
-
-    test "the registration and start_child sides produce identical via names" do
-      {:ok, nursery} =
-        BeamSpy.BeamFile.disassemble(to_string(:code.which(Argus.Test.Fixtures.ViaNursery)))
-
-      {:ok, midwife} =
-        BeamSpy.BeamFile.disassemble(to_string(:code.which(Argus.Test.Fixtures.ViaMidwife)))
-
-      foreman_name =
-        Supervision.extract(nursery)
-        |> Map.fetch!(:supervisor_child_name)
-        |> Enum.find_value(fn [_, _, name] -> if name =~ ~r/Foreman/, do: name end)
-
-      [[start_child_sup | _]] = Map.fetch!(Supervision.extract(midwife), :dynamic_child)
-
-      # Identical strings → anchoring matches; Midwife's own via role
-      # (Midwife) is a different name, so it never mis-anchors.
-      assert foreman_name == start_child_sup
     end
   end
 
