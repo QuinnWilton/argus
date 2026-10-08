@@ -78,4 +78,38 @@ defmodule Argus.Extractor.TermValidationTest do
 
     refute Argus.Extractors.TermValidation.Proof.proves?(fun, :term, MapSet.new())
   end
+
+  describe "what decoded bytes are" do
+    setup do
+      {:ok, facts} =
+        Argus.Pipeline.extract(
+          [Argus.Test.Fixtures.ContractSealed, Argus.Test.Fixtures.ContractUnsealed],
+          extractors: [TermValidation]
+        )
+
+      rows =
+        for [_id, func, pos, param, callee, path] <- facts.decoded_bytes_value,
+            do: {func |> String.split(".") |> List.last(), pos, param, callee, path}
+
+      %{rows: rows}
+    end
+
+    test "a projection out of a remote result, or a parameter and what its local callers hand it",
+         %{rows: rows} do
+      assert {"ContractSealed:verified/2", "0", "-1", "Plug.Crypto.MessageVerifier:verify/2",
+              "tuple:1"} in rows
+
+      assert {"ContractSealed:token_field/2", "0", "-1", "Phoenix.Token:verify/4",
+              ~s(tuple:1/map:"blob")} in rows
+
+      assert {"ContractSealed:safe_decode/1", "0", "0", "", ""} in rows
+
+      # The helper's caller, at the position the helper decodes.
+      assert {"ContractSealed:open_default/3", "0", "-1",
+              "Plug.Crypto.MessageEncryptor:decrypt/4", "tuple:1"} in rows
+
+      # A join of the payload and the ciphertext is no one value.
+      refute Enum.any?(rows, &(elem(&1, 0) == "ContractUnsealed:either/4"))
+    end
+  end
 end

@@ -66,3 +66,31 @@ unchecked_crypto_use(id, func, api, use, "discarded") :-
 .output unchecked_crypto_verification
 unchecked_crypto_verification(id, func, api, use, kind) :-
   unchecked_crypto_use(id, func, api, use, kind).
+
+// ── Authenticated payloads ─────────────────────────────────────────
+
+// An API whose success payload, element 1 of its `{:ok, payload}` result, holds only
+// bytes or a term a holder of the server's key wrote: it is returned only when the
+// AEAD tag or the MAC verifies (Plug.Crypto.MessageEncryptor, MessageVerifier,
+// Plug.Crypto.verify/decrypt, Phoenix.Token). Element 1 of a failure is an atom
+// reason. This says nothing of whether the key holder meant the payload for this use:
+// a token minted for one purpose and accepted for another is still the server's.
+.decl authenticated_payload_api(api: symbol)
+authenticated_payload_api("Plug.Crypto.MessageEncryptor:decrypt/3").
+authenticated_payload_api("Plug.Crypto.MessageEncryptor:decrypt/4").
+authenticated_payload_api("Plug.Crypto.MessageVerifier:verify/2").
+authenticated_payload_api("Plug.Crypto:verify/3").
+authenticated_payload_api("Plug.Crypto:verify/4").
+authenticated_payload_api("Plug.Crypto:decrypt/3").
+authenticated_payload_api("Plug.Crypto:decrypt/4").
+authenticated_payload_api("Phoenix.Token:verify/3").
+authenticated_payload_api("Phoenix.Token:verify/4").
+authenticated_payload_api("Phoenix.Token:decrypt/3").
+authenticated_payload_api("Phoenix.Token:decrypt/4").
+
+// The payload's path in the result: element 1, or a field projected out of it.
+.decl authenticated_payload_path(path: symbol)
+authenticated_payload_path(path) :-
+  decoded_bytes_value(_, _, _, -1, api, path),
+  authenticated_payload_api(api),
+  (path = "tuple:1" ; match("tuple:1/.*", path)).

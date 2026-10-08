@@ -23,7 +23,10 @@ defmodule Argus.Analyses.UnsafeInput do
     safety)` — no request reaches it: atom creation and decompression of
     what an exported function's caller hands in, code execution reachable
     from an exported function, and every deserialization without `:safe`.
-    With priors on, `source` is what the model says the converted value is
+    A deserialization of an authenticated decryption's or MAC check's
+    success payload (`Plug.Crypto`, `Phoenix.Token`; clientlib's
+    verification.dl) is no sink here or above: only the server's key
+    could have written its bytes. With priors on, `source` is what the model says the converted value is
     when it is sure, at `permille`, that it is not outside data
     (`Argus.Priors.Questions.ValueSource`, asked of atoms,
     deserializations and code execution); the finding then steps down and

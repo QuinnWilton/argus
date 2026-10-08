@@ -59,7 +59,65 @@ sink_call(id, func, api, "decompression", "") :- unsafe_decompression(id, func, 
 sink_call(id, func, api, "deserialization", safety) :-
   unsafe_deserialization(id, func, api, safety),
   unsafe_safety_class(safety),
-  !inert_decoded_term(id, func).
+  !inert_decoded_term(id, func),
+  !server_authored_bytes(id, func).
+
+// The bytes are an authenticated decryption's or MAC check's success payload
+// (clientlib/verification.dl): only a holder of the server's key could have written
+// them, so the term decoded is one the server encoded, wherever the ciphertext came
+// from. The payload is decoded where it is checked, or handed to a private function
+// whose every caller hands it one at that parameter (one hop; a capture or a fun
+// reference is a caller that hands nothing known).
+.decl server_authored_bytes(id: symbol, func: symbol)
+
+server_authored_bytes(id, func) :-
+  unsafe_deserialization(id, func, _, _),
+  authenticated_arg(id, func, 0).
+
+server_authored_bytes(id, func) :-
+  unsafe_deserialization(id, func, _, _),
+  decoded_bytes_value(id, func, 0, q, "", _),
+  q >= 0,
+  authenticated_param(func, q).
+
+// Argument `pos` of the call `id` is exactly an authenticated payload its own function
+// received (decoded_bytes_value: a join with any other value has no row).
+.decl authenticated_arg(id: symbol, func: symbol, pos: number)
+
+authenticated_arg(id, func, pos) :-
+  decoded_bytes_value(id, func, pos, -1, api, path),
+  authenticated_payload_api(api),
+  authenticated_payload_path(path).
+
+// Parameter `pos` of a private function holds an authenticated payload on every call.
+.decl authenticated_param(func: symbol, pos: number)
+
+authenticated_param(f, q) :-
+  decoded_param(f, q),
+  function_def(f, _, _, _, 0),
+  local_call(_, _, f, _),
+  !unauthenticated_caller(f, q).
+
+// A deserialization's bytes are exactly parameter `pos` of its function.
+.decl decoded_param(func: symbol, pos: number)
+
+decoded_param(f, q) :-
+  unsafe_deserialization(id, f, _, _),
+  decoded_bytes_value(id, f, 0, q, "", _),
+  q >= 0.
+
+.decl unauthenticated_caller(func: symbol, pos: number)
+
+unauthenticated_caller(f, q) :-
+  decoded_param(f, q),
+  local_call(site, c, f, _),
+  !authenticated_arg(site, c, q).
+
+// A capture, a fun reference or a resolved apply runs the function with arguments no
+// call site shows, even in a function that also calls it directly.
+unauthenticated_caller(f, q) :-
+  decoded_param(f, q),
+  (closure_def(_, f) ; fun_ref(_, f) ; resolved_apply(_, _, f)).
 
 // Recursive validation protects the exact accepted decoded payload. Rejected error
 // envelopes can be returned unchanged, but their payload cannot be reused unchecked.

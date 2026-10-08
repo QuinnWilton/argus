@@ -382,6 +382,20 @@ defmodule Argus.Extractors.ApiCalls do
   @spec atom_sink?({module(), atom(), arity()}) :: boolean()
   def atom_sink?(mfa), do: listed?(mfa, @atom_sink_mfas)
 
+  @deserialization_sink_mfas @table
+                             |> Enum.filter(fn {_mfa, rel, _cols} ->
+                               rel == :unsafe_deserialization
+                             end)
+                             |> Enum.map(fn {mfa, _rel, _cols} -> mfa end)
+                             |> Enum.uniq()
+
+  @doc """
+  Whether a concrete `{mod, fun, arity}` decodes the external term format
+  its first argument holds (`unsafe_deserialization`'s calls).
+  """
+  @spec deserialization_sink?({module(), atom(), arity()}) :: boolean()
+  def deserialization_sink?(mfa), do: listed?(mfa, @deserialization_sink_mfas)
+
   defp mfa_matches?({mod, fun, :any}, {mod, fun, _arity}), do: true
 
   defp mfa_matches?({mod, fun, arities}, {mod, fun, arity}) when is_list(arities),

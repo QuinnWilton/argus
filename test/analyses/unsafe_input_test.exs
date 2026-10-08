@@ -69,7 +69,9 @@ defmodule Argus.Analyses.UnsafeInputTest do
     D.GzipBodyPlug,
     D.ClientMiddleware,
     D.OwnData,
-    [Argus.Test.Fixtures.AtomCallerInput, Argus.Test.Fixtures.AtomCallerInput.NameServer]
+    [Argus.Test.Fixtures.AtomCallerInput, Argus.Test.Fixtures.AtomCallerInput.NameServer],
+    Argus.Test.Fixtures.ContractSealed,
+    Argus.Test.Fixtures.ContractUnsealed
   ]
 
   setup_all do
@@ -109,6 +111,26 @@ defmodule Argus.Analyses.UnsafeInputTest do
       # Paginator CVE-2020-15150 is remote code execution THROUGH `[:safe]`.
       assert Enum.any?(funcs, &String.contains?(&1, "decode_atoms_only"))
       refute Enum.any?(funcs, &String.contains?(&1, "decode_validated"))
+    end
+
+    test "bytes an authenticated decryption or MAC check returned are the server's", ctx do
+      sealed = analyze(ctx, [Argus.Test.Fixtures.ContractSealed])
+
+      for output <- ~w(sink_without_request_path sink_reachable sink_export) do
+        assert Enum.filter(sealed[output] || [], &Enum.member?(&1, "deserialization")) == [],
+               "#{output}: #{inspect(sealed[output])}"
+      end
+
+      # A helper one caller hands its own bytes, a helper captured for
+      # other bytes, a decoding that authenticates nothing, and a join
+      # with an unauthenticated path.
+      funcs =
+        analyze(ctx, [Argus.Test.Fixtures.ContractUnsealed])
+        |> local("deserialization")
+        |> Enum.map(fn {func, _api} -> func |> String.split(":") |> List.last() end)
+        |> Enum.sort()
+
+      assert funcs == ["captured_decode/1", "decode/1", "either/4", "unwrapped/1"]
     end
 
     test "the deserialization finding says what the options were, and grades [:safe] down", ctx do
