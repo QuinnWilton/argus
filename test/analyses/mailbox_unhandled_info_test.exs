@@ -3,11 +3,11 @@ defmodule Argus.Analyses.MailboxUnhandledInfoTest do
   @moduletag :flowlog
 
   alias Argus.Analyses.Mailbox
+  alias Argus.Test.{Batch, Memo}
   alias Argus.Test.Fixtures, as: F
   alias Argus.Test.Fixtures.Hypothesized, as: H
   alias Argus.Test.Fixtures.LateMessage, as: L
   alias Argus.Test.Fixtures.UnhandledInfo, as: U
-  alias Argus.Test.{Batch, Memo}
 
   @all [
     U.MemoryCheck,

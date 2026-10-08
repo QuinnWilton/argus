@@ -13,7 +13,7 @@ defmodule Argus.Extractor.ResolveTest do
   use ExUnit.Case, async: true
   use ExUnitProperties
 
-  alias Argus.Extractor.Resolve
+  alias Argus.Extractor.{Resolve, Terms}
 
   @regs [x: 0, x: 1, x: 2, y: 0, y: 1]
   @pure [
@@ -165,45 +165,31 @@ defmodule Argus.Extractor.ResolveTest do
     Map.put(regs, plain(d), v)
   end
 
-  defp run({:gc_bif, name, _, _, args, d}, regs) do
-    v =
-      case Enum.map(args, &element(&1, regs)) do
-        [i, t]
-        when name == :element and is_integer(i) and is_tuple(t) and i > 0 and i <= tuple_size(t) ->
-          {:ok, elem(t, i - 1)}
+  defp run({:gc_bif, name, _, _, args, d}, regs),
+    do: Map.put(regs, plain(d), bif(name, Enum.map(args, &element(&1, regs))))
 
-        [t] when name == :tuple_size and is_tuple(t) ->
-          {:ok, tuple_size(t)}
+  # What each BIF gives arguments it is defined on; anything else, the
+  # resolver does not compute.
+  defp bif(:element, [i, t]) when is_integer(i) and is_tuple(t) and i > 0 and i <= tuple_size(t),
+    do: {:ok, elem(t, i - 1)}
 
-        [m] when name == :map_size and is_map(m) ->
-          {:ok, map_size(m)}
+  defp bif(:tuple_size, [t]) when is_tuple(t), do: {:ok, tuple_size(t)}
+  defp bif(:map_size, [m]) when is_map(m), do: {:ok, map_size(m)}
+  defp bif(:byte_size, [b]) when is_binary(b), do: {:ok, byte_size(b)}
 
-        [b] when name == :byte_size and is_binary(b) ->
-          {:ok, byte_size(b)}
-
-        [l] when name == :length and is_list(l) ->
-          if Argus.Extractor.Terms.proper_list?(l) and :dynamic not in l,
-            do: {:ok, length(l)},
-            else: :dynamic
-
-        [[h | _]] when name == :hd ->
-          {:ok, h}
-
-        [[_ | t]] when name == :tl ->
-          {:ok, t}
-
-        [a] when name == :atom_to_binary and is_atom(a) and not is_nil(a) ->
-          {:ok, Atom.to_string(a)}
-
-        [a, b] when name == :++ and is_list(a) and is_list(b) ->
-          if Argus.Extractor.Terms.proper_list?(a), do: {:ok, a ++ b}, else: :dynamic
-
-        _ ->
-          :dynamic
-      end
-
-    Map.put(regs, plain(d), v)
+  # A list holding the placeholder may end in a tail nothing resolved.
+  defp bif(:length, [l]) when is_list(l) do
+    if Terms.proper_list?(l) and :dynamic not in l, do: {:ok, length(l)}, else: :dynamic
   end
+
+  defp bif(:hd, [[h | _]]), do: {:ok, h}
+  defp bif(:tl, [[_ | t]]), do: {:ok, t}
+  defp bif(:atom_to_binary, [a]) when is_atom(a) and not is_nil(a), do: {:ok, Atom.to_string(a)}
+
+  defp bif(:++, [a, b]) when is_list(a) and is_list(b),
+    do: if(Terms.proper_list?(a), do: {:ok, a ++ b}, else: :dynamic)
+
+  defp bif(_name, _args), do: :dynamic
 
   defp run({op, _, src, d, _, {:list, pairs}}, regs)
        when op in [:put_map_assoc, :put_map_exact] do
@@ -265,7 +251,7 @@ defmodule Argus.Extractor.ResolveTest do
   defp expected({:ok, :dynamic}), do: :dynamic
 
   defp expected({:ok, list}) when is_list(list),
-    do: if(Argus.Extractor.Terms.proper_list?(list), do: {:ok, list}, else: :dynamic)
+    do: if(Terms.proper_list?(list), do: {:ok, list}, else: :dynamic)
 
   defp expected(other), do: other
 
