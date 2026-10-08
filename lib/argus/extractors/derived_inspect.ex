@@ -48,6 +48,7 @@ defmodule Argus.Extractors.DerivedInspect do
   @behaviour Argus.Extractor
 
   import Argus.Extractor.Facts, only: [add_fact: 3]
+  import Argus.Extractor.Helpers, only: [match_remote_call: 1]
   import Argus.Instr, only: [register: 1]
 
   # Where the derived inspect/2 hands the kept fields over: Inspect.Map
@@ -84,7 +85,9 @@ defmodule Argus.Extractors.DerivedInspect do
   defp derived_target(mod, functions) do
     case Enum.find(functions, &match?({:function, :inspect, 2, _, _}, &1)) do
       {:function, _, _, _, instrs} ->
-        calls = Enum.flat_map(instrs, &external_call/1)
+        calls =
+          for instr <- instrs, {:ok, m, f, a} <- [match_remote_call(instr)], do: {m, f, a}
+
         target = struct_info_target(instrs)
 
         if target != nil and Module.concat(Inspect, target) == mod and
@@ -112,16 +115,11 @@ defmodule Argus.Extractors.DerivedInspect do
   end
 
   defp info_call(call) do
-    case external_call(call) do
-      [{target, :__info__, 1}] -> target
+    case match_remote_call(call) do
+      {:ok, target, :__info__, 1} -> target
       _ -> nil
     end
   end
-
-  defp external_call({:call_ext, _, {:extfunc, m, f, a}}), do: [{m, f, a}]
-  defp external_call({:call_ext_last, _, {:extfunc, m, f, a}, _}), do: [{m, f, a}]
-  defp external_call({:call_ext_only, _, {:extfunc, m, f, a}}), do: [{m, f, a}]
-  defp external_call(_), do: []
 
   # The comprehension's filter lives in a function the compiler names
   # after inspect/2: the fun handed to Enum.reduce, or a list
