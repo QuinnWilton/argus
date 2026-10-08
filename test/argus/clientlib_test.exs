@@ -83,7 +83,14 @@ defmodule Argus.ClientlibTest do
     # Every input relation needs a facts file, empty or not.
     for name <-
           Schema.names() ++
-            [:call_edge, :call_site, :unconditional_call_edge, :call_tag, :fun_handed_to] do
+            [
+              :call_edge,
+              :call_site,
+              :unconditional_call_edge,
+              :call_tag,
+              :fun_handed_to,
+              :fun_built
+            ] do
       File.write!(Path.join(facts, "#{name}.facts"), "")
     end
 

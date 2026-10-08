@@ -60,6 +60,29 @@ defmodule Argus.Analyses.StartupInitTest do
       assert site =~ "StartsChildrenInInit:"
     end
 
+    # runs_elsewhere.dl, fun_edge: a local capture is a fun value, like a
+    # closure, and one init/1 only stores runs later, in a handler.
+    test "a supervisor call in a local capture init/1 only stores is not reported" do
+      assert {:ok, results} =
+               Memo.analyze([Argus.Test.Fixtures.StartupStoredCapture], :startup)
+
+      assert Rows.where(results, :startup, "blocks_on_peer", kind: "sup") == []
+    end
+
+    test "a supervisor call in a local capture init/1 runs is reported" do
+      assert {:ok, results} =
+               Memo.analyze([Argus.Test.Fixtures.StartupCalledCapture], :startup)
+
+      assert [[mod, "dynamic", site, "DynamicSupervisor.start_child"]] =
+               Rows.where(results, :startup, "blocks_on_peer",
+                 kind: "sup",
+                 drop: [:phase, :kind, :ordering, :sup]
+               )
+
+      assert mod == "Argus.Test.Fixtures.StartupCalledCapture"
+      assert site =~ "StartupCalledCapture:start_transport/2#"
+    end
+
     test "a call the tree-order argument accepts is still reported when the callee's handler blocks" do
       modules = [
         Argus.Test.Fixtures.WatcherAppTree,

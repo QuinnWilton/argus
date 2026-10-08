@@ -39,6 +39,11 @@
 .decl fun_handed_to(caller: symbol, fun: symbol, callee: symbol) mutable
 .input fun_handed_to
 
+// The funs a function builds, closures and local captures alike (stage
+// 0, from closure_def).
+.decl fun_built(caller: symbol, fun: symbol) mutable
+.input fun_built
+
 // The staged instruction where func calls project function callee. Use it to anchor
 // function-level findings without reading remote_call.
 .decl call_instr(func: symbol, callee: symbol, id: symbol)

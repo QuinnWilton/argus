@@ -154,3 +154,14 @@ fun_handed_to(f, g, callee) :-
 
 .output fun_handed_to(filename="fun_handed_to.facts")
 
+
+// The funs a function builds with make_fun3: a closure, or a local
+// capture (`&helper/1`), which names the function itself rather than a
+// `-fun-N-` lambda. Their call-graph edges are call_edge's; staged apart
+// so runs_elsewhere can tell a fun func builds from a call it makes
+// without reading closure_def, and as stable as call_edge.
+.decl fun_built(caller: symbol, fun: symbol)
+
+fun_built(f, g) :- closure_def(f, g).
+
+.output fun_built(filename="fun_built.facts")
