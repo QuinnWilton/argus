@@ -425,6 +425,17 @@ defmodule Argus.Schema.CallValues do
         """
       },
       %{
+        name: :doc_hidden,
+        layer: 2,
+        fields: [{:func, :func_id, "function ID (mod:func/arity)"}],
+        doc: """
+        An exported function the Docs chunk hides from the module's users: `@doc false`, \
+        `@impl true` without a `@doc`, or any function of a `@moduledoc false` module \
+        (`Argus.Extractors.Docs`). `unsafe_input.dl` does not count it as a way in for a \
+        caller's data. A beam without a Docs chunk hides nothing.
+        """
+      },
+      %{
         name: :name_release,
         layer: 2,
         fields: [

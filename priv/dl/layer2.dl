@@ -294,6 +294,11 @@
 .decl distributed_store_op(id: symbol, func: symbol, store: symbol, op: symbol) mutable
 .input distributed_store_op
 
+// An exported function the Docs chunk hides from the module's users: `@doc false`, `@impl true` without a `@doc`, or any function of a `@moduledoc false` module (`Argus.Extractors.Docs`). `unsafe_input.dl` does not count it as a way in for a caller's data. A beam without a Docs chunk hides nothing.
+//
+.decl doc_hidden(func: symbol) mutable
+.input doc_hidden
+
 // A runtime child added by `DynamicSupervisor.start_child/2`. Makes dynamic workers visible alongside static supervision children.
 //
 .decl dynamic_child(sup: symbol, child_mod: symbol, caller_func: symbol) mutable

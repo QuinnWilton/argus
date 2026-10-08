@@ -1,5 +1,7 @@
 defmodule Argus.Test.Fixtures.AtomPrecision do
-  @moduledoc false
+  # Documented: its exports are a library's API, which callers outside the
+  # program call whatever the library's own calls pass (`public_token/1`).
+  @moduledoc "Atom-making functions a library documents for its callers."
   @colours [:black, :red, :green, :yellow, :blue, :magenta, :cyan, :white]
 
   def ansi(n) when n in 90..97, do: String.to_atom("light_#{Enum.at(@colours, n - 90)}")

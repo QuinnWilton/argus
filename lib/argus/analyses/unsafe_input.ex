@@ -98,7 +98,9 @@ defmodule Argus.Analyses.UnsafeInput do
       Argus.Extractors.Sockets,
       # Literal and forwarded call arguments: a render naming its template.
       Argus.Extractors.CallArgs,
-      Argus.Extractors.Tooling
+      Argus.Extractors.Tooling,
+      # Exports the docs hide (doc_hidden): no way in for a caller's data.
+      Argus.Extractors.Docs
     ]
 
   @sink_fields [

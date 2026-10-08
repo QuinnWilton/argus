@@ -529,14 +529,33 @@ caller_input(id) :- atom_input.reaches(f, _, id), outside_api(f).
 
 // Every exported function is a possible external entry, even if internal callers pass
 // only literals. Macros are excluded because they run at compile time on the caller's
-// code.
+// code, and so are exports the library's users do not call (internal_export).
 .decl outside_api(func: symbol)
 
 outside_api(f) :-
   api_export(f),
   function_def(f, m, n, a, _),
   !runtime_callback(m, n, a),
-  !function_def(_, m, "__impl__", 1, _).
+  !function_def(_, m, "__impl__", 1, _),
+  !internal_export(f).
+
+// An export the docs hide from the library's users (`@doc false`, a `@moduledoc false`
+// module) that the program itself calls: a helper its own modules share, or one its
+// macros and module bodies call at compile time, as `SQL.BNF` parses a fixed grammar
+// into atoms. Its parameters are what the program hands it, and a documented caller's
+// input still reaches the sink through the flow walk above. A hidden export nothing in
+// the program calls is called from outside after all, by code a macro generates or by
+// a user past the docs, and stays a way in. So does a hidden export of a module with a
+// behaviour: `@impl true` hides a callback, which the behaviour's runtime calls with
+// outside data.
+.decl internal_export(func: symbol)
+
+internal_export(f) :-
+  doc_hidden(f),
+  call_edge(c, f),
+  c != f,
+  function_def(f, m, _, _, _),
+  !behaves_as(m, _).
 
 // A protocol implementation is an external entry when the program defines and exposes
 // the corresponding protocol function. Implementations of external protocols are

@@ -262,7 +262,7 @@ defmodule Argus.Extractor.Helpers do
   def debug_info(%{debug_info: debug_info}), do: debug_info
 
   def debug_info(module_data) do
-    with {:ok, source} <- chunk_source(module_data),
+    with {:ok, source} <- beam_source(module_data),
          {:ok, {_module, [debug_info: chunk]}} <- :beam_lib.chunks(source, [:debug_info]) do
       {:ok, chunk}
     else
@@ -270,7 +270,13 @@ defmodule Argus.Extractor.Helpers do
     end
   end
 
-  defp chunk_source(%{beam: beam}) when is_binary(beam) do
+  @doc """
+  What `:beam_lib.chunks/2` reads the module's chunks from: the beam the
+  pipeline handed over, as data or a path, or, for bare disassembly, the
+  module's file on the code path. `:error` when there is none.
+  """
+  @spec beam_source(map()) :: {:ok, binary() | charlist()} | :error
+  def beam_source(%{beam: beam}) when is_binary(beam) do
     cond do
       BeamSpy.BeamFile.beam_data?(beam) -> {:ok, beam}
       File.regular?(beam) -> {:ok, String.to_charlist(beam)}
@@ -278,7 +284,7 @@ defmodule Argus.Extractor.Helpers do
     end
   end
 
-  defp chunk_source(%{module: mod}) do
+  def beam_source(%{module: mod}) do
     case :code.which(mod) do
       path when is_list(path) -> {:ok, path}
       _ -> :error

@@ -37,6 +37,15 @@ defmodule Argus.Graph.Functions do
     Argus.Extractors.Tls
   ]
 
+  # The producers that read chunks of the beam the disassembly does not
+  # carry: its debug info, compile info or docs.
+  @chunk_readers [
+    Argus.Extractors.Docs,
+    Argus.Extractors.Generated,
+    Argus.Extractors.Specs,
+    Argus.Extractors.Tooling
+  ]
+
   @doc "The producers whose facts depend only on one function's prepared body."
   @spec local_producers() :: [module()]
   def local_producers, do: @local
@@ -261,7 +270,7 @@ defmodule Argus.Graph.Functions do
 
   defquery :extraction_producer, key: {module, producer}, store: :blob do
     cond do
-      producer in [Argus.Extractors.Generated, Argus.Extractors.Specs, Argus.Extractors.Tooling] ->
+      producer in @chunk_readers ->
         R.query(db, :extraction_metadata_rows, {module, producer})
 
       producer in @local ->
@@ -408,14 +417,9 @@ defmodule Argus.Graph.Functions do
   defp export_key({name, arity, _}), do: {name, arity}
   defp export_key({:atom, name, arity, _}), do: {name, arity}
 
-  # Debug-info and compile-info consumers still need the original BEAM. They
+  # Debug-info, compile-info and docs consumers still need the original BEAM. They
   # have their own producer query, so this does not invalidate other producers.
-  defp with_chunks(db, module, producer, data)
-       when producer in [
-              Argus.Extractors.Generated,
-              Argus.Extractors.Specs,
-              Argus.Extractors.Tooling
-            ] do
+  defp with_chunks(db, module, producer, data) when producer in @chunk_readers do
     {:ok, beam} = R.query(db, :module_beam, module)
     Map.put(data, :beam, Frontend.read(beam))
   end
