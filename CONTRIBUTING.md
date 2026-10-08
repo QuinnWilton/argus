@@ -199,6 +199,38 @@ If your change makes a finding disappear, check the related tests under
 unsafe. The [rule guide](docs/design/rule-style.md) explains how to write the
 conditions and evidence for a finding.
 
+### See what your change did to real projects
+
+The tests say your rule finds what you wrote it for. The corpus (`test/corpus/`,
+real projects at the commits before and after a fix) says what else it now finds
+or misses. Take a baseline before you edit, then compare after:
+
+```sh
+mix argus.corpus accept
+# edit the rule
+mix argus.corpus diff
+```
+
+`diff` lists every finding added or removed since the baseline, by title, with
+the project, function and line of each. Read each one: a new finding should be a
+real defect, and a lost one should have been noise. `ARGUS_CORPUS_ONLY=redix`
+narrows both commands to some projects' checkouts, and on a warm cache a few
+take seconds. The corpus test prints the same summary after each run.
+
+When a change is meant only to make a rule faster, its findings must not move at
+all. Extract a project's facts once, measure, change the rule, and measure again:
+
+```sh
+mix argus.flowlog facts tmp/ash --checkout ash-09f4259
+mix argus.flowlog bench tmp/ash --save tmp/before.json
+# edit the rule
+mix argus.flowlog bench tmp/ash --against tmp/before.json
+```
+
+`bench` prints each program's time from scratch and per one-row edit, and its
+engine's peak and kept memory, each beside its change. It ends by saying whether
+every output is the same rows, naming each one that is not.
+
 ## Understand where processes differ
 
 The call graph can lead through a function handed to a spawned process. That
