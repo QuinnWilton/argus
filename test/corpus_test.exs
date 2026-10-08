@@ -10,8 +10,8 @@ defmodule Argus.CorpusTest do
   later run extracts and solves only what an edit invalidated. Every checkout the selected pairs need is analyzed
   once, up to `ARGUS_CORPUS_JOBS` at a time (default 4, at most the
   scheduler count), before the pairs are checked. Narrow a run with
-  `ARGUS_CORPUS_ONLY=redix#334,oban` (substrings of the issue name), or
-  leave the corpus out with `mix test --exclude corpus`. A pair this
+  `ARGUS_CORPUS_ONLY=redix#334,oban` (substrings of the issue name). Plain
+  `mix test` leaves the corpus out; `mix test --only corpus` runs it. A pair this
   machine cannot check is skipped, with the reason: a tree not compiled
   here needs an Erlang or Elixir with no asdf install
   (`Argus.Corpus.unbuildable/1`), or a tree not checked out here comes

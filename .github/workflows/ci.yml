@@ -150,7 +150,7 @@ jobs:
       # half of one. The 25 slowest tests are printed as they ran
       # (`Argus.Test.Timings`), beside the others.
       - name: Run tests
-        run: mix test --include identity_verify --exclude corpus --max-cases "$(nproc)"
+        run: mix test --include identity_verify --max-cases "$(nproc)"
         env:
           ARGUS_TEST_TIMINGS: "25"
 

@@ -25,15 +25,15 @@ the generic engine; `compiled` builds every program's engine, minutes each).
 
 ```sh
 mix deps.get
-mix test --exclude corpus
+mix test
 mix format --check-formatted
 mix credo --strict
 mix dialyzer
 ```
 
 Run checks relevant to the change; documentation-only edits need no tests. Start
-with the affected test files. Plain `mix test` includes the closed-issue corpus,
-which can fetch and compile external projects and is expensive when cold.
+with the affected test files. Plain `mix test` leaves out the closed-issue corpus,
+which fetches and compiles external projects: `mix test --only corpus` runs it.
 
 Use `ARGUS_ROUX_PATH=../roux` with Mix commands when testing unreleased Roux
 changes. Extraction requires that checkout's query deadlines, packed traces and
@@ -43,9 +43,9 @@ reverse dependency tracking until a Roux release includes them.
 |---|---|
 | Analysis rules | Positive fixtures and nearby counterexamples in `test/analyses/` and `test/soundness/`; add a corpus pair for a new bug class. |
 | Batched fixtures or properties, or rules they exercise | `ARGUS_VERIFY_BATCH=1 mix test <test-file>` compares batch slices with separate solves. |
-| Schema, cache keys or producer dependencies | `mix test --include identity_verify --exclude corpus`; use `ARGUS_NO_CACHE=1` to compare fresh results when needed. |
+| Schema, cache keys or producer dependencies | `mix test --include identity_verify`; use `ARGUS_NO_CACHE=1` to compare fresh results when needed. |
 | Query graph or incrementality | `mix test --only parity`. |
-| Frontends or packaging | `mix test --include escript --include rebar3 --include gleam --exclude corpus` with the relevant tools installed. |
+| Frontends or packaging | `mix test --include escript --include rebar3 --include gleam` with the relevant tools installed. |
 | FlowLog toolchain (`native/flowlog`) | `mix test test/argus/flowlog` (and the suite) runs the tool crate's unit tests, `cargo fmt --check` and `cargo clippy -D warnings`, once per version of the sources; `test/argus/flowlog_test.exs` checks both engine kinds. |
 | A rule or engine change meant to be faster | `mix argus.flowlog bench FACTS_DIR --save before.json` before, `--against before.json` after: every output must be the same rows. `mix argus.flowlog facts DIR --checkout NAME` extracts a corpus project's facts. |
 

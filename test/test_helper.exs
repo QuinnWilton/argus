@@ -54,7 +54,10 @@ end
 # request (`mix test --include identity_verify`), not on every edit. The
 # graph's incremental≡batch gate (`@tag :parity`) solves every analysis a
 # dozen times over: CI runs it, and so does a change to the graph
-# (`mix test --include parity`). The built escript (`@tag :escript`) and
+# (`mix test --include parity`). The closed-issue corpus (`@tag :corpus`)
+# clones and compiles some 160 trees of real projects, and analyzes them
+# even warm for minutes: CI runs it nightly, and so does a rule change
+# (`mix test --only corpus`, narrowed by `ARGUS_CORPUS_ONLY`). The built escript (`@tag :escript`) and
 # the real rebar3 and gleam (`:rebar3`, `:gleam`) run in CI's escript job
 # and on request: `mix test --include escript --include rebar3 --include
 # gleam`.
@@ -122,7 +125,7 @@ if System.get_env("ARGUS_FLOWLOG_BUILD_PROFILE", "") == "",
 timeout = if Argus.FlowLog.available?(), do: 1_200_000, else: 60_000
 
 ExUnit.start(
-  exclude: [:parity, :escript, :rebar3, :gleam | exclude],
+  exclude: [:parity, :corpus, :escript, :rebar3, :gleam | exclude],
   formatters: formatters,
   timeout: timeout
 )

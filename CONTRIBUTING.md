@@ -15,15 +15,13 @@ caches the engines itself.
 ```sh
 mix deps.get
 mix argus.flowlog build
-mix test test/analyses/exposure_tls_test.exs --exclude corpus
+mix test test/analyses/exposure_tls_test.exs
 ```
 
 `mix argus.flowlog build` builds every shipped program's engine once per version
 of its rules (the first build takes several minutes); `mix argus.flowlog status`
 shows what is built and where. The second command runs a small set of TLS tests.
-`--exclude corpus` avoids fetching and compiling external projects. Keep that flag
-while working on a local example. Tests that need FlowLog are skipped locally if
-Rust is missing.
+Tests that need FlowLog are skipped locally if Rust is missing.
 
 If you are working with unreleased Roux changes, set
 `ARGUS_ROUX_PATH=/path/to/roux` before running Mix commands.
@@ -188,7 +186,7 @@ a test module that solves rules; tests normally use `async: true`.
 Start with the affected test file. When it passes, run:
 
 ```sh
-mix test --exclude corpus
+mix test
 mix format --check-formatted
 mix credo --strict
 mix dialyzer
@@ -215,7 +213,9 @@ mix argus.corpus diff
 the project, function and line of each. Read each one: a new finding should be a
 real defect, and a lost one should have been noise. `ARGUS_CORPUS_ONLY=redix`
 narrows both commands to some projects' checkouts, and on a warm cache a few
-take seconds. The corpus test prints the same summary after each run.
+take seconds. `mix test --only corpus` checks every pair: the finding is present
+before the fix and gone after it. It prints the same summary when it ends. Plain
+`mix test` leaves the corpus out.
 
 When a change is meant only to make a rule faster, its findings must not move at
 all. Extract a project's facts once, measure, change the rule, and measure again:
