@@ -39,7 +39,7 @@ defmodule Argus.Pipeline.Normalize do
         ) ::
           [normalized()]
   def normalize_function(module, {:function, name, arity, _entry, instructions}) do
-    func_id = func_id(module, name, arity)
+    func_id = InstrId.func_id(module, name, arity)
 
     instructions
     |> Enum.with_index()
@@ -47,12 +47,6 @@ defmodule Argus.Pipeline.Normalize do
       {InstrId.mint(func_id, idx), normalize_instruction(instr)}
     end)
   end
-
-  @doc """
-  Returns the function ID string for a given MFA.
-  """
-  @spec func_id(atom(), atom(), non_neg_integer()) :: String.t()
-  defdelegate func_id(module, name, arity), to: InstrId
 
   # Strip typed registers recursively in instruction operands.
   defp normalize_instruction(instr) when is_tuple(instr) do

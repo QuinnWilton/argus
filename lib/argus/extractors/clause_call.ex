@@ -49,8 +49,6 @@ defmodule Argus.Extractors.ClauseCall do
   alias Argus.Extractors.GenStatem
   alias Argus.Instr
   alias Argus.InstrId
-  alias Argus.Pipeline.Normalize
-
   import Argus.Extractor.Facts, only: [add_fact: 3]
 
   @impl true
@@ -83,7 +81,7 @@ defmodule Argus.Extractors.ClauseCall do
   # (`Argus.Extractors.GenStatem.event_functions/1`).
   defp event_functions(%{module: mod} = module_data) do
     for {name, arity} <- GenStatem.event_functions(module_data),
-        do: Normalize.func_id(mod, name, arity)
+        do: InstrId.func_id(mod, name, arity)
   end
 
   defp event_functions(_module_data), do: []
@@ -92,7 +90,7 @@ defmodule Argus.Extractors.ClauseCall do
   # how a rule asks a tag's event type or content (`:DOWN` under `:info`).
   defp emit_events(facts, %{module: mod, functions: functions}, events) do
     for {:function, name, arity, _entry, instrs} <- functions,
-        func_id = Normalize.func_id(mod, name, arity),
+        func_id = InstrId.func_id(mod, name, arity),
         func_id in events,
         dispatches_on_first?(instrs),
         tag <-
@@ -148,7 +146,7 @@ defmodule Argus.Extractors.ClauseCall do
   defp send_sites(%{module: mod, functions: functions}) do
     for {:function, name, arity, _entry, instrs} <- functions,
         {:send, idx} <- Enum.with_index(instrs),
-        do: %{func_id: Normalize.func_id(mod, name, arity), instrs: instrs, idx: idx}
+        do: %{func_id: InstrId.func_id(mod, name, arity), instrs: instrs, idx: idx}
   end
 
   defp send_sites(_module_data), do: []

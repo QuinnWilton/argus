@@ -64,7 +64,7 @@ defmodule Argus.Pipeline.Emit do
 
     # Process each function.
     Enum.reduce(functions, facts, fn {:function, name, arity, entry, _instrs} = func, acc ->
-      func_id = Normalize.func_id(module, name, arity)
+      func_id = InstrId.func_id(module, name, arity)
 
       exported =
         if MapSet.member?(export_set, {name, arity}), do: "1", else: "0"

@@ -138,6 +138,8 @@ which a change appeared; older names and APIs may have changed since then.
 - `Argus.Pipeline.Emit.emit_module/6`'s imports and attributes, which it
   ignored: it is `emit_module/4`, and `Argus.Pipeline.Emit.emit/1` emits a
   module's disassembly.
+- `Argus.Pipeline.Normalize.func_id/3`, a delegate: call
+  `Argus.InstrId.func_id/3`.
 - Functions nothing called: `Argus.Pipeline.rows_iodata/1` (use
   `Argus.Tsv.encode/1`), `Argus.Pipeline.Writer.append/2`,
   `Argus.Priors.derive/2` and `read_facts/2`, `Argus.Specs.shapes/2`,

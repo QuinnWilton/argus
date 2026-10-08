@@ -2,7 +2,7 @@ defmodule Argus.Extractor.ParamFlowReturnsTest do
   use ExUnit.Case, async: true
 
   alias Argus.Extractors.ParamFlow
-  alias Argus.Pipeline.Normalize
+  alias Argus.InstrId
   alias Argus.Test.Fixtures.ParamFlow.Returns
 
   setup_all do
@@ -11,7 +11,7 @@ defmodule Argus.Extractor.ParamFlowReturnsTest do
   end
 
   defp sinks(facts, function) do
-    func = Normalize.func_id(Returns, function, arity(function))
+    func = InstrId.func_id(Returns, function, arity(function))
 
     facts
     |> Map.get(:sink_arg_derived, [])
@@ -86,7 +86,7 @@ defmodule Argus.Extractor.ParamFlowReturnsTest do
   end
 
   test "the existing-atom choice marker survives a helper return", %{facts: facts} do
-    func = Normalize.func_id(Returns, :chosen, 1)
+    func = InstrId.func_id(Returns, :chosen, 1)
 
     assert Enum.any?(facts.sink_arg_chosen, fn [_id, caller, pos] ->
              caller == func and pos == "0"

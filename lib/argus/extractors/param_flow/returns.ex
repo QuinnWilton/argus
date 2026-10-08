@@ -6,8 +6,6 @@ defmodule Argus.Extractors.ParamFlow.Returns do
   alias Argus.Extractors.ParamFlow.Propagators
   alias Argus.Instr
   alias Argus.InstrId
-  alias Argus.Pipeline.Normalize
-
   @type origin :: non_neg_integer() | :chosen | {:runtime, String.t(), String.t()}
   @type summary :: MapSet.t(origin())
   @type summaries :: %{String.t() => summary()}
@@ -54,7 +52,7 @@ defmodule Argus.Extractors.ParamFlow.Returns do
     targets =
       Map.new(CallSites.for_module(module_data), fn site ->
         {mod, fun, arity} = site.mfa
-        {id(site.func_id, site.idx), Normalize.func_id(mod, fun, arity)}
+        {id(site.func_id, site.idx), InstrId.func_id(mod, fun, arity)}
       end)
 
     callbacks =
@@ -67,7 +65,7 @@ defmodule Argus.Extractors.ParamFlow.Returns do
 
     direct =
       for {:function, name, arity, _entry, instrs} <- module_data.functions,
-          func = Normalize.func_id(module_data.module, name, arity),
+          func = InstrId.func_id(module_data.module, name, arity),
           {instr, idx} <- Enum.with_index(instrs),
           {n, reg} <- direct_fun(instr),
           into: %{} do
@@ -86,7 +84,7 @@ defmodule Argus.Extractors.ParamFlow.Returns do
     Resolve.trace(instrs, idx, reg, nil, fn
       {at, {:make_fun3, {mod, fun, arity}, _index, _uniq, _dst, {:list, env}}}, _follow ->
         %{
-          target: Normalize.func_id(mod, fun, arity),
+          target: InstrId.func_id(mod, fun, arity),
           at: at,
           first: arity - length(env),
           env: env,
@@ -102,7 +100,7 @@ defmodule Argus.Extractors.ParamFlow.Returns do
     case Resolve.fun_origin(instrs, idx, reg) do
       {:external, {mod, fun, arity}} ->
         %{
-          target: Normalize.func_id(mod, fun, arity),
+          target: InstrId.func_id(mod, fun, arity),
           at: idx,
           first: arity,
           env: [],

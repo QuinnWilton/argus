@@ -18,7 +18,6 @@ defmodule Argus.Extractors.SharedStore do
   alias Argus.Extractors.SecurityValues
   alias Argus.Instr
   alias Argus.InstrId
-  alias Argus.Pipeline.Normalize
   alias Argus.Purity.Effects
 
   import Argus.Extractor.Facts, only: [add_fact: 3]
@@ -70,7 +69,7 @@ defmodule Argus.Extractors.SharedStore do
   # :not_found and then :ok retain which result actually means absence.
   defp choices(facts, module_data) do
     Enum.reduce(module_data.functions, facts, fn {:function, name, arity, _, instrs}, acc ->
-      func = Normalize.func_id(module_data.module, name, arity)
+      func = InstrId.func_id(module_data.module, name, arity)
       cfg = Helpers.cfg(module_data, name, arity)
       guards = equality_guards(instrs)
 
@@ -206,7 +205,7 @@ defmodule Argus.Extractors.SharedStore do
   defp callback(facts, %{mfa: {ConCache, :isolated, 3}} = ctx) do
     case Resolve.fun_origin(ctx.instrs, ctx.idx, {:x, 2}) do
       {:closure, {mod, fun, arity}} ->
-        add_fact(facts, :shared_store_callback, [ctx.func_id, Normalize.func_id(mod, fun, arity)])
+        add_fact(facts, :shared_store_callback, [ctx.func_id, InstrId.func_id(mod, fun, arity)])
 
       _ ->
         facts
@@ -247,7 +246,7 @@ defmodule Argus.Extractors.SharedStore do
       |> add_fact(:shared_store_argument, [
         InstrId.mint(ctx.func_id, ctx.idx),
         ctx.func_id,
-        Normalize.func_id(mod, fun, arity),
+        InstrId.func_id(mod, fun, arity),
         to_string(pos),
         transform,
         source,
@@ -267,7 +266,7 @@ defmodule Argus.Extractors.SharedStore do
          true <- ss != "dynamic" and ks != "dynamic",
          {cs, cv} <- captured_identity(ctx, at, env, arity, {ss, sv}),
          {ck, ckval} <- captured_identity(ctx, at, env, arity, {ks, kv}) do
-      add_fact(facts, :shared_store_lock, [Normalize.func_id(mod, fun, arity), cs, cv, ck, ckval])
+      add_fact(facts, :shared_store_lock, [InstrId.func_id(mod, fun, arity), cs, cv, ck, ckval])
     else
       _ -> facts
     end
@@ -315,7 +314,7 @@ defmodule Argus.Extractors.SharedStore do
       {at, instruction}, _follow ->
         case Helpers.match_local_call(instruction) do
           {:ok, mod, fun, 1} ->
-            transform = Normalize.func_id(mod, fun, 1)
+            transform = InstrId.func_id(mod, fun, 1)
 
             if MapSet.member?(ctx.transforms, transform) do
               {source, value} = exact_key_identity(ctx, at, {:x, 0})
@@ -364,7 +363,7 @@ defmodule Argus.Extractors.SharedStore do
     for {:function, name, 1, _entry, instructions} <- module_data.functions,
         Enum.all?(instructions, &stable_instruction?/1),
         into: MapSet.new(),
-        do: Normalize.func_id(module_data.module, name, 1)
+        do: InstrId.func_id(module_data.module, name, 1)
   end
 
   defp stable_instruction?(instruction) do

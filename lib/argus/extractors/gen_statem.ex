@@ -70,9 +70,6 @@ defmodule Argus.Extractors.GenStatem do
   import Argus.Extractor.Facts, only: [add_fact: 3, track_dynamic: 5, track_imprecision: 5]
   import Argus.Extractor.Shapes, only: [return_shapes: 1]
   import Argus.Extractor.Terms, only: [list_elements: 1]
-
-  alias Argus.Pipeline.Normalize
-
   # Standard gen_statem callbacks that are not state functions.
   @non_state_callbacks MapSet.new([
                          :init,
@@ -263,7 +260,7 @@ defmodule Argus.Extractors.GenStatem do
         end)
 
       event? = {name, arity} in events
-      emit_inserts(acc, Normalize.func_id(mod, name, arity), instrs, inserts, event?)
+      emit_inserts(acc, InstrId.func_id(mod, name, arity), instrs, inserts, event?)
     end)
   end
 
@@ -584,7 +581,7 @@ defmodule Argus.Extractors.GenStatem do
         # The module atom itself, not one re-read from its inspected name:
         # String.to_atom("A.B") is :"A.B", not A.B, and every site ID minted
         # from it was unresolvable.
-        func_id = Normalize.func_id(mod, name, arity)
+        func_id = InstrId.func_id(mod, name, arity)
 
         acc
         |> extract_transitions(mod_str, state_name, instrs, func_id)
@@ -601,7 +598,7 @@ defmodule Argus.Extractors.GenStatem do
           do: acc,
           else: helper_transitions(acc, mod, mod_str, function)
 
-      returned_calls(acc, mod, mod_str, Normalize.func_id(mod, name, arity), instrs, labels)
+      returned_calls(acc, mod, mod_str, InstrId.func_id(mod, name, arity), instrs, labels)
     end)
   end
 
@@ -611,7 +608,7 @@ defmodule Argus.Extractors.GenStatem do
   # entered, and its caller may leave, from a state the graph does not
   # name. init/1's `{:ok, State, Data}` is read by extract_initial_states.
   defp helper_transitions(facts, mod, mod_str, {:function, name, arity, _entry, instrs}) do
-    func_id = Normalize.func_id(mod, name, arity)
+    func_id = InstrId.func_id(mod, name, arity)
     ctx = synthetic_ctx(func_id)
 
     instrs
@@ -658,7 +655,7 @@ defmodule Argus.Extractors.GenStatem do
 
   defp callee(instr, mod, labels) do
     case local_call_target(instr, mod, labels) do
-      {name, arity} -> Normalize.func_id(mod, name, arity)
+      {name, arity} -> InstrId.func_id(mod, name, arity)
       nil -> "dynamic"
     end
   end

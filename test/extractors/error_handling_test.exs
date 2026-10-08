@@ -247,7 +247,7 @@ defmodule Argus.Extractors.ErrorHandlingTest do
     defp covered(mod, name, arity) do
       data = disassemble(mod)
       instrs = Helpers.find_function(data.functions, name, arity)
-      func = Argus.Pipeline.Normalize.func_id(mod, name, arity)
+      func = Argus.InstrId.func_id(mod, name, arity)
 
       data
       |> ErrorHandling.extract()

@@ -8,7 +8,7 @@ defmodule Argus.Extractor.CallSites do
   """
 
   alias Argus.Extractor.Helpers
-  alias Argus.Pipeline.Normalize
+  alias Argus.InstrId
 
   @type site :: %{
           func_id: String.t(),
@@ -22,7 +22,7 @@ defmodule Argus.Extractor.CallSites do
   @spec index(module(), [tuple()]) :: [site()]
   def index(mod, functions) do
     Enum.flat_map(functions, fn {:function, name, arity, _entry, instrs} ->
-      func_id = Normalize.func_id(mod, name, arity)
+      func_id = InstrId.func_id(mod, name, arity)
 
       instrs
       |> Enum.with_index()

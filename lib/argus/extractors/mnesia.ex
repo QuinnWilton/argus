@@ -199,7 +199,7 @@ defmodule Argus.Extractors.Mnesia do
   defp closure_made(instrs, idx, reg) do
     Resolve.trace(instrs, idx, reg, nil, fn
       {_at, {:make_fun3, {mod, name, arity}, _index, _uniq, _dst, _env}}, _follow ->
-        Normalize.func_id(mod, name, arity)
+        InstrId.func_id(mod, name, arity)
 
       _writer, _follow ->
         nil

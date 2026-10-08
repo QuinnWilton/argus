@@ -10,7 +10,7 @@ defmodule Argus.Extractors.StateGateTest do
   use ExUnit.Case, async: true
 
   alias Argus.Extractors.StateGate
-  alias Argus.Pipeline.Normalize
+  alias Argus.InstrId
   alias Argus.Test.Soundness.Gated, as: G
   alias Argus.Test.Soundness.RacesOrder
 
@@ -23,7 +23,7 @@ defmodule Argus.Extractors.StateGateTest do
   defp monitor_sites(data) do
     for {:function, name, arity, _entry, instrs} <- data.functions,
         {{:call_ext, 2, {:extfunc, :erlang, :monitor, 2}}, idx} <- Enum.with_index(instrs),
-        do: "#{Normalize.func_id(data.module, name, arity)}##{idx}"
+        do: "#{InstrId.func_id(data.module, name, arity)}##{idx}"
   end
 
   # {admitted atoms, closed?} per key at the module's monitor.
@@ -177,7 +177,7 @@ defmodule Argus.Extractors.StateGateTest do
       bump_calls =
         for {:function, :handle_call, 3, _entry, instrs} <- data.functions,
             {{:call, 2, {^trie, :bump, 2}}, idx} <- Enum.with_index(instrs),
-            do: "#{Normalize.func_id(trie, :handle_call, 3)}##{idx}"
+            do: "#{InstrId.func_id(trie, :handle_call, 3)}##{idx}"
 
       assert [site] = bump_calls
 
@@ -196,7 +196,7 @@ defmodule Argus.Extractors.StateGateTest do
       bumps =
         for {:function, :handle_call, 3, _entry, instrs} <- data.functions,
             {{:call, 2, {:handoff_trie, :bump, 2}}, idx} <- Enum.with_index(instrs),
-            do: "#{Normalize.func_id(:handoff_trie, :handle_call, 3)}##{idx}"
+            do: "#{InstrId.func_id(:handoff_trie, :handle_call, 3)}##{idx}"
 
       excluded = for [site, _func, "{1}", ":init"] <- facts[:state_excluded], do: site
 

@@ -594,7 +594,7 @@ defmodule Argus.Extractors.ETS do
   defp project_call?(%{mfa: {mod, _f, _a}}),
     do: mod != :ets and not Argus.Extractor.Runtime.module?(mod)
 
-  defp callee(%{mfa: {m, f, a}}), do: Normalize.func_id(m, f, a)
+  defp callee(%{mfa: {m, f, a}}), do: InstrId.func_id(m, f, a)
 
   # This module's functions that insert, directly or through a local
   # call to one that does.
@@ -635,7 +635,7 @@ defmodule Argus.Extractors.ETS do
       |> CallSites.for_module()
       |> Enum.reduce(facts, fn %{func_id: func_id, instrs: instrs, idx: idx, mfa: {m, f, a}},
                                acc ->
-        callee = Normalize.func_id(m, f, a)
+        callee = InstrId.func_id(m, f, a)
 
         Enum.reduce(0..(min(a, @max_args) - 1)//1, acc, fn pos, inner ->
           tid_arg(inner, instrs, idx, {:x, pos}, [func_id, callee, to_string(pos)])
@@ -643,7 +643,7 @@ defmodule Argus.Extractors.ETS do
       end)
 
     for {:function, name, arity, _entry, instrs} <- module_data.functions,
-        func_id = Normalize.func_id(module_data.module, name, arity),
+        func_id = InstrId.func_id(module_data.module, name, arity),
         {{:make_fun3, {cmod, cname, carity}, _i, _u, _dst, {:list, env}}, idx} <-
           Enum.with_index(instrs),
         {operand, pos} <- Enum.with_index(env, carity - length(env)),
@@ -651,7 +651,7 @@ defmodule Argus.Extractors.ETS do
         kind in [:x, :y],
         reduce: facts do
       acc ->
-        closure = Normalize.func_id(cmod, cname, carity)
+        closure = InstrId.func_id(cmod, cname, carity)
         tid_arg(acc, instrs, idx, reg, [func_id, closure, to_string(pos)])
     end
   end

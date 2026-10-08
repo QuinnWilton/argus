@@ -76,8 +76,6 @@ defmodule Argus.Extractors.StateGate do
   alias Argus.Instr
   alias Argus.Instr.Reaching
   alias Argus.InstrId
-  alias Argus.Pipeline.Normalize
-
   import Argus.Extractor.Facts, only: [add_fact: 3]
 
   # The handlers whose state a gate reads, by the argument that holds it.
@@ -221,7 +219,7 @@ defmodule Argus.Extractors.StateGate do
         reduce: facts do
       acc ->
         add_fact(acc, :state_return, [
-          Normalize.func_id(mod, name, arity),
+          InstrId.func_id(mod, name, arity),
           clause,
           spell_key(key),
           value
@@ -235,7 +233,7 @@ defmodule Argus.Extractors.StateGate do
   # (`Argus.Extractors.StateGate.Absent`).
   defp emit_absent(facts, mod, functions) do
     for {:function, name, arity, _entry, instrs} <- functions,
-        func_id = Normalize.func_id(mod, name, arity),
+        func_id = InstrId.func_id(mod, name, arity),
         {site, pos, store, arg} <- Absent.rows(instrs, arity),
         reduce: facts do
       acc ->
@@ -250,7 +248,7 @@ defmodule Argus.Extractors.StateGate do
   end
 
   defp emit_gate(ctx, %{fa: {name, arity}} = gate, facts) do
-    func_id = Normalize.func_id(ctx.mod, name, arity)
+    func_id = InstrId.func_id(ctx.mod, name, arity)
     site = InstrId.mint(func_id, gate.site)
     key = spell_key(gate.key)
 
@@ -265,7 +263,7 @@ defmodule Argus.Extractors.StateGate do
   end
 
   defp emit_excluded(ctx, {{name, arity}, %{site: site, key: key, excluded: atoms}}, facts) do
-    func_id = Normalize.func_id(ctx.mod, name, arity)
+    func_id = InstrId.func_id(ctx.mod, name, arity)
     id = InstrId.mint(func_id, site)
 
     Enum.reduce(atoms, facts, fn value, acc ->

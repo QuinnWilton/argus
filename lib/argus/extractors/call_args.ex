@@ -51,8 +51,6 @@ defmodule Argus.Extractors.CallArgs do
   alias Argus.Extractor.Resolve
   alias Argus.Extractor.Runtime
   alias Argus.InstrId
-  alias Argus.Pipeline.Normalize
-
   @max_args 4
   @tuple_elements 2
 
@@ -72,7 +70,7 @@ defmodule Argus.Extractors.CallArgs do
   @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()
   def extract(module_data) do
     each_call(module_data, %{}, fn facts, ctx, {callee_mod, callee_func, arity} ->
-      callee_id = Normalize.func_id(callee_mod, callee_func, arity)
+      callee_id = InstrId.func_id(callee_mod, callee_func, arity)
 
       facts
       |> emit_call_args(ctx, callee_id, arity)
@@ -100,7 +98,7 @@ defmodule Argus.Extractors.CallArgs do
             callee_id,
             to_string(pos),
             inspect(mod),
-            Normalize.func_id(mod, fun, n)
+            InstrId.func_id(mod, fun, n)
           ])
         else
           _ -> acc

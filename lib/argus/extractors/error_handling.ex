@@ -368,7 +368,7 @@ defmodule Argus.Extractors.ErrorHandling do
       add_fact(facts, :call_result, [
         InstrId.mint(ctx.func_id, ctx.idx),
         ctx.func_id,
-        Normalize.func_id(mod, func, arity),
+        InstrId.func_id(mod, func, arity),
         result_fate(ctx),
         raises(mod),
         call_target(ctx)
@@ -1146,7 +1146,7 @@ defmodule Argus.Extractors.ErrorHandling do
     for {:function, name, arity, _entry, instrs} <- functions,
         Boundary.function?(instrs),
         reduce: facts do
-      acc -> add_fact(acc, :boundary_function, [Normalize.func_id(mod, name, arity)])
+      acc -> add_fact(acc, :boundary_function, [InstrId.func_id(mod, name, arity)])
     end
   end
 
@@ -1165,7 +1165,7 @@ defmodule Argus.Extractors.ErrorHandling do
 
         _ ->
           fun = Helpers.cfg(module_data, name, arity)
-          func_id = Normalize.func_id(mod, name, arity)
+          func_id = InstrId.func_id(mod, name, arity)
           closures = closure_uses(instrs)
           lines = Map.get(module_data, :line_table, %{})
           Enum.reduce(regions, acc, &cover(&2, {fun, lines}, func_id, instrs, closures, &1))
@@ -1906,7 +1906,7 @@ defmodule Argus.Extractors.ErrorHandling do
           add_fact(acc, :try_call, [
             id,
             ctx.func_id,
-            Normalize.func_id(m, f, a),
+            InstrId.func_id(m, f, a),
             InstrId.mint(ctx.func_id, idx),
             handler_end(ctx, handler_label, ctx.idx)
           ])

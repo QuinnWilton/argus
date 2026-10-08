@@ -123,7 +123,6 @@ defmodule Argus.Extractors.Dependence do
   alias Argus.Extractors.ProcessRegistry
   alias Argus.Instr
   alias Argus.InstrId
-  alias Argus.Pipeline.Normalize
   alias Argus.Purity.Effects
 
   import Argus.Instr, only: [register: 1]
@@ -172,7 +171,7 @@ defmodule Argus.Extractors.Dependence do
 
       module_data.functions
       |> Enum.reduce(%{}, fn {:function, name, arity, _entry, instrs}, acc ->
-        func_id = Normalize.func_id(module_data.module, name, arity)
+        func_id = InstrId.func_id(module_data.module, name, arity)
 
         case Helpers.cfg(module_data, name, arity) do
           nil ->
@@ -243,9 +242,9 @@ defmodule Argus.Extractors.Dependence do
         for {{:make_fun3, {cmod, cname, carity}, _index, _uniq, _dst, {:list, env}}, idx} <-
               Enum.with_index(instrs),
             into: %{},
-            do: {idx, {Normalize.func_id(cmod, cname, carity), carity - length(env), env}}
+            do: {idx, {InstrId.func_id(cmod, cname, carity), carity - length(env), env}}
 
-      {Normalize.func_id(mod, name, arity), sites}
+      {InstrId.func_id(mod, name, arity), sites}
     end
   end
 
@@ -477,11 +476,11 @@ defmodule Argus.Extractors.Dependence do
 
   defp call_result(idx, {{mod, fun, arity} = mfa, remote?}, inputs, ctx) do
     cond do
-      not remote? -> MapSet.new([{:call, Normalize.func_id(mod, fun, arity)}])
+      not remote? -> MapSet.new([{:call, InstrId.func_id(mod, fun, arity)}])
       site?(mfa) -> site_result(mfa, InstrId.mint(ctx.func_id, idx), inputs)
       runtime?(mod) and Map.get(ctx, :data, false) -> lookup_result(mfa, inputs)
       runtime?(mod) -> union(inputs)
-      true -> MapSet.put(union(inputs), {:call, Normalize.func_id(mod, fun, arity)})
+      true -> MapSet.put(union(inputs), {:call, InstrId.func_id(mod, fun, arity)})
     end
   end
 
@@ -616,7 +615,7 @@ defmodule Argus.Extractors.Dependence do
         if effect?(mfa), do: rows(facts, :effect_decided, [ctx.func_id], here), else: facts
 
       true ->
-        callee = Normalize.func_id(mod, fun, arity)
+        callee = InstrId.func_id(mod, fun, arity)
         facts = rows(facts, :call_decided, [ctx.func_id, callee], here)
 
         Enum.reduce(0..(arity - 1)//1, facts, fn pos, acc ->
@@ -680,7 +679,7 @@ defmodule Argus.Extractors.Dependence do
             facts
 
           true ->
-            callee = Normalize.func_id(mod, fun, arity)
+            callee = InstrId.func_id(mod, fun, arity)
 
             Enum.reduce(0..(arity - 1)//1, facts, fn pos, acc ->
               rows(

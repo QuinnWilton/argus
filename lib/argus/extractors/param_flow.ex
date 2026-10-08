@@ -351,7 +351,7 @@ defmodule Argus.Extractors.ParamFlow do
   # register spelled as the facts spell it (`"x0"`), anything else nil.
   defp bif_operands(%{module: mod, functions: functions}) do
     for {:function, name, arity, _entry, instrs} <- functions,
-        func_id = Normalize.func_id(mod, name, arity),
+        func_id = InstrId.func_id(mod, name, arity),
         {instr, idx} <- Enum.with_index(instrs),
         operands = bif_args(instr),
         operands != nil,
@@ -375,7 +375,7 @@ defmodule Argus.Extractors.ParamFlow do
   defp emit_call_sites(facts, module_data, inputs) do
     instrs =
       Map.new(module_data.functions, fn {:function, n, a, _e, is} ->
-        {Normalize.func_id(module_data.module, n, a), is}
+        {InstrId.func_id(module_data.module, n, a), is}
       end)
 
     module_data
@@ -383,7 +383,7 @@ defmodule Argus.Extractors.ParamFlow do
     |> Enum.reduce(facts, fn %{func_id: func_id, idx: idx, mfa: {mod, fun, arity} = mfa}, acc ->
       id = InstrId.mint(func_id, idx)
       site_inputs = inputs_at(inputs, func_id, idx)
-      callee = Normalize.func_id(mod, fun, arity)
+      callee = InstrId.func_id(mod, fun, arity)
       sink? = ApiCalls.sink?(mfa)
 
       acc =
@@ -461,7 +461,7 @@ defmodule Argus.Extractors.ParamFlow do
   defp closure_at(instrs, idx, reg) do
     Resolve.trace(instrs, idx, reg, nil, fn
       {_at, {:make_fun3, {mod, name, arity}, _index, _uniq, _dst, _env}}, _follow ->
-        Normalize.func_id(mod, name, arity)
+        InstrId.func_id(mod, name, arity)
 
       _writer, _follow ->
         nil
@@ -472,14 +472,14 @@ defmodule Argus.Extractors.ParamFlow do
   # parameters: slot i is parameter arity - env_len + i.
   defp emit_closures(facts, %{module: mod, functions: functions}, inputs) do
     Enum.reduce(functions, facts, fn {:function, name, arity, _entry, instrs}, acc ->
-      func_id = Normalize.func_id(mod, name, arity)
+      func_id = InstrId.func_id(mod, name, arity)
 
       instrs
       |> Enum.with_index()
       |> Enum.reduce(acc, fn
         {{:make_fun3, {cmod, cname, carity}, _index, _uniq, _dst, {:list, env}}, idx}, inner ->
           site_inputs = inputs_at(inputs, func_id, idx)
-          closure = Normalize.func_id(cmod, cname, carity)
+          closure = InstrId.func_id(cmod, cname, carity)
           first = carity - length(env)
 
           env
@@ -522,7 +522,7 @@ defmodule Argus.Extractors.ParamFlow do
 
     facts =
       Enum.reduce(functions, facts, fn {:function, name, arity, _entry, instrs}, acc ->
-        func_id = Normalize.func_id(mod, name, arity)
+        func_id = InstrId.func_id(mod, name, arity)
 
         with [_ | _] = sites <- Map.get(sinks, func_id, []),
              %Argus.Cfg.Function{} = cfg <- Helpers.cfg(module_data, name, arity) do
@@ -592,7 +592,7 @@ defmodule Argus.Extractors.ParamFlow do
 
     tuples =
       Map.new(functions, fn {:function, n, a, _e, instrs} ->
-        {Normalize.func_id(mod, n, a), List.to_tuple(instrs)}
+        {InstrId.func_id(mod, n, a), List.to_tuple(instrs)}
       end)
 
     module_data
@@ -664,12 +664,12 @@ defmodule Argus.Extractors.ParamFlow do
   defp emit_allowlists(facts, %{module: mod, functions: functions} = module_data) do
     by_function =
       Map.new(functions, fn {:function, n, a, _e, instrs} ->
-        {Normalize.func_id(mod, n, a), List.to_tuple(instrs)}
+        {InstrId.func_id(mod, n, a), List.to_tuple(instrs)}
       end)
 
     module_data
     |> CallSites.for_module()
-    |> Enum.group_by(fn %{func_id: f, mfa: {m, fun, a}} -> {f, Normalize.func_id(m, fun, a)} end)
+    |> Enum.group_by(fn %{func_id: f, mfa: {m, fun, a}} -> {f, InstrId.func_id(m, fun, a)} end)
     |> Enum.reduce(facts, fn {{caller, callee}, sites}, acc ->
       tuple = Map.fetch!(by_function, caller)
       {_m, _f, arity} = hd(sites).mfa

@@ -57,7 +57,6 @@ defmodule Argus.Extractors.Supervision do
   alias Argus.Extractor.Terms
   alias Argus.Instr.Reaching
   alias Argus.InstrId
-  alias Argus.Pipeline.Normalize
 
   import Argus.Extractor.Helpers,
     only: [
@@ -260,7 +259,7 @@ defmodule Argus.Extractors.Supervision do
         case Map.get(started, site.func_id) do
           start_idx when is_integer(start_idx) and site.idx > start_idx ->
             {m, f, a} = site.mfa
-            callee = Normalize.func_id(m, f, a)
+            callee = InstrId.func_id(m, f, a)
 
             add_fact(acc, :post_start_call, [
               site.func_id,

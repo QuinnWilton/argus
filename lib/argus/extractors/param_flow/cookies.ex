@@ -25,8 +25,6 @@ defmodule Argus.Extractors.ParamFlow.Cookies do
   alias Argus.Instr
   alias Argus.Instr.Reaching
   alias Argus.InstrId
-  alias Argus.Pipeline.Normalize
-
   # A lookup of a map under a key: {map position, key position}.
   @lookups %{
     {Access, :get, 2} => {0, 1},
@@ -48,7 +46,7 @@ defmodule Argus.Extractors.ParamFlow.Cookies do
   def server_writes(%{module: mod, functions: functions}) do
     for {:function, name, arity, _entry, instrs} <- functions,
         Enum.any?(instrs, &fetch_cookies?/1),
-        func_id = Normalize.func_id(mod, name, arity),
+        func_id = InstrId.func_id(mod, name, arity),
         {instr, idx} <- Enum.with_index(instrs),
         reg <- writes(instrs, instr, idx),
         {:ok, id} = InstrId.parse(InstrId.mint(func_id, idx)),

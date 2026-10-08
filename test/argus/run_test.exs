@@ -17,7 +17,8 @@ defmodule Argus.RunFactsTest do
   use ExUnit.Case, async: true
 
   alias Argus.Analysis
-  alias Argus.Pipeline.{Disassemble, Function, Normalize}
+  alias Argus.InstrId
+  alias Argus.Pipeline.{Disassemble, Function}
   alias Argus.Test.Fixtures.PidFlow
 
   @modules [Argus.Test.Fixtures.EtsBounded, Argus.Test.Fixtures.MissingRow, :gen_server] ++
@@ -52,7 +53,7 @@ defmodule Argus.RunFactsTest do
       {{:function, _, _, _, canonical}, _} =
         Function.canonical(function, data.line_table, Function.entries(data))
 
-      {Normalize.func_id(data.module, name, arity),
+      {InstrId.func_id(data.module, name, arity),
        %{pipeline: targets(instructions), graph: targets(canonical)}}
     end
   end

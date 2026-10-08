@@ -46,9 +46,7 @@ defmodule Argus.Extractors.Generated do
   import Argus.Extractor.Facts, only: [add_fact: 3]
 
   alias Argus.Extractor.Helpers
-
-  alias Argus.Pipeline.Normalize
-
+  alias Argus.InstrId
   @impl true
   def relations, do: [:macro_generated, :macro_written]
 
@@ -67,7 +65,7 @@ defmodule Argus.Extractors.Generated do
           by != nil,
           reduce: %{} do
         acc ->
-          func_id = Normalize.func_id(mod, name, arity)
+          func_id = InstrId.func_id(mod, name, arity)
           acc = add_fact(acc, :macro_generated, [func_id, by])
 
           if Enum.all?(clauses, &clause_generated?(&1, mod)),
@@ -77,7 +75,7 @@ defmodule Argus.Extractors.Generated do
 
     for {name, arity, header} <- included(module_data), reduce: facts do
       acc ->
-        func_id = Normalize.func_id(mod, name, arity)
+        func_id = InstrId.func_id(mod, name, arity)
 
         acc
         |> add_fact(:macro_generated, [func_id, header])

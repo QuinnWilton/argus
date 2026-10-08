@@ -3,13 +3,15 @@ defmodule Argus.Pipeline.NormalizeTest do
 
   alias Argus.Pipeline.Normalize
 
+  alias Argus.InstrId
+
   describe "func_id/3" do
     test "formats Elixir module" do
-      assert Normalize.func_id(Enum, :map, 2) == "Enum:map/2"
+      assert InstrId.func_id(Enum, :map, 2) == "Enum:map/2"
     end
 
     test "formats Erlang module" do
-      assert Normalize.func_id(:lists, :reverse, 1) == ":lists:reverse/1"
+      assert InstrId.func_id(:lists, :reverse, 1) == ":lists:reverse/1"
     end
   end
 

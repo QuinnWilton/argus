@@ -25,7 +25,7 @@ defmodule Argus.Extractors.Specs do
 
   alias Argus.Extractor.CallSites
   alias Argus.Extractor.Helpers
-  alias Argus.Pipeline.Normalize
+  alias Argus.InstrId
   alias Argus.Specs
 
   @impl true
@@ -66,7 +66,7 @@ defmodule Argus.Extractors.Specs do
         reduce: facts do
       acc ->
         add_fact(acc, :spec_return, [
-          Normalize.func_id(mod, name, arity),
+          InstrId.func_id(mod, name, arity),
           to_string(shape),
           "analyzed"
         ])
@@ -88,7 +88,7 @@ defmodule Argus.Extractors.Specs do
         shape <- Map.get(returns, {f, a}, []),
         reduce: facts do
       acc ->
-        add_fact(acc, :spec_return, [Normalize.func_id(m, f, a), to_string(shape), "installed"])
+        add_fact(acc, :spec_return, [InstrId.func_id(m, f, a), to_string(shape), "installed"])
     end
   end
 end

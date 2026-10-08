@@ -51,8 +51,6 @@ defmodule Argus.Extractors.ProcessRegistry do
   alias Argus.Extractors.TermFlow
   alias Argus.Instr
   alias Argus.InstrId
-  alias Argus.Pipeline.Normalize
-
   import Argus.Extractor.Helpers, only: [each_remote_call: 3]
   import Argus.Extractor.Facts, only: [add_fact: 3, track_dynamic: 5, track_imprecision: 5]
   import Argus.Extractor.Identity, only: [key_identity: 4]
@@ -156,7 +154,7 @@ defmodule Argus.Extractors.ProcessRegistry do
   # says, not only the ones holding a creating op.
   defp emit_start_errors(facts, module_data) do
     Enum.reduce(module_data.functions, facts, fn {:function, name, arity, _entry, instrs}, acc ->
-      emit_start_errors(acc, Normalize.func_id(module_data.module, name, arity), instrs)
+      emit_start_errors(acc, InstrId.func_id(module_data.module, name, arity), instrs)
     end)
   end
 

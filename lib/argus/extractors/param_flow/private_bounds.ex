@@ -5,8 +5,7 @@ defmodule Argus.Extractors.ParamFlow.PrivateBounds do
   alias Argus.Extractor.Helpers
   alias Argus.Extractors.ParamFlow.Bounded
   alias Argus.Instr
-  alias Argus.Pipeline.Normalize
-
+  alias Argus.InstrId
   # An unexported function that is never captured has only the direct callers
   # visible in its module. Each parameter can inherit the union of their finite
   # argument sets, provided every invocation establishes that bound. Start with
@@ -26,7 +25,7 @@ defmodule Argus.Extractors.ParamFlow.PrivateBounds do
       data
       |> CallSites.for_module()
       |> Enum.filter(fn %{mfa: {m, f, a}} -> m == mod and {f, a} not in blocked end)
-      |> Enum.group_by(fn %{mfa: {m, f, a}} -> Normalize.func_id(m, f, a) end)
+      |> Enum.group_by(fn %{mfa: {m, f, a}} -> InstrId.func_id(m, f, a) end)
 
     relevant = ancestors(sinks, calls, %{})
 
@@ -42,7 +41,7 @@ defmodule Argus.Extractors.ParamFlow.PrivateBounds do
 
     functions =
       Map.new(functions, fn {:function, name, arity, _, instrs} ->
-        {Normalize.func_id(mod, name, arity),
+        {InstrId.func_id(mod, name, arity),
          {{mod, name, arity}, instrs, Helpers.cfg(data, name, arity)}}
       end)
 

@@ -31,8 +31,6 @@ defmodule Argus.Extractors.TermFlow do
   alias Argus.Extractors.TermFlow.Library
   alias Argus.Instr
   alias Argus.InstrId
-  alias Argus.Pipeline.Normalize
-
   import Argus.Instr, only: [register: 1]
   import Argus.Extractor.Facts, only: [add_fact: 3]
 
@@ -321,7 +319,7 @@ defmodule Argus.Extractors.TermFlow do
 
         module_data.functions
         |> Enum.reduce(%{}, fn {:function, name, arity, _entry, instrs}, acc ->
-          func_id = Normalize.func_id(module_data.module, name, arity)
+          func_id = InstrId.func_id(module_data.module, name, arity)
 
           if generated?(func_id) do
             acc
@@ -526,7 +524,7 @@ defmodule Argus.Extractors.TermFlow do
              Resolve.resolve_register(instrs, idx, {:x, n + 1}),
            {:ok, args} when is_list(args) <- Resolve.resolve_register(instrs, idx, {:x, n + 2}),
            true <- proper_list?(args) do
-        Normalize.func_id(mod, fun, length(args))
+        InstrId.func_id(mod, fun, length(args))
       else
         _ -> "dynamic"
       end
@@ -777,7 +775,7 @@ defmodule Argus.Extractors.TermFlow do
 
   # A closure is not a pid, but what a spawn of it runs.
   defp instruction(_ctx, {:make_fun3, {mod, name, arity}, _index, _uniq, dst, _env}, r),
-    do: write(r, dst, MapSet.new([{:fun, Normalize.func_id(mod, name, arity)}]))
+    do: write(r, dst, MapSet.new([{:fun, InstrId.func_id(mod, name, arity)}]))
 
   defp instruction(_ctx, _instr, r), do: r
 
@@ -1643,7 +1641,7 @@ defmodule Argus.Extractors.TermFlow do
          ictx,
          {:make_fun3, {cmod, cname, carity}, _index, _uniq, _dst, {:list, env}}
        ) do
-    closure = Normalize.func_id(cmod, cname, carity)
+    closure = InstrId.func_id(cmod, cname, carity)
     first = carity - length(env)
 
     env
@@ -1977,10 +1975,10 @@ defmodule Argus.Extractors.TermFlow do
   defp resolver(instrs, idx) do
     case Resolve.fun_origin(instrs, idx, {:x, 2}) do
       {:closure, {mod, name, arity}} ->
-        Normalize.func_id(mod, name, arity)
+        InstrId.func_id(mod, name, arity)
 
       {:external, {mod, name, arity}} ->
-        if Runtime.module?(mod), do: nil, else: Normalize.func_id(mod, name, arity)
+        if Runtime.module?(mod), do: nil, else: InstrId.func_id(mod, name, arity)
 
       _ ->
         nil
@@ -2407,7 +2405,7 @@ defmodule Argus.Extractors.TermFlow do
     String.contains?(func_id, [":__info__/", ":module_info/", ":-inlined-"])
   end
 
-  defp callee({mod, fun, arity}), do: Normalize.func_id(mod, fun, arity)
+  defp callee({mod, fun, arity}), do: InstrId.func_id(mod, fun, arity)
 
   defp path_step({kind, id}), do: "#{kind}(#{id})"
   defp path_step(n), do: to_string(n)

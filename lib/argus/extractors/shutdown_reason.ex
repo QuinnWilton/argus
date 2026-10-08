@@ -47,8 +47,6 @@ defmodule Argus.Extractors.ShutdownReason do
   alias Argus.Extractor.Runtime
   alias Argus.Instr
   alias Argus.InstrId
-  alias Argus.Pipeline.Normalize
-
   import Argus.Extractor.Facts, only: [add_fact: 3]
 
   @impl true
@@ -67,7 +65,7 @@ defmodule Argus.Extractors.ShutdownReason do
     functions
     |> Enum.sort_by(fn {:function, name, arity, _entry, _instrs} -> {name, arity} end)
     |> Enum.reduce(%{}, fn {:function, name, arity, _entry, instrs}, facts ->
-      func_id = Normalize.func_id(mod, name, arity)
+      func_id = InstrId.func_id(mod, name, arity)
       sites = sites(instrs)
 
       if arity == 0 or sites == [],

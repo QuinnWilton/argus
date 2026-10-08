@@ -13,7 +13,6 @@ defmodule Argus.Extractor.Identity do
   alias Argus.Instr
   alias Argus.Instr.Reaching
   alias Argus.InstrId
-  alias Argus.Pipeline.Normalize
 
   @doc """
   What identifies the value in `register` at `idx`, in the vocabulary two
@@ -292,7 +291,7 @@ defmodule Argus.Extractor.Identity do
       # A local helper that hands back its parameter's tuple with element n
       # unchanged (a pipeline of `put_elem`s): the argument's element n.
       {at, {call, _arity, {mod, fun, arity}}}, follow when call in [:call, :call_only] ->
-        case Map.fetch(returns_of(origins), {Normalize.func_id(mod, fun, arity), n}) do
+        case Map.fetch(returns_of(origins), {InstrId.func_id(mod, fun, arity), n}) do
           {:ok, pos} -> follow.(at, {:x, pos})
           :error -> @dynamic_identity
         end
@@ -337,7 +336,7 @@ defmodule Argus.Extractor.Identity do
           returns()
   def returned_elements(module_data, index) do
     for {:function, name, arity, _entry, instrs} <- module_data.functions,
-        func_id = Normalize.func_id(module_data.module, name, arity),
+        func_id = InstrId.func_id(module_data.module, name, arity),
         n <- [0, 1],
         {:ok, pos} <- [returned_element(instrs, n, {index, func_id})],
         into: %{},
