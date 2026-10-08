@@ -45,6 +45,7 @@ defmodule Argus.Extractors.Mnesia do
   @behaviour Argus.Extractor
 
   alias Argus.Cfg.Function, as: CfgFunction
+  alias Argus.Extractor.CallSites
   alias Argus.Extractor.Helpers
   alias Argus.Extractor.Identity
   alias Argus.Extractor.Resolve
@@ -173,9 +174,8 @@ defmodule Argus.Extractors.Mnesia do
   # The closures this module hands to a dirty activity: the make_fun3 the
   # fun operand comes from, in the function that makes the call.
   defp dirty_closures(module_data) do
-    for {:function, _name, _arity, _entry, instrs} <- module_data.functions,
-        {instr, idx} <- Enum.with_index(instrs),
-        {:ok, :mnesia, fun, arity} <- [Helpers.match_remote_call(instr)],
+    for %{remote?: true, mfa: {:mnesia, fun, arity}, instrs: instrs, idx: idx} <-
+          CallSites.for_module(module_data),
         {:ok, reg} <- [dirty_fun_operand(instrs, idx, fun, arity)],
         closure = closure_made(instrs, idx, reg),
         closure != nil,
