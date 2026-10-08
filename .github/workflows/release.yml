@@ -32,7 +32,8 @@ jobs:
         include:
           - os: macos-14
             triple: aarch64-apple-darwin
-          - os: macos-13
+          # GitHub retired macos-13; this is its last x86_64 image.
+          - os: macos-15-intel
             triple: x86_64-apple-darwin
           # The oldest glibc a hosted runner offers: a bundle runs on it
           # and every newer one.
