@@ -11,7 +11,9 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
   `is_eq_exact` tests), a `case` arm, or a membership test against a list
   the program wrote — `if bin in @allowed`, `:lists.member(bin, [...])`,
   `Enum.member?(@allowed, bin)`, or `Enum.__in__/2` from Elixir 1.20 —
-  on the branch where it holds. The value
+  or a key lookup in a literal map (`Map.fetch(@boxes, name)` on its
+  `{:ok, _}` arm, `Map.has_key?/2` and `is_map_key/2` on their true
+  edge, past `Map.fetch!/2`) — on the branch where it holds. The value
   is then one of a bounded set however it was derived, and a sink's
   argument that is is not unbounded input.
 
@@ -137,7 +139,7 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
           binaries: MapSet.t(reg()),
           lists: %{reg() => bound()},
           groups: [[reg()]],
-          pending: %{reg() => {[reg()], bound()}},
+          pending: %{reg() => {[reg()], bound() | {:found, bound()}}},
           ranges: %{reg() => range()},
           returns: %{tuple() => bound()}
         }
@@ -218,6 +220,25 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
     {:lists, :member, 2} => {0, 1},
     {Enum, :member?, 2} => {1, 0},
     {Enum, :__in__, 2} => {0, 1}
+  }
+
+  # The key lookups: {module, function, arity} => {what the result says,
+  # key position, map position}. A key the map holds is one of its keys,
+  # and a literal map's keys are values the program wrote: `case
+  # Map.fetch(@boxes, name) do {:ok, _} -> ...` bounds `name` on that arm.
+  # A boolean answer (`:truthy`) settles on its true edge as membership
+  # does, a fetch's (`:found`) on the edge where it is not `:error`, and
+  # a lookup that raises on a missing key (`:raises`) bounds the key once
+  # it returns. Elixir inlines `Map.fetch/2` to `:maps.find/2`,
+  # `Map.fetch!/2` to the `map_get` BIF, and `Map.has_key?/2` and
+  # `is_map_key/2` to a `has_map_fields` test or the `is_map_key` BIF.
+  @key_lookups %{
+    {:maps, :find, 2} => {:found, 0, 1},
+    {Map, :fetch, 2} => {:found, 1, 0},
+    {:maps, :is_key, 2} => {:truthy, 0, 1},
+    {Map, :has_key?, 2} => {:truthy, 1, 0},
+    {:maps, :get, 2} => {:raises, 0, 1},
+    {Map, :fetch!, 2} => {:raises, 1, 0}
   }
 
   @doc """
@@ -501,6 +522,31 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
       else: after_instr
   end
 
+  # A fetch's result is `{:ok, value}` or `:error`: a tuple found the key.
+  defp edge_state({:test, op, _fail, [a | _]}, :branch_pass, _succ, _state, after_instr, _fun)
+       when op in [:is_tuple, :is_tagged_tuple, :test_arity] do
+    settle_found(after_instr, a)
+  end
+
+  defp edge_state(
+         {:test, :has_map_fields, _fail, map, {:list, keys}},
+         :branch_pass,
+         _succ,
+         _state,
+         after_instr,
+         _fun
+       ) do
+    case map_keys(after_instr, map) do
+      {:ok, bound} ->
+        keys
+        |> Enum.filter(&register?(Instr.register(&1)))
+        |> Enum.reduce(after_instr, &bound(&2, holders(&2, &1), bound))
+
+      :error ->
+        after_instr
+    end
+  end
+
   defp edge_state({:test, :is_binary, _fail, [a]}, :branch_pass, _succ, _state, after_instr, _fun) do
     binaries = Enum.reduce(holders(after_instr, a), after_instr.binaries, &MapSet.put(&2, &1))
     %{after_instr | binaries: binaries}
@@ -559,7 +605,7 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
   @spec step(tuple() | atom(), state()) :: state()
   def step(instr, state) do
     state_before = state
-    member = member_call(instr, state)
+    member = member_call(instr, state) || key_lookup(instr, state)
     converted = conversion(instr, state)
     groups = carry_groups(instr, state.groups)
 
@@ -578,7 +624,7 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
     |> put_made_of_bounded(instr, state_before)
     |> put_conversion(converted, instr)
     |> put_member(member, instr)
-    |> put_comparison(instr)
+    |> put_comparison(instr, state_before)
   end
 
   # Every register a group's value is copied into joins it; a register a
@@ -890,8 +936,48 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
     end
   end
 
+  # What a key lookup is asked, as a membership call is: the registers
+  # holding the key that outlive the call, and the map's keys. A lookup
+  # that raises bounds them on its return, the others once settled.
+  defp key_lookup(instr, state) do
+    with {:ok, mod, fun, arity} <- Helpers.match_remote_call(instr),
+         {:ok, {says, key_pos, map_pos}} <- Map.fetch(@key_lookups, {mod, fun, arity}),
+         {:ok, bound} <- map_keys(state, {:x, map_pos}) do
+      holders = Enum.sort(Instr.carry(instr, holders(state, {:x, key_pos})))
+
+      case says do
+        :truthy -> {holders, bound}
+        :found -> {holders, {:found, bound}}
+        :raises -> {:now, holders, bound}
+      end
+    else
+      _ -> nil
+    end
+  end
+
+  # The keys of the map an operand holds: a literal map's, or those of
+  # every map a bounded register may hold.
+  defp map_keys(_state, {:literal, map}) when is_map(map), do: keys_bound([map])
+
+  defp map_keys(state, operand) do
+    case Map.get(state.bounded, Instr.register(operand)) do
+      {:values, {:set, maps}} -> keys_bound(maps)
+      _ -> :error
+    end
+  end
+
+  defp keys_bound(maps) do
+    if maps != [] and Enum.all?(maps, &is_map/1) do
+      keys = maps |> Enum.flat_map(&Map.keys/1) |> exact_values()
+      if fun_free?(keys), do: {:ok, {:values, {:set, keys}}}, else: :error
+    else
+      :error
+    end
+  end
+
   defp put_member(state, nil, _instr), do: state
   defp put_member(state, {[], _bound}, _instr), do: state
+  defp put_member(state, {:now, holders, bound}, _instr), do: bound(state, holders, bound)
 
   defp put_member(state, entry, instr) do
     if Instr.tail_call?(instr),
@@ -900,7 +986,7 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
   end
 
   # `x == lit` as a value: the boolean a later test branches on.
-  defp put_comparison(state, {:bif, op, _fail, [a, b], dst}) when op in [:"=:=", :==] do
+  defp put_comparison(state, {:bif, op, _fail, [a, b], dst}, _before) when op in [:"=:=", :==] do
     with {:ok, reg} <- register_and_literal(a, b),
          {:values, _} = bound <- equality_bound(element_of(a, b), op == :"=:=") do
       holders = holders(state, reg)
@@ -910,7 +996,30 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
     end
   end
 
-  defp put_comparison(state, _instr), do: state
+  # `is_map_key(key, map)` as a value, and `Map.fetch!/2`'s `map_get`,
+  # which raises unless the key is there (its fail label is 0) and so
+  # bounds the key past it. A guard's `map_get` fails to its label
+  # instead, and bounds nothing here.
+  defp put_comparison(state, {:bif, :is_map_key, _fail, [key, map], dst} = instr, before) do
+    with true <- register?(Instr.register(key)),
+         {:ok, bound} <- map_keys(before, map) do
+      holders = Enum.sort(Instr.carry(instr, holders(before, key)))
+      %{state | pending: Map.put(state.pending, Instr.register(dst), {holders, bound})}
+    else
+      _ -> state
+    end
+  end
+
+  defp put_comparison(state, {:bif, :map_get, {:f, 0}, [key, map], _dst} = instr, before) do
+    with true <- register?(Instr.register(key)),
+         {:ok, bound} <- map_keys(before, map) do
+      bound(state, Instr.carry(instr, holders(before, key)), bound)
+    else
+      _ -> state
+    end
+  end
+
+  defp put_comparison(state, _instr, _before), do: state
 
   # ── Narrowing on an edge ─────────────────────────────────────────────
 
@@ -976,8 +1085,15 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
   # `nil`, which Elixir's `if` tests too) is `true`.
   defp narrow_ne(state, a, b) do
     case register_and_literal(a, b) do
-      {:ok, reg} -> settle(state, reg, literal_of(a, b) in [false, nil])
-      :error -> state
+      {:ok, reg} ->
+        literal = literal_of(a, b)
+
+        state
+        |> settle(reg, literal in [false, nil])
+        |> then(&if(literal == :error, do: settle_found(&1, reg), else: &1))
+
+      :error ->
+        state
     end
   end
 
@@ -986,9 +1102,16 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
   defp narrow_default(state, src, values) do
     literals = Enum.map(values, &literal_value/1)
 
-    if literals != [] and Enum.all?(literals, &(&1 in [false, nil])),
-      do: settle(state, Instr.register(src), true),
-      else: state
+    cond do
+      literals != [] and Enum.all?(literals, &(&1 in [false, nil])) ->
+        settle(state, Instr.register(src), true)
+
+      literals == [:error] ->
+        settle_found(state, src)
+
+      true ->
+        state
+    end
   end
 
   defp arm_values(values),
@@ -996,12 +1119,21 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
 
   defp settle(state, reg, true) do
     case Map.fetch(state.pending, reg) do
+      {:ok, {_holders, {:found, _bound}}} -> state
       {:ok, {holders, bound}} -> bound(state, holders, bound)
       :error -> state
     end
   end
 
   defp settle(state, _reg, false), do: state
+
+  # A fetch's result is not `:error`: the key was found.
+  defp settle_found(state, reg) do
+    case Map.fetch(state.pending, Instr.register(reg)) do
+      {:ok, {holders, {:found, bound}}} -> bound(state, holders, bound)
+      _ -> state
+    end
+  end
 
   defp bound(state, regs, bound) do
     bounded =
