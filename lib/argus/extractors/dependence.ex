@@ -96,6 +96,10 @@ defmodule Argus.Extractors.Dependence do
   answers what the environment holds, which a caller naming the variable
   does not choose.
 
+  By data alone, too, the position a counted closure reads out of the
+  pair it is handed (`for {t, i} <- Enum.with_index(ts, 1)`) is a counter
+  made of nothing the closure was handed (`ParamFlow.Counters`).
+
   ## What is not emitted
 
   A call into the runtime's own applications (erts, kernel, stdlib,
@@ -120,6 +124,7 @@ defmodule Argus.Extractors.Dependence do
   alias Argus.Extractors.ApiCalls
   alias Argus.Extractors.ETS
   alias Argus.Extractors.Mnesia
+  alias Argus.Extractors.ParamFlow.Counters
   alias Argus.Extractors.ProcessRegistry
   alias Argus.Instr
   alias Argus.InstrId
@@ -168,6 +173,10 @@ defmodule Argus.Extractors.Dependence do
     with typed when typed != nil <- Helpers.typed(module_data),
          reaching when reaching != nil <- Helpers.reaching(module_data) do
       index = index(module_data, typed, reaching)
+      # Extracted one function at a time, the module's counted closures
+      # come with the function (Argus.Graph.Captures).
+      counted =
+        Map.get_lazy(module_data, :counted_closures, fn -> Counters.closures(module_data) end)
 
       module_data.functions
       |> Enum.reduce(%{}, fn {:function, name, arity, _entry, instrs}, acc ->
@@ -178,7 +187,12 @@ defmodule Argus.Extractors.Dependence do
             acc
 
           fun ->
-            function_facts(acc, func_id, fun, function_index(index, func_id), shapes(instrs))
+            shapes =
+              instrs
+              |> shapes()
+              |> Map.put(:counters, Counters.projections(instrs, Map.get(counted, func_id)))
+
+            function_facts(acc, func_id, fun, function_index(index, func_id), shapes)
         end
       end)
       |> Map.new(fn {relation, rows} -> {relation, rows |> Enum.uniq() |> Enum.sort()} end)
@@ -454,7 +468,9 @@ defmodule Argus.Extractors.Dependence do
               read |> inputs_of(ctx, outs) |> Map.get(key, MapSet.new())
 
             :error ->
-              union(inputs) |> element_of(Map.get(ctx.shapes.elements, idx))
+              if Map.get(ctx, :data, false) and MapSet.member?(ctx.shapes.counters, idx),
+                do: MapSet.new(),
+                else: union(inputs) |> element_of(Map.get(ctx.shapes.elements, idx))
           end
       end
 

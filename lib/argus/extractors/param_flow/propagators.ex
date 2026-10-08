@@ -52,6 +52,11 @@ defmodule Argus.Extractors.ParamFlow.Propagators do
     {:lists, [:zip], 2, [0, 1]},
     {:lists, [:join], 2, [0, 1]},
     {:lists, [:split], 2, [1]},
+    # The pairs of an enumeration carry its elements; their counters are
+    # no argument's data (`ParamFlow.Counters`).
+    {:lists, [:enumerate], 1, [0]},
+    {:lists, [:enumerate], 2, [1]},
+    {:lists, [:enumerate], 3, [2]},
     {:binary, :any, :any, [0]},
     {:binary, [:replace], :any, [0, 2]},
     {:string, :any, :any, [0]},
@@ -72,6 +77,7 @@ defmodule Argus.Extractors.ParamFlow.Propagators do
         to_list slice split chunk_every with_index group_by frequencies min max
         find)a, :any, [0]},
     {Enum, ~w(zip join)a, :any, [0, 1]},
+    {Stream, [:with_index], :any, [0]},
     {Enum, [:into], 2, [0, 1]},
     {Enum, ~w(into map_join)a, 3, [1]},
     {Enum, [:reduce], 2, [0]},
@@ -130,6 +136,67 @@ defmodule Argus.Extractors.ParamFlow.Propagators do
     # traversing it; the entries are unchanged (including LiveStream inserts).
     {Phoenix.LiveView.LiveStream, [:mark_consumable], 1, [0]}
   ]
+
+  # A higher-order call hands each element of its collection to the fun it
+  # runs: `Map.new(params, fn {k, v} -> ... end)` runs the closure on data
+  # made of `params`, which the fun takes as its first parameter.
+  # {collection position, fun position}.
+  @element_calls %{
+    {Enum, :map, 2} => {0, 1},
+    {Enum, :flat_map, 2} => {0, 1},
+    {Enum, :each, 2} => {0, 1},
+    {Enum, :filter, 2} => {0, 1},
+    {Enum, :reject, 2} => {0, 1},
+    {Enum, :find, 2} => {0, 1},
+    {Enum, :group_by, 2} => {0, 1},
+    {Enum, :sort_by, 2} => {0, 1},
+    {Enum, :uniq_by, 2} => {0, 1},
+    {Enum, :reduce, 3} => {0, 2},
+    {Enum, :into, 3} => {0, 2},
+    {Enum, :map_join, 3} => {0, 2},
+    {Enum, :map_join, 2} => {0, 1},
+    {Enum, :reduce, 2} => {0, 1},
+    {Map, :new, 2} => {0, 1},
+    {:lists, :map, 2} => {1, 0},
+    {:lists, :foreach, 2} => {1, 0},
+    {:lists, :filter, 2} => {1, 0},
+    {:lists, :flatmap, 2} => {1, 0},
+    {:lists, :foldl, 3} => {2, 0},
+    {:lists, :foldr, 3} => {2, 0}
+  }
+
+  # The enumerations that pair each element with its position: {the
+  # counter's field in each pair, the argument positions that must be
+  # integer literals}. The counter starts at the offset and steps by the
+  # step, both literals, so it is made of no argument's data. A fun in
+  # Enum.with_index/2's offset position makes the elements its results
+  # instead, which is why the offset must be a literal.
+  @counted_calls %{
+    {Enum, :with_index, 1} => {1, []},
+    {Enum, :with_index, 2} => {1, [1]},
+    {Stream, :with_index, 1} => {1, []},
+    {Stream, :with_index, 2} => {1, [1]},
+    {:lists, :enumerate, 1} => {0, []},
+    {:lists, :enumerate, 2} => {0, [0]},
+    {:lists, :enumerate, 3} => {0, [0, 1]}
+  }
+
+  @doc """
+  The collection and fun positions of a higher-order call that runs its
+  fun on each element of its collection, the element as the fun's first
+  parameter.
+  """
+  @spec element_call(mfa()) :: {:ok, {non_neg_integer(), non_neg_integer()}} | :error
+  def element_call(mfa), do: Map.fetch(@element_calls, mfa)
+
+  @doc """
+  For an enumeration pairing each element with a counter
+  (`Enum.with_index/1,2`, `Stream.with_index/1,2`, `:lists.enumerate/1,2,3`):
+  the counter's field in each pair, and the argument positions that must
+  hold integer literals for it to be one.
+  """
+  @spec counted_call(mfa()) :: {:ok, {non_neg_integer(), [non_neg_integer()]}} | :error
+  def counted_call(mfa), do: Map.fetch(@counted_calls, mfa)
 
   @doc """
   The table: `{module, functions, arities, positions}`, where `functions`

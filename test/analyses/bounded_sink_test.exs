@@ -4,10 +4,13 @@ defmodule Argus.Analyses.BoundedSinkTest do
 
   alias Argus.Test.Fixtures.BoundedConversion
   alias Argus.Test.Fixtures.BoundedMapKey
+  alias Argus.Test.Fixtures.BoundedWithIndex
   alias Argus.Test.Memo
 
   setup_all do
-    {:ok, result} = Memo.analyze([BoundedConversion, BoundedMapKey], :unsafe_input)
+    {:ok, result} =
+      Memo.analyze([BoundedConversion, BoundedMapKey, BoundedWithIndex], :unsafe_input)
+
     %{rows: result["sink_without_request_path"] ++ result["sink_reachable"]}
   end
 
@@ -87,6 +90,20 @@ defmodule Argus.Analyses.BoundedSinkTest do
       assert Bounded.step(call, state).pending == %{
                {:x, 0} => {[{:y, 0}], {:found, {:values, {:set, ["a"]}}}}
              }
+    end
+  end
+
+  describe "an enumeration's position counter" do
+    test "is not made of the enumerable's elements", %{rows: rows} do
+      for name <- ["stride/3", "streamed/2", "enumerated/2"] do
+        refute reported?(rows, BoundedWithIndex, name), name
+      end
+    end
+
+    test "leaves the element, and a caller's offset, the caller's", %{rows: rows} do
+      for name <- ["named/2", "enumerated_named/2", "offset_stride/2"] do
+        assert reported?(rows, BoundedWithIndex, name), name
+      end
     end
   end
 end

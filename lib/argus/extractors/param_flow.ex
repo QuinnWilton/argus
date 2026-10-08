@@ -96,6 +96,8 @@ defmodule Argus.Extractors.ParamFlow do
   and reduction calls also carry the closure's actual return data back,
   including captured values as they were at closure construction. A
   mapper returning a constant does not hand its element's data through.
+  The position counter `Enum.with_index/2` and its kin pair each element
+  with is derived from no parameter (`ParamFlow.Counters`).
   Funs whose bodies are unavailable are not followed.
   """
 
@@ -110,6 +112,7 @@ defmodule Argus.Extractors.ParamFlow do
   alias Argus.Extractors.ApiCalls
   alias Argus.Extractors.ParamFlow.Bounded
   alias Argus.Extractors.ParamFlow.Cookies
+  alias Argus.Extractors.ParamFlow.Counters
   alias Argus.Extractors.ParamFlow.PrivateBounds
   alias Argus.Extractors.ParamFlow.Propagators
   alias Argus.Extractors.ParamFlow.Returns
@@ -180,7 +183,8 @@ defmodule Argus.Extractors.ParamFlow do
           Helpers.copies(module_data),
           bif_operands(module_data),
           Cookies.server_writes(module_data),
-          Returns.index(module_data)
+          Returns.index(module_data),
+          counter_projections(module_data)
         )
 
       %{}
@@ -198,9 +202,22 @@ defmodule Argus.Extractors.ParamFlow do
 
   # ── The fixpoint ─────────────────────────────────────────────────────
 
+  # %{func_id => the instructions projecting a counted closure's counter}.
+  defp counter_projections(%{module: mod, functions: functions} = module_data) do
+    closures = Counters.closures(module_data)
+
+    for {:function, name, arity, _entry, instrs} <- functions,
+        func_id = InstrId.func_id(mod, name, arity),
+        {:ok, field} <- [Map.fetch(closures, func_id)],
+        into: %{},
+        do: {func_id, Counters.projections(instrs, field)}
+  end
+
   # Per function, what each write is derived from, with the reads the
   # values are joined over: %{func_id => {reads, outs}}.
-  defp derive(typed, triples, copies, bif_operands, server_writes, {targets, callbacks}) do
+  defp derive(typed, triples, copies, bif_operands, server_writes, returns, counters) do
+    {targets, callbacks} = returns
+
     writes =
       typed
       |> Map.get(:def, [])
@@ -243,7 +260,17 @@ defmodule Argus.Extractors.ParamFlow do
         {func_id, {func_reads, by_idx, capture_users}}
       end)
 
-    ctx = Map.put(ctx, :functions, functions)
+    # A closure's projection of the position counter out of the pair it
+    # is handed (Counters) is derived from no parameter.
+    counters =
+      for {func_id, idxs} <- counters,
+          {:ok, {_reads, by_idx, _users}} <- [Map.fetch(functions, func_id)],
+          idx <- idxs,
+          {:ok, id} <- [Map.fetch(by_idx, idx)],
+          into: MapSet.new(),
+          do: id
+
+    ctx = Map.merge(ctx, %{functions: functions, counters: counters})
 
     Returns.solve(functions, targets, callbacks, fn function, summaries ->
       solve_function(function, Map.put(ctx, :summaries, summaries))
@@ -316,7 +343,7 @@ defmodule Argus.Extractors.ParamFlow do
           Map.has_key?(ctx.callbacks, id) ->
         call_result(id, inputs, ctx)
 
-      MapSet.member?(ctx.dynamics, id) ->
+      MapSet.member?(ctx.dynamics, id) or MapSet.member?(ctx.counters, id) ->
         MapSet.new()
 
       Map.has_key?(ctx.bifs, id) ->
@@ -454,36 +481,11 @@ defmodule Argus.Extractors.ParamFlow do
   end
 
   # A higher-order call hands each element of its collection to the fun it
-  # runs: `Map.new(params, fn {k, v} -> ... end)` runs the closure on data
-  # made of `params`. A closure the caller builds, at the fun position,
-  # takes the element as its first parameter; its captured variables are
-  # its trailing ones (emit_closures). {collection position, fun position}.
-  @element_calls %{
-    {Enum, :map, 2} => {0, 1},
-    {Enum, :flat_map, 2} => {0, 1},
-    {Enum, :each, 2} => {0, 1},
-    {Enum, :filter, 2} => {0, 1},
-    {Enum, :reject, 2} => {0, 1},
-    {Enum, :find, 2} => {0, 1},
-    {Enum, :group_by, 2} => {0, 1},
-    {Enum, :sort_by, 2} => {0, 1},
-    {Enum, :uniq_by, 2} => {0, 1},
-    {Enum, :reduce, 3} => {0, 2},
-    {Enum, :into, 3} => {0, 2},
-    {Enum, :map_join, 3} => {0, 2},
-    {Enum, :map_join, 2} => {0, 1},
-    {Enum, :reduce, 2} => {0, 1},
-    {Map, :new, 2} => {0, 1},
-    {:lists, :map, 2} => {1, 0},
-    {:lists, :foreach, 2} => {1, 0},
-    {:lists, :filter, 2} => {1, 0},
-    {:lists, :flatmap, 2} => {1, 0},
-    {:lists, :foldl, 3} => {2, 0},
-    {:lists, :foldr, 3} => {2, 0}
-  }
-
+  # runs (`Propagators.element_call/1`). A closure the caller builds, at
+  # the fun position, takes the element as its first parameter; its
+  # captured variables are its trailing ones (emit_closures).
   defp emit_element_flow(facts, mfa, func_id, idx, site_inputs, instrs) do
-    with {:ok, {coll_pos, fun_pos}} <- Map.fetch(@element_calls, mfa),
+    with {:ok, {coll_pos, fun_pos}} <- Propagators.element_call(mfa),
          derived when derived != [] <-
            site_inputs |> Map.get("x#{coll_pos}", MapSet.new()) |> MapSet.to_list(),
          {:ok, fun_instrs} <- Map.fetch(instrs, func_id),
