@@ -67,6 +67,7 @@ defmodule Argus.Extractors.ETS do
   @behaviour Argus.Extractor
 
   alias Argus.Cfg
+  alias Argus.Extractor.AnswerSides
   alias Argus.Extractor.CallSites
   alias Argus.Extractor.Helpers
   alias Argus.Extractor.Identity
@@ -214,7 +215,7 @@ defmodule Argus.Extractors.ETS do
 
       edges =
         Enum.flat_map(wheres, fn w ->
-          case present_edges(fun, table, instr_idx(w) + 1, [{:x, 0}]) do
+          case whereis_edges(fun, table, w, :present) do
             {:ok, found} -> found
             :error -> []
           end
@@ -229,24 +230,15 @@ defmodule Argus.Extractors.ETS do
       if witnesses == [] do
         []
       else
-        {seen, barrier} = reach_until(fun, edges, makes)
+        {seen, barrier} = AnswerSides.reach_until(fun, edges, makes)
         witness = InstrId.mint(func, hd(witnesses))
 
-        for read <- reads, present?(fun, seen, barrier, instr_idx(read)), do: {read, witness}
+        for read <- reads,
+            AnswerSides.past?(fun, seen, barrier, instr_idx(read)),
+            do: {read, witness}
       end
     else
       _ -> []
-    end
-  end
-
-  defp present?(fun, seen, barrier, idx) do
-    case Cfg.Function.block_at(fun, idx) do
-      nil ->
-        false
-
-      block ->
-        not MapSet.member?(seen, block.id) or
-          (Map.has_key?(barrier, block.id) and Map.fetch!(barrier, block.id) < idx)
     end
   end
 
@@ -294,26 +286,19 @@ defmodule Argus.Extractors.ETS do
 
       edges =
         Enum.flat_map(lookups, fn w ->
-          case side_edges(fun, table, instr_idx(w) + 1, [{:x, 0}], :absent) do
+          case whereis_edges(fun, table, w, :absent) do
             {:ok, absent} -> absent
             :error -> []
           end
         end)
 
-      {seen, _barrier} = reach_until(fun, edges, [])
+      {seen, _barrier} = AnswerSides.reach_until(fun, edges, [])
 
-      if edges != [] and Enum.all?(makes, &(not reached?(fun, seen, &1))),
+      if edges != [] and Enum.all?(makes, &(not AnswerSides.reached?(fun, seen, &1))),
         do: {:ok, lookups |> Enum.min_by(&instr_idx/1)},
         else: :none
     else
       _ -> :none
-    end
-  end
-
-  defp reached?(fun, seen, idx) do
-    case Cfg.Function.block_at(fun, idx) do
-      nil -> true
-      block -> MapSet.member?(seen, block.id)
     end
   end
 
@@ -379,125 +364,11 @@ defmodule Argus.Extractors.ETS do
   defp local_callee({:call_last, _arity, {mod, name, arity}, _dealloc}, mod), do: [{name, arity}]
   defp local_callee(_instr, _mod), do: []
 
-  # The edges out of the test that finds the answer held in `regs` is
-  # not `:undefined` (`want` `:present`), or that it is (`:absent`):
-  # `{:ok, [{from, to}]}`, or `:error` when the answer is read some other
-  # way first, or lost.
-  defp present_edges(fun, table, at, regs), do: side_edges(fun, table, at, regs, :present)
-
-  defp side_edges(_fun, _table, _at, [], _want), do: :error
-
-  defp side_edges(fun, table, at, regs, want) when at < tuple_size(table) do
-    instr = elem(table, at)
-
-    case undefined_test(instr, regs) do
-      {:present_on, side} ->
-        block = Cfg.Function.block_at(fun, at)
-
-        {:ok,
-         for(
-           {to, kind} <- block.succs,
-           present_side?(kind, to, side, fun) == (want == :present),
-           do: {block.id, to}
-         )}
-
-      :none ->
-        cond do
-          reads_value?(instr, regs) -> :error
-          not Argus.Instr.falls_through?(instr) -> :error
-          true -> side_edges(fun, table, at + 1, carried(instr, regs), want)
-        end
-    end
-  end
-
-  defp side_edges(_fun, _table, _at, _regs, _want), do: :error
-
-  @undefined {:atom, :undefined}
-
-  # Which side of `instr` finds the answer is not `:undefined`: the
-  # fail edge of an equality test with it, the pass edge of an
-  # inequality, every way out of a select but to the `:undefined` arm's
-  # code.
-  defp undefined_test({:test, op, _fail, args}, regs) when op in [:is_eq_exact, :is_eq] do
-    if compares_undefined?(args, regs), do: {:present_on, :branch_fail}, else: :none
-  end
-
-  defp undefined_test({:test, op, _fail, args}, regs) when op in [:is_ne_exact, :is_ne] do
-    if compares_undefined?(args, regs), do: {:present_on, :branch_pass}, else: :none
-  end
-
-  defp undefined_test({:select_val, reg, _fail, {:list, cases}}, regs) do
-    labels = for [@undefined, {:f, label}] <- Enum.chunk_every(cases, 2), do: label
-
-    if register(reg) in regs and labels != [],
-      do: {:present_on, {:not_to, labels}},
-      else: :none
-  end
-
-  defp undefined_test(_instr, _regs), do: :none
-
-  defp compares_undefined?(args, regs) do
-    args = Enum.map(args, &register/1)
-    @undefined in args and Enum.any?(args, &(&1 in regs))
-  end
-
-  defp present_side?(kind, _to, side, _fun) when is_atom(side), do: kind == side
-
-  defp present_side?(_kind, to, {:not_to, labels}, fun),
-    do: not Enum.any?(labels, &(Map.get(fun.labels, &1) == to))
-
-  # The instruction reads a register holding the answer other than to
-  # copy it.
-  defp reads_value?(instr, regs) do
-    uses = Argus.Instr.uses(instr)
-    defs = Argus.Instr.defs(instr)
-
-    Enum.any?(uses, &(&1 in regs)) and
-      not Enum.all?(defs, fn dst -> Argus.Instr.copy_source(instr, dst) in regs end)
-  end
-
-  defp carried(instr, regs) do
-    copies =
-      for dst <- Argus.Instr.defs(instr),
-          Argus.Instr.copy_source(instr, dst) in regs,
-          do: dst
-
-    Enum.uniq(Argus.Instr.carry(instr, regs) ++ copies)
-  end
-
-  # The blocks reached from the entry without taking any of `edges` and
-  # without going on past an instruction in `stops`, and for each block
-  # holding one, the first: what lies after it in the block is past it.
-  defp reach_until(fun, edges, stops) do
-    avoid = MapSet.new(edges)
-
-    barrier =
-      Enum.reduce(stops, %{}, fn idx, acc ->
-        case Cfg.Function.block_at(fun, idx) do
-          nil -> acc
-          block -> Map.update(acc, block.id, idx, &min(&1, idx))
-        end
-      end)
-
-    {walk_until([fun.entry], fun, avoid, barrier, MapSet.new([fun.entry])), barrier}
-  end
-
-  defp walk_until([], _fun, _avoid, _barrier, seen), do: seen
-
-  defp walk_until([id | rest], fun, avoid, barrier, seen) do
-    next =
-      if Map.has_key?(barrier, id),
-        do: [],
-        else:
-          for(
-            {to, _kind} <- Map.fetch!(fun.blocks, id).succs,
-            not MapSet.member?(avoid, {id, to}),
-            not MapSet.member?(seen, to),
-            uniq: true,
-            do: to
-          )
-
-    walk_until(next ++ rest, fun, avoid, barrier, Enum.reduce(next, seen, &MapSet.put(&2, &1)))
+  # The edges out of the test of the whereis (or info) at `w` on the side
+  # that finds the table there (`:present`) or `:undefined` (`:absent`).
+  defp whereis_edges(fun, table, w, want) do
+    at = instr_idx(w) + 1
+    AnswerSides.side_edges(fun, table, at, [{:x, 0}], want, &AnswerSides.undefined_test/2)
   end
 
   # ── Effects in order ─────────────────────────────────────────────
