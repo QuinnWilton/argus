@@ -258,7 +258,8 @@ defmodule Argus.Extractors.ErrorHandling.Boundary do
   # hides is a malformed log argument, and the line is what is lost.
   #
   # A region qualifies when it is straight-line code (no branch but the
-  # try's own), holds at least one log call, and every other instruction
+  # try's own, and the level gate of an Elixir `Logger` macro, whose
+  # other edge skips the line), holds at least one log call, and every other instruction
   # that can raise — a call, a raising BIF — produces a value that flows,
   # through moves and the terms built from it, into a log call's
   # arguments, from a source line no earlier than that log call's: the
@@ -327,14 +328,15 @@ defmodule Argus.Extractors.ErrorHandling.Boundary do
 
     with true <- map_size(line_table) > 0,
          [first | _] <- Enum.sort(visited),
-         {:ok, main} <- main_path(first, set, table, []),
-         on_main = MapSet.new(main),
-         raising = MapSet.difference(set, on_main),
+         {:ok, path} <- main_path(first, set, table),
+         on_main = MapSet.new(path.main),
+         {:ok, skipped} <- skipped(path, set, table, on_main),
+         raising = set |> MapSet.difference(on_main) |> MapSet.difference(skipped),
          true <- Enum.all?(raising, &raise_block?(elem(table, &1))),
-         instrs = Enum.map(main, &{&1, elem(table, &1)}),
+         instrs = Enum.map(path.main, &{&1, elem(table, &1)}),
          true <- Enum.all?(instrs, fn {_at, instr} -> straight?(instr) end),
          false <- Enum.any?(instrs, &match?({_at, {:make_fun3, _, _, _, _, _}}, &1)),
-         {:ok, flow} <- flow(instrs, lines(instrs, line_table)) do
+         {:ok, flow} <- flow(instrs, lines(instrs, line_table), path.gate_tests) do
       flow.logged? and
         Enum.all?(flow.produced, fn at ->
           instr = elem(table, at)
@@ -395,16 +397,120 @@ defmodule Argus.Extractors.ErrorHandling.Boundary do
   # end of the try (`try_end`, or `catch_end` for Erlang's `catch`). A
   # branch off it may only go to code that raises (below): a record
   # access's `is_tagged_tuple` test fails into a `badrecord`.
-  defp main_path(at, set, table, acc) do
+  #
+  # Or it is a log gate's: Elixir's Logger macros ask
+  # `Logger.__should_log__/2` for the level, and test it against nil
+  # before the `__do_log__/4` that emits the line. The path goes on the
+  # way the level is not nil, whichever edge that is, and the other edge
+  # (`skips`) skips the line: code that cannot raise, back to the path.
+  # `gates` are the registers holding a gate's level, and `gate_tests`
+  # the tests on one.
+  defp main_path(first, set, table) do
+    labels =
+      for at <- set, {:label, label} <- [elem(table, at)], into: %{}, do: {label, at}
+
+    walk_main(
+      first,
+      {set, table, labels},
+      %{main: [], gates: [], gate_tests: [], skips: [], labels: labels}
+    )
+  end
+
+  defp walk_main(at, {set, table, labels} = region, path) do
+    instr = if at < tuple_size(table), do: elem(table, at)
+
     cond do
-      not MapSet.member?(set, at) or at >= tuple_size(table) ->
+      not MapSet.member?(set, at) ->
         :error
 
-      op(elem(table, at)) in [:try_end, :catch_end] ->
-        {:ok, Enum.reverse([at | acc])}
+      op(instr) in [:try_end, :catch_end] ->
+        {:ok, %{path | main: Enum.reverse([at | path.main])}}
 
-      Argus.Instr.falls_through?(elem(table, at)) ->
-        main_path(at + 1, set, table, [at | acc])
+      gate_test?(instr, path.gates) ->
+        {on, skip} = gate_edges(instr, at, labels)
+
+        path = %{
+          path
+          | main: [at | path.main],
+            gate_tests: [at | path.gate_tests],
+            skips: [skip | path.skips]
+        }
+
+        # Forward only: a gate skips its line, it does not loop.
+        if on == nil or skip == nil or on <= at,
+          do: :error,
+          else: walk_main(on, region, path)
+
+      Argus.Instr.falls_through?(instr) ->
+        gates = Argus.Instr.carry(instr, path.gates)
+        gates = if log_gate?(instr), do: [{:x, 0} | gates], else: gates
+        walk_main(at + 1, region, %{path | main: [at | path.main], gates: gates})
+
+      true ->
+        :error
+    end
+  end
+
+  # The level gate of Elixir's Logger macros: the level the line is
+  # logged at, or nil when it is not.
+  @log_gates [{Logger, :__should_log__, 2}]
+
+  defp log_gate?(instr) do
+    case Helpers.match_remote_call(instr) do
+      {:ok, m, f, a} -> {m, f, a} in @log_gates
+      :none -> false
+    end
+  end
+
+  defp gate_test?({:test, op, {:f, _}, [reg, {:atom, nil}]}, gates)
+       when op in [:is_eq_exact, :is_ne_exact],
+       do: Argus.Instr.register(reg) in gates
+
+  defp gate_test?(_instr, _gates), do: false
+
+  # Where a gate test goes when the level is not nil, and where it goes
+  # when it is: for `is_eq_exact` the fail label, for `is_ne_exact` the
+  # next instruction.
+  defp gate_edges({:test, op, {:f, label}, _args}, at, labels) do
+    fail = Map.get(labels, label)
+
+    case op do
+      :is_eq_exact -> {fail, at + 1}
+      :is_ne_exact -> {at + 1, fail}
+    end
+  end
+
+  # The instructions on the edges that skip a log line: by fall-through
+  # or a jump, code that cannot raise back to the main path.
+  defp skipped(%{skips: skips, labels: labels}, set, table, on_main) do
+    Enum.reduce_while(skips, {:ok, MapSet.new()}, fn skip, {:ok, acc} ->
+      case skip_path(skip, set, table, labels, on_main, acc) do
+        {:ok, acc} -> {:cont, {:ok, acc}}
+        :error -> {:halt, :error}
+      end
+    end)
+  end
+
+  defp skip_path(at, set, table, labels, on_main, acc) do
+    instr = if at < tuple_size(table), do: elem(table, at)
+
+    cond do
+      MapSet.member?(on_main, at) or MapSet.member?(acc, at) ->
+        {:ok, acc}
+
+      not MapSet.member?(set, at) or not inert?(instr) ->
+        :error
+
+      match?({:jump, {:f, _}}, instr) ->
+        {:jump, {:f, label}} = instr
+
+        case Map.fetch(labels, label) do
+          {:ok, to} -> skip_path(to, set, table, labels, on_main, MapSet.put(acc, at))
+          :error -> :error
+        end
+
+      Argus.Instr.targets(instr) == [] and Argus.Instr.falls_through?(instr) ->
+        skip_path(at + 1, set, table, labels, on_main, MapSet.put(acc, at))
 
       true ->
         :error
@@ -468,7 +574,10 @@ defmodule Argus.Extractors.ErrorHandling.Boundary do
   # the producers, the ones some log call read as an argument, the ones
   # it read only as the module an apply dispatches to, and whether one
   # ran.
-  defp flow(instrs, lines) do
+  #
+  # A log gate and the test on its level are the log call's, as the log
+  # call is: no producers.
+  defp flow(instrs, lines, gate_tests) do
     init = %{produced: MapSet.new(), args: MapSet.new(), module: MapSet.new(), logged?: false}
 
     {flow, _holds, _atoms} =
@@ -498,6 +607,12 @@ defmodule Argus.Extractors.ErrorHandling.Boundary do
             }
 
             {flow, step(instr, holds, []), %{}}
+
+          log_gate?(instr) ->
+            {flow, step(instr, holds, []), %{}}
+
+          at in gate_tests ->
+            {flow, holds, atoms}
 
           match?({:test, _, _, _}, instr) or match?({:test, _, _, _, _}, instr) ->
             # A test that can fail into raising code guards the values it

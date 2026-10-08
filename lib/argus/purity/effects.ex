@@ -378,9 +378,17 @@ defmodule Argus.Purity.Effects do
   # reported VERIFIED while transitively running arbitrary user code — the
   # precise failure this analysis exists to prevent. Anything in Kernel not
   # named below is now unknown, and therefore unprovable rather than assumed.
+  #
+  # `Exception.message/1` dispatches the same way, to the exception
+  # module's own `message/1` callback, and `Exception.format_banner/2,3`
+  # is that message (or an `inspect`) behind a fixed prefix.
+  # `Exception.format/2,3` is not here: it also formats the stacktrace,
+  # which looks each frame's application up.
   @protocol_functions [
     {"Kernel", "inspect"},
-    {"Kernel", "to_string"}
+    {"Kernel", "to_string"},
+    {"Exception", "message"},
+    {"Exception", "format_banner"}
   ]
 
   @protocol_modules ~w(

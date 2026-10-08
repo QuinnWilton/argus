@@ -24,7 +24,9 @@ defmodule Argus.Analyses.FailureErrorTest do
     Argus.Test.Fixtures.SharedKill,
     Argus.Test.Fixtures.BoundaryRescue,
     Argus.Test.Fixtures.BoundaryClient,
-    Argus.Test.Fixtures.LogicRescue
+    Argus.Test.Fixtures.LogicRescue,
+    Argus.Test.Fixtures.FailureLogReport,
+    Argus.Test.Fixtures.FailureLogWork
   ]
 
   setup_all do
@@ -85,6 +87,26 @@ defmodule Argus.Analyses.FailureErrorTest do
              "a send, a call, a supervisor query, a named :ets.new and a log line alone are " <>
                "the peer's, the name's or the logger's to fail; a match, arithmetic or a " <>
                "helper beside them, or work whose result is logged, is not"
+    end
+
+    test "a catch-all around one Elixir Logger call is the logger's; work beside it is not",
+         ctx do
+      results =
+        analyze(ctx, [
+          Argus.Test.Fixtures.FailureLogReport,
+          Argus.Test.Fixtures.FailureLogWork
+        ])
+
+      funcs =
+        results
+        |> swallowed()
+        |> Enum.map(fn [func | _] -> func |> String.split(".") |> List.last() end)
+        |> Enum.sort()
+
+      # Logger's macros gate the line on the level (`__should_log__/2`,
+      # then `__do_log__/4` when it is not nil): the gate is the log
+      # call's, as `Exception.format_banner/2` building its message is.
+      assert funcs == ["FailureLogWork:apply_and_log/1", "FailureLogWork:log_applied/1"]
     end
 
     test "a catch-all an OTP header wrote into a generated parser is OTP's" do
