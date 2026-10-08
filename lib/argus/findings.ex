@@ -359,15 +359,8 @@ defmodule Argus.Findings do
       raise ArgumentError, ":at_label must be a string, got: #{inspect(at_label)}"
     end
 
-    unless is_nil(at_source) or (is_binary(at_source) and at_source != "") do
-      raise ArgumentError,
-            ":at_source must be a non-empty string, got: #{inspect(at_source)}"
-    end
-
-    unless to_block in [nil | @blocks] do
-      raise ArgumentError,
-            ":to_block must be one of #{inspect(@blocks)}, got: #{inspect(to_block)}"
-    end
+    check_at_source!(at_source)
+    check_to_block!(to_block)
 
     unless is_list(help) and Enum.all?(help, &is_binary/1) do
       raise ArgumentError, ":help must be a list of strings, got: #{inspect(help)}"
@@ -463,21 +456,28 @@ defmodule Argus.Findings do
     to_block = Keyword.get(opts, :to_block)
     at_source = Keyword.get(opts, :at_source)
 
-    unless to_block in [nil | @blocks] do
-      raise ArgumentError,
-            ":to_block must be one of #{inspect(@blocks)}, got: #{inspect(to_block)}"
-    end
-
-    unless is_nil(at_source) or (is_binary(at_source) and at_source != "") do
-      raise ArgumentError,
-            ":at_source must be a non-empty string, got: #{inspect(at_source)}"
-    end
+    check_to_block!(to_block)
+    check_at_source!(at_source)
 
     anchor
     |> Map.put(:label, label)
     |> Map.put(:to_instr, Keyword.get(opts, :to, Anchor.empty()).instr)
     |> Map.put(:to_block, to_block)
     |> Map.put(:at_source, at_source)
+  end
+
+  defp check_to_block!(to_block) do
+    unless to_block in [nil | @blocks] do
+      raise ArgumentError,
+            ":to_block must be one of #{inspect(@blocks)}, got: #{inspect(to_block)}"
+    end
+  end
+
+  defp check_at_source!(at_source) do
+    unless is_nil(at_source) or (is_binary(at_source) and at_source != "") do
+      raise ArgumentError,
+            ":at_source must be a non-empty string, got: #{inspect(at_source)}"
+    end
   end
 
   # ── Anchors (Argus.Findings.Anchor) ────────────────────────────────
