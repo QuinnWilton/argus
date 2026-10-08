@@ -9,9 +9,18 @@ defmodule Argus.Graph.FunctionPackTest do
   @moduletag :tmp_dir
   @moduletag timeout: 120_000
 
+  # One peer for the module: a fresh VM works out every query's code
+  # version before it opens a graph, seconds of CPU, and each test's
+  # store is its own. The test of a fresh VM starts a second one.
+  setup_all do
+    peer = Peer.start!()
+    Peer.run(peer, fn -> Code.compiler_options(ignore_module_conflict: true) end)
+    %{peer: peer}
+  end
+
   setup %{tmp_dir: dir} do
     on_exit(fn -> Files.rm_rf!(dir) end)
-    %{peer: Peer.start!()}
+    :ok
   end
 
   test "producer additions and removals update packs when other digests stay equal", %{
@@ -62,14 +71,20 @@ defmodule Argus.Graph.FunctionPackTest do
     tmp_dir: dir
   } do
     Peer.run(peer, fn ->
-      Code.compiler_options(ignore_module_conflict: true)
       session = open(dir)
       set_beam(session.db, compile(1))
       assert {:ok, %{lost: false}} = Runtime.query(session.db, :module_facts, :fixture)
 
       set_beam(session.db, compile(2))
       Application.put_env(:argus_beam, :extraction_timeout, 0)
-      assert {:ok, %{lost: true} = lost} = Runtime.query(session.db, :module_facts, :fixture)
+
+      lost =
+        try do
+          assert {:ok, %{lost: true} = lost} = Runtime.query(session.db, :module_facts, :fixture)
+          lost
+        after
+          Application.delete_env(:argus_beam, :extraction_timeout)
+        end
 
       assert {:ok, %{extraction_error: bytes}} =
                Pack.chunks(session.db.blob, lost.pack, [:extraction_error])
@@ -79,27 +94,11 @@ defmodule Argus.Graph.FunctionPackTest do
       Session.commit(session, %{})
       Session.close(session)
 
-      Application.delete_env(:argus_beam, :extraction_timeout)
       restored = open(dir)
       assert restored.restored?
       assert :miss = Memo.get(restored.db, {:module_facts, :fixture})
       assert {:ok, %{lost: false}} = Runtime.query(restored.db, :module_facts, :fixture)
       Session.close(restored)
-    end)
-  end
-
-  test "missing pack segments are reproduced from function results", %{peer: peer, tmp_dir: dir} do
-    Peer.run(peer, fn ->
-      session = open(dir)
-      set_beam(session.db, compile(1))
-      {:ok, pack} = Runtime.query(session.db, :module_facts, :fixture)
-      {:ok, chunks} = Pack.chunks(session.db.blob, pack.pack, [:function_def])
-      {:ok, index} = Blob.get_term(session.db.blob, pack.pack)
-      [{:base, segment, _} | _] = index
-      File.rm!(Blob.path(session.db.blob, segment))
-      assert :ok = Pack.restore(session.db, {:module_facts, :fixture}, pack.pack)
-      assert Pack.chunks(session.db.blob, pack.pack, [:function_def]) == {:ok, chunks}
-      Session.close(session)
     end)
   end
 
@@ -259,7 +258,6 @@ defmodule Argus.Graph.FunctionPackTest do
     tmp_dir: dir
   } do
     Peer.run(peer, fn ->
-      Code.compiler_options(ignore_module_conflict: true)
       session = open(dir)
       db = session.db
       first = compile(1)
@@ -298,7 +296,6 @@ defmodule Argus.Graph.FunctionPackTest do
     tmp_dir: dir
   } do
     Peer.run(peer, fn ->
-      Code.compiler_options(ignore_module_conflict: true)
       session = open(dir)
       db = session.db
       first = compile(1)

@@ -11,9 +11,18 @@ defmodule Argus.Graph.ModuleTraceTest do
 
   @callee ModuleTraceSpecFixture.Callee
 
+  # One peer for the module: a fresh VM works out every query's code
+  # version before it opens a graph, seconds of CPU, and each test's
+  # modules and store are its own.
+  setup_all do
+    peer = Peer.start!()
+    Peer.run(peer, fn -> Code.compiler_options(ignore_module_conflict: true) end)
+    %{peer: peer}
+  end
+
   setup %{tmp_dir: dir} do
     on_exit(fn -> Files.rm_rf!(dir) end)
-    %{peer: Peer.start!()}
+    :ok
   end
 
   test "a whole-module hit tracks installed specs in a fresh session", %{
@@ -132,7 +141,6 @@ defmodule Argus.Graph.ModuleTraceTest do
     tmp_dir: dir
   } do
     Peer.run(peer, fn ->
-      Code.compiler_options(ignore_module_conflict: true)
       first = compile(1)
       second = compile(2)
       expected = seed(Path.join(dir, "oracle"), first)

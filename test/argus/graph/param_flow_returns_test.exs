@@ -8,9 +8,18 @@ defmodule Argus.Graph.ParamFlowReturnsTest do
 
   @moduletag :tmp_dir
 
+  # One peer for the module: a fresh VM works out every query's code
+  # version before it opens a graph, seconds of CPU, and each test's
+  # modules and store are its own.
+  setup_all do
+    peer = Peer.start!()
+    Peer.run(peer, fn -> Code.compiler_options(ignore_module_conflict: true) end)
+    %{peer: peer}
+  end
+
   setup %{tmp_dir: dir} do
     on_exit(fn -> Files.rm_rf!(dir) end)
-    %{peer: Peer.start!()}
+    :ok
   end
 
   test "helper body edits invalidate caller flow and unchanged modules stay warm", %{
@@ -18,7 +27,6 @@ defmodule Argus.Graph.ParamFlowReturnsTest do
     tmp_dir: dir
   } do
     Peer.run(peer, fn ->
-      Code.compiler_options(ignore_module_conflict: true)
       session = Session.open(modules: Argus.Graph.modules(), blob: Path.join(dir, "store"))
       log = QueryLog.start(session.db)
 
@@ -70,7 +78,6 @@ defmodule Argus.Graph.ParamFlowReturnsTest do
     tmp_dir: dir
   } do
     Peer.run(peer, fn ->
-      Code.compiler_options(ignore_module_conflict: true)
       session = Session.open(modules: Argus.Graph.modules(), blob: Path.join(dir, "bounds"))
 
       try do

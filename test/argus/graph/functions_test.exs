@@ -3,21 +3,30 @@ defmodule Argus.Graph.FunctionsTest do
   use Argus.Test.Peer
 
   alias Argus.Graph.Extraction
-  alias Argus.Test.{Files, Peer}
+  alias Argus.Test.{Files, FixtureSpread, Peer}
   alias Roux.{Blob, Input, QueryLog, Runtime, Session}
 
   @moduletag :tmp_dir
+
+  # One peer for the module: a fresh VM works out every query's code
+  # version before it opens a graph, seconds of CPU, and each test's
+  # names and store are its own, so the peer is as fresh to each as one
+  # of its own would be.
+  setup_all do
+    peer = Peer.start!()
+    Peer.run(peer, fn -> Code.compiler_options(ignore_module_conflict: true) end)
+    %{peer: peer}
+  end
 
   setup %{tmp_dir: dir} do
     # Content traces create many small files. Remove them through the native
     # helper so ExUnit's next run does not queue each deletion on file_server.
     on_exit(fn -> Files.rm_rf!(dir) end)
-    %{peer: Peer.start!()}
+    :ok
   end
 
   test "unrelated edits leave closure creators and bodies cached", %{peer: peer, tmp_dir: dir} do
     Peer.run(peer, fn ->
-      Code.compiler_options(ignore_module_conflict: true)
       session = open(dir)
       log = QueryLog.start(session.db)
 
@@ -44,38 +53,52 @@ defmodule Argus.Graph.FunctionsTest do
     end)
   end
 
-  # Keep all fixture comparisons while bounding each test's work under suite
-  # contention. Each partition still exercises several modules in one session.
-  for partition <- 0..3 do
-    @partition partition
+  # The graph's rows, query by query, are the pipeline's over a whole
+  # module, for every producer: over the fixtures with closures and
+  # calls across functions, the ones the instruction candidates of
+  # handles, sockets, TLS and registration pick out, and the spread
+  # every producer writes rows for (`Argus.Test.FixtureSpread`).
+  @named ~w(RpcTarget. GenStatem SameLine. CheckThenAct. Handles. Sockets. Tls. ProcessRegisterer.
+            NamedGenServer. NamedAgents. WhereisModule. RegistryUser. DynamicNameServer.
+            DuplicateRegisterer. StaticWhereis. NamedStarts.)
 
-    test "function queries preserve closure and cross-function facts, partition #{partition}", %{
-      peer: peer,
-      tmp_dir: dir
-    } do
-      Peer.run(peer, fn ->
-        session = open(dir)
+  test "every producer's rows through the graph are the pipeline's, over the fixtures", %{
+    peer: peer,
+    tmp_dir: dir
+  } do
+    named =
+      Path.wildcard("_build/test/lib/argus_beam/ebin/Elixir.Argus.Test.Fixtures.*.beam")
+      |> Enum.filter(&String.contains?(&1, Enum.map(@named, fn name -> "Fixtures." <> name end)))
 
-        try do
-          paths =
-            Path.wildcard("_build/test/lib/argus_beam/ebin/Elixir.Argus.Test.Fixtures.*.beam")
-            |> Enum.filter(fn path ->
-              String.contains?(path, ["RpcTarget.", "GenStatem", "SameLine", "CheckThenAct."])
-            end)
-            |> Enum.with_index()
-            |> Enum.filter(fn {_path, index} -> rem(index, 4) == @partition end)
+    assert length(named) > 40
+    # Picked here: the peer has not loaded the application whose modules
+    # the spread is picked from, unless a test before this one loaded it.
+    paths = Enum.uniq(named ++ FixtureSpread.beams(FixtureSpread.spread()))
+    assert length(paths) > length(named) + 20
 
-          assert length(paths) > 10
+    Peer.run(peer, fn ->
+      # Four sessions side by side, each over its own store and a quarter
+      # of the modules: one session demands its queries one at a time.
+      paths
+      |> Enum.with_index()
+      |> Enum.group_by(fn {_path, index} -> rem(index, 4) end, fn {path, _index} -> path end)
+      |> Task.async_stream(
+        fn {part, paths} ->
+          session = open(Path.join(dir, "part#{part}"))
 
-          for {path, _index} <- paths do
-            set_beam(session.db, path, File.read!(path))
-            assert_same(demand(session.db, path), fresh(path))
+          try do
+            for path <- paths do
+              set_beam(session.db, path, File.read!(path))
+              assert_same(demand(session.db, path), fresh(path), path)
+            end
+          after
+            Session.close(session)
           end
-        after
-          Session.close(session)
-        end
-      end)
-    end
+        end,
+        timeout: :infinity
+      )
+      |> Stream.run()
+    end)
   end
 
   test "content traces reuse extraction across logical module keys without a manifest", %{
@@ -118,7 +141,6 @@ defmodule Argus.Graph.FunctionsTest do
     tmp_dir: dir
   } do
     Peer.run(peer, fn ->
-      Code.compiler_options(ignore_module_conflict: true)
       session = open(dir)
 
       variants = [
@@ -233,7 +255,7 @@ defmodule Argus.Graph.FunctionsTest do
     extraction.facts
   end
 
-  defp assert_same(actual, expected) do
+  defp assert_same(actual, expected, message \\ "the graph's rows differ from the pipeline's") do
     sets = fn rows ->
       Map.new(rows, fn {producer, facts} ->
         {producer,
@@ -243,6 +265,6 @@ defmodule Argus.Graph.FunctionsTest do
       end)
     end
 
-    assert sets.(actual) == sets.(expected)
+    assert sets.(actual) == sets.(expected), message
   end
 end

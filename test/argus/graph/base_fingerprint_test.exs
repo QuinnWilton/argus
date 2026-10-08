@@ -8,16 +8,25 @@ defmodule Argus.Graph.BaseFingerprintTest do
 
   @moduletag :tmp_dir
 
+  # One peer for the module: a fresh VM works out every query's code
+  # version before it opens a graph, seconds of CPU, and each test's
+  # modules and store are its own. The test of a new VM starts a
+  # second one.
+  setup_all do
+    peer = Peer.start!()
+    Peer.run(peer, fn -> Code.compiler_options(ignore_module_conflict: true) end)
+    %{peer: peer}
+  end
+
   setup %{tmp_dir: dir} do
     on_exit(fn -> Files.rm_rf!(dir) end)
     :ok
   end
 
   test "fingerprints and producer traces survive a new VM and different logical keys", %{
+    peer: first,
     tmp_dir: dir
   } do
-    first = Peer.start!()
-
     {beam, expected} =
       Peer.run(first, fn ->
         beam = compile(1)
@@ -50,12 +59,10 @@ defmodule Argus.Graph.BaseFingerprintTest do
   end
 
   test "body changes affect their own fingerprint and the assembled module identity", %{
+    peer: peer,
     tmp_dir: dir
   } do
-    peer = Peer.start!()
-
     Peer.run(peer, fn ->
-      Code.compiler_options(ignore_module_conflict: true)
       session = open(dir)
 
       try do
@@ -73,9 +80,10 @@ defmodule Argus.Graph.BaseFingerprintTest do
     end)
   end
 
-  test "unkeepable and legacy bases retain distinct, complete input identities", %{tmp_dir: dir} do
-    peer = Peer.start!()
-
+  test "unkeepable and legacy bases retain distinct, complete input identities", %{
+    peer: peer,
+    tmp_dir: dir
+  } do
     Peer.run(peer, fn ->
       session = open(dir)
       key = {:fixture, {:run, 2}}

@@ -15,12 +15,25 @@ defmodule Argus.Graph.CandidateTest do
     Argus.Extractors.Router
   ]
 
-  test "candidate additions and removals preserve direct extraction results", %{tmp_dir: dir} do
-    on_exit(fn -> Files.rm_rf!(dir) end)
+  # One peer for both tests: a fresh VM works out every query's code
+  # version before it opens a graph, and each test's module and store
+  # are its own.
+  setup_all do
     peer = Peer.start!()
+    Peer.run(peer, fn -> Code.compiler_options(ignore_module_conflict: true) end)
+    %{peer: peer}
+  end
 
+  setup %{tmp_dir: dir} do
+    on_exit(fn -> Files.rm_rf!(dir) end)
+    :ok
+  end
+
+  test "candidate additions and removals preserve direct extraction results", %{
+    peer: peer,
+    tmp_dir: dir
+  } do
     Peer.run(peer, fn ->
-      Code.compiler_options(ignore_module_conflict: true)
       session = Argus.Graph.open(store: Path.join(dir, "store"))
       Argus.Graph.set_environment(session.db, stamps: false)
       log = QueryLog.start(session.db)
@@ -67,13 +80,10 @@ defmodule Argus.Graph.CandidateTest do
   end
 
   test "instruction candidates become active after edits and keep dynamic and literal cases", %{
+    peer: peer,
     tmp_dir: dir
   } do
-    peer = Peer.start!()
-    on_exit(fn -> Files.rm_rf!(dir) end)
-
     Peer.run(peer, fn ->
-      Code.compiler_options(ignore_module_conflict: true)
       session = Argus.Graph.open(store: Path.join(dir, "instructions"))
       Argus.Graph.set_environment(session.db, stamps: false)
       log = QueryLog.start(session.db)
@@ -131,63 +141,6 @@ defmodule Argus.Graph.CandidateTest do
         QueryLog.stop(log)
         Session.close(session)
       end
-    end)
-  end
-
-  for {producer, names} <- [
-        {Argus.Extractors.Handles, ["Handles"]},
-        {Argus.Extractors.Sockets, ["Sockets"]},
-        {Argus.Extractors.Tls, ["Tls"]},
-        {Argus.Extractors.ProcessRegistry,
-         ~w(ProcessRegisterer NamedGenServer NamedAgents WhereisModule RegistryUser DynamicNameServer DuplicateRegisterer StaticWhereis NamedStarts)}
-      ] do
-    @producer producer
-    @names names
-
-    test "instruction candidates preserve all fixture facts for #{inspect(producer)}", %{
-      tmp_dir: dir
-    } do
-      peer = Peer.start!()
-      on_exit(fn -> Files.rm_rf!(dir) end)
-
-      Peer.run(peer, fn ->
-        session = Argus.Graph.open(store: Path.join(dir, "fixtures"))
-        Argus.Graph.set_environment(session.db, stamps: false)
-
-        try do
-          paths =
-            Path.wildcard("_build/test/lib/argus_beam/ebin/Elixir.Argus.Test.Fixtures.*.beam")
-            |> Enum.filter(fn path ->
-              Enum.any?(@names, fn name ->
-                String.contains?(path, "Fixtures.#{name}.")
-              end)
-            end)
-
-          assert length(paths) >= 5
-
-          for path <- paths do
-            beam = File.read!(path)
-            Input.set(session.db, :beam, path, %{data: beam, hash: Blob.digest(beam)})
-            {:ok, actual} = Runtime.query(session.db, :extraction_producer, {path, @producer})
-
-            {:ok, expected} =
-              Argus.Pipeline.extract_module(path,
-                producers: [@producer],
-                trace_imprecision: true
-              )
-
-            assert normalize(actual) == normalize(expected.facts[@producer]), path
-          end
-        after
-          Session.close(session)
-        end
-      end)
-    end
-  end
-
-  defp normalize(facts) do
-    Map.new(facts, fn {relation, bytes} ->
-      {relation, bytes |> Argus.Tsv.decode() |> MapSet.new()}
     end)
   end
 
