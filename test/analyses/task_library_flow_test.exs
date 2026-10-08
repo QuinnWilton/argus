@@ -560,7 +560,9 @@ defmodule Argus.Analyses.TaskLibraryFlowTest do
   # a later read by `k` still decides.
   defp escapes_by_unknown_key?(%{steps: steps}) do
     steps
-    |> Enum.drop_while(fn {_mfa, _from, expr, to} -> not (to == :map and expr =~ ~r/:a\b/) end)
+    |> Enum.drop_while(fn {_mfa, _from, expr, to} ->
+      not (to == :map and expr =~ ~r/:a\b|\ba: c\b/)
+    end)
     |> Enum.drop(1)
     |> Enum.any?(fn {_mfa, from, expr, to} ->
       from == :map and expr =~ ~r/\bk\b/ and made(to) != :map
