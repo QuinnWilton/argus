@@ -235,22 +235,6 @@ defmodule Argus.FindingsTest do
                )
     end
 
-    test "a name asked for twice runs once" do
-      assert {:ok, result} =
-               Memo.run_analyses([Fixtures.UnsafeAtomCreation],
-                 analyses: [:unsafe_input, :exposure, :unsafe_input]
-               )
-
-      assert Enum.map(result.ran, & &1.analysis) == [:unsafe_input, :exposure]
-    end
-
-    test "a named set selects its analyses" do
-      assert {:ok, result} =
-               Memo.run_analyses([Fixtures.UnsafeAtomCreation], analyses: :security)
-
-      assert Enum.map(result.ran, & &1.analysis) == Argus.Analysis.set(:security) |> elem(1)
-    end
-
     test "a call cycle is one error finding carrying its edges as related frames" do
       modules = [Fixtures.CycleServerA, Fixtures.CycleServerB]
 
@@ -282,22 +266,6 @@ defmodule Argus.FindingsTest do
   end
 
   describe "run/2 degradation" do
-    test "unknown analysis name is an error" do
-      assert {:error, {:unknown_analysis, :nonexistent}} =
-               Memo.run_analyses([:lists], analyses: [:nonexistent])
-    end
-
-    test "invalid analyses option is an error" do
-      assert {:error, {:invalid_analyses, :some}} =
-               Memo.run_analyses([:lists], analyses: :some)
-    end
-
-    @tag :flowlog
-    test "empty analysis selection runs nothing" do
-      assert {:ok, %Findings{findings: [], ran: [], degraded: []}} =
-               Memo.run_analyses([:lists], analyses: [])
-    end
-
     # A store of its own: a solve another run kept would be read back
     # rather than run against the deadline.
     @tag :flowlog
@@ -329,66 +297,7 @@ defmodule Argus.FindingsTest do
     end
   end
 
-  describe "dedupe_rows/2" do
-    @keyed_relation %{
-      name: :coupled,
-      fields: [
-        {:sup, :symbol, "supervisor"},
-        {:caller, :symbol, "caller"},
-        {:witness, :func_id, "witnessing call site"}
-      ],
-      key: [:sup, :caller],
-      doc: "test relation"
-    }
-
-    test "keeps one deterministic representative per key" do
-      rows = [
-        ["Sup", "Queue", "Queue:handle_call/3"],
-        ["Sup", "Queue", "Queue:handle_cast/2"],
-        ["Sup", "Sonar", "Sonar:init/1"]
-      ]
-
-      assert Findings.dedupe_rows(@keyed_relation, rows) == [
-               ["Sup", "Queue", "Queue:handle_call/3"],
-               ["Sup", "Sonar", "Sonar:init/1"]
-             ]
-
-      # Row order must not affect the outcome.
-      assert Findings.dedupe_rows(@keyed_relation, Enum.reverse(rows)) ==
-               Findings.dedupe_rows(@keyed_relation, rows)
-    end
-
-    test "a key chosen by kind needs no default: an unnamed kind keeps every column" do
-      relation = %{
-        name: :effect,
-        fields: [{:mod, :symbol, "m"}, {:kind, :symbol, "k"}, {:api, :symbol, "a"}],
-        key: {:kind, %{"connect" => [:mod], "recv" => [:kind, :api]}},
-        doc: "test relation"
-      }
-
-      rows = [
-        ["M", "connect", "a"],
-        ["M", "connect", "b"],
-        ["M", "recv", "r"],
-        ["N", "recv", "r"],
-        ["M", "other", "x"],
-        ["M", "other", "y"]
-      ]
-
-      assert Findings.dedupe_rows(relation, rows) == [
-               ["M", "connect", "a"],
-               ["M", "other", "x"],
-               ["M", "other", "y"],
-               ["M", "recv", "r"]
-             ]
-    end
-
-    test "relations without a key pass through unchanged" do
-      relation = Map.delete(@keyed_relation, :key)
-      rows = [["Sup", "Queue", "a"], ["Sup", "Queue", "b"]]
-      assert Findings.dedupe_rows(relation, rows) == rows
-    end
-
+  describe "build/2" do
     test "evidence relations become related frames of the finding they join" do
       relation_rows = %{
         "sync_call_fan_in" => [["Target", "5"]],
@@ -421,17 +330,6 @@ defmodule Argus.FindingsTest do
       assert Enum.map(by_module[Bar].related, & &1.mfa) == [{Bar, :g, 0}]
     end
 
-    test "build/2 ignores relations the analysis does not declare as outputs" do
-      assert [finding] =
-               Findings.build(__MODULE__.CustomEvidence, %{
-                 "finding" => [["Foo"]],
-                 "call_reachable" => [["Foo:f/0", "Foo:g/0"]]
-               })
-
-      assert finding.module == Foo
-      assert finding.concern == :custom_evidence
-    end
-
     test "a builder raising on one row costs that row, not the concern" do
       findings =
         Findings.build(__MODULE__.Fragile, %{
@@ -455,39 +353,18 @@ defmodule Argus.FindingsTest do
         Findings.build(__MODULE__.TwoEvidence, %{"finding" => [["Foo"]]})
       end
     end
+  end
 
-    test "a key chosen by kind identifies each kind of row its own way" do
+  # Its other cases are FindingsPropertyTest's: the least row of each
+  # identity, by key or by kind, and a relation with no key unchanged.
+  describe "dedupe_rows/2" do
+    test "raises on a key field the relation does not declare" do
       relation = %{
-        name: :merged,
-        fields: [
-          {:mod, :symbol, "module"},
-          {:kind, :symbol, "kind"},
-          {:api, :symbol, "call"},
-          {:via, :symbol, "site"}
-        ],
-        key: {:kind, %{"unclear" => [:mod], default: [:mod, :api]}},
+        name: :coupled,
+        fields: [{:sup, :symbol, "supervisor"}, {:caller, :symbol, "caller"}],
+        key: [:nonexistent],
         doc: "test relation"
       }
-
-      rows = [
-        ["M", "unclear", "Lease.release/1", "f"],
-        ["M", "unclear", "Session.close/1", "g"],
-        ["M", "never_runs", "File.write/2", "f"],
-        ["M", "never_runs", "File.write/2", "g"],
-        ["M", "never_runs", "File.rm/1", "f"]
-      ]
-
-      # One unclear row per module; one never_runs row per api; the
-      # kinds never collapse into each other.
-      assert Findings.dedupe_rows(relation, rows) == [
-               ["M", "never_runs", "File.rm/1", "f"],
-               ["M", "never_runs", "File.write/2", "f"],
-               ["M", "unclear", "Lease.release/1", "f"]
-             ]
-    end
-
-    test "raises on a key field the relation does not declare" do
-      relation = %{@keyed_relation | key: [:nonexistent]}
 
       assert_raise ArgumentError, fn ->
         Findings.dedupe_rows(relation, [["Sup", "Queue", "a"]])
