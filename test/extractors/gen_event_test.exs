@@ -12,46 +12,24 @@ defmodule Argus.Extractors.GenEventTest do
     test "records implements_behaviour for :gen_event handlers" do
       facts = OTP.extract(disassemble(Argus.Test.Fixtures.MyEventHandler))
 
-      assert Map.has_key?(facts, :implements_behaviour)
-
-      assert Enum.any?(facts[:implements_behaviour], fn [mod, behaviour] ->
-               mod == "Argus.Test.Fixtures.MyEventHandler" and behaviour == ":gen_event"
-             end)
+      assert facts[:implements_behaviour] == [
+               ["Argus.Test.Fixtures.MyEventHandler", ":gen_event"]
+             ]
     end
   end
 
-  describe "extract/1 — sync_call coverage" do
-    test "treats :gen_event.sync_notify as a sync_call" do
+  describe "extract/1 — calls to a manager" do
+    test "sync_notify and call/3,4 are sync calls, notify a cast; add_handler is neither" do
       facts = ApiCalls.extract(disassemble(Argus.Test.Fixtures.GenEventEmitter))
+      emitter = "Argus.Test.Fixtures.GenEventEmitter"
 
-      assert Map.has_key?(facts, :sync_call)
+      assert Enum.sort(facts[:sync_call]) == [
+               ["#{emitter}:call_handler/0", "MyEventManager"],
+               ["#{emitter}:call_handler_with_timeout/0", "MyEventManager"],
+               ["#{emitter}:sync_notify_event/0", "MyEventManager"]
+             ]
 
-      assert Enum.any?(facts[:sync_call], fn [caller, callee] ->
-               String.contains?(caller, "sync_notify_event") and callee == "MyEventManager"
-             end)
-    end
-
-    test "treats :gen_event.call/3 and /4 as sync_call" do
-      facts = ApiCalls.extract(disassemble(Argus.Test.Fixtures.GenEventEmitter))
-
-      callers =
-        facts[:sync_call]
-        |> Enum.map(fn [caller, _] -> caller end)
-
-      assert Enum.any?(callers, &String.contains?(&1, "call_handler/0"))
-      assert Enum.any?(callers, &String.contains?(&1, "call_handler_with_timeout"))
-    end
-  end
-
-  describe "extract/1 — async_cast coverage" do
-    test "treats :gen_event.notify as an async_cast" do
-      facts = ApiCalls.extract(disassemble(Argus.Test.Fixtures.GenEventEmitter))
-
-      assert Map.has_key?(facts, :async_cast)
-
-      assert Enum.any?(facts[:async_cast], fn [caller, callee] ->
-               String.contains?(caller, "notify_event") and callee == "MyEventManager"
-             end)
+      assert facts[:async_cast] == [["#{emitter}:notify_event/0", "MyEventManager"]]
     end
   end
 end
