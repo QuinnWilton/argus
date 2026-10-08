@@ -174,7 +174,7 @@ defmodule Argus.CLI do
   def override(%Argus.Config{} = config, %Options{} = options) do
     analyses =
       cond do
-        options.all -> Argus.Config.all_analyses()
+        options.all -> all_analyses()
         options.analyses -> Argus.Config.analyses(options.analyses, :cli)
         true -> config.analyses
       end
@@ -294,11 +294,11 @@ defmodule Argus.CLI do
   @spec list() :: String.t()
   def list do
     default = Argus.Graph.default_analyses()
+    all = all_analyses()
 
     rows =
       Argus.Analysis.builtin_analysis_modules()
-      |> Enum.reject(&(&1.name() == :coverage))
-      |> Enum.sort_by(& &1.name())
+      |> Enum.filter(&(&1.name() in all))
       |> Enum.map_join("\n", fn mod ->
         marker = if mod.name() in default, do: "*", else: " "
         "  #{marker} #{mod.name()} — #{mod.description()}"
@@ -396,5 +396,10 @@ defmodule Argus.CLI do
       end
 
     "argus #{vsn} (Erlang/OTP #{System.otp_release()}, Elixir #{System.version()}, #{flowlog}, #{rust})"
+  end
+
+  defp all_analyses do
+    {:ok, all} = Argus.Analysis.set(:all)
+    all
   end
 end

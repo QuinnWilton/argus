@@ -164,15 +164,6 @@ defmodule Argus.Config do
   @spec analyses([atom()], origin()) :: [atom()]
   def analyses(names, origin \\ :cli), do: analyses!(ConfigError.context(origin), names)
 
-  @doc "Every analysis argus can run, sorted: `--all`."
-  @spec all_analyses() :: [atom()]
-  def all_analyses do
-    Argus.Analysis.builtin_analysis_modules()
-    |> Enum.reject(&(&1.name() == :coverage))
-    |> Enum.map(& &1.name())
-    |> Enum.sort()
-  end
-
   defp keyword!(ctx, key, value, expected) do
     if Keyword.keyword?(value),
       do: value,
@@ -258,7 +249,7 @@ defmodule Argus.Config do
   end
 
   defp analyses!(ctx, names) when is_list(names) do
-    known = known_analyses()
+    known = Argus.Analysis.builtin_analyses()
 
     case Enum.find(names, &(not (is_atom(&1) and resolvable?(&1, known)))) do
       nil ->
@@ -281,8 +272,6 @@ defmodule Argus.Config do
   defp analyses!(ctx, other),
     do:
       fail(ctx, [:analyses], other, "analyses must be a list of atoms, got: #{show(ctx, other)}")
-
-  defp known_analyses, do: Enum.map(Argus.Analysis.builtin_analysis_modules(), & &1.name())
 
   # Every name a user may write where an analysis goes: a concern or a
   # set.
@@ -422,7 +411,7 @@ defmodule Argus.Config do
   # takes the severity). Later entries win, so `[default: :warning, mailbox:
   # :error]` raises one concern above the rest of its set.
   defp severity!(ctx, pairs) when is_list(pairs) do
-    known = known_analyses()
+    known = Argus.Analysis.builtin_analyses()
 
     ctx
     |> keyword!([:severity], pairs, "severity must be a keyword list")

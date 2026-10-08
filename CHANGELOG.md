@@ -145,6 +145,8 @@ which a change appeared; older names and APIs may have changed since then.
   `Argus.Analysis.builtin_analyses/0`.
 - `Argus.Report.Notice.config_renamed/2`: only `Argus.ConfigError` used it,
   and it says the same.
+- `Argus.Config.all_analyses/0`: pass `analyses: :all`, or read
+  `Argus.Analysis.set(:all)`.
 - Functions nothing called: `Argus.Pipeline.rows_iodata/1` (use
   `Argus.Tsv.encode/1`), `Argus.Pipeline.Writer.append/2`,
   `Argus.Priors.derive/2` and `read_facts/2`, `Argus.Specs.shapes/2`,
