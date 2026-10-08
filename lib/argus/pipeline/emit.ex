@@ -102,6 +102,11 @@ defmodule Argus.Pipeline.Emit do
     location_rows(rest, table, line, emit_line_info(facts, id, line))
   end
 
+  # A marker switches the line in effect. No location (reference 0, or
+  # `[]` on OTP 29) and references the table cannot resolve switch it to
+  # unknown: compiler-generated code must not inherit the previous source
+  # line. OTP 28 debug builds (`beam_debug_info`) carry a debug_line
+  # marker on every executable line, in the same reference space.
   defp instruction_line({:line, marker}, _rest, table, _line),
     do: Disassemble.marker_line(marker, table)
 
@@ -175,8 +180,7 @@ defmodule Argus.Pipeline.Emit do
   defp emit_instructions_loop(facts, func_id, [{id, instr} | rest], idx, line_table, line) do
     line = instruction_line(instr, rest, line_table, line)
 
-    {facts, line} =
-      emit_instruction_fact(facts, id, func_id, to_string(idx), instr, line_table, line)
+    facts = emit_instruction_fact(facts, id, func_id, to_string(idx), instr, line)
 
     facts =
       case rest do
@@ -215,35 +219,22 @@ defmodule Argus.Pipeline.Emit do
 
   defp region_line(_instr, _rest, _line_table, line), do: line
 
-  # Record the instruction fact and dispatch to specific emitters, threading
-  # the source line currently in effect so every instruction gets a
-  # `line_info` fact — anchors are call-site instruction IDs, so a fact only
-  # at the marker itself would leave every real anchor without a line.
-  defp emit_instruction_fact(facts, id, func_id, idx, instr, line_table, line) do
+  # Record the instruction fact and dispatch to specific emitters. Every
+  # instruction gets a `line_info` fact for the line in effect: anchors
+  # are call-site instruction IDs, so a fact only at the marker itself
+  # would leave every real anchor without a line.
+  defp emit_instruction_fact(facts, id, func_id, idx, instr, line) do
     op = instruction_op(instr)
-    facts = add_fact(facts, :instruction, [id, func_id, idx, to_string(op)])
+
+    facts =
+      facts
+      |> add_fact(:instruction, [id, func_id, idx, to_string(op)])
+      |> emit_line_info(id, line)
 
     case instr do
-      # A marker switches the line in effect. No location (reference 0,
-      # or `[]` on OTP 29) and references the table cannot resolve switch
-      # it to unknown — compiler-generated code must not inherit the
-      # previous source line.
-      {:line, marker} ->
-        line = Disassemble.marker_line(marker, line_table)
-        {emit_line_info(facts, id, line), line}
-
-      # OTP 28 debug builds (`beam_debug_info`) carry a debug_line marker
-      # on every executable line — same Line-chunk reference space, same
-      # sticky semantics.
-      {:debug_line, _kind, ref, _index, _live} ->
-        line = Disassemble.marker_line(ref, line_table)
-        {emit_line_info(facts, id, line), line}
-
-      _ ->
-        {facts
-         |> emit_line_info(id, line)
-         |> emit_def_use(id, instr)
-         |> emit_specific(id, func_id, instr), line}
+      {:line, _marker} -> facts
+      {:debug_line, _kind, _ref, _index, _live} -> facts
+      _ -> facts |> emit_def_use(id, instr) |> emit_specific(id, func_id, instr)
     end
   end
 
