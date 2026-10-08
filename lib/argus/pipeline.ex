@@ -322,32 +322,26 @@ defmodule Argus.Pipeline do
     kept = if how.base, do: nil, else: Keyword.get(opts, :base)
     opts = opts |> Keyword.put(:extractors, extractors) |> Keyword.put(:concurrency, 1)
 
-    # Every producer's rows, encoded in the worker; a lost module's are
-    # the base's error row, whether or not the base was asked for.
-    shape = fn produced, kept_base, reads ->
-      encoded = Map.new(produced, fn {p, facts} -> {p, Writer.encode(facts, written)} end)
-      {encoded, kept_base, reads}
-    end
-
     with {:ok, [path]} <- Disassemble.resolve_paths([input]) do
       memo = new_memo(opts)
 
       try do
+        # A lost module's rows are the base's error row, whether or not
+        # the base was asked for.
         [{path, kept}]
-        |> extract_stream(opts, memo, how, shape)
+        |> extract_stream(opts, memo, how, encoded_shape(written))
         |> Enum.to_list()
         |> case do
           [{status, {encoded, kept_base, reads}}] when status in [:ok, :lost] ->
             asked = if status == :lost, do: [:base | producers], else: producers
 
-            {:ok,
-             %{
-               status: status,
-               facts: Map.new(Enum.uniq(asked), &{&1, Map.get(encoded, &1, %{})}),
-               reads: Map.new(producers, &{&1, Map.get(reads, &1, [])}),
-               installed: installed_reads(memo),
-               base: kept_base
-             }}
+            extraction(
+              status,
+              Map.new(Enum.uniq(asked), &{&1, Map.get(encoded, &1, %{})}),
+              Map.new(producers, &{&1, Map.get(reads, &1, [])}),
+              memo,
+              kept_base
+            )
 
           [{:error, reason}] ->
             {:error, reason}
@@ -384,32 +378,22 @@ defmodule Argus.Pipeline do
       on_prepared: Keyword.get(opts, :on_prepared)
     }
 
+    written = Writer.written(Keyword.get(opts, :relations, :all))
     memo = new_memo(opts)
-    was_tracing = Facts.tracing_enabled?()
-    if Keyword.get(opts, :trace_imprecision, false), do: Facts.enable_tracing()
 
     try do
-      written = Writer.written(Keyword.get(opts, :relations, :all))
-
-      shape = fn produced, kept, reads ->
-        {Map.new(produced, fn {producer, rows} -> {producer, Writer.encode(rows, written)} end),
-         kept, reads}
-      end
-
       with {:ok, {encoded, kept, reads}} <-
-             extract_module(data, extractors, false, how, shape, memo) do
-        {:ok,
-         %{
-           status: :ok,
-           facts: Map.new(producers, &{&1, Map.get(encoded, &1, %{})}),
-           reads: Map.take(reads, producers),
-           installed: installed_reads(memo),
-           base: kept
-         }}
+             extract_module(data, extractors, tracing?(opts), how, encoded_shape(written), memo) do
+        extraction(
+          :ok,
+          Map.new(producers, &{&1, Map.get(encoded, &1, %{})}),
+          Map.take(reads, producers),
+          memo,
+          kept
+        )
       end
     after
       Memo.close(memo)
-      if not was_tracing, do: Facts.disable_tracing()
     end
   end
 
@@ -422,24 +406,52 @@ defmodule Argus.Pipeline do
   @spec extract_prepared(map(), keyword()) :: {:ok, module_extraction()}
   def extract_prepared(data, opts) do
     extractors = opts |> Keyword.fetch!(:producers) |> Enum.uniq()
+    written = Writer.written(Keyword.get(opts, :relations, :all))
     memo = new_memo(opts)
-    was_tracing = Facts.tracing_enabled?()
-    if Keyword.get(opts, :trace_imprecision, false), do: Facts.enable_tracing()
 
     try do
-      produced = data |> extractor_data(memo, extractors) |> run_extractors(extractors)
-      written = Writer.written(Keyword.get(opts, :relations, :all))
+      produced =
+        with_tracing(tracing?(opts), fn ->
+          data |> extractor_data(memo, extractors) |> run_extractors(extractors)
+        end)
 
-      {:ok,
-       %{
-         status: :ok,
-         facts: Map.new(produced, fn {p, rows, _reads} -> {p, Writer.encode(rows, written)} end),
-         reads: Map.new(produced, fn {p, _rows, reads} -> {p, reads} end),
-         installed: installed_reads(memo),
-         base: nil
-       }}
+      extraction(
+        :ok,
+        Map.new(produced, fn {p, rows, _reads} -> {p, Writer.encode(rows, written)} end),
+        Map.new(produced, fn {p, _rows, reads} -> {p, reads} end),
+        memo,
+        nil
+      )
     after
       Memo.close(memo)
+    end
+  end
+
+  defp extraction(status, facts, reads, memo, base) do
+    {:ok,
+     %{status: status, facts: facts, reads: reads, installed: installed_reads(memo), base: base}}
+  end
+
+  # Each producer's rows encoded as the lines of its files, in the worker.
+  defp encoded_shape(written) do
+    fn produced, kept, reads ->
+      {Map.new(produced, fn {p, rows} -> {p, Writer.encode(rows, written)} end), kept, reads}
+    end
+  end
+
+  defp tracing?(opts), do: Keyword.get(opts, :trace_imprecision, false)
+
+  # Runs `fun` with imprecision tracing on when `trace?`, leaving the flag
+  # as it found it. The flag lives in the process dictionary.
+  defp with_tracing(false, fun), do: fun.()
+
+  defp with_tracing(true, fun) do
+    was_tracing = Facts.tracing_enabled?()
+    Facts.enable_tracing()
+
+    try do
+      fun.()
+    after
       if not was_tracing, do: Facts.disable_tracing()
     end
   end
@@ -469,13 +481,13 @@ defmodule Argus.Pipeline do
     concurrency = Keyword.get(opts, :concurrency, System.schedulers_online())
     extractors = Keyword.get(opts, :extractors, [])
     task_timeout = Keyword.get(opts, :timeout, @default_timeout)
-    trace_imprecision = Keyword.get(opts, :trace_imprecision, false)
+    trace? = tracing?(opts)
 
     inputs
     |> Task.async_stream(
       fn {path, kept} ->
         how = Map.put(how, :kept, kept)
-        extract_module(path, extractors, trace_imprecision, how, shape, memo)
+        extract_module(path, extractors, trace?, how, shape, memo)
       end,
       max_concurrency: concurrency,
       # Ordered so that extracting the same modules twice produces the
@@ -508,28 +520,21 @@ defmodule Argus.Pipeline do
   end
 
   # Per-module extraction: disassemble, emit Layer 1 facts, run Layer 2
-  # extractors, merge. Enables imprecision tracing in the worker process
-  # when requested — the flag lives in the worker's process dictionary,
-  # which is naturally scoped to this Task.async_stream worker, and the
-  # try/after guarantees the flag is cleared before the worker returns
-  # to the async pool.
+  # extractors, merge, with imprecision tracing on when asked: the flag
+  # is cleared before a worker returns to the async pool.
   #
   # `shape` takes the module's facts, its kept base and the schema
   # reads (`Argus.Schema.Reads`) each producer's rows depend on. A module
   # whose extraction raised past every step's own rescue is the base's
   # one `extraction_error` row, and depends on whatever was read before
   # the raise.
-  defp extract_module(path, extractors, trace_imprecision, how, shape, memo) do
-    if trace_imprecision, do: Facts.enable_tracing()
-
-    try do
+  defp extract_module(path, extractors, trace?, how, shape, memo) do
+    with_tracing(trace?, fn ->
       case Reads.track(fn -> shaped_module(path, extractors, how, shape, memo) end) do
         {{:crashed, facts}, recorded} -> {:ok, shape.(facts, nil, %{base: recorded})}
         {result, _recorded} -> result
       end
-    after
-      if trace_imprecision, do: Facts.disable_tracing()
-    end
+    end)
   end
 
   defp shaped_module(path, extractors, how, shape, memo) do
