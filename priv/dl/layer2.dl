@@ -255,6 +255,11 @@
 .decl code_template_site(id: symbol, func: symbol, api: symbol) mutable
 .input code_template_site
 
+// A `System.cmd` call to a literal shell or interpreter whose arguments are literal on every path, through the module's local helpers' returns (`Argus.Extractor.Argv`). Covers only calls the function's own body could not show fixed, which `code_execution` keeps.
+//
+.decl command_fixed(id: symbol, func: symbol) mutable
+.input command_fixed
+
 // A call restricted to the connected branch of `Phoenix.LiveView.connected?/1` or a non-nil `get_connect_params/1` result. Excludes the disconnected branch and code after branches rejoin. Used to distinguish connected mount work from static rendering (`Argus.Extractors.LiveView`).
 //
 .decl connected_guarded(id: symbol, func: symbol) mutable

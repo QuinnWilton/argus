@@ -46,6 +46,12 @@ defmodule Argus.Extractors.ParamFlow do
     the atom the last one made — so it is no atoms-of-atoms bound.
   - `call_arg_allowlist(caller, callee, arg_pos)` — every call the caller
     makes to the callee passes a literal list at `arg_pos`.
+  - `command_fixed(id, func)` — the `System.cmd` call at `id` hands its
+    literal shell or interpreter arguments that are literal on every
+    path once the module's local helpers are read
+    (`Argus.Extractors.ApiCalls.fixed_command?/3` over
+    `Argus.Extractor.Argv.module/1`), where the function's body alone,
+    all `code_execution` sees, could not show it.
   - `sink_copy(id, func, first)` — the sink call at `id` repeats `first`,
     the earliest call of the same API in the function on the same source
     line: code the compiler duplicated. A copy is made of what `first` is
@@ -88,6 +94,7 @@ defmodule Argus.Extractors.ParamFlow do
   @behaviour Argus.Extractor
 
   alias Argus.Cfg.Function, as: CfgFunction
+  alias Argus.Extractor.Argv
   alias Argus.Extractor.CallSites
   alias Argus.Extractor.Helpers
   alias Argus.Extractor.Resolve
@@ -123,6 +130,7 @@ defmodule Argus.Extractors.ParamFlow do
   @impl true
   def relations,
     do: [
+      :command_fixed,
       :call_arg_allowlist,
       :call_arg_chosen,
       :call_arg_derived,
@@ -153,6 +161,7 @@ defmodule Argus.Extractors.ParamFlow do
       |> emit_call_sites(module_data, inputs)
       |> emit_closures(module_data, inputs)
       |> emit_bounded_sinks(module_data)
+      |> emit_fixed_commands(module_data)
       |> emit_allowlists(module_data)
       |> emit_sink_copies(module_data, inputs)
       |> Map.new(fn {relation, rows} -> {relation, rows |> Enum.uniq() |> Enum.sort()} end)
@@ -563,6 +572,32 @@ defmodule Argus.Extractors.ParamFlow do
       end)
 
     emit_sequence_bounds(facts, module_data, sinks)
+  end
+
+  # The commands whose arguments a local helper builds: `code_execution`
+  # keeps every one that one function's body cannot show fixed, and the
+  # module's may.
+  defp emit_fixed_commands(facts, %{module: mod, functions: functions} = module_data) do
+    keys =
+      Map.new(functions, fn {:function, name, arity, _, _} ->
+        {InstrId.func_id(mod, name, arity), {name, arity}}
+      end)
+
+    scope = Argv.module(module_data)
+
+    for %{mfa: {System, :cmd, arity}} = site <- CallSites.for_module(module_data),
+        arity in [2, 3],
+        {:ok, key} <- [Map.fetch(keys, site.func_id)],
+        fixed_across_module?(site, scope, key),
+        reduce: facts do
+      acc -> add_fact(acc, :command_fixed, [InstrId.mint(site.func_id, site.idx), site.func_id])
+    end
+  end
+
+  defp fixed_across_module?(site, scope, key) do
+    ctx = %{func_id: site.func_id, instrs: site.instrs, idx: site.idx}
+    {local, self} = Argv.function(site.instrs)
+    not ApiCalls.fixed_command?(ctx, local, self) and ApiCalls.fixed_command?(ctx, scope, key)
   end
 
   # A successful list-to-atom conversion rejects non-character elements. Keep

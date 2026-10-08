@@ -27,6 +27,10 @@ defmodule Argus.Analyses.UnsafeInputTest do
     Argus.Test.Fixtures.UnsafeAtomCreation,
     Argus.Test.Fixtures.UnsafeDeserialization,
     Argus.Test.Fixtures.CodeExecution,
+    Argus.Test.Fixtures.CommandLiteralJoin,
+    Argus.Test.Fixtures.CommandDynamicJoin,
+    Argus.Test.Fixtures.CommandLiteralHelper,
+    Argus.Test.Fixtures.CommandDynamicHelper,
     Argus.Test.Fixtures.SafeModule,
     RequestSurface.DirectPlug,
     RequestSurface.SafeCallback,
@@ -194,6 +198,28 @@ defmodule Argus.Analyses.UnsafeInputTest do
       results = analyze(ctx, [Argus.Test.Fixtures.SafeModule])
       assert results["sink_without_request_path"] == []
       assert results["sink_reachable"] == []
+    end
+  end
+
+  describe "commands" do
+    defp commands(ctx, module) do
+      ctx
+      |> analyze([module])
+      |> local("code")
+      |> Enum.map(fn {func, _api} -> func |> String.split(":") |> List.last() end)
+      |> Enum.sort()
+    end
+
+    test "arguments literal on every path, through joins and appends, run no caller code",
+         ctx do
+      assert commands(ctx, Argus.Test.Fixtures.CommandLiteralJoin) == []
+      assert commands(ctx, Argus.Test.Fixtures.CommandDynamicJoin) == ["build/2"]
+    end
+
+    test "a local helper that returns only literal lists hands its caller literal arguments",
+         ctx do
+      assert commands(ctx, Argus.Test.Fixtures.CommandLiteralHelper) == []
+      assert commands(ctx, Argus.Test.Fixtures.CommandDynamicHelper) == ["lint/1"]
     end
   end
 

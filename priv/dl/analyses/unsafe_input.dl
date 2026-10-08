@@ -72,8 +72,11 @@ inert_decoded_term(id, func) :-
 
 // Apply allowlist suppression to atom and deserialization arguments only. A bounded
 // code module does not bound its function, and decompression size safety requires
-// streaming APIs, excluded from sinks.
+// streaming APIs, excluded from sinks. A command is bounded when the module's
+// helpers hand its shell or interpreter literal arguments (`command_fixed`).
 .decl bounded_sink_input(id: symbol, func: symbol, kind: symbol)
+
+bounded_sink_input(id, func, "code") :- sink_call(id, func, _, "code", _), command_fixed(id, func).
 
 bounded_sink_input(id, func, "atom") :- sink_call(id, func, _, "atom", _), bounded_input(id, func).
 

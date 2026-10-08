@@ -30,6 +30,7 @@ defmodule Argus.Extractors.ApiCalls do
 
   @behaviour Argus.Extractor
 
+  alias Argus.Extractor.Argv
   alias Argus.Extractor.Resolve
   alias Argus.InstrId
 
@@ -571,6 +572,45 @@ defmodule Argus.Extractors.ApiCalls do
     end
   end
 
+  # ── Commands ───────────────────────────────────────────────────────────
+
+  # The programs that run what their arguments say: shells and
+  # interpreters, and the wrappers that run another program named in
+  # their arguments (`env cmd`, `sudo cmd`, `xargs cmd`, `timeout 5 cmd`),
+  # hand a command to a remote shell (`ssh host cmd`), or run one in a
+  # container (`docker exec c cmd`). A literal program not listed runs
+  # only itself; one of these runs its caller's data.
+  @interpreters ~w(sh bash zsh dash ksh csh tcsh fish ash busybox cmd cmd.exe powershell pwsh
+                   python python2 python3 perl ruby node deno bun erl elixir iex escript mix
+                   php lua luajit tclsh wish Rscript julia awk gawk mawk nawk osascript
+                   env sudo doas su runuser xargs nohup nice ionice timeout stdbuf time watch
+                   flock setsid chroot nsenter unshare strace ltrace
+                   ssh docker podman kubectl nerdctl lxc-attach)
+
+  @doc """
+  Whether the `System.cmd/2,3` call at `ctx` runs a program its
+  arguments cannot turn into code: a literal program that is no shell or
+  interpreter, or one handed arguments that are literal on every path
+  `scope` shows (`Argus.Extractor.Argv`). `key` is the function in
+  `scope` that holds the call. A program that is not literal is never
+  fixed.
+  """
+  @spec fixed_command?(
+          Argus.Extractor.Helpers.instr_ctx(),
+          Argv.scope(),
+          Argv.key()
+        ) :: boolean()
+  def fixed_command?(ctx, scope, key) do
+    case static_command(ctx) do
+      {:ok, command} ->
+        Path.basename(command) not in @interpreters or
+          Argv.literal?(scope, key, ctx.idx, {:x, 1})
+
+      :dynamic ->
+        false
+    end
+  end
+
   # ── Readers ────────────────────────────────────────────────────────────
 
   defp read(:id, ctx, _mfa, facts, _rel), do: {InstrId.mint(ctx.func_id, ctx.idx), facts}
@@ -770,47 +810,18 @@ defmodule Argus.Extractors.ApiCalls do
     {value, track_dynamic(facts, value, ctx, :port_target, rel)}
   end
 
-  # The programs that run what their arguments say: shells and
-  # interpreters, and the wrappers that run another program named in
-  # their arguments (`env cmd`, `sudo cmd`, `xargs cmd`, `timeout 5 cmd`),
-  # hand a command to a remote shell (`ssh host cmd`), or run one in a
-  # container (`docker exec c cmd`). A literal program not listed runs
-  # only itself; one of these runs its caller's data.
-  @interpreters ~w(sh bash zsh dash ksh csh tcsh fish ash busybox cmd cmd.exe powershell pwsh
-                   python python2 python3 perl ruby node deno bun erl elixir iex escript mix
-                   php lua luajit tclsh wish Rscript julia awk gawk mawk nawk osascript
-                   env sudo doas su runuser xargs nohup nice ionice timeout stdbuf time watch
-                   flock setsid chroot nsenter unshare strace ltrace
-                   ssh docker podman kubectl nerdctl lxc-attach)
-
   # A literal command runs only itself: its arguments are argv, never
   # parsed by a shell, so caller data in them is not code execution. The
   # exception is a literal shell or interpreter, which executes whatever
   # its arguments say — that stays a finding unless the arguments are
-  # literal too. The empty argument list arrives as the atom `nil`. A
-  # command `find_executable/1` found for a literal name is that program
-  # wherever PATH puts it (akkoma's `ffprobe`), and is read as the name.
+  # literal too, on every path, as far as this function's body shows
+  # (`fixed_command?/3`; `Argus.Extractors.ParamFlow` asks again across
+  # the module's local helpers). A command `find_executable/1` found for
+  # a literal name is that program wherever PATH puts it (akkoma's
+  # `ffprobe`), and is read as the name.
   defp read(:unless_static_command, ctx, _mfa, facts, _rel) do
-    command = static_command(ctx)
-    args = resolve_register(ctx.instrs, ctx.idx, {:x, 1})
-    # A list with a value the walk could not read (`["-c", script]`) is
-    # not literal: the shell runs whatever that value is.
-    static_args? =
-      case args do
-        {:ok, nil} -> true
-        {:ok, a} when is_list(a) -> :dynamic not in a
-        _ -> false
-      end
-
-    case command do
-      {:ok, c} when is_binary(c) ->
-        if Path.basename(c) in @interpreters and not static_args?,
-          do: {:pass, facts},
-          else: {:skip, facts}
-
-      _ ->
-        {:pass, facts}
-    end
+    {scope, key} = Argv.function(ctx.instrs)
+    if fixed_command?(ctx, scope, key), do: {:skip, facts}, else: {:pass, facts}
   end
 
   # Template bindings do not become source code. A literal source remains trusted

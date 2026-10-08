@@ -53,6 +53,20 @@ defmodule Argus.Schema.UnsafeInput do
           {:api, :symbol, "API name (e.g. Code.eval_string/1)"}
         ],
         doc: "Dynamic code execution or OS command call."
+      },
+      %{
+        name: :command_fixed,
+        layer: 2,
+        fields: [
+          {:id, :instr_id, "instruction ID of the System.cmd call"},
+          {:func, :func_id, "containing function ID"}
+        ],
+        doc: """
+        A `System.cmd` call to a literal shell or interpreter whose arguments are \
+        literal on every path, through the module's local helpers' returns \
+        (`Argus.Extractor.Argv`). Covers only calls the function's own body could not \
+        show fixed, which `code_execution` keeps.
+        """
       }
     ])
   end
