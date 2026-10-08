@@ -187,7 +187,7 @@ defmodule Argus.Graph.Solve do
                executable: built.executable,
                args: built.args,
                digest: digest,
-               workers: Map.get(solver, :workers, Argus.FlowLog.default_workers()),
+               workers: Map.get(solver, :workers, :auto),
                log: Argus.FlowLog.Toolchain.run_log(built.toolchain, digest)
              ]
            }}

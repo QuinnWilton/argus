@@ -76,6 +76,12 @@ which a change appeared; older names and APIs may have changed since then.
   every one until the run ends (`Argus.FlowLog.Pool.keep/2`): on a
   544-module project its engines peak at 400 to 590 MB together instead of
   1.2 GB. A session kept open (an editor's) keeps them.
+- An engine runs a worker thread per 8 MB of its program's input, from one to
+  four (`Argus.FlowLog.workers/2`), instead of always four: every worker
+  holds its own copy of the dataflow's operators, about 60 MB of the largest
+  analysis's over no rows at all. Over 96 modules the engines of every
+  analysis keep 1.15 GB instead of 2.1 GB; over 18, 490 MB instead of 1.66 GB.
+  `ARGUS_FLOWLOG_WORKERS` and `:workers` still name a count.
 - `mix argus.flowlog solve PROGRAM FACTS_DIR --profile` (and
   `Argus.FlowLog.run/3`'s `:profile`) reports where a solve's memory and
   time went: the arrangements holding the most updates and the operators

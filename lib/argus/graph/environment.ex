@@ -32,11 +32,11 @@ defmodule Argus.Graph.Environment do
 
   `:timeout` in `opts` sets the timeout (default
   `Argus.FlowLog.default_timeout/0`), and `:workers` the dataflow
-  workers (default `Argus.FlowLog.default_workers/0`). The old
+  workers (default `:auto`, by each solve's inputs: `Argus.FlowLog.workers/2`). The old
   `:souffle_bin` and `:souffle_timeout` options raise.
   """
   @spec solver(Blob.t() | nil, keyword()) ::
-          %{version: String.t(), timeout: timeout(), workers: pos_integer()}
+          %{version: String.t(), timeout: timeout(), workers: pos_integer() | :auto}
   def solver(_store, opts \\ []) do
     for old <- [:souffle_bin, :souffle_timeout], Keyword.has_key?(opts, old) do
       raise ArgumentError,
@@ -47,7 +47,7 @@ defmodule Argus.Graph.Environment do
     %{
       version: Argus.FlowLog.Native.digest(),
       timeout: Keyword.get(opts, :timeout, Argus.FlowLog.default_timeout()),
-      workers: Keyword.get(opts, :workers, Argus.FlowLog.default_workers())
+      workers: Keyword.get(opts, :workers, :auto)
     }
   end
 

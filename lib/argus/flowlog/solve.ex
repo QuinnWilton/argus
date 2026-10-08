@@ -58,7 +58,8 @@ defmodule Argus.FlowLog.Solve do
     * `:owner` — the process whose exit stops the engine (the solving
       database's);
     * `:start` — `Argus.FlowLog.Engine.start_link/1`'s options, the
-      engine already built.
+      engine already built; `workers: :auto` (or none) chooses its
+      workers by the size of the inputs (`Argus.FlowLog.workers/2`).
   """
   @type engine_spec :: %{lineage: term(), owner: pid(), start: keyword()}
 
@@ -123,6 +124,15 @@ defmodule Argus.FlowLog.Solve do
     timeout = Keyword.get(opts, :timeout, Argus.FlowLog.default_timeout())
     pool_key = {owner, store.root, lineage, Keyword.fetch!(start, :digest)}
 
+    # An engine started here takes its workers by the size of what it is
+    # first committed (`Argus.FlowLog.workers/2`), and keeps them.
+    started = fn ->
+      workers =
+        Argus.FlowLog.workers(Keyword.get(start, :workers, :auto), input_bytes(store, inputs))
+
+      {:ok, Keyword.put(start, :workers, workers)}
+    end
+
     # What the engine holds, the commit, and the outputs it leaves are
     # one step: two solves of a lineage take turns, and each tells the
     # engine every input that differs from what the other left. A
@@ -133,7 +143,7 @@ defmodule Argus.FlowLog.Solve do
       :global.trans(
         {{__MODULE__, pool_key}, self()},
         fn ->
-          Pool.with_engine(pool_key, owner, fn -> {:ok, start} end, fn engine ->
+          Pool.with_engine(pool_key, owner, started, fn engine ->
             Blob.scratch(store, fn dir -> commit(store, engine, dir, inputs, outputs, timeout) end)
           end)
         end,
@@ -181,6 +191,21 @@ defmodule Argus.FlowLog.Solve do
       :ok = Engine.put_outputs(engine, solved)
       {:ok, solved}
     end
+  end
+
+  defp input_bytes(store, inputs) do
+    inputs
+    |> Enum.map(fn
+      {_name, {:cas, digest}, _identity} ->
+        case File.stat(Blob.path(store, digest)) do
+          {:ok, %File.Stat{size: size}} -> size
+          {:error, _} -> 0
+        end
+
+      {_name, {:fill, _fill}, _identity} ->
+        0
+    end)
+    |> Enum.sum()
   end
 
   defp held_identity(held, name) do

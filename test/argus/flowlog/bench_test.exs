@@ -101,7 +101,7 @@ defmodule Argus.FlowLog.BenchTest do
     bench = fn args -> Mix.Tasks.Argus.Flowlog.run(["bench", facts, program | args]) end
 
     first = capture_io(fn -> bench.(["--save", saved, "--engine", "generic"]) end)
-    assert first =~ ~r/bench\.dl +generic  cold [\d.]+s  edit \d+ms  peak \d+ MB/
+    assert first =~ ~r/bench\.dl +generic×1  cold [\d.]+s  edit \d+ms  peak \d+ MB/
     assert first =~ "saved 1 measure(s)"
 
     again = capture_io(fn -> bench.(["--against", saved, "--engine", "generic"]) end)

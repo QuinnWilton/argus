@@ -171,7 +171,8 @@ defmodule Argus.Graph do
     * `:trees` — the Datalog trees besides argus's own (a custom
       program's directory);
     * `:timeout` — milliseconds a solve's commit may run;
-    * `:workers` — dataflow worker threads per engine;
+    * `:workers` — dataflow worker threads per engine, or `:auto` (the
+      default) by each solve's inputs (`Argus.FlowLog.workers/2`);
     * `:own_ebins` — the directories whose every beam is an input (a
       project's own ebins): not stamped (`Environment.code_index/2`);
     * `:stamps` — each directory's stamp (`app_code`): true (the

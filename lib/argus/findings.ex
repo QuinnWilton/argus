@@ -242,7 +242,8 @@ defmodule Argus.Findings do
   - `:concurrency` — analyses placed side by side (default: the
     scheduler count, capped at 4).
   - `:timeout` — how long a solve's commit may run (default five
-    minutes); `:workers` — dataflow threads per engine.
+    minutes); `:workers` — dataflow threads per engine (default by each
+    solve's inputs: `Argus.FlowLog.workers/2`).
   - `:priors`, `:priors_opts` — the layer-3 priors (`Argus.Priors`).
 
   The batch pipeline's options went with it in 0.20 (`:facts_dir`,

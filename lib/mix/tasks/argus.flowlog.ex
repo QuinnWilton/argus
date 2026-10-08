@@ -350,7 +350,7 @@ defmodule Mix.Tasks.Argus.Flowlog do
     outcome = if measure.outcome == "ok", do: "", else: "  " <> measure.outcome
 
     info(
-      "#{String.pad_trailing(measure.program, 30)} #{measure.engine}  " <>
+      "#{String.pad_trailing(measure.program, 30)} #{measure.engine}×#{measure.workers}  " <>
         Enum.join(cells, "  ") <> "  #{map_size(measure.outputs)} outputs" <> outcome
     )
   end

@@ -37,14 +37,59 @@ defmodule Argus.FlowLog do
   def default_timeout, do: @default_timeout
 
   @doc """
-  The dataflow worker threads an engine runs: `ARGUS_FLOWLOG_WORKERS`,
+  The most dataflow worker threads an engine runs: `ARGUS_FLOWLOG_WORKERS`,
   else the smaller of four and the VM's schedulers.
   """
   @spec default_workers() :: pos_integer()
   def default_workers do
+    case env_workers() do
+      {:ok, n} -> n
+      :none -> min(4, System.schedulers_online())
+    end
+  end
+
+  defp env_workers do
     case Integer.parse(System.get_env("ARGUS_FLOWLOG_WORKERS", "")) do
-      {n, ""} when n > 0 -> n
-      _ -> min(4, System.schedulers_online())
+      {n, ""} when n > 0 -> {:ok, n}
+      _ -> :none
+    end
+  end
+
+  # A worker per this much of a program's input, by default.
+  @bytes_per_worker 8_000_000
+
+  @doc """
+  The worker threads an engine over `input_bytes` of facts runs. A count
+  is itself; `:auto` (the default everywhere) is `ARGUS_FLOWLOG_WORKERS`
+  when that is set, and otherwise a worker per 8 MB of the program's
+  input, from one to `default_workers/0`.
+
+  Every worker builds the whole dataflow, and each of its operators
+  holds memory whatever the facts: about 60 MB of a large analysis's
+  (races, 10,000 operators) per worker over no rows at all. A small
+  solve gains no time from more workers, and a kept engine's edits gain
+  none at any size (`mix argus.flowlog bench`, over 18, 96 and 1,306
+  modules: their edits took the same at one worker as at four), while a
+  large solve from scratch takes about half as long on four. Measured
+  over 96 modules (postgrex), the engines of every program kept 1.15 GB
+  instead of 2.1 GB, and took 2.2s instead of 1.75s from scratch, one
+  after another; over 18 they kept 490 MB instead of 1.66 GB, in the same
+  time, and over 1,306 nothing changed. An engine keeps the workers it
+  started with.
+  """
+  @spec workers(pos_integer() | :auto, non_neg_integer()) :: pos_integer()
+  def workers(count, _input_bytes) when is_integer(count) and count > 0, do: count
+
+  def workers(:auto, input_bytes) when is_integer(input_bytes) and input_bytes >= 0 do
+    case env_workers() do
+      {:ok, n} ->
+        n
+
+      :none ->
+        (input_bytes + @bytes_per_worker - 1)
+        |> div(@bytes_per_worker)
+        |> max(1)
+        |> min(default_workers())
     end
   end
 
@@ -364,7 +409,8 @@ defmodule Argus.FlowLog do
     * `:timeout` — milliseconds the solve may run (default five minutes);
     * `:output_dir` — a directory to write the outputs into as well, each
       under the file name the program gives it;
-    * `:workers` — dataflow worker threads (default `default_workers/0`);
+    * `:workers` — dataflow worker threads, a count or `:auto` (the
+      default: by the size of the inputs, `workers/2`);
     * `:profile` — a file to write the solve's profile to, as JSON: what
       each arrangement holds (`"arrangements"`, each `"name"` and its
       `"updates"`) and how long each operator ran (`"operators"`, each
@@ -379,6 +425,8 @@ defmodule Argus.FlowLog do
     with {:ok, built} <- engine(rules_path, opts),
          {:ok, inputs} <- facts_inputs(facts_dir, built.manifest) do
       out = scratch_dir()
+      bytes = inputs |> Map.values() |> Enum.map(&File.stat!(&1).size) |> Enum.sum()
+      opts = Keyword.put(opts, :workers, workers(Keyword.get(opts, :workers, :auto), bytes))
 
       try do
         with {:ok, engine} <- start_engine(built, opts) do

@@ -25,7 +25,7 @@ defmodule Argus.Graph.Inputs do
       modification time, inode) of every beam in that directory: it
       moves when a beam there is rebuilt, and a reader of a module's
       specs there looks at them again (`Argus.Graph.Reads`).
-    * `solver` (`:all`) — `%{version: digest, timeout: ms, workers: n}`:
+    * `solver` (`:all`) — `%{version: digest, timeout: ms, workers: n | :auto}`:
       the FlowLog toolchain's sources' digest, a commit's timeout and an
       engine's workers.
     * `dl_tree` (a directory) — each Datalog file under it and its

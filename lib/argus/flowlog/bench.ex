@@ -32,6 +32,7 @@ defmodule Argus.FlowLog.Bench do
   @type measure :: %{
           program: String.t(),
           engine: :compiled | :generic,
+          workers: pos_integer(),
           outcome: String.t(),
           cold_ms: [float()],
           edit_ms: [float()],
@@ -67,7 +68,9 @@ defmodule Argus.FlowLog.Bench do
   @doc """
   Measures `program` over `facts_dir`. Options: `:runs` (default 1),
   `:edits` (default 3), `:timeout` per commit in milliseconds (default an
-  hour), `:workers`, and `:engine` as `Argus.FlowLog.engine/2` takes it.
+  hour), `:workers` (a count, or `:auto` as a solve chooses them:
+  `Argus.FlowLog.workers/2`), and `:engine` as `Argus.FlowLog.engine/2`
+  takes it.
   """
   @spec measure(Path.t(), Path.t(), keyword()) :: {:ok, measure()} | {:error, term()}
   def measure(facts_dir, program, opts \\ []) do
@@ -80,12 +83,17 @@ defmodule Argus.FlowLog.Bench do
           {name, Path.join(facts_dir, file)}
         end)
 
+      bytes = inputs |> Map.values() |> Enum.map(&File.stat!(&1).size) |> Enum.sum()
+
+      opts =
+        Keyword.put(opts, :workers, FlowLog.workers(Keyword.get(opts, :workers, :auto), bytes))
+
       scratch = scratch_dir()
 
       try do
         first = solve(built, inputs, scratch, edits, opts)
         rest = for _ <- 2..runs//1, do: solve(built, inputs, scratch, 0, opts)
-        {:ok, summarize(program, built, [first | rest])}
+        {:ok, summarize(program, built, opts[:workers], [first | rest])}
       after
         File.rm_rf(scratch)
       end
@@ -198,12 +206,13 @@ defmodule Argus.FlowLog.Bench do
     end)
   end
 
-  defp summarize(program, built, [first | _] = runs) do
+  defp summarize(program, built, workers, [first | _] = runs) do
     usages = Enum.reject(Enum.map(runs, & &1.usage), &is_nil/1)
 
     %{
       program: name(program),
       engine: built.kind,
+      workers: workers,
       outcome: first.outcome,
       cold_ms: Enum.map(runs, & &1.cold_ms),
       edit_ms: first.edits,
@@ -258,6 +267,7 @@ defmodule Argus.FlowLog.Bench do
     %{
       program: json["program"],
       engine: String.to_existing_atom(json["engine"]),
+      workers: json["workers"],
       outcome: json["outcome"],
       cold_ms: json["cold_ms"],
       edit_ms: json["edit_ms"],

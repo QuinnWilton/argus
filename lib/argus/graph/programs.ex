@@ -193,7 +193,7 @@ defmodule Argus.Graph.Programs do
   sources (`Argus.FlowLog.Native.digest/0`).
   """
   @spec solver(Roux.Database.t()) ::
-          {:ok, %{version: String.t(), timeout: timeout(), workers: pos_integer()}}
+          {:ok, %{version: String.t(), timeout: timeout(), workers: pos_integer() | :auto}}
           | {:error, term()}
   def solver(db) do
     case Runtime.input(db, :solver, :all, default: nil) do
