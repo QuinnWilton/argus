@@ -614,12 +614,13 @@ defmodule Argus.Extractors.ApiCalls do
   end
 
   # rpc:multicall/4 is multicall(Nodes, M, F, A), which waits forever,
-  # or multicall(M, F, A, Timeout): the third argument is a function name
-  # in the first and an argument list in the second.
+  # or multicall(M, F, A, Timeout) (`multicall_form/1`). A form the
+  # arguments do not tell waits as long as the fourth says, if it is the
+  # timeout: unknown.
   defp read({:multicall_timeout, n, category}, ctx, mfa, facts, rel) do
-    case resolve_register(ctx.instrs, ctx.idx, {:x, n - 1}) do
-      {:ok, fun} when is_atom(fun) and fun != :dynamic -> {"-1", facts}
-      _ -> read({:timeout, n, category}, ctx, mfa, facts, rel)
+    case multicall_form(ctx) do
+      :nodes -> {"-1", facts}
+      _timeout_or_unknown -> read({:timeout, n, category}, ctx, mfa, facts, rel)
     end
   end
 
@@ -637,14 +638,12 @@ defmodule Argus.Extractors.ApiCalls do
   end
 
   # multicall(Nodes, M, F, A) names its function third, multicall(M, F,
-  # A, Timeout) second: told apart as {:multicall_timeout, 3, _} does.
+  # A, Timeout) second (`multicall_form/1`).
   defp read(:multicall_target, ctx, mfa, facts, rel) do
-    case resolve_register(ctx.instrs, ctx.idx, {:x, 2}) do
-      {:ok, fun} when is_atom(fun) and fun != :dynamic ->
-        read({:target, 1, 2}, ctx, mfa, facts, rel)
-
-      _ ->
-        read({:target, 0, 1}, ctx, mfa, facts, rel)
+    case multicall_form(ctx) do
+      :nodes -> read({:target, 1, 2}, ctx, mfa, facts, rel)
+      :timeout -> read({:target, 0, 1}, ctx, mfa, facts, rel)
+      :unknown -> {"dynamic", facts}
     end
   end
 
@@ -656,9 +655,10 @@ defmodule Argus.Extractors.ApiCalls do
     do: {arg_count(ctx, f + 1), facts}
 
   defp read({:arity_of, :multicall_target}, ctx, _mfa, facts, _rel) do
-    case resolve_register(ctx.instrs, ctx.idx, {:x, 2}) do
-      {:ok, fun} when is_atom(fun) and fun != :dynamic -> {arg_count(ctx, 3), facts}
-      _ -> {arg_count(ctx, 2), facts}
+    case multicall_form(ctx) do
+      :nodes -> {arg_count(ctx, 3), facts}
+      :timeout -> {arg_count(ctx, 2), facts}
+      :unknown -> {:skip, facts}
     end
   end
 
@@ -698,10 +698,12 @@ defmodule Argus.Extractors.ApiCalls do
     end
   end
 
+  # Only a fourth argument known to be the timeout is a timeout parameter:
+  # in the other form it is the argument list.
   defp read({:timeout_param, {:multicall_timeout, n, _category}}, ctx, mfa, facts, rel) do
-    case resolve_register(ctx.instrs, ctx.idx, {:x, n - 1}) do
-      {:ok, fun} when is_atom(fun) and fun != :dynamic -> {:skip, facts}
-      _ -> read({:timeout_param, {:timeout, n, :rpc_timeout}}, ctx, mfa, facts, rel)
+    case multicall_form(ctx) do
+      :timeout -> read({:timeout_param, {:timeout, n, :rpc_timeout}}, ctx, mfa, facts, rel)
+      _nodes_or_unknown -> {:skip, facts}
     end
   end
 
@@ -825,6 +827,24 @@ defmodule Argus.Extractors.ApiCalls do
     case resolve_register(ctx.instrs, ctx.idx, {:x, 0}) do
       {:ok, source} -> if literal_command?(source), do: {:skip, facts}, else: {:pass, facts}
       _ -> {:pass, facts}
+    end
+  end
+
+  # Which rpc:multicall/4 a site calls: multicall(Nodes, M, F, A) when
+  # its third argument is a function name, its first a list of nodes or
+  # its fourth an argument list; multicall(M, F, A, Timeout) when its
+  # first is a module or its fourth a timeout. Arguments that say neither
+  # (parameters handed on, say) leave it unknown.
+  defp multicall_form(ctx) do
+    value = &resolve_register(ctx.instrs, ctx.idx, {:x, &1})
+
+    cond do
+      match?({:ok, f} when is_atom(f) and f != :dynamic, value.(2)) -> :nodes
+      match?({:ok, ns} when is_list(ns), value.(0)) -> :nodes
+      match?({:ok, args} when is_list(args), value.(3)) -> :nodes
+      match?({:ok, m} when is_atom(m) and m != :dynamic, value.(0)) -> :timeout
+      match?({:ok, t} when is_integer(t) or t == :infinity, value.(3)) -> :timeout
+      true -> :unknown
     end
   end
 

@@ -38,6 +38,10 @@ defmodule Argus.Extractors.ApiCalls.DistributedTest do
         def emulti3(ns, f), do: :erpc.multicall(ns, f, 2000)
         def rmulti_nodes(ns, a), do: :rpc.multicall(ns, M, :f, a)
         def rmulti_timeout(a), do: :rpc.multicall(M, :f, a, 4000)
+        def rmulti_list(f, a), do: :rpc.multicall([:a@h], M, f, a)
+        def rmulti_args(ns, m, f), do: :rpc.multicall(ns, m, f, [1])
+        def rmulti_module(f, a, t), do: :rpc.multicall(M, f, a, t)
+        def rmulti_unknown(w, x, y, z), do: :rpc.multicall(w, x, y, z)
         def multi3(ns), do: GenServer.multi_call(ns, Srv, :ping)
         def multi4(ns), do: GenServer.multi_call(ns, Srv, :ping, 900)
         def dirty(s), do: :gen_statem.call(s, :ping, {:dirty_timeout, 800})
@@ -100,9 +104,26 @@ defmodule Argus.Extractors.ApiCalls.DistributedTest do
       assert rpc["emulti3/2"] == {"erpc_multicall", "2000"}
     end
 
-    test "rpc:multicall/4 is told apart by its last argument", %{rpc: rpc} do
+    test "rpc:multicall/4 is told apart by any argument that tells", ctx do
+      %{rpc: rpc, timeout_param: params, target: target} = ctx
+
+      # multicall(Nodes, M, F, A) waits forever: a function name third, a
+      # node list first, an argument list fourth.
       assert rpc["rmulti_nodes/2"] == {"multicall", "-1"}
+      assert rpc["rmulti_list/2"] == {"multicall", "-1"}
+      assert rpc["rmulti_args/3"] == {"multicall", "-1"}
+
+      # multicall(M, F, A, Timeout): a timeout fourth, or a module first.
       assert rpc["rmulti_timeout/1"] == {"multicall", "4000"}
+      assert rpc["rmulti_module/3"] == {"multicall", "0"}
+      assert params["rmulti_module/3"] == "2"
+
+      # Four parameters say neither: how long it waits, what it runs and
+      # which parameter is a timeout are unknown, and its argument list is
+      # never taken for one.
+      assert rpc["rmulti_unknown/4"] == {"multicall", "0"}
+      assert target["rmulti_unknown/4"] == "dynamic"
+      refute Map.has_key?(params, "rmulti_unknown/4")
     end
 
     test "block_call, yield and receive_response wait forever without a timeout", %{rpc: rpc} do
@@ -116,7 +137,7 @@ defmodule Argus.Extractors.ApiCalls.DistributedTest do
 
     test "a timeout that is a parameter says which one", %{rpc: rpc, timeout_param: params} do
       assert rpc["remote/5"] == {"rpc", "0"}
-      assert params == %{"remote/5" => "4"}
+      assert Map.delete(params, "rmulti_module/3") == %{"remote/5" => "4"}
     end
   end
 
