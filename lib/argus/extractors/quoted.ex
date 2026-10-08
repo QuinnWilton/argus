@@ -41,6 +41,7 @@ defmodule Argus.Extractors.Quoted do
 
   import Argus.Extractor.Facts, only: [add_fact: 3]
 
+  alias Argus.Extractor.Helpers
   alias Argus.Extractor.Resolve
   alias Argus.InstrId
 
@@ -88,11 +89,19 @@ defmodule Argus.Extractors.Quoted do
   end
 
   defp returned_calls(instrs) do
-    for {:return, idx} <- Enum.with_index(instrs),
+    for {instr, idx} <- Enum.with_index(instrs),
+        returns_quote?(instr),
         {:ok, term} <- [Resolve.resolve_register(instrs, idx, {:x, 0})],
         call <- walk(term, :top, true, []),
         do: call
   end
+
+  # A macro returns its quote, or, since Elixir 1.20, hands it to
+  # `:elixir_quote.validate_quote/1`, which returns it as it is.
+  defp returns_quote?(:return), do: true
+
+  defp returns_quote?(instr),
+    do: Helpers.match_remote_call(instr) == {:ok, :elixir_quote, :validate_quote, 1}
 
   # The literal operands an instruction holds, at any depth.
   defp literals({:literal, term}), do: [term]
