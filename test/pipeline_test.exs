@@ -6,22 +6,12 @@ defmodule Argus.PipelineTest do
   @moduletag :tmp_dir
 
   describe "extract/2" do
-    test "extracts facts from a single module" do
-      assert {:ok, facts} = Pipeline.extract([:lists])
-      assert map_size(facts) > 0
-      assert facts[:instruction] != []
-      assert facts[:function_def] != []
-    end
+    test "extracts every module asked for, Erlang's and Elixir's" do
+      assert {:ok, facts} = Pipeline.extract([:lists, :maps, Enum])
 
-    test "extracts facts from multiple modules" do
-      assert {:ok, facts} = Pipeline.extract([:lists, :maps])
-      mods = Enum.map(facts[:function_def], fn [_func, mod, _name, _arity, _exported] -> mod end)
-      assert ":lists" in mods
-      assert ":maps" in mods
-    end
+      assert facts[:function_def] |> Enum.map(&Enum.at(&1, 1)) |> MapSet.new() ==
+               MapSet.new([":lists", ":maps", "Enum"])
 
-    test "extracts facts from Elixir modules" do
-      assert {:ok, facts} = Pipeline.extract([Enum])
       assert facts[:instruction] != []
     end
 
@@ -47,175 +37,90 @@ defmodule Argus.PipelineTest do
       refute MapSet.member?(conditional, start_id)
     end
 
-    test "returns error for non-existent module" do
+    test "a beam's bytes give the facts its path gives" do
+      path = to_string(:code.which(:lists))
+      assert {:ok, from_path} = Pipeline.extract([path])
+      assert Pipeline.extract([File.read!(path)]) == {:ok, from_path}
+    end
+
+    test "no modules is no facts, and a module or path not there is an error" do
+      assert Pipeline.extract([]) == {:ok, %{}}
+
       assert {:error, {:not_found, :definitely_not_a_real_module}} =
                Pipeline.extract([:definitely_not_a_real_module])
-    end
 
-    test "accepts beam file paths" do
-      path = to_string(:code.which(:lists))
-      assert {:ok, facts} = Pipeline.extract([path])
-      assert facts[:instruction] != []
-    end
-  end
-
-  describe "run/3" do
-    test "writes .facts files to output directory", %{tmp_dir: tmp_dir} do
-      assert {:ok, ^tmp_dir} = Pipeline.run([:lists], tmp_dir)
-
-      # Check that fact files were created.
-      assert File.exists?(Path.join(tmp_dir, "instruction.facts"))
-      assert File.exists?(Path.join(tmp_dir, "function_def.facts"))
-      assert File.exists?(Path.join(tmp_dir, "function_entry.facts"))
-    end
-
-    test "fact files are well-formed TSV", %{tmp_dir: tmp_dir} do
-      {:ok, _} = Pipeline.run([:lists], tmp_dir)
-
-      {:ok, rows} = read_facts(Path.join(tmp_dir, "function_def.facts"))
-      assert rows != []
-
-      # function_def has 5 fields per the schema — the entry label lives in
-      # function_entry, split out because it is positional.
-      for row <- rows do
-        assert length(row) == 5, "expected 5 fields, got #{length(row)}: #{inspect(row)}"
-      end
-    end
-
-    test "fact files contain expected content", %{tmp_dir: tmp_dir} do
-      {:ok, _} = Pipeline.run([:lists], tmp_dir)
-
-      {:ok, rows} = read_facts(Path.join(tmp_dir, "function_def.facts"))
-      assert Enum.any?(rows, fn [_func, mod | _] -> mod == ":lists" end)
-    end
-
-    test "handles multiple modules", %{tmp_dir: tmp_dir} do
-      {:ok, _} = Pipeline.run([:lists, :maps], tmp_dir)
-
-      {:ok, rows} = read_facts(Path.join(tmp_dir, "function_def.facts"))
-      mods = Enum.map(rows, fn [_func, mod | _] -> mod end)
-      assert ":lists" in mods
-      assert ":maps" in mods
-    end
-  end
-
-  describe "extract/2 edge cases" do
-    test "empty module list returns empty facts" do
-      assert {:ok, facts} = Pipeline.extract([])
-      assert facts == %{}
-    end
-
-    test "accepts raw beam data binaries, yielding identical facts to paths" do
-      path = to_string(:code.which(:lists))
-      data = File.read!(path)
-
-      assert {:ok, from_data} = Pipeline.extract([data])
-      assert {:ok, from_path} = Pipeline.extract([path])
-      assert from_data == from_path
-    end
-
-    test "returns error for a binary that is neither beam data nor a path" do
       assert {:error, {:not_found, "no/such/file.beam"}} =
                Pipeline.extract(["no/such/file.beam"])
     end
   end
 
+  describe "run/3" do
+    test "writes a file per schema relation, of its rows, and leaves one there alone",
+         %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "prior_sensitive.facts"), "kept\n")
+      assert {:ok, ^tmp_dir} = Pipeline.run([:lists, :maps], tmp_dir)
+
+      # A missing input file is an error to an engine: every relation has
+      # one, rows or not.
+      for name <- Argus.Schema.names() do
+        assert File.exists?(Path.join(tmp_dir, "#{name}.facts")), "no file for #{name}"
+      end
+
+      assert File.read!(Path.join(tmp_dir, "prior_sensitive.facts")) == "kept\n"
+
+      # function_def has the schema's five fields; the entry label lives in
+      # function_entry, split out because it is positional.
+      {:ok, rows} = read_facts(Path.join(tmp_dir, "function_def.facts"))
+      assert Enum.all?(rows, &(length(&1) == 5))
+      assert rows |> Enum.map(&Enum.at(&1, 1)) |> MapSet.new() == MapSet.new([":lists", ":maps"])
+    end
+
+    test "no modules is an empty directory of facts", %{tmp_dir: tmp_dir} do
+      assert {:ok, ^tmp_dir} = Pipeline.run([], tmp_dir)
+    end
+  end
+
   describe "write_facts/2" do
     test "writes an in-memory fact map to a solvable directory", %{tmp_dir: tmp_dir} do
-      {:ok, facts} = Pipeline.extract([:lists])
+      {:ok, facts} = Pipeline.extract([:maps])
 
       assert :ok = Pipeline.write_facts(facts, tmp_dir)
 
       # Extracted relations round-trip through the TSV files.
       {:ok, rows} = read_facts(Path.join(tmp_dir, "function_def.facts"))
-      assert Enum.any?(rows, fn [_func, mod | _] -> mod == ":lists" end)
-
-      # Every schema relation gets a file, even when no facts were
-      # extracted for it — a missing input file is an error.
-      for name <- Argus.Schema.names() do
-        assert File.exists?(Path.join(tmp_dir, "#{name}.facts")),
-               "missing .facts file for #{name}"
-      end
-    end
-  end
-
-  describe "run/3 edge cases" do
-    test "empty module list returns ok with output dir", %{tmp_dir: tmp_dir} do
-      assert {:ok, ^tmp_dir} = Pipeline.run([], tmp_dir)
-    end
-
-    test "every schema relation gets a file, and one already there is left alone",
-         %{tmp_dir: tmp_dir} do
-      File.write!(Path.join(tmp_dir, "prior_sensitive.facts"), "kept\n")
-      assert {:ok, ^tmp_dir} = Pipeline.run([:lists], tmp_dir)
+      assert Enum.any?(rows, fn [_func, mod | _] -> mod == ":maps" end)
 
       for name <- Argus.Schema.names() do
-        assert File.exists?(Path.join(tmp_dir, "#{name}.facts")),
-               "missing .facts file for #{name}"
+        assert File.exists?(Path.join(tmp_dir, "#{name}.facts")), "no file for #{name}"
       end
-
-      assert File.read!(Path.join(tmp_dir, "prior_sensitive.facts")) == "kept\n"
-      assert File.read!(Path.join(tmp_dir, "function_def.facts")) =~ ":lists"
     end
   end
 
   describe "extract/2 imprecision tracing" do
     # MyGenServer.get_value/1 calls GenServer.call(server, :get) where
-    # `server` is a parameter — resolve_callee returns "dynamic", which
-    # the OTP extractor tracks as :genserver_callee imprecision. Gives us
-    # a deterministic single-module test that exercises the gating.
-    @imprecision_module Argus.Test.Fixtures.MyGenServer
+    # `server` is a parameter: resolve_callee returns "dynamic", which the
+    # OTP extractor records as :genserver_callee imprecision.
+    test "is off by default, on when asked, and off again in the next run" do
+      extract = fn opts ->
+        {:ok, facts} =
+          Pipeline.extract(
+            [Argus.Test.Fixtures.MyGenServer],
+            [extractors: [Argus.Extractors.OTP, Argus.Extractors.ApiCalls]] ++ opts
+          )
 
-    test "default run produces no imprecision facts" do
-      {:ok, facts} =
-        Pipeline.extract([@imprecision_module],
-          extractors: [Argus.Extractors.OTP, Argus.Extractors.ApiCalls]
-        )
+        facts[:imprecision] || []
+      end
 
-      assert facts[:imprecision] in [nil, []]
-    end
+      assert extract.([]) == []
+      assert extract.(trace_imprecision: false) == []
 
-    test "explicit trace_imprecision: false produces no imprecision facts" do
-      {:ok, facts} =
-        Pipeline.extract([@imprecision_module],
-          extractors: [Argus.Extractors.OTP, Argus.Extractors.ApiCalls],
-          trace_imprecision: false
-        )
+      assert Enum.any?(
+               extract.(trace_imprecision: true),
+               &match?(["genserver_callee", _func, "sync_call", "dynamic"], &1)
+             )
 
-      assert facts[:imprecision] in [nil, []]
-    end
-
-    test "trace_imprecision: true records dynamic fallbacks" do
-      {:ok, facts} =
-        Pipeline.extract([@imprecision_module],
-          extractors: [Argus.Extractors.OTP, Argus.Extractors.ApiCalls],
-          trace_imprecision: true
-        )
-
-      imprecision = facts[:imprecision] || []
-      assert imprecision != []
-
-      assert Enum.any?(imprecision, fn [category, _func, relation, reason] ->
-               category == "genserver_callee" and relation == "sync_call" and
-                 reason == "dynamic"
-             end)
-    end
-
-    test "tracing flag is cleared in the worker after extraction", %{tmp_dir: _} do
-      # Run with tracing then without — the second run should see a clean
-      # worker process (the first run's try/after must have cleared the flag).
-      {:ok, _} =
-        Pipeline.extract([@imprecision_module],
-          extractors: [Argus.Extractors.OTP, Argus.Extractors.ApiCalls],
-          trace_imprecision: true
-        )
-
-      {:ok, facts} =
-        Pipeline.extract([@imprecision_module],
-          extractors: [Argus.Extractors.OTP, Argus.Extractors.ApiCalls]
-        )
-
-      assert facts[:imprecision] in [nil, []]
+      # The worker's flag is cleared after a traced run.
+      assert extract.([]) == []
     end
   end
 
