@@ -49,40 +49,46 @@ defmodule Argus.Findings.Rows do
       [["A", "1"], ["B", "2"]]
   """
   @spec dedupe(Analysis.output_relation(), [[String.t()]]) :: [[String.t()]]
-  def dedupe(%{key: key_fields, fields: fields} = relation, rows) when is_list(key_fields) do
-    positions = key_positions(key_fields, fields)
-
+  def dedupe(%{key: key} = relation, rows) when is_list(key) or is_tuple(key) do
     rows
-    |> Enum.group_by(fn row -> Enum.map(positions, &Enum.at(row, &1)) end)
-    |> Enum.map(fn {_key, group} -> representative(relation, group) end)
-    |> Enum.sort()
-  end
-
-  def dedupe(%{key: {column, keys}, fields: fields} = relation, rows) when is_map(keys) do
-    [discriminator] = key_positions([column], fields)
-
-    default =
-      case Map.fetch(keys, :default) do
-        {:ok, key_fields} -> key_positions(key_fields, fields)
-        :error -> Enum.to_list(0..(length(fields) - 1)//1)
-      end
-
-    by_value =
-      for {value, key_fields} <- keys, value != :default, into: %{} do
-        {value, key_positions(key_fields, fields)}
-      end
-
-    rows
-    |> Enum.group_by(fn row ->
-      value = Enum.at(row, discriminator)
-      positions = Map.get(by_value, value, default)
-      {value, Enum.map(positions, &Enum.at(row, &1))}
-    end)
+    |> Enum.group_by(row_key(relation))
     |> Enum.map(fn {_key, group} -> representative(relation, group) end)
     |> Enum.sort()
   end
 
   def dedupe(_relation, rows), do: rows
+
+  # What makes two rows one finding: the values of the key columns, or,
+  # for a key chosen by a column's value, that value and the columns it
+  # chooses (every column for a value the key does not name).
+  defp row_key(%{key: key_fields} = relation) when is_list(key_fields) do
+    positions = positions(relation, key_fields)
+    &values_at(&1, positions)
+  end
+
+  defp row_key(%{key: {column, keys}, fields: fields} = relation) when is_map(keys) do
+    discriminator = position(relation, column)
+
+    default =
+      case Map.fetch(keys, :default) do
+        {:ok, key_fields} -> positions(relation, key_fields)
+        :error -> Enum.to_list(0..(length(fields) - 1)//1)
+      end
+
+    by_value =
+      for {value, key_fields} <- keys,
+          value != :default,
+          into: %{},
+          do: {value, positions(relation, key_fields)}
+
+    fn row ->
+      value = Enum.at(row, discriminator)
+      {value, values_at(row, Map.get(by_value, value, default))}
+    end
+  end
+
+  defp positions(relation, columns), do: Enum.map(columns, &position(relation, &1))
+  defp values_at(row, positions), do: Enum.map(positions, &Enum.at(row, &1))
 
   defp representative(%{earliest: column} = relation, group) do
     at = position(relation, column)
@@ -122,14 +128,5 @@ defmodule Argus.Findings.Rows do
     relation.fields
     |> Enum.zip(row)
     |> Enum.map_join(", ", fn {{name, _kind, _doc}, value} -> "#{name}=#{value}" end)
-  end
-
-  defp key_positions(key_fields, fields) do
-    for key_field <- key_fields do
-      case Enum.find_index(fields, fn {name, _kind, _doc} -> name == key_field end) do
-        nil -> raise ArgumentError, "key field #{inspect(key_field)} not in #{inspect(fields)}"
-        position -> position
-      end
-    end
   end
 end
