@@ -78,9 +78,13 @@ A process starts children under another subtree's supervisor without visible
 teardown. Those children can remain alive after the starter stops. Starts through
 the supervisor's own service API are excluded as intentional shared ownership.
 
-Literal supervisor names are required. Any recognized child cleanup in terminate
-can suppress the finding, even if it targets other children or will not run.
-Linked tasks can be reported despite dying with their caller.
+Literal supervisor names are required. A starter that is itself a child of a
+supervisor in that tree, dynamic or static, is no outsider. A stop terminate/2 makes
+of a child's processes, through the child's own stop API or a resolved pid, suppresses
+the finding for that kind of child; any supervisor stop or child termination in
+terminate suppresses it for all, even if it targets other children or will not run.
+Tasks from `Task.Supervisor.async`, `async_stream` and `async_stream_nolink` end with
+their caller and are not counted as children.
 
 ## Stopping a process while still monitoring it
 

@@ -13,7 +13,17 @@ children_left_behind(mod, sup, start) :-
   starts_children_under(mod, sup, start),
   started_from_outside(start, sup),
   in_another_tree(mod, sup),
-  !terminate_stops_children(mod).
+  !terminate_stops_children(mod),
+  leaves_child(mod, sup, start).
+
+// Of the children `start` puts under `sup`, one terminate/2 does not stop through its
+// own stop API (terminate_stops_child): stopping one kind of child excuses no other.
+.decl leaves_child(mod: symbol, sup: symbol, start: symbol)
+
+leaves_child(mod, sup, start) :-
+  starts_children_under(mod, sup, start),
+  outlives_starter(sup, child, start),
+  !terminate_stops_child(mod, child).
 
 // Attribute child starts to the process whose callbacks reach them, including shared
 // helpers. Dynamic supervisor pids have no known tree because these arguments are not
@@ -21,9 +31,23 @@ children_left_behind(mod, sup, start) :-
 .decl starts_children_under(mod: symbol, sup: symbol, start: symbol)
 
 starts_children_under(mod, sup, start) :-
-  dynamic_child(sup, _, start),
+  outlives_starter(sup, _, start),
   sup != "dynamic",
   starter_process(mod, start).
+
+// A child `start` puts under `sup` that lives on when its starter dies. A task from
+// Task.Supervisor.async is linked to its caller, and async_stream's and
+// async_stream_nolink's tasks are killed by the stream's monitor when the caller dies:
+// only start_child and async_nolink start a task with a lifetime of its own. A
+// function making both kinds counts as making the second.
+.decl outlives_starter(sup: symbol, child: symbol, start: symbol)
+
+outlives_starter(sup, child, start) :- dynamic_child(sup, child, start), child != "Task".
+
+outlives_starter(sup, "Task", start) :-
+  dynamic_child(sup, "Task", start),
+  task_supervisor_start(_, start, op, _),
+  (op = "start_child" ; op = "async_nolink").
 
 // An entry of `mod`'s process (process_entry) reaches `start`
 // (reaches_child_start, clientlib/supervision.dl).
@@ -52,6 +76,9 @@ in_another_tree(mod, sup) :-
 
 // A tree's members by module, and by the registered name a child spec
 // gave them (`{DynamicSupervisor, name: Pool}` is a child named Pool).
+// A dynamic child of a member is a member too, at any depth (volt's
+// Tailwind worker, started under the library's pool, starting its
+// runtime under the same pool).
 .decl tree_member(root: symbol, member: symbol)
 
 tree_member(root, mod) :- child_subtree(root, _, mod).
@@ -60,6 +87,8 @@ tree_member(root, name) :- supervisor_child_name(root, _, name).
 tree_member(root, name) :-
   child_subtree(root, _, mid),
   supervisor_child_name(mid, _, name).
+
+tree_member(root, mod) :- dynamic_child(sup, mod, _), sup != "dynamic", tree_member(root, sup).
 
 // Any reachable supervisor stop or child termination suppresses the finding, even if
 // its target is unknown.
@@ -70,6 +99,27 @@ terminate_stops_children(mod) :-
   (via = func ; teardown_reach.reaches(func, via, _)),
   sup_management_call(_, via, _, op, _),
   stopping_sup_op(op).
+
+// terminate/2 stops `child`'s processes itself (fluffy's test scope closes each
+// session it started with the session's own GenServer.stop): a stop whose target is a
+// server of `child`, or an unresolved stop inside `child`'s module, its stop API.
+.decl terminate_stops_child(mod: symbol, child: symbol)
+
+terminate_stops_child(mod, child) :-
+  terminate_callback(func, mod, _),
+  (via = func ; teardown_reach.reaches(func, via, _)),
+  process_signal_source(id, via, "stop", _, _),
+  stop_lands_on(id, via, child).
+
+// The stop at `id` in `func` may end a process running `child`.
+.decl stop_lands_on(id: symbol, func: symbol, child: symbol)
+
+stop_lands_on(id, f, child) :- signal_target(id, f, "stop", p), server_process(p, child).
+
+stop_lands_on(id, f, child) :-
+  process_signal_source(id, f, "stop", _, _),
+  !signal_target(id, f, "stop", _),
+  function_def(f, child, _, _, _).
 
 // What terminate/2 reaches within three calls, whatever its reason.
 .init teardown_reach = ForwardBoundedCallReach

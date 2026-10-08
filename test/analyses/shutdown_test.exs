@@ -268,6 +268,35 @@ defmodule Argus.Analyses.ShutdownTest do
                "Argus.Test.Fixtures.ForeignChildren.TaskStarter"
              ]
     end
+
+    test "a starter in the supervisor's own tree, one whose terminate/2 stops its children, " <>
+           "and tasks bounded by their caller are not reported" do
+      alias Argus.Test.Fixtures.ShutdownForeign, as: F
+
+      {:ok, r} =
+        Memo.analyze(
+          [
+            F.LibTree,
+            F.OtherTree,
+            F.Facade,
+            F.Runtime,
+            F.Worker,
+            F.StrayWorker,
+            F.Session,
+            F.Scope,
+            F.CarelessScope,
+            F.Streams,
+            F.StreamsAndStrays
+          ],
+          :shutdown
+        )
+
+      assert modules(r, "foreign_dynamic_children") == [
+               "Argus.Test.Fixtures.ShutdownForeign.CarelessScope",
+               "Argus.Test.Fixtures.ShutdownForeign.StrayWorker",
+               "Argus.Test.Fixtures.ShutdownForeign.StreamsAndStrays"
+             ]
+    end
   end
 
   describe "cleanup a supervisor's stop skips" do
