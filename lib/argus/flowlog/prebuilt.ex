@@ -31,8 +31,6 @@ defmodule Argus.FlowLog.Prebuilt do
   `prebuilt/<sha256>/`.
   """
 
-  require Logger
-
   alias Argus.FlowLog.Native
   alias Argus.FlowLog.Toolchain
 
