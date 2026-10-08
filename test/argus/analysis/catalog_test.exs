@@ -7,6 +7,7 @@ defmodule Argus.Analysis.CatalogTest do
   test "the names are the modules' names, in the same order" do
     assert Catalog.names() == Enum.map(Catalog.modules(), & &1.name())
     assert Catalog.names() == Enum.sort(Catalog.names())
+    assert Catalog.names() == Enum.uniq(Catalog.names())
   end
 
   test "Argus.Analysis's lookups are the catalog's" do
@@ -32,6 +33,32 @@ defmodule Argus.Analysis.CatalogTest do
       assert Argus.Findings.Tooling.relation() in mod.output_relations(), inspect(mod)
       assert Argus.Extractors.Tooling in mod.extractors(), inspect(mod)
     end
+  end
+
+  test "every built-in declares its outputs' fields with a type and a doc" do
+    for mod <- Catalog.modules(), rel <- mod.output_relations() do
+      assert is_atom(rel.name) and is_binary(rel.doc), inspect({mod, rel.name})
+
+      for field <- rel.fields do
+        assert match?(
+                 {name, type, doc}
+                 when is_atom(name) and type in [:symbol, :number] and
+                        is_binary(doc),
+                 field
+               ),
+               inspect({mod, rel.name, field})
+      end
+    end
+  end
+
+  test "Argus.analyze/2 says why a selection, a module or a program cannot run" do
+    assert {:error, {:unknown_analysis, :nonexistent}} = Argus.analyze([:lists], :nonexistent)
+
+    assert {:error, {:not_found, :fake_module_xyz}} =
+             Argus.analyze([:fake_module_xyz], :startup)
+
+    assert {:error, {:rules_not_found, "/nonexistent/rules.dl"}} =
+             Argus.analyze([:lists], {:custom, "/nonexistent/rules.dl"})
   end
 
   describe "rules_path/1" do
