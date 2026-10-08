@@ -1,6 +1,5 @@
 defmodule Argus.ConfigTest do
-  # One test clears TYPESAFE_API_KEY, which is VM-wide.
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   alias Argus.Config
   alias Argus.Config.Source
@@ -180,17 +179,8 @@ defmodule Argus.ConfigTest do
       end
     end
 
-    test "live without a key fails at configuration" do
-      key = System.get_env("TYPESAFE_API_KEY")
-      System.delete_env("TYPESAFE_API_KEY")
-
-      try do
-        assert_raise ArgumentError, ~r/TYPESAFE_API_KEY/, fn -> Config.load(priors: :live) end
-      after
-        if key, do: System.put_env("TYPESAFE_API_KEY", key)
-      end
-    end
-
+    # Live without a key: PriorsEnvTest, which runs alone (the key is the
+    # VM's).
     test "live with an oracle of one's own needs no key" do
       assert %{mode: :live, opts: [oracle: Argus.Test.PriorOracle]} =
                Config.load(priors: [mode: :live, oracle: Argus.Test.PriorOracle]).priors

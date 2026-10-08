@@ -7,11 +7,13 @@ defmodule Argus.PriorsEnvTest do
 
   @mods [S.Exposed, S.PartlyRedacted, S.Redacted, S.Ordinary, S.Heuristic]
 
-  test "live without a key fails before extracting" do
+  test "live without a key fails at configuration, before extracting" do
     key = System.get_env("TYPESAFE_API_KEY")
     System.delete_env("TYPESAFE_API_KEY")
 
     try do
+      assert_raise ArgumentError, ~r/TYPESAFE_API_KEY/, fn -> Argus.Config.load(priors: :live) end
+
       assert_raise ArgumentError, ~r/TYPESAFE_API_KEY/, fn ->
         Argus.Findings.run(@mods, analyses: [:exposure], priors: :live)
       end
