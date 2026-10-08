@@ -6,6 +6,7 @@ defmodule Argus.Analyses.EtsCheckActTest do
   alias Argus.Test.Batch
   alias Argus.Test.Fixtures.CheckThenAct, as: C
   alias Argus.Test.Fixtures.Dictionary, as: D
+  alias Argus.Test.Fixtures.RacesExposureRows, as: Rows
   alias Argus.Test.Memo
 
   # Every test reads its fixtures' rows from one solve of them all
@@ -61,7 +62,9 @@ defmodule Argus.Analyses.EtsCheckActTest do
     C.AccessorThroughHelper,
     D.TmpOptions,
     D.CallerTable,
-    D.SharedCallerTable
+    D.SharedCallerTable,
+    Rows.Sibling,
+    Rows.SameRow
   ]
 
   setup_all do
@@ -175,6 +178,27 @@ defmodule Argus.Analyses.EtsCheckActTest do
 
     test "different keys are not a race", ctx do
       assert races(ctx, [C.DifferentKeys]) == []
+    end
+
+    test "tuple keys of another arity or literal are other rows", ctx do
+      # phoenix_replay's buffer: `{id, :meta}` beside `{id, :seq}`,
+      # `{id, seq}` and `{:collected, id, name}`.
+      assert races(ctx, [Rows.Sibling]) == []
+    end
+
+    test "a tuple key's own row deleted elsewhere is still a race, and only it", ctx do
+      assert [{"handle_cast/2", ":races_exposure_same_row", key}] =
+               races(ctx, [Rows.SameRow])
+
+      assert key =~ "literal :meta"
+
+      {:ok, results} = solve(ctx, [Rows.SameRow])
+
+      rivals =
+        for [_w, "rival", _site, func] <- results["ets_race_frame"],
+            do: func |> String.split(":") |> List.last()
+
+      assert rivals == ["drop/1"]
     end
   end
 

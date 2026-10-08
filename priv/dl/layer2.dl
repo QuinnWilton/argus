@@ -349,6 +349,11 @@
 .decl ets_key(id: symbol, source: symbol, key: symbol) mutable
 .input ets_key
 
+// An element of a tuple key `ets_key` names `tuple`, in `ets_key` vocabulary (`Identity.key_elements/4`). Every element has a row: a key of n elements has rows at positions 0 to n - 1. Not emitted for match patterns.
+//
+.decl ets_key_element(id: symbol, pos: number, source: symbol, value: symbol) mutable
+.input ets_key_element
+
 // Every creation of a named table in the function follows a lookup of that same table returning `:undefined`. Includes same-module creation helpers. A creation reachable without the absence check removes the row.
 //
 .decl ets_made_when_absent(func: symbol, name: symbol, witness: symbol) mutable

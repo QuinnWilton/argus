@@ -22,6 +22,10 @@ defmodule Argus.Extractors.ETS do
     operation (`Argus.Extractor.Identity.key_identity/4`); for `insert`/`insert_new` the
     key is the first element of the object tuple, and for `match`/`match_object`
     the first element of the pattern, when it is not a wildcard
+  - `ets_key_element(id, pos, source, value)` — what identifies element
+    `pos` (from 0) of a key `ets_key` names a `tuple`
+    (`Argus.Extractor.Identity.key_elements/4`), every element in order;
+    not for a match pattern, whose `:_` is a wildcard
   - `ets_tid_arg(caller, callee, arg_pos, name)` — at some call in
     `caller`, or in the environment of a closure it builds, the argument is
     the table `:ets.new(name, ...)` returned in `caller`: an unnamed table
@@ -114,6 +118,7 @@ defmodule Argus.Extractors.ETS do
   def relations,
     do: [
       :ets_key,
+      :ets_key_element,
       :ets_new,
       :ets_op,
       :ets_op_param,
@@ -694,14 +699,21 @@ defmodule Argus.Extractors.ETS do
 
   defp maybe_key(facts, id, ctx, func) when func in @keyed_ops do
     {source, key} = key_identity(ctx.instrs, ctx.idx, {:x, 1}, ctx.origins)
-    add_fact(facts, :ets_key, [id, source, key])
+
+    facts
+    |> add_fact(:ets_key, [id, source, key])
+    |> key_elements(id, Identity.key_elements(ctx.instrs, ctx.idx, {:x, 1}, ctx.origins))
   end
 
   # The key of an inserted object is its first element; a list of objects
   # says nothing about any one key.
   defp maybe_key(facts, id, ctx, func) when func in @object_ops do
     {source, key} = tuple_element_identity(ctx.instrs, ctx.idx, {:x, 1}, 0, ctx.origins)
-    add_fact(facts, :ets_key, [id, source, key])
+    elements = Identity.tuple_element_elements(ctx.instrs, ctx.idx, {:x, 1}, 0, ctx.origins)
+
+    facts
+    |> add_fact(:ets_key, [id, source, key])
+    |> key_elements(id, elements)
   end
 
   # A match pattern's first element is the key it matches, when it names
@@ -724,6 +736,17 @@ defmodule Argus.Extractors.ETS do
   end
 
   defp maybe_key(facts, _id, _ctx, _func), do: facts
+
+  # A tuple key's elements, so that a rule can tell `{id, :meta}` from
+  # `{id, :seq}` or `{:collected, id, name}` without reading the key's
+  # spelling. A match pattern's are left out: its `:_` is a wildcard.
+  defp key_elements(facts, id, {:ok, elements}) do
+    for {{source, value}, pos} <- Enum.with_index(elements), reduce: facts do
+      acc -> add_fact(acc, :ets_key_element, [id, Integer.to_string(pos), source, value])
+    end
+  end
+
+  defp key_elements(facts, _id, :error), do: facts
 
   # The table operand's access path. Emitted for every operation whose
   # operand has one, a literal name included, so a rule can join on

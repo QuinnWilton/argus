@@ -133,15 +133,17 @@ caller's read to another caller's decision.
 ### Row identity
 
 `EtsTable` uses a literal name, allocation site or module field. Unknown external
-parameters can match any compatible key. Distinct literals, incompatible shapes,
-freshly minted keys and each process's own PID can separate rows. `held_row` also
-treats tables whose creating writes all mint keys as per-holder storage.
+parameters can match any compatible key. Distinct literals, incompatible shapes
+(tuple keys of different arity, or with different literals at one position, such
+as `{id, :meta}` and `{id, :seq}`), freshly minted keys and each process's own PID
+can separate rows. `held_row` also treats tables whose creating writes all mint
+keys as per-holder storage.
 
-These are approximations: a minted key can be shared, a computed key can equal a
-literal the model treats as distinct, and extracted ETS keys assume the first tuple
-element even when custom `keypos` changes it. Unknown refill sources are treated as
-potentially changing; an effect missed in a supposedly pure helper can hide a refill
-race.
+These are approximations: a minted key can be shared, a computed key or tuple
+element can equal a literal the model treats as distinct, and extracted ETS keys
+assume the first tuple element even when custom `keypos` changes it. Unknown refill
+sources are treated as potentially changing; an effect missed in a supposedly pure
+helper can hide a refill race.
 
 ### Concurrent execution
 

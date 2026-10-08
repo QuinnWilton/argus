@@ -511,6 +511,83 @@ keys_apart("literal", k, ks2, k2) :-
   rival_write(_, _, _, ks2, k2),
   computed_in_view(ks2).
 
+// Two tuple keys of different arity, or with different literals at one position, are
+// different rows: `{id, :meta}` is not `{id, :seq}`, nor `{:collected, id, name}`. A
+// literal element is assumed apart from a computed one, as a literal key is from a
+// computed key. A parameter element may be any value, so it is apart from nothing;
+// elements compare by position and literal alone, which mean the same in every
+// function.
+keys_apart("tuple", k, "tuple", k2) :-
+  pair_key(_, _, "tuple", k),
+  rival_write(_, _, _, "tuple", k2),
+  tuple_elements_apart(k, k2).
+
+.decl tuple_elements_apart(k: symbol, k2: symbol)
+
+tuple_elements_apart(k, k2) :-
+  tuple_key_pair(k, k2),
+  tuple_key_element(k, p, _, _),
+  !tuple_key_pos(k2, p).
+
+tuple_elements_apart(k, k2) :-
+  tuple_key_pair(k, k2),
+  tuple_key_element(k2, p, _, _),
+  !tuple_key_pos(k, p).
+
+tuple_elements_apart(k, k2) :-
+  tuple_key_pair(k, k2),
+  tuple_key_element(k, p, "literal", v),
+  tuple_key_element(k2, p, "literal", v2),
+  v != v2.
+
+tuple_elements_apart(k, k2) :-
+  tuple_key_pair(k, k2),
+  tuple_key_element(k, p, "literal", _),
+  tuple_key_element(k2, p, s2, _),
+  computed_element(s2).
+
+tuple_elements_apart(k, k2) :-
+  tuple_key_pair(k, k2),
+  tuple_key_element(k, p, s, _),
+  computed_element(s),
+  tuple_key_element(k2, p, "literal", _).
+
+// A pair's tuple key and a rival's, both with known elements.
+.decl tuple_key_pair(k: symbol, k2: symbol)
+
+tuple_key_pair(k, k2) :-
+  pair_key(_, _, "tuple", k),
+  rival_write(_, _, _, "tuple", k2),
+  tuple_key_pos(k, _),
+  tuple_key_pos(k2, _).
+
+// A tuple key's elements, by the key's spelling: one spelling, one shape. A spelling a
+// match pattern also has is left out, since there `:_` is a wildcard and not a literal.
+.decl tuple_key_element(key: symbol, pos: number, source: symbol, value: symbol)
+
+tuple_key_element(k, p, s, v) :-
+  ets_key(op, "tuple", k),
+  ets_key_element(op, p, s, v),
+  !pattern_tuple_key(k).
+
+.decl tuple_key_pos(key: symbol, pos: number)
+
+tuple_key_pos(k, p) :- tuple_key_element(k, p, _, _).
+
+.decl pattern_tuple_key(key: symbol)
+
+pattern_tuple_key(k) :- ets_key(op, "tuple", k), ets_op(op, _, _, "match", _).
+pattern_tuple_key(k) :- ets_key(op, "tuple", k), ets_op(op, _, _, "match_object", _).
+
+// Elements a function computes, as computed_in_view's keys are computed, and the
+// calling process, which no literal is.
+.decl computed_element(source: symbol)
+
+computed_element("local").
+computed_element("field").
+computed_element("self").
+computed_element(s) :- tuple_key_element(_, _, s, _), match("element [0-9]+", s).
+
 // Computed keys include local/dynamic values, map fields, and parameter elements.
 // External or unfilled parameters may name any key.
 .decl computed_in_view(key_kind: symbol)

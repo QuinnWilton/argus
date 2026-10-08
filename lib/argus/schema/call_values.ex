@@ -203,6 +203,21 @@ defmodule Argus.Schema.CallValues do
         """
       },
       %{
+        name: :ets_key_element,
+        layer: 2,
+        fields: [
+          {:id, :instr_id, "instruction ID of the ETS operation"},
+          {:pos, :number, "0-based element position"},
+          {:source, :symbol, "literal | param | field | local | element N | self | tuple"},
+          {:value, :symbol, "as ets_key spells its key"}
+        ],
+        doc: """
+        An element of a tuple key `ets_key` names `tuple`, in `ets_key` vocabulary \
+        (`Identity.key_elements/4`). Every element has a row: a key of n elements has \
+        rows at positions 0 to n - 1. Not emitted for match patterns.
+        """
+      },
+      %{
         name: :ets_table_path,
         layer: 2,
         fields: [

@@ -42,8 +42,40 @@ defmodule Argus.Extractor.Identity do
   only within one function.
   """
   @spec key_identity([term()], non_neg_integer(), Resolve.register(), origins() | nil) ::
-          {String.t(), String.t()}
-  def key_identity(instrs, idx, register, origins \\ nil) do
+          identity()
+  def key_identity(instrs, idx, register, origins \\ nil),
+    do: instrs |> identify(idx, register, origins) |> pair()
+
+  @typedoc "What names a value: a source and a key, as `key_identity/4` spells them."
+  @type identity :: {String.t(), String.t()}
+
+  # An identity as this module builds it: a tuple's carries its elements'
+  # identities beside their spelling, for key_elements/4.
+  @typep identified :: identity() | {String.t(), String.t(), [identity()]}
+
+  @doc """
+  The elements of the tuple `key_identity/4` names `{"tuple", ...}`, in
+  order, each as `key_identity/4` names it: `{:ok, [identity]}`, or
+  `:error` when the value is not such a tuple. Every element has an
+  identity (a tuple with an element that has none is not named a tuple),
+  so the list's length is the tuple's arity.
+  """
+  @spec key_elements([term()], non_neg_integer(), Resolve.register(), origins() | nil) ::
+          {:ok, [identity()]} | :error
+  def key_elements(instrs, idx, register, origins \\ nil),
+    do: instrs |> identify(idx, register, origins) |> elements()
+
+  @spec pair(identified()) :: identity()
+  defp pair({source, key, _elements}), do: {source, key}
+  defp pair({_source, _key} = identity), do: identity
+
+  @spec elements(identified()) :: {:ok, [identity()]} | :error
+  defp elements({"tuple", _key, elements}), do: {:ok, elements}
+  defp elements(_identity), do: :error
+
+  @spec identify([term()], non_neg_integer(), Resolve.register(), origins() | nil) ::
+          identified()
+  defp identify(instrs, idx, register, origins) do
     case Resolve.resolve_register(instrs, idx, register) do
       {:ok, value}
       when (is_atom(value) and value != :dynamic) or is_binary(value) or is_integer(value) ->
@@ -235,12 +267,13 @@ defmodule Argus.Extractor.Identity do
 
   defp made_by(instrs, idx, {:put_tuple2, _dst, {:list, elements}}, origins)
        when elements != [] do
-    identities = Enum.map(elements, &element_identity(instrs, idx, &1, origins))
+    identities = Enum.map(elements, &pair(element_identity(instrs, idx, &1, origins)))
 
     if Enum.any?(identities, &match?({"dynamic", _}, &1)) do
       nil
     else
-      {"tuple", "{" <> Enum.map_join(identities, ", ", fn {s, v} -> "#{s} #{v}" end) <> "}"}
+      spelled = "{" <> Enum.map_join(identities, ", ", fn {s, v} -> "#{s} #{v}" end) <> "}"
+      {"tuple", spelled, identities}
     end
   end
 
@@ -270,7 +303,32 @@ defmodule Argus.Extractor.Identity do
           non_neg_integer(),
           origins() | nil
         ) :: {String.t(), String.t()}
-  def tuple_element_identity(instrs, idx, register, n, origins \\ nil) do
+  def tuple_element_identity(instrs, idx, register, n, origins \\ nil),
+    do: instrs |> identify_element(idx, register, n, origins) |> pair()
+
+  @doc """
+  `key_elements/4` for element `n` of the tuple in `register` at `idx`,
+  found as `tuple_element_identity/5` finds it: the elements of an
+  inserted object's tuple key.
+  """
+  @spec tuple_element_elements(
+          [term()],
+          non_neg_integer(),
+          Resolve.register(),
+          non_neg_integer(),
+          origins() | nil
+        ) :: {:ok, [identity()]} | :error
+  def tuple_element_elements(instrs, idx, register, n, origins \\ nil),
+    do: instrs |> identify_element(idx, register, n, origins) |> elements()
+
+  @spec identify_element(
+          [term()],
+          non_neg_integer(),
+          Resolve.register(),
+          non_neg_integer(),
+          origins() | nil
+        ) :: identified()
+  defp identify_element(instrs, idx, register, n, origins) do
     Resolve.trace(instrs, idx, register, @dynamic_identity, fn
       {:param, k}, _follow ->
         {"element #{n}", to_string(k)}
@@ -402,13 +460,13 @@ defmodule Argus.Extractor.Identity do
       {call_at, instr}, _follow ->
         case {Helpers.match_remote_call(instr), n} do
           {{:ok, :mnesia, :dirty_read, 2}, n} when n in [0, 1] ->
-            key_identity(instrs, call_at, {:x, n}, origins)
+            identify(instrs, call_at, {:x, n}, origins)
 
           {{:ok, :mnesia, :dirty_read, 1}, n} when n in [0, 1] ->
-            tuple_element_identity(instrs, call_at, {:x, 0}, n, origins)
+            identify_element(instrs, call_at, {:x, 0}, n, origins)
 
           {{:ok, :ets, :lookup, 2}, 0} ->
-            key_identity(instrs, call_at, {:x, 1}, origins)
+            identify(instrs, call_at, {:x, 1}, origins)
 
           _ ->
             @dynamic_identity
@@ -427,7 +485,7 @@ defmodule Argus.Extractor.Identity do
 
   defp element_identity(instrs, idx, operand, origins) do
     case Instr.register(operand) do
-      {kind, _n} = reg when kind in [:x, :y] -> key_identity(instrs, idx, reg, origins)
+      {kind, _n} = reg when kind in [:x, :y] -> identify(instrs, idx, reg, origins)
       _other -> {"dynamic", ""}
     end
   end
