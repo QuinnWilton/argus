@@ -4,6 +4,11 @@
 # and solves there.
 System.put_env("ARGUS_CACHE_DIR", Path.join(Mix.Project.build_path(), "argus/store"))
 
+# What earlier runs' tests left in their tmp_dirs, removed at once
+# (`Argus.Test.Files.rm_tmp_dirs!/0`) rather than by ExUnit as each test
+# starts, through the file server the run's tests share.
+Argus.Test.Files.rm_tmp_dirs!()
+
 # Answers to the same solve are shared across the run (`Argus.Test.Memo`),
 # and facts and solves kept across runs in the blob store above.
 Argus.Test.Memo.start()
