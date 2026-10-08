@@ -47,7 +47,10 @@ excluded.
 A management operation such as `start_child` or `terminate_child` adds another
 process's initialization or shutdown to the caller's startup path. The finding
 does not prove a callback cycle. Detached work and calls after acknowledgement
-are excluded from this class.
+are excluded from this class, and so is a task started under a `Task.Supervisor`:
+the task acknowledges its start before it runs its function, so the call waits on
+no child's initialization, unless the caller is itself started under that
+supervisor.
 
 ## Waiting on a server that can block
 

@@ -257,7 +257,8 @@ blocks_on_peer(mod, "init", peer, "call", "unknown", "", site, "conditional") :-
 //
 // These synchronous calls hold startup: start_child waits for the new child's init,
 // terminate_child for shutdown, and a call to the parent can deadlock. Include every
-// management operation because any may wait on the startup sequence it blocks.
+// management operation because any may wait on the startup sequence it blocks, but a
+// task start (answers_without_init).
 
 // Before acknowledging startup, init/1 calls a supervisor. Startup waits for that call
 // and for any child initialization it triggers.
@@ -266,7 +267,28 @@ blocks_on_peer(mod, "init", peer, "call", "unknown", "", site, "conditional") :-
 supervisor_call_during_init(mod, call) :-
   init_function(mod, init),
   holds_start(init, call),
-  manages_supervisor(call).
+  manages_supervisor(call),
+  !answers_without_init(mod, call).
+
+// The supervisor answers without waiting on a child's init/1 or on anyone
+// mod's start waits for. A Task.Supervisor start spawns the task, which
+// acknowledges its start before it runs its function: the call returns
+// once the supervisor has spawned it, whatever the task then does, and a
+// Task.Supervisor has no other children to wait on. Only one that starts
+// mod itself (a named dynamic_child) is mid-start of mod and does not
+// answer.
+.decl answers_without_init(mod: symbol, call: symbol)
+
+answers_without_init(mod, call) :-
+  init_function(mod, _),
+  sup_management_call(call, _, "Task.Supervisor", op, sup),
+  child_creating_op(op),
+  !starts_under(mod, sup).
+
+// mod is started under the supervisor named `sup`.
+.decl starts_under(mod: symbol, sup: symbol)
+
+starts_under(mod, sup) :- dynamic_child(sup, mod, _), sup != "dynamic".
 
 // The call is Supervisor.start_child/2 or one of its relatives, a
 // GenServer.call into a supervisor (sup_management_call,

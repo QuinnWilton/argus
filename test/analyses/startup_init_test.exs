@@ -83,6 +83,25 @@ defmodule Argus.Analyses.StartupInitTest do
       assert site =~ "StartupCalledCapture:start_transport/2#"
     end
 
+    # startup.dl, supervisor_call_during_init: !answers_without_init(mod, call).
+    test "a task init/1 starts under a Task.Supervisor of its own is not reported" do
+      assert {:ok, results} =
+               Memo.analyze([Argus.Test.Fixtures.StartupPrivateTaskSup], :startup)
+
+      assert Rows.where(results, :startup, "blocks_on_peer", kind: "sup") == []
+    end
+
+    test "a task started under the Task.Supervisor init/1 runs under is reported" do
+      assert {:ok, results} =
+               Memo.analyze([Argus.Test.Fixtures.StartupPooledWorker], :startup)
+
+      assert [["Argus.Test.Fixtures.StartupTaskPool", "Task.Supervisor.async_nolink"]] =
+               Rows.where(results, :startup, "blocks_on_peer",
+                 kind: "sup",
+                 drop: [:mod, :phase, :kind, :ordering, :sup, :site]
+               )
+    end
+
     test "a call the tree-order argument accepts is still reported when the callee's handler blocks" do
       modules = [
         Argus.Test.Fixtures.WatcherAppTree,

@@ -416,3 +416,54 @@ defmodule Argus.Test.Fixtures.StartupAnnounceTree do
     Supervisor.init(children, strategy: :one_for_one)
   end
 end
+
+# init/1 starts a Task.Supervisor of its own, keeps it in its options and
+# its state, and runs a command under it. The start_child waits on no
+# child's init/1: a task acknowledges its start before it runs its
+# function.
+defmodule Argus.Test.Fixtures.StartupPrivateTaskSup do
+  @moduledoc false
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(opts) do
+    {:ok, task_sup} = Task.Supervisor.start_link()
+    opts = Keyword.put(opts, :task_supervisor, task_sup)
+    mount(opts)
+  end
+
+  defp mount(opts) do
+    state = %{task_supervisor: Keyword.fetch!(opts, :task_supervisor)}
+    {:ok, run_command(state, fn -> :draw end)}
+  end
+
+  defp run_command(state, fun) do
+    parent = self()
+
+    Task.Supervisor.start_child(state.task_supervisor, fn ->
+      send(parent, {:command, fun.()})
+    end)
+
+    state
+  end
+end
+
+# The twin: init/1 starts a task under the Task.Supervisor it is itself
+# started under, which does not answer until init/1 returns.
+defmodule Argus.Test.Fixtures.StartupPooledWorker do
+  @moduledoc false
+  use GenServer
+
+  def start(arg),
+    do: DynamicSupervisor.start_child(Argus.Test.Fixtures.StartupTaskPool, {__MODULE__, arg})
+
+  def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
+
+  @impl true
+  def init(arg) do
+    Task.Supervisor.async_nolink(Argus.Test.Fixtures.StartupTaskPool, fn -> arg end)
+    {:ok, arg}
+  end
+end
