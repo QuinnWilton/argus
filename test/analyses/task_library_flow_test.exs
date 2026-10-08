@@ -548,15 +548,23 @@ defmodule Argus.Analyses.TaskLibraryFlowTest do
     Enum.join(lines ++ [tail], "\n    ")
   end
 
-  # A map holding the task under a literal key (`:a`), read later with
-  # the unknown key `k`: the read follows only the map's unknown-key
-  # field, so the task escapes there and is not reported, dropped or not.
+  # A map holding the task under a literal key (`:a`), a value read out of
+  # it later with the unknown key `k`: the read follows only the map's
+  # unknown-key field, so the task escapes there and is not reported,
+  # dropped or not. A step that makes a map of the map by `k` (a take, a
+  # split, an update) keeps the task where it was or leaves it out, and
+  # a later read by `k` still decides.
   defp escapes_by_unknown_key?(%{steps: steps}) do
     steps
     |> Enum.drop_while(fn {_mfa, _from, expr, to} -> not (to == :map and expr =~ ~r/:a\b/) end)
     |> Enum.drop(1)
-    |> Enum.any?(fn {_mfa, from, expr, _to} -> from == :map and expr =~ ~r/\bk\b/ end)
+    |> Enum.any?(fn {_mfa, from, expr, to} ->
+      from == :map and expr =~ ~r/\bk\b/ and made(to) != :map
+    end)
   end
+
+  defp made({:match, _pattern, kind}), do: kind
+  defp made(kind), do: kind
 
   # A run's chains are functions of one module, solved together
   # (`Argus.Test.BatchProperty`): a chain calls only the library, never
