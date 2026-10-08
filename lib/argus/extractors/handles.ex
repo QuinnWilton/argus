@@ -34,7 +34,9 @@ defmodule Argus.Extractors.Handles do
 
   A path on which the tuple was never taken apart — the `{:error, _}`
   arm — owns no handle. A path that raises drops nothing here: the
-  process exits or a handler up the stack decides. The first drop in
+  process exits or a handler up the stack decides. A call to a function
+  of the module that never returns (`Argus.Extractor.NeverReturns`: a
+  `with`'s raising `else`, a `fail!/1` helper) raises too. The first drop in
   instruction order names the path (`handle_dropped`).
 
   ## Emitted facts
@@ -49,6 +51,7 @@ defmodule Argus.Extractors.Handles do
   alias Argus.Cfg.Function, as: Graph
   alias Argus.Extractor.CallSites
   alias Argus.Extractor.Helpers
+  alias Argus.Extractor.NeverReturns
   alias Argus.Instr
   alias Argus.InstrId
   alias Argus.Pipeline.Normalize
@@ -186,7 +189,17 @@ defmodule Argus.Extractors.Handles do
     |> CallSites.for_module()
     |> Enum.filter(&(&1.remote? and Map.has_key?(@opens, &1.mfa)))
     |> Enum.group_by(& &1.func_id)
-    |> Enum.reduce(%{}, fn {func_id, sites}, facts ->
+    |> extract_sites(module_data)
+  end
+
+  defp extract_sites(by_function, _module_data) when by_function == %{}, do: %{}
+
+  defp extract_sites(by_function, module_data) do
+    # A function-local extraction is handed the ones its function calls.
+    never =
+      Map.get_lazy(module_data, :never_returns, fn -> NeverReturns.functions(module_data) end)
+
+    Enum.reduce(by_function, %{}, fn {func_id, sites}, facts ->
       {name, arity} = Normalize.func_id_name_arity(func_id)
 
       case Helpers.cfg(module_data, name, arity) do
@@ -195,12 +208,14 @@ defmodule Argus.Extractors.Handles do
 
         graph ->
           code = sites |> hd() |> Map.fetch!(:instrs) |> List.to_tuple()
-          Enum.reduce(sites, facts, &opened(&2, &1, graph, code))
+          Enum.reduce(sites, facts, &opened(&2, &1, {graph, code, never}))
       end
     end)
   end
 
-  defp opened(facts, %{func_id: func_id, idx: idx, mfa: {mod, fun, arity} = mfa}, graph, code) do
+  defp opened(facts, %{func_id: func_id, idx: idx, mfa: {mod, fun, arity} = mfa}, walk) do
+    {_graph, code, _never} = walk
+
     # A tail call hands what it answers to the caller: nothing left here.
     if Instr.tail_call?(elem(code, idx)) do
       facts
@@ -211,7 +226,7 @@ defmodule Argus.Extractors.Handles do
           :bare -> %{tuple: [], handle: [{:x, 0}], tags: [], owned: true, gone: nil}
         end
 
-      case drop(graph, code, [{idx + 1, start}], %{}, nil) do
+      case drop(walk, [{idx + 1, start}], %{}, nil) do
         nil ->
           facts
 
@@ -231,33 +246,33 @@ defmodule Argus.Extractors.Handles do
   # hold the handle is walked on (`gone`, where it went) until it
   # returns — a drop — or raises, which drops nothing here. `seen` holds
   # the states already walked; each is walked once.
-  defp drop(_graph, _code, [], _seen, first), do: first
+  defp drop(_walk, [], _seen, first), do: first
 
-  defp drop(graph, code, [{idx, regs} = state | rest], seen, first) do
+  defp drop({graph, code, never} = walk, [{idx, regs} = state | rest], seen, first) do
     cond do
       map_size(seen) > @max_states ->
         first
 
       idx >= tuple_size(code) or Map.has_key?(seen, state) ->
-        drop(graph, code, rest, seen, first)
+        drop(walk, rest, seen, first)
 
       true ->
         seen = Map.put(seen, state, true)
         instr = elem(code, idx)
 
-        case step(instr, idx, regs) do
+        case step(instr, idx, regs, never) do
           :done ->
-            drop(graph, code, rest, seen, first)
+            drop(walk, rest, seen, first)
 
           {:dropped, at} ->
-            drop(graph, code, rest, seen, earliest(first, at))
+            drop(walk, rest, seen, earliest(first, at))
 
           {:next, regs} ->
             next =
               for at <- successors(graph, code, idx),
                   do: {at, gone(established(graph, instr, idx, at, regs), idx)}
 
-            drop(graph, code, next ++ rest, seen, first)
+            drop(walk, next ++ rest, seen, first)
         end
     end
   end
@@ -312,15 +327,15 @@ defmodule Argus.Extractors.Handles do
   # What `instr` does on a path: `:done` (the handle handed on, or none
   # on this path), `{:dropped, at}` (the path returns without it, lost
   # at `at`), or `{:next, regs}`.
-  defp step(instr, _idx, %{gone: at} = regs) when at != nil do
+  defp step(instr, _idx, %{gone: at} = regs, never) when at != nil do
     cond do
-      raises?(instr) -> :done
+      NeverReturns.call?(instr, never) -> :done
       Instr.exits?(instr) -> {:dropped, at}
       true -> {:next, regs}
     end
   end
 
-  defp step(instr, idx, regs) do
+  defp step(instr, idx, regs, never) do
     reads = Instr.uses(instr)
     tuple_read = Enum.filter(reads, &(&1 in regs.tuple))
     handle_read = Enum.filter(reads, &(&1 in regs.handle))
@@ -330,7 +345,7 @@ defmodule Argus.Extractors.Handles do
       handle_read == [] and tuple_read != [] -> tuple_use(instr, tuple_read, regs)
       handle_read != [] -> handle_use(instr, idx, handle_read, regs)
       copy?(instr) -> {:next, carry(instr, regs)}
-      raises?(instr) -> :done
+      NeverReturns.call?(instr, never) -> :done
       Instr.exits?(instr) -> if regs.owned, do: {:dropped, idx}, else: :done
       true -> {:next, carry(instr, regs)}
     end
@@ -390,23 +405,6 @@ defmodule Argus.Extractors.Handles do
         handle: instr |> Instr.carry(regs.handle) |> Enum.sort(),
         tags: instr |> Instr.carry(regs.tags) |> Enum.sort()
     }
-  end
-
-  # A call that never returns: the path raises.
-  @raising [
-    {:erlang, :error, 1},
-    {:erlang, :error, 2},
-    {:erlang, :error, 3},
-    {:erlang, :exit, 1},
-    {:erlang, :throw, 1},
-    {:erlang, :raise, 3}
-  ]
-
-  defp raises?(instr) do
-    case Helpers.match_remote_call(instr) do
-      {:ok, m, f, a} -> {m, f, a} in @raising
-      :none -> false
-    end
   end
 
   defp test?(instr) when is_tuple(instr),

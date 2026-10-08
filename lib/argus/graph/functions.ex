@@ -419,6 +419,9 @@ defmodule Argus.Graph.Functions do
   defp context(db, key, Argus.Extractors.ProcessRegistry),
     do: %{returns_to: R.query(db, :extraction_returns_context, key)}
 
+  defp context(db, key, Argus.Extractors.Handles),
+    do: %{never_returns: R.query(db, :extraction_never_returns_context, key)}
+
   defp context(_, _, _), do: %{}
 
   defp export_key({name, arity, _}), do: {name, arity}

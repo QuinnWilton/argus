@@ -14,7 +14,9 @@ defmodule Argus.Analyses.FailureResourceTest do
     Handles.Connect,
     Handles.Ports,
     Handles.Quiet,
-    Handles.Adversarial
+    Handles.Adversarial,
+    Argus.Test.Fixtures.FailureRaisingElse,
+    Argus.Test.Fixtures.FailureReturningElse
   ]
 
   setup_all do
@@ -26,7 +28,7 @@ defmodule Argus.Analyses.FailureResourceTest do
     assert {:ok, results} = Batch.analyze(batch, [module])
 
     for [func, _site, api, _drop] <- Rows.where(results, :failure, "resource_dropped", []) do
-      {String.replace(func, "Argus.Test.Fixtures.Handles.", ""), api}
+      {func |> String.replace("Argus.Test.Fixtures.", "") |> String.replace("Handles.", ""), api}
     end
     |> Enum.sort()
   end
@@ -60,6 +62,17 @@ defmodule Argus.Analyses.FailureResourceTest do
                "Adversarial:raise_before_open/2",
                "Adversarial:raise_or_return/1",
                "Adversarial:with_else/1"
+             ]
+    end
+
+    test "a path into a local function that never returns raises; one that may, loses", ctx do
+      # A `with`'s `else` is lifted into a fun of the module that every
+      # failing step tail-calls (ex_mp4's DataWriter.File.write/4).
+      assert dropped(ctx, Argus.Test.Fixtures.FailureRaisingElse) == []
+
+      assert dropped(ctx, Argus.Test.Fixtures.FailureReturningElse) == [
+               {"FailureReturningElse:copy_into/2", "File.open/2"},
+               {"FailureReturningElse:write_checked/2", "File.open/2"}
              ]
     end
 

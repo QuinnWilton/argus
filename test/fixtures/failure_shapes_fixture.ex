@@ -119,3 +119,76 @@ defmodule Argus.Test.Fixtures.FailureWhereisReturnedUsed do
   # Two lookups compared: both may be nil, and nil == nil.
   def same?, do: Process.whereis(:failure_a) == Process.whereis(:failure_b)
 end
+
+defmodule Argus.Test.Fixtures.FailureRaisingElse do
+  @moduledoc """
+  A file opened in a `with` whose every failure goes to an `else` that
+  raises (ex_mp4's `DataWriter.File.write/4`), or to a helper of the
+  module that always raises: no path returns with it open.
+  """
+
+  def copy_into(path, data) do
+    with {:ok, fd} <- File.open(path, [:write]),
+         :ok <- check(data),
+         :ok <- IO.binwrite(fd, data),
+         :ok <- File.close(fd) do
+      :ok
+    else
+      error -> raise "cannot write: #{inspect(error)}"
+    end
+  end
+
+  def write_checked(path, data) do
+    {:ok, fd} = File.open(path, [:write])
+
+    case :file.write_file(path <> ".bak", data) do
+      :ok ->
+        IO.binwrite(fd, data)
+        File.close(fd)
+
+      error ->
+        fail!(error)
+    end
+  end
+
+  defp fail!(reason), do: raise(ArgumentError, "cannot write: #{inspect(reason)}")
+
+  defp check(data), do: if(data == "", do: {:error, :empty}, else: :ok)
+end
+
+defmodule Argus.Test.Fixtures.FailureReturningElse do
+  @moduledoc """
+  The twins of FailureRaisingElse whose `else`, or helper, returns: the
+  file stays open on that path.
+  """
+
+  def copy_into(path, data) do
+    with {:ok, fd} <- File.open(path, [:write]),
+         :ok <- check(data),
+         :ok <- IO.binwrite(fd, data),
+         :ok <- File.close(fd) do
+      :ok
+    else
+      error -> {:error, {:cannot_write, error}}
+    end
+  end
+
+  def write_checked(path, data) do
+    {:ok, fd} = File.open(path, [:write])
+
+    case :file.write_file(path <> ".bak", data) do
+      :ok ->
+        IO.binwrite(fd, data)
+        File.close(fd)
+
+      error ->
+        fail(error)
+    end
+  end
+
+  # Raises for one reason, returns for the others.
+  defp fail({:error, :enospc}), do: raise(ArgumentError, "disk full")
+  defp fail(reason), do: {:error, reason}
+
+  defp check(data), do: if(data == "", do: {:error, :empty}, else: :ok)
+end

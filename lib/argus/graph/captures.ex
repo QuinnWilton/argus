@@ -3,8 +3,9 @@ defmodule Argus.Graph.Captures do
   What a function-local producer reads of the rest of its module, as an
   explicit extraction dependency: captured parameter provenance
   (`Argus.Extractors.ApiCalls`), counted closures
-  (`Argus.Extractors.Dependence`), and where a function's returned values
-  go in its callers (`Argus.Extractors.ProcessRegistry`). Each is
+  (`Argus.Extractors.Dependence`), where a function's returned values go
+  in its callers (`Argus.Extractors.ProcessRegistry`), and which of the
+  functions it calls never return (`Argus.Extractors.Handles`). Each is
   computed over the module's canonical bodies and taken for one function,
   so an edit elsewhere in the module re-extracts the function only when
   what it reads changed.
@@ -48,6 +49,27 @@ defmodule Argus.Graph.Captures do
       if data == nil,
         do: %{},
         else: Argus.Extractors.ProcessRegistry.returns_to(data, [function])
+    end
+  end
+
+  defquery :extraction_never_returns, key: module, store: :blob do
+    with {:ok, data} <- module_data(db, module) do
+      if data == nil, do: MapSet.new(), else: Argus.Extractor.NeverReturns.functions(data)
+    end
+  end
+
+  defquery :extraction_never_returns_context, key: {module, {_name, _arity} = key} do
+    with {:ok, data} when data != nil <- R.query(db, :extraction_function, {module, key}) do
+      called =
+        for {:function, _, _, _, instrs} <- data.functions,
+            instr <- instrs,
+            {:ok, m, f, a} <- [Argus.Extractor.Helpers.match_local_call(instr)],
+            into: MapSet.new(),
+            do: Argus.InstrId.func_id(m, f, a)
+
+      db |> R.query(:extraction_never_returns, module) |> MapSet.intersection(called)
+    else
+      _ -> MapSet.new()
     end
   end
 
