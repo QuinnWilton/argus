@@ -63,10 +63,13 @@ defmodule Argus.Extractor.Resolve do
   defp apply_pure_bif(:map_size, [map]) when is_map(map), do: {:ok, map_size(map)}
   defp apply_pure_bif(:byte_size, [bin]) when is_binary(bin), do: {:ok, byte_size(bin)}
 
+  # A list holding the placeholder may be one built onto a tail nothing
+  # resolved (`[x | rest]` reads as `[x, :dynamic]`): its length is not
+  # its cells'.
   defp apply_pure_bif(:length, [list]) when is_list(list) do
     case proper_length(list) do
+      n when is_integer(n) -> if :dynamic in list, do: :dynamic, else: {:ok, n}
       nil -> :dynamic
-      n -> {:ok, n}
     end
   end
 
