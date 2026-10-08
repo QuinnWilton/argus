@@ -327,6 +327,29 @@ defmodule Argus.FlowLog.Bench do
   defp outputs_changed(before, measure),
     do: [{"(outcome: #{before.outcome} -> #{measure.outcome})", nil, nil}]
 
+  @doc """
+  Measures taken together: their fastest times from scratch and their
+  edits' medians summed, as if solved one after another; the largest
+  peak; and what their engines keep summed, as a session holding them
+  all keeps it.
+  """
+  @spec total([measure()]) :: %{
+          cold_ms: number(),
+          edit_ms: number(),
+          peak_bytes: non_neg_integer() | nil,
+          bytes: non_neg_integer()
+        }
+  def total(measures) do
+    peaks = for %{peak_bytes: peak} when is_integer(peak) <- measures, do: peak
+
+    %{
+      cold_ms: Enum.sum(Enum.map(measures, &(fastest(&1.cold_ms) || 0))),
+      edit_ms: Enum.sum(Enum.map(measures, &(median(&1.edit_ms) || 0))),
+      peak_bytes: if(peaks != [], do: Enum.max(peaks)),
+      bytes: Enum.sum(Enum.map(measures, &(&1.bytes || 0)))
+    }
+  end
+
   @doc "The fastest of a run's times, or nil when there are none."
   @spec fastest([number()]) :: number() | nil
   def fastest([]), do: nil

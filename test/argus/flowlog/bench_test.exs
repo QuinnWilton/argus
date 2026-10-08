@@ -109,6 +109,15 @@ defmodule Argus.FlowLog.BenchTest do
     assert again =~ "every output is the same rows as the saved run's (1 programs)"
   end
 
+  test "a run's total sums its times and what its engines keep, and takes the largest peak" do
+    measure = fn cold, edits, peak, bytes ->
+      %{cold_ms: cold, edit_ms: edits, peak_bytes: peak, bytes: bytes}
+    end
+
+    assert Bench.total([measure.([30, 10], [5, 1, 3], 100, 40), measure.([7], [], nil, nil)]) ==
+             %{cold_ms: 17, edit_ms: 3, peak_bytes: 100, bytes: 40}
+  end
+
   test "the median and the fastest of times" do
     assert Bench.median([3, 1, 2]) == 2
     assert Bench.median([]) == nil

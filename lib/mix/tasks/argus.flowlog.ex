@@ -318,12 +318,40 @@ defmodule Mix.Tasks.Argus.Flowlog do
         end
       end
 
+    if length(measures) > 1, do: print_total(measures, against)
+
     if path = opts[:save] do
       Bench.write!(Path.expand(path), measures)
       info("argus: saved #{length(measures)} measure(s) to #{path}")
     end
 
     if against, do: print_verdict(Bench.compare(against, measures))
+  end
+
+  # The run as a whole: every program's time from scratch and edits one
+  # after another, and what all their engines keep together, as an
+  # editor's session holds them.
+  defp print_total(measures, against) do
+    total = Bench.total(measures)
+
+    before =
+      against &&
+        Bench.total(
+          Enum.filter(against, &(&1.program in Enum.map(measures, fn m -> m.program end)))
+        )
+
+    info(
+      "#{String.pad_trailing("all #{length(measures)} programs", 30)} " <>
+        Enum.join(
+          [
+            "cold " <> change(&seconds/1, total.cold_ms, before && before.cold_ms),
+            "edits " <> change(&millis/1, total.edit_ms, before && before.edit_ms),
+            "peak " <> change(&mb/1, total.peak_bytes, before && before.peak_bytes),
+            "kept " <> change(&mb/1, total.bytes, before && before.bytes)
+          ],
+          "  "
+        )
+    )
   end
 
   defp engine_option(nil), do: []
