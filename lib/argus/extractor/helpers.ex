@@ -158,15 +158,8 @@ defmodule Argus.Extractor.Helpers do
   if the label is not found.
   """
   @spec instructions_from_label([term()], non_neg_integer()) :: [term()]
-  def instructions_from_label(instrs, label_num) do
-    case Enum.drop_while(instrs, fn
-           {:label, ^label_num} -> false
-           _ -> true
-         end) do
-      [] -> []
-      from_label -> from_label
-    end
-  end
+  def instructions_from_label(instrs, label_num),
+    do: Enum.drop_while(instrs, &(&1 != {:label, label_num}))
 
   # --- Shared readings ---
 
