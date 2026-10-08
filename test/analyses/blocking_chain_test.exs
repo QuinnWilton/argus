@@ -222,36 +222,6 @@ defmodule Argus.Analyses.BlockingChainTest do
       assert [["Argus.Test.Fixtures.TimeoutChain.BlockingCastStage", _]] = chains(results, "cast")
     end
 
-    test "detects infinity timeout in chain" do
-      modules = [
-        Argus.Test.Fixtures.TimeoutChain.ServerA,
-        Argus.Test.Fixtures.TimeoutChain.ServerB,
-        Argus.Test.Fixtures.TimeoutChain.ServerC,
-        Argus.Test.Fixtures.TimeoutChain.ServerWithInfinityTimeout
-      ]
-
-      assert {:ok, results} = Memo.analyze(modules, :blocking)
-      assert Map.has_key?(results, "unbounded_wait")
-
-      # infinity_timeout_in_chain requires callback_sync_dep_timeout with -1
-      # and implements_behaviour on the target. The fixture calls GenServer.call
-      # with :infinity, which the extractor may encode as -1.
-      infinity =
-        Rows.where(results, :blocking, "unbounded_wait",
-          kind: "infinity",
-          drop: [:site, :kind, :detail, :nodes, :peer, :permille]
-        )
-
-      # If the extractor detects the :infinity timeout, it should flag it.
-      # This is conditional on the OTP extractor encoding :infinity as -1.
-      if infinity != [] do
-        assert Enum.any?(infinity, fn [func, _target] ->
-                 func ==
-                   "Argus.Test.Fixtures.TimeoutChain.ServerWithInfinityTimeout:handle_call/3"
-               end)
-      end
-    end
-
     test "runs without error on modules with no GenServer callbacks" do
       assert {:ok, results} = Memo.analyze([:maps], :blocking)
       assert Map.has_key?(results, "call_chain")

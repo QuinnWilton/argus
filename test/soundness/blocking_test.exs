@@ -16,7 +16,8 @@ defmodule Argus.Soundness.BlockingTest do
     S2c.Catch.ReraiseErlang,
     S2c.Catch.ShutdownReexit,
     S2c.Catch.AnyExitReexit,
-    S2c.Catch.OpenKept
+    S2c.Catch.OpenKept,
+    :s2c_catch_many
   ]
 
   setup_all do

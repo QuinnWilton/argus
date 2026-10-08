@@ -47,7 +47,7 @@ defmodule Argus.Priors.Questions.PeerAnswersTest do
     assert [%{function: _, calls: _, literals: _, called_by: _}] = state.functions
 
     for s <- subjects(), {_k, v} <- s.state, x <- List.wrap(v), is_binary(x) do
-      refute x =~ ~r/#\\d+$/, "an instruction id leaked into the state: #{x}"
+      refute x =~ ~r/#\d+$/, "an instruction id leaked into the state: #{x}"
     end
   end
 

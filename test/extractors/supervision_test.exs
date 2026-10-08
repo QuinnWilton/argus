@@ -43,16 +43,12 @@ defmodule Argus.Extractors.SupervisionTest do
         BeamSpy.BeamFile.disassemble(to_string(:code.which(Argus.Test.Fixtures.GoodSupervisor)))
 
       facts = Supervision.extract(data)
+      sup = "Argus.Test.Fixtures.GoodSupervisor"
 
-      if Map.has_key?(facts, :supervisor_child) do
-        children = facts[:supervisor_child]
-        assert children != []
-
-        child_mods = Enum.map(children, fn [_, _, mod, _, _] -> mod end)
-
-        assert Enum.any?(child_mods, &String.contains?(&1, "WorkerA")) or
-                 Enum.any?(child_mods, &String.contains?(&1, "WorkerB"))
-      end
+      assert Enum.sort(facts[:supervisor_child]) == [
+               [sup, "0", "Argus.Test.Fixtures.WorkerA", "own", "worker"],
+               [sup, "1", "Argus.Test.Fixtures.WorkerB", "own", "worker"]
+             ]
     end
 
     test "reads a supervisor that declares no behaviour and starts itself as one" do
@@ -150,16 +146,14 @@ defmodule Argus.Extractors.SupervisionTest do
         BeamSpy.BeamFile.disassemble(to_string(:code.which(Argus.Test.Fixtures.AppSupervisor)))
 
       facts = Supervision.extract(data)
+      sup = "Argus.Test.Fixtures.AppSupervisor"
 
-      if Map.has_key?(facts, :supervisor_child) do
-        children = facts[:supervisor_child]
-        assert children != []
+      assert Enum.sort(facts[:supervisor_child]) == [
+               [sup, "0", "Argus.Test.Fixtures.WorkerA", "own", "worker"],
+               [sup, "1", "Argus.Test.Fixtures.WorkerB", "own", "worker"]
+             ]
 
-        child_mods = Enum.map(children, fn [_, _, mod, _, _] -> mod end)
-
-        assert Enum.any?(child_mods, &String.contains?(&1, "WorkerA")) or
-                 Enum.any?(child_mods, &String.contains?(&1, "WorkerB"))
-      end
+      assert facts[:supervisor_site] == [[sup, sup <> ":start/2#7"]]
     end
   end
 

@@ -251,9 +251,14 @@ defmodule Argus.Extractors.GenStatemTest do
       # the event type is still matched.
       refute Map.has_key?(facts, :statem_event_catchall)
 
+      # DelegatingStatem's state functions take any event, and hand it on.
       facts = GenStatem.extract(disassemble(Argus.Test.Fixtures.DelegatingStatem))
-      totals = Map.get(facts, :statem_event_catchall, [])
-      assert is_list(totals)
+      statem = "Argus.Test.Fixtures.DelegatingStatem"
+
+      assert Enum.sort(facts[:statem_event_catchall]) == [
+               [statem, statem <> ":busy/3"],
+               [statem, statem <> ":idle/3"]
+             ]
     end
   end
 

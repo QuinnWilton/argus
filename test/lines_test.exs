@@ -45,9 +45,10 @@ defmodule Argus.LinesTest do
     end
   end
 
-  test "from_facts_dir/1 reads line_info.facts, and a directory without it raises" do
-    dir = Path.join(System.tmp_dir!(), "argus_lines_test_#{:erlang.unique_integer([:positive])}")
-    File.mkdir_p!(dir)
+  @tag :tmp_dir
+  test "from_facts_dir/1 reads line_info.facts, and a directory without it raises", %{
+    tmp_dir: dir
+  } do
     File.write!(Path.join(dir, "line_info.facts"), "A:b/0#1\t3\nA:b/0#2\t4\n")
 
     lines = Lines.from_facts_dir(dir)
@@ -58,8 +59,6 @@ defmodule Argus.LinesTest do
 
     assert %Argus.MissingRelationError{relation: "line_info", path: ^missing, reason: :enoent} =
              catch_error(Lines.from_facts_dir(Path.join(dir, "nonexistent")))
-  after
-    File.rm_rf(Path.join(System.tmp_dir!(), "argus_lines_test_*"))
   end
 
   test "resolution is end-to-end real against this project's bytecode" do

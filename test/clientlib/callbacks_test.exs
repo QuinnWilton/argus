@@ -15,7 +15,7 @@ defmodule Argus.Clientlib.CallbacksTest do
 
       {:ok, _} =
         Pipeline.run([Argus.Test.Fixtures.MyGenServer], facts_dir,
-          extractors: [Argus.Extractors.OTP, Argus.Extractors.ApiCalls, Argus.Extractors.ApiCalls]
+          extractors: [Argus.Extractors.OTP, Argus.Extractors.ApiCalls]
         )
 
       rules = """

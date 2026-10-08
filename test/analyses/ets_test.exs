@@ -50,7 +50,7 @@ defmodule Argus.Analyses.EtsTest do
       # EtsOwner is a permanent child — table recreated on restart.
       unprotected = results["ets_unprotected_owner"]
 
-      refute Enum.any?(unprotected, fn [_name, mod] ->
+      refute Enum.any?(unprotected, fn [_name, mod, _site] ->
                mod == "Argus.Test.Fixtures.EtsOwner"
              end)
     end
@@ -66,7 +66,7 @@ defmodule Argus.Analyses.EtsTest do
       # EtsOwner is a permanent child under an Erlang-style supervisor.
       unprotected = results["ets_unprotected_owner"]
 
-      refute Enum.any?(unprotected, fn [_name, mod] ->
+      refute Enum.any?(unprotected, fn [_name, mod, _site] ->
                mod == "Argus.Test.Fixtures.EtsOwner"
              end)
     end
@@ -156,7 +156,7 @@ defmodule Argus.Analyses.EtsTest do
       # Application modules live for the entire app — not a real risk.
       unprotected = results["ets_unprotected_owner"]
 
-      refute Enum.any?(unprotected, fn [_name, mod] ->
+      refute Enum.any?(unprotected, fn [_name, mod, _site] ->
                mod == "Argus.Test.Fixtures.EtsApplicationOwner"
              end)
     end

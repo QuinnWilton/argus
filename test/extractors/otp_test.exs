@@ -75,17 +75,6 @@ defmodule Argus.Extractors.OTPTest do
 
       refute Map.has_key?(facts, :implements_behaviour)
     end
-
-    test "detects Supervisor behaviour" do
-      {:ok, data} =
-        BeamSpy.BeamFile.disassemble(to_string(:code.which(Supervisor)))
-
-      facts = OTP.extract(data)
-
-      # Supervisor itself doesn't use @behaviour, it defines one.
-      # But modules that use Supervisor would.
-      assert is_map(facts)
-    end
   end
 
   describe "extract/1 — started_as" do
