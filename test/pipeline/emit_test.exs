@@ -1,4 +1,11 @@
 defmodule Argus.Pipeline.EmitTest do
+  @moduledoc """
+  The relations only the emitter makes of an instruction: calls, spawns,
+  literals, branches, receives, lines. What it records of every
+  instruction's reads, writes, fall-through and targets is
+  `Argus.Instr`'s, which `Argus.InstrTest` checks instruction by
+  instruction and, for the emitter, over the functions of real modules.
+  """
   use ExUnit.Case, async: true
 
   alias Argus.Pipeline.{Disassemble, Emit}
@@ -64,23 +71,6 @@ defmodule Argus.Pipeline.EmitTest do
       instrs = facts[:instruction]
       assert length(instrs) == 3
     end
-
-    test "emits next for sequential instructions" do
-      facts = emit_func([{:label, 1}, {:move, {:atom, :ok}, {:x, 0}}, :return])
-      nexts = facts[:next]
-      # label -> move, but not move -> return (return is not a terminator,
-      # but the next is emitted). Actually return IS not followed by next since
-      # there's nothing after it. Let's check:
-      # label -> move (yes), move -> return (move is not a terminator, so yes)
-      assert length(nexts) == 2
-    end
-
-    test "does not emit next after terminators" do
-      facts = emit_func([{:label, 1}, {:jump, {:f, 1}}, {:label, 2}, :return])
-      nexts = facts[:next]
-      # label -> jump (yes), jump -> label (NO, jump is terminator), label -> return (yes)
-      assert length(nexts) == 2
-    end
   end
 
   describe "label facts" do
@@ -91,13 +81,6 @@ defmodule Argus.Pipeline.EmitTest do
   end
 
   describe "move facts" do
-    test "emits def and use for a move, and no move row" do
-      facts = emit_func([{:move, {:x, 0}, {:y, 1}}])
-      refute Map.has_key?(facts, :move)
-      assert Enum.any?(facts[:def], fn [_, reg] -> reg == "y1" end)
-      assert Enum.any?(facts[:use], fn [_, reg] -> reg == "x0" end)
-    end
-
     test "emits literal_value for constant moves" do
       facts = emit_func([{:move, {:integer, 42}, {:x, 0}}])
       assert [[_id, "x0", "42"]] = facts[:literal_value]
@@ -839,144 +822,10 @@ defmodule Argus.Pipeline.EmitTest do
     end
   end
 
-  describe "swap facts" do
-    test "emits def and use for both operands" do
-      facts = emit_func([{:swap, {:x, 0}, {:x, 1}}])
-      defs = Enum.map(facts[:def], fn [_, reg] -> reg end)
-      uses = Enum.map(facts[:use], fn [_, reg] -> reg end)
-      assert "x0" in defs
-      assert "x1" in defs
-      assert "x0" in uses
-      assert "x1" in uses
-    end
-  end
-
-  describe "dynamic call facts" do
-    test "emits def x0 for call_fun" do
-      facts = emit_func([{:call_fun, 2}])
-      assert Enum.any?(facts[:def], fn [_, reg] -> reg == "x0" end)
-    end
-
-    test "emits def x0 for apply" do
-      facts = emit_func([{:apply, 2}])
-      assert Enum.any?(facts[:def], fn [_, reg] -> reg == "x0" end)
-    end
-  end
-
-  describe "wait instructions" do
-    test "wait does not crash" do
-      facts = emit_func([{:wait, {:f, 5}}])
-      assert Enum.any?(facts[:instruction], fn [_, _, _, op] -> op == "wait" end)
-    end
-
-    test "wait_timeout does not crash" do
-      facts = emit_func([{:wait_timeout, {:f, 5}, {:integer, 1000}}])
-      assert Enum.any?(facts[:instruction], fn [_, _, _, op] -> op == "wait_timeout" end)
-    end
-  end
-
-  describe "float instruction facts" do
-    test "emits use and def for fconv" do
-      facts = emit_func([{:fconv, {:x, 0}, {:fr, 0}}])
-      assert Enum.any?(facts[:use], fn [_, reg] -> reg == "x0" end)
-      assert Enum.any?(facts[:def], fn [_, reg] -> reg == "fr0" end)
-    end
-
-    test "emits def and use for fmove" do
-      facts = emit_func([{:fmove, {:fr, 0}, {:x, 0}}])
-      assert Enum.any?(facts[:def], fn [_, reg] -> reg == "x0" end)
-      assert Enum.any?(facts[:use], fn [_, reg] -> reg == "fr0" end)
-    end
-  end
-
-  describe "set_tuple_element facts" do
-    test "emits use for value and tuple" do
-      facts = emit_func([{:set_tuple_element, {:x, 0}, {:x, 1}, 2}])
-      uses = Enum.map(facts[:use], fn [_, reg] -> reg end)
-      assert "x0" in uses
-      assert "x1" in uses
-    end
-  end
-
-  describe "update_record facts" do
-    test "emits use for source and def for dest" do
-      facts =
-        emit_func([
-          {:update_record, :update, 3, {:x, 0}, {:x, 1}, {:list, [{:integer, 1}, {:x, 2}]}}
-        ])
-
-      assert Enum.any?(facts[:use], fn [_, reg] -> reg == "x0" end)
-      assert Enum.any?(facts[:def], fn [_, reg] -> reg == "x1" end)
-    end
-  end
-
   describe "bs_start_match4 facts" do
-    test "emits bs_start, use, and def" do
+    test "emits bs_start with its fail label" do
       facts = emit_func([{:bs_start_match4, {:f, 5}, 1, {:x, 0}, {:x, 1}}])
       assert [[_, "5"]] = facts[:bs_start]
-      assert Enum.any?(facts[:use], fn [_, reg] -> reg == "x0" end)
-      assert Enum.any?(facts[:def], fn [_, reg] -> reg == "x1" end)
-    end
-  end
-
-  describe "bs_create_bin facts" do
-    test "reads every register segment and writes the destination" do
-      # `"field_" <> p`: a literal string segment and a binary segment from x0.
-      segs =
-        {:list,
-         [
-           {:atom, :string},
-           0,
-           8,
-           nil,
-           {:string, "field_"},
-           {:integer, 6},
-           {:atom, :binary},
-           2,
-           8,
-           nil,
-           {:x, 0},
-           {:atom, :all}
-         ]}
-
-      facts = emit_func([{:bs_create_bin, {:f, 0}, 0, 1, 8, {:x, 0}, segs}])
-      assert [[_, "x0"]] = facts[:use]
-      assert [[_, "x0"]] = facts[:def]
-    end
-
-    test "a register-sized segment reads the size register too" do
-      segs = {:list, [{:atom, :binary}, 2, 8, nil, {:x, 1}, {:x, 2}]}
-      facts = emit_func([{:bs_create_bin, {:f, 0}, 0, 3, 8, {:x, 0}, segs}])
-
-      assert Enum.sort(facts[:use]) ==
-               Enum.sort([[hd(hd(facts[:def])), "x1"], [hd(hd(facts[:def])), "x2"]])
-    end
-  end
-
-  describe "bs_match facts" do
-    test "extracting commands define their destination; tests define nothing" do
-      commands =
-        {:commands,
-         [
-           {:ensure_at_least, 32, 8},
-           {:"=:=", nil, 31, 943_272_623},
-           {:integer, 2, {:literal, []}, 8, 1, {:x, 0}},
-           {:get_tail, 2, 8, {:x, 2}}
-         ]}
-
-      facts = emit_func([{:bs_match, {:f, 12}, {:x, 1}, commands}])
-      assert [[_, "12"]] = facts[:bs_start]
-      assert [[_, "x1"]] = facts[:use]
-
-      assert Enum.sort(facts[:def]) == [
-               [hd(hd(facts[:bs_start])), "x0"],
-               [hd(hd(facts[:bs_start])), "x2"]
-             ]
-    end
-
-    test "an unfamiliar command defines nothing" do
-      facts = emit_func([{:bs_match, {:f, 3}, {:x, 1}, {:commands, [{:mystery, 1, {:x, 0}}]}}])
-      assert facts[:def] == nil
     end
   end
 
@@ -1021,57 +870,6 @@ defmodule Argus.Pipeline.EmitTest do
       facts = emit_func([{:move, {:literal, value}, {:x, 0}}, :return])
       [[_, "x0", spelled]] = facts[:literal_value]
       spelled
-    end
-  end
-
-  describe "real module integration" do
-    test "emits facts for :lists without crashing" do
-      {:ok, data} = BeamSpy.BeamFile.disassemble(to_string(:code.which(:lists)))
-
-      facts =
-        Emit.emit_module(
-          data.module,
-          data.exports,
-          [],
-          data.attributes,
-          data.functions
-        )
-
-      assert map_size(facts) > 0
-      assert facts[:instruction] != []
-      assert facts[:function_def] != []
-    end
-
-    test "emits facts for Enum without crashing" do
-      {:ok, data} = BeamSpy.BeamFile.disassemble(to_string(:code.which(Enum)))
-
-      facts =
-        Emit.emit_module(
-          data.module,
-          data.exports,
-          [],
-          data.attributes,
-          data.functions
-        )
-
-      assert map_size(facts) > 0
-      assert facts[:instruction] != []
-      assert facts[:remote_call] != []
-    end
-
-    test "emits facts for GenServer without crashing" do
-      {:ok, data} = BeamSpy.BeamFile.disassemble(to_string(:code.which(GenServer)))
-
-      facts =
-        Emit.emit_module(
-          data.module,
-          data.exports,
-          [],
-          data.attributes,
-          data.functions
-        )
-
-      assert map_size(facts) > 0
     end
   end
 
