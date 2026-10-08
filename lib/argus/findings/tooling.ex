@@ -31,6 +31,8 @@ defmodule Argus.Findings.Tooling do
     already moved it.
   """
 
+  alias Argus.Findings
+
   @basis %{
     "mix" =>
       "a Mix task or a helper Mix tasks share: it runs in a developer's shell, not the deployed system",
@@ -124,15 +126,12 @@ defmodule Argus.Findings.Tooling do
   # lifts a finding above where it was).
   defp step_down(%{severity: severity} = finding) do
     floor = Map.get(finding, :floor, :info)
-    highest(lower(severity), if(rank(floor) <= rank(severity), do: floor, else: severity))
+    highest(lower(severity), lowest(floor, severity))
   end
 
   defp lower(:error), do: :warning
   defp lower(_warning_or_info), do: :info
 
-  defp highest(a, b), do: if(rank(a) >= rank(b), do: a, else: b)
-
-  defp rank(:error), do: 2
-  defp rank(:warning), do: 1
-  defp rank(:info), do: 0
+  defp highest(a, b), do: Enum.min_by([a, b], &Findings.severity_rank/1)
+  defp lowest(a, b), do: Enum.max_by([a, b], &Findings.severity_rank/1)
 end

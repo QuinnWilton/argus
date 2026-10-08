@@ -47,7 +47,6 @@ defmodule Argus.Run do
   alias Argus.Pipeline.Disassemble
 
   @program :batch
-  @severity_rank %{error: 0, warning: 1, info: 2}
 
   @doc "`Argus.run_analyses/2` over the graph."
   @spec run_analyses([atom() | String.t()], keyword()) :: {:ok, Findings.t()} | {:error, term()}
@@ -266,7 +265,7 @@ defmodule Argus.Run do
         {:degraded, _note} -> []
       end)
       |> Enum.sort_by(fn finding ->
-        {Map.fetch!(@severity_rank, finding.severity), finding.analysis, finding.title,
+        {Findings.severity_rank(finding.severity), finding.analysis, finding.title,
          finding.detail}
       end)
 

@@ -210,6 +210,12 @@ defmodule Argus.Findings do
         }
 
   @severities [:error, :warning, :info]
+
+  @doc "Where a severity ranks: `:error` first."
+  @spec severity_rank(severity()) :: 0..2
+  def severity_rank(:error), do: 0
+  def severity_rank(:warning), do: 1
+  def severity_rank(:info), do: 2
   @blocks [:guard, :receive, :clause, :function]
 
   # ── Running (Argus.Run) ────────────────────────────────────────────

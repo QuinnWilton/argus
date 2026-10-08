@@ -49,7 +49,9 @@ defmodule Argus.Report do
         %{entry | severity: Map.get(config.severity, entry.analysis, entry.severity)}
       end
     end)
-    |> Enum.sort_by(&{severity_rank(&1.severity), &1.file, &1.line, &1.analysis, &1.title})
+    |> Enum.sort_by(
+      &{Argus.Findings.severity_rank(&1.severity), &1.file, &1.line, &1.analysis, &1.title}
+    )
   end
 
   @doc """
@@ -107,12 +109,6 @@ defmodule Argus.Report do
 
   defp strip_private("/private/" <> rest), do: "/" <> rest
   defp strip_private(path), do: path
-
-  @doc "Where a severity ranks: `:error` first."
-  @spec severity_rank(Argus.Findings.severity()) :: 0..2
-  def severity_rank(:error), do: 0
-  def severity_rank(:warning), do: 1
-  def severity_rank(:info), do: 2
 
   defp ignored_file?(file, config, cwd) do
     rel = relative(file, cwd)
