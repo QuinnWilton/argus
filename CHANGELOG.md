@@ -143,6 +143,8 @@ which a change appeared; older names and APIs may have changed since then.
 - `Argus.Analysis.concerns/0` and `Argus.Analysis.Sets.concerns/0`, a list
   kept by hand of the built-in analyses' names: call
   `Argus.Analysis.builtin_analyses/0`.
+- `Argus.Report.Notice.config_renamed/2`: only `Argus.ConfigError` used it,
+  and it says the same.
 - Functions nothing called: `Argus.Pipeline.rows_iodata/1` (use
   `Argus.Tsv.encode/1`), `Argus.Pipeline.Writer.append/2`,
   `Argus.Priors.derive/2` and `read_facts/2`, `Argus.Specs.shapes/2`,

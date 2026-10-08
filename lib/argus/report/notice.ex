@@ -19,8 +19,6 @@ defmodule Argus.Report.Notice do
       was analyzed;
     * `:points_to_bounded` — the process points-to stage outgrew its
       budget and ran bounded;
-    * `:config_renamed` — configuration under scry's name, which argus
-      does not read (`Argus.ConfigError` raises with this wording);
     * `:stale` — sources newer than their beams (the escript, which
       never builds): the findings are about the code as last built.
   """
@@ -36,7 +34,6 @@ defmodule Argus.Report.Notice do
           | :extraction_error
           | :duplicate
           | :points_to_bounded
-          | :config_renamed
           | :stale
 
   @type t :: %__MODULE__{
@@ -165,23 +162,6 @@ defmodule Argus.Report.Notice do
         "#{count} pervasive #{if count == 1, do: "term was", else: "terms were"} resolved " <>
         "coarsely, so findings about the processes #{if count == 1, do: "it holds", else: "they hold"} " <>
         "may include some that cannot happen"
-    )
-  end
-
-  @doc """
-  Configuration under scry's name (`key`, spelled as its source spells
-  it) that argus does not read: the argus name to move it to.
-
-      iex> Argus.Report.Notice.config_renamed("scry:", "argus:").message
-      "scry has moved into argus: rename scry: to argus: (the configuration is otherwise the same)"
-  """
-  @spec config_renamed(String.t(), String.t()) :: t()
-  def config_renamed(key, renamed) do
-    notice(
-      :config_renamed,
-      :error,
-      "scry has moved into argus: rename #{key} to #{renamed} " <>
-        "(the configuration is otherwise the same)"
     )
   end
 

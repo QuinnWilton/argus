@@ -4,5 +4,4 @@ defmodule Argus.Locate.SourceTest do
   doctest Argus.Locate.Source
   doctest Argus.Report.Entry
   doctest Argus.Report
-  doctest Argus.Report.Notice
 end

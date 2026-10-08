@@ -58,9 +58,8 @@ defmodule Argus.ConfigError do
       key: [],
       value: what,
       message:
-        "argus: " <>
-          Argus.Report.Notice.config_renamed(what, renamed).message <>
-          "\n    at: " <> origin_name(origin)
+        "argus: scry has moved into argus: rename #{what} to #{renamed} " <>
+          "(the configuration is otherwise the same)\n    at: " <> origin_name(origin)
     }
   end
 
