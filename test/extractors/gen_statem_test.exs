@@ -10,16 +10,33 @@ defmodule Argus.Extractors.GenStatemTest do
   end
 
   describe "extract/1 — state_functions mode" do
-    test "detects gen_statem module" do
+    test "the module, its states and its transitions" do
       facts = GenStatem.extract(disassemble(Argus.Test.Fixtures.SimpleStatem))
+      mod = "Argus.Test.Fixtures.SimpleStatem"
 
-      assert Map.has_key?(facts, :statem_module)
-      rows = facts[:statem_module]
-      assert length(rows) == 1
+      assert facts[:statem_module] == [[mod, "state_functions"]]
 
-      [mod, mode] = hd(rows)
-      assert String.contains?(mod, "SimpleStatem")
-      assert mode == "state_functions"
+      # A state's site is its state function, or a return that moves to
+      # it; a return's instruction index moves with the compiler.
+      states =
+        for [^mod, state, site] <- facts[:statem_state] do
+          [state, site |> String.trim_leading(mod <> ":") |> String.replace(~r/#\d+$/, "#_")]
+        end
+
+      assert Enum.sort(states) == [
+               ["idle", "idle/3"],
+               ["idle", "running/3#_"],
+               ["running", "idle/3#_"],
+               ["running", "running/3"]
+             ]
+
+      assert Enum.sort(facts[:statem_transition]) == [
+               # {:keep_state, data} stays where it is.
+               [mod, "idle", "event", "idle"],
+               [mod, "idle", "event", "running"],
+               [mod, "running", "event", "idle"],
+               [mod, "running", "event", "stop"]
+             ]
     end
 
     test "reads a gen_statem that declares no behaviour and starts itself as one" do
@@ -29,63 +46,15 @@ defmodule Argus.Extractors.GenStatemTest do
       assert facts[:statem_state] |> Enum.map(&Enum.at(&1, 1)) |> Enum.uniq() == ["idle"]
     end
 
-    test "detects states" do
-      facts = GenStatem.extract(disassemble(Argus.Test.Fixtures.SimpleStatem))
-
-      assert Map.has_key?(facts, :statem_state)
-      rows = facts[:statem_state]
-      states = Enum.map(rows, fn [_, state, _site] -> state end) |> Enum.uniq()
-
-      assert "idle" in states
-      assert "running" in states
-    end
-
     test "registers only exported functions as states" do
       facts = GenStatem.extract(disassemble(Argus.Test.Fixtures.PrivateHelperStatem))
 
-      states = Enum.map(facts[:statem_state], fn [_, state, _site] -> state end)
-
-      # Real states.
-      assert "idle" in states
-      assert "running" in states
-
-      # A private arity-3 helper is not a state.
-      refute "normalize" in states
-
-      # An exported, arity-3, action-returning helper that a state calls
-      # directly is not a state (gen_statem never calls a state locally).
-      refute "finalize" in states
-
-      # Compiler-lifted closures (private arity-3 top-level functions with
-      # mangled names) are not states.
-      refute Enum.any?(states, &String.starts_with?(&1, "-"))
-    end
-
-    test "detects transitions" do
-      facts = GenStatem.extract(disassemble(Argus.Test.Fixtures.SimpleStatem))
-
-      assert Map.has_key?(facts, :statem_transition)
-      rows = facts[:statem_transition]
-
-      # idle -> running.
-      assert Enum.any?(rows, fn [_, from, _, to] ->
-               from == "idle" and to == "running"
-             end)
-
-      # running -> idle.
-      assert Enum.any?(rows, fn [_, from, _, to] ->
-               from == "running" and to == "idle"
-             end)
-    end
-
-    test "detects stop transition" do
-      facts = GenStatem.extract(disassemble(Argus.Test.Fixtures.SimpleStatem))
-
-      rows = facts[:statem_transition]
-
-      assert Enum.any?(rows, fn [_, from, _, to] ->
-               from == "running" and to == "stop"
-             end)
+      # Left out: a private arity-3 helper (normalize); an exported,
+      # arity-3, action-returning helper a state calls directly (finalize),
+      # since gen_statem never calls a state locally; and compiler-lifted
+      # closures, private arity-3 functions with mangled names.
+      states = for [_, state, _site] <- facts[:statem_state], uniq: true, do: state
+      assert Enum.sort(states) == ["idle", "running"]
     end
   end
 
