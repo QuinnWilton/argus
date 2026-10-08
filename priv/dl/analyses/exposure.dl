@@ -76,6 +76,15 @@ secret_metadata(field) :-
   schema_field(_, field, _),
   match(".*_(at|on|date|time|count|expires|expiry|expiration|ttl|set|length|version)", field).
 
+// A suffix that names or describes the secret holds that, not the secret: its id (a
+// JWT's jti, a belongs_to's foreign key), its kind or scopes, a public part of it (a
+// prefix, a hint, the last four, a fingerprint), or where it is kept (a name, a path).
+// A suffix for the value itself (raw, encrypted, a hash or digest) does not match, so
+// the field stays a secret of its kind.
+secret_metadata(field) :-
+  schema_field(_, field, _),
+  match(".*_(jti|id|ids|uuid|type|kind|scope|scopes|prefix|hint|last4|last_four|fingerprint|name|label|path)", field).
+
 // Choose the highest-severity kind when a field matches several secret patterns,
 // avoiding duplicate findings.
 .decl secret_rank(kind: symbol, rank: number)

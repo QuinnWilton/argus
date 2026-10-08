@@ -20,11 +20,14 @@ redact: true alone may not hide them. Without a visible derived implementation,
 the analysis relies on the schema's redacted-field metadata.
 
 Names are clues, not proof. Metadata suffixes and fields with a known boolean
-schema type are excluded. String, custom and unknown types remain candidates;
-identifiers such as api_key_id can still match. A hash-like name changes the
-finding's severity and wording, but does not remove it: offline guessing risk
-depends on the secret's entropy and the hash construction. Test-support findings
-step down one severity level.
+schema type are excluded. A metadata suffix names a time or a count, or
+something about the secret: its id (access_token_jti, api_key_id), its kind or
+scopes, a public part of it (a prefix, hint, last4 or fingerprint), or where it
+is kept (a name or path). String, custom and unknown types remain candidates,
+and a suffix for the value itself (raw, encrypted, hash) still matches. A
+hash-like name changes the finding's severity and wording, but does not remove
+it: offline guessing risk depends on the secret's entropy and the hash
+construction. Test-support findings step down one severity level.
 
 Virtual fields, plain structs, JSON encoders and hand-written Inspect
 implementations are not fully covered. Review the actual value and output behaviour.

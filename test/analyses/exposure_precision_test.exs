@@ -63,4 +63,13 @@ defmodule Argus.Analyses.ExposurePrecisionTest do
     assert fields[":api_key"].severity == :warning
     assert Enum.any?(fields[":api_key_hash"].help, &String.contains?(&1, "test support"))
   end
+
+  @tag :souffle
+  test "a secret's name with a word for something about it is metadata" do
+    mod = Argus.Test.Fixtures.RacesExposureSecretQualifiers
+    assert {:ok, results} = Memo.analyze([mod], :exposure)
+
+    fields = for [m, field | _] <- results["unredacted_secret"], m == inspect(mod), do: field
+    assert Enum.sort(fields) == [":access_token", ":api_key_raw", ":password_hash"]
+  end
 end
