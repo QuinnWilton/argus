@@ -39,9 +39,11 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
   and n <= 8` alone admits every float between — and the range must be
   narrow: at most 1,024 values, a thousandth of the default atom
   table, since `n in 1..100_000` is bounded only in name. A pure
-  conversion of a bounded value (`Integer.to_string/1`,
-  `String.Chars.to_string/1` on builtin inputs, ...) is bounded too: the image of a finite
-  set is finite, so `:"phrase_\#{n}"` makes one of eight atoms.
+  call on bounded values (`Integer.to_string/1`, `String.replace_prefix/3`,
+  `List.last/1`, `String.Chars.to_string/1` on builtin inputs, ...) is
+  bounded too: the image of a finite set under a function of its
+  arguments alone is finite, so `:"phrase_\#{n}"` makes one of eight
+  atoms. A fun is never bounded, so such a call runs no code but its own.
 
   A lookup in a literal table (`Enum.at/2,3`, `Enum.fetch!/2`, or
   `:lists.nth/2`) also has a finite result vocabulary. `Enum.at` includes
@@ -96,6 +98,7 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
 
   alias Argus.Cfg.Function, as: CfgFunction
   alias Argus.Extractor.Helpers
+  alias Argus.Extractor.Terms
   alias Argus.Extractors.SecurityValues.Binary
   alias Argus.Instr
 
@@ -154,13 +157,35 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
   @partition_limit 32
   @partition_steps 50_000
 
-  # Conversions whose result is a function of their arguments alone: a
-  # bounded argument gives a bounded result.
+  # Modules each of whose functions computes its result from its arguments
+  # alone: it reads no state, dispatches no protocol, and runs no code but
+  # its own and the funs it is handed. A call into one with every argument
+  # bounded has a bounded result, since a bounded value is never a fun
+  # (`fun_free?/1`) and so the call runs only the module's own code:
+  # `String.replace_prefix/3`, `List.last/1`, `:lists.flatten/1`. Not
+  # `:erlang`, whose BIFs read the node's state (`system_info/1`) or build
+  # funs of any code (`make_fun/3`), nor `:binary`, which can answer how a
+  # binary is stored (`referenced_byte_size/1`), nor Enum, Map or Keyword,
+  # which dispatch Enumerable and Collectable on a struct.
+  @pure_modules MapSet.new([
+                  String,
+                  :string,
+                  :unicode,
+                  Integer,
+                  Float,
+                  Atom,
+                  List,
+                  :lists,
+                  Tuple,
+                  Base,
+                  :base64
+                ])
+
+  # Functions outside those modules whose result is a function of their
+  # arguments alone. `Module.split/1` takes an `"Elixir."` binary as well
+  # as an atom, so it reads no existing atom's name: its result is bounded
+  # by its argument's bound, not by the atoms that exist.
   @conversions MapSet.new([
-                 {Integer, :to_string, 1},
-                 {Integer, :to_string, 2},
-                 {Integer, :to_charlist, 1},
-                 {Integer, :to_charlist, 2},
                  {:erlang, :integer_to_binary, 1},
                  {:erlang, :integer_to_binary, 2},
                  {:erlang, :integer_to_list, 1},
@@ -169,16 +194,10 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
                  {:erlang, :list_to_binary, 1},
                  {:erlang, :iolist_to_binary, 1},
                  {:erlang, :++, 2},
-                 {:lists, :append, 2},
-                 {:lists, :concat, 1},
-                 {:lists, :flatten, 1},
-                 {:lists, :reverse, 1},
-                 {:lists, :reverse, 2},
-                 {List, :to_string, 1},
-                 {String, :upcase, 1},
-                 {String, :downcase, 1},
                  {Macro, :underscore, 1},
-                 {Macro, :camelize, 1}
+                 {Macro, :camelize, 1},
+                 {Macro, :unescape_string, 1},
+                 {Module, :split, 1}
                ])
 
   # What an atom's name is read out with: whatever the argument, the
@@ -597,8 +616,8 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
 
   # A constant moved into a register is one value; a literal list is a
   # list the program wrote.
-  defp put_constant(state, {op, src, dst}) when op in [:move, :fmove] do
-    if register?(Instr.register(src)) do
+  defp put_constant(state, {op, src, dst} = instr) when op in [:move, :fmove] do
+    if register?(Instr.register(src)) or not fun_free?(instr) do
       state
     else
       dst = Instr.register(dst)
@@ -620,7 +639,8 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
     with {:ok, heads} <- literal_options(head, before),
          {:ok, tails} <- literal_options(tail, before),
          true <- length(heads) * length(tails) <= @range_limit,
-         true <- list_expansion_fits?(heads, tails) do
+         true <- list_expansion_fits?(heads, tails),
+         true <- fun_free?(heads) and fun_free?(tails) do
       values = for head <- heads, tail <- tails, do: [head | tail]
       bound = {:values, {:set, exact_values(values)}}
       %{state | bounded: Map.put(state.bounded, Instr.register(dst), bound)}
@@ -667,7 +687,7 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
     uses = Enum.filter(Instr.uses(instr), &register?/1)
     defs = Instr.defs(instr)
 
-    if defs == [] or uses == [] or Instr.call?(instr) or copy?(instr) do
+    if defs == [] or uses == [] or Instr.call?(instr) or copy?(instr) or not fun_free?(instr) do
       state
     else
       case combine(Enum.map(uses, &Map.get(before.bounded, &1)), instr) do
@@ -753,7 +773,7 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
           # when request data chooses from atoms created by previous calls.
           combine([Map.get(state.bounded, {:x, 0})], instr) || {:atoms, :atom}
 
-        MapSet.member?(@conversions, {mod, fun, arity}) ->
+        MapSet.member?(@conversions, {mod, fun, arity}) or MapSet.member?(@pure_modules, mod) ->
           combine(for(i <- 0..(arity - 1)//1, do: Map.get(state.bounded, {:x, i})), instr)
 
         true ->
@@ -832,6 +852,14 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
       else: %{state | bounded: Map.put(state.bounded, {:x, 0}, bound)}
   end
 
+  # A bound describes data, never a fun: a fun's result is not a function
+  # of the bounded values it is handed, since its code may read anything.
+  # Neither a literal holding a fun nor a closure (`make_fun3`, whose
+  # captures may all be bounded) is bounded, nor anything built of one,
+  # which keeps a pure call's bounded arguments free of code to run.
+  defp fun_free?({:make_fun3, _target, _index, _uniq, _dst, _env}), do: false
+  defp fun_free?(term), do: not Terms.value_contains?(term, &is_function/1)
+
   defp copy?(instr), do: Enum.any?(Instr.defs(instr), &(Instr.copy_source(instr, &1) != nil))
 
   defp list_literal(nil), do: {:ok, []}
@@ -900,13 +928,13 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
     end
   end
 
-  defp equality_bound(value, true), do: {:values, {:set, [value]}}
+  defp equality_bound(value, true), do: if(fun_free?(value), do: {:values, {:set, [value]}})
 
   defp equality_bound(value, false) when is_number(value),
     do: {:values, {:set, exact_values(numeric_equivalents(value))}}
 
   defp equality_bound(value, false) do
-    unless Argus.Extractor.Terms.value_contains?(value, &is_number/1),
+    if fun_free?(value) and not Terms.value_contains?(value, &is_number/1),
       do: {:values, {:set, [value]}}
   end
 
