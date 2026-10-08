@@ -131,4 +131,18 @@ defmodule Argus.Extractors.CallbackTagTest do
     # `{ref, result} when is_reference(ref)` takes 2-tuples: no :DOWN.
     assert for([_f, "handle_info", s, a] <- facts[:callback_open], do: {s, a}) == [{"tuple", "2"}]
   end
+
+  test "a pair that fails its clause's guard enters no clause open to atoms" do
+    {:ok, facts} =
+      Argus.Pipeline.extract([Argus.Test.Fixtures.MailboxOpenRequestShape],
+        extractors: [CallbackTag]
+      )
+
+    # `{op, arg} when is_atom(op)`, then `cmd when is_atom(cmd)`: a pair
+    # whose first element is no atom falls to the second clause, which
+    # it does not pass. The clauses are open to pairs and to atoms, and
+    # to no tuple of another arity.
+    assert for([_f, "handle_call", s, a] <- facts[:callback_open], do: {s, a}) |> Enum.sort() ==
+             [{"any", "-1"}, {"tuple", "2"}]
+  end
 end

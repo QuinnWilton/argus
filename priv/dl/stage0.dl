@@ -136,6 +136,26 @@ call_tag(id, caller, "cast", tag) :-
 
 .output call_tag(filename="call_tag.facts")
 
+// The shape of the message a call_tag site sends: 0 for the bare atom,
+// N for an N-tuple whose first element is the tag. A handler clause that
+// takes messages by shape alone (callback_open) takes the request in one
+// shape only: `cmd when is_atom(cmd)` takes `:version`, not
+// `{:version, n}`.
+.decl call_tag_arity(id: symbol, arity: number)
+
+call_tag_arity(id, n) :-
+  call_tag(id, _, _, _),
+  def_use(write_id, id),
+  tuple_literal(write_id, "x1", _, n).
+
+call_tag_arity(id, 0) :-
+  call_tag(id, _, _, _),
+  def_use(write_id, id),
+  literal_value(write_id, "x1", tag),
+  match(":.*", tag).
+
+.output call_tag_arity(filename="call_tag_arity.facts")
+
 // Which function each call a fun is handed to calls (fun_handed names
 // the call by its instruction): `Enum:each/2`, `:telemetry:attach/4`, a
 // local helper. runs_elsewhere asks it whether that call runs the fun

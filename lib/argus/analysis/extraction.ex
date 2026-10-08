@@ -7,8 +7,9 @@ defmodule Argus.Analysis.Extraction do
 
   - **Stage 0** (`priv/dl/stage0.dl`) derives the shared call graph
     (`call_edge`, `call_site`, `unconditional_call_edge`, `call_tag`,
-    `fun_handed_to`, `fun_built`) once, so no analysis re-derives it and the volatile
-    instruction-level relations stay out of every analysis's input set.
+    `call_tag_arity`, `fun_handed_to`, `fun_built`) once, so no analysis
+    re-derives it and the volatile instruction-level relations stay out of
+    every analysis's input set.
   - **Points-to** (`priv/dl/points_to.dl`), when an analysis reads it,
     derives which process a pid can be (`points_to_relations/0`) once:
     the fixpoint is most of a solve over a large program, and it is the
@@ -24,8 +25,8 @@ defmodule Argus.Analysis.Extraction do
   alias Argus.Stages
 
   # The relations stage 0 writes; a directory holding every one is staged.
-  @stage0_relations ~w(call_edge call_site unconditional_call_edge call_tag fun_handed_to
-                         fun_built)
+  @stage0_relations ~w(call_edge call_site unconditional_call_edge call_tag call_tag_arity
+                         fun_handed_to fun_built)
 
   # The relations the points-to stage writes (points_to.dl's outputs):
   # what the analyses read, and which stage wrote them.

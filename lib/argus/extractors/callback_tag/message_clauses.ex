@@ -80,6 +80,29 @@ defmodule Argus.Extractors.CallbackTag.MessageClauses do
   @value_tests [:is_eq_exact, :is_ne_exact, :is_eq, :is_ne]
   @tuple_tests [:is_tuple, :test_arity, :is_tagged_tuple]
 
+  # Type tests no tuple passes. On a path that has found the message a
+  # tuple, one of these on it passes for no message: `{op, arg} when
+  # is_atom(op)` failing for a pair with another first element falls to
+  # the next clause's `cmd when is_atom(cmd)`, which no tuple enters.
+  @not_tuple_tests [
+    :is_atom,
+    :is_binary,
+    :is_bitstring,
+    :is_boolean,
+    :is_float,
+    :is_function,
+    :is_function2,
+    :is_integer,
+    :is_list,
+    :is_map,
+    :is_nil,
+    :is_nonempty_list,
+    :is_number,
+    :is_pid,
+    :is_port,
+    :is_reference
+  ]
+
   @typep kind :: :msg | :tag | :part
   @typep path :: %{
            tracked: %{Instr.reg() => kind()},
@@ -292,7 +315,12 @@ defmodule Argus.Extractors.CallbackTag.MessageClauses do
     pass = touch(pass, op, args, path)
     pass = if op == :is_map and :msg in kinds, do: %{pass | map: true}, else: pass
 
-    branch(idx, l, {kinds != [], valued?, shaped?}, pass, fail, tuple, labels, st)
+    if op in @not_tuple_tests and :msg in kinds and path.tuple do
+      # The pass edge is no tuple's: only the failure goes on.
+      goto(l, next_clause(fail), tuple, labels, st)
+    else
+      branch(idx, l, {kinds != [], valued?, shaped?}, pass, fail, tuple, labels, st)
+    end
   end
 
   defp step({:test, _op, {:f, l}, src, _fields}, idx, path, tuple, labels, st) do

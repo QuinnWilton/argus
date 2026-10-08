@@ -6,7 +6,16 @@ defmodule Argus.Analyses.MailboxMessageTest do
   alias Argus.Test.Memo
   alias Argus.Test.Rows
 
-  @all [M.Mismatch, M.Agrees, M.CatchAll, M.StaleWrite, M.Forwarder, M.Sink]
+  @all [
+    M.Mismatch,
+    M.Agrees,
+    M.CatchAll,
+    M.StaleWrite,
+    M.Forwarder,
+    M.Sink,
+    Argus.Test.Fixtures.MailboxOpenRequest,
+    Argus.Test.Fixtures.MailboxOpenRequestShape
+  ]
 
   # Every test reads the same solve of @all: solved once, read-only.
   setup_all do
@@ -22,7 +31,10 @@ defmodule Argus.Analyses.MailboxMessageTest do
   end
 
   test "only a tag the module sends itself and cannot handle is reported", ctx do
-    assert Enum.uniq(mods(ctx)) == [inspect(M.Mismatch)]
+    contract =
+      for mod <- Enum.uniq(mods(ctx)), String.starts_with?(mod, inspect(M) <> "."), do: mod
+
+    assert contract == [inspect(M.Mismatch)]
 
     # Silent:
     #   * Agrees: its halves agree.
@@ -36,5 +48,16 @@ defmodule Argus.Analyses.MailboxMessageTest do
     #   * Forwarder: it calls the Sink it started with :sweep; Sink names
     #     no tag, so only points-to says the call is not Forwarder's own,
     #     and the call is that server's business.
+  end
+
+  test "a clause open to the request's shape takes it", ctx do
+    # tm_mercury's reader: `handle_call(cmd, _, s) when is_atom(cmd)`
+    # takes every atom the API sends, and `{op, arg} when is_atom(op)`
+    # every pair.
+    refute "Argus.Test.Fixtures.MailboxOpenRequest" in mods(ctx)
+  end
+
+  test "a clause open to atoms and pairs does not take a 3-tuple", ctx do
+    assert "Argus.Test.Fixtures.MailboxOpenRequestShape" in mods(ctx)
   end
 end

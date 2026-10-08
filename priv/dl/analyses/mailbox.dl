@@ -1164,7 +1164,8 @@ unhandled_own_request(request, kind, tag) :-
   sends_own_server(request, kind, tag),
   request_enters(request, kind, handler),
   !has_clause_for(handler, kind, tag),
-  !takes_any(handler, kind).
+  !takes_any(handler, kind),
+  !open_to_request(handler, kind, request).
 
 reply_defect(mod, sender, "", cat("unhandled_", kind), tag) :-
   unhandled_own_request(request, kind, tag),
@@ -1196,6 +1197,35 @@ has_clause_for(h, kind, tag) :- kind_callback(kind, callback), callback_tag(h, c
 .decl takes_any(handler: symbol, kind: symbol)
 
 takes_any(h, kind) :- kind_callback(kind, callback), callback_total(h, callback).
+
+// A clause of the handler takes the request by its shape alone
+// (callback_open): tm_mercury's `handle_call(cmd, _, s) when
+// is_atom(cmd)` runs every atom the API sends as a command. An open
+// `any` clause takes a bare atom and no tuple: its type test may be
+// is_atom, and a tuple open clause says so (`tuple`). That `any` is
+// also a clause testing is_binary, which takes no atom, errs quiet. A
+// tuple open clause takes a tuple of the arity it tests, or of any.
+.decl open_to_request(handler: symbol, kind: symbol, request: symbol)
+
+open_to_request(h, kind, request) :-
+  call_tag(request, _, kind, _),
+  call_tag_arity(request, 0),
+  kind_callback(kind, callback),
+  callback_open(h, callback, "any", _).
+
+open_to_request(h, kind, request) :-
+  call_tag(request, _, kind, _),
+  call_tag_arity(request, n),
+  n > 0,
+  kind_callback(kind, callback),
+  callback_open(h, callback, "tuple", n).
+
+open_to_request(h, kind, request) :-
+  call_tag(request, _, kind, _),
+  call_tag_arity(request, n),
+  n > 0,
+  kind_callback(kind, callback),
+  callback_open(h, callback, "tuple", -1).
 
 .decl kind_callback(kind: symbol, callback: symbol)
 

@@ -34,6 +34,11 @@
 .decl call_tag(id: symbol, caller: symbol, kind: symbol, tag: symbol) mutable
 .input call_tag
 
+// The shape of the message each call_tag site sends: 0 for the bare
+// atom, N for an N-tuple tagged with it (stage 0).
+.decl call_tag_arity(id: symbol, arity: number) mutable
+.input call_tag_arity
+
 // The function each call handed a fun calls (stage 0, from fun_handed):
 // the caller, the fun, and the callee (`mod:func/arity`).
 .decl fun_handed_to(caller: symbol, fun: symbol, callee: symbol) mutable
