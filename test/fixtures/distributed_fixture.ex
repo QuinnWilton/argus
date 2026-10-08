@@ -57,6 +57,10 @@ defmodule Argus.Test.Fixtures.NodeOperationsModule do
   def disconnect(node), do: Node.disconnect(node)
   def ping(node), do: Node.ping(node)
   def list_nodes, do: Node.list()
+  def spawn_there(node), do: Node.spawn(node, fn -> :ok end)
+  def spawn_mfa_there(node), do: Node.spawn_link(node, __MODULE__, :ping, [node])
+  def spawn_opt_there(node), do: Node.spawn(node, __MODULE__, :ping, [node], [:monitor])
+  def spawn_here, do: spawn(fn -> :ok end)
 end
 
 defmodule Argus.Test.Fixtures.MnesiaModule do
@@ -164,6 +168,33 @@ defmodule Argus.Test.Fixtures.NodeMonitorServer do
   @impl true
   def handle_info({:nodeup, _node}, state), do: {:noreply, state}
   def handle_info({:nodedown, _node}, state), do: {:noreply, state}
+end
+
+defmodule Argus.Test.Fixtures.SpawnThereInInit do
+  @moduledoc false
+  use GenServer
+
+  def start_link(node), do: GenServer.start_link(__MODULE__, node)
+
+  # A spawn on another node waits for that node's reply.
+  @impl true
+  def init(node) do
+    pid = Node.spawn(node, fn -> :ok end)
+    {:ok, pid}
+  end
+end
+
+defmodule Argus.Test.Fixtures.SpawnHereInInit do
+  @moduledoc false
+  use GenServer
+
+  def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
+
+  @impl true
+  def init(arg) do
+    pid = spawn(fn -> arg end)
+    {:ok, pid}
+  end
 end
 
 defmodule Argus.Test.Fixtures.ConnectInInit do

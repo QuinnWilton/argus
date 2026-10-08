@@ -271,15 +271,17 @@ defmodule Argus.Extractors.ApiCalls.DistributedTest do
   end
 
   describe "extract/1 — node operations" do
-    test "connect, disconnect and ping" do
-      rows = sites(Argus.Test.Fixtures.NodeOperationsModule, :node_operation)
-
-      # Node.list/0 compiles to :erlang.nodes/0, so its table entry never
-      # matches; list_nodes/0 is left out of the comparison.
-      assert Enum.reject(rows, &match?(["list_nodes/0" | _], &1)) == [
+    test "connect, disconnect, ping and a spawn on another node, as Elixir compiles them" do
+      # Node.spawn and Node.spawn_link compile to the :erlang spawns that
+      # take a node; Node.list/0 to :erlang.nodes/0, which asks no node,
+      # and a local spawn names none.
+      assert sites(Argus.Test.Fixtures.NodeOperationsModule, :node_operation) == [
                ["connect/1", "connect"],
                ["disconnect/1", "disconnect"],
-               ["ping/1", "ping"]
+               ["ping/1", "ping"],
+               ["spawn_mfa_there/1", "spawn_link"],
+               ["spawn_opt_there/1", "spawn_opt"],
+               ["spawn_there/1", "spawn"]
              ]
     end
   end

@@ -48,6 +48,13 @@ defmodule Argus.Analyses.StartupDistributedTest do
              end)
     end
 
+    test "flags a spawn on another node in init/1, not one on its own" do
+      assert [["Argus.Test.Fixtures.SpawnThereInInit:init/1", _site, "spawn"]] =
+               remote(analyze([Argus.Test.Fixtures.SpawnThereInInit]))
+
+      assert remote(analyze([Argus.Test.Fixtures.SpawnHereInInit])) == []
+    end
+
     test "does not flag a plain module's init/1" do
       # PlainInit implements no behaviour: its init/1 is an ordinary
       # function that never runs at supervisor start time.

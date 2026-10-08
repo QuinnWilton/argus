@@ -122,13 +122,18 @@ defmodule Argus.Extractors.ApiCalls do
     {PartitionSupervisor, :count_children, 1}
   ]
 
+  # Elixir compiles Node.spawn/2..5 and Node.spawn_link/2,4 to the
+  # :erlang spawns that take a node, and Node.list/0,1 to :erlang.nodes,
+  # which asks no other node. A spawn on another node waits for that
+  # node's reply, with no timeout.
   @node_ops [
     {Node, :connect, 1},
     {Node, :disconnect, 1},
-    {Node, :spawn, [2, 3, 4, 5]},
-    {Node, :spawn_link, [2, 3, 4, 5]},
+    {:erlang, :spawn, [2, 4]},
+    {:erlang, :spawn_link, [2, 4]},
+    {:erlang, :spawn_monitor, [2, 4]},
+    {:erlang, :spawn_opt, [3, 5]},
     {Node, :ping, 1},
-    {Node, :list, [0, 1]},
     {Node, :monitor, 2},
     {:net_kernel, :connect_node, 1},
     {:net_kernel, :monitor_nodes, [1, 2]}
