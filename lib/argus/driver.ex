@@ -68,13 +68,6 @@ defmodule Argus.Driver do
   def state_files(project \\ mix_project()), do: [manifest_file(project)]
 
   @doc """
-  Where scry's graph kept its hashes and programs beside the manifest.
-  Nothing writes it now; a frontend's `clean` removes one a scry left.
-  """
-  @spec cache_dir() :: String.t()
-  def cache_dir, do: Path.join(Mix.Project.manifest_path(), "compile.scry.cache")
-
-  @doc """
   Runs the configured analyses against the project's compiled beams.
 
   ## Options

@@ -152,10 +152,6 @@ defmodule Argus.FlowLog.Engine do
   @spec os_pid(t()) :: non_neg_integer() | nil
   def os_pid(engine), do: GenServer.call(engine, :os_pid, :infinity)
 
-  @doc "The manifest the engine reported at `hello`."
-  @spec manifest(t()) :: map()
-  def manifest(engine), do: GenServer.call(engine, :manifest, :infinity)
-
   @doc """
   Stops the engine (and its OS process, as its port closes). Unlinks it
   first: the caller that started it outlives it.
@@ -199,19 +195,18 @@ defmodule Argus.FlowLog.Engine do
       digest: digest,
       held: %{},
       files: %{},
-      outputs: %{},
-      manifest: nil
+      outputs: %{}
     }
 
     case request(state, %{op: "hello"}, 30_000) do
-      {:ok, %{"protocol" => @protocol, "digest" => ^digest} = hello} ->
+      {:ok, %{"protocol" => @protocol, "digest" => ^digest}} ->
         :telemetry.execute(
           [:argus, :flowlog, :engine, :start],
           %{duration: System.monotonic_time() - started},
           %{digest: digest}
         )
 
-        {:ok, %{state | manifest: hello}}
+        {:ok, state}
 
       {:ok, %{"protocol" => @protocol, "digest" => other}} ->
         Port.close(port)
@@ -273,7 +268,6 @@ defmodule Argus.FlowLog.Engine do
   def handle_call({:put_outputs, outputs}, _from, state),
     do: {:reply, :ok, %{state | outputs: outputs}}
 
-  def handle_call(:manifest, _from, state), do: {:reply, state.manifest, state}
 
   def handle_call(:usage, _from, state) do
     case request(state, %{op: "usage"}, 30_000) do

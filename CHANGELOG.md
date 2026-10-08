@@ -137,7 +137,10 @@ which a change appeared; older names and APIs may have changed since then.
   `Argus.Tsv.encode/1`), `Argus.Pipeline.Writer.append/2`,
   `Argus.Priors.derive/2` and `read_facts/2`, `Argus.Specs.shapes/2`,
   `Argus.Cfg.Function.region/2`, `Argus.Instr.Reaching.prepare/2`,
-  `Argus.Purity.Effects.protocol_modules/0` and `pure_modules/0`.
+  `Argus.Purity.Effects.protocol_modules/0` and `pure_modules/0`,
+  `Argus.FlowLog.Pool.discard/1`, `Argus.FlowLog.Engine.manifest/1`,
+  `Argus.FlowLog.Toolchain.available?/0` (use `Argus.FlowLog.available?/0`)
+  and `min_rustc/0`, `Argus.Dl.Embedded.size/0`, `Argus.Driver.cache_dir/0`.
 
 ### Other changes
 

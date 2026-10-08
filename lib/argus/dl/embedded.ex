@@ -51,10 +51,6 @@ defmodule Argus.Dl.Embedded do
   @spec files() :: [{Path.t(), binary()}]
   def files, do: @payload |> :zlib.gunzip() |> :erlang.binary_to_term()
 
-  @doc "The size of the gzipped tree this module carries, in bytes."
-  @spec size() :: non_neg_integer()
-  def size, do: byte_size(@payload)
-
   @doc """
   The tree unpacked under `base`, at `<base>/<digest>`: written into a
   directory of its own and renamed into place, unless an earlier run

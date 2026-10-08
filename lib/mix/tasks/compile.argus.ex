@@ -81,11 +81,6 @@ defmodule Mix.Tasks.Compile.Argus do
   def clean do
     Enum.each(Argus.Driver.state_files(), &File.rm/1)
     File.rm(sidecar_file())
-
-    # What scry kept here before the fold, which nothing reads now.
-    File.rm(Path.join(Mix.Project.manifest_path(), "compile.scry"))
-    File.rm(Path.join(Mix.Project.manifest_path(), "compile.scry.diagnostics"))
-    File.rm_rf(Argus.Driver.cache_dir())
     :ok
   end
 

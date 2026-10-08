@@ -85,15 +85,6 @@ defmodule Argus.FlowLog.Pool do
     GenServer.call(ensure_started(), {:keep, owner, keep?}, :infinity)
   end
 
-  @doc "Stops the engine kept for `key`, if any."
-  @spec discard(key()) :: :ok
-  def discard(key) do
-    case Process.whereis(__MODULE__) do
-      nil -> :ok
-      pid -> GenServer.call(pid, {:discard, key}, :infinity)
-    end
-  end
-
   @doc "Stops every engine this VM keeps."
   @spec close_all() :: :ok
   def close_all do
@@ -199,8 +190,6 @@ defmodule Argus.FlowLog.Pool do
         {:reply, :ok, %{state | unkept: unkept}}
     end
   end
-
-  def handle_call({:discard, key}, _from, state), do: {:reply, :ok, stop_engine(state, key)}
 
   def handle_call(:close_all, _from, state) do
     {:reply, :ok, Enum.reduce(Map.keys(state.engines), state, &stop_engine(&2, &1))}

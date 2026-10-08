@@ -102,10 +102,6 @@ defmodule Argus.FlowLog.Toolchain do
     end
   end
 
-  @doc "The minimum `rustc` version, as `{major, minor, patch}`."
-  @spec min_rustc() :: {non_neg_integer(), non_neg_integer(), non_neg_integer()}
-  def min_rustc, do: @min_rustc
-
   @doc """
   The toolchain, its tool built and installed: from the VM's memo when a
   run already found it, else found (and built when missing). The tool is
@@ -198,10 +194,6 @@ defmodule Argus.FlowLog.Toolchain do
         end
     end
   end
-
-  @doc "Whether a toolchain can be had (found, or built): `ensure/1` succeeding."
-  @spec available?() :: boolean()
-  def available?, do: match?({:ok, _}, ensure())
 
   @doc "The installed tool's path."
   @spec tool(t()) :: Path.t()
