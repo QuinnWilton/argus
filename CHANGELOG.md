@@ -123,7 +123,9 @@ which a change appeared; older names and APIs may have changed since then.
   as they are as the new baseline. The first run of a checkout records its
   baseline, and the corpus test says in brief what moved after each run.
   `ARGUS_CORPUS_ONLY` narrows `fetch`, `tally`, `diff` and `accept` as it
-  does the test.
+  does the test. An analysis that degraded in a run (a solve that timed out
+  on a loaded machine) is named, and its findings are neither compared nor
+  taken.
 
 ### Other changes
 

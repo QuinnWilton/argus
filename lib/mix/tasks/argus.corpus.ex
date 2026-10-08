@@ -82,8 +82,8 @@ defmodule Mix.Tasks.Argus.Corpus do
 
   defp diff do
     changed =
-      for {co, entries} <- analyzed_entries(),
-          changes = Baseline.compare(co, entries),
+      for {co, entries, degraded} <- analyzed_entries(),
+          changes = Baseline.compare(co, entries, degraded),
           moved?(co, changes),
           do: {co, changes}
 
@@ -98,26 +98,42 @@ defmodule Mix.Tasks.Argus.Corpus do
     false
   end
 
+  defp moved?(co, {:unrecorded, degraded}) do
+    Mix.shell().error("#{co.name}: no baseline, and #{inspect(degraded)} degraded; none recorded")
+    false
+  end
+
   defp moved?(_co, %{added: added, removed: removed}), do: added != [] or removed != []
 
+  # A run in which an analysis degraded reported nothing for it: taking
+  # it would record its findings as gone.
   defp accept do
-    accepted = analyzed_entries()
+    accepted = for {co, entries, []} <- analyzed_entries(), do: {co, entries}
     Enum.each(accepted, fn {co, entries} -> Baseline.write!(co, entries) end)
     Mix.shell().info("argus: took #{length(accepted)} checkout(s)' findings as the baseline")
   end
 
-  # Each selected checkout's entries; one that cannot be analyzed is said
-  # and left out, its baseline untouched.
+  # Each selected checkout's entries, and the analyses that degraded in
+  # its run, said here (`Baseline.compare/3` leaves them out); one that
+  # cannot be analyzed is said and left out, its baseline untouched.
   defp analyzed_entries do
     Corpus.selected()
     |> Corpus.checkouts()
     |> Corpus.analyze_all(fn
-      {:ok, results} -> {:ok, Map.take(results, [:findings])}
+      {:ok, results} -> {:ok, Map.take(results, [:findings, :degraded])}
       other -> other
     end)
     |> Enum.flat_map(fn
       {co, {:ok, results}} ->
-        [{co, Baseline.entries(co, results)}]
+        degraded = Baseline.degraded(results)
+
+        if degraded != [] do
+          Mix.shell().error(
+            "#{co.name}: #{inspect(degraded)} degraded; their findings are not compared"
+          )
+        end
+
+        [{co, Baseline.entries(co, results), degraded}]
 
       {co, {:skip, why}} ->
         Mix.shell().info("#{co.name}: skipped, #{why}")

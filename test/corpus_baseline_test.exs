@@ -75,7 +75,7 @@ defmodule Argus.CorpusBaselineTest do
     end
   end
 
-  describe "compare/2" do
+  describe "compare/3" do
     test "records the first run's entries, and compares every later run with them",
          %{tmp_dir: tmp} do
       co = checkout(tmp)
@@ -100,6 +100,33 @@ defmodule Argus.CorpusBaselineTest do
       assert Baseline.read(co) == :none
       assert Baseline.compare(co, []) == {:recorded, 0}
       assert Baseline.read(co) == {:ok, []}
+    end
+  end
+
+  describe "compare/3 of a run in which an analysis degraded" do
+    test "leaves that analysis's findings out on both sides, and records no baseline",
+         %{tmp_dir: tmp} do
+      co = checkout(tmp)
+      ets = {:ets, "A", :warning, "Foo.f/1", nil}
+      races = {:races, "R", :warning, "Foo.g/1", nil}
+
+      # No baseline: a run missing an analysis's findings is not one.
+      assert Baseline.compare(co, [ets], [:races]) == {:unrecorded, [:races]}
+      assert Baseline.read(co) == :none
+
+      :ok = Baseline.write!(co, [ets, races])
+
+      # :races timed out: its finding is not removed, though the run lacks it.
+      assert Baseline.compare(co, [ets], [:races]) == %{added: [], removed: []}
+      assert Baseline.compare(co, [], [:races]) == %{added: [], removed: [ets]}
+    end
+
+    test "the analyses a run's results say degraded" do
+      assert Baseline.degraded(%{findings: []}) == []
+
+      assert Baseline.degraded(%{
+               degraded: [%{analysis: :races, reason: :t}, %{analysis: :races, reason: :u}]
+             }) == [:races]
     end
   end
 

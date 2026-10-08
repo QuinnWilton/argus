@@ -104,7 +104,8 @@ defmodule Argus.CorpusTest do
     changed =
       for {co, {:ok, results}} <- analyzed,
           entries = Baseline.entries(co, results),
-          %{added: added, removed: removed} = changes <- [Baseline.compare(co, entries)],
+          %{added: added, removed: removed} = changes <-
+            [Baseline.compare(co, entries, Baseline.degraded(results))],
           added != [] or removed != [],
           do: {co, changes}
 

@@ -114,18 +114,34 @@ defmodule Argus.Corpus.Baseline do
   @doc """
   Compares a checkout's entries with its baseline, recording them as the
   baseline when it has none: `{:recorded, count}` then, or the changes.
-  """
-  @spec compare(Corpus.checkout(), [entry()]) :: {:recorded, non_neg_integer()} | changes()
-  def compare(checkout, entries) do
-    case read(checkout) do
-      {:ok, baseline} ->
-        changes(baseline, entries)
 
-      :none ->
+  An analysis that `degraded` in the run (it timed out, say, under a
+  loaded machine) reported nothing, which is no finding removed: its
+  entries are left out of the comparison on both sides, and a run with
+  one records no baseline (`{:unrecorded, degraded}`).
+  """
+  @spec compare(Corpus.checkout(), [entry()], [atom()]) ::
+          {:recorded, non_neg_integer()} | {:unrecorded, [atom()]} | changes()
+  def compare(checkout, entries, degraded \\ []) do
+    kept = fn entries -> Enum.reject(entries, &(elem(&1, 0) in degraded)) end
+
+    case {read(checkout), degraded} do
+      {{:ok, baseline}, _} ->
+        changes(kept.(baseline), kept.(entries))
+
+      {:none, []} ->
         write!(checkout, entries)
         {:recorded, length(entries)}
+
+      {:none, _} ->
+        {:unrecorded, degraded}
     end
   end
+
+  @doc "The analyses a run's results say degraded."
+  @spec degraded(%{optional(:degraded) => [map()], optional(atom()) => term()}) :: [atom()]
+  def degraded(results),
+    do: results |> Map.get(:degraded, []) |> Enum.map(& &1.analysis) |> Enum.uniq()
 
   @doc """
   The changes across checkouts, by title: a line per analysis and title
