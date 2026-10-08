@@ -224,6 +224,17 @@ defmodule Argus.Instr do
   def slot({kind, _n} = reg) when kind in [:x, :y], do: reg
   def slot(_operand), do: nil
 
+  @doc """
+  `slot/1` spelled as the facts spell a register (`"y3"`), or nil.
+  """
+  @spec spell_slot(term()) :: String.t() | nil
+  def spell_slot(operand) do
+    case slot(operand) do
+      {kind, n} -> "#{kind}#{n}"
+      nil -> nil
+    end
+  end
+
   @doc "Each label of the function's `instrs` and the index it sits at."
   @spec labels([tuple()]) :: %{pos_integer() => non_neg_integer()}
   def labels(instrs) do

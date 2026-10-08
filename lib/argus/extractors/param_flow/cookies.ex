@@ -80,7 +80,7 @@ defmodule Argus.Extractors.ParamFlow.Cookies do
       {:ok, keys} ->
         for [key, dst] <- Enum.chunk_every(pairs, 2),
             literal_key(key) in keys,
-            spelled = spell(dst),
+            spelled = Instr.spell_slot(dst),
             spelled != nil,
             do: spelled
 
@@ -211,11 +211,4 @@ defmodule Argus.Extractors.ParamFlow.Cookies do
   defp literal_key({:integer, i}), do: i
   defp literal_key(nil), do: []
   defp literal_key(_operand), do: :none
-
-  defp spell(operand) do
-    case Instr.register(operand) do
-      {kind, n} when kind in [:x, :y] -> "#{kind}#{n}"
-      _ -> nil
-    end
-  end
 end

@@ -357,19 +357,12 @@ defmodule Argus.Extractors.ParamFlow do
         operands != nil,
         {:ok, id} = InstrId.parse(InstrId.mint(func_id, idx)),
         into: %{},
-        do: {id, Enum.map(operands, &spelled_register/1)}
+        do: {id, Enum.map(operands, &Instr.spell_slot/1)}
   end
 
   defp bif_args({:bif, _name, _fail, args, _dst}) when is_list(args), do: args
   defp bif_args({:gc_bif, _name, _fail, _live, args, _dst}) when is_list(args), do: args
   defp bif_args(_instr), do: nil
-
-  defp spelled_register(operand) do
-    case register(operand) do
-      {kind, n} when kind in [:x, :y] -> "#{kind}#{n}"
-      _ -> nil
-    end
-  end
 
   defp union_of(inputs, regs) do
     Enum.reduce(regs, MapSet.new(), fn reg, acc ->

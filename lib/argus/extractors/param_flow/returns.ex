@@ -123,7 +123,7 @@ defmodule Argus.Extractors.ParamFlow.Returns do
   def capture_users(callbacks, reads) do
     for {id, %{closure: %{at: at, env: env}}} <- callbacks,
         operand <- env,
-        reg = register(operand),
+        reg = Instr.spell_slot(operand),
         {:def, source} <- Map.get(Map.get(reads, at, %{}), reg, []),
         reduce: %{} do
       acc -> Map.update(acc, source, [id.idx], &[id.idx | &1])
@@ -152,7 +152,7 @@ defmodule Argus.Extractors.ParamFlow.Returns do
             MapSet.union(acc, Map.get(inputs, "x#{Enum.at(args, param)}", MapSet.new()))
 
           param, acc ->
-            reg = env |> Enum.at(param - first) |> register()
+            reg = env |> Enum.at(param - first) |> Instr.spell_slot()
             MapSet.union(acc, Map.get(captures, reg, MapSet.new()))
         end)
 
@@ -172,13 +172,6 @@ defmodule Argus.Extractors.ParamFlow.Returns do
 
   defp union(inputs, regs) do
     Enum.reduce(regs, MapSet.new(), &MapSet.union(&2, Map.get(inputs, &1, MapSet.new())))
-  end
-
-  defp register(operand) do
-    case Instr.register(operand) do
-      {kind, n} when kind in [:x, :y] -> "#{kind}#{n}"
-      _ -> nil
-    end
   end
 
   # The finite summaries contain parameter positions, callback origins and the
