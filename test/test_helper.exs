@@ -8,10 +8,42 @@ System.put_env("ARGUS_CACHE_DIR", Path.join(Mix.Project.build_path(), "argus/sto
 # and facts and solves kept across runs in the blob store above.
 Argus.Test.Memo.start()
 
-ExUnit.after_suite(fn _result ->
-  # The graph's store, as a driver run collects it: once a day.
-  if Argus.Dirs.keep?(), do: Roux.Blob.maybe_gc(Argus.Graph.store())
-end)
+# The graph's store, collected once a day as a driver run collects it,
+# but after the results: whether a collection is due is decided here,
+# and the stamp touched, so that no driver run inside the suite starts
+# one in the middle of a test. A collection reads every trace and kept
+# solve it keeps, and the suite writes hundreds of thousands a day, so
+# it keeps those used within the day rather than a driver's week: one
+# unused for a day was written by code this checkout no longer has, and
+# costs every collection after it a read. It says it is collecting and
+# what it took, so the wait for it is never silent.
+if Argus.Dirs.keep?() do
+  store = Argus.Graph.store()
+  stamp = Path.join(store.root, "gc.stamp")
+  day = 24 * 60 * 60
+
+  due? =
+    case File.stat(stamp, time: :posix) do
+      {:ok, %File.Stat{mtime: mtime}} -> mtime < System.os_time(:second) - day
+      {:error, _} -> true
+    end
+
+  if due? do
+    File.mkdir_p!(store.root)
+    File.touch!(stamp)
+
+    ExUnit.after_suite(fn _result ->
+      IO.puts(:stderr, "\nCollecting the suite's store (#{store.root}), once a day...")
+      {micros, stats} = :timer.tc(fn -> Roux.Blob.gc(store, keep: day) end)
+
+      IO.puts(
+        :stderr,
+        "Collected it in #{div(micros, 1_000_000)}s: removed #{stats.removed} entries " <>
+          "(#{div(stats.bytes, 1_000_000)} MB), kept #{stats.kept}."
+      )
+    end)
+  end
+end
 
 # A test of a store itself (`@tag :cache`) has nothing to test when
 # ARGUS_NO_CACHE turns the stores off. The identity checks of what a key
