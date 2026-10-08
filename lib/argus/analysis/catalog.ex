@@ -21,9 +21,11 @@ defmodule Argus.Analysis.Catalog do
 
   @doc """
   The built-in analysis modules, sorted by name. Found once per VM among
-  the application's modules (thousands in the test build, whose
-  fixtures are compiled into it), and kept: the application's module
-  list is fixed when it loads.
+  the application's modules named `Argus.Analyses.<Name>`, and kept: the
+  application's module list is fixed when it loads. Only those are
+  loaded to be asked: loading every module the application holds (all
+  of argus, and in the test build its thousands of fixtures) was most of
+  what a fresh VM spent before its first query.
   """
   @spec modules() :: [module()]
   def modules do
@@ -32,7 +34,7 @@ defmodule Argus.Analysis.Catalog do
         modules =
           argus_modules()
           |> Enum.filter(fn mod ->
-            Code.ensure_loaded?(mod) and
+            analysis_name?(mod) and Code.ensure_loaded?(mod) and
               function_exported?(mod, :name, 0) and
               function_exported?(mod, :rules_file, 0) and
               function_exported?(mod, :output_relations, 0)
@@ -113,6 +115,13 @@ defmodule Argus.Analysis.Catalog do
   """
   @spec priv_dl(String.t()) :: Path.t()
   def priv_dl(filename), do: Argus.Dl.path(filename)
+
+  defp analysis_name?(mod) do
+    case Atom.to_string(mod) do
+      "Elixir.Argus.Analyses." <> name -> not String.contains?(name, ".")
+      _ -> false
+    end
+  end
 
   # The :modules key only exists once the application is *loaded* — which
   # plain code-path embedding (escripts, sandbox VMs that only call

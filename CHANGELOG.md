@@ -90,6 +90,11 @@ which a change appeared; older names and APIs may have changed since then.
   The `rustc` and `cargo` found for a `PATH` are kept for the VM, as the
   toolchain already was, so a run no longer searches the `PATH` and runs
   `rustc -vV` to learn whether it can solve.
+- Finding the built-in analyses loads only the modules named
+  `Argus.Analyses.<Name>`, not every module of the application: a fresh VM's
+  first query, such as each `mix compile`'s, no longer loads all of argus
+  first. Under the test build, whose fixtures are compiled into it, that was
+  2,900 modules and three seconds of every peer's first graph.
 - `mix argus.flowlog solve PROGRAM FACTS_DIR --profile` (and
   `Argus.FlowLog.run/3`'s `:profile`) reports where a solve's memory and
   time went: the arrangements holding the most updates and the operators
