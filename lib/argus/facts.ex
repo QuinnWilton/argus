@@ -15,9 +15,6 @@ defmodule Argus.Facts do
   only come from a bug in an emitter or extractor, and surfacing it loudly at
   the decode boundary beats consumers silently dropping it. Relations not in
   the schema (custom extractor output) pass through undecoded.
-
-  Eventually emission itself may become typed, with stringification pushed to
-  the `.facts` writer; this decoder is the compatible first step.
   """
 
   alias Argus.{InstrId, Schema}

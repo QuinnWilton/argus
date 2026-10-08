@@ -449,23 +449,22 @@ defmodule Argus.Pipeline do
   # whose worker exited, whose facts are its one `extraction_error` row.
   #
   # Nothing a module does takes the caller down. The workers are linked to
-  # the caller, so a raise that escaped one would exit the caller (scry's
-  # compiler, a test process) before the stream could report it; every
-  # step is therefore caught in the worker (`extract_module/4`), and a
-  # worker that outlives the per-module timeout is killed on its own
+  # the caller, so a raise that escaped one would exit the caller (the
+  # `:argus` compiler, a test process) before the stream could report it;
+  # every step is therefore caught in the worker (`extract_module/4`), and
+  # a worker that outlives the per-module timeout is killed on its own
   # (`on_timeout: :kill_task`) rather than failing the whole stream. Both
   # come back as an `extraction_error` row: what was lost is recorded
   # beside what was extracted, and the run goes on. Only an input that
   # cannot be read at all (`{:error, reason}` from disassembly) ends it.
   #
   # `shape` is what the worker does to a module's facts — a list of
-  # `{producer, facts}`, `:base` first — before they cross to the
-  # caller, which takes them one module at a time in input order:
-  # merging them (`extract/2`), or encoding each producer's as the lines
-  # of its files (`run/3`, `extract_module/2`), so the caller only
-  # writes. Encoding in the caller left the workers waiting on it: on
-  # the Phoenix stack writing the facts took longer than extracting them
-  # at eight workers.
+  # `{producer, facts}`, `:base` first — before they cross to the caller,
+  # which takes them one module at a time in input order: merging them
+  # (`extract/2`), or encoding each producer's as the lines of its files
+  # (`run/3`, `extract_module/2`), so the caller only writes. Encoding in
+  # the caller left the workers waiting on it: on the Phoenix stack
+  # writing the facts took longer than extracting them at eight workers.
   defp extract_stream(inputs, opts, memo, how, shape) do
     concurrency = Keyword.get(opts, :concurrency, System.schedulers_online())
     extractors = Keyword.get(opts, :extractors, [])

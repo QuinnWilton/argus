@@ -62,11 +62,6 @@ defmodule Argus.Dataflow do
   > and unrelated control-flow graphs are spliced together, which silently
   > loses real edges and invents others — measured at 25,409 edges instead
   > of 45,319 on one project.
-  >
-  > Every caller does this correctly today (`Planchette.Flow.build/1` and
-  > `Gloss.Adapters.dataflow/1` are both per module, as is the derivation in
-  > `Argus.Pipeline`), so this documents a precondition that was being met
-  > by convention rather than fixing a live defect.
   """
   @spec def_use_edges(Argus.Facts.t()) :: MapSet.t(edge())
   @pure true
