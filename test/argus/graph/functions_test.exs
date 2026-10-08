@@ -54,13 +54,13 @@ defmodule Argus.Graph.FunctionsTest do
   end
 
   # The graph's rows, query by query, are the pipeline's over a whole
-  # module, for every producer: over the fixtures with closures and
-  # calls across functions, the ones the instruction candidates of
-  # handles, sockets, TLS and registration pick out, and the spread
-  # every producer writes rows for (`Argus.Test.FixtureSpread`).
-  @named ~w(RpcTarget. GenStatem SameLine. CheckThenAct. Handles. Sockets. Tls. ProcessRegisterer.
-            NamedGenServer. NamedAgents. WhereisModule. RegistryUser. DynamicNameServer.
-            DuplicateRegisterer. StaticWhereis. NamedStarts.)
+  # module, for every producer: over the spread every producer writes rows
+  # for (`Argus.Test.FixtureSpread`, OTP's behaviours among it), the
+  # fixtures whose instruction candidates handles, sockets, TLS and
+  # registration pick out, and calls between servers.
+  @named ~w(RpcTarget. GenStatem Handles. Sockets. Tls. ProcessRegisterer. NamedGenServer.
+            NamedAgents. WhereisModule. RegistryUser. DynamicNameServer. DuplicateRegisterer.
+            StaticWhereis. NamedStarts.)
 
   test "every producer's rows through the graph are the pipeline's, over the fixtures", %{
     peer: peer,
@@ -70,7 +70,7 @@ defmodule Argus.Graph.FunctionsTest do
       Path.wildcard("_build/test/lib/argus_beam/ebin/Elixir.Argus.Test.Fixtures.*.beam")
       |> Enum.filter(&String.contains?(&1, Enum.map(@named, fn name -> "Fixtures." <> name end)))
 
-    assert length(named) > 40
+    assert length(named) > 50
     # Picked here: the peer has not loaded the application whose modules
     # the spread is picked from, unless a test before this one loaded it.
     paths = Enum.uniq(named ++ FixtureSpread.beams(FixtureSpread.spread()))
