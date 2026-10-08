@@ -71,7 +71,10 @@ defmodule Argus.Analyses.UnsafeInputTest do
     D.OwnData,
     [Argus.Test.Fixtures.AtomCallerInput, Argus.Test.Fixtures.AtomCallerInput.NameServer],
     Argus.Test.Fixtures.ContractSealed,
-    Argus.Test.Fixtures.ContractUnsealed
+    Argus.Test.Fixtures.ContractUnsealed,
+    [Argus.Test.Fixtures.ContractConfigLive, Argus.Test.Fixtures.ContractConfigOps],
+    Argus.Test.Fixtures.ContractConfigMixed,
+    [Argus.Test.Fixtures.ContractConfigStored, Argus.Test.Fixtures.ContractConfigStore]
   ]
 
   setup_all do
@@ -457,6 +460,21 @@ defmodule Argus.Analyses.UnsafeInputTest do
         ])
 
       refute "flow" in Enum.map(rows, &List.last/1)
+    end
+
+    test "atoms made of the application's configuration alone are not the request's", ctx do
+      alias Argus.Test.Fixtures, as: F
+
+      assert atom_rows(ctx, [F.ContractConfigLive, F.ContractConfigOps]) == []
+
+      # The request's own data beside the config is a flow; a stored
+      # record's beside it keeps the path.
+      assert proximity_for(atom_rows(ctx, [F.ContractConfigMixed]), "operation") == ["flow"]
+
+      assert proximity_for(
+               atom_rows(ctx, [F.ContractConfigStored, F.ContractConfigStore]),
+               "kind"
+             ) == ["adjacent"]
     end
 
     test "the socket, the session and a literal are not the request", ctx do

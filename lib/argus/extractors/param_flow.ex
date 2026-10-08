@@ -44,6 +44,13 @@ defmodule Argus.Extractors.ParamFlow do
     of the atoms that exist, of the caller's choosing. An atom made of it
     grows the set it was chosen from, one per call — the next caller names
     the atom the last one made — so it is no atoms-of-atoms bound.
+  - `call_arg_config(caller, callee, arg_pos)` and `sink_arg_config(id,
+    func, arg_pos)` — the argument is made of a value the application's
+    configuration answered (`Application.get_env/2,3`, `fetch_env/2`,
+    `fetch_env!/2`, `get_all_env/1`, and `:application`'s): what the host
+    configured, its code, not a caller's choice. It says what the
+    argument holds, not that it holds nothing else: the rules ask the
+    other sources (`unsafe_input.dl`'s `config_fed`).
   - `call_arg_allowlist(caller, callee, arg_pos)` — every call the caller
     makes to the callee passes a literal list at `arg_pos`.
   - `command_fixed(id, func)` — the `System.cmd` call at `id` hands its
@@ -128,17 +135,35 @@ defmodule Argus.Extractors.ParamFlow do
               {"List", "to_existing_atom", 1}
             ])
 
+  # The application environment's reads: what they answer is the host's
+  # configuration (the `config` marker, `call_arg_config`), whoever names
+  # the key.
+  @config_reads MapSet.new([
+                  {"Application", "get_env", 2},
+                  {"Application", "get_env", 3},
+                  {"Application", "fetch_env", 2},
+                  {"Application", "fetch_env!", 2},
+                  {"Application", "get_all_env", 1},
+                  {":application", "get_env", 1},
+                  {":application", "get_env", 2},
+                  {":application", "get_env", 3},
+                  {":application", "get_all_env", 0},
+                  {":application", "get_all_env", 1}
+                ])
+
   @impl true
   def relations,
     do: [
       :command_fixed,
       :call_arg_allowlist,
       :call_arg_chosen,
+      :call_arg_config,
       :call_arg_derived,
       :call_arg_param,
       :call_arg_runtime,
       :sink_arg_bounded,
       :sink_arg_chosen,
+      :sink_arg_config,
       :sink_arg_derived,
       :sink_copy
     ]
@@ -339,9 +364,11 @@ defmodule Argus.Extractors.ParamFlow do
             positions -> union_of(inputs, Enum.map(positions, &"x#{&1}"))
           end
 
-        if MapSet.member?(@choosers, {mod, fun, arity}),
-          do: MapSet.put(derived, :chosen),
-          else: derived
+        cond do
+          MapSet.member?(@choosers, {mod, fun, arity}) -> MapSet.put(derived, :chosen)
+          MapSet.member?(@config_reads, {mod, fun, arity}) -> MapSet.put(derived, :config)
+          true -> derived
+        end
 
       true ->
         MapSet.new()
@@ -744,6 +771,9 @@ defmodule Argus.Extractors.ParamFlow do
       :chosen, acc ->
         add_fact(acc, :call_arg_chosen, prefix)
 
+      :config, acc ->
+        add_fact(acc, :call_arg_config, prefix)
+
       param, acc when is_integer(param) ->
         add_fact(acc, :call_arg_derived, prefix ++ [to_string(param)])
 
@@ -757,6 +787,9 @@ defmodule Argus.Extractors.ParamFlow do
     Enum.reduce(derived, facts, fn
       :chosen, acc ->
         add_fact(acc, :sink_arg_chosen, prefix)
+
+      :config, acc ->
+        add_fact(acc, :sink_arg_config, prefix)
 
       param, acc when is_integer(param) ->
         add_fact(acc, :sink_arg_derived, prefix ++ [to_string(param)])

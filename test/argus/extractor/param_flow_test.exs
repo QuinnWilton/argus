@@ -160,4 +160,31 @@ defmodule Argus.Extractor.ParamFlowTest do
              end)
     end
   end
+
+  describe "the application's configuration" do
+    setup do
+      {:ok, facts} =
+        Argus.Pipeline.extract(
+          [Argus.Test.Fixtures.ContractConfigOps, Argus.Test.Fixtures.ContractConfigMixed],
+          extractors: [ParamFlow]
+        )
+
+      %{facts: facts}
+    end
+
+    test "an environment read is a config origin, carried through calls and returns", %{
+      facts: facts
+    } do
+      assert [
+               "Argus.Test.Fixtures.ContractConfigOps:all/0",
+               "Argus.Test.Fixtures.ContractConfigOps:normalize_specs/1",
+               "0"
+             ] in facts.call_arg_config
+
+      # Beside the request's own name, at the sink itself.
+      assert [[_id, func, "0"]] = facts.sink_arg_config
+      assert func =~ "ContractConfigMixed:operation/1"
+      assert {0, 0} in sinks(facts, "ContractConfigMixed:operation/1")
+    end
+  end
 end

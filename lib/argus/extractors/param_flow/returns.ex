@@ -6,7 +6,8 @@ defmodule Argus.Extractors.ParamFlow.Returns do
   alias Argus.Extractors.ParamFlow.Propagators
   alias Argus.Instr
   alias Argus.InstrId
-  @type origin :: non_neg_integer() | :chosen | {:runtime, String.t(), String.t()}
+
+  @type origin :: non_neg_integer() | :chosen | :config | {:runtime, String.t(), String.t()}
   @type summary :: MapSet.t(origin())
   @type summaries :: %{String.t() => summary()}
   @type inputs :: %{String.t() => summary()}
@@ -140,8 +141,8 @@ defmodule Argus.Extractors.ParamFlow.Returns do
         summaries
         |> Map.get(target, fallback)
         |> Enum.reduce(base, fn
-          :chosen, acc ->
-            MapSet.put(acc, :chosen)
+          marker, acc when marker in [:chosen, :config] ->
+            MapSet.put(acc, marker)
 
           {:runtime, _, _} = source, acc ->
             MapSet.put(acc, source)
@@ -162,7 +163,7 @@ defmodule Argus.Extractors.ParamFlow.Returns do
   @spec substitute(summary(), inputs()) :: summary()
   def substitute(summary, inputs) do
     Enum.reduce(summary, MapSet.new(), fn
-      :chosen, acc -> MapSet.put(acc, :chosen)
+      marker, acc when marker in [:chosen, :config] -> MapSet.put(acc, marker)
       {:runtime, _, _} = source, acc -> MapSet.put(acc, source)
       param, acc -> MapSet.union(acc, Map.get(inputs, "x#{param}", MapSet.new()))
     end)
@@ -173,8 +174,9 @@ defmodule Argus.Extractors.ParamFlow.Returns do
   end
 
   # The finite summaries contain parameter positions, callback origins and the
-  # existing-atom marker. Starting empty and revisiting callers gives a least fixpoint,
-  # including mutually recursive helpers, without tainting unknown calls.
+  # existing-atom and configuration markers. Starting empty and revisiting callers
+  # gives a least fixpoint, including mutually recursive helpers, without tainting
+  # unknown calls.
   @spec solve(
           %{String.t() => input},
           targets(),

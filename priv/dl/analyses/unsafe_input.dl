@@ -35,7 +35,97 @@
 
 request_reached_sink(id, func, entry, kind, evidence) :-
   sink(id, func, _, _, _),
-  reached_by_request(id, func, entry, kind, evidence).
+  reached_by_request(id, func, entry, kind, evidence),
+  !config_path(id, evidence).
+
+// ── Configuration, not the request ───────────────────────────────
+
+// A path a request takes to an atom or deserialization sink whose argument is made of
+// the application's configuration alone: what the host configured, its code. Only a
+// path is dropped (adjacent or transitive); a request's own data at the sink is a flow
+// and stays, and a sink in the callback itself operates on the request.
+.decl config_path(id: symbol, evidence: symbol)
+
+config_path(id, evidence) :-
+  config_candidate(id, evidence),
+  config_reaches(id),
+  !other_source(id).
+
+.decl config_candidate(id: symbol, evidence: symbol)
+
+config_candidate(id, evidence) :-
+  sink(id, func, _, kind, _),
+  (kind = "atom" ; kind = "deserialization"),
+  reached_by_request(id, func, _, _, evidence),
+  (evidence = "adjacent" ; evidence = "transitive").
+
+// The functions and parameters the sink's argument is made of, backward over
+// call_arg_derived (closures' captures and handed elements included). Unlike
+// sink_flow_reaches, no template is skipped: a wider chain asks more sources.
+.decl config_chain(func: symbol, pos: number, id: symbol)
+
+config_chain(f, p, id) :-
+  config_candidate(id, _),
+  sink_arg_derived(id, f, 0, p).
+
+config_chain(f, p, id) :- call_arg_derived(f, g, k, p), config_chain(g, k, id).
+
+// An application environment read reaches the argument (ParamFlow's config origin).
+.decl config_reaches(id: symbol)
+
+config_reaches(id) :- config_candidate(id, _), sink_arg_config(id, _, 0).
+config_reaches(id) :- config_chain(g, k, id), call_arg_config(_, g, k).
+
+// Something other than configuration may reach the argument: a result of a call
+// outside the runtime or of a shared-state operation (Dependence's sources, which see
+// through the runtime's calls), a parameter ParamFlow does not follow, an unresolved
+// fun's result, an atom an existing-atom lookup chose, or a parameter of an export,
+// whose callers argus does not see. Known limits: a value a fun handed to a helper is
+// called with is followed by neither extractor, and a runtime call's result carries only
+// its arguments in Dependence, so a fresh value (`make_ref/0`) beside the config is not
+// seen either.
+.decl other_source(id: symbol)
+
+other_source(id) :- config_candidate(id, _), sink_reads(id, _, 0, kind, _), kind != "param".
+
+other_source(id) :-
+  config_candidate(id, _),
+  sink_reads(id, f, 0, "param", p),
+  !sink_param_followed(id, f, p).
+
+other_source(id) :- config_candidate(id, _), call_arg_runtime(id, _, 0, _, _).
+other_source(id) :- config_candidate(id, _), sink_arg_chosen(id, _, 0).
+
+other_source(id) :-
+  config_chain(g, k, id),
+  call_arg_reads(_, g, k, kind, _),
+  kind != "param".
+
+other_source(id) :-
+  config_chain(g, k, id),
+  call_arg_reads(c, g, k, "param", q),
+  !call_param_followed(c, g, k, q).
+
+other_source(id) :-
+  config_chain(g, k, id),
+  local_call(site, c, g, _),
+  call_arg_runtime(site, c, k, _, _).
+
+other_source(id) :- config_chain(g, k, id), call_arg_chosen(_, g, k).
+other_source(id) :- config_chain(g, _, id), api_export(g).
+
+// ParamFlow's parameters, spelled as Dependence spells its sources.
+.decl sink_param_followed(id: symbol, func: symbol, param: symbol)
+
+sink_param_followed(id, f, to_string(p)) :-
+  config_candidate(id, _),
+  sink_arg_derived(id, f, 0, p).
+
+.decl call_param_followed(caller: symbol, callee: symbol, pos: number, param: symbol)
+
+call_param_followed(c, g, k, to_string(q)) :-
+  config_chain(g, k, _),
+  call_arg_derived(c, g, k, q).
 
 // One unbounded sink per source call. Deserialization `safety` is unsafe, atoms_only
 // ([:safe], preventing new atoms but not unsafe use of decoded terms), or dynamic.

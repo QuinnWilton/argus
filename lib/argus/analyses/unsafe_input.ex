@@ -17,7 +17,11 @@ defmodule Argus.Analyses.UnsafeInput do
     string building and forwarding, however far; `direct` means the sink
     is in the callback itself, operating on the request; `adjacent` one
     call away; `transitive` anywhere else in the callback's cone, a path
-    rather than a proven flow. `source` and `permille` are the value
+    rather than a proven flow. An adjacent or transitive atom or
+    deserialization sink whose argument is made of the application's
+    configuration alone (`Application.get_env/3` and kin, and nothing
+    the extractors see come from elsewhere) is not reported: the host's
+    config is its code. `source` and `permille` are the value
     prior's, as below; `safety` is a deserialization's option class.
   - `sink_without_request_path(id, func, api, sink, source, permille,
     safety)` — no request reaches it: atom creation and decompression of

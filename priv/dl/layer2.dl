@@ -59,6 +59,11 @@
 .decl call_arg_chosen(caller: symbol, callee: symbol, arg_pos: number) mutable
 .input call_arg_chosen
 
+// A call argument derived from a read of the application environment in the caller. Chains with `call_arg_derived` to find configuration reaching a sink.
+//
+.decl call_arg_config(caller: symbol, callee: symbol, arg_pos: number) mutable
+.input call_arg_config
+
 // A call argument dependent on the source through data or control flow. Unlike `call_arg_derived`, includes control dependence and call-result sources. Function-level.
 //
 .decl call_arg_depends(caller: symbol, callee: symbol, arg_pos: number, kind: symbol, source: symbol) mutable
@@ -950,6 +955,11 @@
 //
 .decl sink_arg_chosen(id: symbol, func: symbol, arg_pos: number) mutable
 .input sink_arg_chosen
+
+// A sink argument derived from a read of the application environment in the same function (`Application.get_env/2,3` and kin): the host's configuration. It may hold other data as well; this names one origin, not the only one.
+//
+.decl sink_arg_config(id: symbol, func: symbol, arg_pos: number) mutable
+.input sink_arg_config
 
 // Parameter-derived data at an atom-creation, deserialization, or code-execution sink, keyed by site. Chains with `call_arg_derived` to establish data flow from request parameters.
 //

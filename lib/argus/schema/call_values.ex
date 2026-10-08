@@ -565,6 +565,33 @@ defmodule Argus.Schema.CallValues do
         """
       },
       %{
+        name: :sink_arg_config,
+        layer: 2,
+        fields: [
+          {:id, :instr_id, "instruction ID of the sink call"},
+          {:func, :func_id, "function containing the sink"},
+          {:arg_pos, :number, "0-based argument position at the sink"}
+        ],
+        doc: """
+        A sink argument derived from a read of the application environment in the \
+        same function (`Application.get_env/2,3` and kin): the host's configuration. \
+        It may hold other data as well; this names one origin, not the only one.
+        """
+      },
+      %{
+        name: :call_arg_config,
+        layer: 2,
+        fields: [
+          {:caller, :symbol, "calling function ID"},
+          {:callee, :symbol, "callee function ID (mod:func/arity)"},
+          {:arg_pos, :number, "0-based argument position at the call site"}
+        ],
+        doc: """
+        A call argument derived from a read of the application environment in the \
+        caller. Chains with `call_arg_derived` to find configuration reaching a sink.
+        """
+      },
+      %{
         name: :sink_copy,
         layer: 2,
         fields: [
