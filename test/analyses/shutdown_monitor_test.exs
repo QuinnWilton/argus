@@ -35,4 +35,39 @@ defmodule Argus.Analyses.ShutdownMonitorTest do
       assert kill_site =~ "KillsMonitoredAside:-handle_cast/2-fun-0-/1#"
     end
   end
+
+  describe "stops whose :DOWN the crash clause cannot see" do
+    alias Argus.Test.Fixtures.ShutdownMonitors, as: SM
+
+    defp killers(mods) do
+      assert {:ok, r} = Memo.analyze(mods, :shutdown)
+      r |> Map.get("kills_monitored_child", []) |> Enum.map(&hd/1) |> Enum.uniq()
+    end
+
+    test "a stop made from terminate/2 is not reported" do
+      assert killers([SM.StopsInTerminate]) == []
+    end
+
+    test "the same stop in a helper a cast runs too is reported" do
+      assert killers([SM.StopsInTerminateAndCast]) ==
+               ["Argus.Test.Fixtures.ShutdownMonitors.StopsInTerminateAndCast"]
+    end
+
+    test "a stop of a process the server started cannot pair with a monitor of its init argument" do
+      assert killers([SM.OwnerAndWatchers, SM.Lib]) == []
+    end
+
+    test "a stop of the monitored init argument itself is reported" do
+      assert killers([SM.StopsOwner]) == ["Argus.Test.Fixtures.ShutdownMonitors.StopsOwner"]
+    end
+
+    test "a demonitor in the callback that spawns the stop releases the monitor" do
+      assert killers([SM.DemonitorsThenSpawnsStop]) == []
+    end
+
+    test "a demonitor only in another callback does not" do
+      assert killers([SM.SpawnsStopDemonitorsElsewhere]) ==
+               ["Argus.Test.Fixtures.ShutdownMonitors.SpawnsStopDemonitorsElsewhere"]
+    end
+  end
 end

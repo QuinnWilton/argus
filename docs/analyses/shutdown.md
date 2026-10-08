@@ -90,9 +90,12 @@ A server deliberately stops a process but leaves its monitor active. The resulti
 DOWN can be mistaken for an unexpected crash. Inspect whether the handler distinguishes
 intentional stops, or release the corresponding monitor.
 
-Unknown stop and monitor targets may be paired. A demonitor on the stop's path is
-not matched precisely to the reference, and `Process.exit` is not covered here.
-A handler that safely ignores removed references may need no demonitor.
+A stop terminate/2 makes is not reported: the server exits once it returns, so no
+callback sees that DOWN. Unknown stop and monitor targets may be paired, except a
+monitor of a pid init/1 is handed with a stop of processes the server starts itself.
+A demonitor on the stop's path, including in the function that spawns a process to
+make the stop, is not matched precisely to the reference, and `Process.exit` is not
+covered here. A handler that safely ignores removed references may need no demonitor.
 
 ## Permanent children that stop normally
 

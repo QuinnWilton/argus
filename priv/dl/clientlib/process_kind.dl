@@ -34,8 +34,7 @@ takes_some_exits(h) :- callback_tag(h, "handle_info", ":EXIT").
 // Server execution scopes
 // `server_side`: same-module code on the server's own stack.
 // `RunsInServer`: same-process code in any module, seeded by relevant functions.
-// `server_caused`: same-module work caused by callbacks, including spawned closures.
-// All start from process_entry. Client APIs run in their callers and are not
+// Both start from process_entry. Client APIs run in their callers and are not
 // automatically server code; detached monitors belong to their new process even when
 // detached effects are server-caused.
 .init server_reach = ForwardIntraModuleSameProcessReach
@@ -45,14 +44,6 @@ server_reach.root(mod, func) :- process_entry(mod, func).
 .decl server_side(mod: symbol, func: symbol)
 
 server_side(mod, func) :- server_reach.reaches(mod, func).
-
-.init server_caused_reach = ForwardIntraModuleReach
-
-server_caused_reach.root(mod, func) :- process_entry(mod, func).
-
-.decl server_caused(mod: symbol, func: symbol)
-
-server_caused(mod, func) :- server_caused_reach.reaches(mod, func).
 
 // The seeded function runs on a started server's stack, in any module. Exclude logging
 // and telemetry paths (side_call). Requires staged points-to facts via

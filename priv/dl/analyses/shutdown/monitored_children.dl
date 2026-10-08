@@ -24,11 +24,19 @@ kill_of_monitored_child(mod, monitor, kill) :-
 
 server_monitors(mod, monitor) :- server_side(mod, f), monitor_call(monitor, f, _).
 
-// The server causes the stop, directly or through a spawned process. DOWN still goes to
-// the server that owns the monitor.
+// The server causes the stop, directly or through a spawned process, from a callback it
+// lives on after. DOWN still goes to the server that owns the monitor. A stop
+// terminate/2 alone makes is no such stop: the server exits once terminate/2 returns, so
+// no callback ever sees the DOWN it causes.
 .decl server_kills(mod: symbol, kill: symbol)
 
-server_kills(mod, kill) :- server_caused(mod, g), kill_call(kill, g).
+server_kills(mod, kill) :- live_server_reach.reaches(mod, g), kill_call(kill, g).
+
+// Same-module work the server's callbacks other than terminate cause, spawned closures
+// included.
+.init live_server_reach = ForwardIntraModuleReach
+
+live_server_reach.root(mod, func) :- process_entry(mod, func), !terminate_callback(func, mod, _).
 
 // A stop of a process: a supervisor's terminate_child, GenServer.stop.
 .decl kill_call(site: symbol, func: symbol)
@@ -37,7 +45,8 @@ kill_call(x, g) :- sup_call(x, g, _, "terminate_child", _).
 kill_call(x, g) :- remote_call(x, g, "GenServer", "stop", _).
 
 // Pair a kill with a monitor when their targets overlap or either is unresolved.
-// Distinct resolved processes do not qualify.
+// Distinct resolved processes do not qualify, nor a stop of processes born after the
+// pid the monitor watches (born_apart).
 .decl kills_what_it_monitors(monitor: symbol, kill: symbol)
 
 kills_what_it_monitors(m, k) :-
@@ -47,12 +56,66 @@ kills_what_it_monitors(m, k) :-
 kills_what_it_monitors(m, k) :-
   monitor_call(m, f, _),
   kill_call(k, _),
-  !signal_target(m, f, "monitor", _).
+  !signal_target(m, f, "monitor", _),
+  !born_apart(m, k).
 
 kills_what_it_monitors(m, k) :-
   monitor_call(m, _, _),
   kill_call(k, g),
   !signal_target(k, g, "stop", _).
+
+// The monitor watches a pid init/1 is handed, and the kill stops only processes the
+// server starts itself, on its own stack (volt's watcher: the owner from its options,
+// and the file watchers it start_links). A process started once init/1 runs is not one
+// its arguments already named. A kill whose target is unresolved stays paired.
+.decl born_apart(monitor: symbol, kill: symbol)
+
+born_apart(m, k) :-
+  monitors_init_arg(m, mod),
+  kill_call(k, g),
+  signal_target(k, g, "stop", _),
+  !stops_unborn(k, mod).
+
+// The monitor in `mod`'s init/1 watches only what init/1's arguments hold.
+.decl monitors_init_arg(monitor: symbol, mod: symbol)
+
+monitors_init_arg(m, mod) :-
+  init_function(mod, f),
+  monitor_call(m, f, _),
+  process_signal_source(m, f, "monitor", _, _),
+  !monitor_beyond_init_arg(m, f).
+
+.decl monitor_beyond_init_arg(monitor: symbol, func: symbol)
+
+monitor_beyond_init_arg(m, f) :-
+  init_function(_, f),
+  process_signal_source(m, f, "monitor", sk, s),
+  !init_arg_value(f, sk, s).
+
+// A value init/1 reads from its argument: the argument, or a field of it at any depth.
+.decl init_arg_value(func: symbol, src_kind: symbol, src: symbol)
+
+init_arg_value(f, "param", "0") :- init_function(_, f).
+
+init_arg_value(f, "load", l) :-
+  init_function(_, f),
+  value_load(f, l, _, bk, bs),
+  init_arg_value(f, bk, bs).
+
+// The kill may stop a process other than one `mod`'s server starts on its own stack.
+.decl stops_unborn(kill: symbol, mod: symbol)
+
+stops_unborn(k, mod) :-
+  monitors_init_arg(_, mod),
+  kill_call(k, g),
+  signal_target(k, g, "stop", p),
+  !born_on_server(mod, p).
+
+// `p` is started by a function on `mod`'s server stack and kept there
+// (private_process): not a pid any caller handed the server.
+.decl born_on_server(mod: symbol, proc: symbol)
+
+born_on_server(mod, p) :- private_process(p, g, _), server_side(mod, g).
 
 // A demonitor in the kill's function, a caller, or a callee can release the monitor on
 // that path. Unrelated callbacks do not qualify.
@@ -61,6 +124,16 @@ kills_what_it_monitors(m, k) :-
 released_with_kill(k) :- kill_call(k, g), demonitor_call(_, g, _).
 released_with_kill(k) :- kill_call(k, g), call_edge(c, g), demonitor_call(_, c, _).
 released_with_kill(k) :- kill_call(k, g), call_edge(g, h), demonitor_call(_, h, _).
+
+// The kill runs in a process the server spawns for it, in the closure handed to the
+// start or in what that closure calls: a demonitor in the function that hands the
+// closure off releases the monitor on that path (quickbeam's context demonitors its
+// worker with :flush, then stops it from a Task.start).
+released_with_kill(k) :-
+  kill_call(k, g),
+  (c = g ; call_edge(c, g)),
+  runs_elsewhere(b, c),
+  demonitor_call(_, b, _).
 
 kills_monitored_child(mod, site, kill_site) :-
   kill_of_monitored_child(mod, site, kill_site).

@@ -51,9 +51,10 @@ Behaviours and explicit starts identify process modules. Callback tables define
 entries unknown.
 
 A server callback runs in the server; its public client API normally runs in the
-caller. `server_side`, `RunsInServer` and `server_caused` answer different questions:
-work in the server's own module, work anywhere on its stack, and work it causes
-including detached execution.
+caller. `server_side` and `RunsInServer` answer different questions: work in the
+server's own module, and work anywhere on its stack. A rule about work the server
+causes, detached execution included, walks its own forward reach from the entries it
+needs (`live_server_reach` in `monitored_children.dl` leaves out terminate/2).
 
 Points-to relations track starts, names, parameters, returns, fields, callback
 state and messages. They can distinguish some start instances and privately retained
