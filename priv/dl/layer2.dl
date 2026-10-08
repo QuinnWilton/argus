@@ -676,6 +676,11 @@
 .decl pure_contract(func: symbol, mod: symbol, name: symbol, arity: number) mutable
 .input pure_contract
 
+// A remote call in a quote's literal or a macro's rebuilt return value (`Argus.Extractors.Quoted`). It runs where the quote expands, not where the beams call: `unsafe_input.dl` keeps a hidden helper a generated function calls as a way in, and does not count a `__name__` hook only expansions call as one.
+//
+.decl quoted_call(func: symbol, mod: symbol, name: symbol, arity: number, context: symbol) mutable
+.input quoted_call
+
 // A receive clause accepting every reason for `:DOWN` from a monitor created in the same function. The pinned reference must come from that monitor on every path, with no intervening demonitor. Other restrictions on the message disqualify it. The receive cannot outlast the monitored process.
 //
 .decl recv_down(id: symbol, func: symbol, monitor: symbol) mutable

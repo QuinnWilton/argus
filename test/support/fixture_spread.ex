@@ -48,6 +48,7 @@ defmodule Argus.Test.FixtureSpread do
     Argus.Test.Fixtures.Secret.Typed,
     Argus.Test.Fixtures.Tls.ForcesNone,
     Argus.Test.Fixtures.DerivedInspect.OneField,
+    Argus.Test.Fixtures.ApiSurface.QuoteShapes,
     Mix.ArgusFixtures.Seed
   ]
 

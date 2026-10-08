@@ -30,6 +30,7 @@ defmodule Argus.Graph.Functions do
     Argus.Extractors.TermFlow,
     Argus.Extractors.ProcessRegistry,
     Argus.Extractors.Purity,
+    Argus.Extractors.Quoted,
     Argus.Extractors.Reply,
     Argus.Extractors.Router,
     Argus.Extractors.ShutdownReason,

@@ -100,7 +100,9 @@ defmodule Argus.Analyses.UnsafeInput do
       Argus.Extractors.CallArgs,
       Argus.Extractors.Tooling,
       # Exports the docs hide (doc_hidden): no way in for a caller's data.
-      Argus.Extractors.Docs
+      Argus.Extractors.Docs,
+      # Calls a quote names (quoted_call): generated code's, not a beam's.
+      Argus.Extractors.Quoted
     ]
 
   @sink_fields [

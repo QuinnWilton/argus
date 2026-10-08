@@ -436,6 +436,25 @@ defmodule Argus.Schema.CallValues do
         """
       },
       %{
+        name: :quoted_call,
+        layer: 2,
+        fields: [
+          {:func, :func_id, "the function whose quote names the call"},
+          {:mod, :symbol, "the called module, inspected"},
+          {:name, :symbol, "the called function's name"},
+          {:arity, :number, "the call's arity, or -1 when its arguments are not known"},
+          {:context, :symbol,
+           "function (inside a function or nested quote the quote defines) | expansion (at the " <>
+             "top of the code a macro returns)"}
+        ],
+        doc: """
+        A remote call in a quote's literal or a macro's rebuilt return value \
+        (`Argus.Extractors.Quoted`). It runs where the quote expands, not where the beams \
+        call: `unsafe_input.dl` keeps a hidden helper a generated function calls as a way \
+        in, and does not count a `__name__` hook only expansions call as one.
+        """
+      },
+      %{
         name: :name_release,
         layer: 2,
         fields: [

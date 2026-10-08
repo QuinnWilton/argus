@@ -16,7 +16,7 @@ defmodule Argus.Extractors.DocsTest do
 
   test "every function of a @moduledoc false module, and no function the compiler adds" do
     expected =
-      for fun <- ~w(keyword/1 keywords/1 orphan/1 param/1 rules/0 rules/1 word/1),
+      for fun <- ~w(event/1 keyword/1 keywords/1 orphan/1 param/1 rules/0 rules/1 word/1),
           do: "#{inspect(ApiSurface.Grammar)}:#{fun}"
 
     assert hidden(ApiSurface.Grammar) == expected

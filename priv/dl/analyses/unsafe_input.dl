@@ -547,7 +547,8 @@ outside_api(f) :-
 // the program calls is called from outside after all, by code a macro generates or by
 // a user past the docs, and stays a way in. So does a hidden export of a module with a
 // behaviour: `@impl true` hides a callback, which the behaviour's runtime calls with
-// outside data.
+// outside data. And so does one a function a quote defines calls: that generated
+// function runs in the user's module on what its callers hand it.
 .decl internal_export(func: symbol)
 
 internal_export(f) :-
@@ -555,7 +556,40 @@ internal_export(f) :-
   call_edge(c, f),
   c != f,
   function_def(f, m, _, _, _),
-  !behaves_as(m, _).
+  !behaves_as(m, _),
+  !quoted_call_to(f, "function").
+
+// A `__name__` hook (the convention for what generated code calls, not a user) that
+// only the top of code a macro returns calls: it runs where the macro expands, as
+// phoenix_replay's `__live_sessions__/2` builds session names in a router's body while
+// the router compiles, on the options its source writes. A hook a function the quote
+// defines calls, or one the program's runtime calls, stays a way in.
+// Known limit: a macro expanded inside a function body runs such a hook at runtime, on
+// what that function holds.
+internal_export(f) :-
+  quoted_call_to(f, "expansion"),
+  function_def(f, _, n, _, _),
+  match("__.+__", n),
+  !quoted_call_to(f, "function"),
+  !runtime_caller(f).
+
+// A quote in the program calls `func`: in a function or nested quote it defines
+// (`function`), or at the top of the code a macro returns (`expansion`). A call whose
+// arity is unknown names every arity.
+.decl quoted_call_to(func: symbol, context: symbol)
+
+quoted_call_to(f, context) :-
+  quoted_call(_, m, n, a, context),
+  function_def(f, m, n, arity, _),
+  (a = arity ; a = -1).
+
+// A function other than a macro calls `func`.
+.decl runtime_caller(func: symbol)
+
+runtime_caller(f) :-
+  call_edge(c, f),
+  function_def(c, _, n, _, _),
+  !match("MACRO-.*", n).
 
 // A protocol implementation is an external entry when the program defines and exposes
 // the corresponding protocol function. Implementations of external protocols are
