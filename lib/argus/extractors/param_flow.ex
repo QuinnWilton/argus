@@ -48,7 +48,8 @@ defmodule Argus.Extractors.ParamFlow do
     makes to the callee passes a literal list at `arg_pos`.
   - `command_fixed(id, func)` — the `System.cmd` call at `id` hands its
     literal shell or interpreter arguments that are literal on every
-    path once the module's local helpers are read
+    path, or hands `mix` a literal task that runs no code, once the
+    module's local helpers and a private function's callers are read
     (`Argus.Extractors.ApiCalls.fixed_command?/3` over
     `Argus.Extractor.Argv.module/1`), where the function's body alone,
     all `code_execution` sees, could not show it.

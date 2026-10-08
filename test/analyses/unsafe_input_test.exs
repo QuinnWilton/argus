@@ -31,6 +31,12 @@ defmodule Argus.Analyses.UnsafeInputTest do
     Argus.Test.Fixtures.CommandDynamicJoin,
     Argus.Test.Fixtures.CommandLiteralHelper,
     Argus.Test.Fixtures.CommandDynamicHelper,
+    Argus.Test.Fixtures.CommandMixTask,
+    Argus.Test.Fixtures.CommandMixHelper,
+    Argus.Test.Fixtures.CommandMixWrapper,
+    Argus.Test.Fixtures.CommandMixCode,
+    Argus.Test.Fixtures.CommandMixTestWrapper,
+    Argus.Test.Fixtures.CommandOpenWrapper,
     Argus.Test.Fixtures.SafeModule,
     RequestSurface.DirectPlug,
     RequestSurface.SafeCallback,
@@ -220,6 +226,25 @@ defmodule Argus.Analyses.UnsafeInputTest do
          ctx do
       assert commands(ctx, Argus.Test.Fixtures.CommandLiteralHelper) == []
       assert commands(ctx, Argus.Test.Fixtures.CommandDynamicHelper) == ["lint/1"]
+    end
+
+    test "mix handed a literal task that runs no code runs that task, whatever its options",
+         ctx do
+      assert commands(ctx, Argus.Test.Fixtures.CommandMixTask) == []
+      assert commands(ctx, Argus.Test.Fixtures.CommandMixHelper) == []
+      assert commands(ctx, Argus.Test.Fixtures.CommandMixWrapper) == []
+    end
+
+    test "mix run, a task the caller names, and a shell's script stay code execution", ctx do
+      assert commands(ctx, Argus.Test.Fixtures.CommandMixCode) == ["eval/1", "shell/1", "task/2"]
+    end
+
+    test "a wrapper one caller hands mix test, which runs the files named, is reported", ctx do
+      assert commands(ctx, Argus.Test.Fixtures.CommandMixTestWrapper) == ["mix/1"]
+    end
+
+    test "a wrapper with callers outside the module is not read through its callers", ctx do
+      assert commands(ctx, Argus.Test.Fixtures.CommandOpenWrapper) == ["captured_mix/1", "mix/1"]
     end
   end
 

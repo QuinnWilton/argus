@@ -587,13 +587,30 @@ defmodule Argus.Extractors.ApiCalls do
                    flock setsid chroot nsenter unshare strace ltrace
                    ssh docker podman kubectl nerdctl lxc-attach)
 
+  # `mix` runs the task its first argument names, and the rest are that
+  # task's argv: `mix credo --config-name name` and `mix hex.info pkg`
+  # run credo and hex.info, whatever the options say. The tasks below
+  # run code their arguments are or name, and are interpreters as `mix`
+  # is: `run` (a script, or `-e` code) and the `profile.*` tasks that run
+  # as it does, `do` (the tasks named), `cmd` (a shell command), `test`
+  # and ExCoveralls's `coveralls` family (the test files named, loaded
+  # and run), and the installers of code that runs later
+  # (`archive.install`, `escript.install`, `local.rebar` from a path or
+  # URL). An option that points a task at a file it evaluates as
+  # configuration (`mix format --dot-formatter`) is left out, as an
+  # option that runs a hook is for any other program: the program is
+  # still the one the call names.
+  @code_tasks ~w(run do cmd test coveralls archive.install escript.install local.rebar
+                 profile.cprof profile.eprof profile.fprof profile.tprof)
+
   @doc """
   Whether the `System.cmd/2,3` call at `ctx` runs a program its
   arguments cannot turn into code: a literal program that is no shell or
-  interpreter, or one handed arguments that are literal on every path
-  `scope` shows (`Argus.Extractor.Argv`). `key` is the function in
-  `scope` that holds the call. A program that is not literal is never
-  fixed.
+  interpreter, one handed arguments that are literal on every path
+  `scope` shows (`Argus.Extractor.Argv`), or `mix` handed a list that
+  starts, on every path, with a literal task that runs no code its
+  arguments name. `key` is the function in `scope` that holds the call.
+  A program that is not literal is never fixed.
   """
   @spec fixed_command?(
           Argus.Extractor.Helpers.instr_ctx(),
@@ -603,13 +620,27 @@ defmodule Argus.Extractors.ApiCalls do
   def fixed_command?(ctx, scope, key) do
     case static_command(ctx) do
       {:ok, command} ->
-        Path.basename(command) not in @interpreters or
-          Argv.literal?(scope, key, ctx.idx, {:x, 1})
+        program = Path.basename(command)
+
+        program not in @interpreters or Argv.literal?(scope, key, ctx.idx, {:x, 1}) or
+          (program == "mix" and fixed_tasks?(Argv.heads(scope, key, ctx.idx, {:x, 1})))
 
       :dynamic ->
         false
     end
   end
+
+  defp fixed_tasks?({:ok, [_ | _] = heads}), do: Enum.all?(heads, &fixed_task?/1)
+  defp fixed_tasks?(_unknown), do: false
+
+  # A task name as Mix spells one (`hex.info`, `phx.gen.auth`), not an
+  # option to `mix` itself, and not a task that runs code.
+  defp fixed_task?({:value, task}) when is_binary(task) do
+    task =~ ~r/\A[a-z0-9_]+(\.[a-z0-9_]+)*\z/ and task not in @code_tasks and
+      not String.starts_with?(task, "coveralls.")
+  end
+
+  defp fixed_task?(_head), do: false
 
   # ── Readers ────────────────────────────────────────────────────────────
 
@@ -814,9 +845,10 @@ defmodule Argus.Extractors.ApiCalls do
   # parsed by a shell, so caller data in them is not code execution. The
   # exception is a literal shell or interpreter, which executes whatever
   # its arguments say — that stays a finding unless the arguments are
-  # literal too, on every path, as far as this function's body shows
+  # literal too, on every path, or `mix` is handed a literal task that
+  # runs no code, as far as this function's body shows
   # (`fixed_command?/3`; `Argus.Extractors.ParamFlow` asks again across
-  # the module's local helpers). A command `find_executable/1` found for
+  # the module's local helpers and callers). A command `find_executable/1` found for
   # a literal name is that program wherever PATH puts it (akkoma's
   # `ffprobe`), and is read as the name.
   defp read(:unless_static_command, ctx, _mfa, facts, _rel) do

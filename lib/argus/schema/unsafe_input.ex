@@ -63,9 +63,10 @@ defmodule Argus.Schema.UnsafeInput do
         ],
         doc: """
         A `System.cmd` call to a literal shell or interpreter whose arguments are \
-        literal on every path, through the module's local helpers' returns \
-        (`Argus.Extractor.Argv`). Covers only calls the function's own body could not \
-        show fixed, which `code_execution` keeps.
+        literal on every path, or to `mix` with a literal task that runs no code its \
+        arguments name, through the module's local helpers' returns and a private \
+        function's callers (`Argus.Extractor.Argv`). Covers only calls the function's \
+        own body could not show fixed, which `code_execution` keeps.
         """
       }
     ])
