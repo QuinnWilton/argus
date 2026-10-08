@@ -74,7 +74,7 @@ defmodule Argus.Located do
   @spec refine(t()) :: t()
   def refine(%__MODULE__{finding: finding, related: places} = located) do
     {place, guard} = refine_place(located, finding)
-    frames = Map.get(finding, :related, [])
+    frames = finding.related
 
     {frames, places} =
       if length(frames) == length(places) do
@@ -91,7 +91,7 @@ defmodule Argus.Located do
     finding =
       finding
       |> fill_fields([:title, :detail, :at_label, :help], guard)
-      |> then(&if(Map.has_key?(&1, :related), do: %{&1 | related: frames}, else: &1))
+      |> Map.put(:related, frames)
 
     %{located | finding: finding, line: place.line, end_line: place.end_line, related: places}
   end
@@ -103,8 +103,8 @@ defmodule Argus.Located do
 
   defp refine_place(%{file: file} = place, anchored) do
     rules = Source.for(file)
-    line = rules.refine(file, rules.line(file, place.line), Map.get(anchored, :at_source))
-    to_block = Map.get(anchored, :to_block)
+    line = rules.refine(file, rules.line(file, place.line), anchored.at_source)
+    to_block = anchored.to_block
 
     guard =
       if to_block == :guard,
@@ -120,19 +120,13 @@ defmodule Argus.Located do
     {%{file: file, line: line, end_line: end_line}, guard}
   end
 
-  # Only the fields the finding has: one memoized before its shape
-  # gained a field stays without it.
   defp fill_fields(map, _fields, nil), do: map
 
-  defp fill_fields(map, fields, guard) do
-    Enum.reduce(fields, map, fn field, map ->
-      case Map.fetch(map, field) do
-        {:ok, text} when is_binary(text) -> %{map | field => fill(text, guard)}
-        {:ok, texts} when is_list(texts) -> %{map | field => Enum.map(texts, &fill(&1, guard))}
-        _absent_or_nil -> map
-      end
-    end)
-  end
+  defp fill_fields(map, fields, guard),
+    do: Enum.reduce(fields, map, fn field, map -> Map.update!(map, field, &fill(&1, guard)) end)
+
+  defp fill(nil, _guard), do: nil
+  defp fill(texts, guard) when is_list(texts), do: Enum.map(texts, &fill(&1, guard))
 
   defp fill(text, guard), do: String.replace(text, "{guard}", guard)
 

@@ -97,7 +97,8 @@ defmodule Argus.Test.ReportShapes do
     )
   end
 
-  defp frame(label, attrs \\ %{}), do: Map.merge(%{label: label, at_source: nil}, attrs)
+  defp frame(label, attrs \\ %{}),
+    do: Map.merge(%{label: label, at_source: nil, to_block: nil}, attrs)
 
   defp place(file, line, end_line \\ nil), do: %{file: file, line: line, end_line: end_line}
 

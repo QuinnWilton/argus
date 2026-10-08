@@ -82,13 +82,11 @@ defmodule Argus.Report.Entry do
       end_line: refined.end_line,
       title: finding.title,
       detail: finding.detail,
-      # Map.get, not dot access: a finding memoized before its shape
-      # gained these fields must still render.
-      at_label: Map.get(finding, :at_label),
-      help: Map.get(finding, :help, []),
-      related: related(Map.get(finding, :related, []), refined.related),
-      provenance: Map.get(finding, :provenance, :structural),
-      confidence: Map.get(finding, :confidence)
+      at_label: finding.at_label,
+      help: finding.help,
+      related: related(finding.related, refined.related),
+      provenance: finding.provenance,
+      confidence: finding.confidence
     }
   end
 
