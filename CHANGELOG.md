@@ -167,7 +167,10 @@ which a change appeared; older names and APIs may have changed since then.
   take a node, which were not read); `:rpc.multicall/4` is told
   `multicall(Nodes, M, F, A)` from `multicall(M, F, A, Timeout)` by any
   argument that says which, and a call that says neither names no parameter
-  its timeout; a gen_statem's `{:ok, state, data}` and a gen_event handler's
+  its timeout; a task held under a literal key of a map that `Map.update/4`
+  or `Map.update!/3` updates by a key it does not know stays in the map,
+  and is reported when the map is dropped, rather than escaping into the
+  update's fun; a gen_statem's `{:ok, state, data}` and a gen_event handler's
   `{:ok, reply, state}` arm no idle timeout; and `length/1` of a list built
   onto a tail nothing resolved is unknown, not its cells' count.
 - Add a Breeze terminal explorer with `mix argus.debug explore`: search relations,

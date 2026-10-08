@@ -264,6 +264,10 @@ defmodule Argus.Analyses.TaskLibraryFlowTest do
     {{Map, :update, 4}, :map, "Map.update(c, k, x, & &1)", :map},
     {{Map, :update, 4}, :task, "Map.update(%{}, :a, c, & &1)", :map},
     {{Map, :update!, 3}, :map, "Map.update!(c, k, & &1)", :map},
+    # An update by a key the call does not know may hand its fun the task
+    # under :a, and the fun's answer goes back into the map: no escape.
+    {{Map, :update, 4}, :task, "Map.update(%{a: c}, k, x, & &1)", :map},
+    {{Map, :update!, 3}, :task, "Map.update!(%{a: c}, k, & &1)", :map},
     {{Map, :get_lazy, 3}, :map, "Map.get_lazy(c, k, fn -> x end)", :task},
     {{Map, :put_new_lazy, 3}, :task, "Map.put_new_lazy(%{}, :a, fn -> c end)", :map},
     {{Map, :filter, 2}, :map, "Map.filter(c, fn _ -> true end)", :map},

@@ -1108,6 +1108,16 @@ defmodule Argus.Extractors.TermFlow do
     load(ctx, map, sel, lib_load_id(ctx, path, sel), r)
   end
 
+  defp lib_value(ctx, {:entry, map, at}, env, path, r) do
+    {map, r} = lib_value(ctx, map, env, path ++ [0], r)
+    sel = if env.literal, do: literal_selector(ctx.fun.instrs, ctx.idx, at), else: "*"
+    {sources, r} = read(ctx, map, sel, lib_load_id(ctx, path, sel), r)
+
+    if sel == "*",
+      do: {MapSet.union(sources, Heap.unseen(ctx.state.objs, map)), r},
+      else: {sources, r}
+  end
+
   defp lib_value(ctx, {:index, tuple, at}, env, path, r) do
     {tuple, r} = lib_value(ctx, tuple, env, path ++ [0], r)
 
@@ -1513,12 +1523,16 @@ defmodule Argus.Extractors.TermFlow do
   # map built here holds under a literal key it may return goes where
   # value flow does not follow (`unseen`, emitted as `value_escape`).
   defp load(ctx, value, sel, id, r) do
-    {sources, dependencies, loads} = Heap.read(ctx.state.objs, value, sel, id)
-    r = %{r | read_objs: dependencies ++ r.read_objs, loads: loads ++ r.loads}
+    {sources, r} = read(ctx, value, sel, id, r)
 
     if sel == "*",
       do: {sources, %{r | unseen: MapSet.union(r.unseen, Heap.unseen(ctx.state.objs, value))}},
       else: {sources, r}
+  end
+
+  defp read(ctx, value, sel, id, r) do
+    {sources, dependencies, loads} = Heap.read(ctx.state.objs, value, sel, id)
+    {sources, %{r | read_objs: dependencies ++ r.read_objs, loads: loads ++ r.loads}}
   end
 
   # A map key as a field name: the inspected literal, or `*`.

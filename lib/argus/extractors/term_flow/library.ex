@@ -35,6 +35,10 @@ defmodule Argus.Extractors.TermFlow.Library do
     * `{:put, map, key_position, value}` — `map` with the field
       argument `key_position` names set to `value`;
     * `{:field, map, key_position}` — that field of `map`;
+    * `{:entry, map, key_position}` — the same, or, for a key the call
+      does not know, any field of `map`: what an update hands its fun,
+      whose answer goes back into the map, so a value under a literal
+      key does not escape there as it does from a read;
     * `{:index, tuple, index_position}` — the 1-based tuple element
       argument `index_position` names;
     * `{:setelement, index_position, tuple, value}`;
@@ -61,6 +65,7 @@ defmodule Argus.Extractors.TermFlow.Library do
           | {:map, spec(), spec()}
           | {:put, spec(), non_neg_integer(), spec()}
           | {:field, spec(), non_neg_integer()}
+          | {:entry, spec(), non_neg_integer()}
           | {:index, spec(), non_neg_integer()}
           | {:setelement, non_neg_integer(), spec(), spec()}
           | {:into, spec(), non_neg_integer()}
@@ -301,8 +306,8 @@ defmodule Argus.Extractors.TermFlow.Library do
       {Map, :pop, 2} => tup([{:field, a(0), 1}, a(0)]),
       {Map, :pop, 3} => tup([u([{:field, a(0), 1}, a(2)]), a(0)]),
       {Map, :pop!, 2} => tup([{:field, a(0), 1}, a(0)]),
-      {Map, :update, 4} => run(3, [{:field, a(0), 1}], {:put, a(0), 1, u([:result, a(2)])}),
-      {Map, :update!, 3} => run(2, [{:field, a(0), 1}], {:put, a(0), 1, :result}),
+      {Map, :update, 4} => run(3, [{:entry, a(0), 1}], {:put, a(0), 1, u([:result, a(2)])}),
+      {Map, :update!, 3} => run(2, [{:entry, a(0), 1}], {:put, a(0), 1, :result}),
       {Map, :get_lazy, 3} => run(2, [], u([{:field, a(0), 1}, :result])),
       {Map, :put_new_lazy, 3} => run(2, [], {:put, a(0), 1, :result}),
       {Map, :filter, 2} => run(1, [el_(0)], a(0)),
