@@ -265,25 +265,4 @@ defmodule Argus.Cfg.Function do
       :error -> [node | acc]
     end
   end
-
-  @doc """
-  The single-entry region rooted at `block_id`: the block plus everything it
-  dominates, in ascending block order.
-  """
-  @spec region(t(), Block.id()) :: [Block.id()]
-  def region(%__MODULE__{} = fun, block_id) do
-    collect_region(fun, [block_id], %{}) |> Map.keys() |> Enum.sort()
-  end
-
-  @spec collect_region(t(), [Block.id()], %{Block.id() => true}) :: %{Block.id() => true}
-  defp collect_region(_fun, [], acc), do: acc
-
-  defp collect_region(fun, [id | rest], acc) do
-    if Map.has_key?(acc, id) do
-      collect_region(fun, rest, acc)
-    else
-      children = Map.get(fun.dom_children, id, [])
-      collect_region(fun, children ++ rest, Map.put(acc, id, true))
-    end
-  end
 end

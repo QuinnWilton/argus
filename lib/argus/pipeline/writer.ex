@@ -33,26 +33,11 @@ defmodule Argus.Pipeline.Writer do
   def written({:except, names}) when is_list(names), do: {:except, MapSet.new(names)}
   def written(names) when is_list(names), do: MapSet.new(names)
 
-  @spec append(t(), Argus.Pipeline.Emit.facts()) :: {:ok, t()} | {:error, term()}
-  def append(writer, module_facts) do
-    Enum.reduce_while(module_facts, {:ok, writer}, fn {relation, rows}, {:ok, writer} ->
-      if rows == [] or skip?(writer, relation) do
-        {:cont, {:ok, writer}}
-      else
-        bytes = Argus.Tsv.encode(Enum.reverse(rows))
-
-        case write_bytes(writer, relation, bytes) do
-          {:ok, writer} -> {:cont, {:ok, writer}}
-          error -> {:halt, error}
-        end
-      end
-    end)
-  end
-
   @doc """
   A module's facts as `append_encoded/2` writes them: per relation, the
-  bytes of its lines, in the order `append/2` would write the rows, for
-  the relations `written` lets through (`t:written/0`) that have rows.
+  bytes of its lines, oldest row first (the pipeline merges rows newest
+  first), for the relations `written` lets through (`t:written/0`) that
+  have rows.
   What a worker does so that the caller only writes.
   """
   @spec encode(Argus.Pipeline.Emit.facts(), written()) :: %{atom() => binary()}
@@ -79,8 +64,6 @@ defmodule Argus.Pipeline.Writer do
   def close(%__MODULE__{files: files}) do
     Enum.each(files, fn {_relation, device} -> File.close(device) end)
   end
-
-  defp skip?(%__MODULE__{written: written}, relation), do: not written?(written, relation)
 
   defp written?(nil, _relation), do: true
   defp written?({:except, except}, relation), do: not MapSet.member?(except, relation)

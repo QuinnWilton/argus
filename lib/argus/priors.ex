@@ -86,26 +86,6 @@ defmodule Argus.Priors do
   end
 
   @doc """
-  Derives every question's rows from the facts in `facts_dir` and writes
-  them there as `<relation>.facts`, replacing the empty files the
-  pipeline touched. Returns the stats per question.
-  """
-  @spec derive(Path.t(), keyword()) :: {:ok, %{module() => Driver.stats()}} | {:error, term()}
-  def derive(facts_dir, opts) do
-    questions = Keyword.get(opts, :questions, @questions)
-
-    with {:ok, facts} <- read_facts(facts_dir, relations_read(questions)) do
-      {rows, stats} = rows(facts, opts)
-
-      Enum.each(rows, fn {relation, relation_rows} ->
-        write_rows!(facts_dir, relation, relation_rows)
-      end)
-
-      {:ok, stats}
-    end
-  end
-
-  @doc """
   The relations every question in `questions` (default: the built-in
   ones) reads — what a caller deriving from its own facts must supply.
   """
@@ -119,7 +99,7 @@ defmodule Argus.Priors do
   `Argus.Pipeline.extract/2` returns with `format: :typed`, holding at
   least `relations_read/1` — as `{%{relation => rows}, %{question => stats}}`.
   A question that yields nothing still maps to `[]`, so a consumer can
-  set every prior relation, empty or not. Options are `derive/2`'s.
+  set every prior relation, empty or not.
   """
   @spec rows(Argus.Facts.t(), keyword()) ::
           {%{atom() => [[String.t()]]}, %{module() => Driver.stats()}}
@@ -129,32 +109,5 @@ defmodule Argus.Priors do
 
     {Map.new(rows, fn {question, relation_rows} -> {question.relation(), relation_rows} end),
      stats}
-  end
-
-  @doc """
-  Typed rows of `relations` from a facts directory, the shape
-  `Argus.Pipeline.extract/2` returns with `format: :typed`.
-  """
-  @spec read_facts(Path.t(), [atom()]) :: {:ok, Argus.Facts.t()} | {:error, term()}
-  def read_facts(facts_dir, relations) do
-    Enum.reduce_while(relations, {:ok, %{}}, fn relation, {:ok, acc} ->
-      path = Path.join(facts_dir, "#{relation}.facts")
-
-      case File.read(path) do
-        {:ok, content} ->
-          {:cont, {:ok, Map.put(acc, relation, Argus.Tsv.decode(content))}}
-
-        {:error, reason} ->
-          {:halt, {:error, {:read_failed, path, reason}}}
-      end
-    end)
-    |> case do
-      {:ok, raw} -> {:ok, Argus.Facts.decode(raw)}
-      error -> error
-    end
-  end
-
-  defp write_rows!(facts_dir, relation, rows) do
-    File.write!(Path.join(facts_dir, "#{relation}.facts"), Argus.Tsv.encode(rows))
   end
 end

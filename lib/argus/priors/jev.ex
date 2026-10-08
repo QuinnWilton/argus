@@ -36,11 +36,6 @@ defmodule Argus.Priors.Jev do
   @doc "The pinned model name."
   @spec model() :: String.t()
   def model, do: @model
-
-  @doc "The httpc profile requests go over."
-  @spec profile() :: atom()
-  def profile, do: @profile
-
   @doc "The environment variable the key is read from."
   @spec env_var() :: String.t()
   def env_var, do: @env_var

@@ -466,12 +466,6 @@ defmodule Argus.Corpus do
     |> Enum.map(fn {_index, co, result} -> {co, result} end)
   end
 
-  @doc "The `{analysis, title}` pairs among findings."
-  @spec titles(map()) :: MapSet.t({atom(), String.t()})
-  def titles(%{findings: findings}) do
-    MapSet.new(findings, &{&1.analysis, &1.title})
-  end
-
   @doc """
   Whether the pair's finding is among the results: its analysis and title,
   and — when the pair names a `module:` — anchored in that module. An optional

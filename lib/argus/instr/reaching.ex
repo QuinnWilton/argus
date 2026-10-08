@@ -234,24 +234,6 @@ defmodule Argus.Instr.Reaching do
   end
 
   @doc """
-  Prepares complete solutions from `export/1` without installing them. Reuses
-  an installed solution only when both its instructions and blocks match exactly.
-  """
-  @spec prepare([{:function, atom(), arity(), term(), [Instr.instr()]}], [term()]) ::
-          prepared()
-  def prepare(functions, exported) do
-    entries =
-      functions
-      |> Enum.zip(exported)
-      |> Enum.map(fn {{:function, _name, _arity, _entry, instrs}, blocks} ->
-        {key, solution} = restored_solution(instrs, blocks)
-        {key, instrs, solution}
-      end)
-
-    {:reaching_prepared, entries}
-  end
-
-  @doc """
   Installs complete prepared solutions in this process. Repeated installation
   skips entries still present; an intervening query for another module is safe.
   """

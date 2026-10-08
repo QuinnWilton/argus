@@ -24,7 +24,8 @@ defmodule Argus.Pipeline.WriterTest do
     contents(dir)
   end
 
-  test "facts encoded in the worker are written as appending them writes them", %{tmp_dir: tmp} do
+  test "facts encoded in the worker are written oldest row first, and only the written relations",
+       %{tmp_dir: tmp} do
     # Rows arrive newest first, as the pipeline merges them; a relation
     # outside the written set, and an empty one, get no file.
     modules = [
@@ -34,17 +35,14 @@ defmodule Argus.Pipeline.WriterTest do
 
     written = MapSet.new([:jump, :call_edge])
 
-    appended = write(Path.join(tmp, "appended"), modules, &Writer.append/2)
-
     encoded =
       write(Path.join(tmp, "encoded"), modules, fn w, facts ->
         Writer.append_encoded(w, Writer.encode(facts, written))
       end)
 
-    assert encoded == appended
-    assert appended["jump.facts"] == "M:f/1#0\t1\nM:f/1#2\t3\nN:g/0#1\t7\n"
-    assert appended["call_edge.facts"] == "N:g/0\ta\\tb\n"
-    refute Map.has_key?(appended, "label_at.facts")
+    assert encoded["jump.facts"] == "M:f/1#0\t1\nM:f/1#2\t3\nN:g/0#1\t7\n"
+    assert encoded["call_edge.facts"] == "N:g/0\ta\\tb\n"
+    refute Map.has_key?(encoded, "label_at.facts")
   end
 
   test "relations: names the relations written, or those left out" do

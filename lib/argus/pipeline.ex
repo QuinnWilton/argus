@@ -963,9 +963,4 @@ defmodule Argus.Pipeline do
       end
     end)
   end
-
-  @doc false
-  # Kept for callers outside argus that wrote facts through it; `Argus.Tsv`
-  # is the format.
-  def rows_iodata(rows), do: Argus.Tsv.encode(rows)
 end

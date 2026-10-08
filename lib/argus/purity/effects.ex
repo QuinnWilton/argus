@@ -710,14 +710,4 @@ defmodule Argus.Purity.Effects do
     |> Enum.uniq()
     |> Enum.sort()
   end
-
-  @doc "Modules whose calls dispatch to an open set of implementations."
-  @spec protocol_modules() :: [String.t()]
-  @pure true
-  def protocol_modules, do: @protocol_modules
-
-  @doc "Modules treated as free of observable effects."
-  @spec pure_modules() :: [String.t()]
-  @pure true
-  def pure_modules, do: @pure_modules ++ @pure_by_default_modules
 end

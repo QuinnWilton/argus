@@ -82,11 +82,6 @@ defmodule Argus.Pipeline.Emit.Spawns do
             {Process, :spawn, 2} => {{:fun, 0}, {:opts, 1}},
             {Process, :spawn, 4} => {{:mfa, 0}, {:opts, 3}}
           })
-
-  @doc "The `{mod, fun, arity}` calls this module records as spawns."
-  @spec apis() :: [{module(), atom(), arity()}]
-  def apis, do: @spawns |> Map.keys() |> Enum.sort()
-
   @doc """
   One `spawn_call` row per spawning call in `normalized`, the function's
   `{id, instruction}` pairs, as the schema orders the columns.

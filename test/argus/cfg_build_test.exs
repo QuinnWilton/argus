@@ -146,7 +146,6 @@ defmodule Argus.CfgBuildTest do
 
     # The branch block dominates both arms and the merge.
     assert Function.dominates?(fun, branch.id, merge.id)
-    assert merge.id in Function.region(fun, branch.id)
   end
 
   test "if/else: post-dominators and control dependence over the diamond" do

@@ -86,28 +86,6 @@ defmodule Argus.Instr.ReachingRestoreTest do
     assert :erts_debug.same(before, Process.get(@cache))
   end
 
-  test "prepared exported solutions can be reinstalled after interleaved modules" do
-    first = [function(:first, 1)]
-    second = [function(:second, 2)]
-    exported = Reaching.export(first)
-    Reaching.export(second)
-    before = Process.get(@cache)
-
-    prepared = Reaching.prepare(first, exported)
-    assert :erts_debug.same(before, Process.get(@cache))
-    assert :ok = Reaching.restore_prepared(prepared)
-    original = installed_solution()
-
-    for _ <- 1..3 do
-      assert Reaching.at(instructions(hd(second)), 1) === {:move, {:literal, {2}}, {:x, 0}}
-      assert :ok = Reaching.restore_prepared(prepared)
-      restored = installed_solution()
-      assert :erts_debug.same(restored.code, original.code)
-      assert :erts_debug.same(restored.block_of, original.block_of)
-      assert Reaching.sources(instructions(hd(first)), 2, {:x, 0}) == [1]
-    end
-  end
-
   test "prepared solutions replace a different solution of the same body" do
     functions = [function(:first, 1)]
     instrs = instructions(hd(functions))
@@ -148,8 +126,6 @@ defmodule Argus.Instr.ReachingRestoreTest do
     Process.delete(@cache)
 
     assert :ok = Reaching.restore(functions, [exported])
-    {{:atom, :first}, _} = Process.get(@cache)
-    assert :ok = Reaching.restore_prepared(Reaching.prepare(functions, [exported]))
     {{:atom, :first}, _} = Process.get(@cache)
   end
 

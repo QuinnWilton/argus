@@ -228,14 +228,6 @@ defmodule Argus.Specs do
     _ -> form
   end
 
-  @doc """
-  Classifies a list of spec clauses (Erlang abstract format, as
-  `Code.Typespec.fetch_specs/1` returns them) against the types of the
-  module they belong to, as `{params, body}` by `{name, arity}`.
-  """
-  @spec shapes([tuple()], %{{atom(), arity()} => {list(), tuple()}}) :: [shape()]
-  def shapes(clauses, types), do: shapes(clauses, types, nil)
-
   defp shapes(clauses, types, memo) do
     alts = Enum.flat_map(clauses, &clause_return(&1, {types, memo}))
     classify(alts)
