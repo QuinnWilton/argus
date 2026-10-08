@@ -72,7 +72,7 @@ in_module(f, m) :- function_def(f, m, _, _, _).
 .include "exceptions.dl"
 .include "effect_model.dl"
 .include "sinks.dl"
-// Ways in from outside the program: api_export, library_face, open_entry.
+// Ways in from outside the program: api_export, library_face.
 .include "ways_in.dl"
 // Code the program did not write: library_written.
 .include "generated.dl"

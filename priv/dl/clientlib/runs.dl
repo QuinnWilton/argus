@@ -270,12 +270,6 @@ interval_arm(id) :- timer_arm(id, f, _, _, _, _), arms_interval(f).
 
 arms_interval(f) :- call_arg(f, g, _, _), match(":timer:send_interval/[23]", g).
 
-outside_message("info", t) :-
-  interval_arm(id),
-  timer_arm(id, _, "other", _, _, _),
-  timer_tag(id, t, _),
-  node_tag("info", t).
-
 .decl repeated_message(site: symbol, func: symbol, tag: symbol)
 
 repeated_message(id, f, t) :-

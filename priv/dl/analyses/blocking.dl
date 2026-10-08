@@ -775,7 +775,7 @@ ends_when_peer_exits(receive, callback) :-
   callback_reaches(callback, func, _).
 
 // A receive pinned to a linked process or port's EXIT while trapping exits. The linked
-// peer's exit ends the wait; see exit_pinned and trapping_at.
+// peer's exit ends the wait; see exit_pinned and clientlib/trapping.dl.
 .decl trapped_exit_ends(id: symbol, func: symbol)
 
 trapped_exit_ends(id, f) :- exit_pinned(id, f), (flag_set_before(f, id) ; entered_trapping(f), !cleared_before(id)).

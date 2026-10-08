@@ -1,5 +1,6 @@
-// Exit-trapping state. `trapping_at(func, site)` follows a preceding flag set through
-// local calls or callers. `server_traps` identifies a server whose entry leaves
+// Exit-trapping state. Whether the process traps at a site is a preceding flag set
+// (`flag_set_before`) or one inherited on entry (`entered_trapping`), through local
+// calls or callers. `server_traps` identifies a server whose entry leaves
 // trapping enabled; `module_traps` supplies the witness.
 // These are may-properties: one trapping branch or caller is sufficient. Only literal
 // false clears the flag; computed restores and clears in other functions may be missed.

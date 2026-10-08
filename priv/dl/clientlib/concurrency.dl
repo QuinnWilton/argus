@@ -10,7 +10,7 @@
 // Seed functions of interest and traverse backward. Requires imports.dl, otp.dl, and
 // request_entry.dl.
 
-// open_entry and called_by_other_module are clientlib/ways_in.dl's.
+// called_by_other_module is clientlib/ways_in.dl's.
 
 .comp RunsConcurrently {
   .decl seed(func: symbol)

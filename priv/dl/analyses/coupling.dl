@@ -213,7 +213,7 @@ keeping_basis("handed", "inferred").
 dependency_on_unrestarted_sibling(sup, child, sibling, restart, witness) :-
   restart_policy(sup, child, "permanent"),
   may_stay_down(sup, sibling, restart),
-  depends_on(child, sibling, witness),
+  stateful_module_dep(child, sibling, witness),
   !teardown_only(witness),
   !only_own_instances(child, sibling).
 
@@ -232,7 +232,7 @@ teardown_only(w) :-
 sibling_witness(w) :-
   restart_policy(sup, child, "permanent"),
   may_stay_down(sup, sibling, _),
-  depends_on(child, sibling, w).
+  stateful_module_dep(child, sibling, w).
 
 .init teardown_reach = CallReach
 
@@ -260,12 +260,6 @@ may_stay_down(sup, sibling, restart) :-
 
 leaves_down("transient").
 leaves_down("temporary").
-
-// `witness` in `from` depends on `to` through a call, cast, or stateful module
-// dependency. `basis` records the evidence; see stateful_module_dep.
-.decl depends_on(from: symbol, to: symbol, witness: symbol)
-
-depends_on(from, to, witness) :- stateful_module_dep(from, to, witness).
 
 // A supervisor with no site of its own is not reported.
 sibling_dependency(sup, child, sibling, "restart_policy", restart, sup_site, witness, witness, basis, permille) :-

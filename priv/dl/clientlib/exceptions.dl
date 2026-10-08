@@ -44,14 +44,6 @@ rescues_argument_error(f) :- catch_tag(_, f, "error", "ArgumentError").
 rescues_argument_error(f) :- catch_tag(_, f, "error", ":badarg").
 rescues_argument_error(f) :- try_start(_, f, "catch", _).
 
-// The call is covered by a badarg/ArgumentError handler or catch expression. Unrelated
-// handlers in the same function do not count.
-.decl site_rescues_argument_error(call: symbol, func: symbol)
-
-site_rescues_argument_error(c, f) :- covered_by_catch(c, f, _, "error").
-site_rescues_argument_error(c, f) :- try_covers(t, f, c, "try"), catch_tag(t, f, "error", "ArgumentError").
-site_rescues_argument_error(c, f) :- try_covers(t, f, c, "try"), catch_tag(t, f, "error", ":badarg").
-
 // Supported raise categories: badarg (ArgumentError), erpc transport errors, or any
 // reason of error, exit, or throw. Map each to its exception class for handler checks.
 .decl raise_class(raise: symbol, class: symbol)

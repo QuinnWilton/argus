@@ -1,12 +1,10 @@
 // The points-to stage — which process a pid can be, derived once.
 //
 // Process points-to (clientlib/processes.dl) is a whole-program fixpoint
-// over TermFlow's per-function summaries, and on a large program it is
-// most of what a solve costs: over ssl, public_key and kernel it was four
-// of the four and a half seconds each of blocking, coupling, failure,
-// mailbox, shutdown, startup, coverage and races spent, the same rows
-// derived in each. Like stage 0 (stage0.dl), this derives them once, and
-// the analyses read the result as facts (clientlib/staged_processes.dl).
+// over TermFlow's per-function summaries, and on a large program most of
+// what a solve costs, the same rows for every analysis that asks. Like
+// stage 0 (stage0.dl), this derives them once, and the analyses read the
+// result as facts (clientlib/staged_processes.dl).
 //
 // It runs after stage 0, whose call graph it reads, into the same facts
 // directory, and writes only what an analysis reads: the processes, the

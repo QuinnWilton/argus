@@ -1,17 +1,12 @@
 // Stage 0 — the shared derived call graph.
 //
-// Every client analysis walks `call_edge`, and every one of them used to
-// re-derive it from raw bytecode inside its own solve. That is wasteful (the same fixpoint, computed once per
-// analysis) and, worse, it makes each analysis's input set include the
-// layer-1 relations — `instruction`, `remote_call`, `function_def` and
-// friends — which churn on any edit to a function body.
-//
-// Stratifying fixes both. This program derives the call graph once; the
-// analyses take the result as facts (see clientlib/imports.dl). The
-// payoff for incremental consumers is that the *output* of this stage is
-// far more stable than its input: editing a function body without
-// changing which functions it calls leaves call_edge byte-identical, so a memoizing driver can stop there instead of
-// re-solving every analysis.
+// Every analysis walks `call_edge`. This program derives it once from the
+// bytecode, and the analyses take the result as facts (see
+// clientlib/imports.dl), so none reads the layer-1 relations
+// (`instruction`, `remote_call`, `function_def` and friends) that churn on
+// any edit to a function body. The output is far more stable than its
+// input: an edit that changes no call leaves call_edge byte-identical, and
+// a memoizing driver stops there instead of re-solving every analysis.
 //
 // Outputs are written as `.facts` (the fact-file extension and the same
 // tab-separated format inputs are read in) so the directory can be handed
@@ -20,9 +15,8 @@
 .include "base.dl"
 
 // Only call_edge is staged, never its transitive closure: the closure is
-// quadratic in the worst case — 1.6MB of call_edge expands to 24.7MB of
-// call_reachable on a 555-beam corpus — so materializing it would trade
-// a cheap fixpoint for an expensive write-then-read on every solve. No
+// quadratic in the worst case, and materializing it would trade a cheap
+// fixpoint for an expensive write-then-read on every solve. No
 // shipped analysis takes the closure either: each walks call_edge from
 // the functions it cares about, bounded (clientlib/reach.dl), and
 // `call_reachable` in clientlib/imports.dl is left to clients, which

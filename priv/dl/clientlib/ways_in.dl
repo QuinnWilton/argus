@@ -3,8 +3,7 @@
 // functions. Internal use does not remove API status. Consumers decide whether runtime
 // callbacks count as outside input.
 // `library_face` restricts APIs to modules with no clients elsewhere in the analyzed
-// program; `open_entry` further requires no visible caller. Unused exports of
-// internally used modules are treated as inactive.
+// program. Unused exports of internally used modules are treated as inactive.
 // Known limit: a library may both use a module internally and expose otherwise unused
 // functions to its users. Requires imports.dl.
 
@@ -45,7 +44,3 @@ library_face(f) :-
   api_export(f),
   function_def(f, m, _, _, _),
   !called_by_other_module(m).
-
-.decl open_entry(func: symbol)
-
-open_entry(f) :- library_face(f), !call_edge(_, f).

@@ -470,19 +470,13 @@ rival_write(w, h, table, "element", "") :-
 
 // External callers may supply any key. The same applies to parameters with no visible
 // caller, including passed closures and dynamically applied functions.
-rival_write(w, g, table, "param", q) :- param_write(w, g, table, q), outside_entry(g).
+rival_write(w, g, table, "param", q) :- param_write(w, g, table, q), runs.outside_caller(g).
 rival_write(w, g, table, "param", q) :- param_write(w, g, table, q), !param_filled(g, q).
 
 .decl param_filled(func: symbol, pos: symbol)
 
 param_filled(g, to_string(n)) :- param_write(_, g, _, _), call_arg(_, g, n, _).
 param_filled(g, to_string(n)) :- param_write(_, g, _, _), call_arg_forward(_, g, n, _).
-
-// An externally callable library export, excluding runtime callbacks. See
-// outside_caller in concurrency.dl.
-.decl outside_entry(func: symbol)
-
-outside_entry(g) :- runs.outside_caller(g).
 
 // Keys treated as disjoint: distinct literals, incompatible tuple shapes, process-owned
 // self() rows, and minted keys. Literal keys are also assumed distinct from computed
@@ -550,7 +544,7 @@ writer_walk.seed(h, h) :- rival_write(_, h, _, _, _).
 .decl writes_after_start(func: symbol)
 
 writes_after_start(g) :- process_entry(_, c), writer_walk.reaches(c, g), !startup_callback(c).
-writes_after_start(g) :- outside_entry(c), writer_walk.reaches(c, g).
+writes_after_start(g) :- runs.outside_caller(c), writer_walk.reaches(c, g).
 writes_after_start(g) :- request_entry(e, _), writer_walk.reaches(e, g).
 writes_after_start(g) :- runs.spawned(_, _, r), writer_walk.reaches(r, g).
 
@@ -671,11 +665,6 @@ changes_row(w) :- ets_op(w, _, _, op, "write"), op != "insert_new".
 
 // Counting writes include update_counter, read-derived write-backs, and replacement of
 // rows holding atomics/counters arrays whose accumulated counts would be lost.
-.init ets_made = MadeOfRead
-
-ets_made.read(r) :- ets_op(r, _, _, _, "read").
-ets_made.write(w, h) :- table_write(w, h, _), value_write(w).
-
 .decl counts_in(write: symbol, func: symbol)
 
 counts_in(w, h) :- rival_write(w, h, _, _, _), ets_op(w, _, _, "update_counter", _).
@@ -1578,13 +1567,9 @@ can_read_in_the_gap(f, g) :-
 ets_publish_order(mod, writer, pub_kind, pub_table, row_kind, row_table, publish, complete, reader) :-
   publish_order_race(writer, publish, complete, reader, _),
   in_module(writer, mod),
-  table_of(publish, pub_kind, pub_table),
-  table_of(complete, row_kind, row_table),
-  table_of(reader, row_kind, row_table).
-
-.decl table_of(op: symbol, table_kind: symbol, table: symbol)
-
-table_of(op, tk, t) :- ets_table(op, tk, t).
+  ets_table(publish, pub_kind, pub_table),
+  ets_table(complete, row_kind, row_table),
+  ets_table(reader, row_kind, row_table).
 
 // Rows removed between check and use
 //
@@ -1790,7 +1775,7 @@ dirty_read_then_write_race(func, read, write, (table, key), harm) :-
   decides_dirty_write(func, read, write, row), row = (table, key),
   written_by_another_process(table, func),
   !serialized_by_lock(func, table),
-  harms_record(func, read, write, harm).
+  record_race_kind(func, read, write, harm).
 
 // A Mnesia record uses a cluster-wide table name and key. Mnesia and ETS identities
 // remain separate even when their table names match.
@@ -1802,12 +1787,6 @@ dirty_read_then_write_race(func, read, write, (table, key), harm) :-
 .decl decides_dirty_write(func: symbol, read: symbol, write: symbol, record: MnesiaRecord)
 
 decides_dirty_write(f, r, w, (t, k)) :- reads_then_writes_record(f, r, w, t, k).
-
-// What the interleaving costs, by a witness (record_race_kind, below):
-// asked only of the pairs another process can interleave.
-.decl harms_record(func: symbol, read: symbol, write: symbol, harm: symbol)
-
-harms_record(f, r, w, k) :- record_race_kind(f, r, w, k).
 
 .init records = CheckThenAct
 
