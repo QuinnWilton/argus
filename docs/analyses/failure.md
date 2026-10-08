@@ -61,7 +61,10 @@ local and can miss more indirect ways of dropping a result.
 Code uses a literal-name lookup without a recognized nil/undefined check or handler
 for the failure. The process may be absent. A successful lookup also does not keep
 the target alive until its use. Bytecode value flow and straight-line tests limit
-which checks are recognized.
+which checks are recognized. A lookup a private function returns is judged where its
+callers use it; a cast, which drops a message to nil as it would to a dead server, and
+a comparison with a value that is never nil (`self()`, the group leader) are no
+failing use.
 
 ## Unobserved spawned processes
 

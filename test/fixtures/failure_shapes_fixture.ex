@@ -60,3 +60,62 @@ defmodule Argus.Test.Fixtures.FailureLogWork do
 
   def apply_entry(state), do: Map.fetch!(state, :entry) + 1
 end
+
+defmodule Argus.Test.Fixtures.FailureWhereisReturned do
+  @moduledoc """
+  Lookups returned to their callers, judged at the callers' uses
+  (zwave's `EventBus`), and ones compared with a value that is never
+  nil (ex_ast's `real_stdout?/0`).
+  """
+
+  # A cast to nil drops the message, as a cast to a dead server does.
+  defp pid, do: Process.whereis(:failure_event_bus)
+
+  def publish(event), do: GenServer.cast(pid(), {:event, event})
+
+  def subscribe(listener), do: GenServer.cast(pid(), {:subscribe, listener})
+
+  # Every caller tests the result against nil.
+  defp server, do: Process.whereis(:failure_server)
+
+  def ping do
+    case server() do
+      nil -> :down
+      pid -> send(pid, :ping)
+    end
+  end
+
+  # A wrapper that tail-returns its private callee's lookup, to a caller
+  # that casts.
+  defp bus, do: pid()
+
+  def touch, do: GenServer.cast(bus(), :touch)
+
+  # The caller's group leader is a pid: the comparison decides, and
+  # nil reaches no use.
+  def real_stdout?, do: Process.group_leader() == Process.whereis(:user)
+
+  def owner?, do: self() == Process.whereis(:failure_owner)
+end
+
+defmodule Argus.Test.Fixtures.FailureWhereisReturnedUsed do
+  @moduledoc """
+  The twins of FailureWhereisReturned whose nil reaches a use that
+  fails on it.
+  """
+
+  defp metrics, do: Process.whereis(:failure_metrics)
+
+  # A send to nil raises badarg.
+  def bump, do: send(metrics(), :bump)
+
+  # One caller casts, the other sends: the send still fails.
+  defp sink, do: Process.whereis(:failure_sink)
+
+  def drop(msg), do: GenServer.cast(sink(), msg)
+
+  def push(msg), do: send(sink(), msg)
+
+  # Two lookups compared: both may be nil, and nil == nil.
+  def same?, do: Process.whereis(:failure_a) == Process.whereis(:failure_b)
+end

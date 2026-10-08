@@ -582,13 +582,13 @@ start_result_checked(start) :-
 
 after_start.asked(start) :- starts_supervised_task(start, _).
 
-// A literal Process.whereis result is used without a nil check or a handler for the
-// resulting failure.
+// A literal Process.whereis result reaches a use that fails on nil, and no handler
+// takes the failure.
 .decl whereis_without_nil_case(func: symbol, lookup: symbol, name: symbol)
 
 whereis_without_nil_case(func, lookup, name) :-
   used_untested(lookup, func, name),
-  !nil_use_caught(lookup, func).
+  nil_use_open(lookup).
 
 unchecked_result(func, lookup, "Process.whereis", name) :-
   whereis_without_nil_case(func, lookup, name).
@@ -599,16 +599,26 @@ unchecked_result(func, lookup, "Process.whereis", name) :-
 
 used_untested(lookup, func, name) :- name_lookup(lookup, func, "whereis", _, "literal", name, "unchecked").
 
-// The first use of a missing lookup result is covered by a matching handler (`Escape`).
-// Sends and BIFs need error/badarg handling; process calls need exit/noproc handling;
-// unknown uses need both classes. Check the use site, or the lookup site when the use
-// is a send instruction.
-.decl nil_use_caught(lookup: symbol, func: symbol)
+// Some first use of the lookup's result, in its function or, for a result returned to
+// them, in its callers, fails on nil and no handler takes it. A cast ("none") drops
+// the message and fails nothing.
+.decl nil_use_open(lookup: symbol)
 
-nil_use_caught(lookup, f) :- nil_use(lookup, f, u, "error"), nil_use_fault.rescued(u, f, "badarg").
-nil_use_caught(lookup, f) :- nil_use(lookup, f, u, "exit"), nil_use_fault.rescued(u, f, "exit").
+nil_use_open(lookup) :-
+  nil_use(lookup, f, u, fails),
+  fails != "none",
+  !nil_use_caught(lookup, f, u).
 
-nil_use_caught(lookup, f) :-
+// The use `u`, in `func`, of a missing lookup result is covered by a matching handler
+// (`Escape`). Sends and BIFs need error/badarg handling; process calls need
+// exit/noproc handling; unknown uses need both classes. Check the use site, or the
+// site the result reached the function at when the use is no call.
+.decl nil_use_caught(lookup: symbol, func: symbol, use: symbol)
+
+nil_use_caught(lookup, f, u) :- nil_use(lookup, f, u, "error"), nil_use_fault.rescued(u, f, "badarg").
+nil_use_caught(lookup, f, u) :- nil_use(lookup, f, u, "exit"), nil_use_fault.rescued(u, f, "exit").
+
+nil_use_caught(lookup, f, u) :-
   nil_use(lookup, f, u, "any"),
   nil_use_fault.rescued(u, f, "badarg"),
   nil_use_fault.rescued(u, f, "exit").
@@ -625,7 +635,7 @@ nil_use_raise("any", "badarg").
 nil_use_raise("any", "exit").
 
 nil_use_fault.asked(u, f, f, r) :-
-  used_untested(lookup, f, _),
+  used_untested(lookup, _, _),
   nil_use(lookup, f, u, fails),
   nil_use_raise(fails, r).
 

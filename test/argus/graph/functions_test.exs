@@ -60,7 +60,8 @@ defmodule Argus.Graph.FunctionsTest do
   # registration pick out, and calls between servers.
   @named ~w(RpcTarget. GenStatem Handles. Sockets. Tls. ProcessRegisterer. NamedGenServer.
             NamedAgents. WhereisModule. RegistryUser. DynamicNameServer. DuplicateRegisterer.
-            StaticWhereis. NamedStarts.)
+            StaticWhereis. NamedStarts. FailureWhereisReturned.
+            FailureWhereisReturnedUsed.)
 
   test "every producer's rows through the graph are the pipeline's, over the fixtures", %{
     peer: peer,

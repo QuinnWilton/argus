@@ -622,7 +622,7 @@
 .decl named_process(mod: symbol, name: symbol) mutable
 .input named_process
 
-// The failure class of the first use of an unchecked `whereis` result: `error` for sends or BIFs, `exit` for calls, `none` for casts, and `any` when unknown. A handler must catch this class to cover an unregistered name.
+// The failure class of a first use of an unchecked `whereis` result: `error` for sends or BIFs, `exit` for calls, `none` for casts, and `any` when unknown. A handler must catch this class to cover an unregistered name. A result its private function returns is used in the module's callers, each of which says (none when it tests the result against nil); one an exported function returns is used where it is returned (`any`).
 //
 .decl nil_use(id: symbol, func: symbol, use: symbol, fails: symbol) mutable
 .input nil_use

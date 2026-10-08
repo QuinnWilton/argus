@@ -26,9 +26,11 @@ defmodule Argus.Extractors.ProcessRegistry do
     `checked` says whether the result is tested against nil (or `[]`)
     before use
   - `nil_use(id, func, use, fails)` — for an unchecked whereis, how its
-    first use fails on nil: `error` (a send, a BIF), `exit` (a call),
-    `none` (a cast) or `any`; `use` is that call, or the lookup when the
-    use is no call
+    first uses fail on nil: `error` (a send, a BIF), `exit` (a call),
+    `none` (a cast) or `any`; `use` is that call in `func`, or where the
+    result reached `func` when the use is no call. A result a private
+    function returns is used in its callers (`returns_to/2`), none of it
+    by one that tests it against nil
   - `creating_op(id, func, api, scope, source, key)` — a call that claims
     a name or starts a process: `register`, `start_link`/`start` with a
     `name:`, `start_via` (`{:via, Registry, {scope, key}}`),
@@ -45,11 +47,14 @@ defmodule Argus.Extractors.ProcessRegistry do
 
   @behaviour Argus.Extractor
 
+  alias Argus.Extractor.CallSites
   alias Argus.Extractor.Dispatch
   alias Argus.Extractor.Helpers
+  alias Argus.Extractor.Resolve
   alias Argus.Extractor.Terms
   alias Argus.Extractors.TermFlow
   alias Argus.Instr
+  alias Argus.Instr.Reaching
   alias Argus.InstrId
   import Argus.Extractor.Helpers, only: [each_remote_call: 3]
   import Argus.Extractor.Facts, only: [add_fact: 3, track_dynamic: 5, track_imprecision: 5]
@@ -138,9 +143,18 @@ defmodule Argus.Extractors.ProcessRegistry do
 
     index = Argus.Extractor.Identity.origins_index(module_data)
 
+    returns =
+      Map.get_lazy(module_data, :returns_to, fn ->
+        case whereis_functions(module_data) do
+          [] -> %{}
+          funcs -> returns_to(module_data, funcs)
+        end
+      end)
+
     module_data
     |> each_remote_call(%{}, fn facts, ctx, mfa ->
-      register_call(facts, mod_str, Map.put(ctx, :origins, {index, ctx.func_id}), mfa)
+      ctx = ctx |> Map.put(:origins, {index, ctx.func_id}) |> Map.put(:returns, returns)
+      register_call(facts, mod_str, ctx, mfa)
     end)
     |> emit_start_errors(module_data)
   end
@@ -343,20 +357,169 @@ defmodule Argus.Extractors.ProcessRegistry do
   defp maybe_nil_use(facts, "checked", _id, _ctx), do: facts
 
   defp maybe_nil_use(facts, "unchecked", id, ctx) do
-    {use, fails} =
-      case first_use(ctx.instrs, ctx.idx + 1, [{:x, 0}]) do
-        {at, instr} ->
-          {if(Instr.call?(instr) or Instr.tail_call?(instr),
-             do: InstrId.mint(ctx.func_id, at),
-             else: id
-           ), nil_fails(instr)}
-
-        nil ->
-          {id, "any"}
+    uses =
+      case value_use(ctx.instrs, ctx.idx) do
+        :returned -> returned_uses(ctx.func_id, id, ctx.returns, MapSet.new([ctx.func_id]))
+        {at, instr} -> [{ctx.func_id, use_site(ctx.func_id, at, instr, id), nil_fails(instr)}]
+        nil -> [{ctx.func_id, id, "any"}]
       end
 
-    add_fact(facts, :nil_use, [id, ctx.func_id, use, fails])
+    uses
+    |> Enum.uniq()
+    |> Enum.sort()
+    |> Enum.reduce(facts, fn {func, use, fails}, acc ->
+      add_fact(acc, :nil_use, [id, func, use, fails])
+    end)
   end
+
+  # The first uses of a value `func` returns, which reached it at `site`
+  # (the lookup, or a call that returned it), as `{func, use, fails}`. A
+  # function code outside the module may call hands it to a use nobody
+  # here knows (`any`); a private one's callers each check it, use it,
+  # or return it on in turn, followed to their callers. `seen` are the
+  # functions followed already: a cycle back to one adds no use.
+  defp returned_uses(func, site, returns, seen) do
+    case Map.get(returns, func, :escapes) do
+      :escapes ->
+        [{func, site, "any"}]
+
+      callers ->
+        seen = MapSet.put(seen, func)
+
+        Enum.flat_map(callers, fn
+          {_caller, _call, :checked} ->
+            []
+
+          {caller, call, :returned} ->
+            if MapSet.member?(seen, caller),
+              do: [],
+              else: returned_uses(caller, call, returns, seen)
+
+          {caller, _call, {use, fails}} ->
+            [{caller, use, fails}]
+        end)
+    end
+  end
+
+  @typedoc """
+  A call to a function that returns a value, and what the caller does
+  with it: tests it against nil first (`:checked`), returns it in turn
+  (`:returned`), or first uses it at `use`, failing `fails` on nil.
+  """
+  @type returned_to ::
+          {caller :: String.t(), call :: String.t(),
+           :checked | :returned | {use :: String.t(), fails :: String.t()}}
+
+  @doc """
+  What becomes of the values the functions `funcs` return, for them and
+  for every function a caller returns one on to: `:escapes` for a
+  function code outside the module may call (it is exported, or a fun
+  is made of it), else the module's calls to it (`t:returned_to/0`).
+
+  A function-local extraction reads it as `module_data.returns_to`: it
+  is the only thing a lookup's function learns of its callers.
+  """
+  @spec returns_to(Argus.Extractor.module_data(), [String.t()]) :: %{
+          String.t() => :escapes | [returned_to()]
+        }
+  def returns_to(module_data, funcs), do: follow(funcs, local_calls(module_data), %{})
+
+  defp follow([], _local, acc), do: acc
+
+  defp follow([func | rest], local, acc) when is_map_key(acc, func),
+    do: follow(rest, local, acc)
+
+  defp follow([func | rest], local, acc) do
+    entry =
+      if MapSet.member?(local.escaping, func),
+        do: :escapes,
+        else: local.callers |> Map.get(func, []) |> Enum.map(&caller_use/1) |> Enum.sort()
+
+    more = if entry == :escapes, do: [], else: for({caller, _, :returned} <- entry, do: caller)
+    follow(more ++ rest, local, Map.put(acc, func, entry))
+  end
+
+  defp caller_use(site) do
+    call = InstrId.mint(site.func_id, site.idx)
+
+    use =
+      if nil_checked?(site.instrs, site.idx) do
+        :checked
+      else
+        case value_use(site.instrs, site.idx) do
+          :returned -> :returned
+          {at, instr} -> {use_site(site.func_id, at, instr, call), nil_fails(instr)}
+          nil -> {call, "any"}
+        end
+      end
+
+    {site.func_id, call, use}
+  end
+
+  # The functions holding a whereis: the ones whose lookups a whole
+  # module's extraction may follow to their callers.
+  defp whereis_functions(module_data) do
+    module_data
+    |> CallSites.for_module()
+    |> Enum.filter(&(&1.remote? and &1.mfa in [{Process, :whereis, 1}, {:erlang, :whereis, 1}]))
+    |> Enum.map(& &1.func_id)
+    |> Enum.uniq()
+  end
+
+  # What the value the call at `idx` answers meets first: `:returned`
+  # (a tail call, or a return before any use), `{index, instr}` its
+  # first use, or nil when the straight line ends or loses it first.
+  defp value_use(instrs, idx) do
+    if Instr.tail_call?(Enum.at(instrs, idx)) do
+      :returned
+    else
+      case first_use(instrs, idx + 1, [{:x, 0}]) do
+        {_at, :return} -> :returned
+        use -> use
+      end
+    end
+  end
+
+  # The use is the instruction when it is a call, else `site`.
+  defp use_site(func, at, instr, site) do
+    if Instr.call?(instr) or Instr.tail_call?(instr), do: InstrId.mint(func, at), else: site
+  end
+
+  # The module's local call sites by the function they call, and the
+  # functions code outside the module may call: the exported ones, and
+  # the ones a fun is made of.
+  defp local_calls(module_data) do
+    mod = module_data.module
+
+    callers =
+      module_data
+      |> CallSites.for_module()
+      |> Enum.filter(&(not &1.remote? and elem(&1.mfa, 0) == mod))
+      |> Enum.group_by(fn %{mfa: {m, f, a}} -> InstrId.func_id(m, f, a) end)
+
+    # Without the exports (a bare disassembly), any function may be one.
+    exported =
+      case Map.get(module_data, :exports) do
+        nil ->
+          for {:function, name, arity, _entry, _instrs} <- module_data.functions,
+              do: InstrId.func_id(mod, name, arity)
+
+        exports ->
+          for export <- exports,
+              {name, arity} = export_name(export),
+              do: InstrId.func_id(mod, name, arity)
+      end
+
+    funs =
+      for {:function, _name, _arity, _entry, instrs} <- module_data.functions,
+          {:make_fun3, {^mod, name, arity}, _index, _uniq, _dst, _env} <- instrs,
+          do: InstrId.func_id(mod, name, arity)
+
+    %{callers: callers, escaping: MapSet.new(exported ++ funs)}
+  end
+
+  defp export_name({name, arity, _label}), do: {name, arity}
+  defp export_name({:atom, name, arity, _label}), do: {name, arity}
 
   # The first instruction that reads the result other than to copy it,
   # along the straight line after the lookup: `{index, instr}`, or nil
@@ -456,10 +619,11 @@ defmodule Argus.Extractors.ProcessRegistry do
   # Any other use of the value first, or reaching the end of the
   # straight line, means it does not.
   #
-  # A comparison with a value that is never nil — self(), a literal
-  # other than nil — asks a question of its own (`whereis(m) == self()`:
-  # am I the registered process?) and uses the value in no way nil can
-  # break. It decides when the value is not read again where the two
+  # A comparison with a value that is never nil — self(), the group
+  # leader, a pid spawn/1 answered, a literal other than nil, wherever it
+  # was made (`never_nil?/3`) — asks a question of its own
+  # (`whereis(m) == self()`: am I the registered process?) and uses the
+  # value in no way nil can break. It decides when the value is not read again where the two
   # differ, the one place it may still be nil: the branch taken when
   # they differ for a test, anywhere after for a bif. That walk gives up
   # as this one does.
@@ -471,60 +635,56 @@ defmodule Argus.Extractors.ProcessRegistry do
 
   defp nil_checked?(instrs, idx) do
     labels = Instr.labels(instrs)
-    checked_walk(Enum.drop(instrs, idx + 1), [{:x, 0}], [], {instrs, labels})
+    checked_walk(Enum.drop(instrs, idx + 1), idx + 1, [{:x, 0}], {instrs, labels})
   end
 
   # Before the deciding test the value is followed through the registers
   # as `Argus.Instr` reads them: a copy carries it, a write or a call's
   # clobber ends a register's hold on it. The walk gives up where the
   # value is read, where no register holds it any more, and where control
-  # does not fall through (a return, a jump, a tail call, a raise).
-  # `selfs` are the registers holding self().
-  defp checked_walk([], _regs, _selfs, _fun), do: false
-  defp checked_walk(_instrs, [], _selfs, _fun), do: false
+  # does not fall through (a return, a jump, a tail call, a raise). `at`
+  # is the index of the walk's next instruction.
+  defp checked_walk([], _at, _regs, _fun), do: false
+  defp checked_walk(_instrs, _at, [], _fun), do: false
 
-  defp checked_walk([{:test, op, fail, args} | rest], regs, selfs, fun)
+  defp checked_walk([{:test, op, fail, args} | rest], at, regs, fun)
        when op in @equality_tests do
-    case compared(args, regs, selfs) do
+    case compared(args, at, regs, fun) do
       nil -> true
       :never_nil -> unread_where_differ(op, fail, rest, regs, fun)
       :other -> false
     end
   end
 
-  defp checked_walk([{:test, op, _fail, [reg | _]} | _rest], regs, _selfs, _fun)
+  defp checked_walk([{:test, op, _fail, [reg | _]} | _rest], _at, regs, _fun)
        when op in @type_tests do
     Instr.register(reg) in regs
   end
 
-  defp checked_walk([{:select_val, reg, _fail, {:list, cases}} | _rest], regs, _selfs, _fun) do
+  defp checked_walk([{:select_val, reg, _fail, {:list, cases}} | _rest], _at, regs, _fun) do
     Instr.register(reg) in regs and Enum.any?(cases, &(&1 in @nil_atoms))
   end
 
-  defp checked_walk([{:bif, op, _fail, args, dst} = instr | rest], regs, selfs, _fun)
+  defp checked_walk([{:bif, op, _fail, args, dst} = instr | rest], at, regs, fun)
        when op in @equality_bifs do
-    case compared(args, regs, selfs) do
+    case compared(args, at, regs, fun) do
       nil -> decided_by?(rest, Instr.carry(instr, regs), [Instr.register(dst)])
       :never_nil -> unread?(rest, Instr.carry(instr, regs))
       :other -> false
     end
   end
 
-  defp checked_walk([{:bif, op, _fail, [reg], dst} = instr | rest], regs, _selfs, _fun)
+  defp checked_walk([{:bif, op, _fail, [reg], dst} = instr | rest], _at, regs, _fun)
        when op in @type_bifs do
     Instr.register(reg) in regs and
       decided_by?(rest, Instr.carry(instr, regs), [Instr.register(dst)])
   end
 
-  defp checked_walk([{:bif, :self, _fail, [], dst} = instr | rest], regs, selfs, fun) do
-    checked_walk(rest, Instr.carry(instr, regs), [Instr.register(dst) | selfs], fun)
-  end
-
-  defp checked_walk([instr | rest], regs, selfs, fun) do
+  defp checked_walk([instr | rest], at, regs, fun) do
     cond do
       not Instr.falls_through?(instr) -> false
       reads?(instr, regs) -> false
-      true -> checked_walk(rest, Instr.carry(instr, regs), Instr.carry(instr, selfs), fun)
+      true -> checked_walk(rest, at + 1, Instr.carry(instr, regs), fun)
     end
   end
 
@@ -559,22 +719,83 @@ defmodule Argus.Extractors.ProcessRegistry do
     end
   end
 
-  # What a comparison of the value is with: nil (or :undefined), a value
-  # that is never nil, or anything else (another register, or a
-  # comparison that does not read the value at all).
-  defp compared(args, regs, selfs) do
-    args = Enum.map(args, &Instr.register/1)
-
-    case Enum.split_with(args, &(&1 in regs)) do
+  # What a comparison of the value (at `at`) is with: nil (or
+  # :undefined), a value that is never nil, or anything else (another
+  # register, or a comparison that does not read the value at all).
+  defp compared(args, at, regs, {instrs, _labels}) do
+    case Enum.split_with(args, &(Instr.register(&1) in regs)) do
       {[_ | _], [other]} ->
         cond do
-          other in @nil_atoms -> nil
-          other in selfs or never_nil_literal?(other) -> :never_nil
+          Instr.register(other) in @nil_atoms -> nil
+          never_nil?(instrs, at, other) -> :never_nil
           true -> :other
         end
 
       _ ->
         :other
+    end
+  end
+
+  # Calls whose answer is never nil: a pid, a port, a reference, a node.
+  @never_nil_calls MapSet.new([
+                     {:erlang, :self, 0},
+                     {:erlang, :group_leader, 0},
+                     {Process, :group_leader, 0},
+                     {:erlang, :make_ref, 0},
+                     {:erlang, :node, 0},
+                     {:erlang, :spawn, 1},
+                     {:erlang, :spawn, 2},
+                     {:erlang, :spawn, 3},
+                     {:erlang, :spawn, 4},
+                     {:erlang, :spawn_link, 1},
+                     {:erlang, :spawn_link, 2},
+                     {:erlang, :spawn_link, 3},
+                     {:erlang, :spawn_link, 4},
+                     {Kernel, :spawn, 1},
+                     {Kernel, :spawn, 3},
+                     {Kernel, :spawn_link, 1},
+                     {Kernel, :spawn_link, 3},
+                     {:erlang, :open_port, 2},
+                     {Port, :open, 2}
+                   ])
+
+  # Types the compiler gives a register that leave nil out.
+  @never_nil_types [:pid, :port, :reference]
+
+  # Whether the operand holds a value that is never nil at `at`: a literal
+  # other than nil, a register the compiler types as a pid, a port or a
+  # reference, or one every write reaching it (copies followed) made
+  # never nil — self(), node(), a call in `@never_nil_calls`.
+  defp never_nil?(_instrs, _at, {:tr, _reg, type}) when type in @never_nil_types, do: true
+
+  defp never_nil?(instrs, at, operand) do
+    case Instr.register(operand) do
+      {kind, _} = reg when kind in [:x, :y] ->
+        case Resolve.writers(instrs, at, reg) do
+          [] -> false
+          writers -> Enum.all?(writers, &never_nil_writer?(instrs, &1))
+        end
+
+      literal ->
+        never_nil_literal?(literal)
+    end
+  end
+
+  defp never_nil_writer?(_instrs, {:param, _k}), do: false
+
+  defp never_nil_writer?(instrs, at) do
+    case Reaching.at(instrs, at) do
+      {:bif, name, _fail, [], _dst} when name in [:self, :node] ->
+        true
+
+      {:move, literal, _dst} ->
+        never_nil_literal?(literal)
+
+      instr ->
+        case Helpers.match_remote_call(instr) do
+          {:ok, m, f, a} -> MapSet.member?(@never_nil_calls, {m, f, a})
+          :none -> false
+        end
     end
   end
 

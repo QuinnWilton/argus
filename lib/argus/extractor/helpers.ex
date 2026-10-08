@@ -27,14 +27,16 @@ defmodule Argus.Extractor.Helpers do
   @typedoc """
   Per-instruction context passed to scan handlers. Carries everything an
   extractor needs to call `Argus.Extractor.Resolve.resolve_register/3`
-  against the surrounding code.
+  against the surrounding code. An extractor may carry fields of its own
+  beside these (`ProcessRegistry`'s `:returns`).
   """
   @type instr_ctx :: %{
           optional(:line_table) => %{pos_integer() => pos_integer()},
           optional(:origins) => origins(),
           required(:func_id) => String.t(),
           required(:instrs) => [tuple()],
-          required(:idx) => non_neg_integer()
+          required(:idx) => non_neg_integer(),
+          optional(atom()) => term()
         }
 
   @type origins :: Argus.Extractor.Identity.origins()

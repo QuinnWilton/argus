@@ -382,16 +382,20 @@ defmodule Argus.Schema.CallValues do
         layer: 2,
         fields: [
           {:id, :instr_id, "an unchecked whereis (name_lookup)"},
-          {:func, :func_id, "function containing it"},
+          {:func, :func_id, "function containing the use"},
           {:use, :instr_id,
-           "the call that first uses the result, or the lookup itself when that use is no call"},
+           "the call that first uses the result, or, when that use is no call, the " <>
+             "lookup or the call that brought the result to func"},
           {:fails, :symbol,
            "error | exit | none | any: how that use fails when the result is nil"}
         ],
         doc: """
-        The failure class of the first use of an unchecked `whereis` result: `error` for \
+        The failure class of a first use of an unchecked `whereis` result: `error` for \
         sends or BIFs, `exit` for calls, `none` for casts, and `any` when unknown. A \
-        handler must catch this class to cover an unregistered name.
+        handler must catch this class to cover an unregistered name. A result its \
+        private function returns is used in the module's callers, each of which says \
+        (none when it tests the result against nil); one an exported function returns \
+        is used where it is returned (`any`).
         """
       },
       %{
