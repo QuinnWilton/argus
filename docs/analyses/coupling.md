@@ -26,11 +26,16 @@ restarts alone, it can leave the old incarnation's registration behind.
 
 Read-only requests and resets to initial field values do not establish retention.
 Recognized links and dependencies exclusively on privately started instances are
-excluded. The finding identifies the tree, startup request and retaining operation.
-Cached PIDs are the reverse dependency: the caller retains the receiver's identity.
+excluded, and so is a caller that makes each lost request again when it learns of the
+receiver's restart: from the `:DOWN` clause of a monitor on the receiver, or from its
+clause for the call or cast the receiver's startup makes to it, on its own stack or
+through a message it sends itself. The finding identifies the tree, startup request
+and retaining operation. Cached PIDs are the reverse dependency: the caller retains
+the receiver's identity.
 
 Inspect whether the receiver restores its state or the caller re-registers through
-a recovery protocol; the analysis cannot prove either. If their lifetimes must be
+a recovery protocol the analysis does not see (a timer of its own, a send to a pid it
+cannot resolve). If their lifetimes must be
 coupled, use an appropriate restart strategy.
 
 Unknown request tags can match unrelated writing clauses, and module-based matching

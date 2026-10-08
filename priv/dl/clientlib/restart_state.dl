@@ -8,7 +8,8 @@
 // tags admit every clause; unknown external code may retain the request.
 // Not tracked: info sends, gen_statem requests, detached startup work, direct writes
 // into the peer's tables, keeper reconstruction from durable storage, or independent
-// re-registration schedules.
+// re-registration schedules. A re-registration on news of the keeper's restart is
+// coupling.dl's (recovers_registrations).
 // Requires otp.dl and effect_model.dl; includes runs.dl for once-phase classification.
 .include "runs.dl"
 

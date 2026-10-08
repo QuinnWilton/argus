@@ -409,4 +409,58 @@ defmodule Argus.Analyses.CouplingTest do
       results["sibling_dependency"] || []
     end
   end
+
+  describe "sibling_dependency: restart_isolation, recovered" do
+    @describetag :souffle
+
+    # The callers whose registration with a keeper a restart loses.
+    defp isolated_callers(modules) do
+      assert {:ok, results} = Memo.analyze(modules, :coupling)
+
+      results
+      |> Rows.where(:coupling, "sibling_dependency",
+        reason: "restart_isolation",
+        drop: [:sup, :reason, :detail, :sup_site, :witness, :site, :basis, :permille]
+      )
+      |> Enum.uniq()
+      |> Enum.sort()
+    end
+
+    # coupling.dl, lost_registration: a caller's :DOWN clause for the
+    # keeper registers again.
+    test "a caller that registers again on the keeper's :DOWN loses nothing" do
+      modules = [
+        Argus.Test.Fixtures.StartupRecoveryTree,
+        Argus.Test.Fixtures.StartupRecoveryKeeper,
+        Argus.Test.Fixtures.StartupRecoveryMonitor,
+        Argus.Test.Fixtures.StartupRecoveryForgets
+      ]
+
+      assert isolated_callers(modules) == [
+               [
+                 "Argus.Test.Fixtures.StartupRecoveryForgets",
+                 "Argus.Test.Fixtures.StartupRecoveryKeeper"
+               ]
+             ]
+    end
+
+    # coupling.dl, lost_registration: the keeper's start tells the
+    # caller, whose clause for that message asks again.
+    test "a caller the restarted keeper tells, and that asks again, loses nothing" do
+      modules = [
+        Argus.Test.Fixtures.StartupAnnounceTree,
+        Argus.Test.Fixtures.StartupAnnounceQueue,
+        Argus.Test.Fixtures.StartupAnnounceOwner,
+        Argus.Test.Fixtures.StartupAnnounceIgnoredQueue,
+        Argus.Test.Fixtures.StartupAnnounceIgnoredOwner
+      ]
+
+      assert isolated_callers(modules) == [
+               [
+                 "Argus.Test.Fixtures.StartupAnnounceIgnoredOwner",
+                 "Argus.Test.Fixtures.StartupAnnounceIgnoredQueue"
+               ]
+             ]
+    end
+  end
 end

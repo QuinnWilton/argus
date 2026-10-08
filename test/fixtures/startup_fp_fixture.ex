@@ -195,3 +195,224 @@ defmodule Argus.Test.Fixtures.StartupDuplicateTree do
     Supervisor.init(children, strategy: :rest_for_one)
   end
 end
+
+# A keeper that holds what its callers register in its state, under a
+# one_for_one supervisor beside three callers that register from init/1.
+defmodule Argus.Test.Fixtures.StartupRecoveryKeeper do
+  @moduledoc false
+  use GenServer
+
+  def start_link(_), do: GenServer.start_link(__MODULE__, %{}, name: __MODULE__)
+
+  def register(pid), do: GenServer.call(__MODULE__, {:register, pid})
+
+  @impl true
+  def init(registered), do: {:ok, registered}
+
+  @impl true
+  def handle_call({:register, pid}, _from, registered),
+    do: {:reply, :ok, Map.put(registered, pid, true)}
+end
+
+# The caller monitors the keeper and, on its :DOWN, asks itself to
+# register again: a restarted keeper is told afresh.
+defmodule Argus.Test.Fixtures.StartupRecoveryMonitor do
+  @moduledoc false
+  use GenServer
+
+  alias Argus.Test.Fixtures.StartupRecoveryKeeper
+
+  def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
+
+  @impl true
+  def init(_), do: {:ok, register_with_keeper(%{keeper: nil})}
+
+  @impl true
+  def handle_info({:DOWN, ref, :process, _pid, _reason}, %{keeper: ref} = state) do
+    send(self(), :register)
+    {:noreply, %{state | keeper: nil}}
+  end
+
+  def handle_info(:register, state), do: {:noreply, register_with_keeper(state)}
+
+  defp register_with_keeper(state) do
+    case Process.whereis(StartupRecoveryKeeper) do
+      nil ->
+        Process.send_after(self(), :register, 50)
+        state
+
+      pid ->
+        ref = Process.monitor(pid)
+        :ok = StartupRecoveryKeeper.register(self())
+        %{state | keeper: ref}
+    end
+  end
+end
+
+# The twin: the caller monitors the keeper too, but on its :DOWN only
+# forgets the monitor, and never registers again.
+defmodule Argus.Test.Fixtures.StartupRecoveryForgets do
+  @moduledoc false
+  use GenServer
+
+  alias Argus.Test.Fixtures.StartupRecoveryKeeper
+
+  def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
+
+  @impl true
+  def init(_) do
+    ref = Process.monitor(StartupRecoveryKeeper)
+    :ok = StartupRecoveryKeeper.register(self())
+    {:ok, %{keeper: ref}}
+  end
+
+  @impl true
+  def handle_info({:DOWN, ref, :process, _pid, _reason}, %{keeper: ref} = state),
+    do: {:noreply, %{state | keeper: nil}}
+end
+
+defmodule Argus.Test.Fixtures.StartupRecoveryTree do
+  @moduledoc false
+  use Supervisor
+
+  def start_link(opts), do: Supervisor.start_link(__MODULE__, opts, name: __MODULE__)
+
+  @impl true
+  def init(_opts) do
+    children = [
+      Argus.Test.Fixtures.StartupRecoveryKeeper,
+      Argus.Test.Fixtures.StartupRecoveryMonitor,
+      Argus.Test.Fixtures.StartupRecoveryForgets
+    ]
+
+    Supervisor.init(children, strategy: :one_for_one)
+  end
+end
+
+# A keeper of queued work that, each time it starts, casts its owner
+# that it is ready. The owner queued its first batch once, from a timer
+# init/1 armed; told of a restart, it queues what is pending again.
+defmodule Argus.Test.Fixtures.StartupAnnounceQueue do
+  @moduledoc false
+  use GenServer
+
+  def start_link(_), do: GenServer.start_link(__MODULE__, [], name: __MODULE__)
+
+  def enqueue(items), do: GenServer.cast(__MODULE__, {:enqueue, items})
+
+  @impl true
+  def init(queue) do
+    send(self(), :announce)
+    {:ok, queue}
+  end
+
+  @impl true
+  def handle_info(:announce, queue) do
+    GenServer.cast(Argus.Test.Fixtures.StartupAnnounceOwner, :queue_ready)
+    {:noreply, queue}
+  end
+
+  @impl true
+  def handle_cast({:enqueue, items}, queue), do: {:noreply, items ++ queue}
+end
+
+defmodule Argus.Test.Fixtures.StartupAnnounceOwner do
+  @moduledoc false
+  use GenServer
+
+  alias Argus.Test.Fixtures.StartupAnnounceQueue
+
+  def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
+
+  @impl true
+  def init(_) do
+    Process.send_after(self(), :warmed, 100)
+    {:ok, %{pending: [:first]}}
+  end
+
+  @impl true
+  def handle_info(:warmed, state) do
+    StartupAnnounceQueue.enqueue(state.pending)
+    {:noreply, state}
+  end
+
+  def handle_info(:drain, state) do
+    StartupAnnounceQueue.enqueue(state.pending)
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_cast(:queue_ready, state) do
+    send(self(), :drain)
+    {:noreply, state}
+  end
+end
+
+# The twin: the keeper announces itself the same way, but the owner
+# ignores it, and its first batch is lost with a restarted queue.
+defmodule Argus.Test.Fixtures.StartupAnnounceIgnoredQueue do
+  @moduledoc false
+  use GenServer
+
+  def start_link(_), do: GenServer.start_link(__MODULE__, [], name: __MODULE__)
+
+  def enqueue(items), do: GenServer.cast(__MODULE__, {:enqueue, items})
+
+  @impl true
+  def init(queue) do
+    send(self(), :announce)
+    {:ok, queue}
+  end
+
+  @impl true
+  def handle_info(:announce, queue) do
+    GenServer.cast(Argus.Test.Fixtures.StartupAnnounceIgnoredOwner, :queue_ready)
+    {:noreply, queue}
+  end
+
+  @impl true
+  def handle_cast({:enqueue, items}, queue), do: {:noreply, items ++ queue}
+end
+
+defmodule Argus.Test.Fixtures.StartupAnnounceIgnoredOwner do
+  @moduledoc false
+  use GenServer
+
+  alias Argus.Test.Fixtures.StartupAnnounceIgnoredQueue
+
+  def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
+
+  @impl true
+  def init(_) do
+    Process.send_after(self(), :warmed, 100)
+    {:ok, %{pending: [:first]}}
+  end
+
+  @impl true
+  def handle_info(:warmed, state) do
+    StartupAnnounceIgnoredQueue.enqueue(state.pending)
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_cast(:queue_ready, state), do: {:noreply, state}
+end
+
+defmodule Argus.Test.Fixtures.StartupAnnounceTree do
+  @moduledoc false
+  use Supervisor
+
+  def start_link(opts), do: Supervisor.start_link(__MODULE__, opts, name: __MODULE__)
+
+  @impl true
+  def init(_opts) do
+    children = [
+      Argus.Test.Fixtures.StartupAnnounceQueue,
+      Argus.Test.Fixtures.StartupAnnounceOwner,
+      Argus.Test.Fixtures.StartupAnnounceIgnoredQueue,
+      Argus.Test.Fixtures.StartupAnnounceIgnoredOwner
+    ]
+
+    Supervisor.init(children, strategy: :one_for_one)
+  end
+end

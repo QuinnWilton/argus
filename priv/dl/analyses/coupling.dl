@@ -26,7 +26,8 @@ lost_registration(sup, caller, keeper) :-
   restarted_apart(sup, caller, keeper),
   registers_with(caller, keeper),
   !only_own_instances(caller, keeper),
-  !linked(caller, keeper).
+  !linked(caller, keeper),
+  !recovers_registrations(caller, keeper).
 
 // sup is a one_for_one supervisor and the two modules sit in different
 // branches of it, so the restart of one leaves the other running.
@@ -45,6 +46,72 @@ restarted_apart(sup, a, b) :-
 .decl registers_with(caller: symbol, keeper: symbol)
 
 registers_with(caller, keeper) :- holds_in(caller, keeper, _, _, _, _).
+
+// The caller makes every request the keeper's restart loses again when
+// it learns of the restart: the protocol the finding's help recommends.
+.decl recovers_registrations(caller: symbol, keeper: symbol)
+
+recovers_registrations(a, b) :- registers_with(a, b), !unrecovered_request(a, b).
+
+.decl unrecovered_request(caller: symbol, keeper: symbol)
+
+unrecovered_request(a, b) :- holds_in(a, b, g, _, _, _), !remakes_on_restart(a, b, g).
+
+// The caller learns that the keeper restarted, and a clause of its own
+// for the news runs g, the function making the request, again: the
+// :DOWN of a monitor on the keeper's process, or the call or cast the
+// keeper's start code makes to the caller.
+.decl remakes_on_restart(caller: symbol, keeper: symbol, func: symbol)
+
+remakes_on_restart(a, b, g) :-
+  holds_in(a, b, g, _, _, _),
+  monitors_keeper(a, b),
+  clause_callback(a, h, "info"),
+  clause_remakes(a, h, ":DOWN", g).
+
+remakes_on_restart(a, b, g) :-
+  holds_in(a, b, g, _, _, _),
+  once_request(b, a, "cast", tag, _),
+  clause_callback(a, h, "cast"),
+  clause_remakes(a, h, tag, g).
+
+remakes_on_restart(a, b, g) :-
+  holds_in(a, b, g, _, _, _),
+  once_request(b, a, "call", tag, _),
+  handle_call_function(a, h),
+  clause_remakes(a, h, tag, g).
+
+// A function of the caller's process monitors the keeper's process.
+.decl monitors_keeper(caller: symbol, keeper: symbol)
+
+monitors_keeper(a, b) :-
+  registers_with(a, b),
+  signal_target(_, f, "monitor", p),
+  server_process(p, b),
+  (function_def(f, a, _, _, _) ; once_code(a, f)).
+
+// The clause of a's handler h for `tag` runs g, a function making a
+// request a's keeper holds: g is the handler, with the request in that
+// clause; a call the clause makes reaches g on a's stack; or the clause
+// sends a's process a message whose clause runs g.
+.decl clause_remakes(caller: symbol, handler: symbol, tag: symbol, func: symbol)
+
+clause_remakes(a, g, tag, g) :-
+  holds_in(a, b, g, _, _, _),
+  request_site(g, site, b, _),
+  clause_call(site, g, tag).
+
+clause_remakes(a, h, tag, g) :-
+  holds_in(a, _, g, _, _, _),
+  handler_function(a, h),
+  clause_call(c, h, tag),
+  call_instr(h, k, c),
+  !runs_elsewhere(h, k),
+  once_path.reaches(k, g).
+
+clause_remakes(a, h, tag, g) :-
+  enters(h, tag, a, h2, tag2),
+  clause_remakes(a, h2, tag2, g).
 
 // All resolved calls from `from` to `to` use privately started instances
 // (private_module_dep). Restarting the supervisor's instance does not affect them.
