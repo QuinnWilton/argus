@@ -55,8 +55,6 @@ defmodule Argus.Analyses.ShutdownTest do
   defp modules(r, relation),
     do: r |> rows(relation) |> Enum.map(&hd/1) |> Enum.uniq() |> Enum.sort()
 
-  defp named?(mods, fragment), do: Enum.any?(mods, &String.contains?(&1, fragment))
-
   # Matches the module column exactly. `Shutdown.Leaks` is a prefix of
   # `Shutdown.LeaksIndirect`, so a contains-check would silently conflate
   # the two positives and let either one satisfy both tests.
@@ -272,128 +270,71 @@ defmodule Argus.Analyses.ShutdownTest do
     end
   end
 
-  describe "detection" do
-    test "durable cleanup without trap_exit is reported", ctx do
-      assert [[mod, behaviour, "io", api, via]] =
-               only(results(ctx), "cleanup_never_runs", "Shutdown.Leaks")
+  describe "cleanup a supervisor's stop skips" do
+    test "is reported where the module does not trap exits, and only there", ctx do
+      r = results(ctx)
 
-      assert mod =~ "Shutdown.Leaks"
-      assert behaviour == "GenServer"
+      assert modules(r, "cleanup_never_runs") ==
+               Enum.map(
+                 [S.CleansUpOnShutdownToo, S.Leaks, S.LeaksIndirect, S.ReleasesAndWrites],
+                 &inspect/1
+               )
+
+      assert modules(r, "cleanup_unclear") == [inspect(S.Unclear)]
+      assert modules(r, "terminate_may_be_truncated") == [inspect(S.Truncatable)]
+
+      # Not reported, in any of the three:
+      #   * Traps, UnclearTraps: every positive has a twin doing the same
+      #     work while trapping, which means terminate/2 runs; were the
+      #     twins reported too, the analysis would be detecting "has a
+      #     terminate/2" and nothing else.
+      #   * CrashReportOnly: :normal, :shutdown and {:shutdown, _} return
+      #     before its write, which only a crash reaches (and
+      #     CleansUpOnShutdownToo, where :shutdown reaches it, is).
+      #   * ReleasesOwn: the runtime drops a dead process's monitors,
+      #     timers and socket itself (ReleasesAndWrites is reported for
+      #     its writes alone).
+      #   * LogsOnly: logging is not cleanup. ReadsOnly: reads have
+      #     nothing to lose by being skipped. CleansUpElsewhere: cleanup
+      #     outside terminate/2 is not this analysis's business.
+      #   * Leaks is not also unclear: its classified cleanup is the
+      #     precise finding, and the vague one would add nothing.
+      #   * Unclear is: a call into the application's own code is where
+      #     most cleanup lives.
+    end
+
+    test "each names the call it loses and the function terminate/2 reaches it through",
+         ctx do
+      r = results(ctx)
+
+      assert [[_, "GenServer", "io", api, via]] = only(r, "cleanup_never_runs", "Shutdown.Leaks")
       assert api =~ "write"
       assert via =~ "terminate"
-    end
 
-    test "cleanup several calls below terminate/2 is attributed to its site", ctx do
-      assert [[_mod, _b, "io", _api, via]] =
-               only(results(ctx), "cleanup_never_runs", "LeaksIndirect")
-
-      assert via =~ "persist", "blamed terminate/2 rather than the function at fault"
-    end
-
-    test "unclassified work in terminate/2 is reported separately", ctx do
-      mods = modules(results(ctx), "cleanup_unclear")
-
-      assert named?(mods, "Shutdown.Unclear"),
-             "a call into the application's own code is where most cleanup lives"
-
-      refute named?(mods, "UnclearTraps"), "trapping means the callback is reached"
-    end
-
-    test "unbounded work is reported when the module does trap", ctx do
-      assert [[mod, _b, "network", api, _via]] = rows(results(ctx), "terminate_may_be_truncated")
-      assert mod =~ "Truncatable"
-      assert api =~ "request"
-    end
-  end
-
-  describe "the claim is the missing trap, not the cleanup" do
-    # Every positive above has a twin that does identical work while
-    # trapping. If those twins were also reported, the analysis would be
-    # detecting "has a terminate/2" and nothing else.
-    test "the same cleanup is not reported when the module traps exits", ctx do
-      mods = modules(results(ctx), "cleanup_never_runs")
-
-      assert named?(mods, "Shutdown.Leaks")
-      refute named?(mods, "Shutdown.Traps"), "trapping means terminate/2 actually runs"
-    end
-  end
-
-  describe "only what a supervisor stop runs is cleanup it skips" do
-    test "work terminate/2 does only for a crash is not reported", ctx do
-      r = results(ctx)
-
-      refute named?(modules(r, "cleanup_never_runs"), "CrashReportOnly"),
-             ":normal, :shutdown and {:shutdown, _} return before the write"
-
-      refute named?(modules(r, "cleanup_unclear"), "CrashReportOnly")
-
-      assert [[_mod, _b, "io", api, _via]] =
-               only(r, "cleanup_never_runs", "CleansUpOnShutdownToo"),
-             ":shutdown reaches the write when only :normal returns first"
-
+      # Several calls below terminate/2, the site at fault and within a
+      # few hops of it. An earlier version used the unbounded
+      # call_reachable closure and credited Sequin's MutexOwner with
+      # `:ets.insert/2 via :wpool_pool:store_wpool/1`, connection-pool
+      # internals five hops down: right module, meaningless witness.
+      assert [[_, _, "io", api, via]] = only(r, "cleanup_never_runs", "LeaksIndirect")
       assert api =~ "write"
-    end
+      assert via =~ "persist", "blamed terminate/2 rather than the function at fault"
 
-    test "releasing what the process holds is not cleanup a shutdown loses", ctx do
-      r = results(ctx)
+      assert [[_, _, "io", api, _via]] = only(r, "cleanup_never_runs", "CleansUpOnShutdownToo")
+      assert api =~ "write"
 
-      refute named?(modules(r, "cleanup_never_runs"), "ReleasesOwn"),
-             "the runtime drops a dead process's monitors, timers and socket itself"
+      assert [ets, file] =
+               r
+               |> only("cleanup_never_runs", "ReleasesAndWrites")
+               |> Enum.map(fn [_mod, _b, _category, api, _via] -> api end)
+               |> Enum.sort()
 
-      refute named?(modules(r, "cleanup_unclear"), "ReleasesOwn")
-
-      apis =
-        r
-        |> only("cleanup_never_runs", "ReleasesAndWrites")
-        |> Enum.map(fn [_mod, _b, _category, api, _via] -> api end)
-        |> Enum.sort()
-
-      assert [ets, file] = apis
       assert ets =~ ":ets.insert"
       assert file =~ "File.write!"
-    end
-  end
 
-  describe "evidence quality" do
-    # The verdict being right is not enough if the evidence is wrong. An
-    # earlier version used the unbounded call_reachable closure and credited
-    # Sequin's MutexOwner with `:ets.insert/2 via :wpool_pool:store_wpool/1`
-    # — connection-pool internals five hops down Mutex.release -> Redis ->
-    # wpool. Right module, meaningless witness, and indistinguishable from
-    # luck until read against source.
-    test "cleanup is attributed within a few hops of terminate/2", ctx do
-      assert [[_mod, _b, "io", api, via]] =
-               only(results(ctx), "cleanup_never_runs", "LeaksIndirect")
-
-      assert via =~ "persist", "two hops is inside the bound"
-      assert api =~ "write"
-    end
-  end
-
-  describe "what is deliberately not reported" do
-    test "logging is not cleanup", ctx do
-      r = results(ctx)
-
-      refute named?(modules(r, "cleanup_never_runs"), "LogsOnly")
-      refute named?(modules(r, "cleanup_unclear"), "LogsOnly")
-    end
-
-    test "reads have nothing to lose by being skipped", ctx do
-      r = results(ctx)
-
-      refute named?(modules(r, "cleanup_never_runs"), "ReadsOnly")
-      refute named?(modules(r, "cleanup_unclear"), "ReadsOnly")
-    end
-
-    test "cleanup outside terminate/2 is not this analysis's business", ctx do
-      refute named?(modules(results(ctx), "cleanup_never_runs"), "CleansUpElsewhere")
-    end
-
-    test "a module with classified cleanup is not also reported as unclear", ctx do
-      # Otherwise the precise finding and the vague one would name the same
-      # module, and the vague one adds nothing.
-      assert named?(modules(results(ctx), "cleanup_never_runs"), "Shutdown.Leaks")
-      refute named?(modules(results(ctx), "cleanup_unclear"), "Shutdown.Leaks")
+      # The unbounded work of a module that does trap.
+      assert [[_, _, "network", api, _via]] = rows(r, "terminate_may_be_truncated")
+      assert api =~ "request"
     end
   end
 
