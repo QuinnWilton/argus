@@ -901,7 +901,7 @@ distributed_operation_during_init(init, op) :-
   distributed_operation(op, _, _).
 
 // Operations waiting on another node or distributed store: RPC, global registration,
-// node operations, Mnesia, and DETS. Exclude immediate node-list and monitoring
+// node operations and Mnesia (not DETS, a file on this node). Exclude immediate node-list and monitoring
 // subscriptions.
 .decl distributed_operation(op: symbol, func: symbol, name: symbol)
 

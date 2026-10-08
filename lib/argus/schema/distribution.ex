@@ -159,10 +159,12 @@ defmodule Argus.Schema.Distribution do
         fields: [
           {:id, :symbol, "instruction ID"},
           {:func, :symbol, "containing function ID"},
-          {:store, :symbol, "store type (mnesia or dets)"},
+          {:store, :symbol, "store type (mnesia)"},
           {:op, :symbol, "operation name"}
         ],
-        doc: "Mnesia or DETS distributed store operation."
+        doc:
+          "Mnesia distributed store operation. DETS is not one: a DETS table is a file " <>
+            "on its own node."
       }
     ])
   end

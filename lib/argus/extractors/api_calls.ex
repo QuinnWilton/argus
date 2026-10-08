@@ -140,13 +140,13 @@ defmodule Argus.Extractors.ApiCalls do
     {:net_kernel, :monitor_nodes, [1, 2]}
   ]
 
+  # The distributed store is Mnesia alone: a DETS table is a file on the
+  # node that opened it, so nothing a DETS call waits on is a peer.
   @mnesia_ops ~w(read write delete delete_object first next last prev match_object select
                  index_read dirty_read dirty_write dirty_delete dirty_first dirty_next
                  dirty_last dirty_match_object dirty_index_read transaction activity
                  sync_transaction async_dirty sync_dirty create_table delete_table
                  add_table_index add_table_copy change_table_copy_type)a
-
-  @dets_ops ~w(open_file close lookup insert delete match_object select first next sync info)a
 
   # Remote calls that wait for an answer: {mfa, variant, timeout,
   # target}. The timeout is "-1" where the arity leaves it out and the
@@ -314,11 +314,6 @@ defmodule Argus.Extractors.ApiCalls do
                do:
                  {{:mnesia, op, :any}, :distributed_store_op,
                   [:id, :func, {:const, "mnesia"}, :fun]}
-         )
-         |> Kernel.++(
-           for op <- @dets_ops,
-               do:
-                 {{:dets, op, :any}, :distributed_store_op, [:id, :func, {:const, "dets"}, :fun]}
          )
 
   # Indexed by {mod, fun} at compile time; arity is checked per entry.

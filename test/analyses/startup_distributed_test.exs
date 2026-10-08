@@ -63,6 +63,20 @@ defmodule Argus.Analyses.StartupDistributedTest do
       assert remote(results) == []
     end
 
+    test "flags a Mnesia read in init/1" do
+      results = analyze([Argus.Test.Fixtures.StartupMnesiaInInit])
+
+      assert [["Argus.Test.Fixtures.StartupMnesiaInInit:init/1", _site, "dirty_read"]] =
+               remote(results)
+    end
+
+    test "does not flag a local DETS table read in init/1" do
+      # DETS is a file on this node: no peer can be slow or partitioned.
+      results = analyze([Argus.Test.Fixtures.StartupDetsInInit])
+
+      assert remote(results) == []
+    end
+
     test "does not flag :net_kernel.monitor_nodes in init/1" do
       # monitor_nodes is a subscription flag — non-blocking.
       results = analyze([Argus.Test.Fixtures.NodeMonitorServer])

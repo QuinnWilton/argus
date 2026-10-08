@@ -154,10 +154,10 @@ defmodule Argus.Exclusions.StartupTest do
       assert "connect" in details(ctx, [S.RemoteBeforeAck.Node])
     end
 
-    # startup.dl, blocks_on_peer: !start_acked(id, func), the dets rule.
-    test "a dets table opened after the ack", ctx do
+    # startup.dl, blocks_on_peer: !start_acked(id, func), the Mnesia rule.
+    test "a Mnesia table read after the ack", ctx do
       assert peers(ctx, [S.RemoteAfterAck.Journal]) == []
-      assert "open_file" in details(ctx, [S.RemoteBeforeAck.Node])
+      assert "dirty_read" in details(ctx, [S.RemoteBeforeAck.Node])
     end
   end
 

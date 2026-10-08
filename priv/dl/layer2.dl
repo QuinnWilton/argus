@@ -290,7 +290,7 @@
 .decl dict_put(id: symbol, func: symbol, key: symbol, src_kind: symbol, src: symbol) mutable
 .input dict_put
 
-// Mnesia or DETS distributed store operation.
+// Mnesia distributed store operation. DETS is not one: a DETS table is a file on its own node.
 .decl distributed_store_op(id: symbol, func: symbol, store: symbol, op: symbol) mutable
 .input distributed_store_op
 

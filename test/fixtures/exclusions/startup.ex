@@ -216,7 +216,7 @@ end
 
 # proc_lib-started servers that release their starter first
 # (`:proc_lib.init_ack/1`) and only then do the distributed work: a
-# global name registration, a node connect, a dets open. The start is no
+# global name registration, a node connect, a Mnesia read. The start is no
 # longer held by any of them; what they wait on is the server's.
 defmodule Excl.Startup.RemoteAfterAck.GlobalName do
   @moduledoc false
@@ -250,18 +250,18 @@ defmodule Excl.Startup.RemoteAfterAck.Journal do
   @moduledoc false
   use GenServer
 
-  def start_link(path), do: :proc_lib.start_link(__MODULE__, :init, [path])
+  def start_link(key), do: :proc_lib.start_link(__MODULE__, :init, [key])
 
   @impl true
-  def init(path) do
+  def init(key) do
     :proc_lib.init_ack({:ok, self()})
-    {:ok, table} = :dets.open_file(__MODULE__, file: String.to_charlist(path))
-    :gen_server.enter_loop(__MODULE__, [], table)
+    entries = :mnesia.dirty_read(__MODULE__, key)
+    :gen_server.enter_loop(__MODULE__, [], entries)
   end
 end
 
 # The same distributed work done before the ack: each of the three holds
-# the supervisor's start for as long as the cluster or the disk takes.
+# the supervisor's start for as long as the cluster takes.
 # What the servers above avoid.
 defmodule Excl.Startup.RemoteBeforeAck.Node do
   @moduledoc false
@@ -273,9 +273,9 @@ defmodule Excl.Startup.RemoteBeforeAck.Node do
   def init(opts) do
     :yes = :global.register_name(Keyword.fetch!(opts, :name), self())
     connected = Node.connect(Keyword.fetch!(opts, :seed))
-    {:ok, table} = :dets.open_file(__MODULE__, file: String.to_charlist(opts[:path]))
+    entries = :mnesia.dirty_read(__MODULE__, Keyword.fetch!(opts, :key))
     :proc_lib.init_ack({:ok, self()})
-    :gen_server.enter_loop(__MODULE__, [], %{connected: connected, table: table})
+    :gen_server.enter_loop(__MODULE__, [], %{connected: connected, entries: entries})
   end
 end
 
