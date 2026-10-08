@@ -12,7 +12,8 @@
 exit_without_handler(mod, trap) :-
   module_traps(trap, mod),
   hands_exits_to_handle_info(mod),
-  !has_handle_info(mod).
+  !has_handle_info(mod),
+  !links_only_to_parent(mod).
 
 // Behaviours delivering trapped exits to handle_info/2, as classified by
 // `gen_server_like`. Other frameworks use their own callbacks or hidden receives;
@@ -31,7 +32,55 @@ unhandled_exit_signal(mod, "no_handler", trap) :-
 // `callback_tag` counts any atom comparison, so unrelated :EXIT mentions can suppress
 // the finding. `trap_exit_without_exit_clause` excludes gen_statem.
 unhandled_exit_signal(mod, "no_exit_clause", trap) :-
-  trap_exit_without_exit_clause(mod, trap).
+  trap_exit_without_exit_clause(mod, trap),
+  !links_only_to_parent(mod).
+
+// Links besides the parent's
+//
+// A trapped exit reaches handle_info/2 only from a link. gen_server takes its parent's
+// {:EXIT, ...} itself and terminates, so a GenServer whose own stack links to nothing
+// else (fluffy's test scope traps only so that terminate/2 runs, and monitors what it
+// watches) has no {:EXIT, ...} for handle_info/2 to miss. A wrapper behaviour's loop
+// may not take its parent's exit and is still asked.
+.decl links_only_to_parent(mod: symbol)
+
+links_only_to_parent(mod) :-
+  module_traps(_, mod),
+  behaves_as(mod, "GenServer"),
+  !links_beyond_parent(mod).
+
+// A callback other than terminate/2 runs, on the server's own stack in any module, a
+// call that may link the server to a process or port. terminate/2's links come as the
+// server exits, and no callback takes their exits.
+.decl links_beyond_parent(mod: symbol)
+
+links_beyond_parent(mod) :-
+  process_entry(mod, e),
+  !terminate_callback(e, mod, _),
+  link_below.reaches(e).
+
+// Functions whose own stack may make a link.
+.init link_below = SameProcessReachSet
+
+link_below.seed(f) :- may_link(f).
+
+// `func` makes a call that may link its caller: a link, a start or spawn with `link` in
+// its name, a linked task, a port or socket (owned ports and sockets are linked), a
+// file opened through an io server, a call into code the program does not hold, or a
+// call through a fun or a computed MFA (not a field access, `dot_dispatch`).
+.decl may_link(func: symbol)
+
+may_link(f) :- remote_call(_, f, _, name, _), match(".*link.*", name), !match("unlink.*", name).
+may_link(f) :- remote_call(_, f, "Task", name, _), (name = "async" ; name = "async_stream").
+
+may_link(f) :-
+  remote_call(_, f, "Task.Supervisor", name, _),
+  (name = "async" ; name = "async_stream").
+
+may_link(f) :- impure_call(_, f, _, c, _), (c = "port" ; c = "network").
+may_link(f) :- impure_call(_, f, api, "io", _), match("(File|:file)\\.open.*", api).
+may_link(f) :- unknown_call(_, f, api, g), !function_def(g, _, _, _, _), !structural_call(api).
+may_link(f) :- dynamic_call(_, f, k), (k = "call_fun" ; k = "apply").
 
 // Manual loops ignoring trapped exits
 //

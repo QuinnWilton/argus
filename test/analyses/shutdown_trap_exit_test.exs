@@ -33,6 +33,20 @@ defmodule Argus.Analyses.ShutdownTrapExitTest do
     end
   end
 
+  describe "unhandled_exit_signal: the links that make an {:EXIT, ...}" do
+    test "a GenServer linked only to its parent is not reported" do
+      results =
+        analyze([
+          Argus.Test.Fixtures.ShutdownTrap.Session,
+          Argus.Test.Fixtures.ShutdownTrap.MonitorsOnly,
+          Argus.Test.Fixtures.ShutdownTrap.LinksWorker
+        ])
+
+      assert [["Argus.Test.Fixtures.ShutdownTrap.LinksWorker", _witness]] =
+               exit_rows(results, "no_exit_clause")
+    end
+  end
+
   describe "unhandled_exit_signal: the process that traps" do
     test "a trap a helper sets is the calling server's, not the helper module's" do
       results =

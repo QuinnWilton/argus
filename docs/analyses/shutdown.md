@@ -40,8 +40,12 @@ EXIT clause (`no_exit_clause`), and a custom receive loop without such a clause
 (`no_receive_clause`). A partial handler may crash; an ignored exit can leave stale
 state or an unresponsive shutdown protocol.
 
-A default GenServer handler may hide the missing-handler case. Atom comparisons
-can overstate EXIT coverage. Unresolved receive code suppresses custom-loop claims,
+A GenServer whose callbacks other than terminate/2 make no link besides its
+parent's is not reported for the first two kinds: gen_server takes its parent's
+exit itself. A start or spawn named `*link*`, a linked task, a port, a socket, an
+opened file, a call into code outside the program and a call through a fun all
+count as links. A default GenServer handler may hide the missing-handler case.
+Atom comparisons can overstate EXIT coverage. Unresolved receive code suppresses custom-loop claims,
 and gen_statem is excluded here because it handles exits in state functions.
 
 ## Calling a sibling during teardown

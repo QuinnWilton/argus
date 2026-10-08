@@ -352,15 +352,16 @@ defmodule Argus.Test.Fixtures.RawTrapExit do
   @moduledoc false
 
   # Hand-rolled :gen_server (no `use GenServer`): traps exits but defines
-  # no handle_info, so {:EXIT, ...} messages crash the server. `use
-  # GenServer` modules always compile in a default handle_info, which is
-  # why this rule can only fire for raw behaviour modules.
+  # no handle_info, so the {:EXIT, ...} of the port it owns finds no
+  # callback. `use GenServer` modules always compile in a default
+  # handle_info, which is why this rule can only fire for raw behaviour
+  # modules.
   @behaviour :gen_server
 
   @impl true
-  def init(state) do
+  def init(cmd) do
     Process.flag(:trap_exit, true)
-    {:ok, state}
+    {:ok, Port.open({:spawn, cmd}, [:binary])}
   end
 
   @impl true
@@ -472,16 +473,17 @@ end
 defmodule Argus.Test.Fixtures.TrapsWithoutExitClause do
   @moduledoc """
   Traps exits and has a handle_info/2 — so it passes the "no handler"
-  check — but no clause accepts {:EXIT, ...}. Bandit's HTTP/1 handler.
+  check — but no clause accepts the {:EXIT, ...} of the port it owns.
+  Bandit's HTTP/1 handler, with its socket.
   """
   use GenServer
 
   def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
 
   @impl true
-  def init(state) do
+  def init(cmd) do
     Process.flag(:trap_exit, true)
-    {:ok, state}
+    {:ok, Port.open({:spawn, cmd}, [:binary])}
   end
 
   @impl true
@@ -904,18 +906,18 @@ end
 defmodule Argus.Test.Fixtures.TrapsThroughHelper do
   @moduledoc """
   A server whose init/1 traps exits through TrapHelper.enable/0 and whose
-  handle_info/2 has no {:EXIT, ...} clause: the server is the process
-  that traps (postgrex's connect/1 trapping inside DBConnection's
-  connection process, M2-17).
+  handle_info/2 has no clause for the {:EXIT, ...} of the port it owns:
+  the server is the process that traps (postgrex's connect/1 trapping
+  inside DBConnection's connection process, with its socket, M2-17).
   """
   use GenServer
 
   def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
 
   @impl true
-  def init(state) do
+  def init(cmd) do
     :ok = Argus.Test.Fixtures.TrapHelper.enable()
-    {:ok, state}
+    {:ok, Port.open({:spawn, cmd}, [:binary])}
   end
 
   @impl true
