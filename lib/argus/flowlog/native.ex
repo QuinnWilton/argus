@@ -18,55 +18,35 @@ defmodule Argus.FlowLog.Native do
   of every program's digest (`Argus.Graph.Programs`).
   """
 
+  alias Argus.EmbeddedTree
+
   @native Path.expand("../../../native/flowlog", __DIR__)
 
   # Only sources travel: a developer's `target/` or a generated module in
   # the template are build products.
-  @files @native
-         |> Path.join("**/*")
-         |> Path.wildcard()
-         |> Enum.filter(&File.regular?/1)
-         |> Enum.map(&Path.relative_to(&1, @native))
-         |> Enum.reject(
-           &(String.contains?(&1, "target/") or
-               &1 in ["engine/src/program.rs", "engine/src/glue.rs"])
-         )
-         |> Enum.sort()
-         |> Enum.map(&{&1, File.read!(Path.join(@native, &1))})
+  @except ["target/", "engine/src/program.rs", "engine/src/glue.rs"]
+
+  @files EmbeddedTree.read(@native, @except)
 
   for {relative, _content} <- @files do
     @external_resource Path.join(@native, relative)
   end
 
-  @digest :crypto.hash(:sha256, :erlang.term_to_binary(@files, [:deterministic]))
-          |> Base.encode16(case: :lower)
-
-  @payload :zlib.gzip(:erlang.term_to_binary(@files, [:deterministic]))
-
+  @digest EmbeddedTree.digest(@files)
+  @payload EmbeddedTree.pack(@files)
   @paths Enum.map(@files, &elem(&1, 0))
 
   @doc false
   @spec __mix_recompile__?() :: boolean()
-  def __mix_recompile__? do
-    @native
-    |> Path.join("**/*")
-    |> Path.wildcard()
-    |> Enum.filter(&File.regular?/1)
-    |> Enum.map(&Path.relative_to(&1, @native))
-    |> Enum.reject(
-      &(String.contains?(&1, "target/") or &1 in ["engine/src/program.rs", "engine/src/glue.rs"])
-    )
-    |> Enum.sort()
-    |> Kernel.!=(@paths)
-  end
+  def __mix_recompile__?, do: EmbeddedTree.listing(@native, @except) != @paths
 
   @doc "The digest of the toolchain's sources: every file by its path and content."
   @spec digest() :: String.t()
   def digest, do: @digest
 
   @doc "Every source file, by its path relative to `native/flowlog`, with its content."
-  @spec files() :: [{Path.t(), binary()}]
-  def files, do: @payload |> :zlib.gunzip() |> :erlang.binary_to_term()
+  @spec files() :: EmbeddedTree.files()
+  def files, do: EmbeddedTree.unpack(@payload)
 
   @doc """
   The FlowLog revision the toolchain pins, as its `Cargo.toml`s name it.
@@ -78,47 +58,8 @@ defmodule Argus.FlowLog.Native do
     rev
   end
 
-  @doc """
-  The sources unpacked under `base`, at `<base>/<digest>`: written into a
-  directory of its own and renamed into place, unless an earlier run (or
-  a concurrent one) put them there first. Returns the directory.
-  """
+  @doc "The sources unpacked under `base`, at `<base>/<digest>` (`Argus.EmbeddedTree.unpack!/4`)."
   @spec unpack!(Path.t()) :: Path.t()
-  def unpack!(base) do
-    target = Path.join(base, @digest)
-
-    if File.dir?(target) do
-      target
-    else
-      staging =
-        Path.join(base, ".#{@digest}.#{:os.getpid()}.#{System.unique_integer([:positive])}")
-
-      File.mkdir_p!(staging)
-
-      try do
-        for {relative, content} <- files() do
-          path = Path.join(staging, relative)
-          File.mkdir_p!(Path.dirname(path))
-          File.write!(path, content)
-        end
-
-        case :file.rename(staging, target) do
-          :ok ->
-            target
-
-          {:error, reason} when reason in [:eexist, :enotempty] ->
-            target
-
-          {:error, reason} ->
-            raise File.RenameError,
-              reason: reason,
-              action: "install the FlowLog toolchain sources at",
-              source: staging,
-              destination: target
-        end
-      after
-        File.rm_rf(staging)
-      end
-    end
-  end
+  def unpack!(base),
+    do: EmbeddedTree.unpack!(base, @digest, files(), "install the FlowLog toolchain sources at")
 end
