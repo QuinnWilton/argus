@@ -1,0 +1,27 @@
+{
+  "bundles": {
+    "aarch64-apple-darwin": {
+      "bytes": 76059277,
+      "sha256": "35f345c8ca0ea64f206ca2adf97e60375bf8cde712671cb6d72ec4565d47e97a",
+      "url": "https://github.com/QuinnWilton/argus/releases/download/v0.22.0/argus-flowlog-aarch64-apple-darwin.tar.gz"
+    },
+    "aarch64-unknown-linux-gnu": {
+      "bytes": 119018558,
+      "sha256": "6f70ade6dd5a2ebc8229962ce03cbcb98d9a933de34060323fc590ea6ad1724c",
+      "url": "https://github.com/QuinnWilton/argus/releases/download/v0.22.0/argus-flowlog-aarch64-unknown-linux-gnu.tar.gz"
+    },
+    "x86_64-apple-darwin": {
+      "bytes": 77720988,
+      "sha256": "cbdb314c80339df145e4558290b53127dd12fe7ccaafc757544f9d18a844879c",
+      "url": "https://github.com/QuinnWilton/argus/releases/download/v0.22.0/argus-flowlog-x86_64-apple-darwin.tar.gz"
+    },
+    "x86_64-unknown-linux-gnu": {
+      "bytes": 85906246,
+      "sha256": "b3ec905cac16abe254078635930adf62b5f99fb553258b027ea8ab0d7b1825c3",
+      "url": "https://github.com/QuinnWilton/argus/releases/download/v0.22.0/argus-flowlog-x86_64-unknown-linux-gnu.tar.gz"
+    }
+  },
+  "format": 1,
+  "native": "52b27e8029b040843ca766e20797b4ca53dc12e2bdec82672bc37f7c2919f8b8"
+}
+
