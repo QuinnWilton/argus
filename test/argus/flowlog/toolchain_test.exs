@@ -127,6 +127,53 @@ defmodule Argus.FlowLog.ToolchainTest do
     assert offline =~ "--offline"
   end
 
+  test "a build of the tool that fails is tried once per VM, however many ask, and says why first",
+       %{peer: peer, tmp_dir: tmp} do
+    runs = Path.join(tmp, "cargo-runs")
+    bin = Path.join(tmp, "bin")
+    File.mkdir_p!(bin)
+
+    # A Rust whose builds fail as they do without a C compiler: one cause,
+    # and a consequence per crate.
+    File.write!(Path.join(bin, "cargo"), """
+    #!/bin/sh
+    echo run >> "#{runs}"
+    sleep 0.3
+    echo "error: linker \\`cc\\` not found"
+    for crate in quote serde libc; do
+      echo "error: could not compile \\`$crate\\` (build script) due to 1 previous error"
+    done
+    exit 101
+    """)
+
+    File.write!(Path.join(bin, "rustc"), "#!/bin/sh\necho 'release: 1.90.0'\n")
+    for exe <- ~w(cargo rustc), do: File.chmod!(Path.join(bin, exe), 0o755)
+
+    Peer.run(peer, fn ->
+      System.put_env("ARGUS_FLOWLOG_DIR", Path.join(tmp, "root"))
+      System.put_env("ARGUS_CARGO", Path.join(bin, "cargo"))
+      System.put_env("ARGUS_FLOWLOG_PREBUILT", "0")
+
+      # Every analysis of a run asks at once.
+      assert [{:error, {:build_failed, :tool, _log, tail} = reason} | others] =
+               1..3
+               |> Task.async_stream(fn _ -> Toolchain.ensure(progress: false) end)
+               |> Enum.map(fn {:ok, result} -> result end)
+
+      assert Enum.all?(others, &(&1 == {:error, reason}))
+
+      assert tail =~ ~r/\Aerror: linker `cc` not found\n\(and 3 crate\(s\) could not compile\)\n/
+      assert Toolchain.describe(reason) =~ "install gcc or clang"
+
+      assert {:error, ^reason} = Toolchain.ensure(progress: false)
+      assert File.read!(runs) == "run\n"
+
+      assert :ok = Toolchain.forget_failures()
+      assert {:error, {:build_failed, :tool, _, _}} = Toolchain.ensure(progress: false)
+      assert File.read!(runs) == "run\nrun\n"
+    end)
+  end
+
   describe "why there are no engines" do
     @url "https://example.com/argus-flowlog.tar.gz"
 

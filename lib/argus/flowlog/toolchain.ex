@@ -108,6 +108,9 @@ defmodule Argus.FlowLog.Toolchain do
   run already found it, else found (and built when missing). The tool is
   built at most once per machine; an engine, once per program
   (`Argus.FlowLog.Program`).
+
+  A build of the tool that fails is not tried again by the same VM (each
+  analysis of a run asks), until `forget_failures/0`.
   """
   @spec ensure(keyword()) :: {:ok, t()} | {:error, reason()}
   def ensure(opts \\ []) do
@@ -117,9 +120,21 @@ defmodule Argus.FlowLog.Toolchain do
       %__MODULE__{} = toolchain ->
         if File.regular?(tool(toolchain)), do: {:ok, toolchain}, else: ensure_uncached(memo, opts)
 
+      {:failed, reason} ->
+        {:error, reason}
+
       nil ->
         ensure_uncached(memo, opts)
     end
+  end
+
+  @doc "Forgets the builds of the tool this VM saw fail, so the next `ensure/1` tries again."
+  @spec forget_failures() :: :ok
+  def forget_failures do
+    for {{__MODULE__, :ensured, _, _, _} = memo, {:failed, _}} <- :persistent_term.get(),
+        do: :persistent_term.erase(memo)
+
+    :ok
   end
 
   # With Rust, a toolchain that builds; without it (or with one too old),
@@ -134,7 +149,7 @@ defmodule Argus.FlowLog.Toolchain do
               struct!(__MODULE__, Map.merge(rust, %{dir: dir, key: key(rust), kind: :rust}))
 
             discard_unrunnable(toolchain)
-            with :ok <- ensure_tool(toolchain, opts), do: {:ok, toolchain}
+            with :ok <- ensure_tool(toolchain, memo, opts), do: {:ok, toolchain}
           end
 
         {:error, rust_reason} ->
@@ -602,15 +617,30 @@ defmodule Argus.FlowLog.Toolchain do
 
   # ── Building ─────────────────────────────────────────────────────────
 
-  defp ensure_tool(toolchain, opts) do
+  defp remember_failure(memo, {:error, reason} = error) do
+    :persistent_term.put(memo, {:failed, reason})
+    error
+  end
+
+  defp remember_failure(_memo, :ok), do: :ok
+
+  # Under the lock, a build another process of this VM saw fail while
+  # this one waited is that failure, not another build.
+  defp ensure_tool(toolchain, memo, opts) do
     if File.regular?(tool(toolchain)) do
       :ok
     else
       locked(:build, fn ->
-        cond do
-          File.regular?(tool(toolchain)) -> :ok
-          bundled_tool(toolchain, opts) == :ok -> :ok
-          true -> build_tool(toolchain, opts)
+        case :persistent_term.get(memo, nil) do
+          {:failed, reason} ->
+            {:error, reason}
+
+          _ ->
+            cond do
+              File.regular?(tool(toolchain)) -> :ok
+              bundled_tool(toolchain, opts) == :ok -> :ok
+              true -> remember_failure(memo, build_tool(toolchain, opts))
+            end
         end
       end)
     end
@@ -778,11 +808,34 @@ defmodule Argus.FlowLog.Toolchain do
     _ -> :error
   end
 
+  # Cargo's errors, the causes first: a missing linker fails every build
+  # script, and its one line would drown under a "could not compile" per
+  # crate.
   defp tail(output) do
     lines = String.split(output, "\n")
     errors = Enum.filter(lines, &String.starts_with?(&1, "error"))
-    shown = if errors == [], do: Enum.take(lines, -15), else: Enum.take(errors, 10)
-    Enum.join(shown, "\n")
+
+    {consequences, causes} =
+      Enum.split_with(errors, &String.starts_with?(&1, "error: could not compile"))
+
+    shown =
+      case {causes, consequences} do
+        {[], []} -> Enum.take(lines, -15)
+        {[], _} -> Enum.take(consequences, 10)
+        {_, []} -> Enum.take(causes, 10)
+        _ -> Enum.take(causes, 10) ++ ["(and #{length(consequences)} crate(s) could not compile)"]
+      end
+
+    Enum.join(shown ++ hints(output), "\n")
+  end
+
+  defp hints(output) do
+    if output =~ ~r/linker `[^`]+` not found/,
+      do: [
+        "Rust needs a C compiler to link with: install gcc or clang (on NixOS, " <>
+          "`nix-shell -p cargo rustc gcc`; on Debian or Ubuntu, build-essential)."
+      ],
+      else: []
   end
 
   @doc """

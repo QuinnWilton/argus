@@ -60,6 +60,10 @@ which a change appeared; older names and APIs may have changed since then.
 - A bundle that does not run says why: the dynamic loader it names is not on
   the system (NixOS), or the system's glibc is older than the one it needs
   (2.34; Debian 11, Ubuntu 20.04, RHEL 8 and Amazon Linux 2 build with Rust).
+- A build of the FlowLog toolchain that fails is tried once per run, not once
+  per analysis, and its error leads with the cause: without a C compiler,
+  "linker `cc` not found" and how to install one, not a "could not compile"
+  line per crate.
 - `mix argus.flowlog build`, `status` and `clean` no longer compile the
   project, which ran its analyses first. `status` says whether the prebuilt
   bundle is downloaded, and why it is not used.

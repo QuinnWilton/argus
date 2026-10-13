@@ -99,6 +99,7 @@ defmodule Mix.Tasks.Argus.Flowlog do
   defp command(["build" | programs]) do
     load_argus()
     :ok = Prebuilt.forget_failures()
+    :ok = Toolchain.forget_failures()
 
     programs =
       if programs == [], do: FlowLog.builtin_programs(), else: Enum.map(programs, &Path.expand/1)
