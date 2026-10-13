@@ -59,6 +59,21 @@ defmodule Mix.Tasks.ArgusTest do
     end)
   end
 
+  test "reports each finding once, though the compile it runs has the :argus compiler",
+       context do
+    in_project(context, fn _log ->
+      compile!()
+
+      # As a fresh `mix argus` does, the compile chain runs again.
+      Mix.Task.clear()
+
+      output = capture_io(:stderr, fn -> Mix.Task.run("argus", []) end)
+
+      assert [_] = Regex.scan(~r/warning\[argus\.coupling\]/, output)
+      assert output =~ "3 findings (2 warnings, 1 info)"
+    end)
+  end
+
   test "--format json emits the stable schema", context do
     in_project(context, fn _log ->
       compile!()

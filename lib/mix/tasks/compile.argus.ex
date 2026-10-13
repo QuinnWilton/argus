@@ -66,12 +66,29 @@ defmodule Mix.Tasks.Compile.Argus do
     rendered =
       Enum.map(notices, &Diagnostics.notice/1) ++ Diagnostics.build(entries, cwd)
 
-    Diagnostics.print(rendered)
+    unless Process.get({__MODULE__, :quiet}, false), do: Diagnostics.print(rendered)
 
     diagnostics = Enum.map(rendered, & &1.diagnostic)
     write_sidecar(diagnostics)
 
     {status(diagnostics, result, config), diagnostics}
+  end
+
+  @doc false
+  # Runs `fun` (a compile) with this compiler printing nothing: for `mix
+  # argus`, which reports the findings itself. Mix runs the compilers in
+  # the caller's process.
+  @spec quietly((-> result)) :: result when result: var
+  def quietly(fun) do
+    previous = Process.put({__MODULE__, :quiet}, true)
+
+    try do
+      fun.()
+    after
+      if previous,
+        do: Process.put({__MODULE__, :quiet}, previous),
+        else: Process.delete({__MODULE__, :quiet})
+    end
   end
 
   @impl Mix.Task.Compiler

@@ -17,11 +17,17 @@ defmodule Argus.Project.Mix do
 
   Keep Argus and its dependencies on Mix's code path. An Argus compiler
   diagnostic means findings are available to report; an error from another
-  compiler means the BEAMs are stale and must not be analyzed.
+  compiler means the BEAMs are stale and must not be analyzed. The `:argus`
+  compiler, when the project lists it, prints nothing: the caller reports.
   """
   @spec compile!() :: :ok
   def compile! do
-    case Mix.Task.run("compile", ["--no-prune-code-paths", "--return-errors"]) do
+    compiled =
+      Mix.Tasks.Compile.Argus.quietly(fn ->
+        Mix.Task.run("compile", ["--no-prune-code-paths", "--return-errors"])
+      end)
+
+    case compiled do
       {:error, diagnostics} ->
         if Enum.any?(diagnostics, &(&1.severity == :error and &1.compiler_name != "argus")) do
           Mix.raise("argus: the project does not compile; fix the errors above first")
