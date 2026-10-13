@@ -426,7 +426,8 @@ defmodule Argus.FlowLog.Prebuilt do
 
   defp get("https://" <> _ = url, file) do
     with {:ok, _} <- Application.ensure_all_started(:inets),
-         {:ok, _} <- Application.ensure_all_started(:ssl) do
+         {:ok, _} <- Application.ensure_all_started(:ssl),
+         {:ok, cacerts} <- cacerts() do
       request = {String.to_charlist(url), [{~c"user-agent", ~c"argus"}]}
 
       http = [
@@ -435,7 +436,7 @@ defmodule Argus.FlowLog.Prebuilt do
         autoredirect: true,
         ssl: [
           verify: :verify_peer,
-          cacerts: :public_key.cacerts_get(),
+          cacerts: cacerts,
           depth: 4,
           customize_hostname_check: [
             match_fun: :public_key.pkix_verify_hostname_match_fun(:https)
@@ -454,6 +455,15 @@ defmodule Argus.FlowLog.Prebuilt do
   end
 
   defp get(url, _file), do: {:error, {:download_failed, url, :unsupported_scheme}}
+
+  # The system's CA certificates, which a minimal system (a slim container)
+  # may not have: :public_key.cacerts_get/0 raises then (on OTP 28, in its
+  # own error handling), and a download must fail, not the run.
+  defp cacerts do
+    {:ok, :public_key.cacerts_get()}
+  rescue
+    _ -> {:error, :no_ca_certificates}
+  end
 
   defp check_sum(file, expected) do
     actual =
@@ -742,6 +752,12 @@ defmodule Argus.FlowLog.Prebuilt do
   end
 
   defp download_error({:http, status}), do: "the server answered HTTP #{status}"
+
+  defp download_error(:no_ca_certificates),
+    do:
+      "this system has no CA certificates to check the server with (install them: " <>
+        "ca-certificates on Debian, Ubuntu and Alpine)"
+
   defp download_error(:timeout), do: "it timed out"
   defp download_error(reason) when is_atom(reason), do: posix(reason)
   defp download_error(reason), do: inspect(reason)

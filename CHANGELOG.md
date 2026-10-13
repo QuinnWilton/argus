@@ -3,6 +3,14 @@
 Notable changes and upgrade notes for Argus. Entries describe the release in
 which a change appeared; older names and APIs may have changed since then.
 
+## Unreleased
+
+### Fixed
+
+- A system without CA certificates (a slim container) no longer crashes the
+  run that downloads the prebuilt engines: the download fails, saying so
+  and how to install them, and is tried again an hour later.
+
 ## 0.23.0 — 2026-10-13
 
 ### Added

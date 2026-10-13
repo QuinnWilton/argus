@@ -367,6 +367,9 @@ defmodule Argus.FlowLog.ToolchainTest do
       assert Prebuilt.describe({:download_failed, @url, {:http, 404}}) =~
                "failed: the server answered HTTP 404"
 
+      assert Prebuilt.describe({:download_failed, @url, :no_ca_certificates}) =~
+               "failed: this system has no CA certificates to check the server with"
+
       assert Prebuilt.describe({:download_failed, @url, {:weird, 1}}) =~
                "failed: {:weird, 1}"
     end
