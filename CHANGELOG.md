@@ -14,6 +14,11 @@ which a change appeared; older names and APIs may have changed since then.
   escript's and the rebar3 plugin's users, who have no `mix argus.flowlog
   build`, can try again at once by removing it.
 
+### Changed
+
+- The rebar3 plugin, `rebar3_argus` 0.1.1, carries 0.23.0's `--offline`: it
+  downloads no escript, and passes `ARGUS_OFFLINE=1` to the one it runs.
+
 ## 0.23.0 — 2026-10-13
 
 ### Added
