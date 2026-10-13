@@ -61,6 +61,7 @@ defmodule Argus.FlowLog.Toolchain do
           {:rust_missing, String.t()}
           | {:rust_too_old, String.t(), String.t()}
           | {:untrusted_root, Path.t(), String.t()}
+          | {:unwritable_root, Path.t(), String.t()}
           | {:build_failed, :tool | {:engine, String.t()} | {:engines, pos_integer()}, Path.t(),
              String.t()}
           | {:needs_rust, String.t()}
@@ -93,13 +94,7 @@ defmodule Argus.FlowLog.Toolchain do
         Path.expand(dir)
 
       _ ->
-        base =
-          case System.get_env("XDG_CACHE_HOME") do
-            dir when dir not in [nil, ""] -> dir
-            _ -> Path.join(System.user_home!(), ".cache")
-          end
-
-        Path.join([base, "argus", "flowlog"])
+        Path.join([Argus.Dirs.cache_home(), "argus", "flowlog"])
     end
   end
 
@@ -180,7 +175,7 @@ defmodule Argus.FlowLog.Toolchain do
       unless File.regular?(tool(toolchain)), do: install(bundled, tool(toolchain))
       {:ok, toolchain}
     else
-      {:error, {:untrusted_root, _, _}} = error -> error
+      {:error, {tag, _, _}} = error when tag in [:untrusted_root, :unwritable_root] -> error
       {:error, prebuilt_reason} -> {:error, {:no_engines, rust_reason, prebuilt_reason}}
       :error -> {:error, {:no_engines, rust_reason, {:bad_bundle, "it holds no tool"}}}
     end
@@ -540,8 +535,10 @@ defmodule Argus.FlowLog.Toolchain do
   @doc """
   `<root>/<name>` (`root/0`), created owner-only: `{:ok, dir}` once the
   root and the directory are trusted (`check_trust/1`), or
-  `{:error, {:untrusted_root, path, detail}}`. argus runs what it finds
-  under the root, so nothing there is read or run before this.
+  `{:error, {:untrusted_root, path, detail}}`, or
+  `{:error, {:unwritable_root, path, detail}}` when it cannot be made.
+  argus runs what it finds under the root, so nothing there is read or
+  run before this.
   """
   @spec owned_dir(String.t()) :: {:ok, Path.t()} | {:error, reason()}
   def owned_dir(name) do
@@ -573,7 +570,7 @@ defmodule Argus.FlowLog.Toolchain do
         :ok
 
       {:error, reason} ->
-        {:error, {:untrusted_root, dir, "cannot create it: #{:file.format_error(reason)}"}}
+        {:error, {:unwritable_root, dir, :file.format_error(reason) |> to_string()}}
     end
   end
 
@@ -583,7 +580,7 @@ defmodule Argus.FlowLog.Toolchain do
     case File.lstat(dir) do
       {:ok, %File.Stat{type: :directory, mode: mode, uid: uid}} ->
         cond do
-          uid != current_uid() ->
+          uid != Argus.Dirs.uid() ->
             {:error, "it belongs to another user (uid #{uid})"}
 
           Bitwise.band(mode, 0o022) != 0 ->
@@ -599,19 +596,6 @@ defmodule Argus.FlowLog.Toolchain do
 
       {:error, reason} ->
         {:error, "cannot read it: #{:file.format_error(reason)}"}
-    end
-  end
-
-  defp current_uid do
-    case :persistent_term.get({__MODULE__, :uid}, nil) do
-      nil ->
-        {out, 0} = System.cmd("id", ["-u"])
-        uid = out |> String.trim() |> String.to_integer()
-        :persistent_term.put({__MODULE__, :uid}, uid)
-        uid
-
-      uid ->
-        uid
     end
   end
 
@@ -899,6 +883,11 @@ defmodule Argus.FlowLog.Toolchain do
 
   def describe({:untrusted_root, path, detail}) do
     Exception.message(%TrustError{path: path, detail: detail})
+  end
+
+  def describe({:unwritable_root, path, detail}) do
+    "argus keeps its FlowLog engines in #{path}, and cannot create it (#{detail}): set " <>
+      "ARGUS_FLOWLOG_DIR to a directory you can write"
   end
 
   def describe({:no_engines, rust_reason, prebuilt_reason}) do

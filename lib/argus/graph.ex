@@ -138,21 +138,21 @@ defmodule Argus.Graph do
   The blob store a run keeps its facts and solves in: a temporary one
   under `ARGUS_NO_CACHE`, removed when its session closes; else the one
   `ARGUS_CACHE_DIR` names, else `$XDG_CACHE_HOME/argus/store`, else
-  `~/.cache/argus/store`. Shared by every run on the machine, every
+  `~/.cache/argus/store` (`Argus.Dirs.open_store/0`: a temporary one
+  when that cannot be made). Shared by every run on the machine, every
   worktree and every VM: entries are immutable and named by content.
   """
   @spec store() :: Blob.t()
   def store do
-    if Argus.Dirs.keep?(), do: Blob.open!(store_root()), else: Blob.temporary()
+    if Argus.Dirs.keep?(), do: Argus.Dirs.open_store(), else: Blob.temporary()
   end
 
   @doc "The root of `store/0`'s store (see there)."
   @spec store_root() :: Path.t()
   def store_root do
-    cond do
-      dir = System.get_env("ARGUS_CACHE_DIR") -> Path.expand(dir)
-      dir = System.get_env("XDG_CACHE_HOME") -> Path.join([dir, "argus", "store"])
-      true -> Path.expand("~/.cache/argus/store")
+    case System.get_env("ARGUS_CACHE_DIR") do
+      dir when dir not in [nil, ""] -> Path.expand(dir)
+      _ -> Path.join([Argus.Dirs.cache_home(), "argus", "store"])
     end
   end
 

@@ -67,6 +67,13 @@ which a change appeared; older names and APIs may have changed since then.
 - `mix argus.flowlog build`, `status` and `clean` no longer compile the
   project, which ran its analyses first. `status` says whether the prebuilt
   bundle is downloaded, and why it is not used.
+- Without a home directory (`HOME` unset), argus keeps its caches under the
+  system's temporary directory, in a directory of the user's own, rather
+  than failing. A cache directory argus cannot create says so and names the
+  variable to set: for the engines, rather than calling it untrusted, and for
+  the blob store, a run goes on with a temporary store (a Nix build's
+  sandbox). An empty `XDG_CACHE_HOME` is ignored, as the specification says,
+  rather than putting the store in a relative path.
 
 ## 0.22.0 — 2026-10-08
 

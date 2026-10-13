@@ -77,6 +77,7 @@ defmodule Argus.FlowLog.Prebuilt do
           | :offline
           | {:recently_failed, String.t(), non_neg_integer(), String.t()}
           | {:untrusted_root, Path.t(), String.t()}
+          | {:unwritable_root, Path.t(), String.t()}
 
   @doc """
   The platform a bundle must be built for, as a Rust target triple:
@@ -610,7 +611,8 @@ defmodule Argus.FlowLog.Prebuilt do
       "downloading #{url} failed #{minutes(age)} ago (#{detail}); argus tries again an " <>
         "hour after, or at once on `mix argus.flowlog build`"
 
-  def describe({:untrusted_root, _, _} = reason), do: Toolchain.describe(reason)
+  def describe({tag, _, _} = reason) when tag in [:untrusted_root, :unwritable_root],
+    do: Toolchain.describe(reason)
 
   def describe({:unrunnable, "it needs glibc" <> _ = detail}),
     do: "the prebuilt engines do not run on this machine (the bundle's tool: #{detail})"

@@ -107,8 +107,13 @@ defmodule Argus.FlowLog do
   def not_found_message do
     case availability() do
       :ok -> "the FlowLog toolchain is available"
-      {:error, reason} -> Toolchain.describe(reason)
+      {:error, reason} -> reason |> Toolchain.describe() |> sentence()
     end
+  end
+
+  # What follows the message (a notice's advice) starts a sentence.
+  defp sentence(message) do
+    if String.ends_with?(message, [".", "!", "?"]), do: message, else: message <> "."
   end
 
   @doc """

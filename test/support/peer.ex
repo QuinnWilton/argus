@@ -41,6 +41,9 @@ defmodule Argus.Test.Peer do
   one of its own, removed with it: for a test that must see its solver
   run rather than a solve kept by another.
 
+  `env: [{name, value}]` sets more of its environment at boot, a `nil`
+  value unsetting the variable: what the VM reads once, as `HOME`.
+
   `code_path: :this` gives it this VM's code path, exactly, in place of
   argus's runtime applications': for a test comparing what argus does
   there with what it does here. Mix leaves off this VM's path the OTP
@@ -70,10 +73,16 @@ defmodule Argus.Test.Peer do
       :peer.start_link(%{
         connection: :standard_io,
         args: args,
-        env: [
-          {~c"TMPDIR", String.to_charlist(tmp <> "/")},
-          {~c"ARGUS_CACHE_DIR", String.to_charlist(store)}
-        ],
+        env:
+          [
+            {~c"TMPDIR", String.to_charlist(tmp <> "/")},
+            {~c"ARGUS_CACHE_DIR", String.to_charlist(store)}
+          ] ++
+            for(
+              {name, value} <- Keyword.get(opts, :env, []),
+              do:
+                {String.to_charlist(name), if(value, do: String.to_charlist(value), else: false)}
+            ),
         wait_boot: 60_000
       })
 

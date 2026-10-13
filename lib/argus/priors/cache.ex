@@ -28,8 +28,8 @@ defmodule Argus.Priors.Cache do
   @spec root() :: Path.t()
   def root do
     case System.get_env("ARGUS_PRIORS_DIR") do
-      nil -> Path.expand("~/.cache/argus/priors")
-      dir -> Path.expand(dir)
+      dir when dir not in [nil, ""] -> Path.expand(dir)
+      _ -> Path.join([Argus.Dirs.home_cache(), "argus", "priors"])
     end
   end
 

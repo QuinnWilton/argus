@@ -174,6 +174,29 @@ defmodule Argus.FlowLog.ToolchainTest do
     end)
   end
 
+  test "a cache root that cannot be made says so, and where to put it instead",
+       %{peer: peer, tmp_dir: tmp} do
+    locked = Path.join(tmp, "locked")
+    File.mkdir_p!(locked)
+    File.chmod!(locked, 0o500)
+    on_exit(fn -> File.chmod(locked, 0o700) end)
+    root = Path.join(locked, "flowlog")
+
+    Peer.run(peer, fn ->
+      System.put_env("ARGUS_FLOWLOG_DIR", root)
+      System.put_env("ARGUS_CARGO", "/nonexistent/cargo")
+
+      assert {:error, {:unwritable_root, ^root, detail} = reason} =
+               Toolchain.ensure(progress: false)
+
+      assert detail =~ "permission denied"
+      message = Toolchain.describe(reason)
+      assert message =~ "cannot create it (permission denied)"
+      assert message =~ "set ARGUS_FLOWLOG_DIR to a directory you can write"
+      refute message =~ "belong to you"
+    end)
+  end
+
   describe "why there are no engines" do
     @url "https://example.com/argus-flowlog.tar.gz"
 
