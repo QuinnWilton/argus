@@ -204,6 +204,15 @@ defmodule Argus.FlowLog.Toolchain do
   """
   @spec runs(Path.t()) :: :ok | {:error, String.t()}
   def runs(path) do
+    with {:error, detail} <- run_bare(path) do
+      case missing_loader(path) do
+        nil -> {:error, detail}
+        loader -> {:error, "its dynamic loader, #{loader}, is not on this system"}
+      end
+    end
+  end
+
+  defp run_bare(path) do
     case System.cmd(path, [], stderr_to_stdout: true) do
       {out, 2} ->
         if out =~ "usage: argus-flowlog-tool",
@@ -211,7 +220,10 @@ defmodule Argus.FlowLog.Toolchain do
           else: {:error, "it exited 2 without printing its usage: #{first_line(out)}"}
 
       {out, status} ->
-        {:error, "it exited #{status}: #{first_line(out)}"}
+        case glibc_needed(out) do
+          nil -> {:error, "it exited #{status}: #{first_line(out)}"}
+          version -> {:error, "it needs glibc #{version} or newer, and this system's is older"}
+        end
     end
   rescue
     # Only what says the file cannot be executed here: any other failure
@@ -222,6 +234,55 @@ defmodule Argus.FlowLog.Toolchain do
         do: {:error, "it could not be run: #{:file.format_error(error.original)}"},
         else: reraise(error, __STACKTRACE__)
   end
+
+  # The dynamic loader a 64-bit little-endian ELF executable names
+  # (its PT_INTERP), when this system has no file there: what NixOS lacks
+  # for a binary linked for other Linux distributions. Read from the
+  # file's first 64 KB, where the program headers and the path are.
+  defp missing_loader(path) do
+    with {:ok, head} <- read_head(path, 65_536),
+         <<0x7F, "ELF", 2, 1, _::binary-size(26), phoff::little-64, _::binary-size(14),
+           phentsize::little-16, phnum::little-16, _::binary>> <- head,
+         loader when is_binary(loader) <- interp(head, phoff, phentsize, phnum),
+         false <- File.exists?(loader) do
+      loader
+    else
+      _ -> nil
+    end
+  end
+
+  defp interp(head, phoff, phentsize, phnum) do
+    Enum.find_value(0..(phnum - 1)//1, fn i ->
+      case binary_slice(head, phoff + i * phentsize, 40) do
+        <<3::little-32, _flags::32, offset::little-64, _vaddr::64, _paddr::64, size::little-64>> ->
+          head |> binary_slice(offset, size) |> String.trim_trailing(<<0>>)
+
+        _ ->
+          nil
+      end
+    end)
+  end
+
+  defp read_head(path, bytes) do
+    File.open(path, [:read, :binary], fn file ->
+      case IO.binread(file, bytes) do
+        data when is_binary(data) -> data
+        _ -> ""
+      end
+    end)
+  end
+
+  # The newest glibc the dynamic loader says is missing ("version
+  # `GLIBC_2.34' not found", a line per version), or nil.
+  defp glibc_needed(out) do
+    case Regex.scan(~r/`GLIBC_(\d+(?:\.\d+)*)' not found/, out, capture: :all_but_first) do
+      [] -> nil
+      found -> found |> List.flatten() |> Enum.max_by(&version_parts/1)
+    end
+  end
+
+  defp version_parts(version),
+    do: version |> String.split(".") |> Enum.map(&String.to_integer/1)
 
   defp first_line(out) do
     case out |> String.trim() |> String.split("\n", parts: 2) do

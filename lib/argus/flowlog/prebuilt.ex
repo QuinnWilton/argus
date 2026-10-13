@@ -612,6 +612,9 @@ defmodule Argus.FlowLog.Prebuilt do
 
   def describe({:untrusted_root, _, _} = reason), do: Toolchain.describe(reason)
 
+  def describe({:unrunnable, "it needs glibc" <> _ = detail}),
+    do: "the prebuilt engines do not run on this machine (the bundle's tool: #{detail})"
+
   def describe({:unrunnable, detail}),
     do:
       "the prebuilt engines do not run on this machine (the bundle's tool: #{detail}); " <>

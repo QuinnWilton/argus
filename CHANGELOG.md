@@ -57,6 +57,9 @@ which a change appeared; older names and APIs may have changed since then.
   as the other way, rather than opening with "install Rust". A failed
   download is said in words ("cannot connect to github.com:443: non-existing
   domain"), its URL once.
+- A bundle that does not run says why: the dynamic loader it names is not on
+  the system (NixOS), or the system's glibc is older than the one it needs
+  (2.34; Debian 11, Ubuntu 20.04, RHEL 8 and Amazon Linux 2 build with Rust).
 - `mix argus.flowlog build`, `status` and `clean` no longer compile the
   project, which ran its analyses first. `status` says whether the prebuilt
   bundle is downloaded, and why it is not used.

@@ -156,6 +156,52 @@ defmodule Argus.FlowLog.ToolchainTest do
       end
     end
 
+    @tag :tmp_dir
+    test "a tool too new for this system's glibc says which glibc it needs", %{tmp_dir: tmp} do
+      tool = Path.join(tmp, "tool")
+
+      # As the dynamic loader of a system with glibc 2.31 says it.
+      File.write!(tool, """
+      #!/bin/sh
+      for v in 2.33 2.4 2.34 2.32; do
+        echo "$0: /lib/libc.so.6: version \\`GLIBC_$v' not found (required by $0)" >&2
+      done
+      exit 1
+      """)
+
+      File.chmod!(tool, 0o755)
+
+      assert {:error, detail} = Toolchain.runs(tool)
+      assert detail == "it needs glibc 2.34 or newer, and this system's is older"
+
+      message = Prebuilt.describe({:unrunnable, detail})
+      assert message =~ "do not run on this machine (the bundle's tool: it needs glibc 2.34"
+      refute message =~ "nix-ld"
+    end
+
+    @tag :tmp_dir
+    test "a tool whose dynamic loader this system lacks names the loader", %{tmp_dir: tmp} do
+      loader = "/nonexistent/ld-linux-aarch64.so.1"
+      interp = loader <> <<0>>
+
+      # The headers of a 64-bit ELF executable, as NixOS sees one linked for
+      # other Linux distributions: a PT_INTERP naming a loader it does not have.
+      elf =
+        <<0x7F, "ELF", 2, 1, 1, 0::size(9)-unit(8), 2::little-16, 0xB7::little-16, 1::little-32,
+          0::little-64, 64::little-64, 0::little-64, 0::little-32, 64::little-16, 56::little-16,
+          1::little-16, 0::little-16, 0::little-16, 0::little-16>> <>
+          <<3::little-32, 4::little-32, 120::little-64, 0::little-64, 0::little-64,
+            byte_size(interp)::little-64, byte_size(interp)::little-64, 1::little-64>> <>
+          interp
+
+      tool = Path.join(tmp, "tool")
+      File.write!(tool, elf)
+      File.chmod!(tool, 0o755)
+
+      assert Toolchain.runs(tool) ==
+               {:error, "its dynamic loader, #{loader}, is not on this system"}
+    end
+
     test "a failed download says what went wrong in words" do
       connect =
         {:failed_connect, [{:to_address, {~c"github.com", 443}}, {:inet, [:inet], :nxdomain}]}
