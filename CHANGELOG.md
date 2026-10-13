@@ -74,6 +74,8 @@ which a change appeared; older names and APIs may have changed since then.
   the blob store, a run goes on with a temporary store (a Nix build's
   sandbox). An empty `XDG_CACHE_HOME` is ignored, as the specification says,
   rather than putting the store in a relative path.
+- The escript's error when it cannot run its analyses no longer says it was
+  "configured with engine: :require".
 
 ## 0.22.0 — 2026-10-08
 

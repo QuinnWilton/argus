@@ -87,7 +87,7 @@ defmodule Argus.CLI do
       if Argus.FlowLog.available?() do
         drive(project, config, options, cwd)
       else
-        error(3, Notice.engine_unavailable(:require).message)
+        error(3, Argus.FlowLog.not_found_message())
       end
     else
       {:error, status, message} -> error(status, message)
