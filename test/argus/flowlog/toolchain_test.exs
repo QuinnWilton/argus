@@ -11,7 +11,7 @@ defmodule Argus.FlowLog.ToolchainTest do
   use ExUnit.Case, async: true
   use Argus.Test.Peer
 
-  alias Argus.FlowLog.Toolchain
+  alias Argus.FlowLog.{Prebuilt, Toolchain}
   alias Argus.Test.Peer
 
   @moduletag :tmp_dir
@@ -125,5 +125,50 @@ defmodule Argus.FlowLog.ToolchainTest do
     assert [online, offline] = args |> File.read!() |> String.split("\n", trim: true)
     refute online =~ "--offline"
     assert offline =~ "--offline"
+  end
+
+  describe "why there are no engines" do
+    @url "https://example.com/argus-flowlog.tar.gz"
+
+    test "a bundle that could not be used comes first, and Rust as the other way" do
+      failed =
+        {:recently_failed, @url, 90,
+         "cannot connect to github.com:443: non-existing domain (nxdomain)"}
+
+      message =
+        Toolchain.describe({:no_engines, {:rust_missing, "cargo was not found on PATH"}, failed})
+
+      assert message =~
+               ~r/^argus runs its analyses on FlowLog engines, and could not use the prebuilt/
+
+      assert message =~ "failed a minute ago (cannot connect to github.com:443"
+      assert message =~ "with Rust 1.88.0 or newer, and cargo was not found on PATH: install"
+      assert length(String.split(message, @url)) == 2
+    end
+
+    test "without a bundle to use, Rust comes first" do
+      for reason <- [:disabled, :none, {:no_bundle, "riscv64gc-unknown-linux-gnu"}] do
+        message =
+          Toolchain.describe({:no_engines, {:rust_too_old, "1.70.0", "1.88.0"}, reason})
+
+        assert message =~ ~r/^argus builds its FlowLog engines with Rust 1.88.0 or newer/
+        assert message =~ "prebuilt engines are no help either"
+      end
+    end
+
+    test "a failed download says what went wrong in words" do
+      connect =
+        {:failed_connect, [{:to_address, {~c"github.com", 443}}, {:inet, [:inet], :nxdomain}]}
+
+      assert Prebuilt.describe({:download_failed, @url, connect}) ==
+               "downloading #{@url} failed: cannot connect to github.com:443: " <>
+                 "non-existing domain (nxdomain)"
+
+      assert Prebuilt.describe({:download_failed, @url, {:http, 404}}) =~
+               "failed: the server answered HTTP 404"
+
+      assert Prebuilt.describe({:download_failed, @url, {:weird, 1}}) =~
+               "failed: {:weird, 1}"
+    end
   end
 end

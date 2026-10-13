@@ -52,6 +52,11 @@ which a change appeared; older names and APIs may have changed since then.
 - argus checks that its FlowLog cache directory is the user's own before
   downloading a prebuilt bundle into it or running the bundle's tool, as it
   already did before building or running an engine there.
+- When the prebuilt engines could not be used (a failed download, offline, a
+  bundle that does not run here), the message leads with that, and names Rust
+  as the other way, rather than opening with "install Rust". A failed
+  download is said in words ("cannot connect to github.com:443: non-existing
+  domain"), its URL once.
 
 ## 0.22.0 — 2026-10-08
 

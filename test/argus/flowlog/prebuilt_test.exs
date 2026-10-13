@@ -378,7 +378,8 @@ defmodule Argus.FlowLog.PrebuiltTest do
                Prebuilt.fetch(progress: false)
 
       assert age < 60
-      assert detail =~ "failed: :enoent"
+      assert detail == "no such file or directory (enoent)"
+      refute Prebuilt.describe(reason) =~ ~r/file:.*file:/
       assert Prebuilt.describe(reason) =~ "tries again an hour after"
 
       # An hour on, it is tried again, and the failure goes.

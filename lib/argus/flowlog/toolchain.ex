@@ -788,9 +788,19 @@ defmodule Argus.FlowLog.Toolchain do
   end
 
   def describe({:no_engines, rust_reason, prebuilt_reason}) do
-    describe(rust_reason) <>
-      " argus's prebuilt engines are no help either: " <>
-      Prebuilt.describe(prebuilt_reason) <> "."
+    if Prebuilt.offered?(prebuilt_reason) do
+      # The bundle is what this machine was meant to use: what kept it
+      # from it comes first, and Rust only as the other way.
+      "argus runs its analyses on FlowLog engines, and could not use the prebuilt ones " <>
+        "its release publishes: #{Prebuilt.describe(prebuilt_reason)}. Without them, it " <>
+        "builds its own with Rust #{version_string(@min_rustc)} or newer, and " <>
+        "#{rust_problem(rust_reason)}: install it from https://rustup.rs, or set ARGUS_CARGO " <>
+        "to a cargo."
+    else
+      describe(rust_reason) <>
+        " argus's prebuilt engines are no help either: " <>
+        Prebuilt.describe(prebuilt_reason) <> "."
+    end
   end
 
   def describe({:needs_rust, program}) do
@@ -810,4 +820,8 @@ defmodule Argus.FlowLog.Toolchain do
 
     "building #{subject} failed (the full Cargo output is at #{log}):\n#{tail}"
   end
+
+  defp rust_problem({:rust_missing, detail}), do: detail
+  defp rust_problem({:rust_too_old, found, _needed}), do: "found Rust #{found}"
+  defp rust_problem(reason), do: describe(reason)
 end

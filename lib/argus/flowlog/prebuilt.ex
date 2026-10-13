@@ -229,7 +229,7 @@ defmodule Argus.FlowLog.Prebuilt do
   end
 
   defp remember_failure(offer, reason) do
-    File.write!(failure_path(offer), describe(reason))
+    File.write!(failure_path(offer), failure_detail(reason))
   end
 
   @doc """
@@ -546,6 +546,19 @@ defmodule Argus.FlowLog.Prebuilt do
     end
   end
 
+  @doc """
+  Whether `reason` is about a bundle the package offers this machine,
+  which it could use once the reason is gone (a download that failed,
+  one that does not run here), rather than about there being none.
+  """
+  @spec offered?(reason()) :: boolean()
+  def offered?(reason) when reason in [:disabled, :none], do: false
+
+  def offered?({tag, _}) when tag in [:unsupported_platform, :no_bundle, :other_sources],
+    do: false
+
+  def offered?(_reason), do: true
+
   @doc "A sentence for a user saying why no bundle was used."
   @spec describe(reason()) :: String.t()
   def describe(:disabled), do: "prebuilt engines are turned off (ARGUS_FLOWLOG_PREBUILT=0)"
@@ -560,7 +573,7 @@ defmodule Argus.FlowLog.Prebuilt do
     do: "the prebuilt engines this package names were built from other toolchain sources"
 
   def describe({:download_failed, url, reason}),
-    do: "downloading #{url} failed: #{inspect(reason)}"
+    do: "downloading #{url} failed: #{download_error(reason)}"
 
   def describe({:checksum_mismatch, expected, actual}),
     do:
@@ -585,6 +598,40 @@ defmodule Argus.FlowLog.Prebuilt do
       "the prebuilt engines do not run on this machine (the bundle's tool: #{detail}); " <>
         "they are linked for a generic system, which NixOS, for one, loads only with " <>
         "nix-ld (programs.nix-ld.enable)"
+
+  # What went wrong, as a failed download keeps it: its URL is the
+  # offer's, said again when the failure is.
+  defp failure_detail({:download_failed, _url, reason}), do: download_error(reason)
+  defp failure_detail(reason), do: describe(reason)
+
+  defp download_error({:failed_connect, info}) when is_list(info) do
+    to =
+      case List.keyfind(info, :to_address, 0) do
+        {:to_address, {host, port}} -> " to #{host}:#{port}"
+        _ -> ""
+      end
+
+    case List.keyfind(info, :inet, 0) do
+      {:inet, _, reason} -> "cannot connect#{to}: #{posix(reason)}"
+      _ -> "cannot connect#{to}: #{inspect(info)}"
+    end
+  end
+
+  defp download_error({:http, status}), do: "the server answered HTTP #{status}"
+  defp download_error(:timeout), do: "it timed out"
+  defp download_error(reason) when is_atom(reason), do: posix(reason)
+  defp download_error(reason), do: inspect(reason)
+
+  # A POSIX error's sentence (`nxdomain`: "non-existing domain"), or the
+  # term itself for one that is not.
+  defp posix(reason) when is_atom(reason) do
+    case :inet.format_error(reason) do
+      ~c"unknown POSIX error" ++ _ -> inspect(reason)
+      text -> "#{text} (#{reason})"
+    end
+  end
+
+  defp posix(reason), do: inspect(reason)
 
   defp minutes(seconds) when seconds < 60, do: "less than a minute"
   defp minutes(seconds) when seconds < 120, do: "a minute"
