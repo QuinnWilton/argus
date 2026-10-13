@@ -77,7 +77,11 @@ defmodule Argus.DirsTest do
     end
 
     test "without a home, they go under the temporary directory, the user's own" do
-      peer = Peer.start!(env: [{"HOME", nil}, {"XDG_CACHE_HOME", nil}])
+      # Mix itself finds its own home through HOME, unless MIX_HOME says.
+      peer =
+        Peer.start!(
+          env: [{"HOME", nil}, {"XDG_CACHE_HOME", nil}, {"MIX_HOME", Mix.Utils.mix_home()}]
+        )
 
       Peer.run(peer, fn ->
         System.delete_env("ARGUS_CACHE_DIR")
