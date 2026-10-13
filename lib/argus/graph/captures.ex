@@ -17,13 +17,13 @@ defmodule Argus.Graph.Captures do
 
   alias Roux.Runtime, as: R
 
-  defquery :extraction_capture_origins, key: module, store: :blob do
+  defquery :extraction_capture_origins, key: module, store: :none do
     with {:ok, data} <- module_data(db, module) do
       if data == nil, do: %{}, else: Argus.Extractors.ApiCalls.capture_origins(data)
     end
   end
 
-  defquery :extraction_capture_context, key: {module, {name, arity}} do
+  defquery :extraction_capture_context, key: {module, {name, arity}}, store: :none do
     function = Argus.InstrId.func_id(R.query(db, :module_name, module), name, arity)
     db |> R.query(:extraction_capture_origins, module) |> Map.take([function])
   end
@@ -31,18 +31,18 @@ defmodule Argus.Graph.Captures do
   # The module's counted closures (`Argus.Extractors.ParamFlow.Counters`):
   # whether a closure's first parameter is a pair of an element and its
   # counter is decided where the closure is built, in another function.
-  defquery :extraction_counted_closures, key: module, store: :blob do
+  defquery :extraction_counted_closures, key: module, store: :none do
     with {:ok, data} <- module_data(db, module) do
       if data == nil, do: %{}, else: Argus.Extractors.ParamFlow.Counters.closures(data)
     end
   end
 
-  defquery :extraction_counted_context, key: {module, {name, arity}} do
+  defquery :extraction_counted_context, key: {module, {name, arity}}, store: :none do
     function = Argus.InstrId.func_id(R.query(db, :module_name, module), name, arity)
     db |> R.query(:extraction_counted_closures, module) |> Map.take([function])
   end
 
-  defquery :extraction_returns_context, key: {module, {name, arity}} do
+  defquery :extraction_returns_context, key: {module, {name, arity}}, store: :none do
     function = Argus.InstrId.func_id(R.query(db, :module_name, module), name, arity)
 
     with {:ok, data} <- module_data(db, module) do
@@ -52,13 +52,15 @@ defmodule Argus.Graph.Captures do
     end
   end
 
-  defquery :extraction_never_returns, key: module, store: :blob do
+  defquery :extraction_never_returns, key: module, store: :none do
     with {:ok, data} <- module_data(db, module) do
       if data == nil, do: MapSet.new(), else: Argus.Extractor.NeverReturns.functions(data)
     end
   end
 
-  defquery :extraction_never_returns_context, key: {module, {_name, _arity} = key} do
+  defquery :extraction_never_returns_context,
+    key: {module, {_name, _arity} = key},
+    store: :none do
     with {:ok, data} when data != nil <- R.query(db, :extraction_function, {module, key}) do
       called =
         for {:function, _, _, _, instrs} <- data.functions,

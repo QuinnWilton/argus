@@ -90,7 +90,7 @@ defmodule Argus.Graph.ModuleTrace do
     with %{module: owner} when owner in [Functions, Captures, FunctionPack] <-
            Database.query_definition(db, query),
          {:ok, deps, code, persist, generation}
-         when persist in [:inline, :blob] and is_binary(code) <-
+         when persist != :transient and is_binary(code) <-
            Memo.trace_state(db, key),
          true <- code == Database.code_version(db, query),
          :clean <- Dependencies.status(db, key),

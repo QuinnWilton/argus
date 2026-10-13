@@ -3,6 +3,24 @@
 Notable changes and upgrade notes for Argus. Entries describe the release in
 which a change appeared; older names and APIs may have changed since then.
 
+## Unreleased
+
+### Fixed
+
+- A no-op `mix compile` is several times faster than on 0.21 and 0.22 (the
+  argus compiler over a 268-module project: about 0.5s, where it took 2.5s
+  with a fresh manifest and 5.5s with one grown by edits), and the
+  compiler's manifest no longer grows (#11). Since 0.21 the manifest kept
+  every per-function extraction entry, about 360 per module, under keys that
+  move with the compiler's generated function names. It grew with every
+  edit and every switch between argus versions, and every run restored all
+  of it. Those entries now live only in memory for the session: content
+  traces in the blob store already carry their rows across runs. A manifest
+  written by 0.21 or 0.22 shrinks on the first run after the upgrade. Needs
+  roux 0.3.3, which drops the entries a run restores outdated and never
+  demands; before it, they were kept forever and rewrote the manifest on
+  every run.
+
 ## 0.22.0 — 2026-10-08
 
 ### Changed

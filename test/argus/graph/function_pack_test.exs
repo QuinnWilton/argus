@@ -197,7 +197,8 @@ defmodule Argus.Graph.FunctionPackTest do
     end)
   end
 
-  test "manifest and content traces survive a fresh VM", %{peer: first, tmp_dir: dir} do
+  test "module facts survive a fresh VM in the manifest, and function facts in content traces",
+       %{peer: first, tmp_dir: dir} do
     expected =
       Peer.run(first, fn ->
         beam = compile(1)
@@ -216,12 +217,10 @@ defmodule Argus.Graph.FunctionPackTest do
       session = open(dir)
       assert session.restored?
       assert Runtime.query(session.db, :module_facts, :fixture) == {:ok, expected}
+      # The function graph is the session's own: the manifest keeps none
+      # of it, and the next session asks again, of the content traces.
       key = {:extraction_base, {:fixture, {:run, 2}}}
-      assert {:ok, locator} = Memo.held_locator(session.db, key)
-
-      for digest <- Roux.Memo.Value.roots(locator) do
-        File.rm!(Blob.path(session.db.blob, digest))
-      end
+      assert Memo.get(session.db, key) == :miss
 
       assert {:ok, %{base: base}} =
                Runtime.query(session.db, :extraction_base, {:fixture, {:run, 2}})

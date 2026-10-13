@@ -82,7 +82,7 @@ defmodule Argus.Graph.FunctionPack do
     end
   end
 
-  defquery :extraction_pack, key: {module, kind} do
+  defquery :extraction_pack, key: {module, kind}, store: :none do
     packed(db, :extraction_pack, module, fn ->
       with {:ok, _pack, held} = result <- materialize(db, module, kind) do
         R.hold(held)

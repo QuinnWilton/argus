@@ -51,7 +51,7 @@ defmodule Argus.Graph.Functions do
   @spec local_producers() :: [module()]
   def local_producers, do: @local
 
-  defquery :extraction_disassembly, key: module, store: :blob do
+  defquery :extraction_disassembly, key: module, store: :none do
     case R.query(db, :module_beam, module) do
       {:ok, beam} ->
         with {:ok, data} <- Disassemble.disassemble_path(Frontend.read(beam)) do
@@ -63,13 +63,13 @@ defmodule Argus.Graph.Functions do
     end
   end
 
-  defquery :extraction_functions, key: module do
+  defquery :extraction_functions, key: module, store: :none do
     with {:ok, data} <- R.query(db, :extraction_disassembly, module) do
       {:ok, for({:function, name, arity, _, _} <- data.functions, do: {name, arity})}
     end
   end
 
-  defquery :extraction_index, key: module, store: :blob do
+  defquery :extraction_index, key: module, store: :none do
     with {:ok, data} <- R.query(db, :extraction_disassembly, module) do
       {:ok,
        %{
@@ -82,7 +82,7 @@ defmodule Argus.Graph.Functions do
     end
   end
 
-  defquery :extraction_function, key: {module, key} do
+  defquery :extraction_function, key: {module, key}, store: :none do
     with {:ok, data} <- R.query(db, :extraction_index, module) do
       case Map.get(data.functions, key) do
         nil ->
@@ -108,11 +108,11 @@ defmodule Argus.Graph.Functions do
     end
   end
 
-  defquery :extraction_code, key: producer do
+  defquery :extraction_code, key: producer, store: :none do
     db |> R.query(:producer_code, :all) |> Map.fetch!(producer)
   end
 
-  defquery :extraction_producers, key: :all do
+  defquery :extraction_producers, key: :all, store: :none do
     db
     |> R.query(:producer_code, :all)
     |> Map.keys()
@@ -120,7 +120,7 @@ defmodule Argus.Graph.Functions do
     |> Enum.sort()
   end
 
-  defquery :extraction_base, key: key, store: :blob do
+  defquery :extraction_base, key: key, store: :none do
     with {:ok, data} when data != nil <- R.query(db, :extraction_function, key) do
       code = R.query(db, :extraction_code, :base)
 
@@ -145,7 +145,7 @@ defmodule Argus.Graph.Functions do
     end
   end
 
-  defquery :extraction_base_rows, key: {module, kind}, store: :blob do
+  defquery :extraction_base_rows, key: {module, kind}, store: :none do
     in_process = Argus.Schema.in_process_only()
 
     with {:ok, keys} <- R.query(db, :extraction_functions, module) do
@@ -164,14 +164,14 @@ defmodule Argus.Graph.Functions do
     end
   end
 
-  defquery :extraction_locations, key: module, store: :blob do
+  defquery :extraction_locations, key: module, store: :none do
     with {:ok, data} <- R.query(db, :extraction_disassembly, module) do
       rows = Argus.Pipeline.Emit.locations(data.module, data.functions, data.line_table)
       {:ok, Argus.Pipeline.Writer.encode(rows, MapSet.new([:line_info]))}
     end
   end
 
-  defquery :extraction_local, key: {key, producer} do
+  defquery :extraction_local, key: {key, producer}, store: :none do
     with {:ok, base} when base != nil <- R.query(db, :extraction_base, key) do
       code = R.query(db, :extraction_code, producer)
       context = context(db, key, producer)
@@ -196,7 +196,7 @@ defmodule Argus.Graph.Functions do
     end
   end
 
-  defquery :extraction_metadata, key: module do
+  defquery :extraction_metadata, key: module, store: :none do
     with {:ok, data} <- R.query(db, :extraction_disassembly, module) do
       {:ok,
        %{
@@ -212,7 +212,7 @@ defmodule Argus.Graph.Functions do
     end
   end
 
-  defquery :extraction_module_base, key: module do
+  defquery :extraction_module_base, key: module, store: :none do
     with {:ok, keys} <- R.query(db, :extraction_functions, module),
          {:ok, metadata} <- R.query(db, :extraction_metadata, module) do
       parts =
@@ -234,7 +234,7 @@ defmodule Argus.Graph.Functions do
     end
   end
 
-  defquery :extraction_module_producer, key: {module, producer}, store: :blob do
+  defquery :extraction_module_producer, key: {module, producer}, store: :none do
     with {:ok, base} <- R.query(db, :extraction_module_base, module) do
       code = R.query(db, :extraction_code, producer)
       metadata = with_chunks(db, module, producer, base.metadata)
@@ -269,7 +269,7 @@ defmodule Argus.Graph.Functions do
     end
   end
 
-  defquery :extraction_producer, key: {module, producer}, store: :blob do
+  defquery :extraction_producer, key: {module, producer}, store: :none do
     cond do
       producer in @chunk_readers ->
         R.query(db, :extraction_metadata_rows, {module, producer})
@@ -301,7 +301,7 @@ defmodule Argus.Graph.Functions do
     end
   end
 
-  defquery :extraction_candidates, key: {module, producer} do
+  defquery :extraction_candidates, key: {module, producer}, store: :none do
     R.query(db, :extraction_code, producer)
 
     with {:ok, data} <- R.query(db, :extraction_index, module) do
@@ -334,13 +334,13 @@ defmodule Argus.Graph.Functions do
       else: keys
   end
 
-  defquery :extraction_attributes, key: {module, names} do
+  defquery :extraction_attributes, key: {module, names}, store: :none do
     with {:ok, metadata} <- R.query(db, :extraction_metadata, module) do
       {:ok, Keyword.take(metadata.attributes, names)}
     end
   end
 
-  defquery :extraction_attribute_rows, key: {module, producer}, store: :blob do
+  defquery :extraction_attribute_rows, key: {module, producer}, store: :none do
     names = if producer == Argus.Extractors.OTP, do: [:behaviour, :behavior], else: [:argus_pure]
     {:ok, attributes} = R.query(db, :extraction_attributes, {module, names})
     code = R.query(db, :extraction_code, producer)
@@ -353,7 +353,7 @@ defmodule Argus.Graph.Functions do
   end
 
   # These producers read metadata or calls, never CFGs or reaching definitions.
-  defquery :extraction_metadata_rows, key: {module, producer}, store: :blob do
+  defquery :extraction_metadata_rows, key: {module, producer}, store: :none do
     with {:ok, disassembly} <- R.query(db, :extraction_disassembly, module) do
       data = Map.merge(empty_data(disassembly.module), disassembly)
       data = with_chunks(db, module, producer, data)
