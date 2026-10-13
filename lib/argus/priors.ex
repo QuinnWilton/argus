@@ -71,7 +71,9 @@ defmodule Argus.Priors do
       :live ->
         oracle = Keyword.get(priors_opts, :oracle, Jev)
 
-        if oracle == Jev and Jev.api_key(Keyword.get(priors_opts, :oracle_opts, [])) == :error do
+        # Offline, a live run asks no oracle (`Argus.Graph.Priors`), so needs no key.
+        if oracle == Jev and not Argus.Offline.offline?() and
+             Jev.api_key(Keyword.get(priors_opts, :oracle_opts, [])) == :error do
           raise ArgumentError,
                 "priors: :live asks #{inspect(oracle)}, which needs #{Jev.env_var()} " <>
                   "in the environment (or :api_key under :priors_opts' :oracle_opts); " <>

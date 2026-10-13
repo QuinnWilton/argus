@@ -606,7 +606,8 @@ defmodule Argus.FlowLog.Toolchain do
   `{:error, {:build_failed, what, log, tail}}` with Cargo's output kept
   at `log`. Uses the crate's lockfile as it stands (`--locked`), and
   goes on past a binary that fails (`--keep-going`), so the others are
-  built.
+  built. Offline (`Argus.Offline`), Cargo fetches nothing (`--offline`):
+  the build uses the crates `~/.cargo` already holds.
 
   `profile` is the Cargo profile, `:release` or the engine template's
   `:quick`. Cargo runs `build_jobs/0` compiles at once, and stops, with
@@ -625,6 +626,7 @@ defmodule Argus.FlowLog.Toolchain do
         "--jobs",
         Integer.to_string(build_jobs())
       ] ++
+        if(Argus.Offline.offline?(), do: ["--offline"], else: []) ++
         Enum.flat_map(bins, &["--bin", &1]) ++
         ["--manifest-path", Path.join(crate, "Cargo.toml")]
 

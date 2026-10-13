@@ -97,4 +97,33 @@ defmodule Argus.FlowLog.ToolchainTest do
     :peer.stop(peer)
     assert eventually(fn -> not alive?(compiler) end)
   end
+
+  test "offline, Cargo builds without fetching", %{peer: peer, tmp_dir: tmp} do
+    args = Path.join(tmp, "args")
+    cargo = Path.join(tmp, "cargo")
+    File.write!(cargo, "#!/bin/sh\necho \"$*\" >> \"#{args}\"\n")
+    File.chmod!(cargo, 0o755)
+    crate = Path.join(tmp, "crate")
+    File.mkdir_p!(crate)
+
+    toolchain = %Toolchain{
+      dir: tmp,
+      key: "test",
+      kind: :rust,
+      cargo: cargo,
+      rustc: cargo,
+      rustc_version: ""
+    }
+
+    Peer.run(peer, fn ->
+      log = Path.join(tmp, "build.log")
+      assert :ok = Toolchain.cargo_build(toolchain, crate, ["tool"], log, :tool)
+      System.put_env("ARGUS_OFFLINE", "1")
+      assert :ok = Toolchain.cargo_build(toolchain, crate, ["tool"], log, :tool)
+    end)
+
+    assert [online, offline] = args |> File.read!() |> String.split("\n", trim: true)
+    refute online =~ "--offline"
+    assert offline =~ "--offline"
+  end
 end

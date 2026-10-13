@@ -188,5 +188,12 @@ defmodule Argus.CLITest do
       assert {:error, message} = Options.parse(["coupling", "--analyses", "ets"], :mix)
       assert message =~ "name the analyses once"
     end
+
+    test "--offline is the escript's and mix argus's alike" do
+      for mode <- [:escript, :mix] do
+        assert {:ok, %Options{offline: true}} = Options.parse(["--offline"], mode)
+        assert {:ok, %Options{offline: false}} = Options.parse([], mode)
+      end
+    end
   end
 end

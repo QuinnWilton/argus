@@ -41,6 +41,7 @@ defmodule Argus.Graph.Priors do
 
   def sync(db, program, %{mode: mode, opts: opts}) do
     import_cassette(opts)
+    mode = online(mode)
 
     facts =
       Argus.Priors.relations_read()
@@ -62,6 +63,20 @@ defmodule Argus.Graph.Priors do
       :ok = Input.set(db, :priors, {program, relation}, text)
     end)
   end
+
+  # Offline, a live run asks the cache alone. The rows are this run's
+  # input, computed again each run, so the next run online asks the
+  # questions this one could not.
+  defp online(:live) do
+    if Argus.Offline.offline?() do
+      Logger.info("argus: offline, so priors come from the cache alone (as priors: :cached_only)")
+      :cached_only
+    else
+      :live
+    end
+  end
+
+  defp online(mode), do: mode
 
   @doc "The layer-3 relations, as `Argus.Schema` declares them."
   @spec relations() :: [atom()]

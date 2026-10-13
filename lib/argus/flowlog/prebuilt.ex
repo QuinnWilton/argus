@@ -31,7 +31,8 @@ defmodule Argus.FlowLog.Prebuilt do
 
   `ARGUS_FLOWLOG_PREBUILT=0` turns bundles off: argus downloads nothing.
   A bundle is unpacked once per machine, under the cache root's
-  `prebuilt/<sha256>/`.
+  `prebuilt/<sha256>/`. Offline (`Argus.Offline`), argus uses a bundle
+  already unpacked and downloads none.
 
   A download that fails is not tried again for an hour: a machine
   without Rust and without a network would otherwise try at every run,
@@ -71,6 +72,7 @@ defmodule Argus.FlowLog.Prebuilt do
           | {:checksum_mismatch, String.t(), String.t()}
           | {:bad_bundle, String.t()}
           | {:unrunnable, String.t()}
+          | :offline
           | {:recently_failed, String.t(), non_neg_integer(), String.t()}
 
   @doc """
@@ -186,6 +188,9 @@ defmodule Argus.FlowLog.Prebuilt do
 
   defp obtain(offer, dir, opts) do
     cond do
+      Argus.Offline.offline?() ->
+        {:error, :offline}
+
       failure = recent_failure(offer) ->
         {:error, failure}
 
@@ -561,6 +566,11 @@ defmodule Argus.FlowLog.Prebuilt do
       "the download's SHA-256 is #{actual}, not the #{expected} the package names; it was not used"
 
   def describe({:bad_bundle, detail}), do: "the downloaded bundle was refused: #{detail}"
+
+  def describe(:offline),
+    do:
+      "argus is offline (#{Argus.Offline.env_var()} or --offline), and has not downloaded " <>
+        "the prebuilt engines yet"
 
   def describe({:recently_failed, url, age, detail}),
     do:

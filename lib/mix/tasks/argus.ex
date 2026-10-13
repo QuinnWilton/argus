@@ -16,6 +16,7 @@ defmodule Mix.Tasks.Argus do
       mix argus --fail-above 0       # fail when findings exceed the count
       mix argus --include-deps       # feed dependency beams to the call graph
       mix argus --force              # ignore the manifest, recompute everything
+      mix argus --offline            # make no network call (`Argus.Offline`)
       mix argus --color always       # color the frames even into a pipe
 
   The command line is the `argus` escript's (`Argus.CLI.Options`), less
@@ -49,6 +50,7 @@ defmodule Mix.Tasks.Argus do
       end
 
     {:ok, _apps} = Application.ensure_all_started(:telemetry)
+    if options.offline, do: Argus.Offline.enable()
 
     case options.command do
       :help ->

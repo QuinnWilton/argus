@@ -78,7 +78,22 @@ defmodule Mix.Tasks.Compile.ArgusPriorsTest do
       assert Enum.all?(entries(off), &(&1.provenance == :structural and is_nil(&1.confidence)))
       refute File.exists?(log)
 
-      # On: the oracle is asked, and every structural finding is still there.
+      # Offline, a live run asks nothing: the cache alone, empty here.
+      System.put_env("ARGUS_OFFLINE", "1")
+
+      offline =
+        try do
+          run(on, Path.join(scratch, "manifest_on"))
+        after
+          System.delete_env("ARGUS_OFFLINE")
+        end
+
+      refute File.exists?(log)
+      assert keys(offline) == keys(off)
+
+      # On, over the offline run's manifest: the oracle is asked (what
+      # the offline run could not ask was not kept as answered), and
+      # every structural finding is still there.
       live = run(on, Path.join(scratch, "manifest_on"))
       assert live |> Result.degraded() == []
       asked = log |> File.read!() |> String.split("\n", trim: true)

@@ -36,8 +36,12 @@ defmodule Argus.CLI do
   @spec run([String.t()]) :: status()
   def run(argv) do
     case Options.parse(argv, :escript) do
-      {:ok, options} -> command(options)
-      {:error, message} -> usage_error(message)
+      {:ok, options} ->
+        if options.offline, do: Argus.Offline.enable()
+        command(options)
+
+      {:error, message} ->
+        usage_error(message)
     end
   end
 

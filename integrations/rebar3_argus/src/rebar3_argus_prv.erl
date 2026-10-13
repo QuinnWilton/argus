@@ -7,7 +7,7 @@
 %%     {provider_hooks, [{post, [{compile, argus}]}]}.  % optional: after every compile
 %%
 %% `rebar3 argus [--analyses A,B] [--all] [--format text|json]
-%% [--fail-above N] [--include-deps] [--force]`. More findings than
+%% [--fail-above N] [--include-deps] [--force] [--offline]`. More findings than
 %% fail_above (the flag, else {argus_plugin, [{fail_above, N}]}) fail
 %% the command; any other failure of the escript is an error naming its
 %% exit status. The project's apps are one program; its dependencies'
@@ -19,6 +19,11 @@
 %% {sha256, Hex} when given), then `argus` on PATH, then
 %% ~/.mix/escripts/argus. argus's own configuration is {argus, [...]} in
 %% rebar.config, which the escript reads.
+%%
+%% --offline (or ARGUS_OFFLINE=1) makes no network call: the plugin
+%% downloads no escript, using one already cached, and the escript runs
+%% with ARGUS_OFFLINE=1 (an environment variable, which an escript of an
+%% older release, without --offline, ignores).
 -module(rebar3_argus_prv).
 
 -export([init/1, do/1, format_error/1]).
@@ -47,15 +52,18 @@ opts() ->
      {format, $f, "format", string, "text (the default) or json"},
      {fail_above, undefined, "fail-above", integer, "Fail when there are more findings"},
      {include_deps, undefined, "include-deps", boolean, "Analyze the dependencies too"},
-     {force, undefined, "force", boolean, "Ignore the manifest; recompute everything"}].
+     {force, undefined, "force", boolean, "Ignore the manifest; recompute everything"},
+     {offline, undefined, "offline", boolean, "Make no network call (or ARGUS_OFFLINE=1)"}].
 
 -spec do(rebar_state:t()) -> {ok, rebar_state:t()} | {error, term()}.
 do(State) ->
     Config = rebar_state:get(State, argus_plugin, []),
-    case find_escript(Config) of
+    {Opts, _} = rebar_state:command_parsed_args(State),
+    Offline = offline(Opts),
+    case find_escript(Config, Offline) of
         {ok, Escript} ->
-            {Opts, _} = rebar_state:command_parsed_args(State),
-            relay(Escript, args(State, Config, Opts), rebar_state:dir(State), Opts, Config, State);
+            relay(Escript, args(State, Config, Opts), rebar_state:dir(State), Offline, Opts,
+                  Config, State);
         {error, Reason} ->
             {error, {?MODULE, Reason}}
     end.
@@ -92,10 +100,17 @@ color() ->
         _ -> []
     end.
 
-relay(Escript, Args, Root, Opts, Config, State) ->
+%% The flag, else ARGUS_OFFLINE set to anything but "", "0" or "false",
+%% as the escript reads it.
+offline(Opts) ->
+    proplists:get_value(offline, Opts, false) orelse
+        not lists:member(os:getenv("ARGUS_OFFLINE", ""), ["", "0", "false"]).
+
+relay(Escript, Args, Root, Offline, Opts, Config, State) ->
     rebar_api:debug("argus: ~ts ~ts", [Escript, lists:join(" ", Args)]),
+    Env = [{"ARGUS_OFFLINE", "1"} || Offline],
     Port = open_port({spawn_executable, Escript},
-                     [{args, Args}, {cd, Root}, exit_status, binary, stream]),
+                     [{args, Args}, {cd, Root}, {env, Env}, exit_status, binary, stream]),
     case collect(Port) of
         0 -> {ok, State};
         1 -> {error, {?MODULE, {findings, fail_above(Opts, Config)}}};
@@ -111,7 +126,7 @@ collect(Port) ->
 fail_above(Opts, Config) ->
     proplists:get_value(fail_above, Opts, proplists:get_value(fail_above, Config)).
 
-find_escript(Config) ->
+find_escript(Config, Offline) ->
     Home = os:getenv("HOME", ""),
     Candidates = [proplists:get_value(escript, Config), env("ARGUS_ESCRIPT")],
     case [C || C <- Candidates, C =/= undefined] of
@@ -122,7 +137,7 @@ find_escript(Config) ->
                     first([os:find_executable("argus"),
                            filename:join([Home, ".mix", "escripts", "argus"])]);
                 Version ->
-                    download(Version, proplists:get_value(sha256, Config))
+                    download(Version, proplists:get_value(sha256, Config), Offline)
             end
     end.
 
@@ -147,12 +162,13 @@ first(Paths) ->
 
 %% argus's release escript for Version, downloaded once into the user's
 %% cache and checked against the release's sha256 (or the one pinned).
-download(Version, Pinned) ->
+download(Version, Pinned, Offline) ->
     Dir = filename:join([cache_home(), "argus", "escripts", Version]),
     Escript = filename:join(Dir, "argus"),
-    case filelib:is_regular(Escript) of
-        true -> {ok, Escript};
-        false -> fetch(Version, Pinned, Dir, Escript)
+    case {filelib:is_regular(Escript), Offline} of
+        {true, _} -> {ok, Escript};
+        {false, true} -> {error, {offline, Version}};
+        {false, false} -> fetch(Version, Pinned, Dir, Escript)
     end.
 
 fetch(Version, Pinned, Dir, Escript) ->
@@ -234,6 +250,10 @@ format_error(not_found) ->
     "(mix escript.install hex argus_beam)";
 format_error({no_escript, Path}) ->
     io_lib:format("the argus escript ~ts is not a file", [Path]);
+format_error({offline, Version}) ->
+    io_lib:format("the argus ~ts escript is not downloaded yet, and argus is offline "
+                  "(--offline or ARGUS_OFFLINE): run once online, or set "
+                  "{argus_plugin, [{escript, Path}]}", [Version]);
 format_error({download, Url, Reason}) ->
     io_lib:format("the argus escript could not be downloaded from ~ts: ~p", [Url, Reason]);
 format_error(Reason) ->

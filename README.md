@@ -36,6 +36,11 @@ it, argus finds they do not run and builds its own with Rust. A download that
 fails is tried again an hour later (or at once by `mix argus.flowlog build`), not
 at every compile.
 
+`ARGUS_OFFLINE=1` (or `--offline` on `mix argus`, `mix argus.flowlog`, the escript
+and `rebar3 argus`) makes no network call: argus uses prebuilt engines only once
+they are downloaded, Cargo builds from the crates `~/.cargo` already holds, and
+`priors: :live` answers from the cache alone.
+
 Build or fetch the engines ahead of time, in CI for instance, with
 `mix argus.flowlog build`, and see what is installed with `mix argus.flowlog status`.
 `ARGUS_FLOWLOG_ENGINE=generic` runs every program in the generic engine, and

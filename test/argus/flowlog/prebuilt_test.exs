@@ -377,4 +377,27 @@ defmodule Argus.FlowLog.PrebuiltTest do
       assert {:ok, _dir} = Prebuilt.fetch(progress: false)
     end)
   end
+
+  test "offline, a bundle is used once downloaded, and none is downloaded",
+       %{peer: peer, root: root} = context do
+    offer = offered(context)
+    sha = context.offer["sha256"]
+
+    Peer.run(peer, fn ->
+      System.put_env("ARGUS_FLOWLOG_DIR", root)
+      Application.put_env(:argus_beam, :flowlog_prebuilt, offer)
+      System.put_env("ARGUS_OFFLINE", "1")
+
+      assert {:error, :offline} = Prebuilt.fetch(progress: false)
+      assert Prebuilt.describe(:offline) =~ "offline"
+      # Nothing fetched, and nothing kept as a failure.
+      refute File.exists?(Path.join(root, "prebuilt"))
+
+      System.delete_env("ARGUS_OFFLINE")
+      assert {:ok, dir} = Prebuilt.fetch(progress: false)
+      System.put_env("ARGUS_OFFLINE", "1")
+      assert {:ok, ^dir} = Prebuilt.fetch(progress: false)
+      assert Path.basename(dir) == sha
+    end)
+  end
 end

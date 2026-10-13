@@ -111,5 +111,31 @@ defmodule Argus.Integrations.Rebar3Test do
       assert output =~
                "the argus escript #{Path.join(context.dir, "nowhere/argus")} is not a file"
     end
+
+    test "offline, a release's escript is not downloaded", context do
+      File.write!(
+        Path.join(context.root, "rebar.config"),
+        "{argus_plugin, [{version, \"0.0.0\"}]}.\n",
+        [:append]
+      )
+
+      env = [{"ARGUS_ESCRIPT", nil}, {"XDG_CACHE_HOME", Path.join(context.dir, "empty_cache")}]
+      {output, 1} = rebar3(context, context.root, ["argus", "--offline"], env)
+      assert output =~ "the argus 0.0.0 escript is not downloaded yet, and argus is offline"
+      refute File.exists?(Path.join(context.dir, "empty_cache/argus/escripts"))
+    end
+
+    test "--offline reaches the escript as ARGUS_OFFLINE", context do
+      escript = Path.join(context.dir, "env_argus")
+      File.write!(escript, "#!/bin/sh\necho \"ARGUS_OFFLINE=[$ARGUS_OFFLINE]\"\n")
+      File.chmod!(escript, 0o755)
+      env = [{"ARGUS_ESCRIPT", escript}, {"ARGUS_OFFLINE", nil}]
+
+      {output, 0} = rebar3(context, context.root, ["argus", "--offline"], env)
+      assert output =~ "ARGUS_OFFLINE=[1]"
+
+      {output, 0} = rebar3(context, context.root, ["argus"], env)
+      assert output =~ "ARGUS_OFFLINE=[]"
+    end
   end
 end

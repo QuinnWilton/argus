@@ -68,6 +68,10 @@ defmodule Mix.Tasks.Argus.Flowlog do
   `build` tries a download of the prebuilt engines that failed less than
   an hour ago again at once (`Argus.FlowLog.Prebuilt.forget_failures/0`).
 
+  `--offline`, with any command, makes no network call (`Argus.Offline`):
+  no prebuilt engines are downloaded, and Cargo builds from the crates
+  `~/.cargo` already holds.
+
   The cache is `$ARGUS_FLOWLOG_DIR`, else `$XDG_CACHE_HOME/argus/flowlog`,
   else `~/.cache/argus/flowlog`; `ARGUS_CARGO` names the `cargo` to build
   with.
@@ -83,7 +87,16 @@ defmodule Mix.Tasks.Argus.Flowlog do
   alias Argus.FlowLog.Toolchain
 
   @impl Mix.Task
-  def run(["build" | programs]) do
+  def run(args) when is_list(args) do
+    if "--offline" in args do
+      Argus.Offline.enable()
+      command(args -- ["--offline"])
+    else
+      command(args)
+    end
+  end
+
+  defp command(["build" | programs]) do
     Mix.Task.run("app.config")
     :ok = Prebuilt.forget_failures()
 
@@ -96,12 +109,12 @@ defmodule Mix.Tasks.Argus.Flowlog do
     end
   end
 
-  def run(["status"]) do
+  defp command(["status"]) do
     Mix.Task.run("app.config")
     status()
   end
 
-  def run(["solve" | args]) do
+  defp command(["solve" | args]) do
     case OptionParser.parse(args, strict: [profile: :boolean]) do
       {switches, [program, facts | out], []} when length(out) <= 1 ->
         solve(program, facts, out, Keyword.get(switches, :profile, false))
@@ -111,14 +124,14 @@ defmodule Mix.Tasks.Argus.Flowlog do
     end
   end
 
-  def run(["facts" | args]) do
+  defp command(["facts" | args]) do
     case OptionParser.parse(args, strict: [checkout: :string, ebin: :keep, beam: :keep]) do
       {opts, [out], []} when opts != [] -> facts(Path.expand(out), opts)
       _ -> Mix.raise(usage())
     end
   end
 
-  def run(["bench" | args]) do
+  defp command(["bench" | args]) do
     switches = [
       runs: :integer,
       edits: :integer,
@@ -133,7 +146,7 @@ defmodule Mix.Tasks.Argus.Flowlog do
     end
   end
 
-  def run(["clean"]) do
+  defp command(["clean"]) do
     Mix.Task.run("app.config")
     stale = Toolchain.stale(Toolchain.current_key()) ++ Prebuilt.stale()
     freed = megabytes(stale)
@@ -145,7 +158,7 @@ defmodule Mix.Tasks.Argus.Flowlog do
     )
   end
 
-  def run(["bundle", out_dir]) do
+  defp command(["bundle", out_dir]) do
     Mix.Task.run("app.config")
     # A bundle is what this machine builds, never what another release
     # bundled.
@@ -169,7 +182,7 @@ defmodule Mix.Tasks.Argus.Flowlog do
     end
   end
 
-  def run(["prebuilt", base_url | offers]) when offers != [] do
+  defp command(["prebuilt", base_url | offers]) when offers != [] do
     Mix.Task.run("app.config")
     target = Path.join(["priv", "flowlog", "prebuilt.json"])
 
@@ -184,7 +197,7 @@ defmodule Mix.Tasks.Argus.Flowlog do
     end
   end
 
-  def run(_args), do: Mix.raise(usage())
+  defp command(_args), do: Mix.raise(usage())
 
   defp usage do
     "usage: mix argus.flowlog build [PROGRAM...] | status " <>

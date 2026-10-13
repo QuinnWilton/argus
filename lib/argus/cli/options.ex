@@ -37,6 +37,7 @@ defmodule Argus.CLI.Options do
             fail_above: nil,
             include_deps: nil,
             force: false,
+            offline: false,
             state_dir: nil,
             config: nil,
             color: :auto,
@@ -60,6 +61,7 @@ defmodule Argus.CLI.Options do
           fail_above: non_neg_integer() | nil,
           include_deps: boolean() | nil,
           force: boolean(),
+          offline: boolean(),
           state_dir: Path.t() | nil,
           config: Path.t() | nil,
           color: :auto | :always | :never,
@@ -74,6 +76,7 @@ defmodule Argus.CLI.Options do
     fail_above: :integer,
     include_deps: :boolean,
     force: :boolean,
+    offline: :boolean,
     color: :string,
     help: :boolean
   ]
@@ -188,6 +191,7 @@ defmodule Argus.CLI.Options do
            fail_above: opts[:fail_above],
            include_deps: opts[:include_deps],
            force: Keyword.get(opts, :force, false),
+           offline: Keyword.get(opts, :offline, false),
            state_dir: opts[:state_dir],
            config: opts[:config],
            color: color,
@@ -293,6 +297,8 @@ defmodule Argus.CLI.Options do
       --all                every analysis
       --include-deps       analyze the dependencies' modules too
       --force              ignore the manifest and recompute everything
+      --offline            make no network call: no engine download, no
+                           Cargo fetch, priors from the cache (ARGUS_OFFLINE=1)
 
     Output:
       --format text|json   pentiment frames on stderr (default), or JSON on stdout

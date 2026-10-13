@@ -5,6 +5,16 @@ which a change appeared; older names and APIs may have changed since then.
 
 ## Unreleased
 
+### Added
+
+- Offline mode: `ARGUS_OFFLINE=1`, or `--offline` on `mix argus`,
+  `mix argus.flowlog`, the `argus` escript and `rebar3 argus`, makes no
+  network call (`Argus.Offline`). argus downloads no prebuilt engines (one
+  already downloaded is used), Cargo builds with `--offline`, and
+  `priors: :live` answers from the cache alone, as `:cached_only` does.
+  The rebar3 plugin downloads no escript, and passes `ARGUS_OFFLINE=1` to
+  the one it runs. The `:argus` compiler reads `ARGUS_OFFLINE`.
+
 ### Fixed
 
 - A machine without Rust runs the analyses on the release's prebuilt engines,
