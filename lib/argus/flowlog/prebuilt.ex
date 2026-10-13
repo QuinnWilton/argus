@@ -32,6 +32,12 @@ defmodule Argus.FlowLog.Prebuilt do
   `ARGUS_FLOWLOG_PREBUILT=0` turns bundles off: argus downloads nothing.
   A bundle is unpacked once per machine, under the cache root's
   `prebuilt/<sha256>/`.
+
+  A download that fails is not tried again for an hour: a machine
+  without Rust and without a network would otherwise try at every run,
+  and wait out the connection's timeout each time. The failure is kept
+  beside the bundles (`prebuilt/<sha256>.failed`); `mix argus.flowlog
+  build` forgets it and tries at once (`forget_failures/0`).
   """
 
   alias Argus.FlowLog.Native
@@ -46,6 +52,10 @@ defmodule Argus.FlowLog.Prebuilt do
 
   @format 1
   @digest ~r/\A[0-9a-f]{64}\z/
+  @failure ~r/\A[0-9a-f]{64}\.failed\z/
+
+  # How long a failed download stands before a run tries again, in seconds.
+  @retry_after 3600
 
   @typedoc "A bundle the package offers for this platform."
   @type offer :: %{url: String.t(), sha256: String.t(), bytes: non_neg_integer()}
@@ -61,6 +71,7 @@ defmodule Argus.FlowLog.Prebuilt do
           | {:checksum_mismatch, String.t(), String.t()}
           | {:bad_bundle, String.t()}
           | {:unrunnable, String.t()}
+          | {:recently_failed, String.t(), non_neg_integer(), String.t()}
 
   @doc """
   The platform a bundle must be built for, as a Rust target triple:
@@ -134,7 +145,7 @@ defmodule Argus.FlowLog.Prebuilt do
           {:ok, dir}
         else
           Toolchain.locked({:prebuilt, offer.sha256}, fn ->
-            if unpacked?(dir), do: {:ok, dir}, else: download(offer, dir, opts)
+            if unpacked?(dir), do: {:ok, dir}, else: obtain(offer, dir, opts)
           end)
         end
 
@@ -173,9 +184,69 @@ defmodule Argus.FlowLog.Prebuilt do
 
   defp unpacked?(dir), do: File.regular?(Path.join(dir, "bundle.json"))
 
+  defp obtain(offer, dir, opts) do
+    cond do
+      failure = recent_failure(offer) ->
+        {:error, failure}
+
+      true ->
+        case download(offer, dir, opts) do
+          {:ok, _dir} = ok ->
+            _ = File.rm(failure_path(offer))
+            ok
+
+          {:error, reason} = error ->
+            remember_failure(offer, reason)
+            error
+        end
+    end
+  end
+
+  defp failure_path(offer),
+    do: Path.join([Toolchain.root(), "prebuilt", offer.sha256 <> ".failed"])
+
+  # The failure's age is its file's: what it holds is only what to say.
+  defp recent_failure(offer) do
+    path = failure_path(offer)
+
+    with {:ok, %File.Stat{type: :regular, mtime: at}} <- File.stat(path, time: :posix),
+         age = System.os_time(:second) - at,
+         true <- age in 0..(@retry_after - 1),
+         {:ok, detail} <- File.read(path) do
+      {:recently_failed, offer.url, age, String.trim(detail)}
+    else
+      _ -> nil
+    end
+  end
+
+  defp remember_failure(offer, reason) do
+    path = failure_path(offer)
+    File.mkdir_p!(Path.dirname(path))
+    File.write!(path, describe(reason))
+  end
+
+  @doc """
+  Forgets every failed download, so the next run that needs a bundle
+  tries again at once rather than an hour after the failure.
+  """
+  @spec forget_failures() :: :ok
+  def forget_failures do
+    dir = Path.join(Toolchain.root(), "prebuilt")
+
+    case File.ls(dir) do
+      {:ok, names} ->
+        for name <- names, name =~ @failure, do: File.rm(Path.join(dir, name))
+        :ok
+
+      {:error, _} ->
+        :ok
+    end
+  end
+
   @doc """
   The unpacked bundles under the cache root other than the one this
-  package offers: those of other releases, which nothing here uses again.
+  package offers, and their failed downloads: those of other releases,
+  which nothing here uses again.
   """
   @spec stale() :: [Path.t()]
   def stale do
@@ -189,7 +260,10 @@ defmodule Argus.FlowLog.Prebuilt do
 
     case File.ls(dir) do
       {:ok, names} ->
-        for name <- Enum.sort(names), name != keep, name =~ @digest, do: Path.join(dir, name)
+        for name <- Enum.sort(names),
+            name not in [keep, "#{keep}.failed"],
+            name =~ @digest or name =~ @failure,
+            do: Path.join(dir, name)
 
       {:error, _} ->
         []
@@ -488,9 +562,18 @@ defmodule Argus.FlowLog.Prebuilt do
 
   def describe({:bad_bundle, detail}), do: "the downloaded bundle was refused: #{detail}"
 
+  def describe({:recently_failed, url, age, detail}),
+    do:
+      "downloading #{url} failed #{minutes(age)} ago (#{detail}); argus tries again an " <>
+        "hour after, or at once on `mix argus.flowlog build`"
+
   def describe({:unrunnable, detail}),
     do:
       "the prebuilt engines do not run on this machine (the bundle's tool: #{detail}); " <>
         "they are linked for a generic system, which NixOS, for one, loads only with " <>
         "nix-ld (programs.nix-ld.enable)"
+
+  defp minutes(seconds) when seconds < 60, do: "less than a minute"
+  defp minutes(seconds) when seconds < 120, do: "a minute"
+  defp minutes(seconds), do: "#{div(seconds, 60)} minutes"
 end

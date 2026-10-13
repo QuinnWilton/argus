@@ -23,6 +23,9 @@ which a change appeared; older names and APIs may have changed since then.
   along with the engines beside it.
 - A failing `argus-flowlog-tool` is described by its exit status and output,
   not as a raw `{:flowlog_tool, status, output}` term.
+- A failed download of the prebuilt engines is not tried again for an hour.
+  A machine without Rust or a network tried at every compile, waiting out
+  the connection each time. `mix argus.flowlog build` tries again at once.
 - A no-op `mix compile` is several times faster than on 0.21 and 0.22 (the
   argus compiler over a 268-module project: about 0.5s, where it took 2.5s
   with a fresh manifest and 5.5s with one grown by edits), and the

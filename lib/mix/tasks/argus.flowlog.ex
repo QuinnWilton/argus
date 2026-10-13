@@ -65,6 +65,9 @@ defmodule Mix.Tasks.Argus.Flowlog do
   machine of a platform with a bundle then needs no Rust for argus's own
   analyses.
 
+  `build` tries a download of the prebuilt engines that failed less than
+  an hour ago again at once (`Argus.FlowLog.Prebuilt.forget_failures/0`).
+
   The cache is `$ARGUS_FLOWLOG_DIR`, else `$XDG_CACHE_HOME/argus/flowlog`,
   else `~/.cache/argus/flowlog`; `ARGUS_CARGO` names the `cargo` to build
   with.
@@ -82,6 +85,7 @@ defmodule Mix.Tasks.Argus.Flowlog do
   @impl Mix.Task
   def run(["build" | programs]) do
     Mix.Task.run("app.config")
+    :ok = Prebuilt.forget_failures()
 
     programs =
       if programs == [], do: FlowLog.builtin_programs(), else: Enum.map(programs, &Path.expand/1)

@@ -32,7 +32,9 @@ compiles engines for argus's own, which solve a large project up to twice as fas
 `ARGUS_FLOWLOG_PREBUILT=0` turns the download off, so argus builds everything itself.
 The prebuilt engines are linked for a generic Linux, which NixOS runs only with
 [nix-ld](https://github.com/nix-community/nix-ld) (`programs.nix-ld.enable`); without
-it, argus finds they do not run and builds its own with Rust.
+it, argus finds they do not run and builds its own with Rust. A download that
+fails is tried again an hour later (or at once by `mix argus.flowlog build`), not
+at every compile.
 
 Build or fetch the engines ahead of time, in CI for instance, with
 `mix argus.flowlog build`, and see what is installed with `mix argus.flowlog status`.

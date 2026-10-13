@@ -179,7 +179,8 @@ defmodule Argus.FlowLog.PrebuiltTest do
 
       assert {:error, {:checksum_mismatch, _, actual}} = Prebuilt.fetch(progress: false)
       assert actual == offer["sha256"]
-      assert File.ls!(Path.join(root, "prebuilt")) == []
+      # Nothing unpacked; the failure is kept, so the next run waits.
+      assert File.ls!(Path.join(root, "prebuilt")) == [String.duplicate("0", 64) <> ".failed"]
     end)
   end
 
@@ -209,7 +210,8 @@ defmodule Argus.FlowLog.PrebuiltTest do
       assert {:error, {:bad_bundle, "unexpected bin/../../escaped"}} =
                Prebuilt.fetch(progress: false)
 
-      assert File.ls!(Path.join(root, "prebuilt")) == []
+      assert [failure] = File.ls!(Path.join(root, "prebuilt"))
+      assert String.ends_with?(failure, ".failed")
       refute File.exists?(Path.join(root, "escaped"))
     end)
   end
@@ -323,6 +325,56 @@ defmodule Argus.FlowLog.PrebuiltTest do
       assert [{:ok, %{kind: :generic}}, {:ok, %{kind: :generic}}] = engines
       refute log =~ "building the FlowLog engines instead"
       assert runs |> File.read!() |> String.split("\n", trim: true) == ["run"]
+    end)
+  end
+
+  test "a failed download is not tried again for an hour",
+       %{peer: peer, root: root, tmp_dir: tmp, archive: archive, offer: offer} do
+    later = Path.join(tmp, "later.tar.gz")
+    offered = offering(later, offer["sha256"], offer["bytes"])
+    failure = Path.join([root, "prebuilt", offer["sha256"] <> ".failed"])
+
+    Peer.run(peer, fn ->
+      System.put_env("ARGUS_FLOWLOG_DIR", root)
+      Application.put_env(:argus_beam, :flowlog_prebuilt, offered)
+
+      assert {:error, {:download_failed, _, :enoent}} = Prebuilt.fetch(progress: false)
+
+      # The bundle is there now, but the failure stands.
+      File.cp!(archive, later)
+
+      assert {:error, {:recently_failed, "file://" <> _, age, detail} = reason} =
+               Prebuilt.fetch(progress: false)
+
+      assert age < 60
+      assert detail =~ "failed: :enoent"
+      assert Prebuilt.describe(reason) =~ "tries again an hour after"
+
+      # An hour on, it is tried again, and the failure goes.
+      File.touch!(failure, System.os_time(:second) - 3600)
+      assert {:ok, _dir} = Prebuilt.fetch(progress: false)
+      refute File.exists?(failure)
+    end)
+  end
+
+  test "forgotten, a failed download is tried at once; another release's failure is stale",
+       %{peer: peer, root: root, tmp_dir: tmp, archive: archive, offer: offer} do
+    later = Path.join(tmp, "later.tar.gz")
+    offered = offering(later, offer["sha256"], offer["bytes"])
+    other = Path.join([root, "prebuilt", String.duplicate("f", 64) <> ".failed"])
+
+    Peer.run(peer, fn ->
+      System.put_env("ARGUS_FLOWLOG_DIR", root)
+      Application.put_env(:argus_beam, :flowlog_prebuilt, offered)
+
+      assert {:error, {:download_failed, _, :enoent}} = Prebuilt.fetch(progress: false)
+      File.write!(other, "another release's")
+      assert Prebuilt.stale() == [other]
+
+      File.cp!(archive, later)
+      assert :ok = Prebuilt.forget_failures()
+      refute File.exists?(other)
+      assert {:ok, _dir} = Prebuilt.fetch(progress: false)
     end)
   end
 end
