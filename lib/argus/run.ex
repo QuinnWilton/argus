@@ -276,8 +276,8 @@ defmodule Argus.Run do
   end
 
   defp ensure_engine do
-    case Argus.FlowLog.Toolchain.rust() do
-      {:ok, _} -> :ok
+    case Argus.FlowLog.availability() do
+      :ok -> :ok
       {:error, reason} -> {:error, {:flowlog_unavailable, reason}}
     end
   end

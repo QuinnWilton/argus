@@ -109,6 +109,7 @@ defmodule Argus.FlowLog.PrebuiltTest do
       System.put_env("ARGUS_CARGO", "/nonexistent/cargo")
       Application.put_env(:argus_beam, :flowlog_prebuilt, offer)
 
+      assert FlowLog.available?()
       assert {:ok, %Toolchain{kind: :prebuilt, cargo: nil}} = Toolchain.ensure(progress: false)
       assert {:ok, results} = FlowLog.run(facts, stage0)
       assert is_map(results)

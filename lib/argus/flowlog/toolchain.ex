@@ -64,6 +64,7 @@ defmodule Argus.FlowLog.Toolchain do
           | {:build_failed, :tool | {:engine, String.t()} | {:engines, pos_integer()}, Path.t(),
              String.t()}
           | {:needs_rust, String.t()}
+          | {:no_engines, rust_reason :: reason(), Prebuilt.reason()}
 
   @min_rustc {1, 88, 0}
 
@@ -163,7 +164,8 @@ defmodule Argus.FlowLog.Toolchain do
       {:ok, toolchain}
     else
       {:error, {:untrusted_root, _, _}} = error -> error
-      _ -> {:error, rust_reason}
+      {:error, prebuilt_reason} -> {:error, {:no_engines, rust_reason, prebuilt_reason}}
+      :error -> {:error, {:no_engines, rust_reason, {:bad_bundle, "it holds no tool"}}}
     end
   end
 
@@ -706,6 +708,12 @@ defmodule Argus.FlowLog.Toolchain do
 
   def describe({:untrusted_root, path, detail}) do
     Exception.message(%TrustError{path: path, detail: detail})
+  end
+
+  def describe({:no_engines, rust_reason, prebuilt_reason}) do
+    describe(rust_reason) <>
+      " argus's prebuilt engines are no help either: " <>
+      Prebuilt.describe(prebuilt_reason) <> "."
   end
 
   def describe({:needs_rust, program}) do

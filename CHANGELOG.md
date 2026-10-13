@@ -7,6 +7,12 @@ which a change appeared; older names and APIs may have changed since then.
 
 ### Fixed
 
+- A machine without Rust runs the analyses on the release's prebuilt engines,
+  as 0.22.0 meant it to (#12). `mix compile`, `mix argus` and the escript
+  asked only whether Rust was installed, and skipped every analysis when it
+  was not, or when `rustc -vV` failed (a version manager's shim with no
+  version set) or named a release older than 1.88. When neither Rust nor
+  the bundle can be used, the message gives both reasons.
 - A no-op `mix compile` is several times faster than on 0.21 and 0.22 (the
   argus compiler over a 268-module project: about 0.5s, where it took 2.5s
   with a fresh manifest and 5.5s with one grown by edits), and the

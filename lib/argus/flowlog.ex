@@ -94,20 +94,35 @@ defmodule Argus.FlowLog do
   end
 
   @doc """
-  Whether argus can solve: the toolchain is built, or can be (Rust is
-  installed and new enough).
+  Whether argus can solve: Rust is installed and new enough to build the
+  toolchain, or, without it, the release's prebuilt bundle supplies one
+  (`Argus.FlowLog.Prebuilt`, downloaded once per release). Without Rust
+  this fetches the bundle, as the first solve would.
   """
   @spec available?() :: boolean()
-  def available? do
-    match?({:ok, _}, Toolchain.rust())
-  end
+  def available?, do: availability() == :ok
 
   @doc "The message to show a user when `available?/0` is false."
   @spec not_found_message() :: String.t()
   def not_found_message do
-    case Toolchain.rust() do
-      {:ok, _} -> "the FlowLog toolchain is available"
+    case availability() do
+      :ok -> "the FlowLog toolchain is available"
       {:error, reason} -> Toolchain.describe(reason)
+    end
+  end
+
+  @doc """
+  `:ok` when argus can solve (`available?/0`), or why it cannot, as
+  `Argus.FlowLog.Toolchain.ensure/1` gives it.
+  """
+  @spec availability() :: :ok | {:error, Toolchain.reason()}
+  def availability do
+    with {:error, _} <- Toolchain.rust(),
+         {:ok, _toolchain} <- Toolchain.ensure() do
+      :ok
+    else
+      {:ok, _rust} -> :ok
+      {:error, _} = error -> error
     end
   end
 

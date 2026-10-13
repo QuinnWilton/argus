@@ -76,9 +76,14 @@ defmodule Mix.Tasks.Compile.ArgusEngineGateTest do
       end
     end
 
-    # A cargo that is not there: argus cannot build an engine, nor run one
-    # (`ARGUS_CARGO`, when set, is the only cargo it uses).
-    defp without_rust(fun), do: env("ARGUS_CARGO", "/nonexistent/cargo", fun)
+    # A cargo that is not there, and no release's bundle to stand in for
+    # it: argus cannot build an engine, nor run one (`ARGUS_CARGO`, when
+    # set, is the only cargo it uses).
+    defp without_rust(fun) do
+      env("ARGUS_CARGO", "/nonexistent/cargo", fn ->
+        env("ARGUS_FLOWLOG_PREBUILT", "0", fun)
+      end)
+    end
 
     defp with_failing_engine(program, fun), do: Argus.Test.FailingEngine.with(program, fun)
 
