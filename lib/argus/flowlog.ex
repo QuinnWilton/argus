@@ -142,6 +142,11 @@ defmodule Argus.FlowLog do
       "the generic engine does not run #{path} (#{refusal}); unset ARGUS_FLOWLOG_ENGINE " <>
         "to build it"
 
+  def describe_error({:flowlog_tool, status, out}),
+    do:
+      "argus-flowlog-tool exited with status #{status}" <>
+        if(String.trim(out) == "", do: "", else: ":\n" <> String.trim(out))
+
   def describe_error({:flowlog_program, path, diagnostic}),
     do: "#{path} does not compile:\n#{diagnostic}"
 
