@@ -74,6 +74,9 @@ which a change appeared; older names and APIs may have changed since then.
   the blob store, a run goes on with a temporary store (a Nix build's
   sandbox). An empty `XDG_CACHE_HOME` is ignored, as the specification says,
   rather than putting the store in a relative path.
+- A download of the prebuilt engines stopped part way (a VM killed) no longer
+  leaves its partial file behind for good: the next download or
+  `mix argus.flowlog clean` removes it an hour on.
 - The escript's error when it cannot run its analyses no longer says it was
   "configured with engine: :require".
 

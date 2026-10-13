@@ -410,6 +410,36 @@ defmodule Argus.FlowLog.PrebuiltTest do
     end)
   end
 
+  test "what a stopped download left goes an hour on, with the next download or clean",
+       %{peer: peer, root: root} = context do
+    offer = offered(context)
+    prebuilt = Path.join(root, "prebuilt")
+    File.mkdir_p!(Path.join(prebuilt, ".fetch-1-2"))
+    hour_ago = System.os_time(:second) - 3600
+
+    for name <- [".fetch-1-2.tar.gz", ".fetch-1-2"] do
+      path = Path.join(prebuilt, name)
+      unless File.dir?(path), do: File.write!(path, "half a bundle")
+      File.touch!(path, hour_ago)
+    end
+
+    # Another VM's, still coming.
+    File.write!(Path.join(prebuilt, ".fetch-3-4.tar.gz"), "a bundle coming")
+
+    Peer.run(peer, fn ->
+      System.put_env("ARGUS_FLOWLOG_DIR", root)
+      Application.put_env(:argus_beam, :flowlog_prebuilt, offer)
+
+      assert Prebuilt.stale() == [
+               Path.join(prebuilt, ".fetch-1-2"),
+               Path.join(prebuilt, ".fetch-1-2.tar.gz")
+             ]
+
+      assert {:ok, dir} = Prebuilt.fetch(progress: false)
+      assert Enum.sort(File.ls!(prebuilt)) == [".fetch-3-4.tar.gz", Path.basename(dir)]
+    end)
+  end
+
   test "offline, a bundle is used once downloaded, and none is downloaded",
        %{peer: peer, root: root} = context do
     offer = offered(context)

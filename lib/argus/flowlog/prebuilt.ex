@@ -273,7 +273,8 @@ defmodule Argus.FlowLog.Prebuilt do
   @doc """
   The unpacked bundles under the cache root other than the one this
   package offers, and their failed downloads: those of other releases,
-  which nothing here uses again.
+  which nothing here uses again. And what a download stopped in the
+  middle (a VM killed) left, an hour on.
   """
   @spec stale() :: [Path.t()]
   def stale do
@@ -287,13 +288,40 @@ defmodule Argus.FlowLog.Prebuilt do
 
     case File.ls(dir) do
       {:ok, names} ->
-        for name <- Enum.sort(names),
-            name not in [keep, "#{keep}.failed"],
-            name =~ @digest or name =~ @failure,
-            do: Path.join(dir, name)
+        for(
+          name <- Enum.sort(names),
+          name not in [keep, "#{keep}.failed"],
+          name =~ @digest or name =~ @failure,
+          do: Path.join(dir, name)
+        ) ++ abandoned(dir)
 
       {:error, _} ->
         []
+    end
+  end
+
+  # A download's scratch (`.fetch-*`, the file and the directory it is
+  # unpacked in) untouched for an hour: one a run was stopped in the
+  # middle of. A live download writes its file as it comes, and gives up
+  # after half an hour.
+  defp abandoned(dir) do
+    case File.ls(dir) do
+      {:ok, names} ->
+        for name <- Enum.sort(names),
+            String.starts_with?(name, ".fetch-"),
+            path = Path.join(dir, name),
+            idle?(path),
+            do: path
+
+      {:error, _} ->
+        []
+    end
+  end
+
+  defp idle?(path) do
+    case File.lstat(path, time: :posix) do
+      {:ok, %File.Stat{mtime: at}} -> System.os_time(:second) - at >= @retry_after
+      {:error, _} -> false
     end
   end
 
@@ -330,6 +358,7 @@ defmodule Argus.FlowLog.Prebuilt do
     )
 
     parent = Path.dirname(dir)
+    Enum.each(abandoned(parent), &File.rm_rf/1)
     scratch = Path.join(parent, ".fetch-#{:os.getpid()}-#{System.unique_integer([:positive])}")
     file = scratch <> ".tar.gz"
 
