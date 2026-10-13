@@ -228,7 +228,11 @@ defmodule Argus.Graph.RulesTest do
   test "an edit to the producers' code re-runs every module, extracts nothing, solves nothing",
        %{paths: paths} = context do
     in_graph(context, fn db, log, _root ->
-      extracted = extracted(fn -> edit_code!(db, :module_facts) && findings!(db) end)
+      extracted =
+        extracted(fn ->
+          :ok = edit_code!(db, :module_facts)
+          findings!(db)
+        end)
 
       assert length(QueryLog.executions(log, :module_facts)) == map_size(paths)
       # Every producer's rows found by its trace, every module's facts

@@ -7,6 +7,9 @@
 %% and what follows goes by the name the winner holds. ensure/0 hands
 %% the start's answer to its callers, who may match {ok, Pid} on it.
 -module(registry_losers).
+
+%% The fixture is about `catch Expr` itself, which OTP 29 deprecates.
+-compile(nowarn_deprecated_catch).
 -behaviour(gen_server).
 -export([server_init/0, switch/0, start/0, start_server/0, ensure/0]).
 -export([init/1, handle_call/3, handle_cast/2]).

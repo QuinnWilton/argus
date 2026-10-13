@@ -4,6 +4,9 @@
 %% them: lookup/1 turns the restart window into a result, peek/1 crashes
 %% its caller in it.
 -module(ets_catch_reader).
+
+%% The fixture is about `catch Expr` itself, which OTP 29 deprecates.
+-compile(nowarn_deprecated_catch).
 -behaviour(gen_server).
 -export([start_link/0, lookup/1, peek/1]).
 -export([init/1, handle_call/3, handle_cast/2]).

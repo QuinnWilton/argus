@@ -72,7 +72,8 @@ defmodule Argus.Extractor.ResultFateTest do
 
         defp wrap(x), do: {:wrapped, make(x)}
 
-        defp make(x), do: {:ok, x}
+        # Either shape, so a caller's clause for the other is reachable.
+        defp make(x), do: if(is_integer(x), do: {:ok, x}, else: {:error, x})
       end
       """)
 

@@ -5,6 +5,9 @@
 %% with try and one with catch; all four are guarded, and none deviates.
 -module(consistency_catch).
 
+%% The fixture is about `catch Expr` itself, which OTP 29 deprecates.
+-compile(nowarn_deprecated_catch).
+
 -export([a/1, b/1, c/1, d/1, m1/1, m2/1, m3/1, m4/1]).
 
 a(K) -> case catch ets:update_counter(ec, K, 1) of {'EXIT', _} -> 0; N -> N end.

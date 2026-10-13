@@ -168,29 +168,6 @@ defmodule Argus.Extractor.ResolveTest do
   defp run({:gc_bif, name, _, _, args, d}, regs),
     do: Map.put(regs, plain(d), bif(name, Enum.map(args, &element(&1, regs))))
 
-  # What each BIF gives arguments it is defined on; anything else, the
-  # resolver does not compute.
-  defp bif(:element, [i, t]) when is_integer(i) and is_tuple(t) and i > 0 and i <= tuple_size(t),
-    do: {:ok, elem(t, i - 1)}
-
-  defp bif(:tuple_size, [t]) when is_tuple(t), do: {:ok, tuple_size(t)}
-  defp bif(:map_size, [m]) when is_map(m), do: {:ok, map_size(m)}
-  defp bif(:byte_size, [b]) when is_binary(b), do: {:ok, byte_size(b)}
-
-  # A list holding the placeholder may end in a tail nothing resolved.
-  defp bif(:length, [l]) when is_list(l) do
-    if Terms.proper_list?(l) and :dynamic not in l, do: {:ok, length(l)}, else: :dynamic
-  end
-
-  defp bif(:hd, [[h | _]]), do: {:ok, h}
-  defp bif(:tl, [[_ | t]]), do: {:ok, t}
-  defp bif(:atom_to_binary, [a]) when is_atom(a) and not is_nil(a), do: {:ok, Atom.to_string(a)}
-
-  defp bif(:++, [a, b]) when is_list(a) and is_list(b),
-    do: if(Terms.proper_list?(a), do: {:ok, a ++ b}, else: :dynamic)
-
-  defp bif(_name, _args), do: :dynamic
-
   defp run({op, _, src, d, _, {:list, pairs}}, regs)
        when op in [:put_map_assoc, :put_map_exact] do
     base =
@@ -245,6 +222,29 @@ defmodule Argus.Extractor.ResolveTest do
   # A call writes x0 and destroys the other x registers.
   defp run({:call, _, _}, regs),
     do: regs |> Enum.reject(fn {{k, _}, _} -> k == :x end) |> Map.new()
+
+  # What each BIF gives arguments it is defined on; anything else, the
+  # resolver does not compute.
+  defp bif(:element, [i, t]) when is_integer(i) and is_tuple(t) and i > 0 and i <= tuple_size(t),
+    do: {:ok, elem(t, i - 1)}
+
+  defp bif(:tuple_size, [t]) when is_tuple(t), do: {:ok, tuple_size(t)}
+  defp bif(:map_size, [m]) when is_map(m), do: {:ok, map_size(m)}
+  defp bif(:byte_size, [b]) when is_binary(b), do: {:ok, byte_size(b)}
+
+  # A list holding the placeholder may end in a tail nothing resolved.
+  defp bif(:length, [l]) when is_list(l) do
+    if Terms.proper_list?(l) and :dynamic not in l, do: {:ok, length(l)}, else: :dynamic
+  end
+
+  defp bif(:hd, [[h | _]]), do: {:ok, h}
+  defp bif(:tl, [[_ | t]]), do: {:ok, t}
+  defp bif(:atom_to_binary, [a]) when is_atom(a) and not is_nil(a), do: {:ok, Atom.to_string(a)}
+
+  defp bif(:++, [a, b]) when is_list(a) and is_list(b),
+    do: if(Terms.proper_list?(a), do: {:ok, a ++ b}, else: :dynamic)
+
+  defp bif(_name, _args), do: :dynamic
 
   # What a consumer is handed: the placeholder alone, or a list no list
   # operation accepts, is unresolved.
