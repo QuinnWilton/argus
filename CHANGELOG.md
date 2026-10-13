@@ -49,6 +49,9 @@ which a change appeared; older names and APIs may have changed since then.
   roux 0.3.3, which drops the entries a run restores outdated and never
   demands; before it, they were kept forever and rewrote the manifest on
   every run.
+- argus checks that its FlowLog cache directory is the user's own before
+  downloading a prebuilt bundle into it or running the bundle's tool, as it
+  already did before building or running an engine there.
 
 ## 0.22.0 — 2026-10-08
 

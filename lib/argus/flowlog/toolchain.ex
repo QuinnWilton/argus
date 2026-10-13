@@ -415,20 +415,14 @@ defmodule Argus.FlowLog.Toolchain do
   # made by this module alone, owner-only, and refused when another
   # user could write it.
   defp toolchain_dir(key) do
-    root = root()
-
-    with :ok <- trusted_root(root) do
-      dir = Path.join(root, key)
-
-      with :ok <- mkdir_owned(dir),
-           :ok <- mkdir_owned(Path.join(dir, "bin")),
-           :ok <- mkdir_owned(Path.join(dir, "engines")),
-           :ok <- mkdir_owned(Path.join(dir, "logs")),
-           :ok <- mkdir_owned(Path.join(dir, "crates")),
-           :ok <- mkdir_owned(Path.join(dir, "sources")) do
-        _ = Native.unpack!(Path.join(dir, "sources"))
-        {:ok, dir}
-      end
+    with {:ok, dir} <- owned_dir(key),
+         :ok <- mkdir_owned(Path.join(dir, "bin")),
+         :ok <- mkdir_owned(Path.join(dir, "engines")),
+         :ok <- mkdir_owned(Path.join(dir, "logs")),
+         :ok <- mkdir_owned(Path.join(dir, "crates")),
+         :ok <- mkdir_owned(Path.join(dir, "sources")) do
+      _ = Native.unpack!(Path.join(dir, "sources"))
+      {:ok, dir}
     end
   end
 
@@ -464,6 +458,26 @@ defmodule Argus.FlowLog.Toolchain do
 
       {:error, _} ->
         []
+    end
+  end
+
+  @doc """
+  `<root>/<name>` (`root/0`), created owner-only: `{:ok, dir}` once the
+  root and the directory are trusted (`check_trust/1`), or
+  `{:error, {:untrusted_root, path, detail}}`. argus runs what it finds
+  under the root, so nothing there is read or run before this.
+  """
+  @spec owned_dir(String.t()) :: {:ok, Path.t()} | {:error, reason()}
+  def owned_dir(name) do
+    root = root()
+    dir = Path.join(root, name)
+
+    with :ok <- trusted_root(root),
+         :ok <- mkdir_owned(dir) do
+      case check_trust(dir) do
+        :ok -> {:ok, dir}
+        {:error, detail} -> {:error, {:untrusted_root, dir, detail}}
+      end
     end
   end
 

@@ -31,8 +31,10 @@ defmodule Argus.FlowLog.Prebuilt do
 
   `ARGUS_FLOWLOG_PREBUILT=0` turns bundles off: argus downloads nothing.
   A bundle is unpacked once per machine, under the cache root's
-  `prebuilt/<sha256>/`. Offline (`Argus.Offline`), argus uses a bundle
-  already unpacked and downloads none.
+  `prebuilt/<sha256>/`, and only once the root is the user's own, as
+  the toolchain's must be (`Argus.FlowLog.Toolchain.owned_dir/1`):
+  argus runs the bundle's tool from there. Offline (`Argus.Offline`),
+  argus uses a bundle already unpacked and downloads none.
 
   A download that fails is not tried again for an hour: a machine
   without Rust and without a network would otherwise try at every run,
@@ -74,6 +76,7 @@ defmodule Argus.FlowLog.Prebuilt do
           | {:unrunnable, String.t()}
           | :offline
           | {:recently_failed, String.t(), non_neg_integer(), String.t()}
+          | {:untrusted_root, Path.t(), String.t()}
 
   @doc """
   The platform a bundle must be built for, as a Rust target triple:
@@ -139,8 +142,9 @@ defmodule Argus.FlowLog.Prebuilt do
   """
   @spec fetch(keyword()) :: {:ok, Path.t()} | {:error, reason()}
   def fetch(opts \\ []) do
-    with {:ok, offer} <- offer() do
-      dir = Path.join([Toolchain.root(), "prebuilt", offer.sha256])
+    with {:ok, offer} <- offer(),
+         {:ok, prebuilt} <- Toolchain.owned_dir("prebuilt") do
+      dir = Path.join(prebuilt, offer.sha256)
 
       fetched =
         if unpacked?(dir) do
@@ -225,9 +229,7 @@ defmodule Argus.FlowLog.Prebuilt do
   end
 
   defp remember_failure(offer, reason) do
-    path = failure_path(offer)
-    File.mkdir_p!(Path.dirname(path))
-    File.write!(path, describe(reason))
+    File.write!(failure_path(offer), describe(reason))
   end
 
   @doc """
@@ -308,7 +310,6 @@ defmodule Argus.FlowLog.Prebuilt do
     )
 
     parent = Path.dirname(dir)
-    File.mkdir_p!(parent)
     scratch = Path.join(parent, ".fetch-#{:os.getpid()}-#{System.unique_integer([:positive])}")
     file = scratch <> ".tar.gz"
 
@@ -576,6 +577,8 @@ defmodule Argus.FlowLog.Prebuilt do
     do:
       "downloading #{url} failed #{minutes(age)} ago (#{detail}); argus tries again an " <>
         "hour after, or at once on `mix argus.flowlog build`"
+
+  def describe({:untrusted_root, _, _} = reason), do: Toolchain.describe(reason)
 
   def describe({:unrunnable, detail}),
     do:

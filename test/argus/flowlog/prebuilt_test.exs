@@ -328,6 +328,37 @@ defmodule Argus.FlowLog.PrebuiltTest do
     end)
   end
 
+  test "a cache root that is not the user's own is refused before anything in it runs",
+       %{peer: peer, root: root, tmp_dir: tmp, broken: broken} do
+    offer = offered(broken)
+    runs = Path.join(tmp, "tool-runs")
+
+    # A bundle unpacked where argus would look for it, in a directory the
+    # root only links to.
+    elsewhere = Path.join(tmp, "elsewhere")
+    planted = Path.join([elsewhere, "prebuilt", broken.offer["sha256"]])
+    tool = Path.join([planted, "bin", "argus-flowlog-tool"])
+    File.mkdir_p!(Path.dirname(tool))
+    File.write!(Path.join(planted, "bundle.json"), "{}")
+    File.write!(tool, @unrunnable)
+    File.chmod!(tool, 0o755)
+    File.rm_rf!(root)
+    File.ln_s!(elsewhere, root)
+
+    Peer.run(peer, fn ->
+      System.put_env("ARGUS_FLOWLOG_DIR", root)
+      System.put_env("ARGUS_CARGO", "/nonexistent/cargo")
+      System.put_env("ARGUS_TEST_TOOL_RUNS", runs)
+      Application.put_env(:argus_beam, :flowlog_prebuilt, offer)
+
+      assert {:error, {:untrusted_root, ^root, detail}} = Prebuilt.fetch(progress: false)
+      assert detail =~ "symlink"
+
+      assert {:error, {:untrusted_root, ^root, _}} = Toolchain.ensure(progress: false)
+      refute File.exists?(runs)
+    end)
+  end
+
   test "a failed download is not tried again for an hour",
        %{peer: peer, root: root, tmp_dir: tmp, archive: archive, offer: offer} do
     later = Path.join(tmp, "later.tar.gz")
@@ -391,7 +422,7 @@ defmodule Argus.FlowLog.PrebuiltTest do
       assert {:error, :offline} = Prebuilt.fetch(progress: false)
       assert Prebuilt.describe(:offline) =~ "offline"
       # Nothing fetched, and nothing kept as a failure.
-      refute File.exists?(Path.join(root, "prebuilt"))
+      assert File.ls!(Path.join(root, "prebuilt")) == []
 
       System.delete_env("ARGUS_OFFLINE")
       assert {:ok, dir} = Prebuilt.fetch(progress: false)
