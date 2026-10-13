@@ -93,6 +93,9 @@ which a change appeared; older names and APIs may have changed since then.
   removes the crates a killed build generated.
 - `mix argus` in a project with the `:argus` compiler reports each finding
   once; the compile it runs printed them too.
+- An engine that stops reading before it answers (one that fails as it
+  starts, on a busy machine) is reported as its exit, with what it logged,
+  rather than as `:epipe`.
 - The escript's error when it cannot run its analyses no longer says it was
   "configured with engine: :require".
 

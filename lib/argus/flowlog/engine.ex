@@ -167,6 +167,11 @@ defmodule Argus.FlowLog.Engine do
 
   @impl GenServer
   def init(opts) do
+    # The port's death arrives as a message: an engine that exits before
+    # it reads a request kills its port as the request is written
+    # (`:epipe`), which would otherwise take this process with it and lose
+    # what the engine logged.
+    Process.flag(:trap_exit, true)
     started = System.monotonic_time()
     executable = Keyword.fetch!(opts, :executable)
     digest = Keyword.fetch!(opts, :digest)
@@ -296,6 +301,10 @@ defmodule Argus.FlowLog.Engine do
     {:stop, {:flowlog_engine_exit, status, log_tail(state.log)}, state}
   end
 
+  def handle_info({:EXIT, port, reason}, %{port: port} = state) do
+    {:stop, {:flowlog_engine_exit, reason, log_tail(state.log)}, state}
+  end
+
   def handle_info(_message, state), do: {:noreply, state}
 
   defp file({path, _previous}), do: path
@@ -310,7 +319,12 @@ defmodule Argus.FlowLog.Engine do
   # One request and its reply. The engine answers requests in order, one
   # at a time, and only this process talks to it.
   defp request(%{port: port} = state, request, timeout) do
-    Port.command(port, :json.encode(request))
+    # A port already closed raises; its exit is in the mailbox, read below.
+    try do
+      Port.command(port, :json.encode(request))
+    rescue
+      ArgumentError -> :ok
+    end
 
     receive do
       {^port, {:data, data}} ->
@@ -331,6 +345,9 @@ defmodule Argus.FlowLog.Engine do
 
       {^port, {:exit_status, status}} ->
         {:error, {:flowlog_engine_exit, status, log_tail(state.log)}}
+
+      {:EXIT, ^port, reason} ->
+        {:error, {:flowlog_engine_exit, reason, log_tail(state.log)}}
     after
       timeout -> {:error, :flowlog_timeout}
     end

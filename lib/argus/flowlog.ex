@@ -160,8 +160,14 @@ defmodule Argus.FlowLog do
   def describe_error({:flowlog_error, kind, message}),
     do: "the engine refused the commit (#{kind}): #{message}"
 
-  def describe_error({:flowlog_engine_exit, status, log}),
+  def describe_error({:flowlog_engine_exit, status, log}) when is_integer(status),
     do: "the engine exited with status #{status}#{if log != "", do: ":\n" <> log, else: ""}"
+
+  # Its pipe closed before it answered (`:epipe`): what it logged says why.
+  def describe_error({:flowlog_engine_exit, reason, log}),
+    do:
+      "the engine stopped before it answered (#{inspect(reason)})" <>
+        if(log != "", do: ":\n" <> log, else: "")
 
   def describe_error({:flowlog_engine_down, reason}), do: "the engine stopped: #{inspect(reason)}"
 

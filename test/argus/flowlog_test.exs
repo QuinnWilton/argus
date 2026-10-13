@@ -540,6 +540,38 @@ defmodule Argus.FlowLogTest do
     end
   end
 
+  # An engine that stops reading before it answers a request has its
+  # port die as the request is written (:epipe) when it is still running,
+  # and exits first otherwise: either way, what it logged is the reason,
+  # never a broken pipe.
+  test "an engine gone before it reads says what it logged" do
+    Process.flag(:trap_exit, true)
+    dir = Path.join(System.tmp_dir!(), "argus_engine_gone_#{System.unique_integer([:positive])}")
+    File.mkdir_p!(dir)
+    on_exit(fn -> File.rm_rf!(dir) end)
+    {stub, log} = {Path.join(dir, "engine"), Path.join(dir, "engine.log")}
+
+    File.write!(stub, """
+    #!/bin/sh
+    exec 3<&-
+    echo "injected failure" >> "#{log}"
+    sleep 0.2
+    exit 1
+    """)
+
+    File.chmod!(stub, 0o755)
+
+    for _ <- 1..20 do
+      File.rm(log)
+
+      assert {:error, {:flowlog_engine_exit, _, logged} = reason} =
+               Engine.start_link(executable: stub, digest: "any", log: log)
+
+      assert logged =~ "injected failure"
+      assert FlowLog.describe_error(reason) =~ "injected failure"
+    end
+  end
+
   describe "a solve through the store" do
     @describetag :tmp_dir
 
