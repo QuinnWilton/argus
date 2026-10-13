@@ -56,7 +56,7 @@ Add Argus to your dependencies:
 ```elixir
 def deps do
   [
-    {:argus_beam, "~> 0.22", only: [:dev, :test], runtime: false}
+    {:argus_beam, "~> 0.23", only: [:dev, :test], runtime: false}
   ]
 end
 ```
@@ -101,7 +101,7 @@ project and downloads the specified Argus escript.
 
 ```erlang
 {plugins, [rebar3_argus]}.
-{argus_plugin, [{version, "0.22.0"}]}.
+{argus_plugin, [{version, "0.23.0"}]}.
 {argus, [{analyses, [default, ets]}]}.           % optional
 {provider_hooks, [{post, [{compile, argus}]}]}.  % optional: run after compilation
 ```
