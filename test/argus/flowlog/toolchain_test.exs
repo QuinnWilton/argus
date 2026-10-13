@@ -287,7 +287,8 @@ defmodule Argus.FlowLog.ToolchainTest do
     test "a bundle that could not be used comes first, and Rust as the other way" do
       failed =
         {:recently_failed, @url, 90,
-         "cannot connect to github.com:443: non-existing domain (nxdomain)"}
+         "cannot connect to github.com:443: non-existing domain (nxdomain)",
+         "/cache/prebuilt/abc.failed"}
 
       message =
         Toolchain.describe({:no_engines, {:rust_missing, "cargo was not found on PATH"}, failed})
@@ -296,6 +297,7 @@ defmodule Argus.FlowLog.ToolchainTest do
                ~r/^argus runs its analyses on FlowLog engines, and could not use the prebuilt/
 
       assert message =~ "failed a minute ago (cannot connect to github.com:443"
+      assert message =~ "or once /cache/prebuilt/abc.failed is removed"
       assert message =~ "with Rust 1.88.0 or newer, and cargo was not found on PATH: install"
       assert length(String.split(message, @url)) == 2
     end

@@ -374,7 +374,7 @@ defmodule Argus.FlowLog.PrebuiltTest do
       # The bundle is there now, but the failure stands.
       File.cp!(archive, later)
 
-      assert {:error, {:recently_failed, "file://" <> _, age, detail} = reason} =
+      assert {:error, {:recently_failed, "file://" <> _, age, detail, ^failure} = reason} =
                Prebuilt.fetch(progress: false)
 
       assert age < 60

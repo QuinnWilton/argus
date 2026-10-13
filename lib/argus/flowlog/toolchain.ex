@@ -29,7 +29,7 @@ defmodule Argus.FlowLog.Toolchain do
   `~/.cargo/bin`; `ARGUS_CARGO` names the `cargo` to use instead, and when
   it is set argus uses no other. The first build
   fetches FlowLog and its dependencies from the network; every later one
-  is offline. `mix argus.flowlog build` (or `argus flowlog build`) does
+  is offline. `mix argus.flowlog build` does
   it ahead of a run.
   """
 

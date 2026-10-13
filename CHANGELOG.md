@@ -10,6 +10,9 @@ which a change appeared; older names and APIs may have changed since then.
 - A system without CA certificates (a slim container) no longer crashes the
   run that downloads the prebuilt engines: the download fails, saying so
   and how to install them, and is tried again an hour later.
+- A remembered failed download names the file that keeps it, so the
+  escript's and the rebar3 plugin's users, who have no `mix argus.flowlog
+  build`, can try again at once by removing it.
 
 ## 0.23.0 — 2026-10-13
 

@@ -79,7 +79,7 @@ defmodule Argus.FlowLog.Prebuilt do
           | {:bad_bundle, String.t()}
           | {:unrunnable, String.t()}
           | :offline
-          | {:recently_failed, String.t(), non_neg_integer(), String.t()}
+          | {:recently_failed, String.t(), non_neg_integer(), String.t(), Path.t()}
           | {:untrusted_root, Path.t(), String.t()}
           | {:unwritable_root, Path.t(), String.t()}
           | {:needs_target, String.t()}
@@ -277,7 +277,7 @@ defmodule Argus.FlowLog.Prebuilt do
          age = System.os_time(:second) - at,
          true <- age in 0..(@retry_after - 1),
          {:ok, detail} <- File.read(path) do
-      {:recently_failed, offer.url, age, String.trim(detail)}
+      {:recently_failed, offer.url, age, String.trim(detail), path}
     else
       _ -> nil
     end
@@ -696,10 +696,10 @@ defmodule Argus.FlowLog.Prebuilt do
       "argus is offline (#{Argus.Offline.env_var()} or --offline), and has not downloaded " <>
         "the prebuilt engines yet"
 
-  def describe({:recently_failed, url, age, detail}),
+  def describe({:recently_failed, url, age, detail, path}),
     do:
       "downloading #{url} failed #{minutes(age)} ago (#{detail}); argus tries again an " <>
-        "hour after, or at once on `mix argus.flowlog build`"
+        "hour after, or at once on `mix argus.flowlog build` or once #{path} is removed"
 
   def describe({tag, _, _} = reason) when tag in [:untrusted_root, :unwritable_root],
     do: Toolchain.describe(reason)
