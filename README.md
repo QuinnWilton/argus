@@ -58,10 +58,12 @@ Add Argus to your dependencies:
 ```elixir
 def deps do
   [
-    {:argus_beam, "~> 0.22"}
+    {:argus_beam, "~> 0.22", only: [:dev, :test], runtime: false}
   ]
 end
 ```
+
+`only:` and `runtime: false` keep Argus out of production builds and releases.
 
 Then fetch dependencies and run an analysis. `mix argus` compiles the project first.
 
@@ -81,11 +83,15 @@ show the findings as compiler diagnostics.
 ```elixir
 def project do
   [
-    compilers: Mix.compilers() ++ [:argus],
+    compilers: Mix.compilers() ++ if(Mix.env() in [:dev, :test], do: [:argus], else: []),
     argus: [analyses: [:default, :ets], severity: [mailbox: :error]]
   ]
 end
 ```
+
+List `:argus` only in the environments that have the dependency: in any other,
+such as a `MIX_ENV=prod` release build, Mix stops with "The task compile.argus
+could not be found".
 
 By default, error findings fail the compiler run. `mix argus` uses `--fail-above`
 to decide whether findings fail the run.
