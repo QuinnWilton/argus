@@ -57,6 +57,9 @@ which a change appeared; older names and APIs may have changed since then.
   as the other way, rather than opening with "install Rust". A failed
   download is said in words ("cannot connect to github.com:443: non-existing
   domain"), its URL once.
+- `mix argus.flowlog build`, `status` and `clean` no longer compile the
+  project, which ran its analyses first. `status` says whether the prebuilt
+  bundle is downloaded, and why it is not used.
 
 ## 0.22.0 — 2026-10-08
 

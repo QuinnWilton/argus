@@ -97,7 +97,7 @@ defmodule Mix.Tasks.Argus.Flowlog do
   end
 
   defp command(["build" | programs]) do
-    Mix.Task.run("app.config")
+    load_argus()
     :ok = Prebuilt.forget_failures()
 
     programs =
@@ -110,7 +110,7 @@ defmodule Mix.Tasks.Argus.Flowlog do
   end
 
   defp command(["status"]) do
-    Mix.Task.run("app.config")
+    load_argus()
     status()
   end
 
@@ -147,7 +147,7 @@ defmodule Mix.Tasks.Argus.Flowlog do
   end
 
   defp command(["clean"]) do
-    Mix.Task.run("app.config")
+    load_argus()
     stale = Toolchain.stale(Toolchain.current_key()) ++ Prebuilt.stale()
     freed = megabytes(stale)
     Enum.each(stale, &File.rm_rf!/1)
@@ -198,6 +198,16 @@ defmodule Mix.Tasks.Argus.Flowlog do
   end
 
   defp command(_args), do: Mix.raise(usage())
+
+  # The engines are argus's, not the project's: these commands need
+  # argus's code, never a compile of the project, which would first run
+  # the `:argus` compiler's analyses on it. In argus's own checkout, that
+  # code is the project's.
+  defp load_argus do
+    if Mix.Project.config()[:app] == :argus_beam,
+      do: Mix.Task.run("compile"),
+      else: Mix.Task.run("loadpaths")
+  end
 
   defp usage do
     "usage: mix argus.flowlog build [PROGRAM...] | status " <>
@@ -508,19 +518,41 @@ defmodule Mix.Tasks.Argus.Flowlog do
         "#{release} (#{rust.cargo})"
 
       {{:error, reason}, {:ok, _}} ->
-        "unavailable: argus's own analyses run on its prebuilt engines, and a program " <>
-          "of your own in the generic engine; one that engine does not run needs Rust " <>
-          "(#{Toolchain.describe(reason)})"
+        "unavailable (#{rust_problem(reason)}): argus's own analyses need its prebuilt " <>
+          "engines (below), and a program of your own runs in the generic engine they " <>
+          "carry, or needs Rust"
 
       {{:error, reason}, {:error, _}} ->
         "unavailable: " <> Toolchain.describe(reason)
     end
   end
 
+  defp rust_problem({:rust_missing, detail}), do: detail
+
+  defp rust_problem({:rust_too_old, found, needed}),
+    do: "found #{found}; #{needed} or newer is needed"
+
   defp prebuilt_status do
     case Prebuilt.offer() do
-      {:ok, offer} -> "#{offer.url} (#{div(offer.bytes, 1_000_000)} MB)"
-      {:error, reason} -> "none: " <> Prebuilt.describe(reason)
+      {:ok, offer} ->
+        held =
+          case Prebuilt.local(offer) do
+            {:ok, dir} ->
+              "unpacked at #{dir}"
+
+            :absent ->
+              if Argus.Offline.offline?(),
+                do: "not downloaded (offline)",
+                else: "not downloaded yet"
+
+            {:error, reason} ->
+              "not used: " <> Prebuilt.describe(reason)
+          end
+
+        "#{offer.url} (#{div(offer.bytes, 1_000_000)} MB), #{held}"
+
+      {:error, reason} ->
+        "none: " <> Prebuilt.describe(reason)
     end
   end
 

@@ -159,6 +159,25 @@ defmodule Argus.FlowLog.Prebuilt do
     end
   end
 
+  @doc """
+  What this machine holds of the bundle `offer`, downloading nothing:
+  `{:ok, dir}` when it is unpacked and runs here, `:absent` when it is
+  not downloaded, or why it is not used (a download that failed within
+  the hour, a tool that does not run here).
+  """
+  @spec local(offer()) :: {:ok, Path.t()} | :absent | {:error, reason()}
+  def local(offer) do
+    with {:ok, prebuilt} <- Toolchain.owned_dir("prebuilt") do
+      dir = Path.join(prebuilt, offer.sha256)
+
+      cond do
+        unpacked?(dir) -> with :ok <- runnable(dir), do: {:ok, dir}
+        failure = recent_failure(offer) -> {:error, failure}
+        true -> :absent
+      end
+    end
+  end
+
   # Checked once per VM, whatever the answer: a solve that finds no
   # compiled engine installed asks the bundle for one, and on a machine
   # that cannot run it (NixOS) would otherwise start its tool every time.
