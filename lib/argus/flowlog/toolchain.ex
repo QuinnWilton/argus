@@ -133,6 +133,7 @@ defmodule Argus.FlowLog.Toolchain do
             toolchain =
               struct!(__MODULE__, Map.merge(rust, %{dir: dir, key: key(rust), kind: :rust}))
 
+            discard_unrunnable(toolchain)
             with :ok <- ensure_tool(toolchain, opts), do: {:ok, toolchain}
           end
 
@@ -160,12 +161,72 @@ defmodule Argus.FlowLog.Toolchain do
         rustc_version: nil
       }
 
+      discard_unrunnable(toolchain)
       unless File.regular?(tool(toolchain)), do: install(bundled, tool(toolchain))
       {:ok, toolchain}
     else
       {:error, {:untrusted_root, _, _}} = error -> error
       {:error, prebuilt_reason} -> {:error, {:no_engines, rust_reason, prebuilt_reason}}
       :error -> {:error, {:no_engines, rust_reason, {:bad_bundle, "it holds no tool"}}}
+    end
+  end
+
+  # A tool that does not run here (an executable built for another
+  # system, installed from a release's bundle, or one whose libraries
+  # have since gone, as a NixOS garbage collection removes them) goes,
+  # with the engines beside it: none of them runs either, and none was
+  # built by this tool, which could not have generated it. A run then
+  # installs or builds them again.
+  defp discard_unrunnable(toolchain) do
+    path = tool(toolchain)
+
+    with true <- File.regular?(path),
+         {:error, detail} <- runs(path) do
+      Logger.warning(
+        "argus: the FlowLog tool at #{path} does not run on this machine (#{detail}); " <>
+          "replacing it, and the engines installed beside it"
+      )
+
+      File.rm!(path)
+      File.rm_rf!(engines(toolchain))
+      :ok = mkdir_owned(engines(toolchain))
+    end
+
+    :ok
+  end
+
+  @doc """
+  Whether the tool at `path` runs on this machine: `:ok`, or
+  `{:error, detail}` saying what happened when it was run. Run without
+  arguments, the tool prints its usage and exits 2; an executable this
+  system cannot load fails before it gets that far (NixOS's stub loader
+  exits 127 for one linked for other Linux distributions).
+  """
+  @spec runs(Path.t()) :: :ok | {:error, String.t()}
+  def runs(path) do
+    case System.cmd(path, [], stderr_to_stdout: true) do
+      {out, 2} ->
+        if out =~ "usage: argus-flowlog-tool",
+          do: :ok,
+          else: {:error, "it exited 2 without printing its usage: #{first_line(out)}"}
+
+      {out, status} ->
+        {:error, "it exited #{status}: #{first_line(out)}"}
+    end
+  rescue
+    # Only what says the file cannot be executed here: any other failure
+    # to start it (out of file descriptors, say) says nothing about the
+    # tool, and must not have it, and the engines beside it, discarded.
+    error in ErlangError ->
+      if error.original in [:enoexec, :eacces, :enoent],
+        do: {:error, "it could not be run: #{:file.format_error(error.original)}"},
+        else: reraise(error, __STACKTRACE__)
+  end
+
+  defp first_line(out) do
+    case out |> String.trim() |> String.split("\n", parts: 2) do
+      [""] -> "no output"
+      [line | _] -> line
     end
   end
 

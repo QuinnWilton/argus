@@ -13,6 +13,14 @@ which a change appeared; older names and APIs may have changed since then.
   was not, or when `rustc -vV` failed (a version manager's shim with no
   version set) or named a release older than 1.88. When neither Rust nor
   the bundle can be used, the message gives both reasons.
+- Prebuilt engines that do not run on the machine are no longer used. Their
+  executables are linked for a generic system, which NixOS cannot load
+  without nix-ld: `mix argus.flowlog build` failed there with
+  `{:flowlog_tool, 127, ""}`, even with Rust installed. argus now runs the
+  bundle's tool before using the bundle; with Rust it builds the toolchain
+  and engines instead, and without it says why the bundle cannot help. A
+  tool already installed from such a bundle, which does not run, is replaced
+  along with the engines beside it.
 - A no-op `mix compile` is several times faster than on 0.21 and 0.22 (the
   argus compiler over a 268-module project: about 0.5s, where it took 2.5s
   with a fresh manifest and 5.5s with one grown by edits), and the

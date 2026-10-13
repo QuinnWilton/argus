@@ -17,7 +17,10 @@ defmodule Argus.FlowLog.Prebuilt do
     * it holds only regular files where a bundle keeps them: its
       `bundle.json`, the tool at `bin/`, and each engine and its manifest
       at `engines/<digest>/`;
-    * its `bundle.json` names the same sources and platform.
+    * its `bundle.json` names the same sources and platform;
+    * its tool runs on this machine: a bundle's executables are linked
+      for a generic system of its platform, which some systems (NixOS)
+      cannot load.
 
   An engine is found by its program's digest, which argus computes for
   itself (`Argus.FlowLog.program_digest/2`): a bundle's engine for
@@ -57,6 +60,7 @@ defmodule Argus.FlowLog.Prebuilt do
           | {:download_failed, String.t(), term()}
           | {:checksum_mismatch, String.t(), String.t()}
           | {:bad_bundle, String.t()}
+          | {:unrunnable, String.t()}
 
   @doc """
   The platform a bundle must be built for, as a Rust target triple:
@@ -116,21 +120,54 @@ defmodule Argus.FlowLog.Prebuilt do
 
   @doc """
   The unpacked bundle for this platform: `{:ok, dir}` once it is
-  downloaded, checked and unpacked (once per machine), or why it cannot
-  be. `opts` take `:progress` (`Argus.FlowLog.Toolchain.announce/2`).
+  downloaded, checked and unpacked (once per machine), and its tool runs
+  here, or why it cannot be used. `opts` take `:progress`
+  (`Argus.FlowLog.Toolchain.announce/2`).
   """
   @spec fetch(keyword()) :: {:ok, Path.t()} | {:error, reason()}
   def fetch(opts \\ []) do
     with {:ok, offer} <- offer() do
       dir = Path.join([Toolchain.root(), "prebuilt", offer.sha256])
 
-      if unpacked?(dir) do
-        {:ok, dir}
-      else
-        Toolchain.locked({:prebuilt, offer.sha256}, fn ->
-          if unpacked?(dir), do: {:ok, dir}, else: download(offer, dir, opts)
-        end)
-      end
+      fetched =
+        if unpacked?(dir) do
+          {:ok, dir}
+        else
+          Toolchain.locked({:prebuilt, offer.sha256}, fn ->
+            if unpacked?(dir), do: {:ok, dir}, else: download(offer, dir, opts)
+          end)
+        end
+
+      with {:ok, dir} <- fetched, :ok <- runnable(dir), do: {:ok, dir}
+    end
+  end
+
+  # Checked once per VM, whatever the answer: a solve that finds no
+  # compiled engine installed asks the bundle for one, and on a machine
+  # that cannot run it (NixOS) would otherwise start its tool every time.
+  # The next VM checks again, so a system that has since learned to load
+  # it (nix-ld) uses it.
+  defp runnable(dir) do
+    memo = {__MODULE__, :runs, dir}
+
+    case :persistent_term.get(memo, nil) do
+      nil ->
+        verdict = check_runs(dir)
+        :persistent_term.put(memo, verdict)
+        verdict
+
+      verdict ->
+        verdict
+    end
+  end
+
+  defp check_runs(dir) do
+    with {:ok, tool} <- tool(dir),
+         :ok <- Toolchain.runs(tool) do
+      :ok
+    else
+      :error -> {:error, {:bad_bundle, "it holds no tool"}}
+      {:error, detail} -> {:error, {:unrunnable, detail}}
     end
   end
 
@@ -450,4 +487,10 @@ defmodule Argus.FlowLog.Prebuilt do
       "the download's SHA-256 is #{actual}, not the #{expected} the package names; it was not used"
 
   def describe({:bad_bundle, detail}), do: "the downloaded bundle was refused: #{detail}"
+
+  def describe({:unrunnable, detail}),
+    do:
+      "the prebuilt engines do not run on this machine (the bundle's tool: #{detail}); " <>
+        "they are linked for a generic system, which NixOS, for one, loads only with " <>
+        "nix-ld (programs.nix-ld.enable)"
 end

@@ -30,6 +30,9 @@ toolchain with [Rust](https://rustup.rs) 1.88 or later, once: a few minutes. Eve
 program then runs at once in the generic engine, and `mix argus.flowlog build`
 compiles engines for argus's own, which solve a large project up to twice as fast.
 `ARGUS_FLOWLOG_PREBUILT=0` turns the download off, so argus builds everything itself.
+The prebuilt engines are linked for a generic Linux, which NixOS runs only with
+[nix-ld](https://github.com/nix-community/nix-ld) (`programs.nix-ld.enable`); without
+it, argus finds they do not run and builds its own with Rust.
 
 Build or fetch the engines ahead of time, in CI for instance, with
 `mix argus.flowlog build`, and see what is installed with `mix argus.flowlog status`.

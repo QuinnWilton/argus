@@ -237,7 +237,8 @@ defmodule Argus.FlowLog.Program do
 
       true ->
         Toolchain.locked(:build, fn ->
-          {installed, _rest} = from_bundle(toolchain, [{{path, digest, :release}, opts}])
+          {installed, _rest, _unused} =
+            from_bundle(toolchain, [{{path, digest, :release}, opts}])
 
           case Map.get(installed, {digest, :release}) do
             :ok -> {:ok, executable(toolchain, digest)}
@@ -278,7 +279,7 @@ defmodule Argus.FlowLog.Program do
   defp build_missing(_toolchain, []), do: %{}
 
   defp build_missing(toolchain, programs) do
-    {installed, rest} = from_bundle(toolchain, programs)
+    {installed, rest, unused} = from_bundle(toolchain, programs)
 
     cond do
       rest == [] ->
@@ -293,10 +294,20 @@ defmodule Argus.FlowLog.Program do
         )
 
       true ->
+        if unused,
+          do:
+            Logger.warning(
+              "argus: building the FlowLog engines instead: " <> Prebuilt.describe(unused)
+            )
+
         Map.merge(installed, compile_all(toolchain, rest))
     end
   end
 
+  # The engines installed from the release's bundle, the programs it does
+  # not hold, and why the bundle went unused when it did (nil when it was
+  # used, or none was offered): only a caller that builds in its place
+  # says so, as a lookup that finds nothing is no news.
   defp from_bundle(toolchain, programs) do
     {shipped, others} = Enum.split_with(programs, fn {{path, _, _}, _opts} -> shipped?(path) end)
     opts = with [{_program, opts} | _] <- shipped, do: opts
@@ -317,17 +328,13 @@ defmodule Argus.FlowLog.Program do
             {key(program), Toolchain.install(engine, executable(toolchain, digest))}
           end)
 
-        {installed, unbundled ++ others}
+        {installed, unbundled ++ others, nil}
+
+      {:error, reason} when reason in [:disabled, :none] ->
+        {%{}, programs, nil}
 
       {:error, reason} ->
-        if reason not in [:disabled, :none] and shipped != [],
-          do:
-            Logger.warning(
-              "argus: building the FlowLog engines instead: " <>
-                Prebuilt.describe(reason)
-            )
-
-        {%{}, programs}
+        {%{}, programs, reason}
     end
   end
 

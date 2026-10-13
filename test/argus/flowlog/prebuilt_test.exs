@@ -21,6 +21,13 @@ defmodule Argus.FlowLog.PrebuiltTest do
   @moduletag :flowlog
   @moduletag :tmp_dir
 
+  @unrunnable """
+  #!/bin/sh
+  echo run >> "${ARGUS_TEST_TOOL_RUNS:-/dev/null}"
+  echo "Could not start dynamically linked executable: $0" >&2
+  exit 127
+  """
+
   setup_all do
     dir =
       Path.join(System.tmp_dir!(), "argus_prebuilt_test_#{System.unique_integer([:positive])}")
@@ -41,7 +48,30 @@ defmodule Argus.FlowLog.PrebuiltTest do
       )
 
     offer = offer_path |> File.read!() |> :json.decode()
-    %{archive: Path.join(dir, offer["asset"]), offer: offer, stage0: stage0, digest: built.digest}
+
+    # The same bundle, with a tool this machine cannot start: as one
+    # linked for a generic Linux is to NixOS, whose stub loader says so
+    # and exits 127.
+    broken_tool = Path.join(dir, "broken-tool")
+    File.write!(broken_tool, @unrunnable)
+    File.chmod!(broken_tool, 0o755)
+
+    {:ok, broken_path} =
+      Prebuilt.write_bundle(
+        broken_tool,
+        [{"stage0.dl", built.digest, engine, Path.join(Path.dirname(engine), "manifest.json")}],
+        Path.join(dir, "broken")
+      )
+
+    broken = broken_path |> File.read!() |> :json.decode()
+
+    %{
+      archive: Path.join(dir, offer["asset"]),
+      offer: offer,
+      broken: %{archive: Path.join([dir, "broken", broken["asset"]]), offer: broken},
+      stage0: stage0,
+      digest: built.digest
+    }
   end
 
   setup %{tmp_dir: tmp} do
@@ -204,6 +234,95 @@ defmodule Argus.FlowLog.PrebuiltTest do
       System.put_env("ARGUS_FLOWLOG_DIR", root)
       Application.put_env(:argus_beam, :flowlog_prebuilt, offer)
       assert {:error, {:other_sources, _}} = Prebuilt.offer()
+    end)
+  end
+
+  test "a bundle whose tool does not run here is not used, and the reason says why",
+       %{peer: peer, root: root, broken: broken} do
+    offer = offered(broken)
+
+    Peer.run(peer, fn ->
+      System.put_env("ARGUS_FLOWLOG_DIR", root)
+      System.put_env("ARGUS_CARGO", "/nonexistent/cargo")
+      Application.put_env(:argus_beam, :flowlog_prebuilt, offer)
+
+      assert {:error, {:unrunnable, detail}} = Prebuilt.fetch(progress: false)
+      assert detail =~ "exited 127: Could not start dynamically linked executable"
+
+      assert {:error, {:no_engines, {:rust_missing, _}, {:unrunnable, _}}} =
+               Toolchain.ensure(progress: false)
+
+      refute FlowLog.available?()
+      message = FlowLog.not_found_message()
+      assert message =~ "ARGUS_CARGO names /nonexistent/cargo"
+      assert message =~ "the prebuilt engines do not run on this machine"
+      assert message =~ "nix-ld"
+    end)
+  end
+
+  test "an installed tool that does not run here is replaced, with the engines beside it",
+       %{peer: peer, root: root, stage0: stage0, digest: digest} = context do
+    offer = offered(context)
+
+    install = fn ->
+      System.put_env("ARGUS_FLOWLOG_DIR", root)
+      Application.put_env(:argus_beam, :flowlog_prebuilt, offer)
+      assert {:ok, %Toolchain{kind: :rust} = toolchain} = Toolchain.ensure(progress: false)
+      assert :ok = FlowLog.prebuild([stage0], progress: false)
+      toolchain
+    end
+
+    toolchain = Peer.run(peer, install)
+    File.write!(Toolchain.tool(toolchain), @unrunnable)
+    engine = Program.executable(toolchain, digest)
+    assert File.regular?(engine)
+
+    # A VM that has not used the toolchain yet checks its tool.
+    Peer.run(Peer.start!(), fn ->
+      System.put_env("ARGUS_FLOWLOG_DIR", root)
+      Application.put_env(:argus_beam, :flowlog_prebuilt, offer)
+
+      {result, log} =
+        ExUnit.CaptureLog.with_log(fn -> Toolchain.ensure(progress: false) end)
+
+      assert {:ok, ^toolchain} = result
+      assert log =~ "does not run on this machine (it exited 127"
+      assert Toolchain.runs(Toolchain.tool(toolchain)) == :ok
+      refute File.exists?(engine)
+
+      assert :ok = FlowLog.prebuild([stage0], progress: false)
+      assert File.regular?(engine)
+    end)
+  end
+
+  test "with Rust, a bundle whose tool does not run here is tried once per VM, and quietly",
+       %{peer: peer, root: root, broken: broken, stage0: stage0, tmp_dir: tmp} do
+    offer = offered(broken)
+    runs = Path.join(tmp, "tool-runs")
+
+    # The suite's toolchain, built with Rust, but for its engines: no
+    # engine of stage 0's is installed, so each lookup asks the bundle.
+    {:ok, toolchain} = FlowLog.toolchain(progress: false)
+    dir = Path.join(root, Path.basename(toolchain.dir))
+    File.mkdir_p!(Path.join(dir, "engines"))
+
+    for entry <- ~w(bin sources target logs crates),
+        do: File.ln_s!(Path.join(toolchain.dir, entry), Path.join(dir, entry))
+
+    Peer.run(peer, fn ->
+      System.put_env("ARGUS_FLOWLOG_DIR", root)
+      System.put_env("ARGUS_TEST_TOOL_RUNS", runs)
+      Application.put_env(:argus_beam, :flowlog_prebuilt, offer)
+
+      {engines, log} =
+        ExUnit.CaptureLog.with_log(fn ->
+          for _ <- 1..2, do: FlowLog.engine(stage0, progress: false)
+        end)
+
+      # Nothing is built in the bundle's place: stage 0 runs generically.
+      assert [{:ok, %{kind: :generic}}, {:ok, %{kind: :generic}}] = engines
+      refute log =~ "building the FlowLog engines instead"
+      assert runs |> File.read!() |> String.split("\n", trim: true) == ["run"]
     end)
   end
 end
