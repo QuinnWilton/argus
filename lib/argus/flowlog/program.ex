@@ -359,6 +359,8 @@ defmodule Argus.FlowLog.Program do
   end
 
   defp compile_profile(toolchain, profile, programs) do
+    :ok = Toolchain.sweep_crates(toolchain)
+
     crate =
       Path.join(
         Toolchain.tmp(toolchain),

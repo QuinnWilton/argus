@@ -89,7 +89,8 @@ which a change appeared; older names and APIs may have changed since then.
   rather than putting the store in a relative path.
 - A download of the prebuilt engines stopped part way (a VM killed) no longer
   leaves its partial file behind for good: the next download or
-  `mix argus.flowlog clean` removes it an hour on.
+  `mix argus.flowlog clean` removes it an hour on. The next engine build
+  removes the crates a killed build generated.
 - `mix argus` in a project with the `:argus` compiler reports each finding
   once; the compile it runs printed them too.
 - The escript's error when it cannot run its analyses no longer says it was

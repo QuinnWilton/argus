@@ -769,6 +769,42 @@ defmodule Argus.FlowLog.Toolchain do
     end
   end
 
+  @doc """
+  Removes the crates builds left in `tmp/1` when their VM was killed
+  before it could: each is named for its VM's OS process
+  (`crate-<pid>-<n>`), and one whose process is gone is no build's. The
+  cache is the user's own, on this machine, so its builds are the user's
+  processes here.
+  """
+  @spec sweep_crates(t()) :: :ok
+  def sweep_crates(toolchain) do
+    dir = tmp(toolchain)
+
+    case File.ls(dir) do
+      {:ok, names} ->
+        for name <- names,
+            [_, pid] <- [Regex.run(~r/\Acrate-(\d+)-\d+\z/, name)],
+            pid != to_string(:os.getpid()),
+            not alive?(pid),
+            do: File.rm_rf(Path.join(dir, name))
+
+        :ok
+
+      {:error, _} ->
+        :ok
+    end
+  end
+
+  # `kill -0`, which signals nothing: exit 0 when the process is there.
+  # A shell's, as BusyBox's `ps` has no `-p`. When it cannot tell, the
+  # process is taken to be there, and its crate kept.
+  defp alive?(pid) do
+    {_, status} = System.cmd("/bin/sh", ["-c", "kill -0 \"$1\" 2>/dev/null", "sh", pid])
+    status == 0
+  rescue
+    _ -> true
+  end
+
   @doc "Where `cargo_build/6` leaves the binary `bin` it built with `profile`."
   @spec built(t(), String.t(), :release | :quick) :: Path.t()
   def built(toolchain, bin, profile \\ :release) do

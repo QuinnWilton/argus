@@ -224,6 +224,38 @@ defmodule Argus.FlowLog.ToolchainTest do
     end)
   end
 
+  test "a crate a killed build left goes, and a live build's stays", %{tmp_dir: tmp} do
+    toolchain = %Toolchain{
+      dir: tmp,
+      key: "test",
+      kind: :rust,
+      cargo: nil,
+      rustc: nil,
+      rustc_version: nil
+    }
+
+    crates = Toolchain.tmp(toolchain)
+
+    # A process that has exited, so its pid names none (until reused).
+    {pid, 0} = System.cmd("/bin/sh", ["-c", "sh -c 'echo $$' "])
+    gone = Path.join(crates, "crate-#{String.trim(pid)}-1")
+    live = Path.join(crates, "crate-#{:os.getpid()}-2")
+    # Another VM's build, still running.
+    port = Port.open({:spawn_executable, System.find_executable("sleep")}, args: ["30"])
+    {:os_pid, other} = Port.info(port, :os_pid)
+    busy = Path.join(crates, "crate-#{other}-3")
+    mine = Path.join(crates, "notes")
+
+    for dir <- [gone, live, busy, mine], do: File.mkdir_p!(Path.join(dir, "src"))
+
+    assert :ok = Toolchain.sweep_crates(toolchain)
+    refute File.exists?(gone)
+    assert File.dir?(live)
+    assert File.dir?(busy)
+    assert File.dir?(mine)
+    System.cmd("kill", [to_string(other)])
+  end
+
   test "every Linux of an architecture shares its static bundle" do
     for {arch, triple} <- [
           {"x86_64-pc-linux-gnu", "x86_64-unknown-linux-musl"},
