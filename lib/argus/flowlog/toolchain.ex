@@ -109,7 +109,9 @@ defmodule Argus.FlowLog.Toolchain do
   """
   @spec ensure(keyword()) :: {:ok, t()} | {:error, reason()}
   def ensure(opts \\ []) do
-    memo = {__MODULE__, :ensured, root(), System.get_env("PATH"), System.get_env("ARGUS_CARGO")}
+    memo =
+      {__MODULE__, :ensured, root(), System.get_env("PATH"), System.get_env("ARGUS_CARGO"),
+       build_target()}
 
     case :persistent_term.get(memo, nil) do
       %__MODULE__{} = toolchain ->
@@ -126,7 +128,7 @@ defmodule Argus.FlowLog.Toolchain do
   @doc "Forgets the builds of the tool this VM saw fail, so the next `ensure/1` tries again."
   @spec forget_failures() :: :ok
   def forget_failures do
-    for {{__MODULE__, :ensured, _, _, _} = memo, {:failed, _}} <- :persistent_term.get(),
+    for {{__MODULE__, :ensured, _, _, _, _} = memo, {:failed, _}} <- :persistent_term.get(),
         do: :persistent_term.erase(memo)
 
     :ok
@@ -503,9 +505,30 @@ defmodule Argus.FlowLog.Toolchain do
   """
   @spec key(rust()) :: String.t()
   def key(%{rustc_version: version}) do
-    :crypto.hash(:sha256, :erlang.term_to_binary({Native.digest(), version}))
+    # A build for another target is another toolchain: its engines run
+    # elsewhere, and never mix with the host's.
+    identity =
+      case build_target() do
+        nil -> {Native.digest(), version}
+        target -> {Native.digest(), version, target}
+      end
+
+    :crypto.hash(:sha256, :erlang.term_to_binary(identity))
     |> Base.encode16(case: :lower)
     |> binary_part(0, 24)
+  end
+
+  @doc """
+  The Rust target triple builds are for: `ARGUS_FLOWLOG_TARGET`, or nil
+  for the host's. A release builds its Linux bundles for a musl target
+  (`Argus.FlowLog.Prebuilt`), which links them static.
+  """
+  @spec build_target() :: String.t() | nil
+  def build_target do
+    case System.get_env("ARGUS_FLOWLOG_TARGET") do
+      target when target not in [nil, ""] -> target
+      _ -> nil
+    end
   end
 
   @doc """
@@ -695,8 +718,9 @@ defmodule Argus.FlowLog.Toolchain do
   `{:error, {:build_failed, what, log, tail}}` with Cargo's output kept
   at `log`. Uses the crate's lockfile as it stands (`--locked`), and
   goes on past a binary that fails (`--keep-going`), so the others are
-  built. Offline (`Argus.Offline`), Cargo fetches nothing (`--offline`):
-  the build uses the crates `~/.cargo` already holds.
+  built, and for `build_target/0` when it names one. Offline
+  (`Argus.Offline`), Cargo fetches nothing (`--offline`): the build uses
+  the crates `~/.cargo` already holds.
 
   `profile` is the Cargo profile, `:release` or the engine template's
   `:quick`. Cargo runs `build_jobs/0` compiles at once, and stops, with
@@ -716,6 +740,7 @@ defmodule Argus.FlowLog.Toolchain do
         Integer.to_string(build_jobs())
       ] ++
         if(Argus.Offline.offline?(), do: ["--offline"], else: []) ++
+        if(build_target(), do: ["--target", build_target()], else: []) ++
         Enum.flat_map(bins, &["--bin", &1]) ++
         ["--manifest-path", Path.join(crate, "Cargo.toml")]
 
@@ -746,8 +771,12 @@ defmodule Argus.FlowLog.Toolchain do
 
   @doc "Where `cargo_build/6` leaves the binary `bin` it built with `profile`."
   @spec built(t(), String.t(), :release | :quick) :: Path.t()
-  def built(toolchain, bin, profile \\ :release),
-    do: Path.join([target(toolchain), Atom.to_string(profile), bin])
+  def built(toolchain, bin, profile \\ :release) do
+    Path.join(
+      [target(toolchain)] ++
+        List.wrap(build_target()) ++ [Atom.to_string(profile), bin]
+    )
+  end
 
   @doc """
   How many compiles a build runs at once: `ARGUS_FLOWLOG_BUILD_JOBS`, or

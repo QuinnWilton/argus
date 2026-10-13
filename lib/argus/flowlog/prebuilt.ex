@@ -18,9 +18,8 @@ defmodule Argus.FlowLog.Prebuilt do
       `bundle.json`, the tool at `bin/`, and each engine and its manifest
       at `engines/<digest>/`;
     * its `bundle.json` names the same sources and platform;
-    * its tool runs on this machine: a bundle's executables are linked
-      for a generic system of its platform, which some systems (NixOS)
-      cannot load.
+    * its tool runs on this machine (a cache on a filesystem mounted
+      `noexec` runs nothing).
 
   An engine is found by its program's digest, which argus computes for
   itself (`Argus.FlowLog.program_digest/2`): a bundle's engine for
@@ -61,7 +60,12 @@ defmodule Argus.FlowLog.Prebuilt do
   @retry_after 3600
 
   @typedoc "A bundle the package offers for this platform."
-  @type offer :: %{url: String.t(), sha256: String.t(), bytes: non_neg_integer()}
+  @type offer :: %{
+          triple: String.t(),
+          url: String.t(),
+          sha256: String.t(),
+          bytes: non_neg_integer()
+        }
 
   @typedoc "Why no bundle is used."
   @type reason ::
@@ -78,21 +82,27 @@ defmodule Argus.FlowLog.Prebuilt do
           | {:recently_failed, String.t(), non_neg_integer(), String.t()}
           | {:untrusted_root, Path.t(), String.t()}
           | {:unwritable_root, Path.t(), String.t()}
+          | {:needs_target, String.t()}
 
   @doc """
   The platform a bundle must be built for, as a Rust target triple:
   `{:ok, triple}`, or `{:error, {:unsupported_platform, architecture}}`
-  for one no bundle is built for.
+  for one no bundle is built for. Every Linux of an architecture shares
+  one, built for musl and linked static: it needs no dynamic loader and
+  no C library of the system's, so it runs on glibc and musl systems
+  alike, of any age, and on NixOS.
   """
   @spec platform() :: {:ok, String.t()} | {:error, reason()}
-  def platform do
-    arch = to_string(:erlang.system_info(:system_architecture))
+  def platform, do: platform(to_string(:erlang.system_info(:system_architecture)))
 
+  @doc "`platform/0` for the system architecture `arch`, as the VM names it."
+  @spec platform(String.t()) :: {:ok, String.t()} | {:error, reason()}
+  def platform(arch) do
     cond do
       arch =~ ~r/\Aaarch64-apple-darwin/ -> {:ok, "aarch64-apple-darwin"}
       arch =~ ~r/\Ax86_64-apple-darwin/ -> {:ok, "x86_64-apple-darwin"}
-      arch =~ ~r/\Ax86_64-.*-linux-gnu/ -> {:ok, "x86_64-unknown-linux-gnu"}
-      arch =~ ~r/\Aaarch64-.*-linux-gnu/ -> {:ok, "aarch64-unknown-linux-gnu"}
+      arch =~ ~r/\Ax86_64-.*-linux-(gnu|musl)/ -> {:ok, "x86_64-unknown-linux-musl"}
+      arch =~ ~r/\Aaarch64-.*-linux-(gnu|musl)/ -> {:ok, "aarch64-unknown-linux-musl"}
       true -> {:error, {:unsupported_platform, arch}}
     end
   end
@@ -102,17 +112,42 @@ defmodule Argus.FlowLog.Prebuilt do
   """
   @spec offer() :: {:ok, offer()} | {:error, reason()}
   def offer do
+    arch = to_string(:erlang.system_info(:system_architecture))
+
     with :ok <- enabled(),
          {:ok, manifest} <- manifest(),
          :ok <- same_sources(manifest),
-         {:ok, triple} <- platform() do
-      case manifest["bundles"] do
-        %{^triple => %{"url" => url, "sha256" => sha, "bytes" => bytes}} ->
-          {:ok, %{url: url, sha256: String.downcase(sha), bytes: bytes}}
+         {:ok, [triple | _] = triples} <- triples(arch) do
+      bundles = manifest["bundles"] || %{}
 
-        _ ->
-          {:error, {:no_bundle, triple}}
-      end
+      Enum.find_value(triples, {:error, {:no_bundle, triple}}, fn candidate ->
+        case bundles do
+          %{^candidate => %{"url" => url, "sha256" => sha, "bytes" => bytes}} ->
+            {:ok, %{triple: candidate, url: url, sha256: String.downcase(sha), bytes: bytes}}
+
+          _ ->
+            nil
+        end
+      end)
+    end
+  end
+
+  @doc """
+  The triples of the bundles that run on a machine of the architecture
+  `arch`, the one to prefer first: `platform/1`'s, and on a glibc Linux
+  the glibc build too, which a package naming no static bundle (0.22.0's)
+  offers.
+  """
+  @spec triples(String.t()) :: {:ok, [String.t()]} | {:error, reason()}
+  def triples(arch) do
+    with {:ok, triple} <- platform(arch) do
+      glibc =
+        case Regex.run(~r/\A(x86_64|aarch64)-.*-linux-gnu/, arch) do
+          [_, cpu] -> ["#{cpu}-unknown-linux-gnu"]
+          nil -> []
+        end
+
+      {:ok, [triple | glibc]}
     end
   end
 
@@ -367,7 +402,7 @@ defmodule Argus.FlowLog.Prebuilt do
            :ok <- check_sum(file, offer.sha256),
            :ok <- check_entries(file),
            :ok <- unpack(file, scratch),
-           :ok <- check_bundle(scratch) do
+           :ok <- check_bundle(scratch, offer.triple) do
         case File.rename(scratch, dir) do
           :ok -> {:ok, dir}
           # Another VM unpacked the same bundle first.
@@ -482,10 +517,9 @@ defmodule Argus.FlowLog.Prebuilt do
     end
   end
 
-  defp check_bundle(dir) do
+  defp check_bundle(dir, triple) do
     with {:ok, text} <- File.read(Path.join(dir, "bundle.json")),
-         %{"format" => @format, "native" => native, "triple" => triple} <- :json.decode(text),
-         {:ok, ^triple} <- platform() do
+         %{"format" => @format, "native" => native, "triple" => ^triple} <- :json.decode(text) do
       if native == Native.digest(),
         do: :ok,
         else: {:error, {:bad_bundle, "built from other toolchain sources (#{native})"}}
@@ -560,6 +594,23 @@ defmodule Argus.FlowLog.Prebuilt do
         {:ok, path}
       after
         File.rm_rf(staging)
+      end
+    end
+  end
+
+  @doc """
+  Whether this machine's builds make the bundle `platform/0` names: `:ok`,
+  or `{:error, {:needs_target, triple}}` on Linux, whose bundle is the
+  static build for a musl target, unless builds are for it
+  (`Argus.FlowLog.Toolchain.build_target/0`).
+  """
+  @spec bundles_here() :: :ok | {:error, reason()}
+  def bundles_here do
+    with {:ok, triple} <- platform() do
+      cond do
+        not String.ends_with?(triple, "-linux-musl") -> :ok
+        Toolchain.build_target() == triple -> :ok
+        true -> {:error, {:needs_target, triple}}
       end
     end
   end
@@ -648,9 +699,29 @@ defmodule Argus.FlowLog.Prebuilt do
 
   def describe({:unrunnable, detail}),
     do:
-      "the prebuilt engines do not run on this machine (the bundle's tool: #{detail}); " <>
-        "they are linked for a generic system, which NixOS, for one, loads only with " <>
-        "nix-ld (programs.nix-ld.enable)"
+      "the prebuilt engines do not run on this machine (the bundle's tool: #{detail})" <>
+        unrunnable_hint(detail)
+
+  def describe({:needs_target, triple}),
+    do:
+      "a Linux bundle is the static build for #{triple}: build it with " <>
+        "ARGUS_FLOWLOG_TARGET=#{triple} (`rustup target add #{triple}`, and musl-gcc as " <>
+        "CC_#{String.replace(triple, "-", "_")})"
+
+  defp unrunnable_hint(detail) do
+    cond do
+      detail =~ "permission denied" ->
+        "; the cache may be on a filesystem mounted noexec: set ARGUS_FLOWLOG_DIR to " <>
+          "one that runs programs"
+
+      detail =~ ~r/dynamic/ ->
+        "; it is linked for a generic system, which NixOS, for one, loads only with " <>
+          "nix-ld (programs.nix-ld.enable)"
+
+      true ->
+        ""
+    end
+  end
 
   # What went wrong, as a failed download keeps it: its URL is the
   # offer's, said again when the failure is.

@@ -35,12 +35,15 @@ jobs:
           # GitHub retired macos-13; this is its last x86_64 image.
           - os: macos-15-intel
             triple: x86_64-apple-darwin
-          # The oldest glibc a hosted runner offers: a bundle runs on it
-          # and every newer one.
+          # Linux's are built for musl and linked static: one runs on every
+          # Linux of its architecture, glibc or musl, of any age, and on
+          # NixOS, needing no loader or C library of the system's.
           - os: ubuntu-22.04
-            triple: x86_64-unknown-linux-gnu
+            triple: x86_64-unknown-linux-musl
+            static: true
           - os: ubuntu-22.04-arm
-            triple: aarch64-unknown-linux-gnu
+            triple: aarch64-unknown-linux-musl
+            static: true
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -54,6 +57,16 @@ jobs:
       - name: Install Rust
         run: rustup toolchain install stable --profile minimal && rustup default stable
 
+      # The musl target, its C compiler (mimalloc is C), and the target for
+      # every build (`Argus.FlowLog.Toolchain.build_target/0`).
+      - name: Set up the static build
+        if: matrix.static
+        run: |
+          sudo apt-get update && sudo apt-get install -y musl-tools
+          rustup target add "${{ matrix.triple }}"
+          echo "ARGUS_FLOWLOG_TARGET=${{ matrix.triple }}" >> "$GITHUB_ENV"
+          echo "CC_$(echo "${{ matrix.triple }}" | tr - _)=musl-gcc" >> "$GITHUB_ENV"
+
       - name: Install dependencies
         run: mix deps.get
 
@@ -65,6 +78,23 @@ jobs:
 
       - name: Check the bundle is this platform's
         run: test -f "bundles/argus-flowlog-${{ matrix.triple }}.tar.gz"
+
+      # Every executable static, and the tool running where a dynamically
+      # linked one does not: Alpine (musl), NixOS (no FHS loader) and
+      # Debian 11 (glibc 2.31). Run bare, the tool prints its usage and
+      # exits 2.
+      - name: Check the static bundle runs on other Linuxes
+        if: matrix.static
+        run: |
+          mkdir check && tar xzf "bundles/argus-flowlog-${{ matrix.triple }}.tar.gz" -C check
+          if file check/bin/argus-flowlog-tool check/engines/*/engine | grep 'dynamically linked'; then
+            echo "an executable above is not static"; exit 1
+          fi
+          for image in alpine:3 nixos/nix:latest debian:bullseye-slim; do
+            code=0
+            docker run --rm -v "$PWD/check:/bundle:ro" "$image" /bundle/bin/argus-flowlog-tool || code=$?
+            if [ "$code" != 2 ]; then echo "the tool exits $code on $image"; exit 1; fi
+          done
 
       - uses: actions/upload-artifact@v4
         with:
@@ -124,4 +154,4 @@ jobs:
         run: >-
           gh release create "v${{ inputs.version }}" argus argus.sha256 prebuilt.json bundles/*.tar.gz
           --draft --title "argus ${{ inputs.version }}"
-          --notes "The argus escript (needs Erlang/OTP 28), and prebuilt FlowLog engines for macOS and Linux on arm64 and x86_64: argus's own analyses need no Rust there. A program of your own needs Rust 1.88 or newer (https://rustup.rs). Check the escript with: sha256sum -c <(echo \"$(cat argus.sha256)  argus\"). Before publishing the package, commit prebuilt.json as priv/flowlog/prebuilt.json."
+          --notes "The argus escript (needs Erlang/OTP 28), and prebuilt FlowLog engines for macOS and Linux on arm64 and x86_64 (static on Linux, for any distribution, NixOS included): argus's own analyses need no Rust there. A program of your own needs Rust 1.88 or newer (https://rustup.rs). Check the escript with: sha256sum -c <(echo \"$(cat argus.sha256)  argus\"). Before publishing the package, commit prebuilt.json as priv/flowlog/prebuilt.json."

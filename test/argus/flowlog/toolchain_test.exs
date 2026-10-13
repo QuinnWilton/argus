@@ -127,6 +127,33 @@ defmodule Argus.FlowLog.ToolchainTest do
     assert offline =~ "--offline"
   end
 
+  test "a build for another target is its own toolchain, and Cargo builds for it",
+       %{peer: peer, tmp_dir: tmp} do
+    args = Path.join(tmp, "args")
+    cargo = Path.join(tmp, "cargo")
+    File.write!(cargo, "#!/bin/sh\necho \"$*\" >> \"#{args}\"\n")
+    File.chmod!(cargo, 0o755)
+    crate = Path.join(tmp, "crate")
+    File.mkdir_p!(crate)
+    rust = %{cargo: cargo, rustc: cargo, rustc_version: "release: 1.90.0"}
+    toolchain = struct!(Toolchain, Map.merge(rust, %{dir: tmp, key: "test", kind: :rust}))
+    target = "aarch64-unknown-linux-musl"
+
+    {host, built} =
+      Peer.run(peer, fn ->
+        host = Toolchain.key(rust)
+        System.put_env("ARGUS_FLOWLOG_TARGET", target)
+        log = Path.join(tmp, "build.log")
+        assert :ok = Toolchain.cargo_build(toolchain, crate, ["tool"], log, :tool)
+        {host, {Toolchain.key(rust), Toolchain.built(toolchain, "tool")}}
+      end)
+
+    assert {key, path} = built
+    refute key == host
+    assert path == Path.join([tmp, "target", target, "release", "tool"])
+    assert File.read!(args) =~ "--target #{target}"
+  end
+
   test "a build of the tool that fails is tried once per VM, however many ask, and says why first",
        %{peer: peer, tmp_dir: tmp} do
     runs = Path.join(tmp, "cargo-runs")
@@ -195,6 +222,31 @@ defmodule Argus.FlowLog.ToolchainTest do
       assert message =~ "set ARGUS_FLOWLOG_DIR to a directory you can write"
       refute message =~ "belong to you"
     end)
+  end
+
+  test "every Linux of an architecture shares its static bundle" do
+    for {arch, triple} <- [
+          {"x86_64-pc-linux-gnu", "x86_64-unknown-linux-musl"},
+          {"x86_64-pc-linux-musl", "x86_64-unknown-linux-musl"},
+          {"aarch64-unknown-linux-gnu", "aarch64-unknown-linux-musl"},
+          {"aarch64-unknown-linux-musl", "aarch64-unknown-linux-musl"},
+          {"aarch64-apple-darwin23.6.0", "aarch64-apple-darwin"}
+        ],
+        do: assert(Prebuilt.platform(arch) == {:ok, triple})
+
+    assert {:error, {:unsupported_platform, _}} = Prebuilt.platform("riscv64-unknown-linux-gnu")
+  end
+
+  test "a glibc Linux takes the static bundle first, and a glibc one where none is offered" do
+    assert Prebuilt.triples("x86_64-pc-linux-gnu") ==
+             {:ok, ["x86_64-unknown-linux-musl", "x86_64-unknown-linux-gnu"]}
+
+    assert Prebuilt.triples("aarch64-unknown-linux-gnu") ==
+             {:ok, ["aarch64-unknown-linux-musl", "aarch64-unknown-linux-gnu"]}
+
+    # Nothing linked against glibc runs on a musl system, nor on a Mac.
+    assert Prebuilt.triples("x86_64-pc-linux-musl") == {:ok, ["x86_64-unknown-linux-musl"]}
+    assert Prebuilt.triples("aarch64-apple-darwin23.6.0") == {:ok, ["aarch64-apple-darwin"]}
   end
 
   describe "why there are no engines" do

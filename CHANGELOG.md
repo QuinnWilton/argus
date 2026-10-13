@@ -15,6 +15,19 @@ which a change appeared; older names and APIs may have changed since then.
   The rebar3 plugin downloads no escript, and passes `ARGUS_OFFLINE=1` to
   the one it runs. The `:argus` compiler reads `ARGUS_OFFLINE`.
 
+### Changed
+
+- The prebuilt engines for Linux are built for musl and linked static
+  (`x86_64-unknown-linux-musl`, `aarch64-unknown-linux-musl`), and every
+  Linux of the architecture uses them. 0.22.0's, linked against glibc 2.34,
+  did not run on NixOS without nix-ld, on Alpine, or on Debian 11, Ubuntu
+  20.04, RHEL 8 and Amazon Linux 2, which needed Rust instead. A release's
+  CI checks each Linux bundle is static, and that its tool runs on Alpine,
+  NixOS and Debian 11. `mix argus.flowlog bundle` on Linux needs
+  `ARGUS_FLOWLOG_TARGET` set to the musl target, which every build then
+  uses. A glibc Linux still takes a glibc bundle when a package offers no
+  static one (0.22.0's).
+
 ### Fixed
 
 - A machine without Rust runs the analyses on the release's prebuilt engines,
@@ -57,9 +70,9 @@ which a change appeared; older names and APIs may have changed since then.
   as the other way, rather than opening with "install Rust". A failed
   download is said in words ("cannot connect to github.com:443: non-existing
   domain"), its URL once.
-- A bundle that does not run says why: the dynamic loader it names is not on
-  the system (NixOS), or the system's glibc is older than the one it needs
-  (2.34; Debian 11, Ubuntu 20.04, RHEL 8 and Amazon Linux 2 build with Rust).
+- A tool that does not run says why: the dynamic loader it names is not on
+  the system (NixOS), the system's glibc is older than the one it needs, or
+  (permission denied) the cache is on a filesystem mounted noexec.
 - A build of the FlowLog toolchain that fails is tried once per run, not once
   per analysis, and its error leads with the cause: without a C compiler,
   "linker `cc` not found" and how to install one, not a "could not compile"

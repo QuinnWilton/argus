@@ -63,7 +63,10 @@ defmodule Mix.Tasks.Argus.Flowlog do
   engine with its offer (`Argus.FlowLog.Prebuilt`), and `prebuilt` names
   them all, by URL and SHA-256, in the package argus publishes. A
   machine of a platform with a bundle then needs no Rust for argus's own
-  analyses.
+  analyses. A Linux bundle is the static build for a musl target, which
+  every Linux of its architecture runs: `bundle` there needs
+  `ARGUS_FLOWLOG_TARGET` set to it (`<arch>-unknown-linux-musl`), its Rust
+  target installed, and a musl C compiler.
 
   `build` tries a download of the prebuilt engines that failed less than
   an hour ago again at once (`Argus.FlowLog.Prebuilt.forget_failures/0`).
@@ -166,7 +169,8 @@ defmodule Mix.Tasks.Argus.Flowlog do
     System.put_env("ARGUS_FLOWLOG_PREBUILT", "0")
     programs = FlowLog.builtin_programs()
 
-    with :ok <- FlowLog.prebuild(programs, progress: &info/1),
+    with :ok <- Prebuilt.bundles_here(),
+         :ok <- FlowLog.prebuild(programs, progress: &info/1),
          {:ok, toolchain} <- FlowLog.toolchain(progress: false),
          {:ok, engines} <- bundled_engines(toolchain, programs),
          {:ok, offer} <-
@@ -576,7 +580,7 @@ defmodule Mix.Tasks.Argus.Flowlog do
   defp info(message), do: Mix.shell().info(message)
 
   defp describe(reason)
-       when is_tuple(reason) and elem(reason, 0) in [:download_failed, :bad_bundle],
+       when is_tuple(reason) and elem(reason, 0) in [:download_failed, :bad_bundle, :needs_target],
        do: Prebuilt.describe(reason)
 
   defp describe(reason), do: FlowLog.describe_error(reason)
