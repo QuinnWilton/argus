@@ -170,7 +170,7 @@ defmodule Argus.Schema.Dependence do
         doc: """
         A send or external runtime effect controlled by a test on the source. Includes \
         process, port, file, network, and node effects classified by \
-        `Argus.Purity.Effects`; excludes logging. Project calls use `call_decided`. \
+        `Argus.EffectModel`; excludes logging. Project calls use `call_decided`. \
         Function-level.
         """
       }

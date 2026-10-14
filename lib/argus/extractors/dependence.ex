@@ -70,7 +70,7 @@ defmodule Argus.Extractors.Dependence do
     under a key match would otherwise be compared with the key.
   - `effect_decided(func, kind, source)` — a message send, or a runtime
     call that changes something outside the function
-    (`Argus.Purity.Effects`: a process, a port, a file, the network, a
+    (`Argus.EffectModel`: a process, a port, a file, the network, a
     node; logging, clocks, randomness and the process dictionary are not
     counted), runs only because of a test on the source. The runtime's
     calls are otherwise not emitted (below); a project call under a
@@ -116,6 +116,7 @@ defmodule Argus.Extractors.Dependence do
   @behaviour Argus.Extractor
 
   alias Argus.Cfg.Function, as: CfgFunction
+  alias Argus.EffectModel
   alias Argus.Extractor.CallSites
   alias Argus.Extractor.Helpers
   alias Argus.Extractor.Resolve
@@ -128,7 +129,6 @@ defmodule Argus.Extractors.Dependence do
   alias Argus.Extractors.ProcessRegistry
   alias Argus.Instr
   alias Argus.InstrId
-  alias Argus.Purity.Effects
 
   import Argus.Instr, only: [register: 1]
   import Argus.Extractor.Facts, only: [add_fact: 3]
@@ -776,7 +776,7 @@ defmodule Argus.Extractors.Dependence do
   @quiet_effects [:logging, :time, :random, :process_dict, :ets]
 
   defp effect?({mod, fun, _arity}) do
-    case Effects.classify(inspect(mod), to_string(fun)) do
+    case EffectModel.classify(inspect(mod), to_string(fun)) do
       {:impure, category, :write} -> category not in @quiet_effects
       _other -> false
     end

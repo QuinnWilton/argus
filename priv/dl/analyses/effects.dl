@@ -28,7 +28,7 @@ declared_pure(func) :- pure_contract(func, _, _, _).
 
 // Direct effects
 //
-// `impure_call` supplies the classifications from `Argus.Purity.Effects`. Layer-1
+// `impure_call` supplies the classifications from `Argus.EffectModel`. Layer-1
 // instructions supply intrinsic effects such as sends.
 
 // `site` anchors the finding at the effect's instruction. Receives span an instruction

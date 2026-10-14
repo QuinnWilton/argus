@@ -1,4 +1,4 @@
-defmodule Argus.Purity.Effects do
+defmodule Argus.EffectModel do
   @moduledoc """
   The effect model: which calls are observable effects, and which are known
   to be free of them.
@@ -615,22 +615,22 @@ defmodule Argus.Purity.Effects do
   @doc """
   Classify a remote call.
 
-      iex> Argus.Purity.Effects.classify("IO", "puts")
+      iex> Argus.EffectModel.classify("IO", "puts")
       {:impure, :io, :write}
 
-      iex> Argus.Purity.Effects.classify("Application", "get_env")
+      iex> Argus.EffectModel.classify("Application", "get_env")
       {:impure, :process, :read}
 
-      iex> Argus.Purity.Effects.classify(":erlang", "+")
+      iex> Argus.EffectModel.classify(":erlang", "+")
       :pure
 
-      iex> Argus.Purity.Effects.classify(":erlang", "put")
+      iex> Argus.EffectModel.classify(":erlang", "put")
       {:impure, :process_dict, :write}
 
-      iex> Argus.Purity.Effects.classify("String.Chars", "to_string")
+      iex> Argus.EffectModel.classify("String.Chars", "to_string")
       {:opaque, :protocol}
 
-      iex> Argus.Purity.Effects.classify("MyApp.Repo", "all")
+      iex> Argus.EffectModel.classify("MyApp.Repo", "all")
       :unknown
   """
   @spec classify(String.t(), String.t()) :: verdict()
@@ -678,13 +678,13 @@ defmodule Argus.Purity.Effects do
   its argument, beside `node/0`, which reads the local node) is pure;
   every other call is classified by `classify/2`.
 
-      iex> Argus.Purity.Effects.classify(":erlang", "node", 0)
+      iex> Argus.EffectModel.classify(":erlang", "node", 0)
       {:impure, :node, :read}
 
-      iex> Argus.Purity.Effects.classify(":erlang", "node", 1)
+      iex> Argus.EffectModel.classify(":erlang", "node", 1)
       :pure
 
-      iex> Argus.Purity.Effects.classify(":erlang", "self", 0)
+      iex> Argus.EffectModel.classify(":erlang", "self", 0)
       {:impure, :process, :read}
   """
   @spec classify(String.t(), String.t(), non_neg_integer()) :: verdict()
@@ -699,10 +699,10 @@ defmodule Argus.Purity.Effects do
   @doc """
   Whether a call changes anything, or merely observes it.
 
-      iex> Argus.Purity.Effects.mode("File", "read")
+      iex> Argus.EffectModel.mode("File", "read")
       :read
 
-      iex> Argus.Purity.Effects.mode("File", "write")
+      iex> Argus.EffectModel.mode("File", "write")
       :write
   """
   @spec mode(String.t(), String.t()) :: mode()

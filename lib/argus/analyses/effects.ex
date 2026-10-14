@@ -30,7 +30,7 @@ defmodule Argus.Analyses.Effects do
   @behaviour Argus.Analysis
 
   alias Argus.Findings
-  alias Argus.Purity.Effects
+  alias Argus.EffectModel
 
   @impl true
   def name, do: :effects
@@ -174,7 +174,7 @@ defmodule Argus.Analyses.Effects do
       at_label: "declared pure here",
       related: effect_frame("the call the effect model has no entry for", site),
       help: [
-        "if #{api} is effect-free, add it to Argus.Purity.Effects and this becomes " <>
+        "if #{api} is effect-free, add it to Argus.EffectModel and this becomes " <>
           "a verified contract; otherwise drop `@pure`"
       ]
     )
@@ -296,7 +296,7 @@ defmodule Argus.Analyses.Effects do
   # The api as the rows spell it, `Module.function/arity`.
   defp read_api?(api) do
     case Regex.run(~r{^(.+)\.([^./]+)/\d+$}, api) do
-      [_, module, function] -> Effects.mode(module, function) == :read
+      [_, module, function] -> EffectModel.mode(module, function) == :read
       nil -> false
     end
   end

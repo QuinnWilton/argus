@@ -34,7 +34,7 @@ defmodule Argus.Schema.Purity do
           {:mode, :symbol, "read (observes state) or write (changes it)"}
         ],
         doc: """
-        A known observable call effect (`Argus.Purity.Effects`). Category identifies the \
+        A known observable call effect (`Argus.EffectModel`). Category identifies the \
         effect; mode distinguishes reads from writes. Purity rejects both, while \
         transaction checks report only writes that cannot be rolled back.
         """

@@ -324,7 +324,7 @@
 .decl dynamic_child_restart(sup: symbol, child_mod: symbol, caller_func: symbol, restart: symbol) mutable
 .input dynamic_child_restart
 
-// A send or external runtime effect controlled by a test on the source. Includes process, port, file, network, and node effects classified by `Argus.Purity.Effects`; excludes logging. Project calls use `call_decided`. Function-level.
+// A send or external runtime effect controlled by a test on the source. Includes process, port, file, network, and node effects classified by `Argus.EffectModel`; excludes logging. Project calls use `call_decided`. Function-level.
 //
 .decl effect_decided(func: symbol, kind: symbol, source: symbol) mutable
 .input effect_decided
@@ -498,7 +498,7 @@
 .decl imprecision(category: symbol, func: symbol, relation: symbol, reason: symbol) mutable
 .input imprecision
 
-// A known observable call effect (`Argus.Purity.Effects`). Category identifies the effect; mode distinguishes reads from writes. Purity rejects both, while transaction checks report only writes that cannot be rolled back.
+// A known observable call effect (`Argus.EffectModel`). Category identifies the effect; mode distinguishes reads from writes. Purity rejects both, while transaction checks report only writes that cannot be rolled back.
 //
 .decl impure_call(id: symbol, caller: symbol, api: symbol, category: symbol, mode: symbol) mutable
 .input impure_call

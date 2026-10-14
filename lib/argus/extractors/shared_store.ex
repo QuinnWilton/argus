@@ -10,6 +10,7 @@ defmodule Argus.Extractors.SharedStore do
 
   @behaviour Argus.Extractor
 
+  alias Argus.EffectModel
   alias Argus.Extractor.CallSites
   alias Argus.Extractor.Helpers
   alias Argus.Extractor.Identity
@@ -18,7 +19,6 @@ defmodule Argus.Extractors.SharedStore do
   alias Argus.Extractors.SecurityValues
   alias Argus.Instr
   alias Argus.InstrId
-  alias Argus.Purity.Effects
 
   import Argus.Extractor.Facts, only: [add_fact: 3]
 
@@ -369,7 +369,7 @@ defmodule Argus.Extractors.SharedStore do
   defp stable_instruction?(instruction) do
     case Helpers.match_remote_call(instruction) do
       {:ok, mod, fun, arity} ->
-        Effects.classify(inspect(mod), Atom.to_string(fun), arity) == :pure
+        EffectModel.classify(inspect(mod), Atom.to_string(fun), arity) == :pure
 
       :none ->
         stable_noncall?(instruction)
@@ -388,5 +388,5 @@ defmodule Argus.Extractors.SharedStore do
   end
 
   defp pure_bif?(fun, args),
-    do: Effects.classify(":erlang", Atom.to_string(fun), length(args)) == :pure
+    do: EffectModel.classify(":erlang", Atom.to_string(fun), length(args)) == :pure
 end

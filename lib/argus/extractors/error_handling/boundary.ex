@@ -27,10 +27,10 @@ defmodule Argus.Extractors.ErrorHandling.Boundary do
   the line.
   """
 
+  alias Argus.EffectModel
   alias Argus.Extractor.Dispatch
   alias Argus.Extractor.Helpers
   alias Argus.Pipeline.Disassemble
-  alias Argus.Purity.Effects
 
   # Calls whose failure is the state of something else: a process, a
   # node, a port, a registered name. The first four are :erlang BIFs a
@@ -269,7 +269,7 @@ defmodule Argus.Extractors.ErrorHandling.Boundary do
   # `Logger.info(inspect(r))`: the try protects do_work too. Without a
   # line table the second test cannot be made, and nothing qualifies.
   #
-  # And every such producer is pure (`Argus.Purity.Effects`: a pure
+  # And every such producer is pure (`Argus.EffectModel`: a pure
   # call, a formatting protocol such as `inspect/2`, a pure BIF, a
   # guard test): real work inside the arguments —
   # `:logger.info("~p", [apply_entry!(t, e)])`, or an Erlang
@@ -281,7 +281,7 @@ defmodule Argus.Extractors.ErrorHandling.Boundary do
   # `(ra_env:logger_mod()):log(...)`).
   #
   # The log call is a logger API — the logging modules of the effect
-  # model (`Argus.Purity.Effects`: `:logger`, `:error_logger`, `Logger`,
+  # model (`Argus.EffectModel`: `:logger`, `:error_logger`, `Logger`,
   # the side paths calls.dl's side_api names too), at the functions that
   # emit a line — or an apply of `log` shaped as the logger's own
   # `log(Level, ...)`, its first argument a log level: the
@@ -353,7 +353,7 @@ defmodule Argus.Extractors.ErrorHandling.Boundary do
   end
 
   # A producer that does no work of its own: a guard test, a pure BIF, a
-  # pure call or a formatting protocol (`Argus.Purity.Effects`). A call
+  # pure call or a formatting protocol (`Argus.EffectModel`). A call
   # into the program, or through a fun, is not.
   defp pure?({:test, _, _, _}), do: true
   defp pure?({:test, _, _, _, _}), do: true
@@ -377,7 +377,7 @@ defmodule Argus.Extractors.ErrorHandling.Boundary do
   end
 
   defp pure_call?(m, f, a) do
-    case Effects.classify(inspect(m), to_string(f), a) do
+    case EffectModel.classify(inspect(m), to_string(f), a) do
       :pure -> true
       {:opaque, :protocol} -> true
       _ -> false
@@ -703,7 +703,7 @@ defmodule Argus.Extractors.ErrorHandling.Boundary do
   end
 
   defp logging_module?(m, f, a),
-    do: match?({:impure, :logging, _}, Effects.classify(inspect(m), to_string(f), a))
+    do: match?({:impure, :logging, _}, EffectModel.classify(inspect(m), to_string(f), a))
 
   @doc "Whether `instr` is an operation whose failure is another process's, a port's or a name's."
   @spec boundary?(tuple() | atom()) :: boolean()

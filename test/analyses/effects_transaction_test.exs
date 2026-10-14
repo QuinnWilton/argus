@@ -2,7 +2,7 @@ defmodule Argus.Analyses.EffectsTransactionTest do
   use ExUnit.Case, async: true
   @moduletag :flowlog
 
-  alias Argus.Purity.Effects
+  alias Argus.EffectModel
   alias Argus.Test.Fixtures.Transaction, as: T
   alias Argus.Test.Memo
   alias Argus.Test.Rows
@@ -159,32 +159,32 @@ defmodule Argus.Analyses.EffectsTransactionTest do
       # The model dimension this analysis rests on. Without it every
       # Application.get_env/2 in a transaction is a finding, and the real
       # ones drown.
-      assert {:impure, :process, :read} = Effects.classify("Application", "get_env")
-      assert {:impure, :process, :write} = Effects.classify("Application", "put_env")
+      assert {:impure, :process, :read} = EffectModel.classify("Application", "get_env")
+      assert {:impure, :process, :write} = EffectModel.classify("Application", "put_env")
 
-      assert {:impure, :io, :read} = Effects.classify("File", "read")
-      assert {:impure, :io, :write} = Effects.classify("File", "write")
+      assert {:impure, :io, :read} = EffectModel.classify("File", "read")
+      assert {:impure, :io, :write} = EffectModel.classify("File", "write")
 
-      assert {:impure, :ets, :read} = Effects.classify(":ets", "lookup")
-      assert {:impure, :ets, :write} = Effects.classify(":ets", "insert")
+      assert {:impure, :ets, :read} = EffectModel.classify(":ets", "lookup")
+      assert {:impure, :ets, :write} = EffectModel.classify(":ets", "insert")
     end
 
     @tag flowlog: false
     test "an unlisted effect defaults to write" do
       # The safe direction: a false "irreversible" costs a look, a false
       # "harmless" costs the bug.
-      assert {:impure, :network, :write} = Effects.classify(":httpc", "request")
+      assert {:impure, :network, :write} = EffectModel.classify(":httpc", "request")
 
-      assert {:impure, :process, :write} = Effects.classify("Phoenix.PubSub", "broadcast")
-      assert {:impure, :process, :read} = Effects.classify("Phoenix.PubSub", "node_name")
-      assert {:impure, :network, :write} = Effects.classify("Req", "get!")
-      assert Effects.classify("Req", "new") != {:impure, :network, :write}
+      assert {:impure, :process, :write} = EffectModel.classify("Phoenix.PubSub", "broadcast")
+      assert {:impure, :process, :read} = EffectModel.classify("Phoenix.PubSub", "node_name")
+      assert {:impure, :network, :write} = EffectModel.classify("Req", "get!")
+      assert EffectModel.classify("Req", "new") != {:impure, :network, :write}
 
       # :timer arms timers, and converts units without one.
-      assert {:impure, :process, :write} = Effects.classify(":timer", "send_after")
-      assert :pure = Effects.classify(":timer", "seconds")
-      assert :pure = Effects.classify(":timer", "hms")
-      assert Effects.mode("SomeUnknown", "thing") == :write
+      assert {:impure, :process, :write} = EffectModel.classify(":timer", "send_after")
+      assert :pure = EffectModel.classify(":timer", "seconds")
+      assert :pure = EffectModel.classify(":timer", "hms")
+      assert EffectModel.mode("SomeUnknown", "thing") == :write
     end
 
     test "purity still rejects reads, which reversibility does not" do
@@ -192,7 +192,7 @@ defmodule Argus.Analyses.EffectsTransactionTest do
       # the other — which is the whole reason for two dimensions.
       assert for_module(findings(), "ReadsConfig") == []
 
-      assert {:impure, :process_dict, :read} = Effects.classify("Process", "get")
+      assert {:impure, :process_dict, :read} = EffectModel.classify("Process", "get")
     end
   end
 end

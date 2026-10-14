@@ -14,7 +14,7 @@ defmodule Argus.Extractors.Purity do
   - `unknown_call(id, caller, api)` — a call the effect model has no
     opinion about.
 
-  The classification lives in Elixir (`Argus.Purity.Effects`) rather than in
+  The classification lives in Elixir (`Argus.EffectModel`) rather than in
   Datalog for two reasons. It is a large table that wants unit tests and
   doctests, and expressing it as rules would mean either hundreds of facts
   or string surgery — and string surgery in these rules once produced a
@@ -25,7 +25,7 @@ defmodule Argus.Extractors.Purity do
 
   alias Argus.InstrId
   alias Argus.Pipeline.Emit.Applies
-  alias Argus.Purity.Effects
+  alias Argus.EffectModel
 
   import Argus.Extractor.Helpers,
     only: [attribute_values: 2, each_remote_call: 3, scan_functions: 4]
@@ -117,7 +117,7 @@ defmodule Argus.Extractors.Purity do
     api = "#{mod_str}.#{func_str}/#{arity}"
     id = InstrId.mint(ctx.func_id, ctx.idx)
 
-    case Effects.classify(mod_str, func_str, arity) do
+    case EffectModel.classify(mod_str, func_str, arity) do
       {:impure, category, mode} ->
         add_fact(facts, :impure_call, [
           id,
