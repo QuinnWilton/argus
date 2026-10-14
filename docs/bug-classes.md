@@ -18,7 +18,7 @@ it and the limits to consider when reviewing it.
 | [Races](analyses/races.md) | Harmful interleavings on names, ETS rows, Mnesia records and shared-cache claims. |
 | [State machines](analyses/state-machine.md) | Unreachable states and states with no exit. |
 | [ETS](analyses/ets.md) | Table ownership, restart windows and access patterns. |
-| [Effects](analyses/effects.md) | Purity contracts and effects that transactions cannot undo. |
+| [Effects](analyses/effects.md) | Effects inside a transaction that a rollback cannot undo. |
 | [Unsafe input](analyses/unsafe-input.md) | Resource exhaustion, code/SQL/HTML injection, upload path traversal and unenforced cryptographic verification. |
 | [Exposure](analyses/exposure.md) | Inspect-visible secrets and TLS verification settings. |
 | [Coverage](analyses/coverage.md) | Facts the analysis could not recover; opt-in and informational. |
@@ -35,7 +35,7 @@ Severity combines the consequence with the strength of the available evidence:
 |---|---|
 | **error** | Strong structural or data-flow evidence: a broken callback contract, conflicting registration, self-call or explicitly disabled control. |
 | **warning** | A crash, hang, leak or lost update under a plausible failure, repeated operation or timing window. |
-| **info** | A performance hint, uncertain lifetime or intent, weaker evidence, coverage gap or successful verification. |
+| **info** | A performance hint, uncertain lifetime or intent, weaker evidence or coverage gap. |
 
 These are review priorities, not proofs that a particular execution will fail.
 Some findings use explicit assumptions even at error severity. Read the entry's

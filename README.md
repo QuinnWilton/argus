@@ -147,7 +147,7 @@ The analyses marked ✓ run by default.
 | `blocking` | call cycles, nested waits, bottlenecks and unsafe distributed calls | |
 | `state_machine` | unreachable `gen_statem` states and terminal states that never stop | |
 | `ets` | table ownership, lifecycle and access-pattern problems | |
-| `effects` | violated `@pure` contracts and effects a transaction cannot undo | |
+| `effects` | effects inside a transaction that a rollback cannot undo | |
 | `unsafe_input` | atom exhaustion, unsafe deserialization and code execution | |
 | `exposure` | inspect-visible secrets and TLS connections without peer verification | |
 
