@@ -159,7 +159,9 @@ defmodule Argus.Graph.FunctionPackTest do
   } do
     Peer.run(peer, fn ->
       first = open(dir)
-      set_beam(first.db, compile(1))
+      # Enough functions that the base segment is a blob of its own beside
+      # the pack, and the small ones are held in it.
+      set_beam(first.db, compile(1, 60))
 
       expected =
         for query <- [:module_facts, :module_in_process] do
@@ -175,7 +177,9 @@ defmodule Argus.Graph.FunctionPackTest do
       try do
         for {query, pack, chunks} <- expected do
           {:ok, index} = Blob.get_term(restored.db.blob, pack.pack)
-          segments = Enum.map(index, &elem(&1, 1))
+          segments = for {_producer, digest, _} when is_binary(digest) <- index, do: digest
+          held = for {_producer, rows, _} when is_map(rows) <- index, do: rows
+          assert query == :module_in_process or (segments != [] and held != [])
 
           for removed <- [[pack.pack], Enum.take(segments, 1), [pack.pack | segments]] do
             for digest <- Enum.uniq(removed), do: File.rm!(Blob.path(restored.db.blob, digest))
@@ -356,12 +360,21 @@ defmodule Argus.Graph.FunctionPackTest do
   defp set_beam(db, bytes),
     do: Input.set(db, :beam, :fixture, %{data: bytes, hash: Blob.digest(bytes)})
 
-  defp compile(value) do
+  # The fixture, with `padding` functions more, each returning a literal
+  # of its own that compresses poorly.
+  defp compile(value, padding \\ 0) do
+    padded =
+      for i <- 1..padding//1 do
+        literal = Base.encode64(:crypto.hash(:sha512, "#{i}:#{value}"))
+        "def pad#{i}, do: #{inspect(literal)}\n"
+      end
+
     [{_, bytes}] =
       Code.compile_string("""
       defmodule FunctionPackFixture do
         def run(table, key), do: :ets.lookup(table, {key, #{value}})
         def closure(table), do: fn key -> :ets.delete(table, key) end
+        #{padded}
       end
       """)
 

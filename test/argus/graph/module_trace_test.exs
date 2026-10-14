@@ -107,7 +107,9 @@ defmodule Argus.Graph.ModuleTraceTest do
     tmp_dir: dir
   } do
     Peer.run(peer, fn ->
-      beam = compile(1)
+      # Enough functions that the base segment is a blob of its own, not
+      # held in the pack.
+      beam = compile(1, 60)
       expected = seed(dir, beam)
       session = open(dir)
       db = session.db
@@ -122,6 +124,7 @@ defmodule Argus.Graph.ModuleTraceTest do
         {:ok, rows} = Pack.chunks(db.blob, expected.pack, [:function_def])
         {:ok, index} = Blob.get_term(db.blob, expected.pack)
         {:base, segment, _relations} = List.keyfind(index, :base, 0)
+        assert is_binary(segment)
         File.rm!(Blob.path(db.blob, segment))
 
         assert Pack.read_chunks(db, :module_facts, :fixture, expected.pack, [:function_def]) ==
@@ -205,11 +208,20 @@ defmodule Argus.Graph.ModuleTraceTest do
     Input.set(db, :beam, key, value)
   end
 
-  defp compile(value) do
+  # The fixture, with `padding` functions more, each returning a literal
+  # of its own that compresses poorly.
+  defp compile(value, padding \\ 0) do
+    padded =
+      for i <- 1..padding//1 do
+        literal = Base.encode64(:crypto.hash(:sha512, "#{i}:#{value}"))
+        "def pad#{i}, do: #{inspect(literal)}\n"
+      end
+
     [{_, beam}] =
       Code.compile_string("""
       defmodule ModuleTraceFixture do
         def run(table), do: :ets.lookup(table, #{value})
+        #{padded}
       end
       """)
 

@@ -5,7 +5,8 @@ defmodule Argus.Graph.LostSegmentTest do
   module is extracted again, the blobs it names are put back, and the
   run goes on. Reading the module's chunks raised
   `Roux.Blob.MissingError` instead, on every run that assembled a
-  relation from them, until the store was cleared.
+  relation from them, until the store was cleared. A small segment is
+  held in the module's pack, and is lost with the pack.
   """
 
   use ExUnit.Case, async: true
@@ -24,10 +25,11 @@ defmodule Argus.Graph.LostSegmentTest do
 
   setup %{tmp_dir: tmp} do
     # A store of its own, where a first run extracted the modules and
-    # kept each one's trace; then the base segment of one is gone.
+    # kept each one's trace; then the blob holding the base segment of
+    # one is gone.
     store = Path.join(tmp, "store")
     assert {:ok, _} = Argus.analyze(@modules, :mailbox, store: store)
-    segment = base_segment(store, @lost)
+    segment = base_blob(store, @lost)
     File.rm!(Blob.path(Blob.open!(store), segment))
     refute Blob.member?(Blob.open!(store), segment)
 
@@ -36,15 +38,16 @@ defmodule Argus.Graph.LostSegmentTest do
 
   defp path(module), do: module |> :code.which() |> List.to_string()
 
-  # The base segment of `module`'s pack, as its kept trace names it.
-  defp base_segment(store, module) do
+  # The blob holding the base segment of `module`'s pack, as its kept
+  # trace names it: the segment's own, or the pack when it holds it.
+  defp base_blob(store, module) do
     db = Graph.new_db(%{module => path(module)}, store: Blob.open!(store))
 
     try do
       {:ok, %{pack: pack}} = Argus.Graph.Extraction.module_facts(db, path(module))
       {:ok, index} = Blob.get_term(db.blob, pack)
       [segment] = for {:base, segment, _relations} <- index, do: segment
-      segment
+      if is_binary(segment), do: segment, else: pack
     after
       Roux.Database.shutdown(db)
     end

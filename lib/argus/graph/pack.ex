@@ -1,7 +1,7 @@
 defmodule Argus.Graph.Pack do
   @moduledoc """
   A module's facts as the query graph keeps them: text, one segment per
-  producer in the blob store (`Roux.Blob`). `Argus.Graph.FunctionPack`
+  producer, in the blob store (`Roux.Blob`). `Argus.Graph.FunctionPack`
   extracts them, function by function, and `Argus.Graph.ModuleTrace`
   finds a module's pack again.
 
@@ -10,18 +10,32 @@ defmodule Argus.Graph.Pack do
   A module's rows from one producer (`Argus.Pipeline`'s `:base` and each
   extractor) are that producer's *segment*: for each relation it has
   rows for, the bytes of its lines as a `.facts` file holds them
-  (`Argus.Pipeline.Writer.encode/2`), in one blob. A producer with no
-  rows for the module has none. The module's *pack* is their index:
-  each producer that has a segment, in producer order, with the
-  segment's digest and the relations it holds. A relation's chunk of the
-  module is its producers' bytes joined in that order (`chunks/4`), and a
-  relation's file is its modules' chunks joined (`Argus.Graph.Relations`).
+  (`Argus.Pipeline.Writer.encode/2`). A producer with no rows for the
+  module has none. The module's *pack* is their index, a blob: each
+  producer that has a segment, in producer order, with the segment and
+  the relations it holds. A relation's chunk of the module is its
+  producers' bytes joined in that order (`chunks/4`), and a relation's
+  file is its modules' chunks joined (`Argus.Graph.Relations`).
+
+  A segment is held in the pack itself when it is small: when its
+  stored form (`Roux.Blob.encode_term/1`) is at most `inline_limit/0`
+  bytes, one block of the file systems a store lives on. Most are (a
+  producer has rows for a few relations of a module, often a few
+  lines), and a blob of their own cost each a file, written, linked into
+  place and its staging name removed, for bytes the pack holds in less
+  room than a block. A larger segment is a blob of its own, named in the
+  pack by its digest: it is written once however many packs name it,
+  so an edit that leaves a producer's rows alone does not write them
+  again. A pack written before small segments were held in it names
+  every segment by digest, and reads the same.
 
   Each relation of the module is named by a digest of its chunk: the
   SHA-256 of its bytes when one producer has rows for it, as all but a
   few relations have, else of its producers' digests, in producer
-  order. So a producer that runs again writes its own segment alone,
-  and the module's digests are made without reading any other.
+  order: what a relation is named by does not depend on where its
+  segment is held. So a producer that runs again writes its own segment
+  and the pack (the pack alone, for a segment held in it), and the
+  module's digests are made without reading any other.
 
   ## A blob the store lost
 
@@ -32,7 +46,8 @@ defmodule Argus.Graph.Pack do
   extracts the module again, as a cold run does, and puts the blobs back
   under the digests the pack names — the same beam under the same code
   makes the same bytes — so the run goes on and every later one finds
-  them (`restore/2`).
+  them (`restore/2`). A segment held in the pack is lost only with it,
+  and comes back with it.
   """
 
   alias Argus.Pipeline
@@ -43,6 +58,11 @@ defmodule Argus.Graph.Pack do
   # producers' digests, under a prefix no single chunk's digest is
   # taken over.
   @joined "argus-joined-chunk\n"
+
+  # A block of APFS and ext4: a segment stored in no more is held in the
+  # pack, where it costs no more room than the block its own file takes,
+  # and spares the file. See "Segments and packs".
+  @inline_limit 4096
 
   @typedoc """
   A module's facts: its name, its pack's digest, each relation's chunk
@@ -56,10 +76,14 @@ defmodule Argus.Graph.Pack do
         }
 
   @typedoc """
-  A pack: each producer with a segment, in producer order, with its
-  segment's digest and the relations the segment holds.
+  A pack: each producer with a segment, in producer order, with the
+  segment — its rows, when the pack holds it, else its blob's digest —
+  and the relations the segment holds.
   """
-  @type pack :: [{Pipeline.producer(), Blob.digest(), [atom()]}]
+  @type pack :: [{Pipeline.producer(), segment() | Blob.digest(), [atom()]}]
+
+  @typedoc "A producer's rows of a module: each relation's encoded bytes."
+  @type segment :: %{atom() => binary()}
 
   @typedoc """
   Which of a module's relations a pack holds: `:extracted`, every one
@@ -72,9 +96,9 @@ defmodule Argus.Graph.Pack do
 
   @doc """
   A module's facts from each producer's encoded rows
-  (`Argus.Pipeline.Writer.encode/2`), in producer order: each segment
-  and the pack put into the store, and the blobs the value names, for
-  the query that makes it to hold.
+  (`Argus.Pipeline.Writer.encode/2`), in producer order: the pack put
+  into the store, each segment held in it or put beside it, and the
+  blobs the value names, for the query that makes it to hold.
   """
   @spec from_segments(Blob.t(), module() | nil, [{Pipeline.producer(), map()}]) ::
           {t(), [Blob.digest()]}
@@ -87,23 +111,28 @@ defmodule Argus.Graph.Pack do
           do: {producer, segment, relations |> Map.keys() |> Enum.sort()}
 
     {:ok, pack} = Blob.put_term(store, index)
-    held = [pack | for({_, %{segment: segment}} <- chosen, segment != nil, do: segment)]
+    held = [pack | for({_, %{segment: segment}} <- chosen, is_binary(segment), do: segment)]
 
     {%{module: module, pack: pack, relations: relation_digests(chosen), lost: false}, held}
   end
 
-  # A producer's rows: the segment holding them (none for no rows), and
-  # each relation's digest.
+  # A producer's rows: the segment holding them (none for no rows; the
+  # rows themselves when the pack holds them, else their blob's digest),
+  # and each relation's digest.
   defp segment(store, encoded) do
     relations = Map.new(encoded, fn {relation, bytes} -> {relation, sha256(bytes)} end)
 
-    case map_size(encoded) do
-      0 ->
-        %{segment: nil, relations: relations}
+    if map_size(encoded) == 0 do
+      %{segment: nil, relations: relations}
+    else
+      {digest, stored} = Blob.encode_term(encoded)
 
-      _ ->
-        {:ok, segment} = Blob.put_term(store, encoded)
-        %{segment: segment, relations: relations}
+      if byte_size(stored) <= @inline_limit do
+        %{segment: encoded, relations: relations}
+      else
+        {:ok, ^digest} = Blob.put_encoded_term(store, digest, stored)
+        %{segment: digest, relations: relations}
+      end
     end
   end
 
@@ -122,12 +151,19 @@ defmodule Argus.Graph.Pack do
   defp sha256(data), do: :crypto.hash(:sha256, data)
 
   @doc """
+  The most bytes a segment's stored form (`Roux.Blob.encode_term/1`)
+  takes and is still held in the pack rather than in a blob of its own.
+  """
+  @spec inline_limit() :: pos_integer()
+  def inline_limit, do: @inline_limit
+
+  @doc """
   The chunks of `relations` in the module whose pack is `pack`: each
   relation's bytes from `producers` (`:all`, the default, for every
   producer's), joined in producer order; a relation the module has no
-  rows for from them is left out. Reads the pack and the segments that
-  hold one of the relations, each once. `{:missing, digest}` names a
-  blob the store no longer has.
+  rows for from them is left out. Reads the pack and the segments of
+  their own that hold one of the relations, each once.
+  `{:missing, digest}` names a blob the store no longer has.
   """
   @spec chunks(Blob.t(), Blob.digest(), [atom()], :all | [Pipeline.producer()]) ::
           {:ok, %{atom() => binary()}} | {:missing, Blob.digest()}
@@ -141,7 +177,7 @@ defmodule Argus.Graph.Pack do
           Enum.any?(held, &MapSet.member?(wanted, &1))
       end)
       |> Enum.reduce_while({:ok, %{}}, fn {_producer, segment, _held}, {:ok, acc} ->
-        case get_term(store, segment) do
+        case segment_rows(store, segment) do
           {:ok, rows} ->
             acc =
               rows
@@ -243,6 +279,10 @@ defmodule Argus.Graph.Pack do
       error -> error
     end
   end
+
+  # A segment's rows: held in the pack, or a blob of their own.
+  defp segment_rows(_store, rows) when is_map(rows), do: {:ok, rows}
+  defp segment_rows(store, digest) when is_binary(digest), do: get_term(store, digest)
 
   defp get_term(store, digest) do
     case Blob.get_term(store, digest) do
