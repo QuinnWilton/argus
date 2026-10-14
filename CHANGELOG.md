@@ -22,6 +22,9 @@ which a change appeared; older names and APIs may have changed since then.
 
 - The rebar3 plugin, `rebar3_argus` 0.1.1, carries 0.23.0's `--offline`: it
   downloads no escript, and passes `ARGUS_OFFLINE=1` to the one it runs.
+- roux `~> 0.3.4`, which reads a file again when its stamp was taken
+  within the timestamp's granularity of its write, where an edit in that
+  window could go unseen.
 
 ## 0.23.0 — 2026-10-13
 
