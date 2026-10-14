@@ -400,6 +400,11 @@
 .decl ets_table_default(id: symbol, name: symbol, site: symbol) mutable
 .input ets_table_default
 
+// The struct or map field an ETS table operand was read from: the last key of each of its `ets_table_path` paths that has one (`db.dedup_table` and `state.db.dedup_table` both read `:dedup_table`). Tells apart the tables one `:ets.new/2` site makes, one per element, when they are kept under different fields.
+//
+.decl ets_table_field(id: symbol, field: symbol) mutable
+.input ets_table_field
+
 // An ETS table operand's root and map access path (`Resolve.access_path/4`). Distinguishes tables stored under different keys of one map. Conflicting writers have no row; a fallback expression such as `cfg.table || @default` has a path for each arm.
 //
 .decl ets_table_path(id: symbol, source: symbol, root: symbol, path: symbol) mutable

@@ -36,6 +36,11 @@ defmodule Argus.Extractors.ETS do
     tables one function was handed in one map (`%{forward: f, reverse:
     r}`) are two paths, where `ets_op` knows both by the name they were
     created with
+  - `ets_table_field(id, field)` — the last map key of each of those
+    paths: the struct or map field the table was kept under
+    (`db.dedup_table` and `state.db.dedup_table` both read it under
+    `:dedup_table`), which tells apart the tables one `:ets.new/2` site
+    makes, one per element, when they are kept under different fields
   - `ets_table_default(id, name, site)` — the operand is a literal
     name only where a test found the value the call at `site` returned
     unset (`undefined`, `nil` or `false`), and that value otherwise:
@@ -130,6 +135,7 @@ defmodule Argus.Extractors.ETS do
       :ets_option,
       :ets_options_known,
       :ets_table_path,
+      :ets_table_field,
       :ets_table_default,
       :ets_tid_arg,
       :ets_value,
@@ -658,12 +664,23 @@ defmodule Argus.Extractors.ETS do
 
   # The table operand's access path. Emitted for every operation whose
   # operand has one, a literal name included, so a rule can join on
-  # paths alone.
+  # paths alone. A path's last key is the field the table was kept
+  # under. A key spelled with a dot in it (`:"a.b"`) splits there too:
+  # one key always splits the same way, so two operations under one
+  # field still agree, and two keys that end alike only look alike.
   defp table_path(facts, id, ctx) do
-    for {source, root, path} <- access_paths(ctx.instrs, ctx.idx, {:x, 0}, ctx.func_id),
-        reduce: facts do
-      acc -> add_fact(acc, :ets_table_path, [id, source, root, path])
-    end
+    paths = access_paths(ctx.instrs, ctx.idx, {:x, 0}, ctx.func_id)
+
+    facts =
+      for {source, root, path} <- paths, reduce: facts do
+        acc -> add_fact(acc, :ets_table_path, [id, source, root, path])
+      end
+
+    paths
+    |> Enum.reject(fn {_source, _root, path} -> path == "" end)
+    |> Enum.map(fn {_source, _root, path} -> path |> String.split(".") |> List.last() end)
+    |> Enum.uniq()
+    |> Enum.reduce(facts, &add_fact(&2, :ets_table_field, [id, &1]))
   end
 
   # A literal the operand holds only as the default of a value a test

@@ -236,6 +236,21 @@ defmodule Argus.Schema.CallValues do
         """
       },
       %{
+        name: :ets_table_field,
+        layer: 2,
+        fields: [
+          {:id, :instr_id, "instruction ID of the ETS operation"},
+          {:field, :symbol,
+           "the last map key of the operand's access path, as `ets_table_path` spells it"}
+        ],
+        doc: """
+        The struct or map field an ETS table operand was read from: the last key of each \
+        of its `ets_table_path` paths that has one (`db.dedup_table` and \
+        `state.db.dedup_table` both read `:dedup_table`). Tells apart the tables one \
+        `:ets.new/2` site makes, one per element, when they are kept under different fields.
+        """
+      },
+      %{
         name: :ets_table_default,
         layer: 2,
         fields: [
