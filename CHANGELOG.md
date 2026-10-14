@@ -3,6 +3,16 @@
 Notable changes and upgrade notes for Argus. Entries describe the release in
 which a change appeared; older names and APIs may have changed since then.
 
+## Unreleased
+
+### Changed
+
+- roux `~> 0.3.5`: a demand waiting on a query another process computes is
+  woken also when the key's previous claimant failed meanwhile, and
+  cancelling a task leaves a newer claim of its key alone; both could
+  leave a long-lived caller (planchette's LSP, an IEx session) waiting for
+  good.
+
 ## 0.23.1 — 2026-10-13
 
 ### Fixed
