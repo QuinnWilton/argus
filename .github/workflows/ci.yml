@@ -392,3 +392,51 @@ jobs:
         with:
           name: argus-escript
           path: argus
+
+  argus:
+    name: Argus on argus
+    runs-on: ubuntu-latest
+    env:
+      # bin/argus analyzes the dev build, as it does locally.
+      MIX_ENV: dev
+      # The runner has Rust, with which argus would build its engines from
+      # source; naming a cargo that is not there makes it use the release's
+      # prebuilt ones.
+      ARGUS_CARGO: /nonexistent
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          elixir-version: "1.19.4"
+          otp-version: "28.3"
+
+      - name: Restore dependencies cache
+        uses: actions/cache@v4
+        with:
+          path: deps
+          key: ${{ runner.os }}-mix-${{ hashFiles('mix.lock') }}
+          restore-keys: ${{ runner.os }}-mix-
+
+      - name: Restore argus's escript, engines and store
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/argus
+          key: ${{ runner.os }}-argus-self-${{ hashFiles('bin/argus') }}
+          restore-keys: ${{ runner.os }}-argus-self-
+
+      - name: Install dependencies
+        run: mix deps.get
+
+      # A released argus judges this checkout (bin/argus); every finding is
+      # shown, and one at error severity (argus.config) fails the job.
+      - name: Analyze argus with its last release
+        run: |
+          bin/argus --color always
+          bin/argus --format json > "$RUNNER_TEMP/argus.json"
+          errors=$(jq '[.[] | select(.severity == "error")] | length' "$RUNNER_TEMP/argus.json")
+          if [ "$errors" -gt 0 ]; then
+            echo "::error::argus reported $errors error findings"
+            exit 1
+          fi

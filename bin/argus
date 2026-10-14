@@ -1,0 +1,109 @@
+#!/bin/sh
+# Runs a released argus escript over this project's Mix build.
+#
+# `mix argus` here would analyze argus with the argus under analysis: a
+# change that breaks an analysis would hide its own findings. A released
+# escript reads this checkout's beams as data, never loading them. It
+# runs in beams mode (`--project beams`): the program is argus's ebin,
+# its dependencies the build's other ebins, as `mix argus` would name
+# them. Arguments go to the escript:
+#
+#   bin/argus                  # the analyses argus.config names
+#   bin/argus --all            # every analysis
+#   bin/argus --format json    # findings as JSON on stdout
+#   bin/argus --offline        # no download (ARGUS_OFFLINE=1 too)
+#
+# The escript is downloaded once into the cache the rebar3 plugin uses,
+# and checked against the SHA-256 pinned here at every run.
+set -eu
+
+version=0.23.1
+sha256=afd6a6c5066318364f45eed76ad3222a4f8780a168f29b0402c246de42e83108
+app=argus_beam
+
+root=$(cd "$(dirname "$0")/.." && pwd)
+cd "$root"
+env=${MIX_ENV:-dev}
+cache=${XDG_CACHE_HOME:-${HOME:?argus: set HOME or XDG_CACHE_HOME}/.cache}/argus/escripts/$version
+escript=$cache/argus
+
+# Erlang is always here (the escript runs on it), so it stands in for a
+# hashing or download tool the system lacks (Alpine has no curl). An
+# exception in -eval leaves the VM running: each script halts itself.
+erl_run() {
+  script=$1
+  shift
+  erl -noshell -noinput -eval "try $script catch C:R -> io:format(standard_error, \"argus: ~p~n\", [{C, R}]), halt(1) end." -extra "$@"
+}
+
+digest() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | cut -d' ' -f1
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | cut -d' ' -f1
+  else
+    erl_run '[F] = init:get_plain_arguments(), {ok, B} = file:read_file(F),
+      io:format("~s~n", [binary:encode_hex(crypto:hash(sha256, B), lowercase)]), halt(0)' "$1"
+  fi
+}
+
+fetch() {
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL --retry 3 -o "$2" "$1"
+  else
+    erl_run '[Url, Out] = init:get_plain_arguments(),
+      {ok, _} = application:ensure_all_started([ssl, inets]),
+      Ssl = [{verify, verify_peer}, {cacerts, public_key:cacerts_get()},
+             {customize_hostname_check,
+              [{match_fun, public_key:pkix_verify_hostname_match_fun(https)}]}],
+      case httpc:request(get, {Url, []}, [{ssl, Ssl}, {autoredirect, true}, {timeout, 300000}],
+                         [{body_format, binary}]) of
+        {ok, {{_, 200, _}, _, Body}} -> ok = file:write_file(Out, Body), halt(0);
+        {ok, {{_, Code, _}, _, _}} -> io:format(standard_error, "argus: ~s: HTTP ~p~n", [Url, Code]), halt(1);
+        {error, Reason} -> io:format(standard_error, "argus: ~s: ~w~n", [Url, Reason]), halt(1)
+      end' "$1" "$2"
+  fi
+}
+
+offline=no
+case ${ARGUS_OFFLINE:-} in "" | 0 | false) ;; *) offline=yes ;; esac
+for arg in "$@"; do
+  if [ "$arg" = --offline ]; then offline=yes; fi
+done
+
+if [ ! -f "$escript" ] || [ "$(digest "$escript")" != "$sha256" ]; then
+  if [ "$offline" = yes ]; then
+    if [ -f "$escript" ]; then
+      echo "argus: offline, and $escript is not the pinned argus $version (SHA-256 $sha256)" >&2
+    else
+      echo "argus: offline, and no argus $version escript is in $cache" >&2
+    fi
+    exit 2
+  fi
+
+  mkdir -p "$cache"
+  # Written beside its name and renamed into place: a download that dies
+  # midway leaves no escript half written.
+  partial=$escript.$$
+  trap 'rm -f "$partial"' EXIT
+  url=https://github.com/QuinnWilton/argus/releases/download/v$version/argus
+  fetch "$url" "$partial"
+  actual=$(digest "$partial")
+  if [ "$actual" != "$sha256" ]; then
+    echo "argus: $url has SHA-256 $actual, not the pinned $sha256" >&2
+    exit 2
+  fi
+  chmod 755 "$partial"
+  mv "$partial" "$escript"
+fi
+
+# On stderr: stdout is the escript's, JSON with --format json.
+MIX_ENV=$env mix compile >&2
+
+lib=_build/$env/lib
+set -- "$@" --project beams --ebin "$lib/$app/ebin" --state-dir "_build/$env/argus"
+for ebin in "$lib"/*/ebin; do
+  [ "$ebin" = "$lib/$app/ebin" ] || set -- "$@" --dep-ebin "$ebin"
+done
+
+exec "$escript" "$@"

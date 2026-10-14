@@ -29,7 +29,13 @@ mix test
 mix format --check-formatted
 mix credo --strict
 mix dialyzer
+bin/argus
 ```
+
+`bin/argus` runs argus's analyses over argus itself (`argus.config`) with a
+pinned, released escript rather than the code under analysis, so an edit that
+breaks an analysis cannot hide its own findings. Bump `version` and `sha256`
+in it after a release.
 
 Run checks relevant to the change; documentation-only edits need no tests. Start
 with the affected test files. Plain `mix test` leaves out the closed-issue corpus,
