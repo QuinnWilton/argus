@@ -6,6 +6,7 @@ defmodule Argus.Analyses.EtsCheckActTest do
   alias Argus.Test.Batch
   alias Argus.Test.Fixtures.CheckThenAct, as: C
   alias Argus.Test.Fixtures.Dictionary, as: D
+  alias Argus.Test.Fixtures.EtsTableFields, as: F
   alias Argus.Test.Fixtures.RacesExposureClaim, as: Claims
   alias Argus.Test.Fixtures.RacesExposureRows, as: Rows
   alias Argus.Test.Memo
@@ -68,7 +69,10 @@ defmodule Argus.Analyses.EtsCheckActTest do
     Rows.SameRow,
     Claims.Upsert,
     Claims.Reserve,
-    Claims.TakeFree
+    Claims.TakeFree,
+    F.OtherField,
+    F.SameField,
+    F.UnfieldedTable
   ]
 
   setup_all do
@@ -433,6 +437,22 @@ defmodule Argus.Analyses.EtsCheckActTest do
     end
   end
 
+  describe "ets_check_act on the tables one closure makes" do
+    test "a lookup of one field's table deciding an insert into another's is no race", ctx do
+      # roux's wait_for_claimant/2: a lookup of dedup_table, an insert
+      # into dedup_waiters.
+      assert races(ctx, [F.OtherField]) == []
+    end
+
+    test "one field's table read and written is one table", ctx do
+      assert [{"claim/2", "field :claims", "1"}] = races(ctx, [F.SameField])
+    end
+
+    test "a table no field names may be any of the site's", ctx do
+      assert [{"claim/2", "field :claims", "1"}] = races(ctx, [F.UnfieldedTable])
+    end
+  end
+
   describe "ets_check_act through the process dictionary" do
     test "a table named only while a key is unset is not touched where the key was set", ctx do
       # validate/1 puts its private table under the key first: its read and
@@ -491,6 +511,13 @@ defmodule Argus.Analyses.EtsCheckActTest do
       assert [%{label: "the read it depends on"}] = f.related
       assert Enum.any?(f.help, &(&1 =~ "insert_new"))
       refute f.detail =~ " in M."
+    end
+
+    test "names one of the tables a site makes per element by the field it is kept under" do
+      row = ["M", "M:claim/2", "field :claims", "1", "M:claim/2#4", "M:claim/2#9", "claim"]
+      f = Races.finding(:ets_check_act, row)
+
+      assert f.detail =~ "reads a key of the table kept under :claims"
     end
 
     test "names a table the callers hand in by its argument, and says why it is shared" do

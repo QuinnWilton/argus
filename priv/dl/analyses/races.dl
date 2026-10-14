@@ -257,12 +257,129 @@ ets_table_ident(id, "param", to_string(p)) :- ets_op(id, _, "dynamic", _, _), et
 ets_table_ident(id, ts, t) :-
   ets_op(id, _, _, _, _),
   !handed_table(id),
-  ets_table(id, k, t),
+  race_table(id, k, t),
   table_source(k, ts).
 
 .decl handed_table(id: symbol)
 
 handed_table(id) :- ets_op(id, _, "dynamic", _, _), ets_op_param(id, _).
+
+// Tables one site makes per element
+//
+// An :ets.new/2 in a closure or comprehension body, or in a function that calls itself,
+// makes a table for each element it runs on (`Map.new(specs, fn {tag, type} -> {tag,
+// :ets.new(tag, [type, :public])} end)`), and points-to knows them all as the one site.
+// Where operations read the site's tables from two or more struct or map fields, each
+// field is a table of its own: different fields are assumed to hold different tables,
+// and one table kept under two fields is a blind spot. An operation whose table no field
+// names may touch any of them, and one tables.dl knows only by its field (the `field`
+// fallback, where points-to found no table) may touch the site's table under that field.
+
+// The table an operation touches, as the races below compare tables: its EtsTable
+// identity, a sliced site's tables told apart by their fields.
+.decl race_table(id: symbol, kind: symbol, ident: symbol)
+
+race_table(id, k, t) :- ets_table(id, k, t), k != "new".
+race_table(id, "new", t) :- ets_table(id, "new", t), !sliced_site(t).
+race_table(id, "new", t) :- ets_table(id, "new", n), op_field(id, s), sliced_table(t, n, s).
+race_table(id, "new", t) :- ets_table(id, "new", n), open_field(id), sliced_table(t, n, _).
+race_table(id, "new", t) :- ets_table(id, "field", _), op_field(id, s), sliced_table(t, _, s).
+
+.decl table_per_element(site: symbol)
+
+table_per_element(n) :- ets_new(n, f, _), function_def(f, _, name, _, _), match("-.*", name).
+table_per_element(n) :- ets_new(n, f, _), local_call(_, f, f, _).
+
+// The fields operations read a per-element site's tables from.
+.decl site_field(site: symbol, field: symbol)
+
+site_field(n, s) :- ets_table(id, "new", n), table_per_element(n), ets_table_field(id, s).
+
+.decl sliced_site(site: symbol)
+
+sliced_site(n) :- site_field(n, s), site_field(n, s2), s != s2.
+
+// The table a sliced site keeps under one field, spelled "site field".
+.decl sliced_table(ident: symbol, site: symbol, field: symbol)
+
+sliced_table(cat(n, cat(" ", s)), n, s) :- sliced_site(n), site_field(n, s).
+
+// The fields an operation's table is read from: its own path's, or, for a table that is
+// a parameter itself, the fields its callers read it from.
+.decl op_field(id: symbol, field: symbol)
+
+op_field(id, s) :- ets_table_field(id, s).
+op_field(id, s) :- ets_op(id, g, _, _, _), ets_table_path(id, "param", p, ""), param_field(g, p, s).
+
+// An operation one of whose tables no field names.
+.decl open_field(id: symbol)
+
+open_field(id) :- ets_op(id, _, _, _, _), !has_table_path(id).
+open_field(id) :- ets_op(id, _, _, _, _), ets_table_path(id, src, _, ""), src != "param".
+open_field(id) :- ets_op(id, g, _, _, _), ets_table_path(id, "param", p, ""), param_open(g, p).
+
+.decl has_table_path(id: symbol)
+
+has_table_path(id) :- ets_table_path(id, _, _, _).
+
+// Table parameters of sliced sites' operations, and the parameters forwarding them.
+.decl field_param_needed(func: symbol, pos: symbol)
+
+field_param_needed(g, p) :-
+  ets_op(id, g, _, _, _),
+  ets_table_path(id, "param", p, ""),
+  ets_table(id, "new", n),
+  sliced_site(n).
+
+field_param_needed(c, to_string(m)) :-
+  field_param_needed(g, p),
+  call_arg_forward(c, g, n, m),
+  p = to_string(n).
+
+// A caller hands the parameter a table it read from a field.
+.decl param_field(func: symbol, pos: symbol, field: symbol)
+
+param_field(g, p, s) :- field_param_needed(g, p), call_arg_field(_, g, n, s), p = to_string(n).
+
+param_field(g, p, s) :-
+  field_param_needed(g, p),
+  call_arg_forward(c, g, n, m),
+  p = to_string(n),
+  param_field(c, q, s),
+  q = to_string(m).
+
+// A caller hands the parameter something no field names, or the parameter has callers
+// out of view.
+.decl param_open(func: symbol, pos: symbol)
+
+param_open(g, p) :-
+  field_param_needed(g, p),
+  call_arg(c, g, n, _),
+  p = to_string(n),
+  !call_arg_field(c, g, n, _),
+  !call_arg_forward(c, g, n, _).
+
+param_open(g, p) :-
+  field_param_needed(g, p),
+  call_arg_forward(c, g, n, m),
+  p = to_string(n),
+  param_open(c, q),
+  q = to_string(m).
+
+param_open(g, p) :- field_param_needed(g, p), runs.outside_caller(g).
+param_open(g, p) :- field_param_needed(g, p), !field_param_filled(g, p).
+
+.decl field_param_filled(func: symbol, pos: symbol)
+
+field_param_filled(g, p) :- field_param_needed(g, p), call_arg(_, g, n, _), p = to_string(n).
+field_param_filled(g, p) :- field_param_needed(g, p), call_arg_field(_, g, n, _), p = to_string(n).
+field_param_filled(g, p) :- field_param_needed(g, p), call_arg_forward(_, g, n, _), p = to_string(n).
+
+// A race table some site makes :public: a sliced table by its site's options.
+.decl race_table_public(kind: symbol, ident: symbol)
+
+race_table_public(k, t) :- table_public(k, t).
+race_table_public("new", t) :- sliced_table(t, n, _), table_public("new", n).
 
 rows.check(read, func, table_kind, table, key_kind, key) :-
   deciding_read(read, func),
@@ -380,7 +497,20 @@ decides_write(f, r, w, (table, ks, k)) :-
 .decl table_in(func: symbol, source: symbol, ident: symbol, table: EtsTable)
 
 table_in(f, ts, t, (k, t)) :- rows.meets(f, _, _, ts, t, _, _), table_source(k, ts).
-table_in(f, "param", p, (k, t)) :- rows.meets(f, _, _, "param", p, _, _), param_table(f, p, k, t).
+table_in(f, "param", p, (k, t)) :-
+  rows.meets(f, _, _, "param", p, _, _),
+  param_table(f, p, k, t),
+  !sliced_kind(k, t).
+
+// A sliced site's table handed in as a parameter: any of its fields' tables.
+table_in(f, "param", p, ("new", t)) :-
+  rows.meets(f, _, _, "param", p, _, _),
+  param_table(f, p, "new", n),
+  sliced_table(t, n, _).
+
+.decl sliced_kind(kind: symbol, ident: symbol)
+
+sliced_kind("new", n) :- sliced_site(n).
 
 // The same pairs, by the table and the key alone: what the rivals and
 // the harms below are asked of.
@@ -411,7 +541,7 @@ rival_table(table) :- reads_then_writes(_, _, _, table, _).
 // The tables a write or a counter bump may touch (clientlib/tables.dl).
 .decl ets_op_table(id: symbol, table: EtsTable)
 
-ets_op_table(id, (k, t)) :- ets_table(id, k, t), ets_op(id, _, _, _, _).
+ets_op_table(id, (k, t)) :- race_table(id, k, t), ets_op(id, _, _, _, _).
 
 // A write of a table some pair touches, in the function holding it.
 .decl table_write(write: symbol, func: symbol, table: EtsTable)
@@ -1208,8 +1338,8 @@ minted_key(w) :-
 .decl mints_rows(kind: symbol, table: symbol)
 .decl names_rows(kind: symbol, table: symbol)
 
-mints_rows(k, t) :- ets_table(w, k, t), minted_key(w).
-names_rows(k, t) :- ets_table(w, k, t), makes_row(w), !minted_key(w).
+mints_rows(k, t) :- race_table(w, k, t), minted_key(w).
+names_rows(k, t) :- race_table(w, k, t), makes_row(w), !minted_key(w).
 
 // Every row uses a minted key, so only its creator can name it. Holding the table alone
 // does not establish access to a specific row.
@@ -1221,7 +1351,7 @@ mints_every_row(k, t) :- mints_rows(k, t), !names_rows(k, t).
 // opposite case.
 .decl on_table_not_all_minted(write: symbol)
 
-on_table_not_all_minted(w) :- reads_then_writes(_, _, w, _, _), ets_table(w, k, t), !mints_every_row(k, t).
+on_table_not_all_minted(w) :- reads_then_writes(_, _, w, _, _), race_table(w, k, t), !mints_every_row(k, t).
 
 .decl held_row(write: symbol)
 
@@ -1239,7 +1369,7 @@ held_row(w) :-
 // caller processes.
 .decl on_public_table(row: EtsRow)
 
-on_public_table(((tk, t), ks, k)) :- decides_write(_, _, _, row), row = (table_id, ks, k), table_id = (tk, t), table_public(tk, t).
+on_public_table(((tk, t), ks, k)) :- decides_write(_, _, _, row), row = (table_id, ks, k), table_id = (tk, t), race_table_public(tk, t).
 on_public_table((("handed_in", t), ks, k)) :- decides_write(_, _, _, row), row = (table_id, ks, k), table_id = (table_kind, t), table_kind = "handed_in".
 
 // A competing process can write the same row between the paired read and write, either
@@ -1287,6 +1417,11 @@ table_shown_as(f, (tk, t), name) :-
   tk != "handed_in",
   table_made_at(tk, t, n),
   ets_new(n, _, name).
+
+// A sliced site's table, by the field it is kept under.
+table_shown_as(f, ("new", t), cat("field ", s)) :-
+  decides_write(f, _, _, row), row = (table_id, _, _), table_id = (tk, t), tk = "new",
+  sliced_table(t, _, s).
 
 table_shown_as(f, ("handed_in", t), cat("param ", p)) :-
   decides_write(f, _, _, row), row = (table_id, _, _), table_id = (table_kind, t), table_kind = "handed_in",

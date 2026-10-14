@@ -19,6 +19,7 @@ defmodule Argus.Soundness.RacesTest do
   import Argus.Test.Soundness, only: [fired: 2]
 
   alias Argus.Test.Fixtures.CheckThenAct, as: C
+  alias Argus.Test.Fixtures.EtsTableFields, as: F
   alias Argus.Test.Memo
   alias Argus.Test.Soundness.Races, as: R
 
@@ -204,6 +205,16 @@ defmodule Argus.Soundness.RacesTest do
 
     test "matched out of lookup/2" do
       assert_fires([R.OneTableLookup], @publish, {R.OneTableLookup, :register, 1})
+    end
+  end
+
+  describe "a table is told apart from its site's others by its field alone" do
+    test "a claim read and made in the same field's table" do
+      assert_fires([F.SameField], @ets, {F.SameField, :claim, 2})
+    end
+
+    test "a claim made in a table a helper answers, which no field names" do
+      assert_fires([F.UnfieldedTable], @ets, {F.UnfieldedTable, :claim, 2})
     end
   end
 

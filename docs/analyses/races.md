@@ -136,8 +136,15 @@ caller's read to another caller's decision.
 
 ### Row identity
 
-`EtsTable` uses a literal name, allocation site or module field. Unknown external
-parameters can match any compatible key. Distinct literals, incompatible shapes
+`EtsTable` uses a literal name, allocation site or module field. An allocation site
+that makes a table per element (an `:ets.new/2` in a closure or comprehension body, or
+in a function that calls itself) is one points-to object for all its tables; where
+operations read its tables from different struct or map fields (`db.dedup_table`,
+`db.task_registry`), each field is a table of its own. An operation whose table no
+field names may touch any of them, and one known only by its field (the `field`
+fallback) may touch the site's table kept under that field. Different fields are
+assumed to hold different tables; one table kept under two fields is a blind spot.
+Unknown external parameters can match any compatible key. Distinct literals, incompatible shapes
 (tuple keys of different arity, or with different literals at one position, such
 as `{id, :meta}` and `{id, :seq}`), freshly minted keys and each process's own PID
 can separate rows. `held_row` also treats tables whose creating writes all mint

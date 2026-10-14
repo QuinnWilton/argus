@@ -87,7 +87,12 @@ defmodule Argus.Analyses.Races do
   A table is what `clientlib/tables.dl` says an operation may touch:
   `named` and its name, `new` and the `:ets.new/2` site that made it
   (followed as process points-to follows a pid), or, where neither is
-  known, `field` and the module and map path it is read under.
+  known, `field` and the module and map path it is read under. A site
+  that makes a table per element of a collection (in a closure or a
+  comprehension body, or a function calling itself) and whose tables are
+  read from different struct or map fields is one table per field here,
+  named `field F`: different fields of the site name different tables,
+  and an operation that names no field may touch any of them.
 
   Every check-then-act finding is a `:warning` anchored at the act, with
   the check as a related frame, but a Mnesia fill and an ETS stale fill,
@@ -647,6 +652,11 @@ defmodule Argus.Analyses.Races do
         {name, "The table is public and"}
     end
   end
+
+  # One of the tables a site makes per element, kept under a field
+  # (races.dl's `race_table`).
+  defp ets_table_prose("field " <> field),
+    do: {"the table kept under #{field}", "The table is public and"}
 
   defp ets_table_prose(name), do: {name, "The table is public and"}
 
