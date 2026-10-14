@@ -18,8 +18,6 @@ defmodule Argus.Extractor.Runtime do
   follow.
   """
 
-  use Argus.Purity
-
   @runtime_modules for(
                      app <- [:erts, :kernel, :stdlib, :elixir, :logger],
                      _ = Application.load(app),
@@ -42,6 +40,5 @@ defmodule Argus.Extractor.Runtime do
       false
   """
   @spec module?(module()) :: boolean()
-  @pure true
   def module?(mod) when is_atom(mod), do: MapSet.member?(@runtime_modules, mod)
 end

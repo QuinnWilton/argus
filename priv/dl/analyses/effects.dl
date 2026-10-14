@@ -1,6 +1,7 @@
-// Check purity contracts and effects inside database transactions. Purity yields
-// verified, violated, or unprovable. Transaction checks find external writes that
-// survive rollback or repeat on retry.
+// Check effects inside database transactions. External writes can survive rollback
+// and repeat when a transaction is retried. External waits also hold the checked-out
+// database connection for their duration, tying pool capacity to another service's
+// latency.
 
 .include "../clientlib/imports.dl"
 .include "../clientlib/behaviours.dl"
@@ -10,205 +11,6 @@
 // A finding in code only developers' tools or tests run steps down a
 // level (clientlib/tooling.dl, Argus.Findings.Tooling).
 .output tooling
-
-// Purity contracts
-//
-// Check every reachable call for functions marked `@pure true`:
-// - violated: a known observable effect is reachable.
-// - unprovable: a reachable call cannot be followed or classified.
-// - verified: all reachable calls are known to be effect-free.
-// Unknown calls must prevent verification.
-
-
-// ── What the author claimed ──────────────────────────────────────
-
-.decl declared_pure(func: symbol)
-
-declared_pure(func) :- pure_contract(func, _, _, _).
-
-// Direct effects
-//
-// `impure_call` supplies the classifications from `Argus.EffectModel`. Layer-1
-// instructions supply intrinsic effects such as sends.
-
-// `site` anchors the finding at the effect's instruction. Receives span an instruction
-// loop, so they have no single site.
-.decl performs_effect(func: symbol, category: symbol, api: symbol, site: symbol)
-
-// Purity rejects both modes: reading a clock or the process dictionary
-// already makes the result depend on something other than the arguments.
-performs_effect(func, category, api, id) :-
-  impure_call(id, func, api, category, _mode).
-
-performs_effect(func, "process", "send", id) :-
-  send_msg(id, func).
-
-performs_effect(func, "process", "receive", "") :-
-  receives(func).
-
-performs_effect(func, "process", "spawn", id) :-
-  spawn_call(id, func, _, _, _, _, _, _, _, _).
-
-performs_effect(func, "ets", "ets", id) :-
-  ets_op(id, func, _, _, _).
-
-performs_effect(func, "ets", "ets_new", id) :-
-  ets_new(id, func, _).
-
-performs_effect(func, "port", "port", id) :-
-  port_open(id, func, _, _).
-
-performs_effect(func, "process", "register", id) :-
-  process_register(id, func, _, _).
-
-// Opaque calls
-//
-// Unresolved fun/apply targets and remote calls absent from the effect model prevent
-// purity verification.
-
-.decl opaque(func: symbol, reason: symbol, detail: symbol, site: symbol)
-
-// An apply whose module and function resolve (resolved_apply) is
-// followed as the call it is; only an unresolved one is opaque.
-opaque(func, "dynamic_call", kind, id) :-
-  dynamic_call(id, func, kind),
-  !resolved_apply(id, _, _).
-
-// Trust a callee's declared purity at the call site and verify its definition
-// separately. This allows purity contracts to compose across functions.
-opaque(func, "unclassified_call", api, id) :-
-  unknown_call(id, func, api, callee),
-  !pure_contract(callee, _, _, _).
-
-// Protocol dispatch is opaque for a different reason: not a missing table
-// entry, but an open set of implementations that no table could enumerate.
-opaque(func, "protocol_dispatch", api, id) :-
-  protocol_dispatch(id, func, api).
-
-// Propagation
-//
-// Effects and opacity propagate through the call graph, including closure-construction
-// edges. A closure body may run through a higher-order call made by its enclosing
-// function.
-
-// Seed effect reachability from declared-pure functions and closures passed to them.
-// Explore forward only from these roots.
-.decl purity_root(func: symbol)
-
-purity_root(func) :- declared_pure(func).
-
-purity_root(closure) :-
-  declared_pure(callee),
-  call_edge(caller, callee),
-  closure_def(caller, closure).
-
-.init root_reach = ForwardCallReach
-
-root_reach.root(func, func) :- purity_root(func).
-
-.decl reaches_effect(func: symbol, category: symbol, api: symbol, via: symbol, site: symbol)
-
-reaches_effect(func, category, api, func, site) :-
-  performs_effect(func, category, api, site).
-
-reaches_effect(func, category, api, via, site) :-
-  root_reach.reaches(func, via),
-  performs_effect(via, category, api, site).
-
-.decl reaches_opaque(func: symbol, reason: symbol, detail: symbol, via: symbol, site: symbol)
-
-reaches_opaque(func, reason, detail, func, site) :-
-  opaque(func, reason, detail, site).
-
-reaches_opaque(func, reason, detail, via, site) :-
-  root_reach.reaches(func, via),
-  opaque(via, reason, detail, site).
-
-// ── Findings ─────────────────────────────────────────────────────
-
-// Shared effect output. `context` is `pure_contract` or `transaction`; `scope` names
-// the repo for transactions. `via` performs the effect and `site` anchors it (empty for
-// receives). `opened` identifies the transaction call and is empty for purity findings.
-.decl effect_in_context(func: symbol, context: symbol, scope: symbol, category: symbol, api: symbol, via: symbol, site: symbol, opened: symbol)
-.output effect_in_context
-
-// A function declared pure performs an effect, itself or through a
-// function it calls.
-.decl violated_purity_claim(func: symbol, category: symbol, api: symbol, via: symbol, site: symbol)
-
-violated_purity_claim(func, category, api, via, site) :-
-  declared_pure(func),
-  reaches_effect(func, category, api, via, site).
-
-effect_in_context(func, "pure_contract", "", category, api, via, site, "") :-
-  violated_purity_claim(func, category, api, via, site).
-
-// A declared-pure function has an unresolved call but no known effect. Its purity is
-// unverified, rather than disproven.
-.decl purity_unprovable(func: symbol, reason: symbol, detail: symbol, via: symbol, site: symbol)
-.output purity_unprovable
-
-purity_unprovable(func, reason, detail, via, site) :-
-  declared_pure(func),
-  reaches_opaque(func, reason, detail, via, site),
-  !reaches_effect(func, _, _, _, _).
-
-// A declared-pure function reaches no known effect or opaque call. Emit verified
-// results explicitly to distinguish successful checking from no analysis.
-.decl purity_verified(func: symbol)
-.output purity_verified
-
-purity_verified(func) :-
-  declared_pure(func),
-  !reaches_effect(func, _, _, _, _),
-  !reaches_opaque(func, _, _, _, _).
-
-// Higher-order contracts
-//
-// A pure function invoking a supplied fun may be unprovable in isolation. When a caller
-// supplies a known effectful closure, report the violation at that caller's site.
-
-// An effectful closure is passed to a declared-pure function that invokes it. `site` is
-// the passing call; `effect_site` is the closure's effect.
-.decl impure_closure_to_pure(caller: symbol, callee: symbol, closure: symbol, category: symbol, api: symbol, site: symbol, effect_site: symbol)
-.output impure_closure_to_pure
-
-impure_closure_to_pure(caller, callee, closure, category, api, site, effect_site) :-
-  higher_order_pure(callee),
-  calls_declared_pure(site, caller, callee),
-  handed_closure(site, caller, closure),
-  impure_closure(caller, closure, category, api, effect_site).
-
-// A declared-pure function transitively invokes a supplied fun. Include lifted
-// closures, where higher-order APIs may place the call_fun instruction.
-.decl higher_order_pure(func: symbol)
-
-higher_order_pure(func) :-
-  declared_pure(func),
-  reaches_opaque(func, "dynamic_call", "call_fun", _, _).
-
-// A call instruction and call-graph edge from `caller` to declared-pure `callee`.
-.decl calls_declared_pure(site: symbol, caller: symbol, callee: symbol)
-
-calls_declared_pure(site, caller, callee) :-
-  call_edge(caller, callee),
-  pure_contract(callee, mod, name, arity),
-  call_site(site, caller, mod, name, arity).
-
-// `closure` is defined in caller and reaches an effect at site. handed_closure
-// identifies which closure a call passes; see closures.dl.
-.decl impure_closure(caller: symbol, closure: symbol, category: symbol, api: symbol, site: symbol)
-
-impure_closure(caller, closure, category, api, site) :-
-  closure_def(caller, closure),
-  reaches_effect(closure, category, api, _, site).
-
-// Effects inside transactions
-//
-// External writes can survive rollback and repeat when a transaction is retried.
-// External waits also hold the checked-out database connection for their duration,
-// tying pool capacity to another service's latency.
-
 
 // ── Transaction call sites ───────────────────────────────────────
 
@@ -341,6 +143,13 @@ runs_from_transaction(body, via) :- started_reach.reaches(body, via).
 started_reach.root(body, body) :- transaction_body(_, _, _, body).
 
 // ── Findings ─────────────────────────────────────────────────────
+
+// An effect a transaction body performs that a rollback cannot undo. `context` is
+// always `transaction` and `scope` names the repo; the columns keep the relation's
+// earlier shape. `via` performs the effect, `site` anchors it, and `opened` identifies
+// the transaction call.
+.decl effect_in_context(func: symbol, context: symbol, scope: symbol, category: symbol, api: symbol, via: symbol, site: symbol, opened: symbol)
+.output effect_in_context
 
 // Match each transaction body to the repo at its own call site, avoiding unrelated
 // repos used by the same caller.

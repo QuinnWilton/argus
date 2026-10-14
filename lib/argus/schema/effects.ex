@@ -1,6 +1,6 @@
-defmodule Argus.Schema.Purity do
+defmodule Argus.Schema.Effects do
   @moduledoc """
-  Layer-2 purity contracts and call-effect classifications. Exposed through \
+  Layer-2 call-effect classifications (`Argus.EffectModel`). Exposed through \
   `Argus.Schema`.
   """
 
@@ -8,20 +8,6 @@ defmodule Argus.Schema.Purity do
   @spec relations() :: [Argus.Schema.declaration()]
   def relations do
     Argus.Schema.Reads.record("relations #{__MODULE__}", [
-      %{
-        name: :pure_contract,
-        layer: 2,
-        fields: [
-          {:func, :func_id, "the function declared pure"},
-          {:mod, :symbol, "declaring module"},
-          {:name, :symbol, "function name"},
-          {:arity, :number, "function arity"}
-        ],
-        doc: """
-        A function declared `@pure true` (`Argus.Purity`), read from the compiled BEAM's \
-        persisted attributes.
-        """
-      },
       %{
         name: :impure_call,
         layer: 2,
@@ -35,8 +21,8 @@ defmodule Argus.Schema.Purity do
         ],
         doc: """
         A known observable call effect (`Argus.EffectModel`). Category identifies the \
-        effect; mode distinguishes reads from writes. Purity rejects both, while \
-        transaction checks report only writes that cannot be rolled back.
+        effect; mode distinguishes reads from writes. Transaction checks report only \
+        writes, since a read leaves a rollback nothing to undo.
         """
       },
       %{
@@ -60,11 +46,11 @@ defmodule Argus.Schema.Purity do
           {:id, :instr_id, "instruction ID of the call"},
           {:caller, :func_id, "containing function ID"},
           {:api, :symbol, "the API called, as Mod.fun/arity"},
-          {:callee, :func_id, "the callee as a function ID, for contract lookup"}
+          {:callee, :func_id, "the callee as a function ID, to join function_def"}
         ],
         doc: """
-        A call classified as neither pure nor impure by the effect model. Unknown \
-        effects prevent proving purity.
+        A call classified as neither pure nor impure by the effect model. Each rule \
+        decides what an unknown effect means for it.
         """
       }
     ])

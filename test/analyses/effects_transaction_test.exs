@@ -187,9 +187,9 @@ defmodule Argus.Analyses.EffectsTransactionTest do
       assert EffectModel.mode("SomeUnknown", "thing") == :write
     end
 
-    test "purity still rejects reads, which reversibility does not" do
-      # The same call is disqualifying for one contract and harmless for
-      # the other — which is the whole reason for two dimensions.
+    test "a read stays an effect, which reversibility ignores" do
+      # The same call is an effect, and harmless to a rollback — which is
+      # the whole reason for two dimensions.
       assert for_module(findings(), "ReadsConfig") == []
 
       assert {:impure, :process_dict, :read} = EffectModel.classify("Process", "get")

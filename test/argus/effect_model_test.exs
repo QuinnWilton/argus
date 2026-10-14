@@ -5,16 +5,15 @@ defmodule Argus.EffectModelTest do
 
   doctest Argus.EffectModel
 
-  describe "the effect model" do
+  describe "classify/2,3 and mode/2" do
     test "classifies the three buckets" do
       assert EffectModel.classify("IO", "puts") == {:impure, :io, :write}
       assert EffectModel.classify(":ets", "insert") == {:impure, :ets, :write}
       assert EffectModel.classify(":erlang", "put") == {:impure, :process_dict, :write}
-      # A clock read is a read. Purity rejects it either way, since it
-      # ignores the mode dimension entirely — reading the clock still breaks
-      # referential transparency. Only the contracts about durability care,
-      # and none of them should treat `now()` as something to roll back or
-      # something lost when terminate/2 is skipped.
+      # A clock read is a read. It is still an effect (the result depends
+      # on when it ran), but the contracts about durability should not
+      # treat `now()` as something to roll back or something lost when
+      # terminate/2 is skipped.
       assert EffectModel.classify(":erlang", "monotonic_time") == {:impure, :time, :read}
 
       assert EffectModel.classify("Enum", "map") == :pure
@@ -60,10 +59,9 @@ defmodule Argus.EffectModelTest do
     end
 
     test "reads are impure but distinguished from writes" do
-      # Purity ignores the mode dimension; the context-imposed contracts
-      # look only at writes, because a read has nothing to roll back and
-      # nothing to lose by being skipped. Path and System query the
-      # environment without changing it.
+      # The context-imposed contracts look only at writes, because a read
+      # has nothing to roll back and nothing to lose by being skipped. Path
+      # and System query the environment without changing it.
       assert EffectModel.classify("Path", "expand") == {:impure, :io, :read}
       assert EffectModel.classify("System", "tmp_dir!") == {:impure, :port, :read}
       assert EffectModel.classify("File", "cwd") == {:impure, :io, :read}

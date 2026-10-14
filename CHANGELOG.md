@@ -5,6 +5,23 @@ which a change appeared; older names and APIs may have changed since then.
 
 ## Unreleased
 
+### Removed
+
+- The `@pure` purity contracts: `use Argus.Purity`, `@pure true`, and the
+  verified, violated and unprovable checks with their findings
+  (`purity_verified`, `purity_unprovable`, `impure_closure_to_pure`, and
+  `effect_in_context` with `context=pure_contract`). They were an
+  experiment: on argus itself they made 21 of 58 findings, none a real
+  violation. The `effects` analysis and the `:effects` set remain, and
+  check only effects inside transactions.
+- Upgrade: delete `use Argus.Purity` and every `@pure true`; `use
+  Argus.Purity` no longer compiles. A configuration naming `:purity`,
+  `:purity_verified`, `:purity_unprovable`, `:purity_violated` or
+  `:impure_closure_to_pure` fails, saying the checks were removed.
+- The `pure_contract` and `port_open` relations. `effect_in_context` keeps
+  its columns; its `context` is always `transaction`.
+  `Argus.Purity.Effects` is `Argus.EffectModel`, with the same functions.
+
 ### Added
 
 - `--fail-on error|warning|info` on the `argus` escript and `mix argus`:

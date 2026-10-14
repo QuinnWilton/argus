@@ -25,9 +25,6 @@ defmodule Argus.Facts do
   @doc """
   Decode a raw facts map (`relation => [[String.t()]]`) into typed rows.
   """
-  # Not `@pure` (`Argus.Purity`): reading a relation's columns records the
-  # read in the process dictionary of a producer that tracks its reads
-  # (`Argus.Schema.Reads`), an effect by that analysis's definition.
   @spec decode(%{atom() => [[String.t()]]}) :: t()
   def decode(raw) when is_map(raw) do
     # A module's instruction IDs recur across its relations (an

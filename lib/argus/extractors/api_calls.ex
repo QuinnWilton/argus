@@ -21,7 +21,6 @@ defmodule Argus.Extractors.ApiCalls do
     `async_cast_site` — each cast's target, by site
   - `unsafe_atom_creation`, `unsafe_deserialization`, `unsafe_decompression`,
     `code_execution`
-  - `port_open`
   - `rpc_call`, `rpc_target`, `rpc_timeout_param`, `rpc_arity`, `rpc_callee`,
     `rpc_mfa_param`, `global_register`, `global_op`,
     `node_operation`,
@@ -261,15 +260,6 @@ defmodule Argus.Extractors.ApiCalls do
            # System.cmd with a literal command and literal args runs a known
            # program; only a dynamic one is code execution.
            {{System, :cmd, [2, 3]}, :code_execution, [:id, :func, :api, :unless_static_command]},
-           # ── ports ──
-           {{Port, :open, 2}, :port_open, [:id, :func, {:const, "Port.open"}, {:port_target, 0}]},
-           {{:erlang, :open_port, 2}, :port_open,
-            [:id, :func, {:const, "erlang.open_port"}, {:port_target, 0}]},
-           {{System, :cmd, [2, 3]}, :port_open,
-            [:id, :func, {:const, "System.cmd"}, {:command, 0}]},
-           {{System, :shell, [1, 2]}, :port_open,
-            [:id, :func, {:const, "System.shell"}, {:command, 0}]},
-           {{:os, :cmd, [1, 2]}, :port_open, [:id, :func, {:const, "os.cmd"}, {:command, 0}]},
            # ── distributed ──
            {{:global, :register_name, [2, 3]}, :global_register,
             [:id, :func, {:atom, 0, :global_register_name}, :arity]},
@@ -824,37 +814,6 @@ defmodule Argus.Extractors.ApiCalls do
     {value, track_dynamic(facts, value, ctx, :unsafe_deserialization_safety, rel)}
   end
 
-  # Port.open's name is a `{mechanism, spec}` tuple; the spec (the command,
-  # the executable path, the driver name) is the interesting part.
-  defp read({:port_target, n}, ctx, _mfa, facts, rel) do
-    value =
-      case resolve_register(ctx.instrs, ctx.idx, {:x, n}) do
-        {:ok, {kind, spec}} when kind in [:spawn, :spawn_executable, :spawn_driver] ->
-          display(spec)
-
-        {:ok, {:fd, _in, _out}} ->
-          "fd"
-
-        {:ok, other} ->
-          display(other)
-
-        _ ->
-          "dynamic"
-      end
-
-    {value, track_dynamic(facts, value, ctx, :port_target, rel)}
-  end
-
-  defp read({:command, n}, ctx, _mfa, facts, rel) do
-    value =
-      case resolve_register(ctx.instrs, ctx.idx, {:x, n}) do
-        {:ok, value} -> display(value)
-        _ -> "dynamic"
-      end
-
-    {value, track_dynamic(facts, value, ctx, :port_target, rel)}
-  end
-
   # A literal command runs only itself: its arguments are argv, never
   # parsed by a shell, so caller data in them is not code execution. The
   # exception is a literal shell or interpreter, which executes whatever
@@ -973,16 +932,4 @@ defmodule Argus.Extractors.ApiCalls do
       _ -> :skip
     end
   end
-
-  defp display(:dynamic), do: "dynamic"
-  defp display(value) when is_binary(value), do: cap(value)
-
-  defp display(value) when is_list(value),
-    do: if(List.ascii_printable?(value), do: cap(List.to_string(value)), else: "dynamic")
-
-  defp display(value) when is_atom(value), do: inspect(value)
-  defp display(_value), do: "dynamic"
-
-  defp cap(string) when byte_size(string) > 80, do: binary_part(string, 0, 79) <> "…"
-  defp cap(string), do: string
 end

@@ -286,7 +286,7 @@ defmodule Argus.Graph.Functions do
             end
 
           extra =
-            if producer in [Argus.Extractors.OTP, Argus.Extractors.Purity] do
+            if producer == Argus.Extractors.OTP do
               {:ok, rows} = R.query(db, :extraction_attribute_rows, {module, producer})
               [rows]
             else
@@ -341,8 +341,7 @@ defmodule Argus.Graph.Functions do
   end
 
   defquery :extraction_attribute_rows, key: {module, producer}, store: :none do
-    names = if producer == Argus.Extractors.OTP, do: [:behaviour, :behavior], else: [:argus_pure]
-    {:ok, attributes} = R.query(db, :extraction_attributes, {module, names})
+    {:ok, attributes} = R.query(db, :extraction_attributes, {module, [:behaviour, :behavior]})
     code = R.query(db, :extraction_code, producer)
     data = empty_data(R.query(db, :module_name, module)) |> Map.put(:attributes, attributes)
 

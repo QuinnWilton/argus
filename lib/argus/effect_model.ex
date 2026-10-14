@@ -3,37 +3,41 @@ defmodule Argus.EffectModel do
   The effect model: which calls are observable effects, and which are known
   to be free of them.
 
-  A purity claim is a claim about every execution, so the analysis cannot
-  simply assume that a call it knows nothing about is harmless. Every real
-  purity checker ships an effect model of its standard library — Haskell
-  encodes it in types, effect-typed languages in rows; on the BEAM it has to
-  be a table, because the runtime offers no way to ask.
+  Several analyses ask what a call does to the world outside the calling
+  function: whether a transaction body does something a rollback cannot
+  undo, whether cleanup that `terminate/2` may skip leaves anything behind,
+  whether a value read from a shared table can change between two reads.
+  The runtime offers no way to ask, so the answer is a table of the
+  standard library and common dependencies. `Argus.Extractors.Purity`
+  classifies every remote call and effectful BIF with it, as the
+  `impure_call`, `unknown_call` and `protocol_dispatch` relations, and a
+  few extractors consult it directly.
 
-  So calls land in one of three buckets:
+  Calls land in one of four buckets:
 
-  - **impure** — a known observable effect. Names the category, so the
+  - **impure** — a known observable effect. Names the category, so a
     report can say *what* the effect is rather than just that there is one.
   - **pure** — known to compute a value and nothing else.
-  - **unknown** — neither. The analysis reports these as *unprovable*
-    rather than guessing, which is the difference between a verification
-    and an opinion.
+  - **opaque** — runs code the call site does not name: a protocol whose
+    implementations are an open set, or a wrapper that runs the function
+    it is handed.
+  - **unknown** — neither. A rule decides what an unknown call means for
+    its own question rather than the model guessing for it.
 
-  That third bucket is the honest part. Assuming unknown calls are pure
-  would make the checker report success far more often and mean nothing;
-  assuming they are impure would flag every real program. Saying "I cannot
-  see past this" is the only answer that keeps a "verified" worth having.
+  That last bucket is deliberate. Assuming unknown calls are pure would
+  hide effects behind every dependency the table has not met; assuming
+  they are impure would flag every real program.
 
   ## Two dimensions, not one
 
   Every impure call also carries a **mode**: `:read` or `:write`.
 
-  Purity cares about neither — reading a clock or the process dictionary
-  already breaks referential transparency, so both modes are equally
-  disqualifying. Other contracts care a great deal. Inside a database
-  transaction, `Application.get_env/2` is harmless and `HTTPoison.post/2`
-  is an incident: one has nothing to undo, the other has already left the
-  machine. A model with only "is this an effect" cannot tell them apart and
-  would report every config read as a transaction hazard.
+  Inside a database transaction, `Application.get_env/2` is harmless and
+  `HTTPoison.post/2` is an incident: one has nothing to undo, the other has
+  already left the machine. A model with only "is this an effect" cannot
+  tell them apart and would report every config read as a transaction
+  hazard. Rules that care whether a value can change (a clock, the process
+  dictionary, a table read) look at reads too.
 
   Mode defaults to `:write`, so a call nobody has classified is assumed to
   change something. That is the safe direction: a false "this is
@@ -46,8 +50,6 @@ defmodule Argus.EffectModel do
   effects — a function that raises still computes a value or fails and
   leaves nothing behind.
   """
-
-  use Argus.Purity
 
   # ── Impure: observable effects, by category ──────────────────────
   #
@@ -367,17 +369,17 @@ defmodule Argus.EffectModel do
   ]
 
   # `Kernel` is NOT listed pure, and the reason is worth recording because
-  # listing it was a real soundness hole found by running this analysis over
-  # argus itself. Most of Kernel inlines to BIFs and never appears as a
+  # listing it was a real soundness hole, found when argus checked purity
+  # contracts over itself. Most of Kernel inlines to BIFs and never appears as a
   # remote call, so the entries that DO survive compilation are exactly the
   # ones that dispatch: inspect/1 and to_string/1 go through a protocol,
   # which is user-extensible code. Kernel also exports send/2, spawn/1,
   # exit/1, apply/3 and self/0.
   #
-  # Treating the module as pure meant a function calling inspect/1 could be
-  # reported VERIFIED while transitively running arbitrary user code — the
-  # precise failure this analysis exists to prevent. Anything in Kernel not
-  # named below is now unknown, and therefore unprovable rather than assumed.
+  # Treating the module as pure meant a function calling inspect/1 read as
+  # effect-free while transitively running arbitrary user code. Anything in
+  # Kernel not named below is unknown, and left to each rule to weigh,
+  # rather than assumed harmless.
   #
   # `Exception.message/1` dispatches the same way, to the exception
   # module's own `message/1` callback, and `Exception.format_banner/2,3`
@@ -555,7 +557,7 @@ defmodule Argus.EffectModel do
   # Deliberately conservative. A module is only listed when every exported
   # function is free of observable effects; anything with a `*_!` file
   # variant, a clock read, or a process interaction is left off, and
-  # therefore reported as unprovable rather than quietly assumed.
+  # therefore unknown rather than quietly assumed harmless.
 
   # `:io_lib` builds the characters `:io` would write — format, fwrite,
   # write, print — and writes nothing itself.
@@ -582,7 +584,7 @@ defmodule Argus.EffectModel do
   # `:erlang` is mostly arithmetic, comparison, and type tests — all pure —
   # with a well-defined impure minority listed above. Treating the module as
   # pure-by-default and subtracting the effects is far more accurate than
-  # the reverse, which would make every arithmetic BIF unprovable.
+  # the reverse, which would make every arithmetic BIF unknown.
   @pure_by_default_modules ~w(:erlang)
 
   @type category ::
@@ -634,7 +636,6 @@ defmodule Argus.EffectModel do
       :unknown
   """
   @spec classify(String.t(), String.t()) :: verdict()
-  @pure true
   def classify(module, function) when is_binary(module) and is_binary(function) do
     # Order matters, and the most specific statement about a call wins.
     # "This runs whatever you hand it" dominates anything its module says:
@@ -688,7 +689,6 @@ defmodule Argus.EffectModel do
       {:impure, :process, :read}
   """
   @spec classify(String.t(), String.t(), non_neg_integer()) :: verdict()
-  @pure true
   def classify(module, function, arity)
       when is_binary(module) and is_binary(function) and is_integer(arity) do
     if MapSet.member?(@pure_arities, {module, function, arity}),
@@ -712,7 +712,6 @@ defmodule Argus.EffectModel do
 
   @doc "Every impure category, for exhaustiveness checks and reporting."
   @spec categories() :: [category()]
-  @pure true
   def categories do
     (Map.values(@impure_modules) ++ Map.values(@impure_functions))
     |> Enum.uniq()

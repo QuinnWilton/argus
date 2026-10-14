@@ -9,7 +9,7 @@
   coverage:
     ~w(added_child async_cast call_arg call_arg_forward dynamic_child ets_new ets_op function_def implements_behaviour imprecision named_pid named_process process_call server_process started_as supervisor supervisor_child sync_call),
   effects:
-    ~w(call_edge call_site closure_def dynamic_call ets_new ets_op fun_built fun_handed fun_handed_to fun_ref function_def implements_behaviour impure_call port_open prior_tooling process_register process_start protocol_dispatch pure_contract recv_start remote_call resolved_apply send_msg spawn_call started_as tooling_module unknown_call),
+    ~w(call_edge call_site closure_def dynamic_call fun_built fun_handed fun_handed_to fun_ref function_def implements_behaviour impure_call prior_tooling process_start remote_call started_as tooling_module),
   ets:
     ~w(added_child call_arg call_arg_forward call_edge call_site catch_class catch_tag catch_total child_spec_option child_spec_restart child_spec_type coarse_table dynamic_call dynamic_child dynamic_child_restart ets_key ets_made_when_absent ets_new ets_op ets_op_param ets_option ets_options_known ets_read_when_present ets_table_path ets_tid_arg fun_built fun_handed fun_handed_to fun_ref function_def implements_behaviour prior_tooling process_start remote_call resolved_apply shorthand_arg shorthand_option source_table spawn_call started_as statem_event_clause supervisor supervisor_child table_alloc table_use tooling_module try_covers try_start value_field value_return),
   exposure:

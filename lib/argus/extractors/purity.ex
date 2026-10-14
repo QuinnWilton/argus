@@ -1,34 +1,39 @@
 defmodule Argus.Extractors.Purity do
   @moduledoc """
-  Purity contracts and call classification.
+  Call classification by the effect model (`Argus.EffectModel`).
 
-  Emits three relations:
+  Emits:
 
-  - `pure_contract(func, mod, name, arity)` — the functions a module
-    declared pure with `@pure true` (see `Argus.Purity`). Read out of the
-    beam's attribute chunk, so the contract is taken from the artifact
-    rather than the source.
-  - `impure_call(id, caller, api, category)` — a call to something with a
-    known observable effect, a guard BIF's `bif` instruction included
-    (`self/0`, `node/0`, `:erlang.get/1`).
-  - `unknown_call(id, caller, api)` — a call the effect model has no
-    opinion about.
+  - `impure_call(id, caller, api, category, mode)` — a call to something
+    with a known observable effect, a guard BIF's `bif` instruction
+    included (`self/0`, `node/0`, `:erlang.get/1`).
+  - `unknown_call(id, caller, api, callee)` — a call the effect model has
+    no opinion about.
+  - `protocol_dispatch(id, caller, api)` — a protocol call, whose
+    implementations are an open set.
+  - `dynamic_call(id, caller, "dot_dispatch")` — a call that runs the
+    function it is handed (`:timer.tc/2`).
 
-  The classification lives in Elixir (`Argus.EffectModel`) rather than in
-  Datalog for two reasons. It is a large table that wants unit tests and
-  doctests, and expressing it as rules would mean either hundreds of facts
-  or string surgery — and string surgery in these rules once produced a
+  The transaction checks, cleanup in `terminate/2`, startup's connection
+  checks and the race analysis's state reads all read these rows.
+
+  The name is historical: the extractor first served argus's `@pure`
+  contracts, since removed. Its rows never depended on them.
+
+  The classification lives in Elixir rather than in Datalog for two
+  reasons. It is a large table that wants unit tests and doctests, and
+  expressing it as rules would mean either hundreds of facts or string
+  surgery — and string surgery in these rules once produced a
   partial-functor unsoundness.
   """
 
   @behaviour Argus.Extractor
 
+  alias Argus.EffectModel
   alias Argus.InstrId
   alias Argus.Pipeline.Emit.Applies
-  alias Argus.EffectModel
 
-  import Argus.Extractor.Helpers,
-    only: [attribute_values: 2, each_remote_call: 3, scan_functions: 4]
+  import Argus.Extractor.Helpers, only: [each_remote_call: 3, scan_functions: 4]
 
   import Argus.Extractor.Facts, only: [add_fact: 3]
 
@@ -38,40 +43,12 @@ defmodule Argus.Extractors.Purity do
       :dynamic_call,
       :impure_call,
       :protocol_dispatch,
-      :pure_contract,
       :unknown_call
     ]
 
   @impl true
   @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()
-  def extract(module_data) do
-    mod = module_data.module
-
-    %{}
-    |> extract_contracts(mod, module_data.attributes)
-    |> classify_calls(module_data)
-  end
-
-  # `@pure true` accumulates {name, arity} into the persisted :argus_pure
-  # attribute, which lands in the beam as a list per definition.
-  defp extract_contracts(facts, mod, attributes) do
-    mod_str = inspect(mod)
-
-    attributes
-    |> attribute_values(:argus_pure)
-    |> Enum.reduce(facts, fn
-      {name, arity}, acc when is_atom(name) and is_integer(arity) ->
-        add_fact(acc, :pure_contract, [
-          InstrId.func_id(mod, name, arity),
-          mod_str,
-          InstrId.name(name),
-          to_string(arity)
-        ])
-
-      _malformed, acc ->
-        acc
-    end)
-  end
+  def extract(module_data), do: classify_calls(%{}, module_data)
 
   defp classify_calls(facts, module_data) do
     facts =
@@ -103,7 +80,7 @@ defmodule Argus.Extractors.Purity do
   # `apply(M, F, A)` is only opaque when M and F are actually unknown.
   # When they resolve (`Argus.Pipeline.Emit.Applies`, whose
   # `resolved_apply` row discharges the apply's `dynamic_call`) it is a
-  # static call wearing a disguise, and its purity is simply its target's.
+  # static call wearing a disguise, and its effect is simply its target's.
   defp record_apply(facts, ctx) do
     case Applies.resolve(ctx.instrs, ctx.idx, Enum.at(ctx.instrs, ctx.idx)) do
       {:ok, {mod, func, arity}} -> record(facts, ctx, mod, func, arity)
@@ -138,7 +115,8 @@ defmodule Argus.Extractors.Purity do
 
       :unknown ->
         # The callee's func_id travels alongside so the rules can ask
-        # whether IT declared itself pure, without parsing the api string.
+        # whether it is a project function (function_def) without parsing
+        # the api string.
         callee = InstrId.func_id(callee_mod, callee_func, arity)
         add_fact(facts, :unknown_call, [id, ctx.func_id, api, callee])
     end

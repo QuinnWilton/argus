@@ -15,8 +15,6 @@ defmodule Argus.Lines do
   guess.
   """
 
-  use Argus.Purity
-
   alias Argus.InstrId
 
   @typedoc "Line tables: exact per-instruction plus first-line per function."
@@ -30,7 +28,6 @@ defmodule Argus.Lines do
   returned by `Argus.Pipeline.extract/2` with the default format).
   """
   @spec from_facts(%{atom() => [[String.t()]]}) :: t()
-  @pure true
   def from_facts(facts) when is_map(facts) do
     facts |> Map.get(:line_info, []) |> build()
   end
@@ -78,7 +75,6 @@ defmodule Argus.Lines do
   tables and resolves to `nil`.
   """
   @spec resolve(t(), String.t() | InstrId.t() | mfa()) :: pos_integer() | nil
-  @pure true
   def resolve(lines, %InstrId{} = instr_id) do
     resolve(lines, InstrId.format(instr_id))
   end
@@ -92,7 +88,7 @@ defmodule Argus.Lines do
   # map field OR, if the value turns out to be an atom, calls it as a remote
   # function — a dynamic dispatch behind ordinary-looking syntax. `lines` is
   # a plain map, not a struct, so explicit access is both provable and
-  # clearer. Found by running the purity analysis over argus itself.
+  # clearer. Found by running the (since removed) purity analysis over argus.
   def resolve(lines, id) when is_binary(id) do
     Map.get(Map.fetch!(lines, :by_instr), id) ||
       Map.get(Map.fetch!(lines, :by_func), id) ||

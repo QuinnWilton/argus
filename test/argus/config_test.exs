@@ -71,6 +71,22 @@ defmodule Argus.ConfigTest do
     end
   end
 
+  test "a name of the removed purity checks says so, and suggests no concern" do
+    concerns = Argus.Analysis.builtin_analyses()
+
+    for name <- Config.removed(), key <- [:analyses, :severity] do
+      raw = if key == :analyses, do: [analyses: [name]], else: [severity: [{name, :error}]]
+      e = assert_raise(Argus.ConfigError, fn -> Config.load(raw) end)
+
+      assert e.message =~ "#{inspect(name)} checked `@pure` contracts, which argus removed",
+             "#{name} under #{key}: #{e.message}"
+
+      refute name in concerns
+      refute Map.has_key?(Config.retired(), name)
+      refute hint(e) =~ "did you mean", "#{name} under #{key}: #{e.message}"
+    end
+  end
+
   test "an unknown analysis fails with the concerns and the sets" do
     assert_raise Argus.ConfigError,
                  ~r/unknown analyses \[:nonsense\].*or a set: \[:all, :default/s,

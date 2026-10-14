@@ -37,8 +37,6 @@ defmodule Argus.Dataflow do
   instructions.
   """
 
-  use Argus.Purity
-
   alias Argus.InstrId
 
   @typedoc "A def→use edge: the writing instruction feeds the reading one."
@@ -64,7 +62,6 @@ defmodule Argus.Dataflow do
   > of 45,319 on one project.
   """
   @spec def_use_edges(Argus.Facts.t()) :: MapSet.t(edge())
-  @pure true
   def def_use_edges(facts) when is_map(facts) do
     facts
     |> reaching_uses()
@@ -91,7 +88,6 @@ defmodule Argus.Dataflow do
   Same precondition as `def_use_edges/1`: one module at a time.
   """
   @spec reaching_uses(Argus.Facts.t(), params: boolean()) :: MapSet.t(reaching_use())
-  @pure true
   def reaching_uses(facts, opts \\ []) when is_map(facts) do
     params? = Keyword.get(opts, :params, false)
     defs = regs_by_instr(Map.get(facts, :def, []))

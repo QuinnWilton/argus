@@ -498,7 +498,7 @@
 .decl imprecision(category: symbol, func: symbol, relation: symbol, reason: symbol) mutable
 .input imprecision
 
-// A known observable call effect (`Argus.EffectModel`). Category identifies the effect; mode distinguishes reads from writes. Purity rejects both, while transaction checks report only writes that cannot be rolled back.
+// A known observable call effect (`Argus.EffectModel`). Category identifies the effect; mode distinguishes reads from writes. Transaction checks report only writes, since a read leaves a rollback nothing to undo.
 //
 .decl impure_call(id: symbol, caller: symbol, api: symbol, category: symbol, mode: symbol) mutable
 .input impure_call
@@ -636,10 +636,6 @@
 .decl param_decided(id: symbol, func: symbol, pos: number) mutable
 .input param_decided
 
-// Port creation point. A port is owned by the opening process and dies when it terminates — so, like an ETS table, it attributes to that process in the supervision tree.
-.decl port_open(id: symbol, func: symbol, mechanism: symbol, target: symbol) mutable
-.input port_open
-
 // A call made after Supervisor.start_link returned, in the same function.
 .decl post_start_call(func: symbol, site: symbol, callee: symbol) mutable
 .input post_start_call
@@ -700,11 +696,6 @@
 //
 .decl pubsub_call(id: symbol, func: symbol, op: symbol, via: symbol) mutable
 .input pubsub_call
-
-// A function declared `@pure true` (`Argus.Purity`), read from the compiled BEAM's persisted attributes.
-//
-.decl pure_contract(func: symbol, mod: symbol, name: symbol, arity: number) mutable
-.input pure_contract
 
 // A remote call in a quote's literal or a macro's rebuilt return value (`Argus.Extractors.Quoted`). It runs where the quote expands, not where the beams call: `unsafe_input.dl` keeps a hidden helper a generated function calls as a way in, and does not count a `__name__` hook only expansions call as one.
 //
@@ -1296,7 +1287,7 @@
 .decl try_wrapper_call(id: symbol, func: symbol, call: symbol) mutable
 .input try_wrapper_call
 
-// A call classified as neither pure nor impure by the effect model. Unknown effects prevent proving purity.
+// A call classified as neither pure nor impure by the effect model. Each rule decides what an unknown effect means for it.
 //
 .decl unknown_call(id: symbol, caller: symbol, api: symbol, callee: symbol) mutable
 .input unknown_call

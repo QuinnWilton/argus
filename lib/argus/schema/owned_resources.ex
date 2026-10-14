@@ -106,21 +106,6 @@ defmodule Argus.Schema.OwnedResources do
         """
       },
       %{
-        name: :port_open,
-        layer: 2,
-        fields: [
-          {:id, :symbol, "instruction ID of the port-opening call"},
-          {:func, :symbol, "containing function ID"},
-          {:mechanism, :symbol,
-           ~s(how the port is opened: "Port.open", "erlang.open_port", "System.cmd", "System.shell", or "os.cmd")},
-          {:target, :symbol, "the spawned command / executable / driver, or \"dynamic\""}
-        ],
-        doc:
-          "Port creation point. A port is owned by the opening process and dies " <>
-            "when it terminates — so, like an ETS table, it attributes to that " <>
-            "process in the supervision tree."
-      },
-      %{
         name: :handle_dropped,
         layer: 2,
         fields: [

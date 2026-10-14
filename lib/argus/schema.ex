@@ -89,7 +89,7 @@ defmodule Argus.Schema do
     Argus.Schema.CallValues,
     Argus.Schema.Processes,
     Argus.Schema.Dependence,
-    Argus.Schema.Purity,
+    Argus.Schema.Effects,
     Argus.Schema.Coverage,
     Argus.Schema.Priors
   ]

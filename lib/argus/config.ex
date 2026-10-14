@@ -57,7 +57,9 @@ defmodule Argus.Config do
   relation written where its analysis goes (`:registry_race`) names the
   analysis that reports it, and a name argus retired in 0.17 and
   stopped reading in 0.20 (`:sync_call_in_init`, `:supervision`) names
-  the concerns its findings went to. Configuration under scry's name
+  the concerns its findings went to. A name of the `@pure` contract
+  checks, which 0.24 removed (`:purity`, `:purity_unprovable`), says so
+  and suggests nothing in its place. Configuration under scry's name
   (`scry:`, or the `:scry` compiler) raises with the rename, and so does
   `souffle:`, which 0.22 renamed `engine:` when argus moved from Souffle
   to FlowLog.
@@ -296,7 +298,6 @@ defmodule Argus.Config do
     unbounded_dynamic_children: [:unsafe_input],
     secret_exposure: [:exposure],
     tls_verification: [:exposure],
-    purity: [:effects],
     transaction_safety: [:effects],
     timeout_chain: [:blocking],
     call_cycle: [:blocking],
@@ -323,12 +324,42 @@ defmodule Argus.Config do
   @spec retired() :: %{atom() => [atom()]}
   def retired, do: @retired
 
+  # The names of `@pure` contract checking, which argus removed in 0.24:
+  # the analysis retired into `:effects` in 0.17, and the findings that
+  # were its own. Nothing reports what they did, so no concern is the one
+  # meant; the transaction checks that shared `:effects` with them remain.
+  @removed [
+    :purity,
+    :purity_violated,
+    :purity_verified,
+    :purity_unprovable,
+    :impure_closure_to_pure
+  ]
+
+  @doc false
+  # The names removed with nothing to stand for them, for the tests.
+  @spec removed() :: [atom()]
+  def removed, do: @removed
+
   # An unknown name is most often a typo of a concern or a set, the name
   # of a finding written where its analysis goes (an output relation,
   # `:registry_race`, whose owner is the name that was meant), or a name
-  # argus retired in 0.17 (whose concerns are).
+  # argus retired in 0.17 (whose concerns are). A name removed with
+  # nothing in its place is none of these, whatever it resembles.
   @spec unknown_name!(ConfigError.context(), [atom()], term(), String.t(), [atom()]) ::
           no_return()
+  defp unknown_name!(ctx, key, name, expected, _known) when name in @removed do
+    fail(
+      ctx,
+      key,
+      name,
+      expected <>
+        "; #{show(ctx, name)} checked `@pure` contracts, which argus removed in 0.24, " <>
+        "and nothing reports it now: leave it out (#{show(ctx, :effects)} still checks " <>
+        "effects inside transactions)"
+    )
+  end
+
   defp unknown_name!(ctx, key, name, expected, known) do
     candidates = selectable(known)
     owner = relation_owner(name)
