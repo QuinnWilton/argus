@@ -139,7 +139,9 @@ defmodule Argus.FlowLog.Engine do
 
   @doc """
   The memory the engine holds (`t:usage/0`), or an error when the engine
-  is down or its platform reports none.
+  is down or its platform reports none. An engine that does not answer
+  within 30 seconds stops: its late answer would be read as the reply
+  to the next request.
   """
   @spec usage(t()) :: {:ok, usage()} | {:error, term()}
   def usage(engine) do
@@ -277,6 +279,11 @@ defmodule Argus.FlowLog.Engine do
     case request(state, %{op: "usage"}, 30_000) do
       {:ok, %{"bytes" => bytes, "peak_bytes" => peak}} ->
         {:reply, {:ok, %{bytes: bytes, peak_bytes: peak}}, state}
+
+      # The reply is still to come, and the next request would read it as
+      # its own: an engine out of step with its requests stops.
+      {:error, :flowlog_timeout} = error ->
+        {:stop, :normal, error, state}
 
       {:error, {:flowlog_engine_exit, _, _} = reason} ->
         {:stop, :normal, {:error, reason}, state}

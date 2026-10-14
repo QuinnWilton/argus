@@ -19,6 +19,12 @@ which a change appeared; older names and APIs may have changed since then.
   leave a long-lived caller (planchette's LSP, an IEx session) waiting for
   good.
 
+### Fixed
+
+- An engine whose memory report (`Argus.FlowLog.Engine.usage/1`, which
+  `mix argus.flowlog bench` reads) times out stops, rather than reading
+  that late reply as the answer to its next request.
+
 ## 0.23.1 — 2026-10-13
 
 ### Fixed
