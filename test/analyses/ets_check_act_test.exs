@@ -167,6 +167,10 @@ defmodule Argus.Analyses.EtsCheckActTest do
       assert races(:alone, [C.SeedingOwner, C.SerializedCounter, C.VersionStamper]) == []
     end
 
+    test "another process that sets the table's heir or gives it away writes no row" do
+      assert races(:alone, [C.SeedingOwner, C.SerializedCounter, C.CountsHandover]) == []
+    end
+
     test "another process that writes counts by key while the counter runs races it" do
       assert [{"handle_call/3", ":serialized_counts", _}] =
                Enum.uniq(races(:alone, [C.SeedingOwner, C.SerializedCounter, C.CountImporter]))

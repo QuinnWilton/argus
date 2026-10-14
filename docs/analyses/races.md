@@ -126,8 +126,9 @@ possible interference.
 `CheckThenAct.meets` relates a read to an act it controls or supplies, translating
 resource and key identities through parameters, returns and loops. A rival is
 another execution of the pair or a compatible operation in another process.
-Parameter-keyed writes are evaluated at their callers; an accessor used for several
-literal keys must not become a writer to every row.
+`:ets.setopts/2` and `:ets.give_away/3` change a table's options and owner, not its
+rows, and are no rivals. Parameter-keyed writes are evaluated at their callers; an
+accessor used for several literal keys must not become a writer to every row.
 
 `PairCarries` follows this pair's read to its write. `MadeOfRead` asks whether a rival
 writes back a read-derived value. Keeping those contexts separate avoids joining one

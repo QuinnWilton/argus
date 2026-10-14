@@ -741,6 +741,27 @@ defmodule Argus.Test.Fixtures.CheckThenAct do
     end
   end
 
+  defmodule CountsHandover do
+    @moduledoc """
+    Another process that sets the counts table's heir and hands the table
+    on: it changes who owns the table, and no row (roux's
+    `Database.give_away_table/3`).
+    """
+    use GenServer
+
+    def start_link(_), do: GenServer.start_link(__MODULE__, [], name: __MODULE__)
+
+    @impl true
+    def init([]), do: {:ok, %{}}
+
+    @impl true
+    def handle_cast({:hand_over, heir, owner}, state) do
+      :ets.setopts(:serialized_counts, {:heir, heir, :counts})
+      :ets.give_away(:serialized_counts, owner, :counts)
+      {:noreply, state}
+    end
+  end
+
   defmodule CountImporter do
     @moduledoc "Another process that writes counts by key while the counter runs."
     use GenServer

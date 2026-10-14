@@ -416,7 +416,12 @@ ets_op_table(id, (k, t)) :- ets_table(id, k, t), ets_op(id, _, _, _, _).
 // A write of a table some pair touches, in the function holding it.
 .decl table_write(write: symbol, func: symbol, table: EtsTable)
 
-table_write(w, g, table) :- ets_op(w, g, _, _, "write"), ets_op_table(w, table), rival_table(table).
+table_write(w, g, table) :- ets_op(w, g, _, op, "write"), row_write_op(op), ets_op_table(w, table), rival_table(table).
+
+// Writes of rows. setopts and give_away change a table's options and its owner.
+.decl row_write_op(op: symbol)
+
+row_write_op(op) :- ets_op(_, _, _, op, "write"), op != "setopts", op != "give_away".
 
 // The write's locally constructed key. A "minted" key is freshly generated and cannot
 // equal another independently generated key.

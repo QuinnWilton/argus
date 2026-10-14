@@ -18,6 +18,7 @@ defmodule Argus.Soundness.RacesTest do
 
   import Argus.Test.Soundness, only: [fired: 2]
 
+  alias Argus.Test.Fixtures.CheckThenAct, as: C
   alias Argus.Test.Memo
   alias Argus.Test.Soundness.Races, as: R
 
@@ -203,6 +204,16 @@ defmodule Argus.Soundness.RacesTest do
 
     test "matched out of lookup/2" do
       assert_fires([R.OneTableLookup], @publish, {R.OneTableLookup, :register, 1})
+    end
+  end
+
+  describe "a rival writes rows, not the table's owner or options" do
+    test "a handover beside a process that writes counts by key" do
+      assert_fires(
+        [C.SeedingOwner, C.SerializedCounter, C.CountsHandover, C.CountImporter],
+        @ets,
+        {C.SerializedCounter, :handle_call, 3}
+      )
     end
   end
 
