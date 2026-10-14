@@ -11,9 +11,14 @@ defmodule Argus.Graph.ModuleTrace do
   def fetch(db, module, kind, identity, token, compute) do
     name = {:argus_function_module, 1, Blob.term_digest(identity)}
 
+    # The module's facts are demanded in its extraction group
+    # (`FunctionPack.packed/4`), whose function traces a cold run
+    # writes as one pack: this trace joins them there rather than take
+    # a directory and a file of its own.
+
     hit =
       if token do
-        Enum.find_value(Trace.fetch(db.blob, name, limit: 4), fn trace ->
+        Enum.find_value(Trace.Pack.fetch(db.blob, name, limit: 4), fn trace ->
           with %{pack: pack, held: held, codes: codes} <- trace.value,
                true <- Enum.all?(codes, fn {q, v} -> R.query_code(db, q) == v end),
                true <- Enum.all?(trace.deps, fn {read, value} -> observe(db, read) === value end),
@@ -44,7 +49,7 @@ defmodule Argus.Graph.ModuleTrace do
          observed = for(read <- Enum.sort(Map.keys(reads)), do: {read, observe(db, read)}),
          true <- Enum.all?(held, &Blob.member?(db.blob, &1)),
          ^token <- Dependencies.snapshot(db) do
-      Trace.put(db.blob, name, observed, %{pack: pack, held: held, codes: codes}, keep: 4)
+      Trace.Pack.put(db.blob, name, observed, %{pack: pack, held: held, codes: codes}, keep: 4)
 
       result
     else
