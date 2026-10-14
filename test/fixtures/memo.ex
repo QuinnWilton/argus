@@ -10,7 +10,7 @@ defmodule Argus.Test.Memo do
   test asks for a solver, a deadline or a facts directory of its own.
 
   Across runs, every call goes through the suite's blob store
-  (`Argus.Graph.store/0`, `_build/test/argus/store`): a fixture set's
+  (`Argus.Graph.store/0`, `Argus.Test.Store`): a fixture set's
   facts are extracted only for the producers an edit invalidated, and a
   solve only when what it reads changed. These are the tests of what a rule finds over a
   fixture — a function of the fixture's beams, the extractors' code,
@@ -92,7 +92,7 @@ defmodule Argus.Test.Memo do
 
   @doc """
   `Argus.analyze(modules, analysis)`, once per run, through the suite's
-  blob store (`Argus.Graph.store/0`, `_build/test/argus/store`).
+  blob store (`Argus.Graph.store/0`, `Argus.Test.Store`).
   """
   @spec analyze([module() | String.t()], Argus.Analysis.analysis(), keyword()) ::
           {:ok, map()} | {:error, term()}

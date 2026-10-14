@@ -8,6 +8,10 @@ on:
 
 env:
   MIX_ENV: test
+  # The suite's blob store in the build, which the test jobs' caches
+  # save between runs, rather than under the user's cache where it is
+  # kept outside a developer's working tree (`Argus.Test.Store`).
+  ARGUS_TEST_STORE: _build/test/argus/store
 
 jobs:
   format:

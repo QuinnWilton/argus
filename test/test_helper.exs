@@ -1,8 +1,9 @@
-# The graph backend's blob store is the suite's, beside the beams it
-# keeps facts of (`mix clean` takes it too), never the machine's: every
-# graph run here, and in every peer (`Argus.Test.Peer`), keeps its facts
-# and solves there.
-System.put_env("ARGUS_CACHE_DIR", Path.join(Mix.Project.build_path(), "argus/store"))
+# The graph backend's blob store is the suite's, a store of this
+# checkout's own under the user's cache (`Argus.Test.Store`), never the
+# machine's nor inside the working tree, where every file watcher over
+# the tree took each of its writes: every graph run here, and in every
+# peer (`Argus.Test.Peer`), keeps its facts and solves there.
+System.put_env("ARGUS_CACHE_DIR", Argus.Test.Store.root())
 
 # What earlier runs' tests left in their tmp_dirs, removed at once
 # (`Argus.Test.Files.rm_tmp_dirs!/0`) rather than by ExUnit as each test
@@ -21,7 +22,8 @@ Argus.Test.Memo.start()
 # it keeps those used within the day rather than a driver's week: one
 # unused for a day was written by code this checkout no longer has, and
 # costs every collection after it a read. It says it is collecting and
-# what it took, so the wait for it is never silent.
+# what it took, so the wait for it is never silent. The stores of
+# checkouts whose build is gone go then too (`Argus.Test.Store`).
 if Argus.Dirs.keep?() do
   store = Argus.Graph.store()
   stamp = Path.join(store.root, "gc.stamp")
@@ -46,6 +48,9 @@ if Argus.Dirs.keep?() do
         "Collected it in #{div(micros, 1_000_000)}s: removed #{stats.removed} entries " <>
           "(#{div(stats.bytes, 1_000_000)} MB), kept #{stats.kept}."
       )
+
+      for dir <- Argus.Test.Store.prune_orphans(),
+          do: IO.puts(:stderr, "Removed the store of a checkout whose build is gone: #{dir}")
     end)
   end
 end

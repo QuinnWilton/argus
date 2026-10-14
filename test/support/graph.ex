@@ -82,14 +82,13 @@ defmodule Argus.Test.Graph do
   end
 
   @doc """
-  The suite's blob store, `_build/test/argus/store` (beside the beams,
-  so `mix clean` takes it too), or a temporary one under
+  The suite's blob store (`Argus.Test.Store`), or a temporary one under
   `ARGUS_NO_CACHE`.
   """
   @spec store() :: Roux.Blob.t()
   def store do
     if Argus.Dirs.keep?(),
-      do: Roux.Blob.open!(Path.join(Mix.Project.build_path(), "argus/store")),
+      do: Roux.Blob.open!(Argus.Test.Store.root()),
       else: Roux.Blob.temporary()
   end
 
