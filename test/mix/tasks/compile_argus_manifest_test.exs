@@ -361,9 +361,16 @@ defmodule Mix.Tasks.Compile.ArgusManifestTest do
       File.touch!(beam, System.os_time(:second) + 5)
 
       QueryLog.reset(log)
-      compile!()
+      assert {:noop, _} = compile!()
       assert assembled(log) == []
       assert ran(log, :solve) == []
+
+      # A stamp too recent to trust is read again by the next run, which
+      # trusts it once it is old enough: the manifest moves, the run
+      # found nothing new.
+      File.touch!(beam, System.os_time(:second) - 3600)
+      assert {:noop, _} = compile!()
+      assert {:noop, _} = compile!()
     end)
   end
 

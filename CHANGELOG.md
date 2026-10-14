@@ -13,6 +13,10 @@ which a change appeared; older names and APIs may have changed since then.
 - A remembered failed download names the file that keeps it, so the
   escript's and the rebar3 plugin's users, who have no `mix argus.flowlog
   build`, can try again at once by removing it.
+- The `:argus` compiler says `:noop` for a run that found nothing new
+  though it rewrote its manifest: a beam merely touched, or read again
+  (with roux 0.3.4) because it was written too soon before the last run
+  to trust its stamp, which every compile after an edit did once.
 
 ### Changed
 

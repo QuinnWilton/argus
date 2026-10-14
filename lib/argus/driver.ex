@@ -142,17 +142,29 @@ defmodule Argus.Driver do
           {%{}, [:engine_unavailable]}
         end
 
-      {status, _session} = Roux.Session.commit(session, meta)
+      changed? = force? or moved?(session)
+      {_status, _session} = Roux.Session.commit(session, meta)
       _ = collect(session.blob)
 
       %Result{
         located: located,
         notices: notices ++ Enum.map(duplicates, &{:duplicate, &1}),
-        changed?: force? or status == :written
+        changed?: changed?
       }
     after
       Roux.Session.close(session)
     end
+  end
+
+  # Whether the run moved an input or computed an entry the manifest
+  # does not hold. The manifest is also rewritten for a beam whose stamp
+  # alone moved (a touch, or one read again once its stamp can be
+  # trusted), and for the entries it drops: nothing found moves with it.
+  defp moved?(%Roux.Session{restored?: false}), do: true
+
+  defp moved?(%Roux.Session{db: db} = session) do
+    Roux.Revision.current(db.revision) != session.revision or
+      Roux.Database.writes(db) != session.writes
   end
 
   # What extraction could not do: each module it could not read at all
