@@ -73,6 +73,7 @@ mix argus --all           # all bug-finding analyses
 mix argus --list          # available analyses and sets
 mix argus --format json   # findings as JSON
 mix argus --fail-above 0  # fail CI on any finding
+mix argus --fail-on error # fail CI on an error-severity finding
 ```
 
 To report findings on every compile, append the `:argus` compiler. Editors can

@@ -51,6 +51,7 @@ defmodule Argus.CLITest do
             ["analyze", "a", "b"],
             ["--app", "no-equals-sign"],
             ["--fail-above", "-1"],
+            ["--fail-on", "fatal"],
             ["--project", "gleam", "--profile", "test"]
           ] do
         assert %{status: 2, stderr: stderr} = run(argv), inspect(argv)
@@ -110,6 +111,13 @@ defmodule Argus.CLITest do
 
       assert %{status: 1} = run([root, "--analyses", "coupling,failure", "--fail-above", "1"])
       assert %{status: 0} = run([root, "--analyses", "coupling,failure", "--fail-above", "2"])
+    end
+
+    test "--fail-on decides the status by severity", %{root: root} do
+      analyses = ["--analyses", "coupling,failure"]
+      assert %{status: 1} = run([root | analyses] ++ ["--fail-on", "warning"])
+      assert %{status: 1} = run([root | analyses] ++ ["--fail-on", "info"])
+      assert %{status: 0} = run([root | analyses] ++ ["--fail-on", "error"])
     end
 
     test "--format json: the findings on stdout", %{root: root} do

@@ -113,6 +113,20 @@ defmodule Mix.Tasks.ArgusTest do
     end)
   end
 
+  test "--fail-on raises on a finding at the severity or above", context do
+    in_project(context, fn _log ->
+      compile!()
+
+      assert_raise Mix.Error, ~r/findings at --fail-on info or above/, fn ->
+        capture_io(:stderr, fn -> Mix.Task.rerun("argus", ["--fail-on", "info"]) end)
+      end
+
+      capture_io(:stderr, fn ->
+        assert Mix.Task.rerun("argus", ["--fail-on", "error"]) != :failed
+      end)
+    end)
+  end
+
   test "--fail-above raises when the count is exceeded", context do
     in_project(context, fn _log ->
       compile!()

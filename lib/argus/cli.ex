@@ -255,7 +255,8 @@ defmodule Argus.CLI do
   Renders a driver run — the notices, then the findings — as `options`
   ask (`--format`, `--color`), and says how it went: the entries, and
   the exit status (1 when there are more findings than `--fail-above`,
-  3 when an analysis degraded, else 0). Ignored files are matched
+  or one at `--fail-on`'s severity or above, 3 when an analysis
+  degraded, else 0). Ignored files are matched
   relative to `root`; paths are shown relative to `cwd`. Shared by the
   escript and `mix argus`.
   """
@@ -283,6 +284,7 @@ defmodule Argus.CLI do
       cond do
         Argus.Driver.Result.degraded(result) != [] -> 3
         over?(entries, options.fail_above) -> 1
+        failing(entries, options.fail_on) != [] -> 1
         true -> 0
       end
 
@@ -291,6 +293,19 @@ defmodule Argus.CLI do
 
   defp over?(_entries, nil), do: false
   defp over?(entries, threshold), do: length(entries) > threshold
+
+  @doc """
+  The entries at `severity` or above (`--fail-on`): none for `nil`.
+  """
+  @spec failing([Report.Entry.t()], Argus.Findings.severity() | nil) :: [Report.Entry.t()]
+  def failing(_entries, nil), do: []
+
+  def failing(entries, severity),
+    do: Enum.filter(entries, &(rank(&1.severity) <= rank(severity)))
+
+  defp rank(:error), do: 0
+  defp rank(:warning), do: 1
+  defp rank(:info), do: 2
 
   # ── list, gc, version ────────────────────────────────────────────────
 

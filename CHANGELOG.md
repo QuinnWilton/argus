@@ -5,6 +5,12 @@ which a change appeared; older names and APIs may have changed since then.
 
 ## Unreleased
 
+### Added
+
+- `--fail-on error|warning|info` on the `argus` escript and `mix argus`:
+  exit 1 (raise, for the task) on a finding at that severity or above, as
+  the configuration sets it, where `--fail-above` counts every finding.
+
 ### Changed
 
 - roux `~> 0.3.5`: a demand waiting on a query another process computes is

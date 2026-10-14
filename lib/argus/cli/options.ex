@@ -35,6 +35,7 @@ defmodule Argus.CLI.Options do
             all: false,
             format: :text,
             fail_above: nil,
+            fail_on: nil,
             include_deps: nil,
             force: false,
             offline: false,
@@ -59,6 +60,7 @@ defmodule Argus.CLI.Options do
           all: boolean(),
           format: :text | :json,
           fail_above: non_neg_integer() | nil,
+          fail_on: Argus.Findings.severity() | nil,
           include_deps: boolean() | nil,
           force: boolean(),
           offline: boolean(),
@@ -74,6 +76,7 @@ defmodule Argus.CLI.Options do
     all: :boolean,
     format: :string,
     fail_above: :integer,
+    fail_on: :string,
     include_deps: :boolean,
     force: :boolean,
     offline: :boolean,
@@ -169,6 +172,7 @@ defmodule Argus.CLI.Options do
   defp build(options, opts) do
     with {:ok, format} <- one_of(opts, :format, ~w(text json)a, :text),
          {:ok, color} <- one_of(opts, :color, ~w(auto always never)a, :auto),
+         {:ok, fail_on} <- fail_on(opts[:fail_on]),
          {:ok, project} <- project(opts[:project]),
          {:ok, apps} <- pairs(Keyword.get_values(opts, :app), "--app"),
          {:ok, deps} <- pairs(Keyword.get_values(opts, :dep), "--dep"),
@@ -189,6 +193,7 @@ defmodule Argus.CLI.Options do
            all: Keyword.get(opts, :all, false),
            format: format,
            fail_above: opts[:fail_above],
+           fail_on: fail_on,
            include_deps: opts[:include_deps],
            force: Keyword.get(opts, :force, false),
            offline: Keyword.get(opts, :offline, false),
@@ -212,6 +217,9 @@ defmodule Argus.CLI.Options do
         {:ok, atom}
     end
   end
+
+  defp fail_on(nil), do: {:ok, nil}
+  defp fail_on(value), do: one_of([fail_on: value], :fail_on, ~w(error warning info)a, nil)
 
   defp project(nil), do: {:ok, nil}
 
@@ -304,8 +312,10 @@ defmodule Argus.CLI.Options do
       --format text|json   pentiment frames on stderr (default), or JSON on stdout
       --color auto|always|never
       --fail-above N       exit 1 when there are more than N findings
+      --fail-on SEVERITY   exit 1 on a finding at error, warning or info
+                           severity or above (as configured)
 
-    Exit status: 0 done, 1 findings over --fail-above, 2 a usage, project
+    Exit status: 0 done, 1 findings over --fail-above or --fail-on, 2 a usage, project
     or configuration error, 3 the analyses could not run or did not finish
     (no Rust to build the engines with, an analysis that degraded).
 
