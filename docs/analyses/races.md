@@ -121,6 +121,28 @@ The remover can be a take, delete, bulk removal or table deletion. Key matching 
 process reachability bound the analysis; unresolved identities can over-approximate
 possible interference.
 
+## Deletes by key that take others' rows
+
+`ets_broad_delete` · **warning**
+
+`:ets.delete/2` removes every row under a key. Where other processes make rows of
+their own under that key (an insert of a row holding the inserter's `self()`, as a
+waiter, subscriber or claimant does), a delete by key can take a row its caller never
+meant to:
+
+| Kind | Shape |
+|---|---|
+| `after_read` | The function read the key's rows, acts on them, and deletes the key. A row another process inserted in between goes with the delete, unseen: a waiter is never woken. |
+| `after_kill` | The function killed a process and deletes the key on its behalf. Once the process is dead, another can claim or register under the key, and the delete takes that live row. |
+
+Delete exactly the rows meant, with `:ets.delete_object/2`: the rows read, or the dead
+process's own row. A table only its owner writes (`:protected` or `:private`), a
+claimant releasing its own claim, and a delete that `ets_check_act` already reports are
+not reported. `after_read` counts rival `insert`s only: an `insert_new` cannot add a row
+while the rows the function read are there. The read or kill and the delete must be in
+one function; a rival row is recognized by `self()` in the inserted tuple itself, not
+by a pid a caller passes in.
+
 ## Interference model
 
 `CheckThenAct.meets` relates a read to an act it controls or supplies, translating

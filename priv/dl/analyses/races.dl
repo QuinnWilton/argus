@@ -1,6 +1,7 @@
 // Check-then-act races on process names, ETS rows, and Mnesia records, plus ETS
-// publication-order races. A finding requires a conflicting concurrent operation and a
-// harmful result that no serial ordering produces.
+// publication-order races and deletes by key that take other processes' rows. A finding
+// requires a conflicting concurrent operation and a harmful result that no serial
+// ordering produces.
 // `CheckThenAct` follows dependent checks and acts across functions. `EtsTable`
 // provides shared table identity. One `RunsConcurrently` instance classifies the
 // processes running all candidate pairs and writes. See
@@ -536,7 +537,15 @@ runs.seed(f) :- reads_then_writes(f, _, _, _, _).
 // witness.
 .decl rival_table(table: EtsTable)
 
-rival_table(table) :- reads_then_writes(_, _, _, table, _).
+rival_table(table) :- contended(_, table).
+
+// The tables a pair, or a delete by key after a read or a kill (below), is on in `func`.
+.decl contended(func: symbol, table: EtsTable)
+
+contended(f, table) :- reads_then_writes(f, _, _, table, _).
+contended(f, table) :- broad_delete(f, _, _, table, _, _, _).
+
+runs.seed(f) :- contended(f, _).
 
 // The tables a write or a counter bump may touch (clientlib/tables.dl).
 .decl ets_op_table(id: symbol, table: EtsTable)
@@ -618,31 +627,31 @@ param_filled(g, to_string(n)) :- param_write(_, g, _, _), call_arg_forward(_, g,
 // keys; collisions where computation reproduces a literal are a known blind spot.
 .decl keys_apart(ks: symbol, k: symbol, ks2: symbol, k2: symbol)
 
-keys_apart(ks, k, "literal", k2) :- pair_key(_, _, ks, k), ks = "literal", rival_write(_, _, _, "literal", k2), k != k2.
+keys_apart(ks, k, "literal", k2) :- key_asked(ks, k), ks = "literal", rival_write(_, _, _, "literal", k2), k != k2.
 
 keys_apart("literal", k, "tuple", k2) :-
-  pair_key(_, _, "literal", k),
+  key_asked("literal", k),
   !match("[{].*", k),
   rival_write(_, _, _, "tuple", k2).
 
 keys_apart("tuple", k, "literal", k2) :-
-  pair_key(_, _, "tuple", k),
+  key_asked("tuple", k),
   rival_write(_, _, _, "literal", k2),
   !match("[{].*", k2).
 
-keys_apart("literal", k, "self", k2) :- pair_key(_, _, "literal", k), rival_write(_, _, _, "self", k2).
-keys_apart("self", k, ks2, k2) :- pair_key(_, _, "self", k), rival_write(_, _, _, ks2, k2), (ks2 = "literal" ; ks2 = "self").
-keys_apart(ks, k, "minted", k2) :- pair_key(_, _, ks, k), rival_write(_, _, _, "minted", k2).
+keys_apart("literal", k, "self", k2) :- key_asked("literal", k), rival_write(_, _, _, "self", k2).
+keys_apart("self", k, ks2, k2) :- key_asked("self", k), rival_write(_, _, _, ks2, k2), (ks2 = "literal" ; ks2 = "self").
+keys_apart(ks, k, "minted", k2) :- key_asked(ks, k), rival_write(_, _, _, "minted", k2).
 
 keys_apart(ks, k, "literal", k2) :-
-  pair_key(_, _, ks, k),
+  key_asked(ks, k),
   ks != "literal",
   ks != "any",
   ks != "tuple",
   rival_write(_, _, _, "literal", k2).
 
 keys_apart("literal", k, ks2, k2) :-
-  pair_key(_, _, "literal", k),
+  key_asked("literal", k),
   rival_write(_, _, _, ks2, k2),
   computed_in_view(ks2).
 
@@ -653,7 +662,7 @@ keys_apart("literal", k, ks2, k2) :-
 // elements compare by position and literal alone, which mean the same in every
 // function.
 keys_apart("tuple", k, "tuple", k2) :-
-  pair_key(_, _, "tuple", k),
+  key_asked("tuple", k),
   rival_write(_, _, _, "tuple", k2),
   tuple_elements_apart(k, k2).
 
@@ -691,7 +700,7 @@ tuple_elements_apart(k, k2) :-
 .decl tuple_key_pair(k: symbol, k2: symbol)
 
 tuple_key_pair(k, k2) :-
-  pair_key(_, _, "tuple", k),
+  key_asked("tuple", k),
   rival_write(_, _, _, "tuple", k2),
   tuple_key_pos(k, _),
   tuple_key_pos(k2, _).
@@ -735,6 +744,12 @@ computed_in_view(ks) :- rival_write(_, _, _, ks, _), match("element [0-9]+", ks)
 
 // The key a pair meets on, in the meeting function's terms, and the
 // table it is on.
+// The keys keys_apart is asked about: a pair's, and a broad delete's.
+.decl key_asked(key_kind: symbol, key: symbol)
+
+key_asked(ks, k) :- pair_key(_, _, ks, k).
+key_asked(ks, k) :- broad_delete(_, _, _, _, ks, k, _).
+
 .decl pair_key(func: symbol, table: EtsTable, key_kind: symbol, key: symbol)
 
 pair_key(f, table, ks, k) :- decides_write(f, _, _, row), row = (table, ks, k).
@@ -760,19 +775,19 @@ writes_after_start(g) :- runs.outside_caller(c), writer_walk.reaches(c, g).
 writes_after_start(g) :- request_entry(e, _), writer_walk.reaches(e, g).
 writes_after_start(g) :- runs.spawned(_, _, r), writer_walk.reaches(r, g).
 
-// A rival write can overlap the pair when its function runs concurrently after startup
-// and no handoff orders it. Attribute execution to the writing function, even when the
-// key is named by a caller.
+// A rival write can overlap the pair, or a broad delete, when its function runs
+// concurrently after startup and no handoff orders it. Attribute execution to the writing
+// function, even when the key is named by a caller.
 .decl concurrent(func: symbol, rival_func: symbol, rival_write: symbol)
 
 concurrent(f, h, w2) :-
-  reads_then_writes(f, _, _, table, _),
+  contended(f, table),
   !runs.single_process(f),
   rival_write(w2, h, table, _, _),
   writes_after_start(h).
 
 concurrent(f, h, w2) :-
-  reads_then_writes(f, _, _, table, _),
+  contended(f, table),
   runs.single_process(f),
   runs.entry_reaches(m, f),
   rival_write(w2, h, table, _, _),
@@ -1497,6 +1512,137 @@ ets_race_frame(w_at, "rival", w2, h) :-
   reported_at(f, w, w_at),
   ets_harm_by(f, r, w, k, w2, h),
   other_site(f, w, w2, h).
+
+// Deletes by key that take rows other processes made
+//
+// :ets.delete/2 removes every row under a key. Where other processes make rows of their
+// own under it (an insert of a row holding the inserter's self()), a delete by key can
+// take a row its function never meant: one inserted after the function read the key's
+// rows (`after_read`), or one another process made after the function killed the
+// process the rows were for (`after_kill`). The read or the kill and the delete are in
+// one function. After a read, only plain inserts count: an insert_new cannot add a row
+// while the rows read are there.
+
+// A delete by key, as opposed to deleting the table or one object.
+.decl key_delete(delete: symbol, func: symbol)
+
+key_delete(d, f) :- ets_op(d, f, _, "delete", "write"), op_key(d, _, _).
+
+// An exit signal to another process.
+.decl kills(site: symbol, func: symbol)
+
+kills(e, f) :- exit_call(e, f, _), remote_call(e, f, ":erlang", "exit", 2).
+
+// Reads answering a key's rows.
+.decl row_read_op(op: symbol)
+
+row_read_op("lookup").
+row_read_op("lookup_element").
+row_read_op("match").
+row_read_op("match_object").
+
+.init delete_order = RunsAfter
+
+delete_order.asked(r) :- ets_op(r, f, _, op, "read"), row_read_op(op), key_delete(_, f).
+delete_order.asked(e) :- kills(e, f), key_delete(_, f).
+
+// `func` deletes `key` of `table` at `delete` after `before`, a read of the same key or
+// a kill.
+.decl broad_delete(func: symbol, before: symbol, delete: symbol, table: EtsTable, key_kind: symbol, key: symbol, kind: symbol)
+
+broad_delete(f, r, d, table, ks, k, "after_read") :-
+  key_delete(d, f),
+  ets_op(r, f, _, op, "read"),
+  row_read_op(op),
+  delete_order.runs_after(r, d),
+  op_key(r, ks, k),
+  ks != "dynamic",
+  op_key(d, ks, k),
+  ets_op_table(r, table),
+  ets_op_table(d, table).
+
+broad_delete(f, e, d, table, ks, k, "after_kill") :-
+  kills(e, f),
+  key_delete(d, f),
+  delete_order.runs_after(e, d),
+  op_key(d, ks, k),
+  ets_op_table(d, table).
+
+// An insert of a row holding the process making it: its own entry under the key.
+.decl own_row_write(write: symbol, op: symbol)
+
+own_row_write(w, op) :-
+  ets_op(w, _, _, op, "write"),
+  (op = "insert" ; op = "insert_new"),
+  ets_value(w, _, "self", _).
+
+// Another process can make its own row under the deleted key, through `rival_func`.
+.decl takes_own_row(func: symbol, before: symbol, delete: symbol, rival_write: symbol, rival_func: symbol)
+
+takes_own_row(f, b, d, w2, h) :-
+  broad_delete(f, b, d, table, ks, k, kind),
+  rival_write(w2, h, table, ks2, k2),
+  own_row_write(w2, op),
+  (kind = "after_kill" ; op = "insert"),
+  !keys_apart(ks, k, ks2, k2),
+  concurrent(f, h, w2).
+
+// A table another process can write: public, or handed in by the program's users.
+.decl writable_elsewhere(table: EtsTable)
+
+writable_elsewhere(table) :- contended(_, table), table = (tk, t), race_table_public(tk, t).
+writable_elsewhere(table) :- contended(_, table), table = (tk, _), tk = "handed_in".
+
+// A delete by key on a shared table takes a row another process made for itself, which
+// the function never read or which came after the kill. A delete ets_check_act reports
+// is left to it.
+.decl broad_delete_race(func: symbol, before: symbol, delete: symbol, kind: symbol)
+
+broad_delete_race(f, b, d, kind) :-
+  broad_delete(f, b, d, table, _, _, kind),
+  writable_elsewhere(table),
+  takes_own_row(f, b, d, _, _),
+  !ets_check_act(_, _, _, _, _, d, _).
+
+// One finding per function and trigger, at its first delete; the others are frames.
+.init broad_deletes = OnePerWrite
+
+broad_deletes.race(f, b, d, kind, 0) :- broad_delete_race(f, b, d, kind).
+broad_deletes.write_in(d, f) :- broad_delete_race(f, _, d, _).
+
+.decl ets_broad_delete(mod: symbol, func: symbol, name: symbol, key: symbol, before: symbol, delete: symbol, kind: symbol)
+.output ets_broad_delete
+
+ets_broad_delete(mod, f, name, k, b, d, kind) :-
+  broad_deletes.reported(f, b, d, kind),
+  broad_delete(f, b, d, table, _, k, kind),
+  writable_elsewhere(table),
+  deleted_table_shown_as(table, name),
+  in_module(f, mod).
+
+.decl deleted_table_shown_as(table: EtsTable, name: symbol)
+
+deleted_table_shown_as(table, t) :- contended(_, table), table = (tk, t), tk = "named".
+
+deleted_table_shown_as(table, cat("field ", s)) :-
+  contended(_, table), table = (tk, t), tk = "new",
+  sliced_table(t, _, s).
+
+deleted_table_shown_as(table, name) :-
+  contended(_, table), table = (tk, t), tk = "new",
+  table_made_at(tk, t, n),
+  ets_new(n, _, name).
+
+deleted_table_shown_as(table, "an argument") :- contended(_, table), table = (tk, _), tk = "handed_in".
+
+.decl ets_broad_delete_frame(delete: symbol, role: symbol, site: symbol, func: symbol)
+.output ets_broad_delete_frame
+
+ets_broad_delete_frame(d1, "also_deletes", d2, f) :- broad_deletes.also_writes(d1, d2, f).
+
+ets_broad_delete_frame(d, "rival", w2, h) :-
+  ets_broad_delete(_, f, _, _, b, d, _),
+  takes_own_row(f, b, d, w2, h).
 
 // Premature publication
 //

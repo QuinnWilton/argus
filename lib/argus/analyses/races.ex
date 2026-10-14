@@ -83,6 +83,20 @@ defmodule Argus.Analyses.Races do
     `:ets.lookup_element/3`), while `remover`, a take or delete of the
     table's rows, can run in another process between the two: the act
     crashes on the row the remover took.
+  - `ets_broad_delete(mod, func, name, key, before, delete, kind)` — a
+    delete by key (`delete`) takes every row under the key, and other
+    processes make rows of their own there (an insert of a row holding
+    the inserter's `self()`). `after_read`: the function read the key's
+    rows first (`before`), and a row inserted between the read and the
+    delete goes unseen (roux's waiters, woken from the rows read and
+    then all deleted). `after_kill`: the function killed a process first
+    (`before`), and a row another process made under the key once that
+    process died goes with it (roux's claims, deleted by key after
+    killing the claimant). One row per function and trigger, at its
+    first delete. A delete that `ets_check_act` reports is left to it.
+  - `ets_broad_delete_frame(delete, role, site, func)` — evidence for a
+    broad delete: the same function's other deletes (`also_deletes`) and
+    the inserts of rows other processes make for themselves (`rival`).
 
   A table is what `clientlib/tables.dl` says an operation may touch:
   `named` and its name, `new` and the `:ets.new/2` site that made it
@@ -100,7 +114,9 @@ defmodule Argus.Analyses.Races do
   publish-order finding is a `:warning`
   anchored at the early write, with the completing write and the reader
   as related frames; a missing-row finding is a `:warning` anchored at the
-  act, with the check and the remover as related frames.
+  act, with the check and the remover as related frames; a broad-delete
+  finding is a `:warning` anchored at the delete, with the read or the
+  kill as a related frame.
   """
 
   @behaviour Argus.Analysis
@@ -115,8 +131,9 @@ defmodule Argus.Analyses.Races do
     do:
       "check-then-act races on a process name, an ETS key or a Mnesia record that " <>
         "another process can write between the check and the act, non-atomic shared-cache claims, ETS values " <>
-        "published before the rows they point to, and ETS rows acted on after another " <>
-        "process may have removed them"
+        "published before the rows they point to, ETS rows acted on after another " <>
+        "process may have removed them, and deletes by key that take rows other " <>
+        "processes made for themselves"
 
   @impl true
   def rules_file, do: "analyses/races.dl"
@@ -268,6 +285,38 @@ defmodule Argus.Analyses.Races do
         key: [:func, :publish, :complete],
         doc:
           "A value is published in one ETS table before the row another table keys by it exists."
+      },
+      %{
+        name: :ets_broad_delete,
+        fields: [
+          {:mod, :symbol, "the module"},
+          {:func, :symbol, "the function holding the delete"},
+          {:name, :symbol,
+           "the table: its name, `field F` for one of the tables a site makes per element, " <>
+             "or `an argument` for one the program's users hand in"},
+          {:key, :symbol, "the key, as func identifies it"},
+          {:before, :symbol, "instruction ID of the read of the key's rows, or of the kill"},
+          {:delete, :symbol, "instruction ID of the delete by key"},
+          {:kind, :symbol, "after_read | after_kill"}
+        ],
+        key: [:delete],
+        doc:
+          "A delete by key, after a read of the key's rows or a kill, can take a row " <>
+            "another process made under the key for itself."
+      },
+      %{
+        name: :ets_broad_delete_frame,
+        fields: [
+          {:delete, :symbol, "the finding's delete"},
+          {:role, :symbol, "also_deletes | rival"},
+          {:site, :symbol, "instruction ID of the other delete, or of the rival insert"},
+          {:func, :symbol, "the function the site is reported from"}
+        ],
+        key: [:delete, :role, :site],
+        evidence: %{of: :ets_broad_delete, on: [:delete], limit: 4},
+        doc:
+          "The same function's other deletes after the read or the kill, and the inserts " <>
+            "of rows other processes make for themselves, attached to its finding."
       },
       %{
         name: :ets_missing_row,
@@ -500,6 +549,51 @@ defmodule Argus.Analyses.Races do
     )
   end
 
+  def finding(:ets_broad_delete, [mod, func, name, _key, before, delete, "after_read"]) do
+    table = ets_delete_table(name)
+
+    Findings.new(
+      :warning,
+      "ETS delete by key takes rows it never read",
+      "#{func} reads the rows of a key of #{table}#{Findings.elsewhere(before, func)} and " <>
+        "then deletes the key#{Findings.elsewhere(delete, func)}, every row under it. Other " <>
+        "processes make rows of their own under the key: one made between the read and " <>
+        "the delete goes with the delete, and what the function does with the rows it " <>
+        "read never reaches that process.",
+      at: Findings.at_site(delete, mod),
+      at_label: "this delete takes every row under the key, read or not",
+      related: [Findings.related("the read of the key's rows", Findings.at_site(before, mod))],
+      help: [
+        "delete exactly the rows read: `:ets.delete_object/2` of each, so a row made " <>
+          "since stays for the next reader",
+        "or take the rows and the key in one step: `:ets.take/2`"
+      ]
+    )
+  end
+
+  def finding(:ets_broad_delete, [mod, func, name, _key, before, delete, "after_kill"]) do
+    table = ets_delete_table(name)
+
+    Findings.new(
+      :warning,
+      "ETS delete by key after a kill takes another process's row",
+      "#{func} kills a process#{Findings.elsewhere(before, func)} and then deletes a key of " <>
+        "#{table}#{Findings.elsewhere(delete, func)}, every row under it. Other processes " <>
+        "make rows of their own under the key: once the process is dead, another can " <>
+        "claim or register under the key before the delete, and the delete takes that " <>
+        "live row too.",
+      at: Findings.at_site(delete, mod),
+      at_label: "this delete takes every row under the key, the dead process's or not",
+      related: [Findings.related("the kill", Findings.at_site(before, mod))],
+      help: [
+        "delete only the killed process's own row: `:ets.delete_object/2` of the row " <>
+          "naming it, which leaves a newer process's row alone",
+        "or leave the row to its owner's monitor, which sees the exit and can delete " <>
+          "exactly the dead process's row"
+      ]
+    )
+  end
+
   def finding(:ets_missing_row, [mod, func, kind, table, check, act, remover]) do
     name = describe_table(kind, table)
 
@@ -532,6 +626,21 @@ defmodule Argus.Analyses.Races do
   def evidence(frame, [_write, "also_writes", site, func])
       when frame in [:ets_race_frame, :mnesia_race_frame] do
     Findings.related("the same race writes here too", Findings.at_site_in_func(site, func))
+  end
+
+  def evidence(:ets_broad_delete_frame, [_delete, "also_deletes", site, func]) do
+    Findings.related(
+      "this delete by key takes rows the same way",
+      Findings.at_site_in_func(site, func)
+    )
+  end
+
+  def evidence(:ets_broad_delete_frame, [_delete, "rival", site, func]) do
+    Findings.related(
+      "another process makes its own row under the key here, from " <>
+        Findings.call_name(func),
+      Findings.at_site_in_func(site, func)
+    )
   end
 
   def evidence(:mnesia_race_frame, [_write, "other_writer", site, func]) do
@@ -659,6 +768,9 @@ defmodule Argus.Analyses.Races do
     do: {"the table kept under #{field}", "The table is public and"}
 
   defp ets_table_prose(name), do: {name, "The table is public and"}
+
+  defp ets_delete_table("an argument"), do: "the table its callers hand in"
+  defp ets_delete_table(name), do: name |> ets_table_prose() |> elem(0)
 
   # A "field" table is spelled with its module, which the prose has.
   defp describe_table("field", ident), do: "the table held under #{field_path(ident)}"
