@@ -63,7 +63,7 @@ defmodule Argus.MixProject do
     [
       # BEAM file analysis: disassembly and the corrected Line-chunk table
       # that line_info resolution depends on (0.2.0+).
-      {:beam_spy, "~> 0.2"},
+      {:beam_spy, "~> 0.2.2"},
       # The incremental query graph (memos, the manifest, the blob store).
       {:roux, "~> 0.3.5", roux_options()},
       {:telemetry, "~> 1.0"},

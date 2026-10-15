@@ -38,6 +38,10 @@ which a change appeared; older names and APIs may have changed since then.
 
 ### Fixed
 
+- beam_spy `~> 0.2.2`: on OTP 29, a module an OTP 27 or 28 compiler built
+  whose type table holds a union of an atom and a bitstring is extracted,
+  its operands' types as `any`, instead of failing whole (OTP 29.1
+  converts such an entry to a bitstring of unit 0 and then refuses it).
 - `String.to_atom(Atom.to_string(a))`, and other reads of an atom's own
   name back, are no longer reported as atom creation.
 - An exported decoder the program only ever hands literals (an `@payload`
