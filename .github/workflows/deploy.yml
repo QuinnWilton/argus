@@ -1,0 +1,80 @@
+name: Deploy
+
+# argus deployed the ways a user does, on the systems they run it on, with
+# Rust and without (test/deploy/check.sh): a Mix project with the :argus
+# compiler, mix argus, a prod build, the escript, and offline with nothing
+# downloaded. The checkout by default; a release from Hex when dispatched
+# with a version.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "argus version from Hex (empty: this checkout)"
+        required: false
+        default: ""
+  schedule:
+    - cron: "0 6 * * 1"
+  push:
+    branches: [main]
+    paths:
+      - native/**
+      - priv/flowlog/**
+      - lib/argus/flowlog/**
+      - lib/argus/flowlog.ex
+      - lib/argus/dirs.ex
+      - lib/argus/offline.ex
+      - lib/argus/cli.ex
+      - lib/argus/cli/**
+      - lib/mix/tasks/**
+      - mix.exs
+      - mix.lock
+      - test/deploy/**
+      - .github/workflows/deploy.yml
+
+jobs:
+  linux:
+    name: ${{ matrix.system }} / ${{ matrix.arch }} / Rust ${{ matrix.rust }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        system: [debian, alpine, nixos]
+        arch: [x86_64, arm64]
+        rust: [none]
+        include:
+          - { system: debian, arch: x86_64, rust: present }
+          - { system: alpine, arch: arm64, rust: present }
+          - { system: nixos, arch: arm64, rust: present }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy and use argus
+        run: test/deploy/run.sh ${{ matrix.system }} ${{ matrix.rust }}
+        env:
+          ARGUS_VERSION: ${{ inputs.version }}
+
+  macos:
+    name: macOS / ${{ matrix.arch }} / Rust ${{ matrix.rust }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'macos-15' || 'macos-15-intel' }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [arm64, x86_64]
+        rust: [none, present]
+    env:
+      RUST: ${{ matrix.rust }}
+      # The runner has Rust; naming a cargo that is not there is a machine
+      # without it, which uses the release's prebuilt engines.
+      ARGUS_CARGO: ${{ matrix.rust == 'none' && '/nonexistent' || '' }}
+      ARGUS_VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Elixir
+        run: brew install elixir
+
+      - name: Deploy and use argus
+        run: ARGUS_SRC_IN="$GITHUB_WORKSPACE" WORK="$RUNNER_TEMP/deploy" sh test/deploy/check.sh
