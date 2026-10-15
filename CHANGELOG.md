@@ -109,6 +109,13 @@ which a change appeared; older names and APIs may have changed since then.
   the suite links it into the same directory, so `@tag :tmp_dir` tests'
   files stay out of the tree too; remove an existing `tmp/` to have it
   linked.
+- roux `~> 0.3.6`: the blob store's collection drops a root not retained
+  for 30 days, and the entries only it named, though its manifest is
+  still there (a project nobody has built since: another checkout, an old
+  worktree), and removes trace directories left empty, which a store
+  gathered by the hundred thousand. A user's store stayed at 63 GB after
+  collections; the first collection after upgrading removes what those
+  kept.
 - roux `~> 0.3.5`: a demand waiting on a query another process computes is
   woken also when the key's previous claimant failed meanwhile, and
   cancelling a task leaves a newer claim of its key alone; both could
