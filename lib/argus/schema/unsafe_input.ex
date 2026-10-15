@@ -30,6 +30,25 @@ defmodule Argus.Schema.UnsafeInput do
         doc: "Binary-to-term deserialization call with safety classification."
       },
       %{
+        name: :decoded_origin,
+        layer: 2,
+        fields: [
+          {:id, :instr_id, "instruction ID of the binary_to_term call"},
+          {:func, :func_id, "containing function ID"},
+          {:origin, :symbol,
+           "artifact: a BEAM file's chunks or object code; build: a file under the " <>
+             "project's build directories"}
+        ],
+        doc: """
+        The bytes a `binary_to_term/1,2` call decodes come, on every path the module \
+        shows, from a BEAM file's chunks or object code (`:beam_lib`, \
+        `:code.get_object_code/1`), or from a file whose path is made of the project's \
+        own build directories and literals alone (`Argus.Extractors.DecodedOrigin`). A \
+        parameter of a function callers outside the module can run, and a value whose \
+        making the walk does not see, is neither.
+        """
+      },
+      %{
         name: :unsafe_decompression,
         layer: 2,
         fields: [

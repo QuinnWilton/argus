@@ -295,6 +295,11 @@
 .decl decoded_bytes_value(id: symbol, func: symbol, pos: number, param: number, callee: symbol, path: symbol) mutable
 .input decoded_bytes_value
 
+// The bytes a `binary_to_term/1,2` call decodes come, on every path the module shows, from a BEAM file's chunks or object code (`:beam_lib`, `:code.get_object_code/1`), or from a file whose path is made of the project's own build directories and literals alone (`Argus.Extractors.DecodedOrigin`). A parameter of a function callers outside the module can run, and a value whose making the walk does not see, is neither.
+//
+.decl decoded_origin(id: symbol, func: symbol, origin: symbol) mutable
+.input decoded_origin
+
 // Every accepted payload from this decoded term follows a successful local recursive validator. Rejected error envelopes may be returned unchanged; projecting or consuming their rejected payload is not certified. Validation accepts only inert scalars and recursively checks list heads/tails, every tuple element, and map keys/values. The proof follows exact values and accepted verdicts, including exception handlers; unknown operations establish no safety. This does not exclude compressed ETF allocation or make decoding without safe immune to atom creation.
 //
 .decl decoded_term_validated(id: symbol, func: symbol) mutable

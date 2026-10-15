@@ -75,6 +75,8 @@ defmodule Argus.Analyses.UnsafeInputTest do
     Argus.Test.Fixtures.AtomRoundTrip,
     [Argus.Test.Fixtures.ConstantDecode.Tree, Argus.Test.Fixtures.ConstantDecode.Embedded],
     [Argus.Test.Fixtures.OpenDecode.Tree, Argus.Test.Fixtures.OpenDecode.Callers],
+    Argus.Test.Fixtures.DecodedOrigin,
+    Argus.Test.Fixtures.DecodedOriginTwins,
     Argus.Test.Fixtures.AtomRoundTripTwins,
     D.FrameHandler,
     D.BoundedFrameHandler,
@@ -170,6 +172,55 @@ defmodule Argus.Analyses.UnsafeInputTest do
                {"Tree:lone/1", "deserialization"},
                {"Tree:unpack/1", "decompression"},
                {"Tree:unpack/1", "deserialization"}
+             ]
+    end
+
+    test "a decode of a beam's own terms or of a build file is reported apart, as info",
+         ctx do
+      short = &(&1 |> String.split(":") |> List.last())
+
+      own = analyze(ctx, [Argus.Test.Fixtures.DecodedOrigin])
+      assert local(own, "deserialization") == []
+
+      # The comprehension's own function, whatever the compiler names it.
+      named = fn func ->
+        if String.starts_with?(short.(func), "-literal_table/1-"),
+          do: "literal_table comprehension",
+          else: short.(func)
+      end
+
+      assert own["artifact_decode"]
+             |> Enum.map(fn [_id, func, _api, origin, safety] ->
+               {named.(func), origin, safety}
+             end)
+             |> Enum.sort() == [
+               {"decode/1", "artifact", "unsafe"},
+               {"docs/1", "artifact", "unsafe"},
+               {"literal_table comprehension", "artifact", "unsafe"},
+               {"sidecar/0", "build", "unsafe"}
+             ]
+
+      [artifact | _] = Enum.filter(own["artifact_decode"], &(Enum.at(&1, 3) == "artifact"))
+      finding = UnsafeInput.finding(:artifact_decode, artifact)
+      assert finding.severity == :info
+      assert finding.title == "binary_to_term of a BEAM file's chunks"
+      assert Enum.any?(finding.help, &(&1 =~ "short-lived VM"))
+
+      # Chunk bytes on one path only, a decoder another caller hands a
+      # caller's bytes, a build file a caller names, an exported decoder
+      # and a fun's parameter keep the deserialization finding.
+      twins = analyze(ctx, [Argus.Test.Fixtures.DecodedOriginTwins])
+      assert twins["artifact_decode"] == []
+
+      assert twins
+             |> local("deserialization")
+             |> Enum.map(fn {func, _api} -> short.(func) end)
+             |> Enum.sort() == [
+               "-through_fun/2-fun-0-/1",
+               "decode/1",
+               "either/3",
+               "exported_decode/1",
+               "named/1"
              ]
     end
 

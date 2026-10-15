@@ -703,11 +703,26 @@ export_reach.root(func) :- api_export(func).
 
 sink_without_request_path(id, func, api, s, source, p, safety) :-
   exposed_sink(id, func, api, s, safety),
-  sink_value(func, s, source, p).
+  sink_value(func, s, source, p),
+  !decoded_origin(id, func, _).
 
 sink_without_request_path(id, func, api, s, "", 0, safety) :-
   exposed_sink(id, func, api, s, safety),
-  !sink_value(func, s, _, _).
+  !sink_value(func, s, _, _),
+  !decoded_origin(id, func, _).
+
+// A deserialization no request reaches whose bytes are, on every path, a BEAM file's own
+// terms (`artifact`) or a file under the project's build directories (`build`): the
+// analyzed code's or the build's, not a caller's (`decoded_origin`). Reported apart, at a
+// lower tier: :safe cannot decode a beam's terms, which name atoms and funs this node
+// lacks, and the remedy is isolation, not an option. A request's path keeps its finding:
+// a beam a request hands in is the request's.
+.decl artifact_decode(id: symbol, func: symbol, api: symbol, origin: symbol, safety: symbol)
+.output artifact_decode
+
+artifact_decode(id, func, api, origin, safety) :-
+  exposed_sink(id, func, api, "deserialization", safety),
+  decoded_origin(id, func, origin).
 
 // With priors enabled, lower severity when at least 0.9 probability places the sink's
 // input outside externally supplied data. Preserve severity for request, URL, or

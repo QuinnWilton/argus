@@ -42,6 +42,7 @@ defmodule Argus.Test.FixtureSpread do
     Argus.Test.Fixtures.PathTraversal,
     Argus.Test.Fixtures.HtmlInjection,
     Argus.Test.Fixtures.EtfAllocation,
+    Argus.Test.Fixtures.DecodedOrigin,
     :term_validation_fixture,
     Argus.Test.Fixtures.SharedStoreClaim.Helpers,
     Argus.Test.Fixtures.SharedStoreClaim.Atomic,

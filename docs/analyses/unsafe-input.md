@@ -141,6 +141,31 @@ Request-path severity still follows proximity, so a distant request path can hav
 lower severity than the no-request fallback. This is the current grading behaviour,
 not a statement that adding a request path makes decoding safer.
 
+## A beam's terms and the build's files
+
+`artifact_decode` · **info**
+
+A deserialization no request reaches whose bytes are, on every path, a BEAM file's
+chunks or object code (`:beam_lib.chunks/2,3`, `:beam_lib.all_chunks/1`,
+`:code.get_object_code/1`), or a file whose path is made of the project's build
+directories (`Mix.Project.manifest_path/0` and kin) and literals alone, is reported
+here rather than as a deserialization. A beam's literal table, attributes, debug info
+and docs legitimately name atoms the node has not made and hold funs, so `:safe`
+cannot decode them: the question is whether the analyzed code is trusted, and the
+remedy is to analyze untrusted beams in a short-lived VM. A build file is as trusted
+as the build, since whoever writes the build directory already runs code through it.
+
+`Argus.Extractors.DecodedOrigin` follows the bytes through the module: structural
+instructions, the runtime's pure calls and decompressors, local helpers' returns,
+private functions' callers and the closures supported higher-order calls run. A value
+from a read, a dependency's call, an unresolved fun, a message or an exception, or a
+parameter of a function callers outside the module can run, keeps the deserialization
+finding. A request path keeps it too: a beam a request hands in is the request's.
+
+A checksum compared before decoding is not treated as provenance: whoever can write
+the bytes can write a matching checksum. Only a keyed check (a MAC or an authenticated
+decryption) establishes who wrote them.
+
 ## Compressed ETF allocation
 
 `compressed_etf_from_input` · **warning**

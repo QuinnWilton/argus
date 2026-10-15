@@ -38,6 +38,12 @@ defmodule Argus.Analyses.UnsafeInput do
     (`Argus.Priors.Questions.ValueSource`, asked of atoms,
     deserializations and code execution); the finding then steps down and
     says so.
+  - `artifact_decode(id, func, api, origin, safety)` — a deserialization
+    no request reaches whose bytes are, on every path, a BEAM file's
+    chunks (`artifact`) or a file under the build directories (`build`)
+    (`Argus.Extractors.DecodedOrigin`): reported here, at info, instead of
+    as a deserialization. `:safe` cannot decode a beam's terms; the
+    remedy is a short-lived VM.
   - `sink_endpoint(sink, verb, path, plug)` — the HTTP route a sink is
     reachable from, when the router literal names one.
   - `unbounded_children_from_request(sup, child, via, kind)` —
@@ -119,7 +125,9 @@ defmodule Argus.Analyses.UnsafeInput do
       # Exports the docs hide (doc_hidden): no way in for a caller's data.
       Argus.Extractors.Docs,
       # Calls a quote names (quoted_call): generated code's, not a beam's.
-      Argus.Extractors.Quoted
+      Argus.Extractors.Quoted,
+      # Bytes decoded from a beam's chunks or the build (decoded_origin).
+      Argus.Extractors.DecodedOrigin
     ]
 
   @sink_fields [
@@ -166,6 +174,22 @@ defmodule Argus.Analyses.UnsafeInput do
                "for a deserialization, its option class: unsafe | atoms_only | dynamic; else empty"}
             ],
         doc: "A sink no request reaches: live code, but not attacker-reachable."
+      },
+      %{
+        name: :artifact_decode,
+        fields: [
+          {:id, :symbol, "instruction ID of the binary_to_term call"},
+          {:func, :symbol, "function containing it"},
+          {:api, :symbol, "the API called"},
+          {:origin, :symbol,
+           "artifact | build; artifact: a BEAM file's chunks or object code, build: a " <>
+             "file under the project's build directories"},
+          {:safety, :symbol, "unsafe | atoms_only | dynamic, its option class"}
+        ],
+        key: [:id],
+        doc:
+          "A deserialization no request reaches of a BEAM file's own terms, or of a file " <>
+            "in the build directories: the analyzed code's bytes or the build's."
       },
       %{
         name: :sink_export,
@@ -416,6 +440,43 @@ defmodule Argus.Analyses.UnsafeInput do
     )
     |> trusted_value("the command it runs", source, p)
     |> Map.put(:floor, :warning)
+  end
+
+  def finding(:artifact_decode, [id, func, api, "artifact", safety]) do
+    Findings.new(
+      :info,
+      "binary_to_term of a BEAM file's chunks",
+      "#{func} decodes bytes it read from a BEAM file's chunks or object code, with " <>
+        "#{api} #{deserialization_how(safety)}. They are the analyzed module's own terms, " <>
+        "which can name atoms this node has not made and hold funs, so :safe cannot " <>
+        "decode them all. Decoding them runs the beam author's terms through this node: " <>
+        "a crafted beam can fill the atom table or plant funs. The defence is where the " <>
+        "analysis runs, not an option.",
+      at: Findings.at_instr(id),
+      at_label: "a beam's terms decoded here",
+      help: [
+        "analyze BEAM files from outside in a separate, short-lived VM (an escript, a " <>
+          "peer node), never in a long-running node that serves anything"
+      ]
+    )
+  end
+
+  def finding(:artifact_decode, [id, func, api, "build", safety]) do
+    Findings.new(
+      :info,
+      "binary_to_term of a file in the build directory",
+      "#{func} decodes, with #{api} #{deserialization_how(safety)}, a file whose path " <>
+        "is made of the project's build directories (`Mix.Project.manifest_path/0` and " <>
+        "kin) and literals alone. Whoever can write there can already run code through " <>
+        "the build, so the bytes are as trusted as the build itself; a build directory " <>
+        "others can write to is not.",
+      at: Findings.at_instr(id),
+      at_label: "a build file decoded here",
+      help: [
+        "keep the build directory writable only by the user who runs the build",
+        "or decode with `[:safe]` where the file can hold only atoms the code names"
+      ]
+    )
   end
 
   def finding(:unbounded_children_from_request, [sup, child, via, kind]) do
