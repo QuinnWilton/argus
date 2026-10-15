@@ -24,12 +24,26 @@ which a change appeared; older names and APIs may have changed since then.
 
 ### Added
 
+- `Argus.Graph.Pack.inline_limit/0`: the stored size up to which a
+  producer's segment is held in its module's pack.
 - `--fail-on error|warning|info` on the `argus` escript and `mix argus`:
   exit 1 (raise, for the task) on a finding at that severity or above, as
   the configuration sets it, where `--fail-above` counts every finding.
 
 ### Changed
 
+- A run writes about half the files it did: a module's per-producer fact
+  segments up to 4 KB stored are held in its pack rather than as files of
+  their own, and module traces join the module's trace pack (a cold run
+  over roux, 82 modules: 2,271 files and some 7,000 file-system events
+  before, 1,050 and 3,400 after). Relation digests, kept solves and
+  finding identities are unchanged, and packs written before still read.
+- Contributors: the test suite keeps its blob store under
+  `$XDG_CACHE_HOME/argus/test/<checkout>/store`, out of the working tree
+  editors watch, rather than in `_build/test/argus/store`
+  (`ARGUS_TEST_STORE` names another); the daily collection removes the
+  stores of checkouts whose build is gone. Remove an old
+  `_build/test/argus/store` by hand.
 - roux `~> 0.3.5`: a demand waiting on a query another process computes is
   woken also when the key's previous claimant failed meanwhile, and
   cancelling a task leaves a newer claim of its key alone; both could
