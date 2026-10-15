@@ -750,8 +750,25 @@ may_answer_in_handler(h) :-
   tag != ":noreply".
 
 may_answer_in_handler(h) :- handle_call_function(_, h), local_call(id, h, _, _), tail_call(id).
-may_answer_in_handler(h) :- handle_call_function(_, h), remote_call(id, h, _, _, _), tail_call(id).
+may_answer_in_handler(h) :-
+  handle_call_function(_, h),
+  remote_call(id, h, m, f, a),
+  tail_call(id),
+  !never_returns(m, f, a).
 may_answer_in_handler(h) :- handle_call_function(_, h), dynamic_call(id, h, _), tail_call(id).
+
+// A call that raises, throws or exits its caller, and so answers nothing:
+// a handler's tail call to one is its error path (Elixir 1.19 compiles
+// Map.put/3's :badmap error as a tail call to :erlang.error/1). exit/2
+// signals another process and returns.
+.decl never_returns(mod: symbol, fun: symbol, arity: number)
+
+never_returns(":erlang", "error", 1).
+never_returns(":erlang", "error", 2).
+never_returns(":erlang", "error", 3).
+never_returns(":erlang", "exit", 1).
+never_returns(":erlang", "throw", 1).
+never_returns(":erlang", "raise", 3).
 
 // The handler's own stack, in its module: where it starts the process it
 // hands the request to.
