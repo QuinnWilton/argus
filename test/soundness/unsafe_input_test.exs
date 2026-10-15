@@ -19,6 +19,7 @@ defmodule Argus.Soundness.UnsafeInputTest do
 
   @atom_export "Dynamic atom creation reachable from an exported function"
   @code_export "Dynamic code execution reachable from exports"
+  @command_export "Subprocess execution of a caller's input"
 
   describe "atoms made of atoms" do
     test "an atom a lookup chose, a request's atoms and fed-back atoms stay reported", %{sev: sev} do
@@ -133,18 +134,18 @@ defmodule Argus.Soundness.UnsafeInputTest do
   describe "programs PATH finds" do
     test "wrappers and interpreters run their arguments", %{sev: sev} do
       for fun <- [:via_env, :via_ssh, :via_docker, :via_search_path],
-          do: assert(severity(sev, "G9.FoundWrapper", fun, @code_export) == :error)
+          do: assert(severity(sev, "G9.FoundWrapper", fun, @command_export) == :error)
 
       for fun <- [:run_snippet, :php],
-          do: assert(severity(sev, "G9.FoundMix", fun, @code_export) == :error)
+          do: assert(severity(sev, "G9.FoundMix", fun, @command_export) == :error)
 
       for fun <- [:via_sudo, :via_xargs, :via_timeout, :via_lua, :via_awk, :literal_env, :search],
-          do: assert(severity(sev, "Adv.Found.Wrappers", fun, @code_export) == :error)
+          do: assert(severity(sev, "Adv.Found.Wrappers", fun, @command_export) == :error)
     end
 
     test "a program that runs none of its arguments stays quiet", %{sev: sev} do
-      assert severity(sev, "Adv.Found.Quiet", :dims, "code") == nil
-      assert severity(sev, "Adv.Found.Quiet", :literal, "code") == nil
+      assert severity(sev, "Adv.Found.Quiet", :dims, "Subprocess") == nil
+      assert severity(sev, "Adv.Found.Quiet", :literal, "Subprocess") == nil
     end
   end
 

@@ -1,13 +1,14 @@
-// Unsafe atom creation, deserialization, decompression, and code execution reachable
-// from requests. Evidence distinguishes direct/adjacent/transitive call paths from
+// Unsafe atom creation, deserialization, decompression, code execution and subprocesses
+// reachable from requests. Evidence distinguishes direct/adjacent/transitive call paths from
 // proven argument flow (`flow`). Reachability alone does not establish
 // attacker-controlled data.
 // Flow chains per-function argument summaries backward from sinks. Missing flow
 // evidence may reflect unsupported returns, captures, or stored state; it does not
 // prove safe input.
-// Outside request paths, report live code-execution sinks, atom creation from external
-// caller parameters, and deserialization without :safe. Export reach establishes
-// liveness, not attacker access. Request entries use behaviour and callback signatures.
+// Outside request paths, report live code-execution sinks, atom creation, decompression
+// and subprocesses fed by external caller parameters, and deserialization without :safe.
+// Export reach establishes liveness, not attacker access. Request entries use behaviour
+// and callback signatures.
 
 .include "../clientlib/imports.dl"
 .include "../clientlib/behaviours.dl"
@@ -36,7 +37,8 @@
 request_reached_sink(id, func, entry, kind, evidence) :-
   sink(id, func, _, _, _),
   reached_by_request(id, func, entry, kind, evidence),
-  !config_path(id, evidence).
+  !config_path(id, evidence),
+  !fixed_command_path(id, evidence).
 
 // ── Configuration, not the request ───────────────────────────────
 
@@ -143,7 +145,8 @@ sink(id, func, api, kind, safety) :-
 .decl sink_call(id: symbol, func: symbol, api: symbol, kind: symbol, safety: symbol)
 
 sink_call(id, func, api, "atom", "") :- unsafe_atom_creation(id, func, api).
-sink_call(id, func, api, "code", "") :- code_execution(id, func, api).
+sink_call(id, func, api, "code", "") :- code_execution(id, func, api), !command_api(api).
+sink_call(id, func, api, "command", "") :- code_execution(id, func, api), command_api(api).
 sink_call(id, func, api, "decompression", "") :- unsafe_decompression(id, func, api, _).
 
 sink_call(id, func, api, "deserialization", safety) :-
@@ -225,7 +228,9 @@ inert_decoded_term(id, func) :-
 // task that runs no code (`command_fixed`).
 .decl bounded_sink_input(id: symbol, func: symbol, kind: symbol)
 
-bounded_sink_input(id, func, "code") :- sink_call(id, func, _, "code", _), command_fixed(id, func).
+bounded_sink_input(id, func, "command") :-
+  sink_call(id, func, _, "command", _),
+  command_fixed(id, func).
 
 bounded_sink_input(id, func, "atom") :- sink_call(id, func, _, "atom", _), bounded_input(id, func).
 
@@ -477,7 +482,13 @@ sink_flow_reaches(c, q, t) :-
 sink_flow_seed(func, pos, id) :-
   sink_call(id, func, _, k, _),
   k != "decompression",
+  k != "command",
   sink_arg_derived(id, func, _, pos).
+
+sink_flow_seed(func, pos, id) :-
+  sink_call(id, func, _, "command", _),
+  command_arg(id, arg),
+  sink_arg_derived(id, func, arg, pos).
 
 sink_flow_seed(func, pos, id) :-
   sink_data_arg(id, func, arg),
@@ -578,8 +589,8 @@ exposed_sink(id, func, api, s, safety) :-
   exposed_to_callers(id, func),
   !request_reached_sink(id, _, _, _, _).
 
-// External reach establishes code-execution liveness. Atom and decompression findings
-// also require caller-derived arguments. Deserialization remains eligible
+// External reach establishes code-execution liveness. Atom, decompression and subprocess
+// findings also require caller-derived arguments. Deserialization remains eligible
 // independently.
 .decl exposed_to_callers(id: symbol, func: symbol)
 
@@ -615,6 +626,13 @@ sink_without_request_path(id, func, api, s, "", 0, safety) :-
 sink_value(func, s, source, p) :-
   exposed_sink(_, func, _, s, _),
   prior_value_source(func, s, source, _, p),
+  p >= 900,
+  !several_sinks(func).
+
+// The prior asks one question of every code_execution call, subprocesses included.
+sink_value(func, "command", source, p) :-
+  exposed_sink(_, func, _, "command", _),
+  prior_value_source(func, "code", source, _, p),
   p >= 900,
   !several_sinks(func).
 
@@ -804,6 +822,92 @@ inflate_input.seed(func, p, id) :-
   sink_reads(id, func, arg, "param", p).
 
 caller_input(id) :- inflate_input.reaches(f, _, id), outside_api(f).
+
+// ── Subprocesses ─────────────────────────────────────────────────
+
+// The subprocess APIs among code_execution's: what runs is a program on the host, not
+// code in the node. A call is a finding where outside data chooses what runs.
+.decl command_api(api: symbol)
+
+command_api("System.cmd/2").
+command_api("System.cmd/3").
+command_api(":os.cmd/1").
+command_api(":os.cmd/2").
+command_api("System.shell/1").
+command_api("System.shell/2").
+
+// The arguments of a subprocess call that say what runs: the program System.cmd runs
+// and its argument list, which a shell or an interpreter runs as code (a literal
+// program that runs none of its arguments is no sink: code_execution leaves it out),
+// and the whole command line a shell parses. A shell handed a literal script that takes
+// the arguments after it as data (`command_data_args`) runs nothing those arguments
+// say. Known limits: an option that makes a program run another (option injection),
+// and an `env:` entry such as `LD_PRELOAD`, are not arguments that say what runs here.
+.decl command_arg(id: symbol, pos: number)
+
+command_arg(id, 0) :- code_execution(id, _, api), command_api(api).
+
+command_arg(id, 1) :-
+  code_execution(id, func, api),
+  (api = "System.cmd/2" ; api = "System.cmd/3"),
+  !command_data_args(id, func).
+
+// A request's path to a subprocess whose program and script are made of nothing at all:
+// literals, and what the environment and the configuration answer (Dependence reads a
+// lookup as made of nothing). No request data, and no other source, reaches what runs.
+.decl fixed_command_path(id: symbol, evidence: symbol)
+
+fixed_command_path(id, evidence) :-
+  sink(id, func, _, "command", _),
+  reached_by_request(id, func, _, _, evidence),
+  evidence != "flow",
+  !command_varies(id).
+
+// Something reaches what the subprocess runs: a parameter, a call's or a shared-state
+// operation's result (Dependence's sources), or an unresolved fun's result.
+.decl command_varies(id: symbol)
+
+command_varies(id) :- command_arg(id, pos), sink_reads(id, _, pos, _, _).
+command_varies(id) :- command_arg(id, pos), sink_arg_derived(id, _, pos, _).
+command_varies(id) :- command_arg(id, pos), call_arg_runtime(id, _, pos, _, _).
+
+// Without a request path, the parameters of the program's API that reach what runs.
+.init command_input = ParamReadsReach
+
+command_input.seed(func, to_string(pos), id) :-
+  sink(id, func, _, "command", ""),
+  command_arg(id, arg),
+  sink_arg_derived(id, func, arg, pos).
+
+command_input.seed(func, p, id) :-
+  sink(id, func, _, "command", ""),
+  command_arg(id, arg),
+  sink_reads(id, func, arg, "param", p).
+
+// Made of what a helper returns of its own parameter.
+command_input.seed(func, p, id) :-
+  sink(id, func, _, "command", ""),
+  command_arg(id, arg),
+  sink_reads(id, func, arg, "call", g),
+  returns_reads(g, "param", q),
+  call_arg_reads(func, g, n, "param", p),
+  q = to_string(n).
+
+command_input.reaches(f, p, t) :- message_param(f, p, h), command_input.reaches(h, "0", t).
+
+caller_input(id) :- command_input.reaches(f, _, id), command_entry(f).
+
+// Where a caller outside the program hands a subprocess's function its arguments: the
+// program's API, or a named function the program makes a fun of (`&run/1`), which runs
+// with whatever its holder hands it.
+.decl command_entry(func: symbol)
+
+command_entry(f) :- outside_api(f).
+
+command_entry(f) :-
+  closure_def(_, f),
+  function_def(f, _, n, _, _),
+  !match("-.*-fun-[0-9]+-", n).
 
 // Nearby exported callers provide evidence of public reachability. An exported sink
 // function already serves as its own anchor.

@@ -9,7 +9,7 @@ defmodule Argus.Soundness.CommandPrecisionTest do
     assert {:ok, results} = Memo.analyze([CodeExecution], :unsafe_input)
 
     functions =
-      for [_, func, _, "code" | _] <- results["sink_without_request_path"],
+      for [_, func, _, "command" | _] <- results["sink_without_request_path"],
           do: func
 
     for name <- [:os_cmd, :partial_os_cmd, :nested_os_cmd, :branch_os_cmd, :dynamic_shell] do

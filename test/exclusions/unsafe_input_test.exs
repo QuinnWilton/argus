@@ -49,7 +49,7 @@ defmodule Argus.Exclusions.UnsafeInputTest do
     # unsafe_input.dl, sink: !repeated_site(id).
     test "a try's `after` block the compiler emits twice is one sink", ctx do
       assert sinks(ctx, [U.TryAfterSink.Scratch]) ==
-               [{"with_scratch_dir/2", ":os.cmd/1", "code"}]
+               [{"with_scratch_dir/2", ":os.cmd/1", "command"}]
     end
 
     # unsafe_input.dl, sink: !bounded_input(id, func).

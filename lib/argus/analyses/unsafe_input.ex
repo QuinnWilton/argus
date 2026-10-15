@@ -2,9 +2,10 @@ defmodule Argus.Analyses.UnsafeInput do
   @moduledoc """
   Attacker-shaped data reaching a sink.
 
-  Tracks atom creation, deserialization, decompression and code execution,
-  with separate rules for compressed ETF allocation, cryptographic verdicts,
-  runtime templates, SQL construction, raw HTML and upload filesystem paths.
+  Tracks atom creation, deserialization, decompression, code execution and
+  subprocesses, with separate rules for compressed ETF allocation,
+  cryptographic verdicts, runtime templates, SQL construction, raw HTML and
+  upload filesystem paths.
   The general sink findings describe how exposed each operation is:
 
   - `sink_reachable(id, func, api, sink, entry, kind, proximity, source,
@@ -24,9 +25,11 @@ defmodule Argus.Analyses.UnsafeInput do
     config is its code. `source` and `permille` are the value
     prior's, as below; `safety` is a deserialization's option class.
   - `sink_without_request_path(id, func, api, sink, source, permille,
-    safety)` — no request reaches it: atom creation and decompression of
-    what an exported function's caller hands in, code execution reachable
-    from an exported function, and every deserialization without `:safe`.
+    safety)` — no request reaches it: atom creation, decompression and
+    subprocesses of what an exported function's caller hands in (a
+    subprocess's program, a shell's script or an interpreter's arguments),
+    code execution reachable from an exported function, and every
+    deserialization without `:safe`.
     A deserialization of an authenticated decryption's or MAC check's
     success payload (`Plug.Crypto`, `Phoenix.Token`; clientlib's
     verification.dl) is no sink here or above: only the server's key
@@ -52,7 +55,14 @@ defmodule Argus.Analyses.UnsafeInput do
   A sink no request reaches keeps the severities the sinks carried when
   they were reported by export reachability alone: deserialization is an
   error, code execution an error, atom creation and decompression a
-  warning.
+  warning. A subprocess an exported function's caller chooses is an error:
+  a flow from the API's parameters to what runs, not reachability.
+
+  A subprocess (`System.cmd`, `:os.cmd`, `System.shell`) runs a program on
+  the host rather than code in the node, and is reported only where data
+  reaches what runs. A request's path to one whose program and script are
+  made of literals, the environment and the configuration alone is no
+  finding.
   """
 
   @behaviour Argus.Analysis
@@ -116,7 +126,7 @@ defmodule Argus.Analyses.UnsafeInput do
     {:id, :symbol, "instruction ID of the sink call"},
     {:func, :symbol, "function containing the sink"},
     {:api, :symbol, "the API called"},
-    {:sink, :symbol, "atom | deserialization | decompression | code"}
+    {:sink, :symbol, "atom | deserialization | decompression | code | command"}
   ]
 
   # Keyed on the site, not the (site, entry) pair: a sink reachable from
@@ -212,6 +222,19 @@ defmodule Argus.Analyses.UnsafeInput do
       "names built from data"
   ]
 
+  @command_help [
+    "run a fixed program with an argument list (`System.cmd/3` with a literal " <>
+      "executable) rather than a shell command line",
+    "hand outside data to a fixed `sh -c` script as a positional parameter, quoted " <>
+      "(`\"$1\"`), never as the script, the program or an interpreter's code",
+    "or check the program against an allowlist"
+  ]
+
+  @command_risk " If outside data chooses the program, a shell's script or an " <>
+                  "interpreter's arguments, whoever supplies it runs commands on the " <>
+                  "host with the node's operating-system privileges."
+
+
   @inflate_help [
     "inflate in bounded chunks (`:zlib.safeInflate/2` or `inflateChunk/2`) and stop past a cap",
     "or refuse a body whose size the transport has not already bounded"
@@ -284,6 +307,19 @@ defmodule Argus.Analyses.UnsafeInput do
     |> requested()
   end
 
+  def finding(:sink_reachable, [id, func, api, "command", entry, kind, proximity, source, p, _s]) do
+    Findings.new(
+      code_severity(proximity),
+      "Subprocess execution #{reached(proximity)} #{surface(kind)}",
+      route(func, api, entry, proximity, kind) <> @command_risk,
+      [at: Findings.at_instr(id)] ++
+        route_opts(proximity, "runs a subprocess here", @command_help)
+    )
+    |> retier(func, proximity, source, p)
+    |> at_least(:warning)
+    |> requested()
+  end
+
   def finding(:sink_reachable, [id, func, api, "atom", entry, kind, proximity, source, p, _s]) do
     Findings.new(
       severity(proximity),
@@ -338,6 +374,21 @@ defmodule Argus.Analyses.UnsafeInput do
       at_label: "inflated with no size bound here",
       help: @inflate_help
     )
+  end
+
+  def finding(:sink_without_request_path, [id, func, api, "command", source, p, _safety]) do
+    Findings.new(
+      :error,
+      "Subprocess execution of a caller's input",
+      "#{func} calls #{api}, and what an exported function's caller hands in reaches " <>
+        "what it runs: the program, a shell's script or an interpreter's arguments." <>
+        @command_risk,
+      at: Findings.at_instr(id),
+      at_label: "runs a subprocess here",
+      help: @command_help
+    )
+    |> trusted_value("the command it runs", source, p)
+    |> Map.put(:floor, :warning)
   end
 
   def finding(:sink_without_request_path, [id, func, api, "code", source, p, _safety]) do
@@ -516,15 +567,17 @@ defmodule Argus.Analyses.UnsafeInput do
   defp severity("rendered"), do: :warning
   defp severity(_transitive), do: :info
 
-  # Code execution a request reaches is never below :warning, whatever
-  # the distance and whatever a prior says the function reads. The other
-  # sinks' tiers step down with distance because a path is not a flow
-  # and the transitive rows read storage; a code sink has no bound a
-  # program writes and no value test, so reach from a request is itself
-  # the finding. An admin-only route is no exception: argus cannot see
-  # `pipe_through`, and an administrator's token reaching code on the
-  # host is an escalation past the application's own authority (akkoma's
-  # ConfigDB evaluated posted config three ways). `floor:` holds it there
+  # Code execution, and a subprocess, a request reaches is never below
+  # :warning, whatever the distance and whatever a prior says the
+  # function reads. The other sinks' tiers step down with distance
+  # because a path is not a flow and the transitive rows read storage; a
+  # code sink has no bound a program writes and no value test, so reach
+  # from a request is itself the finding (a subprocess's, where something
+  # reaches what it runs: `fixed_command_path` in unsafe_input.dl). An
+  # admin-only route is no exception: argus cannot see `pipe_through`,
+  # and an administrator's token reaching code on the host is an
+  # escalation past the application's own authority (akkoma's ConfigDB
+  # evaluated posted config three ways). `floor:` holds it there
   # past the tooling step too (Argus.Findings.Tooling), as a request's
   # every sink is. So is code execution no request reaches: a value prior
   # takes it to `:warning` at most, and the tooling step no further.

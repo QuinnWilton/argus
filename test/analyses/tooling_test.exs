@@ -48,14 +48,14 @@ defmodule Argus.Analyses.ToolingTest do
     end
   end
 
-  # Code execution each module's export reaches, by module.
+  # The subprocess each module's export hands its caller's command, by module.
   defp findings(opts) do
     opts = Keyword.put(opts, :analyses, [:unsafe_input])
 
     assert {:ok, %Findings{degraded: []} = r} = Findings.run(@mods, opts)
 
     r.findings
-    |> Enum.filter(&(&1.title =~ "Dynamic code execution"))
+    |> Enum.filter(&(&1.title =~ "Subprocess execution"))
     |> Map.new(&{&1.module, &1})
   end
 
@@ -142,7 +142,7 @@ defmodule Argus.Analyses.ToolingTest do
 
       by_module =
         r.findings
-        |> Enum.filter(&(&1.title =~ "Dynamic code execution"))
+        |> Enum.filter(&(&1.title =~ "Subprocess execution"))
         |> Enum.group_by(& &1.module, & &1.severity)
 
       for mod <- [ContractToolingHelper, ContractToolingDeep] do

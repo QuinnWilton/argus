@@ -3,7 +3,8 @@
 [Bug-class catalog](../bug-classes.md)
 
 This analysis connects external entry points to operations that can exhaust resources,
-execute code, alter SQL or HTML syntax, or use upload filenames as filesystem paths.
+execute code, run subprocesses, alter SQL or HTML syntax, or use upload filenames as
+filesystem paths.
 It also checks whether cryptographic verification results are enforced. A call path is weaker evidence than tracked data flow. Inspect the
 proximity and value evidence before interpreting a finding as exploitable input flow.
 
@@ -25,11 +26,11 @@ sink-specific fallback described below.
 | `adjacent` | The entry calls the sink function. | warning |
 | `transitive` | A longer call path reaches it. | info |
 
-Code execution stays at least warning regardless of distance. Optional value-source
-priors can lower some severities and mark the evidence heuristic; they do not prove
-that a value is trusted. Missing flow facts are not evidence of safety. Wrappers,
-returned values, higher-order calls and unsupported propagators can reduce a flow
-to a path. A route frame does not establish whether authentication protects it.
+Code execution and subprocesses stay at least warning regardless of distance. Optional
+value-source priors can lower some severities and mark the evidence heuristic; they do
+not prove that a value is trusted. Missing flow facts are not evidence of safety.
+Wrappers, returned values, higher-order calls and unsupported propagators can reduce a
+flow to a path. A route frame does not establish whether authentication protects it.
 
 ## Unbounded atom creation
 
@@ -157,22 +158,48 @@ outside this local result-use model.
 
 `sink=code`
 
-The sink list includes supported Code and EEx evaluation/compilation APIs, shell
-commands and dynamic command execution. Request-controlled input can execute with the node's
-privileges. This check intentionally requires no proven input flow. Literal EEx
-sources and fully literal os:cmd/System.shell commands are excluded; partial commands
-and branches with unknown command values remain candidates. Other reachable code
-evaluation can still be reported without evidence that a caller chooses the source.
-
-For System.cmd, a literal non-interpreter executable is excluded; a dynamic executable
-or shell/interpreter with non-literal arguments remains a sink. This does not cover
-option injection into otherwise literal commands. Some evaluation and port-spawn APIs
-are outside the list.
+The sink list includes supported Code and EEx evaluation/compilation APIs.
+Request-controlled input can execute with the node's privileges. This check
+intentionally requires no proven input flow. Literal EEx sources are excluded. Other
+reachable code evaluation can still be reported without evidence that a caller
+chooses the source.
 
 Without a request path, reachability from an export is an error before optional
 re-tiering. Code execution never falls below warning through distance, priors or
 tooling classification. An administrative endpoint still needs an explicit trust
 boundary; the analysis does not model its authorization policy.
+
+## Subprocess execution
+
+`sink=command`
+
+`System.cmd/2,3`, `:os.cmd/1,2` and `System.shell/1,2` run a program on the host,
+not code in the node. A call is a finding where data reaches what runs: the program
+`System.cmd` runs and the arguments it hands a shell or interpreter, or the whole
+command line `:os.cmd` and `System.shell` hand a shell. A literal program that runs
+none of its arguments, a fully literal command line, and a shell or interpreter handed
+literal arguments on every path (`mix` handed a task that runs no code included) are
+no sink.
+
+A shell handed `-c` and a literal script runs nothing the arguments after the script
+say, where the script uses them only as double-quoted arguments of programs that do not
+run their arguments: `sh -c 'kill -0 "$1"' sh pid` runs `kill`, whatever `pid` holds.
+A positional parameter as a command word (`"$@" &`), unquoted, handed to `eval`,
+`exec`, `trap`, a shell, an interpreter or a wrapper such as `env` or `xargs`, or a
+script with command substitution, a here-document, an alias or a change of `PATH` or
+directory, leaves the arguments code.
+
+Without a request path, the finding requires that an exported function's caller hands
+in what runs (or a function the program makes a fun of, which runs with whatever its
+holder hands it), and is an error: it is a flow, not reachability. A program found on
+the PATH or named by configuration, run with literal arguments, is no finding. A
+request's flow is an error; a request's path to a subprocess is a warning where
+anything reaches what it runs, and no finding where the program and script are made of
+literals, the environment and configuration alone.
+
+Option injection into an otherwise literal command (`git "$@"` or `System.cmd("tar",
+args)` handed `--to-command`), and `env:` entries such as `LD_PRELOAD`, are not
+covered. Port spawns are outside the list.
 
 ## Runtime template sources
 

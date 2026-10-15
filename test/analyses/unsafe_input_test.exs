@@ -37,6 +37,14 @@ defmodule Argus.Analyses.UnsafeInputTest do
     Argus.Test.Fixtures.CommandMixCode,
     Argus.Test.Fixtures.CommandMixTestWrapper,
     Argus.Test.Fixtures.CommandOpenWrapper,
+    Argus.Test.Fixtures.CommandDataArgs,
+    Argus.Test.Fixtures.CommandCodeArgs,
+    Argus.Test.Fixtures.CommandFixedInput,
+    Argus.Test.Fixtures.CommandUnknownProgram,
+    Argus.Test.Fixtures.CommandRequest.ProgramPlug,
+    Argus.Test.Fixtures.CommandRequest.DataPlug,
+    [Argus.Test.Fixtures.CommandRequest.FixedPlug],
+    [Argus.Test.Fixtures.CommandRequest.StoredPlug, Argus.Test.Fixtures.CommandRequest.Jobs],
     Argus.Test.Fixtures.SafeModule,
     RequestSurface.DirectPlug,
     RequestSurface.SafeCallback,
@@ -200,12 +208,12 @@ defmodule Argus.Analyses.UnsafeInputTest do
     end
 
     test "flags eval and dynamic commands, leaving literal commands quiet", ctx do
-      funcs =
-        analyze(ctx, [Argus.Test.Fixtures.CodeExecution])
-        |> local("code")
-        |> Enum.map(&elem(&1, 0))
+      results = analyze(ctx, [Argus.Test.Fixtures.CodeExecution])
+      assert [{eval, _}] = local(results, "code")
+      assert eval =~ ":eval/1"
 
-      assert Enum.any?(funcs, &String.contains?(&1, "eval"))
+      funcs = results |> local("command") |> Enum.map(&elem(&1, 0))
+
       assert Enum.any?(funcs, &String.contains?(&1, "os_cmd"))
       assert Enum.any?(funcs, &String.contains?(&1, "system_cmd"))
       refute Enum.any?(funcs, &String.contains?(&1, "static_system_cmd"))
@@ -236,7 +244,7 @@ defmodule Argus.Analyses.UnsafeInputTest do
     defp commands(ctx, module) do
       ctx
       |> analyze([module])
-      |> local("code")
+      |> local("command")
       |> Enum.map(fn {func, _api} -> func |> String.split(":") |> List.last() end)
       |> Enum.sort()
     end
@@ -270,6 +278,70 @@ defmodule Argus.Analyses.UnsafeInputTest do
 
     test "a wrapper with callers outside the module is not read through its callers", ctx do
       assert commands(ctx, Argus.Test.Fixtures.CommandOpenWrapper) == ["captured_mix/1", "mix/1"]
+    end
+
+    test "a literal script that takes the caller's data as quoted parameters runs none of it",
+         ctx do
+      assert commands(ctx, Argus.Test.Fixtures.CommandDataArgs) == []
+
+      # A parameter run as a command, split unquoted, evaluated, wrapped,
+      # interpreted or substituted is code.
+      assert commands(ctx, Argus.Test.Fixtures.CommandCodeArgs) == [
+               "evaluated/1",
+               "interpreted/1",
+               "run_guarded/2",
+               "substituted/1",
+               "unquoted/1",
+               "wrapped/1"
+             ]
+    end
+
+    test "a program and arguments no caller hands in are live, but no finding", ctx do
+      assert commands(ctx, Argus.Test.Fixtures.CommandFixedInput) == []
+      assert commands(ctx, Argus.Test.Fixtures.CommandUnknownProgram) == ["lint/1"]
+    end
+
+    test "a subprocess finding says it runs a program, at the severity of a flow", ctx do
+      [row] =
+        for [_id, func | _] = row <-
+              analyze(ctx, [Argus.Test.Fixtures.CommandUnknownProgram])[
+                "sink_without_request_path"
+              ],
+            func =~ "lint/1",
+            do: row
+
+      finding = UnsafeInput.finding(:sink_without_request_path, row)
+      assert finding.title == "Subprocess execution of a caller's input"
+      assert finding.severity == :error and finding.floor == :warning
+      assert finding.detail =~ "operating-system privileges"
+      refute finding.detail =~ "code execution inside the node"
+    end
+
+    test "a request's data reaching the program is a flow; its quoted parameter is not",
+         ctx do
+      alias Argus.Test.Fixtures.CommandRequest, as: R
+
+      reached = fn modules ->
+        for [_id, func, _api, "command", _entry, _kind, proximity | _] <-
+              analyze(ctx, modules)["sink_reachable"],
+            do: {func |> String.split(".") |> List.last(), proximity}
+      end
+
+      assert reached.([R.ProgramPlug]) == [{"ProgramPlug:call/2", "flow"}]
+      assert reached.([R.DataPlug]) == []
+      assert analyze(ctx, [R.DataPlug])["sink_without_request_path"] == []
+    end
+
+    test "a request's path to a fixed command is none; to a stored script, a path", ctx do
+      alias Argus.Test.Fixtures.CommandRequest, as: R
+
+      fixed = analyze(ctx, [R.FixedPlug])
+      assert fixed["sink_reachable"] == [] and fixed["sink_without_request_path"] == []
+
+      assert [[_id, func, ":os.cmd/1", "command", _entry, "plug", "adjacent" | _]] =
+               analyze(ctx, [R.StoredPlug, R.Jobs])["sink_reachable"]
+
+      assert func =~ "StoredPlug:run/1"
     end
   end
 

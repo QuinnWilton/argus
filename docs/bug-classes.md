@@ -19,7 +19,7 @@ it and the limits to consider when reviewing it.
 | [State machines](analyses/state-machine.md) | Unreachable states and states with no exit. |
 | [ETS](analyses/ets.md) | Table ownership, restart windows and access patterns. |
 | [Effects](analyses/effects.md) | Effects inside a transaction that a rollback cannot undo. |
-| [Unsafe input](analyses/unsafe-input.md) | Resource exhaustion, code/SQL/HTML injection, upload path traversal and unenforced cryptographic verification. |
+| [Unsafe input](analyses/unsafe-input.md) | Resource exhaustion, code/command/SQL/HTML injection, upload path traversal and unenforced cryptographic verification. |
 | [Exposure](analyses/exposure.md) | Inspect-visible secrets and TLS verification settings. |
 | [Coverage](analyses/coverage.md) | Facts the analysis could not recover; opt-in and informational. |
 
@@ -44,8 +44,8 @@ limits and the finding's evidence rather than treating a level as a probability.
 Inferred targets and optional priors can lower severity. Findings identify heuristic
 provenance when applicable. Code classified as tooling or test support can also step
 down a level. Unsafe-input findings have their own proximity-based grading; code
-execution retains a warning floor. The finding builder is the authority for exact
-variant-specific grading.
+execution and subprocesses retain a warning floor. The finding builder is the
+authority for exact variant-specific grading.
 
 ## Reviewing a finding
 
