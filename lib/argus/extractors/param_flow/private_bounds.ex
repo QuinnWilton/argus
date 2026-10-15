@@ -8,7 +8,8 @@ defmodule Argus.Extractors.ParamFlow.PrivateBounds do
   alias Argus.InstrId
   # An unexported function that is never captured has only the direct callers
   # visible in its module. Each parameter can inherit the union of their finite
-  # argument sets, provided every invocation establishes that bound. Start with
+  # argument sets, or an existing atom's name, provided every invocation
+  # establishes that bound. Start with
   # unknown parameters, so cycles cannot prove themselves bounded. A fixed round
   # limit only loses additional refinements: every retained proof already holds
   # without assuming anything about callers whose parameters remain unknown.
@@ -97,10 +98,10 @@ defmodule Argus.Extractors.ParamFlow.PrivateBounds do
             |> Map.fetch!(site.func_id)
             |> Map.get(site.idx, %{})
             |> Map.take(regs)
-            |> Map.filter(fn {_reg, bound} -> match?({:values, _}, bound) end)
+            |> Map.filter(fn {_reg, bound} -> inheritable?(bound) end)
           end)
 
-        {target, Bounded.common_entries(inherited)}
+        {target, inherited |> Bounded.common_entries() |> Map.filter(&inheritable?(elem(&1, 1)))}
       end)
 
     returned = return_bounds(Map.take(functions, Map.keys(calls)), entries, returns)
@@ -109,6 +110,14 @@ defmodule Argus.Extractors.ParamFlow.PrivateBounds do
       do: {entries, returns},
       else: solve(calls, functions, refined, returned, rounds - 1)
   end
+
+  # A finite set of the program's values, or exactly the name of an atom
+  # that exists (`Atom.to_string/1` of one), which an atom sink reads back
+  # as that atom. The weaker "made of atoms" bound is not handed on: its
+  # proof also asks who chose the atoms, a question about the caller.
+  defp inheritable?({:values, _desc}), do: true
+  defp inheritable?({:atoms, :atom}), do: true
+  defp inheritable?(_bound), do: false
 
   # A return summary must cover every completing path. Functions with tail
   # calls are left unknown here; their result would need the callee's own proof.

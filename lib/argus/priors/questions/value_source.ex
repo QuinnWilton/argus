@@ -125,7 +125,7 @@ defmodule Argus.Priors.Questions.ValueSource do
     # no better answer than an atom's name: it is not asked either.
     bounded =
       for r <- Map.get(facts, :sink_arg_bounded, []),
-          r.arg_pos == 0 and r.list_param in ["", "atoms"],
+          r.arg_pos == 0 and r.list_param in ["", "atom", "atoms"],
           into: MapSet.new(),
           do: site(r.id)
 

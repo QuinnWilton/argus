@@ -542,7 +542,8 @@ defmodule Argus.Schema.CallValues do
           {:func, :func_id, "function containing the sink"},
           {:arg_pos, :number, "0-based argument position at the sink"},
           {:list_param, :symbol,
-           "empty when the bound holds; 'atoms' for an atom made of atoms that exist, " <>
+           "empty when the bound holds; 'atom' for exactly an existing atom's name, " <>
+             "which makes no atom; 'atoms' for an atom made of atoms that exist, " <>
              "which holds where those atoms are not the caller's choice; else the position " <>
              "of the function's list parameter the bound needs to be a literal list"}
         ],
@@ -553,7 +554,9 @@ defmodule Argus.Schema.CallValues do
         parameter is a bound only when callers pass literal lists \
         (`call_arg_allowlist`). At atom sinks, `list_param` value `atoms` means \
         existing-atom input; this is bounded only if outsiders cannot choose the atoms \
-        and newly created atoms cannot feed back.
+        and newly created atoms cannot feed back. Value `atom` means the argument is \
+        exactly an existing atom's name on every path (`Atom.to_string/1` of one, read \
+        back in the same encoding): the conversion returns that atom and makes none.
         """
       },
       %{

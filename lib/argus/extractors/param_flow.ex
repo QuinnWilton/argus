@@ -36,7 +36,10 @@ defmodule Argus.Extractors.ParamFlow do
     the first; `"atoms"` for the second, which holds only where the rules
     find the atoms are not the caller's choice (below); otherwise the
     function's parameter that list is, which the callers must fill with a
-    literal list.
+    literal list. `"atom"` is the narrowest of the second: on every path
+    the argument is exactly the name of an atom that exists
+    (`Atom.to_string/1` of one, read back in the same encoding), so the
+    conversion makes no atom at all, whoever chose it.
   - `call_arg_chosen(caller, callee, arg_pos)` and `sink_arg_chosen(id,
     func, arg_pos)` — the argument is made of an atom an existing-atom
     lookup returned (`String.to_existing_atom/1`,
@@ -601,7 +604,7 @@ defmodule Argus.Extractors.ParamFlow do
                 InstrId.mint(func_id, idx),
                 func_id,
                 to_string(pos),
-                list_param(bound)
+                list_param(bound, existing_name?(mfa, Map.get(bounds, idx, %{})))
               ])
           end
         else
@@ -737,9 +740,23 @@ defmodule Argus.Extractors.ParamFlow do
     end)
   end
 
-  defp list_param({:values, _n}), do: ""
-  defp list_param({:atoms, _n}), do: "atoms"
-  defp list_param({:param, q}), do: to_string(q)
+  defp list_param({:values, _n}, _existing_name?), do: ""
+  defp list_param({:atoms, :atom}, true), do: "atom"
+  defp list_param({:atoms, _n}, _existing_name?), do: "atoms"
+  defp list_param({:param, q}, _existing_name?), do: to_string(q)
+
+  # Whether the atom sink reads its argument back in the encoding
+  # `Atom.to_string/1` and `atom_to_list/1` write an atom's name in:
+  # UTF-8, or a list of code points. The name of an atom that exists,
+  # read so, is that atom; read as Latin-1 it can name another.
+  defp existing_name?({:erlang, :binary_to_atom, 1}, _bounds), do: true
+  defp existing_name?({:erlang, :list_to_atom, 1}, _bounds), do: true
+  defp existing_name?({String, :to_atom, 1}, _bounds), do: true
+
+  defp existing_name?({:erlang, :binary_to_atom, 2}, bounds),
+    do: Map.get(bounds, {:x, 1}) in [{:values, {:set, [:utf8]}}, {:values, {:set, [:unicode]}}]
+
+  defp existing_name?(_mfa, _bounds), do: false
 
   # The positions at which every call from a function to a callee passes
   # a literal list: the list is moved into the argument register in the

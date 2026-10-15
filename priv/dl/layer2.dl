@@ -957,7 +957,7 @@
 .decl shutdown_runs(id: symbol, func: symbol, pos: number) mutable
 .input shutdown_runs
 
-// A sink argument restricted on every path to at most 1,024 values, through literal tests, allowlists, bounded integers, or combinations of bounded values (`Argus.Extractors.ParamFlow.Bounded`). Combined bounds multiply. A list parameter is a bound only when callers pass literal lists (`call_arg_allowlist`). At atom sinks, `list_param` value `atoms` means existing-atom input; this is bounded only if outsiders cannot choose the atoms and newly created atoms cannot feed back.
+// A sink argument restricted on every path to at most 1,024 values, through literal tests, allowlists, bounded integers, or combinations of bounded values (`Argus.Extractors.ParamFlow.Bounded`). Combined bounds multiply. A list parameter is a bound only when callers pass literal lists (`call_arg_allowlist`). At atom sinks, `list_param` value `atoms` means existing-atom input; this is bounded only if outsiders cannot choose the atoms and newly created atoms cannot feed back. Value `atom` means the argument is exactly an existing atom's name on every path (`Atom.to_string/1` of one, read back in the same encoding): the conversion returns that atom and makes none.
 //
 .decl sink_arg_bounded(id: symbol, func: symbol, arg_pos: number, list_param: symbol) mutable
 .input sink_arg_bounded

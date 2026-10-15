@@ -73,6 +73,14 @@ Without a request path, caller-derived input through a public API is reported at
 warning. Runtime callbacks and known internal values are treated differently from
 library entry points. Priors may lower this fallback to info.
 
+The name of an atom that exists, read back into an atom
+(`String.to_atom(Atom.to_string(a))`, `list_to_atom(atom_to_list(a))`), is that atom:
+the conversion makes none, whoever chose `a`, so it is no sink. A private helper
+inherits this from callers that each hand it such a name. A name written as Latin-1
+and read as UTF-8 can name another atom and keeps the weaker existing-atom bound
+above. Names that reach the conversion as text from elsewhere, such as a function
+name parsed out of an ID string, are not recognized.
+
 ## Unbounded decompression
 
 `sink=decompression`

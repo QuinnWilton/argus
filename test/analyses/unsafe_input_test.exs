@@ -72,6 +72,8 @@ defmodule Argus.Analyses.UnsafeInputTest do
     Argus.Test.Fixtures.AtomBounds,
     Argus.Test.Fixtures.AtomFromMessages,
     Argus.Test.Fixtures.AtomProcessName,
+    Argus.Test.Fixtures.AtomRoundTrip,
+    Argus.Test.Fixtures.AtomRoundTripTwins,
     D.FrameHandler,
     D.BoundedFrameHandler,
     D.GzipBodyPlug,
@@ -670,6 +672,23 @@ defmodule Argus.Analyses.UnsafeInputTest do
       # The atoms bound is a count, not a vetting of the bytes.
       assert [{decode, _}] = local(results, "deserialization")
       assert decode =~ "AtomBounds:decode/1"
+    end
+
+    test "is not reported of an atom's own name, whoever chose the atom", ctx do
+      short = fn results ->
+        results
+        |> local("atom")
+        |> Enum.map(fn {func, _api} -> func |> String.split(":") |> List.last() end)
+        |> Enum.uniq()
+        |> Enum.sort()
+      end
+
+      assert short.(analyze(ctx, [Argus.Test.Fixtures.AtomRoundTrip])) == []
+
+      # A caller's string, a suffix on a chosen atom, a helper another
+      # caller hands a string, and a Latin-1 name read as UTF-8.
+      assert short.(analyze(ctx, [Argus.Test.Fixtures.AtomRoundTripTwins])) ==
+               ["from_input/1", "intern/1", "latin1/1", "suffixed/1"]
     end
 
     test "is not reported of a server's own messages or a pipeline's own name", ctx do

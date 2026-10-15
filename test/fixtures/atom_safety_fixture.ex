@@ -200,3 +200,51 @@ defmodule Argus.Test.Fixtures.AtomCallerInput do
     def handle_call({:intern, name}, _from, state), do: {:reply, String.to_atom(name), state}
   end
 end
+
+defmodule Argus.Test.Fixtures.AtomRoundTrip do
+  @moduledoc """
+  An atom's own name read back into an atom: the conversion returns the
+  atom it was read from and makes none. argus reads a function's name
+  back out of an ID it minted from the atom; here the name is in hand.
+  Whoever chose the atom (an existing-atom lookup, a recursion handing
+  its own result back), its name alone is no new atom.
+  """
+
+  def same(name) when is_atom(name), do: String.to_atom(Atom.to_string(name))
+  def listed(name), do: :erlang.list_to_atom(:erlang.atom_to_list(name))
+  def encoded(name), do: :erlang.binary_to_atom(:erlang.atom_to_binary(name, :utf8), :utf8)
+  def chosen(input), do: String.to_atom(Atom.to_string(String.to_existing_atom(input)))
+  def via_helper(name), do: intern(Atom.to_string(name))
+  def via_other_helper(name), do: intern(Atom.to_string(name))
+
+  def again(name, 0), do: name
+  def again(name, n), do: again(String.to_atom(Atom.to_string(name)), n - 1)
+
+  defp intern(text), do: String.to_atom(text)
+end
+
+defmodule Argus.Test.Fixtures.AtomRoundTripTwins do
+  @moduledoc """
+  The twins, each reported: a caller's string, a chosen atom's name with a
+  suffix (one more atom per call: the next lookup chooses it), a helper
+  one caller hands a caller's string, and a name written as Latin-1 and
+  read as UTF-8, which can name another atom.
+  """
+
+  def from_input(text), do: String.to_atom(text)
+
+  def suffixed(input),
+    do: String.to_atom(Atom.to_string(String.to_existing_atom(input)) <> "_desc")
+
+  def via_helper(name), do: intern(Atom.to_string(name))
+  def raw(text), do: intern(text)
+
+  def latin1(input),
+    do:
+      :erlang.binary_to_atom(
+        :erlang.atom_to_binary(String.to_existing_atom(input), :latin1),
+        :utf8
+      )
+
+  defp intern(text), do: String.to_atom(text)
+end

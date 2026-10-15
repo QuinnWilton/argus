@@ -817,7 +817,10 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
           # Retain an explicitly finite atom table through atom_to_binary.
           # The general existing-atom bound is weaker and may be invalidated
           # when request data chooses from atoms created by previous calls.
-          combine([Map.get(state.bounded, {:x, 0})], instr) || {:atoms, :atom}
+          # `:atom` is an atom's own name, in the encoding the atom sinks
+          # read back (ParamFlow's "atom" row); a Latin-1 name is one more
+          # value per atom.
+          combine([Map.get(state.bounded, {:x, 0})], instr) || atom_name(state, {mod, fun, arity})
 
         MapSet.member?(@conversions, {mod, fun, arity}) or MapSet.member?(@pure_modules, mod) ->
           combine(for(i <- 0..(arity - 1)//1, do: Map.get(state.bounded, {:x, i})), instr)
@@ -829,6 +832,17 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
       _ -> nil
     end
   end
+
+  defp atom_name(state, {:erlang, :atom_to_binary, 2}) do
+    if Map.get(state.bounded, {:x, 1}) in [
+         {:values, {:set, [:utf8]}},
+         {:values, {:set, [:unicode]}}
+       ],
+       do: {:atoms, :atom},
+       else: {:atoms, {:many, 1, :erlang.phash2(:latin1_name)}}
+  end
+
+  defp atom_name(_state, _mfa), do: {:atoms, :atom}
 
   # Protocol implementations may consult state outside their input. Only
   # builtin inputs establish that to_string is a pure finite conversion.
