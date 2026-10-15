@@ -38,6 +38,10 @@ which a change appeared; older names and APIs may have changed since then.
 
 ### Fixed
 
+- `receive_in_callback` reads a receive's timeout from the callback that
+  passes it: an `after` whose parameter a callback passes as `:infinity`
+  is untimed, a warning, rather than "timed, so it cannot hang" (new
+  `timeout` column).
 - `races` tells apart the tables one `:ets.new/2` site makes per element
   (in a closure or a comprehension) by the struct field each is read
   from, so a read of one table no longer pairs with writes to another:
@@ -48,6 +52,24 @@ which a change appeared; older names and APIs may have changed since then.
 
 ### Changed
 
+- High synchronous fan-in counts the modules that call a server directly
+  (a client module's wrapper is one caller, not its callers), and only a
+  server its callers share and that answers in its own handler: a
+  process per start (unnamed, or one per key) or one that hands each
+  request to another is not a bottleneck. `sync_call_fan_in` gains a
+  `waits` column; where every call waits `:infinity`, the finding no
+  longer says callers start timing out.
+- A `:global.trans` over the local node alone is no longer reported as a
+  lock without a retry bound: it releases the lock when its function
+  returns, raises or dies, so retries would only turn waiting into a
+  spurious `:aborted`. A local `:global.set_lock` still is.
+- `yield_linked` is reported only where the code expects a crash from
+  the yield (an `{:exit, _}` match in the yielding function, its callees
+  or its callers): `Task.yield(t, ms) || Task.shutdown(t)` is the
+  timeout idiom, not this bug. A library task's exit names `Task.yield`
+  beside `Task.await`.
+- New layer-2 relations `recv_timeout_param` and `compares_exit` (schema
+  shape change).
 - A run writes about half the files it did: a module's per-producer fact
   segments up to 4 KB stored are held in its pack rather than as files of
   their own, and module traces join the module's trace pack (a cold run
