@@ -34,6 +34,31 @@ defmodule Argus.TestStoreTest do
     refute File.exists?(Path.join(tmp, "cache"))
   end
 
+  test "tmp/ is linked into the checkout's directory, once, and not in CI", %{tmp_dir: tmp} do
+    work = Path.join(tmp, "work")
+    File.mkdir_p!(work)
+
+    {first, again, root} =
+      Peer.run(peer(tmp, [{"ARGUS_TEST_STORE", nil}]), fn ->
+        File.cd!(work)
+        {Store.link_tmp(), Store.link_tmp(), Store.root()}
+      end)
+
+    assert {first, again} == {:linked, :kept}
+    assert File.read_link!(Path.join(work, "tmp")) == Path.join(Path.dirname(root), "tmp")
+    assert File.dir?(Path.join(work, "tmp"))
+
+    ci = Path.join(tmp, "ci")
+    File.mkdir_p!(ci)
+
+    assert Peer.run(peer(tmp, [{"ARGUS_TEST_STORE", Path.join(tmp, "s")}]), fn ->
+             File.cd!(ci)
+             Store.link_tmp()
+           end) == :skipped
+
+    refute File.exists?(Path.join(ci, "tmp"))
+  end
+
   test "the stores of checkouts whose build is gone are removed", %{tmp_dir: tmp} do
     base = Path.join(tmp, "cache/argus/test")
     live = Path.join(tmp, "live/_build/test")

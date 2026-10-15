@@ -5,6 +5,10 @@
 # peer (`Argus.Test.Peer`), keeps its facts and solves there.
 System.put_env("ARGUS_CACHE_DIR", Argus.Test.Store.root())
 
+# `@tag :tmp_dir` tests write under tmp/, a link into the same directory
+# of the user's cache where there is no tmp/ yet (`Argus.Test.Store`).
+_ = Argus.Test.Store.link_tmp()
+
 # What earlier runs' tests left in their tmp_dirs, removed at once
 # (`Argus.Test.Files.rm_tmp_dirs!/0`) rather than by ExUnit as each test
 # starts, through the file server the run's tests share.

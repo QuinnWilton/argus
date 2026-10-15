@@ -101,7 +101,10 @@ which a change appeared; older names and APIs may have changed since then.
   editors watch, rather than in `_build/test/argus/store`
   (`ARGUS_TEST_STORE` names another); the daily collection removes the
   stores of checkouts whose build is gone. Remove an old
-  `_build/test/argus/store` by hand.
+  `_build/test/argus/store` by hand. Where a checkout has no `tmp/` yet,
+  the suite links it into the same directory, so `@tag :tmp_dir` tests'
+  files stay out of the tree too; remove an existing `tmp/` to have it
+  linked.
 - roux `~> 0.3.5`: a demand waiting on a query another process computes is
   woken also when the key's previous claimant failed meanwhile, and
   cancelling a task leaves a newer claim of its key alone; both could
