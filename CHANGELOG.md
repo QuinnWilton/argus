@@ -24,11 +24,27 @@ which a change appeared; older names and APIs may have changed since then.
 
 ### Added
 
+- `races` reports a delete by key that takes rows other processes made for
+  themselves (`ets_broad_delete`): after reading the key's rows, or after
+  killing the process they were for, where another process inserts a row
+  holding its own `self()` under the key. Found roux's lost wakeup and its
+  cancellation's deletes of a newer claim. New layer-2 relation
+  `ets_table_field` (schema shape change).
 - `Argus.Graph.Pack.inline_limit/0`: the stored size up to which a
   producer's segment is held in its module's pack.
 - `--fail-on error|warning|info` on the `argus` escript and `mix argus`:
   exit 1 (raise, for the task) on a finding at that severity or above, as
   the configuration sets it, where `--fail-above` counts every finding.
+
+### Fixed
+
+- `races` tells apart the tables one `:ets.new/2` site makes per element
+  (in a closure or a comprehension) by the struct field each is read
+  from, so a read of one table no longer pairs with writes to another:
+  on roux, three of nine race findings were such pairs. Such a table is
+  named "the table kept under :field".
+- `races` counts no `:ets.setopts/2` or `:ets.give_away/3` as a rival
+  write: they write no rows.
 
 ### Changed
 
