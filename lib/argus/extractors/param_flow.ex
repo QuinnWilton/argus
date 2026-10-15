@@ -60,6 +60,13 @@ defmodule Argus.Extractors.ParamFlow do
     (`Argus.Extractors.ApiCalls.fixed_command?/3` over
     `Argus.Extractor.Argv.module/1`), where the function's body alone,
     all `code_execution` sees, could not show it.
+  - `command_data_args(id, func)` — the `System.cmd` call at `id` runs a
+    literal shell with `-c` and a literal script that hands the arguments
+    after it to its commands as data, never as code, on every path the
+    module's local helpers and a private function's callers show
+    (`Argus.Extractors.ApiCalls.inert_script?/3`,
+    `Argus.Extractor.ShellScript`): `sh -c 'kill -0 "$1"' sh pid` runs
+    `kill`, whatever `pid` holds.
   - `sink_copy(id, func, first)` — the sink call at `id` repeats `first`,
     the earliest call of the same API in the function on the same source
     line: code the compiler duplicated. A copy is made of what `first` is
@@ -157,6 +164,7 @@ defmodule Argus.Extractors.ParamFlow do
   @impl true
   def relations,
     do: [
+      :command_data_args,
       :command_fixed,
       :call_arg_allowlist,
       :call_arg_chosen,
@@ -606,7 +614,8 @@ defmodule Argus.Extractors.ParamFlow do
 
   # The commands whose arguments a local helper builds: `code_execution`
   # keeps every one that one function's body cannot show fixed, and the
-  # module's may.
+  # module's may. And the shells handed a literal script that takes the
+  # rest of its arguments as data (`command_data_args`).
   defp emit_fixed_commands(facts, %{module: mod, functions: functions} = module_data) do
     keys =
       Map.new(functions, fn {:function, name, arity, _, _} ->
@@ -618,15 +627,24 @@ defmodule Argus.Extractors.ParamFlow do
     for %{mfa: {System, :cmd, arity}} = site <- CallSites.for_module(module_data),
         arity in [2, 3],
         {:ok, key} <- [Map.fetch(keys, site.func_id)],
-        fixed_across_module?(site, scope, key),
+        ctx = %{func_id: site.func_id, instrs: site.instrs, idx: site.idx},
         reduce: facts do
-      acc -> add_fact(acc, :command_fixed, [InstrId.mint(site.func_id, site.idx), site.func_id])
+      acc ->
+        row = [InstrId.mint(site.func_id, site.idx), site.func_id]
+
+        acc =
+          if fixed_across_module?(ctx, scope, key),
+            do: add_fact(acc, :command_fixed, row),
+            else: acc
+
+        if ApiCalls.inert_script?(ctx, scope, key),
+          do: add_fact(acc, :command_data_args, row),
+          else: acc
     end
   end
 
-  defp fixed_across_module?(site, scope, key) do
-    ctx = %{func_id: site.func_id, instrs: site.instrs, idx: site.idx}
-    {local, self} = Argv.function(site.instrs)
+  defp fixed_across_module?(ctx, scope, key) do
+    {local, self} = Argv.function(ctx.instrs)
     not ApiCalls.fixed_command?(ctx, local, self) and ApiCalls.fixed_command?(ctx, scope, key)
   end
 

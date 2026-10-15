@@ -309,6 +309,69 @@ defmodule Argus.Extractor.Argv do
     end)
   end
 
+  @doc """
+  The first `n` elements the list in `register` at `idx` in the function
+  `key` can start with, on every path there: a list of the literal
+  prefixes, each `n` elements long, or shorter where the list ends
+  first. `:unknown` when some path's list starts with an element the
+  walk cannot read within `n`, or there are more than #{@max_heads}
+  prefixes.
+  """
+  @spec prefixes(scope(), key(), non_neg_integer(), Resolve.register(), non_neg_integer()) ::
+          {:ok, [[term()]]} | :unknown
+  def prefixes(scope, key, idx, register, n),
+    do: walk(fn -> list_prefixes(scope, key, idx, Instr.register(register), n) end)
+
+  defp list_prefixes(_scope, _key, _idx, _reg, 0), do: {:ok, [[]]}
+
+  defp list_prefixes(scope, key, idx, reg, n) do
+    step({:prefixes, key, idx, reg, n}, :unknown, fn ->
+      instrs = Map.fetch!(scope.functions, key)
+
+      case Resolve.writers(instrs, idx, reg) do
+        [] -> :unknown
+        writers -> union(writers, &written_prefixes(scope, key, instrs, &1, n))
+      end
+    end)
+  end
+
+  defp written_prefixes(scope, key, _instrs, {:param, k}, n),
+    do: at_callers(scope, key, &list_prefixes(scope, &1, &2, {:x, k}, n))
+
+  defp written_prefixes(scope, key, instrs, at, n) do
+    case Reaching.at(instrs, at) do
+      {op, src, _dst} when op in [:move, :fmove] ->
+        operand_prefixes(scope, key, at, src, n)
+
+      {:put_list, head, tail, _dst} ->
+        with {:ok, heads} <- element_values(scope, key, at, head),
+             {:ok, tails} <- operand_prefixes(scope, key, at, tail, n - 1) do
+          {:ok, for(h <- heads, t <- tails, do: [h | t])}
+        end
+
+      _other ->
+        :unknown
+    end
+  end
+
+  defp operand_prefixes(scope, key, at, operand, n) do
+    case Instr.register(operand) do
+      {kind, _} = reg when kind in [:x, :y] ->
+        list_prefixes(scope, key, at, reg, n)
+
+      _literal ->
+        case literal_value(operand) do
+          {:ok, list} when is_list(list) ->
+            if Argus.Extractor.Terms.proper_list?(list),
+              do: {:ok, [Enum.take(list, n)]},
+              else: :unknown
+
+          _other ->
+            :unknown
+        end
+    end
+  end
+
   # The literal values an element can be on every path: a literal, or a
   # register every writer of which copies one in.
   defp element_values(scope, key, at, operand) do

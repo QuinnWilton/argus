@@ -31,6 +31,7 @@ defmodule Argus.Extractors.ApiCalls do
 
   alias Argus.Extractor.Argv
   alias Argus.Extractor.Resolve
+  alias Argus.Extractor.ShellScript
   alias Argus.InstrId
 
   import Argus.Extractor.Helpers, only: [each_remote_call: 3]
@@ -631,6 +632,41 @@ defmodule Argus.Extractors.ApiCalls do
 
       :dynamic ->
         false
+    end
+  end
+
+  @doc """
+  Whether the program `program` (a basename) runs what its arguments
+  say: a shell, an interpreter, or a wrapper that runs another program
+  its arguments name.
+  """
+  @spec runs_arguments?(String.t()) :: boolean()
+  def runs_arguments?(program), do: program in @interpreters
+
+  # The POSIX shells, whose `-c` takes a script and hands the arguments
+  # after it to the script as its positional parameters.
+  @shells ~w(sh bash dash zsh ksh mksh ash yash)
+
+  @doc """
+  Whether the `System.cmd/2,3` call at `ctx` runs a literal shell with
+  `-c` and a literal script, on every path `scope` shows, that hands the
+  positional parameters after it to its commands as data
+  (`Argus.Extractor.ShellScript`): the rest of the argument list is
+  data, whatever it holds. `key` is the function in `scope` that holds
+  the call.
+  """
+  @spec inert_script?(Argus.Extractor.Helpers.instr_ctx(), Argv.scope(), Argv.key()) ::
+          boolean()
+  def inert_script?(ctx, scope, key) do
+    with {:ok, command} <- static_command(ctx),
+         true <- Path.basename(command) in @shells,
+         {:ok, [_ | _] = prefixes} <- Argv.prefixes(scope, key, ctx.idx, {:x, 1}, 2) do
+      Enum.all?(prefixes, fn
+        ["-c", script] when is_binary(script) -> ShellScript.inert_positionals?(script)
+        _other -> false
+      end)
+    else
+      _ -> false
     end
   end
 

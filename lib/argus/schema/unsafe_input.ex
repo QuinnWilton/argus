@@ -68,6 +68,22 @@ defmodule Argus.Schema.UnsafeInput do
         function's callers (`Argus.Extractor.Argv`). Covers only calls the function's \
         own body could not show fixed, which `code_execution` keeps.
         """
+      },
+      %{
+        name: :command_data_args,
+        layer: 2,
+        fields: [
+          {:id, :instr_id, "instruction ID of the System.cmd call"},
+          {:func, :func_id, "containing function ID"}
+        ],
+        doc: """
+        A `System.cmd` call to a literal POSIX shell handed `-c` and a literal script, \
+        on every path through the module's local helpers and a private function's \
+        callers, that uses the positional parameters after it only as quoted \
+        arguments of programs that do not run their arguments \
+        (`Argus.Extractor.ShellScript`): the rest of the argument list is data, \
+        not code.
+        """
       }
     ])
   end

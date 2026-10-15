@@ -141,7 +141,11 @@ defmodule Argus.Test.Fixtures.CommandMixTestWrapper do
 end
 
 defmodule Argus.Test.Fixtures.CommandOpenWrapper do
-  @moduledoc false
+  @moduledoc """
+  A library's documented wrappers. A hidden export only the program calls
+  takes what the program hands it (`internal_export` in unsafe_input.dl);
+  a documented one is the library's API.
+  """
 
   # An exported wrapper has callers the module cannot see.
   def mix(args), do: System.cmd("mix", args)
@@ -152,4 +156,114 @@ defmodule Argus.Test.Fixtures.CommandOpenWrapper do
   def docs, do: captured_mix(["docs"])
 
   defp captured_mix(args), do: System.cmd("mix", args, stderr_to_stdout: true)
+end
+
+defmodule Argus.Test.Fixtures.CommandDataArgs do
+  @moduledoc """
+  A shell handed a literal script and the caller's data after it, as the
+  script's positional parameters. argus's toolchain probes a process with
+  `kill -0 "$1"`: the shell expands the quoted `"$1"` into one word that
+  only `kill` sees, as an argument, whatever the caller hands in.
+  """
+
+  @probe ~S(kill -0 "$1" 2>/dev/null)
+
+  def alive?(pid), do: System.cmd("/bin/sh", ["-c", @probe, "sh", pid])
+
+  # The same through a private helper every caller hands a literal script.
+  def stat(path), do: shell(~S(stat -c %s "$1" && wc -l "$1"), [path])
+
+  defp shell(script, args), do: System.cmd("sh", ["-c", script, "sh" | args])
+end
+
+defmodule Argus.Test.Fixtures.CommandCodeArgs do
+  @moduledoc """
+  The twins: a literal script that runs its positional parameters as
+  code. `"$@"` as a command word runs the program the caller names (argus's
+  cargo guard), an unquoted `$1` is split and globbed, and `eval`, a
+  wrapper and an interpreter run the string they are handed.
+  """
+
+  def run_guarded(program, args),
+    do: System.cmd("/bin/sh", ["-c", ~S("$@" </dev/null & wait "$!"), "sh", program | args])
+
+  def unquoted(arg), do: System.cmd("sh", ["-c", "kill -0 $1", "sh", arg])
+  def evaluated(code), do: System.cmd("sh", ["-c", ~S(eval "$1"), "sh", code])
+  def wrapped(cmd), do: System.cmd("sh", ["-c", ~S(nohup "$1" &), "sh", cmd])
+  def interpreted(code), do: System.cmd("bash", ["-c", ~S(python3 -c "$1"), "bash", code])
+  def substituted(arg), do: System.cmd("sh", ["-c", ~S|echo "$(cat "$1")"|, "sh", arg])
+end
+
+defmodule Argus.Test.Fixtures.CommandFixedInput do
+  @moduledoc """
+  Programs whose name and arguments no caller hands in: a program a helper
+  finds on the PATH, and one the configuration names, each with literal
+  arguments. argus's `rustc -vV` is this shape. Each is live code
+  reachable from an export, and neither runs what a caller chooses.
+  """
+
+  def rustc_version, do: System.cmd(rustc(), ["-vV"])
+
+  def tool_version, do: System.cmd(Application.fetch_env!(:my_app, :tool), ["--version"])
+
+  defp rustc, do: System.find_executable("rustc") || "/usr/bin/rustc"
+end
+
+defmodule Argus.Test.Fixtures.CommandUnknownProgram do
+  @moduledoc """
+  The twin: a program no literal names, handed the caller's argument. It
+  may be a shell or an interpreter, which runs that argument as code.
+  """
+
+  def lint(file), do: System.cmd(linter(), ["--quiet", file])
+
+  defp linter, do: Path.join(System.user_home!(), "bin/lint")
+end
+
+defmodule Argus.Test.Fixtures.CommandRequest do
+  @moduledoc "Subprocesses a request reaches."
+
+  defmodule Jobs do
+    @moduledoc "Jobs the program stored."
+    def load(id), do: :persistent_term.get({__MODULE__, id})
+  end
+
+  defmodule ProgramPlug do
+    @moduledoc "The request names the program: a flow."
+    @behaviour Plug
+
+    def init(opts), do: opts
+    def call(conn, _opts), do: System.cmd(conn.params["program"], [])
+  end
+
+  defmodule DataPlug do
+    @moduledoc "The request's value is a quoted positional parameter of a literal script."
+    @behaviour Plug
+
+    def init(opts), do: opts
+
+    def call(conn, _opts),
+      do: System.cmd("sh", ["-c", ~S(kill -0 "$1"), "sh", conn.params["pid"]])
+  end
+
+  defmodule FixedPlug do
+    @moduledoc "A request's path to a program and script made of literals and configuration."
+    @behaviour Plug
+
+    def init(opts), do: opts
+    def call(conn, _opts), do: {conn, restart()}
+
+    def restart,
+      do: System.cmd(Application.fetch_env!(:my_app, :supervisor_ctl), ["restart", "web"])
+  end
+
+  defmodule StoredPlug do
+    @moduledoc "A request's path to a script made of a stored record: kept as a path."
+    @behaviour Plug
+
+    def init(opts), do: opts
+    def call(conn, _opts), do: {conn, run(Jobs.load(:nightly))}
+
+    def run(job), do: :os.cmd(String.to_charlist(job.script))
+  end
 end

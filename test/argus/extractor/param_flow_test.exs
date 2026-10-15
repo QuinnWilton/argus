@@ -187,4 +187,23 @@ defmodule Argus.Extractor.ParamFlowTest do
       assert {0, 0} in sinks(facts, "ContractConfigMixed:operation/1")
     end
   end
+
+  describe "a shell's arguments past a literal script" do
+    setup do
+      {:ok, facts} =
+        Argus.Pipeline.extract(
+          [Argus.Test.Fixtures.CommandDataArgs, Argus.Test.Fixtures.CommandCodeArgs],
+          extractors: [ParamFlow]
+        )
+
+      %{facts: facts}
+    end
+
+    # The script a private helper's every caller hands it counts too.
+    test "are data where the script quotes them for programs that run none", %{facts: facts} do
+      assert facts.command_data_args
+             |> Enum.map(fn [_id, func] -> short(func) end)
+             |> Enum.sort() == ["alive?/1", "shell/2"]
+    end
+  end
 end

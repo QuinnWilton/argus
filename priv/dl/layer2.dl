@@ -260,6 +260,11 @@
 .decl code_template_site(id: symbol, func: symbol, api: symbol) mutable
 .input code_template_site
 
+// A `System.cmd` call to a literal POSIX shell handed `-c` and a literal script, on every path through the module's local helpers and a private function's callers, that uses the positional parameters after it only as quoted arguments of programs that do not run their arguments (`Argus.Extractor.ShellScript`): the rest of the argument list is data, not code.
+//
+.decl command_data_args(id: symbol, func: symbol) mutable
+.input command_data_args
+
 // A `System.cmd` call to a literal shell or interpreter whose arguments are literal on every path, or to `mix` with a literal task that runs no code its arguments name, through the module's local helpers' returns and a private function's callers (`Argus.Extractor.Argv`). Covers only calls the function's own body could not show fixed, which `code_execution` keeps.
 //
 .decl command_fixed(id: symbol, func: symbol) mutable
