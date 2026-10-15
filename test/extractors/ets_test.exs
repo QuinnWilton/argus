@@ -2,6 +2,7 @@ defmodule Argus.Extractors.ETSTest do
   use ExUnit.Case, async: true
 
   alias Argus.Extractors.ETS
+  alias Argus.Pipeline.Disassemble
 
   defp disassemble(mod) do
     {:ok, data} = BeamSpy.BeamFile.disassemble(to_string(:code.which(mod)))
@@ -251,7 +252,7 @@ defmodule Argus.Extractors.ETSTest do
         end
         """)
 
-      {:ok, data} = Argus.Pipeline.Disassemble.disassemble_path(bin)
+      {:ok, data} = Disassemble.disassemble_path(bin)
 
       ops =
         for [_id, func, table, op, _kind] <- ETS.extract(data)[:ets_op],
@@ -261,6 +262,34 @@ defmodule Argus.Extractors.ETSTest do
       assert {"handle_cast/2", "insert", ":sessions"} in ops
       # :other holds two tables in this module: it names neither.
       assert {"handle_info/2", "lookup", "dynamic"} in ops
+    end
+  end
+
+  describe "the field a table is kept under" do
+    test "the last key of each path, and none for a table read from no map" do
+      [{_mod, bin}] =
+        Code.compile_string("""
+        defmodule Argus.ETSTest.TableFields do
+          def claim(db, k), do: :ets.insert_new(db.claims, {k, self()})
+          def wait(%{waiters: t}, k), do: :ets.insert(t, {k, self()})
+          def nested(state, k), do: :ets.lookup(state.db.claims, k)
+          def bare(table, k), do: :ets.lookup(table, k)
+        end
+        """)
+
+      {:ok, data} = Disassemble.disassemble_path(bin)
+      facts = ETS.extract(data)
+      funcs = Map.new(facts[:ets_op], fn [id, func, _t, _op, _k] -> {id, func} end)
+
+      fields =
+        for [id, field] <- facts[:ets_table_field],
+            do: {funcs[id] |> String.split(":") |> List.last(), field}
+
+      assert Enum.sort(fields) == [
+               {"claim/2", ":claims"},
+               {"nested/2", ":claims"},
+               {"wait/2", ":waiters"}
+             ]
     end
   end
 end
