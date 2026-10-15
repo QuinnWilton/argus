@@ -38,6 +38,11 @@ defmodule Argus.Analyses.BlockingReceiveTest do
     CallbackReceive.TrapsOnlyAroundStart,
     CallbackReceive.TrapsInHelper,
     CallbackReceive.TrapsBeforeWaitInCallback,
+    CallbackReceive.InfinityFromCallback,
+    CallbackReceive.FiniteFromCallback,
+    CallbackReceive.InfinityFromOneClause,
+    CallbackReceive.InfinityUntilPortExits,
+    CallbackReceive.InfinityOnInitPort,
     CallbackReceive.WrappedServer,
     CallbackReceive.JoinsInClient,
     CallbackReceive.StatemStateReceive
@@ -59,8 +64,15 @@ defmodule Argus.Analyses.BlockingReceiveTest do
   defp run(source, modules) do
     assert {:ok, results} = solve(source, modules)
 
-    {Rows.where(results, :blocking, "receive_in_callback", bounded: "false", drop: [:bounded]),
-     Rows.where(results, :blocking, "receive_in_callback", bounded: "true", drop: [:bounded])}
+    {Rows.where(results, :blocking, "receive_in_callback",
+       bounded: "false",
+       timeout: "none",
+       drop: [:bounded, :timeout]
+     ),
+     Rows.where(results, :blocking, "receive_in_callback",
+       bounded: "true",
+       drop: [:bounded, :timeout]
+     )}
   end
 
   # The receives a :DOWN bounds, beside the blocking and timed ones.
@@ -69,8 +81,25 @@ defmodule Argus.Analyses.BlockingReceiveTest do
     assert {:ok, results} = solve(source, modules)
 
     {blocking, bounded,
-     Rows.where(results, :blocking, "receive_in_callback", bounded: "down", drop: [:bounded])}
+     Rows.where(results, :blocking, "receive_in_callback",
+       bounded: "down",
+       timeout: "none",
+       drop: [:bounded, :timeout]
+     )}
   end
+
+  # Every receive in a callback as {function, callback, bounded, timeout}.
+  defp receives(source, modules) do
+    assert {:ok, results} = solve(source, modules)
+
+    for [func, callback, bounded, timeout] <-
+          Rows.where(results, :blocking, "receive_in_callback",
+            drop: [:id, :behaviour, :proximity]
+          ),
+        do: {short(func), short(callback), bounded, timeout}
+  end
+
+  defp short(func), do: func |> String.split(":") |> List.last()
 
   describe "detection" do
     test "a blocking receive in a callback is reported", ctx do
@@ -250,7 +279,8 @@ defmodule Argus.Analyses.BlockingReceiveTest do
           "M:terminate/2",
           "GenServer",
           "direct",
-          "down"
+          "down",
+          "none"
         ])
 
       # Bounded by its peer, as startup's "init/1 waits on another process"
@@ -259,6 +289,76 @@ defmodule Argus.Analyses.BlockingReceiveTest do
       assert attrs.title == "Receive inside an OTP callback"
       assert attrs.detail =~ "takes the exit of the process it waits on"
       refute attrs.detail =~ "has a timeout"
+    end
+  end
+
+  describe "a timeout the callback passes" do
+    # blocking.dl, waits_without_timeout: an `after` whose timeout is a
+    # parameter (recv_timeout_param) the callback fills with :infinity.
+    test "a helper's `after` handed :infinity has no timeout", ctx do
+      assert receives(ctx, [CallbackReceive.InfinityFromCallback]) == [
+               {"request/2", "handle_call/3", "false", "caller"}
+             ]
+    end
+
+    test "the same helper handed a finite timeout is timed", ctx do
+      assert receives(ctx, [CallbackReceive.FiniteFromCallback]) == [
+               {"request/2", "handle_call/3", "true", "after"}
+             ]
+    end
+
+    test "one clause passing :infinity makes the callback's wait untimed, once", ctx do
+      # init/1 passes 30_000 and handle_call/3's other clause 30_000 too:
+      # one finding, the untimed one, not a timed one beside it.
+      assert receives(ctx, [CallbackReceive.InfinityFromOneClause]) == [
+               {"request/2", "handle_call/3", "false", "caller"}
+             ]
+    end
+
+    test "an untimed wait on a port's reply or :EXIT lasts no longer than the port", ctx do
+      assert receives(ctx, [CallbackReceive.InfinityUntilPortExits]) == [
+               {"run/3", "handle_call/3", "down", "caller"}
+             ]
+    end
+
+    test "a port init/1 opened is a link the bound does not see", ctx do
+      assert receives(ctx, [CallbackReceive.InfinityOnInitPort]) == [
+               {"request/3", "handle_call/3", "false", "caller"}
+             ]
+    end
+
+    @tag flowlog: false
+    test "the finding says the callback passes :infinity, not that it has a timeout" do
+      attrs =
+        Blocking.finding(:receive_in_callback, [
+          "M:request/2#9",
+          "M:request/2",
+          "M:handle_call/3",
+          "GenServer",
+          "helper",
+          "false",
+          "caller"
+        ])
+
+      assert attrs.severity == :warning
+      assert attrs.detail =~ "passes `:infinity` there"
+      refute attrs.detail =~ "no `after`"
+    end
+
+    @tag flowlog: false
+    test "a timed receive no longer claims it cannot hang" do
+      attrs =
+        Blocking.finding(:receive_in_callback, [
+          "M:request/2#9",
+          "M:request/2",
+          "M:handle_call/3",
+          "GenServer",
+          "helper",
+          "true",
+          "after"
+        ])
+
+      refute attrs.detail =~ "cannot hang"
     end
   end
 
@@ -324,7 +424,8 @@ defmodule Argus.Analyses.BlockingReceiveTest do
             "M:handle_call/3",
             "GenServer",
             "direct",
-            bounded
+            bounded,
+            "none"
           ])
 
         assert {attrs.at_source, attrs.to_block} == {"receive", :receive}, bounded

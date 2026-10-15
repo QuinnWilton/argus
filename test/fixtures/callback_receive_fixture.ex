@@ -601,4 +601,127 @@ defmodule Argus.Test.Fixtures.CallbackReceive do
       end
     end
   end
+
+  defmodule InfinityFromCallback do
+    @moduledoc """
+    A helper's `after` takes its timeout as a parameter, and the callback
+    passes `:infinity` there: on that path the receive has no timeout.
+    """
+    @behaviour GenServer
+
+    def init(arg), do: {:ok, arg}
+    def handle_call(:wait, _from, state), do: {:reply, request(:wait, :infinity), state}
+
+    def request(message, timeout) do
+      send(self(), message)
+
+      receive do
+        {:answer, answer} -> answer
+      after
+        timeout -> :timeout
+      end
+    end
+  end
+
+  defmodule FiniteFromCallback do
+    @moduledoc "The same helper, handed a finite timeout: the wait is bounded."
+    @behaviour GenServer
+
+    def init(arg), do: {:ok, arg}
+    def handle_call(:wait, _from, state), do: {:reply, request(:wait, 5_000), state}
+
+    def request(message, timeout) do
+      send(self(), message)
+
+      receive do
+        {:answer, answer} -> answer
+      after
+        timeout -> :timeout
+      end
+    end
+  end
+
+  defmodule InfinityFromOneClause do
+    @moduledoc """
+    init/1 and one clause hand the helper a finite timeout, another clause
+    `:infinity` (argus's Engine, its commit and its usage request): the
+    callback can wait on it without a timeout.
+    """
+    @behaviour GenServer
+
+    def init(arg) do
+      _ = request(:hello, 30_000)
+      {:ok, arg}
+    end
+
+    def handle_call(:commit, _from, state), do: {:reply, request(:commit, :infinity), state}
+    def handle_call(:usage, _from, state), do: {:reply, request(:usage, 30_000), state}
+
+    def request(message, timeout) do
+      send(self(), message)
+
+      receive do
+        {:answer, answer} -> answer
+      after
+        timeout -> :timeout
+      end
+    end
+  end
+
+  defmodule InfinityUntilPortExits do
+    @moduledoc """
+    A server trapping exits opens a port and waits for its reply or its
+    :EXIT, with the timeout its callback passes, `:infinity`: the wait
+    lasts no longer than the port.
+    """
+    @behaviour GenServer
+
+    def init(executable) do
+      Process.flag(:trap_exit, true)
+      {:ok, executable}
+    end
+
+    def handle_call({:run, data}, _from, executable),
+      do: {:reply, run(executable, data, :infinity), executable}
+
+    def run(executable, data, timeout) do
+      port = Port.open({:spawn_executable, executable}, [:binary, {:packet, 4}])
+      Port.command(port, data)
+
+      receive do
+        {^port, {:data, reply}} -> {:ok, reply}
+        {:EXIT, ^port, reason} -> {:error, reason}
+      after
+        timeout -> {:error, :timeout}
+      end
+    end
+  end
+
+  defmodule InfinityOnInitPort do
+    @moduledoc """
+    The same wait on a port init/1 opened (argus's Engine). The peer-exit
+    bound asks for the link in the waiting function (clientlib/receive.dl,
+    links_in), so this one is reported as a wait with no bound.
+    """
+    @behaviour GenServer
+
+    def init(executable) do
+      Process.flag(:trap_exit, true)
+      {:ok, Port.open({:spawn_executable, executable}, [:binary, {:packet, 4}])}
+    end
+
+    def handle_call({:request, data}, _from, port),
+      do: {:reply, request(port, data, :infinity), port}
+
+    def request(port, data, timeout) do
+      Port.command(port, data)
+
+      receive do
+        {^port, {:data, reply}} -> {:ok, reply}
+        {:EXIT, ^port, reason} -> {:error, reason}
+      after
+        timeout -> {:error, :timeout}
+      end
+    end
+  end
 end

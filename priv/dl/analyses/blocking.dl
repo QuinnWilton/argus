@@ -25,8 +25,9 @@
 // socket wait. Global rows include retries and node scope; socket rows identify the API
 // and server.
 // `receive_in_callback`: a receive on an OTP callback's stack. `bounded` is `false`
-// without an after clause, `true` with one, or `down` when a monitor's :DOWN bounds the
-// wait.
+// when it can wait with no timeout, `true` with one, or `down` when a monitor's :DOWN
+// bounds the wait; `timeout` is `none` without an after clause, `caller` when the after
+// takes a parameter the callback passes as :infinity, `after` otherwise.
 // With priors enabled, cast and infinity findings may include `peer = local` and
 // confidence in `permille` when the target is classified as answering locally.
 .decl call_chain(from: symbol, to: symbol, kind: symbol, depth: number, inferred: symbol, caller_ms: number, downstream_ms: number, peer: symbol, permille: number, site: symbol)
@@ -39,7 +40,7 @@
 .decl chain_found(from: symbol, to: symbol, kind: symbol, depth: number, inferred: symbol, caller_ms: number, downstream_ms: number, site: symbol)
 .decl wait_found(func: symbol, site: symbol, kind: symbol, api: symbol, detail: symbol, nodes: symbol)
 
-.decl receive_in_callback(id: symbol, func: symbol, callback: symbol, behaviour: symbol, proximity: symbol, bounded: symbol)
+.decl receive_in_callback(id: symbol, func: symbol, callback: symbol, behaviour: symbol, proximity: symbol, bounded: symbol, timeout: symbol)
 .output receive_in_callback
 
 // Call chains through handle_call
@@ -826,53 +827,71 @@ callback_reaches(entry, callee, "helper") :-
 
 // An unbounded receive on an OTP callback's stack with no guaranteed completion
 // message. Init receives are reported by startup's `unbounded_effect_in_init` instead.
-.decl hanging_receive(receive: symbol, func: symbol, callback: symbol, proximity: symbol)
+.decl hanging_receive(receive: symbol, func: symbol, callback: symbol, proximity: symbol, how: symbol)
 
-hanging_receive(receive, func, callback, proximity) :-
-  waits_without_timeout(receive, func),
-  callback_reaches(callback, func, proximity),
+hanging_receive(receive, func, callback, proximity, how) :-
+  waits_without_timeout(receive, func, callback, proximity, how),
   !is_init(callback),
   !ends_when_peer_exits(receive, callback),
   !takes_fired_timer_message(receive).
 
-receive_in_callback(receive, func, callback, behaviour, proximity, "false") :-
-  hanging_receive(receive, func, callback, proximity),
+receive_in_callback(receive, func, callback, behaviour, proximity, "false", how) :-
+  hanging_receive(receive, func, callback, proximity, how),
   loop_entry(callback, _, behaviour).
 
-// A callback receive without an after clause that ends when its peer exits. Reported
-// with bound `down`; it can hold the callback for the peer's lifetime. Init receives
-// are reported by startup.
-.decl receive_until_peer_exits(receive: symbol, func: symbol, callback: symbol, proximity: symbol)
+// A callback receive without a timeout that ends when its peer exits. Reported with
+// bound `down`; it can hold the callback for the peer's lifetime. Init receives are
+// reported by startup.
+.decl receive_until_peer_exits(receive: symbol, func: symbol, callback: symbol, proximity: symbol, how: symbol)
 
-receive_until_peer_exits(receive, func, callback, proximity) :-
-  waits_without_timeout(receive, func),
-  callback_reaches(callback, func, proximity),
+receive_until_peer_exits(receive, func, callback, proximity, how) :-
+  waits_without_timeout(receive, func, callback, proximity, how),
   !is_init(callback),
   ends_when_peer_exits(receive, callback),
   !takes_fired_timer_message(receive).
 
-receive_in_callback(receive, func, callback, behaviour, proximity, "down") :-
-  receive_until_peer_exits(receive, func, callback, proximity),
+receive_in_callback(receive, func, callback, behaviour, proximity, "down", how) :-
+  receive_until_peer_exits(receive, func, callback, proximity, how),
   loop_entry(callback, _, behaviour).
 
 // A timed receive on an OTP callback's stack has a bounded wait but still consumes and
-// re-scans the behaviour's mailbox.
+// re-scans the behaviour's mailbox. A receive another callback runs with no timeout is
+// reported as that one, once.
 .decl timed_receive_in_callback(receive: symbol, func: symbol, callback: symbol, proximity: symbol)
 
 timed_receive_in_callback(receive, func, callback, proximity) :-
   waits_with_timeout(receive, func),
   callback_reaches(callback, func, proximity),
+  !waits_without_timeout(receive, func, callback, _, _),
+  !untimed_in_a_callback(receive),
   !polls_cancelled_timer(receive).
 
-receive_in_callback(receive, func, callback, behaviour, proximity, "true") :-
+receive_in_callback(receive, func, callback, behaviour, proximity, "true", "after") :-
   timed_receive_in_callback(receive, func, callback, proximity),
   loop_entry(callback, _, behaviour).
 
-// The receive in `func` has no `after`: it waits until its message
-// comes.
-.decl waits_without_timeout(receive: symbol, func: symbol)
+// The receive in `func` waits with no timeout when `callback` runs it: it has no
+// `after` ("none"), or its `after` takes the timeout from a parameter the callback
+// passes as `:infinity` ("caller"). A literal :infinity compiles to no `after` at all.
+// A timeout read from state or computed is not followed: such a receive counts as
+// timed.
+.decl waits_without_timeout(receive: symbol, func: symbol, callback: symbol, proximity: symbol, how: symbol)
 
-waits_without_timeout(receive, func) :- recv_start(receive, func, 1, _).
+waits_without_timeout(receive, func, callback, proximity, "none") :-
+  recv_start(receive, func, 1, _),
+  callback_reaches(callback, func, proximity).
+
+waits_without_timeout(receive, func, callback, "helper", "caller") :-
+  recv_timeout_param(receive, func, pos),
+  callback_reaches(callback, func, "helper"),
+  infinity_arg(callback, func, pos).
+
+// Some callback other than init/1 runs the receive with no timeout.
+.decl untimed_in_a_callback(receive: symbol)
+
+untimed_in_a_callback(receive) :-
+  waits_without_timeout(receive, _, callback, _, _),
+  !is_init(callback).
 
 // The receive in `func` has an `after`: it can end without its message.
 .decl waits_with_timeout(receive: symbol, func: symbol)
@@ -886,8 +905,7 @@ waits_with_timeout(receive, func) :- recv_start(receive, func, 0, _).
 
 ends_when_peer_exits(receive, callback) :-
   down_bounded(receive),
-  recv_start(receive, func, 1, _),
-  callback_reaches(callback, func, _).
+  waits_without_timeout(receive, _, callback, _, _).
 
 ends_when_peer_exits(receive, callback) :-
   trapped_exit_ends(receive, func),

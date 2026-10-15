@@ -202,6 +202,21 @@ defmodule Argus.Schema.Monitors do
         A receive clause with fixed tag `:DOWN`, regardless of restrictions on \
         reference, object, or reason. Catch-alls do not qualify.
         """
+      },
+      %{
+        name: :recv_timeout_param,
+        layer: 2,
+        fields: [
+          {:id, :symbol, "the receive's loop_rec"},
+          {:func, :symbol, "the function"},
+          {:param, :number, "0-based position of the function's parameter the timeout is"}
+        ],
+        doc: """
+        A receive whose `after` timeout is the function's parameter `param` on every \
+        path. `recv_start` calls it timed; a caller passing `:infinity` there \
+        (`infinity_arg`) makes it wait with no timeout. A literal `:infinity` compiles \
+        to an untimed wait and needs no row.
+        """
       }
     ])
   end

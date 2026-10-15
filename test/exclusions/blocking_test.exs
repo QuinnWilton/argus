@@ -81,7 +81,7 @@ defmodule Argus.Exclusions.BlockingTest do
   defp receives(ctx, set) do
     for [func, callback, bounded] <-
           Rows.where(results(ctx, set), :blocking, "receive_in_callback",
-            drop: [:id, :behaviour, :proximity]
+            drop: [:id, :behaviour, :proximity, :timeout]
           ),
         do: {short(func), short(callback), bounded}
   end

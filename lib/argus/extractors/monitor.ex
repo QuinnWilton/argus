@@ -75,6 +75,10 @@ defmodule Argus.Extractors.Monitor do
   - `recv_flush(id, func, cancel)` — the receive runs only where the
     `cancel_timer` call at `cancel` returned `false`: the timer had fired,
     and its message is in the mailbox (`Argus.Extractors.Monitor.Flush`)
+  - `recv_timeout_param(id, func, param)` — a receive whose `after` takes
+    its timeout from the function's parameter `param` on every path, so
+    a caller passing `:infinity` there (`infinity_arg`) makes it wait
+    with no timeout at all
 
   Whether the ref is dropped is read from the instructions after the
   call, along every path: the ref arrives in `{x, 0}`, and it is dropped
@@ -177,7 +181,8 @@ defmodule Argus.Extractors.Monitor do
       :recv_flush,
       :recv_signal,
       :recv_takes_down,
-      :recv_takes_exit
+      :recv_takes_exit,
+      :recv_timeout_param
     ]
 
   @impl true
@@ -191,7 +196,70 @@ defmodule Argus.Extractors.Monitor do
     |> emit_recv_takes_exit(mod, functions)
     |> emit_recv_takes_down(mod, functions)
     |> emit_recv_flush(module_data)
+    |> emit_recv_timeout_param(mod, functions)
   end
+
+  # ── A receive whose timeout is a parameter ──────────────────────────
+
+  # `after timeout` compiles to a `wait_timeout` on the timeout's
+  # register in the receive's empty-mailbox block; a literal `:infinity`
+  # compiles to `wait` instead, which recv_start already calls blocking.
+  # The register must hold the same parameter on every path to the wait
+  # (`Argus.Extractor.Resolve.arg_position/3`), or the receive gets no
+  # row: a timeout read from state or computed here is not a caller's.
+  defp emit_recv_timeout_param(facts, mod, functions) do
+    for {:function, name, arity, _entry, instrs} <- functions,
+        {loop, param} <- timeout_params(instrs),
+        reduce: facts do
+      acc ->
+        func_id = InstrId.func_id(mod, name, arity)
+
+        add_fact(acc, :recv_timeout_param, [
+          InstrId.mint(func_id, loop),
+          func_id,
+          to_string(param)
+        ])
+    end
+  end
+
+  defp timeout_params(instrs) do
+    labels = Instr.labels(instrs)
+    indexed = Enum.with_index(instrs)
+
+    for {{:loop_rec, {:f, fail}, _dst}, loop} <- indexed,
+        {:register, reg, at} <- [empty_mailbox_wait(indexed, labels, fail)],
+        {:ok, param} <- [Resolve.arg_position(instrs, at, reg)],
+        do: {loop, param}
+  end
+
+  # The first of wait, wait_timeout or a bare timeout from the receive's
+  # empty-mailbox label, as recv_start's blocking flag reads it: `after
+  # 0` has no wait at all, and a later receive's wait is not this one's.
+  defp empty_mailbox_wait(indexed, labels, fail) do
+    with from when is_integer(from) <- Map.get(labels, fail),
+         {instr, at} <-
+           indexed
+           |> Enum.drop(from)
+           |> Enum.find(fn {instr, _at} -> wait?(instr) end) do
+      case instr do
+        {:wait_timeout, _label, timeout} -> timeout_register(timeout, at)
+        _ -> :none
+      end
+    else
+      _ -> :none
+    end
+  end
+
+  defp wait?({:wait, _}), do: true
+  defp wait?({:wait_timeout, _, _}), do: true
+  defp wait?(:timeout), do: true
+  defp wait?(_instr), do: false
+
+  # A literal timeout (`after 5_000`, a module attribute) is no
+  # parameter.
+  defp timeout_register({:tr, reg, _type}, at), do: timeout_register(reg, at)
+  defp timeout_register({kind, _n} = reg, at) when kind in [:x, :y], do: {:register, reg, at}
+  defp timeout_register(_literal, _at), do: :none
 
   # ── A receive that flushes a timer that has fired ───────────────────
 

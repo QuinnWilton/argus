@@ -752,6 +752,11 @@
 .decl recv_takes_exit(id: symbol, func: symbol) mutable
 .input recv_takes_exit
 
+// A receive whose `after` timeout is the function's parameter `param` on every path. `recv_start` calls it timed; a caller passing `:infinity` there (`infinity_arg`) makes it wait with no timeout. A literal `:infinity` compiles to an untimed wait and needs no row.
+//
+.decl recv_timeout_param(id: symbol, func: symbol, param: number) mutable
+.input recv_timeout_param
+
 // An Ecto field marked `redact: true`. Ecto hides it from inspection unless a separately derived Inspect implementation controls the output. Redaction defaults to off; consumers check for absence.
 //
 .decl redacted_field(mod: symbol, field: symbol) mutable

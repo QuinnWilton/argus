@@ -94,9 +94,14 @@ OTP behaviour. This can delay system messages and other requests. A timed receiv
 is bounded; a receive tied to DOWN or a trapped EXIT can last until that peer dies.
 Recognized timer-flush receives are excluded.
 
+A receive whose `after` takes its timeout from a parameter is untimed on a path
+where the callback passes a literal `:infinity` there (`timeout = caller`); a
+timeout read from state, computed, or forwarded further is not followed, and such a
+receive counts as timed.
+
 Untimed initialization waits belong to [startup](startup.md). Deeper helpers and
 some gen_statem state-function paths are missed. The facts distinguish timed from
-untimed receives, not the duration of the timeout.
+untimed receives, not the duration of a finite timeout.
 
 ## RPC waits
 

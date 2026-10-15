@@ -201,6 +201,26 @@ defmodule Argus.Extractors.MonitorTest do
     end
   end
 
+  describe "recv_timeout_param" do
+    alias Argus.Test.Fixtures.CallbackReceive, as: R
+
+    defp timeout_params(mod) do
+      for [_id, func, param] <- Map.get(extract(mod), :recv_timeout_param, []),
+          do: {func |> String.split(":") |> List.last(), param}
+    end
+
+    test "an `after` whose timeout is a parameter names its position" do
+      assert timeout_params(R.InfinityFromCallback) == [{"request/2", "1"}]
+      assert timeout_params(R.InfinityOnInitPort) == [{"request/3", "2"}]
+    end
+
+    test "a literal timeout, and a receive with no `after`, are none" do
+      # BoundedInCallback's `after 100`; BlockingInCallback has no after.
+      assert timeout_params(R.BoundedInCallback) == []
+      assert timeout_params(R.BlockingInCallback) == []
+    end
+  end
+
   describe "recv_signal" do
     alias Argus.Test.Fixtures.InitRecv
 

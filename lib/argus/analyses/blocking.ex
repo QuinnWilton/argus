@@ -32,10 +32,12 @@ defmodule Argus.Analyses.Blocking do
     is `infinity` when every call waits with `:infinity`. The callers in
     `bottleneck_caller` are its related frames.
   - `receive_in_callback(id, func, callback, behaviour, proximity,
-    bounded)` — a `receive` on an OTP process's own stack, `bounded`
-    false when it has no `after` and can hang, true when it has one, down
+    bounded, timeout)` — a `receive` on an OTP process's own stack,
+    `bounded` false when it can hang, true when it has a timeout, down
     when it has none but takes the `:DOWN` of a monitor its function
-    took, and so ends no later than the monitored process.
+    took, and so ends no later than the monitored process; `timeout`
+    says why it has none: `none` (no `after`) or `caller` (its `after`
+    takes a parameter the callback passes as `:infinity`).
   - `unbounded_wait(func, site, kind, api, detail, nodes)` — a wait with
     no deadline: `infinity` on a hop that itself serves synchronous
     callers, an `rpc` with the default infinity timeout, an
@@ -199,8 +201,11 @@ defmodule Argus.Analyses.Blocking do
           {:behaviour, :symbol, "the behaviour that owns the process loop"},
           {:proximity, :symbol, "direct (in the callback) | helper (one call away)"},
           {:bounded, :symbol,
-           "false when the receive has no after clause, true when it has one, " <>
-             "down when it has none but takes the :DOWN of a monitor its function took"}
+           "false when the receive can wait with no timeout, true when it has one, " <>
+             "down when it has none but takes the :DOWN of a monitor its function took"},
+          {:timeout, :symbol,
+           "none when the receive has no after clause; caller when its after takes a " <>
+             "parameter the callback passes as :infinity; after when it has a timeout"}
         ],
         key: [:id],
         doc: "A receive on an OTP process's own stack, with or without a timeout."
@@ -448,11 +453,11 @@ defmodule Argus.Analyses.Blocking do
     )
   end
 
-  def finding(:receive_in_callback, [id, func, callback, behaviour, proximity, "false"]) do
+  def finding(:receive_in_callback, [id, func, callback, behaviour, proximity, "false", how]) do
     Findings.new(
       :warning,
       "Blocking receive inside an OTP callback",
-      "#{func} runs a `receive` with no `after`, #{where(proximity, callback)}. It " <>
+      "#{func} runs a `receive` #{untimed(how, callback)}, #{where(proximity, callback)}. It " <>
         "executes on the #{behaviour} process's own stack, so it consumes from " <>
         "the mailbox the behaviour is managing: {:system, _, _} (which is how " <>
         ":sys.get_state and the debug surface reach the process), {:EXIT, _, _} " <>
@@ -471,12 +476,13 @@ defmodule Argus.Analyses.Blocking do
     )
   end
 
-  def finding(:receive_in_callback, [id, func, callback, behaviour, proximity, "true"]) do
+  def finding(:receive_in_callback, [id, func, callback, behaviour, proximity, "true", _how]) do
     Findings.new(
       :info,
       "Receive inside an OTP callback",
-      "#{func} runs a `receive`, #{where(proximity, callback)}. It has a " <>
-        "timeout so it cannot hang, but it still executes on the #{behaviour} " <>
+      "#{func} runs a `receive`, #{where(proximity, callback)}. It has an " <>
+        "`after`, so it ends once its timeout runs out (unless the timeout it is " <>
+        "given is `:infinity`), but it still executes on the #{behaviour} " <>
         "process's own stack and selectively consumes from the mailbox the " <>
         "behaviour manages — including the system messages :sys and the " <>
         "supervisor rely on. Messages it does not match are left in the queue " <>
@@ -489,11 +495,11 @@ defmodule Argus.Analyses.Blocking do
     )
   end
 
-  def finding(:receive_in_callback, [id, func, callback, behaviour, proximity, "down"]) do
+  def finding(:receive_in_callback, [id, func, callback, behaviour, proximity, "down", how]) do
     Findings.new(
       :info,
       "Receive inside an OTP callback",
-      "#{func} runs a `receive` with no `after`, #{where(proximity, callback)}, " <>
+      "#{func} runs a `receive` #{untimed(how, callback)}, #{where(proximity, callback)}, " <>
         "and it takes the exit of the process it waits on: the :DOWN of the process " <>
         "it monitored, which the runtime sends once the process exits (or at once " <>
         "if it was already gone), or, in a process that traps exits, the :EXIT of " <>
@@ -670,6 +676,15 @@ defmodule Argus.Analyses.Blocking do
 
   defp where("direct", callback), do: "and #{callback} is that callback"
   defp where(_helper, callback), do: "reached directly from the callback #{callback}"
+
+  # Why a receive has no timeout: no `after` at all, or an `after` whose
+  # timeout the callback hands it as `:infinity`.
+  defp untimed("caller", callback),
+    do:
+      "whose `after` takes its timeout as a parameter, and #{callback} passes " <>
+        "`:infinity` there, so on that path it has no timeout"
+
+  defp untimed(_none, _callback), do: "with no `after`"
 
   # What queueing costs the callers: a timeout of their own, or, when
   # every call waits with :infinity, the queue's whole length.
