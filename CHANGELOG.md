@@ -38,6 +38,12 @@ which a change appeared; older names and APIs may have changed since then.
 
 ### Fixed
 
+- `String.to_atom(Atom.to_string(a))`, and other reads of an atom's own
+  name back, are no longer reported as atom creation.
+- An exported decoder the program only ever hands literals (an `@payload`
+  built at compile time) is no longer reported.
+- A deserialization without `:safe` is reported once per call, its
+  finding covering the compressed-ETF form too.
 - `receive_in_callback` reads a receive's timeout from the callback that
   passes it: an `after` whose parameter a callback passes as `:infinity`
   is untimed, a warning, rather than "timed, so it cannot hang" (new
@@ -52,6 +58,20 @@ which a change appeared; older names and APIs may have changed since then.
 
 ### Changed
 
+- `System.cmd`, `:os.cmd` and `System.shell` are their own sink,
+  "Subprocess execution", reported only where a request or an exported
+  function's caller hands in what runs: a constant program with constant
+  arguments (`rustc -vV`) is not. A quoted positional parameter of a
+  literal `sh -c` script is data, not code.
+- `binary_to_term` of a BEAM file's chunks, or of a file under the build
+  directories, is its own finding (`artifact_decode`), at info, with the
+  advice to analyze untrusted code in a short-lived VM: such bytes hold
+  atoms and funs `:safe` refuses.
+- An unsafe_input finding's frame says whether an export's caller's
+  argument reaches the sink or the export only calls into it (`via`
+  column of `sink_export`).
+- New facts `command_data_args` and `decoded_origin`
+  (`Argus.Extractors.DecodedOrigin`), a schema shape change.
 - High synchronous fan-in counts the modules that call a server directly
   (a client module's wrapper is one caller, not its callers), and only a
   server its callers share and that answers in its own handler: a
