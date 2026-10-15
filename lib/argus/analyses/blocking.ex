@@ -26,9 +26,11 @@ defmodule Argus.Analyses.Blocking do
     was attributed by message tag. `self` is the cycle of one: a
     synchronous call to the calling process itself, which gen exits with
     `:calling_self`.
-  - `sync_call_fan_in(target, count)` — a server five or more modules
-    call synchronously; the callers in `bottleneck_caller` are its
-    related frames.
+  - `sync_call_fan_in(target, count, waits)` — a server process five or
+    more modules call directly (making the call, or calling its client
+    API), shared by them all, and answering in its own handler; `waits`
+    is `infinity` when every call waits with `:infinity`. The callers in
+    `bottleneck_caller` are its related frames.
   - `receive_in_callback(id, func, callback, behaviour, proximity,
     bounded)` — a `receive` on an OTP process's own stack, `bounded`
     false when it has no `after` and can hang, true when it has one, down
@@ -170,16 +172,19 @@ defmodule Argus.Analyses.Blocking do
         name: :sync_call_fan_in,
         fields: [
           {:target_mod, :symbol, "target GenServer module"},
-          {:cnt, :number, "number of distinct caller modules"}
+          {:cnt, :number, "number of distinct modules calling it directly"},
+          {:waits, :symbol,
+           "infinity when every call waits with :infinity; bounded when some can time out"}
         ],
-        doc: "Synchronous call fan-in count for a GenServer (>= 5 only)."
+        doc: "Synchronous call fan-in count for a shared server process (>= 5 only)."
       },
       %{
         name: :bottleneck_caller,
         fields: [
           {:caller_mod, :symbol, "module making the sync call"},
           {:target_mod, :symbol, "target GenServer module"},
-          {:witness, :symbol, "function in caller_mod making the call"}
+          {:witness, :symbol,
+           "function in caller_mod making the call or calling the server's client API"}
         ],
         key: [:caller_mod, :target_mod],
         evidence: %{of: :sync_call_fan_in, on: [:target_mod]},
@@ -428,13 +433,15 @@ defmodule Argus.Analyses.Blocking do
     )
   end
 
-  def finding(:sync_call_fan_in, [target_mod, cnt]) do
+  def finding(:sync_call_fan_in, [target_mod, cnt, waits]) do
     Findings.new(
       :warning,
       "High synchronous fan-in",
-      "#{cnt} distinct modules make GenServer.call into #{target_mod}. A " <>
-        "single process serializes all of them — under load, queue depth and " <>
-        "call latency grow together until callers start timing out.",
+      "#{cnt} distinct modules call #{target_mod} synchronously, each itself " <>
+        "(GenServer.call, or the server's client API), and they share one " <>
+        "process, which answers them in its own handler. It serializes all of " <>
+        "them — under load, queue depth and call latency grow together" <>
+        fan_in_consequence(waits),
       at: Findings.at_mfa(target_mod, :handle_call, 3),
       at_label: "#{cnt} modules call this server",
       help: ["shard the server, serve reads from ETS, or use casts where no reply is needed"]
@@ -657,6 +664,15 @@ defmodule Argus.Analyses.Blocking do
 
   defp where("direct", callback), do: "and #{callback} is that callback"
   defp where(_helper, callback), do: "reached directly from the callback #{callback}"
+
+  # What queueing costs the callers: a timeout of their own, or, when
+  # every call waits with :infinity, the queue's whole length.
+  defp fan_in_consequence("infinity"),
+    do:
+      ". Every call waits with `:infinity`, so no caller times out: each " <>
+        "waits for as long as the queue ahead of it takes."
+
+  defp fan_in_consequence(_bounded), do: " until callers start timing out."
 
   defp socket_wait(":gen_tcp.connect/3"),
     do: "waits until the operating system gives up on the connect, minutes on Linux"

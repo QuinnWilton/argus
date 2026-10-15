@@ -634,46 +634,165 @@ back_to(a, y) :-
 
 // ══ Synchronous fan-in ══════════════════════════════════════════════
 
-// Many modules wait on one server's replies: it answers them one at a
+// Many modules wait on one shared server process: it answers them one at a
 // time, and every call queues behind the others.
 .decl serialization_bottleneck(server: symbol, callers: number)
 
 serialization_bottleneck(server, callers) :-
-  caller_count(server, callers),
+  direct_callers(server, callers),
   // Five or more: this separates normal centralized services (one to four
   // callers) from true serialization bottlenecks.
-  callers >= 5.
+  callers >= 5,
+  !runs_per_instance(server),
+  !hands_requests_off(server).
 
-// How many modules have a function that waits on the server's process
-// (module_sync_dep, clientlib/calls.dl).
-.decl caller_count(server: symbol, callers: number)
+// A function of `caller_mod` that waits on `server` itself: it makes the
+// call, or calls the server's client API (sync_dep, clientlib/calls.dl).
+// Its own callers wait through it and are not counted again: callers that
+// all go through one facade count once, as the facade's module.
+.decl direct_caller(caller_mod: symbol, server: symbol, witness: symbol)
 
-.decl sync_callers(server: symbol, callers: number)
+direct_caller(caller_mod, server, f) :-
+  sync_dep(f, server),
+  function_def(f, caller_mod, _, _, _),
+  caller_mod != server,
+  gen_server_like(server).
 
-sync_callers(server, count(c)) :- sync_caller(c, server).
+.decl direct_callers(server: symbol, callers: number)
 
-caller_count(server, n) :- gen_server_like(server), sync_callers(server, n).
-caller_count(server, 0) :- gen_server_like(server), !sync_callers(server, _).
+direct_callers(server, count(c)) :- direct_caller(c, server, _).
 
-.decl sync_caller(caller_mod: symbol, target_mod: symbol)
+// Whether the callers share one process
+//
+// A module whose every start the program makes is unnamed (start_link/2
+// and its kin) or named per key (a via name with a computed key) runs a
+// process per start, and its callers each wait on their own (roux's
+// TableOwner, one per database). Any sign the process is shared keeps the
+// count: a start with a name, literal or not; a registration; a call or
+// cast by a literal name. A module with no start in sight counts as shared.
+.decl runs_per_instance(server: symbol)
 
-sync_caller(caller_mod, target_mod) :- module_sync_dep(caller_mod, target_mod, _).
+runs_per_instance(m) :- starts_an_instance(m, _), !may_run_shared(m).
 
-// Count of distinct caller modules for each such server.
-.decl sync_call_fan_in(target_mod: symbol, cnt: number)
+// The start at `site` makes a process of `server` under no name its
+// callers share.
+.decl starts_an_instance(server: symbol, site: symbol)
+
+starts_an_instance(m, id) :-
+  process_start(id, f, _, "server", m),
+  remote_call(id, f, api_mod, api_fun, arity),
+  unnamed_start(api_mod, api_fun, arity).
+
+starts_an_instance(m, id) :-
+  process_start(id, f, p, "server", m),
+  creating_op(id, f, "start_via", _, _, _),
+  !process_register_source(id, f, _, _, p).
+
+// The server starts that take no name.
+.decl unnamed_start(mod: symbol, fun: symbol, arity: number)
+
+unnamed_start("GenServer", "start", 2).
+unnamed_start("GenServer", "start_link", 2).
+unnamed_start("GenStateMachine", "start", 2).
+unnamed_start("GenStateMachine", "start_link", 2).
+unnamed_start("GenStage", "start", 2).
+unnamed_start("GenStage", "start_link", 2).
+unnamed_start(":gen_server", "start", 3).
+unnamed_start(":gen_server", "start_link", 3).
+unnamed_start(":gen_server", "start_monitor", 3).
+unnamed_start(":gen_statem", "start", 3).
+unnamed_start(":gen_statem", "start_link", 3).
+unnamed_start(":gen_statem", "start_monitor", 3).
+
+// A start through a supervisor runs the module's own start function,
+// whose start decides the name.
+.decl child_start(site: symbol)
+
+child_start(id) :- remote_call(id, _, "DynamicSupervisor", "start_child", 2).
+child_start(id) :- remote_call(id, _, "Supervisor", "start_child", 2).
+
+.decl may_run_shared(server: symbol)
+
+may_run_shared(m) :-
+  process_start(id, _, _, "server", m),
+  !starts_an_instance(m, id),
+  !child_start(id).
+
+may_run_shared(m) :- named_process(m, _).
+may_run_shared(m) :- named_pid(_, p), server_process(p, m).
+may_run_shared(m) :- sync_call(_, m).
+may_run_shared(m) :- async_cast(_, m).
+
+// Requests handed off
+//
+// A server whose handle_call/3 only queues its caller and starts the work
+// in another process, answering with GenServer.reply/2 later (argus's
+// Builder), keeps its mailbox moving while the work runs. Every return of
+// the handler must defer: a reply built in the handler, or a return left
+// to a tail call (whose shape is unknown), may be the slow path. Deferring
+// to a continuation or a message of its own does the work on the server's
+// own stack, and still counts.
+.decl hands_requests_off(server: symbol)
+
+hands_requests_off(m) :-
+  handle_call_function(m, h),
+  defers_reply(m, h, _),
+  !may_answer_in_handler(h),
+  handoff.reaches(h, f),
+  process_start(_, f, _, _, _).
+
+.decl may_answer_in_handler(handler: symbol)
+
+may_answer_in_handler(h) :-
+  handle_call_function(_, h),
+  callback_return(_, h, "handle_call", tag),
+  tag != ":noreply".
+
+may_answer_in_handler(h) :- handle_call_function(_, h), local_call(id, h, _, _), tail_call(id).
+may_answer_in_handler(h) :- handle_call_function(_, h), remote_call(id, h, _, _, _), tail_call(id).
+may_answer_in_handler(h) :- handle_call_function(_, h), dynamic_call(id, h, _), tail_call(id).
+
+// The handler's own stack, in its module: where it starts the process it
+// hands the request to.
+.init handoff = ForwardIntraModuleSameProcessReach
+
+handoff.root(h, h) :-
+  handle_call_function(m, h),
+  defers_reply(m, h, _),
+  direct_callers(m, n),
+  n >= 5.
+
+// Every call into the server waits with :infinity ("infinity"), or some
+// can give up ("bounded"): a finite or default timeout, or one the bytecode
+// does not show.
+.decl fan_in_waits(server: symbol, waits: symbol)
+
+fan_in_waits(m, "bounded") :- serialization_bottleneck(m, _), may_give_up(m).
+fan_in_waits(m, "infinity") :- serialization_bottleneck(m, _), !may_give_up(m).
+
+.decl may_give_up(server: symbol)
+
+may_give_up(m) :- direct_caller(_, m, f), sync_dep_timeout(f, m, ms), ms != -1.
+may_give_up(m) :- direct_caller(_, m, f), !sync_dep_timeout(f, m, _).
+
+// The number of modules calling each such server directly.
+.decl sync_call_fan_in(target_mod: symbol, cnt: number, waits: symbol)
 .output sync_call_fan_in
 
-sync_call_fan_in(target_mod, cnt) :- serialization_bottleneck(target_mod, cnt).
+sync_call_fan_in(target_mod, cnt, waits) :-
+  serialization_bottleneck(target_mod, cnt),
+  fan_in_waits(target_mod, waits).
 
 // ── Bottleneck callers ──────────────────────────────────────────────────
 
-// Caller evidence for a fan-in finding. Keep one row per witness; deduplicate displayed
-// frames by (caller_mod, target_mod).
+// Caller evidence for a fan-in finding: the functions calling the server.
+// Keep one row per witness; deduplicate displayed frames by (caller_mod,
+// target_mod).
 .decl bottleneck_caller(caller_mod: symbol, target_mod: symbol, witness: symbol)
 .output bottleneck_caller
 
 bottleneck_caller(caller_mod, target_mod, witness) :-
-  module_sync_dep(caller_mod, target_mod, witness),
+  direct_caller(caller_mod, target_mod, witness),
   serialization_bottleneck(target_mod, _).
 
 // Receives on an OTP callback's own stack. Exclude edges into detached or deferred

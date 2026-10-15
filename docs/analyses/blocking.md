@@ -65,9 +65,25 @@ all initial tags. Self-calls require a resolved PID or exclusive registered name
 
 `sync_call_fan_in` · **warning**
 
-At least five other modules synchronously depend on one server. It may become a
-latency bottleneck because it serializes requests. The threshold counts modules,
-not processes, call frequency or load; inspect the workload before redesigning it.
+At least five other modules call one shared server process synchronously, and it
+answers them in its own handler. It may become a latency bottleneck because it
+serializes requests. The threshold counts modules, not call frequency or load;
+inspect the workload before redesigning it.
+
+- A caller is a module that makes the call itself or calls the server's client
+  API. Modules reaching the server only through another module's function wait
+  through it and count once, as that module.
+- The callers must share the process. A module whose every start in the program
+  is unnamed (`GenServer.start_link/2` and its kin) or named per key (a via name
+  with a computed key) runs a process per start and is not counted. A start under
+  any other name, a registration, a call by literal name, or a start out of sight
+  keeps it.
+- A server whose `handle_call/3` only defers (every return is `{:noreply, ...}`,
+  none left to a tail call) and starts a process from its own stack hands the
+  work off and answers later; it is not counted. Deferring to a continuation or a
+  message of its own still does the work in the server.
+- When every call waits with `:infinity`, the finding says the callers queue
+  rather than time out.
 
 ## Receives inside callbacks
 

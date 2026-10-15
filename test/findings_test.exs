@@ -300,7 +300,7 @@ defmodule Argus.FindingsTest do
   describe "build/2" do
     test "evidence relations become related frames of the finding they join" do
       relation_rows = %{
-        "sync_call_fan_in" => [["Target", "5"]],
+        "sync_call_fan_in" => [["Target", "5", "bounded"]],
         "bottleneck_caller" => [
           ["B", "Target", "B:call/0"],
           ["A", "Target", "A:call/0"],
