@@ -225,22 +225,24 @@ defmodule Argus.Test.Fixtures.AtomRoundTrip do
   def listed(name), do: :erlang.list_to_atom(:erlang.atom_to_list(name))
   def encoded(name), do: :erlang.binary_to_atom(:erlang.atom_to_binary(name, :utf8), :utf8)
   def chosen(input), do: String.to_atom(Atom.to_string(String.to_existing_atom(input)))
-  def via_helper(name), do: intern(Atom.to_string(name))
-  def via_other_helper(name), do: intern(Atom.to_string(name))
 
   def again(name, 0), do: name
   def again(name, n), do: again(String.to_atom(Atom.to_string(name)), n - 1)
-
-  defp intern(text), do: String.to_atom(text)
 end
 
 defmodule Argus.Test.Fixtures.AtomRoundTripTwins do
   @moduledoc """
   The twins, each reported: a caller's string, a chosen atom's name with a
   suffix (one more atom per call: the next lookup chooses it), a helper
-  one caller hands a caller's string, and a name written as Latin-1 and
-  read as UTF-8, which can name another atom.
+  one caller hands a caller's string, a name written as Latin-1 and read
+  as UTF-8, which can name another atom, and a private function that
+  prefixes the atom its caller's caller chose (Horde's per-registry ETS
+  table names). A private function is not credited with its callers'
+  atom names: what it builds from one asks who chose the atom.
   """
+
+  def table(registry) when is_atom(registry), do: pids_table(registry)
+  defp pids_table(registry), do: :"pids_#{registry}"
 
   def from_input(text), do: String.to_atom(text)
 

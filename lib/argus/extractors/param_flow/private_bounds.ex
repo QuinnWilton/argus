@@ -111,12 +111,11 @@ defmodule Argus.Extractors.ParamFlow.PrivateBounds do
       else: solve(calls, functions, refined, returned, rounds - 1)
   end
 
-  # A finite set of the program's values, or exactly the name of an atom
-  # that exists (`Atom.to_string/1` of one), which an atom sink reads back
-  # as that atom. The weaker "made of atoms" bound is not handed on: its
-  # proof also asks who chose the atoms, a question about the caller.
+  # A finite set of the program's values. An atom bound is not handed on,
+  # not even exactly an existing atom's name: the callee may build a new
+  # atom from it (`:"pids_#{name}"`), whose proof asks who chose the atom,
+  # a question about the caller that the inherited bound no longer asks.
   defp inheritable?({:values, _desc}), do: true
-  defp inheritable?({:atoms, :atom}), do: true
   defp inheritable?(_bound), do: false
 
   # A return summary must cover every completing path. Functions with tail
