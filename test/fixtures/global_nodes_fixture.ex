@@ -69,6 +69,13 @@ defmodule Argus.Test.Fixtures.GlobalNodes do
     def trans_local(k, f), do: :global.trans({k, self()}, f, [node()])
     def trans_cluster(k, f), do: :global.trans({k, self()}, f, [node() | Node.list()], 3)
 
+    # A transaction over [node()] whose callers take turns, retrying for
+    # as long as it takes (argus's Toolchain.locked/2, roux's
+    # Code.Verify.counting/2): the lock is released as the function
+    # returns or raises, or its holder dies. Quiet, whatever the retries.
+    def trans_local_infinity(k, f), do: :global.trans({k, self()}, f, [node()], :infinity)
+    def trans_local_forwarded(k, f, n), do: :global.trans({k, self()}, f, [node()], n)
+
     # A positive retry count over [node()] gives up on a held local lock:
     # the fix, quiet. The same count over the cluster still asks every node.
     def bounded_local(k), do: :global.set_lock({k, self()}, [node()], 5)

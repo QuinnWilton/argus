@@ -1327,7 +1327,8 @@ wait_found(func, call, "rpc_in_callback", variant, "", "") :-
 // Global synchronization
 //
 // Use startup's lock criteria: unbounded retries on any node scope, or finite positive
-// retries involving other nodes. Finite local-only retries are exempt.
+// retries involving other nodes. Finite local-only retries are exempt, and so is a
+// local-only :global.trans, whatever its retries.
 
 // A :global lock outside init/1 retries indefinitely while another process holds it.
 .decl unbounded_lock_wait(func: symbol, lock: symbol)
@@ -1335,7 +1336,19 @@ wait_found(func, call, "rpc_in_callback", variant, "", "") :-
 unbounded_lock_wait(func, lock) :-
   takes_global_lock(func, lock),
   retries_until_locked(lock),
-  !during_init(lock).
+  !during_init(lock),
+  !takes_turns(lock).
+
+// A :global.trans over this node alone: callers take turns at its function. The lock
+// is released as the function returns or raises, and when its holder dies, so a waiter
+// waits only while a live holder runs the function; no partition can hold it. Bounded
+// retries would turn that wait into a spurious `:aborted`. A holder that never returns
+// is the defect, reported where it waits (receive_in_callback, unbounded_wait) when
+// that is visible. set_lock is not exempt: its lock is held until a del_lock the
+// holder may never reach.
+.decl takes_turns(lock: symbol)
+
+takes_turns(lock) :- global_op(lock, _, "trans", _, "local").
 
 // A :global lock outside init/1 uses finite retries, but each attempt may wait for a
 // partitioned node to be declared down.

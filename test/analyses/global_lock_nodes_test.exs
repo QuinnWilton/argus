@@ -100,6 +100,17 @@ defmodule Argus.Analyses.GlobalLockNodesTest do
     test "a local lock is not called cluster-wide", %{by_func: by_func} do
       assert by_func[:local].title == "Local :global lock without a retry bound"
       refute by_func[:local].detail =~ "whole cluster"
+      assert by_func[:local].detail =~ "del_lock"
+    end
+
+    # blocking.dl, unbounded_lock_wait: !takes_turns(lock). A set_lock
+    # over [node()] (`local` above) is still reported: it is held until a
+    # del_lock its holder may never reach.
+    test "a transaction over [node()] is a take-turns lock, quiet", %{by_func: by_func} do
+      refute Map.has_key?(by_func, :trans_local)
+      refute Map.has_key?(by_func, :trans_local_infinity)
+      refute Map.has_key?(by_func, :trans_local_forwarded)
+      assert by_func[:trans_default].title == "Cluster-wide :global synchronization"
     end
 
     test "an unread list stays cluster-wide and says so", %{by_func: by_func} do

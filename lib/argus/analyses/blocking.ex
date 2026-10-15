@@ -583,10 +583,16 @@ defmodule Argus.Analyses.Blocking do
       "#{func} calls :global.#{op} #{retries_phrase(retries)} over only the " <>
         "local node. No other node takes part, so a partition cannot stall " <>
         "it, but the caller waits for as long as another process on this " <>
-        "node holds the lock.",
+        "node holds the lock, and a lock taken this way is held until its " <>
+        "holder calls :global.del_lock or exits: a holder that goes on along a " <>
+        "path that never releases it keeps every waiter here.",
       at: Findings.at_instr(site),
       at_label: "lock on this node alone, retried until it is free",
-      help: ["bound `retries` so a held lock fails this caller instead of holding it"]
+      help: [
+        "take the lock with `:global.trans/4`, which releases it as its function " <>
+          "returns or raises",
+        "or bound `retries` so a held lock fails this caller instead of holding it"
+      ]
     )
   end
 

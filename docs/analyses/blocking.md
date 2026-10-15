@@ -134,6 +134,13 @@ distributed. Finite positive retries count when other nodes may participate; fin
 local-only retries are excluded. Check the actual arguments and whether a distributed
 lock is required.
 
+A `:global.trans` over `[node()]` is excluded whatever its retries: callers take
+turns at its function, the lock is released as the function returns or raises or
+its holder dies, and bounded retries would turn waiting into a spurious `:aborted`.
+A holder that never returns is the defect, reported where it waits when that is
+visible. A local `set_lock` without a retry bound is still reported: its lock is
+held until a `del_lock` the holder may never reach.
+
 ## Catching only one peer failure
 
 `partial_noproc_catch` · **warning**
