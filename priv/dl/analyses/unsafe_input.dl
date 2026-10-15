@@ -1000,6 +1000,23 @@ command_entry(f) :-
   function_def(f, _, n, _, _),
   !match("-.*-fun-[0-9]+-", n).
 
+// A deserialization reported without a literal :safe, whose finding covers the call
+// whatever its bytes hold, compressed ETF included: the compressed-ETF finding at the
+// same call would report one site twice. A [:safe] decode keeps it, since :safe bounds
+// no allocation. A value prior that re-tiers the deserialization re-tiers what it says
+// of the compressed form with it: priors move findings, and never add one.
+.decl unsafe_decode_reported(id: symbol)
+
+unsafe_decode_reported(id) :-
+  sink(id, _, _, "deserialization", safety),
+  safety != "atoms_only",
+  request_reached_sink(id, _, _, _, _).
+
+unsafe_decode_reported(id) :-
+  sink(id, _, _, "deserialization", safety),
+  safety != "atoms_only",
+  exposed_sink(id, _, _, _, _).
+
 // Nearby exported callers provide evidence of public reachability. An exported sink
 // function already serves as its own anchor.
 .init sink_callers = BackwardBoundedCallReach

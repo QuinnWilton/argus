@@ -26,4 +26,5 @@ etf_outside_param(f, q, to_string(q)) :- etf_source.reaches(f, q, _), outside_ap
 compressed_etf_from_input(id, func, api) :-
   etf_decode_site(id, func, api),
   etf_has_external_input(id),
-  !etf_compression_rejected(id, func).
+  !etf_compression_rejected(id, func),
+  !unsafe_decode_reported(id).

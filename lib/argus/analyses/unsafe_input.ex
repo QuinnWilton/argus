@@ -234,6 +234,15 @@ defmodule Argus.Analyses.UnsafeInput do
                   "interpreter's arguments, whoever supplies it runs commands on the " <>
                   "host with the node's operating-system privileges."
 
+  # Said where a decode without a literal :safe is reported: the
+  # compressed-ETF finding at the same call is left out
+  # (`unsafe_decode_reported` in unsafe_input.dl), and :safe alone would
+  # not bound this.
+  @compressed_risk " Compressed ETF (`<<131, 80, ...>>`) also inflates in full " <>
+                     "before anything checks it, with :safe or without."
+
+  @compressed_help "reject compressed ETF (`<<131, 80, _::binary>>`) from outside before " <>
+                     "decoding it"
 
   @inflate_help [
     "inflate in bounded chunks (`:zlib.safeInflate/2` or `inflateChunk/2`) and stop past a cap",
@@ -529,13 +538,13 @@ defmodule Argus.Analyses.UnsafeInput do
     "Whether :safe is among them cannot be seen here. Without it, untrusted " <>
       "bytes intern unbounded atoms and materialize funs, ports and " <>
       "references. With :safe, executable terms still require validation before use; " <>
-      "validation does not prevent atom creation when :safe is missing."
+      "validation does not prevent atom creation when :safe is missing." <> @compressed_risk
   end
 
   defp deserialization_risk(_unsafe) do
     "Untrusted bytes can intern unbounded atoms and materialize funs, ports, " <>
       "and references — a well-known denial-of-service vector, and on the " <>
-      "BEAM the strongest of the three sinks."
+      "BEAM the strongest of the three sinks." <> @compressed_risk
   end
 
   defp deserialization_help("atoms_only") do
@@ -546,12 +555,13 @@ defmodule Argus.Analyses.UnsafeInput do
   end
 
   defp deserialization_help("dynamic") do
-    ["pass `[:safe]` as a literal and validate the decoded shape"]
+    ["pass `[:safe]` as a literal and validate the decoded shape", @compressed_help]
   end
 
   defp deserialization_help(_unsafe) do
     [
-      "pass `[:safe]` and validate the decoded shape — :safe alone still admits arbitrary nested terms"
+      "pass `[:safe]` and validate the decoded shape — :safe alone still admits arbitrary nested terms",
+      @compressed_help
     ]
   end
 

@@ -342,9 +342,11 @@ defmodule Argus.PriorsTest do
           finding.title == "Compressed ETF allocation from external input"
         end)
 
-      # A term-safety/value-source prior is not an allocation bound. Both the raw
-      # and non-executable decoder still need a compressed-prefix rejection.
-      assert length(allocation) == 3
+      # A term-safety/value-source prior is not an allocation bound: the
+      # non-executable decoders' compressed-ETF findings stay as they were. The
+      # raw decoder's compressed form is its deserialization finding's to report,
+      # which the prior re-tiers whole.
+      assert length(allocation) == 2
       for {before, now} <- allocation, do: assert(before == now)
 
       for {before, now} <- value_sinks do

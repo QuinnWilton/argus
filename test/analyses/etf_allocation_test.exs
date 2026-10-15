@@ -13,18 +13,34 @@ defmodule Argus.Analyses.EtfAllocationTest do
         :unsafe_input
       )
 
-    %{rows: results["compressed_etf_from_input"]}
+    %{rows: results["compressed_etf_from_input"], results: results}
   end
 
   defp reported?(rows, name),
     do: Enum.any?(rows, fn [_id, func, _api] -> String.ends_with?(func, ":" <> name) end)
 
   test "safe options and compressed-input limits do not prevent allocation", %{rows: rows} do
-    assert reported?(rows, "direct/1")
     assert reported?(rows, "safe_option/1")
     assert reported?(rows, "encoded_cap/1")
     assert reported?(rows, "non_executable/1")
     refute reported?(rows, "fixed_literal/0")
+  end
+
+  test "a decode reported without :safe is one finding, which names the compressed form", %{
+    rows: rows,
+    results: results
+  } do
+    refute reported?(rows, "direct/1")
+
+    assert [row] =
+             Enum.filter(results["sink_without_request_path"], fn [_id, func | _] ->
+               String.ends_with?(func, ":direct/1")
+             end)
+
+    finding = Argus.Analyses.UnsafeInput.finding(:sink_without_request_path, row)
+    assert finding.title == "binary_to_term without :safe"
+    assert finding.detail =~ "Compressed ETF"
+    assert Enum.any?(finding.help, &(&1 =~ "<<131, 80, _::binary>>"))
   end
 
   test "same-byte prefix rejection works directly and through a checked local predicate", %{

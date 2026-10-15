@@ -132,7 +132,10 @@ Review the accepted success payload and the treatment of rejected values separat
 
 Unlike atom creation, the fallback reports deserialization even without caller-input
 evidence. Trusted files and internally stored terms can therefore be reported. The
-program's own literals are not (see decompression above).
+program's own literals are not (see decompression above). A deserialization reported
+without a literal `:safe` covers the call's compressed-ETF allocation too; the
+compressed-ETF finding below is left out at that call, and the deserialization finding
+says so.
 Request-path severity still follows proximity, so a distant request path can have
 lower severity than the no-request fallback. This is the current grading behaviour,
 not a statement that adding a request path makes decoding safer.
