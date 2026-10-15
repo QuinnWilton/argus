@@ -54,6 +54,19 @@ defmodule Argus.CLIGcTest do
     assert File.dir?(current)
   end
 
+  test "a collection that could not read a root says it removed no entry", %{store: store} do
+    {:ok, blob} = Roux.Blob.open(store)
+    {:ok, digest} = Roux.Blob.put(blob, "an entry nothing retains")
+    File.touch!(Roux.Blob.path(blob, digest), System.os_time(:second) - 2 * 24 * 60 * 60)
+    File.mkdir_p!(Path.join(store, "roots"))
+    File.write!(Path.join([store, "roots", "unreadable"]), "not a root")
+
+    output = capture_io(fn -> assert Argus.CLI.run(["gc"]) == 0 end)
+
+    assert output =~ "so no stored entry was removed: run argus gc again"
+    assert Roux.Blob.member?(blob, digest)
+  end
+
   test "a store its group can write is refused, saying how to fix it", %{store: store} do
     {:ok, _blob} = Roux.Blob.open(store)
     File.chmod!(store, 0o775)

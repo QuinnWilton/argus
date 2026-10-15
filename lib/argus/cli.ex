@@ -348,6 +348,12 @@ defmodule Argus.CLI do
               if(rules > 0,
                 do: "; removed #{rules} unpacked rule trees of other versions",
                 else: ""
+              ) <>
+              if(stats.partial,
+                do:
+                  "; a root or trace changed as it was read, so no stored entry was " <>
+                    "removed: run argus gc again when no other run is using the store",
+                else: ""
               )
           )
 
