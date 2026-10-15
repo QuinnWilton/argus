@@ -61,7 +61,7 @@ info[argus.mailbox]: Task.async in library code links to an unknown caller
 27 │   end
    │
    ╰─────
-     note: Depot.Archive.archive_sync/1 is a plain function, not a process callback, so the task it starts with Task.async is linked to whichever process called it. A caller that traps exits then receives the task's exit as an {:EXIT, pid, :normal} message that Task.await never consumes, and a crashing task takes the caller down with it.
+     note: Depot.Archive.archive_sync/1 is a plain function, not a process callback, so the task it starts with Task.async is linked to whichever process called it. A caller that traps exits then receives the task's exit as an {:EXIT, pid, :normal} message that collecting the task (Task.await, Task.yield) never consumes, and a crashing task takes the caller down with it.
      help: use `Task.async_stream/3` or `Task.Supervisor.async_nolink/2`, or document that callers must not trap exits
 
 3 findings (2 warnings, 1 info)

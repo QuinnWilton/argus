@@ -652,7 +652,8 @@ defmodule Argus.Analyses.Mailbox do
       "#{func} is a plain function, not a process callback, so the task it starts " <>
         "with Task.async is linked to whichever process called it. A caller that " <>
         "traps exits then receives the task's exit as an {:EXIT, pid, :normal} " <>
-        "message that Task.await never consumes, and a crashing task takes the " <>
+        "message that collecting the task (Task.await, Task.yield) never consumes, " <>
+        "and a crashing task takes the " <>
         "caller down with it.",
       at: Findings.at_instr(id),
       at_label: "linked task started in library code",
