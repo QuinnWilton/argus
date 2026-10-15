@@ -71,7 +71,8 @@ facts beyond these bounds and may still produce warnings.
 
 Without a request path, caller-derived input through a public API is reported at
 warning. Runtime callbacks and known internal values are treated differently from
-library entry points. Priors may lower this fallback to info.
+library entry points. Priors may lower this fallback to info. The finding lists the
+exports whose callers' argument reaches the conversion.
 
 The name of an atom that exists, read back into an atom
 (`String.to_atom(Atom.to_string(a))`, `list_to_atom(atom_to_list(a))`), is that atom:

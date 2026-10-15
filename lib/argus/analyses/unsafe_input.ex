@@ -171,13 +171,16 @@ defmodule Argus.Analyses.UnsafeInput do
         name: :sink_export,
         fields: [
           {:sink, :symbol, "the sink site"},
-          {:export, :symbol, "an exported function that reaches it"}
+          {:export, :symbol, "an exported function"},
+          {:via, :symbol,
+           "input | calls; input: its caller's argument reaches the sink's, calls: it " <>
+             "calls into the sink's function within six calls, a call path only"}
         ],
         key: [:sink, :export],
         evidence: %{of: :sink_without_request_path, on: [sink: :id], limit: 3},
         doc:
-          "Exported functions a sink no request reaches is reachable from, within six calls, " <>
-            "attached to its finding."
+          "Exported functions whose callers' input reaches a sink no request reaches, or, " <>
+            "where none does, that call into it within six calls, attached to its finding."
       },
       %{
         name: :sink_endpoint,
@@ -461,8 +464,20 @@ defmodule Argus.Analyses.UnsafeInput do
   # route is authenticated — Phoenix compiles pipe_through into the
   # router's dispatch as control flow, not into the route table.
   @impl true
-  def evidence(:sink_export, [_sink, export]) do
-    Findings.related("reachable from #{export}, which is exported", Findings.at_func(export))
+  # A data path and a call path read alike as "reachable from"; the
+  # label says which one the row is.
+  def evidence(:sink_export, [_sink, export, "input"]) do
+    Findings.related(
+      "#{export} is exported, and what its caller hands in reaches this call",
+      Findings.at_func(export)
+    )
+  end
+
+  def evidence(:sink_export, [_sink, export, _calls]) do
+    Findings.related(
+      "#{export} is exported and calls into this function (a call path, not a data flow)",
+      Findings.at_func(export)
+    )
   end
 
   def evidence(:sink_endpoint, [_sink, verb, path, plug]) do

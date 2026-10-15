@@ -76,6 +76,17 @@ defmodule Argus.Test.Fixtures.ExportedSinkCaller do
   defp to_tag(input), do: String.to_atom(input)
 end
 
+defmodule Argus.Test.Fixtures.ExportedDecodeCaller do
+  @moduledoc """
+  A private decode no request reaches, below an export that hands it bytes
+  it read: no caller's argument reaches the decode, only the call does.
+  """
+
+  def load, do: decode(File.read!("state.bin"))
+
+  defp decode(bytes), do: :erlang.binary_to_term(bytes)
+end
+
 defmodule Argus.Test.Fixtures.DefaultArgSinkCaller do
   @moduledoc """
   A private sink no request reaches below an exported function with a

@@ -1024,10 +1024,32 @@ unsafe_decode_reported(id) :-
 sink_callers.root(func, func) :- exposed_sink(_, func, _, _, _).
 sink_callers.limit(6).
 
-// The exports listed with an exposed sink's finding, one per arity a
-// reader would look at.
-.decl sink_export(sink: symbol, export: symbol)
+// The exports listed with an exposed sink's finding, one per arity a reader would look
+// at, and how each relates to it: its caller's argument reaches the sink's (`input`), or,
+// where no export's does, it calls into the sink's function within six calls (`calls`),
+// a path that says nothing of the data.
+.decl sink_export(sink: symbol, export: symbol, via: symbol)
 .output sink_export
+
+sink_export(id, e, via) :- export_frame(id, e, via), !forwards_to_listed_arity(id, e, via).
+
+// The candidate frames. An exported sink function already serves as its own anchor.
+.decl export_frame(sink: symbol, export: symbol, via: symbol)
+
+export_frame(id, e, "input") :-
+  exposed_sink(id, func, _, _, _),
+  sink_input_export(id, e),
+  e != func.
+
+export_frame(id, e, "calls") :- sink_export_reach(id, e), !sink_input_export(id, _).
+
+// An export of the program's API whose parameter reaches the sink's argument: the walks
+// that found the caller's input (`caller_input`).
+.decl sink_input_export(sink: symbol, export: symbol)
+
+sink_input_export(id, e) :- atom_input.reaches(e, _, id), outside_api(e).
+sink_input_export(id, e) :- inflate_input.reaches(e, _, id), outside_api(e).
+sink_input_export(id, e) :- command_input.reaches(e, _, id), outside_api(e).
 
 // An export at least one call above the exposed sink's function, within
 // the walk's six calls.
@@ -1039,21 +1061,17 @@ sink_export_reach(id, e) :-
   d > 0,
   api_export(e).
 
-sink_export(id, e) :-
-  sink_export_reach(id, e),
-  !forwards_to_listed_arity(id, e).
-
 // Suppress redundant evidence frames for exports forwarding to a higher arity of
 // themselves, such as default-argument wrappers, when that arity is already listed.
-.decl forwards_to_listed_arity(sink: symbol, export: symbol)
+.decl forwards_to_listed_arity(sink: symbol, export: symbol, via: symbol)
 
-forwards_to_listed_arity(id, e) :-
-  sink_export_reach(id, e),
+forwards_to_listed_arity(id, e, via) :-
+  export_frame(id, e, via),
   function_def(e, m, name, n, _),
   call_edge(e, g),
   function_def(g, m, name, k, _),
   k > n,
-  sink_export_reach(id, g).
+  export_frame(id, g, via).
 
 // HTTP routes reaching a sink
 //

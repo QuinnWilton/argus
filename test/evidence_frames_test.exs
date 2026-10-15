@@ -82,13 +82,25 @@ defmodule Argus.EvidenceFramesTest do
     assert frame.mfa == {Fixtures.InitRecv.Blocking, :init, 1}
   end
 
-  test "sink_export: the exported functions a sink no request reaches is reachable from" do
+  test "sink_export: the exported functions whose callers' input reaches a sink" do
     assert [finding] = findings([Fixtures.ExportedSinkCaller], :unsafe_input)
     assert finding.mfa == {Fixtures.ExportedSinkCaller, :to_tag, 1}
 
     assert [frame] = finding.related
-    assert frame.label =~ "tag/1, which is exported"
+    assert frame.label =~ "tag/1 is exported, and what its caller hands in reaches this call"
     assert frame.mfa == {Fixtures.ExportedSinkCaller, :tag, 1}
+  end
+
+  test "sink_export: an export that only calls into a sink says it is a call path" do
+    assert [finding] = findings([Fixtures.ExportedDecodeCaller], :unsafe_input)
+    assert finding.mfa == {Fixtures.ExportedDecodeCaller, :decode, 1}
+
+    assert [frame] = finding.related
+
+    assert frame.label =~
+             "load/0 is exported and calls into this function (a call path, not a data flow)"
+
+    assert frame.mfa == {Fixtures.ExportedDecodeCaller, :load, 0}
   end
 
   test "sink_export: a default-argument head is no frame beside the arity it calls" do
