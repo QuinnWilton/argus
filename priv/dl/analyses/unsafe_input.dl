@@ -222,8 +222,9 @@ inert_decoded_term(id, func) :-
   decoded_term_validated(id, func).
 
 // Apply allowlist suppression to atom and deserialization arguments only. A bounded
-// code module does not bound its function, and decompression size safety requires
-// streaming APIs, excluded from sinks. A command is bounded when the module's
+// code module does not bound its function, and a decompression's size safety requires
+// streaming APIs, excluded from sinks; a decoder of the program's own literal bytes
+// decodes no input at all (`constant_input`). A command is bounded when the module's
 // helpers and callers hand its shell or interpreter literal arguments, or `mix` a
 // task that runs no code (`command_fixed`).
 .decl bounded_sink_input(id: symbol, func: symbol, kind: symbol)
@@ -237,6 +238,88 @@ bounded_sink_input(id, func, "atom") :- sink_call(id, func, _, "atom", _), bound
 bounded_sink_input(id, func, "deserialization") :-
   sink_call(id, func, _, "deserialization", _),
   bounded_input(id, func).
+
+bounded_sink_input(id, func, kind) :-
+  sink_call(id, func, _, kind, _),
+  (kind = "deserialization" ; kind = "decompression"),
+  constant_input(id).
+
+// Constant input
+//
+// The bytes a deserialization or decompression decodes are made of parameters alone,
+// each one the program fills with a literal at every call it makes: a module attribute
+// built at compile time (`@payload`), a literal binary. An exported decoder is judged
+// by the calls the program makes to it; one the program never calls has no such
+// evidence and keeps its finding. What the argument is made of is Dependence's answer
+// (`sink_reads`); a value it does not see beside the parameter, such as a received
+// message, is a known limit, as it is for `other_source`.
+.decl constant_input(id: symbol)
+
+constant_input(id) :-
+  decoded_input(id, func, pos),
+  sink_reads(id, func, pos, "param", _),
+  !varying_input(id).
+
+// The argument a decoding sink reads its bytes from.
+.decl decoded_input(id: symbol, func: symbol, pos: number)
+
+decoded_input(id, func, 0) :- unsafe_deserialization(id, func, _, _).
+decoded_input(id, func, pos) :- unsafe_decompression(id, func, _, pos).
+
+// Something other than a literal-fed parameter reaches the decoded argument.
+.decl varying_input(id: symbol)
+
+varying_input(id) :-
+  decoded_input(id, func, pos),
+  sink_reads(id, func, pos, kind, _),
+  kind != "param".
+
+varying_input(id) :-
+  decoded_input(id, func, pos),
+  sink_reads(id, func, pos, "param", p),
+  !literal_fed(func, p).
+
+varying_input(id) :- decoded_input(id, func, pos), call_arg_runtime(id, func, pos, _, _).
+
+// The parameters `literal_fed` is asked of: a decoding sink's, and an exported ETF
+// decoder's that caller-derived bytes reach (`etf_has_external_input`).
+.decl literal_fed_candidate(func: symbol, param: symbol)
+
+literal_fed_candidate(f, p) :- decoded_input(id, f, pos), sink_reads(id, f, pos, "param", p).
+
+literal_fed_candidate(f, p) :- etf_outside_param(f, _, p).
+
+// Every call the program makes to `func` hands its parameter `param` a literal, and there
+// is at least one. CallArgs resolves the first four arguments only.
+.decl literal_fed(func: symbol, param: symbol)
+
+literal_fed(f, p) :-
+  literal_fed_candidate(f, p),
+  call_arg(_, f, q, v),
+  p = to_string(q),
+  v != "dynamic",
+  !unliteral_call(f, p).
+
+// A caller hands `func` something other than a literal at `param` on some call, or
+// reaches it without a call site argus reads: a capture, a fun handed on, an apply.
+.decl unliteral_call(func: symbol, param: symbol)
+
+unliteral_call(f, p) :- literal_fed_candidate(f, p), call_edge(c, f), !literal_call(c, f, p).
+
+unliteral_call(f, p) :-
+  literal_fed_candidate(f, p),
+  (closure_def(_, f) ; fun_ref(_, f) ; resolved_apply(_, _, f)).
+
+// Every call from `caller` to `callee` hands it a literal at `param`.
+.decl literal_call(caller: symbol, callee: symbol, param: symbol)
+
+literal_call(c, f, p) :-
+  literal_fed_candidate(f, p),
+  call_arg(c, f, q, v),
+  p = to_string(q),
+  v != "dynamic",
+  !call_arg(c, f, q, "dynamic"),
+  !call_arg_forward(c, f, q, _).
 
 // The argument a decompression reads: the compressed data, not the
 // zstream `inflate/2` takes first (which lives in the handler's state).

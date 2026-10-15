@@ -7,8 +7,18 @@ etf_source.seed(func, param, id) :-
   etf_decode_site(id, func, _),
   call_arg_param(id, func, 0, param).
 
+// An exported decoder every call of which the program hands a literal is judged by
+// those calls (`literal_fed`, analyses/unsafe_input.dl).
 .decl etf_has_external_input(id: symbol)
-etf_has_external_input(id) :- etf_source.reaches(func, _, id), outside_api(func).
+etf_has_external_input(id) :-
+  etf_source.reaches(func, q, id),
+  etf_outside_param(func, q, p),
+  !literal_fed(func, p).
+
+// A parameter of the program's API that caller-derived bytes reach, with its position
+// spelled as Dependence spells it.
+.decl etf_outside_param(func: symbol, pos: number, param: symbol)
+etf_outside_param(f, q, to_string(q)) :- etf_source.reaches(f, q, _), outside_api(f).
 
 .decl compressed_etf_from_input(id: symbol, func: symbol, api: symbol)
 .output compressed_etf_from_input

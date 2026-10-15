@@ -94,6 +94,14 @@ enforces a total output limit. Zip/tar extraction and unmodeled wrappers are out
 this sink list. With no request path, caller-derived data is a warning whether it
 comes from a network response or another external source.
 
+An exported decoder is judged by the calls the program makes to it, where it makes
+some: when every one hands the decoded parameter a literal (a module attribute built
+at compile time, such as an embedded tree's gzipped payload), the bytes are the
+program's own and neither decompression nor deserialization is reported. One call with
+other bytes, a fun of the decoder handed on, or no call in the program at all keeps
+the finding. What the decoded argument is made of is Dependence's answer; a value it
+does not see beside the parameter, such as a received message, is a known limit.
+
 ## Deserialization
 
 `sink=deserialization`
@@ -123,7 +131,8 @@ establish that validation is absent or that a decoded function reaches execution
 Review the accepted success payload and the treatment of rejected values separately.
 
 Unlike atom creation, the fallback reports deserialization even without caller-input
-evidence. Trusted files and internally stored terms can therefore be reported.
+evidence. Trusted files and internally stored terms can therefore be reported. The
+program's own literals are not (see decompression above).
 Request-path severity still follows proximity, so a distant request path can have
 lower severity than the no-request fallback. This is the current grading behaviour,
 not a statement that adding a request path makes decoding safer.

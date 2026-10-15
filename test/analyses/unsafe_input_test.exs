@@ -73,6 +73,8 @@ defmodule Argus.Analyses.UnsafeInputTest do
     Argus.Test.Fixtures.AtomFromMessages,
     Argus.Test.Fixtures.AtomProcessName,
     Argus.Test.Fixtures.AtomRoundTrip,
+    [Argus.Test.Fixtures.ConstantDecode.Tree, Argus.Test.Fixtures.ConstantDecode.Embedded],
+    [Argus.Test.Fixtures.OpenDecode.Tree, Argus.Test.Fixtures.OpenDecode.Callers],
     Argus.Test.Fixtures.AtomRoundTripTwins,
     D.FrameHandler,
     D.BoundedFrameHandler,
@@ -144,6 +146,31 @@ defmodule Argus.Analyses.UnsafeInputTest do
         |> Enum.sort()
 
       assert funcs == ["captured_decode/1", "decode/1", "either/4", "unwrapped/1"]
+    end
+
+    test "an exported decoder the program hands only its own literals decodes no input", ctx do
+      alias Argus.Test.Fixtures.ConstantDecode, as: C
+      alias Argus.Test.Fixtures.OpenDecode, as: O
+
+      constant = analyze(ctx, [C.Tree, C.Embedded])
+
+      for output <- ~w(sink_without_request_path sink_reachable compressed_etf_from_input) do
+        assert constant[output] == [], "#{output}: #{inspect(constant[output])}"
+      end
+
+      # A caller's bytes beside the literal, a fun of the decoder handed
+      # on, and a decoder nothing in the program calls.
+      sinks =
+        for [_id, func, _api, sink | _] <-
+              analyze(ctx, [O.Tree, O.Callers])["sink_without_request_path"],
+            do: {func |> String.split(".") |> List.last(), sink}
+
+      assert Enum.sort(sinks) == [
+               {"Tree:decode/1", "deserialization"},
+               {"Tree:lone/1", "deserialization"},
+               {"Tree:unpack/1", "decompression"},
+               {"Tree:unpack/1", "deserialization"}
+             ]
     end
 
     test "the deserialization finding says what the options were, and grades [:safe] down", ctx do
