@@ -3,7 +3,7 @@
 Notable changes and upgrade notes for Argus. Entries describe the release in
 which a change appeared; older names and APIs may have changed since then.
 
-## Unreleased
+## 0.24.0 — 2026-10-15
 
 ### Removed
 
