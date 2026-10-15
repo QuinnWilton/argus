@@ -576,14 +576,45 @@ takes_task_reply(h) :- callback_open(h, "handle_info", "tuple", -1).
 // an exit result. Unlinked tasks support collecting such failures.
 
 // Yielding on linked tasks does not protect a caller that is not trapping exits: a task
-// crash kills it before yield can report the failure.
+// crash kills it before yield can report the failure, and the code that expects that
+// report is dead.
 .decl yield_on_linked_task(owner: symbol, start: symbol)
 
 yield_on_linked_task(owner, start) :-
   starts_linked_task_in(owner, start),
   yields_on_task(owner, _),
+  expects_yield_exit(owner),
   !starts_trapping(start),
   task_can_fail(start).
+
+// The owner expects a yield to report a crashed task as `{:exit, reason}`: it or a
+// closure it defines, a function it may hand the result to (redix#317's
+// __collect_group_results__/1), or a caller it may hand the result back to, each with
+// the closures they define, compares a term with :exit (compares_exit). Without that,
+// `Task.yield(t, ms) || Task.shutdown(t)` taking only a reply or nil crashes with the
+// task as Task.await would, and nothing is dead. The comparison is function-level, so
+// one made for another value counts too.
+.decl expects_yield_exit(owner: symbol)
+
+expects_yield_exit(owner) :-
+  yields_on_task(owner, _),
+  enclosing_function(g, owner),
+  compares_exit(g).
+
+// A callee of the owner's own code, not of the task's body, which runs in the task.
+expects_yield_exit(owner) :-
+  yields_on_task(owner, _),
+  enclosing_function(f, owner),
+  !process_start(_, _, _, _, f),
+  call_edge(f, callee),
+  enclosing_function(g, callee),
+  compares_exit(g).
+
+expects_yield_exit(owner) :-
+  yields_on_task(owner, _),
+  call_edge(caller, owner),
+  enclosing_function(g, caller),
+  compares_exit(g).
 
 // The task started at `start` can exit abnormally, which the link carries
 // to its caller. A body that only sends and receives (tm_mercury's stop

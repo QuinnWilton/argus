@@ -361,6 +361,18 @@ defmodule Argus.Schema.ErrorHandling do
         """
       },
       %{
+        name: :compares_exit,
+        layer: 2,
+        fields: [
+          {:func, :symbol, "the function"}
+        ],
+        doc: """
+        A function comparing a term, or a tuple's first element, with the atom `:exit`: \
+        a `{:exit, reason}` clause (what `Task.yield/2` reports of a crashed task) or a \
+        `catch :exit, _`. Function-level: the compared value is not identified.
+        """
+      },
+      %{
         name: :field_nil_test,
         layer: 2,
         fields: [

@@ -239,6 +239,26 @@ defmodule Argus.Extractors.ErrorHandlingTest do
     end
   end
 
+  describe "extract/1 — compares_exit" do
+    alias Argus.Test.Fixtures.YieldOrShutdown
+    alias Argus.Test.Fixtures.YieldOrShutdownExpectsExit
+    alias Argus.Test.Fixtures.YieldsLinkedTask
+
+    defp compares_exit(mod) do
+      {:ok, facts} = Argus.Pipeline.extract([mod], extractors: [ErrorHandling])
+      for [f] <- Map.get(facts, :compares_exit, []), do: f |> String.split(":") |> List.last()
+    end
+
+    test "a {:exit, _} clause, at the top or inside a tuple a closure takes" do
+      assert compares_exit(YieldOrShutdownExpectsExit) == ["fetch/1"]
+      assert compares_exit(YieldsLinkedTask) == ["-fan_out/1-fun-2-/1"]
+    end
+
+    test "clauses for a reply and nil alone are none" do
+      assert compares_exit(YieldOrShutdown) == []
+    end
+  end
+
   describe "extract/1 — raise_source" do
     alias Argus.Test.Fixtures.MailboxYieldNamedSend
     alias Argus.Test.Fixtures.MailboxYieldRescueOnly

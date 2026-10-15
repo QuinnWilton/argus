@@ -147,7 +147,13 @@ monitors active until it exits, and a protocol may prevent repeated registration
 | `yield_linked` | The caller expects yield to report a task crash but is linked and not trapping exits at the start. | warning |
 | `linked_in_library` | Library code links a task to an unknown caller and awaits it internally. | info |
 
-The caller can die before yield reports the failure. In a trapping caller, normal
+The caller can die before yield reports the failure. `yield_linked` needs evidence
+of that expectation: the owner, a function it hands the result to, or a caller it
+may hand the result back to (or a closure of one of them) compares a term with
+`:exit` (a `{:exit, reason}` clause). The comparison is function-level. `Task.yield(t, ms) || Task.shutdown(t)` taking only a reply or
+`nil` crashes with the task as `Task.await` would, and is not reported.
+
+In a trapping caller, normal
 linked exits can also become unexpected mailbox messages. Collection and return
 tracking are approximate; use the finding's start and handler evidence to check
 the actual task protocol.

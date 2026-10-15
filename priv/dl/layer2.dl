@@ -265,6 +265,11 @@
 .decl command_fixed(id: symbol, func: symbol) mutable
 .input command_fixed
 
+// A function comparing a term, or a tuple's first element, with the atom `:exit`: a `{:exit, reason}` clause (what `Task.yield/2` reports of a crashed task) or a `catch :exit, _`. Function-level: the compared value is not identified.
+//
+.decl compares_exit(func: symbol) mutable
+.input compares_exit
+
 // A call restricted to the connected branch of `Phoenix.LiveView.connected?/1` or a non-nil `get_connect_params/1` result. Excludes the disconnected branch and code after branches rejoin. Used to distinguish connected mount work from static rendering (`Argus.Extractors.LiveView`).
 //
 .decl connected_guarded(id: symbol, func: symbol) mutable

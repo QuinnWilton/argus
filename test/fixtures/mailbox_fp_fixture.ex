@@ -140,6 +140,7 @@ defmodule Argus.Test.Fixtures.MailboxYieldStopTask do
     result =
       case Task.yield(task, 5_000) || Task.shutdown(task) do
         nil -> {:ok, :killed}
+        {:exit, reason} -> {:error, reason}
         other -> other
       end
 
@@ -159,6 +160,7 @@ defmodule Argus.Test.Fixtures.MailboxYieldSafeCallback do
 
     case Task.yield(task, timeout) || Task.shutdown(task, :brutal_kill) do
       {:ok, result} -> result
+      {:exit, _reason} -> {:error, :callback_crashed}
       nil -> {:error, :timeout}
     end
   end
@@ -183,6 +185,7 @@ defmodule Argus.Test.Fixtures.MailboxYieldResolve do
 
     case Task.yield(task, timeout) || Task.shutdown(task, :brutal_kill) do
       {:ok, {:ok, {:hostent, _, _, _, _, addresses}}} -> addresses
+      {:exit, _reason} -> []
       _failed_or_timeout -> []
     end
   end
@@ -200,6 +203,7 @@ defmodule Argus.Test.Fixtures.MailboxYieldRescueOnly do
 
     case Task.yield(task, timeout) || Task.shutdown(task, :brutal_kill) do
       {:ok, result} -> result
+      {:exit, _reason} -> {:error, :callback_crashed}
       nil -> {:error, :timeout}
     end
   end
@@ -227,6 +231,9 @@ defmodule Argus.Test.Fixtures.MailboxYieldNamedSend do
         end
       end)
 
-    Task.yield(task, timeout) || Task.shutdown(task)
+    case Task.yield(task, timeout) || Task.shutdown(task) do
+      {:exit, reason} -> {:error, reason}
+      result -> result
+    end
   end
 end

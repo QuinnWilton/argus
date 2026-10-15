@@ -226,6 +226,33 @@ defmodule Argus.Analyses.MailboxTaskTest do
              ]
     end
 
+    # mailbox.dl, yield_on_linked_task: expects_yield_exit(owner).
+    test "yield is reported only where the code expects it to report a crash" do
+      assert {:ok, results} =
+               Memo.analyze(
+                 [
+                   Argus.Test.Fixtures.YieldOrShutdown,
+                   Argus.Test.Fixtures.YieldOrShutdownExpectsExit,
+                   Argus.Test.Fixtures.YieldReturnedToMatcher,
+                   Argus.Test.Fixtures.YieldHandedToMatcher
+                 ],
+                 :mailbox
+               )
+
+      # `yield || shutdown` taking only a reply or nil (argus's
+      # Corpus.reachable/1) has no dead branch; the same with an
+      # {:exit, _} clause has one, as has a caller matching {:exit, _} of
+      # the result a yield hands back to it, and a helper the yield's
+      # result is handed to (redix#317).
+      funcs = results |> tasks("yield_linked") |> Enum.map(&hd/1) |> Enum.sort()
+
+      assert funcs == [
+               "Argus.Test.Fixtures.YieldHandedToMatcher:fan_out/1",
+               "Argus.Test.Fixtures.YieldOrShutdownExpectsExit:fetch/1",
+               "Argus.Test.Fixtures.YieldReturnedToMatcher:fetch/1"
+             ]
+    end
+
     test "Task.async in a plain library function is noted; a GenServer's is not" do
       assert {:ok, results} =
                Memo.analyze(

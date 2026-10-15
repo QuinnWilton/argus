@@ -245,11 +245,14 @@ defmodule Argus.Test.Fixtures.TrapsAndYields do
   @impl true
   def handle_call(:work, _from, state) do
     task = Task.async(fn -> Application.fetch_env!(:probe, :work) end)
-    {:reply, Task.yield(task, 1_000), state}
+    {:reply, crash_as_error(Task.yield(task, 1_000)), state}
   end
 
   @impl true
   def handle_info({:EXIT, _pid, _reason}, state), do: {:noreply, state}
+
+  defp crash_as_error({:exit, reason}), do: {:error, reason}
+  defp crash_as_error(result), do: result
 end
 
 defmodule Argus.Test.Fixtures.TrapsButYieldsInClient do
@@ -262,7 +265,11 @@ defmodule Argus.Test.Fixtures.TrapsButYieldsInClient do
 
   def fetch(item) do
     task = Task.async(fn -> Application.fetch_env!(:probe, item) end)
-    Task.yield(task, 1_000)
+
+    case Task.yield(task, 1_000) do
+      {:exit, reason} -> {:error, reason}
+      result -> result
+    end
   end
 
   @impl true
@@ -339,7 +346,11 @@ defmodule Argus.Test.Fixtures.TrapsAroundTasks do
 
     results = Task.yield_many(tasks, 1_000)
     Process.flag(:trap_exit, false)
-    results
+
+    Enum.map(results, fn
+      {_task, {:exit, reason}} -> {:error, reason}
+      {_task, result} -> result
+    end)
   end
 end
 
@@ -349,7 +360,11 @@ defmodule Argus.Test.Fixtures.TrapsInHelperBeforeTask do
   def fetch(item) do
     trap_exits()
     task = Task.async(fn -> Application.fetch_env!(:probe, item) end)
-    Task.yield(task, 1_000)
+
+    case Task.yield(task, 1_000) do
+      {:exit, reason} -> {:error, reason}
+      result -> result
+    end
   end
 
   defp trap_exits, do: Process.flag(:trap_exit, true)
@@ -362,7 +377,11 @@ defmodule Argus.Test.Fixtures.TrapsAfterTask do
   def fetch(item) do
     task = Task.async(fn -> Application.fetch_env!(:probe, item) end)
     Process.flag(:trap_exit, true)
-    Task.yield(task, 1_000)
+
+    case Task.yield(task, 1_000) do
+      {:exit, reason} -> {:error, reason}
+      result -> result
+    end
   end
 end
 
@@ -384,9 +403,82 @@ defmodule Argus.Test.Fixtures.ClearsBeforeTask do
   def handle_call(:work, _from, state) do
     Process.flag(:trap_exit, false)
     task = Task.async(fn -> Application.fetch_env!(:probe, :work) end)
-    {:reply, Task.yield(task, 1_000), state}
+
+    case Task.yield(task, 1_000) do
+      {:exit, reason} -> {:reply, {:error, reason}, state}
+      result -> {:reply, result, state}
+    end
   end
 
   @impl true
   def handle_info({:EXIT, _pid, _reason}, state), do: {:noreply, state}
+end
+
+defmodule Argus.Test.Fixtures.YieldOrShutdown do
+  @moduledoc false
+  # argus's Corpus.reachable/1: yield with a timeout, else shut the task
+  # down, and take its reply or the timeout. No clause expects yield to
+  # report a crash: one kills the caller through the link, as it would
+  # under Task.await, and no branch is dead.
+  def fetch(item) do
+    task = Task.async(fn -> Application.fetch_env!(:probe, item) end)
+
+    case Task.yield(task, 1_000) || Task.shutdown(task, :brutal_kill) do
+      {:ok, value} -> {:ok, value}
+      nil -> {:error, :timeout}
+    end
+  end
+end
+
+defmodule Argus.Test.Fixtures.YieldOrShutdownExpectsExit do
+  @moduledoc false
+  # The same idiom with an {:exit, _} clause: a crash kills the caller
+  # before yield or shutdown can return it, so the clause is dead.
+  def fetch(item) do
+    task = Task.async(fn -> Application.fetch_env!(:probe, item) end)
+
+    case Task.yield(task, 1_000) || Task.shutdown(task, :brutal_kill) do
+      {:ok, value} -> {:ok, value}
+      {:exit, reason} -> {:error, reason}
+      nil -> {:error, :timeout}
+    end
+  end
+end
+
+defmodule Argus.Test.Fixtures.YieldReturnedToMatcher do
+  @moduledoc false
+  # The yield's result goes back to the caller, which expects {:exit, _}
+  # of it: the dead clause is one call up.
+  def run(item) do
+    case fetch(item) do
+      {:ok, value} -> {:ok, value}
+      {:exit, reason} -> {:error, reason}
+      nil -> {:error, :timeout}
+    end
+  end
+
+  def fetch(item) do
+    task = Task.async(fn -> Application.fetch_env!(:probe, item) end)
+    Task.yield(task, 1_000)
+  end
+end
+
+defmodule Argus.Test.Fixtures.YieldHandedToMatcher do
+  @moduledoc false
+  # redix#317: the yields go to a helper whose closure matches
+  # {_task, {:exit, _}}: the dead clause is one call down.
+  def fan_out(items) do
+    items
+    |> Enum.map(fn item -> Task.async(fn -> Application.fetch_env!(:probe, item) end) end)
+    |> Task.yield_many(1_000)
+    |> collect()
+  end
+
+  def collect(results) do
+    Enum.map(results, fn
+      {_task, {:ok, value}} -> {:ok, value}
+      {_task, {:exit, reason}} -> {:error, reason}
+      {_task, nil} -> {:error, :timeout}
+    end)
+  end
 end

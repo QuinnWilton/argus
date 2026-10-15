@@ -37,6 +37,10 @@ defmodule Argus.Extractors.ErrorHandling do
     Task.Supervisor.start_child) whose result every way it goes on loses:
     read on no path, here or in the callers it is handed back to, whole
     or in a term built of it (`Argus.Extractor.ResultFate`)
+  - `compares_exit(func)` — the function compares a term, or a tuple's
+    first element, with the atom `:exit`: a `{:exit, reason}` clause, as
+    one matching what `Task.yield/2` reports of a task that crashed, or a
+    `catch :exit, _`
   - `catch_class(id, func, class, span_end)` — some path through the
     handler of the try (or Erlang `catch`) at `id` catches `class` and
     does not raise again (`*`: with no class test)
@@ -210,6 +214,7 @@ defmodule Argus.Extractors.ErrorHandling do
       :catch_total,
       :catch_tuple_tag,
       :catch_inner_tag,
+      :compares_exit,
       :exit_call,
       :ignored_error_result,
       :result_lost,
@@ -286,6 +291,18 @@ defmodule Argus.Extractors.ErrorHandling do
     end)
     |> emit_result_tests(module_data)
     |> emit_dropped_refs(mod, module_data.functions)
+    |> emit_exit_comparisons(module_data)
+  end
+
+  # Function-level, as the :badrpc comparison emit_result_tests asks
+  # for: which value the comparison reads is not followed, so a function
+  # comparing :exit for any reason counts.
+  defp emit_exit_comparisons(facts, %{module: mod, functions: functions}) do
+    for {:function, name, arity, _entry, instrs} <- functions,
+        :exit in Dispatch.compared_atoms(instrs, :any),
+        reduce: facts do
+      acc -> add_fact(acc, :compares_exit, [InstrId.func_id(mod, name, arity)])
+    end
   end
 
   # A call to an arming helper of this module that returns its timer's
