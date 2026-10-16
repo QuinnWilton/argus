@@ -48,10 +48,14 @@ defmodule Argus.Mix.Diagnostics do
 
   @doc """
   Prints rendered diagnostics to stderr, frames separated by blank
-  lines.
+  lines, under the `==> app` header of an umbrella child, which Mix
+  prints only for output through its shell.
   """
   @spec print([rendered()]) :: :ok
+  def print([]), do: :ok
+
   def print(rendered) do
+    Mix.shell().print_app()
     Enum.each(rendered, fn %{ansi: ansi} -> IO.puts(:stderr, ansi <> "\n") end)
   end
 

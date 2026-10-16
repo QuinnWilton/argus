@@ -73,16 +73,25 @@ defmodule Argus.Test.Fixture do
   @spec compile_io!() ::
           {{Mix.Task.Compiler.status(), [Mix.Task.Compiler.Diagnostic.t()]}, String.t()}
   def compile_io! do
+    {result, _stdout, stderr} = compile_stdio!()
+    {result, stderr}
+  end
+
+  @doc "`compile!/0`, also returning what the chain printed to stdout and stderr."
+  @spec compile_stdio!() ::
+          {{Mix.Task.Compiler.status(), [Mix.Task.Compiler.Diagnostic.t()]}, String.t(),
+           String.t()}
+  def compile_stdio! do
     Mix.Task.clear()
 
-    with_io(:stderr, fn ->
-      {result, _stdout} =
+    {{result, stdout}, stderr} =
+      with_io(:stderr, fn ->
         with_io(fn ->
           Mix.Task.run("compile", ["--return-errors", "--no-prune-code-paths"])
         end)
+      end)
 
-      result
-    end)
+    {result, stdout, stderr}
   end
 
   @doc """

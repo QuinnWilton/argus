@@ -78,6 +78,8 @@ defmodule Mix.Tasks.Argus do
     end
 
     notices = Argus.Report.Notice.from_result(result, config, cwd)
+    # An umbrella child's report, under its `==> app` header; JSON stays JSON.
+    if options.format == :text, do: Mix.shell().print_app()
     %{entries: entries} = Argus.CLI.report(result, notices, config, options, cwd, cwd)
 
     if options.fail_above && length(entries) > options.fail_above do

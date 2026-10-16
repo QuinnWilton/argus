@@ -12,6 +12,8 @@ defmodule Mix.Tasks.Compile.ArgusUmbrellaTest do
   @moduletag :project
   use Argus.Test.Peer
 
+  import ExUnit.CaptureIO, only: [with_io: 1, with_io: 2]
+
   alias Argus.Test.{Fixture, Peer}
 
   # An umbrella's compile in a peer: minutes on a runner whose cores
@@ -46,6 +48,23 @@ defmodule Mix.Tasks.Compile.ArgusUmbrellaTest do
       manifest = Path.join(copy, "_build/test/lib/a/.mix/compile.argus")
       assert File.exists?(manifest)
       refute File.exists?(Path.join(copy, "_build/test/lib/b/.mix/compile.argus"))
+
+      # Warm, nothing compiles and only argus reports: under the child's
+      # `==> a`, which Mix prints only for output through its shell.
+      {_result, stdout, stderr} = Fixture.compile_stdio!()
+      assert stderr =~ "[argus.mailbox]"
+      assert stdout =~ "==> a\n"
+
+      # `mix argus` reports each child under its name; b lists no :argus
+      # compiler but is analyzed too, with nothing to say. The reports go to
+      # stderr, the names to stdout, as a compile's warnings do.
+      Mix.Task.clear()
+
+      {{[:ok, :ok], report}, headers} =
+        with_io(fn -> with_io(:stderr, fn -> Mix.Task.run("argus", []) end) end)
+
+      assert headers == "==> b\n==> a\n"
+      assert report =~ ~r/\A0 findings\n.*\[argus\.mailbox\].*\n1 finding /s
     end)
   end
 end
