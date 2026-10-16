@@ -628,6 +628,10 @@ defmodule Argus.Extractors.ProcessRegistry do
   # they differ for a test, anywhere after for a bif. That walk gives up
   # as this one does.
   @nil_atoms [{:atom, nil}, {:atom, :undefined}]
+  # What a missing lookup is compared with: nil or :undefined, or the
+  # empty list (the operand `nil` in the assembly) a Registry.lookup
+  # answers (`Registry.lookup(r, k) != []`).
+  @missing_operands [nil | @nil_atoms]
   @equality_tests [:is_eq_exact, :is_ne_exact, :is_eq, :is_ne]
   @equality_bifs [:==, :"/=", :"=:=", :"=/="]
   @type_tests [:is_atom, :is_pid, :is_port, :is_nil, :is_list, :is_nonempty_list]
@@ -726,7 +730,7 @@ defmodule Argus.Extractors.ProcessRegistry do
     case Enum.split_with(args, &(Instr.register(&1) in regs)) do
       {[_ | _], [other]} ->
         cond do
-          Instr.register(other) in @nil_atoms -> nil
+          Instr.register(other) in @missing_operands -> nil
           never_nil?(instrs, at, other) -> :never_nil
           true -> :other
         end

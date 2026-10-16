@@ -37,7 +37,9 @@ defmodule Argus.Analyses.RegistryRaceTest do
     C.NameDirectory,
     C.NameStarter,
     C.HelperTakesLoser,
-    C.HelperOtherName
+    C.HelperOtherName,
+    C.PredicateHelper,
+    C.PredicateThenStartHelper
   ]
 
   setup_all do
@@ -187,6 +189,19 @@ defmodule Argus.Analyses.RegistryRaceTest do
 
     test "a helper that takes the loser's outcome, or starts another name, is quiet", ctx do
       assert sites(ctx, [C.HelperTakesLoser, C.HelperOtherName]) == []
+    end
+
+    test "a predicate answering whether the name is taken (`lookup != []`) decides the start",
+         ctx do
+      assert sites(ctx, [C.PredicateHelper]) == [
+               {"PredicateHelper:retry/1", "PredicateHelper:running?/1",
+                "PredicateHelper:retry/1"}
+             ]
+
+      assert sites(ctx, [C.PredicateThenStartHelper]) == [
+               {"PredicateThenStartHelper:retry/1", "PredicateThenStartHelper:running?/1",
+                "PredicateThenStartHelper:start/1"}
+             ]
     end
   end
 

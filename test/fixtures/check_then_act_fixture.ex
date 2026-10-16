@@ -123,6 +123,37 @@ defmodule Argus.Test.Fixtures.CheckThenAct do
     def init(state), do: {:ok, state}
   end
 
+  defmodule PredicateHelper do
+    @moduledoc """
+    Primer's retry: the lookup sits in a predicate that answers whether
+    the name is taken (`!= []`), and the caller starts on false.
+    """
+    def retry(key) do
+      if running?(key) do
+        {:error, :busy}
+      else
+        {:ok, _} = DynamicSupervisor.start_child(MySup, {Worker, key})
+        :ok
+      end
+    end
+
+    def running?(key), do: Registry.lookup(MyRegistry, key) != []
+  end
+
+  defmodule PredicateThenStartHelper do
+    @moduledoc "PredicateHelper with the start behind the worker's own start/1, as Primer has it."
+    def retry(key) do
+      if running?(key), do: {:error, :busy}, else: start(key)
+    end
+
+    def running?(key), do: Registry.lookup(MyRegistry, key) != []
+
+    def start(key) do
+      {:ok, _} = DynamicSupervisor.start_child(MySup, {Worker, key})
+      :ok
+    end
+  end
+
   defmodule StartHelper do
     @moduledoc "The decision calls a helper that starts the named process."
     def ensure(name) do
