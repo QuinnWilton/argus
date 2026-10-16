@@ -13,8 +13,29 @@ children_left_behind(mod, sup, start) :-
   starts_children_under(mod, sup, start),
   started_from_outside(start, sup),
   in_another_tree(mod, sup),
+  !handed_off(mod, sup),
   !terminate_stops_children(mod),
   leaves_child(mod, sup, start).
+
+// A process a connection makes and ends (a LiveView, its components, a channel) hands
+// what it starts under its application's own supervisors off on purpose: a passage goes
+// on being written after its tab closes. Those supervisors stop with the application,
+// so the work outlives the connection, not the application. A supervisor in a tree no
+// application of the program roots (a library's pool) outlives the application too.
+.decl handed_off(mod: symbol, sup: symbol)
+
+handed_off(mod, sup) :-
+  starts_children_under(mod, sup, _),
+  behaves_as(mod, b),
+  connection_behaviour(b),
+  application_root(root),
+  tree_member(root, sup).
+
+.decl connection_behaviour(behaviour: symbol)
+
+connection_behaviour("Phoenix.LiveView").
+connection_behaviour("Phoenix.LiveComponent").
+connection_behaviour("Phoenix.Channel").
 
 // Of the children `start` puts under `sup`, one terminate/2 does not stop through its
 // own stop API (terminate_stops_child): stopping one kind of child excuses no other.
@@ -131,6 +152,16 @@ foreign_dynamic_children(mod, sup, start, site, sup_site) :-
   children_left_behind(mod, sup, start),
   dynamic_start_site_or_empty(start, site),
   supervisor_site_or_empty(sup, sup_site).
+
+// Each process whose callback `entry` reaches a reported start: one finding per start,
+// every process that makes it named beside it.
+.decl foreign_children_starter(via: symbol, site: symbol, mod: symbol, entry: symbol)
+.output foreign_children_starter
+
+foreign_children_starter(start, site, mod, c) :-
+  foreign_dynamic_children(mod, _, start, site, _),
+  process_entry(mod, c),
+  reaches_child_start(c, start).
 
 // The DynamicSupervisor.start_child call in `func`.
 .decl dynamic_start_site(func: symbol, id: symbol)

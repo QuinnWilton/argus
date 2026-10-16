@@ -297,6 +297,54 @@ defmodule Argus.Analyses.ShutdownTest do
                "Argus.Test.Fixtures.ShutdownForeign.StreamsAndStrays"
              ]
     end
+
+    test "a LiveView's or a channel's start under its application's pools is a hand-off; " <>
+           "under a library's pool it is reported, once per start with every starter beside it" do
+      alias Argus.Test.Fixtures.ShutdownForeign, as: F
+
+      {:ok, r} =
+        Memo.analyze(
+          [
+            F.LibTree,
+            F.Session,
+            F.CarelessScope,
+            F.OtherCarelessScope,
+            F.Runtime,
+            F.App,
+            F.AppRoot,
+            F.Writer,
+            F.BookLive,
+            F.RoomChannel,
+            F.PoolLive
+          ],
+          :shutdown
+        )
+
+      # BookLive and RoomChannel start under AppRoot's pools, which stop
+      # with the application: not reported. PoolLive starts under the
+      # library's, which no application of the program roots.
+      assert modules(r, "foreign_dynamic_children") == [
+               "Argus.Test.Fixtures.ShutdownForeign.CarelessScope",
+               "Argus.Test.Fixtures.ShutdownForeign.OtherCarelessScope",
+               "Argus.Test.Fixtures.ShutdownForeign.PoolLive"
+             ]
+
+      # Three processes make Session.start/1's one start: one finding,
+      # each starter's callback a frame of it.
+      assert [finding] =
+               r
+               |> then(&Argus.Findings.build(Argus.Analyses.Shutdown, &1))
+               |> Enum.filter(&(&1.title =~ "outlive their owner"))
+
+      assert finding.detail =~ "a supervisor"
+
+      assert finding.related |> Enum.map(& &1.label) |> Enum.sort() ==
+               Enum.sort([
+                 "Argus.Test.Fixtures.ShutdownForeign.CarelessScope's process starts them from here",
+                 "Argus.Test.Fixtures.ShutdownForeign.OtherCarelessScope's process starts them from here",
+                 "Argus.Test.Fixtures.ShutdownForeign.PoolLive's process starts them from here"
+               ])
+    end
   end
 
   describe "cleanup a supervisor's stop skips" do

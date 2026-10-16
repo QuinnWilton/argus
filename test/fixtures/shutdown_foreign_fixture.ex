@@ -3,7 +3,8 @@ defmodule Argus.Test.Fixtures.ShutdownForeign do
   Processes that start children under a supervisor of another tree, for
   `foreign_dynamic_children`: starters that are themselves in that tree,
   starters whose terminate/2 stops the children through their own stop
-  API, task starts bounded by their caller, and the twins that leave
+  API, task starts bounded by their caller, a LiveView's and a channel's
+  hand-offs to their application's pools, and the twins that leave
   children behind.
   """
 
@@ -218,6 +219,108 @@ defmodule Argus.Test.Fixtures.ShutdownForeign do
 
       {:ok, _} = Task.Supervisor.start_child(F.Tasks, fn -> Process.sleep(:infinity) end)
       {:reply, results, state}
+    end
+  end
+
+  defmodule App do
+    @moduledoc "The application, whose root holds the app's own pools."
+    use Application
+
+    @impl true
+    def start(_type, _args), do: F.AppRoot.start_link([])
+  end
+
+  defmodule AppRoot do
+    @moduledoc "Primer's root: the writers' pool and the app's tasks."
+    use Supervisor
+
+    def start_link(opts), do: Supervisor.start_link(__MODULE__, opts, name: __MODULE__)
+
+    @impl true
+    def init(_opts) do
+      children = [
+        {DynamicSupervisor,
+         name: Argus.Test.Fixtures.ShutdownForeign.WriterPool, strategy: :one_for_one},
+        {Task.Supervisor, name: Argus.Test.Fixtures.ShutdownForeign.AppTasks}
+      ]
+
+      Supervisor.init(children, strategy: :one_for_one)
+    end
+  end
+
+  defmodule Writer do
+    @moduledoc "A passage being written, under the app's pool."
+    use GenServer, restart: :temporary
+
+    def start(id), do: DynamicSupervisor.start_child(F.WriterPool, {__MODULE__, id})
+    def start_link(id), do: GenServer.start_link(__MODULE__, id)
+
+    @impl true
+    def init(id), do: {:ok, id}
+  end
+
+  defmodule BookLive do
+    @moduledoc """
+    Primer's LiveView: a passage it starts, and an answer it asks for, go
+    on being made after the tab closes, under the application's pools.
+    """
+    @behaviour Phoenix.LiveView
+
+    def mount(_params, _session, socket), do: {:ok, socket}
+    def render(assigns), do: assigns
+
+    def handle_event("write", %{"id" => id}, socket) do
+      {:ok, _} = F.Writer.start(id)
+      {:noreply, socket}
+    end
+
+    def handle_event("ask", %{"q" => q}, socket) do
+      {:ok, _} = Task.Supervisor.start_child(F.AppTasks, fn -> String.length(q) end)
+      {:noreply, socket}
+    end
+  end
+
+  defmodule RoomChannel do
+    @moduledoc "A channel that starts a passage under the app's pool."
+    @behaviour Phoenix.Channel
+
+    def join(_topic, _payload, socket), do: {:ok, socket}
+
+    def handle_in("write", %{"id" => id}, socket) do
+      {:ok, _} = F.Writer.start(id)
+      {:noreply, socket}
+    end
+  end
+
+  defmodule PoolLive do
+    @moduledoc """
+    BookLive's twin that starts its work under the library's pool, which
+    no application of the program roots: it outlives the application.
+    """
+    @behaviour Phoenix.LiveView
+
+    def mount(_params, _session, socket), do: {:ok, socket}
+    def render(assigns), do: assigns
+
+    def handle_event("open", %{"owner" => owner}, socket) do
+      {:ok, _} = F.Session.start(owner)
+      {:noreply, socket}
+    end
+  end
+
+  defmodule OtherCarelessScope do
+    @moduledoc "CarelessScope's twin: a second process making the same start."
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+    @impl true
+    def init(opts), do: {:ok, opts}
+
+    @impl true
+    def handle_call({:attach, owner}, _from, state) do
+      {:ok, session} = F.Session.start(owner)
+      {:reply, session, state}
     end
   end
 end

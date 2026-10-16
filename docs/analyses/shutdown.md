@@ -90,6 +90,13 @@ terminate suppresses it for all, even if it targets other children or will not r
 Tasks from `Task.Supervisor.async`, `async_stream` and `async_stream_nolink` end with
 their caller and are not counted as children.
 
+A LiveView, a LiveComponent or a channel starting work under a supervisor its
+application's root tree holds hands that work off on purpose (a reply still being
+written when the tab closes): the supervisor stops with the application, so it is not
+reported. Under a tree no application of the program roots, such as a library's pool,
+it is. Each start is one finding, with every process that makes it as a related
+frame.
+
 ## Stopping a process while still monitoring it
 
 `kills_monitored_child` · **info**

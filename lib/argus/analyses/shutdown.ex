@@ -24,7 +24,9 @@ defmodule Argus.Analyses.Shutdown do
     `call`), or a handler stops a sibling the supervisor owns (`handler`,
     `stop`).
   - `foreign_dynamic_children(mod, sup, via, site, sup_site)` — children started under a
-    DynamicSupervisor in another tree outlive this one.
+    supervisor in another tree outlive this one. One finding per start, with
+    every process that makes it (`foreign_children_starter`). A LiveView's or a
+    channel's start under its application's own supervisors is a hand-off.
   - `kills_monitored_child(mod, site, kill_site)` — a server terminates a
     process it still monitors, so the `:DOWN` reads as a crash.
   - `permanent_child_stops_normally(sup, child, reason, site, sup_site)`
@@ -142,15 +144,28 @@ defmodule Argus.Analyses.Shutdown do
         name: :foreign_dynamic_children,
         fields: [
           {:mod, :symbol, "module that starts the children"},
-          {:sup, :symbol, "the DynamicSupervisor they are started under"},
+          {:sup, :symbol,
+           "the supervisor they are started under (a DynamicSupervisor or a Task.Supervisor)"},
           {:via, :symbol, "function that calls start_child"},
           {:site, :symbol, "the start_child call, else empty"},
           {:sup_site, :symbol, "where the other tree defines the supervisor, else empty"}
         ],
-        key: [:mod, :sup],
+        key: [:sup, :via, :site],
         doc:
-          "A process starts children under a DynamicSupervisor in another tree " <>
+          "A process starts children under a supervisor in another tree " <>
             "and its terminate/2 does not stop them."
+      },
+      %{
+        name: :foreign_children_starter,
+        fields: [
+          {:via, :symbol, "the function that starts the children"},
+          {:site, :symbol, "the start_child call, else empty"},
+          {:mod, :symbol, "a process that makes the start"},
+          {:entry, :symbol, "the callback of mod that reaches it"}
+        ],
+        key: [:via, :site, :mod, :entry],
+        evidence: %{of: :foreign_dynamic_children, on: [:via, :site], limit: 6},
+        doc: "Each process whose callbacks reach a foreign_dynamic_children start."
       },
       %{
         name: :unhandled_exit_signal,
@@ -311,14 +326,14 @@ defmodule Argus.Analyses.Shutdown do
     Findings.new(
       :warning,
       "Children started under another tree outlive their owner",
-      "#{via} starts children under #{sup}, a DynamicSupervisor #{mod} does not sit " <>
+      "#{via} starts children under #{sup}, a supervisor #{mod} does not sit " <>
         "under. Their lifetime follows #{sup}'s tree, not #{mod}'s: when #{mod}'s tree " <>
         "shuts down they keep running — reconnecting, logging, calling into " <>
         "applications that have already stopped — and #{mod}'s terminate/2 does " <>
         "not stop them.",
       at: Findings.at_site_in_func(site, via, mod),
       at_label: "start_child onto a supervisor in another tree",
-      related: placed_by(sup, sup_site),
+      related: placed_by(sup, sup_site, "#{sup} is placed here, in another tree"),
       help: [
         "give #{mod} a terminate/2 (trapping exits) that terminates the children it started",
         "or start them under a DynamicSupervisor in #{mod}'s own tree"
@@ -464,6 +479,10 @@ defmodule Argus.Analyses.Shutdown do
   @impl true
   def evidence(:cleanup_site, [_mod, _kind, api, via, site]) do
     Findings.related("calls #{api}", Findings.at_site_in_func(site, via))
+  end
+
+  def evidence(:foreign_children_starter, [_via, _site, mod, entry]) do
+    Findings.related("#{mod}'s process starts them from here", Findings.at_func(entry))
   end
 
   def evidence(:terminate_path, [handler, _via, ""]) do
