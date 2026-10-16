@@ -19,7 +19,9 @@ defmodule Argus.Extractors.ProcessRegistry do
     as `name`; for an Agent, which has no module of its own, the module that starts it
   - `name_lookup(id, func, api, scope, source, key, checked)` —
     `Process.whereis/1`, `:erlang.whereis/1` (`api` `whereis`, no scope),
-    `Registry.lookup/2` (`api` `registry_lookup`, `scope` the registry)
+    `Registry.lookup/2` (`api` `registry_lookup`, `scope` the registry),
+    `GenServer.whereis/1` (a local name as `whereis`; `{:via, Registry,
+    {scope, key}}` as `via_whereis`),
     and `Process.registered/0`, `:erlang.registered/0` (`api`
     `registered`, `source` `any`: every name at once); `source`/`key`
     identify the name in the vocabulary of `Argus.Extractor.Identity.key_identity/4`;
@@ -82,6 +84,7 @@ defmodule Argus.Extractors.ProcessRegistry do
   @sites [
     {Process, :whereis, 1},
     {:erlang, :whereis, 1},
+    {GenServer, :whereis, 1},
     {Process, :registered, 0},
     {:erlang, :registered, 0},
     {Registry, :lookup, 2},
@@ -244,6 +247,9 @@ defmodule Argus.Extractors.ProcessRegistry do
       {:erlang, :whereis, 1} ->
         emit_whereis(facts, ctx)
 
+      {GenServer, :whereis, 1} ->
+        emit_genserver_whereis(facts, ctx)
+
       {Registry, :lookup, 2} ->
         emit_registry_lookup(facts, ctx)
 
@@ -352,6 +358,37 @@ defmodule Argus.Extractors.ProcessRegistry do
     )
     |> add_fact(:name_lookup, [id, ctx.func_id, "whereis", "", source, key, checked])
     |> maybe_nil_use(checked, id, ctx)
+  end
+
+  # GenServer.whereis/1 answers nil for a name nothing holds, as
+  # Process.whereis/1 does: a local name is that lookup, and a
+  # `{:via, Registry, {registry, key}}` one a lookup in that registry. A
+  # global name, or one another via module keeps, is not followed.
+  defp emit_genserver_whereis(facts, ctx) do
+    case resolve_register(ctx.instrs, ctx.idx, {:x, 0}) do
+      {:ok, {:via, Registry, {registry, key}}} ->
+        id = InstrId.mint(ctx.func_id, ctx.idx)
+        checked = if nil_checked?(ctx.instrs, ctx.idx), do: "checked", else: "unchecked"
+
+        add_fact(facts, :name_lookup, [
+          id,
+          ctx.func_id,
+          "via_whereis",
+          via_scope(registry),
+          via_source(key),
+          via_key(key),
+          checked
+        ])
+
+      {:ok, {kind, _, _}} when kind == :via ->
+        facts
+
+      {:ok, {:global, _}} ->
+        facts
+
+      _ ->
+        emit_whereis(facts, ctx)
+    end
   end
 
   defp maybe_nil_use(facts, "checked", _id, _ctx), do: facts

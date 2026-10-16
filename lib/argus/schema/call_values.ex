@@ -379,8 +379,8 @@ defmodule Argus.Schema.CallValues do
         fields: [
           {:id, :instr_id, "instruction ID of the lookup"},
           {:func, :func_id, "function containing the lookup"},
-          {:api, :symbol, "whereis | registry_lookup | registered"},
-          {:scope, :symbol, "the Registry, for registry_lookup; empty otherwise"},
+          {:api, :symbol, "whereis | registry_lookup | via_whereis | registered"},
+          {:scope, :symbol, "the Registry, for registry_lookup and via_whereis; empty otherwise"},
           {:source, :symbol, "literal | param | field | local | dynamic, or any for registered"},
           {:key, :symbol,
            "the name: an inspected literal, a parameter index, a map key, or the instruction that made it"},

@@ -39,7 +39,9 @@ defmodule Argus.Analyses.RegistryRaceTest do
     C.HelperTakesLoser,
     C.HelperOtherName,
     C.PredicateHelper,
-    C.PredicateThenStartHelper
+    C.PredicateThenStartHelper,
+    C.ViaWhereisThenStartChild,
+    C.LocalWhereisThenStart
   ]
 
   setup_all do
@@ -201,6 +203,20 @@ defmodule Argus.Analyses.RegistryRaceTest do
       assert sites(ctx, [C.PredicateThenStartHelper]) == [
                {"PredicateThenStartHelper:retry/1", "PredicateThenStartHelper:running?/1",
                 "PredicateThenStartHelper:start/1"}
+             ]
+    end
+  end
+
+  describe "registry_race through GenServer.whereis/1" do
+    test "of a {:via, Registry, ...} name, then a start_child", ctx do
+      assert races(ctx, [C.ViaWhereisThenStartChild]) == [
+               {"ensure/1", "via_whereis", "start_child", ""}
+             ]
+    end
+
+    test "of a local name, then a named start of it", ctx do
+      assert races(ctx, [C.LocalWhereisThenStart]) == [
+               {"ensure/1", "whereis", "start_link", "0"}
              ]
     end
   end

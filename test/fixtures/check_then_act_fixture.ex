@@ -154,6 +154,28 @@ defmodule Argus.Test.Fixtures.CheckThenAct do
     end
   end
 
+  defmodule ViaWhereisThenStartChild do
+    @moduledoc "GenServer.whereis of a {:via, Registry, ...} name, then a start_child."
+    def ensure(key) do
+      case GenServer.whereis({:via, Registry, {MyRegistry, key}}) do
+        nil -> DynamicSupervisor.start_child(MySup, {Worker, key})
+        pid -> {:ok, pid}
+      end
+    end
+  end
+
+  defmodule LocalWhereisThenStart do
+    @moduledoc "GenServer.whereis of a local name, then a named start of it."
+    def ensure(name) do
+      case GenServer.whereis(name) do
+        nil -> GenServer.start_link(__MODULE__, [], name: name)
+        pid -> {:ok, pid}
+      end
+    end
+
+    def init(state), do: {:ok, state}
+  end
+
   defmodule StartHelper do
     @moduledoc "The decision calls a helper that starts the named process."
     def ensure(name) do

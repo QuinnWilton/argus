@@ -190,7 +190,7 @@ defmodule Argus.Analyses.Races do
         fields: [
           {:mod, :symbol, "the module"},
           {:func, :symbol, "the function where the lookup's result meets the act"},
-          {:lookup_api, :symbol, "whereis | registry_lookup | registered"},
+          {:lookup_api, :symbol, "whereis | registry_lookup | via_whereis | registered"},
           {:create_api, :symbol,
            "register | start_link | start | start_via | registry_register | start_child | unregister"},
           {:key_source, :symbol,
@@ -817,6 +817,7 @@ defmodule Argus.Analyses.Races do
 
   defp lookup("whereis"), do: "whereis"
   defp lookup("registry_lookup"), do: "Registry.lookup"
+  defp lookup("via_whereis"), do: "GenServer.whereis"
   defp lookup("registered"), do: "Process.registered"
   defp lookup(other), do: other
 
