@@ -59,6 +59,9 @@ which a change appeared; older names and APIs may have changed since then.
   named "the table kept under :field".
 - `races` counts no `:ets.setopts/2` or `:ets.give_away/3` as a rival
   write: they write no rows.
+- An engine whose memory report (`Argus.FlowLog.Engine.usage/1`, which
+  `mix argus.flowlog bench` reads) times out stops, rather than reading
+  that late reply as the answer to its next request.
 
 ### Changed
 
@@ -121,12 +124,6 @@ which a change appeared; older names and APIs may have changed since then.
   cancelling a task leaves a newer claim of its key alone; both could
   leave a long-lived caller (planchette's LSP, an IEx session) waiting for
   good.
-
-### Fixed
-
-- An engine whose memory report (`Argus.FlowLog.Engine.usage/1`, which
-  `mix argus.flowlog bench` reads) times out stops, rather than reading
-  that late reply as the answer to its next request.
 
 ## 0.23.1 — 2026-10-13
 
