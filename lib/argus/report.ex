@@ -9,9 +9,10 @@ defmodule Argus.Report do
 
     1. refines each place from its source (`Argus.Report.Entry`),
        leaving out a finding outside the program;
-    2. leaves out the findings in a file the configuration ignores
+    2. leaves out the findings the configuration ignores: in a file
        (`ignore: [files: globs]`, matched against the path relative to
-       where the run was asked from): an ignored file's facts still feed
+       where the run was asked from), or of one analysis in a module or
+       a function (`ignore: [findings: ...]`). Their facts still feed
        every cross-module analysis, so reports are suppressed, truth is
        not;
     3. applies the configuration's severity overrides;
@@ -44,6 +45,7 @@ defmodule Argus.Report do
     Argus.Locate.Source.within(fn ->
       for {_analysis, {:ok, placed}} <- Enum.sort(located),
           one <- placed,
+          not ignored_finding?(one.finding, config),
           %Entry{} = entry <- [Entry.from_located(one)],
           not ignored_file?(entry.file, config, cwd) do
         %{entry | severity: Map.get(config.severity, entry.analysis, entry.severity)}
@@ -109,6 +111,14 @@ defmodule Argus.Report do
 
   defp strip_private("/private/" <> rest), do: "/" <> rest
   defp strip_private(path), do: path
+
+  defp ignored_finding?(%{analysis: analysis, module: module, mfa: mfa}, config) do
+    Enum.any?(config.ignore_findings, fn
+      {^analysis, {_, _, _} = target} -> target == mfa
+      {^analysis, target} -> target == module
+      _other -> false
+    end)
+  end
 
   defp ignored_file?(file, config, cwd) do
     rel = relative(file, cwd)

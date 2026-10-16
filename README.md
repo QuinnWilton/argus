@@ -162,7 +162,15 @@ Use analysis names or these sets in `analyses:`:
 The separate `coverage` analysis reports missing analysis information. Request it
 explicitly; `--all` excludes it.
 
-`severity:` overrides the level for an analysis or set. See the
+`severity:` overrides the level for an analysis or set. To keep a finding you have
+looked at out of the report without hiding the rest of its module, name its
+analysis and where it is:
+
+```elixir
+argus: [ignore: [findings: [{:shutdown, MyApp.Writer}, {:races, {MyApp.Reading, :retry, 2}}]]]
+```
+
+See the
 [configuration reference](https://hexdocs.pm/argus_beam/Argus.Config.html) for
 severity, ignore rules and compiler settings.
 

@@ -95,6 +95,31 @@ defmodule Mix.Tasks.Compile.ArgusConfigTest do
       end)
     end
 
+    test "finding ignores leave out one analysis's findings in a module or a function",
+         %{peer: peer} do
+      project =
+        checkout!(
+          [ignore: [findings: [{:mailbox, {Depot.Archive, :archive_async, 1}}]]],
+          :depot_ignfn
+        )
+
+      in_project(peer, project, fn _log ->
+        {_status, diagnostics} = compile!()
+        diags = Enum.filter(diagnostics, &(&1.compiler_name == "argus"))
+
+        # archive_async/1's finding is left out, archive_sync/1's kept.
+        assert codes(diags) |> Enum.sort() == ["coupling", "mailbox"]
+        refute Enum.any?(diags, &(&1.message =~ "Async task never awaited"))
+      end)
+
+      project = checkout!([ignore: [findings: [{:mailbox, Depot.Archive}]]], :depot_ignmodf)
+
+      in_project(peer, project, fn _log ->
+        {_status, diagnostics} = compile!()
+        assert codes(Enum.filter(diagnostics, &(&1.compiler_name == "argus"))) == ["coupling"]
+      end)
+    end
+
     test "module ignores keep the module out of analysis entirely", %{peer: peer} do
       project = checkout!([ignore: [modules: [~r/Archive/]]], :depot_ignmod)
 

@@ -19,7 +19,11 @@ defmodule Argus.Config do
           argus: [
             analyses: [:coupling, :mailbox],
             severity: [mailbox: :error],
-            ignore: [modules: [~r/^MyApp\\.Gen/], files: ["lib/legacy/**"]],
+            ignore: [
+              modules: [~r/^MyApp\\.Gen/],
+              files: ["lib/legacy/**"],
+              findings: [{:shutdown, MyApp.Writer}, {:races, {MyApp.Reading, :retry, 2}}]
+            ],
             include_deps: false,
             fail_on: :error,
             engine: :warn
@@ -33,7 +37,8 @@ defmodule Argus.Config do
       {argus, [
           {analyses, [coupling, mailbox]},
           {severity, [{mailbox, error}]},
-          {ignore, [{modules, [my_gen, "^my_app_gen_"]}, {files, ["src/legacy/**"]}]}
+          {ignore, [{modules, [my_gen, "^my_app_gen_"]}, {files, ["src/legacy/**"]},
+                    {findings, [{shutdown, my_writer}, {races, {my_reading, retry, 2}}]}]}
       ]}.
 
   Every key is optional. `analyses` defaults to argus's `:default` set
@@ -49,7 +54,12 @@ defmodule Argus.Config do
   matched against a module's name (`MyApp.Gen`, `my_app_gen`) — ignored
   modules are never extracted; `ignore: [files: ...]` takes globs over
   the paths findings are reported at — the findings in those files are
-  left out, while their facts still feed every analysis.
+  left out, while their facts still feed every analysis. `ignore:
+  [findings: ...]` leaves out one analysis's findings in a module
+  (`{:shutdown, MyApp.Writer}`) or a function (`{:races, {MyApp.Reading,
+  :retry, 2}}`), its analysis named as `severity:` names it (a set stands
+  for its members): the finding someone looked at and kept, without
+  hiding the rest of the module's.
 
   Every key, at every level, is validated: an invalid entry raises
   `Argus.ConfigError` naming where it is (in its source's own syntax),
@@ -77,12 +87,16 @@ defmodule Argus.Config do
     :severity,
     :ignore_modules,
     :ignore_files,
+    :ignore_findings,
     :include_deps,
     :fail_on,
     :engine,
     :priors
   ]
   defstruct @enforce_keys
+
+  @typedoc "One analysis's findings left out in a module, or in a function."
+  @type ignored_finding :: {atom(), module() | mfa()}
 
   @typedoc """
   `priors:` — `:off` (default), `:cached_only` or `:live`, or a keyword
@@ -97,6 +111,7 @@ defmodule Argus.Config do
           severity: %{optional(atom()) => :error | :warning | :info},
           ignore_modules: [Regex.t() | module()],
           ignore_files: [String.t()],
+          ignore_findings: [ignored_finding()],
           include_deps: boolean(),
           fail_on: :error | :warning,
           engine: :warn | :require,
@@ -113,7 +128,7 @@ defmodule Argus.Config do
 
   @severities [:error, :warning, :info]
   @keys [:analyses, :severity, :ignore, :include_deps, :fail_on, :engine, :priors]
-  @ignore_keys [:modules, :files]
+  @ignore_keys [:modules, :files, :findings]
 
   # Keys the rebar3 plugin reads from `{argus_plugin, [...]}`: written
   # under `{argus, [...]}`, they are in the wrong tuple.
@@ -151,6 +166,7 @@ defmodule Argus.Config do
       severity: severity!(ctx, Keyword.get(raw, :severity, [])),
       ignore_modules: ignore_modules!(ctx, Keyword.get(ignore, :modules, [])),
       ignore_files: ignore_files!(ctx, Keyword.get(ignore, :files, [])),
+      ignore_findings: ignore_findings!(ctx, Keyword.get(ignore, :findings, [])),
       include_deps: boolean!(ctx, :include_deps, Keyword.get(raw, :include_deps, false)),
       fail_on: enum!(ctx, [:fail_on], Keyword.get(raw, :fail_on, :error), [:error, :warning]),
       engine: enum!(ctx, [:engine], Keyword.get(raw, :engine, :warn), [:warn, :require]),
@@ -476,6 +492,64 @@ defmodule Argus.Config do
 
   defp severity!(ctx, other),
     do: fail(ctx, [:severity], other, "severity must be a keyword list, got: #{show(ctx, other)}")
+
+  # `{analysis, module}` or `{analysis, {module, function, arity}}`; the
+  # analysis a concern or a set, as severity: takes it.
+  defp ignore_findings!(ctx, entries) when is_list(entries) do
+    known = Argus.Analysis.builtin_analyses()
+
+    Enum.flat_map(entries, fn
+      {analysis, target} = entry when is_atom(analysis) ->
+        unless resolvable?(analysis, known) do
+          unknown_name!(
+            ctx,
+            [:ignore, :findings],
+            analysis,
+            "ignore findings names unknown analysis #{show(ctx, analysis)}; available: " <>
+              "#{show(ctx, Enum.sort(known))}, or a set: " <>
+              "#{show(ctx, Enum.sort(Map.keys(Argus.Analysis.sets())))}",
+            known
+          )
+        end
+
+        target = finding_target!(ctx, entry, target)
+        Enum.map(resolve(analysis), &{&1, target})
+
+      other ->
+        fail(
+          ctx,
+          [:ignore, :findings],
+          other,
+          "ignore findings takes {analysis, module} or {analysis, {module, function, arity}}, " <>
+            "got: #{show(ctx, other)}"
+        )
+    end)
+  end
+
+  defp ignore_findings!(ctx, other),
+    do:
+      fail(
+        ctx,
+        [:ignore, :findings],
+        other,
+        "ignore findings must be a list, got: #{show(ctx, other)}"
+      )
+
+  defp finding_target!(_ctx, _entry, module) when is_atom(module) and module != nil, do: module
+
+  defp finding_target!(_ctx, _entry, {module, function, arity} = mfa)
+       when is_atom(module) and is_atom(function) and is_integer(arity) and arity >= 0,
+       do: mfa
+
+  defp finding_target!(ctx, entry, _target) do
+    fail(
+      ctx,
+      [:ignore, :findings],
+      entry,
+      "ignore findings takes {analysis, module} or {analysis, {module, function, arity}}, " <>
+        "got: #{show(ctx, entry)}"
+    )
+  end
 
   defp ignore_modules!(ctx, patterns) when is_list(patterns) do
     Enum.map(patterns, fn

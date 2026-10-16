@@ -140,6 +140,39 @@ defmodule Argus.ConfigTest do
       assert e.message =~ "did you mean :modules?"
     end
 
+    test "ignore findings takes an analysis and a module or a function, sets expanded" do
+      config =
+        Config.load(
+          ignore: [findings: [{:shutdown, MyApp.Writer}, {:otp, {MyApp.Reading, :retry, 2}}]]
+        )
+
+      {:ok, otp} = Argus.Analysis.set(:otp)
+
+      assert config.ignore_findings ==
+               [{:shutdown, MyApp.Writer} | Enum.map(otp, &{&1, {MyApp.Reading, :retry, 2}})]
+
+      assert Config.load([]).ignore_findings == []
+    end
+
+    test "ignore findings names a known analysis, and a module or a function" do
+      e = error(ignore: [findings: [{:shutdwn, MyApp.Writer}]])
+      assert e.key == [:ignore, :findings]
+      assert e.message =~ "ignore findings names unknown analysis :shutdwn"
+      assert e.message =~ "did you mean :shutdown?"
+
+      e = error(ignore: [findings: [{:shutdown, "MyApp.Writer"}]])
+      assert e.key == [:ignore, :findings]
+
+      assert e.message =~
+               "ignore findings takes {analysis, module} or {analysis, {module, function, arity}}"
+
+      assert error(ignore: [findings: [{:shutdown, {MyApp.Writer, :start}}]]).key ==
+               [:ignore, :findings]
+
+      assert error(ignore: [findings: [:shutdown]]).key == [:ignore, :findings]
+      assert error(ignore: [findings: :shutdown]).message =~ "ignore findings must be a list"
+    end
+
     test "an unknown top-level key suggests the known one" do
       e = error(analysis: [:mailbox])
       assert e.key == [:analysis]
@@ -214,7 +247,8 @@ defmodule Argus.ConfigTest do
       {argus, [
           {analyses, [coupling, mailbox]},
           {severity, [{mailbox, error}]},
-          {ignore, [{modules, [my_gen, "^my_app_gen_"]}, {files, ["src/legacy/**"]}]},
+          {ignore, [{modules, [my_gen, "^my_app_gen_"]}, {files, ["src/legacy/**"]},
+                    {findings, [{shutdown, my_writer}, {races, {my_reading, retry, 2}}]}]},
           {priors, [{mode, cached_only}, {cassette, "priors.jsonl"}]}
       ]}.
       {argus_plugin, [{escript, "/usr/local/bin/argus"}]}.
@@ -227,6 +261,12 @@ defmodule Argus.ConfigTest do
       assert config.severity == %{mailbox: :error}
       assert [:my_gen, %Regex{source: "^my_app_gen_"}] = config.ignore_modules
       assert config.ignore_files == ["src/legacy/**"]
+
+      assert config.ignore_findings == [
+               {:shutdown, :my_writer},
+               {:races, {:my_reading, :retry, 2}}
+             ]
+
       assert config.priors == %{mode: :cached_only, opts: [cassette: "priors.jsonl"]}
     end
 
