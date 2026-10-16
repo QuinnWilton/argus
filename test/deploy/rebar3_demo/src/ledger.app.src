@@ -1,0 +1,7 @@
+{application, ledger, [
+    {description, "A deploy check's rebar3 project"},
+    {vsn, "0.1.0"},
+    {registered, []},
+    {applications, [kernel, stdlib]},
+    {env, []}
+]}.

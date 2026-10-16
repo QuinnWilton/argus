@@ -2,8 +2,8 @@ name: Deploy
 
 # argus deployed the ways a user does, on the systems they run it on, with
 # Rust and without (test/deploy/check.sh): a Mix project with the :argus
-# compiler, mix argus, a prod build, the escript, and offline with nothing
-# downloaded. The checkout by default; a release from Hex when dispatched
+# compiler, mix argus, a prod build, the escript, rebar3 with the
+# rebar3_argus plugin, and offline with nothing downloaded. The checkout by default; a release from Hex when dispatched
 # with a version.
 
 on:

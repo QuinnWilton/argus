@@ -2,8 +2,9 @@
 # Deploys argus the ways a user does, on the system this runs on, and checks
 # each works: a Mix project with the :argus compiler (cold, then warm),
 # `mix argus --all`, a prod build without argus, `mix argus.flowlog status`,
-# the escript over the project's beams, and, without Rust, offline with
-# nothing downloaded (which must say why it cannot run, not crash).
+# the escript over the project's beams, `rebar3 argus` over an Erlang
+# project with the rebar3_argus plugin, and offline with nothing downloaded
+# (which must say why it cannot run, not crash).
 #
 #   ARGUS_SRC_IN   the argus checkout, read-only (default /src)
 #   ARGUS_VERSION  test this release from Hex instead of the checkout
@@ -171,6 +172,48 @@ if [ -x "$escript" ]; then
 else
   fail "escript build"
   tail -30 "$work/escript.log"
+fi
+
+# rebar3: the rebar3_argus plugin from Hex over an Erlang project, with the
+# escript above (ARGUS_ESCRIPT), or for a release the one the plugin
+# downloads by version. rebar3 is the one Mix installed.
+rebar3=
+for candidate in "$HOME"/.mix/elixir/*/rebar3; do
+  [ -f "$candidate" ] && rebar3=$candidate
+done
+
+cp -R "$src_in/test/deploy/rebar3_demo" "$work/rebar3_demo"
+if [ -n "${ARGUS_VERSION:-}" ]; then
+  echo "{argus_plugin, [{version, \"$ARGUS_VERSION\"}]}." >>"$work/rebar3_demo/rebar.config"
+  plugin_escript=
+else
+  plugin_escript=$escript
+fi
+
+(cd "$work/rebar3_demo" && ARGUS_ESCRIPT="$plugin_escript" escript "$rebar3" argus) \
+  >"$work/rebar3.log" 2>&1
+code=$?
+count=$(findings "$work/rebar3.log")
+
+if [ $code -eq 0 ] && [ "$count" -gt 0 ]; then
+  pass "rebar3 argus with the plugin ($count findings)"
+else
+  fail "rebar3 argus with the plugin (exit $code, $count findings, rebar3 ${rebar3:-not found})"
+  tail -30 "$work/rebar3.log"
+fi
+
+# The plugin offline, with no escript downloaded: an error that says why.
+if [ -n "${ARGUS_VERSION:-}" ]; then
+  (cd "$work/rebar3_demo" && XDG_CACHE_HOME="$work/empty-cache" escript "$rebar3" argus --offline) \
+    >"$work/rebar3-offline.log" 2>&1
+  code=$?
+
+  if [ $code -ne 0 ] && grep -q 'not downloaded yet, and argus is offline' "$work/rebar3-offline.log"; then
+    pass "rebar3 argus offline with no escript says why (exit $code)"
+  else
+    fail "rebar3 argus offline with no escript (exit $code)"
+    cat "$work/rebar3-offline.log"
+  fi
 fi
 
 exit $failed
