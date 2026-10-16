@@ -9,7 +9,7 @@ it and the limits to consider when reviewing it.
 | Analysis | What to inspect |
 |---|---|
 | [Startup](analyses/startup.md) | Dependencies that block or race initialization. |
-| [Shutdown](analyses/shutdown.md) | Cleanup and peer lifetimes during teardown. |
+| [Shutdown](analyses/shutdown.md) | Cleanup and peer lifetimes during teardown, and programs a killed task leaves running. |
 | [Blocking](analyses/blocking.md) | Call chains, cycles and unbounded waits. |
 | [Restart coupling](analyses/coupling.md) | State or work left inconsistent by independent restarts. |
 | [Mailbox](analyses/mailbox.md) | Unhandled messages, missing replies and repeated acquisitions. |

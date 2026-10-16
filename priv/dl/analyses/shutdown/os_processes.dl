@@ -1,0 +1,54 @@
+// External programs outliving a killed task
+//
+// A task that runs an external program (System.cmd, :os.cmd, a port to a spawned
+// executable) holds it through a port. Killing the task (Task.shutdown, an exit signal)
+// closes the port, and closing a port does not stop the program: it runs on, an
+// orphan, unless it exits when its stdin closes or a write to its closed stdout kills
+// it. A task the program's caller only waits for is not reported, nor a port owner
+// whose own shutdown closes the port: what that does to the program depends on the
+// program.
+
+// A call that runs an external program through a port.
+.decl port_program_call(id: symbol, func: symbol, api: symbol)
+
+port_program_call(id, f, "System.cmd") :- remote_call(id, f, "System", "cmd", _).
+port_program_call(id, f, "System.shell") :- remote_call(id, f, "System", "shell", _).
+port_program_call(id, f, ":os.cmd") :- remote_call(id, f, ":os", "cmd", _).
+port_program_call(id, f, "Port.open") :- remote_call(id, f, "Port", "open", 2).
+port_program_call(id, f, ":erlang.open_port") :- remote_call(id, f, ":erlang", "open_port", 2).
+
+// `f` ends the task process `p` at `kill`: Task.shutdown, with a timeout or
+// :brutal_kill, or an exit signal sent to its pid.
+.decl kills_task(f: symbol, kill: symbol, p: symbol, how: symbol)
+
+kills_task(f, id, p, "Task.shutdown") :- task_handled(f, id, "shutdown", p).
+kills_task(f, id, p, "Process.exit") :- signal_target(id, f, "exit", p), task_started(p).
+
+// A process a Task start allocates (task_handled holds only those).
+.decl task_started(p: symbol)
+
+task_started(p) :-
+  process_start(id, f, p, "spawn", _),
+  remote_call(id, f, m, a, _),
+  task_start_api(m, a, _).
+
+// What a killed task's body runs, within four calls.
+.init task_program_reach = ForwardBoundedCallReach
+
+task_program_reach.root(body, body) :-
+  kills_task(_, _, p, _),
+  process_start(_, _, p, "spawn", body),
+  function_def(body, _, _, _, _).
+
+task_program_reach.limit(4).
+
+// `owner` kills, at `kill`, the task started at `start`, whose body reaches the
+// program call `program` (`api`) in `via`.
+.decl orphaned_os_process(owner: symbol, kill: symbol, how: symbol, start: symbol, program: symbol, api: symbol, via: symbol)
+.output orphaned_os_process
+
+orphaned_os_process(owner, kill, how, start, program, api, via) :-
+  kills_task(owner, kill, p, how),
+  process_start(start, _, p, "spawn", body),
+  task_program_reach.reaches(body, via, _),
+  port_program_call(program, via, api).

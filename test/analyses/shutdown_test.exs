@@ -347,6 +347,47 @@ defmodule Argus.Analyses.ShutdownTest do
     end
   end
 
+  describe "orphaned_os_process" do
+    test "a killed task that runs an external program is reported; " <>
+           "one waited for, or running none, is not" do
+      alias Argus.Test.Fixtures.ShutdownOsProcess, as: O
+
+      {:ok, r} =
+        Memo.analyze(
+          [O.Render, O.RenderThroughHelper, O.Killer, O.Waits, O.ShutsDownPure],
+          :shutdown
+        )
+
+      short = &(&1 |> String.split(".") |> List.last())
+
+      assert r
+             |> Map.get("orphaned_os_process", [])
+             |> Enum.map(fn [owner, _kill, how, _start, _program, api, via] ->
+               {short.(owner), how, api, short.(via)}
+             end)
+             |> Enum.sort() ==
+               [
+                 {"Killer:run/1", "Process.exit", ":erlang.open_port", "Killer:-run/1-fun-0-/1"},
+                 {"Render:pdf/3", "Task.shutdown", "System.cmd", "Render:-pdf/3-fun-0-/2"},
+                 {"RenderThroughHelper:pdf/2", "Task.shutdown", "System.cmd",
+                  "RenderThroughHelper:convert/1"}
+               ]
+
+      findings =
+        Argus.Findings.build(Argus.Analyses.Shutdown, r)
+        |> Enum.filter(&(&1.title == "A killed task leaves its external program running"))
+
+      assert length(findings) == 3
+
+      assert Enum.all?(findings, fn f ->
+               Enum.map(f.related, & &1.label) == [
+                 "the task is killed here",
+                 "the task starts here"
+               ]
+             end)
+    end
+  end
+
   describe "cleanup a supervisor's stop skips" do
     test "is reported where the module does not trap exits, and only there", ctx do
       r = results(ctx)

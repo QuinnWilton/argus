@@ -122,6 +122,22 @@ budget. Stops from initialization and termination callbacks are excluded. Restar
 policy comes from the child spec, including overrides; unread policy is not assumed
 permanent. Choose the policy to match the child's intended lifetime.
 
+## External programs a killed task leaves running
+
+`orphaned_os_process` · **warning**
+
+A task runs an external program (`System.cmd`, `System.shell`, `:os.cmd`, or a port
+to a spawned executable), and the code that started it kills it: `Task.shutdown`
+(often `Task.yield(task, ms) || Task.shutdown(task, :brutal_kill)`) or an exit signal
+to its pid. Killing the task closes its port, and closing a port does not stop the
+program: it runs on, unless it exits when its stdin closes or dies writing to its
+closed stdout. Run it through a wrapper that kills it when stdin closes, or kill its
+OS pid (`Port.info(port, :os_pid)`) along with the task.
+
+The task's body is followed four calls deep. A task that is only waited for is not
+reported, nor `Task.async_stream`'s `on_timeout: :kill_task`, nor a port owner whose
+own shutdown closes its port: what that does to the program depends on the program.
+
 ## Broadway draining that restarts fetching
 
 `drain_keeps_fetching` · **warning**

@@ -1,6 +1,7 @@
 // Shutdown defects: skipped or unbounded cleanup, unhandled trapped exits, teardown
 // calls to stopped siblings, children outliving their owner, deliberate kills handled
-// as crashes, and permanent children restarting after normal stops. Supervisor shutdown
+// as crashes, permanent children restarting after normal stops, and external programs
+// a killed task leaves running. Supervisor shutdown
 // runs terminate only when the process traps exits.
 
 .include "../clientlib/imports.dl"
@@ -28,4 +29,5 @@
 .include "shutdown/trapped_exits.dl"
 .include "shutdown/monitored_children.dl"
 .include "shutdown/permanent_children.dl"
+.include "shutdown/os_processes.dl"
 .include "shutdown/draining.dl"

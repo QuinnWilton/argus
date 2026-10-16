@@ -138,7 +138,7 @@ The analyses marked ✓ run by default.
 | Analysis | Finds | Default |
 |---|---|:---:|
 | `startup` | blocking work, deadlocks and races during initialization | ✓ |
-| `shutdown` | skipped cleanup and teardown that disrupts a peer | ✓ |
+| `shutdown` | skipped cleanup, teardown that disrupts a peer, and programs a killed task leaves running | ✓ |
 | `coupling` | processes that depend on each other but restart independently | ✓ |
 | `structure` | invalid child specs, conflicting registrations and supervision mistakes | ✓ |
 | `mailbox` | unhandled messages, missing replies and repeated resource acquisitions | ✓ |

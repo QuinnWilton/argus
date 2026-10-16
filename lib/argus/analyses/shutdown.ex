@@ -32,6 +32,9 @@ defmodule Argus.Analyses.Shutdown do
   - `permanent_child_stops_normally(sup, child, reason, site, sup_site)`
     — a permanent child returns `{:stop, :normal, ...}` and is started
     straight back.
+  - `orphaned_os_process(owner, kill, how, start, program, api, via)` — a
+    task that runs an external program is killed (`Task.shutdown`, an exit
+    signal): its port closes and the program runs on.
   - `drain_keeps_fetching(mod, drain, gate, key)` — a Broadway producer's
     `prepare_for_draining/1` sets `key` to nil and no flag the fetch
     reads, while a fetch handle_demand/2 reaches runs when `key` is nil:
@@ -46,7 +49,10 @@ defmodule Argus.Analyses.Shutdown do
   def name, do: :shutdown
 
   @impl true
-  def description, do: "cleanup a supervisor shutdown will skip, and teardown that hurts a peer"
+  def description,
+    do:
+      "cleanup a supervisor shutdown will skip, teardown that hurts a peer, and programs " <>
+        "a killed task leaves running"
 
   @impl true
   def rules_file, do: "analyses/shutdown.dl"
@@ -199,6 +205,20 @@ defmodule Argus.Analyses.Shutdown do
         key: [:sup, :child],
         doc:
           "A permanent child returns {:stop, :normal | :shutdown, ...}; the supervisor restarts it."
+      },
+      %{
+        name: :orphaned_os_process,
+        fields: [
+          {:owner, :symbol, "the function that kills the task"},
+          {:kill, :symbol, "the Task.shutdown call or the exit signal"},
+          {:how, :symbol, "Task.shutdown | Process.exit"},
+          {:start, :symbol, "where the task starts"},
+          {:program, :symbol, "the call that runs the external program"},
+          {:api, :symbol, "System.cmd | System.shell | :os.cmd | Port.open | :erlang.open_port"},
+          {:via, :symbol, "the function of the task's body making that call"}
+        ],
+        key: [:start, :program],
+        doc: "A task that runs an external program is killed, and the program outlives it."
       },
       %{
         name: :drain_keeps_fetching,
@@ -447,6 +467,29 @@ defmodule Argus.Analyses.Shutdown do
       help: [
         "set a `draining: true` field here and give the fetch a first clause that " <>
           "takes it and returns `{:noreply, [], state}`"
+      ]
+    )
+  end
+
+  def finding(:orphaned_os_process, [owner, kill, how, start, program, api, via]) do
+    Findings.new(
+      :warning,
+      "A killed task leaves its external program running",
+      "#{Findings.call_name(owner)} ends a task with #{how}, and the task runs an " <>
+        "external program (#{api}#{Findings.elsewhere(program, owner)}). Killing the task " <>
+        "closes its port, and closing a port does not stop the program the port " <>
+        "spawned: it runs on, an orphan still working and holding what it holds, unless " <>
+        "it exits when its stdin closes.",
+      at: Findings.at_site_in_func(program, via),
+      at_label: "this program outlives the task when the task is killed",
+      related: [
+        Findings.related("the task is killed here", Findings.at_site_in_func(kill, owner)),
+        Findings.related("the task starts here", Findings.at_instr(start))
+      ],
+      help: [
+        "run the program through a wrapper that kills it when its stdin closes, or keep " <>
+          "its OS pid (`Port.info(port, :os_pid)`) and kill it when the task is killed",
+        "or start it with a library that ties the program to its owner (MuonTrap, erlexec)"
       ]
     )
   end
