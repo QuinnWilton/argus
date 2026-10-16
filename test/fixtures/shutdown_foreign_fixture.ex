@@ -308,6 +308,45 @@ defmodule Argus.Test.Fixtures.ShutdownForeign do
     end
   end
 
+  defmodule InlineApp do
+    @moduledoc "Primer's own application: start/2 lists the children itself."
+    use Application
+
+    @impl true
+    def start(_type, _args) do
+      children = [
+        {DynamicSupervisor,
+         name: Argus.Test.Fixtures.ShutdownForeign.InlinePool, strategy: :one_for_one}
+      ]
+
+      Supervisor.start_link(children, strategy: :one_for_one, name: F.InlineRoot)
+    end
+  end
+
+  defmodule InlineWriter do
+    @moduledoc "A passage being written, under the inline application's pool."
+    use GenServer, restart: :temporary
+
+    def start(id), do: DynamicSupervisor.start_child(F.InlinePool, {__MODULE__, id})
+    def start_link(id), do: GenServer.start_link(__MODULE__, id)
+
+    @impl true
+    def init(id), do: {:ok, id}
+  end
+
+  defmodule InlineLive do
+    @moduledoc "A LiveView handing a passage to the inline application's pool."
+    @behaviour Phoenix.LiveView
+
+    def mount(_params, _session, socket), do: {:ok, socket}
+    def render(assigns), do: assigns
+
+    def handle_event("write", %{"id" => id}, socket) do
+      {:ok, _} = F.InlineWriter.start(id)
+      {:noreply, socket}
+    end
+  end
+
   defmodule OtherCarelessScope do
     @moduledoc "CarelessScope's twin: a second process making the same start."
     use GenServer

@@ -315,13 +315,17 @@ defmodule Argus.Analyses.ShutdownTest do
             F.Writer,
             F.BookLive,
             F.RoomChannel,
-            F.PoolLive
+            F.PoolLive,
+            F.InlineApp,
+            F.InlineWriter,
+            F.InlineLive
           ],
           :shutdown
         )
 
-      # BookLive and RoomChannel start under AppRoot's pools, which stop
-      # with the application: not reported. PoolLive starts under the
+      # BookLive and RoomChannel start under AppRoot's pools, and InlineLive
+      # under a pool InlineApp's start/2 lists itself, which stop with the
+      # application: not reported. PoolLive starts under the
       # library's, which no application of the program roots.
       assert modules(r, "foreign_dynamic_children") == [
                "Argus.Test.Fixtures.ShutdownForeign.CarelessScope",

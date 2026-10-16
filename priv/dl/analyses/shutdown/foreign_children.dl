@@ -28,8 +28,15 @@ handed_off(mod, sup) :-
   starts_children_under(mod, sup, _),
   behaves_as(mod, b),
   connection_behaviour(b),
-  application_root(root),
+  application_tree(root),
   tree_member(root, sup).
+
+// The tree an application roots: its root supervisor's, or, where start/2 lists the
+// children itself (`Supervisor.start_link(children, opts)`), the application's own.
+.decl application_tree(root: symbol)
+
+application_tree(root) :- application_root(root).
+application_tree(app) :- behaves_as(app, "Application"), supervisor_child(app, _, _, _, _).
 
 .decl connection_behaviour(behaviour: symbol)
 
