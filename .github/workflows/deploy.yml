@@ -34,7 +34,7 @@ on:
 
 jobs:
   linux:
-    name: ${{ matrix.system }} / ${{ matrix.arch }} / Rust ${{ matrix.rust }}
+    name: ${{ matrix.system }} / ${{ matrix.arch }} / Rust ${{ matrix.rust }} / Elixir ${{ matrix.elixir }}
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     timeout-minutes: 45
     strategy:
@@ -43,15 +43,19 @@ jobs:
         system: [debian, alpine, nixos]
         arch: [x86_64, arm64]
         rust: [none]
+        elixir: ["1.19"]
         include:
-          - { system: debian, arch: x86_64, rust: present }
-          - { system: alpine, arch: arm64, rust: present }
-          - { system: nixos, arch: arm64, rust: present }
+          - { system: debian, arch: x86_64, rust: present, elixir: "1.19" }
+          - { system: alpine, arch: arm64, rust: present, elixir: "1.19" }
+          - { system: nixos, arch: arm64, rust: present, elixir: "1.19" }
+          # Elixir 1.20 on OTP 29.
+          - { system: debian, arch: x86_64, rust: none, elixir: "1.20" }
+          - { system: alpine, arch: arm64, rust: none, elixir: "1.20" }
     steps:
       - uses: actions/checkout@v4
 
       - name: Deploy and use argus
-        run: test/deploy/run.sh ${{ matrix.system }} ${{ matrix.rust }}
+        run: test/deploy/run.sh ${{ matrix.system }} ${{ matrix.rust }} ${{ matrix.elixir }}
         env:
           ARGUS_VERSION: ${{ inputs.version }}
 
