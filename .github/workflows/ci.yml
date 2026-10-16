@@ -436,11 +436,4 @@ jobs:
       # A released argus judges this checkout (bin/argus); every finding is
       # shown, and one at error severity (argus.config) fails the job.
       - name: Analyze argus with its last release
-        run: |
-          bin/argus --color always
-          bin/argus --format json > "$RUNNER_TEMP/argus.json"
-          errors=$(jq '[.[] | select(.severity == "error")] | length' "$RUNNER_TEMP/argus.json")
-          if [ "$errors" -gt 0 ]; then
-            echo "::error::argus reported $errors error findings"
-            exit 1
-          fi
+        run: bin/argus --color always --fail-on error
