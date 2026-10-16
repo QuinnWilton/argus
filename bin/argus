@@ -17,8 +17,8 @@
 # and checked against the SHA-256 pinned here at every run.
 set -eu
 
-version=0.23.1
-sha256=afd6a6c5066318364f45eed76ad3222a4f8780a168f29b0402c246de42e83108
+version=0.24.0
+sha256=7644cc596e4989ffe713786e4fed5f125500e492590741e60ce596fe24a95880
 app=argus_beam
 
 root=$(cd "$(dirname "$0")/.." && pwd)
