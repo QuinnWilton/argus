@@ -1,24 +1,24 @@
 {
   "bundles": {
     "aarch64-apple-darwin": {
-      "bytes": 76059299,
-      "sha256": "9e571d23a3cdf96f92f5123c5cae093eef64c59deb5779e3813203108aa49fc9",
-      "url": "https://github.com/QuinnWilton/argus/releases/download/v0.23.1/argus-flowlog-aarch64-apple-darwin.tar.gz"
+      "bytes": 76341865,
+      "sha256": "a97031f543f04d143738f7fd5ebf688b7e7a9f1f373fe9eaff14f65972a6a330",
+      "url": "https://github.com/QuinnWilton/argus/releases/download/v0.24.0/argus-flowlog-aarch64-apple-darwin.tar.gz"
     },
     "aarch64-unknown-linux-musl": {
-      "bytes": 119280793,
-      "sha256": "77364ec088f05f4b28b25b98bac845434c88c05da49b5f9daee80fec0efce2ae",
-      "url": "https://github.com/QuinnWilton/argus/releases/download/v0.23.1/argus-flowlog-aarch64-unknown-linux-musl.tar.gz"
+      "bytes": 119732194,
+      "sha256": "501076790ab16837d4e08e1b35cc9acf7f99970a71aa5565cdc989ad737959a1",
+      "url": "https://github.com/QuinnWilton/argus/releases/download/v0.24.0/argus-flowlog-aarch64-unknown-linux-musl.tar.gz"
     },
     "x86_64-apple-darwin": {
-      "bytes": 77720964,
-      "sha256": "62f3707b9cc50ee6bc02c0082f7810af68ad45f75610f71eda846e160704476e",
-      "url": "https://github.com/QuinnWilton/argus/releases/download/v0.23.1/argus-flowlog-x86_64-apple-darwin.tar.gz"
+      "bytes": 77964948,
+      "sha256": "424099d8070f54a31d7bf81bce1b992d38f0191e3711f457c7984b2fca50dfb9",
+      "url": "https://github.com/QuinnWilton/argus/releases/download/v0.24.0/argus-flowlog-x86_64-apple-darwin.tar.gz"
     },
     "x86_64-unknown-linux-musl": {
-      "bytes": 122839376,
-      "sha256": "ab5773a21d459dbb18487c4042167dc135b14fb94ffa3b98809ba98de5a2f867",
-      "url": "https://github.com/QuinnWilton/argus/releases/download/v0.23.1/argus-flowlog-x86_64-unknown-linux-musl.tar.gz"
+      "bytes": 123312811,
+      "sha256": "825c797d094cae010d1a9ff23caaf9118048d2d5526370e729b744b251920434",
+      "url": "https://github.com/QuinnWilton/argus/releases/download/v0.24.0/argus-flowlog-x86_64-unknown-linux-musl.tar.gz"
     }
   },
   "format": 1,
