@@ -303,6 +303,27 @@ field_pts(cat("pair ", o), "{1}", x) :-
 
 reads_field(o, "**", x) :- field_read(o, "**"), field_pts(o, _, x).
 
+// A pair's key is the field of the map it is made of: a read of its value
+// under a key (`opts[:key]`, a match of `{:key, v}`) reads the map's field
+// under that key, or under one not known, not the pair's every value.
+// Read whole, every lookup in a map read every field of it, and of every
+// map its source points to.
+.decl keyed_pair_load(func: symbol, load: symbol, map: symbol, sel: symbol)
+
+keyed_pair_load(f, l, o, tag) :-
+  value_load(f, l, "{1}", bk, bs),
+  value_load_shape(l, tag, "2"),
+  tag != "",
+  source_pts(f, bk, bs, p),
+  pair_map(p, o).
+
+.decl pair_map(pair: symbol, map: symbol)
+
+pair_map(cat("pair ", o), o) :- field_read(o, "[]"), term_shape(o, "map", _, _).
+
+source_pts(f, "load", l, x) :- keyed_pair_load(f, l, o, sel), field_pts(o, sel, x).
+source_pts(f, "load", l, x) :- keyed_pair_load(f, l, o, _), field_pts(o, "*", x).
+
 field_pts(o, sel, x) :- value_field(f, o, sel, sk, s), source_pts(f, sk, s, x).
 
 // A kept `{:ok, pid}` holds its own instance.
@@ -484,13 +505,13 @@ built_base(i, o, b) :-
 update_keeps(i, b, sel) :- built_base(i, o, b), field_sel(b, sel), !value_sets(o, sel).
 
 // A term's shape: its construction's, an instance's its term's, or the
-// shape a rule gives a term it names (a map's pair, a kept start's
-// `{:ok, pid}`).
+// shape a rule gives a term it names (a map's pair, whose tag `@pair` fits
+// no tagged match, which reads it by its key; a kept start's `{:ok, pid}`).
 .decl term_shape(obj: symbol, kind: symbol, tag: symbol, arity: symbol)
 
 term_shape(o, kind, tag, n) :- value_object(_, o, kind, tag, n).
 term_shape(i, kind, tag, n) :- built_call(_, _, _, o, i), value_object(_, o, kind, tag, n).
-term_shape(cat("pair ", o), "tuple", "", "2") :- field_read(o, "[]"), term_shape(o, "map", _, _).
+term_shape(p, "tuple", "@pair", "2") :- pair_map(p, _).
 term_shape(cat("result ", c), "tuple", ":ok", "2") :- kept_fresh(c, _, x), start_object(x, _).
 
 // Fresh returns

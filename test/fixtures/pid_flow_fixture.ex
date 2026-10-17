@@ -1130,6 +1130,26 @@ defmodule Argus.Test.Fixtures.PidFlow do
     end
   end
 
+  defmodule MapOptions do
+    @moduledoc """
+    Peers handed in one map and read back by key with `opts[key]`: each
+    lookup holds its own peer. Read as a keyword list, the map's pairs
+    would hand each lookup every value the map holds.
+    """
+    alias Argus.Test.Fixtures.PidFlow.{TargetA, TargetB}
+
+    def run do
+      {:ok, left} = TargetA.start_link()
+      {:ok, right} = TargetB.start_link()
+      ping(%{left: left, right: right})
+    end
+
+    def ping(opts) do
+      GenServer.call(opts[:left], :ping)
+      GenServer.cast(opts[:right], :ping)
+    end
+  end
+
   defmodule Refused do
     @moduledoc """
     A start whose `{:error, reason}` is handed back as it came: the

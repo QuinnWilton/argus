@@ -65,6 +65,7 @@ defmodule Argus.Clientlib.ProcessesTest do
     PidFlow.Shapes,
     PidFlow.Matches,
     PidFlow.Options,
+    PidFlow.MapOptions,
     PidFlow.Refused,
     PidFlow.Nested
   ]
@@ -278,8 +279,15 @@ defmodule Argus.Clientlib.ProcessesTest do
   end
 
   test "a keyword lookup reaches the value under its key alone", ctx do
-    r = solve(ctx, ~w(process_call))
-    rows = for ["Options:ping/1", _a, _s, kind, p] <- r["process_call"], do: {kind, p}
+    assert_keyed(solve(ctx, ~w(process_call)), "Options:ping/1")
+  end
+
+  test "a lookup by key in a map reaches that key's value alone, not the map's every pair", ctx do
+    assert_keyed(solve(ctx, ~w(process_call)), "MapOptions:ping/1")
+  end
+
+  defp assert_keyed(r, f) do
+    rows = for [^f, _a, _s, kind, p] <- r["process_call"], do: {kind, p}
     calls = for {"call", p} <- rows, uniq: true, do: p
     casts = for {"cast", p} <- rows, uniq: true, do: p
 

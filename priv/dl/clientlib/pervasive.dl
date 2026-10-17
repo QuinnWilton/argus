@@ -126,6 +126,29 @@ coarse(f, "load", l, ("deep", ("", "", "", "")), x) :-
 coarse(f, "load", l, ("deep", ("", "", "", "")), x) :- value_load(f, l, _, bk, bs), coarse(f, bk, bs, reach_1, x),
   reach_1 = ("deep", ("", "", "", "")).
 
+// An element read of a map is a pair of it (`pair <map>`, processes.dl): a
+// leaf under or below one of the map's fields is under or below the pair's
+// value, one under a key not a literal (`@key`) under its key.
+coarse(f, "load", l, (reach_1_tag, (pair_sel, "tuple", "@pair", "2")), x) :-
+  value_load(f, l, "[]", bk, bs),
+  coarse(f, bk, bs, reach_1, x),
+  reach_1 = (reach_1_tag, reach_1_at),
+  reach_1_at = (reach_1_at_sel, reach_1_at_kind, _, _),
+  (reach_1_tag = "under" ; reach_1_tag = "below"),
+  reach_1_at_kind = "map",
+  reach_1_at_sel != "@key",
+  pair_sel = "{1}".
+
+coarse(f, "load", l, (reach_1_tag, (pair_sel, "tuple", "@pair", "2")), x) :-
+  value_load(f, l, "[]", bk, bs),
+  coarse(f, bk, bs, reach_1, x),
+  reach_1 = (reach_1_tag, reach_1_at),
+  reach_1_at = (reach_1_at_sel, reach_1_at_kind, _, _),
+  (reach_1_tag = "under" ; reach_1_tag = "below"),
+  reach_1_at_kind = "map",
+  reach_1_at_sel = "@key",
+  pair_sel = "{0}".
+
 // Separate call parameters from entry arguments and fresh returns. Forwarded parameters
 // retain each call's argument. Factory values are renamed through direct or forwarded
 // factory returns, conservatively covering the exact pass's results.
