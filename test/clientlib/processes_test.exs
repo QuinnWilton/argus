@@ -59,6 +59,9 @@ defmodule Argus.Clientlib.ProcessesTest do
     PidFlow.Pass,
     PidFlow.PassUserA,
     PidFlow.PassUserB,
+    PidFlow.Build,
+    PidFlow.BuildUserA,
+    PidFlow.BuildUserB,
     PidFlow.Shapes,
     PidFlow.Nested
   ]
@@ -215,6 +218,29 @@ defmodule Argus.Clientlib.ProcessesTest do
     refute {"PassUserB:handle_call/3", "start PassUserA:init/1"} in targets
     # The helpers return nothing of their own: what they hand back is the caller's.
     refute Enum.any?(r["returns_pts"], &match?(["Pass:" <> _ | _], &1))
+  end
+
+  test "a term a helper builds of its parameters holds each caller's own values", ctx do
+    r = solve(ctx, ~w(process_call))
+
+    targets =
+      for ["BuildUser" <> _ = f, a, _s, "call", p] <- r["process_call"],
+          do: {f, a, unsite(p)}
+
+    # Each user reaches its own peer through every helper's term, at each
+    # of its four calls: put into, through a second helper, built whole,
+    # and updated...
+    for {user, own} <- [
+          {"BuildUserA", "start BuildUserA:init/1"},
+          {"BuildUserB", "start BuildUserB:init/1"}
+        ] do
+      sites = for {f, a, ^own} <- targets, String.starts_with?(f, user), uniq: true, do: a
+      assert length(sites) == 4, "#{user} reaches its peer at #{inspect(sites)}"
+    end
+
+    # ...and only its own: built once for every caller, each term would hold both.
+    refute Enum.any?(targets, &match?({"BuildUserA:" <> _, _, "start BuildUserB:init/1"}, &1))
+    refute Enum.any?(targets, &match?({"BuildUserB:" <> _, _, "start BuildUserA:init/1"}, &1))
   end
 
   test "an update copies the fields of a base of its own kind alone", ctx do

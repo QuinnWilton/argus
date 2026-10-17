@@ -154,8 +154,13 @@ source_pts(f, "obj", o, o) :- value_object(f, o, _, _, _), holds_leaf(o).
 holds_leaf(o) :- field_pts(o, _, _).
 
 source_pts(f, "param", k, x) :- param_pts(f, k, x).
-// A callee's result; a factory's fresh value is renamed where it is kept.
-source_pts(f, "result", c, x) :- value_result(c, f, g), returns_pts(g, x), !fresh_return(g, x).
+// A callee's result; a factory's fresh value, and a term the callee builds, are
+// renamed where they are kept.
+source_pts(f, "result", c, x) :-
+  value_result(c, f, g),
+  returns_pts(g, x),
+  !fresh_return(g, x),
+  !built_kept(c, x).
 
 // A callee that hands its parameter back returns, at this call, what
 // this call passed it (see "Returns" below).
@@ -189,6 +194,7 @@ source_pts(f, "result", c, i) :-
   !pervasive(i).
 
 source_pts(f, "result", c, cat("result ", c)) :- kept_fresh(c, f, x), start_object(x, _).
+source_pts(f, "result", c, i) :- built_call(c, f, _, _, i), holds_leaf(i).
 source_pts(f, "name", n, p) :- reads_name(f, n), named_pid(n, p), !pervasive(p).
 source_pts(f, "dict", k, x) :- dict_read(f, k, g, sk, s), source_pts(g, sk, s, x).
 
@@ -315,11 +321,141 @@ update_base(o, b) :-
 
 term_kind(o, kind) :- term_shape(o, kind, _, _).
 
-// A term's shape: its construction's, or the shape a rule gives a term
-// it names (a map's pair, a kept start's `{:ok, pid}`).
+// ── Built terms ─────────────────────────────────────────────────────
+//
+// A helper that builds a term from its parameters and hands it back (a
+// `maybe_put/3` around `Map.put/3`, a protocol message's constructor) is
+// one term to the rules above, holding what every caller handed it: a
+// caller reading a field of what it got back reads every other caller's
+// values, and each term it builds of those holds them all, so the terms
+// grow with the square of the calls (ex_mcp's map helpers took field_pts
+// past the budget, even bounded). A call that keeps such a term, as
+// kept_fresh keeps a factory's pid, gets an instance of its own, `built
+// <call> <term>`: a field the helper fills from its parameter holds what
+// that call passed there, through any helper that hands the term on as
+// its own result; one filled from anything else holds what that source
+// points to where it is, as the term itself does. The term the helper
+// builds stays, holding every call's values, for what reads it without a
+// call: the helper itself, a fun's answer to a library call (element_fun),
+// a callback's return.
+
+// A term `func` builds, or a callee hands it, and `func` returns. A
+// factory's start (fresh_return) and a task's handle keep their identity.
+.decl built_return(func: symbol, obj: symbol)
+
+built_return(g, o) :-
+  value_return(g, "obj", o),
+  !start_object(o, _),
+  !process_start(o, _, _, _, _).
+
+built_return(g, o) :- value_return(g, "result", c), value_result(c, g, h), built_return(h, o).
+
+// Field `sel` of `obj`, as `func` returns it, holds `func`'s parameter `pos`;
+// built_local, what a source holds in `home`.
+.decl built_param(func: symbol, obj: symbol, sel: symbol, pos: symbol)
+.decl built_local(func: symbol, obj: symbol, sel: symbol, home: symbol, src_kind: symbol, src: symbol)
+
+built_param(g, o, sel, j) :- built_return(g, o), value_field(g, o, sel, "param", j).
+
+built_param(g, o, sel, j) :-
+  value_return(g, "result", c),
+  value_result(c, g, h),
+  built_param(h, o, sel, i),
+  value_arg(c, g, h, i, "call", "param", j).
+
+built_local(g, o, sel, g, sk, s) :- built_return(g, o), value_field(g, o, sel, sk, s), sk != "param".
+
+built_local(g, o, sel, g, sk, s) :-
+  value_return(g, "result", c),
+  value_result(c, g, h),
+  built_param(h, o, sel, i),
+  value_arg(c, g, h, i, "call", sk, s),
+  sk != "param".
+
+built_local(g, o, sel, home, sk, s) :-
+  value_return(g, "result", c),
+  value_result(c, g, h),
+  built_local(h, o, sel, home, sk, s).
+
+// The base an update `func` returns copies the fields it does not set
+// from: `func`'s parameter `pos`, or a source in `home`.
+.decl built_base_param(func: symbol, obj: symbol, pos: symbol)
+.decl built_base_local(func: symbol, obj: symbol, home: symbol, src_kind: symbol, src: symbol)
+
+built_base_param(g, o, j) :- built_return(g, o), value_base(g, o, "param", j).
+
+built_base_param(g, o, j) :-
+  value_return(g, "result", c),
+  value_result(c, g, h),
+  built_base_param(h, o, i),
+  value_arg(c, g, h, i, "call", "param", j).
+
+built_base_local(g, o, g, sk, s) :- built_return(g, o), value_base(g, o, sk, s), sk != "param".
+
+built_base_local(g, o, g, sk, s) :-
+  value_return(g, "result", c),
+  value_result(c, g, h),
+  built_base_param(h, o, i),
+  value_arg(c, g, h, i, "call", sk, s),
+  sk != "param".
+
+built_base_local(g, o, home, sk, s) :-
+  value_return(g, "result", c),
+  value_result(c, g, h),
+  built_base_local(h, o, home, sk, s).
+
+// The call `call` in `func` keeps `obj` that `callee` returns, as the
+// instance `inst`. A call `func` returns hands the term on instead, to
+// be kept further up; a library call running a fun hands the fun no
+// arguments of its own, its answer the term itself (returns_all).
+.decl built_call(call: symbol, func: symbol, callee: symbol, obj: symbol, inst: symbol)
+
+built_call(c, f, g, o, cat("built ", cat(c, cat(" ", o)))) :-
+  value_result(c, f, g),
+  built_return(g, o),
+  !value_return(f, "result", c),
+  !element_fun(c, f, g, _).
+
+.decl built_kept(call: symbol, obj: symbol)
+
+built_kept(c, o) :- built_call(c, _, _, o, _).
+
+field_pts(i, sel, x) :-
+  built_call(c, f, g, o, i),
+  built_param(g, o, sel, j),
+  value_arg(c, f, g, j, "call", sk, s),
+  source_pts(f, sk, s, x).
+
+field_pts(i, sel, x) :- built_call(_, _, g, o, i), built_local(g, o, sel, h, sk, s), source_pts(h, sk, s, x).
+
+// An instance's base, and the fields it keeps of it: those its term does
+// not set.
+.decl built_base(inst: symbol, obj: symbol, base: symbol)
+
+built_base(i, o, b) :-
+  built_call(c, f, g, o, i),
+  built_base_param(g, o, j),
+  value_arg(c, f, g, j, "call", sk, s),
+  source_pts(f, sk, s, b),
+  value_object(g, o, kind, _, _),
+  term_kind(b, kind).
+
+built_base(i, o, b) :-
+  built_call(_, _, g, o, i),
+  built_base_local(g, o, h, sk, s),
+  source_pts(h, sk, s, b),
+  value_object(g, o, kind, _, _),
+  term_kind(b, kind).
+
+update_keeps(i, b, sel) :- built_base(i, o, b), field_sel(b, sel), !value_sets(o, sel).
+
+// A term's shape: its construction's, an instance's its term's, or the
+// shape a rule gives a term it names (a map's pair, a kept start's
+// `{:ok, pid}`).
 .decl term_shape(obj: symbol, kind: symbol, tag: symbol, arity: symbol)
 
 term_shape(o, kind, tag, n) :- value_object(_, o, kind, tag, n).
+term_shape(i, kind, tag, n) :- built_call(_, _, _, o, i), value_object(_, o, kind, tag, n).
 term_shape(cat("pair ", o), "tuple", "", "2") :- field_read(o, "[]"), term_shape(o, "map", _, _).
 term_shape(cat("result ", c), "tuple", ":ok", "2") :- kept_fresh(c, _, x), start_object(x, _).
 

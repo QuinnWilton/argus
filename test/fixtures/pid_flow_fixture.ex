@@ -957,6 +957,90 @@ defmodule Argus.Test.Fixtures.PidFlow do
     end
   end
 
+  defmodule Build do
+    @moduledoc """
+    Helpers that build a term of what they are handed and hand it back: a
+    map put into under a key they are given, the same through a second
+    helper, a map of their own, and an update of a map they are handed.
+    """
+    def put(map, key, value), do: Map.put(map, key, value)
+    def put_via(map, key, value), do: put(map, key, value)
+    def wrap(value), do: %{held: value}
+    def keep(map, value), do: %{map | held: value}
+  end
+
+  defmodule BuildUserA do
+    @moduledoc """
+    Calls its private peer after handing it to Build's helpers, which
+    hand it back in a term they build. BuildUserB does the same with
+    another peer: built once for every caller, each term would hold both.
+    """
+    use GenServer
+
+    alias Argus.Test.Fixtures.PidFlow.{Build, TargetA}
+
+    @impl true
+    def init(:ok) do
+      {:ok, peer} = TargetA.start_link()
+      {:ok, %{peer: peer}}
+    end
+
+    @impl true
+    def handle_call(:put, _from, s) do
+      held = Build.put(%{}, :held, s.peer)
+      {:reply, GenServer.call(held.held, :ping), s}
+    end
+
+    def handle_call(:via, _from, s) do
+      held = Build.put_via(%{}, :held, s.peer)
+      {:reply, GenServer.call(held.held, :ping), s}
+    end
+
+    def handle_call(:wrap, _from, s) do
+      held = Build.wrap(s.peer)
+      {:reply, GenServer.call(held.held, :ping), s}
+    end
+
+    def handle_call(:keep, _from, s) do
+      held = Build.keep(%{held: nil}, s.peer)
+      {:reply, GenServer.call(held.held, :ping), s}
+    end
+  end
+
+  defmodule BuildUserB do
+    @moduledoc false
+    use GenServer
+
+    alias Argus.Test.Fixtures.PidFlow.{Build, TargetB}
+
+    @impl true
+    def init(:ok) do
+      {:ok, peer} = TargetB.start_link()
+      {:ok, %{peer: peer}}
+    end
+
+    @impl true
+    def handle_call(:put, _from, s) do
+      held = Build.put(%{}, :held, s.peer)
+      {:reply, GenServer.call(held.held, :ping), s}
+    end
+
+    def handle_call(:via, _from, s) do
+      held = Build.put_via(%{}, :held, s.peer)
+      {:reply, GenServer.call(held.held, :ping), s}
+    end
+
+    def handle_call(:wrap, _from, s) do
+      held = Build.wrap(s.peer)
+      {:reply, GenServer.call(held.held, :ping), s}
+    end
+
+    def handle_call(:keep, _from, s) do
+      held = Build.keep(%{held: nil}, s.peer)
+      {:reply, GenServer.call(held.held, :ping), s}
+    end
+  end
+
   defmodule Shapes do
     @moduledoc """
     A helper whose parameter is a map at one call and a tuple at another:
