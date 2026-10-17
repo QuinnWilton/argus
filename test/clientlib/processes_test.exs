@@ -59,19 +59,21 @@ defmodule Argus.Clientlib.ProcessesTest do
     PidFlow.Pass,
     PidFlow.PassUserA,
     PidFlow.PassUserB,
+    PidFlow.Shapes,
     PidFlow.Nested
   ]
 
   defp priv_dl, do: Path.join(:code.priv_dir(:argus_beam), "dl")
 
   # The relations of processes.dl the points-to stage does not stage.
-  @internal ~w(param_pts returns_pts self_pid statem_data_pts)
+  @internal ~w(field_pts param_pts returns_pts self_pid statem_data_pts)
 
   # Every relation a test below reads. One extraction and one solve per
   # program serve the module: the rows of a relation do not depend on
   # which others a program outputs, and each test only reads them.
-  @outputs ~w(async_dep call_site_target call_target exit_to_own_process genserver_sync_api
-              instance named_pid param_pts private_process process_call process_start
+  @outputs ~w(async_dep call_site_target call_target exit_to_own_process field_pts
+              genserver_sync_api instance named_pid param_pts private_process process_call
+              process_start
               reaches_sync_dep returns_pts self_call self_pid send_target server_process
               signal_target statem_data_pts supervised_process sync_dep sync_dep_timeout
               sync_site tag_resolved_site watched_process)
@@ -213,6 +215,19 @@ defmodule Argus.Clientlib.ProcessesTest do
     refute {"PassUserB:handle_call/3", "start PassUserA:init/1"} in targets
     # The helpers return nothing of their own: what they hand back is the caller's.
     refute Enum.any?(r["returns_pts"], &match?(["Pass:" <> _ | _], &1))
+  end
+
+  test "an update copies the fields of a base of its own kind alone", ctx do
+    r = solve(ctx, ~w(field_pts))
+
+    stamped =
+      for ["Shapes:stamp/1" <> _ = o, sel, x] <- r["field_pts"], do: {o, sel, unsite(x)}
+
+    # The map's peer is kept under its key...
+    assert Enum.any?(stamped, &match?({_, ":peer", "start Shapes:from_map/0"}, &1))
+    # ...and the tuple handed to the same parameter adds no element to it.
+    refute Enum.any?(stamped, &match?({_, "{1}", _}, &1))
+    refute Enum.any?(stamped, &match?({_, _, "start Shapes:from_tuple/0"}, &1))
   end
 
   test "a pid held three terms deep is followed out of another function's term", ctx do

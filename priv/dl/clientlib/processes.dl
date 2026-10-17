@@ -209,7 +209,7 @@ source_pts(f, "reply", id, x) :-
   server_process(p, m),
   function_def(h, m, "handle_call", 3, _),
   returns_all(h, t),
-  value_object(_, t, "tuple", ":reply", _),
+  term_shape(t, "tuple", ":reply", _),
   field_pts(t, "{1}", x).
 
 // A load reads a field of whatever its base points to.
@@ -238,7 +238,7 @@ reads_field(o, sel, x) :- field_read(o, sel), field_pts(o, sel, x).
 
 reads_field(o, sel, x) :-
   field_read(o, sel),
-  value_object(_, o, "map", _, _),
+  term_shape(o, "map", _, _),
   field_pts(o, "*", x).
 
 // Enumerating a map yields its {key, value} pairs: an element read (`[]`) of a map
@@ -247,17 +247,17 @@ reads_field(o, sel, x) :-
 // (Tuple.to_list/1).
 reads_field(o, "[]", cat("pair ", o)) :-
   field_read(o, "[]"),
-  value_object(_, o, "map", _, _),
+  term_shape(o, "map", _, _),
   holds_leaf(o).
 
 field_pts(cat("pair ", o), "{0}", x) :-
   field_read(o, "[]"),
-  value_object(_, o, "map", _, _),
+  term_shape(o, "map", _, _),
   field_pts(o, "@key", x).
 
 field_pts(cat("pair ", o), "{1}", x) :-
   field_read(o, "[]"),
-  value_object(_, o, "map", _, _),
+  term_shape(o, "map", _, _),
   field_pts(o, sel, x),
   sel != "@key".
 
@@ -295,10 +295,33 @@ update_keeps(o, b, sel) :- update_base(o, b), field_sel(b, sel), !value_sets(o, 
 
 field_sel(o, sel) :- field_pts(o, sel, _).
 
-// The term an update copies the fields it does not set from.
+// The term an update copies the fields it does not set from: one of its
+// own kind, a map's base a map and a cons cell's tail a list, as it is
+// when the update runs (`%{m | k: v}` and `Map.put/3` raise on anything
+// else). What its source points to may be of every kind, where a
+// parameter or a field merges the terms of unrelated callers; copied,
+// every field of each of them would hold what all the others hold,
+// tuple elements in a map, a struct's fields in a list.
 .decl update_base(obj: symbol, base: symbol)
 
-update_base(o, b) :- value_base(f, o, bk, bs), source_pts(f, bk, bs, b).
+update_base(o, b) :-
+  value_base(f, o, bk, bs),
+  source_pts(f, bk, bs, b),
+  value_object(f, o, kind, _, _),
+  term_kind(b, kind).
+
+// A term's kind: a map, a tuple or a list.
+.decl term_kind(obj: symbol, kind: symbol)
+
+term_kind(o, kind) :- term_shape(o, kind, _, _).
+
+// A term's shape: its construction's, or the shape a rule gives a term
+// it names (a map's pair, a kept start's `{:ok, pid}`).
+.decl term_shape(obj: symbol, kind: symbol, tag: symbol, arity: symbol)
+
+term_shape(o, kind, tag, n) :- value_object(_, o, kind, tag, n).
+term_shape(cat("pair ", o), "tuple", "", "2") :- field_read(o, "[]"), term_shape(o, "map", _, _).
+term_shape(cat("result ", c), "tuple", ":ok", "2") :- kept_fresh(c, _, x), start_object(x, _).
 
 // Fresh returns
 //
@@ -535,7 +558,7 @@ state_in(m, f, "1") :-
 state_pts(m, x) :-
   state_out(m, g),
   returns_all(g, t),
-  value_object(_, t, "tuple", tag, n),
+  term_shape(t, "tuple", tag, n),
   state_slot(tag, n, sel),
   field_pts(t, sel, x).
 
@@ -751,7 +774,7 @@ statem_data_in(m, f, "2") :- statem_process(m), function_def(f, m, "terminate", 
 statem_data_pts(m, x) :-
   statem_data_out(m, g),
   returns_all(g, t),
-  value_object(_, t, "tuple", tag, n),
+  term_shape(t, "tuple", tag, n),
   statem_data_slot(tag, n, sel),
   field_pts(t, sel, x).
 

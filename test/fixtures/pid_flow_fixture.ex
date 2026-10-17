@@ -957,6 +957,29 @@ defmodule Argus.Test.Fixtures.PidFlow do
     end
   end
 
+  defmodule Shapes do
+    @moduledoc """
+    A helper whose parameter is a map at one call and a tuple at another:
+    its update copies the fields of the map alone, as it runs only on a
+    map. Copied from the tuple too, the map would hold the tuple's peer
+    as its second element.
+    """
+    alias Argus.Test.Fixtures.PidFlow.{TargetA, TargetB}
+
+    def stamp(term) when is_map(term), do: %{term | stamped: true}
+    def stamp(term), do: term
+
+    def from_map do
+      {:ok, peer} = TargetA.start_link()
+      Shapes.stamp(%{stamped: false, peer: peer})
+    end
+
+    def from_tuple do
+      {:ok, peer} = TargetB.start_link()
+      Shapes.stamp({:peer, peer})
+    end
+  end
+
   defmodule Nested do
     @moduledoc "Keeps its peer three terms deep, built in one function and read out in another."
     alias Argus.Test.Fixtures.PidFlow.TargetA

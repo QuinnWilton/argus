@@ -66,7 +66,7 @@ task_escapes(p) :-
 task_escapes(p) :-
   value_load(f, _, "*", sk, s),
   source_pts(f, sk, s, o),
-  value_object(_, o, "map", _, _),
+  term_shape(o, "map", _, _),
   field_pts(o, sel, x),
   sel != "*",
   sel != "@key",
@@ -83,7 +83,7 @@ task_escapes(p) :-
 task_escapes(p) :-
   state_out(_, g),
   returns_all(g, t),
-  value_object(_, t, "tuple", tag, n),
+  term_shape(t, "tuple", tag, n),
   state_slot(tag, n, sel),
   field_pts(t, other, x),
   other != sel,
