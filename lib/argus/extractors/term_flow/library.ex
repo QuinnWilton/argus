@@ -28,6 +28,10 @@ defmodule Argus.Extractors.TermFlow.Library do
       (modeled as a list);
     * `{:read, spec, sel}` — field `sel` of `spec` (`"{1}"`, `"**"` for
       any field of a tuple);
+    * `{:keyed, spec, key_position}` — the values of the `{key, value}`
+      pairs among `spec`'s elements, of those whose key is the literal
+      argument `key_position` names alone (every pair's when it is not a
+      literal);
     * `{:list, spec}` — a new list whose elements are `spec`;
     * `{:cons, head, tail}` — a new list cell;
     * `{:tuple, [spec | nil], tag}` — a new tuple;
@@ -59,6 +63,7 @@ defmodule Argus.Extractors.TermFlow.Library do
           | :result
           | {:elements, spec()}
           | {:read, spec(), String.t()}
+          | {:keyed, spec(), non_neg_integer()}
           | {:list, spec()}
           | {:cons, spec(), spec()}
           | {:tuple, [spec() | nil], String.t()}
@@ -88,6 +93,7 @@ defmodule Argus.Extractors.TermFlow.Library do
   defp second(spec), do: {:read, spec, "{1}"}
   defp keys(n), do: first(el_(n))
   defp values(n), do: second(el_(n))
+  defp keyed(n, at), do: {:keyed, a(n), at}
   defp from_pairs(spec), do: {:map, first(spec), second(spec)}
   defp run(fun, params, answer, others \\ []), do: {:run, fun, params, answer, others}
 
@@ -321,11 +327,11 @@ defmodule Argus.Extractors.TermFlow.Library do
 
   defp keyword do
     %{
-      {Keyword, :get, 2} => values(0),
-      {Keyword, :get, 3} => u([values(0), a(2)]),
-      {Keyword, :fetch!, 2} => values(0),
-      {Keyword, :fetch, 2} => tup([nil, values(0)], ":ok"),
-      {Keyword, :get_values, 2} => list(values(0)),
+      {Keyword, :get, 2} => keyed(0, 1),
+      {Keyword, :get, 3} => u([keyed(0, 1), a(2)]),
+      {Keyword, :fetch!, 2} => keyed(0, 1),
+      {Keyword, :fetch, 2} => tup([nil, keyed(0, 1)], ":ok"),
+      {Keyword, :get_values, 2} => list(keyed(0, 1)),
       {Keyword, :values, 1} => list(values(0)),
       {Keyword, :keys, 1} => list(keys(0)),
       {Keyword, :put, 3} => {:cons, tup([a(1), a(2)]), a(0)},
@@ -337,16 +343,16 @@ defmodule Argus.Extractors.TermFlow.Library do
       {Keyword, :new, 1} => list(el_(0)),
       {Keyword, :to_list, 1} => a(0),
       {Keyword, :split, 2} => tup([a(0), a(0)]),
-      {Keyword, :pop, 2} => tup([values(0), a(0)]),
-      {Keyword, :pop, 3} => tup([u([values(0), a(2)]), a(0)]),
-      {Keyword, :pop!, 2} => tup([values(0), a(0)]),
+      {Keyword, :pop, 2} => tup([keyed(0, 1), a(0)]),
+      {Keyword, :pop, 3} => tup([u([keyed(0, 1), a(2)]), a(0)]),
+      {Keyword, :pop!, 2} => tup([keyed(0, 1), a(0)]),
       {Keyword, :filter, 2} => run(1, [el_(0)], a(0)),
       {Keyword, :reject, 2} => run(1, [el_(0)], a(0)),
       {Keyword, :has_key?, 2} => :none,
       # `term[key]` on a keyword list: Access.get/2's map read is TermFlow's
       # own (`@field_reads`); this adds a keyword list's values.
-      {Access, :get, 2} => values(0),
-      {Access, :get, 3} => u([values(0), a(2)])
+      {Access, :get, 2} => keyed(0, 1),
+      {Access, :get, 3} => u([keyed(0, 1), a(2)])
     }
   end
 

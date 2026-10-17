@@ -1110,6 +1110,26 @@ defmodule Argus.Test.Fixtures.PidFlow do
     end
   end
 
+  defmodule Options do
+    @moduledoc """
+    Peers handed in one keyword list, each read back by its key: a lookup
+    of `:left` holds the left peer alone. Read from every pair, it would
+    hold both.
+    """
+    alias Argus.Test.Fixtures.PidFlow.{TargetA, TargetB}
+
+    def run do
+      {:ok, left} = TargetA.start_link()
+      {:ok, right} = TargetB.start_link()
+      ping(left: left, right: right)
+    end
+
+    def ping(opts) do
+      GenServer.call(Keyword.get(opts, :left), :ping)
+      GenServer.cast(opts[:right], :ping)
+    end
+  end
+
   defmodule Nested do
     @moduledoc "Keeps its peer three terms deep, built in one function and read out in another."
     alias Argus.Test.Fixtures.PidFlow.TargetA

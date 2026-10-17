@@ -1273,6 +1273,19 @@ defmodule Argus.Extractors.TermFlow do
     load(ctx, value, sel, lib_load_id(ctx, path, sel), r)
   end
 
+  # A read of the pairs under one key: a load of their values a match of
+  # the key guards (`value_load_shape`), as `{^key, value}` would.
+  defp lib_value(ctx, {:keyed, spec, at}, env, path, r) do
+    {pairs, r} = lib_value(ctx, {:elements, spec}, env, path ++ [0], r)
+    id = lib_load_id(ctx, path, "{1}")
+    {value, r} = load(ctx, pairs, "{1}", id, r)
+
+    case env.literal and Resolve.resolve_register(ctx.fun.instrs, ctx.idx, {:x, at}) do
+      {:ok, key} when is_atom(key) -> {value, %{r | shapes: [{id, inspect(key), "2"} | r.shapes]}}
+      _ -> {value, r}
+    end
+  end
+
   defp lib_value(ctx, {:list, spec}, env, path, r) do
     {value, r} = lib_value(ctx, spec, env, path ++ [0], r)
     lib_object(ctx, path, %{shape: "list", fields: %{"[]" => value}, base: MapSet.new()}, r)

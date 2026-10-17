@@ -90,7 +90,9 @@ inspects (`Enum.count/1`, `Map.has_key?/2`) answers nothing and keeps nothing.
 Enumeration is uniform: a list yields its `[]` field, a map its `{key, value}`
 pairs, and a MapSet — modeled as the list of its members — its members. A map
 holds a key that is not a literal under the pseudo-field `@key`, so a pair's
-key is what was put there. A pair is allocated at the call for a map built in
+key is what was put there. A lookup in a keyword list under a literal key
+(`Keyword.get/2`, `opts[:key]`) reads the pairs tagged with that key alone,
+as a match of `{^key, value}` would. A pair is allocated at the call for a map built in
 the function, and for a map from elsewhere points-to stands one for it
 (`pair <map>`, `clientlib/processes.dl`). `**` reads any field
 (`Tuple.to_list/1`). A stream is the list it would enumerate.

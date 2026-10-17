@@ -320,6 +320,17 @@ defmodule Argus.Extractors.TermFlowTest do
       end
     end
 
+    test "a keyword lookup with a literal key reads the pairs under that key" do
+      f = facts([F.Options])
+
+      shapes =
+        for ["Options:ping/1" <> _ = load, tag, arity] <- f.value_load_shape,
+            do: {load, tag, arity}
+
+      assert Enum.any?(shapes, &match?({_, ":left", "2"}, &1))
+      assert Enum.any?(shapes, &match?({_, ":right", "2"}, &1))
+    end
+
     test "a message tuple carries the pid in its field" do
       f = facts([F.Hub])
       [msg] = for ["Hub:subscribe/1", o, "tuple", ":subscribe", "2"] <- f.value_object, do: o

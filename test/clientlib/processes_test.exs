@@ -64,6 +64,7 @@ defmodule Argus.Clientlib.ProcessesTest do
     PidFlow.BuildUserB,
     PidFlow.Shapes,
     PidFlow.Matches,
+    PidFlow.Options,
     PidFlow.Nested
   ]
 
@@ -273,6 +274,17 @@ defmodule Argus.Clientlib.ProcessesTest do
     assert {"call", "start Matches:go/0"} in selected
     assert {"cast", "start Matches:fail/0"} in selected
     refute {"call", "start Matches:fail/0"} in selected
+  end
+
+  test "a keyword lookup reaches the value under its key alone", ctx do
+    r = solve(ctx, ~w(process_call))
+    rows = for ["Options:ping/1", _a, _s, kind, p] <- r["process_call"], do: {kind, p}
+    calls = for {"call", p} <- rows, uniq: true, do: p
+    casts = for {"cast", p} <- rows, uniq: true, do: p
+
+    assert [left] = calls
+    assert [right] = casts
+    assert left != right
   end
 
   test "a pid held three terms deep is followed out of another function's term", ctx do
