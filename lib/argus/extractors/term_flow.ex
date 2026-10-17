@@ -326,6 +326,7 @@ defmodule Argus.Extractors.TermFlow do
             acc
           else
             code = List.to_tuple(instrs)
+            func_reads = Map.get(reads, func_id, %{})
             # Read only for a function's tuple element loads and where a
             # probe asks what guards it.
             cfg = fn -> Helpers.cfg(module_data, name, arity) end
@@ -334,11 +335,11 @@ defmodule Argus.Extractors.TermFlow do
               func_id: func_id,
               code: code,
               instrs: instrs,
-              reads: Map.get(reads, func_id, %{}),
+              reads: func_reads,
               sites: Map.get(sites, func_id, %{}),
               spawns: Map.get(spawns, func_id, %{}),
               cfg: cfg,
-              matches: tuple_matches(code, cfg)
+              matches: tuple_matches(code, func_reads, cfg)
             }
 
             function_facts(acc, fun)
@@ -721,18 +722,17 @@ defmodule Argus.Extractors.TermFlow do
     r |> object(ctx.idx, obj) |> write(dst, obj_token(ctx.idx))
   end
 
+  # The tuples a match fit alone are read (`val/2`); one from elsewhere is
+  # left to points-to, by the shape the load carries.
   defp instruction(ctx, {:get_tuple_element, src, i, dst}, r) do
     sel = "{#{i}}"
     id = load_id(ctx, sel)
     {value, r} = load(ctx, val(ctx, src), sel, id, r)
 
-    r =
-      case Map.get(ctx.fun.matches, ctx.idx) do
-        nil -> r
-        {tag, arity} -> %{r | shapes: [{id, tag, arity} | r.shapes]}
-      end
-
-    write(r, dst, value)
+    case Map.get(ctx.fun.matches, {ctx.idx, register(src)}) do
+      nil -> write(r, dst, value)
+      {tag, arity} -> write(%{r | shapes: [{id, tag, arity} | r.shapes]}, dst, value)
+    end
   end
 
   defp instruction(ctx, {op, _fail, src, dst, _live, {:list, pairs}}, r)
@@ -803,26 +803,56 @@ defmodule Argus.Extractors.TermFlow do
   # or visits more than @match_steps blocks finds nothing.
   @match_steps 64
 
-  # The shapes of a function's tuple element loads, by instruction: worked
-  # out once, as value flow evaluates an instruction again at each pass.
-  defp tuple_matches(code, cfg) do
+  # What a match established of a register where an instruction reads
+  # it, by `{instruction, register}`: for each tuple element load, and
+  # each read of a register a tuple test tests. Worked out once, as
+  # value flow evaluates an instruction again at each pass.
+  defp tuple_matches(code, reads, cfg) do
+    tested =
+      for idx <- 0..(tuple_size(code) - 1)//1,
+          reg = tested_tuple(elem(code, idx)),
+          reg != nil,
+          into: MapSet.new(),
+          do: reg
+
     loads =
       for idx <- 0..(tuple_size(code) - 1)//1,
           {:get_tuple_element, src, _i, _dst} <- [elem(code, idx)],
           do: {idx, register(src)}
 
-    case loads != [] && cfg.() do
-      %Graph{} = graph ->
-        for {idx, src} <- loads,
-            match = tuple_match(graph, code, idx, src),
-            match != nil,
-            into: %{},
-            do: {idx, match}
+    uses =
+      for {idx, regs} <- reads,
+          name <- Map.keys(regs),
+          reg = parse_register(name),
+          MapSet.member?(tested, reg),
+          do: {idx, reg}
 
-      _ ->
-        %{}
+    case loads != [] or uses != [] do
+      true -> matches_in(Enum.uniq(loads ++ uses), code, cfg.())
+      false -> %{}
     end
   end
+
+  defp matches_in(points, code, %Graph{} = graph) do
+    for {idx, reg} <- points,
+        match = tuple_match(graph, code, idx, reg),
+        match != nil,
+        into: %{},
+        do: {{idx, reg}, match}
+  end
+
+  defp matches_in(_points, _code, _graph), do: %{}
+
+  defp tested_tuple({:test, op, _fail, [reg | _]}) when op in [:is_tagged_tuple, :test_arity],
+    do: register(reg)
+
+  defp tested_tuple({:select_tuple_arity, reg, _fail, _arms}), do: register(reg)
+  defp tested_tuple(_instr), do: nil
+
+  defp parse_register("x" <> n), do: {:x, String.to_integer(n)}
+  defp parse_register("y" <> n), do: {:y, String.to_integer(n)}
+  # A float register (`fr0`) holds no tuple a test could match.
+  defp parse_register(_name), do: nil
 
   defp tuple_match(cfg, code, idx, src) do
     with %{} = block <- Graph.block_at(cfg, idx),
@@ -978,6 +1008,25 @@ defmodule Argus.Extractors.TermFlow do
        do: {:compared, register(reg), inspect(atom)}
 
   defp edge_match(_instr, _kind, _label, _src, _pending), do: :none
+
+  # Whether a term the function built may be a tuple `{tag, arity}` fits:
+  # one of that arity, or of one not known (0), whose tag is the match's
+  # or not known. Anything else it holds is read as before.
+  defp fits_match?(objs, {:obj, key}, {tag, arity}) do
+    case Map.get(objs, key) do
+      %{shape: "tuple"} = obj ->
+        to_string(Map.get(obj, :arity, 0)) in [arity, "0"] and
+          (tag == "" or Map.get(obj, :tag, "") in [tag, ""])
+
+      %{} ->
+        false
+
+      nil ->
+        true
+    end
+  end
+
+  defp fits_match?(_objs, _token, _match), do: true
 
   defp pending_tag({:tag, tag}), do: tag
   defp pending_tag(_pending), do: ""
@@ -1723,9 +1772,14 @@ defmodule Argus.Extractors.TermFlow do
   defp val(ctx, operand) do
     case register(operand) do
       {kind, n} when kind in [:x, :y] ->
-        reg = "#{kind}#{n}"
+        value =
+          ValueFlow.input(ctx.fun.reads, ctx.state.outs, ctx.idx, "#{kind}#{n}", &{:param, &1})
 
-        ValueFlow.input(ctx.fun.reads, ctx.state.outs, ctx.idx, reg, &{:param, &1})
+        # A tuple a match the read is past did not fit is not what it reads.
+        case Map.get(ctx.fun.matches, {ctx.idx, {kind, n}}) do
+          nil -> value
+          match -> MapSet.filter(value, &fits_match?(ctx.state.objs, &1, match))
+        end
 
       _literal ->
         MapSet.new()

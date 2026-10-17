@@ -1130,6 +1130,22 @@ defmodule Argus.Test.Fixtures.PidFlow do
     end
   end
 
+  defmodule Refused do
+    @moduledoc """
+    A start whose `{:error, reason}` is handed back as it came: the
+    compiler returns the matched tuple itself, and that tuple is no
+    `{:ok, pid}`, so `start/0` returns no process.
+    """
+    alias Argus.Test.Fixtures.PidFlow.TargetA
+
+    def start do
+      case GenServer.start(TargetA, :ok) do
+        {:error, reason} -> {:error, reason}
+        _ -> :started
+      end
+    end
+  end
+
   defmodule Nested do
     @moduledoc "Keeps its peer three terms deep, built in one function and read out in another."
     alias Argus.Test.Fixtures.PidFlow.TargetA

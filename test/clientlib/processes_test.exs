@@ -65,6 +65,7 @@ defmodule Argus.Clientlib.ProcessesTest do
     PidFlow.Shapes,
     PidFlow.Matches,
     PidFlow.Options,
+    PidFlow.Refused,
     PidFlow.Nested
   ]
 

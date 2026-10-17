@@ -22,6 +22,23 @@ defmodule Argus.Extractors.TermFlowTest do
   # which instruction it is.
   defp unsited(rows), do: Enum.map(rows, &tl/1)
 
+  test "a function using float registers beside a tuple match is extracted" do
+    [{_mod, bin}] =
+      Code.compile_string("""
+      defmodule Argus.TermFlowTest.Floats do
+        def scaled({:ok, x}, factor) when is_float(x) and is_float(factor), do: {:ok, x * factor + 1.0}
+        def scaled(other, _factor), do: other
+      end
+      """)
+
+    {:beam_file, _, _, _, _, code} = :beam_disasm.file(bin)
+    assert inspect(code, limit: :infinity) =~ "{:fr, "
+
+    {:ok, raw} = Argus.Pipeline.extract([bin], extractors: [TermFlow])
+    assert Map.get(raw, :extraction_error, []) == []
+    assert ["Argus.TermFlowTest.Floats:scaled/2", "param", "0"] in raw.value_return
+  end
+
   test "map read defaults and compound literal keys retain general value provenance" do
     [{_mod, bin}] =
       Code.compile_string("""
@@ -329,6 +346,12 @@ defmodule Argus.Extractors.TermFlowTest do
 
       assert Enum.any?(shapes, &match?({_, ":left", "2"}, &1))
       assert Enum.any?(shapes, &match?({_, ":right", "2"}, &1))
+    end
+
+    test "a tuple handed back past a match of another tag is not the term the match failed on" do
+      f = facts([F.Refused])
+
+      refute Enum.any?(f.value_return, &match?(["Refused:start/0", "obj", _], &1))
     end
 
     test "a message tuple carries the pid in its field" do

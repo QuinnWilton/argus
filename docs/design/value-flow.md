@@ -72,7 +72,10 @@ registries, replies and dictionary contents across these function summaries.
 A tuple element load runs only once its match has passed: `value_load_shape`
 gives the arity and, when tested, the tag that every path to it matched, and
 points-to reads such a load from the tuples that fit it alone. A tuple whose
-tag or arity is not known fits any match.
+tag or arity is not known fits any match. A read of a register past such a
+match, any instruction's, skips the tuples the function built that the match
+does not fit: `{:error, e} -> {:error, e}` hands back the term it matched,
+and that is not the `{:ok, pid}` the same register held on the other path.
 `process_start` and `process_{call,message,send,signal,register}_source`
 describe process operations. Table, dictionary and remote-PID
 relations expose their respective operations. Exact columns and consumers are
