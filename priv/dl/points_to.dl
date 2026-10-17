@@ -200,3 +200,12 @@ leaves_process(t) :-
 coarse_table(t) :- pervasive(t), table_alloc(_, _, t).
 
 .output coarse_table(filename="coarse_table.facts")
+
+// The processes the bounded or coarse stage resolved coarsely: their
+// targets are a superset (pervasive.dl), each a process a call, send or
+// signal may reach, not one it surely does. None in the exact stage.
+.decl coarse_process(proc: symbol)
+
+coarse_process(p) :- pervasive(p), process(p).
+
+.output coarse_process(filename="coarse_process.facts")

@@ -52,6 +52,12 @@
 .decl coarse_table(table: symbol) mutable
 .input coarse_table
 
+// The processes a bounded stage resolved coarsely: a target of one of
+// them is one a call, send or signal may reach, not one it surely does
+// (points_to.dl).
+.decl coarse_process(proc: symbol) mutable
+.input coarse_process
+
 // An unnamed table its process keeps in its dictionary and never hands
 // to another (points_to.dl).
 .decl kept_in_dictionary(table: symbol) mutable

@@ -27,6 +27,8 @@ The analysis may accept a compatible receive anywhere on the server's own stack
 without proving that it consumes this message in time. Dynamic messages, unresolved
 targets and state-dependent protocols limit coverage. For gen_statem, handling in
 one state can suppress a finding even when another reachable state rejects it.
+A send whose targets only the bounded points-to stage's coarse pass resolves is
+reported only when every process it may reach is one of that module's servers.
 
 ### Task results
 
@@ -171,7 +173,9 @@ the actual task protocol.
 A deferred reply needs an address retained for later use. A missing reply leaves the
 caller waiting until its timeout, potentially forever for gen_statem calls. Reading
 or forwarding from is only evidence that a later reply is possible, not proof it
-will happen. Dynamic request targets and broad tag matching can hide defects.
+will happen. Dynamic request targets, targets the bounded points-to stage's coarse
+pass resolves to more than the module's own servers, and broad tag matching can hide
+defects.
 
 ## Registering during LiveView's static render
 

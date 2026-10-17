@@ -1324,9 +1324,10 @@ kind_callback("cast", "handle_cast").
 handler(mod, "handle_call", func) :- handle_call_function(mod, func).
 handler(mod, "handle_cast", func) :- handle_cast_function(mod, func).
 
-// A site targets its module's own server when points-to resolves it there, or when the
-// target is unresolved and neither a literal name nor message tag identifies another
-// server. Classify each site independently; unrelated calls in the same function do not
+// A site targets its module's own server when points-to resolves it there (a target
+// only the bounded stage's coarse pass resolves, when the site reaches no other
+// process), or when the target is unresolved and neither a literal name nor message
+// tag identifies another server. Classify each site independently; unrelated calls in the same function do not
 // change its target.
 .decl to_own_server(mod: symbol, id: symbol)
 
@@ -1334,7 +1335,26 @@ to_own_server(mod, id) :-
   call_tag(id, f, kind, _),
   function_def(f, mod, _, _, _),
   call_site_target(id, f, kind, p),
+  !coarse_process(p),
   server_process(p, mod).
+
+to_own_server(mod, id) :-
+  call_tag(id, f, kind, _),
+  function_def(f, mod, _, _, _),
+  call_site_target(id, f, kind, p),
+  coarse_process(p),
+  server_process(p, mod),
+  !targets_elsewhere(id, mod).
+
+// The call or cast at `id` may reach a process that is not one of `mod`'s
+// servers.
+.decl targets_elsewhere(id: symbol, mod: symbol)
+
+targets_elsewhere(id, mod) :-
+  call_tag(id, f, kind, _),
+  function_def(f, mod, _, _, _),
+  call_site_target(id, f, kind, q),
+  !server_process(q, mod).
 
 to_own_server(mod, id) :-
   call_tag(id, f, kind, _),
@@ -1656,7 +1676,29 @@ info_message(m, f, id, msg, "send") :-
   send_target(id, f, msg, p),
   msg != "dynamic",
   !send_envelope(id),
+  !coarse_process(p),
   server_process(p, m).
+
+// A target only the bounded stage's coarse pass resolves (coarse_process)
+// is one of the processes its source reaches anywhere: a server among
+// them is sent the message only when every target is one of that
+// module's servers, as a send to a registered name of its own resolves.
+info_message(m, f, id, msg, "send") :-
+  send_target(id, f, msg, p),
+  msg != "dynamic",
+  !send_envelope(id),
+  coarse_process(p),
+  server_process(p, m),
+  !sends_elsewhere(id, m).
+
+// The send at `id` may reach a process that is not one of `mod`'s servers.
+.decl sends_elsewhere(id: symbol, mod: symbol)
+
+sends_elsewhere(id, m) :-
+  send_target(id, f, _, p),
+  server_process(p, m),
+  send_target(id, f, _, q),
+  !server_process(q, m).
 
 // Timers and monitors created on a server callback's stack deliver messages to that
 // server, even when created in another module. See RunsInServer.
