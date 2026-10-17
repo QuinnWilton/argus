@@ -294,6 +294,7 @@ defmodule Argus.Extractors.TermFlow do
       :value_base,
       :value_sets,
       :value_load,
+      :value_load_shape,
       :process_remote_source,
       :process_probe_source,
       :table_alloc,
@@ -324,15 +325,20 @@ defmodule Argus.Extractors.TermFlow do
           if generated?(func_id) do
             acc
           else
+            code = List.to_tuple(instrs)
+            # Read only for a function's tuple element loads and where a
+            # probe asks what guards it.
+            cfg = fn -> Helpers.cfg(module_data, name, arity) end
+
             fun = %{
               func_id: func_id,
-              code: List.to_tuple(instrs),
+              code: code,
               instrs: instrs,
               reads: Map.get(reads, func_id, %{}),
               sites: Map.get(sites, func_id, %{}),
               spawns: Map.get(spawns, func_id, %{}),
-              # Read only where a probe asks what guards it.
-              cfg: fn -> Helpers.cfg(module_data, name, arity) end
+              cfg: cfg,
+              matches: tuple_matches(code, cfg)
             }
 
             function_facts(acc, fun)
@@ -637,7 +643,8 @@ defmodule Argus.Extractors.TermFlow do
 
   # ── What an instruction writes ───────────────────────────────────────
 
-  defp new_result, do: %{writes: [], objs: [], read_objs: [], loads: [], unseen: MapSet.new()}
+  defp new_result,
+    do: %{writes: [], objs: [], read_objs: [], loads: [], shapes: [], unseen: MapSet.new()}
 
   defp evaluate(idx, fun, state) do
     ctx = %{idx: idx, fun: fun, state: state}
@@ -716,7 +723,15 @@ defmodule Argus.Extractors.TermFlow do
 
   defp instruction(ctx, {:get_tuple_element, src, i, dst}, r) do
     sel = "{#{i}}"
-    {value, r} = load(ctx, val(ctx, src), sel, load_id(ctx, sel), r)
+    id = load_id(ctx, sel)
+    {value, r} = load(ctx, val(ctx, src), sel, id, r)
+
+    r =
+      case Map.get(ctx.fun.matches, ctx.idx) do
+        nil -> r
+        {tag, arity} -> %{r | shapes: [{id, tag, arity} | r.shapes]}
+      end
+
     write(r, dst, value)
   end
 
@@ -778,6 +793,215 @@ defmodule Argus.Extractors.TermFlow do
     do: write(r, dst, MapSet.new([{:fun, InstrId.func_id(mod, name, arity)}]))
 
   defp instruction(_ctx, _instr, r), do: r
+
+  # The shape a match gave `src` before a read of one of its elements:
+  # `{tag, arity}`, the tag "" when the match did not test it. Walks the
+  # control flow back from the read: every path reaching it must pass a
+  # match of `src` (`is_tagged_tuple`, `test_arity`, an arm of
+  # `select_tuple_arity`, a test or select of its first element) and no
+  # write of it, and the paths must agree on the arity. A walk that loops
+  # or visits more than @match_steps blocks finds nothing.
+  @match_steps 64
+
+  # The shapes of a function's tuple element loads, by instruction: worked
+  # out once, as value flow evaluates an instruction again at each pass.
+  defp tuple_matches(code, cfg) do
+    loads =
+      for idx <- 0..(tuple_size(code) - 1)//1,
+          {:get_tuple_element, src, _i, _dst} <- [elem(code, idx)],
+          do: {idx, register(src)}
+
+    case loads != [] && cfg.() do
+      %Graph{} = graph ->
+        for {idx, src} <- loads,
+            match = tuple_match(graph, code, idx, src),
+            match != nil,
+            into: %{},
+            do: {idx, match}
+
+      _ ->
+        %{}
+    end
+  end
+
+  defp tuple_match(cfg, code, idx, src) do
+    with %{} = block <- Graph.block_at(cfg, idx),
+         {match, _steps} <-
+           match_back(cfg, code, block, idx - 1, {src, nil}, {MapSet.new(), @match_steps}) do
+      match
+    else
+      _ -> nil
+    end
+  end
+
+  # Scans `block` back from `j` for what reached it. `pending` is
+  # `{reg, tag}` once a later test compared `reg` with `tag`, `{:tag, tag}`
+  # once `reg` is found to hold the first element of `src`.
+  defp match_back(_cfg, _code, _block, _j, _at, {_seen, 0}), do: {nil, 0}
+
+  defp match_back(cfg, code, block, j, {src, pending}, {seen, steps}) do
+    {first, _} = block.range
+
+    case scan_block(code, j, first, src, pending) do
+      :clobbered ->
+        {nil, steps - 1}
+
+      {:ok, pending} ->
+        seen = MapSet.put(seen, block.id)
+
+        case block.preds do
+          [] ->
+            {nil, steps - 1}
+
+          preds ->
+            {matches, steps} =
+              Enum.map_reduce(preds, steps - 1, fn {pred, kind}, steps ->
+                match_edge(cfg, code, block, {pred, kind}, {src, pending}, {seen, steps})
+              end)
+
+            {meet_matches(matches), steps}
+        end
+    end
+  end
+
+  defp scan_block(_code, j, first, _src, pending) when j < first, do: {:ok, pending}
+
+  defp scan_block(code, j, first, src, pending) do
+    instr = elem(code, j)
+
+    pending =
+      case {instr, pending} do
+        {{:get_tuple_element, from, 0, reg}, {held, tag}} when is_binary(tag) ->
+          if register(from) == src and register(reg) == held, do: {:tag, tag}, else: pending
+
+        _ ->
+          pending
+      end
+
+    cond do
+      Instr.clobbers?(instr, src) ->
+        :clobbered
+
+      testing?(pending) and Instr.clobbers?(instr, elem(pending, 0)) ->
+        scan_block(code, j - 1, first, src, nil)
+
+      true ->
+        scan_block(code, j - 1, first, src, pending)
+    end
+  end
+
+  defp testing?({held, tag}), do: held != :tag and is_binary(tag)
+  defp testing?(nil), do: false
+
+  defp match_edge(cfg, code, block, {pred, kind}, {src, pending}, {seen, steps}) do
+    if MapSet.member?(seen, pred) do
+      {nil, steps}
+    else
+      %{range: {_, last}} = from = Map.fetch!(cfg.blocks, pred)
+      back = fn j, pending -> match_back(cfg, code, from, j, {src, pending}, {seen, steps}) end
+
+      case edge_match(elem(code, last), kind, block.label, src, pending) do
+        {:match, match} -> {match, steps}
+        {:compared, reg, tag} -> back.(last - 1, {reg, tag})
+        :none -> back.(last, pending)
+        :lost -> {nil, steps}
+      end
+    end
+  end
+
+  # What the edge of kind `kind` out of `instr` says of `src`: a match of
+  # it, a comparison of a register with a tag, nothing, or that the arm
+  # cannot be told. A handler is entered with the registers the
+  # exception left, not the ones its `try` held.
+  defp edge_match(_instr, :exception, _label, _src, _pending), do: :lost
+
+  defp edge_match(
+         {:test, :is_tagged_tuple, _fail, [reg, n, {:atom, atom}]},
+         :branch_pass,
+         _label,
+         src,
+         _pending
+       )
+       when is_integer(n) and is_atom(atom) do
+    if register(reg) == src, do: {:match, {inspect(atom), to_string(n)}}, else: :none
+  end
+
+  defp edge_match({:test, :test_arity, _fail, [reg, n]}, :branch_pass, _label, src, pending)
+       when is_integer(n) do
+    if register(reg) == src, do: {:match, {pending_tag(pending), to_string(n)}}, else: :none
+  end
+
+  defp edge_match(
+         {:select_tuple_arity, reg, _fail, {:list, arms}},
+         {:select_arm, _},
+         label,
+         src,
+         pending
+       ) do
+    cond do
+      register(reg) != src ->
+        :none
+
+      match?([n] when is_integer(n), arm_values(arms, label)) ->
+        {:match, {pending_tag(pending), to_string(hd(arm_values(arms, label)))}}
+
+      true ->
+        :lost
+    end
+  end
+
+  defp edge_match({:select_val, reg, _fail, {:list, arms}}, {:select_arm, _}, label, _src, nil) do
+    case arm_values(arms, label) do
+      [{:atom, atom}] when is_atom(atom) -> {:compared, register(reg), inspect(atom)}
+      _ -> :none
+    end
+  end
+
+  defp edge_match(
+         {:test, :is_eq_exact, _fail, [reg, {:atom, atom}]},
+         :branch_pass,
+         _label,
+         _src,
+         nil
+       )
+       when is_atom(atom),
+       do: {:compared, register(reg), inspect(atom)}
+
+  defp edge_match(
+         {:test, :is_eq_exact, _fail, [{:atom, atom}, reg]},
+         :branch_pass,
+         _label,
+         _src,
+         nil
+       )
+       when is_atom(atom),
+       do: {:compared, register(reg), inspect(atom)}
+
+  defp edge_match(_instr, _kind, _label, _src, _pending), do: :none
+
+  defp pending_tag({:tag, tag}), do: tag
+  defp pending_tag(_pending), do: ""
+
+  # The values of a select's arms that jump to `label`.
+  defp arm_values(arms, label) do
+    arms
+    |> Enum.chunk_every(2)
+    |> Enum.flat_map(fn
+      [value, {:f, ^label}] -> [value]
+      _ -> []
+    end)
+  end
+
+  defp meet_matches(matches) do
+    case Enum.uniq(matches) do
+      [match] -> match
+      many -> if nil in many, do: nil, else: meet_tags(many)
+    end
+  end
+
+  defp meet_tags([{_, n} | _] = matches) do
+    if Enum.all?(matches, &match?({_, ^n}, &1)), do: {"", n}, else: nil
+  end
 
   defp bif(_ctx, :self, [], dst, r), do: write(r, dst, MapSet.new([:self]))
 
@@ -2269,9 +2493,17 @@ defmodule Argus.Extractors.TermFlow do
     end
   end
 
-  # The loads an evaluation made, and what its unknown-key reads could not
-  # see (`load/5`), escaped at this instruction.
+  # The loads an evaluation made, the shapes a match gave their tuples,
+  # and what its unknown-key reads could not see (`load/5`), escaped at
+  # this instruction.
   defp emit_loads(facts, at, r) do
+    loaded = MapSet.new(r.loads, fn {id, _sel, _token} -> id end)
+
+    facts =
+      for {id, tag, arity} <- r.shapes, MapSet.member?(loaded, id), reduce: facts do
+        acc -> add_fact(acc, :value_load_shape, [id, tag, arity])
+      end
+
     r.loads
     |> Enum.reduce(facts, fn {id, sel, token}, inner ->
       sources(inner, at, :value_load, [at.fun.func_id, id, sel], MapSet.new([token]))

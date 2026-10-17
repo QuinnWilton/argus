@@ -1369,6 +1369,11 @@
 .decl value_load(func: symbol, load: symbol, sel: symbol, src_kind: symbol, src: symbol) mutable
 .input value_load
 
+// The tuple element load `load` runs only once a match established its source a tuple of `arity` elements, tagged `tag`.
+//
+.decl value_load_shape(load: symbol, tag: symbol, arity: symbol) mutable
+.input value_load_shape
+
 // A term containing a source, identified by its construction instruction. Includes maps, tuples, lists, records, and calls with known result shapes such as process starts or `Map.put/3`.
 //
 .decl value_object(func: symbol, obj: symbol, shape: symbol, tag: symbol, arity: symbol) mutable

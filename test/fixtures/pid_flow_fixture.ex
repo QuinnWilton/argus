@@ -1064,6 +1064,52 @@ defmodule Argus.Test.Fixtures.PidFlow do
     end
   end
 
+  defmodule Matches do
+    @moduledoc """
+    A helper answering `{:cont, peer}`, `{:halt, peer}` or `{:halt, peer,
+    reason}`, a different peer in each. A caller matching `{:cont, peer}`
+    with its tag (`tagged/1`, an `is_tagged_tuple`) reads the first peer
+    alone; one telling the tuples apart by their arity first
+    (`selected/1`, a `select_tuple_arity`) reads the pairs' peers, not the
+    triple's. Read from every tuple, either call would reach all three.
+    """
+    alias Argus.Test.Fixtures.PidFlow.{TargetA, TargetB, Worker}
+
+    def step(0), do: go()
+    def step(1), do: stop()
+    def step(2), do: fail()
+
+    def go do
+      {:ok, peer} = TargetA.start_link()
+      {:cont, peer}
+    end
+
+    def stop do
+      {:ok, peer} = TargetB.start_link()
+      {:halt, peer}
+    end
+
+    def fail do
+      {:ok, peer} = Worker.start_link(:matches)
+      {:halt, peer, :failed}
+    end
+
+    def tagged(n) do
+      case step(n) do
+        {:cont, peer} -> GenServer.call(peer, :ping)
+        _ -> :done
+      end
+    end
+
+    def selected(n) do
+      case step(n) do
+        {:cont, peer} -> GenServer.call(peer, :ping)
+        {:halt, peer} -> GenServer.cast(peer, :stop)
+        {:halt, peer, _reason} -> GenServer.cast(peer, :stop)
+      end
+    end
+  end
+
   defmodule Nested do
     @moduledoc "Keeps its peer three terms deep, built in one function and read out in another."
     alias Argus.Test.Fixtures.PidFlow.TargetA

@@ -69,6 +69,10 @@ registries, replies and dictionary contents across these function summaries.
 
 `value_arg`, `value_return` and `value_result` connect parameters and returns.
 `value_object`, `value_field`, `value_base`, `value_sets` and `value_load` describe containers.
+A tuple element load runs only once its match has passed: `value_load_shape`
+gives the arity and, when tested, the tag that every path to it matched, and
+points-to reads such a load from the tuples that fit it alone. A tuple whose
+tag or arity is not known fits any match.
 `process_start` and `process_{call,message,send,signal,register}_source`
 describe process operations. Table, dictionary and remote-PID
 relations expose their respective operations. Exact columns and consumers are

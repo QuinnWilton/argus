@@ -305,6 +305,21 @@ defmodule Argus.Extractors.TermFlowTest do
       assert Enum.any?(f.value_base, &match?(["Relay:handle_cast/2", ^cons, "load", _], &1))
     end
 
+    test "a tuple element read after a match carries the shape the match tested" do
+      f = facts([F.Matches])
+      shapes = for [load, tag, arity] <- f.value_load_shape, do: {load, tag, arity}
+
+      # is_tagged_tuple tests the tag and the arity at once...
+      assert Enum.any?(shapes, &match?({"Matches:tagged/1#" <> _, ":cont", "2"}, &1))
+      # ...select_tuple_arity the arity alone, each arm its own.
+      assert Enum.any?(shapes, &match?({"Matches:selected/1#" <> _, "", "2"}, &1))
+      assert Enum.any?(shapes, &match?({"Matches:selected/1#" <> _, "", "3"}, &1))
+
+      for {"Matches:" <> _ = load, _tag, _arity} <- shapes do
+        assert Enum.any?(f.value_load, &match?([_, ^load | _], &1))
+      end
+    end
+
     test "a message tuple carries the pid in its field" do
       f = facts([F.Hub])
       [msg] = for ["Hub:subscribe/1", o, "tuple", ":subscribe", "2"] <- f.value_object, do: o

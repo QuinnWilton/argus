@@ -232,7 +232,34 @@ source_pts(f, "load", l, x) :- load_base(f, l, sel, o), reads_field(o, sel, x).
 // loads.
 .decl load_base(func: symbol, load: symbol, sel: symbol, obj: symbol)
 
-load_base(f, l, sel, o) :- value_load(f, l, sel, bk, bs), source_pts(f, bk, bs, o).
+load_base(f, l, sel, o) :- value_load(f, l, sel, bk, bs), source_pts(f, bk, bs, o), !shaped_load(l).
+
+// A tuple element read past a match (value_load_shape) reads the tuples
+// the match fits alone: `{:ok, x}` is no `{:error, e}`, a reply triple no
+// `{:noreply, state}`. Read from every tuple its source points to, one
+// call's `{:cont, socket}` holds what another's `{:halt, reply, socket}`
+// holds there, and a cycle through them can join every term's fields
+// (Phoenix LiveView's exact stage held 566,000 field rows; 125,000 so).
+load_base(f, l, sel, o) :-
+  value_load(f, l, sel, bk, bs),
+  value_load_shape(l, tag, n),
+  source_pts(f, bk, bs, o),
+  fits_match(o, tag, n).
+
+.decl shaped_load(load: symbol)
+
+shaped_load(l) :- value_load_shape(l, _, _).
+
+// A tuple a match of `tag` and `arity` may have matched: one of that
+// arity, or of an arity not known (0), whose tag is that one or not
+// known ("").
+.decl fits_match(obj: symbol, tag: symbol, arity: symbol)
+
+fits_match(o, tag, n) :-
+  value_load_shape(_, tag, n),
+  term_shape(o, "tuple", t, a),
+  (a = n ; a = "0"),
+  (t = tag ; t = "" ; tag = "").
 
 // A field read sees the named field and unknown-key writes. Unknown-key reads see only
 // unknown-key writes, avoiding merges of every struct field. Derive results only for
@@ -777,9 +804,9 @@ process_call(f, id, id, kind, p) :-
 // A field read from a source other than a parameter.
 process_call(f, id, id, kind, p) :-
   pid_use(id, f, kind, "load", l),
-  value_load(f, l, sel, bk, bs),
+  value_load(f, l, _, bk, _),
   bk != "param",
-  source_pts(f, bk, bs, o),
+  load_base(f, l, sel, o),
   reads_field(o, sel, p),
   process(p).
 
@@ -793,6 +820,7 @@ process_call(f, id, id, kind, p) :-
   pid_use(id, f, kind, "load", l),
   value_load(f, l, sel, "param", k),
   entry_pts(f, k, o),
+  load_base(f, l, sel, o),
   reads_field(o, sel, p),
   process(p).
 

@@ -63,6 +63,7 @@ defmodule Argus.Clientlib.ProcessesTest do
     PidFlow.BuildUserA,
     PidFlow.BuildUserB,
     PidFlow.Shapes,
+    PidFlow.Matches,
     PidFlow.Nested
   ]
 
@@ -254,6 +255,24 @@ defmodule Argus.Clientlib.ProcessesTest do
     # ...and the tuple handed to the same parameter adds no element to it.
     refute Enum.any?(stamped, &match?({_, "{1}", _}, &1))
     refute Enum.any?(stamped, &match?({_, _, "start Shapes:from_tuple/0"}, &1))
+  end
+
+  test "an element a match reads is one of the tuples the match fits", ctx do
+    r = solve(ctx, ~w(process_call))
+
+    reached = fn f ->
+      for [^f, _a, _s, kind, p] <- unsited(r["process_call"]), do: {kind, p}
+    end
+
+    # Matched with its tag, {:cont, peer} holds go/0's peer alone.
+    assert reached.("Matches:tagged/1") == [{"call", "start Matches:go/0"}]
+
+    # Matched by its arity, a pair is no triple: the call on a pair's
+    # element reaches no peer the triple holds there.
+    selected = reached.("Matches:selected/1")
+    assert {"call", "start Matches:go/0"} in selected
+    assert {"cast", "start Matches:fail/0"} in selected
+    refute {"call", "start Matches:fail/0"} in selected
   end
 
   test "a pid held three terms deep is followed out of another function's term", ctx do

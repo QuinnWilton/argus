@@ -236,6 +236,19 @@ defmodule Argus.Schema.Processes do
         """
       },
       %{
+        name: :value_load_shape,
+        layer: 2,
+        fields: [
+          {:load, :symbol, "the load, as in value_load"},
+          {:tag, :symbol, "the tag the match tested, or \"\" when it tested the arity alone"},
+          {:arity, :symbol, "the arity the match tested"}
+        ],
+        doc: """
+        The tuple element load `load` runs only once a match established its \
+        source a tuple of `arity` elements, tagged `tag`.
+        """
+      },
+      %{
         name: :process_remote_source,
         layer: 2,
         fields: [
