@@ -5,8 +5,9 @@ defmodule Argus.Graph.Solve do
     * `stage({program, :stage0})` — the call graph (`priv/dl/stage0.dl`),
       derived once for every analysis that reads it.
     * `stage({program, :points_to})` — process points-to, the exact
-      program or, when it outgrows its budget, the bounded one
-      (`Argus.Stages`), over stage 0's call graph.
+      program or, when it outgrows its budget, the bounded one, or the
+      coarse one when that does too (`Argus.Stages`), over stage 0's
+      call graph.
     * `stage_output({program, stage, file})` — the digest of one file a
       stage wrote: the second and third cutoff seams. An edit that moves
       instructions but no call leaves the call graph byte-identical, and
@@ -60,11 +61,18 @@ defmodule Argus.Graph.Solve do
   end
 
   # The exact program, then the bounded one over the same facts when the
-  # exact fixpoint outgrew its budget; the stage is the last one's.
+  # exact fixpoint outgrew its budget, and the coarse one when the
+  # bounded one did too; the stage is the last one's.
   defp points_to(db, program) do
     {:ok, exact} = Programs.rules_path(:points_to)
     {:ok, bounded} = Programs.rules_path(:points_to_bounded)
-    programs = %{exact => :points_to, bounded => :points_to_bounded}
+    {:ok, coarse} = Programs.rules_path(:points_to_coarse)
+
+    programs = %{
+      exact => :points_to,
+      bounded => :points_to_bounded,
+      coarse => :points_to_coarse
+    }
 
     solve = fn rules_path, _previous ->
       with {:ok, outputs} <- solve_program(db, program, Map.fetch!(programs, rules_path)),
@@ -74,7 +82,7 @@ defmodule Argus.Graph.Solve do
       end
     end
 
-    case Stages.points_to(solve, nil, exact, bounded) do
+    case Stages.points_to(solve, nil, exact, bounded, coarse) do
       {:ok, outputs, mode} -> {:ok, %{outputs: outputs, mode: mode}}
       {:error, reason, _outputs} -> Stages.failed(reason)
     end

@@ -50,11 +50,11 @@ defmodule Argus.Findings do
     `degraded` entry naming the analysis and why, while every other
     analysis still runs and reports. Stage 0 failing grounds every
     analysis, so each gets that entry; the points-to stage failing
-    (past `:timeout`, or past its row budget even bounded) grounds
-    the analyses that read it. A points-to stage that runs bounded is no
-    failure: which stage runs is a function of the facts, not of time
-    (`Argus.Analysis.Extraction.derive_points_to/2`), and a warning says
-    so.
+    (past `:timeout`, or past its row budget even coarse) grounds
+    the analyses that read it. A points-to stage that runs bounded or
+    coarse is no failure: which stage runs is a function of the facts,
+    not of time (`Argus.Analysis.Extraction.derive_points_to/2`), and a
+    warning says so.
   - A finding builder raising on a row it did not expect → that row is
     reported with its raw columns (a generic finding, or a generic frame
     for an evidence row, whose help says so) and the analysis gets a

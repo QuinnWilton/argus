@@ -103,7 +103,12 @@ defmodule Argus.Debug.Program do
           [program, "rules/stage0.dl"]
 
         name in Argus.Analysis.points_to_relations() ->
-          [program, "rules/points_to.dl", "rules/points_to_bounded.dl"]
+          [
+            program,
+            "rules/points_to.dl",
+            "rules/points_to_bounded.dl",
+            "rules/points_to_coarse.dl"
+          ]
 
         true ->
           [program]

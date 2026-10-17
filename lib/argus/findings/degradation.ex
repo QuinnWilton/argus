@@ -54,7 +54,7 @@ defmodule Argus.Findings.Degradation do
       end)
 
     "The #{name} analysis did not run: the process points-to it reads " <>
-      "(priv/dl/points_to.dl) outgrew its budget even bounded (#{reached})."
+      "(priv/dl/points_to.dl) outgrew its budget even coarse (#{reached})."
   end
 
   def detail(name, {:points_to, reason}) do

@@ -3,8 +3,9 @@ defmodule Argus.Analysis.PointsToBudgetTest do
   Which points-to stage runs is a function of the facts
   (`Argus.Analysis.Extraction.derive_points_to/2`): the exact stage
   within its row budget (`priv/dl/points_to.dl`'s `points_to_budget`,
-  counted over the finished fixpoint), the bounded one past it, and a
-  failure, never a switch of stage, when the engine runs out of time.
+  counted over the finished fixpoint), the bounded one past it, the
+  coarse one past even that, and a failure, never a switch of stage,
+  when the engine runs out of time.
 
   The programs are TermFlow's summaries written by hand: a merge
   function `merge/1` whose parameter every caller hands a term holding
@@ -111,13 +112,19 @@ defmodule Argus.Analysis.PointsToBudgetTest do
         "clientlib/pervasive.dl" => &String.replace(&1, "n > 1000,", "n > 20,")
       })
 
+    paths(rules)
+  end
+
+  defp paths(rules) do
     [
       rules_path: Path.join(rules, "points_to.dl"),
-      bounded_rules_path: Path.join(rules, "points_to_bounded.dl")
+      bounded_rules_path: Path.join(rules, "points_to_bounded.dl"),
+      coarse_rules_path: Path.join(rules, "points_to_coarse.dl")
     ]
   end
 
-  # Both stages held to a budget every program here outgrows.
+  # Every stage held to a budget every program here outgrows but the
+  # coarse one, whose source_pts and field_pts hold no leaf.
   defp tiny_budget(text), do: String.replace(text, "500000", "10")
 
   # The exact stage says it outgrew its budget, whatever it found; the
@@ -224,24 +231,41 @@ defmodule Argus.Analysis.PointsToBudgetTest do
     assert log =~ "did not finish within the solve's timeout"
   end
 
-  test "a stage that outgrows the budget even bounded fails and stages nothing",
+  test "a program that outgrows the budget even bounded runs coarse, every leaf coarsely",
        %{tmp_dir: tmp} do
-    rules = rules_copy!(tmp, %{"points_to.dl" => &tiny_budget/1})
+    dir = merged_heap!(Path.join(tmp, "over-bounded"), @within)
+    copies = paths(rules_copy!(tmp, %{"points_to.dl" => &tiny_budget/1}))
 
-    copies = [
-      rules_path: Path.join(rules, "points_to.dl"),
-      bounded_rules_path: Path.join(rules, "points_to_bounded.dl")
-    ]
+    log = capture_log(fn -> assert :ok = Analysis.derive_points_to(dir, copies) end)
+
+    assert log =~ "and so did the bounded one (source_pts reached"
+    assert log =~ "ran it coarse, resolving every leaf coarsely (1)"
+    assert rows(dir, "points_to_mode") == [["bounded"]]
+
+    # The coarse pass finds the targets the exact stage would.
+    {callers, _} = @within
+    assert length(rows(dir, "process_call")) == callers
+    assert rows(dir, "call_site_target") == [["k0", "M:merge/1", "call", @proc]]
+  end
+
+  test "a stage that outgrows the budget even coarse fails and stages nothing",
+       %{tmp_dir: tmp} do
+    copies =
+      paths(
+        rules_copy!(tmp, %{
+          "points_to.dl" => &tiny_budget/1,
+          "points_to_coarse.dl" =>
+            &(&1 <> ~s|\npoints_to_overflow("field_pts", 11, 10) :- stage_mode("coarse").\n|)
+        })
+      )
 
     log =
-      fails_as_found!(tmp, "over-bounded", fn dir ->
-        assert {:error, {:points_to, {:over_budget, over}}} =
+      fails_as_found!(tmp, "over-coarse", fn dir ->
+        assert {:error, {:points_to, {:over_budget, [{"field_pts", 11, 10}]}}} =
                  Analysis.derive_points_to(dir, copies)
-
-        assert Enum.any?(over, &match?({"source_pts", rows, 10} when rows >= 10, &1))
       end)
 
-    assert log =~ "outgrew its budget even bounded"
+    assert log =~ "outgrew its budget even coarse"
   end
 
   describe "through a store" do

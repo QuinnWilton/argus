@@ -371,16 +371,17 @@ defmodule Argus.FlowLog do
   end
 
   @doc """
-  argus's own programs: the two shared stages' (three files: the
-  bounded points-to program runs in the exact one's place) and every
-  built-in analysis's.
+  argus's own programs: the two shared stages' (four files: the bounded
+  points-to program runs in the exact one's place, and the coarse one in
+  the bounded one's) and every built-in analysis's.
   """
   @spec builtin_programs() :: [Path.t()]
   def builtin_programs do
     stages = [
       Argus.Analysis.stage0_rules_path(),
       Argus.Analysis.points_to_rules_path(),
-      Argus.Analysis.points_to_bounded_rules_path()
+      Argus.Analysis.points_to_bounded_rules_path(),
+      Argus.Analysis.points_to_coarse_rules_path()
     ]
 
     analyses =

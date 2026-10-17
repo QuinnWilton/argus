@@ -2,10 +2,11 @@ defmodule Argus.Graph.Programs do
   @moduledoc """
   The Datalog programs the graph solves, as a solve reads them.
 
-  A program is the call graph's (`:stage0`), the points-to stage's two
-  (`:points_to`, and `:points_to_bounded`, which it runs in place of the
-  exact one when that outgrows its budget), a built-in analysis's (its
-  name), or a program of a caller's own (`{:custom, path}`).
+  A program is the call graph's (`:stage0`), the points-to stage's three
+  (`:points_to`; `:points_to_bounded`, which it runs in place of the
+  exact one when that outgrows its budget; and `:points_to_coarse`, in
+  place of the bounded one), a built-in analysis's (its name), or a
+  program of a caller's own (`{:custom, path}`).
 
     * `program_files(program)` — the program's files, each by the name
       it is included by, its path under its tree and its content's
@@ -37,13 +38,20 @@ defmodule Argus.Graph.Programs do
   alias Roux.Runtime
 
   @typedoc "A program the graph solves."
-  @type program :: :stage0 | :points_to | :points_to_bounded | atom() | {:custom, Path.t()}
+  @type program ::
+          :stage0
+          | :points_to
+          | :points_to_bounded
+          | :points_to_coarse
+          | atom()
+          | {:custom, Path.t()}
 
   @doc "The file a program's solve runs, or an error for an unknown analysis."
   @spec rules_path(program()) :: {:ok, Path.t()} | {:error, term()}
   def rules_path(:stage0), do: {:ok, Argus.Analysis.stage0_rules_path()}
   def rules_path(:points_to), do: {:ok, Argus.Analysis.points_to_rules_path()}
   def rules_path(:points_to_bounded), do: {:ok, Argus.Analysis.points_to_bounded_rules_path()}
+  def rules_path(:points_to_coarse), do: {:ok, Argus.Analysis.points_to_coarse_rules_path()}
   def rules_path({:custom, path}), do: {:ok, Path.expand(path)}
   def rules_path(analysis) when is_atom(analysis), do: Catalog.rules_path(analysis)
 
@@ -119,8 +127,9 @@ defmodule Argus.Graph.Programs do
 
   defquery :program_files, key: program do
     # Which file an analysis's program is: its module's to say.
-    if is_atom(program) and program not in [:stage0, :points_to, :points_to_bounded],
-      do: _ = Runtime.query(db, :analysis_code, program)
+    if is_atom(program) and
+         program not in [:stage0, :points_to, :points_to_bounded, :points_to_coarse],
+       do: _ = Runtime.query(db, :analysis_code, program)
 
     with {:ok, path} <- rules_path(program) do
       tree = tree(program)

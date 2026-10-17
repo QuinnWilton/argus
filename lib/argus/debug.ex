@@ -151,7 +151,8 @@ defmodule Argus.Debug do
         facts,
         [
           rules_path: Path.join(root, "rules/points_to.dl"),
-          bounded_rules_path: Path.join(root, "rules/points_to_bounded.dl")
+          bounded_rules_path: Path.join(root, "rules/points_to_bounded.dl"),
+          coarse_rules_path: Path.join(root, "rules/points_to_coarse.dl")
         ] ++ opts
       ),
       "derive points-to"

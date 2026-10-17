@@ -20,8 +20,10 @@
 // runs points_to_bounded.dl instead (Argus.Analysis.Extraction.
 // derive_points_to/2): this program with stage_mode("bounded"), which
 // resolves the leaves a coarse pass finds pervasive with that pass
-// (clientlib/pervasive.dl) and every other one as here. Both write the
-// same relations, and points_to_mode says which one wrote them.
+// (clientlib/pervasive.dl) and every other one as here; and one that
+// outgrows even that runs points_to_coarse.dl, which resolves every leaf
+// with it. All three write the same relations, and points_to_mode says
+// whether the exact one wrote them.
 
 .include "clientlib/imports.dl"
 .include "clientlib/behaviours.dl"
@@ -52,9 +54,9 @@ stage_mode("exact").
 // it is a function of the program and its facts, not of how fast the
 // engine ran. points_to_overflow names the relations that reached it, and
 // the caller runs the bounded stage in their place. The bounded stage is
-// held to the same budget (it includes this file), and a program that
-// outgrows even that has no points-to: the analyses that read it
-// degrade.
+// held to the same budget (it includes this file), and the coarse stage,
+// run when the bounded one outgrows it, too: a program that outgrows
+// even that has no points-to, and the analyses that read it degrade.
 
 .decl points_to_budget(rows: number)
 

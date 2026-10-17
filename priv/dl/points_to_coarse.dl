@@ -1,0 +1,16 @@
+// The points-to stage, coarse: what Argus.Analysis.Extraction runs when
+// even the bounded stage (points_to_bounded.dl) outgrows its budget. The
+// same program, held to the same budget, with every leaf resolved by the
+// coarse pass (clientlib/pervasive.dl), pervasive or not. The bounded
+// stage outgrows its budget where the program's terms merge into each
+// other, each holding every other's fields (ex_mcp's client and transport
+// states, through the helpers both hand them to), whatever leaves they
+// hold; the coarse pass follows the leaves alone, a row per source a leaf
+// reaches, so its rows grow with the sources and the leaves, never with
+// the terms. It writes the same relations, points_to_mode saying
+// "bounded", and every leaf as resolved coarsely (pervasive.csv).
+
+.include "points_to.dl"
+
+stage_mode("bounded").
+stage_mode("coarse").

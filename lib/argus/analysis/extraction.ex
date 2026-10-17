@@ -178,7 +178,16 @@ defmodule Argus.Analysis.Extraction do
   pays for its exact fixpoint once before the bounded one runs, within
   the solve's timeout.
 
-  A stage that outgrows the budget even bounded, or does not finish
+  A bounded stage that outgrows the budget too runs coarse
+  (`points_to_coarse_rules_path/0`): every leaf resolved by the coarse
+  pass, whose rows grow with the program's sources and leaves rather
+  than with its terms. Where the terms merge into each other (ex_mcp's
+  client and transport states, each holding every other's fields), the
+  bounded stage outgrows the budget whichever leaves it resolves
+  exactly; the coarse one answers for every leaf what the bounded one
+  answers for a pervasive one.
+
+  A stage that outgrows the budget even coarse, or does not finish
   within `:timeout`, fails with a warning, `{:error,
   {:points_to, reason}}`, and the analyses that read it degrade
   (`Argus.Findings.run/2`): time can fail the stage, never change what
@@ -191,8 +200,8 @@ defmodule Argus.Analysis.Extraction do
   among the facts. Idempotent, and safe beside another derivation into
   the same directory.
 
-  `:rules_path` and `:bounded_rules_path` select copied stage programs for a
-  debug reproduction. Both default to the shipped programs. The same budget
+  `:rules_path`, `:bounded_rules_path` and `:coarse_rules_path` select copied
+  stage programs for a debug reproduction. All default to the shipped programs. The same budget
   policy and publication contract apply to those copies.
   """
   @spec derive_points_to(Path.t(), keyword()) :: :ok | {:error, term()}
@@ -211,7 +220,8 @@ defmodule Argus.Analysis.Extraction do
              solve,
              {facts_dir, []},
              Keyword.get(opts, :rules_path, points_to_rules_path()),
-             Keyword.get(opts, :bounded_rules_path, points_to_bounded_rules_path())
+             Keyword.get(opts, :bounded_rules_path, points_to_bounded_rules_path()),
+             Keyword.get(opts, :coarse_rules_path, points_to_coarse_rules_path())
            ) do
         {:ok, {_dir, [aside | _] = asides}, _mode} ->
           {publish(aside, facts_dir, @points_to_relations), asides}
@@ -239,6 +249,15 @@ defmodule Argus.Analysis.Extraction do
   """
   @spec points_to_bounded_rules_path() :: Path.t()
   def points_to_bounded_rules_path, do: Argus.Dl.path("points_to_bounded.dl")
+
+  @doc """
+  The path to the coarse points-to stage's rules file: what
+  `derive_points_to/2` runs when even the bounded stage outgrows its
+  budget. A consumer that keys the stage on its programs keys it on this
+  one too.
+  """
+  @spec points_to_coarse_rules_path() :: Path.t()
+  def points_to_coarse_rules_path, do: Argus.Dl.path("points_to_coarse.dl")
 
   @doc "The relations the points-to stage writes."
   @spec points_to_relations() :: [String.t()]

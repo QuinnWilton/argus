@@ -6,7 +6,9 @@
 // using coarse targets for messages/replies involving pervasive processes. Coarse rows
 // over-approximate exact results.
 // The exact-stage budget, not coarse spread, triggers fallback. In exact mode these
-// rules produce no rows. Included by points_to.dl after processes.dl.
+// rules produce no rows; in coarse mode (points_to_coarse.dl), which runs when even the
+// bounded stage exceeds its budget, every leaf is pervasive. Included by points_to.dl
+// after processes.dl.
 
 .decl stage_mode(mode: symbol)
 
@@ -502,6 +504,9 @@ pid_sources(0) :- stage_mode("bounded"), !pid_source_rows(_).
 .decl pervasive(x: symbol)
 
 pervasive(x) :- leaf_spread(x, n), pid_sources(t), n > 1000, n * 100 > t.
+
+// The coarse stage (points_to_coarse.dl) resolves every leaf so.
+pervasive(x) :- stage_mode("coarse"), leaf(x).
 
 // A pervasive leaf's targets and names are the coarse pass's.
 process_call(f, a, id, kind, p) :- coarse_use(f, a, id, kind, p), pervasive(p).

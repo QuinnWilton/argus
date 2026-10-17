@@ -278,6 +278,10 @@ defmodule Argus.Analysis do
   @spec points_to_bounded_rules_path() :: Path.t()
   defdelegate points_to_bounded_rules_path(), to: Extraction
 
+  @doc "The path to the coarse points-to stage's rules file."
+  @spec points_to_coarse_rules_path() :: Path.t()
+  defdelegate points_to_coarse_rules_path(), to: Extraction
+
   @doc "The relations the points-to stage writes."
   @spec points_to_relations() :: [String.t()]
   defdelegate points_to_relations(), to: Extraction
