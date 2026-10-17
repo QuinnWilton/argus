@@ -193,7 +193,14 @@ source_pts(f, "result", c, i) :-
   kept_instance(c, i),
   !pervasive(i).
 
-source_pts(f, "result", c, cat("result ", c)) :- kept_fresh(c, f, x), start_object(x, _).
+// A kept `{:ok, pid}` is a term only while it holds its instance: one the
+// bounded stage resolves coarsely (pervasive.dl) is left to that pass, as
+// the field below is.
+source_pts(f, "result", c, cat("result ", c)) :-
+  kept_fresh(c, f, x),
+  start_object(x, _),
+  kept_instance(c, i),
+  !pervasive(i).
 source_pts(f, "result", c, i) :- built_call(c, f, _, _, i), holds_leaf(i).
 source_pts(f, "name", n, p) :- reads_name(f, n), named_pid(n, p), !pervasive(p).
 source_pts(f, "dict", k, x) :- dict_read(f, k, g, sk, s), source_pts(g, sk, s, x).

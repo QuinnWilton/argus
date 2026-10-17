@@ -48,6 +48,15 @@ defmodule Argus.Clientlib.PervasiveTest do
     :ok = Analysis.derive_stage0(facts_dir)
 
     exact = solve(dir, facts_dir, "exact", Analysis.points_to_rules_path())
+
+    # The exact stage's terms: what each source points to.
+    exact_terms =
+      program(dir, facts_dir, "exact_terms", """
+      .include "#{Analysis.points_to_rules_path()}"
+
+      .output source_pts
+      """)
+
     bounded = solve(dir, facts_dir, "bounded", Analysis.points_to_bounded_rules_path())
 
     # The bounded stage with the leaves TargetA's instances made
@@ -60,12 +69,14 @@ defmodule Argus.Clientlib.PervasiveTest do
         m = "Argus.Test.Fixtures.PidFlow.TargetA".
 
       .output coarse_use
+      .output source_pts
       """)
 
     %{
       dir: dir,
       facts_dir: facts_dir,
       exact: exact,
+      exact_terms: exact_terms,
       bounded: bounded,
       forced: forced
     }
@@ -110,6 +121,22 @@ defmodule Argus.Clientlib.PervasiveTest do
     for row <- ctx.exact["process_call"] do
       assert row in coarse, "the coarse pass misses #{inspect(row)}"
     end
+  end
+
+  test "a kept start of a pervasive process is no term: the coarse pass holds it", ctx do
+    pervasive = MapSet.new(ctx.forced["pervasive"], fn [p] -> p end)
+
+    # The {:ok, pid} each kept start of a pervasive process answers.
+    wrappers = for "start " <> c <- pervasive, do: "result " <> c
+    assert wrappers != []
+
+    terms = fn results -> MapSet.new(results["source_pts"], &List.last/1) end
+
+    # A term the exact stage follows...
+    assert Enum.any?(wrappers, &MapSet.member?(terms.(ctx.exact_terms), &1))
+    # ...and, once its process is pervasive, none: holding nothing exact, it
+    # would only make every term it is put in one to follow.
+    refute Enum.any?(wrappers, &MapSet.member?(terms.(ctx.forced), &1))
   end
 
   test "a leaf made pervasive keeps its targets, and every other leaf keeps its own", ctx do
