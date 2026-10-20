@@ -93,7 +93,9 @@ warning. Runtime callbacks and known internal values are treated differently fro
 library entry points. So are callbacks the build runs on what a party already running
 code in it wrote: an EEx, LiveView tag or Phoenix template engine's, handed a template's
 source at compile time; a Mix SCM's, task's or compiler's, handed a dependency's
-metadata that its publisher's code is compiled beside; and the hidden helpers such a module's callbacks call. None of them roots the
+metadata that its publisher's code is compiled beside; a compiler hook
+(`@on_definition`, `@after_compile`, `@after_verify`), handed the module being
+compiled; and the hidden helpers such a module's callbacks call. None of them roots the
 export reach a code sink is reported from either. An engine's runtime helpers stay
 entry points, and so does a documented function that compiles a template (older
 LiveView's `TagEngine.compile/2`). Priors may lower this fallback to info. The finding

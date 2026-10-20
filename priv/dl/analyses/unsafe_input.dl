@@ -916,6 +916,20 @@ build_callback(m, n, a) :-
   build_behaviour_callback(b, n, a),
   function_def(_, m, n, a, _).
 
+// A compiler hook, which the compiler calls on the module being compiled: an
+// `@on_definition` hook, handed each definition's body (a story module's own code, in
+// phoenix_storybook's validators), and an `@after_compile` or `@after_verify` one.
+// (`__before_compile__` is a macro, which no export reaches anyway.)
+build_callback(m, n, a) :-
+  compiler_hook(n, a),
+  function_def(_, m, n, a, _).
+
+.decl compiler_hook(name: symbol, arity: number)
+
+compiler_hook("on_definition", 6).
+compiler_hook("__after_compile__", 2).
+compiler_hook("__after_verify__", 1).
+
 .decl build_behaviour_callback(behaviour: symbol, name: symbol, arity: number)
 
 build_behaviour_callback("EEx.Engine", "init", 1).

@@ -85,4 +85,19 @@ defmodule Argus.Test.Fixtures.BuildCallback do
     def parse_managers(line), do: line |> String.split(",") |> Enum.map(&String.to_atom/1)
   end
 
+  defmodule DefinitionHook do
+    @moduledoc """
+    phoenix_storybook's validators: an `@on_definition` hook that evaluates
+    a definition's body, the developer's own code, as the module compiles.
+    """
+    def on_definition(env, :def, :folder_name, [], _guards, body) do
+      {[do: term], _} = Code.eval_quoted(body, [], env)
+      term
+    end
+
+    def on_definition(_env, _kind, _name, _args, _guards, _body), do: :ok
+
+    # A runtime function evaluating what its caller hands it still is a way in.
+    def eval(quoted), do: Code.eval_quoted(quoted)
+  end
 end

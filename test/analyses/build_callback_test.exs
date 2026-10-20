@@ -31,6 +31,18 @@ defmodule Argus.Analyses.BuildCallbackTest do
     assert atom_sinks([B.SCM]) == []
   end
 
+  test "a compiler hook's evaluation of a definition is no way in; a runtime eval is" do
+    assert {:ok, r} = Memo.analyze([B.DefinitionHook], :unsafe_input)
+
+    code =
+      for f <- Argus.Findings.build(Argus.Analyses.UnsafeInput, r),
+          f.title =~ "code execution",
+          uniq: true,
+          do: f.mfa
+
+    assert code == [{B.DefinitionHook, :eval, 1}]
+  end
+
   test "a hidden helper of a build behaviour's module, which its callback calls, is no way in" do
     assert atom_sinks([B.HiddenSCM]) == []
   end
