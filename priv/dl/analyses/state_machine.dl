@@ -72,6 +72,8 @@ has_resolved_transition(mod) :-
   statem_transition(mod, _, _, to),
   to != "dynamic".
 
+has_resolved_transition(mod) :- handed_target(mod, _, _, _).
+
 // Require a transition graph with no computed targets. A dynamic target could reach any
 // state, preventing sound unreachability claims.
 .decl targets_all_known(mod: symbol)
@@ -88,6 +90,38 @@ has_dynamic_transition(mod) :-
 
 has_dynamic_transition(mod) :-
   statem_helper_transition(mod, _, "dynamic").
+
+has_dynamic_transition(mod) :- unknown_handed_target(mod, _, _).
+
+// An exported helper taking its target from a parameter may be handed any state by
+// another module.
+has_dynamic_transition(mod) :-
+  statem_target_param(mod, h, _),
+  function_def(h, mod, _, _, 1).
+
+// ── Targets a helper's callers hand it ───────────────────────────
+
+// A helper whose next_state target is its parameter (ra's `next_state(follower, State,
+// Actions)`) enters the state each local call hands it there: the calling function may
+// return that transition.
+.decl handed_target(mod: symbol, caller: symbol, callee: symbol, to: symbol)
+
+handed_target(mod, c, h, to) :-
+  statem_target_arg(mod, c, h, k, "literal", to),
+  statem_target_param(mod, h, k).
+
+// A call whose target argument no literal names: a computed one, or a parameter of a
+// function whose own callers do not choose it (a state function's event content).
+.decl unknown_handed_target(mod: symbol, caller: symbol, callee: symbol)
+
+unknown_handed_target(mod, c, h) :-
+  statem_target_arg(mod, c, h, k, "dynamic", _),
+  statem_target_param(mod, h, k).
+
+unknown_handed_target(mod, c, h) :-
+  statem_target_arg(mod, c, h, k, "param", j),
+  statem_target_param(mod, h, k),
+  !statem_target_param(mod, c, j).
 
 // Ignore graph self-loops
 //
@@ -122,6 +156,12 @@ has_way_in(mod, state) :-
   state != "stop",
   state != "dynamic",
   call_edge(c, h),
+  !state_function(mod, state, c).
+
+// A state a call hands a helper's target parameter, unless the call is that state's own.
+has_way_in(mod, state) :-
+  handed_target(mod, c, _, state),
+  state != "stop",
   !state_function(mod, state, c).
 
 // A helper with no visible caller may be called externally, so its transition remains a
@@ -172,6 +212,14 @@ has_way_out(mod, state) :-
 
 may_return_transition(mod, func, to) :-
   statem_helper_transition(mod, func, to).
+
+may_return_transition(mod, c, to) :-
+  handed_target(mod, c, h, to),
+  statem_returns_call(mod, c, h).
+
+may_return_transition(mod, c, "dynamic") :-
+  unknown_handed_target(mod, c, h),
+  statem_returns_call(mod, c, h).
 
 // An external returned call may transition anywhere. A visible non-machine module's
 // returned result is treated as keeping the state; unseen callees remain dynamic.

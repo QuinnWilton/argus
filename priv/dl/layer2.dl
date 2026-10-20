@@ -1142,6 +1142,15 @@
 .decl statem_state(mod: symbol, state: symbol, site: symbol) mutable
 .input statem_state
 
+// What a local call hands a helper in its target parameter.
+.decl statem_target_arg(mod: symbol, caller: symbol, callee: symbol, pos: symbol, kind: symbol, value: symbol) mutable
+.input statem_target_arg
+
+// A helper's `{:next_state, target, ...}` whose target is its parameter at `pos`, directly or through a helper it hands that parameter on to. Its callers name the state (`statem_target_arg`); no transition of its own is emitted.
+//
+.decl statem_target_param(mod: symbol, func: symbol, pos: symbol) mutable
+.input statem_target_param
+
 // Timeout set in a gen_statem state.
 .decl statem_timeout(mod: symbol, state: symbol, type: symbol, value: symbol) mutable
 .input statem_timeout

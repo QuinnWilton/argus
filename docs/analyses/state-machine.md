@@ -16,8 +16,11 @@ an arbitrary state. The state may be dead code or may reveal a missing transitio
 
 When the initial state cannot be read, the analysis uses a graph-based fallback.
 Helper returns and state-function recognition are conservative; a dynamic target
-suppresses unreachability claims for the module. Confirm the intended transition
-before deleting the state.
+suppresses unreachability claims for the module. A private helper that builds
+`{:next_state, target, data}` from a parameter (ra's `next_state(follower, ...)`)
+enters the states its callers hand it, through further helpers too; only a target
+taken from an event, or an exported helper another module may call, is dynamic.
+Confirm the intended transition before deleting the state.
 
 ## States with no exit
 

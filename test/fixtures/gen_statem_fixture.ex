@@ -593,3 +593,60 @@ defmodule Argus.Test.Fixtures.StatemDataFromArgs do
   @impl true
   def handle_event(:info, :tick, _state, data), do: {:keep_state, data}
 end
+
+defmodule Argus.Test.Fixtures.TargetParamStatem do
+  @moduledoc """
+  ra's shape: every transition goes through a private helper that builds
+  `{:next_state, target, data}` from the target its callers hand it, one
+  of them through a second helper. :orphan is entered by no call.
+  """
+  @behaviour :gen_statem
+
+  @impl true
+  def callback_mode, do: :state_functions
+
+  @impl true
+  def init(_args), do: {:ok, :follower, %{}}
+
+  def follower(:cast, :timeout, data), do: next_state(:candidate, data)
+
+  def candidate(:cast, :won, data), do: next_state(:leader, data)
+  def candidate(:cast, :lost, data), do: next_state(:follower, data)
+
+  def leader(:cast, :step_down, data), do: step_down(:follower, data)
+  def leader(:cast, :lost_quorum, data), do: step_down(:candidate, data)
+
+  def orphan(:cast, _event, data), do: {:keep_state, data}
+
+  defp step_down(to, data), do: next_state(to, Map.put(data, :leader, nil))
+
+  defp next_state(to, data), do: {:next_state, to, data}
+
+  @impl true
+  def terminate(_reason, _state, _data), do: :ok
+end
+
+defmodule Argus.Test.Fixtures.EventTargetStatem do
+  @moduledoc """
+  TargetParamStatem's twin whose follower hands the helper a state the
+  event names: the target is the event's, any state may be entered.
+  """
+  @behaviour :gen_statem
+
+  @impl true
+  def callback_mode, do: :state_functions
+
+  @impl true
+  def init(_args), do: {:ok, :follower, %{}}
+
+  def follower(:cast, {:goto, state}, data), do: next_state(state, data)
+
+  def candidate(:cast, :won, data), do: next_state(:follower, data)
+
+  def orphan(:cast, _event, data), do: {:keep_state, data}
+
+  defp next_state(to, data), do: {:next_state, to, data}
+
+  @impl true
+  def terminate(_reason, _state, _data), do: :ok
+end

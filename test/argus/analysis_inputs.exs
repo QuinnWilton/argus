@@ -25,7 +25,7 @@
   startup:
     ~w(added_child async_cast block_flow call_arg call_arg_forward call_edge call_site call_site_target call_tag callback_tag callback_timeout clause_call clause_event conditional_call distributed_store_op dynamic_call dynamic_child fun_built fun_handed fun_handed_to fun_ref function_def global_op global_register handle_continue_clause ignored_error_result implements_behaviour impure_call init_continues_to mailbox_writer node_operation post_start_call prior_answers prior_tooling process_call process_start recv_down recv_flush recv_pattern recv_signal recv_start remote_call result_lost rpc_call server_process site_block spawn_call start_acked started_as statem_event_clause statem_timeout sup_call supervisor supervisor_child supervisor_children_open supervisor_site sync_call sync_call_site task_handled timer_arm tooling_module trap_exit try_start unconditional_call_edge untrap_exit),
   state_machine:
-    ~w(call_edge call_site function_def prior_tooling statem_helper_transition statem_initial statem_module statem_returns_call statem_state statem_transition tail_call tooling_module),
+    ~w(call_edge call_site function_def prior_tooling statem_helper_transition statem_initial statem_module statem_returns_call statem_state statem_target_arg statem_target_param statem_transition tail_call tooling_module),
   structure:
     ~w(added_child call_edge child_spec_option child_spec_restart child_spec_type dynamic_child dynamic_child_restart function_def global_register implements_behaviour prior_tooling process_register shorthand_arg shorthand_option started_as supervisor_child supervisor_child_form supervisor_site tooling_module),
   unsafe_input:

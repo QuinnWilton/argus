@@ -39,6 +39,12 @@ defmodule Argus.Extractors.GenStatem do
   - `statem_transition(mod, from, event, to)` — state transition
   - `statem_helper_transition(mod, func, to)` — a transition a function
     that is not a state function returns on a state's behalf
+  - `statem_target_param(mod, func, pos)` — a function that is not a state
+    function returns `{:next_state, target, ...}` with its parameter `pos`
+    as the target, directly or through a helper it hands that parameter on to
+  - `statem_target_arg(mod, caller, callee, pos, kind, value)` — what a
+    local call hands such a function there: a `literal` state, a `param`
+    of the caller's own (`value` its position), or `dynamic`
   - `statem_returns_call(mod, func, callee)` — a function that may return
     what a call returns (a tail call, a call's result, a throw): the local
     callee, or `dynamic`
@@ -97,6 +103,8 @@ defmodule Argus.Extractors.GenStatem do
       :statem_module,
       :statem_returns_call,
       :statem_state,
+      :statem_target_arg,
+      :statem_target_param,
       :statem_timeout,
       :statem_transition
     ]
@@ -439,7 +447,7 @@ defmodule Argus.Extractors.GenStatem do
   # Actions)`, whose `{next_state, Next, ...}` reads its first parameter).
   defp named_states(mod, functions) do
     labels = function_labels(functions)
-    target_params = target_params(functions)
+    target_params = target_params(mod, functions)
 
     literal =
       for {:function, name, arity, _e, instrs} <- functions,
@@ -463,15 +471,87 @@ defmodule Argus.Extractors.GenStatem do
   defp named_target(_fa, _elements), do: []
 
   # For each function, the parameters a `{:next_state, target, ...}` it
-  # returns takes its target from.
-  defp target_params(functions) do
+  # returns takes its target from: its own (ra's `next_state(Next, State,
+  # Actions)`), or one it hands a helper in that helper's such position,
+  # followed until no function gains one.
+  defp target_params(mod, functions) do
+    direct =
+      for {:function, name, arity, _e, instrs} <- functions,
+          {idx, [{:atom, :next_state}, target | _]} <- return_shapes(instrs),
+          {kind, _} = reg <- [Instr.register(target)],
+          kind in [:x, :y],
+          {:ok, k} <- [Resolve.arg_position(instrs, idx, reg)],
+          reduce: %{} do
+        acc -> Map.update(acc, {name, arity}, [k], &Enum.uniq([k | &1]))
+      end
+
+    handed_on(direct, local_calls(mod, functions))
+  end
+
+  defp handed_on(params, calls) do
+    next =
+      for {caller, instrs, idx, callee} <- calls,
+          k <- Map.get(params, callee, []),
+          {:ok, j} <- [Resolve.arg_position(instrs, idx, {:x, k})],
+          reduce: params do
+        acc -> Map.update(acc, caller, [j], &Enum.uniq([j | &1]))
+      end
+
+    if next == params, do: params, else: handed_on(next, calls)
+  end
+
+  # Every local call: `{caller, instrs, idx, callee}`, the functions as
+  # `{name, arity}`.
+  defp local_calls(mod, functions) do
+    labels = function_labels(functions)
+
     for {:function, name, arity, _e, instrs} <- functions,
-        {idx, [{:atom, :next_state}, target | _]} <- return_shapes(instrs),
-        {kind, _} = reg <- [Instr.register(target)],
-        kind in [:x, :y],
-        {:ok, k} <- [Resolve.arg_position(instrs, idx, reg)],
-        reduce: %{} do
-      acc -> Map.update(acc, {name, arity}, [k], &Enum.uniq([k | &1]))
+        {instr, idx} <- Enum.with_index(instrs),
+        callee = local_call_target(instr, mod, labels),
+        callee != nil,
+        do: {{name, arity}, instrs, idx, callee}
+  end
+
+  # A helper that takes its target from a parameter enters what its
+  # callers hand it there: the parameter (statem_target_param), and each
+  # local call's argument (statem_target_arg), in place of a dynamic
+  # transition of its own.
+  defp target_args(facts, mod, mod_str, functions, state_set) do
+    params = Map.drop(target_params(mod, functions), MapSet.to_list(state_set))
+    id = fn {name, arity} -> InstrId.func_id(mod, name, arity) end
+
+    facts =
+      for {fa, ks} <- params, k <- ks, reduce: facts do
+        acc -> add_fact(acc, :statem_target_param, [mod_str, id.(fa), to_string(k)])
+      end
+
+    for {caller, instrs, idx, callee} <- local_calls(mod, functions),
+        k <- Map.get(params, callee, []),
+        reduce: facts do
+      acc ->
+        {kind, value} = target_arg(instrs, idx, k)
+
+        add_fact(acc, :statem_target_arg, [
+          mod_str,
+          id.(caller),
+          id.(callee),
+          to_string(k),
+          kind,
+          value
+        ])
+    end
+  end
+
+  defp target_arg(instrs, idx, k) do
+    case Resolve.arg_position(instrs, idx, {:x, k}) do
+      {:ok, j} ->
+        {"param", to_string(j)}
+
+      _ ->
+        case Resolve.resolve_register(instrs, idx, {:x, k}) do
+          {:ok, state} when is_atom(state) and state != :dynamic -> {"literal", to_string(state)}
+          _ -> {"dynamic", ""}
+        end
     end
   end
 
@@ -591,6 +671,7 @@ defmodule Argus.Extractors.GenStatem do
 
     state_set = MapSet.new(state_funs, fn {:function, name, arity, _, _} -> {name, arity} end)
     labels = function_labels(functions)
+    facts = target_args(facts, mod, mod_str, functions, state_set)
 
     Enum.reduce(functions, facts, fn {:function, name, arity, _, instrs} = function, acc ->
       acc =
@@ -613,14 +694,19 @@ defmodule Argus.Extractors.GenStatem do
 
     instrs
     |> return_shapes()
-    |> Enum.reduce(facts, fn {_idx, elements}, acc ->
+    |> Enum.reduce(facts, fn {idx, elements}, acc ->
       case elements do
         [{:atom, :next_state}, target | _] ->
-          to_state = resolve_element_value(target)
+          if parameter?(instrs, idx, target) do
+            # Its callers name the target (target_args).
+            acc
+          else
+            to_state = resolve_element_value(target)
 
-          acc
-          |> track_dynamic(to_state, ctx, :statem_transition_target, :statem_helper_transition)
-          |> add_fact(:statem_helper_transition, [mod_str, func_id, to_state])
+            acc
+            |> track_dynamic(to_state, ctx, :statem_transition_target, :statem_helper_transition)
+            |> add_fact(:statem_helper_transition, [mod_str, func_id, to_state])
+          end
 
         [{:atom, action} | _] when action in [:stop, :stop_and_reply] ->
           add_fact(acc, :statem_helper_transition, [mod_str, func_id, "stop"])
@@ -629,6 +715,16 @@ defmodule Argus.Extractors.GenStatem do
           acc
       end
     end)
+  end
+
+  defp parameter?(instrs, idx, target) do
+    case Instr.register(target) do
+      {kind, _} = reg when kind in [:x, :y] ->
+        match?({:ok, _}, Resolve.arg_position(instrs, idx, reg))
+
+      _ ->
+        false
+    end
   end
 
   # A function returning what a call returns hands the choice of its

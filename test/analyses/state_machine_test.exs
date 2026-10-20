@@ -36,6 +36,21 @@ defmodule Argus.Analyses.StateMachineTest do
       assert results["terminal_without_stop"] == []
     end
 
+    test "a helper's target parameter names the states its callers hand it" do
+      results = analyze([Argus.Test.Fixtures.TargetParamStatem])
+
+      # Every transition is the helper's, its target what each call hands
+      # it (one through step_down/2): :orphan alone is entered by none.
+      assert states(results["unreachable_state"]) == ["orphan"]
+      assert results["terminal_without_stop"] == []
+    end
+
+    test "a target handed on from an event's content may be any state" do
+      results = analyze([Argus.Test.Fixtures.EventTargetStatem])
+
+      assert results["unreachable_state"] == []
+    end
+
     test "a machine with no extracted transitions produces no findings" do
       # DelegatingStatem's state functions delegate to a helper, so their
       # own bodies contain no gen_statem action return — they aren't even
