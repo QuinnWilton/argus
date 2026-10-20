@@ -61,6 +61,11 @@ defmodule Argus.Extractors.Sockets do
   @activations %{
     {:gen_tcp, :connect, 3} => {"tcp", :open, 2},
     {:gen_tcp, :connect, 4} => {"tcp", :open, 2},
+    # A UDP socket opened active delivers {udp, Socket, IP, Port, Data} to the owner;
+    # it has no close message. Tracked so an active UDP socket's handle_info is seen as
+    # a socket-data entry (its bytes are a peer's), not for a close clause.
+    {:gen_udp, :open, 1} => {"udp", :open, :no_options},
+    {:gen_udp, :open, 2} => {"udp", :open, 1},
     {:ssl, :connect, 2} => {"ssl", :open, 1},
     {:ssl, :connect, 3} => {"ssl", :open, :connect3},
     {:ssl, :connect, 4} => {"ssl", :open, 2},
@@ -151,6 +156,9 @@ defmodule Argus.Extractors.Sockets do
 
   # The mode the options at `pos` give, and the parameter they come from.
   defp mode_at(_instrs, _idx, nil, _what), do: {"dynamic", "-1"}
+
+  # An open that takes no options (`:gen_udp.open/1`) opens with the defaults.
+  defp mode_at(_instrs, _idx, :no_options, :open), do: {"default", "-1"}
 
   defp mode_at(instrs, idx, pos, what) do
     case Resolve.value_at(instrs, idx, {:x, pos}) do

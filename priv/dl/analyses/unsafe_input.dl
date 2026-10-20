@@ -14,6 +14,7 @@
 .include "../clientlib/behaviours.dl"
 .include "../clientlib/callbacks.dl"
 .include "../clientlib/request_entry.dl"
+.include "../clientlib/request_socket.dl"
 .include "../clientlib/runs_elsewhere.dl"
 .include "../clientlib/staged_processes.dl"
 .include "../clientlib/supervision.dl"

@@ -298,6 +298,56 @@ defmodule Argus.Test.Soundness.G6.RanchAtom do
   def handle_cast(_msg, s), do: {:noreply, s}
 end
 
+defmodule Argus.Test.Soundness.G6.UdpTerm do
+  # A gen_udp server active socket: each datagram's bytes arrive in handle_info/2 as
+  # {:udp, _, _, _, Data}, the shape libcluster's gossip strategy uses. Here a helper
+  # strips a prefix and binary_to_term/1 (no [:safe]) decodes the rest, so an
+  # unauthenticated peer's datagram reaches the deserializer: socket-data, not internal.
+  use GenServer
+
+  def start_link(p), do: GenServer.start_link(__MODULE__, p)
+
+  def init(p) do
+    {:ok, socket} = :gen_udp.open(p, [:binary, active: true])
+    {:ok, %{socket: socket}}
+  end
+
+  def handle_info({:udp, _socket, _ip, _port, <<"hb::", _::binary>> = packet}, state) do
+    _ = decode(packet)
+    {:noreply, state}
+  end
+
+  defp decode(<<"hb::", rest::binary>>), do: :erlang.binary_to_term(rest)
+end
+
+defmodule Argus.Test.Soundness.G6.InetTcpTerm do
+  # A plain gen_server handed an accepted TCP socket, made active with a
+  # direct :inet.setopts/2 (active: :once) rather than a transport-module
+  # wrapper or gen_udp.open. This is the riak_core_lite handoff-receiver
+  # shape: handle_info/2 takes the socket's frame and a helper decodes it
+  # with binary_to_term/1 (no [:safe]), so an unauthenticated peer's bytes
+  # reach the deserializer.
+  use GenServer
+
+  def start_link(_), do: GenServer.start_link(__MODULE__, [])
+  def init(_), do: {:ok, %{}}
+
+  def handle_call({:set_socket, socket}, _from, s) do
+    :ok = :inet.setopts(socket, active: :once)
+    {:reply, :ok, Map.put(s, :socket, socket)}
+  end
+
+  def handle_info({:tcp, socket, data}, s) do
+    _ = decode(data)
+    :ok = :inet.setopts(socket, active: :once)
+    {:noreply, s}
+  end
+
+  def handle_info({:tcp_closed, _socket}, s), do: {:stop, :normal, s}
+
+  defp decode(data), do: :erlang.binary_to_term(data)
+end
+
 defmodule Argus.Test.Soundness.Adv.Atoms.ChosenInCaller do
   # (a) The lookup is in the caller, the atoms bound in the helper.
   def key(params), do: suffixed(String.to_existing_atom(params["f"]))
@@ -657,6 +707,44 @@ end
 defmodule Argus.Test.Soundness.Adv.Dunder do
   def __eval__(code), do: Code.eval_string(code)
 end
+
+defmodule :acceptor do
+  # Minimal stand-in for the acceptor_pool framework's `acceptor` behaviour, so
+  # the fixture below can declare `@behaviour :acceptor` and be recognised as
+  # an acceptor-pool handler without depending on the acceptor_pool package.
+  # The beam records the behaviour name as `:acceptor`, the same name the
+  # request-entry rule matches.
+  @callback acceptor_init(term(), term(), term()) :: term()
+  @callback acceptor_continue(term(), term(), term()) :: term()
+  @callback acceptor_terminate(term(), term()) :: term()
+end
+
+defmodule Argus.Test.Soundness.G6.AcceptorTerm do
+  # The acceptor_pool shape: a module implementing the `acceptor` behaviour
+  # takes over a socket the pool accepted and, via gen_server:enter_loop,
+  # receives the peer's bytes in handle_info/2. It never opens the socket
+  # itself, so socket_active never names it; only the behaviour marks it as a
+  # socket-data entry. A helper binary_to_term/1 (no [:safe]) decodes the
+  # frame, so an unauthenticated peer's bytes reach the deserializer. This is
+  # the partisan_peer_service_server shape.
+  use GenServer
+  @behaviour :acceptor
+
+  def start_link(_), do: GenServer.start_link(__MODULE__, [])
+  def init(_), do: {:ok, %{}}
+
+  def acceptor_init(_sockname, _lsocket, _args), do: {:ok, nil}
+  def acceptor_continue(_peername, _socket, _state), do: {:ok, %{}}
+  def acceptor_terminate(reason, _state), do: exit(reason)
+
+  def handle_info({:tcp, _socket, data}, s) do
+    msg = :erlang.binary_to_term(data)
+    {:noreply, Map.put(s, :last, msg)}
+  end
+
+  def handle_info({:tcp_closed, _socket}, s), do: {:stop, :normal, s}
+end
+
 # A decode reached only when a cryptographic verification the function performs
 # succeeds is re-ranked below an ungated decode (secret_gated_decode), never
 # dropped (Argus.Extractors.VerificationGate). The gated clauses step down to a

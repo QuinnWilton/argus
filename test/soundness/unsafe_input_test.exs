@@ -18,6 +18,9 @@ defmodule Argus.Soundness.UnsafeInputTest do
   end
 
   @atom_export "Dynamic atom creation reachable from an exported function"
+  @atom_socket "Unbounded atom creation fed by request data from a socket handler"
+  @deser_socket "binary_to_term without :safe fed by request data from a socket handler"
+  @deser_acceptor "binary_to_term without :safe fed by request data from an acceptor-pool socket handler"
   @deser_gated "binary_to_term without :safe, behind a signature check"
   @deser_unsafe "binary_to_term without :safe"
   @code_caller_fed "Dynamic code execution of a caller's input"
@@ -156,7 +159,22 @@ defmodule Argus.Soundness.UnsafeInputTest do
   end
 
   test "a socket's bytes in a server's handle_info are an outside party's", %{sev: sev} do
-    assert severity(sev, "G6.RanchAtom", :handle_info, @atom_export) == :warning
+    assert severity(sev, "G6.RanchAtom", :handle_info, @atom_socket) == :error
+  end
+
+  test "an active UDP socket's datagrams reaching binary_to_term are an outside party's",
+       %{sev: sev} do
+    assert severity(sev, "G6.UdpTerm", :decode, @deser_socket) == :error
+  end
+
+  test "an :inet.setopts active TCP socket's frames reaching binary_to_term are an outside party's",
+       %{sev: sev} do
+    assert severity(sev, "G6.InetTcpTerm", :decode, @deser_socket) == :error
+  end
+
+  test "an acceptor-pool handler's socket frames reaching binary_to_term are an outside party's",
+       %{sev: sev} do
+    assert severity(sev, "G6.AcceptorTerm", :handle_info, @deser_acceptor) == :error
   end
 
   describe "a decode behind a cryptographic verification is re-ranked, never dropped" do

@@ -57,6 +57,21 @@ request_entry(func, "websocket") :-
   behaves_as(mod, "WebSock"),
   function_def(func, mod, "handle_in", 2, _).
 
+// A module implementing the `acceptor` behaviour (the acceptor_pool framework) takes
+// over a socket the pool accepted and, after `gen_server:enter_loop`, receives the
+// peer's bytes as `{tcp|ssl, _, Data}` in its handle_info/2. The pool opens the socket,
+// not this module, so socket_active never names it; the behaviour is the witness. On an
+// unauthenticated plane those bytes are attacker-controlled, so handle_info/2 is a
+// socket data entry, like a direct-open handler's.
+request_entry(func, "acceptor_socket") :-
+  behaves_as(mod, b),
+  (b = ":acceptor" ; b = "acceptor"),
+  function_def(func, mod, "handle_info", 2, _).
+
+// A process that opens a raw TCP/UDP/SSL socket in an active mode receives the peer's
+// bytes in its handle_info/2. That entry reads socket_active, so it lives in
+// request_socket.dl, included only by analyses that register the Sockets extractor.
+
 // Treat background-job arguments as potentially untrusted: user-facing code may enqueue
 // them through storage.
 request_entry(func, "oban_job") :-
@@ -114,6 +129,10 @@ request_param(func, 1) :- request_entry(func, "channel").
 // The bytes read off the socket; the frame, `{payload, opcode: op}`.
 request_param(func, 0) :- request_entry(func, "socket").
 request_param(func, 0) :- request_entry(func, "websocket").
+
+// The `{tcp|ssl, _, Data}` message delivered to an acceptor handler's handle_info/2;
+// the body destructures the peer's bytes out and the flow walk follows them.
+request_param(func, 0) :- request_entry(func, "acceptor_socket").
 
 // The job: its args round-tripped through storage from user-facing code.
 request_param(func, 0) :- request_entry(func, "oban_job").

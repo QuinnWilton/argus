@@ -826,6 +826,8 @@ defmodule Argus.Analyses.UnsafeInput do
   defp surface("oban_job"), do: "an Oban job"
   defp surface("broadway"), do: "a Broadway pipeline message"
   defp surface("socket"), do: "a ThousandIsland handler (socket data)"
+  defp surface("raw_socket"), do: "a socket handler (socket data)"
+  defp surface("acceptor_socket"), do: "an acceptor-pool socket handler (socket data)"
   defp surface("websocket"), do: "a WebSock handler (websocket frame)"
   defp surface(other), do: other
 end

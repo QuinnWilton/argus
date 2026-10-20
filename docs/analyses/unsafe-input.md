@@ -10,7 +10,10 @@ proximity and value evidence before interpreting a finding as exploitable input 
 
 Recognized entries include Plug/controller requests, selected LiveView and channel
 callbacks, Oban jobs, Broadway messages, ThousandIsland socket data and WebSock frames.
-Only designated parameters carry external data. Callback names and behaviours determine
+A process that opens a raw TCP, UDP or SSL socket in an active mode (not `active:
+false`, so the defaults count) takes its peer's bytes in `handle_info/2`, a socket data
+entry; so does a module with the `acceptor` behaviour, whose pool accepts the socket
+for it. Only designated parameters carry external data. Callback names and behaviours determine
 coverage; not every public endpoint, hook or authentication boundary is understood.
 
 ## Evidence and severity

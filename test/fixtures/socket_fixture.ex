@@ -37,6 +37,33 @@ defmodule Argus.Test.Fixtures.Sockets do
       do: {:noreply, %{state | buffer: state.buffer <> data}}
   end
 
+  defmodule ActiveUdp do
+    @moduledoc "Opens a UDP socket that delivers each datagram as a message."
+    use GenServer
+
+    @impl true
+    def init(port) do
+      {:ok, socket} = :gen_udp.open(port, [:binary, active: true])
+      {:ok, %{socket: socket}}
+    end
+
+    @impl true
+    def handle_info({:udp, _socket, _ip, _port, data}, state),
+      do: {:noreply, Map.put(state, :last, data)}
+  end
+
+  defmodule PassiveUdp do
+    @moduledoc "A UDP socket read with recv, and one opened with the default options."
+    use GenServer
+
+    @impl true
+    def init(port) do
+      {:ok, socket} = :gen_udp.open(port, [:binary, active: false])
+      {:ok, _default} = :gen_udp.open(port + 1)
+      {:ok, %{socket: socket}}
+    end
+  end
+
   defmodule ActiveTcpHandled do
     @moduledoc "The same server, with a clause for the close: quiet."
     use GenServer

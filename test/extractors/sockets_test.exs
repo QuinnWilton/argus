@@ -36,6 +36,12 @@ defmodule Argus.Extractors.SocketsTest do
       assert {"init/1", "ssl", "once", "-1"} in active(F.TlsTakesTcpClose)
     end
 
+    test "a UDP open's literal :active entry, and the default where it leaves options out" do
+      assert {"init/1", "udp", "true", "-1"} in active(F.ActiveUdp)
+      assert {"init/1", "udp", "false", "-1"} in active(F.PassiveUdp)
+      assert {"init/1", "udp", "default", "-1"} in active(F.PassiveUdp)
+    end
+
     test "a setopts through :inet, :ssl, or a transport module in a variable" do
       assert {"handle_info/2", "inet", "once", "-1"} in active(F.InetTcp)
       assert {"handle_info/2", "ssl", "once", "-1"} in active(F.TlsTakesTcpClose)

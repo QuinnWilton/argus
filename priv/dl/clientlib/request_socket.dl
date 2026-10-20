@@ -1,0 +1,23 @@
+// Socket-handler request entries, scoped to analyses that extract socket
+// facts. A process that opens a raw TCP/UDP/SSL socket in an active mode
+// receives the peer's bytes as `{tcp|udp|ssl, _, Data}` messages delivered to
+// its handle_info/2. That data is attacker-controlled on an unauthenticated
+// plane (a plaintext cluster overlay, a UDP discovery port), so handle_info/2
+// is a socket data entry, like a framework handler's.
+//
+// This rule reads socket_active (Argus.Extractors.Sockets), so it lives apart
+// from request_entry.dl: an analysis that includes it must register the
+// Sockets extractor. Include after request_entry.dl (which declares
+// request_entry/request_param).
+
+request_entry(func, "raw_socket") :-
+  socket_active(_, opener, _, mode, _),
+  mode != "false",
+  mode != "unset",
+  function_def(opener, mod, _, _, _),
+  function_def(func, mod, "handle_info", 2, _).
+
+// The message delivered to handle_info/2; its `{tcp|udp|ssl, _, Data}` shape
+// carries the peer's bytes, which the body destructures out and the flow walk
+// follows.
+request_param(func, 0) :- request_entry(func, "raw_socket").
