@@ -134,6 +134,23 @@ defmodule Mix.Tasks.Compile.ArgusConfigTest do
       end)
     end
 
+    test "an ignore entry that leaves nothing out is a warning", %{peer: peer} do
+      project =
+        checkout!([ignore: [findings: [{:mailbox, {Depot.Archive, :gone, 0}}]]], :depot_ignstale)
+
+      in_project(peer, project, fn _log ->
+        {_status, diagnostics} = compile!()
+        diags = Enum.filter(diagnostics, &(&1.compiler_name == "argus"))
+
+        # The entry names a function no finding is reported in: both
+        # archive findings stay, and the entry is a warning of its own.
+        assert [stale] = Enum.filter(diags, &(&1.message =~ "left nothing out"))
+        assert stale.severity == :warning
+        assert stale.message =~ "{:mailbox, {Depot.Archive, :gone, 0}}"
+        assert Enum.count(diags, &(&1.message =~ "[argus.mailbox]")) == 2
+      end)
+    end
+
     test "module ignores keep the module out of analysis entirely", %{peer: peer} do
       project = checkout!([ignore: [modules: [~r/Archive/]]], :depot_ignmod)
 

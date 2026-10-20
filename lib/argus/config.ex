@@ -61,7 +61,9 @@ defmodule Argus.Config do
   for its members): the finding someone looked at and kept, without
   hiding the rest of the module's. The module and the function are the
   ones the finding is reported in, its first frame, which every
-  finding's help names (`ignore_hint/2`).
+  finding's help names (`ignore_hint/2`); an entry that matches no
+  finding of an analysis the run reported is a warning
+  (`Argus.Report.Notice`).
 
   Every key, at every level, is validated: an invalid entry raises
   `Argus.ConfigError` naming where it is (in its source's own syntax),

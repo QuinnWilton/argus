@@ -22,7 +22,10 @@ defmodule Argus.Report.Notice do
     * `:points_to_coarse` — it outgrew the budget bounded too, and ran
       coarse;
     * `:stale` — sources newer than their beams (the escript, which
-      never builds): the findings are about the code as last built.
+      never builds): the findings are about the code as last built;
+    * `:unused_ignore` — an `ignore: [findings: ...]` entry that left
+      nothing out: the finding it was written for is gone, or it names
+      another place than the one the finding is reported in.
   """
 
   alias Argus.Driver.Result
@@ -38,6 +41,7 @@ defmodule Argus.Report.Notice do
           | :points_to_bounded
           | :points_to_coarse
           | :stale
+          | :unused_ignore
 
   @type t :: %__MODULE__{
           kind: kind(),
@@ -46,8 +50,11 @@ defmodule Argus.Report.Notice do
         }
 
   @doc """
-  The notices of a driver run: its own (`Argus.Driver.Result` notices)
-  and one for each analysis that degraded, in that order. `config`
+  The notices of a driver run: its own (`Argus.Driver.Result` notices),
+  one for each analysis that degraded, and one for each `ignore:
+  [findings: ...]` entry that left out none of its analysis's findings,
+  in that order. An entry whose analysis did not report (not run, or
+  degraded) is not judged. `config`
   decides how loud a machine without the engines is (`engine: :warn`
   makes it an `:info`, `:require` an `:error`); `cwd` is what the paths
   in a duplicate's notice are relative to.
@@ -58,7 +65,16 @@ defmodule Argus.Report.Notice do
 
     Enum.map(unavailable, fn :engine_unavailable -> engine_unavailable(config.engine) end) ++
       Enum.map(Result.degraded(result), &degraded/1) ++
-      Enum.map(rest, &of(&1, cwd))
+      Enum.map(rest, &of(&1, cwd)) ++
+      Enum.map(unused_ignores(result, config), &unused_ignore(config, &1))
+  end
+
+  defp unused_ignores(result, config) do
+    for %{analyses: analyses} = ignored <- config.ignore_findings,
+        reported <- [for({:ok, located} <- Enum.map(analyses, &result.located[&1]), do: located)],
+        reported != [],
+        not Enum.any?(List.flatten(reported), &Argus.Config.ignore_matches?(ignored, &1.finding)),
+        do: ignored
   end
 
   defp of({:extraction_error, error}, _cwd), do: extraction_error(error)
@@ -182,6 +198,23 @@ defmodule Argus.Report.Notice do
       "the process points-to stage outgrew its budget, bounded too, and ran coarse: " <>
         "every term holding a process (#{length(leaves)}) was resolved coarsely, so " <>
         "findings about any process may include some that cannot happen"
+    )
+  end
+
+  @doc """
+  An `ignore: [findings: ...]` entry that left nothing out: no finding
+  of its analysis is reported in the module or function it names.
+  """
+  @spec unused_ignore(Argus.Config.t(), Argus.Config.ignored_finding()) :: t()
+  def unused_ignore(%Argus.Config{} = config, %{entry: {analysis, _} = entry}) do
+    ctx = Argus.ConfigError.context(config.origin)
+
+    notice(
+      :unused_ignore,
+      :warning,
+      "ignore findings entry #{Argus.ConfigError.show(ctx, entry)} left nothing out: no " <>
+        "#{analysis} finding is reported there now. Remove it, or name the module or " <>
+        "function the finding is reported in, which its help shows"
     )
   end
 
