@@ -723,12 +723,35 @@ export_reach.root(func) :- api_export(func).
 sink_without_request_path(id, func, api, s, source, p, safety) :-
   exposed_sink(id, func, api, s, safety),
   sink_value(func, s, source, p),
-  !decoded_origin(id, func, _).
+  !decoded_origin(id, func, _),
+  !code_fed(id).
 
 sink_without_request_path(id, func, api, s, "", 0, safety) :-
   exposed_sink(id, func, api, s, safety),
   !sink_value(func, s, _, _),
-  !decoded_origin(id, func, _).
+  !decoded_origin(id, func, _),
+  !code_fed(id).
+
+// A code sink no request reaches whose source argument a caller's data decides: the
+// stronger tier, reported apart from the bare reachable-from-exports case, the way the
+// subprocess and decompression sinks name "a caller's input". Export reach keeps the
+// weaker finding for every other code sink.
+.decl code_fed(id: symbol)
+
+code_fed(id) :- exposed_sink(id, _, _, "code", _), caller_input(id).
+
+.decl code_caller_fed(id: symbol, func: symbol, api: symbol, sink: symbol, source: symbol, permille: number, safety: symbol)
+.output code_caller_fed
+
+code_caller_fed(id, func, api, "code", source, p, safety) :-
+  exposed_sink(id, func, api, "code", safety),
+  caller_input(id),
+  sink_value(func, "code", source, p).
+
+code_caller_fed(id, func, api, "code", "", 0, safety) :-
+  exposed_sink(id, func, api, "code", safety),
+  caller_input(id),
+  !sink_value(func, "code", _, _).
 
 // A deserialization no request reaches whose bytes are, on every path, a BEAM file's own
 // terms (`artifact`) or a file under the project's build directories (`build`): the
@@ -835,6 +858,31 @@ site_server(id, f, kind, m) :-
 .decl caller_input(id: symbol)
 
 caller_input(id) :- atom_input.reaches(f, _, id), outside_api(f).
+caller_input(id) :- code_input.reaches(f, _, id), outside_api(f).
+
+// Code execution whose source argument a caller's data reaches. Traced the way atom
+// creation is: argument 0 of every code sink is the eval or template source. This does
+// not gate the finding (export reach alone keeps it, since an evaluator receives its
+// code through state the trace cannot always follow); it marks the stronger case, where
+// a caller's data is shown to decide what runs.
+.init code_input = ParamReadsReach
+
+code_input.seed(func, to_string(pos), id) :-
+  sink(id, func, _, "code", _),
+  sink_arg_derived(id, func, 0, pos).
+
+code_input.seed(func, p, id) :-
+  sink(id, func, _, "code", _),
+  sink_reads(id, func, 0, "param", p).
+
+code_input.seed(func, p, id) :-
+  sink(id, func, _, "code", _),
+  sink_reads(id, func, 0, "call", g),
+  returns_reads(g, "param", q),
+  call_arg_reads(func, g, n, "param", p),
+  q = to_string(n).
+
+code_input.reaches(f, p, t) :- message_param(f, p, h), code_input.reaches(h, "0", t).
 
 // Every exported function is a possible external entry, even if internal callers pass
 // only literals. Macros are excluded because they run at compile time on the caller's

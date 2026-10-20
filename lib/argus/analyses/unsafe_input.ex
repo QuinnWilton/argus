@@ -196,6 +196,23 @@ defmodule Argus.Analyses.UnsafeInput do
         doc: "A sink no request reaches: live code, but not attacker-reachable."
       },
       %{
+        name: :code_caller_fed,
+        fields:
+          @sink_fields ++
+            [
+              {:source, :symbol,
+               "what the evaluated source is, when a prior is sure it is not outside data " <>
+                 "(configured | code | stored | cluster | operator), else empty"},
+              {:permille, :number,
+               "the prior's probability that the source is not outside data, in thousandths, else 0"},
+              {:safety, :symbol, "empty for a code sink"}
+            ],
+        key: [:id],
+        doc:
+          "A code sink no request reaches whose evaluated source a caller's data decides: " <>
+            "the stronger, exploitability-validated tier of code execution."
+      },
+      %{
         name: :secret_gated_decode,
         fields: [
           {:id, :symbol, "instruction ID of the binary_to_term call"},
@@ -472,7 +489,21 @@ defmodule Argus.Analyses.UnsafeInput do
       at_label: "evaluated here",
       help: @code_help
     )
-    |> trusted_value("the command it runs", source, p)
+    |> trusted_value("the source it evaluates", source, p)
+    |> Map.put(:floor, :warning)
+  end
+
+  def finding(:code_caller_fed, [id, func, api, "code", source, p, _safety]) do
+    Findings.new(
+      :error,
+      "Dynamic code execution of a caller's input",
+      "#{func} calls #{api}, and what an exported function's caller hands in reaches " <>
+        "the source it evaluates: arbitrary code execution inside the node.",
+      at: Findings.at_instr(id),
+      at_label: "evaluated here",
+      help: @code_help
+    )
+    |> trusted_value("the source it evaluates", source, p)
     |> Map.put(:floor, :warning)
   end
 

@@ -20,7 +20,7 @@ defmodule Argus.Soundness.UnsafeInputTest do
   @atom_export "Dynamic atom creation reachable from an exported function"
   @deser_gated "binary_to_term without :safe, behind a signature check"
   @deser_unsafe "binary_to_term without :safe"
-  @code_export "Dynamic code execution reachable from exports"
+  @code_caller_fed "Dynamic code execution of a caller's input"
   @command_export "Subprocess execution of a caller's input"
 
   describe "atoms made of atoms" do
@@ -152,7 +152,7 @@ defmodule Argus.Soundness.UnsafeInputTest do
   end
 
   test "an export named like reflection that takes data is a way in", %{sev: sev} do
-    assert severity(sev, "Adv.Dunder", :__eval__, @code_export) == :error
+    assert severity(sev, "Adv.Dunder", :__eval__, @code_caller_fed) == :error
   end
 
   test "a socket's bytes in a server's handle_info are an outside party's", %{sev: sev} do

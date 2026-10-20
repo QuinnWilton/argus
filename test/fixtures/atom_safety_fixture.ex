@@ -58,6 +58,17 @@ defmodule Argus.Test.Fixtures.CodeExecution do
     sh = System.find_executable("bash")
     System.cmd(sh, ["-c", script])
   end
+
+  # Evaluating a quoted AST runs it as code, the same as eval_string runs a string.
+  def eval_quoted(ast), do: Code.eval_quoted(ast)
+  def eval_quoted_env(ast, binding, env), do: Code.eval_quoted_with_env(ast, binding, env)
+
+  # Compiling a quoted AST loads the modules it defines, running their bodies.
+  def compile_quoted(ast), do: Code.compile_quoted(ast)
+
+  # Erlang's evaluator runs an abstract-format expression, like eval_quoted.
+  def erl_eval_exprs(forms, bindings), do: :erl_eval.exprs(forms, bindings)
+  def erl_eval_expr(form, bindings), do: :erl_eval.expr(form, bindings)
 end
 
 defmodule Argus.Test.Fixtures.SafeModule do

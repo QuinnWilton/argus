@@ -253,6 +253,20 @@ defmodule Argus.Extractors.ApiCalls do
            {{:zlib, :inflate, [2, 3]}, :unsafe_decompression, [:id, :func, :api, {:const, "1"}]},
            {{Code, :eval_string, [1, 2, 3]}, :code_execution, [:id, :func, :api]},
            {{Code, :compile_string, [1, 2]}, :code_execution, [:id, :func, :api]},
+           # Evaluating a quoted AST runs it as code just as eval_string runs a
+           # string: a request-built AST (e.g. from EEx.compile_string, or an AST
+           # parsed from request text) reaching one of these executes.
+           {{Code, :eval_quoted, [1, 2, 3]}, :code_execution, [:id, :func, :api]},
+           {{Code, :eval_quoted_with_env, [3, 4]}, :code_execution, [:id, :func, :api]},
+           # Compiling a quoted AST loads the modules it defines, running their
+           # module-level expressions (and any @on_load), so a request-built AST
+           # reaching it executes, as with eval_quoted.
+           {{Code, :compile_quoted, [1, 2]}, :code_execution, [:id, :func, :api]},
+           # Erlang's own evaluator: erl_eval runs an abstract-format expression
+           # (arg 0), the Erlang analogue of Code.eval_quoted. A request-parsed
+           # form (erl_scan + erl_parse) reaching it executes.
+           {{:erl_eval, :exprs, [2, 3, 4]}, :code_execution, [:id, :func, :api]},
+           {{:erl_eval, :expr, [2, 3, 4, 5]}, :code_execution, [:id, :func, :api]},
            {{EEx, :eval_string, [1, 2, 3]}, :code_execution,
             [:id, :func, :api, :unless_literal_source]},
            {{EEx, :compile_string, [1, 2]}, :code_execution,

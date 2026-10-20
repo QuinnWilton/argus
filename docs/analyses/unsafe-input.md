@@ -228,11 +228,14 @@ outside this local result-use model.
 
 `sink=code`
 
-The sink list includes supported Code and EEx evaluation/compilation APIs.
-Request-controlled input can execute with the node's privileges. This check
-intentionally requires no proven input flow. Literal EEx sources are excluded. Other
-reachable code evaluation can still be reported without evidence that a caller
-chooses the source.
+The sink list includes supported Code and EEx evaluation/compilation APIs (eval and
+compile of a string, and eval of a quoted AST). Request-controlled input can execute
+with the node's privileges. This check intentionally requires no proven input flow:
+reachability from an export keeps the finding, since an evaluator receives its code
+through state the trace cannot always follow. Where the trace does reach the source
+argument, the finding is the stronger `code_caller_fed` tier ("of a caller's input"),
+the same two-tier split the subprocess and decompression sinks use; otherwise it stays
+the bare reachable-from-exports case. Literal EEx sources are excluded.
 
 Without a request path, reachability from an export is an error before optional
 re-tiering. Code execution never falls below warning through distance, priors or

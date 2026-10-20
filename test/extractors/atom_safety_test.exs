@@ -71,8 +71,13 @@ defmodule Argus.Extractors.ApiCalls.AtomSafetyTest do
       # runs the script it is handed, as a literal sh handed one does.
       assert sites(F.CodeExecution, :code_execution) == [
                ["branch_os_cmd/2", ":os.cmd/1"],
+               ["compile_quoted/1", "Code.compile_quoted/1"],
                ["dynamic_shell/1", "System.shell/1"],
+               ["erl_eval_expr/2", ":erl_eval.expr/2"],
+               ["erl_eval_exprs/2", ":erl_eval.exprs/2"],
                ["eval/1", "Code.eval_string/1"],
+               ["eval_quoted/1", "Code.eval_quoted/1"],
+               ["eval_quoted_env/3", "Code.eval_quoted_with_env/3"],
                ["found_shell/1", "System.cmd/2"],
                ["nested_os_cmd/1", ":os.cmd/1"],
                ["os_cmd/1", ":os.cmd/1"],

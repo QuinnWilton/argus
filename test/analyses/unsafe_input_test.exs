@@ -107,7 +107,12 @@ defmodule Argus.Analyses.UnsafeInputTest do
   end
 
   defp local(results, sink),
-    do: for([_id, func, api, ^sink | _] <- results["sink_without_request_path"], do: {func, api})
+    do:
+      for(
+        [_id, func, api, ^sink | _] <-
+          results["sink_without_request_path"] ++ (results["code_caller_fed"] || []),
+        do: {func, api}
+      )
 
   describe "sinks no request reaches" do
     test "flags dynamic atom creation reachable from an export, not to_existing_atom", ctx do
@@ -289,8 +294,15 @@ defmodule Argus.Analyses.UnsafeInputTest do
 
     test "flags eval and dynamic commands, leaving literal commands quiet", ctx do
       results = analyze(ctx, [Argus.Test.Fixtures.CodeExecution])
-      assert [{eval, _}] = local(results, "code")
-      assert eval =~ ":eval/1"
+      code_funcs = results |> local("code") |> Enum.map(&elem(&1, 0))
+      # eval_string, both quoted-AST evaluators, Code.compile_quoted, and
+      # Erlang's erl_eval are all code execution.
+      assert Enum.any?(code_funcs, &String.contains?(&1, ":eval/1"))
+      assert Enum.any?(code_funcs, &String.contains?(&1, ":eval_quoted/1"))
+      assert Enum.any?(code_funcs, &String.contains?(&1, ":eval_quoted_env/3"))
+      assert Enum.any?(code_funcs, &String.contains?(&1, ":compile_quoted/1"))
+      assert Enum.any?(code_funcs, &String.contains?(&1, ":erl_eval_exprs/2"))
+      assert Enum.any?(code_funcs, &String.contains?(&1, ":erl_eval_expr/2"))
 
       funcs = results |> local("command") |> Enum.map(&elem(&1, 0))
 

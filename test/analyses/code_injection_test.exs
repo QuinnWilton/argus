@@ -32,7 +32,9 @@ defmodule Argus.Analyses.CodeInjectionTest do
   test "EEx evaluators and compilers participate in the existing code sink analysis", %{
     results: results
   } do
-    rows = results["sink_without_request_path"]
+    # A code sink no request reaches lands in sink_without_request_path, or, when a
+    # caller's data reaches its source, the stronger code_caller_fed tier.
+    rows = results["sink_without_request_path"] ++ (results["code_caller_fed"] || [])
 
     assert Enum.any?(rows, fn [_, func, api, kind | _] ->
              String.ends_with?(func, ":dynamic_template/1") and kind == "code" and
