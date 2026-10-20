@@ -86,11 +86,13 @@ points_to_overflow("field_pts", n, b) :- points_to_budget(b), field_pts_rows(n),
 
 // Which stage wrote the relations below, staged beside them: a result
 // read back from a store says how it was made. The leaves the bounded
-// stage resolved coarsely go beside it too (none in this stage).
+// and coarse stages resolved coarsely go beside it too (none in this
+// stage).
 .decl points_to_mode(mode: symbol)
 
 points_to_mode("exact") :- stage_mode("exact"), !stage_mode("bounded").
-points_to_mode("bounded") :- stage_mode("bounded").
+points_to_mode("bounded") :- stage_mode("bounded"), !stage_mode("coarse").
+points_to_mode("coarse") :- stage_mode("coarse").
 
 .output points_to_mode(filename="points_to_mode.facts")
 .output pervasive(filename="pervasive.csv")

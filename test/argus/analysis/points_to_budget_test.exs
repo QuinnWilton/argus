@@ -240,7 +240,7 @@ defmodule Argus.Analysis.PointsToBudgetTest do
 
     assert log =~ "and so did the bounded one (source_pts reached"
     assert log =~ "ran it coarse, resolving every leaf coarsely (1)"
-    assert rows(dir, "points_to_mode") == [["bounded"]]
+    assert rows(dir, "points_to_mode") == [["coarse"]]
     assert rows(dir, "coarse_process") == [[@proc]]
 
     # The coarse pass finds the targets the exact stage would.

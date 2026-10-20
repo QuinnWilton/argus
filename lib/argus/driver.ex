@@ -188,6 +188,9 @@ defmodule Argus.Driver do
       {:ok, %Roux.Memo.Entry{value: {:ok, %{mode: {:bounded, leaves}}}}} ->
         [{:points_to_bounded, leaves}]
 
+      {:ok, %Roux.Memo.Entry{value: {:ok, %{mode: {:coarse, leaves}}}}} ->
+        [{:points_to_coarse, leaves}]
+
       _ ->
         []
     end

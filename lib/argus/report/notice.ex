@@ -19,6 +19,8 @@ defmodule Argus.Report.Notice do
       was analyzed;
     * `:points_to_bounded` — the process points-to stage outgrew its
       budget and ran bounded;
+    * `:points_to_coarse` — it outgrew the budget bounded too, and ran
+      coarse;
     * `:stale` — sources newer than their beams (the escript, which
       never builds): the findings are about the code as last built.
   """
@@ -34,6 +36,7 @@ defmodule Argus.Report.Notice do
           | :extraction_error
           | :duplicate
           | :points_to_bounded
+          | :points_to_coarse
           | :stale
 
   @type t :: %__MODULE__{
@@ -61,6 +64,7 @@ defmodule Argus.Report.Notice do
   defp of({:extraction_error, error}, _cwd), do: extraction_error(error)
   defp of({:duplicate, duplicate}, cwd), do: duplicate(duplicate, cwd)
   defp of({:points_to_bounded, leaves}, _cwd), do: points_to_bounded(leaves)
+  defp of({:points_to_coarse, leaves}, _cwd), do: points_to_coarse(leaves)
 
   @doc """
   The engines cannot be built here (`Argus.FlowLog.Toolchain`). Under
@@ -162,6 +166,22 @@ defmodule Argus.Report.Notice do
         "#{count} pervasive #{if count == 1, do: "term was", else: "terms were"} resolved " <>
         "coarsely, so findings about the processes #{if count == 1, do: "it holds", else: "they hold"} " <>
         "may include some that cannot happen"
+    )
+  end
+
+  @doc """
+  The process points-to stage outgrew its budget bounded too and ran
+  coarse: every leaf resolved coarsely, so a finding about any process
+  may be a false alarm.
+  """
+  @spec points_to_coarse([String.t()]) :: t()
+  def points_to_coarse(leaves) do
+    notice(
+      :points_to_coarse,
+      :info,
+      "the process points-to stage outgrew its budget, bounded too, and ran coarse: " <>
+        "every term holding a process (#{length(leaves)}) was resolved coarsely, so " <>
+        "findings about any process may include some that cannot happen"
     )
   end
 

@@ -26,6 +26,9 @@ defmodule Argus.Driver.Result do
     * `{:points_to_bounded, leaves}` — the process points-to stage
       outgrew its budget and ran bounded, resolving `leaves` coarsely
       (a sound superset of their exact rows).
+    * `{:points_to_coarse, leaves}` — the bounded stage outgrew the
+      budget too, and the stage ran coarse: every leaf (`leaves`)
+      resolved coarsely.
   """
 
   @enforce_keys [:located, :notices, :changed?]
@@ -47,6 +50,7 @@ defmodule Argus.Driver.Result do
           | {:extraction_error, extraction_error()}
           | {:duplicate, duplicate()}
           | {:points_to_bounded, [String.t()]}
+          | {:points_to_coarse, [String.t()]}
 
   @type t :: %__MODULE__{
           located: %{optional(atom()) => {:ok, [Argus.Located.t()]} | {:error, term()}},

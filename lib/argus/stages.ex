@@ -23,7 +23,7 @@ defmodule Argus.Stages do
   bounded or coarse one's with the leaves its coarse pass resolved
   (every leaf, for the coarse one).
   """
-  @type mode :: :exact | {:bounded, [String.t()]}
+  @type mode :: :exact | {:bounded, [String.t()]} | {:coarse, [String.t()]}
 
   @typedoc """
   Solves a program over what the previous solve returned (the first
@@ -90,7 +90,7 @@ defmodule Argus.Stages do
             "resolving every leaf coarsely (#{length(leaves)})"
         )
 
-        {:ok, solved, {:bounded, leaves}}
+        {:ok, solved, {:coarse, leaves}}
 
       {:over, coarse_over, acc} ->
         {:error, {:over_budget, coarse_over}, acc}

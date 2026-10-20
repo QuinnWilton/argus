@@ -8,7 +8,7 @@
 // hold; the coarse pass follows the leaves alone, a row per source a leaf
 // reaches, so its rows grow with the sources and the leaves, never with
 // the terms. It writes the same relations, points_to_mode saying
-// "bounded", and every leaf as resolved coarsely (pervasive.csv).
+// "coarse", and every leaf as resolved coarsely (pervasive.csv).
 
 .include "points_to.dl"
 
