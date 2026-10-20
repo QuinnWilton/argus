@@ -133,6 +133,51 @@ defmodule Argus.Test.Fixtures.UnboundedChildren do
     def render(assigns), do: assigns
   end
 
+  defmodule TaskPools do
+    @moduledoc """
+    Two Task.Supervisors with a ceiling: one whose cap is a literal, and
+    one whose cap a function reads at start (ztlp's QuerySupervisor,
+    `max_children: Config.worker_pool_size()`).
+    """
+    use Supervisor
+    def start_link(o), do: Supervisor.start_link(__MODULE__, o, name: __MODULE__)
+
+    @impl Supervisor
+    def init(_) do
+      children = [
+        {Task.Supervisor,
+         name: Argus.Test.Fixtures.UnboundedChildren.LiteralPool, max_children: 10},
+        {Task.Supervisor,
+         name: Argus.Test.Fixtures.UnboundedChildren.ConfiguredPool, max_children: pool_size()}
+      ]
+
+      Supervisor.init(children, strategy: :one_for_one)
+    end
+
+    defp pool_size, do: Application.get_env(:pools, :size, 16)
+  end
+
+  defmodule PooledLive do
+    @moduledoc "Quiet: a request starts tasks only under the capped pools."
+    @behaviour Phoenix.LiveView
+
+    def mount(_p, _s, socket), do: {:ok, socket}
+
+    def handle_event("fire", params, socket) do
+      Task.Supervisor.start_child(Argus.Test.Fixtures.UnboundedChildren.LiteralPool, fn ->
+        send(self(), params)
+      end)
+
+      Task.Supervisor.start_child(Argus.Test.Fixtures.UnboundedChildren.ConfiguredPool, fn ->
+        send(self(), params)
+      end)
+
+      {:noreply, socket}
+    end
+
+    def render(assigns), do: assigns
+  end
+
   defmodule Internal do
     @moduledoc """
     Uncapped, but only reachable from code the operator drives. Most dynamic

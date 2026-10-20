@@ -1287,16 +1287,23 @@ unbounded_children_from_request(sup, child, via, kind) :-
 
 starts_child(via, sup, child) :- dynamic_child(sup, child, via).
 
-// A supervisor with no known finite or dynamic max_children cap. Dynamic option rows
-// block this conclusion. Pid targets are not resolved by points-to here; inline or
-// external supervisors without visible options are treated as uncapped, a known
-// limitation.
+// A supervisor with no known finite or dynamic max_children cap: a DynamicSupervisor's
+// own (supervisor_max_children), or one a Task.Supervisor's spec states, a literal or
+// one a call reads at start (`max_children: Config.pool_size()`, task_supervisor_cap's
+// "dynamic"). Dynamic option rows block this conclusion. Pid targets are not resolved
+// by points-to here; inline or external supervisors without visible options are
+// treated as uncapped, a known limitation.
 .decl uncapped_supervisor(sup: symbol)
 
 uncapped_supervisor(sup) :-
   dynamic_child(sup, _, _),
   sup != "dynamic",
-  !supervisor_max_children(sup, _).
+  !supervisor_max_children(sup, _),
+  !capped_task_supervisor(sup).
+
+.decl capped_task_supervisor(sup: symbol)
+
+capped_task_supervisor(sup) :- task_supervisor_cap(sup, limit), limit != "infinity".
 
 // A request entry of `kind` reaches the function that starts the child
 // (reaches_child_start, clientlib/supervision.dl).

@@ -24,6 +24,8 @@ defmodule Argus.Analyses.UnsafeInputTest do
     U.TaskLive,
     U.StreamLive,
     U.WaitsLive,
+    U.TaskPools,
+    U.PooledLive,
     Argus.Test.Fixtures.UnsafeAtomCreation,
     Argus.Test.Fixtures.UnsafeDeserialization,
     Argus.Test.Fixtures.CodeExecution,
@@ -1056,7 +1058,9 @@ defmodule Argus.Analyses.UnsafeInputTest do
       U.Internal,
       U.TaskLive,
       U.StreamLive,
-      U.WaitsLive
+      U.WaitsLive,
+      U.TaskPools,
+      U.PooledLive
     ]
 
     defp callers(ctx) do
@@ -1073,10 +1077,11 @@ defmodule Argus.Analyses.UnsafeInputTest do
                inspect(U.TaskLive) <> ":handle_event/3"
              ]
 
-      # Quiet: CappedLive (max_children is the whole fix), Internal (no
-      # request drives it), WaitsLive (a start the request then waits
-      # out is no child that outlives it), StreamLive (async_stream lives
-      # no longer than its request).
+      # Quiet: CappedLive (max_children is the whole fix), PooledLive (a
+      # Task.Supervisor's cap, a literal or one a function reads at
+      # start), Internal (no request drives it), WaitsLive (a start the
+      # request then waits out is no child that outlives it), StreamLive
+      # (async_stream lives no longer than its request).
     end
 
     test "the finding names the entry surface it came from", ctx do

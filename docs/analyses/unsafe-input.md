@@ -395,8 +395,10 @@ Use an explicit concurrency/lifetime bound appropriate to the service.
 Task streams enumerated by the request's own process and starts followed by a
 recognized wait for child exit are excluded. Detached enumeration, a timeout or an
 early reply can break that lifetime bound. The analysis recognizes selected cap
-locations; unread cap options are unknown, not evidence of no cap. Dynamic supervisor
-identities and deployment-specific admission control can limit the finding.
+locations, a DynamicSupervisor's and a Task.Supervisor's spec alike, and a cap a call
+reads at start (`max_children: Config.pool_size()`) as one; unread cap options are
+unknown, not evidence of no cap. Dynamic supervisor identities and deployment-specific
+admission control can limit the finding.
 
 ## Implementation
 
