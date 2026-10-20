@@ -25,8 +25,9 @@ argument's value (a literal command or template) is recognized only where it is 
 
 A client's `GenServer.call` or `cast` carries its parameters into the handler of that
 call's server: the module the call names, or the callback module of the process
-points-to resolves its pid to. A message goes to its own call's server, not to every
-server the client's function calls.
+points-to resolves its pid to. A message sent to a server's name or pid (`send/2`,
+`Process.send/3`) reaches its `handle_info/2` the same way. A message goes to its own
+call's or send's server, not to every server the client's function calls.
 
 | Proximity | Evidence | Usual severity |
 |---|---|---|

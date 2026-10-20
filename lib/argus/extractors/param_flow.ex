@@ -179,7 +179,8 @@ defmodule Argus.Extractors.ParamFlow do
       :sink_arg_chosen,
       :sink_arg_config,
       :sink_arg_derived,
-      :sink_copy
+      :sink_copy,
+      :send_arg_param
     ]
 
   @impl true
@@ -200,6 +201,7 @@ defmodule Argus.Extractors.ParamFlow do
 
       %{}
       |> emit_call_sites(module_data, inputs)
+      |> emit_sends(module_data, inputs)
       |> emit_closures(module_data, inputs)
       |> emit_bounded_sinks(module_data)
       |> emit_fixed_commands(module_data)
@@ -499,6 +501,20 @@ defmodule Argus.Extractors.ParamFlow do
       derived = Map.get(inputs_at(inputs, site.func_id, site.idx), "x#{n}", MapSet.new())
       emit_sink_arg(acc, [InstrId.mint(site.func_id, site.idx), site.func_id, "0"], derived)
     end)
+  end
+
+  # A `send` is an instruction, not a call: its message (x1) is what a
+  # receiving server's handle_info/2 takes first.
+  defp emit_sends(facts, %{module: mod, functions: functions}, inputs) do
+    for {:function, name, arity, _entry, instrs} <- functions,
+        func_id = InstrId.func_id(mod, name, arity),
+        {:send, idx} <- Enum.with_index(instrs),
+        param when is_integer(param) <-
+          inputs |> inputs_at(func_id, idx) |> Map.get("x1", MapSet.new()),
+        reduce: facts do
+      acc ->
+        add_fact(acc, :send_arg_param, [InstrId.mint(func_id, idx), func_id, to_string(param)])
+    end
   end
 
   # A higher-order call hands each element of its collection to the fun it

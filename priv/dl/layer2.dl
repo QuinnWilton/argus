@@ -905,6 +905,11 @@
 .decl security_value_origin(value: symbol, func: symbol, kind: symbol, source: symbol) mutable
 .input security_value_origin
 
+// A `send` instruction (`send/2`, which compiles to one rather than a call) whose message is derived from a parameter of the sending function, with call_arg_param's data-flow semantics. A send through a call (`Process.send/3`) has call_arg_param rows instead.
+//
+.decl send_arg_param(id: symbol, func: symbol, param_pos: number) mutable
+.input send_arg_param
+
 // A send of a behaviour envelope identified by tag and size: `$gen_call`, `$gen_cast`, or `system`. Adds shape information beyond `process_send_source`'s tuple tag.
 //
 .decl send_envelope(id: symbol) mutable

@@ -25,4 +25,14 @@ defmodule Argus.Analyses.MessageSiteTest do
   test "a call to a pid the client started reaches that server" do
     assert atom_findings(M.OwnServer) != []
   end
+
+  test "a message sent to a server's name or pid reaches its handle_info" do
+    assert atom_findings(M.SendsName) != []
+    assert atom_findings(M.SendsPid) != []
+    assert atom_findings(M.ProcessSends) != []
+  end
+
+  test "a message sent to one server reaches no other's handle_info" do
+    assert atom_findings(M.SendsEcho) == []
+  end
 end

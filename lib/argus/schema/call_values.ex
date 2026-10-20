@@ -60,6 +60,21 @@ defmodule Argus.Schema.CallValues do
         """
       },
       %{
+        name: :send_arg_param,
+        layer: 2,
+        fields: [
+          {:id, :symbol, "send instruction ID"},
+          {:func, :symbol, "sending function ID"},
+          {:param_pos, :number, "parameter from which the message is derived"}
+        ],
+        doc: """
+        A `send` instruction (`send/2`, which compiles to one rather than a call) whose \
+        message is derived from a parameter of the sending function, with \
+        call_arg_param's data-flow semantics. A send through a call \
+        (`Process.send/3`) has call_arg_param rows instead.
+        """
+      },
+      %{
         name: :call_arg_field,
         layer: 2,
         fields: [

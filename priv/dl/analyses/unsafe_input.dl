@@ -786,6 +786,19 @@ message_param(f, to_string(p), h) :-
   site_server(id, f, "cast", m),
   function_def(h, m, "handle_cast", 2, _).
 
+// A message sent to a server's pid or name, which its handle_info/2 takes first: a
+// `send` instruction's (send_arg_param), or `Process.send/3`'s and `:erlang.send/2,3`'s
+// second argument.
+message_param(f, to_string(p), h) :-
+  sent_param(id, f, p),
+  site_server(id, f, "info", m),
+  function_def(h, m, "handle_info", 2, _).
+
+.decl sent_param(id: symbol, func: symbol, param: number)
+
+sent_param(id, f, p) :- send_arg_param(id, f, p).
+sent_param(id, f, p) :- call_arg_param(id, f, 1, p), call_site_target(id, f, "info", _).
+
 // The server module a call or cast at `id` reaches: the one it names, or the
 // callback module of a process points-to resolves its target to (a pid the client
 // was handed or started).
@@ -796,7 +809,7 @@ site_server(id, f, "cast", m) :- async_cast_site(id, f, m), m != "dynamic".
 
 site_server(id, f, kind, m) :-
   call_site_target(id, f, kind, p),
-  (kind = "call" ; kind = "cast"),
+  (kind = "call" ; kind = "cast" ; kind = "info"),
   server_process(p, m).
 
 // The sink's argument is made of a parameter of the program's API
