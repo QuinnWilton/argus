@@ -38,7 +38,13 @@ defmodule Argus.Analyses.Effects do
       Argus.Extractors.OTP,
       # Where a transaction's body starts a process (process_start):
       # runs_elsewhere's edges, which the transaction walk treats apart.
+      # The task a wait is handed comes from the points-to stage
+      # (task_handled), which reads these four too.
       Argus.Extractors.TermFlow,
+      Argus.Extractors.ErrorHandling,
+      Argus.Extractors.ProcessRegistry,
+      Argus.Extractors.GenStatem,
+      Argus.Extractors.Supervision,
       Argus.Extractors.Tooling
     ]
 

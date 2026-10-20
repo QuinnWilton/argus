@@ -6,6 +6,7 @@
 .include "../clientlib/imports.dl"
 .include "../clientlib/behaviours.dl"
 .include "../clientlib/runs_elsewhere.dl"
+.include "../clientlib/staged_processes.dl"
 .include "../clientlib/tooling.dl"
 
 // A finding in code only developers' tools or tests run steps down a
@@ -98,23 +99,16 @@ on_process_table("process").
 
 runs_in_transaction(body, via) :- body_reach.reaches(body, via).
 
-// `func` starts a task running `runs` at `start` and waits on a task (runs_elsewhere.dl):
-// any task, since this analysis reads no points-to to tell which one.
-.decl awaits_task(func: symbol, start: symbol, runs: symbol)
-
-awaits_task(f, id, g) :-
-  process_start(id, f, _, "spawn", g),
-  call_site(id, f, m, a, _),
-  task_start_api(m, a, _),
-  call_site(_, f, "Task", w, _),
-  task_wait(w).
-
-// Forward from the transaction bodies only, and not past a start the
-// body does not wait for (runs_elsewhere, clientlib).
+// Forward from the transaction bodies only, and not into what a start runs in another
+// process, except a task a function the body reaches waits on (awaits_task,
+// staged_processes.dl): the task its handle names, wherever it was started. A task
+// started and not waited on runs on its own; one started in a helper and awaited in
+// the body holds the transaction.
 .init body_reach = ForwardCallReachCut
 
 body_reach.root(body, body) :- transaction_body(_, _, _, body).
-body_reach.cut(caller, fun) :- starts_on(caller, fun), !awaits_task(caller, _, fun).
+body_reach.cut(caller, fun) :- starts_on(caller, fun).
+body_reach.reaches(r, h) :- body_reach.reaches(r, g), awaits_task(g, _, h).
 
 // `caller` starts `fun` in a spawn, task, agent or forwarding helper. Functions merely
 // registered or retained are traversed normally.

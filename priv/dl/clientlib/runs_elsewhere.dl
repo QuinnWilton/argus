@@ -107,8 +107,7 @@ hands_funs_off(f) :-
 // Awaited task work still runs in another process, but holds the caller. Wait analyses
 // may cross this boundary through `awaits_task(func, start, runs)`: `func` waits on the
 // task started at `start`, which runs `runs`. staged_processes.dl derives it from the
-// task's handle, wherever it was started; effects.dl, which reads no points-to, from the
-// function starting a task and waiting on any.
+// task's handle, wherever it was started.
 
 // Reply-producing task APIs send `{ref, result}` and :DOWN. Linked variants can also
 // crash the caller or deliver :EXIT when it traps. Unlinked variants leave replies and

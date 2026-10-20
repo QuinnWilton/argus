@@ -16,11 +16,11 @@ defmodule Argus.Findings.FailedStageTest do
     Argus.Test.FailingEngine.with("points_to.dl", fn ->
       assert {:ok, %Findings{ran: ran, degraded: degraded}} =
                Findings.run([:lists],
-                 analyses: [:startup, :effects],
+                 analyses: [:startup, :state_machine],
                  store: Path.join(dir, "store")
                )
 
-      assert [%{analysis: :effects}] = ran
+      assert [%{analysis: :state_machine}] = ran
 
       assert [
                %{

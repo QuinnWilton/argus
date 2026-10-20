@@ -138,6 +138,38 @@ defmodule Argus.Test.Fixtures.Transaction do
     end
   end
 
+  defmodule AwaitsAnotherTask do
+    @moduledoc """
+    Two tasks started in the transaction, one waited on: the notifier's
+    message leaves from its own process whether the body waits or not, so
+    only its start is the transaction's.
+    """
+    def create(post) do
+      FakeRepo.transaction(fn ->
+        _notifier = Task.async(fn -> Process.send(:audit, {:created, post}, []) end)
+        lookup = Task.async(fn -> String.length(post) end)
+        FakeRepo.insert(post)
+        Task.await(lookup)
+      end)
+    end
+  end
+
+  defmodule AwaitsHelperTask do
+    @moduledoc """
+    A task a helper starts and the body waits on: its message is sent while
+    the transaction holds on to it.
+    """
+    def create(post) do
+      FakeRepo.transaction(fn ->
+        task = start_notify(post)
+        FakeRepo.insert(post)
+        Task.await(task)
+      end)
+    end
+
+    defp start_notify(post), do: Task.async(fn -> Process.send(:audit, {:created, post}, []) end)
+  end
+
   defmodule Unsafe do
     @moduledoc "The bug: an unrollbackable effect inside the transaction."
     def create(user) do

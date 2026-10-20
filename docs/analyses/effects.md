@@ -25,7 +25,9 @@ contract; simply spawning work does not make it consistent with commit or rollba
 The analysis recognizes selected transaction APIs, wrappers and closure shapes.
 It distinguishes some detached process-local effects from lasting external effects,
 but cannot model every Ecto.Multi composition, nested transaction or application
-compensation protocol. Logging and ordinary reads are not rollback defects here.
+compensation protocol. A task the transaction waits on, wherever it was started, holds
+the transaction: its messages and starts are the transaction's. A task it starts and
+does not wait on sends its own. Logging and ordinary reads are not rollback defects here.
 
 ## Implementation
 

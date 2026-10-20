@@ -44,7 +44,7 @@ defmodule Argus.Analysis.ExtractionTest do
     @tag :flowlog
     test "is derived when an analysis reads it, and only then" do
       assert {:ok, reads} = Analysis.extract_facts([:lists], [:startup])
-      assert {:ok, reads_not} = Analysis.extract_facts([:lists], [:effects])
+      assert {:ok, reads_not} = Analysis.extract_facts([:lists], [:state_machine])
 
       assert {:ok, deferred} =
                Analysis.extract_facts([:lists], [:startup], points_to: :deferred)
@@ -66,7 +66,9 @@ defmodule Argus.Analysis.ExtractionTest do
     test "is read by the analyses that ask about processes" do
       assert Extraction.reads_points_to?(:startup)
       assert Extraction.reads_points_to?(:races)
-      refute Extraction.reads_points_to?(:effects)
+      # The task a transaction waits on, by its handle.
+      assert Extraction.reads_points_to?(:effects)
+      refute Extraction.reads_points_to?(:state_machine)
       refute Extraction.reads_points_to?(:structure)
     end
 
@@ -77,7 +79,7 @@ defmodule Argus.Analysis.ExtractionTest do
 
     @tag :flowlog
     test "is not derived for analyses that do not read it", %{tmp_dir: dir} do
-      assert :ok = Extraction.ensure_points_to(dir, [:effects, :structure], [])
+      assert :ok = Extraction.ensure_points_to(dir, [:state_machine, :structure], [])
       assert File.ls!(dir) == []
     end
 

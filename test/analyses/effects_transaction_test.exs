@@ -64,6 +64,23 @@ defmodule Argus.Analyses.EffectsTransactionTest do
       assert start =~ "Task"
     end
 
+    test "a task's messages are the transaction's when the body waits on that task" do
+      rows = findings([T.FakeRepo, T.AwaitsAnotherTask, T.AwaitsHelperTask])
+
+      sends = fn module ->
+        for [_, _, "process", api, via] <- for_module(rows, module), api =~ "send", do: via
+      end
+
+      # The notifier is started and never waited on: its send is its own,
+      # though the body waits on another task.
+      assert sends.("AwaitsAnotherTask") == []
+
+      # Started by a helper, waited on in the body: its send holds the
+      # transaction.
+      assert [via] = sends.("AwaitsHelperTask")
+      assert via =~ "start_notify/1-fun-0-"
+    end
+
     test "a broadcast, an HTTP request, and Repo.transact's fun" do
       rows =
         findings([
