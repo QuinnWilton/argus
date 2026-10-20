@@ -43,7 +43,8 @@ defmodule Argus.Report.PentimentLabelsTest do
       help: [],
       related: related,
       provenance: :structural,
-      confidence: nil
+      confidence: nil,
+      ignore: nil
     }
   end
 

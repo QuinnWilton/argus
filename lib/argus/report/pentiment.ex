@@ -16,7 +16,8 @@ defmodule Argus.Report.Pentiment do
     on one span of one file are one label, their messages joined in
     order: a cycle's anchor and the frame for the edge it starts sit on
     the same call, and two underlines of one span read as two places.
-  - `detail` renders as a note, each `help` as a help trailer.
+  - `detail` renders as a note, each `help` as a help trailer, and how
+    to ignore the finding as the last.
 
   Sources are read from disk as the frame is rendered. A path that is
   not a source file (a beam, the anchor of a module that recorded no
@@ -59,7 +60,11 @@ defmodule Argus.Report.Pentiment do
     |> Pentiment.Report.with_labels(related)
     |> Pentiment.Report.with_note(entry.detail)
     |> then(fn report -> Enum.reduce(entry.help, report, &Pentiment.Report.with_help(&2, &1)) end)
+    |> with_ignore(entry.ignore)
   end
+
+  defp with_ignore(report, nil), do: report
+  defp with_ignore(report, hint), do: Pentiment.Report.with_help(report, hint)
 
   defp report_for(:error, message), do: Pentiment.Report.error(message)
   defp report_for(:warning, message), do: Pentiment.Report.warning(message)

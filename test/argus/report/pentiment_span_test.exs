@@ -43,7 +43,8 @@ defmodule Argus.Report.PentimentSpanTest do
         %{label: "guarded by this catch", file: file, line: 3, end_line: 5}
       ],
       provenance: :structural,
-      confidence: nil
+      confidence: nil,
+      ignore: nil
     }
 
     details = Pentiment.format(entry, dir)
@@ -74,7 +75,8 @@ defmodule Argus.Report.PentimentSpanTest do
       help: [],
       related: [],
       provenance: :structural,
-      confidence: nil
+      confidence: nil,
+      ignore: nil
     }
 
     details = Pentiment.format(entry, dir)

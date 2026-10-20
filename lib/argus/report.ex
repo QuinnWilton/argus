@@ -48,7 +48,11 @@ defmodule Argus.Report do
           not Argus.Config.ignores_finding?(config, one.finding),
           %Entry{} = entry <- [Entry.from_located(one)],
           not ignored_file?(entry.file, config, cwd) do
-        %{entry | severity: Map.get(config.severity, entry.analysis, entry.severity)}
+        %{
+          entry
+          | severity: Map.get(config.severity, entry.analysis, entry.severity),
+            ignore: Argus.Config.ignore_hint(config, one.finding)
+        }
       end
     end)
     |> Enum.sort_by(

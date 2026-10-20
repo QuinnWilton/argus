@@ -22,7 +22,9 @@ defmodule Argus.Report.Entry do
   outside the program (no file) is left out.
 
   `file` is absolute; the renderers show it relative to where the run
-  was asked from.
+  was asked from. `ignore` says how to leave the finding out, in the
+  configuration's own syntax (`Argus.Config.ignore_hint/2`, which
+  `Argus.Report.build/3` fills in).
   """
 
   @enforce_keys [
@@ -37,7 +39,8 @@ defmodule Argus.Report.Entry do
     :help,
     :related,
     :provenance,
-    :confidence
+    :confidence,
+    :ignore
   ]
   defstruct @enforce_keys
 
@@ -61,7 +64,8 @@ defmodule Argus.Report.Entry do
           help: [String.t()],
           related: [frame()],
           provenance: Argus.Findings.provenance(),
-          confidence: 0..1000 | nil
+          confidence: 0..1000 | nil,
+          ignore: String.t() | nil
         }
 
   @doc """
@@ -86,7 +90,8 @@ defmodule Argus.Report.Entry do
       help: finding.help,
       related: related(finding.related, refined.related),
       provenance: finding.provenance,
-      confidence: finding.confidence
+      confidence: finding.confidence,
+      ignore: nil
     }
   end
 

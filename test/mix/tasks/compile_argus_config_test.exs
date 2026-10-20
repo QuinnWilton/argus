@@ -120,6 +120,20 @@ defmodule Mix.Tasks.Compile.ArgusConfigTest do
       end)
     end
 
+    test "a finding's frame says how to ignore it", %{peer: peer} do
+      project = checkout!([], :depot_ignhint)
+
+      in_project(peer, project, fn _log ->
+        {_status, diagnostics} = compile!()
+        diags = Enum.filter(diagnostics, &(&1.compiler_name == "argus"))
+        async = Enum.find(diags, &(&1.message =~ "Async task never awaited"))
+
+        assert async.details =~
+                 "to ignore it, add {:mailbox, {Depot.Archive, :archive_async, 1}} to " <>
+                   "argus's ignore: [findings: [...]]"
+      end)
+    end
+
     test "module ignores keep the module out of analysis entirely", %{peer: peer} do
       project = checkout!([ignore: [modules: [~r/Archive/]]], :depot_ignmod)
 

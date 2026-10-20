@@ -60,7 +60,8 @@ defmodule Argus.Config do
   :retry, 2}}`), its analysis named as `severity:` names it (a set stands
   for its members): the finding someone looked at and kept, without
   hiding the rest of the module's. The module and the function are the
-  ones the finding is reported in, its first frame.
+  ones the finding is reported in, its first frame, which every
+  finding's help names (`ignore_hint/2`).
 
   Every key, at every level, is validated: an invalid entry raises
   `Argus.ConfigError` naming where it is (in its source's own syntax),
@@ -92,7 +93,8 @@ defmodule Argus.Config do
     :include_deps,
     :fail_on,
     :engine,
-    :priors
+    :priors,
+    :origin
   ]
   defstruct @enforce_keys
 
@@ -124,7 +126,8 @@ defmodule Argus.Config do
           include_deps: boolean(),
           fail_on: :error | :warning,
           engine: :warn | :require,
-          priors: priors()
+          priors: priors(),
+          origin: origin()
         }
 
   @typedoc """
@@ -179,9 +182,70 @@ defmodule Argus.Config do
       include_deps: boolean!(ctx, :include_deps, Keyword.get(raw, :include_deps, false)),
       fail_on: enum!(ctx, [:fail_on], Keyword.get(raw, :fail_on, :error), [:error, :warning]),
       engine: enum!(ctx, [:engine], Keyword.get(raw, :engine, :warn), [:warn, :require]),
-      priors: priors!(ctx, Keyword.get(raw, :priors, :off))
+      priors: priors!(ctx, Keyword.get(raw, :priors, :off)),
+      origin: origin
     }
   end
+
+  @doc """
+  How to leave out `finding`'s analysis's findings in the function it is
+  reported in (the one a fun or a comprehension is written in), else its
+  module, spelled as `config` was written: the
+  `ignore: [findings: ...]` entry to add, and what it leaves out. Nil
+  for a finding reported in no module.
+
+      iex> config = Argus.Config.load([])
+      iex> finding = %{analysis: :shutdown, module: MyApp.Writer, mfa: {MyApp.Writer, :run, 2}}
+      iex> Argus.Config.ignore_hint(config, finding)
+      "to ignore it, add {:shutdown, {MyApp.Writer, :run, 2}} to argus's ignore: [findings: [...]]; " <>
+        "that leaves out every shutdown finding in MyApp.Writer.run/2"
+
+      iex> config = Argus.Config.load([], {:rebar3, "rebar.config"})
+      iex> finding = %{analysis: :races, module: :my_reading, mfa: nil}
+      iex> Argus.Config.ignore_hint(config, finding)
+      "to ignore it, add {races,my_reading} to argus's {ignore, [{findings, [...]}]}; " <>
+        "that leaves out every races finding in my_reading"
+  """
+  @spec ignore_hint(t(), %{analysis: atom(), module: module() | nil, mfa: mfa() | nil}) ::
+          String.t() | nil
+  def ignore_hint(%__MODULE__{} = config, %{analysis: analysis} = finding) do
+    ctx = ConfigError.context(config.origin)
+
+    case ignore_target(finding) do
+      nil ->
+        nil
+
+      target ->
+        under =
+          if ctx.erlang?,
+            do: "{ignore, [{findings, [...]}]}",
+            else: "ignore: [findings: [...]]"
+
+        "to ignore it, add #{show(ctx, {analysis, target})} to argus's #{under}; " <>
+          "that leaves out every #{analysis} finding in #{show_target(ctx, target)}"
+    end
+  end
+
+  defp ignore_target(%{mfa: {module, _, _} = mfa}) do
+    case enclosing(mfa) do
+      {name, arity} ->
+        try do
+          {module, String.to_existing_atom(name), arity}
+        rescue
+          ArgumentError -> mfa
+        end
+
+      nil ->
+        mfa
+    end
+  end
+
+  defp ignore_target(%{module: module}) when is_atom(module) and module != nil, do: module
+  defp ignore_target(_finding), do: nil
+
+  defp show_target(%{erlang?: false}, {m, f, a}), do: Exception.format_mfa(m, f, a)
+  defp show_target(%{erlang?: true} = ctx, {m, f, a}), do: "#{show(ctx, m)}:#{show(ctx, f)}/#{a}"
+  defp show_target(ctx, module), do: if(ctx.erlang?, do: show(ctx, module), else: inspect(module))
 
   @doc """
   Whether `config` leaves out `finding` (`ignore: [findings: ...]`): an

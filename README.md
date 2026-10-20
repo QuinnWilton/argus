@@ -170,6 +170,8 @@ analysis and where it is:
 argus: [ignore: [findings: [{:shutdown, MyApp.Writer}, {:races, {MyApp.Reading, :retry, 2}}]]]
 ```
 
+Each finding's help names the entry that leaves it out.
+
 See the
 [configuration reference](https://hexdocs.pm/argus_beam/Argus.Config.html) for
 severity, ignore rules and compiler settings.

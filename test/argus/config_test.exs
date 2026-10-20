@@ -4,6 +4,8 @@ defmodule Argus.ConfigTest do
   alias Argus.Config
   alias Argus.Config.Source
 
+  doctest Argus.Config, only: [ignore_hint: 2]
+
   test "the default analyses are argus's default set" do
     assert Config.load([]).analyses == Argus.Graph.default_analyses()
     assert {:ok, Config.load([]).analyses} == Argus.Analysis.set(:default)
@@ -169,6 +171,9 @@ defmodule Argus.ConfigTest do
       assert Config.ignores_finding?(config, finding.(:"-run/1-lc$^0/1-0-"))
       refute Config.ignores_finding?(config, finding.(:"-other/1-fun-0-"))
       refute Config.ignores_finding?(config, %{finding.(:run) | analysis: :races})
+
+      assert Config.ignore_hint(config, finding.(:"-run/1-fun-0-")) =~
+               "add {:shutdown, {MyApp.Writer, :run, 1}}"
     end
 
     test "ignore findings names a known analysis, and a module or a function" do
@@ -292,7 +297,7 @@ defmodule Argus.ConfigTest do
       File.write!(path, "{erl_opts, [debug_info]}.\n")
 
       {raw, origin} = Source.rebar3(path)
-      assert Config.load(raw, origin) == Config.load([])
+      assert Config.load(raw, origin) == %{Config.load([]) | origin: {:rebar3, path}}
     end
 
     test "an error is spelled in Erlang and names the file", %{tmp_dir: dir} do
