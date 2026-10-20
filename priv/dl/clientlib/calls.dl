@@ -144,18 +144,18 @@ side_call(f, g) :-
 
 // Dependencies
 //
-// `sync_dep(f, m)` is a direct wait on m or its client API; `reaches_sync_dep` adds
+// `sync_dependency(f, m)` is a direct wait on m or its client API; `reaches_sync_dependency` adds
 // reachable waits. Dynamic and via-name strings do not identify server modules. Resolve
 // them through points-to or message tags instead.
-.decl sync_dep(func: symbol, mod: symbol)
+.decl sync_dependency(func: symbol, mod: symbol)
 
-sync_dep(f, m) :-
+sync_dependency(f, m) :-
   sync_call(f, m),
   m != "dynamic",
   m != ":dynamic",
   !match("via:.*", m).
 
-sync_dep(f, m) :-
+sync_dependency(f, m) :-
   call_edge(f, g),
   !side_call(f, g),
   genserver_sync_api(g, m),
@@ -164,7 +164,7 @@ sync_dep(f, m) :-
 
 // Points-to resolves a pid-targeted call to m's server. Parameter-based helper calls
 // belong to the caller supplying the pid, not the shared helper.
-sync_dep(f, m) :-
+sync_dependency(f, m) :-
   process_call(f, _, _, "call", p),
   server_process(p, m).
 
@@ -194,24 +194,24 @@ sync_site(f, m, id) :-
   m != ":dynamic",
   !match("via:.*", m).
 
-// f casts to m's process, as sync_dep calls it (the same spelled
+// f casts to m's process, as sync_dependency calls it (the same spelled
 // targets, side paths and client APIs).
-.decl async_dep(func: symbol, mod: symbol)
+.decl async_dependency(func: symbol, mod: symbol)
 
-async_dep(f, m) :-
+async_dependency(f, m) :-
   async_cast(f, m),
   m != "dynamic",
   m != ":dynamic",
   !match("via:.*", m).
 
-async_dep(f, m) :-
+async_dependency(f, m) :-
   call_edge(f, g),
   !side_call(f, g),
   genserver_async_api(g, m),
   function_def(f, fm, _, _, _),
   fm != m.
 
-async_dep(f, m) :-
+async_dependency(f, m) :-
   process_call(f, _, _, "cast", p),
   server_process(p, m).
 
@@ -321,58 +321,58 @@ tag_resolved_site(id, func, kind, mod) :-
   !pointsto_resolved(id, func, kind).
 
 // The sync dependencies that exist only by tag attribution, propagated
-// backwards like reaches_sync_dep, so a consumer can mark an inferred
+// backwards like reaches_sync_dependency, so a consumer can mark an inferred
 // edge for the reader.
-.decl tag_dep(func: symbol, mod: symbol)
+.decl tag_dependency(func: symbol, mod: symbol)
 
-tag_dep(f, m) :-
+tag_dependency(f, m) :-
   tag_resolved_site(id, f, "call", m),
   sync_call_site(id, f, t, _),
   unresolved_target(t).
 
-.decl reaches_tag_dep(func: symbol, mod: symbol)
+.decl reaches_tag_dependency(func: symbol, mod: symbol)
 
-reaches_tag_dep(f, m) :- tag_dep(f, m).
+reaches_tag_dependency(f, m) :- tag_dependency(f, m).
 
-reaches_tag_dep(f, m) :-
+reaches_tag_dependency(f, m) :-
   call_edge(f, g),
   !runs_elsewhere(f, g),
   !side_call(f, g),
-  reaches_tag_dep(g, m).
+  reaches_tag_dependency(g, m).
 
-reaches_tag_dep(f, m) :- awaits_task(f, _, g), reaches_tag_dep(g, m).
+reaches_tag_dependency(f, m) :- awaits_task(f, _, g), reaches_tag_dependency(g, m).
 
-sync_dep(f, m) :-
+sync_dependency(f, m) :-
   tag_resolved_site(id, f, "call", m),
   sync_call_site(id, f, t, _),
   unresolved_target(t).
 
-async_dep(f, m) :-
+async_dependency(f, m) :-
   tag_resolved_call(f, "cast", m),
   async_cast(f, t),
   unresolved_target(t).
 
-.decl reaches_sync_dep(func: symbol, mod: symbol)
+.decl reaches_sync_dependency(func: symbol, mod: symbol)
 
 // Propagate waits only across same-process calls, plus tasks the caller awaits.
 // Detached work retains its own dependency but does not block its starter. Traverse
 // backward from dependency holders, bounding results by functions × target modules
 // rather than full call-graph closure.
-reaches_sync_dep(f, m) :- sync_dep(f, m).
+reaches_sync_dependency(f, m) :- sync_dependency(f, m).
 
-reaches_sync_dep(f, m) :-
+reaches_sync_dependency(f, m) :-
   call_edge(f, g),
   !runs_elsewhere(f, g),
   !side_call(f, g),
-  reaches_sync_dep(g, m).
+  reaches_sync_dependency(g, m).
 
-reaches_sync_dep(f, m) :- awaits_task(f, _, g), reaches_sync_dep(g, m).
+reaches_sync_dependency(f, m) :- awaits_task(f, _, g), reaches_sync_dependency(g, m).
 
 // Request tags
 //
 // Attach each wait's atom or tuple-head tag, using `any` when unknown. This supports
 // clause-specific call chains. `reaches_sync_request` covers the same dependencies as
-// `reaches_sync_dep`.
+// `reaches_sync_dependency`.
 
 // The tag of the sync call at `id`, "any" when its message has none.
 .decl sent_tag(id: symbol, func: symbol, tag: symbol)
@@ -507,12 +507,12 @@ sync_request_known(f, m, tag) :-
 
 sync_request_seen(f, m) :- sync_request_known(f, m, _).
 
-// Give every sync_dep a request classification. Unclassified dependencies default to
+// Give every sync_dependency a request classification. Unclassified dependencies default to
 // "any".
 .decl sync_request(func: symbol, mod: symbol, tag: symbol)
 
 sync_request(f, m, tag) :- sync_request_known(f, m, tag).
-sync_request(f, m, "any") :- sync_dep(f, m), !sync_request_seen(f, m).
+sync_request(f, m, "any") :- sync_dependency(f, m), !sync_request_seen(f, m).
 
 .decl reaches_sync_request(func: symbol, mod: symbol, tag: symbol)
 
@@ -684,22 +684,22 @@ site_clause(f, id, "any") :- site_request(f, id, _, _), !clause_call(id, f, _).
 
 // Propagate async dependencies over the same process boundaries as sync dependencies,
 // excluding detached work and side APIs. A detached task's cast is its own, not init's.
-.decl reaches_async_dep(func: symbol, mod: symbol)
+.decl reaches_async_dependency(func: symbol, mod: symbol)
 
-reaches_async_dep(f, m) :- async_dep(f, m).
+reaches_async_dependency(f, m) :- async_dependency(f, m).
 
-reaches_async_dep(f, m) :-
+reaches_async_dependency(f, m) :-
   call_edge(f, g),
   !runs_elsewhere(f, g),
   !side_call(f, g),
-  reaches_async_dep(g, m).
+  reaches_async_dependency(g, m).
 
 // Dependency timeout: -1 means infinity and 0 unknown. Preserve the waiting wrapper's
 // timeout and pair points-to targets with that same call site.
-.decl sync_dep_timeout(func: symbol, mod: symbol, timeout_ms: number)
+.decl sync_dependency_timeout(func: symbol, mod: symbol, timeout_ms: number)
 
-// A spelled target, as sync_dep's (a via or dynamic one names no module).
-sync_dep_timeout(f, m, ms) :-
+// A spelled target, as sync_dependency's (a via or dynamic one names no module).
+sync_dependency_timeout(f, m, ms) :-
   sync_call_timeout(f, m, ms),
   m != "dynamic",
   m != ":dynamic",
@@ -707,19 +707,19 @@ sync_dep_timeout(f, m, ms) :-
 
 // The timeout of the very call the tag attributes, not of any unresolved
 // call in the same function.
-sync_dep_timeout(f, m, ms) :-
+sync_dependency_timeout(f, m, ms) :-
   tag_resolved_site(id, f, "call", m),
   sync_call_site(id, f, t, ms),
   unresolved_target(t).
 
 // A call points-to resolves, with its own timeout: the helper's
 // call when f hands the pid to one.
-sync_dep_timeout(f, m, ms) :-
+sync_dependency_timeout(f, m, ms) :-
   process_call(f, _, site, "call", p),
   server_process(p, m),
   sync_call_site(site, _, _, ms).
 
-sync_dep_timeout(f, m, ms) :-
+sync_dependency_timeout(f, m, ms) :-
   call_edge(f, g),
   !side_call(f, g),
   genserver_sync_api(g, m),
@@ -728,17 +728,17 @@ sync_dep_timeout(f, m, ms) :-
   function_def(f, fm, _, _, _),
   fm != m.
 
-.decl reaches_sync_dep_timeout(func: symbol, mod: symbol, timeout_ms: number)
+.decl reaches_sync_dependency_timeout(func: symbol, mod: symbol, timeout_ms: number)
 
-reaches_sync_dep_timeout(f, m, ms) :- sync_dep_timeout(f, m, ms).
+reaches_sync_dependency_timeout(f, m, ms) :- sync_dependency_timeout(f, m, ms).
 
 // Attribute waits only to the executing process. Timeouts reached solely in detached
 // tasks, spawns or agents do not belong to f.
-reaches_sync_dep_timeout(f, m, ms) :-
+reaches_sync_dependency_timeout(f, m, ms) :-
   call_edge(f, g),
   !runs_elsewhere(f, g),
   !side_call(f, g),
-  reaches_sync_dep_timeout(g, m, ms).
+  reaches_sync_dependency_timeout(g, m, ms).
 
 // Private process dependencies
 //
@@ -746,38 +746,38 @@ reaches_sync_dep_timeout(f, m, ms) :-
 // registered shared instance, and no literal target names mod. Sibling restart rules
 // exclude these dependencies because restarting a shared child does not replace the
 // caller's private process.
-.decl private_dep(func: symbol, mod: symbol)
+.decl private_dependency(func: symbol, mod: symbol)
 
-private_dep(f, m) :-
+private_dependency(f, m) :-
   call_target(f, kind, p),
   (kind = "call" ; kind = "cast"),
   server_process(p, m),
   private_process(p, _, _),
-  !shared_dep(f, m).
+  !shared_dependency(f, m).
 
-.decl shared_dep(func: symbol, mod: symbol)
+.decl shared_dependency(func: symbol, mod: symbol)
 
-shared_dep(f, m) :-
+shared_dependency(f, m) :-
   call_target(f, kind, p),
   (kind = "call" ; kind = "cast"),
   server_process(p, m),
   !private_process(p, _, _).
 
-shared_dep(f, m) :- sync_call(f, m).
-shared_dep(f, m) :- async_cast(f, m).
+shared_dependency(f, m) :- sync_call(f, m).
+shared_dependency(f, m) :- async_cast(f, m).
 
 // A module that depends on `mod` through private instances alone: some
 // function of it does, and none does otherwise.
-.decl private_module_dep(from_mod: symbol, to_mod: symbol)
+.decl private_module_dependency(from_mod: symbol, to_mod: symbol)
 
-private_module_dep(a, b) :-
-  private_dep(f, b),
+private_module_dependency(a, b) :-
+  private_dependency(f, b),
   function_def(f, a, _, _, _),
-  !shared_module_dep(a, b).
+  !shared_module_dependency(a, b).
 
-.decl shared_module_dep(from_mod: symbol, to_mod: symbol)
+.decl shared_module_dependency(from_mod: symbol, to_mod: symbol)
 
-shared_module_dep(a, b) :- shared_dep(f, b), function_def(f, a, _, _, _).
+shared_module_dependency(a, b) :- shared_dependency(f, b), function_def(f, a, _, _, _).
 
 // ── Module-level dependency ────────────────────────────────────────────
 //
@@ -789,15 +789,15 @@ shared_module_dep(a, b) :- shared_dep(f, b), function_def(f, a, _, _, _).
 .decl reaches_module(func: symbol, mod: symbol)
 
 // Asked only of a module some supervisor starts (coupling's siblings,
-// the one consumer of stateful_module_dep), so only those are targets.
-.decl module_dep_target(mod: symbol)
+// the one consumer of stateful_module_dependency), so only those are targets.
+.decl module_dependency_target(mod: symbol)
 
-module_dep_target(m) :- child_subtree(_, _, m).
+module_dependency_target(m) :- child_subtree(_, _, m).
 
 reaches_module(f, m) :-
   call_edge(f, g),
   function_def(g, m, _, _, _),
-  module_dep_target(m).
+  module_dependency_target(m).
 
 reaches_module(f, m) :-
   call_edge(f, g),
@@ -823,27 +823,27 @@ reaches_sync_caller_in(f, m) :-
   reaches_sync_caller_in(g, m).
 
 // A function of from_mod waits on to_mod's process, somewhere below it.
-.decl module_sync_dep(from_mod: symbol, to_mod: symbol, witness: symbol)
+.decl module_sync_dependency(from_mod: symbol, to_mod: symbol, witness: symbol)
 
-module_sync_dep(from_mod, to_mod, f) :-
+module_sync_dependency(from_mod, to_mod, f) :-
   function_def(f, from_mod, _, _, _),
-  reaches_sync_dep(f, to_mod),
+  reaches_sync_dependency(f, to_mod),
   from_mod != to_mod.
 
 // A module's sync or async process dependency, resolved or inferred from the target
 // module's unresolved client API. `witness` identifies the caller function. Used for
 // restart-policy coupling; stored relationships lost on restart are tracked separately
 // in restart_state.dl.
-.decl stateful_module_dep(from_mod: symbol, to_mod: symbol, witness: symbol)
+.decl stateful_module_dependency(from_mod: symbol, to_mod: symbol, witness: symbol)
 
-stateful_module_dep(from_mod, to_mod, f) :- module_sync_dep(from_mod, to_mod, f).
+stateful_module_dependency(from_mod, to_mod, f) :- module_sync_dependency(from_mod, to_mod, f).
 
-stateful_module_dep(from_mod, to_mod, f) :-
+stateful_module_dependency(from_mod, to_mod, f) :-
   function_def(f, from_mod, _, _, _),
-  reaches_async_dep(f, to_mod),
+  reaches_async_dependency(f, to_mod),
   from_mod != to_mod.
 
-stateful_module_dep(from_mod, to_mod, w) :-
+stateful_module_dependency(from_mod, to_mod, w) :-
   module_reaches(from_mod, to_mod, w),
   module_client_call(to_mod).
 

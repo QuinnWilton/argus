@@ -187,7 +187,7 @@ defmodule Argus.Schema.CallValues do
         """
       },
       %{
-        name: :creating_op,
+        name: :creating_operation,
         layer: 2,
         fields: [
           {:id, :instr_id, "instruction ID of the call"},
@@ -340,7 +340,7 @@ defmodule Argus.Schema.CallValues do
         """
       },
       %{
-        name: :mnesia_op,
+        name: :mnesia_operation,
         layer: 2,
         fields: [
           {:id, :instr_id, "instruction ID of the call"},
@@ -365,7 +365,7 @@ defmodule Argus.Schema.CallValues do
         layer: 2,
         fields: [
           {:func, :func_id, "the function holding both writes"},
-          {:first, :instr_id, "a Mnesia write (mnesia_op kind write)"},
+          {:first, :instr_id, "a Mnesia write (mnesia_operation kind write)"},
           {:then, :instr_id, "a Mnesia write that can run after it"}
         ],
         doc: """
@@ -378,8 +378,8 @@ defmodule Argus.Schema.CallValues do
         name: :mnesia_written_when_found,
         layer: 2,
         fields: [
-          {:read, :instr_id, "a Mnesia read (mnesia_op kind read)"},
-          {:write, :instr_id, "a Mnesia write (mnesia_op kind write) of the same function"}
+          {:read, :instr_id, "a Mnesia read (mnesia_operation kind read)"},
+          {:write, :instr_id, "a Mnesia write (mnesia_operation kind write) of the same function"}
         ],
         doc: """
         No path from the side of a test of the read's answer that found no record \

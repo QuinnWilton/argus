@@ -41,7 +41,7 @@ live_server_reach.root(mod, func) :- process_entry(mod, func), !terminate_callba
 // A stop of a process: a supervisor's terminate_child, GenServer.stop.
 .decl kill_call(site: symbol, func: symbol)
 
-kill_call(x, g) :- sup_call(x, g, _, "terminate_child", _).
+kill_call(x, g) :- supervisor_call(x, g, _, "terminate_child", _).
 kill_call(x, g) :- remote_call(x, g, "GenServer", "stop", _).
 
 // Pair a kill with a monitor when their targets overlap or either is unresolved.

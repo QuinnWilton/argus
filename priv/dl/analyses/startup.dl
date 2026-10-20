@@ -71,7 +71,7 @@ holds_start(init, op) :-
 // from supervisor calls, unbounded socket/receive waits, and server loops.
 .init own_stack = OwnStackBeforeAck
 
-own_stack.seed(g, site) :- sup_management_call(site, g, _, _, _), !start_acked(site, g).
+own_stack.seed(g, site) :- supervisor_management_call(site, g, _, _, _), !start_acked(site, g).
 own_stack.seed(f, f) :- reads_socket_without_timeout(f).
 own_stack.seed(f, f) :- receives_without_timeout(f, _).
 own_stack.seed(f, f) :- enters_loop_at(f, _).
@@ -88,11 +88,11 @@ call_to_unplaced_peer_during_init(mod, peer) :-
   !later_sibling_call(mod, peer).
 
 // mod's init/1 holds its start on a synchronous call to `peer`: on its own
-// stack, before it acknowledges its start (init_dep "call",
+// stack, before it acknowledges its start (init_dependency "call",
 // clientlib/entries.dl).
 .decl calls_during_init(mod: symbol, peer: symbol)
 
-calls_during_init(mod, peer) :- init_dep(mod, peer, "call", _).
+calls_during_init(mod, peer) :- init_dependency(mod, peer, "call", _).
 
 // The peer is running when mod's init/1 calls it: it starts earlier under
 // the same supervisor, or under another supervision tree.
@@ -105,8 +105,8 @@ already_running(mod, peer) :- init_safe_cross_supervisor(mod, peer).
 // ordering evidence. Do not also report them as unordered calls.
 .decl later_sibling_call(child: symbol, dep: symbol)
 
-later_sibling_call(child, dep) :- later_sibling_dep(child, dep, "call", _, _, _).
-later_sibling_call(child, dep) :- after_tree_dep(child, dep, _, _, _).
+later_sibling_call(child, dep) :- later_sibling_dependency(child, dep, "call", _, _, _).
+later_sibling_call(child, dep) :- after_tree_dependency(child, dep, _, _, _).
 
 // ── Supervision-aware filtering ────────────────────────────────────────
 
@@ -179,7 +179,7 @@ unconditional_sync_call_in_init(mod, callee) :-
   init_function(mod, func),
   unconditional_call_edge(func, g),
   !acked_edge(func, g),
-  reaches_sync_dep(g, callee).
+  reaches_sync_dependency(g, callee).
 
 unconditional_sync_call_in_init(mod, callee) :-
   init_function(mod, func),
@@ -211,7 +211,7 @@ init_wait_site(mod, callee, id) :-
   call_instr(f, g, id),
   !start_acked(id, f),
   !side_call(f, g),
-  reaches_sync_dep(g, callee).
+  reaches_sync_dependency(g, callee).
 
 // A task init/1 awaits (awaits_task): the wait is at its start.
 init_wait_site(mod, callee, id) :-
@@ -219,7 +219,7 @@ init_wait_site(mod, callee, id) :-
   init_function(mod, f),
   awaits_task(f, id, g),
   !start_acked(id, f),
-  reaches_sync_dep(g, callee).
+  reaches_sync_dependency(g, callee).
 
 .decl init_waits_unconditionally_at(mod: symbol, callee: symbol)
 
@@ -281,8 +281,8 @@ supervisor_call_during_init(mod, call) :-
 
 answers_without_init(mod, call) :-
   init_function(mod, _),
-  sup_management_call(call, _, "Task.Supervisor", op, sup),
-  child_creating_op(op),
+  supervisor_management_call(call, _, "Task.Supervisor", op, sup),
+  child_creating_operation(op),
   !starts_under(mod, sup).
 
 // mod is started under the supervisor named `sup`.
@@ -291,15 +291,15 @@ answers_without_init(mod, call) :-
 starts_under(mod, sup) :- dynamic_child(sup, mod, _), sup != "dynamic".
 
 // The call is Supervisor.start_child/2 or one of its relatives, a
-// GenServer.call into a supervisor (sup_management_call,
+// GenServer.call into a supervisor (supervisor_management_call,
 // clientlib/supervision.dl).
 .decl manages_supervisor(call: symbol)
 
-manages_supervisor(call) :- sup_management_call(call, _, _, _, _).
+manages_supervisor(call) :- supervisor_management_call(call, _, _, _, _).
 
 blocks_on_peer(mod, "init", target, "sup", "", "", call, cat(api, cat(".", op))) :-
   supervisor_call_during_init(mod, call),
-  sup_management_call(call, _, api, op, target).
+  supervisor_management_call(call, _, api, op, target).
 
 // ── A server that blocks in its handler ────────────────────────────────
 
@@ -323,14 +323,14 @@ blocks_on_peer(mod, "init", server, "blocking_server", "earlier", "", wait, hand
 
 handler_blocks(mod, h, site) :-
   handler_function(mod, h),
-  sup_management_call(site, h, _, op, _),
-  unbounded_sup_op(op).
+  supervisor_management_call(site, h, _, op, _),
+  unbounded_supervisor_operation(op).
 
 handler_blocks(mod, h, site) :-
   handler_function(mod, h),
   own_stack.reaches(h, site),
-  sup_management_call(site, _, _, op, _),
-  unbounded_sup_op(op).
+  supervisor_management_call(site, _, _, op, _),
+  unbounded_supervisor_operation(op).
 
 handler_blocks(mod, h, site) :-
   handler_function(mod, h),
@@ -361,7 +361,7 @@ socket_read_during_init(mod, reader) :-
   reads_socket_without_timeout(reader).
 
 // An infinite socket read timeout, omitted by arity, given literally, or forwarded
-// through a wrapper parameter (infinite_recv_param).
+// through a wrapper parameter (infinite_receive_param).
 .decl reads_socket_without_timeout(func: symbol)
 
 reads_socket_without_timeout(f) :- call_arg(f, ":gen_tcp:recv/3", 2, ":infinity").
@@ -371,19 +371,19 @@ reads_socket_without_timeout(f) :- remote_call(_, f, ":ssl", "recv", 2).
 
 reads_socket_without_timeout(f) :-
   call_arg(f, g, pos, ":infinity"),
-  infinite_recv_param(g, pos).
+  infinite_receive_param(g, pos).
 
 // The wrapper's parameter at `pos` is the timeout of a socket recv it
 // makes, or hands on to a wrapper that does (call_arg_forward).
-.decl infinite_recv_param(func: symbol, pos: number)
+.decl infinite_receive_param(func: symbol, pos: number)
 
-infinite_recv_param(g, p) :- call_arg_forward(g, ":gen_tcp:recv/3", 2, p).
-infinite_recv_param(g, p) :- call_arg_forward(g, ":ssl:recv/3", 2, p).
-infinite_recv_param(g, p) :- call_arg_forward(g, h, q, p), infinite_recv_param(h, q).
+infinite_receive_param(g, p) :- call_arg_forward(g, ":gen_tcp:recv/3", 2, p).
+infinite_receive_param(g, p) :- call_arg_forward(g, ":ssl:recv/3", 2, p).
+infinite_receive_param(g, p) :- call_arg_forward(g, h, q, p), infinite_receive_param(h, q).
 
 init_effect(mod, "recv", reader, site) :-
   socket_read_during_init(mod, reader),
-  recv_site_or_empty(reader, site).
+  receive_site_or_empty(reader, site).
 
 // Unbounded receives during init
 //
@@ -418,7 +418,7 @@ receive_until_peer_exits_during_init(mod, waiter, recv) :-
 .decl receives_without_timeout(func: symbol, recv: symbol)
 
 receives_without_timeout(f, id) :-
-  recv_start(id, f, 1, _),
+  receive_start(id, f, 1, _),
   !start_acked(id, f),
   !flush_receive(id).
 
@@ -480,23 +480,23 @@ init_effect(mod, "enter_loop", func, entry) :-
 
 // The receive that waits: the recv call, the `receive`, or the call
 // that forwards :infinity into a helper's recv.
-.decl recv_site(func: symbol, id: symbol)
+.decl receive_site(func: symbol, id: symbol)
 
-recv_site(f, id) :- call_site(id, f, ":gen_tcp", "recv", _).
-recv_site(f, id) :- call_site(id, f, ":ssl", "recv", _).
-recv_site(f, id) :- call_arg(f, g, pos, ":infinity"), infinite_recv_param(g, pos), call_instr(f, g, id).
+receive_site(f, id) :- call_site(id, f, ":gen_tcp", "recv", _).
+receive_site(f, id) :- call_site(id, f, ":ssl", "recv", _).
+receive_site(f, id) :- call_arg(f, g, pos, ":infinity"), infinite_receive_param(g, pos), call_instr(f, g, id).
 
 // A receiving function with no such site of its own is anchored at the
 // function, its site empty.
-.decl recv_site_or_empty(func: symbol, site: symbol)
+.decl receive_site_or_empty(func: symbol, site: symbol)
 
-recv_site_or_empty(f, id) :- recv_site(f, id).
-recv_site_or_empty(f, "") :- reads_socket_without_timeout(f), !recv_site(f, _).
+receive_site_or_empty(f, id) :- receive_site(f, id).
+receive_site_or_empty(f, "") :- reads_socket_without_timeout(f), !receive_site(f, _).
 
 // Report once per receiving function with reaching inits as evidence. Use init's
 // earliest call toward it, or an empty call for direct/site-less paths.
-.decl init_reaches_recv(mod: symbol, api: symbol, call: symbol)
-.output init_reaches_recv
+.decl init_reaches_receive(mod: symbol, api: symbol, call: symbol)
+.output init_reaches_receive
 
 // A socket read or a receive an init/1 of mod waits in ("recv", "receive"
 // or "down").
@@ -508,24 +508,24 @@ reported_wait(mod, r) :- init_effect(mod, "down", r, _).
 
 // Apply phase cuts to the first edge out of init/1 as well. Post-acknowledgement calls
 // do not hold up startup.
-.decl init_recv_step(mod: symbol, api: symbol, call: symbol)
+.decl init_receive_step(mod: symbol, api: symbol, call: symbol)
 
-init_recv_step(mod, r, call) :-
+init_receive_step(mod, r, call) :-
   reported_wait(mod, r),
   init_function(mod, f),
   call_instr(f, g, call),
   !acked_edge(f, g),
   own_stack.reaches(g, r).
 
-.decl init_recv_stepped(mod: symbol, api: symbol)
+.decl init_receive_stepped(mod: symbol, api: symbol)
 
-init_recv_stepped(mod, r) :- init_recv_step(mod, r, _).
+init_receive_stepped(mod, r) :- init_receive_step(mod, r, _).
 
-init_reaches_recv(mod, r, call) :- init_recv_step(mod, r, call).
+init_reaches_receive(mod, r, call) :- init_receive_step(mod, r, call).
 
-init_reaches_recv(mod, r, "") :-
+init_reaches_receive(mod, r, "") :-
   reported_wait(mod, r),
-  !init_recv_stepped(mod, r).
+  !init_receive_stepped(mod, r).
 
 // Connections without a retry path
 //
@@ -580,21 +580,21 @@ init_effect(mod, "connect", api, "") :- connect_without_retry(mod, api).
 
 // A child's init/1 depends on a process that its supervisor starts after
 // it, so the process is not there yet when init/1 needs it.
-.decl later_sibling_dep(child: symbol, dep: symbol, kind: symbol, sup: symbol, sup_site: symbol, witness: symbol)
+.decl later_sibling_dependency(child: symbol, dep: symbol, kind: symbol, sup: symbol, sup_site: symbol, witness: symbol)
 
-later_sibling_dep(child, dep, kind, sup, sup_site, witness) :-
+later_sibling_dependency(child, dep, kind, sup, sup_site, witness) :-
   depends_during_startup(child, dep, kind, witness),
   starts_after(dep, child, sup),
   child != dep,
   tree_defined_at(sup, sup_site).
 
-// A call or cast dependency from mod's init/1, either before acknowledgement (init_dep)
-// or in the subsequent startup window (init_window_dep). `witness` makes the
+// A call or cast dependency from mod's init/1, either before acknowledgement (init_dependency)
+// or in the subsequent startup window (init_window_dependency). `witness` makes the
 // dependency.
 .decl depends_during_startup(mod: symbol, dep: symbol, kind: symbol, witness: symbol)
 
-depends_during_startup(mod, dep, kind, witness) :- init_dep(mod, dep, kind, witness).
-depends_during_startup(mod, dep, kind, witness) :- init_window_dep(mod, dep, kind, witness).
+depends_during_startup(mod, dep, kind, witness) :- init_dependency(mod, dep, kind, witness).
+depends_during_startup(mod, dep, kind, witness) :- init_window_dependency(mod, dep, kind, witness).
 
 // `later` starts after `earlier` under `sup`, in another branch of its
 // child list (boots_before, clientlib/supervision.dl).
@@ -610,7 +610,7 @@ starts_after(later, earlier, sup) :- boots_before(sup, earlier, later, _, _).
 tree_defined_at(sup, site) :- supervisor_site(sup, site).
 
 blocks_on_peer(child, "init", dep, kind, "later", sup, sup_site, witness) :-
-  later_sibling_dep(child, dep, kind, sup, sup_site, witness).
+  later_sibling_dependency(child, dep, kind, sup, sup_site, witness).
 
 // Dependencies started after the tree
 //
@@ -620,9 +620,9 @@ blocks_on_peer(child, "init", dep, kind, "later", sup, sup_site, witness) :-
 
 // A child waits for dep, but the tree's start function starts dep only after the tree
 // returns. `site` is the later start of dep.
-.decl after_tree_dep(child: symbol, dep: symbol, start: symbol, site: symbol, witness: symbol)
+.decl after_tree_dependency(child: symbol, dep: symbol, start: symbol, site: symbol, witness: symbol)
 
-after_tree_dep(child, dep, start, site, witness) :-
+after_tree_dependency(child, dep, start, site, witness) :-
   starts_tree(start, sup),
   in_tree(child, sup),
   starts_after_tree(start, site, dep),
@@ -651,13 +651,13 @@ starts_after_tree(start, site, dep) :-
   function_def(callee, dep, "start_link", _, _).
 
 // mod's init/1 holds its start on a synchronous call to `dep`, made in
-// `witness` (init_dep "call"; calls_during_init without the witness).
+// `witness` (init_dependency "call"; calls_during_init without the witness).
 .decl calls_during_init_by(mod: symbol, dep: symbol, witness: symbol)
 
-calls_during_init_by(mod, dep, witness) :- init_dep(mod, dep, "call", witness).
+calls_during_init_by(mod, dep, witness) :- init_dependency(mod, dep, "call", witness).
 
 blocks_on_peer(child, "init", dep, "call", "after_tree", start, site, witness) :-
-  after_tree_dep(child, dep, start, site, witness).
+  after_tree_dependency(child, dep, start, site, witness).
 
 // ══ Deferred startup: handle_continue ═══════════════════════════════
 //
@@ -715,13 +715,13 @@ calls_supervisor_during_continue(worker, sup, call) :-
 manages_supervisor_during_continue(worker, sup, call, cat(api, cat(".", op))) :-
   init_continues_to(worker, _),
   handle_continue_clause(worker, _, f),
-  sup_management_call(call, f, api, op, sup).
+  supervisor_management_call(call, f, api, op, sup).
 
 manages_supervisor_during_continue(worker, sup, call, cat(api, cat(".", op))) :-
   init_continues_to(worker, _),
   handle_continue_clause(worker, _, f),
   own_stack.reaches(f, call),
-  sup_management_call(call, _, api, op, sup).
+  supervisor_management_call(call, _, api, op, sup).
 
 // The worker is one of sup's own children.
 .decl supervises(sup: symbol, worker: symbol)
@@ -765,13 +765,13 @@ parent_call_after_ack(worker, sup, call) :-
 manages_supervisor_after_ack(worker, sup, call, cat(api, cat(".", op))) :-
   init_function(worker, i),
   before_ack.reaches(i, f),
-  sup_management_call(call, f, api, op, sup),
+  supervisor_management_call(call, f, api, op, sup),
   start_acked(call, f).
 
 manages_supervisor_after_ack(worker, sup, call, cat(api, cat(".", op))) :-
   init_function(worker, i),
   after_ack.reaches(i, g),
-  sup_management_call(call, g, api, op, sup).
+  supervisor_management_call(call, g, api, op, sup).
 
 .init after_ack = ForwardSameProcessReachCut
 
@@ -845,11 +845,11 @@ lock_during_init(init, lock) :-
 // global_assumed. Builders deduplicate by function, nodes, and operation.
 blocks_on_peer(init, "init", nodes, "global", "", "", lock, op) :-
   lock_during_init(init, lock),
-  global_op(lock, _, op, "infinity", nodes).
+  global_operation(lock, _, op, "infinity", nodes).
 
 blocks_on_peer(init, "init", nodes, "global_assumed", "", "", lock, op) :-
   lock_during_init(init, lock),
-  global_op(lock, _, op, "dynamic", nodes).
+  global_operation(lock, _, op, "dynamic", nodes).
 
 // A finite positive retry count bounds attempts. Local-only retries are exempt;
 // cross-node attempts can still wait for node failure detection, so report
@@ -896,7 +896,7 @@ init_lock_path(init, lock, call) :- init_lock_step(init, lock, call).
 
 init_lock_path(init, lock, "") :-
   init_lock(init, lock),
-  global_op(lock, holder, _, _, _),
+  global_operation(lock, holder, _, _, _),
   holder != init,
   !lock_in_init_closure(init, lock),
   !init_lock_stepped(init, lock).
@@ -907,7 +907,7 @@ init_lock_path(init, lock, "") :-
 
 lock_in_init_closure(init, lock) :-
   init_lock(init, lock),
-  global_op(lock, holder, _, _, _),
+  global_operation(lock, holder, _, _, _),
   function_def(init, m, n, a, _),
   contains(cat(m, cat(":-", cat(n, cat("/", cat(to_string(a), "-fun-"))))), holder).
 
@@ -936,7 +936,7 @@ distributed_operation(id, f, name) :-
   name != "monitor",
   name != "monitor_nodes".
 
-distributed_operation(id, f, name) :- distributed_store_op(id, f, _, name).
+distributed_operation(id, f, name) :- distributed_store_operation(id, f, _, name).
 
 // One row per site: finding builders dedupe on (func, op).
 blocks_on_peer(init, "init", "", "remote", "", "", op, name) :-

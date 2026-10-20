@@ -93,7 +93,7 @@ defmodule Argus.Extractors.ErrorHandling do
   - `start_timer_arm(id, func, target)` — an `:erlang.start_timer/3,4` at
     `id` arms `{:timeout, ref, msg}` for the calling process (`self`) or
     another (`other`)
-  - `recv_shape(id, func, shape)` — the shape a clause of the receive at
+  - `receive_shape(id, func, shape)` — the shape a clause of the receive at
     `id` takes the message in (`MessageClauses.receive_shapes/2`): the
     atom, `{:tag, …}`, `{ref, …}` (a tuple whose first element is
     compared with a value the function holds), `map`, `tuple` or `any`;
@@ -222,8 +222,8 @@ defmodule Argus.Extractors.ErrorHandling do
       :ignored_error_result,
       :result_lost,
       :mailbox_writer,
-      :recv_pattern,
-      :recv_shape,
+      :receive_pattern,
+      :receive_shape,
       :result_tested,
       :returns_call,
       :answers_call,
@@ -896,14 +896,14 @@ defmodule Argus.Extractors.ErrorHandling do
 
   # Per function: which map keys receive a call's result (timer_store),
   # which callee's result the function returns (returns_call), and what
-  # each receive matches (recv_pattern). A receive in an anonymous
+  # each receive matches (receive_pattern). A receive in an anonymous
   # function is as much the process's as one in a named function (a
   # `for` in terminate/2 that waits for each monitor's :DOWN compiles
-  # its body into one), so recv_pattern is read in every function.
+  # its body into one), so receive_pattern is read in every function.
   defp emit_timer_flows(facts, mod, functions, events) do
     Enum.reduce(functions, facts, fn {:function, name, arity, _entry, instrs}, acc ->
       func_id = InstrId.func_id(mod, name, arity)
-      acc = emit_recv_patterns(acc, func_id, instrs)
+      acc = emit_receive_patterns(acc, func_id, instrs)
 
       if generated?(name) do
         acc
@@ -1512,7 +1512,7 @@ defmodule Argus.Extractors.ErrorHandling do
   # a wildcard, a guard on the message). Clause heads are found by
   # following each test's failure label from the loop_rec; a body
   # reached without a test on the message is a catch-all.
-  defp emit_recv_patterns(facts, func_id, instrs) do
+  defp emit_receive_patterns(facts, func_id, instrs) do
     labels = Instr.labels(instrs)
 
     instrs
@@ -1525,13 +1525,13 @@ defmodule Argus.Extractors.ErrorHandling do
           instrs
           |> recv_heads(idx + 1, labels, [])
           |> Enum.uniq()
-          |> Enum.reduce(acc, fn m, inner -> add_fact(inner, :recv_pattern, [id, func_id, m]) end)
+          |> Enum.reduce(acc, fn m, inner -> add_fact(inner, :receive_pattern, [id, func_id, m]) end)
 
         if waits?(instrs, Map.get(labels, fail)) do
           instrs
           |> MessageClauses.receive_shapes(idx)
           |> Enum.reduce(acc, fn shape, inner ->
-            add_fact(inner, :recv_shape, [id, func_id, shape])
+            add_fact(inner, :receive_shape, [id, func_id, shape])
           end)
         else
           acc

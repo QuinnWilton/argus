@@ -8,7 +8,7 @@ defmodule Argus.Extractors.Monitor.ExitSignal do
   the process exits, or at once if it was already gone. One with a clause
   for `{:EXIT, ^pid, _}` ends no later than the process or port it is
   linked to, in a process that traps exits (in one that does not, an
-  abnormal exit ends the waiter with it). `recv_down` asks the first of a
+  abnormal exit ends the waiter with it). `receive_down` asks the first of a
   monitor the receive's own function took; this asks it of the receive
   alone, wherever the pinned value came from: a parameter (proc_lib's
   `await_DOWN(pid, ref)`, mnesia's `rec(pid, ref)`), a `spawn_monitor`'s

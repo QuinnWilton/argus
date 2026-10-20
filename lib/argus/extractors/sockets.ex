@@ -38,7 +38,7 @@ defmodule Argus.Extractors.Sockets do
     whose literal options leave it out (unchanged), `"param"` when the
     options are the function's parameter `param` (0-based; -1 otherwise),
     or `"dynamic"`.
-  - `socket_opts_arg(id, caller, callee, pos, mode)` — the call at `id`
+  - `socket_options_arg(id, caller, callee, pos, mode)` — the call at `id`
     hands `callee` a literal option list with an `:active` entry of
     `mode`, at argument `pos`: what a wrapper's `"param"` row resolves to.
   - `socket_wait(id, func, api, timeout, param)` — a blocking socket call:
@@ -93,7 +93,7 @@ defmodule Argus.Extractors.Sockets do
   }
 
   @impl true
-  def relations, do: [:socket_active, :socket_opts_arg, :socket_wait]
+  def relations, do: [:socket_active, :socket_options_arg, :socket_wait]
 
   @impl true
   @doc false
@@ -281,7 +281,7 @@ defmodule Argus.Extractors.Sockets do
         {:ok, value} <- [active_entry(opts)],
         reduce: facts do
       acc ->
-        add_fact(acc, :socket_opts_arg, [
+        add_fact(acc, :socket_options_arg, [
           InstrId.mint(site.func_id, site.idx),
           site.func_id,
           InstrId.func_id(m, f, a),

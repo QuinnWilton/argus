@@ -41,7 +41,7 @@ defmodule Argus.Schema.OwnedResources do
         """
       },
       %{
-        name: :ets_op_param,
+        name: :ets_operation_param,
         layer: 2,
         fields: [
           {:id, :symbol, "the ETS operation"},
@@ -50,7 +50,7 @@ defmodule Argus.Schema.OwnedResources do
         doc: "The table operand of an ETS operation is the function's own parameter."
       },
       %{
-        name: :ets_op,
+        name: :ets_operation,
         layer: 2,
         fields: [
           {:id, :symbol, "instruction ID"},
@@ -65,7 +65,7 @@ defmodule Argus.Schema.OwnedResources do
         name: :ets_read_when_present,
         layer: 2,
         fields: [
-          {:read, :symbol, "the read (an ets_op of kind read)"},
+          {:read, :symbol, "the read (an ets_operation of kind read)"},
           {:witness, :symbol,
            "the first :ets.whereis/1 of the same named table in the function, or else the first instruction that makes it"}
         ],
@@ -94,8 +94,8 @@ defmodule Argus.Schema.OwnedResources do
         name: :ets_written_when_found,
         layer: 2,
         fields: [
-          {:read, :instr_id, "a lookup, match, match_object, select or member (an ets_op)"},
-          {:write, :instr_id, "an ets_op of kind write in the same function"}
+          {:read, :instr_id, "a lookup, match, match_object, select or member (an ets_operation)"},
+          {:write, :instr_id, "an ets_operation of kind write in the same function"}
         ],
         doc: """
         No path from the side of a test of the read's answer that found no row reaches \
@@ -141,7 +141,7 @@ defmodule Argus.Schema.OwnedResources do
         """
       },
       %{
-        name: :socket_opts_arg,
+        name: :socket_options_arg,
         layer: 2,
         fields: [
           {:id, :symbol, "instruction ID of the call"},

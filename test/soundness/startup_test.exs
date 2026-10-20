@@ -148,7 +148,7 @@ defmodule Argus.Soundness.StartupTest do
   defp census_deadlock?(mod), do: {:error, @deadlock, {mod, :init, 1}} in fired(@census, :startup)
 
   # census: awaited-task
-  # A task init/1 awaits was not init/1's wait: reaches_sync_dep did not
+  # A task init/1 awaits was not init/1's wait: reaches_sync_dependency did not
   # step into it.
   describe "census hole: a later sibling a task init/1 awaits calls" do
     for mod <- [C.TaskCache, C.HelperTaskCache] do

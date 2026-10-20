@@ -4,7 +4,7 @@ defmodule Argus.Extractors.OTP do
 
   Detects OTP behaviour implementations, process links, and the
   init/handle_continue handshake from module attributes and bytecode.
-  The call facts (`sync_call`, `async_cast`, `sup_call`) come from
+  The call facts (`sync_call`, `async_cast`, `supervisor_call`) come from
   `Argus.Extractors.ApiCalls`.
 
   ## Emitted facts

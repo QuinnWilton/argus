@@ -319,7 +319,7 @@ defmodule Argus.Analyses.BlockingChainTest do
     test "a handle_call reaching only a pure function is not a chain hop" do
       # ChainOuter.handle_call reaches only ChainMiddle.pure/1 (pure);
       # ChainMiddle really does sync-call ChainInner. The old
-      # stateful_module_dep clause manufactured ChainOuter -> ChainMiddle
+      # stateful_module_dependency clause manufactured ChainOuter -> ChainMiddle
       # -> ChainInner from the pure reach plus "ChainMiddle has a
       # GenServer.call somewhere".
       modules = [

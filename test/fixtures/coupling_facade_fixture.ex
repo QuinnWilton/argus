@@ -4,7 +4,7 @@ defmodule Argus.Test.Fixtures.FacadeSupervisor do
   `FacadeCaller`, a permanent child, reaches a *pure* function of
   `FacadeHelper`, a temporary sibling, and `FacadeHelper` happens to call
   a server from another function. No resolved call or cast connects the
-  two; the third clause of `stateful_module_dep` makes the caller depend
+  two; the third clause of `stateful_module_dependency` makes the caller depend
   on a sibling that never comes back (coupling's `restart_policy`)
   anyway. A prior that says the helper's API does not message a process
   is what tells this apart from a facade reached through delegation.

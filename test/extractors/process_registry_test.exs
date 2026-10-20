@@ -60,7 +60,7 @@ defmodule Argus.Extractors.ProcessRegistryTest do
              ]
 
       created =
-        for [_id, func, api, "", source, key] <- facts[:creating_op],
+        for [_id, func, api, "", source, key] <- facts[:creating_operation],
             do: {func |> String.split(":") |> List.last(), api, source, key}
 
       assert Enum.sort(created) == [
@@ -102,7 +102,7 @@ defmodule Argus.Extractors.ProcessRegistryTest do
                  [server, ":sup_erlang"]
                ])
 
-      keys = for [_id, _func, _api, "", "literal", key] <- facts[:creating_op], do: key
+      keys = for [_id, _func, _api, "", "literal", key] <- facts[:creating_operation], do: key
       assert "{:global, :g_erlang}" in keys
       refute ":g_erlang" in keys
     end
@@ -153,7 +153,7 @@ defmodule Argus.Extractors.ProcessRegistryTest do
 
       assert [[_id, func, "unregister", "param", "0"]] = facts[:name_release]
       assert func =~ "release/1"
-      refute Map.has_key?(facts, :creating_op)
+      refute Map.has_key?(facts, :creating_operation)
     end
   end
 

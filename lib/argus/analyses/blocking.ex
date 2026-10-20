@@ -81,7 +81,7 @@ defmodule Argus.Analyses.Blocking do
       Argus.Extractors.CallArgs,
       Argus.Extractors.ErrorHandling,
       # A receive that takes the :DOWN of a monitor its function took ends
-      # no later than the monitored process (recv_down).
+      # no later than the monitored process (receive_down).
       Argus.Extractors.Monitor,
       # A call whose target is a pid resolves through points-to
       # (clientlib/processes.dl, in the points-to stage): where the pid was

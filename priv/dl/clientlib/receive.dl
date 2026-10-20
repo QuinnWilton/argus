@@ -1,20 +1,20 @@
-// Receive-shape helpers. recv_start.blocking distinguishes receives without an after
+// Receive-shape helpers. receive_start.blocking distinguishes receives without an after
 // clause, which may wait forever for a message. Keep that encoding here so callers can
 // query the relevant shape. Requires imports.dl.
 
 .decl receives(func: symbol)
 
-receives(func) :- recv_start(_, func, _, _).
+receives(func) :- receive_start(_, func, _, _).
 
 // No `after`: waits until the message arrives.
 .decl blocking_receive(func: symbol)
 
-blocking_receive(func) :- recv_start(_, func, 1, _).
+blocking_receive(func) :- receive_start(_, func, 1, _).
 
 // With an `after`: can end without the message.
 .decl timed_receive(func: symbol)
 
-timed_receive(func) :- recv_start(_, func, 0, _).
+timed_receive(func) :- receive_start(_, func, 0, _).
 
 // Execution whose receives are not visible: function-value calls, apply, gen behaviour
 // enter_loop calls, and MFA-based hibernation.
@@ -35,7 +35,7 @@ hides_receives(g) :-
 .decl receives_message(mod: symbol, message: symbol)
 
 receives_message(mod, message) :-
-  recv_pattern(_, f, message),
+  receive_pattern(_, f, message),
   function_def(f, mod, _, _, _).
 
 // Receives bounded by a peer's lifetime
@@ -49,12 +49,12 @@ receives_message(mod, message) :-
 // `monitor_released` separately checks collection on every return path.
 .decl down_bounded(recv: symbol)
 
-down_bounded(id) :- recv_down(id, _, _).
-down_bounded(id) :- recv_signal(id, _, "down").
+down_bounded(id) :- receive_down(id, _, _).
+down_bounded(id) :- receive_signal(id, _, "down").
 
 .decl exit_pinned(recv: symbol, func: symbol)
 
-exit_pinned(id, f) :- recv_signal(id, f, "exit"), links_in(f).
+exit_pinned(id, f) :- receive_signal(id, f, "exit"), links_in(f).
 
 // A call linking the current process to another process or port: link, spawn_link,
 // start_link or port creation.

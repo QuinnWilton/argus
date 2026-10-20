@@ -27,11 +27,11 @@ defmodule Argus.ClientlibTest do
   out("statem", m, "") :- statem_process(m).
   out("partial", m, f) :- partial_handle_info(m, f).
   out("sibling", a, b) :- sibling(_, a, b).
-  out("sup_op", f, op) :- sup_management_call(_, f, _, op, _).
+  out("sup_op", f, op) :- supervisor_management_call(_, f, _, op, _).
   out("deferral", m, k) :- deferral_path(m, k).
-  out("init_dep", m, to) :- init_dep(m, to, "call", _).
-  out("handler_dep", m, to) :- handler_dep(m, "handle_call", to, "call", _).
-  out("module_dep", m, to) :- module_sync_dep(m, to, _).
+  out("init_dependency", m, to) :- init_dependency(m, to, "call", _).
+  out("handler_dependency", m, to) :- handler_dependency(m, "handle_call", to, "call", _).
+  out("module_dep", m, to) :- module_sync_dependency(m, to, _).
   """
 
   # M is a GenServer whose init and handle_call wait on W; W is a
@@ -61,12 +61,12 @@ defmodule Argus.ClientlibTest do
       ~w(M:g/0 M:g/0-c1),
       ~w(M:g/0 M:g/0-c2)
     ],
-    "recv_start" => [~w(r1 M:f/0 1 0), ~w(r2 M:g/0 0 0)],
-    "recv_pattern" => [~w(r1 M:f/0 :tick), ~w(r2 M:g/0 any)],
+    "receive_start" => [~w(r1 M:f/0 1 0), ~w(r2 M:g/0 0 0)],
+    "receive_pattern" => [~w(r1 M:f/0 :tick), ~w(r2 M:g/0 any)],
     "catch_total" => [~w(t1 M:f/0 exit), ~w(t2 M:g/0 *)],
     "callback_total" => [~w(T:handle_info/2 handle_info)],
     "supervisor_child" => [~w(Sup 0 M permanent worker), ~w(Sup 1 W permanent worker)],
-    "sup_call" => [~w(s1 M:f/0 Supervisor start_child Sup), ~w(s2 M:f/0 GenServer stop W)],
+    "supervisor_call" => [~w(s1 M:f/0 Supervisor start_child Sup), ~w(s2 M:f/0 GenServer stop W)],
     "mailbox_writer" => [~w(w1 M:g/0 timer)],
     # init and handle_call both go through helper, which calls W.
     "sync_call" => [~w(M:helper/0 W)],
@@ -166,8 +166,8 @@ defmodule Argus.ClientlibTest do
 
   test "startup and entries: deferral paths and what each entry waits on", %{out: out} do
     assert out["deferral"] == [{"M", "timer"}]
-    assert out["init_dep"] == [{"M", "W"}]
-    assert out["handler_dep"] == [{"M", "W"}]
+    assert out["init_dependency"] == [{"M", "W"}]
+    assert out["handler_dependency"] == [{"M", "W"}]
     assert out["module_dep"] == [{"M", "W"}]
   end
 end

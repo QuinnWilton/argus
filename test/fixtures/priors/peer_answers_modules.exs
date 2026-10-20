@@ -1961,7 +1961,7 @@
     ["DBConnection.ConnectionPool", "DBConnection.Pool"],
     ["DBConnection.ConnectionPool", "GenServer"]
   ],
-  recv_start: [
+  receive_start: [
     [":code_server:call/1#20", ":code_server:call/1", "1", "40"],
     [":code_server:loop/1#10", ":code_server:loop/1", "1", "57"],
     [":code_server:start_link/1#19", ":code_server:start_link/1", "1", "5"],

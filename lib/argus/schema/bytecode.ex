@@ -248,7 +248,7 @@ defmodule Argus.Schema.Bytecode do
         """
       },
       %{
-        name: :send_msg,
+        name: :send_message,
         layer: 1,
         fields: [
           {:id, :instr_id, "instruction ID"},
@@ -257,7 +257,7 @@ defmodule Argus.Schema.Bytecode do
         doc: "Message send instruction."
       },
       %{
-        name: :recv_start,
+        name: :receive_start,
         layer: 1,
         fields: [
           {:id, :instr_id, "instruction ID"},

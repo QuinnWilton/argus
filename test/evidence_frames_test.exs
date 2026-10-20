@@ -71,7 +71,7 @@ defmodule Argus.EvidenceFramesTest do
     assert %InstrId{func: "delete", arity: 2} = frame.instr
   end
 
-  test "init_reaches_recv: the init/1 callbacks that reach an unbounded receive" do
+  test "init_reaches_receive: the init/1 callbacks that reach an unbounded receive" do
     assert [finding] =
              [Fixtures.InitRecv.Blocking]
              |> findings(:startup)

@@ -199,7 +199,7 @@ defmodule Argus.Extractors.ApiCalls.DistributedTest do
 
   describe "extract/1 — :global synchronization" do
     test "each lock, transaction and lookup with its retries and node list" do
-      assert sites(Argus.Test.Fixtures.GlobalLockModule, :global_op) == [
+      assert sites(Argus.Test.Fixtures.GlobalLockModule, :global_operation) == [
                # del_lock never waits.
                ["del/2", "del_lock", "0", "unknown"],
                # set_lock/2 and trans/2 leave out their retries, which
@@ -223,7 +223,7 @@ defmodule Argus.Extractors.ApiCalls.DistributedTest do
       facts = ApiCalls.extract(disassemble(Argus.Test.Fixtures.GlobalNodes.Shapes))
 
       nodes =
-        for [_id, func, op, _retries, nodes] <- facts[:global_op],
+        for [_id, func, op, _retries, nodes] <- facts[:global_operation],
             do: {func |> String.split(":") |> List.last(), op, nodes}
 
       %{nodes: nodes}
@@ -288,7 +288,7 @@ defmodule Argus.Extractors.ApiCalls.DistributedTest do
 
   describe "extract/1 — distributed stores" do
     test "each :mnesia operation, in a transaction's closure or not" do
-      assert sites(Argus.Test.Fixtures.MnesiaModule, :distributed_store_op) == [
+      assert sites(Argus.Test.Fixtures.MnesiaModule, :distributed_store_operation) == [
                ["-read_in_transaction/2-fun-0-/2", "mnesia", "read"],
                ["dirty_read/2", "mnesia", "dirty_read"],
                ["read_in_transaction/2", "mnesia", "transaction"],

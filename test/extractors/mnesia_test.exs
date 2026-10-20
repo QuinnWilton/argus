@@ -7,7 +7,7 @@ defmodule Argus.Extractors.MnesiaTest do
   defp ops(module) do
     {:ok, facts} = Argus.Pipeline.extract([module], extractors: [Mnesia])
 
-    for [_id, func, op, kind, ts, t, ks, k] <- Map.get(facts, :mnesia_op, []),
+    for [_id, func, op, kind, ts, t, ks, k] <- Map.get(facts, :mnesia_operation, []),
         do: {func |> String.split(":") |> List.last(), op, kind, {ts, t}, {ks, k}}
   end
 

@@ -76,7 +76,7 @@ request_handler(m, "cast", h) :- handle_cast_function(m, h), once_request(_, m, 
 // An instruction of f that keeps something in f's process.
 .decl keeps_site(site: symbol, func: symbol, how: symbol)
 
-keeps_site(x, f, "table") :- ets_op(x, f, _, _, "write").
+keeps_site(x, f, "table") :- ets_operation(x, f, _, _, "write").
 keeps_site(x, f, "monitor") :- process_signal_var(x, f, "monitor", _, _).
 keeps_site(x, f, "monitor") :- process_signal_var(x, f, "link", _, _).
 keeps_site(x, f, "monitor") :- monitor_call(x, f, _).

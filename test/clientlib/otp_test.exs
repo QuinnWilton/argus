@@ -36,7 +36,7 @@ defmodule Argus.Clientlib.OtpTest do
 
       .output init_function
       .output genserver_sync_api
-      .output stateful_module_dep
+      .output stateful_module_dependency
       """
 
       rules_path = Path.join(tmp_dir, "test_otp.dl")
@@ -59,8 +59,8 @@ defmodule Argus.Clientlib.OtpTest do
       assert sync_api != []
 
       # CycleServerA and CycleServerB have mutual dependencies.
-      assert Map.has_key?(results, "stateful_module_dep")
-      deps = results["stateful_module_dep"]
+      assert Map.has_key?(results, "stateful_module_dependency")
+      deps = results["stateful_module_dependency"]
       assert deps != []
     end
   end

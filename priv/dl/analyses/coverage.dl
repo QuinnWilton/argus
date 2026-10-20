@@ -112,7 +112,7 @@ makes_named_table(name) :- ets_new(_, _, name), name != "dynamic".
 // An ETS operation names the table.
 .decl used_by_name(name: symbol)
 
-used_by_name(name) :- ets_op(_, _, name, _, _).
+used_by_name(name) :- ets_operation(_, _, name, _, _).
 
 // A module creating the named table also performs ETS operations, possibly through
 // unresolved references. Treat these as evidence that a name-only join may be missing
@@ -123,7 +123,7 @@ maker_uses_ets(name) :-
   ets_new(_, create_func, name),
   name != "dynamic",
   function_def(create_func, mod, _, _, _),
-  ets_op(_, op_func, _, _, _),
+  ets_operation(_, op_func, _, _, _),
   function_def(op_func, mod, _, _, _).
 
 // ── A registered name with no known traffic ─────────────────────────

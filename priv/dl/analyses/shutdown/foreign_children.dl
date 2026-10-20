@@ -134,8 +134,8 @@ tree_member(root, mod) :- dynamic_child(sup, mod, _), sup != "dynamic", tree_mem
 terminate_stops_children(mod) :-
   terminate_callback(func, mod, _),
   (via = func ; teardown_reach.reaches(func, via, _)),
-  sup_management_call(_, via, _, op, _),
-  stopping_sup_op(op).
+  supervisor_management_call(_, via, _, op, _),
+  stopping_supervisor_operation(op).
 
 // terminate/2 stops `child`'s processes itself (fluffy's test scope closes each
 // session it started with the session's own GenServer.stop): a stop whose target is a

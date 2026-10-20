@@ -126,7 +126,7 @@ defmodule Argus.Schema.Distribution do
         """
       },
       %{
-        name: :global_op,
+        name: :global_operation,
         layer: 2,
         fields: [
           {:id, :symbol, "instruction ID"},
@@ -154,7 +154,7 @@ defmodule Argus.Schema.Distribution do
         doc: "Node or :net_kernel operation."
       },
       %{
-        name: :distributed_store_op,
+        name: :distributed_store_operation,
         layer: 2,
         fields: [
           {:id, :symbol, "instruction ID"},

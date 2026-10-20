@@ -15,18 +15,18 @@
 // the calls into them are where a caller does.
 .init key_put_below = SameProcessReach
 
-key_put_below.seed(f, k) :- dict_op(_, f, "put", k), k != "dynamic".
+key_put_below.seed(f, k) :- dictionary_operation(_, f, "put", k), k != "dynamic".
 
 .init key_erase_below = SameProcessReach
 
-key_erase_below.seed(f, k) :- dict_op(_, f, "erase", k).
+key_erase_below.seed(f, k) :- dictionary_operation(_, f, "erase", k).
 
 // The order of every put and erase, and of every call into a function
 // that may make one.
 .init key_order = RunsAfter
 
-key_order.asked(id) :- dict_op(id, _, "put", _).
-key_order.asked(id) :- dict_op(id, _, "erase", _).
+key_order.asked(id) :- dictionary_operation(id, _, "put", _).
+key_order.asked(id) :- dictionary_operation(id, _, "erase", _).
 key_order.asked(id) :- call_instr(f, g, id), !runs_elsewhere(f, g), key_put_below.reaches(g, _).
 key_order.asked(id) :- call_instr(f, g, id), !runs_elsewhere(f, g), key_erase_below.reaches(g, _).
 
@@ -34,7 +34,7 @@ key_order.asked(id) :- call_instr(f, g, id), !runs_elsewhere(f, g), key_erase_be
 // returns with the key set.
 .decl sets_key_at(func: symbol, site: symbol, key: symbol)
 
-sets_key_at(f, id, k) :- dict_op(id, f, "put", k), k != "dynamic".
+sets_key_at(f, id, k) :- dictionary_operation(id, f, "put", k), k != "dynamic".
 
 sets_key_at(f, id, k) :-
   call_instr(f, g, id),
@@ -50,7 +50,7 @@ leaves_key_set(f, k) :- sets_key_at(f, s, k), !erased_after(s, k).
 // same-process helper.
 .decl erases_key_at(func: symbol, site: symbol, key: symbol)
 
-erases_key_at(f, id, k) :- dict_op(id, f, "erase", e), erases_key(e, k).
+erases_key_at(f, id, k) :- dictionary_operation(id, f, "erase", e), erases_key(e, k).
 
 erases_key_at(f, id, k) :-
   call_instr(f, g, id),
@@ -62,8 +62,8 @@ erases_key_at(f, id, k) :-
 // known (`erase/0`, an erase of a computed key).
 .decl erases_key(erased: symbol, key: symbol)
 
-erases_key(k, k) :- dict_op(_, _, "put", k), k != "dynamic".
-erases_key("dynamic", k) :- dict_op(_, _, "put", k), k != "dynamic".
+erases_key(k, k) :- dictionary_operation(_, _, "put", k), k != "dynamic".
+erases_key("dynamic", k) :- dictionary_operation(_, _, "put", k), k != "dynamic".
 
 // An erase of `key` runs after `site` in its function.
 .decl erased_after(site: symbol, key: symbol)
@@ -96,7 +96,7 @@ erased_between(f, t, s, k) :-
 
 default_of_key(op, name, k) :-
   ets_table_default(op, name, site),
-  dict_op(site, _, "get", k),
+  dictionary_operation(site, _, "get", k),
   k != "dynamic".
 
 default_of_key(op, name, k) :-
@@ -114,7 +114,7 @@ answers_with_key(g, k) :- return_var(g, "result", c), call_instr(g, h, c), answe
 // The functions whose stack reaches such an operation.
 .init default_reach = SameProcessReach
 
-default_reach.seed(f, op) :- default_of_key(op, _, _), ets_op(op, f, _, _, _).
+default_reach.seed(f, op) :- default_of_key(op, _, _), ets_operation(op, f, _, _, _).
 
 // `func` reaches `op` through the call at `site`, or holds it (`site` is
 // op itself).
@@ -125,7 +125,7 @@ reaches_default_at(f, op, c) :-
   !runs_elsewhere(f, g),
   default_reach.reaches(g, op).
 
-reaches_default_at(f, op, op) :- default_of_key(op, _, _), ets_op(op, f, _, _, _).
+reaches_default_at(f, op, op) :- default_of_key(op, _, _), ets_operation(op, f, _, _, _).
 
 // `op` is reachable with key unset: no preceding put is established, or the call has no
 // known instruction position.

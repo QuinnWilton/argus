@@ -133,7 +133,7 @@ defmodule Argus.Analyses.EtsPublishOrderTest do
           extractors: [Argus.Extractors.ETS]
         )
 
-      [lookup] = for [id, _, _, "lookup", _] <- facts.ets_op, do: id
+      [lookup] = for [id, _, _, "lookup", _] <- facts.ets_operation, do: id
       paths = for [^lookup, source, root, path] <- facts.ets_table_path, do: {source, root, path}
 
       assert {"literal", ":debounce_buckets", ""} in paths
@@ -146,7 +146,7 @@ defmodule Argus.Analyses.EtsPublishOrderTest do
           extractors: [Argus.Extractors.ETS]
         )
 
-      kinds = for [_, _, _, "take", kind] <- facts.ets_op, do: kind
+      kinds = for [_, _, _, "take", kind] <- facts.ets_operation, do: kind
       assert Enum.sort(kinds) == ["read", "write"]
     end
 
@@ -166,8 +166,8 @@ defmodule Argus.Analyses.EtsPublishOrderTest do
     test "ets_value and ets_effect_order join the id written into one table to the other's key" do
       {:ok, facts} = Argus.Pipeline.extract([P.MapFields], extractors: [Argus.Extractors.ETS])
 
-      [insert_new] = for [id, _, _, "insert_new", _] <- facts.ets_op, do: id
-      [insert] = for [id, _, _, "insert", _] <- facts.ets_op, do: id
+      [insert_new] = for [id, _, _, "insert_new", _] <- facts.ets_operation, do: id
+      [insert] = for [id, _, _, "insert", _] <- facts.ets_operation, do: id
 
       assert [[^insert_new, "1", "local", made]] =
                Enum.filter(facts.ets_value, &(hd(&1) == insert_new))

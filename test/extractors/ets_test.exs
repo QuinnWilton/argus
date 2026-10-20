@@ -12,7 +12,7 @@ defmodule Argus.Extractors.ETSTest do
   describe "match patterns" do
     test "a pattern's key is its first element, unless that is a wildcard" do
       facts = ETS.extract(disassemble(Argus.Test.Fixtures.CheckThenAct.MatchThenWrite))
-      ops = Map.new(facts[:ets_op], fn [id, func, _t, op, _k] -> {id, {func, op}} end)
+      ops = Map.new(facts[:ets_operation], fn [id, func, _t, op, _k] -> {id, {func, op}} end)
 
       keyed =
         for [id, source, key] <- facts[:ets_key],
@@ -26,7 +26,7 @@ defmodule Argus.Extractors.ETSTest do
   describe "a literal named only while an answer is unset" do
     defp defaults(mod) do
       facts = ETS.extract(disassemble(mod))
-      ops = Map.new(facts[:ets_op], fn [id, func, _t, op, _k] -> {id, {short(func), op}} end)
+      ops = Map.new(facts[:ets_operation], fn [id, func, _t, op, _k] -> {id, {short(func), op}} end)
       for [id, name, site] <- facts[:ets_table_default], do: {ops[id], name, short(site)}
     end
 
@@ -49,7 +49,7 @@ defmodule Argus.Extractors.ETSTest do
   describe "keys a value's maker names" do
     defp keys(mod) do
       facts = ETS.extract(disassemble(mod))
-      ops = Map.new(facts[:ets_op], fn [id, func, _t, op, _k] -> {id, {short(func), op}} end)
+      ops = Map.new(facts[:ets_operation], fn [id, func, _t, op, _k] -> {id, {short(func), op}} end)
       for [id, source, key] <- facts[:ets_key], do: {ops[id], {source, key}}
     end
 
@@ -95,7 +95,7 @@ defmodule Argus.Extractors.ETSTest do
     # which passes a whereis that found the table or a make of it.
     defp present_readers do
       facts = ETS.extract(disassemble(Lifetime.EnsureReader))
-      ops = Map.new(Map.get(facts, :ets_op, []), fn [id, func | _] -> {id, func} end)
+      ops = Map.new(Map.get(facts, :ets_operation, []), fn [id, func | _] -> {id, func} end)
 
       for [read, _witness] <- Map.get(facts, :ets_read_when_present, []), uniq: true do
         ops |> Map.fetch!(read) |> String.split(":") |> List.last()
@@ -130,10 +130,10 @@ defmodule Argus.Extractors.ETSTest do
       |> Enum.sort()
     end
 
-    # A module's ets_op rows, by function: [func, table, op, kind].
+    # A module's ets_operation rows, by function: [func, table, op, kind].
     defp ops(mod) do
       ETS.extract(disassemble(mod))
-      |> Map.get(:ets_op, [])
+      |> Map.get(:ets_operation, [])
       |> Enum.map(fn [id, func | rest] ->
         assert id =~ ~r/^#{Regex.escape(func)}#\d+$/
         [short(func) | rest]
@@ -255,7 +255,7 @@ defmodule Argus.Extractors.ETSTest do
       {:ok, data} = Disassemble.disassemble_path(bin)
 
       ops =
-        for [_id, func, table, op, _kind] <- ETS.extract(data)[:ets_op],
+        for [_id, func, table, op, _kind] <- ETS.extract(data)[:ets_operation],
             do: {func |> String.split(":") |> List.last(), op, table}
 
       assert {"handle_call/3", "lookup", ":sessions"} in ops
@@ -279,7 +279,7 @@ defmodule Argus.Extractors.ETSTest do
 
       {:ok, data} = Disassemble.disassemble_path(bin)
       facts = ETS.extract(data)
-      funcs = Map.new(facts[:ets_op], fn [id, func, _t, _op, _k] -> {id, func} end)
+      funcs = Map.new(facts[:ets_operation], fn [id, func, _t, _op, _k] -> {id, func} end)
 
       fields =
         for [id, field] <- facts[:ets_table_field],

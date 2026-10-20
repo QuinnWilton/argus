@@ -141,7 +141,7 @@ defmodule Argus.Analyses.Startup do
             "start is acknowledged, or connects with no way to retry."
       },
       %{
-        name: :init_reaches_recv,
+        name: :init_reaches_receive,
         fields: [
           {:mod, :symbol, "module whose init/1 reaches the receive"},
           {:api, :symbol, "the receiving function"},
@@ -709,11 +709,11 @@ defmodule Argus.Analyses.Startup do
     Findings.related("init/1 reaches it from here", Findings.at_site_in_func(call, init))
   end
 
-  def evidence(:init_reaches_recv, [mod, _api, ""]) do
+  def evidence(:init_reaches_receive, [mod, _api, ""]) do
     Findings.related("reached from #{mod}.init/1", Findings.at_mfa(mod, :init, 1))
   end
 
-  def evidence(:init_reaches_recv, [mod, _api, call]) do
+  def evidence(:init_reaches_receive, [mod, _api, call]) do
     Findings.related("reached from #{mod}.init/1", Findings.at_site(call, mod))
   end
 

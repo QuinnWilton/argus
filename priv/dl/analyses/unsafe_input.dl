@@ -660,12 +660,12 @@ graded_by_reads(func, evidence, "", 0) :-
 graded_by_reads(func, evidence, source, p) :-
   request_reached_sink(_, func, _, _, evidence),
   !proven_reach(evidence),
-  sink_func_reads(func, source, p).
+  sink_function_reads(func, source, p).
 
 graded_by_reads(func, evidence, "", 0) :-
   request_reached_sink(_, func, _, _, evidence),
   !proven_reach(evidence),
-  !sink_func_reads(func, _, _).
+  !sink_function_reads(func, _, _).
 
 // Evidence that the request's data, not only its path, reaches the sink.
 .decl proven_reach(evidence: symbol)
@@ -675,9 +675,9 @@ proven_reach("rendered").
 
 // The stored sources a sink's function reads by the prior, at 0.7 or
 // more, where the function holds one sink.
-.decl sink_func_reads(func: symbol, source: symbol, permille: number)
+.decl sink_function_reads(func: symbol, source: symbol, permille: number)
 
-sink_func_reads(func, source, p) :-
+sink_function_reads(func, source, p) :-
   sink(_, func, _, _, _),
   prior_reads(func, source, p),
   p >= 700,
@@ -1342,7 +1342,7 @@ waits_for_child(via, child) :- dynamic_child(_, child, via), awaits_child_exit(v
 
 stream_only(via, "Task") :-
   task_supervisor_start(_, via, op, _),
-  task_supervisor_op(op, "stream"),
+  task_supervisor_operation(op, "stream"),
   !starts_tasks_otherwise(via),
   !streams_detached(via).
 
@@ -1350,7 +1350,7 @@ stream_only(via, "Task") :-
 
 starts_tasks_otherwise(via) :-
   task_supervisor_start(_, via, op, _),
-  task_supervisor_op(op, "one").
+  task_supervisor_operation(op, "one").
 
 // The request reaches the stream through detached or stored-fun execution, or the
 // streaming function starts a fun that may enumerate it. Known limit: a returned stream
@@ -1359,7 +1359,7 @@ starts_tasks_otherwise(via) :-
 
 detach_reach.seed(f, via) :-
   task_supervisor_start(_, via, op, _),
-  task_supervisor_op(op, "stream"),
+  task_supervisor_operation(op, "stream"),
   runs_elsewhere(f, g),
   reaches_child_start(g, via).
 
@@ -1369,7 +1369,7 @@ streams_detached(via) :- request_entry(entry, _), detach_reach.reaches(entry, vi
 
 streams_detached(via) :-
   task_supervisor_start(_, via, op, _),
-  task_supervisor_op(op, "stream"),
+  task_supervisor_operation(op, "stream"),
   runs_elsewhere(via, _).
 
 // Require evidence that a dependency's transport is enabled. Phoenix socket options are

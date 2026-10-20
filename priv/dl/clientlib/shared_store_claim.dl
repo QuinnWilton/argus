@@ -3,8 +3,8 @@
 // competing callers, and a returned read value alone is not a one-use verdict.
 .init shared_claim = CheckThenAct
 
-shared_claim.check(r, f, ss, s, ks, k) :- shared_store_op(r, f, "get", ss, s, ks, k).
-shared_claim.act(w, f, ss, s, ks, k) :- shared_store_op(w, f, "put", ss, s, ks, k).
+shared_claim.check(r, f, ss, s, ks, k) :- shared_store_operation(r, f, "get", ss, s, ks, k).
+shared_claim.act(w, f, ss, s, ks, k) :- shared_store_operation(w, f, "put", ss, s, ks, k).
 
 // A unary pure normalization has its own identity: normalizing a hash for both the
 // read and write does not make their independently computed keys different rows.
@@ -67,7 +67,7 @@ shared_claim.lift(f, g, mapped, to_string(n), mapped2, v) :-
 // absent. Merely testing a result or refreshing an existing cache entry is not a
 // one-use claim. An equality edge must guard this write (or its actual caller).
 .decl shared_absence_value(func: symbol, kind: symbol, source: symbol, read: symbol, value: symbol)
-shared_absence_value(f, "site", r, r, "nil") :- shared_store_op(r, f, "get", _, _, _, _).
+shared_absence_value(f, "site", r, r, "nil") :- shared_store_operation(r, f, "get", _, _, _, _).
 shared_absence_value(f, "call", site, r, v) :-
   shared_absence_return(g, r, v), shared_claim.carries(f, "call", g, r, _, _, _, _),
   call_site(site, f, m, n, a), g = cat(m, cat(":", cat(n, cat("/", to_string(a))))).
@@ -142,7 +142,7 @@ shared_store_site_lift(site, mapped, pv, mapped2, v) :-
   mapped_store_source(t, projected, mapped2).
 
 .decl shared_checked_row(func: symbol, kind: symbol, source: symbol, read: symbol, ss: symbol, store: symbol, ks: symbol, key: symbol)
-shared_checked_row(f, "site", r, r, ss, s, ks, k) :- shared_store_op(r, f, "get", ss, s, ks, k).
+shared_checked_row(f, "site", r, r, ss, s, ks, k) :- shared_store_operation(r, f, "get", ss, s, ks, k).
 shared_checked_row(f, "call", site, r, ss2, s2, ks2, k2) :-
   call_site(site, f, m, n, a), g = cat(m, cat(":", cat(n, cat("/", to_string(a))))),
   shared_claim.returns_check(g, r, ss, s, ks, k),
@@ -173,8 +173,8 @@ shared_claim_locked(f, r, w) :-
 // This consumer only asks whether the verdict returns the cached value; it has
 // no fresh-fill sources, so the component's `fresh` input has no rules and is empty.
 shared_claim_values.pair(f, r, w) :- shared_claim.meets(f, r, w, _, _, _, _).
-shared_claim_values.read_in(r, f) :- shared_store_op(r, f, "get", _, _, _, _).
-shared_claim_values.write_in(w, f) :- shared_store_op(w, f, "put", _, _, _, _).
+shared_claim_values.read_in(r, f) :- shared_store_operation(r, f, "get", _, _, _, _).
+shared_claim_values.write_in(w, f) :- shared_store_operation(w, f, "put", _, _, _, _).
 
 .decl shared_claim_verdict(meet: symbol, func: symbol, read: symbol)
 shared_claim_verdict(f, f, r) :-

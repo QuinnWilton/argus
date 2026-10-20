@@ -78,7 +78,7 @@ defmodule Argus.Priors.Questions.PeerAnswers do
   def prompt_version, do: 2
 
   @impl true
-  def relations_read, do: Code.relations_read() ++ ~w(recv_start named_process)a
+  def relations_read, do: Code.relations_read() ++ ~w(receive_start named_process)a
 
   @impl true
   def subjects(facts) do
@@ -119,7 +119,7 @@ defmodule Argus.Priors.Questions.PeerAnswers do
   # The functions with a receive that has no `after`.
   defp waits(facts, index) do
     facts
-    |> Map.get(:recv_start, [])
+    |> Map.get(:receive_start, [])
     |> Enum.filter(&(&1.blocking == 1))
     |> Enum.map(& &1.caller)
     |> Enum.uniq()

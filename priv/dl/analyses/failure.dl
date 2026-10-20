@@ -898,7 +898,7 @@ always_holds_table(t, m) :-
 
 .decl table_deleted(table: symbol)
 
-table_deleted(t) :- ets_op(w, _, t, "delete", _), remote_call(w, _, ":ets", "delete", 1).
+table_deleted(t) :- ets_operation(w, _, t, "delete", _), remote_call(w, _, ":ets", "delete", 1).
 
 .decl reached_by_other(func: symbol, mod: symbol)
 
@@ -920,7 +920,7 @@ in_owner(f, t) :-
 
 seeded_row(t, k) :-
   always_holds_table(t, m),
-  ets_op(w, g, t, op, "write"),
+  ets_operation(w, g, t, op, "write"),
   (op = "insert" ; op = "insert_new"),
   ets_key(w, "literal", k),
   !conditional_call(w),
@@ -932,25 +932,25 @@ seeded_row(t, k) :-
 // A key may be removed explicitly, through an unknown key, or by clearing the table.
 // Clearing covers every literal key in that table.
 removes_row(t, k) :-
-  ets_op(w, _, t, op, "write"),
+  ets_operation(w, _, t, op, "write"),
   ets_key(w, "literal", k),
-  ets_removal_op(op).
+  ets_removal_operation(op).
 
 removes_row(t, k) :-
-  ets_op(w, _, t, op, "write"),
+  ets_operation(w, _, t, op, "write"),
   ets_key(w, ks, _),
   ks != "literal",
-  ets_removal_op(op),
-  ets_op(w2, _, t, _, _),
+  ets_removal_operation(op),
+  ets_operation(w2, _, t, _, _),
   ets_key(w2, "literal", k).
 
 removes_row(t, k) :-
-  ets_op(_, _, t, op, "write"),
+  ets_operation(_, _, t, op, "write"),
   ets_removes_every_key(op),
-  ets_op(w2, _, t, _, _),
+  ets_operation(w2, _, t, _, _),
   ets_key(w2, "literal", k).
 
-own.seed(f, f) :- ets_op(_, f, t, _, "write"), t != "dynamic".
+own.seed(f, f) :- ets_operation(_, f, t, _, "write"), t != "dynamic".
 
 // Call guards
 //

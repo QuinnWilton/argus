@@ -190,22 +190,22 @@ defmodule Argus.Extractors.MonitorTest do
     end
   end
 
-  describe "recv_takes_down" do
+  describe "receive_takes_down" do
     test "a receive with a clause whose head fixes the tag to :DOWN" do
-      assert [[_, func]] = extract(M.Leaks)[:recv_takes_down]
+      assert [[_, func]] = extract(M.Leaks)[:receive_takes_down]
       assert func =~ "Leaks:wait/1"
 
       # A receive whose clauses take other messages only is none.
-      refute Map.has_key?(extract(M.NoMonitor), :recv_takes_down)
-      refute Map.has_key?(extract(M.TaskPolls), :recv_takes_down)
+      refute Map.has_key?(extract(M.NoMonitor), :receive_takes_down)
+      refute Map.has_key?(extract(M.TaskPolls), :receive_takes_down)
     end
   end
 
-  describe "recv_timeout_param" do
+  describe "receive_timeout_param" do
     alias Argus.Test.Fixtures.CallbackReceive, as: R
 
     defp timeout_params(mod) do
-      for [_id, func, param] <- Map.get(extract(mod), :recv_timeout_param, []),
+      for [_id, func, param] <- Map.get(extract(mod), :receive_timeout_param, []),
           do: {func |> String.split(":") |> List.last(), param}
     end
 
@@ -221,11 +221,11 @@ defmodule Argus.Extractors.MonitorTest do
     end
   end
 
-  describe "recv_signal" do
+  describe "receive_signal" do
     alias Argus.Test.Fixtures.InitRecv
 
     defp signals(mod) do
-      for [_id, func, signal] <- Map.get(extract(mod), :recv_signal, []),
+      for [_id, func, signal] <- Map.get(extract(mod), :receive_signal, []),
           do: {func |> String.split(":") |> List.last(), signal}
     end
 
@@ -254,11 +254,11 @@ defmodule Argus.Extractors.MonitorTest do
     end
   end
 
-  describe "recv_flush" do
+  describe "receive_flush" do
     alias Argus.Test.Fixtures.InitRecv
 
     defp flushes(mod) do
-      for [id, func, cancel] <- Map.get(extract(mod), :recv_flush, []) do
+      for [id, func, cancel] <- Map.get(extract(mod), :receive_flush, []) do
         [_, recv] = String.split(id, "#")
         [_, at] = String.split(cancel, "#")
 
@@ -279,13 +279,13 @@ defmodule Argus.Extractors.MonitorTest do
     end
   end
 
-  describe "recv_down" do
+  describe "receive_down" do
     alias Argus.Test.Fixtures.CallbackReceive, as: R
 
     defp down(mod) do
       facts = extract(mod)
       monitors = for [id, _func, _target] <- Map.get(facts, :monitor_call, []), do: id
-      {Map.get(facts, :recv_down, []), monitors}
+      {Map.get(facts, :receive_down, []), monitors}
     end
 
     test "a receive for the :DOWN of the monitor its function took names that monitor" do

@@ -107,7 +107,7 @@ defmodule Argus.Schema.Otp do
         """
       },
       %{
-        name: :sup_call,
+        name: :supervisor_call,
         layer: 2,
         fields: [
           {:id, :symbol, "the call site"},

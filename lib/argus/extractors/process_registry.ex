@@ -33,7 +33,7 @@ defmodule Argus.Extractors.ProcessRegistry do
     result reached `func` when the use is no call. A result a private
     function returns is used in its callers (`returns_to/2`), none of it
     by one that tests it against nil
-  - `creating_op(id, func, api, scope, source, key)` — a call that claims
+  - `creating_operation(id, func, api, scope, source, key)` — a call that claims
     a name or starts a process: `register`, `start_link`/`start` with a
     `name:`, `start_via` (`{:via, Registry, {scope, key}}`),
     `registry_register`, and `start_child`, whose name hides in the child
@@ -70,7 +70,7 @@ defmodule Argus.Extractors.ProcessRegistry do
   @impl true
   def relations,
     do: [
-      :creating_op,
+      :creating_operation,
       :name_lookup,
       :name_release,
       :nil_use,
@@ -266,33 +266,33 @@ defmodule Argus.Extractors.ProcessRegistry do
         emit_release(facts, ctx)
 
       {Registry, :register, 3} ->
-        emit_creating_op(facts, ctx, "registry_register", registry_scope(ctx), {:x, 1})
+        emit_creating_operation(facts, ctx, "registry_register", registry_scope(ctx), {:x, 1})
 
       {DynamicSupervisor, :start_child, 2} ->
-        add_creating_op(facts, ctx, "start_child", "", "dynamic", "")
+        add_creating_operation(facts, ctx, "start_child", "", "dynamic", "")
 
       {Supervisor, :start_child, 2} ->
-        add_creating_op(facts, ctx, "start_child", "", "dynamic", "")
+        add_creating_operation(facts, ctx, "start_child", "", "dynamic", "")
 
       # A test's start_supervised is a start_child on the test supervisor,
       # and the lookup-then-start shape is common in shared test helpers.
       {ExUnit.Callbacks, func, arity}
       when func in [:start_supervised, :start_supervised!] and arity in [1, 2] ->
-        add_creating_op(facts, ctx, "start_child", "", "dynamic", "")
+        add_creating_operation(facts, ctx, "start_child", "", "dynamic", "")
 
       _ ->
         facts
     end
   end
 
-  defp emit_creating_op(facts, ctx, api, scope, key_reg) do
+  defp emit_creating_operation(facts, ctx, api, scope, key_reg) do
     {source, key} = key_identity(ctx.instrs, ctx.idx, key_reg, ctx.origins)
-    add_creating_op(facts, ctx, api, scope, source, key)
+    add_creating_operation(facts, ctx, api, scope, source, key)
   end
 
-  defp add_creating_op(facts, ctx, api, scope, source, key) do
+  defp add_creating_operation(facts, ctx, api, scope, source, key) do
     id = InstrId.mint(ctx.func_id, ctx.idx)
-    add_fact(facts, :creating_op, [id, ctx.func_id, api, scope, source, key])
+    add_fact(facts, :creating_operation, [id, ctx.func_id, api, scope, source, key])
   end
 
   defp registry_scope(ctx), do: resolve_atom(ctx.instrs, ctx.idx, {:x, 0})
@@ -329,7 +329,7 @@ defmodule Argus.Extractors.ProcessRegistry do
     |> track_dynamic(name, ctx, :process_register_name, :process_register)
     |> add_fact(:process_register, [id, ctx.func_id, name, method])
     |> maybe_emit_named_process(mod_str, name)
-    |> emit_creating_op(ctx, method, "", name_reg)
+    |> emit_creating_operation(ctx, method, "", name_reg)
   end
 
   # Direct register/2 calls inside a module's own code typically register
@@ -943,7 +943,7 @@ defmodule Argus.Extractors.ProcessRegistry do
           # A via-registered name is the registry's, not a process_register;
           # for the race it is a create scoped to that registry.
           {:via, registry, key} ->
-            add_creating_op(
+            add_creating_operation(
               facts,
               ctx,
               "start_via",
@@ -973,17 +973,17 @@ defmodule Argus.Extractors.ProcessRegistry do
     facts
     |> add_fact(:process_register, [id, ctx.func_id, name, method])
     |> maybe_emit_named_process_for_start(ctx, owner, name)
-    |> add_creating_op(ctx, method, "", "literal", name)
+    |> add_creating_operation(ctx, method, "", "literal", name)
   end
 
   defp emit_dynamic_named_start(facts, ctx, method, opts_reg) do
     case keyword_value_register(ctx.instrs, ctx.idx, opts_reg, :name) do
       {:ok, reg, value_idx} ->
         {source, key} = key_identity(ctx.instrs, value_idx, reg, ctx.origins)
-        add_creating_op(facts, ctx, method, "", source, key)
+        add_creating_operation(facts, ctx, method, "", source, key)
 
       :no ->
-        add_creating_op(facts, ctx, method, "", "dynamic", "")
+        add_creating_operation(facts, ctx, method, "", "dynamic", "")
     end
   end
 
@@ -1015,7 +1015,7 @@ defmodule Argus.Extractors.ProcessRegistry do
         facts
         |> add_fact(:process_register, [id, ctx.func_id, spelled, method])
         |> maybe_emit_named_process_for_erlang_start(ctx, spelled, mod_reg)
-        |> add_creating_op(ctx, method, "", "literal", spelled)
+        |> add_creating_operation(ctx, method, "", "literal", spelled)
 
       _ ->
         if Instr.tail_call?(Enum.at(ctx.instrs, ctx.idx)) do

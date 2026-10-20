@@ -203,7 +203,7 @@ var_points_to(f, "result", c, cat("result ", c)) :-
   !hub_object(i).
 var_points_to(f, "result", c, i) :- built_call(c, f, _, _, i), holds_object(i).
 var_points_to(f, "name", n, p) :- reads_name(f, n), named_pid(n, p), !hub_object(p).
-var_points_to(f, "dictionary", k, x) :- dict_read(f, k, g, sk, s), var_points_to(g, sk, s, x).
+var_points_to(f, "dictionary", k, x) :- dictionary_read(f, k, g, sk, s), var_points_to(g, sk, s, x).
 
 // A helper returning a dictionary entry returns the value held by the caller's process
 // at that call.
@@ -213,7 +213,7 @@ var_points_to(f, "self", "self", p) :- self_pid(f, p), !hub_object(p).
 // ETS tables are allocated objects named "table <site>". They are neither processes nor
 // field-bearing terms. tables.dl uses these identities to track tables allocated by
 // :ets.new/2.
-var_points_to(f, "table", t, t) :- table_alloc(_, f, t), !hub_object(t).
+var_points_to(f, "table", t, t) :- table_allocation(_, f, t), !hub_object(t).
 
 // GenServer.call may return the reply field of any {:reply, reply, state} from the
 // server's handle_call/3, without filtering by request clause.
@@ -350,11 +350,11 @@ field_points_to(o, sel, x) :- update_keeps(o, b, sel), field_points_to(b, sel, x
 // the full stage's.
 .decl update_keeps(term: symbol, base: symbol, field: symbol)
 
-update_keeps(o, b, sel) :- update_base(o, b), field_sel(b, sel), !term_update_overwrites(o, sel).
+update_keeps(o, b, sel) :- update_base(o, b), field_selector(b, sel), !term_update_overwrites(o, sel).
 
-.decl field_sel(term: symbol, field: symbol)
+.decl field_selector(term: symbol, field: symbol)
 
-field_sel(o, sel) :- field_points_to(o, sel, _).
+field_selector(o, sel) :- field_points_to(o, sel, _).
 
 // The term an update copies the fields it does not set from: one of its
 // own kind, a map's base a map and a cons cell's tail a list, as it is
@@ -502,7 +502,7 @@ built_base(i, o, b) :-
   term_allocation(g, o, kind, _, _),
   term_kind(b, kind).
 
-update_keeps(i, b, sel) :- built_base(i, o, b), field_sel(b, sel), !term_update_overwrites(o, sel).
+update_keeps(i, b, sel) :- built_base(i, o, b), field_selector(b, sel), !term_update_overwrites(o, sel).
 
 // A term's shape: its construction's, an instance's its term's, or the
 // shape a rule gives a term it names (a map's pair, whose tag `@pair` fits
@@ -627,52 +627,52 @@ returns_key(g, k) :- return_var(g, "result", c), call_result_var(c, g, h), retur
 
 // A dictionary read of `key` in `func`, and each put of it the same
 // process may make, in `putter`, of the source (sk, s).
-.decl dict_read(func: symbol, key: symbol, putter: symbol, var_kind: symbol, var: symbol)
+.decl dictionary_read(func: symbol, key: symbol, putter: symbol, var_kind: symbol, var: symbol)
 
-dict_read(f, k, g, sk, s) :-
-  reads_dict(f, k),
-  dict_put(_, g, k, sk, s),
+dictionary_read(f, k, g, sk, s) :-
+  reads_dictionary(f, k),
+  dictionary_put(_, g, k, sk, s),
   shares_dictionary(f, g).
 
 // The dict sources each function reads, so the rules resolving them are
 // bound by the function that uses them.
-.decl reads_dict(func: symbol, key: symbol)
+.decl reads_dictionary(func: symbol, key: symbol)
 
-reads_dict(f, k) :- call_arg_var(_, f, _, _, _, "dictionary", k).
-reads_dict(f, k) :- return_var(f, "dictionary", k).
-reads_dict(f, k) :- process_call_var(_, f, _, "dictionary", k).
-reads_dict(f, k) :- process_message_var(_, f, _, "dictionary", k).
-reads_dict(f, k) :- process_register_var(_, f, _, "dictionary", k).
-reads_dict(f, k) :- field_store(f, _, _, "dictionary", k).
-reads_dict(f, k) :- term_update_base(f, _, "dictionary", k).
-reads_dict(f, k) :- process_signal_var(_, f, _, "dictionary", k).
-reads_dict(f, k) :- field_load(f, _, _, "dictionary", k).
-reads_dict(f, k) :- table_use(_, f, "dictionary", k).
-reads_dict(f, k) :- dict_put(_, f, _, "dictionary", k).
-reads_dict(f, k) :- task_operation_var(_, f, _, "dictionary", k).
-reads_dict(f, k) :- unmodeled_use(_, f, "dictionary", k).
-reads_dict(f, k) :- call_result_var(_, f, g), returns_key(g, k).
+reads_dictionary(f, k) :- call_arg_var(_, f, _, _, _, "dictionary", k).
+reads_dictionary(f, k) :- return_var(f, "dictionary", k).
+reads_dictionary(f, k) :- process_call_var(_, f, _, "dictionary", k).
+reads_dictionary(f, k) :- process_message_var(_, f, _, "dictionary", k).
+reads_dictionary(f, k) :- process_register_var(_, f, _, "dictionary", k).
+reads_dictionary(f, k) :- field_store(f, _, _, "dictionary", k).
+reads_dictionary(f, k) :- term_update_base(f, _, "dictionary", k).
+reads_dictionary(f, k) :- process_signal_var(_, f, _, "dictionary", k).
+reads_dictionary(f, k) :- field_load(f, _, _, "dictionary", k).
+reads_dictionary(f, k) :- table_use(_, f, "dictionary", k).
+reads_dictionary(f, k) :- dictionary_put(_, f, _, "dictionary", k).
+reads_dictionary(f, k) :- task_operation_var(_, f, _, "dictionary", k).
+reads_dictionary(f, k) :- unmodeled_use(_, f, "dictionary", k).
+reads_dictionary(f, k) :- call_result_var(_, f, g), returns_key(g, k).
 
 // Seed same-process dictionary reachability from reads and writes whose keys have a
 // corresponding write or read elsewhere.
 .init dict_stack = SameProcessReach
 
-dict_stack.seed(f, f) :- reads_dict(f, k), dict_put(_, _, k, _, _).
-dict_stack.seed(g, g) :- dict_put(_, g, k, _, _), reads_dict(_, k).
+dict_stack.seed(f, f) :- reads_dictionary(f, k), dictionary_put(_, _, k, _, _).
+dict_stack.seed(g, g) :- dictionary_put(_, g, k, _, _), reads_dictionary(_, k).
 
 // `func` and other may share a process dictionary if one stack reaches both or they are
 // callbacks of the same module.
 .decl shares_dictionary(func: symbol, other: symbol)
 
 shares_dictionary(f, g) :-
-  reads_dict(f, k),
-  dict_put(_, g, k, _, _),
+  reads_dictionary(f, k),
+  dictionary_put(_, g, k, _, _),
   dict_stack.reaches(a, f),
   dict_stack.reaches(a, g).
 
 shares_dictionary(f, g) :-
-  reads_dict(f, k),
-  dict_put(_, g, k, _, _),
+  reads_dictionary(f, k),
+  dictionary_put(_, g, k, _, _),
   dict_stack.reaches(a, f),
   process_entry(m, a),
   process_entry(m, b),

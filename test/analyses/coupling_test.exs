@@ -215,7 +215,7 @@ defmodule Argus.Analyses.CouplingTest do
         ],
         async_cast: [["A:init/1", "B"]],
         remote_call: [["A:init/1#2", "A:init/1", "GenServer", "cast", "2"]],
-        ets_op: [["B:handle_cast/2#4", "B:handle_cast/2", "subs", "insert", "write"]]
+        ets_operation: [["B:handle_cast/2#4", "B:handle_cast/2", "subs", "insert", "write"]]
       }
 
       assert [[_sup, "A", "B", "restart_isolation", "table", _, "B:handle_cast/2#4", _ | _]] =
@@ -232,7 +232,7 @@ defmodule Argus.Analyses.CouplingTest do
     test "a read and a field reset are not what a restart loses" do
       # B's handler for A's request keeps nothing: no ETS write, no
       # monitor, no state it returns sets a field to what init/1 does not.
-      read = Map.put(registered(), :ets_op, [])
+      read = Map.put(registered(), :ets_operation, [])
       assert coupling_rows(read) == []
 
       reset =
@@ -400,7 +400,7 @@ defmodule Argus.Analyses.CouplingTest do
         ],
         sync_call: [["A:init/1", "B"]],
         sync_call_site: [["A:init/1#2", "A:init/1", "B", "5000"]],
-        ets_op: [["B:handle_call/3#4", "B:handle_call/3", "hooks", "insert", "write"]]
+        ets_operation: [["B:handle_call/3#4", "B:handle_call/3", "hooks", "insert", "write"]]
       }
     end
 

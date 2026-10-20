@@ -283,7 +283,7 @@ defmodule Argus.Schema.Processes do
         """
       },
       %{
-        name: :table_alloc,
+        name: :table_allocation,
         layer: 2,
         fields: [
           {:id, :instr_id, "instruction ID of the :ets.new/2 call"},
@@ -310,7 +310,7 @@ defmodule Argus.Schema.Processes do
         """
       },
       %{
-        name: :dict_op,
+        name: :dictionary_operation,
         layer: 2,
         fields: [
           {:id, :instr_id, "instruction ID of the call"},
@@ -324,7 +324,7 @@ defmodule Argus.Schema.Processes do
         """
       },
       %{
-        name: :dict_put,
+        name: :dictionary_put,
         layer: 2,
         fields: [
           {:id, :instr_id, "instruction ID of the put"},

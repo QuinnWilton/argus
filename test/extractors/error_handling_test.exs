@@ -138,13 +138,13 @@ defmodule Argus.Extractors.ErrorHandlingTest do
     end
   end
 
-  describe "extract/1 — recv_shape" do
+  describe "extract/1 — receive_shape" do
     alias Argus.Test.Soundness.Witness, as: W
 
     defp shapes(mod) do
       facts = ErrorHandling.extract(disassemble(mod))
       name = &(&1 |> String.split(":") |> List.last())
-      for [_id, func, shape] <- Map.get(facts, :recv_shape, []), do: {name.(func), shape}
+      for [_id, func, shape] <- Map.get(facts, :receive_shape, []), do: {name.(func), shape}
     end
 
     test "a receive's clauses by shape, for a receive that waits" do

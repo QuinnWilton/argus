@@ -2,7 +2,7 @@ defmodule Argus.Priors.Questions.ProcessRole do
   @moduledoc """
   Whether a module fronts a process, or only contains a call.
 
-  `stateful_module_dep`'s third clause (calls.dl) says a module depends
+  `stateful_module_dependency`'s third clause (calls.dl) says a module depends
   on a sibling when it reaches *any* function of it and the sibling has a
   `GenServer.call` or cast *somewhere*: a facade reached through
   delegation, like Oban's Notifier, is caught that way and nothing

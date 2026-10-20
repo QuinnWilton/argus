@@ -227,7 +227,7 @@ defmodule Argus.Extractors.TermFlowTest do
     defp dict_facts(modules) do
       {:ok, facts} = Argus.Pipeline.extract(modules, extractors: [TermFlow])
 
-      Map.new([:dict_op, :dict_put, :table_use, :return_var], fn relation ->
+      Map.new([:dictionary_operation, :dictionary_put, :table_use, :return_var], fn relation ->
         rows =
           for row <- Map.get(facts, relation, []),
               do: Enum.map(row, &String.replace(&1, "Argus.Test.Fixtures.Dictionary.", ""))
@@ -238,7 +238,7 @@ defmodule Argus.Extractors.TermFlowTest do
 
     test "every put, read and erase, with its literal key" do
       r = dict_facts([Dictionary.TmpOptions])
-      ops = for [_id, func, op, key] <- r.dict_op, uniq: true, do: {func, op, key}
+      ops = for [_id, func, op, key] <- r.dictionary_operation, uniq: true, do: {func, op, key}
 
       assert {"TmpOptions:create_tmp/0", "put", ":dict_options"} in ops
       assert {"TmpOptions:get_tmp/0", "get", ":dict_options"} in ops
@@ -249,7 +249,7 @@ defmodule Argus.Extractors.TermFlowTest do
       r = dict_facts([Dictionary.TmpOptions])
 
       assert [[_, "TmpOptions:create_tmp/0", ":dict_options", "table", "table " <> site]] =
-               r.dict_put
+               r.dictionary_put
 
       assert site =~ "TmpOptions:create_tmp/0#"
       assert ["TmpOptions:get_tmp/0", "dictionary", ":dict_options"] in r.return_var
@@ -257,12 +257,12 @@ defmodule Argus.Extractors.TermFlowTest do
 
     test "a key computed at run time is a key not known, and keeps nothing" do
       r = dict_facts([Dictionary.ComputedKey])
-      ops = for [_id, func, op, key] <- r.dict_op, uniq: true, do: {func, op, key}
+      ops = for [_id, func, op, key] <- r.dictionary_operation, uniq: true, do: {func, op, key}
 
       assert {"ComputedKey:run/2", "put", "dynamic"} in ops
       assert {"ComputedKey:run/2", "get", "dynamic"} in ops
       assert {"ComputedKey:run_literal/1", "put", "{:computed, :fixed}"} in ops
-      assert for([_, "ComputedKey:run/2" | _] <- r.dict_put, do: :row) == []
+      assert for([_, "ComputedKey:run/2" | _] <- r.dictionary_put, do: :row) == []
 
       assert [_, "ComputedKey:run_literal/1", "dictionary", "{:computed, :fixed}"] =
                Enum.find(r.table_use, &match?([_, "ComputedKey:run_literal/1" | _], &1))

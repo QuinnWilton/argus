@@ -115,11 +115,11 @@ defmodule Argus.Exclusions.StartupTest do
   end
 
   describe "a wait init/1 reaches through a helper" do
-    # startup.dl, init_recv_step: !acked_edge(f, g), for a socket read.
+    # startup.dl, init_receive_step: !acked_edge(f, g), for a socket read.
     test "a socket read after the ack holds the server, not the start", ctx do
       calls =
         for [call] <-
-              Rows.where(results(ctx, [S.WaitAfterAck.Wire]), :startup, "init_reaches_recv",
+              Rows.where(results(ctx, [S.WaitAfterAck.Wire]), :startup, "init_reaches_receive",
                 drop: [:mod, :api]
               ),
             do: call
@@ -127,11 +127,11 @@ defmodule Argus.Exclusions.StartupTest do
       assert lines([S.WaitAfterAck.Wire], calls) == [fixture_line("greeting = recv_line(sock)")]
     end
 
-    # startup.dl, init_recv_step: !acked_edge(f, g), for a receive.
+    # startup.dl, init_receive_step: !acked_edge(f, g), for a receive.
     test "a receive after the ack holds the server, not the start", ctx do
       calls =
         for [call] <-
-              Rows.where(results(ctx, [S.WaitAfterAck.Helper]), :startup, "init_reaches_recv",
+              Rows.where(results(ctx, [S.WaitAfterAck.Helper]), :startup, "init_reaches_receive",
                 drop: [:mod, :api]
               ),
             do: call

@@ -25,7 +25,7 @@ defmodule Argus.Extractors.SharedStore do
   @impl true
   def relations,
     do: [
-      :shared_store_op,
+      :shared_store_operation,
       :shared_store_argument,
       :shared_store_transform,
       :shared_store_lock,
@@ -223,7 +223,7 @@ defmodule Argus.Extractors.SharedStore do
       facts
       |> expression(store_transform)
       |> expression(key_transform)
-      |> add_fact(:shared_store_op, [
+      |> add_fact(:shared_store_operation, [
         InstrId.mint(ctx.func_id, ctx.idx),
         ctx.func_id,
         Atom.to_string(operation),

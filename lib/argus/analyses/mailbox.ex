@@ -104,7 +104,7 @@ defmodule Argus.Analyses.Mailbox do
       Argus.Extractors.ClauseCall,
       # Where a LiveView asks connected?/1 (connected_guarded).
       Argus.Extractors.LiveView,
-      # The rows a server writes and deletes (ets_op): a monitored process's
+      # The rows a server writes and deletes (ets_operation): a monitored process's
       # record in a table, dropped while its monitor stays (monitor_leak).
       Argus.Extractors.ETS,
       # A protocol's dispatch (protocol_dispatch): a call the call graph

@@ -101,7 +101,7 @@ defmodule Argus.Pipeline.Derive do
   @ordered_sites [
     local_call: "call",
     remote_call: "call",
-    recv_start: "receive",
+    receive_start: "receive",
     branch: "branch"
   ]
 

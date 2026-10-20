@@ -78,11 +78,11 @@ defmodule Argus.Clientlib.ProcessesTest do
   # Every relation a test below reads. One extraction and one solve per
   # program serve the module: the rows of a relation do not depend on
   # which others a program outputs, and each test only reads them.
-  @outputs ~w(async_dep call_site_target call_target exit_to_own_process field_points_to
+  @outputs ~w(async_dependency call_site_target call_target exit_to_own_process field_points_to
               genserver_sync_api instance named_pid param_points_to private_process process_call
               process_start
-              reaches_sync_dep return_points_to self_call self_pid send_target server_process
-              signal_target statem_data_points_to supervised_process sync_dep sync_dep_timeout
+              reaches_sync_dependency return_points_to self_call self_pid send_target server_process
+              signal_target statem_data_points_to supervised_process sync_dependency sync_dependency_timeout
               sync_site tag_resolved_site watched_process)
 
   setup_all do
@@ -177,23 +177,23 @@ defmodule Argus.Clientlib.ProcessesTest do
   end
 
   test "resolved calls become dependencies on the server's module", ctx do
-    r = solve(ctx, ~w(sync_dep async_dep))
+    r = solve(ctx, ~w(sync_dependency async_dependency))
 
-    assert ["Owner:direct/0", "Worker"] in r["sync_dep"]
-    assert ["Owner:run/0", "Worker"] in r["sync_dep"]
-    assert ["Owner:run/0", "Worker"] in r["async_dep"]
+    assert ["Owner:direct/0", "Worker"] in r["sync_dependency"]
+    assert ["Owner:run/0", "Worker"] in r["sync_dependency"]
+    assert ["Owner:run/0", "Worker"] in r["async_dependency"]
   end
 
   test "a helper's parameter is each caller's pid, not all of them", ctx do
-    r = solve(ctx, ~w(sync_dep process_call sync_site))
-    deps = for ["User" <> _ = f, m] <- r["sync_dep"], do: {f, m}
+    r = solve(ctx, ~w(sync_dependency process_call sync_site))
+    deps = for ["User" <> _ = f, m] <- r["sync_dependency"], do: {f, m}
 
     assert {"UserA:handle_call/3", "TargetA"} in deps
     assert {"UserB:handle_call/3", "TargetB"} in deps
     refute {"UserA:handle_call/3", "TargetB"} in deps
     refute {"UserB:handle_call/3", "TargetA"} in deps
     # Neither helper holds a dependency of its own.
-    refute Enum.any?(r["sync_dep"], &match?(["SafeCall:" <> _, _], &1))
+    refute Enum.any?(r["sync_dependency"], &match?(["SafeCall:" <> _, _], &1))
 
     # The dependency is anchored at UserA's call into the helper, and
     # also names the helper's GenServer.call it comes down to.
@@ -307,15 +307,15 @@ defmodule Argus.Clientlib.ProcessesTest do
   end
 
   test "a dependency carries the timeout of the call that makes it", ctx do
-    r = solve(ctx, ~w(sync_dep_timeout))
-    timeouts = for ["Timed:handle_call/3", m, ms] <- r["sync_dep_timeout"], do: {m, ms}
+    r = solve(ctx, ~w(sync_dependency_timeout))
+    timeouts = for ["Timed:handle_call/3", m, ms] <- r["sync_dependency_timeout"], do: {m, ms}
 
     assert {"TargetA", "-1"} in timeouts
     refute {"TargetA", "5000"} in timeouts
   end
 
   test "self() and a server's state carry a peer's pid", ctx do
-    r = solve(ctx, ~w(param_points_to sync_dep))
+    r = solve(ctx, ~w(param_points_to sync_dependency))
     params = unsited(r["param_points_to"])
 
     # A starts B with self(): B's init/1, and so B's state, holds A.
@@ -323,12 +323,12 @@ defmodule Argus.Clientlib.ProcessesTest do
     assert ["CycleB:handle_call/3", "2", "server CycleA:start_link/1"] in params
     # A keeps B's pid, returned from init/1 in {:ok, pid}, as its state.
     assert ["CycleA:handle_call/3", "2", "server CycleB:start_link/1"] in params
-    assert ["CycleA:handle_call/3", "CycleB"] in r["sync_dep"]
-    assert ["CycleB:handle_call/3", "CycleA"] in r["sync_dep"]
+    assert ["CycleA:handle_call/3", "CycleB"] in r["sync_dependency"]
+    assert ["CycleB:handle_call/3", "CycleA"] in r["sync_dependency"]
   end
 
   test "each pid in a state map stays under its key", ctx do
-    r = solve(ctx, ~w(call_target sync_dep))
+    r = solve(ctx, ~w(call_target sync_dependency))
 
     # Front holds both Back and Side, and calls only Back.
     assert ["Front:handle_call/3", "call", "start Front:init/1"] in unsited(r["call_target"])
@@ -338,8 +338,8 @@ defmodule Argus.Clientlib.ProcessesTest do
              &match?(["Front:handle_call/3", _, "server Side" <> _], &1)
            )
 
-    assert ["Front:handle_call/3", "Back"] in r["sync_dep"]
-    refute ["Front:handle_call/3", "Side"] in r["sync_dep"]
+    assert ["Front:handle_call/3", "Back"] in r["sync_dependency"]
+    refute ["Front:handle_call/3", "Side"] in r["sync_dependency"]
   end
 
   test "a list field and a scalar field of one state reach different processes",
@@ -468,43 +468,43 @@ defmodule Argus.Clientlib.ProcessesTest do
   end
 
   test "a call points-to resolves is not attributed by its tag", ctx do
-    r = solve(ctx, ~w(sync_dep tag_resolved_site))
+    r = solve(ctx, ~w(sync_dependency tag_resolved_site))
 
     # :reindex is named by Decoy alone, but the call goes to the AnyCall
     # Reindexer started.
-    assert ["Reindexer:handle_call/3", "AnyCall"] in r["sync_dep"]
-    refute ["Reindexer:handle_call/3", "Decoy"] in r["sync_dep"]
+    assert ["Reindexer:handle_call/3", "AnyCall"] in r["sync_dependency"]
+    refute ["Reindexer:handle_call/3", "Decoy"] in r["sync_dependency"]
     refute Enum.any?(r["tag_resolved_site"], &match?([_, "Reindexer:handle_call/3" | _], &1))
   end
 
   test "a server module's function that calls another server is a proxy", ctx do
-    r = solve(ctx, ~w(sync_dep reaches_sync_dep genserver_sync_api))
+    r = solve(ctx, ~w(sync_dependency reaches_sync_dependency genserver_sync_api))
 
     # ProxyApi.ask/0 calls Answerer by name: ProxyUser waits on Answerer,
     # and ask/0 is not ProxyApi's own client API.
     refute Enum.any?(r["genserver_sync_api"], &match?(["ProxyApi:ask/0", _], &1))
-    refute ["ProxyUser:use/0", "ProxyApi"] in r["sync_dep"]
-    assert ["ProxyUser:use/0", "Answerer"] in r["reaches_sync_dep"]
+    refute ["ProxyUser:use/0", "ProxyApi"] in r["sync_dependency"]
+    assert ["ProxyUser:use/0", "Answerer"] in r["reaches_sync_dependency"]
   end
 
   test "a wrapper forwarding its target to :gen_statem.call is a peer call", ctx do
-    r = solve(ctx, ~w(sync_dep))
+    r = solve(ctx, ~w(sync_dependency))
     # The caller that names Machine waits on it, not the wrapper it hands
     # the name to.
-    assert ["StatemClient:status/0", "Machine"] in r["sync_dep"]
-    refute ["StatemClient:do_call/2", "Machine"] in r["sync_dep"]
+    assert ["StatemClient:status/0", "Machine"] in r["sync_dependency"]
+    refute ["StatemClient:do_call/2", "Machine"] in r["sync_dependency"]
   end
 
   test "a name handed to a wrapper is the target of the call that hands it", ctx do
-    r = solve(ctx, ~w(sync_dep reaches_sync_dep sync_site))
+    r = solve(ctx, ~w(sync_dependency reaches_sync_dependency sync_site))
 
     # Each caller waits on the server it names, through the helper or its
     # wrapper, and on no other caller's: the helper waits on none.
-    assert ["NamedUserA:handle_call/3", "NamedTargetA"] in r["sync_dep"]
-    assert ["NamedUserB:handle_call/3", "NamedTargetB"] in r["sync_dep"]
-    refute ["NamedUserA:handle_call/3", "NamedTargetB"] in r["reaches_sync_dep"]
-    refute ["NamedUserB:handle_call/3", "NamedTargetA"] in r["reaches_sync_dep"]
-    refute Enum.any?(r["sync_dep"], &match?(["NamedCall:" <> _, _], &1))
+    assert ["NamedUserA:handle_call/3", "NamedTargetA"] in r["sync_dependency"]
+    assert ["NamedUserB:handle_call/3", "NamedTargetB"] in r["sync_dependency"]
+    refute ["NamedUserA:handle_call/3", "NamedTargetB"] in r["reaches_sync_dependency"]
+    refute ["NamedUserB:handle_call/3", "NamedTargetA"] in r["reaches_sync_dependency"]
+    refute Enum.any?(r["sync_dependency"], &match?(["NamedCall:" <> _, _], &1))
 
     # Anchored at the call into the wrapper.
     assert Enum.any?(
@@ -517,8 +517,8 @@ defmodule Argus.Clientlib.ProcessesTest do
   end
 
   test "a gen_statem's data carries its pids from state to state", ctx do
-    r = solve(ctx, ~w(sync_dep statem_data_points_to))
-    assert ["Machine:idle/3", "Back"] in r["sync_dep"]
+    r = solve(ctx, ~w(sync_dependency statem_data_points_to))
+    assert ["Machine:idle/3", "Back"] in r["sync_dependency"]
   end
 
   test "exit signals, monitors and links go to the processes they name", ctx do
@@ -548,10 +548,10 @@ defmodule Argus.Clientlib.ProcessesTest do
   end
 
   test "a pid a server replies with reaches its caller", ctx do
-    r = solve(ctx, ~w(sync_dep process_call))
+    r = solve(ctx, ~w(sync_dependency process_call))
     # The directory keeps workers under keys it does not know and replies
     # with one; the client calls what it gets.
-    assert ["DirectoryClient:ping/1", "Back"] in r["sync_dep"]
+    assert ["DirectoryClient:ping/1", "Back"] in r["sync_dependency"]
 
     # A read by a key not known does not read a field written under a
     # literal key: the socket's transport is not every dynamic read of it.

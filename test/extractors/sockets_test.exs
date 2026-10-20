@@ -58,10 +58,10 @@ defmodule Argus.Extractors.SocketsTest do
     end
   end
 
-  describe "socket_opts_arg" do
+  describe "socket_options_arg" do
     test "the literal lists a caller hands on, with their :active entry" do
       rows =
-        for [_id, caller, callee, pos, mode] <- facts(F.Wrapped.Client).socket_opts_arg,
+        for [_id, caller, callee, pos, mode] <- facts(F.Wrapped.Client).socket_options_arg,
             do: {name(caller), name(callee), pos, mode}
 
       assert Enum.sort(rows) == [

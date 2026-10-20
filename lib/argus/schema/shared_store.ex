@@ -6,7 +6,7 @@ defmodule Argus.Schema.SharedStore do
   def relations do
     Argus.Schema.Reads.record("relations #{__MODULE__}", [
       %{
-        name: :shared_store_op,
+        name: :shared_store_operation,
         layer: 2,
         fields: [
           {:site, :instr_id, "the ConCache call"},

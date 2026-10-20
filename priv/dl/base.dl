@@ -101,8 +101,8 @@
 
 // Start of a receive loop (`loop_rec`). The emitter follows its empty-mailbox branch to classify the receive: `wait` can block indefinitely; `wait_timeout` has a timeout.
 //
-.decl recv_start(id: symbol, caller: symbol, blocking: number, fail: number) mutable
-.input recv_start
+.decl receive_start(id: symbol, caller: symbol, blocking: number, fail: number) mutable
+.input receive_start
 
 // Call to an external (remote) function.
 .decl remote_call(id: symbol, caller: symbol, mod: symbol, func: symbol, arity: number) mutable
@@ -118,8 +118,8 @@
 .input select_branch
 
 // Message send instruction.
-.decl send_msg(id: symbol, caller: symbol) mutable
-.input send_msg
+.decl send_message(id: symbol, caller: symbol) mutable
+.input send_message
 
 // The basic block containing a named call, receive, or branch; blocks are identified by their first instruction. Used with `block_flow` by `clientlib/order.dl` to order calls and receives. BIFs, dynamic calls, and sends have no rows. Branch rows are for in-process passes; a receive's `loop_rec` has both kinds. Instruction IDs change on body edits.
 //

@@ -160,7 +160,7 @@ defmodule Argus.Analyses.CouplingSupervisionTest do
             ["P:init/1#9", "P:init/1", "GenServer", "call", "2"]
           ],
           process_call_var: [["P:init/1#9", "P:init/1", "call", "name", "S"]],
-          ets_op: [["S:handle_call/3#4", "S:handle_call/3", "subs", "insert", "write"]]
+          ets_operation: [["S:handle_call/3#4", "S:handle_call/3", "subs", "insert", "write"]]
         })
 
       assert [["Sup", "P", "S", "restart_isolation", "table", _, "S:handle_call/3#4", site | _]] =

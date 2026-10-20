@@ -104,7 +104,7 @@ defmodule Argus.Schema.Monitors do
         """
       },
       %{
-        name: :recv_down,
+        name: :receive_down,
         layer: 2,
         fields: [
           {:id, :symbol, "the receive's loop_rec"},
@@ -119,7 +119,7 @@ defmodule Argus.Schema.Monitors do
         """
       },
       %{
-        name: :recv_signal,
+        name: :receive_signal,
         layer: 2,
         fields: [
           {:id, :symbol, "the receive's loop_rec"},
@@ -135,7 +135,7 @@ defmodule Argus.Schema.Monitors do
         """
       },
       %{
-        name: :recv_takes_exit,
+        name: :receive_takes_exit,
         layer: 2,
         fields: [
           {:id, :symbol, "the receive's loop_rec"},
@@ -148,7 +148,7 @@ defmodule Argus.Schema.Monitors do
         """
       },
       %{
-        name: :recv_flush,
+        name: :receive_flush,
         layer: 2,
         fields: [
           {:id, :symbol, "the receive's loop_rec"},
@@ -192,7 +192,7 @@ defmodule Argus.Schema.Monitors do
         """
       },
       %{
-        name: :recv_takes_down,
+        name: :receive_takes_down,
         layer: 2,
         fields: [
           {:id, :symbol, "the receive's loop_rec"},
@@ -204,7 +204,7 @@ defmodule Argus.Schema.Monitors do
         """
       },
       %{
-        name: :recv_timeout_param,
+        name: :receive_timeout_param,
         layer: 2,
         fields: [
           {:id, :symbol, "the receive's loop_rec"},
@@ -213,7 +213,7 @@ defmodule Argus.Schema.Monitors do
         ],
         doc: """
         A receive whose `after` timeout is the function's parameter `param` on every \
-        path. `recv_start` calls it timed; a caller passing `:infinity` there \
+        path. `receive_start` calls it timed; a caller passing `:infinity` there \
         (`infinity_arg`) makes it wait with no timeout. A literal `:infinity` compiles \
         to an untimed wait and needs no row.
         """

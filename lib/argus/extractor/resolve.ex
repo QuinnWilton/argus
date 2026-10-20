@@ -1021,7 +1021,7 @@ defmodule Argus.Extractor.Resolve do
   end
 
   @doc """
-  Which nodes a `:global` node-list argument names, as `global_op`
+  Which nodes a `:global` node-list argument names, as `global_operation`
   spells it: `"local"` for a list of only the local node (`[node()]`,
   `[Node.self()]`), `"cluster"` for one that holds the connected nodes
   (`Node.list/0,1` or `:erlang.nodes/0,1`, alone, consed onto, or

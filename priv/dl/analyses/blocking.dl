@@ -56,21 +56,21 @@ site_demand(h) :- handle_call_function(_, h).
 
 // A request tagged `clause` to `mod` makes a request tagged `request` of
 // `to`'s server.
-.decl clause_dep(mod: symbol, clause: symbol, to: symbol, request: symbol)
+.decl clause_dependency(mod: symbol, clause: symbol, to: symbol, request: symbol)
 
-clause_dep(mod, clause, to, request) :-
+clause_dependency(mod, clause, to, request) :-
   handle_call_function(mod, h),
   site_request(h, id, to, request),
   site_clause(h, id, clause),
   mod != to.
 
-// Do not derive chains from `stateful_module_dep`: it can describe init or cast work,
+// Do not derive chains from `stateful_module_dependency`: it can describe init or cast work,
 // include asynchronous edges, and infer server dependencies from unrelated functions in
 // a module. Chains require synchronous calls reached by handle_call.
 
 .decl requested(mod: symbol, request: symbol)
 
-requested(to, request) :- clause_dep(_, _, to, request).
+requested(to, request) :- clause_dependency(_, _, to, request).
 
 // Map request tags to matching handler clauses, including catch-alls. An unknown
 // request tag may enter every clause.
@@ -78,7 +78,7 @@ requested(to, request) :- clause_dep(_, _, to, request).
 
 enters(m, request, clause) :-
   requested(m, request),
-  clause_dep(m, clause, _, _),
+  clause_dependency(m, clause, _, _),
   (request = clause ; clause = "any" ; request = "any").
 
 // ── Timeout chain computation ────────────────────────────────────────
@@ -89,13 +89,13 @@ enters(m, request, clause) :-
 
 // Base case: the clause itself calls `to` (depth 1).
 request_chain_at(from, clause, to, 1) :-
-  clause_dep(from, clause, to, _),
+  clause_dependency(from, clause, to, _),
   gen_server_like(to).
 
 // Extend through the clause entered in the next server. Stop at request cycles, which
 // `call_cycle` reports separately.
 request_chain_at(from, clause, to, d + 1) :-
-  clause_dep(from, clause, mid, request),
+  clause_dependency(from, clause, mid, request),
   enters(mid, request, mid_clause),
   !chain_cycle_clause(mid, mid_clause),
   request_chain_at(mid, mid_clause, to, d),
@@ -111,7 +111,7 @@ request_chain(from, clause, to, min(d)) :- request_chain_at(from, clause, to, d)
 // One request following another, and the clauses on a cycle of them.
 .decl clause_step(mod: symbol, clause: symbol, to: symbol, to_clause: symbol)
 
-clause_step(m, c, to, tc) :- clause_dep(m, c, to, request), enters(to, request, tc).
+clause_step(m, c, to, tc) :- clause_dependency(m, c, to, request), enters(to, request, tc).
 
 .decl clause_reach(mod: symbol, clause: symbol, to: symbol, to_clause: symbol)
 
@@ -157,18 +157,18 @@ handler_inferred(h, id, to) :-
 handler_inferred(h, id, to) :-
   handle_call_function(_, h),
   call_instr(h, g, id),
-  reaches_tag_dep(g, to).
+  reaches_tag_dependency(g, to).
 
 handler_inferred(h, "", to) :-
   handle_call_function(_, h),
   call_edge(h, g),
   !call_instr(h, g, _),
   !runs_elsewhere(h, g),
-  reaches_tag_dep(g, to).
+  reaches_tag_dependency(g, to).
 
-.decl clause_tag_dep(mod: symbol, clause: symbol, to: symbol)
+.decl clause_tag_dependency(mod: symbol, clause: symbol, to: symbol)
 
-clause_tag_dep(mod, clause, to) :-
+clause_tag_dependency(mod, clause, to) :-
   handle_call_function(mod, h),
   handler_inferred(h, id, to),
   site_request(h, id, to, _),
@@ -179,15 +179,15 @@ clause_tag_dep(mod, clause, to) :-
 
 request_chain_inferred(from, clause, to) :-
   request_chain(from, clause, to, _),
-  clause_tag_dep(from, clause, to).
+  clause_tag_dependency(from, clause, to).
 
 request_chain_inferred(from, clause, to) :-
-  clause_dep(from, clause, mid, request),
+  clause_dependency(from, clause, mid, request),
   enters(mid, request, mid_clause),
   !chain_cycle_clause(mid, mid_clause),
   request_chain(mid, mid_clause, to, _),
   from != to,
-  (clause_tag_dep(from, clause, mid) ; request_chain_inferred(mid, mid_clause, to)).
+  (clause_tag_dependency(from, clause, mid) ; request_chain_inferred(mid, mid_clause, to)).
 
 .decl timeout_chain_inferred(from: symbol, to: symbol)
 
@@ -248,13 +248,13 @@ blocking_cast_handler(mod, handler, to) :-
 handles_casts(mod, h) :- handle_cast_function(mod, h).
 
 // The handler waits on another module's server, on its own stack or in
-// a task it awaits (handler_dep's "call" kind, clientlib/entries.dl).
+// a task it awaits (handler_dependency's "call" kind, clientlib/entries.dl).
 .decl waits_on_server(handler: symbol, to: symbol)
 
-waits_on_server(h, to) :- handler_dep(_, "handle_cast", to, "call", h).
+waits_on_server(h, to) :- handler_dependency(_, "handle_cast", to, "call", h).
 
 // The handler can reach this wait through clauses selected by its literal arguments.
-// Uses `site_request`; `reaches_sync_dep` does not distinguish dispatcher clauses.
+// Uses `site_request`; `reaches_sync_dependency` does not distinguish dispatcher clauses.
 .decl requests_through_a_clause_it_enters(handler: symbol, to: symbol)
 
 requests_through_a_clause_it_enters(h, to) :- site_request(h, _, to, _).
@@ -286,7 +286,7 @@ chain_found(mod, to, "cast", 1, "", 0, 0, "") :-
 
 handle_call_waits_on(mod, to, ms) :-
   handle_call_function(mod, h),
-  reaches_sync_dep_timeout(h, to, ms),
+  reaches_sync_dependency_timeout(h, to, ms),
   mod != to.
 
 // ── Output: timeout insufficient ───────────────────────────────────
@@ -359,7 +359,7 @@ timed_wait_site(mod, t, ms, id) :-
   handle_call_function(mod, h),
   call_instr(h, g, id),
   !side_call(h, g),
-  reaches_sync_dep_timeout(g, t, ms).
+  reaches_sync_dependency_timeout(g, t, ms).
 
 .decl timed_wait(mod: symbol, target: symbol, ms: number, site: symbol)
 
@@ -390,7 +390,7 @@ answer_reach.root(h, h) :- infinity_target(m), handle_call_function(m, h).
 // unresolved call, or external call that cannot answer promptly.
 .decl may_wait_to_answer(handler: symbol)
 
-may_wait_to_answer(h) :- answer_reach.reaches(h, f), recv_start(_, f, 1, _).
+may_wait_to_answer(h) :- answer_reach.reaches(h, f), receive_start(_, f, 1, _).
 
 // Returning {:noreply, …} defers the reply to a later callback. The caller waits for
 // that reply, which may never arrive.
@@ -461,13 +461,13 @@ waits_through_later(a, b, z) :-
 // callback on the module's own stack, including tasks it awaits.
 .decl cycle_candidate(a: symbol, b: symbol)
 
-cycle_candidate(a, b) :- module_sync_dep(a, b, _), sync_reach(b, a).
+cycle_candidate(a, b) :- module_sync_dependency(a, b, _), sync_reach(b, a).
 
 // Transitive module-level wait dependencies, limited to modules that both wait and are
 // waited on, since only those can participate in cycles.
 .decl sync_link(a: symbol, b: symbol)
 
-sync_link(a, b) :- module_sync_dep(a, b, _), module_sync_dep(b, _, _), module_sync_dep(_, a, _).
+sync_link(a, b) :- module_sync_dependency(a, b, _), module_sync_dependency(b, _, _), module_sync_dependency(_, a, _).
 
 .decl sync_reach(a: symbol, b: symbol)
 
@@ -478,7 +478,7 @@ sync_reach(a, c) :- sync_reach(a, b), sync_link(b, c).
 // stack or in a task it waits for.
 .init holds = HoldingReach
 
-holds.seed(w, w) :- cycle_candidate(a, b), module_sync_dep(a, b, w).
+holds.seed(w, w) :- cycle_candidate(a, b), module_sync_dependency(a, b, w).
 
 // Classify process entries as startup ("start": init/1 or a channel's join/3) or normal
 // operation ("run": other callbacks).
@@ -493,11 +493,11 @@ process_code(m, f, "start") :- start_code(m, f).
 process_code(m, f, "run") :- process_entry(m, f), !start_code(m, f).
 
 // a's process waits on b's at `w`, a function of a's it runs.
-.decl process_dep(a: symbol, b: symbol, w: symbol, phase: symbol)
+.decl process_dependency(a: symbol, b: symbol, w: symbol, phase: symbol)
 
-process_dep(a, b, w, phase) :-
+process_dependency(a, b, w, phase) :-
   cycle_candidate(a, b),
-  module_sync_dep(a, b, w),
+  module_sync_dependency(a, b, w),
   process_code(a, e, phase),
   holds.reaches(e, w).
 
@@ -519,21 +519,21 @@ nameable(m) :- async_cast(_, m).
 .decl calls_back(b: symbol, a: symbol, w: symbol)
 
 calls_back(b, a, w) :-
-  process_dep(a, b, w, "start"),
+  process_dependency(a, b, w, "start"),
   !handle_call_function(b, _).
 
 calls_back(b, a, w) :-
-  process_dep(a, b, w, "start"),
+  process_dependency(a, b, w, "start"),
   reaches_sync_request(w, b, request),
-  clause_dep(b, clause, a, _),
+  clause_dependency(b, clause, a, _),
   (request = clause ; clause = "any" ; request = "any").
 
 // Process a waits on process b at w, either during normal operation or during startup
 // when the start can participate in a cycle.
 .decl process_waits_on(a: symbol, b: symbol, w: symbol)
 
-process_waits_on(a, b, w) :- process_dep(a, b, w, "run").
-process_waits_on(a, b, w) :- process_dep(a, b, w, "start"), nameable(a).
+process_waits_on(a, b, w) :- process_dependency(a, b, w, "run").
+process_waits_on(a, b, w) :- process_dependency(a, b, w, "start"), nameable(a).
 process_waits_on(a, b, w) :- calls_back(b, a, w).
 
 // Two servers wait on each other from handle_continue/2 after both have initialized.
@@ -547,10 +547,10 @@ continue_cycle(a, b, a_wait, b_wait) :-
   a < b.
 
 // A handle_continue/2 that init/1 continues to waits on another module's
-// server at `w` (continue_dep, clientlib/entries.dl).
+// server at `w` (continue_dependency, clientlib/entries.dl).
 .decl continues_into_wait_on(mod: symbol, to: symbol, w: symbol)
 
-continues_into_wait_on(mod, to, w) :- continue_dep(mod, to, w).
+continues_into_wait_on(mod, to, w) :- continue_dependency(mod, to, w).
 
 call_cycle(a, b, a_wait, b_wait, "continue", site_a, site_b) :-
   continue_cycle(a, b, a_wait, b_wait),
@@ -575,13 +575,13 @@ call_cycle(m, m, func, func, "self", call, call) :-
 sync_site_or_empty(f, m, id) :- sync_site(f, m, id).
 
 sync_site_or_empty(f, m, id) :-
-  module_sync_dep(_, m, f),
+  module_sync_dependency(_, m, f),
   !sync_site(f, m, _),
   call_instr(f, g, id),
   function_def(g, m, _, _, _).
 
 sync_site_or_empty(f, m, "") :-
-  module_sync_dep(_, m, f),
+  module_sync_dependency(_, m, f),
   !sync_site(f, m, _),
   !calls_into(f, m).
 
@@ -589,7 +589,7 @@ sync_site_or_empty(f, m, "") :-
 .decl calls_into(func: symbol, mod: symbol)
 
 calls_into(f, m) :-
-  module_sync_dep(_, m, f),
+  module_sync_dependency(_, m, f),
   call_instr(f, g, _),
   function_def(g, m, _, _, _).
 
@@ -601,12 +601,12 @@ calls_into(f, m) :-
 
 call_cycle_path(a, b, from_mod, to_mod, witness, "tag", site) :-
   ring_edge(a, b, from_mod, to_mod, witness),
-  reaches_tag_dep(witness, to_mod),
+  reaches_tag_dependency(witness, to_mod),
   sync_site_or_empty(witness, to_mod, site).
 
 call_cycle_path(a, b, from_mod, to_mod, witness, "static", site) :-
   ring_edge(a, b, from_mod, to_mod, witness),
-  !reaches_tag_dep(witness, to_mod),
+  !reaches_tag_dependency(witness, to_mod),
   sync_site_or_empty(witness, to_mod, site).
 
 // Edges in a call_cycle: a → b, then the path back to a through modules ordered after
@@ -648,13 +648,13 @@ serialization_bottleneck(server, callers) :-
   !hands_requests_off(server).
 
 // A function of `caller_mod` that waits on `server` itself: it makes the
-// call, or calls the server's client API (sync_dep, clientlib/calls.dl).
+// call, or calls the server's client API (sync_dependency, clientlib/calls.dl).
 // Its own callers wait through it and are not counted again: callers that
 // all go through one facade count once, as the facade's module.
 .decl direct_caller(caller_mod: symbol, server: symbol, witness: symbol)
 
 direct_caller(caller_mod, server, f) :-
-  sync_dep(f, server),
+  sync_dependency(f, server),
   function_def(f, caller_mod, _, _, _),
   caller_mod != server,
   gen_server_like(server).
@@ -686,7 +686,7 @@ starts_an_instance(m, id) :-
 
 starts_an_instance(m, id) :-
   process_start(id, f, p, "server", m),
-  creating_op(id, f, "start_via", _, _, _),
+  creating_operation(id, f, "start_via", _, _, _),
   !process_register_var(id, f, _, _, p).
 
 // The server starts that take no name.
@@ -790,8 +790,8 @@ fan_in_waits(m, "infinity") :- serialization_bottleneck(m, _), !may_give_up(m).
 
 .decl may_give_up(server: symbol)
 
-may_give_up(m) :- direct_caller(_, m, f), sync_dep_timeout(f, m, ms), ms != -1.
-may_give_up(m) :- direct_caller(_, m, f), !sync_dep_timeout(f, m, _).
+may_give_up(m) :- direct_caller(_, m, f), sync_dependency_timeout(f, m, ms), ms != -1.
+may_give_up(m) :- direct_caller(_, m, f), !sync_dependency_timeout(f, m, _).
 
 // The number of modules calling each such server directly.
 .decl sync_call_fan_in(target_mod: symbol, cnt: number, waits: symbol)
@@ -895,11 +895,11 @@ receive_in_callback(receive, func, callback, behaviour, proximity, "true", "afte
 .decl waits_without_timeout(receive: symbol, func: symbol, callback: symbol, proximity: symbol, how: symbol)
 
 waits_without_timeout(receive, func, callback, proximity, "none") :-
-  recv_start(receive, func, 1, _),
+  receive_start(receive, func, 1, _),
   callback_reaches(callback, func, proximity).
 
 waits_without_timeout(receive, func, callback, "helper", "caller") :-
-  recv_timeout_param(receive, func, pos),
+  receive_timeout_param(receive, func, pos),
   callback_reaches(callback, func, "helper"),
   infinity_arg(callback, func, pos).
 
@@ -913,7 +913,7 @@ untimed_in_a_callback(receive) :-
 // The receive in `func` has an `after`: it can end without its message.
 .decl waits_with_timeout(receive: symbol, func: symbol)
 
-waits_with_timeout(receive, func) :- recv_start(receive, func, 0, _).
+waits_with_timeout(receive, func) :- receive_start(receive, func, 0, _).
 
 // The receive accepts a monitor's :DOWN, or a linked peer's :EXIT while the callback
 // traps exits. Its wait ends no later than that peer's lifetime; other clauses may end
@@ -964,7 +964,7 @@ polls_cancelled_timer(receive) :- flush_poll(receive).
 socket_wait_in_callback(site, func, api, server) :-
   waits_on_socket_forever(site, func, api, holder),
   runs_in_callback_of(holder, server),
-  !recv_during_init(site).
+  !receive_during_init(site).
 
 wait_found(func, site, "socket", api, server, "") :-
   socket_wait_in_callback(site, func, api, server).
@@ -1010,20 +1010,20 @@ runs_in_callback_of(h, m) :-
   name != "init",
   socket_reach.reaches(c, h).
 
-.decl socket_recv_api(api: symbol)
+.decl socket_receive_api(api: symbol)
 
-socket_recv_api(":gen_tcp.recv/2").
-socket_recv_api(":gen_tcp.recv/3").
-socket_recv_api(":ssl.recv/2").
-socket_recv_api(":ssl.recv/3").
+socket_receive_api(":gen_tcp.recv/2").
+socket_receive_api(":gen_tcp.recv/3").
+socket_receive_api(":ssl.recv/2").
+socket_receive_api(":ssl.recv/3").
 
 // A recv init/1 runs: startup's finding (unbounded_effect_in_init,
 // "recv"), reported there once.
-.decl recv_during_init(site: symbol)
+.decl receive_during_init(site: symbol)
 
-recv_during_init(id) :-
+receive_during_init(id) :-
   waits_on_socket_forever(id, _, api, h),
-  socket_recv_api(api),
+  socket_receive_api(api),
   init_function(_, c),
   socket_reach.reaches(c, h).
 
@@ -1219,7 +1219,7 @@ rpc_fun.root(call, g) :- rpc_closure(call, g).
 // captured funs passed to Enum may appear only as Enum calls.
 .decl fun_waits(call: symbol)
 
-fun_waits(call) :- rpc_fun.reaches(call, f), recv_start(_, f, 1, _).
+fun_waits(call) :- rpc_fun.reaches(call, f), receive_start(_, f, 1, _).
 fun_waits(call) :- rpc_fun.reaches(call, f), dynamic_call(_, f, kind), unseen_call(kind).
 
 fun_waits(call) :-
@@ -1383,7 +1383,7 @@ unbounded_lock_wait(func, lock) :-
 // holder may never reach.
 .decl takes_turns(lock: symbol)
 
-takes_turns(lock) :- global_op(lock, _, "trans", _, "local").
+takes_turns(lock) :- global_operation(lock, _, "trans", _, "local").
 
 // A :global lock outside init/1 uses finite retries, but each attempt may wait for a
 // partitioned node to be declared down.
@@ -1398,18 +1398,18 @@ bounded_lock_wait(func, lock) :-
 // A :global.set_lock or :global.trans call `func` makes.
 .decl takes_global_lock(func: symbol, lock: symbol)
 
-takes_global_lock(func, lock) :- global_op(lock, func, _, _, _).
+takes_global_lock(func, lock) :- global_operation(lock, func, _, _, _).
 
 // A global lock site with retry count and node scope. Cluster scope can stall on
 // partitions; local scope waits only on local holders. Builders deduplicate by
 // function, operation, retries, and nodes.
 wait_found(func, lock, "global", op, retries, nodes) :-
   unbounded_lock_wait(func, lock),
-  global_op(lock, func, op, retries, nodes).
+  global_operation(lock, func, op, retries, nodes).
 
 wait_found(func, lock, "global", op, retries, nodes) :-
   bounded_lock_wait(func, lock),
-  global_op(lock, func, op, retries, nodes).
+  global_operation(lock, func, op, retries, nodes).
 
 // Peer calls catching :noproc but not peer shutdown
 //

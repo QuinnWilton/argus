@@ -139,7 +139,7 @@ defmodule Argus.Pipeline.Emit do
     Enum.reduce(normalized, facts, fn
       {id, {:loop_rec, {:f, fail}, _dst}}, acc ->
         blocking = if blocking_wait?(instrs, Map.get(labels, fail)), do: "1", else: "0"
-        add_fact(acc, :recv_start, [id, func_id, blocking, to_string(fail)])
+        add_fact(acc, :receive_start, [id, func_id, blocking, to_string(fail)])
 
       _, acc ->
         acc
@@ -359,7 +359,7 @@ defmodule Argus.Pipeline.Emit do
 
   # Send.
   defp emit_specific(facts, id, func_id, :send) do
-    add_fact(facts, :send_msg, [id, func_id])
+    add_fact(facts, :send_message, [id, func_id])
   end
 
   # Make fun: a closure lifted to a concrete MFA is a closure_def edge.
@@ -466,7 +466,7 @@ defmodule Argus.Pipeline.Emit do
   # empty mailbox; loop_rec_end and wait transfer back to the loop label; and
   # wait_timeout re-enters the loop on a message or falls through on timeout.
   # Without these edges, receive loops have no back edges in the CFG.
-  # recv_start is emitted by emit_receives/3 instead: deciding whether the
+  # receive_start is emitted by emit_receives/3 instead: deciding whether the
   # receive can block forever means following the fail label to another
   # instruction, which a per-instruction emitter cannot see.
   defp emit_specific(facts, id, {:loop_rec, {:f, fail}, _dst}) do

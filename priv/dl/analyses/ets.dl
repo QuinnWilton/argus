@@ -39,7 +39,7 @@
 .init ets_reach = SameProcessReach
 
 ets_reach.seed(f, f) :- ets_new(_, f, _).
-ets_reach.seed(f, f) :- ets_op(_, f, _, _, "read").
+ets_reach.seed(f, f) :- ets_operation(_, f, _, _, "read").
 ets_reach.seed(f, f) :- table_read(_, f, _, _).
 // A function that spawns a linked process: which process runs it says
 // what the spawn ends with (linked_by, below).
@@ -179,7 +179,7 @@ handed_back(id, p) :-
   process_root(_, p, _, "behaviour"),
   ets_new(id, f, _),
   !ets_option(id, "named_table", "true"),
-  table_alloc(id, f, t),
+  table_allocation(id, f, t),
   returns_table(f, t).
 
 .decl returns_table(func: symbol, table: symbol)
@@ -290,7 +290,7 @@ written_by_two_modules(create, m1, m2) :-
 .decl reads_in_module(create: symbol, mod: symbol)
 
 reads_in_module(create, mod) :-
-  ets_op(id, func, _, _, "read"),
+  ets_operation(id, func, _, _, "read"),
   touches_made_table(id, create),
   function_def(func, mod, _, _, _).
 
@@ -298,7 +298,7 @@ reads_in_module(create, mod) :-
 .decl writes_in_module(create: symbol, mod: symbol)
 
 writes_in_module(create, mod) :-
-  ets_op(id, func, _, _, "write"),
+  ets_operation(id, func, _, _, "write"),
   touches_made_table(id, create),
   function_def(func, mod, _, _, _).
 
@@ -307,7 +307,7 @@ writes_in_module(create, mod) :-
 .decl touches_made_table(id: symbol, create: symbol)
 
 touches_made_table(id, create) :-
-  ets_op(id, _, _, _, _),
+  ets_operation(id, _, _, _, _),
   ets_table(id, k, t),
   table_made_at(k, t, create).
 
@@ -398,7 +398,7 @@ table_only_grows(table, create) :-
 .decl grows_outside_init(create: symbol)
 
 grows_outside_init(create) :-
-  ets_op(id, f, _, op, "write"),
+  ets_operation(id, f, _, op, "write"),
   (op = "insert" ; op = "insert_new"),
   touches_made_table(id, create),
   function_def(f, _, fname, _, _),
@@ -410,14 +410,14 @@ grows_outside_init(create) :-
 .decl loses_rows(create: symbol)
 
 loses_rows(create) :-
-  ets_op(id, _, _, op, _),
-  ets_removal_op(op),
+  ets_operation(id, _, _, op, _),
+  ets_removal_operation(op),
   touches_made_table(id, create).
 
 loses_rows(create) :-
   made_in(create, mod),
-  ets_op(id, f, _, op, _),
-  ets_removal_op(op),
+  ets_operation(id, f, _, op, _),
+  ets_removal_operation(op),
   may_touch_any_table(id),
   function_def(f, mod, _, _, _).
 
@@ -522,7 +522,7 @@ reads_named_table(read, reader, create) :-
 // :undefined; see ets_answers_missing_table. races.dl separately handles missing rows.
 .decl raises_if_table_missing(site: symbol)
 
-raises_if_table_missing(site) :- ets_op(site, _, _, op, "read"), !ets_answers_missing_table(op).
+raises_if_table_missing(site) :- ets_operation(site, _, _, op, "read"), !ets_answers_missing_table(op).
 
 // The missing-table ArgumentError is caught at the read, along every path through
 // helpers, or at every call to the reader (`Escape`). Closures require coverage of
@@ -533,7 +533,7 @@ read_rescued(site, reader) :- table_miss.rescued(site, reader, "badarg").
 
 .init table_miss = Escape
 
-table_miss.asked(site, g, reader, "badarg") :- table_read(site, reader, _, _), ets_op(site, g, _, _, _).
+table_miss.asked(site, g, reader, "badarg") :- table_read(site, reader, _, _), ets_operation(site, g, _, _, _).
 table_miss.asked(site, reader, reader, "badarg") :- computed_read(_, _, reader, site, _).
 table_miss.asked(create, f, start, "badarg") :- makes_on_its_stack(start, create), ets_new(create, f, _).
 
@@ -550,9 +550,9 @@ read_when_present(site) :- ets_read_when_present(site, _).
 .decl table_read(site: symbol, reader: symbol, kind: symbol, ident: symbol)
 
 table_read(site, reader, k, t) :-
-  ets_op(site, reader, _, _, "read"),
+  ets_operation(site, reader, _, _, "read"),
   raises_if_table_missing(site),
-  !ets_op_param(site, _),
+  !ets_operation_param(site, _),
   ets_table(site, k, t).
 
 // A table read in a helper whose table parameter receives a literal name, possibly
@@ -566,9 +566,9 @@ table_read(site, caller, "named", name) :-
 .decl table_param(func: symbol, pos: number, site: symbol)
 
 table_param(reader, pos, site) :-
-  ets_op(site, reader, "dynamic", _, "read"),
+  ets_operation(site, reader, "dynamic", _, "read"),
   raises_if_table_missing(site),
-  ets_op_param(site, pos).
+  ets_operation_param(site, pos).
 
 table_param(f, p, site) :-
   call_arg_forward(f, g, q, p),
@@ -691,7 +691,7 @@ computed_read(p, owner, reader, site, id) :-
 
 computed_read(p, owner, reader, site, id) :-
   computed_name_held(p, owner, id),
-  ets_op(site, reader, "dynamic", _, "read"),
+  ets_operation(site, reader, "dynamic", _, "read"),
   raises_if_table_missing(site),
   !reads_table_made_in_view(site),
   function_def(reader, owner, _, _, _).
@@ -701,7 +701,7 @@ computed_read(p, owner, reader, site, id) :-
 .decl reads_table_made_in_view(site: symbol)
 
 reads_table_made_in_view(site) :-
-  ets_op(site, _, "dynamic", _, "read"),
+  ets_operation(site, _, "dynamic", _, "read"),
   ets_table(site, k, t),
   table_made_at(k, t, _).
 
@@ -814,12 +814,12 @@ given_away(create, start) :-
 // `func` gives away the table made at `create`.
 .decl gives_table_away(func: symbol, create: symbol)
 
-gives_table_away(f, create) :- ets_op(id, f, _, "give_away", _), touches_made_table(id, create).
+gives_table_away(f, create) :- ets_operation(id, f, _, "give_away", _), touches_made_table(id, create).
 
 // `func` gives away a table no view names: it may be any.
 .decl gives_some_table_away(func: symbol)
 
-gives_some_table_away(f) :- ets_op(id, f, _, "give_away", _), may_touch_any_table(id).
+gives_some_table_away(f) :- ets_operation(id, f, _, "give_away", _), may_touch_any_table(id).
 
 // The start function cannot leak the table-name collision ArgumentError because every
 // path to creation, or every caller of the start, has a matching handler (`Escape`).

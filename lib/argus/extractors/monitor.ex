@@ -51,7 +51,7 @@ defmodule Argus.Extractors.Monitor do
     taken after the start (Livebook's `UniqueTask.run/2`): what it starts
     lives no longer than the call
   - `demonitor_call(id, func, flush)` — `flush` is `"flush"` or `"no_flush"`
-  - `recv_down(id, func, monitor)` — a receive with a clause that takes
+  - `receive_down(id, func, monitor)` — a receive with a clause that takes
     the `:DOWN` of the monitor its function took at `monitor`, so it ends
     no later than the monitored process does
   - `matches_down(func)` — the function's clause heads (or a `case` on an
@@ -62,20 +62,20 @@ defmodule Argus.Extractors.Monitor do
   - `monitor_released_after(func, call)` — every path in `func` from the
     call at `call` to its return takes a `:DOWN` or demonitors the ref the
     call returned (below)
-  - `recv_signal(id, func, signal)` — a receive with a clause that takes
+  - `receive_signal(id, func, signal)` — a receive with a clause that takes
     the exit signal of the process a pinned register names, whatever its
     reason: a `:DOWN` (`"down"`) or an `:EXIT` (`"exit"`)
     (`Argus.Extractors.Monitor.ExitSignal`); a `:DOWN` only where no path
     from the function's entry to the receive demonitors
-  - `recv_takes_down(id, func)` — a receive with a clause whose head fixes
+  - `receive_takes_down(id, func)` — a receive with a clause whose head fixes
     the tag to `:DOWN`: the function waits for a monitor's end
-  - `recv_takes_exit(id, func)` — a receive with a clause that can take a
+  - `receive_takes_exit(id, func)` — a receive with a clause that can take a
     trapped `{:EXIT, pid, reason}`: its head fixes the tag to `:EXIT`, or
     fixes none
-  - `recv_flush(id, func, cancel)` — the receive runs only where the
+  - `receive_flush(id, func, cancel)` — the receive runs only where the
     `cancel_timer` call at `cancel` returned `false`: the timer had fired,
     and its message is in the mailbox (`Argus.Extractors.Monitor.Flush`)
-  - `recv_timeout_param(id, func, param)` — a receive whose `after` takes
+  - `receive_timeout_param(id, func, param)` — a receive whose `after` takes
     its timeout from the function's parameter `param` on every path, so
     a caller passing `:infinity` there (`infinity_arg`) makes it wait
     with no timeout at all
@@ -177,12 +177,12 @@ defmodule Argus.Extractors.Monitor do
       :monitor_answer,
       :monitor_kept,
       :monitor_type,
-      :recv_down,
-      :recv_flush,
-      :recv_signal,
-      :recv_takes_down,
-      :recv_takes_exit,
-      :recv_timeout_param
+      :receive_down,
+      :receive_flush,
+      :receive_signal,
+      :receive_takes_down,
+      :receive_takes_exit,
+      :receive_timeout_param
     ]
 
   @impl true
@@ -191,30 +191,30 @@ defmodule Argus.Extractors.Monitor do
     |> each_remote_call(%{}, &handle(&1, &2, &3, module_data))
     |> emit_matches_down(mod, functions)
     |> emit_released_after(module_data)
-    |> emit_recv_down(module_data)
-    |> emit_recv_signal(module_data)
-    |> emit_recv_takes_exit(mod, functions)
-    |> emit_recv_takes_down(mod, functions)
-    |> emit_recv_flush(module_data)
-    |> emit_recv_timeout_param(mod, functions)
+    |> emit_receive_down(module_data)
+    |> emit_receive_signal(module_data)
+    |> emit_receive_takes_exit(mod, functions)
+    |> emit_receive_takes_down(mod, functions)
+    |> emit_receive_flush(module_data)
+    |> emit_receive_timeout_param(mod, functions)
   end
 
   # ── A receive whose timeout is a parameter ──────────────────────────
 
   # `after timeout` compiles to a `wait_timeout` on the timeout's
   # register in the receive's empty-mailbox block; a literal `:infinity`
-  # compiles to `wait` instead, which recv_start already calls blocking.
+  # compiles to `wait` instead, which receive_start already calls blocking.
   # The register must hold the same parameter on every path to the wait
   # (`Argus.Extractor.Resolve.arg_position/3`), or the receive gets no
   # row: a timeout read from state or computed here is not a caller's.
-  defp emit_recv_timeout_param(facts, mod, functions) do
+  defp emit_receive_timeout_param(facts, mod, functions) do
     for {:function, name, arity, _entry, instrs} <- functions,
         {loop, param} <- timeout_params(instrs),
         reduce: facts do
       acc ->
         func_id = InstrId.func_id(mod, name, arity)
 
-        add_fact(acc, :recv_timeout_param, [
+        add_fact(acc, :receive_timeout_param, [
           InstrId.mint(func_id, loop),
           func_id,
           to_string(param)
@@ -233,7 +233,7 @@ defmodule Argus.Extractors.Monitor do
   end
 
   # The first of wait, wait_timeout or a bare timeout from the receive's
-  # empty-mailbox label, as recv_start's blocking flag reads it: `after
+  # empty-mailbox label, as receive_start's blocking flag reads it: `after
   # 0` has no wait at all, and a later receive's wait is not this one's.
   defp empty_mailbox_wait(indexed, labels, fail) do
     with from when is_integer(from) <- Map.get(labels, fail),
@@ -265,7 +265,7 @@ defmodule Argus.Extractors.Monitor do
 
   # The graph is built only for a function that both cancels a timer and
   # receives.
-  defp emit_recv_flush(facts, %{module: mod, functions: functions} = module_data) do
+  defp emit_receive_flush(facts, %{module: mod, functions: functions} = module_data) do
     Enum.reduce(functions, facts, fn {:function, name, arity, _entry, instrs}, acc ->
       if flush_candidate?(instrs) do
         func_id = InstrId.func_id(mod, name, arity)
@@ -273,7 +273,7 @@ defmodule Argus.Extractors.Monitor do
         for {loop, cancel} <- Flush.guarded(instrs, cfg(module_data, name, arity)),
             reduce: acc do
           acc ->
-            add_fact(acc, :recv_flush, [
+            add_fact(acc, :receive_flush, [
               InstrId.mint(func_id, loop),
               func_id,
               InstrId.mint(func_id, cancel)
@@ -303,11 +303,11 @@ defmodule Argus.Extractors.Monitor do
   # A :DOWN is taken while the monitor is in place: a receive some path
   # from the function's entry reaches past a demonitor — of that ref or
   # any other, flushed or not — waits for a :DOWN the demonitor may have
-  # cancelled, and is no row (`demonitors_before?`, as recv_down asks it
+  # cancelled, and is no row (`demonitors_before?`, as receive_down asks it
   # from the monitor). A demonitor after the wait (the reply branch of a
   # hand-rolled call) cancels nothing it waits for. The graph is built
   # only for a function that demonitors.
-  defp emit_recv_signal(facts, %{module: mod, functions: functions} = module_data) do
+  defp emit_receive_signal(facts, %{module: mod, functions: functions} = module_data) do
     Enum.reduce(functions, facts, fn {:function, name, arity, _entry, instrs}, acc ->
       case for({{:loop_rec, _fail, _dst}, idx} <- Enum.with_index(instrs), do: idx) do
         [] ->
@@ -327,7 +327,7 @@ defmodule Argus.Extractors.Monitor do
               not (signal == "down" and demonitors? and
                      demonitors_before?(cfg(module_data, name, arity), instrs, head, loop)),
               reduce: acc do
-            acc -> add_fact(acc, :recv_signal, [InstrId.mint(func_id, loop), func_id, signal])
+            acc -> add_fact(acc, :receive_signal, [InstrId.mint(func_id, loop), func_id, signal])
           end
       end
     end)
@@ -642,14 +642,14 @@ defmodule Argus.Extractors.Monitor do
 
   # ── A receive that takes its own monitor's :DOWN ─────────────────────
 
-  defp emit_recv_down(facts, %{module: mod, functions: functions} = module_data) do
+  defp emit_receive_down(facts, %{module: mod, functions: functions} = module_data) do
     Enum.reduce(functions, facts, fn {:function, name, arity, _entry, instrs}, acc ->
       func_id = InstrId.func_id(mod, name, arity)
 
       for {loop, monitor} <- awaited_monitors(instrs, fn -> cfg(module_data, name, arity) end),
           reduce: acc do
         acc ->
-          add_fact(acc, :recv_down, [
+          add_fact(acc, :receive_down, [
             InstrId.mint(func_id, loop),
             func_id,
             InstrId.mint(func_id, monitor)
@@ -1461,13 +1461,13 @@ defmodule Argus.Extractors.Monitor do
   # variable, a test of another element). A clause whose head fixes
   # another tag, or matches an atom, cannot. The arity is not read: a
   # clause for `{:EXIT, pid}` counts, in the quiet direction.
-  defp emit_recv_takes_exit(facts, mod, functions) do
+  defp emit_receive_takes_exit(facts, mod, functions) do
     for {:function, name, arity, _entry, instrs} <- functions,
         loop <- exit_takers(instrs),
         reduce: facts do
       acc ->
         func_id = InstrId.func_id(mod, name, arity)
-        add_fact(acc, :recv_takes_exit, [InstrId.mint(func_id, loop), func_id])
+        add_fact(acc, :receive_takes_exit, [InstrId.mint(func_id, loop), func_id])
     end
   end
 
@@ -1476,18 +1476,18 @@ defmodule Argus.Extractors.Monitor do
   # A receive with a clause whose head fixes the message's tag to :DOWN,
   # whatever it asks of the ref, the object or the reason: a function
   # with one waits for a monitor's end, in its own call. Unlike
-  # recv_down and recv_signal, which ask whether the wait ends with the
+  # receive_down and receive_signal, which ask whether the wait ends with the
   # monitored process, this asks only whether the monitor was taken for
   # a wait: Phoenix's LiveViewTest render_chunk/3 takes only a redirect's
   # :DOWN, on its error path, and returns on the others with the monitor
   # live.
-  defp emit_recv_takes_down(facts, mod, functions) do
+  defp emit_receive_takes_down(facts, mod, functions) do
     for {:function, name, arity, _entry, instrs} <- functions,
         loop <- down_takers(instrs),
         reduce: facts do
       acc ->
         func_id = InstrId.func_id(mod, name, arity)
-        add_fact(acc, :recv_takes_down, [InstrId.mint(func_id, loop), func_id])
+        add_fact(acc, :receive_takes_down, [InstrId.mint(func_id, loop), func_id])
     end
   end
 

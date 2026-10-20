@@ -10,7 +10,7 @@ defmodule Argus.Extractors.Mnesia do
 
   ## Emitted facts
 
-  - `mnesia_op(id, func, op, kind, table_source, table, key_source, key)`
+  - `mnesia_operation(id, func, op, kind, table_source, table, key_source, key)`
     — a dirty read (`dirty_read`, `dirty_match_object`, `dirty_select`,
     `dirty_index_read`, `dirty_index_match_object`) or write (`dirty_write`, `dirty_delete`,
     `dirty_delete_object`), or a write that is not dirty but changes the
@@ -114,7 +114,7 @@ defmodule Argus.Extractors.Mnesia do
   }
 
   @impl true
-  def relations, do: [:mnesia_op, :mnesia_write_order, :mnesia_written_when_found]
+  def relations, do: [:mnesia_operation, :mnesia_write_order, :mnesia_written_when_found]
 
   @doc "Whether a remote call is a Mnesia read or write extracted here, for `Argus.Extractors.Dependence`."
   @spec site?(mfa()) :: boolean()
@@ -147,7 +147,7 @@ defmodule Argus.Extractors.Mnesia do
   # the record. Every read returns a list of the records it found: `[]`
   # is none.
   defp emit_found_writes(facts, module_data) do
-    ops = Map.get(facts, :mnesia_op, [])
+    ops = Map.get(facts, :mnesia_operation, [])
     reads = for [id, func, _op, "read" | _] <- ops, do: {func, id, &AnswerSides.empty_test/2}
     writes = for [id, func, _op, "write" | _] <- ops, do: {func, id}
 
@@ -161,7 +161,7 @@ defmodule Argus.Extractors.Mnesia do
   # with two writes.
   defp emit_write_order(facts, module_data) do
     facts
-    |> Map.get(:mnesia_op, [])
+    |> Map.get(:mnesia_operation, [])
     |> Enum.filter(fn [_id, _func, _op, kind | _] -> kind == "write" end)
     |> Enum.group_by(fn [_id, func | _] -> func end, fn [id | _] -> id end)
     |> Enum.filter(fn {_func, ids} -> length(Enum.uniq(ids)) > 1 end)
@@ -228,8 +228,8 @@ defmodule Argus.Extractors.Mnesia do
 
   defp handle_call(facts, %{dirty?: true} = ctx, {:mnesia, op, arity} = mfa) do
     case Map.fetch(@in_dirty_context, {op, arity}) do
-      {:ok, {dirty_op, kind, table_at, key_at}} ->
-        add_op(facts, ctx, dirty_op, kind, table_at, key_at)
+      {:ok, {dirty_operation, kind, table_at, key_at}} ->
+        add_op(facts, ctx, dirty_operation, kind, table_at, key_at)
 
       :error ->
         handle_call(facts, %{ctx | dirty?: false}, mfa)
@@ -252,7 +252,7 @@ defmodule Argus.Extractors.Mnesia do
     {table_source, table} = identity(ctx, table_at)
     {key_source, key} = ctx |> identity(key_at) |> wildcard()
 
-    add_fact(facts, :mnesia_op, [
+    add_fact(facts, :mnesia_operation, [
       InstrId.mint(ctx.func_id, ctx.idx),
       ctx.func_id,
       op,

@@ -31,7 +31,7 @@ stops_process_of(h, via, m) :-
 // names.
 .decl stops_process(func: symbol, target: symbol)
 
-stops_process(f, target) :- sup_call(_, f, "GenServer", "stop", target).
+stops_process(f, target) :- supervisor_call(_, f, "GenServer", "stop", target).
 
 // What reaches a function that stops a process.
 .init stop_reach = CallReach

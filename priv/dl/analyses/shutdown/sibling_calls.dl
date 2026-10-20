@@ -20,10 +20,10 @@ catches_exit(f) :- catches_class(f, "exit").
 catches_exit(f) :- catch_tuple_tag(_, f, "exit", ":noproc").
 
 // A synchronous dependency on another module's server. Exclude private connections the
-// module started for itself (private_dep).
+// module started for itself (private_dependency).
 .decl waits_on(func: symbol, mod: symbol)
 
-waits_on(f, m) :- sync_dep(f, m), !private_dep(f, m).
+waits_on(f, m) :- sync_dependency(f, m), !private_dependency(f, m).
 
 // The call that invokes a function value, either through a receiving API such as
 // Enum.each or a resolved apply.

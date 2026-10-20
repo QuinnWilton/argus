@@ -53,14 +53,14 @@ config_write_api(c) :- post_start_call(_, _, c), match("Application:put_all_env/
 // identifies operations without a specific key. ETS delete/1 and delete/2 both use op
 // `delete`; mode distinguishes table deletion. Shared by race, growth, missing-row, and
 // bookkeeping checks.
-.decl ets_removal_op(op: symbol)
+.decl ets_removal_operation(op: symbol)
 
-ets_removal_op("delete").
-ets_removal_op("delete_object").
-ets_removal_op("delete_all_objects").
-ets_removal_op("select_delete").
-ets_removal_op("match_delete").
-ets_removal_op("take").
+ets_removal_operation("delete").
+ets_removal_operation("delete_object").
+ets_removal_operation("delete_all_objects").
+ets_removal_operation("select_delete").
+ets_removal_operation("match_delete").
+ets_removal_operation("take").
 
 .decl ets_removes_every_key(op: symbol)
 
@@ -95,7 +95,7 @@ removal_api(":maps", "take").
 removal_api("MapSet", "delete").
 removal_api("Keyword", "delete").
 removal_api("List", "delete").
-removal_api(":ets", op) :- ets_removal_op(op).
+removal_api(":ets", op) :- ets_removal_operation(op).
 
 // Resource releases treated as automatic on owner exit: monitors, links, owned timers,
 // ports, sockets, and files. Excludes timer.cancel for surviving apply_after work, ETS
@@ -126,7 +126,7 @@ released_at_exit("File.close/1").
 // calls.
 .decl sends_message(site: symbol, func: symbol)
 
-sends_message(id, f) :- send_msg(id, f).
+sends_message(id, f) :- send_message(id, f).
 sends_message(id, f) :- remote_call(id, f, ":erlang", "send", _).
 sends_message(id, f) :- remote_call(id, f, "Process", "send", _).
 

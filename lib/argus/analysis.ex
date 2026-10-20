@@ -346,7 +346,7 @@ defmodule Argus.Analysis do
   Restricts raw engine results to the relations a built-in analysis
   declares as its outputs.
 
-  Intermediate clientlib relations (`call_reachable`, `sync_dep`, ...) are
+  Intermediate clientlib relations (`call_reachable`, `sync_dependency`, ...) are
   dropped. Custom analyses and unknown names pass through unchanged — there
   is no declaration to filter against.
   """

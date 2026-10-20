@@ -15,16 +15,16 @@ defmodule Argus.Extractors.ApiCalls do
 
   ## Emitted facts
 
-  - `sync_call`, `sync_call_timeout`, `async_cast`, `sup_call` — process
+  - `sync_call`, `sync_call_timeout`, `async_cast`, `supervisor_call` — process
     calls (GenServer, gen_statem, GenStage, Agent, gen_event, supervisors);
     `sync_call_site` — each synchronous call's target and timeout, by site;
     `async_cast_site` — each cast's target, by site
   - `unsafe_atom_creation`, `unsafe_deserialization`, `unsafe_decompression`,
     `code_execution`
   - `rpc_call`, `rpc_target`, `rpc_timeout_param`, `rpc_arity`, `rpc_callee`,
-    `rpc_mfa_param`, `global_register`, `global_op`,
+    `rpc_mfa_param`, `global_register`, `global_operation`,
     `node_operation`,
-    `distributed_store_op`
+    `distributed_store_operation`
   """
 
   @behaviour Argus.Extractor
@@ -226,7 +226,7 @@ defmodule Argus.Extractors.ApiCalls do
          ])
          |> Kernel.++(
            for mfa <- @sup_calls,
-               do: {mfa, :sup_call, [:id, :func, :mod, :fun, {:supervisor_target, 0}]}
+               do: {mfa, :supervisor_call, [:id, :func, :mod, :fun, {:supervisor_target, 0}]}
          )
          |> Kernel.++([
            # ── atom safety ──
@@ -282,26 +282,26 @@ defmodule Argus.Extractors.ApiCalls do
            # A lock call that leaves out its node list takes the lock on
            # every known node — `[node() | nodes()]` — so the omitted
            # argument is "cluster".
-           {{:global, :set_lock, 1}, :global_op,
+           {{:global, :set_lock, 1}, :global_operation,
             [:id, :func, {:const, "set_lock"}, {:const, "infinity"}, {:const, "cluster"}]},
-           {{:global, :set_lock, 2}, :global_op,
+           {{:global, :set_lock, 2}, :global_operation,
             [:id, :func, {:const, "set_lock"}, {:const, "infinity"}, {:nodes, 1}]},
-           {{:global, :set_lock, 3}, :global_op,
+           {{:global, :set_lock, 3}, :global_operation,
             [:id, :func, {:const, "set_lock"}, {:retries, 2}, {:nodes, 1}]},
-           {{:global, :del_lock, 1}, :global_op,
+           {{:global, :del_lock, 1}, :global_operation,
             [:id, :func, {:const, "del_lock"}, {:const, "0"}, {:const, "cluster"}]},
-           {{:global, :del_lock, 2}, :global_op,
+           {{:global, :del_lock, 2}, :global_operation,
             [:id, :func, {:const, "del_lock"}, {:const, "0"}, {:nodes, 1}]},
-           {{:global, :trans, 2}, :global_op,
+           {{:global, :trans, 2}, :global_operation,
             [:id, :func, {:const, "trans"}, {:const, "infinity"}, {:const, "cluster"}]},
-           {{:global, :trans, 3}, :global_op,
+           {{:global, :trans, 3}, :global_operation,
             [:id, :func, {:const, "trans"}, {:const, "infinity"}, {:nodes, 2}]},
-           {{:global, :trans, 4}, :global_op,
+           {{:global, :trans, 4}, :global_operation,
             [:id, :func, {:const, "trans"}, {:retries, 3}, {:nodes, 2}]},
            # A name lookup and a send take no node list.
-           {{:global, :whereis_name, 1}, :global_op,
+           {{:global, :whereis_name, 1}, :global_operation,
             [:id, :func, {:const, "whereis_name"}, {:const, "0"}, {:const, ""}]},
-           {{:global, :send, 2}, :global_op,
+           {{:global, :send, 2}, :global_operation,
             [:id, :func, {:const, "send"}, {:const, "0"}, {:const, ""}]}
          ])
          |> Kernel.++(
@@ -319,7 +319,7 @@ defmodule Argus.Extractors.ApiCalls do
          |> Kernel.++(
            for op <- @mnesia_ops,
                do:
-                 {{:mnesia, op, :any}, :distributed_store_op,
+                 {{:mnesia, op, :any}, :distributed_store_operation,
                   [:id, :func, {:const, "mnesia"}, :fun]}
          )
 

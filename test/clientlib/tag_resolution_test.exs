@@ -42,7 +42,7 @@ defmodule Argus.Clientlib.TagResolutionTest do
     results =
       solve(tmp_dir, [Argus.Test.Fixtures.TagServerA, Argus.Test.Fixtures.TagServerB], [
         "tag_resolved_call",
-        "sync_dep"
+        "sync_dependency"
       ])
 
     a = "Argus.Test.Fixtures.TagServerA"
@@ -50,8 +50,8 @@ defmodule Argus.Clientlib.TagResolutionTest do
 
     assert [a <> ":handle_call/3", "call", b] in results["tag_resolved_call"]
     assert [b <> ":handle_call/3", "call", a] in results["tag_resolved_call"]
-    assert [a <> ":handle_call/3", b] in results["sync_dep"]
-    assert [b <> ":handle_call/3", a] in results["sync_dep"]
+    assert [a <> ":handle_call/3", b] in results["sync_dependency"]
+    assert [b <> ":handle_call/3", a] in results["sync_dependency"]
   end
 
   test "a tag handled by more than one module attributes nothing", %{tmp_dir: tmp_dir} do

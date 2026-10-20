@@ -67,7 +67,7 @@ defmodule Argus.RunFactsTest do
   defp rows(rows, relation, targets, source) do
     rows
     |> Enum.map(fn row ->
-      if relation in [:bif_call, :recv_start, :try_start] do
+      if relation in [:bif_call, :receive_start, :try_start] do
         labels = targets |> Map.fetch!(Enum.at(row, 1)) |> Map.fetch!(source)
         List.update_at(row, -1, &Map.fetch!(labels, &1))
       else

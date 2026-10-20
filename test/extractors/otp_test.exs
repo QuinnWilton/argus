@@ -137,7 +137,7 @@ defmodule Argus.Extractors.OTPTest do
       :sync_call_site,
       :async_cast,
       :async_cast_site,
-      :sup_call
+      :supervisor_call
     ]
 
     # A module's process calls, one row per call: [func, "call", target,
@@ -161,7 +161,7 @@ defmodule Argus.Extractors.OTPTest do
       Enum.sort(
         for([f, t, ms] <- rows.(:sync_call_timeout), do: [short(f), "call", t, ms]) ++
           for([f, t] <- rows.(:async_cast), do: [short(f), "cast", t]) ++
-          for([f, api, op, t] <- unsited(rows.(:sup_call)), do: [short(f), api, op, t])
+          for([f, api, op, t] <- unsited(rows.(:supervisor_call)), do: [short(f), api, op, t])
       )
     end
 

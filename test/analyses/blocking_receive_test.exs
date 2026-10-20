@@ -294,7 +294,7 @@ defmodule Argus.Analyses.BlockingReceiveTest do
 
   describe "a timeout the callback passes" do
     # blocking.dl, waits_without_timeout: an `after` whose timeout is a
-    # parameter (recv_timeout_param) the callback fills with :infinity.
+    # parameter (receive_timeout_param) the callback fills with :infinity.
     test "a helper's `after` handed :infinity has no timeout", ctx do
       assert receives(ctx, [CallbackReceive.InfinityFromCallback]) == [
                {"request/2", "handle_call/3", "false", "caller"}
@@ -389,14 +389,14 @@ defmodule Argus.Analyses.BlockingReceiveTest do
   describe "the suppressions are not blanket" do
   end
 
-  describe "recv_start facts" do
+  describe "receive_start facts" do
     @tag flowlog: false
     test "blocking is decided by following the fail label, on real OTP code" do
       # gen_server's own loop uses wait_timeout; timer's interval loop uses
       # a bare wait. If this ever collapses to one value the analysis
       # silently becomes "every receive".
       {:ok, facts} = Argus.Pipeline.extract([:gen_server, :timer])
-      rows = Map.get(facts, :recv_start, [])
+      rows = Map.get(facts, :receive_start, [])
 
       blocking = for [_id, caller, "1", _fail] <- rows, do: caller
       bounded = for [_id, caller, "0", _fail] <- rows, do: caller

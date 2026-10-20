@@ -43,18 +43,18 @@ timer_message_unknown(mod) :-
 
 .decl takes_timer_message(recv: symbol)
 
-takes_timer_message(id) :- recv_pattern(id, _, "any").
-takes_timer_message(id) :- recv_pattern(id, _, ":timeout").
+takes_timer_message(id) :- receive_pattern(id, _, "any").
+takes_timer_message(id) :- receive_pattern(id, _, ":timeout").
 
 takes_timer_message(id) :-
-  recv_pattern(id, f, lit),
+  receive_pattern(id, f, lit),
   function_def(f, mod, _, _, _),
   timer_message(mod, lit).
 
 .decl waits_for_other(recv: symbol)
 
 waits_for_other(id) :-
-  recv_pattern(id, f, _),
+  receive_pattern(id, f, _),
   function_def(f, mod, _, _, _),
   timer_message(mod, _),
   !timer_message_unknown(mod),
@@ -63,14 +63,14 @@ waits_for_other(id) :-
 .decl flush_receive(recv: symbol)
 
 flush_receive(id) :-
-  recv_start(id, _, 1, _),
-  recv_flush(id, _, _),
+  receive_start(id, _, 1, _),
+  receive_flush(id, _, _),
   !waits_for_other(id).
 
 .decl flush_poll(recv: symbol)
 
 flush_poll(id) :-
-  recv_start(id, _, 0, _),
+  receive_start(id, _, 0, _),
   after_cancel_timer.runs_after(_, id),
   !waits_for_other(id).
 

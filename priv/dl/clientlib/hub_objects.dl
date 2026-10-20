@@ -23,7 +23,7 @@
 .decl object(x: symbol)
 
 object(p) :- stage_mode("selective"), process(p).
-object(t) :- stage_mode("selective"), table_alloc(_, _, t).
+object(t) :- stage_mode("selective"), table_allocation(_, _, t).
 
 .decl field_insensitive_points_to(func: symbol, var_kind: symbol, var: symbol, r: Reach, x: symbol)
 .decl field_insensitive_entry(func: symbol, pos: symbol, r: Reach, x: symbol)
@@ -46,9 +46,9 @@ reach_top(r) :- reach_top_tag(t), r = (t, ("", "", "", "")).
 
 field_insensitive_points_to(f, "process", p, ("top", ("", "", "", "")), p) :- stage_mode("selective"), process_start(_, f, p, _, _).
 field_insensitive_points_to(f, "self", "self", ("top", ("", "", "", "")), p) :- stage_mode("selective"), self_pid(f, p).
-field_insensitive_points_to(f, "table", t, ("top", ("", "", "", "")), t) :- stage_mode("selective"), table_alloc(_, f, t).
+field_insensitive_points_to(f, "table", t, ("top", ("", "", "", "")), t) :- stage_mode("selective"), table_allocation(_, f, t).
 field_insensitive_points_to(f, "name", n, ("top", ("", "", "", "")), p) :- reads_name(f, n), field_insensitive_named_pid(n, p).
-field_insensitive_points_to(f, "dictionary", k, r, x) :- dict_read(f, k, g, sk, s), field_insensitive_points_to(g, sk, s, r, x).
+field_insensitive_points_to(f, "dictionary", k, r, x) :- dictionary_read(f, k, g, sk, s), field_insensitive_points_to(g, sk, s, r, x).
 
 // A store: one field further down.
 field_insensitive_points_to(f, "term", o, ("under", (sel, kind, tag, ar)), x) :-

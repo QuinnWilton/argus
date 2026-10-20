@@ -54,7 +54,7 @@ defmodule Argus.Clientlib.OrderTest do
     .output instruction_of
     instruction_of(id, "call") :- local_call(id, _, _, _).
     instruction_of(id, "call") :- remote_call(id, _, _, _, _).
-    instruction_of(id, "receive") :- recv_start(id, _, _, _).
+    instruction_of(id, "receive") :- receive_start(id, _, _, _).
     instruction_of(id, "branch") :- branch(id, _, _).
 
     .decl callee(id: symbol, func: symbol)

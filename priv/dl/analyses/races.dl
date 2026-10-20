@@ -73,22 +73,22 @@ names.check(c, f, "literal", scope, ks, k) :-
 
 names.check(c, f, "dynamic", "", ks, k) :- name_lookup(c, f, _, "dynamic", ks, k, _).
 
-names.act(a, f, "any", "", "any", "") :- creating_op(a, f, "start_child", _, _, _).
+names.act(a, f, "any", "", "any", "") :- creating_operation(a, f, "start_child", _, _, _).
 
 names.act(a, f, "literal", scope, ks, k) :-
-  creating_op(a, f, api, scope, ks, k),
+  creating_operation(a, f, api, scope, ks, k),
   api != "start_child",
   scope != "dynamic".
 
 names.act(a, f, "dynamic", "", ks, k) :-
-  creating_op(a, f, api, "dynamic", ks, k),
+  creating_operation(a, f, api, "dynamic", ks, k),
   api != "start_child".
 
 names.act(a, f, "literal", "", ks, k) :- name_release(a, f, _, ks, k).
 
 .decl name_act(act: symbol, func: symbol, api: symbol)
 
-name_act(a, f, api) :- creating_op(a, f, api, _, _, _).
+name_act(a, f, api) :- creating_operation(a, f, api, _, _, _).
 name_act(a, f, api) :- name_release(a, f, api, _, _).
 
 // The losing start result is compared, or its badarg is caught, at the meeting function
@@ -179,11 +179,11 @@ runs.seed(f) :- names.meets(f, _, _, _, _, _, _).
 // passing literals into helpers.
 .decl claims_name(act: symbol, func: symbol, scope: symbol, key: symbol)
 
-claims_name(a, g, scope, k) :- creating_op(a, g, api, scope, "literal", k), api != "start_child".
+claims_name(a, g, scope, k) :- creating_operation(a, g, api, scope, "literal", k), api != "start_child".
 claims_name(a, g, "", k) :- name_release(a, g, _, "literal", k).
 
 claims_name(a, g, scope, k) :-
-  creating_op(a, h, api, scope, "param", q),
+  creating_operation(a, h, api, scope, "param", q),
   api != "start_child",
   call_arg(g, h, n, k),
   k != "dynamic",
@@ -231,39 +231,39 @@ registry_race(mod, func, lookup_api, create_api, key_source, key, lookup, claim)
 
 .init rows = CheckThenAct
 
-.decl deciding_read_op(op: symbol)
+.decl deciding_read_operation(op: symbol)
 
-deciding_read_op("lookup").
-deciding_read_op("lookup_element").
-deciding_read_op("member").
+deciding_read_operation("lookup").
+deciding_read_operation("lookup_element").
+deciding_read_operation("member").
 
 // Key matches act as lookups. Exclude select match specifications and dynamic keys
 // because their keys are not extracted.
-deciding_read_op("match").
-deciding_read_op("match_object").
+deciding_read_operation("match").
+deciding_read_operation("match_object").
 
-.decl plain_write_op(op: symbol)
+.decl plain_write_operation(op: symbol)
 
-plain_write_op("insert").
-plain_write_op("delete").
-plain_write_op("delete_object").
-plain_write_op("update_element").
+plain_write_operation("insert").
+plain_write_operation("delete").
+plain_write_operation("delete_object").
+plain_write_operation("update_element").
 
 // Represent the operation's table as its local parameter or possible EtsTable
 // identities. Translate parameters at each call to preserve caller-specific tables.
 .decl ets_table_ident(id: symbol, ts: symbol, t: symbol)
 
-ets_table_ident(id, "param", to_string(p)) :- ets_op(id, _, "dynamic", _, _), ets_op_param(id, p).
+ets_table_ident(id, "param", to_string(p)) :- ets_operation(id, _, "dynamic", _, _), ets_operation_param(id, p).
 
 ets_table_ident(id, ts, t) :-
-  ets_op(id, _, _, _, _),
+  ets_operation(id, _, _, _, _),
   !handed_table(id),
   race_table(id, k, t),
   table_source(k, ts).
 
 .decl handed_table(id: symbol)
 
-handed_table(id) :- ets_op(id, _, "dynamic", _, _), ets_op_param(id, _).
+handed_table(id) :- ets_operation(id, _, "dynamic", _, _), ets_operation_param(id, _).
 
 // Tables one site makes per element
 //
@@ -282,9 +282,9 @@ handed_table(id) :- ets_op(id, _, "dynamic", _, _), ets_op_param(id, _).
 
 race_table(id, k, t) :- ets_table(id, k, t), k != "new".
 race_table(id, "new", t) :- ets_table(id, "new", t), !sliced_site(t).
-race_table(id, "new", t) :- ets_table(id, "new", n), op_field(id, s), sliced_table(t, n, s).
+race_table(id, "new", t) :- ets_table(id, "new", n), operation_field(id, s), sliced_table(t, n, s).
 race_table(id, "new", t) :- ets_table(id, "new", n), open_field(id), sliced_table(t, n, _).
-race_table(id, "new", t) :- ets_table(id, "field", _), op_field(id, s), sliced_table(t, _, s).
+race_table(id, "new", t) :- ets_table(id, "field", _), operation_field(id, s), sliced_table(t, _, s).
 
 .decl table_per_element(site: symbol)
 
@@ -307,17 +307,17 @@ sliced_table(cat(n, cat(" ", s)), n, s) :- sliced_site(n), site_field(n, s).
 
 // The fields an operation's table is read from: its own path's, or, for a table that is
 // a parameter itself, the fields its callers read it from.
-.decl op_field(id: symbol, field: symbol)
+.decl operation_field(id: symbol, field: symbol)
 
-op_field(id, s) :- ets_table_field(id, s).
-op_field(id, s) :- ets_op(id, g, _, _, _), ets_table_path(id, "param", p, ""), param_field(g, p, s).
+operation_field(id, s) :- ets_table_field(id, s).
+operation_field(id, s) :- ets_operation(id, g, _, _, _), ets_table_path(id, "param", p, ""), param_field(g, p, s).
 
 // An operation one of whose tables no field names.
 .decl open_field(id: symbol)
 
-open_field(id) :- ets_op(id, _, _, _, _), !has_table_path(id).
-open_field(id) :- ets_op(id, _, _, _, _), ets_table_path(id, src, _, ""), src != "param".
-open_field(id) :- ets_op(id, g, _, _, _), ets_table_path(id, "param", p, ""), param_open(g, p).
+open_field(id) :- ets_operation(id, _, _, _, _), !has_table_path(id).
+open_field(id) :- ets_operation(id, _, _, _, _), ets_table_path(id, src, _, ""), src != "param".
+open_field(id) :- ets_operation(id, g, _, _, _), ets_table_path(id, "param", p, ""), param_open(g, p).
 
 .decl has_table_path(id: symbol)
 
@@ -327,7 +327,7 @@ has_table_path(id) :- ets_table_path(id, _, _, _).
 .decl field_param_needed(func: symbol, pos: symbol)
 
 field_param_needed(g, p) :-
-  ets_op(id, g, _, _, _),
+  ets_operation(id, g, _, _, _),
   ets_table_path(id, "param", p, ""),
   ets_table(id, "new", n),
   sliced_site(n).
@@ -395,24 +395,24 @@ rows.act(write, func, table_kind, table, key_kind, key) :-
 .decl deciding_read(read: symbol, func: symbol)
 .decl plain_write(write: symbol, func: symbol)
 
-deciding_read(r, f) :- ets_op(r, f, _, op, "read"), deciding_read_op(op).
-plain_write(w, f) :- ets_op(w, f, _, op, "write"), plain_write_op(op).
+deciding_read(r, f) :- ets_operation(r, f, _, op, "read"), deciding_read_operation(op).
+plain_write(w, f) :- ets_operation(w, f, _, op, "write"), plain_write_operation(op).
 
 // An operation's table and key, the table in its own function's terms
 // (ets_table_ident) or as clientlib/tables.dl knows it (ets_table).
 .decl local_table_and_key(op: symbol, table_kind: symbol, table: symbol, key_kind: symbol, key: symbol)
 .decl table_and_key(op: symbol, table_kind: symbol, table: symbol, key_kind: symbol, key: symbol)
 
-local_table_and_key(op, ts, t, ks, k) :- ets_table_ident(op, ts, t), op_key(op, ks, k).
-table_and_key(op, tk, t, ks, k) :- ets_table(op, tk, t), op_key(op, ks, k).
+local_table_and_key(op, ts, t, ks, k) :- ets_table_ident(op, ts, t), operation_key(op, ks, k).
+table_and_key(op, tk, t, ks, k) :- ets_table(op, tk, t), operation_key(op, ks, k).
 
 // Use the inserted object's first element as key unless a known custom keypos selects
 // element N - 1, supplied by ets_value.
-.decl op_key(op: symbol, key_kind: symbol, key: symbol)
+.decl operation_key(op: symbol, key_kind: symbol, key: symbol)
 
-op_key(op, ks, k) :- ets_key(op, ks, k), !keyed_past_zero(op, _).
+operation_key(op, ks, k) :- ets_key(op, ks, k), !keyed_past_zero(op, _).
 
-op_key(op, ks, k) :-
+operation_key(op, ks, k) :-
   keyed_past_zero(op, v),
   ets_value(op, pos, ks, k),
   to_string(pos + 1) = v.
@@ -420,7 +420,7 @@ op_key(op, ks, k) :-
 .decl keyed_past_zero(op: symbol, keypos: symbol)
 
 keyed_past_zero(op, v) :-
-  ets_op(op, _, _, o, "write"),
+  ets_operation(op, _, _, o, "write"),
   (o = "insert" ; o = "insert_new"),
   ets_table(op, tk, t),
   site_table(n, tk, t),
@@ -435,27 +435,27 @@ keyed_past_zero(op, v) :-
 // constant without a conflicting rival is not a race.
 .decl ets_accessor(func: symbol, op: symbol, key_kind: symbol)
 
-ets_accessor(g, w, "param") :- lone_ets_op(g, w), op_key(w, ks, _), ks != "literal", ks != "dynamic".
-ets_accessor(g, w, "fixed") :- lone_ets_op(g, w), op_key(w, "literal", _).
+ets_accessor(g, w, "param") :- lone_ets_operation(g, w), operation_key(w, ks, _), ks != "literal", ks != "dynamic".
+ets_accessor(g, w, "fixed") :- lone_ets_operation(g, w), operation_key(w, "literal", _).
 
-.decl lone_ets_op(func: symbol, op: symbol)
+.decl lone_ets_operation(func: symbol, op: symbol)
 
-.decl ets_op_rows(func: symbol, n: number)
+.decl ets_operation_rows(func: symbol, n: number)
 
-ets_op_rows(g, count((w, name, a, b))) :- ets_op(w, g, name, a, b).
+ets_operation_rows(g, count((w, name, a, b))) :- ets_operation(w, g, name, a, b).
 
-lone_ets_op(g, w) :-
-  ets_op(w, g, name, _, _),
+lone_ets_operation(g, w) :-
+  ets_operation(w, g, name, _, _),
   name != "dynamic",
-  ets_op_rows(g, 1),
-  !other_shared_op(g).
+  ets_operation_rows(g, 1),
+  !other_shared_operation(g).
 
-.decl other_shared_op(func: symbol)
+.decl other_shared_operation(func: symbol)
 
-other_shared_op(g) :- mnesia_op(_, g, _, _, _, _, _, _).
-other_shared_op(g) :- name_lookup(_, g, _, _, _, _, _).
-other_shared_op(g) :- creating_op(_, g, _, _, _, _).
-other_shared_op(g) :- name_release(_, g, _, _, _).
+other_shared_operation(g) :- mnesia_operation(_, g, _, _, _, _, _, _).
+other_shared_operation(g) :- name_lookup(_, g, _, _, _, _, _).
+other_shared_operation(g) :- creating_operation(_, g, _, _, _, _).
+other_shared_operation(g) :- name_release(_, g, _, _, _).
 
 // Where `func` calls the accessor holding `op`: the site a lifted
 // operation is reported at.
@@ -548,30 +548,30 @@ contended(f, table) :- broad_delete(f, _, _, table, _, _, _).
 runs.seed(f) :- contended(f, _).
 
 // The tables a write or a counter bump may touch (clientlib/tables.dl).
-.decl ets_op_table(id: symbol, table: EtsTable)
+.decl ets_operation_table(id: symbol, table: EtsTable)
 
-ets_op_table(id, (k, t)) :- race_table(id, k, t), ets_op(id, _, _, _, _).
+ets_operation_table(id, (k, t)) :- race_table(id, k, t), ets_operation(id, _, _, _, _).
 
 // A write of a table some pair touches, in the function holding it.
 .decl table_write(write: symbol, func: symbol, table: EtsTable)
 
-table_write(w, g, table) :- ets_op(w, g, _, op, "write"), row_write_op(op), ets_op_table(w, table), rival_table(table).
+table_write(w, g, table) :- ets_operation(w, g, _, op, "write"), row_write_operation(op), ets_operation_table(w, table), rival_table(table).
 
 // Writes of rows. setopts and give_away change a table's options and its owner.
-.decl row_write_op(op: symbol)
+.decl row_write_operation(op: symbol)
 
-row_write_op(op) :- ets_op(_, _, _, op, "write"), op != "setopts", op != "give_away".
+row_write_operation(op) :- ets_operation(_, _, _, op, "write"), op != "setopts", op != "give_away".
 
 // The write's locally constructed key. A "minted" key is freshly generated and cannot
 // equal another independently generated key.
 .decl write_key(write: symbol, key_kind: symbol, key: symbol)
 
 write_key(w, "minted", w) :- table_write(w, _, _), minted_key(w).
-write_key(w, ks, k) :- table_write(w, _, _), op_key(w, ks, k), !minted_key(w).
+write_key(w, ks, k) :- table_write(w, _, _), operation_key(w, ks, k), !minted_key(w).
 
 // A write with no key the extractor names (select_delete, delete_all_
 // objects, deleting the table) touches any row.
-write_key(w, "any", "") :- table_write(w, _, _), !op_key(w, _, _).
+write_key(w, "any", "") :- table_write(w, _, _), !operation_key(w, _, _).
 
 // rival_write(w, h, table, ks, k): calling `h` may make write `w` of
 // `table`, at the row h names (ks, k).
@@ -671,12 +671,12 @@ keys_apart("tuple", k, "tuple", k2) :-
 tuple_elements_apart(k, k2) :-
   tuple_key_pair(k, k2),
   tuple_key_element(k, p, _, _),
-  !tuple_key_pos(k2, p).
+  !tuple_key_position(k2, p).
 
 tuple_elements_apart(k, k2) :-
   tuple_key_pair(k, k2),
   tuple_key_element(k2, p, _, _),
-  !tuple_key_pos(k, p).
+  !tuple_key_position(k, p).
 
 tuple_elements_apart(k, k2) :-
   tuple_key_pair(k, k2),
@@ -702,8 +702,8 @@ tuple_elements_apart(k, k2) :-
 tuple_key_pair(k, k2) :-
   key_asked("tuple", k),
   rival_write(_, _, _, "tuple", k2),
-  tuple_key_pos(k, _),
-  tuple_key_pos(k2, _).
+  tuple_key_position(k, _),
+  tuple_key_position(k2, _).
 
 // A tuple key's elements, by the key's spelling: one spelling, one shape. A spelling a
 // match pattern also has is left out, since there `:_` is a wildcard and not a literal.
@@ -714,14 +714,14 @@ tuple_key_element(k, p, s, v) :-
   ets_key_element(op, p, s, v),
   !pattern_tuple_key(k).
 
-.decl tuple_key_pos(key: symbol, pos: number)
+.decl tuple_key_position(key: symbol, pos: number)
 
-tuple_key_pos(k, p) :- tuple_key_element(k, p, _, _).
+tuple_key_position(k, p) :- tuple_key_element(k, p, _, _).
 
 .decl pattern_tuple_key(key: symbol)
 
-pattern_tuple_key(k) :- ets_key(op, "tuple", k), ets_op(op, _, _, "match", _).
-pattern_tuple_key(k) :- ets_key(op, "tuple", k), ets_op(op, _, _, "match_object", _).
+pattern_tuple_key(k) :- ets_key(op, "tuple", k), ets_operation(op, _, _, "match", _).
+pattern_tuple_key(k) :- ets_key(op, "tuple", k), ets_operation(op, _, _, "match_object", _).
 
 // Elements a function computes, as computed_in_view's keys are computed, and the
 // calling process, which no literal is.
@@ -863,38 +863,38 @@ writer_walk.seed(f, f) :- reads_then_writes(f, _, _, _, _).
 .init ets_carried = PairCarries
 
 ets_carried.pair(f, r, w) :- reads_then_writes(f, r, w, _, _).
-ets_carried.read_in(r, g) :- ets_op(r, g, _, _, "read").
-ets_carried.write_in(w, h) :- ets_op(w, h, _, _, "write").
+ets_carried.read_in(r, g) :- ets_operation(r, g, _, _, "read").
+ets_carried.write_in(w, h) :- ets_operation(w, h, _, _, "write").
 ets_carried.fresh(kind, src) :- fill_source(kind, src).
 
 // A write of a value, and the writes that make a row.
 .decl value_write(w: symbol)
 
-value_write(w) :- ets_op(w, _, _, op, "write"), (op = "insert" ; op = "update_element").
+value_write(w) :- ets_operation(w, _, _, op, "write"), (op = "insert" ; op = "update_element").
 
 .decl makes_row(write: symbol)
 
-makes_row(w) :- ets_op(w, _, _, "insert", "write").
-makes_row(w) :- ets_op(w, _, _, "insert_new", "write").
+makes_row(w) :- ets_operation(w, _, _, "insert", "write").
+makes_row(w) :- ets_operation(w, _, _, "insert_new", "write").
 makes_row(w) :-
-  ets_op(w, _, _, "update_counter", "write"),
+  ets_operation(w, _, _, "update_counter", "write"),
   remote_call(w, _, ":ets", "update_counter", 4).
 
 .decl removal(write: symbol)
 
-removal(w) :- ets_op(w, _, _, op, "write"), ets_removal_op(op).
+removal(w) :- ets_operation(w, _, _, op, "write"), ets_removal_operation(op).
 
 // A write that changes what the row holds: stores a value, counts in it,
 // or removes it.
 .decl changes_row(write: symbol)
 
-changes_row(w) :- ets_op(w, _, _, op, "write"), op != "insert_new".
+changes_row(w) :- ets_operation(w, _, _, op, "write"), op != "insert_new".
 
 // Counting writes include update_counter, read-derived write-backs, and replacement of
 // rows holding atomics/counters arrays whose accumulated counts would be lost.
 .decl counts_in(write: symbol, func: symbol)
 
-counts_in(w, h) :- rival_write(w, h, _, _, _), ets_op(w, _, _, "update_counter", _).
+counts_in(w, h) :- rival_write(w, h, _, _, _), ets_operation(w, _, _, "update_counter", _).
 counts_in(w, h) :- rival_write(w, h, _, _, _), stores_counters(w).
 counts_in(w, h) :- rival_write(w, h, _, _, _), rival_value(w, h, k, s), rival_made.made(h, k, s).
 
@@ -914,14 +914,14 @@ rival_value(w, h, k, s) :-
 // of the rivals' values).
 .init rival_made = MadeOfRead
 
-rival_made.read(r) :- ets_op(r, _, _, _, "read").
+rival_made.read(r) :- ets_operation(r, _, _, _, "read").
 rival_made.write(w, g) :- table_write(w, g, _), value_write(w).
 rival_made.asked(h, k, s) :- rival_value(w, h, k, s), rival_write(w, h, _, _, _).
 
 .decl stores_counters(write: symbol)
 
 stores_counters(w) :-
-  ets_op(w, _, _, op, "write"),
+  ets_operation(w, _, _, op, "write"),
   (op = "insert" ; op = "insert_new"),
   ets_value(w, _, "local", made),
   remote_call(made, _, m, "new", 2),
@@ -933,8 +933,8 @@ stores_counters(w) :-
 
 fill_source("call", g) :- site_reads(_, _, "call", g).
 fill_source("call", g) :- call_arg_reads(_, _, _, "call", g).
-fill_source("site", r) :- site_reads(_, _, "site", r), !ets_op(r, _, _, _, _).
-fill_source("site", r) :- call_arg_reads(_, _, _, "site", r), !ets_op(r, _, _, _, _).
+fill_source("site", r) :- site_reads(_, _, "site", r), !ets_operation(r, _, _, _, _).
+fill_source("site", r) :- call_arg_reads(_, _, _, "site", r), !ets_operation(r, _, _, _, _).
 
 // A refill row is a cached value computed on a miss or stale read. Other writes
 // establish independent state, such as a pid, caller value, or count.
@@ -1152,13 +1152,13 @@ decision_reach.cut(f, g) :- side_call(f, g).
 // changes_table(func, table): func writes the ETS table `table`.
 .decl changes_table(func: symbol, table: EtsTable)
 
-changes_table(k, table) :- ets_op(s, k, _, _, "write"), ets_op_table(s, table).
+changes_table(k, table) :- ets_operation(s, k, _, _, "write"), ets_operation_table(s, table).
 
 // Other state changes include shared stores, registration, sends, peer calls/casts, and
 // external runtime writes to processes, ports, files, networks, or nodes.
 .decl changes_other_state(func: symbol)
 
-changes_other_state(k) :- shared_write(s), !ets_op(s, _, _, _, _), (mnesia_op(s, k, _, _, _, _, _, _) ; creating_op(s, k, _, _, _, _) ; name_release(s, k, _, _, _)).
+changes_other_state(k) :- shared_write(s), !ets_operation(s, _, _, _, _), (mnesia_operation(s, k, _, _, _, _, _, _) ; creating_operation(s, k, _, _, _, _) ; name_release(s, k, _, _, _)).
 changes_other_state(k) :- delivers_message(k).
 
 changes_other_state(k) :-
@@ -1169,14 +1169,14 @@ changes_other_state(k) :-
 // table belong to the same race.
 .decl other_state_write(site: symbol, table: EtsTable)
 
-other_state_write(s, table) :- rival_table(table), ets_op(s, _, _, _, "write"), ets_op_table(s, table2), table2 != table.
-other_state_write(s, table) :- rival_table(table), shared_write(s), !ets_op(s, _, _, _, _).
+other_state_write(s, table) :- rival_table(table), ets_operation(s, _, _, _, "write"), ets_operation_table(s, table2), table2 != table.
+other_state_write(s, table) :- rival_table(table), shared_write(s), !ets_operation(s, _, _, _, _).
 
 .decl shared_write(site: symbol)
 
-shared_write(s) :- ets_op(s, _, _, _, "write").
-shared_write(s) :- mnesia_op(s, _, _, "write", _, _, _, _).
-shared_write(s) :- creating_op(s, _, _, _, _, _).
+shared_write(s) :- ets_operation(s, _, _, _, "write").
+shared_write(s) :- mnesia_operation(s, _, _, "write", _, _, _, _).
+shared_write(s) :- creating_operation(s, _, _, _, _, _).
 shared_write(s) :- name_release(s, _, _, _, _).
 
 // A send, a call or a cast, where the read's value decides on the pair's
@@ -1227,8 +1227,8 @@ reads_state(g) :- state_reader(g).
 state_reader(g) :- function_def(g, _, _, _, _), unknown_call(_, g, _, _).
 state_reader(g) :- function_def(g, _, _, _, _), protocol_dispatch(_, g, _).
 state_reader(g) :- impure_call(_, g, _, category, "read"), category != "time", category != "random".
-state_reader(g) :- ets_op(_, g, _, _, "read").
-state_reader(g) :- mnesia_op(_, g, _, "read", _, _, _, _).
+state_reader(g) :- ets_operation(_, g, _, _, "read").
+state_reader(g) :- mnesia_operation(_, g, _, "read", _, _, _, _).
 state_reader(g) :- local_call(_, g, h, _), state_reader(h).
 state_reader(g) :- remote_call(_, g, m, n, a), h = cat(m, cat(":", cat(n, cat("/", to_string(a))))), function_def(h, _, _, _, _), state_reader(h).
 
@@ -1274,14 +1274,14 @@ ets_harm_by(f, r, w, "stale_fill", w2, h) :-
   removal(w2).
 
 ets_harm_by(f, r, w, "state_delete", w2, h) :-
-  ets_op(w, _, _, "delete", _),
+  ets_operation(w, _, _, "delete", _),
   tests_row_fields(f, r),
   rival(f, r, w, w2, h),
   other_site(f, w, w2, h),
   makes_own_row(w2).
 
 ets_harm_by(f, r, w, "state_delete", w2, h) :-
-  ets_op(w, _, _, "delete", _),
+  ets_operation(w, _, _, "delete", _),
   tests_row_fields(f, r),
   rival(f, r, w, w2, h),
   other_site(f, w, w2, h),
@@ -1305,7 +1305,7 @@ overwrites_found_row(f, r, w) :-
   !tests_row_fields(f, r).
 
 ets_harm_by(f, r, w, "take", w2, h) :-
-  ets_op(w, _, _, "delete", _),
+  ets_operation(w, _, _, "delete", _),
   !tests_row_fields(f, r),
   decision_escapes(f, r),
   ets_carried.answers(f, r),
@@ -1344,7 +1344,7 @@ minting_call("System", "unique_integer", 1).
 
 minted_key(w) :-
   makes_row(w),
-  op_key(w, "local", made),
+  operation_key(w, "local", made),
   remote_call(made, _, m, n, a),
   minting_call(m, n, a).
 
@@ -1466,7 +1466,7 @@ ets_best_rank(f, r, w, min(m)) :- ets_race(_, f, _, _, r, w, k), ets_harm_rank(k
 .init ets_writes = OnePerWrite
 
 ets_writes.race(f, r, w, "", n) :- ets_best_rank(f, r, w, n).
-ets_writes.write_in(s, f) :- ets_race(_, _, _, _, _, s, _), ets_op(s, f, _, _, _).
+ets_writes.write_in(s, f) :- ets_race(_, _, _, _, _, s, _), ets_operation(s, f, _, _, _).
 ets_writes.write_in(s, f) :- ets_race(_, _, _, _, _, s, _), call_site(s, f, _, _, _).
 
 .decl ets_check_act(mod: symbol, func: symbol, name: symbol, key: symbol, read: symbol, write: symbol, kind: symbol)
@@ -1526,7 +1526,7 @@ ets_race_frame(w_at, "rival", w2, h) :-
 // A delete by key, as opposed to deleting the table or one object.
 .decl key_delete(delete: symbol, func: symbol)
 
-key_delete(d, f) :- ets_op(d, f, _, "delete", "write"), op_key(d, _, _).
+key_delete(d, f) :- ets_operation(d, f, _, "delete", "write"), operation_key(d, _, _).
 
 // An exit signal that may stop another process (stopping_exit: not `:normal`).
 .decl kills(site: symbol, func: symbol)
@@ -1534,16 +1534,16 @@ key_delete(d, f) :- ets_op(d, f, _, "delete", "write"), op_key(d, _, _).
 kills(e, f) :- stopping_exit(e, f, _), remote_call(e, f, ":erlang", "exit", 2).
 
 // Reads answering a key's rows.
-.decl row_read_op(op: symbol)
+.decl row_read_operation(op: symbol)
 
-row_read_op("lookup").
-row_read_op("lookup_element").
-row_read_op("match").
-row_read_op("match_object").
+row_read_operation("lookup").
+row_read_operation("lookup_element").
+row_read_operation("match").
+row_read_operation("match_object").
 
 .init delete_order = RunsAfter
 
-delete_order.asked(r) :- ets_op(r, f, _, op, "read"), row_read_op(op), key_delete(_, f).
+delete_order.asked(r) :- ets_operation(r, f, _, op, "read"), row_read_operation(op), key_delete(_, f).
 delete_order.asked(e) :- kills(e, f), key_delete(_, f).
 
 // `func` deletes `key` of `table` at `delete` after `before`, a read of the same key or
@@ -1552,27 +1552,27 @@ delete_order.asked(e) :- kills(e, f), key_delete(_, f).
 
 broad_delete(f, r, d, table, ks, k, "after_read") :-
   key_delete(d, f),
-  ets_op(r, f, _, op, "read"),
-  row_read_op(op),
+  ets_operation(r, f, _, op, "read"),
+  row_read_operation(op),
   delete_order.runs_after(r, d),
-  op_key(r, ks, k),
+  operation_key(r, ks, k),
   ks != "dynamic",
-  op_key(d, ks, k),
-  ets_op_table(r, table),
-  ets_op_table(d, table).
+  operation_key(d, ks, k),
+  ets_operation_table(r, table),
+  ets_operation_table(d, table).
 
 broad_delete(f, e, d, table, ks, k, "after_kill") :-
   kills(e, f),
   key_delete(d, f),
   delete_order.runs_after(e, d),
-  op_key(d, ks, k),
-  ets_op_table(d, table).
+  operation_key(d, ks, k),
+  ets_operation_table(d, table).
 
 // An insert of a row holding the process making it: its own entry under the key.
 .decl own_row_write(write: symbol, op: symbol)
 
 own_row_write(w, op) :-
-  ets_op(w, _, _, op, "write"),
+  ets_operation(w, _, _, op, "write"),
   (op = "insert" ; op = "insert_new"),
   ets_value(w, _, "self", _).
 
@@ -1682,7 +1682,7 @@ finds_published_value(r, w1) :-
 // A table some read hands a value out of (hands_out, below).
 .decl handed_out_from(kind: symbol, table: symbol)
 
-handed_out_from(ak, a) :- ets_op(ra, _, _, _, "read"), ets_table(ra, ak, a), hands_out(ra).
+handed_out_from(ak, a) :- ets_operation(ra, _, _, _, "read"), ets_table(ra, ak, a), hands_out(ra).
 
 // An explicit call instruction runs the callee on its caller's stack. runs_elsewhere
 // applies only to execution edges lacking that direct call.
@@ -1697,8 +1697,8 @@ same_stack_site(c, f, g) :-
 
 .decl object_insert(w: symbol, func: symbol)
 
-object_insert(w, f) :- ets_op(w, f, _, "insert", "write").
-object_insert(w, f) :- ets_op(w, f, _, "insert_new", "write").
+object_insert(w, f) :- ets_operation(w, f, _, "insert", "write").
+object_insert(w, f) :- ets_operation(w, f, _, "insert_new", "write").
 
 .decl reaches_insert(func: symbol)
 
@@ -1800,17 +1800,17 @@ publishes_early(f, w1, w2) :-
 .decl raises_if_row_missing(r: symbol, func: symbol)
 
 raises_if_row_missing(r, g) :-
-  ets_op(r, g, _, op, _),
+  ets_operation(r, g, _, op, _),
   remote_call(r, _, m, op, a),
   ets_raises_without_row(m, op, a).
 
 // A read of A that hands out what it found: the way V reaches a reader.
 .decl hands_out(r: symbol)
 
-hands_out(r) :- ets_op(r, _, _, "lookup", _), returns_depends(_, "site", r).
-hands_out(r) :- ets_op(r, _, _, "lookup", _), site_reads(_, _, "site", r).
-hands_out(r) :- ets_op(r, _, _, "lookup", _), call_arg_reads(_, _, _, "site", r).
-hands_out(r) :- ets_op(r, _, _, op, "read"), op != "lookup", op != "member", op != "info".
+hands_out(r) :- ets_operation(r, _, _, "lookup", _), returns_depends(_, "site", r).
+hands_out(r) :- ets_operation(r, _, _, "lookup", _), site_reads(_, _, "site", r).
+hands_out(r) :- ets_operation(r, _, _, "lookup", _), call_arg_reads(_, _, _, "site", r).
+hands_out(r) :- ets_operation(r, _, _, op, "read"), op != "lookup", op != "member", op != "info".
 
 // The operation may access a table readable by another process.
 // table_readable_elsewhere resolves field tables through their extracted names.
@@ -1856,7 +1856,7 @@ key_needed(h, k, s) :- key_needed(_, "call", h), returns_depends(h, k, s).
 
 from_table(g, "site", ra, tk, t) :-
   key_needed(g, "site", ra),
-  ets_op(ra, g, _, _, "read"),
+  ets_operation(ra, g, _, _, "read"),
   ets_table(ra, tk, t).
 
 from_table(g, "call", h, tk, t) :-
@@ -2021,8 +2021,8 @@ shared_table(act, (tk, t)) :- ets_table(act, tk, t), table_made_out_of_view(tk, 
 .decl removes_rows(remover: symbol, table: EtsTable)
 
 removes_rows(d, (tk, t)) :-
-  ets_op(d, _, _, op, _),
-  ets_removal_op(op),
+  ets_operation(d, _, _, op, _),
+  ets_removal_operation(op),
   ets_table(d, tk, t).
 
 // The pairs the rule asks about, for the questions it asks of processes.
@@ -2043,7 +2043,7 @@ found_key(ks, k) :-
 
 .decl remover_in(remover: symbol, func: symbol)
 
-remover_in(d, h) :- found_row_act(_, table), removes_rows(d, table), ets_op(d, h, _, _, _).
+remover_in(d, h) :- found_row_act(_, table), removes_rows(d, table), ets_operation(d, h, _, _, _).
 
 runs.seed(f) :- found_row_act(f, _).
 runs.seed(h) :- remover_in(_, h).
@@ -2166,19 +2166,19 @@ decides_dirty_write(f, r, w, (t, k)) :- reads_then_writes_record(f, r, w, t, k).
 .init records = CheckThenAct
 
 records.check(read, func, table_kind, table, key_kind, key) :-
-  mnesia_op(read, func, _, "read", table_kind, table, key_kind, key).
+  mnesia_operation(read, func, _, "read", table_kind, table, key_kind, key).
 
 records.act(write, func, table_kind, table, key_kind, key) :-
-  mnesia_op(write, func, op, "write", table_kind, table, key_kind, key),
-  dirty_write_op(op).
+  mnesia_operation(write, func, op, "write", table_kind, table, key_kind, key),
+  dirty_write_operation(op).
 
 // Dirty writes are candidate acts. Transactional writes and dirty_update_counter may
 // compete or restore table contents, but are not candidate acts.
-.decl dirty_write_op(op: symbol)
+.decl dirty_write_operation(op: symbol)
 
-dirty_write_op("dirty_write").
-dirty_write_op("dirty_delete").
-dirty_write_op("dirty_delete_object").
+dirty_write_operation("dirty_write").
+dirty_write_operation("dirty_delete").
+dirty_write_operation("dirty_delete_object").
 
 .decl reads_then_writes_record(func: symbol, read: symbol, write: symbol, table: symbol, key: symbol)
 
@@ -2235,7 +2235,7 @@ table_at_record(f, p, t) :-
   table_at_record(c, m_text, t), m_text = to_string(m).
 
 runs.seed(f) :- reads_then_writes_record(f, _, _, _, _).
-runs.seed(f) :- mnesia_op(_, f, _, "write", _, _, _, _).
+runs.seed(f) :- mnesia_operation(_, f, _, "write", _, _, _, _).
 
 // Another process can write between the pair's read and write, either by running func
 // concurrently or through a separate table writer.
@@ -2258,7 +2258,7 @@ written_by_another_process(t, f) :-
 // distinguished. Both can suppress real races.
 .decl locked_closure(func: symbol)
 
-locked_closure(c) :- global_op(_, f, "trans", _, _), closure_def(f, c).
+locked_closure(c) :- global_operation(_, f, "trans", _, _), closure_def(f, c).
 
 .decl called_unlocked(func: symbol)
 
@@ -2289,26 +2289,26 @@ serialized_by_lock(f, t) :-
 // Transactional writes and atomic counters are also rivals to unlocked dirty pairs.
 .decl mnesia_write_table(write: symbol, func: symbol, table: symbol)
 
-mnesia_write_table(w, f, t) :- mnesia_op(w, f, _, "write", "literal", t, _, _).
+mnesia_write_table(w, f, t) :- mnesia_operation(w, f, _, "write", "literal", t, _, _).
 
 mnesia_write_table(w, f, t) :-
-  mnesia_op(w, f, _, "write", "param", p, _, _),
+  mnesia_operation(w, f, _, "write", "param", p, _, _),
   record_table_at_param(f, p, t).
 
 mnesia_write_table(w, f, t) :-
-  mnesia_op(w, f, _, "write", "element 0", p, _, _),
+  mnesia_operation(w, f, _, "write", "element 0", p, _, _),
   table_at_record(f, p, t).
 
-record_param_needed(f, p) :- mnesia_op(_, f, _, "write", "element 0", p, _, _).
+record_param_needed(f, p) :- mnesia_operation(_, f, _, "write", "element 0", p, _, _).
 
 // A dirty write stores a value derived from a Mnesia read along some caller path. See
 // MadeOfRead.
 .init record_made = MadeOfRead
 
-record_made.read(r) :- mnesia_op(r, _, _, "read", _, _, _, _).
-record_made.write(w, h) :- mnesia_write_table(w, h, _), mnesia_op(w, _, op, _, _, _, _, _), (op = "dirty_write" ; op = "write").
+record_made.read(r) :- mnesia_operation(r, _, _, "read", _, _, _, _).
+record_made.write(w, h) :- mnesia_write_table(w, h, _), mnesia_operation(w, _, op, _, _, _, _, _), (op = "dirty_write" ; op = "write").
 
-record_table_needed(f, p) :- mnesia_op(_, f, _, "write", "param", p, _, _).
+record_table_needed(f, p) :- mnesia_operation(_, f, _, "write", "param", p, _, _).
 
 // A pair another process can interleave: the race but for its harm,
 // what the harms below are asked of.
@@ -2320,9 +2320,9 @@ racing_record_pair(f, r, w) :-
   !serialized_by_lock(f, t).
 
 // Which dirty operation a Mnesia call is.
-.decl dirty_op(site: symbol, op: symbol)
+.decl dirty_operation(site: symbol, op: symbol)
 
-dirty_op(site, op) :- mnesia_op(site, _, op, _, _, _, _, _).
+dirty_operation(site, op) :- mnesia_operation(site, _, op, _, _, _, _, _).
 
 // Mnesia rivals
 //
@@ -2358,15 +2358,15 @@ writer_walk.seed(g, g) :- mnesia_write_table(_, g, _).
 
 records_apart(w, w2) :-
   racing_record_pair(_, _, w),
-  mnesia_op(w, _, _, _, _, _, "literal", k),
+  mnesia_operation(w, _, _, _, _, _, "literal", k),
   mnesia_write_table(w2, _, _),
-  mnesia_op(w2, _, _, _, _, _, "literal", k2),
+  mnesia_operation(w2, _, _, _, _, _, "literal", k2),
   k != k2.
 
 records_apart(w, w2) :-
   racing_record_pair(_, _, w),
   mnesia_write_table(w2, _, _),
-  mnesia_op(w2, _, _, _, _, _, "local", made),
+  mnesia_operation(w2, _, _, _, _, _, "local", made),
   minted_value(made).
 
 // A freshly generated reference, monitor, unique integer or random value, including one
@@ -2381,13 +2381,13 @@ minted_value(made) :- local_call(made, _, g, _), mints(g).
 .decl record_counts_in(write: symbol)
 
 record_counts_in(w) :- record_made.stores(w).
-record_counts_in(w) :- mnesia_op(w, _, "dirty_update_counter", _, _, _, _, _).
+record_counts_in(w) :- mnesia_operation(w, _, "dirty_update_counter", _, _, _, _, _).
 
 // A writer that removes the record.
 .decl record_removes(write: symbol)
 
 record_removes(w) :-
-  mnesia_op(w, _, op, "write", _, _, _, _),
+  mnesia_operation(w, _, op, "write", _, _, _, _),
   (op = "dirty_delete" ; op = "delete" ; op = "dirty_delete_object" ; op = "delete_object").
 
 // A writer creates independent record state rather than a cached refill computed from a
@@ -2395,7 +2395,7 @@ record_removes(w) :-
 .decl record_makes_own(write: symbol)
 
 record_makes_own(w) :-
-  mnesia_op(w, _, op, "write", _, _, _, _),
+  mnesia_operation(w, _, op, "write", _, _, _, _),
   (op = "dirty_write" ; op = "write"),
   !record_carried.fills(_, _, w).
 
@@ -2418,13 +2418,13 @@ record_makes_own(w) :-
 // A read that finds records by something other than their key.
 .decl searches(read: symbol)
 
-searches(r) :- mnesia_op(r, _, _, "read", _, _, "any", _).
+searches(r) :- mnesia_operation(r, _, _, "read", _, _, "any", _).
 
 // Made of this pair's read (PairCarries, clientlib/check_then_act.dl).
 .init record_carried = PairCarries
 
 record_carried.pair(f, r, w) :- racing_record_pair(f, r, w).
-record_carried.read_in(r, g) :- mnesia_op(r, g, _, "read", _, _, _, _).
+record_carried.read_in(r, g) :- mnesia_operation(r, g, _, "read", _, _, _, _).
 record_carried.write_in(w, h) :- records.act(w, h, _, _, _, _).
 record_carried.fresh(kind, src) :- fill_source(kind, src).
 
@@ -2507,8 +2507,8 @@ other_branch(s, w) :-
 .decl exclusive_writes(first: symbol, second: symbol)
 
 exclusive_writes(w1, w2) :-
-  mnesia_op(w1, h, "dirty_write", _, _, _, _, _),
-  mnesia_op(w2, h, "dirty_write", _, _, _, _, _),
+  mnesia_operation(w1, h, "dirty_write", _, _, _, _, _),
+  mnesia_operation(w2, h, "dirty_write", _, _, _, _, _),
   w1 != w2,
   !mnesia_write_order(h, w1, w2),
   !mnesia_write_order(h, w2, w1).
@@ -2536,23 +2536,23 @@ decides_more_here(f, r, w) :-
 // unique claim.
 record_race_kind(f, r, w, "unique") :-
   racing_record_pair(f, r, w),
-  mnesia_op(w, _, "dirty_write", _, _, _, _, _),
+  mnesia_operation(w, _, "dirty_write", _, _, _, _, _),
   searches(r),
   !record_carried.carries(f, r, w).
 
 record_race_kind(f, r, w, "lost_update") :-
   racing_record_pair(f, r, w),
-  mnesia_op(w, _, "dirty_write", _, _, _, _, _),
+  mnesia_operation(w, _, "dirty_write", _, _, _, _, _),
   record_carried.carries(f, r, w).
 
 record_race_kind(f, r, w, "guarded") :-
   racing_record_pair(f, r, w),
-  mnesia_op(w, _, "dirty_write", _, _, _, _, _),
+  mnesia_operation(w, _, "dirty_write", _, _, _, _, _),
   guards_record(f, r, w).
 
 record_race_kind(f, r, w, "claim") :-
   racing_record_pair(f, r, w),
-  mnesia_op(w, _, "dirty_write", _, _, _, _, _),
+  mnesia_operation(w, _, "dirty_write", _, _, _, _, _),
   record_decision_escapes(f, r),
   !record_carried.answers(f, r),
   !overwrites_found_record(f, r, w).
@@ -2568,12 +2568,12 @@ overwrites_found_record(f, r, w) :-
 
 record_race_kind(f, r, w, "decides_more") :-
   racing_record_pair(f, r, w),
-  mnesia_op(w, _, "dirty_write", _, _, _, _, _),
+  mnesia_operation(w, _, "dirty_write", _, _, _, _, _),
   decides_more_here(f, r, w).
 
 record_race_kind(f, r, w, "fill") :-
   racing_record_pair(f, r, w),
-  mnesia_op(w, _, "dirty_write", _, _, _, _, _),
+  mnesia_operation(w, _, "dirty_write", _, _, _, _, _),
   record_rival(f, r, w, w2, _),
   (record_counts_in(w2) ; record_removes(w2) ; record_makes_own(w2)).
 
@@ -2581,7 +2581,7 @@ record_race_kind(f, r, w, "fill") :-
 // A presence-only delete has the same result as a serial write followed by deletion.
 record_race_kind(f, r, w, "delete") :-
   racing_record_pair(f, r, w),
-  mnesia_op(w, _, "dirty_delete", _, _, _, _, _),
+  mnesia_operation(w, _, "dirty_delete", _, _, _, _, _),
   tests_record_fields(f, r),
   record_rival(f, r, w, w2, _),
   (record_counts_in(w2) ; record_makes_own(w2)).
@@ -2590,13 +2590,13 @@ record_race_kind(f, r, w, "delete") :-
 // removes: both racers send, or both take the record.
 record_race_kind(f, r, w, "delete") :-
   racing_record_pair(f, r, w),
-  mnesia_op(w, _, op, _, _, _, _, _),
+  mnesia_operation(w, _, op, _, _, _, _, _),
   (op = "dirty_delete" ; op = "dirty_delete_object"),
   record_decision_sends(f, r).
 
 record_race_kind(f, r, w, "delete") :-
   racing_record_pair(f, r, w),
-  mnesia_op(w, _, op, _, _, _, _, _),
+  mnesia_operation(w, _, op, _, _, _, _, _),
   (op = "dirty_delete" ; op = "dirty_delete_object"),
   record_decision_escapes(f, r),
   record_carried.answers(f, r).
@@ -2672,7 +2672,7 @@ record_writes.write_in(w, h) :- ranked_race(_, _, w, _, _), records.act(w, h, _,
 mnesia_check_act(mod, func, table, key, read, write, op, harm) :-
   record_writes.reported(func, read, write, harm),
   dirty_read_then_write_race(func, read, write, row, harm), row = (table, key),
-  dirty_op(write, op),
+  dirty_operation(write, op),
   in_module(func, mod).
 
 // Related Mnesia evidence: later writes (`also_writes`), external rivals to

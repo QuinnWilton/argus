@@ -14,7 +14,7 @@
 
 global_call_during_init(init, site) :- init_function(_, init), global_path(init, _, site).
 
-global_path(f, site, site) :- global_op(site, f, _, _, _), !start_acked(site, f).
+global_path(f, site, site) :- global_operation(site, f, _, _, _), !start_acked(site, f).
 
 // Direct calls stay on f's stack. Site-less edges, such as closures, stay only when
 // runs_elsewhere does not classify them as detached.

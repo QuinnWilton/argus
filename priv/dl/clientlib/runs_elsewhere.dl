@@ -121,13 +121,13 @@ task_start_api("Task.Supervisor", "async_nolink", "unlinked").
 // Task.Supervisor operations start one task per call ("one") or a bounded stream
 // ("stream"). Each stream enumerator runs at most max_concurrency tasks at once and
 // waits for each result.
-.decl task_supervisor_op(op: symbol, how: symbol)
+.decl task_supervisor_operation(op: symbol, how: symbol)
 
-task_supervisor_op("start_child", "one").
-task_supervisor_op("async", "one").
-task_supervisor_op("async_nolink", "one").
-task_supervisor_op("async_stream", "stream").
-task_supervisor_op("async_stream_nolink", "stream").
+task_supervisor_operation("start_child", "one").
+task_supervisor_operation("async", "one").
+task_supervisor_operation("async_nolink", "one").
+task_supervisor_operation("async_stream", "stream").
+task_supervisor_operation("async_stream_nolink", "stream").
 
 // Task waits block until the task returns or the wait expires. Exclude Task.shutdown,
 // which stops the task.

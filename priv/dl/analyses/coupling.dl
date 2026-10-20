@@ -114,10 +114,10 @@ clause_remakes(a, h, tag, g) :-
   clause_remakes(a, h2, tag2, g).
 
 // All resolved calls from `from` to `to` use privately started instances
-// (private_module_dep). Restarting the supervisor's instance does not affect them.
+// (private_module_dependency). Restarting the supervisor's instance does not affect them.
 .decl only_own_instances(from: symbol, to: symbol)
 
-only_own_instances(from, to) :- private_module_dep(from, to).
+only_own_instances(from, to) :- private_module_dependency(from, to).
 
 // The two modules' processes are linked, one way or the other: an exit
 // propagates through the link and both restart together.
@@ -205,32 +205,32 @@ holds_site(caller, keeper, start, how, store) :-
 // dependencies, or `doubted` when only that inference exists and the process-role prior
 // is at most 0.3. Doubted findings have lower severity; `permille` retains confidence.
 // Restart-isolation rows are always resolved.
-.decl dep_resolved(from: symbol, to: symbol)
+.decl dependency_resolved(from: symbol, to: symbol)
 
-dep_resolved(f, t) :- module_sync_dep(f, t, _).
+dependency_resolved(f, t) :- module_sync_dependency(f, t, _).
 
-dep_resolved(f, t) :-
+dependency_resolved(f, t) :-
   function_def(w, f, _, _, _),
-  reaches_async_dep(w, t),
+  reaches_async_dependency(w, t),
   f != t.
 
-.decl dep_doubted(from: symbol, to: symbol, permille: number)
+.decl dependency_doubted(from: symbol, to: symbol, permille: number)
 
-dep_doubted(f, t, p) :-
-  stateful_module_dep(f, t, _),
-  !dep_resolved(f, t),
+dependency_doubted(f, t, p) :-
+  stateful_module_dependency(f, t, _),
+  !dependency_resolved(f, t),
   prior_talks_to_process(t, p),
   p <= 300.
 
-.decl dep_basis(from: symbol, to: symbol, basis: symbol, permille: number)
+.decl dependency_basis(from: symbol, to: symbol, basis: symbol, permille: number)
 
-dep_basis(f, t, "resolved", 0) :- dep_resolved(f, t).
-dep_basis(f, t, "doubted", p) :- dep_doubted(f, t, p).
+dependency_basis(f, t, "resolved", 0) :- dependency_resolved(f, t).
+dependency_basis(f, t, "doubted", p) :- dependency_doubted(f, t, p).
 
-dep_basis(f, t, "inferred", 0) :-
-  stateful_module_dep(f, t, _),
-  !dep_resolved(f, t),
-  !dep_doubted(f, t, _).
+dependency_basis(f, t, "inferred", 0) :-
+  stateful_module_dependency(f, t, _),
+  !dependency_resolved(f, t),
+  !dependency_doubted(f, t, _).
 
 .decl sibling_dependency(sup: symbol, caller: symbol, callee: symbol, reason: symbol, detail: symbol, sup_site: symbol, witness: symbol, site: symbol, basis: symbol, permille: number)
 .output sibling_dependency
@@ -280,7 +280,7 @@ keeping_basis("handed", "inferred").
 dependency_on_unrestarted_sibling(sup, child, sibling, restart, witness) :-
   restart_policy(sup, child, "permanent"),
   may_stay_down(sup, sibling, restart),
-  stateful_module_dep(child, sibling, witness),
+  stateful_module_dependency(child, sibling, witness),
   !teardown_only(witness),
   !only_own_instances(child, sibling).
 
@@ -299,7 +299,7 @@ teardown_only(w) :-
 sibling_witness(w) :-
   restart_policy(sup, child, "permanent"),
   may_stay_down(sup, sibling, _),
-  stateful_module_dep(child, sibling, w).
+  stateful_module_dependency(child, sibling, w).
 
 .init teardown_reach = CallReach
 
@@ -332,7 +332,7 @@ leaves_down("temporary").
 sibling_dependency(sup, child, sibling, "restart_policy", restart, sup_site, witness, witness, basis, permille) :-
   dependency_on_unrestarted_sibling(sup, child, sibling, restart, witness),
   supervisor_site(sup, sup_site),
-  dep_basis(child, sibling, basis, permille).
+  dependency_basis(child, sibling, basis, permille).
 
 // Cached sibling pids under one_for_one
 //
@@ -439,8 +439,8 @@ runs_in_child(sup, pos, mod) :-
 
 starts_child(owner, start) :-
   function_def(func, owner, _, _, _),
-  sup_management_call(start, func, _, op, _),
-  child_creating_op(op).
+  supervisor_management_call(start, func, _, op, _),
+  child_creating_operation(op).
 
 // The start takes `{:error, {:already_started, pid}}` for success: the
 // child is registered under a name, and a restarted owner adopts the one
@@ -452,11 +452,11 @@ starts_child(owner, start) :-
 .decl adopts_running_child(start: symbol)
 
 adopts_running_child(start) :-
-  sup_management_call(start, f, _, _, _),
+  supervisor_management_call(start, f, _, _, _),
   start_error_compared(f, ":already_started").
 
 adopts_running_child(start) :-
-  sup_management_call(start, f, _, _, _),
+  supervisor_management_call(start, f, _, _, _),
   call_edge(g, f),
   start_error_compared(g, ":already_started").
 
@@ -466,7 +466,7 @@ adopts_running_child(start) :-
 .decl starts_under_earlier_child(start: symbol, sup: symbol, owner_pos: number, holder_pos: number, basis: symbol)
 
 starts_under_earlier_child(start, sup, owner_pos, holder_pos, "resolved") :-
-  sup_management_call(start, _, _, _, name),
+  supervisor_management_call(start, _, _, _, name),
   supervisor_child_name(sup, holder_pos, name),
   supervisor_child(sup, owner_pos, _, _, _),
   holder_pos < owner_pos.
@@ -475,7 +475,7 @@ starts_under_earlier_child(start, sup, owner_pos, holder_pos, "resolved") :-
 // sibling matches the supervisor API. Supervisor management calls are not represented
 // by `process_call_var`, so points-to cannot resolve this pid.
 starts_under_earlier_child(start, sup, owner_pos, holder_pos, "inferred") :-
-  sup_management_call(start, _, api, _, "dynamic"),
+  supervisor_management_call(start, _, api, _, "dynamic"),
   sole_earlier_sibling_of_kind(sup, holder_pos, api, owner_pos).
 
 // sup's child at `pos` is `mod`.

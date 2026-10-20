@@ -47,11 +47,11 @@ defmodule Argus.Clientlib.DictionaryTest do
 
     .decl op_table(func: symbol, op: symbol, kind: symbol, ident: symbol)
     .output op_table
-    op_table(f, o, k, t) :- ets_op(id, f, _, o, _), ets_table(id, k, t).
+    op_table(f, o, k, t) :- ets_operation(id, f, _, o, _), ets_table(id, k, t).
 
     .decl op_any(func: symbol, op: symbol)
     .output op_any
-    op_any(f, o) :- ets_op(id, f, _, o, _), may_touch_any_table(id).
+    op_any(f, o) :- ets_operation(id, f, _, o, _), may_touch_any_table(id).
 
     .decl kept(func: symbol)
     .output kept
@@ -64,7 +64,7 @@ defmodule Argus.Clientlib.DictionaryTest do
     .decl skipped(func: symbol, op_func: symbol, name: symbol)
     .output skipped
     skipped(f, g, name) :-
-      skips_default(f, op, table), table = (kind, name), kind = "named", ets_op(op, g, _, _, _).
+      skips_default(f, op, table), table = (kind, name), kind = "named", ets_operation(op, g, _, _, _).
     """)
 
     out = Path.join(tmp_dir, "out")

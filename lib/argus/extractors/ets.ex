@@ -15,8 +15,8 @@ defmodule Argus.Extractors.ETS do
   - `ets_options_known(id)` — the options list was read whole, so an option
     `ets_option` does not list (`named_table`, `heir`) is not given; no row
     when the list is built at run time
-  - `ets_op(id, func, table_ref, op, kind)` — ETS read/write/delete operation
-  - `ets_op_param(id, pos)` — the table operand of that operation is the
+  - `ets_operation(id, func, table_ref, op, kind)` — ETS read/write/delete operation
+  - `ets_operation_param(id, pos)` — the table operand of that operation is the
     function's own parameter `pos`, so a caller's literal names the table
   - `ets_key(id, source, key)` — what identifies the key operand of an
     operation (`Argus.Extractor.Identity.key_identity/4`); for `insert`/`insert_new` the
@@ -34,7 +34,7 @@ defmodule Argus.Extractors.ETS do
     an operation was read from (`Resolve.access_path/4`): a literal name,
     a parameter or a local value, and the map keys read from it. Two
     tables one function was handed in one map (`%{forward: f, reverse:
-    r}`) are two paths, where `ets_op` knows both by the name they were
+    r}`) are two paths, where `ets_operation` knows both by the name they were
     created with
   - `ets_table_field(id, field)` — the last map key of each of those
     paths: the struct or map field the table was kept under
@@ -130,8 +130,8 @@ defmodule Argus.Extractors.ETS do
       :ets_key,
       :ets_key_element,
       :ets_new,
-      :ets_op,
-      :ets_op_param,
+      :ets_operation,
+      :ets_operation_param,
       :ets_option,
       :ets_options_known,
       :ets_table_path,
@@ -181,7 +181,7 @@ defmodule Argus.Extractors.ETS do
   @boolean_reads ~w(member)
 
   defp emit_found_writes(facts, module_data) do
-    ops = Map.get(facts, :ets_op, [])
+    ops = Map.get(facts, :ets_operation, [])
 
     reads =
       for [id, func, _table, op, "read"] <- ops,
@@ -219,7 +219,7 @@ defmodule Argus.Extractors.ETS do
   # reached on a path that skips both, or on the whereis's `:undefined`
   # side before a make, is not one.
   defp emit_present_reads(facts, module_data) do
-    ops = Map.get(facts, :ets_op, [])
+    ops = Map.get(facts, :ets_operation, [])
     makers = table_makers(facts, module_data)
 
     reads =
@@ -297,7 +297,7 @@ defmodule Argus.Extractors.ETS do
   # past none, leaves the function without a row: a start function run
   # again while its table lives on raises on that make.
   defp emit_absent_makes(facts, module_data) do
-    ops = Map.get(facts, :ets_op, [])
+    ops = Map.get(facts, :ets_operation, [])
     makers = table_makers(facts, module_data)
 
     ops
@@ -431,7 +431,7 @@ defmodule Argus.Extractors.ETS do
   defp emit_effect_order(facts, module_data, index) do
     inserts =
       facts
-      |> Map.get(:ets_op, [])
+      |> Map.get(:ets_operation, [])
       |> Enum.filter(fn [_id, _func, _table, op, kind] ->
         kind == "write" and op in @object_writes
       end)
@@ -600,7 +600,7 @@ defmodule Argus.Extractors.ETS do
     table_ref = resolve_table(ctx, fields)
 
     facts
-    |> track_dynamic(table_ref, ctx, :ets_table_ref_op, :ets_op)
+    |> track_dynamic(table_ref, ctx, :ets_table_ref_op, :ets_operation)
     |> ops(id, ctx.func_id, table_ref, func, arity)
     |> maybe_table_param(id, table_ref, ctx)
     |> table_path(id, ctx)
@@ -844,7 +844,7 @@ defmodule Argus.Extractors.ETS do
   # name arrives from a caller, which `call_arg` can supply.
   defp maybe_table_param(facts, id, "dynamic", ctx) do
     case resolve_to_arg_or_atom(ctx.instrs, ctx.idx, {:x, 0}) do
-      {:arg, pos} -> add_fact(facts, :ets_op_param, [id, to_string(pos)])
+      {:arg, pos} -> add_fact(facts, :ets_operation_param, [id, to_string(pos)])
       _ -> facts
     end
   end
@@ -1005,7 +1005,7 @@ defmodule Argus.Extractors.ETS do
   # :ets.delete/1 is table deletion; :ets.delete/2 is key deletion (a write).
   defp ops(facts, id, func_id, table_ref, func, arity) do
     for kind <- classify_op(func, arity), reduce: facts do
-      acc -> add_fact(acc, :ets_op, [id, func_id, table_ref, to_string(func), kind])
+      acc -> add_fact(acc, :ets_operation, [id, func_id, table_ref, to_string(func), kind])
     end
   end
 

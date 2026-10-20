@@ -48,11 +48,11 @@ defmodule Argus.Clientlib.TablesTest do
 
     .decl op_table(func: symbol, op: symbol, kind: symbol, ident: symbol)
     .output op_table
-    op_table(f, o, k, t) :- ets_op(id, f, _, o, _), ets_table(id, k, t).
+    op_table(f, o, k, t) :- ets_operation(id, f, _, o, _), ets_table(id, k, t).
 
     .decl op_any(func: symbol, op: symbol)
     .output op_any
-    op_any(f, o) :- ets_op(id, f, _, o, _), may_touch_any_table(id).
+    op_any(f, o) :- ets_operation(id, f, _, o, _), may_touch_any_table(id).
 
     .decl site_of(site: symbol, kind: symbol, ident: symbol)
     .output site_of
@@ -73,7 +73,7 @@ defmodule Argus.Clientlib.TablesTest do
     File.cp_r!(facts_dir, approximated_dir)
 
     tables =
-      Path.join(facts_dir, "table_alloc.facts")
+      Path.join(facts_dir, "table_allocation.facts")
       |> File.read!()
       |> String.split("\n", trim: true)
       |> Enum.map(&String.split(&1, "\t"))

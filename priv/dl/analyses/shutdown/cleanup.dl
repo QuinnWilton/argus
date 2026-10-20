@@ -103,7 +103,7 @@ released_by_exit(id, t) :-
 
 own_table_released(mod, id) :-
   cleanup_candidate(mod, id),
-  ets_op(id, _, t, _, _),
+  ets_operation(id, _, t, _, _),
   own_named_table(mod, t).
 
 // An ETS call terminate/2's cleanup rules ask about.
@@ -134,9 +134,9 @@ own_named_table(m, t) :-
 // Ownership or options the table's code can change after it is made.
 .decl passed_on(table: symbol)
 
-passed_on(t) :- ets_op(_, _, t, "give_away", _).
-passed_on(t) :- ets_op(_, _, t, "rename", _).
-passed_on(t) :- ets_op(_, _, t, "setopts", _).
+passed_on(t) :- ets_operation(_, _, t, "give_away", _).
+passed_on(t) :- ets_operation(_, _, t, "rename", _).
+passed_on(t) :- ets_operation(_, _, t, "setopts", _).
 
 // Cleanup findings: `never_runs` for known durable cleanup skipped without exit
 // trapping, `unclear` for unclassified work skipped the same way, and `truncated` for

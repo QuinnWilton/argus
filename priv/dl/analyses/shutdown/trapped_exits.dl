@@ -135,12 +135,12 @@ trap_loop.root(f, r) :-
 // for its caller) is not asked.
 .decl trap_loop_receives(trap: symbol)
 
-trap_loop_receives(f) :- trap_loop.reaches(f, g), recv_start(_, g, _, _).
+trap_loop_receives(f) :- trap_loop.reaches(f, g), receive_start(_, g, _, _).
 
-// Some receive the loop runs can take an {:EXIT, ...} (recv_takes_exit).
+// Some receive the loop runs can take an {:EXIT, ...} (receive_takes_exit).
 .decl trap_loop_takes_exit(trap: symbol)
 
-trap_loop_takes_exit(f) :- trap_loop.reaches(f, g), recv_takes_exit(_, g).
+trap_loop_takes_exit(f) :- trap_loop.reaches(f, g), receive_takes_exit(_, g).
 
 // The loop runs code whose receives are not the program's to read
 // (hides_receives, clientlib/receive.dl).

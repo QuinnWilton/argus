@@ -149,14 +149,14 @@ var_process(h, sk, s, p) :-
 
 .decl var_table(func: symbol, var_kind: symbol, var: symbol, table: symbol)
 
-var_table(f, sk, s, t) :- table_use(_, f, sk, s), var_points_to(f, sk, s, t), table_alloc(_, _, t).
+var_table(f, sk, s, t) :- table_use(_, f, sk, s), var_points_to(f, sk, s, t), table_allocation(_, _, t).
 
 var_table(f, sk, s, t) :-
   table_use(_, f, sk, s),
   field_insensitive_points_to(f, sk, s, r, t),
   reach_top(r),
   hub_object(t),
-  table_alloc(_, _, t).
+  table_allocation(_, _, t).
 
 .output var_table(filename="var_table.facts")
 
@@ -172,27 +172,27 @@ var_table(f, sk, s, t) :-
 .decl kept_in_dictionary(table: symbol)
 
 kept_in_dictionary(t) :-
-  dict_put(_, g, _, sk, s),
+  dictionary_put(_, g, _, sk, s),
   var_points_to(g, sk, s, t),
-  table_alloc(_, _, t),
+  table_allocation(_, _, t),
   !leaves_process(t).
 
 .decl leaves_process(table: symbol)
 
-leaves_process(t) :- field_points_to(_, _, t), table_alloc(_, _, t).
+leaves_process(t) :- field_points_to(_, _, t), table_allocation(_, _, t).
 
 leaves_process(t) :-
   call_arg_var(_, f, _, _, via, sk, s),
   via != "call",
   via != "closure",
   var_points_to(f, sk, s, t),
-  table_alloc(_, _, t).
+  table_allocation(_, _, t).
 
 leaves_process(t) :-
   call_arg_var(_, f, g, _, "closure", sk, s),
   runs_elsewhere(_, g),
   var_points_to(f, sk, s, t),
-  table_alloc(_, _, t).
+  table_allocation(_, _, t).
 
 .output kept_in_dictionary(filename="kept_in_dictionary.facts")
 
@@ -202,7 +202,7 @@ leaves_process(t) :-
 // (tables.dl). None in the full stage.
 .decl approximated_table(table: symbol)
 
-approximated_table(t) :- hub_object(t), table_alloc(_, _, t).
+approximated_table(t) :- hub_object(t), table_allocation(_, _, t).
 
 .output approximated_table(filename="approximated_table.facts")
 

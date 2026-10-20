@@ -111,7 +111,7 @@ defmodule Argus.Exclusions.CouplingTest do
   end
 
   describe "restart policy" do
-    # coupling.dl, sibling_dependency: !private_module_dep(perm, sibling).
+    # coupling.dl, sibling_dependency: !private_module_dependency(perm, sibling).
     test "a permanent child querying only its own instance of a temporary sibling's module",
          ctx do
       assert dependencies(ctx, @private_conn) == []

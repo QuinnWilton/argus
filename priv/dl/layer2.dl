@@ -296,8 +296,8 @@
 
 // A call that registers a name or starts a process, including via registration and `start_child` with a name in its child spec.
 //
-.decl creating_op(id: symbol, func: symbol, api: symbol, scope: symbol, source: symbol, key: symbol) mutable
-.input creating_op
+.decl creating_operation(id: symbol, func: symbol, api: symbol, scope: symbol, source: symbol, key: symbol) mutable
+.input creating_operation
 
 // The argument is exactly this value on every path to the call: the caller's parameter, or a field projected out of a remote call's result in the same function. Rows are emitted at decoding calls, and at local calls of a function whose decoder decodes its parameter, at that position. A join of different values, a computed value, or a local helper's result has no row.
 //
@@ -321,17 +321,17 @@
 
 // A process-dictionary put, get, or erase, including Elixir wrappers. `erase/0` uses an unknown key.
 //
-.decl dict_op(id: symbol, func: symbol, op: symbol, key: symbol) mutable
-.input dict_op
+.decl dictionary_operation(id: symbol, func: symbol, op: symbol, key: symbol) mutable
+.input dictionary_operation
 
 // A source stored under `key` in the running process's dictionary. Reads of the same `dict` source in that process may resolve to it (`clientlib/processes.dl`).
 //
-.decl dict_put(id: symbol, func: symbol, key: symbol, var_kind: symbol, var: symbol) mutable
-.input dict_put
+.decl dictionary_put(id: symbol, func: symbol, key: symbol, var_kind: symbol, var: symbol) mutable
+.input dictionary_put
 
 // Mnesia distributed store operation. DETS is not one: a DETS table is a file on its own node.
-.decl distributed_store_op(id: symbol, func: symbol, store: symbol, op: symbol) mutable
-.input distributed_store_op
+.decl distributed_store_operation(id: symbol, func: symbol, store: symbol, op: symbol) mutable
+.input distributed_store_operation
 
 // An exported function the Docs chunk hides from the module's users: `@doc false`, `@impl true` without a `@doc`, or any function of a `@moduledoc false` module (`Argus.Extractors.Docs`). `unsafe_input.dl` does not count it as a way in for a caller's data. A beam without a Docs chunk hides nothing.
 //
@@ -398,12 +398,12 @@
 .input ets_new
 
 // ETS read/write/delete operation.
-.decl ets_op(id: symbol, func: symbol, table_ref: symbol, op: symbol, kind: symbol) mutable
-.input ets_op
+.decl ets_operation(id: symbol, func: symbol, table_ref: symbol, op: symbol, kind: symbol) mutable
+.input ets_operation
 
 // The table operand of an ETS operation is the function's own parameter.
-.decl ets_op_param(id: symbol, pos: number) mutable
-.input ets_op_param
+.decl ets_operation_param(id: symbol, pos: number) mutable
+.input ets_operation_param
 
 // Parsed option from :ets.new/2.
 .decl ets_option(id: symbol, key: symbol, value: symbol) mutable
@@ -498,8 +498,8 @@
 
 // A `:global` synchronization operation. Retries are `0` for try-once, a positive count, or `infinity`; omitted retries default to `infinity`. Node scope is `local` for `[node()]`, `cluster` for connected-node lists or the default, and `unknown` when unresolved (`Argus.Extractor.Resolve.node_list/3`).
 //
-.decl global_op(id: symbol, func: symbol, op: symbol, retries: symbol, nodes: symbol) mutable
-.input global_op
+.decl global_operation(id: symbol, func: symbol, op: symbol, retries: symbol, nodes: symbol) mutable
+.input global_operation
 
 // A `:global.register_name` call. Arity 2 uses default conflict resolution; arity 3 supplies a resolver.
 //
@@ -612,8 +612,8 @@
 
 // A Mnesia dirty operation's table and key, outside transaction serialization. Single-argument forms derive both from `{table, key}` or the first two record elements.
 //
-.decl mnesia_op(id: symbol, func: symbol, op: symbol, kind: symbol, table_source: symbol, table: symbol, key_source: symbol, key: symbol) mutable
-.input mnesia_op
+.decl mnesia_operation(id: symbol, func: symbol, op: symbol, kind: symbol, table_source: symbol, table: symbol, key_source: symbol, key: symbol) mutable
+.input mnesia_operation
 
 // Two Mnesia writes ordered within one function iteration, excluding loop back edges (`Argus.Extractors.Mnesia`). Writes ordered in neither direction lie on mutually exclusive paths.
 //
@@ -756,43 +756,43 @@
 
 // A receive clause accepting every reason for `:DOWN` from a monitor created in the same function. The pinned reference must come from that monitor on every path, with no intervening demonitor. Other restrictions on the message disqualify it. The receive cannot outlast the monitored process.
 //
-.decl recv_down(id: symbol, func: symbol, monitor: symbol) mutable
-.input recv_down
+.decl receive_down(id: symbol, func: symbol, monitor: symbol) mutable
+.input receive_down
 
 // A receive reached only after the earlier `cancel_timer` at `cancel` returns `false`. Every path must take that result's false branch. An unchecked cancellation does not qualify because a successful cancellation prevents message delivery.
 //
-.decl recv_flush(id: symbol, func: symbol, cancel: symbol) mutable
-.input recv_flush
+.decl receive_flush(id: symbol, func: symbol, cancel: symbol) mutable
+.input receive_flush
 
 // A receive clause's literal atom pattern, or `any` for other patterns. Used to check whether a flush after `cancel_timer/1` accepts the timer message.
 //
-.decl recv_pattern(id: symbol, func: symbol, message: symbol) mutable
-.input recv_pattern
+.decl receive_pattern(id: symbol, func: symbol, message: symbol) mutable
+.input receive_pattern
 
-// A waiting receive clause's complete message shape: atom, tagged tuple, tuple with a pinned first element, map, arbitrary tuple, or `any`. Unlike `recv_pattern`, reads the whole head. Excludes `after 0` polls (`Argus.Extractors.CallbackTag.MessageClauses.receive_shapes/2`).
+// A waiting receive clause's complete message shape: atom, tagged tuple, tuple with a pinned first element, map, arbitrary tuple, or `any`. Unlike `receive_pattern`, reads the whole head. Excludes `after 0` polls (`Argus.Extractors.CallbackTag.MessageClauses.receive_shapes/2`).
 //
-.decl recv_shape(id: symbol, func: symbol, shape: symbol) mutable
-.input recv_shape
+.decl receive_shape(id: symbol, func: symbol, shape: symbol) mutable
+.input receive_shape
 
 // A receive clause accepting every exit reason for a pinned monitor reference (`down`, including custom tags) or sender (`exit`). The pinned value may come from outside the function. A possible preceding demonitor excludes `down` rows. The receive is bounded by the target's lifetime while the monitor or link remains active.
 //
-.decl recv_signal(id: symbol, func: symbol, signal: symbol) mutable
-.input recv_signal
+.decl receive_signal(id: symbol, func: symbol, signal: symbol) mutable
+.input receive_signal
 
 // A receive clause with fixed tag `:DOWN`, regardless of restrictions on reference, object, or reason. Catch-alls do not qualify.
 //
-.decl recv_takes_down(id: symbol, func: symbol) mutable
-.input recv_takes_down
+.decl receive_takes_down(id: symbol, func: symbol) mutable
+.input receive_takes_down
 
 // A receive clause that may accept a trapped exit: its head fixes tag `:EXIT` or leaves the tag unrestricted. Atom patterns and other fixed tags are excluded. Tuple arity is not checked.
 //
-.decl recv_takes_exit(id: symbol, func: symbol) mutable
-.input recv_takes_exit
+.decl receive_takes_exit(id: symbol, func: symbol) mutable
+.input receive_takes_exit
 
-// A receive whose `after` timeout is the function's parameter `param` on every path. `recv_start` calls it timed; a caller passing `:infinity` there (`infinity_arg`) makes it wait with no timeout. A literal `:infinity` compiles to an untimed wait and needs no row.
+// A receive whose `after` timeout is the function's parameter `param` on every path. `receive_start` calls it timed; a caller passing `:infinity` there (`infinity_arg`) makes it wait with no timeout. A literal `:infinity` compiles to an untimed wait and needs no row.
 //
-.decl recv_timeout_param(id: symbol, func: symbol, param: number) mutable
-.input recv_timeout_param
+.decl receive_timeout_param(id: symbol, func: symbol, param: number) mutable
+.input receive_timeout_param
 
 // An Ecto field marked `redact: true`. Ecto hides it from inspection unless a separately derived Inspect implementation controls the output. Redaction defaults to off; consumers check for absence.
 //
@@ -959,8 +959,8 @@
 .input shared_store_lock
 
 // An individual shared-cache read or non-atomic write, identified by store and key.
-.decl shared_store_op(site: symbol, func: symbol, operation: symbol, store_source: symbol, store: symbol, key_source: symbol, key: symbol) mutable
-.input shared_store_op
+.decl shared_store_operation(site: symbol, func: symbol, operation: symbol, store_source: symbol, store: symbol, key_source: symbol, key: symbol) mutable
+.input shared_store_operation
 
 // A wrapper maps a required result to a literal return; used to retain absence polarity.
 .decl shared_store_return_choice(func: symbol, kind: symbol, source: symbol, tested: symbol, returned: symbol) mutable
@@ -1045,8 +1045,8 @@
 
 // A literal options argument containing `:active`, used to resolve a wrapper's `socket_active` mode `param`.
 //
-.decl socket_opts_arg(id: symbol, caller: symbol, callee: symbol, pos: number, mode: symbol) mutable
-.input socket_opts_arg
+.decl socket_options_arg(id: symbol, caller: symbol, callee: symbol, pos: number, mode: symbol) mutable
+.input socket_options_arg
 
 // An enabled socket transport from an endpoint's compiled `__sockets__/0`. Records only present, non-false transports, matching Phoenix.
 //
@@ -1191,14 +1191,14 @@
 .decl statem_transition(mod: symbol, from_state: symbol, event: symbol, to_state: symbol) mutable
 .input statem_transition
 
-// A synchronous supervisor management call, with the target resolved from its first argument. These calls wait on the supervisor; starting a child waits for init, and terminating one waits for shutdown.
-//
-.decl sup_call(id: symbol, func: symbol, api: symbol, op: symbol, target: symbol) mutable
-.input sup_call
-
 // Module that implements the Supervisor behaviour.
 .decl supervisor(mod: symbol, strategy: symbol) mutable
 .input supervisor
+
+// A synchronous supervisor management call, with the target resolved from its first argument. These calls wait on the supervisor; starting a child waits for init, and terminating one waits for shutdown.
+//
+.decl supervisor_call(id: symbol, func: symbol, api: symbol, op: symbol, target: symbol) mutable
+.input supervisor_call
 
 // A supervisor child specification. Shorthand forms use restart `own`, resolved from `child_spec_restart` or argument-dependent `child_spec_option`, unless `Supervisor.child_spec/2` overrides it.
 //
@@ -1244,8 +1244,8 @@
 
 // An ETS allocation represented as a `table` points-to source. Its reference or registered name flows through parameters, returns, fields, and server state.
 //
-.decl table_alloc(id: symbol, func: symbol, table: symbol) mutable
-.input table_alloc
+.decl table_allocation(id: symbol, func: symbol, table: symbol) mutable
+.input table_allocation
 
 // An ETS operation's table source, resolved to possible allocations by `clientlib/tables.dl`.
 //

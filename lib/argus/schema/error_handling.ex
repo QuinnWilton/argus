@@ -258,7 +258,7 @@ defmodule Argus.Schema.ErrorHandling do
         """
       },
       %{
-        name: :recv_shape,
+        name: :receive_shape,
         layer: 2,
         fields: [
           {:id, :symbol, "the receive (its loop_rec)"},
@@ -269,7 +269,7 @@ defmodule Argus.Schema.ErrorHandling do
         doc: """
         A waiting receive clause's complete message shape: atom, tagged tuple, tuple \
         with a pinned first element, map, arbitrary tuple, or `any`. Unlike \
-        `recv_pattern`, reads the whole head. Excludes `after 0` polls \
+        `receive_pattern`, reads the whole head. Excludes `after 0` polls \
         (`Argus.Extractors.CallbackTag.MessageClauses.receive_shapes/2`).
         """
       },
@@ -477,7 +477,7 @@ defmodule Argus.Schema.ErrorHandling do
         """
       },
       %{
-        name: :recv_pattern,
+        name: :receive_pattern,
         layer: 2,
         fields: [
           {:id, :symbol, "the receive's loop_rec"},

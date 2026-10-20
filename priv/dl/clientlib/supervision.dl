@@ -169,13 +169,13 @@ on_demand_child(pool, child) :- added_child(pool, child, _, _, _).
 
 .decl boot_start(func: symbol, pool: symbol)
 
-boot_start(f, pool) :- sup_management_call(_, f, _, "start_child", pool).
+boot_start(f, pool) :- supervisor_management_call(_, f, _, "start_child", pool).
 
 boot_start(f, pool) :-
   call_edge(f, g),
-  sup_management_call(_, g, _, "start_child", pool).
+  supervisor_management_call(_, g, _, "start_child", pool).
 
-// Erlang's own `supervisor:start_child(Pool, Args)`, which sup_call (the
+// Erlang's own `supervisor:start_child(Pool, Args)`, which supervisor_call (the
 // Elixir APIs) does not name.
 boot_start(f, pool) :- erlang_start_child(f, pool).
 boot_start(f, pool) :- call_edge(f, g), erlang_start_child(g, pool).
@@ -247,20 +247,20 @@ sibling(sup, a, b) :-
   supervisor_child(sup, _, b, _, _),
   a != b.
 
-// Supervisor management APIs. Project sup_call to exclude GenServer.stop, which is also
+// Supervisor management APIs. Project supervisor_call to exclude GenServer.stop, which is also
 // recorded there under "GenServer".
-.decl sup_management_call(id: symbol, func: symbol, api: symbol, op: symbol, target: symbol)
+.decl supervisor_management_call(id: symbol, func: symbol, api: symbol, op: symbol, target: symbol)
 
-sup_management_call(id, func, api, op, target) :-
-  sup_call(id, func, api, op, target),
+supervisor_management_call(id, func, api, op, target) :-
+  supervisor_call(id, func, api, op, target),
   api != "GenServer".
 
 // Operations that create a child in the target supervisor.
-.decl child_creating_op(op: symbol)
+.decl child_creating_operation(op: symbol)
 
-child_creating_op("start_child").
-child_creating_op("async").
-child_creating_op("async_nolink").
+child_creating_operation("start_child").
+child_creating_operation("async").
+child_creating_operation("async_nolink").
 
 // Walk backward from dynamic child-start functions to all callers, restricting
 // traversal to code that can reach those starts.
@@ -274,15 +274,15 @@ child_start_reach.seed(start, start) :- dynamic_child(_, _, start).
 
 // Supervisor stop and termination operations wait for complete shutdown. Child starts
 // depend on initialization; explicit call timeouts bound the caller's wait.
-.decl unbounded_sup_op(op: symbol)
+.decl unbounded_supervisor_operation(op: symbol)
 
-unbounded_sup_op("terminate_child").
-unbounded_sup_op("restart_child").
-unbounded_sup_op("delete_child").
-unbounded_sup_op("stop").
+unbounded_supervisor_operation("terminate_child").
+unbounded_supervisor_operation("restart_child").
+unbounded_supervisor_operation("delete_child").
+unbounded_supervisor_operation("stop").
 
 // Operations that stop children.
-.decl stopping_sup_op(op: symbol)
+.decl stopping_supervisor_operation(op: symbol)
 
-stopping_sup_op("terminate_child").
-stopping_sup_op("stop").
+stopping_supervisor_operation("terminate_child").
+stopping_supervisor_operation("stop").

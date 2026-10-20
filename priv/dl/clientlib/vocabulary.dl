@@ -19,7 +19,7 @@ is_terminate(f, m) :- terminate_callback(f, m, _).
 .decl retrying_lock(site: symbol, func: symbol, op: symbol, retries: symbol, nodes: symbol)
 
 retrying_lock(site, f, op, retries, nodes) :-
-  global_op(site, f, op, retries, nodes),
+  global_operation(site, f, op, retries, nodes),
   retries != "0",
   retries != "dynamic".
 
@@ -29,7 +29,7 @@ retrying_lock(site, f, op, retries, nodes) :-
 .decl lock_until_granted(site: symbol, func: symbol, op: symbol, retries: symbol, nodes: symbol)
 
 lock_until_granted(site, f, op, retries, nodes) :-
-  global_op(site, f, op, retries, nodes),
+  global_operation(site, f, op, retries, nodes),
   (retries = "infinity" ; retries = "dynamic").
 
 // A :global lock with finite positive retries. Failed attempts back off up to eight
@@ -56,7 +56,7 @@ gives_up_after_retries(lock) :- bounded_lock(lock, _, _, _, _).
 // "local"): each try waits on them.
 .decl waits_on_other_nodes(lock: symbol)
 
-waits_on_other_nodes(lock) :- global_op(lock, _, _, _, nodes), nodes != "local".
+waits_on_other_nodes(lock) :- global_operation(lock, _, _, _, nodes), nodes != "local".
 
 // An :ets.new/2 site whose options include named_table. Its name, rather than the
 // returned reference, identifies the table.

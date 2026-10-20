@@ -297,10 +297,10 @@ defmodule Argus.Extractors.TermFlow do
       :field_load_match,
       :process_remote_var,
       :process_probe_var,
-      :table_alloc,
+      :table_allocation,
       :table_use,
-      :dict_op,
-      :dict_put,
+      :dictionary_operation,
+      :dictionary_put,
       :element_fun,
       :task_operation_var,
       :unmodeled_use
@@ -1964,7 +1964,7 @@ defmodule Argus.Extractors.TermFlow do
 
   defp emit_other(facts, at, _ictx, {:bif, :get, _fail, [key], _dst}) do
     spelled = dictionary_key(at.fun.instrs, at.idx, key)
-    add_fact(facts, :dict_op, [site(at.fun, at.idx), at.fun.func_id, "get", spelled])
+    add_fact(facts, :dictionary_operation, [site(at.fun, at.idx), at.fun.func_id, "get", spelled])
   end
 
   defp emit_other(facts, _at, _ictx, _instr), do: facts
@@ -1983,7 +1983,7 @@ defmodule Argus.Extractors.TermFlow do
     |> emit_probe(at, ictx, mfa)
     |> emit_resolver(at, mfa)
     |> emit_library(at, ictx)
-    |> emit_task_op(at, ictx, mfa)
+    |> emit_task_operation(at, ictx, mfa)
     |> emit_escape(at, ictx, site)
     |> emit_tail(at, ictx, site)
   end
@@ -2034,7 +2034,7 @@ defmodule Argus.Extractors.TermFlow do
 
     cond do
       Map.has_key?(@task_ops, called) ->
-        facts |> emit_loads(at, r) |> task_op_rows(at, Map.fetch!(@task_ops, called), hd(values))
+        facts |> emit_loads(at, r) |> task_operation_rows(at, Map.fetch!(@task_ops, called), hd(values))
 
       # A signal captured as the fun (`&Process.monitor/1`) goes to each
       # element it is handed.
@@ -2075,14 +2075,14 @@ defmodule Argus.Extractors.TermFlow do
 
   defp run_rows(facts, _at, _ictx, _runs, _params, _path), do: facts
 
-  defp emit_task_op(facts, at, ictx, mfa) do
+  defp emit_task_operation(facts, at, ictx, mfa) do
     case Map.fetch(@task_ops, mfa) do
-      {:ok, op} -> task_op_rows(facts, at, op, val(ictx, {:x, 0}))
+      {:ok, op} -> task_operation_rows(facts, at, op, val(ictx, {:x, 0}))
       :error -> facts
     end
   end
 
-  defp task_op_rows(facts, at, op, value),
+  defp task_operation_rows(facts, at, op, value),
     do: sources(facts, at, :task_operation_var, [site(at.fun, at.idx), at.fun.func_id, op], value)
 
   # Every argument of a call outside the program that value flow does not
@@ -2116,7 +2116,7 @@ defmodule Argus.Extractors.TermFlow do
     end
   end
 
-  # A put under a key not known is a value no `dict_put` row keeps.
+  # A put under a key not known is a value no `dictionary_put` row keeps.
   defp kept_in_dictionary?(at, _ictx, mfa) do
     Map.fetch!(@dictionary_ops, mfa) != "put" or
       dictionary_key(at.fun.instrs, at.idx, {:x, 0}) != "dynamic"
@@ -2296,7 +2296,7 @@ defmodule Argus.Extractors.TermFlow do
   # it: the reference an unnamed table is, or the name a named table is
   # answered with. Every other `:ets` call names its table in x0.
   defp emit_table(facts, at, _ictx, {:ets, :new, 2}) do
-    add_fact(facts, :table_alloc, [site(at.fun, at.idx), at.fun.func_id, table(at.fun, at.idx)])
+    add_fact(facts, :table_allocation, [site(at.fun, at.idx), at.fun.func_id, table(at.fun, at.idx)])
   end
 
   defp emit_table(facts, at, ictx, {:ets, _func, arity}) when arity > 0 do
@@ -2317,10 +2317,10 @@ defmodule Argus.Extractors.TermFlow do
             do: "dynamic",
             else: dictionary_key(at.fun.instrs, at.idx, {:x, 0})
 
-        facts = add_fact(facts, :dict_op, [id, at.fun.func_id, op, key])
+        facts = add_fact(facts, :dictionary_operation, [id, at.fun.func_id, op, key])
 
         if op == "put" and key != "dynamic",
-          do: sources(facts, at, :dict_put, [id, at.fun.func_id, key], val(ictx, {:x, 1})),
+          do: sources(facts, at, :dictionary_put, [id, at.fun.func_id, key], val(ictx, {:x, 1})),
           else: facts
 
       :error ->
@@ -2691,7 +2691,7 @@ defmodule Argus.Extractors.TermFlow do
     do: add_fact(facts, :process_probe_var, row)
 
   defp emit_row(facts, :table_use, row), do: add_fact(facts, :table_use, row)
-  defp emit_row(facts, :dict_put, row), do: add_fact(facts, :dict_put, row)
+  defp emit_row(facts, :dictionary_put, row), do: add_fact(facts, :dictionary_put, row)
   defp emit_row(facts, :task_operation_var, row), do: add_fact(facts, :task_operation_var, row)
   defp emit_row(facts, :unmodeled_use, row), do: add_fact(facts, :unmodeled_use, row)
 

@@ -48,9 +48,9 @@ site_table(n, "named", name) :- site_name(n, name), !named_site(n), !ets_options
 // into them. Analyses can add further seeds.
 .decl table_param_needed(func: symbol, pos: symbol)
 
-table_param_needed(f, p) :- ets_table_path(id, "param", p, ""), ets_op(id, f, _, _, _).
+table_param_needed(f, p) :- ets_table_path(id, "param", p, ""), ets_operation(id, f, _, _, _).
 table_param_needed(f, p) :- ets_table_path(id, "param", p, ""), ets_new(id, f, _).
-table_param_needed(f, to_string(p)) :- ets_op_param(id, p), ets_op(id, f, _, _, _).
+table_param_needed(f, to_string(p)) :- ets_operation_param(id, p), ets_operation(id, f, _, _, _).
 
 table_param_needed(c, to_string(m)) :-
   table_param_needed(f, p),
@@ -136,18 +136,18 @@ param_table(f, p, "handed_in", cat("param ", cat(q, cat(" of ", w)))) :-
 
 // A name spelled at the operation, alone or as one arm.
 known_table(id, "named", name) :-
-  ets_op(id, _, _, _, _),
+  ets_operation(id, _, _, _, _),
   ets_table_path(id, "literal", name, "").
 
 // What the parameter holds.
 known_table(id, k, t) :-
-  ets_op(id, f, _, _, _),
+  ets_operation(id, f, _, _, _),
   ets_table_path(id, "param", p, ""),
   param_table(f, p, k, t).
 
 known_table(id, k, t) :-
-  ets_op(id, f, _, _, _),
-  ets_op_param(id, p),
+  ets_operation(id, f, _, _, _),
+  ets_operation_param(id, p),
   param_table(f, p_text, k, t), p_text = to_string(p).
 
 // Points-to table identities for an operand. Field-insensitive results of a selective stage are
@@ -156,7 +156,7 @@ known_table(id, k, t) :-
   table_use(id, f, sk, s),
   var_table(f, sk, s, x),
   !approximated_table(x),
-  table_alloc(n, _, x),
+  table_allocation(n, _, x),
   site_table(n, k, t).
 
 // A creation site is the table it makes.
@@ -175,7 +175,7 @@ has_known_table(id) :- known_table(id, _, _).
 ets_table(id, "field", cat(mod, cat(" ", path))) :-
   ets_table_path(id, "param", _, path),
   path != "",
-  ets_op(id, f, _, _, _),
+  ets_operation(id, f, _, _, _),
   !has_known_table(id),
   function_def(f, mod, _, _, _).
 
@@ -183,7 +183,7 @@ ets_table(id, "field", cat(mod, cat(" ", path))) :-
 // ── Where a table is made ───────────────────────────────────────────
 
 // Possible :ets.new/2 allocation sites. Named and allocation-site tables use their own
-// sites. Field tables use ets_op's extracted table name as a fallback. Handed-in tables
+// sites. Field tables use ets_operation's extracted table name as a fallback. Handed-in tables
 // have no visible allocation.
 .decl table_made_at(kind: symbol, ident: symbol, site: symbol)
 
@@ -191,7 +191,7 @@ table_made_at(k, t, n) :- site_table(n, k, t).
 
 table_made_at("field", t, n) :-
   ets_table(id, "field", t),
-  ets_op(id, _, name, _, _),
+  ets_operation(id, _, name, _, _),
   name != "dynamic",
   ets_new(n, _, name).
 
@@ -208,7 +208,7 @@ table_made_out_of_view("handed_in", t) :- ets_table(_, "handed_in", t).
 // identity.
 .decl may_touch_any_table(id: symbol)
 
-may_touch_any_table(id) :- ets_op(id, _, _, _, _), !names_a_table(id).
+may_touch_any_table(id) :- ets_operation(id, _, _, _, _), !names_a_table(id).
 
 // The operation names a table: a named one, which is its name whoever
 // makes it, or one a site in view makes.
@@ -248,14 +248,14 @@ table_public(k, t) :-
 
 kept_by_its_process("new", n) :-
   site_table(n, "new", n),
-  table_alloc(n, _, x),
+  table_allocation(n, _, x),
   kept_in_dictionary(x),
   !handed_to_another("new", n).
 
 // A table some :ets.give_away/3 hands to another process.
 .decl handed_to_another(kind: symbol, ident: symbol)
 
-handed_to_another(k, t) :- ets_op(id, _, _, "give_away", _), ets_table(id, k, t).
+handed_to_another(k, t) :- ets_operation(id, _, _, "give_away", _), ets_table(id, k, t).
 
 // ── Tables across calls ─────────────────────────────────────────────
 

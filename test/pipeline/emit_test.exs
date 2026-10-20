@@ -531,14 +531,14 @@ defmodule Argus.Pipeline.EmitTest do
   end
 
   describe "message facts" do
-    test "emits send_msg" do
+    test "emits send_message" do
       facts = emit_func([:send])
-      assert [[_id, _caller]] = facts[:send_msg]
+      assert [[_id, _caller]] = facts[:send_message]
     end
 
-    test "emits recv_start for loop_rec" do
+    test "emits receive_start for loop_rec" do
       facts = emit_func([{:loop_rec, {:f, 5}, {:x, 0}}])
-      assert [[_id, _caller, _blocking, "5"]] = facts[:recv_start]
+      assert [[_id, _caller, _blocking, "5"]] = facts[:receive_start]
     end
 
     # Phoenix's Channel.Server.close/2: a grace period for the :DOWN, then
@@ -561,7 +561,7 @@ defmodule Argus.Pipeline.EmitTest do
         ])
 
       assert [["TestMod:test_func/0#1", _, "0", "2"], ["TestMod:test_func/0#7", _, "1", "4"]] =
-               Enum.sort(facts[:recv_start])
+               Enum.sort(facts[:receive_start])
     end
 
     # io's execute_request/3: after the :DOWN, a look for the :EXIT with
@@ -583,7 +583,7 @@ defmodule Argus.Pipeline.EmitTest do
         ])
 
       assert [["TestMod:test_func/0#1", _, "0", "2"], ["TestMod:test_func/0#6", _, "1", "4"]] =
-               Enum.sort(facts[:recv_start])
+               Enum.sort(facts[:receive_start])
     end
   end
 
