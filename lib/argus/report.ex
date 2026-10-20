@@ -45,7 +45,7 @@ defmodule Argus.Report do
     Argus.Locate.Source.within(fn ->
       for {_analysis, {:ok, placed}} <- Enum.sort(located),
           one <- placed,
-          not ignored_finding?(one.finding, config),
+          not Argus.Config.ignores_finding?(config, one.finding),
           %Entry{} = entry <- [Entry.from_located(one)],
           not ignored_file?(entry.file, config, cwd) do
         %{entry | severity: Map.get(config.severity, entry.analysis, entry.severity)}
@@ -111,14 +111,6 @@ defmodule Argus.Report do
 
   defp strip_private("/private/" <> rest), do: "/" <> rest
   defp strip_private(path), do: path
-
-  defp ignored_finding?(%{analysis: analysis, module: module, mfa: mfa}, config) do
-    Enum.any?(config.ignore_findings, fn
-      {^analysis, {_, _, _} = target} -> target == mfa
-      {^analysis, target} -> target == module
-      _other -> false
-    end)
-  end
 
   defp ignored_file?(file, config, cwd) do
     rel = relative(file, cwd)

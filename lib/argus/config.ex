@@ -59,7 +59,8 @@ defmodule Argus.Config do
   (`{:shutdown, MyApp.Writer}`) or a function (`{:races, {MyApp.Reading,
   :retry, 2}}`), its analysis named as `severity:` names it (a set stands
   for its members): the finding someone looked at and kept, without
-  hiding the rest of the module's.
+  hiding the rest of the module's. The module and the function are the
+  ones the finding is reported in, its first frame.
 
   Every key, at every level, is validated: an invalid entry raises
   `Argus.ConfigError` naming where it is (in its source's own syntax),
@@ -95,8 +96,16 @@ defmodule Argus.Config do
   ]
   defstruct @enforce_keys
 
-  @typedoc "One analysis's findings left out in a module, or in a function."
-  @type ignored_finding :: {atom(), module() | mfa()}
+  @typedoc """
+  An `ignore: [findings: ...]` entry: as written (`entry`), and the
+  analyses its name stands for (a set, its members) with the module or
+  function their findings are left out in.
+  """
+  @type ignored_finding :: %{
+          entry: {atom(), module() | mfa()},
+          analyses: [atom()],
+          target: module() | mfa()
+        }
 
   @typedoc """
   `priors:` — `:off` (default), `:cached_only` or `:live`, or a keyword
@@ -172,6 +181,48 @@ defmodule Argus.Config do
       engine: enum!(ctx, [:engine], Keyword.get(raw, :engine, :warn), [:warn, :require]),
       priors: priors!(ctx, Keyword.get(raw, :priors, :off))
     }
+  end
+
+  @doc """
+  Whether `config` leaves out `finding` (`ignore: [findings: ...]`): an
+  entry names its analysis and the function it is reported in (or the
+  one a fun or a comprehension is written in), or its module.
+  """
+  @spec ignores_finding?(t(), %{analysis: atom(), module: module() | nil, mfa: mfa() | nil}) ::
+          boolean()
+  def ignores_finding?(%__MODULE__{ignore_findings: entries}, finding),
+    do: Enum.any?(entries, &ignore_matches?(&1, finding))
+
+  @doc "Whether one `ignore: [findings: ...]` entry matches `finding`."
+  @spec ignore_matches?(ignored_finding(), %{
+          analysis: atom(),
+          module: module() | nil,
+          mfa: mfa() | nil
+        }) ::
+          boolean()
+  def ignore_matches?(%{analyses: analyses, target: target}, finding) do
+    finding.analysis in analyses and
+      case {target, finding.mfa} do
+        {{_, _, _}, {_, _, _} = mfa} -> target == mfa or within?(target, mfa)
+        {{_, _, _}, nil} -> false
+        {module, _} -> module == finding.module
+      end
+  end
+
+  defp within?({module, function, arity}, {module, _, _} = mfa),
+    do: enclosing(mfa) == {Atom.to_string(function), arity}
+
+  defp within?(_target, _mfa), do: false
+
+  # A function the compiler makes of a fun or a comprehension
+  # (`-run/1-fun-0-`) is named after the one it is written in, which is
+  # the function someone ignoring its findings names: that one's name
+  # and arity, else nil.
+  defp enclosing({_module, function, _arity}) do
+    case Regex.run(~r{^-(.+)/(\d+)-[a-z]+[-$]}, Atom.to_string(function)) do
+      [_, name, parent] -> {name, String.to_integer(parent)}
+      nil -> nil
+    end
   end
 
   @doc """
@@ -513,7 +564,7 @@ defmodule Argus.Config do
         end
 
         target = finding_target!(ctx, entry, target)
-        Enum.map(resolve(analysis), &{&1, target})
+        [%{entry: {analysis, target}, analyses: resolve(analysis), target: target}]
 
       other ->
         fail(

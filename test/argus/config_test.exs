@@ -148,10 +148,27 @@ defmodule Argus.ConfigTest do
 
       {:ok, otp} = Argus.Analysis.set(:otp)
 
-      assert config.ignore_findings ==
-               [{:shutdown, MyApp.Writer} | Enum.map(otp, &{&1, {MyApp.Reading, :retry, 2}})]
+      assert config.ignore_findings == [
+               %{entry: {:shutdown, MyApp.Writer}, analyses: [:shutdown], target: MyApp.Writer},
+               %{
+                 entry: {:otp, {MyApp.Reading, :retry, 2}},
+                 analyses: otp,
+                 target: {MyApp.Reading, :retry, 2}
+               }
+             ]
 
       assert Config.load([]).ignore_findings == []
+    end
+
+    test "an ignored function covers the funs and comprehensions written in it" do
+      config = Config.load(ignore: [findings: [{:shutdown, {MyApp.Writer, :run, 1}}]])
+      finding = &%{analysis: :shutdown, module: MyApp.Writer, mfa: {MyApp.Writer, &1, 1}}
+
+      assert Config.ignores_finding?(config, finding.(:run))
+      assert Config.ignores_finding?(config, finding.(:"-run/1-fun-0-"))
+      assert Config.ignores_finding?(config, finding.(:"-run/1-lc$^0/1-0-"))
+      refute Config.ignores_finding?(config, finding.(:"-other/1-fun-0-"))
+      refute Config.ignores_finding?(config, %{finding.(:run) | analysis: :races})
     end
 
     test "ignore findings names a known analysis, and a module or a function" do
@@ -262,7 +279,7 @@ defmodule Argus.ConfigTest do
       assert [:my_gen, %Regex{source: "^my_app_gen_"}] = config.ignore_modules
       assert config.ignore_files == ["src/legacy/**"]
 
-      assert config.ignore_findings == [
+      assert Enum.map(config.ignore_findings, & &1.entry) == [
                {:shutdown, :my_writer},
                {:races, {:my_reading, :retry, 2}}
              ]
