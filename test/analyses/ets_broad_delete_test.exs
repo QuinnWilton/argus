@@ -14,6 +14,7 @@ defmodule Argus.Analyses.EtsBroadDeleteTest do
     B.ReleaseReadWaiters,
     B.CancelClaim,
     B.CancelOwnRow,
+    B.CancelNormal,
     B.ReleaseOwnClaim,
     B.OwnerCancels,
     B.TaskTables
@@ -52,6 +53,10 @@ defmodule Argus.Analyses.EtsBroadDeleteTest do
     test "takes a claim made after the kill: roux 0.3.4's kill_task/4", ctx do
       assert deletes(ctx, B.CancelClaim) == [{"cancel/2", ":cancel_claims", "after_kill"}]
       assert frames(ctx, B.CancelClaim, "rival") == ["claim/1"]
+    end
+
+    test "is quiet after an exit signal of reason :normal, which kills no claimant", ctx do
+      assert deletes(ctx, B.CancelNormal) == []
     end
 
     test "is quiet when it deletes the killed process's own row: roux's fix", ctx do

@@ -63,6 +63,13 @@ call_instr(f, g, id) :-
 
 in_module(f, m) :- function_def(f, m, _, _, _).
 
+// An exit signal `func` sends at `id` that may stop its target: exit/2 to a process
+// other than itself, unless its reason is `:normal`, which stops no process that does
+// not trap exits (exit_reason) and reaches one that does as a message.
+.decl stopping_exit(id: symbol, func: symbol, target: symbol)
+
+stopping_exit(id, f, t) :- exit_call(id, f, t), t != "self", !exit_reason(id, ":normal").
+
 // Full transitive reach over staged call edges, retained for custom programs and pruned
 // when unused. Built-in analyses instead seed targeted propagation to avoid a
 // potentially quadratic closure.

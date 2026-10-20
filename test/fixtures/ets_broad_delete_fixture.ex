@@ -66,6 +66,22 @@ defmodule Argus.Test.Fixtures.EtsBroadDelete do
     end
   end
 
+  defmodule CancelNormal do
+    @moduledoc """
+    CancelClaim's twin signalling the claimant with reason :normal, which a
+    claimant that does not trap exits ignores: it keeps its claim, and the
+    delete is no cleanup after a kill.
+    """
+    def start, do: :ets.new(:normal_claims, [:named_table, :public])
+
+    def claim(key), do: :ets.insert_new(:normal_claims, {key, self()})
+
+    def cancel(key, pid) do
+      Process.exit(pid, :normal)
+      :ets.delete(:normal_claims, key)
+    end
+  end
+
   defmodule CancelOwnRow do
     @moduledoc "The fix: delete the killed claimant's own row, and a new claim stays."
     def start, do: :ets.new(:own_row_claims, [:named_table, :public])

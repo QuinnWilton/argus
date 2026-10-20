@@ -1528,10 +1528,10 @@ ets_race_frame(w_at, "rival", w2, h) :-
 
 key_delete(d, f) :- ets_op(d, f, _, "delete", "write"), op_key(d, _, _).
 
-// An exit signal to another process.
+// An exit signal that may stop another process (stopping_exit: not `:normal`).
 .decl kills(site: symbol, func: symbol)
 
-kills(e, f) :- exit_call(e, f, _), remote_call(e, f, ":erlang", "exit", 2).
+kills(e, f) :- stopping_exit(e, f, _), remote_call(e, f, ":erlang", "exit", 2).
 
 // Reads answering a key's rows.
 .decl row_read_op(op: symbol)

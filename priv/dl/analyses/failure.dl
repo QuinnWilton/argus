@@ -256,11 +256,12 @@ exit_target_owner(func, child, sup, sup_site) :-
   exits_supervised_child(exit, child, sup),
   supervisor_site(sup, sup_site).
 
-// An exit/2 signal to another process. Exclude exit/1, represented by target self: it
-// raises locally and remains visible to supervision.
+// An exit/2 signal to another process that may stop it (stopping_exit). Exclude
+// exit/1, represented by target self: it raises locally and remains visible to
+// supervision; and a `:normal` reason, which stops no process that does not trap exits.
 .decl sends_exit_signal(exit: symbol, func: symbol, target: symbol)
 
-sends_exit_signal(exit, func, target) :- exit_call(exit, func, target), target != "self".
+sends_exit_signal(exit, func, target) :- stopping_exit(exit, func, target).
 
 // A message handler of a server runs the exit, itself or in what it runs
 // in its own process.

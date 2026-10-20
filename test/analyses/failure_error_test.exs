@@ -13,6 +13,7 @@ defmodule Argus.Analyses.FailureErrorTest do
     Argus.Test.Fixtures.ExitSignals.Tree,
     Argus.Test.Fixtures.ExitSignals.Worker,
     Argus.Test.Fixtures.ExitSignals.Killer,
+    Argus.Test.Fixtures.ExitSignals.NormalSignals,
     Argus.Test.Fixtures.BareRescue,
     Argus.Test.Fixtures.FilteredRescue,
     Argus.Test.Fixtures.ReifyingRescue,
@@ -173,6 +174,14 @@ defmodule Argus.Analyses.FailureErrorTest do
       results = analyze(ctx, [Argus.Test.Fixtures.SelfCrashCallback])
 
       assert exits(results) == []
+    end
+
+    test "an exit signal of reason :normal stops nothing, to a child or to any process", ctx do
+      alias Argus.Test.Fixtures.ExitSignals
+
+      results = analyze(ctx, [ExitSignals.Tree, ExitSignals.Worker, ExitSignals.NormalSignals])
+
+      assert Rows.where(results, :failure, "orphan_process", drop: []) == []
     end
 
     test "an exit to a process the server started itself is its own to stop", ctx do

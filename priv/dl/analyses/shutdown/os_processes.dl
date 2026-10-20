@@ -27,7 +27,7 @@ kills_task(f, id, p, "Task.shutdown") :- task_handled(f, id, "shutdown", p).
 kills_task(f, id, p, "Process.exit") :-
   signal_target(id, f, "exit", p),
   task_started(p),
-  !exit_reason(id, ":normal").
+  stopping_exit(id, f, _).
 
 // A process a Task start allocates (task_handled holds only those).
 .decl task_started(p: symbol)

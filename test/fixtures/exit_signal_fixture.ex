@@ -65,6 +65,33 @@ defmodule Argus.Test.Fixtures.ExitSignals do
     end
   end
 
+  defmodule NormalSignals do
+    @moduledoc """
+    Killer's twin signalling with reason :normal, to the supervised worker and
+    to a pid it is handed: a process that does not trap exits ignores the
+    signal, so neither is a kill.
+    """
+    use GenServer
+
+    alias Argus.Test.Fixtures.ExitSignals.Worker
+
+    def start_link(_), do: GenServer.start_link(__MODULE__, :ok)
+
+    @impl true
+    def init(:ok), do: {:ok, nil}
+
+    @impl true
+    def handle_cast(:nudge, s) do
+      Process.exit(Process.whereis(Worker), :normal)
+      {:noreply, s}
+    end
+
+    def handle_cast({:nudge, pid}, s) do
+      Process.exit(pid, :normal)
+      {:noreply, s}
+    end
+  end
+
   defmodule Watched do
     @moduledoc "Spawns processes it monitors or links to: their crashes are seen."
     def monitored do
