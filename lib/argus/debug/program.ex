@@ -106,8 +106,8 @@ defmodule Argus.Debug.Program do
           [
             program,
             "rules/points_to.dl",
-            "rules/points_to_bounded.dl",
-            "rules/points_to_coarse.dl"
+            "rules/points_to_selective.dl",
+            "rules/points_to_field_insensitive.dl"
           ]
 
         true ->

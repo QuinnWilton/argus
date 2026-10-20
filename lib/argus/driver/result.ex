@@ -23,12 +23,12 @@ defmodule Argus.Driver.Result do
       needed them may be missing.
     * `{:duplicate, duplicate}` — a module more than one scanned ebin
       defines: which beam is analyzed, and which are passed over.
-    * `{:points_to_bounded, leaves}` — the process points-to stage
-      outgrew its budget and ran bounded, resolving `leaves` coarsely
-      (a sound superset of their exact rows).
-    * `{:points_to_coarse, leaves}` — the bounded stage outgrew the
-      budget too, and the stage ran coarse: every leaf (`leaves`)
-      resolved coarsely.
+    * `{:points_to_selective, hubs}` — the points-to stage outgrew its
+      budget and ran selective, resolving the hub objects `hubs`
+      field-insensitively (a sound superset of their full rows).
+    * `{:points_to_field_insensitive, objects}` — the selective stage
+      outgrew the budget too, and the stage ran field-insensitive:
+      every object (`objects`) resolved that way.
   """
 
   @enforce_keys [:located, :notices, :changed?]
@@ -49,8 +49,8 @@ defmodule Argus.Driver.Result do
           :engine_unavailable
           | {:extraction_error, extraction_error()}
           | {:duplicate, duplicate()}
-          | {:points_to_bounded, [String.t()]}
-          | {:points_to_coarse, [String.t()]}
+          | {:points_to_selective, [String.t()]}
+          | {:points_to_field_insensitive, [String.t()]}
 
   @type t :: %__MODULE__{
           located: %{optional(atom()) => {:ok, [Argus.Located.t()]} | {:error, term()}},

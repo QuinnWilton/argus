@@ -88,7 +88,7 @@ defmodule Argus.Priors.Questions.PeerAnswers do
 
   # Every server that answers calls: what its handle_call/3 does is what
   # a caller waits on. The rules find the server a call reaches through
-  # registered names and process points-to; asking every server keeps
+  # registered names and points-to; asking every server keeps
   # that reasoning in one place, and a server is one request.
   defp servers(facts, index) do
     names = facts |> Map.get(:named_process, []) |> Enum.group_by(& &1.mod, & &1.name)

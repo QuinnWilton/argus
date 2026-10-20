@@ -43,7 +43,7 @@ defmodule Argus.Graph.Identity.DeclaredDigestTest do
       [
         Path.join(dl, "stage0.dl"),
         Path.join(dl, "points_to.dl"),
-        Path.join(dl, "points_to_bounded.dl")
+        Path.join(dl, "points_to_selective.dl")
       ] ++
         Enum.sort(Path.wildcard(Path.join(dl, "analyses/*.dl")))
 

@@ -74,7 +74,7 @@ defmodule Argus.Analyses.Shutdown do
       # What a function runs, and hands on, when a parameter holds the
       # :shutdown a supervisor's stop passes terminate/2.
       Argus.Extractors.ShutdownReason,
-      # A call whose target is a pid resolves through process points-to
+      # A call whose target is a pid resolves through points-to
       # (clientlib/processes.dl, in the points-to stage): where the pid was
       # started, and names.
       Argus.Extractors.TermFlow,

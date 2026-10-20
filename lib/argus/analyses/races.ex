@@ -100,7 +100,7 @@ defmodule Argus.Analyses.Races do
 
   A table is what `clientlib/tables.dl` says an operation may touch:
   `named` and its name, `new` and the `:ets.new/2` site that made it
-  (followed as process points-to follows a pid), or, where neither is
+  (followed as points-to follows a pid), or, where neither is
   known, `field` and the module and map path it is read under. A site
   that makes a table per element of a collection (in a closure or a
   comprehension body, or a function calling itself) and whose tables are

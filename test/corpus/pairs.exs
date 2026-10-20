@@ -101,7 +101,8 @@
     issue: "CVE-2026-82722",
     module: "AshAdmin.Components.Resource.Show",
     pre: "0a90527021ad01101e308de5b906d9475a3d0a5b",
-    finding: {:unsafe_input, "Unbounded atom creation fed by request data from a LiveComponent event"}
+    finding:
+      {:unsafe_input, "Unbounded atom creation fed by request data from a LiveComponent event"}
   },
   # absinthe builds a parsed directive's identifier with String.to_atom on the
   # directive name (Absinthe.Language.DirectiveDefinition), so a document with
@@ -121,7 +122,8 @@
     issue: "CVE-2026-8469",
     module: "PhoenixStorybook.Story.Playground",
     pre: "56ab8464d4375fa52db806148a06cce126ad481d",
-    finding: {:unsafe_input, "Unbounded atom creation fed by request data from a LiveComponent event"}
+    finding:
+      {:unsafe_input, "Unbounded atom creation fed by request data from a LiveComponent event"}
   },
   %{
     repo: "ash-project/ash_ai",

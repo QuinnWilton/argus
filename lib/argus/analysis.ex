@@ -274,13 +274,13 @@ defmodule Argus.Analysis do
   @spec points_to_rules_path() :: Path.t()
   defdelegate points_to_rules_path(), to: Extraction
 
-  @doc "The path to the bounded points-to stage's rules file."
-  @spec points_to_bounded_rules_path() :: Path.t()
-  defdelegate points_to_bounded_rules_path(), to: Extraction
+  @doc "The path to the selective points-to stage's rules file."
+  @spec points_to_selective_rules_path() :: Path.t()
+  defdelegate points_to_selective_rules_path(), to: Extraction
 
-  @doc "The path to the coarse points-to stage's rules file."
-  @spec points_to_coarse_rules_path() :: Path.t()
-  defdelegate points_to_coarse_rules_path(), to: Extraction
+  @doc "The path to the field-insensitive points-to stage's rules file."
+  @spec points_to_field_insensitive_rules_path() :: Path.t()
+  defdelegate points_to_field_insensitive_rules_path(), to: Extraction
 
   @doc "The relations the points-to stage writes."
   @spec points_to_relations() :: [String.t()]

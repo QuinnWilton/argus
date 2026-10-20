@@ -90,7 +90,7 @@ defmodule Argus.Analysis.SharedStageTest do
     fi
     """
 
-    proxied(["points_to.dl", "points_to_bounded.dl"], "", hold, fn ->
+    proxied(["points_to.dl", "points_to_selective.dl"], "", hold, fn ->
       first = Task.async(fn -> Analysis.derive_points_to(dir) end)
       await_mark!(marks, "holding")
 
@@ -99,10 +99,10 @@ defmodule Argus.Analysis.SharedStageTest do
       assert :ok = Task.await(first, 60_000)
     end)
 
-    assert File.read!(Path.join(dir, "points_to_mode.facts")) == "exact\n"
+    assert File.read!(Path.join(dir, "points_to_mode.facts")) == "full\n"
     # Neither report is left among the facts.
     refute File.exists?(Path.join(dir, "points_to_overflow.csv"))
-    refute File.exists?(Path.join(dir, "pervasive.csv"))
+    refute File.exists?(Path.join(dir, "hub_object.csv"))
     assert dir |> File.ls!() |> Enum.filter(&String.starts_with?(&1, ".")) == []
   end
 
@@ -126,7 +126,7 @@ defmodule Argus.Analysis.SharedStageTest do
       programs =
         if unquote(derive) == :derive_stage0,
           do: ["stage0.dl"],
-          else: ["points_to.dl", "points_to_bounded.dl"]
+          else: ["points_to.dl", "points_to_selective.dl"]
 
       proxied(
         programs,

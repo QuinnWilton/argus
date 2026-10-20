@@ -17,10 +17,10 @@ defmodule Argus.Report.Notice do
       the analyses ran without those facts;
     * `:duplicate` — a module more than one ebin defines, and which beam
       was analyzed;
-    * `:points_to_bounded` — the process points-to stage outgrew its
-      budget and ran bounded;
-    * `:points_to_coarse` — it outgrew the budget bounded too, and ran
-      coarse;
+    * `:points_to_selective` — the points-to stage outgrew its budget
+      and ran selective;
+    * `:points_to_field_insensitive` — it outgrew the budget selective
+      too, and ran field-insensitive;
     * `:stale` — sources newer than their beams (the escript, which
       never builds): the findings are about the code as last built;
     * `:unused_ignore` — an `ignore: [findings: ...]` entry that left
@@ -38,8 +38,8 @@ defmodule Argus.Report.Notice do
           | :degraded
           | :extraction_error
           | :duplicate
-          | :points_to_bounded
-          | :points_to_coarse
+          | :points_to_selective
+          | :points_to_field_insensitive
           | :stale
           | :unused_ignore
 
@@ -79,8 +79,10 @@ defmodule Argus.Report.Notice do
 
   defp of({:extraction_error, error}, _cwd), do: extraction_error(error)
   defp of({:duplicate, duplicate}, cwd), do: duplicate(duplicate, cwd)
-  defp of({:points_to_bounded, leaves}, _cwd), do: points_to_bounded(leaves)
-  defp of({:points_to_coarse, leaves}, _cwd), do: points_to_coarse(leaves)
+  defp of({:points_to_selective, hubs}, _cwd), do: points_to_selective(hubs)
+
+  defp of({:points_to_field_insensitive, objects}, _cwd),
+    do: points_to_field_insensitive(objects)
 
   @doc """
   The engines cannot be built here (`Argus.FlowLog.Toolchain`). Under
@@ -167,37 +169,39 @@ defmodule Argus.Report.Notice do
   end
 
   @doc """
-  The process points-to stage outgrew its budget and ran bounded: the
-  leaves it resolved coarsely have a sound superset of their exact rows,
-  so a finding about one of them may be a false alarm.
+  The points-to stage outgrew its budget and ran selective: the hub
+  objects it resolved field-insensitively have a sound superset of
+  their full rows, so a finding about one of them may be a false alarm.
   """
-  @spec points_to_bounded([String.t()]) :: t()
-  def points_to_bounded(leaves) do
-    count = length(leaves)
+  @spec points_to_selective([String.t()]) :: t()
+  def points_to_selective(hubs) do
+    count = length(hubs)
 
     notice(
-      :points_to_bounded,
+      :points_to_selective,
       :info,
-      "the process points-to stage outgrew its budget and ran bounded: " <>
-        "#{count} pervasive #{if count == 1, do: "term was", else: "terms were"} resolved " <>
-        "coarsely, so findings about the processes #{if count == 1, do: "it holds", else: "they hold"} " <>
+      "the points-to stage outgrew its budget and ran selective: " <>
+        "#{count} hub #{if count == 1, do: "term was", else: "terms were"} resolved " <>
+        "field-insensitively, so findings about the processes " <>
+        "#{if count == 1, do: "it holds", else: "they hold"} " <>
         "may include some that cannot happen"
     )
   end
 
   @doc """
-  The process points-to stage outgrew its budget bounded too and ran
-  coarse: every leaf resolved coarsely, so a finding about any process
-  may be a false alarm.
+  The points-to stage outgrew its budget selective too and ran
+  field-insensitive: every object resolved that way, so a finding about
+  any process may be a false alarm.
   """
-  @spec points_to_coarse([String.t()]) :: t()
-  def points_to_coarse(leaves) do
+  @spec points_to_field_insensitive([String.t()]) :: t()
+  def points_to_field_insensitive(objects) do
     notice(
-      :points_to_coarse,
+      :points_to_field_insensitive,
       :info,
-      "the process points-to stage outgrew its budget, bounded too, and ran coarse: " <>
-        "every term holding a process (#{length(leaves)}) was resolved coarsely, so " <>
-        "findings about any process may include some that cannot happen"
+      "the points-to stage outgrew its budget, selective too, and ran field-insensitive: " <>
+        "every term holding a process (#{length(objects)}) was resolved " <>
+        "field-insensitively, so findings about any process may include some " <>
+        "that cannot happen"
     )
   end
 

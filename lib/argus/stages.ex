@@ -1,10 +1,10 @@
 defmodule Argus.Stages do
   @moduledoc """
-  How the process points-to stage is solved, whoever solves it: the
-  exact program, the bounded one in its place when the exact fixpoint
-  outgrows its budget, and the coarse one when even the bounded one
-  does (`Argus.Analysis.Extraction.derive_points_to/2` says why). Which
-  one runs is a function of the facts, never of time:
+  How the points-to stage is solved, whoever solves it: the full
+  program, the selective one in its place when the full fixpoint
+  outgrows its budget, and the field-insensitive one when even the
+  selective one does (`Argus.Analysis.Extraction.derive_points_to/2`
+  says why). Which one runs is a function of the facts, never of time:
   each program counts its fixpoint's rows and writes `points_to_overflow`,
   the relations that reached the budget (`priv/dl/points_to.dl`), or its
   engine stops it as one of them grows past (`{:limitsize, ...}`), which
@@ -12,26 +12,27 @@ defmodule Argus.Stages do
 
   A facts directory's derivation (`Argus.Analysis.Extraction`) and the
   query graph (`Argus.Graph.Solve`, over the blob store) each solve the
-  programs their own way and hand that to `points_to/4`, so the policy
+  programs their own way and hand that to `points_to/5`, so the policy
   is written once.
   """
 
   require Logger
 
   @typedoc """
-  Which program's outputs the stage has: the exact one's, or the
-  bounded or coarse one's with the leaves its coarse pass resolved
-  (every leaf, for the coarse one).
+  Which program's outputs the stage has: the full one's, or the
+  selective or field-insensitive one's with the hub objects its
+  field-insensitive pass resolved (every object, for the
+  field-insensitive one).
   """
-  @type mode :: :exact | {:bounded, [String.t()]} | {:coarse, [String.t()]}
+  @type mode :: :full | {:selective, [String.t()]} | {:field_insensitive, [String.t()]}
 
   @typedoc """
   Solves a program over what the previous solve returned (the first
   time, what `points_to/5` was handed): `{:ok, results, solved}`, the
   program's outputs as rows by relation name (at least
-  `points_to_overflow`, and `pervasive` for the bounded and coarse
-  programs) and
-  what the next solve goes on from, or `{:error, reason}`.
+  `points_to_overflow`, and `hub_object` for the selective and
+  field-insensitive programs) and what the next solve goes on from, or
+  `{:error, reason}`.
   """
   @type solve(acc) :: (Path.t(), acc ->
                          {:ok, %{String.t() => [[String.t()]]}, acc} | {:error, term()})
@@ -40,32 +41,32 @@ defmodule Argus.Stages do
   The points-to stage: `{:ok, solved, mode}` with what the solve whose
   outputs are the stage's returned, or `{:error, reason, solved}` with
   what the last solve returned (or `acc`), for the caller to clean up
-  after. A bounded or coarse run is reported with a warning naming the
-  leaves it resolved coarsely; a failure is the caller's to report
-  (`failed/1`).
+  after. A selective or field-insensitive run is reported with a
+  warning naming the hub objects it resolved field-insensitively; a
+  failure is the caller's to report (`failed/1`).
   """
   @spec points_to(solve(acc), acc, Path.t(), Path.t(), Path.t()) ::
           {:ok, acc, mode()} | {:error, term(), acc}
         when acc: var
-  def points_to(solve, acc, exact_path, bounded_path, coarse_path) do
-    case attempt(solve, exact_path, acc) do
+  def points_to(solve, acc, full_path, selective_path, field_insensitive_path) do
+    case attempt(solve, full_path, acc) do
       {:ok, solved, _results} ->
-        {:ok, solved, :exact}
+        {:ok, solved, :full}
 
-      {:over, exact_over, acc} ->
-        case attempt(solve, bounded_path, acc) do
+      {:over, full_over, acc} ->
+        case attempt(solve, selective_path, acc) do
           {:ok, solved, results} ->
-            leaves = pervasive(results)
+            hubs = hub_objects(results)
 
             Logger.warning(
-              "points-to: the exact stage outgrew its budget (#{budget_summary(exact_over)}); " <>
-                "ran it bounded, " <> pervasive_summary(leaves)
+              "points-to: the full stage outgrew its budget (#{budget_summary(full_over)}); " <>
+                "ran it selective, " <> hub_summary(hubs)
             )
 
-            {:ok, solved, {:bounded, leaves}}
+            {:ok, solved, {:selective, hubs}}
 
-          {:over, bounded_over, acc} ->
-            coarse(solve, acc, coarse_path, exact_over, bounded_over)
+          {:over, selective_over, acc} ->
+            field_insensitive(solve, acc, field_insensitive_path, full_over, selective_over)
 
           {:error, reason, acc} ->
             {:error, reason, acc}
@@ -76,24 +77,25 @@ defmodule Argus.Stages do
     end
   end
 
-  # The coarse stage, when even the bounded one outgrew the budget: it
-  # resolves every leaf coarsely, so it outgrows the budget only where
-  # the coarse pass does, and then the stage fails.
-  defp coarse(solve, acc, coarse_path, exact_over, bounded_over) do
-    case attempt(solve, coarse_path, acc) do
+  # The field-insensitive stage, when even the selective one outgrew
+  # the budget: it resolves every object field-insensitively, so it
+  # outgrows the budget only where the field-insensitive pass does, and
+  # then the stage fails.
+  defp field_insensitive(solve, acc, path, full_over, selective_over) do
+    case attempt(solve, path, acc) do
       {:ok, solved, results} ->
-        leaves = pervasive(results)
+        objects = hub_objects(results)
 
         Logger.warning(
-          "points-to: the exact stage outgrew its budget (#{budget_summary(exact_over)}), " <>
-            "and so did the bounded one (#{budget_summary(bounded_over)}); ran it coarse, " <>
-            "resolving every leaf coarsely (#{length(leaves)})"
+          "points-to: the full stage outgrew its budget (#{budget_summary(full_over)}), " <>
+            "and so did the selective one (#{budget_summary(selective_over)}); " <>
+            "ran it field-insensitive, resolving every object that way (#{length(objects)})"
         )
 
-        {:ok, solved, {:coarse, leaves}}
+        {:ok, solved, {:field_insensitive, objects}}
 
-      {:over, coarse_over, acc} ->
-        {:error, {:over_budget, coarse_over}, acc}
+      {:over, over, acc} ->
+        {:error, {:over_budget, over}, acc}
 
       {:error, reason, acc} ->
         {:error, reason, acc}
@@ -124,8 +126,8 @@ defmodule Argus.Stages do
     end
   end
 
-  defp pervasive(results),
-    do: results |> Map.get("pervasive", []) |> List.flatten() |> Enum.sort()
+  defp hub_objects(results),
+    do: results |> Map.get("hub_object", []) |> List.flatten() |> Enum.sort()
 
   @doc """
   The relations that reached the stage's budget, `{relation, rows,
@@ -162,7 +164,7 @@ defmodule Argus.Stages do
   end
 
   defp failure_summary({:over_budget, over}),
-    do: "the stage outgrew its budget even coarse (#{budget_summary(over)})"
+    do: "the stage outgrew its budget even field-insensitive (#{budget_summary(over)})"
 
   defp failure_summary(:flowlog_timeout),
     do: "the stage did not finish within the solve's timeout (:timeout)"
@@ -175,12 +177,13 @@ defmodule Argus.Stages do
     end)
   end
 
-  defp pervasive_summary([]), do: "which found no leaf pervasive"
+  defp hub_summary([]), do: "which found no hub object"
 
-  defp pervasive_summary(leaves) do
-    shown = Enum.take(leaves, 3)
-    more = if length(leaves) > length(shown), do: ", …", else: ""
+  defp hub_summary(hubs) do
+    shown = Enum.take(hubs, 3)
+    more = if length(hubs) > length(shown), do: ", …", else: ""
 
-    "resolving #{length(leaves)} pervasive leaves coarsely (#{Enum.join(shown, ", ")}#{more})"
+    "resolving #{length(hubs)} hub objects field-insensitively " <>
+      "(#{Enum.join(shown, ", ")}#{more})"
   end
 end

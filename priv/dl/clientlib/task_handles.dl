@@ -8,12 +8,12 @@
 // holding it (task_operation_var), and it escapes where value flow stops
 // following it: handed to code no summary describes (unmodeled_use, or a
 // function the program does not define), enumerated as a map or tuple,
-// answered to a caller outside the program, or resolved coarsely by the
-// bounded stage. A task neither handled nor escaped is one whose every use
+// answered to a caller outside the program, or resolved
+// field-insensitively by the selective stage. A task neither handled nor escaped is one whose every use
 // value flow saw, and none of them handles it.
 //
 // Included by points_to.dl after processes.dl, runs_elsewhere.dl and
-// pervasive.dl.
+// hub_objects.dl.
 
 // A task process: a start the Task API answers a %Task{} for.
 .decl task_process(proc: symbol)
@@ -89,9 +89,9 @@ task_escapes(p) :-
   other != sel,
   task_handle(x, p).
 
-// The bounded stage resolved the task coarsely: what holds it is not
-// known exactly (pervasive.dl).
-task_escapes(p) :- task_process(p), pervasive(p).
+// The selective stage resolved the task field-insensitively: what holds
+// it is not known exactly (hub_objects.dl).
+task_escapes(p) :- task_process(p), hub_object(p).
 
 .output task_escapes(filename="task_escapes.facts")
 

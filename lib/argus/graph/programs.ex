@@ -3,9 +3,9 @@ defmodule Argus.Graph.Programs do
   The Datalog programs the graph solves, as a solve reads them.
 
   A program is the call graph's (`:stage0`), the points-to stage's three
-  (`:points_to`; `:points_to_bounded`, which it runs in place of the
-  exact one when that outgrows its budget; and `:points_to_coarse`, in
-  place of the bounded one), a built-in analysis's (its name), or a
+  (`:points_to`; `:points_to_selective`, which it runs in place of the
+  full one when that outgrows its budget; and
+  `:points_to_field_insensitive`, in place of the selective one), a built-in analysis's (its name), or a
   program of a caller's own (`{:custom, path}`).
 
     * `program_files(program)` — the program's files, each by the name
@@ -41,8 +41,8 @@ defmodule Argus.Graph.Programs do
   @type program ::
           :stage0
           | :points_to
-          | :points_to_bounded
-          | :points_to_coarse
+          | :points_to_selective
+          | :points_to_field_insensitive
           | atom()
           | {:custom, Path.t()}
 
@@ -50,8 +50,11 @@ defmodule Argus.Graph.Programs do
   @spec rules_path(program()) :: {:ok, Path.t()} | {:error, term()}
   def rules_path(:stage0), do: {:ok, Argus.Analysis.stage0_rules_path()}
   def rules_path(:points_to), do: {:ok, Argus.Analysis.points_to_rules_path()}
-  def rules_path(:points_to_bounded), do: {:ok, Argus.Analysis.points_to_bounded_rules_path()}
-  def rules_path(:points_to_coarse), do: {:ok, Argus.Analysis.points_to_coarse_rules_path()}
+  def rules_path(:points_to_selective), do: {:ok, Argus.Analysis.points_to_selective_rules_path()}
+
+  def rules_path(:points_to_field_insensitive),
+    do: {:ok, Argus.Analysis.points_to_field_insensitive_rules_path()}
+
   def rules_path({:custom, path}), do: {:ok, Path.expand(path)}
   def rules_path(analysis) when is_atom(analysis), do: Catalog.rules_path(analysis)
 
@@ -128,7 +131,7 @@ defmodule Argus.Graph.Programs do
   defquery :program_files, key: program do
     # Which file an analysis's program is: its module's to say.
     if is_atom(program) and
-         program not in [:stage0, :points_to, :points_to_bounded, :points_to_coarse],
+         program not in [:stage0, :points_to, :points_to_selective, :points_to_field_insensitive],
        do: _ = Runtime.query(db, :analysis_code, program)
 
     with {:ok, path} <- rules_path(program) do

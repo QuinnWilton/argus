@@ -846,7 +846,7 @@ sent_param(id, f, p) :- send_arg_param(id, f, p).
 sent_param(id, f, p) :- call_arg_param(id, f, 1, p), call_site_target(id, f, "info", _).
 
 // The server module a call or cast at `id` reaches: the one it names, or the
-// callback module of a process points-to resolves its target to (a pid the client
+// callback module of a points-to resolves its target to (a pid the client
 // was handed or started).
 .decl site_server(id: symbol, func: symbol, kind: symbol, mod: symbol)
 

@@ -34,7 +34,7 @@ defmodule Argus.Dl.UncommentedTest do
 
     programs =
       Path.wildcard(Path.join(dl, "analyses/*.dl")) ++
-        Enum.map(~w(stage0.dl points_to.dl points_to_bounded.dl), &Path.join(dl, &1))
+        Enum.map(~w(stage0.dl points_to.dl points_to_selective.dl), &Path.join(dl, &1))
 
     before = Map.new(programs, &{&1, Program.declared_digest(&1, :all)})
 

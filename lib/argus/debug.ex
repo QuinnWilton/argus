@@ -144,15 +144,15 @@ defmodule Argus.Debug do
   end
 
   defp restage_points_to!(root, facts, opts) do
-    # Reuse the existing bounded fallback with explicit paths instead of mutating
+    # Reuse the existing selective fallback with explicit paths instead of mutating
     # the application's dl_root (which would affect concurrent graph sessions).
     unwrap!(
       Analysis.Extraction.derive_points_to(
         facts,
         [
           rules_path: Path.join(root, "rules/points_to.dl"),
-          bounded_rules_path: Path.join(root, "rules/points_to_bounded.dl"),
-          coarse_rules_path: Path.join(root, "rules/points_to_coarse.dl")
+          selective_rules_path: Path.join(root, "rules/points_to_selective.dl"),
+          field_insensitive_rules_path: Path.join(root, "rules/points_to_field_insensitive.dl")
         ] ++ opts
       ),
       "derive points-to"

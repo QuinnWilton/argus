@@ -1,16 +1,16 @@
-// Interprocedural process points-to, composing `Argus.Extractors.TermFlow` summaries.
+// Interprocedural points-to, composing `Argus.Extractors.TermFlow` summaries.
 // Processes use allocation-site identities; factory results and supervised children
 // receive caller-specific instances mapped to their base by `instance`. Terms use
 // construction sites and field selectors.
-// Sources include proc, param, result, name, self, obj, load, reply, and dict.
-// Parameters merge possible callers, except unchanged returned parameters are resolved
-// from each call's own argument. Only terms containing a process/table leaf are
-// followed.
+// Variable kinds are process, param, result, name, self, term, load, reply, table and
+// dictionary. Parameters merge possible callers, except unchanged returned parameters
+// are resolved from each call's own argument. Only terms containing a process or table
+// object are followed.
 // Run once in points_to.dl and expose results through staged_processes.dl. Sends and
-// signals have separate consumer views. In bounded mode, pervasive.dl resolves
-// widespread leaves coarsely; exact mode excludes none.
+// signals have separate consumer views. In selective mode, hub_objects.dl resolves hub
+// objects field-insensitively; full mode excludes none.
 // Requires imports, behaviours, callbacks, process_statem, and runs_elsewhere, with
-// pervasive.dl included alongside it.
+// hub_objects.dl included alongside it.
 
 // ── Processes ───────────────────────────────────────────────────────
 
@@ -142,11 +142,11 @@ reads_name(f, n) :- process_signal_var(_, f, _, "name", n).
 reads_name(f, n) :- task_operation_var(_, f, _, "name", n).
 reads_name(f, n) :- unmodeled_use(_, f, "name", n).
 
-var_points_to(f, "process", p, p) :- process_start(_, f, p, _, _), !pervasive(p).
+var_points_to(f, "process", p, p) :- process_start(_, f, p, _, _), !hub_object(p).
 
-// Follow only terms containing a process or table leaf, directly or through another
-// term. Every field_points_to row points to a leaf or such a term, so it also proves that its
-// containing term is relevant.
+// Follow only terms containing a process or table object, directly or through another
+// term. Every field_points_to row points to such an object or term, so it also proves
+// that its containing term is relevant.
 var_points_to(f, "term", o, o) :- term_allocation(f, o, _, _, _), holds_object(o).
 
 .decl holds_object(term: symbol)
@@ -175,7 +175,7 @@ var_points_to(f, "result", c, x) :-
   call_result_var(c, f, g),
   fresh_return(g, x),
   return_var(f, "result", c),
-  !pervasive(x).
+  !hub_object(x).
 
 // A library call running the program's fun on elements (element_fun) answers what the
 // fun answers, its parameters included: they are the elements and accumulator this call
@@ -191,29 +191,29 @@ var_points_to(f, "result", c, i) :-
   kept_fresh(c, f, x),
   process_start(_, _, x, _, _),
   kept_instance(c, i),
-  !pervasive(i).
+  !hub_object(i).
 
 // A kept `{:ok, pid}` is a term only while it holds its instance: one the
-// bounded stage resolves coarsely (pervasive.dl) is left to that pass, as
-// the field below is.
+// selective stage resolves field-insensitively (hub_objects.dl) is left to
+// that pass, as the field below is.
 var_points_to(f, "result", c, cat("result ", c)) :-
   kept_fresh(c, f, x),
   start_term(x, _),
   kept_instance(c, i),
-  !pervasive(i).
+  !hub_object(i).
 var_points_to(f, "result", c, i) :- built_call(c, f, _, _, i), holds_object(i).
-var_points_to(f, "name", n, p) :- reads_name(f, n), named_pid(n, p), !pervasive(p).
+var_points_to(f, "name", n, p) :- reads_name(f, n), named_pid(n, p), !hub_object(p).
 var_points_to(f, "dictionary", k, x) :- dict_read(f, k, g, sk, s), var_points_to(g, sk, s, x).
 
 // A helper returning a dictionary entry returns the value held by the caller's process
 // at that call.
 var_points_to(f, "result", c, x) :- call_result_var(c, f, g), returns_key(g, k), var_points_to(f, "dictionary", k, x).
-var_points_to(f, "self", "self", p) :- self_pid(f, p), !pervasive(p).
+var_points_to(f, "self", "self", p) :- self_pid(f, p), !hub_object(p).
 
-// ETS tables are allocation leaves named "table <site>". They are neither processes nor
+// ETS tables are allocated objects named "table <site>". They are neither processes nor
 // field-bearing terms. tables.dl uses these identities to track tables allocated by
 // :ets.new/2.
-var_points_to(f, "table", t, t) :- table_alloc(_, f, t), !pervasive(t).
+var_points_to(f, "table", t, t) :- table_alloc(_, f, t), !hub_object(t).
 
 // GenServer.call may return the reply field of any {:reply, reply, state} from the
 // server's handle_call/3, without filtering by request clause.
@@ -236,10 +236,10 @@ load_base(f, l, sel, o) :- field_load(f, l, sel, bk, bs), var_points_to(f, bk, b
 
 // A tuple element read past a match (field_load_match) reads the tuples
 // the match fits alone: `{:ok, x}` is no `{:error, e}`, a reply triple no
-// `{:noreply, state}`. Read from every tuple its source points to, one
+// `{:noreply, state}`. Read from every tuple its variable points to, one
 // call's `{:cont, socket}` holds what another's `{:halt, reply, socket}`
 // holds there, and a cycle through them can join every term's fields
-// (Phoenix LiveView's exact stage held 566,000 field rows; 125,000 so).
+// (Phoenix LiveView's full stage held 566,000 field rows; 125,000 so).
 load_base(f, l, sel, o) :-
   field_load(f, l, sel, bk, bs),
   field_load_match(l, tag, n),
@@ -331,7 +331,7 @@ field_points_to(cat("result ", c), "{1}", i) :-
   kept_fresh(c, _, x),
   start_term(x, _),
   kept_instance(c, i),
-  !pervasive(i).
+  !hub_object(i).
 
 // The instance a kept start holds, named by the start's call site. A relation of
 // its own so the negation above reads a column, not a computed value.
@@ -347,7 +347,7 @@ field_points_to(o, sel, x) :- update_keeps(o, b, sel), field_points_to(b, sel, x
 // selector, before the base's values join, rather than per value held
 // there. Negated after the join, the engine held every value the base's
 // fields held to check it: on Ash's deps 4.8 million rows, a fifth of
-// the exact stage's.
+// the full stage's.
 .decl update_keeps(term: symbol, base: symbol, field: symbol)
 
 update_keeps(o, b, sel) :- update_base(o, b), field_sel(b, sel), !term_update_overwrites(o, sel).
@@ -384,7 +384,7 @@ term_kind(o, kind) :- term_shape(o, kind, _, _).
 // caller reading a field of what it got back reads every other caller's
 // values, and each term it builds of those holds them all, so the terms
 // grow with the square of the calls (ex_mcp's map helpers took field_points_to
-// past the budget, even bounded). A call that keeps such a term, as
+// past the budget, even selective). A call that keeps such a term, as
 // kept_fresh keeps a factory's pid, gets an instance of its own, `built
 // <call> <term>`: a field the helper fills from its parameter holds what
 // that call passed there, through any helper that hands the term on as
@@ -882,8 +882,8 @@ call_site_target(id, g, kind, p) :-
   process_call(_, _, id, kind, p),
   process_call_var(id, g, kind, _, _).
 
-// Resolve destinations of call/cast/send messages and call replies. Bounded staging may
-// use coarse targets for pervasive sources; see pervasive.dl.
+// Resolve destinations of call/cast/send messages and call replies. The selective stage
+// may use field-insensitive targets for hub objects; see hub_objects.dl.
 .decl message_target(id: symbol, func: symbol, api_kind: symbol, proc: symbol)
 
 message_target(id, g, kind, p) :- call_site_target(id, g, kind, p).

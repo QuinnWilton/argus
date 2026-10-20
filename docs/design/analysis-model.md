@@ -60,7 +60,7 @@ Points-to relations track starts, names, parameters, returns, fields, callback
 state and messages. A `start_link` of code outside the analyzed program (a dependency
 left out) counts as a start, out of sight, of the process its `{:ok, pid}` names. They can distinguish some start instances and privately retained
 processes, but many supervision and dependency questions remain module-based.
-Bounded points-to results are supersets; do not treat a coarse set as one exact identity.
+Selective and field-insensitive points-to results are supersets; do not treat one of their sets as one exact identity.
 
 ## Requests and messages
 

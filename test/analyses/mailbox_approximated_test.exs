@@ -1,16 +1,17 @@
-defmodule Argus.Analyses.MailboxCoarseTest do
+defmodule Argus.Analyses.MailboxApproximatedTest do
   @moduledoc """
-  A target the bounded points-to stage resolves coarsely
-  (`coarse_process`) is a process the target's source reaches anywhere
+  A target the selective points-to stage resolves field-insensitively
+  (`approximated_process`) is a process the target's variable reaches anywhere
   in the program: one a send or a call may reach, not one it does. The
   mailbox analysis reports a message such a target is sent only when
   every process the site may reach is a server of one module: a send
   to one of two modules' servers is reported for neither, and a cast a
   server makes to itself by its name still is.
 
-  The coarse resolution is forced by a copy of the rules whose exact
-  stage is the coarse one (`stage_mode("coarse")`), over the same
-  fixtures the exact stage resolves.
+  The field-insensitive resolution is forced by a copy of the rules
+  whose full stage is the field-insensitive one
+  (`stage_mode("field_insensitive")`), over the same fixtures the full
+  stage resolves.
   """
   # Not async: the copy of the rules is argus's own for the test's length
   # (`:dl_root`, application-wide).
@@ -20,7 +21,7 @@ defmodule Argus.Analyses.MailboxCoarseTest do
   # The copy's engine is built once per version of the rules.
   @moduletag timeout: 1_800_000
 
-  alias Argus.Test.Fixtures.MailboxCoarse, as: C
+  alias Argus.Test.Fixtures.MailboxApproximated, as: C
   alias Argus.Test.Rows
 
   @modules [C.Left, C.Right, C.Sender, C.Self]
@@ -30,7 +31,7 @@ defmodule Argus.Analyses.MailboxCoarseTest do
     r
   end
 
-  defp coarse(tmp, fun) do
+  defp field_insensitive(tmp, fun) do
     root = Path.join(tmp, "dl")
     File.cp_r!(Argus.Dl.root(), root)
     path = Path.join(root, "points_to.dl")
@@ -39,8 +40,8 @@ defmodule Argus.Analyses.MailboxCoarseTest do
       path,
       String.replace(
         File.read!(path),
-        ~s|stage_mode("exact").|,
-        ~s|stage_mode("exact").\nstage_mode("bounded").\nstage_mode("coarse").|
+        ~s|stage_mode("full").|,
+        ~s|stage_mode("full").\nstage_mode("selective").\nstage_mode("field_insensitive").|
       )
     )
 
@@ -58,7 +59,7 @@ defmodule Argus.Analyses.MailboxCoarseTest do
 
   defp sent_to_right?(rows), do: Enum.any?(rows, &(Enum.at(&1, 5) == inspect(C.Right)))
 
-  test "exactly resolved, a send to one of two servers is checked against each", %{} do
+  test "resolved field-sensitively, a send to one of two servers is checked against each", %{} do
     r = analyze()
 
     assert sent_to_right?(unhandled(r))
@@ -66,9 +67,9 @@ defmodule Argus.Analyses.MailboxCoarseTest do
     assert mod == inspect(C.Self)
   end
 
-  test "coarsely resolved, it is checked against neither; a cast to itself still is",
+  test "resolved field-insensitively, it is checked against neither; a cast to itself still is",
        %{tmp_dir: tmp} do
-    coarse(tmp, fn ->
+    field_insensitive(tmp, fn ->
       r = analyze()
 
       refute sent_to_right?(unhandled(r))

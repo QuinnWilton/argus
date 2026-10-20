@@ -712,7 +712,7 @@ sync_dep_timeout(f, m, ms) :-
   sync_call_site(id, f, t, ms),
   unresolved_target(t).
 
-// A call process points-to resolves, with its own timeout: the helper's
+// A call points-to resolves, with its own timeout: the helper's
 // call when f hands the pid to one.
 sync_dep_timeout(f, m, ms) :-
   process_call(f, _, site, "call", p),

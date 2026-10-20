@@ -29,7 +29,10 @@ defmodule Argus.Clientlib.TablesTest do
     :ok = Argus.Analysis.derive_stage0(facts_dir)
     :ok = Argus.Analysis.derive_points_to(facts_dir)
 
-    %{exact: solve(tmp_dir, facts_dir, "exact"), coarse: solve_coarse(tmp_dir, facts_dir)}
+    %{
+      full: solve(tmp_dir, facts_dir, "full"),
+      approximated: solve_approximated(tmp_dir, facts_dir)
+    }
   end
 
   # The words over every operation of the fixtures, keyed by the
@@ -62,12 +65,12 @@ defmodule Argus.Clientlib.TablesTest do
     results
   end
 
-  # The same facts, as a bounded stage that resolved EnsuredCache's table
-  # coarsely would leave them: its var_table rows kept, and the table
-  # marked coarse.
-  defp solve_coarse(tmp_dir, facts_dir) do
-    coarse_dir = Path.join(tmp_dir, "coarse-facts")
-    File.cp_r!(facts_dir, coarse_dir)
+  # The same facts, as a selective stage that resolved EnsuredCache's
+  # table field-insensitively would leave them: its var_table rows kept,
+  # and the table marked approximated.
+  defp solve_approximated(tmp_dir, facts_dir) do
+    approximated_dir = Path.join(tmp_dir, "approximated-facts")
+    File.cp_r!(facts_dir, approximated_dir)
 
     tables =
       Path.join(facts_dir, "table_alloc.facts")
@@ -77,8 +80,8 @@ defmodule Argus.Clientlib.TablesTest do
       |> Enum.filter(fn [_, func, _] -> func =~ "EnsuredCache" end)
       |> Enum.map_join(&(List.last(&1) <> "\n"))
 
-    File.write!(Path.join(coarse_dir, "coarse_table.facts"), tables)
-    solve(tmp_dir, coarse_dir, "coarse")
+    File.write!(Path.join(approximated_dir, "approximated_table.facts"), tables)
+    solve(tmp_dir, approximated_dir, "approximated")
   end
 
   defp tables(results, func_part, op) do
@@ -88,30 +91,31 @@ defmodule Argus.Clientlib.TablesTest do
   defp any?(results, func_part, op),
     do: Enum.any?(results["op_any"], fn [f, o] -> f =~ func_part and o == op end)
 
-  test "a table a helper returns is its :ets.new/2's named table", %{exact: r} do
+  test "a table a helper returns is its :ets.new/2's named table", %{full: r} do
     assert tables(r, "EnsuredCache:put_if_absent", "lookup") == [{"named", ":ensured_cache"}]
     assert tables(r, "EnsuredCache:put_if_absent", "insert") == [{"named", ":ensured_cache"}]
   end
 
-  test "two unnamed tables made under one atom are two sites", %{exact: r} do
+  test "two unnamed tables made under one atom are two sites", %{full: r} do
     [{"new", seen}] = tables(r, "TwoTablesOneName:copy", "lookup")
     [{"new", totals}] = Enum.uniq(tables(r, "TwoTablesOneName:copy", "insert"))
     assert seen != totals
   end
 
-  test "a handed-in table is named by the way in, below it too", %{exact: r} do
+  test "a handed-in table is named by the way in, below it too", %{full: r} do
     [{"handed_in", ident}] = tables(r, "HandedDebounce:log", "lookup")
     assert ident =~ ~r/^param 0 of .*HandedDebounce:log\/3$/
     assert tables(r, "HandedDebounce:drop", "delete") == [{"handed_in", ident}]
     assert any?(r, "HandedDebounce:drop", "delete")
   end
 
-  test "a parameter the program fills with its own table is that table", %{exact: r} do
+  test "a parameter the program fills with its own table is that table", %{full: r} do
     assert [{"new", _site}] = tables(r, "OwnPrivateTable:log", "lookup")
     refute any?(r, "OwnPrivateTable:log", "lookup")
   end
 
-  test "a table a bounded stage resolved coarsely names no table", %{coarse: r} do
+  test "a table a selective stage resolved field-insensitively names no table",
+       %{approximated: r} do
     assert tables(r, "EnsuredCache:put_if_absent", "lookup") == []
     assert any?(r, "EnsuredCache:put_if_absent", "lookup")
     # What the other fixtures' operations name is left alone.

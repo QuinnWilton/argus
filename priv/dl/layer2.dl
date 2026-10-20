@@ -714,7 +714,7 @@
 .decl process_register_var(id: symbol, func: symbol, name: symbol, var_kind: symbol, var: symbol) mutable
 .input process_register_var
 
-// A call producing potentially remote pids or passing them to a fun. Covers distributed registries and groups, `$callers`, process links, and global conflict resolvers. Reverse, sort, and uniq preserve remote-pid lists. The source is `remote`, named by call site; it represents no allocation and has no process points-to target.
+// A call producing potentially remote pids or passing them to a fun. Covers distributed registries and groups, `$callers`, process links, and global conflict resolvers. Reverse, sort, and uniq preserve remote-pid lists. The source is `remote`, named by call site; it represents no allocation and has no points-to target.
 //
 .decl process_remote_var(id: symbol, func: symbol, api: symbol) mutable
 .input process_remote_var

@@ -42,7 +42,7 @@ defmodule Argus.Findings.Degradation do
   end
 
   def detail(name, {:points_to, :flowlog_timeout}) do
-    "The #{name} analysis did not run: the process points-to it reads " <>
+    "The #{name} analysis did not run: the points-to it reads " <>
       "(priv/dl/points_to.dl) did not finish within :timeout. " <>
       "Raise :timeout to include it."
   end
@@ -53,12 +53,12 @@ defmodule Argus.Findings.Degradation do
         "#{relation} reached #{rows} rows, over #{budget}"
       end)
 
-    "The #{name} analysis did not run: the process points-to it reads " <>
-      "(priv/dl/points_to.dl) outgrew its budget even coarse (#{reached})."
+    "The #{name} analysis did not run: the points-to it reads " <>
+      "(priv/dl/points_to.dl) outgrew its budget even field-insensitive (#{reached})."
   end
 
   def detail(name, {:points_to, reason}) do
-    "The #{name} analysis did not run: the process points-to it reads " <>
+    "The #{name} analysis did not run: the points-to it reads " <>
       "(priv/dl/points_to.dl) could not be derived: #{Argus.FlowLog.describe_error(reason)}."
   end
 

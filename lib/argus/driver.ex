@@ -181,15 +181,16 @@ defmodule Argus.Driver do
     end
   end
 
-  # The points-to stage ran bounded, when an analysis read it: the
-  # leaves its coarse pass resolved.
+  # The points-to stage ran selective or field-insensitive, when an
+  # analysis read it: the hub objects its field-insensitive pass
+  # resolved.
   defp points_to_notices(db) do
     case Roux.Memo.get(db, {:stage, {@program, :points_to}}) do
-      {:ok, %Roux.Memo.Entry{value: {:ok, %{mode: {:bounded, leaves}}}}} ->
-        [{:points_to_bounded, leaves}]
+      {:ok, %Roux.Memo.Entry{value: {:ok, %{mode: {:selective, hubs}}}}} ->
+        [{:points_to_selective, hubs}]
 
-      {:ok, %Roux.Memo.Entry{value: {:ok, %{mode: {:coarse, leaves}}}}} ->
-        [{:points_to_coarse, leaves}]
+      {:ok, %Roux.Memo.Entry{value: {:ok, %{mode: {:field_insensitive, objects}}}}} ->
+        [{:points_to_field_insensitive, objects}]
 
       _ ->
         []

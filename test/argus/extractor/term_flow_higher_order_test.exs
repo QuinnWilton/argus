@@ -95,7 +95,11 @@ defmodule Argus.Extractors.TermFlowHigherOrderTest do
   end
 
   test "a Task operation is handed the task, or the list it runs on", %{rows: rows} do
-    assert Enum.any?(rows.task_operation_var, &match?([_, "awaited/1", "await", "param", "0"], &1))
+    assert Enum.any?(
+             rows.task_operation_var,
+             &match?([_, "awaited/1", "await", "param", "0"], &1)
+           )
+
     # A capture is handed each element: a `[]` load of the list.
     assert [[_, "captured/1", "await", "load", load]] =
              Enum.filter(rows.task_operation_var, &match?([_, "captured/1" | _], &1))
@@ -174,7 +178,10 @@ defmodule Argus.Extractors.TermFlowHigherOrderTest do
     # Built here (the compiler folds the put into one literal): a pair
     # whose value is either field's.
     fun = "-updated_local/2-fun-0-/1"
-    [pair] = for [_, "updated_local/2", ^fun, "0", "element", "term", p] <- rows.call_arg_var, do: p
+
+    [pair] =
+      for [_, "updated_local/2", ^fun, "0", "element", "term", p] <- rows.call_arg_var, do: p
+
     seconds = for ["updated_local/2", ^pair, "{1}", "param", n] <- rows.field_store, do: n
     assert Enum.sort(seconds) == ["0", "1"]
   end

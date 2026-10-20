@@ -66,7 +66,7 @@ genserver_without_known_traffic(mod) :-
 coverage_genserver_isolated(mod) :- genserver_without_known_traffic(mod).
 
 // A sync_call or async_cast names the module as its target, or a call
-// process points-to follows reaches a process of the module's.
+// points-to follows reaches a process of the module's.
 .decl receives_known_traffic(mod: symbol)
 
 receives_known_traffic(mod) :- sync_call(_, mod).

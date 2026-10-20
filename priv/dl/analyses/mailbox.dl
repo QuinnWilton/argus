@@ -1325,7 +1325,7 @@ handler(mod, "handle_call", func) :- handle_call_function(mod, func).
 handler(mod, "handle_cast", func) :- handle_cast_function(mod, func).
 
 // A site targets its module's own server when points-to resolves it there (a target
-// only the bounded stage's coarse pass resolves, when the site reaches no other
+// only the selective stage's field-insensitive pass resolves, when the site reaches no other
 // process), or when the target is unresolved and neither a literal name nor message
 // tag identifies another server. Classify each site independently; unrelated calls in the same function do not
 // change its target.
@@ -1335,14 +1335,14 @@ to_own_server(mod, id) :-
   call_tag(id, f, kind, _),
   function_def(f, mod, _, _, _),
   call_site_target(id, f, kind, p),
-  !coarse_process(p),
+  !approximated_process(p),
   server_process(p, mod).
 
 to_own_server(mod, id) :-
   call_tag(id, f, kind, _),
   function_def(f, mod, _, _, _),
   call_site_target(id, f, kind, p),
-  coarse_process(p),
+  approximated_process(p),
   server_process(p, mod),
   !targets_elsewhere(id, mod).
 
@@ -1485,7 +1485,7 @@ unreceived_message(mod, func, send, message, runs, starter, spawn, recv) :-
   process_start(spawn, starter, _, "spawn", runs),
   process_receive(runs, recv).
 
-// The send at `send` sends a literal `message` that process points-to
+// The send at `send` sends a literal `message` that points-to
 // (sends.dl) follows to the process started at `spawn`, running `runs`.
 .decl sends_to_spawned(send: symbol, spawn: symbol, runs: symbol, message: symbol)
 
@@ -1676,10 +1676,10 @@ info_message(m, f, id, msg, "send") :-
   send_target(id, f, msg, p),
   msg != "dynamic",
   !send_envelope(id),
-  !coarse_process(p),
+  !approximated_process(p),
   server_process(p, m).
 
-// A target only the bounded stage's coarse pass resolves (coarse_process)
+// A target only the selective stage's field-insensitive pass resolves (approximated_process)
 // is one of the processes its source reaches anywhere: a server among
 // them is sent the message only when every target is one of that
 // module's servers, as a send to a registered name of its own resolves.
@@ -1687,7 +1687,7 @@ info_message(m, f, id, msg, "send") :-
   send_target(id, f, msg, p),
   msg != "dynamic",
   !send_envelope(id),
-  coarse_process(p),
+  approximated_process(p),
   server_process(p, m),
   !sends_elsewhere(id, m).
 

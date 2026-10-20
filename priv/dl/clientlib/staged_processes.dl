@@ -1,4 +1,4 @@
-// Process points-to facts computed once by points_to.dl and consumed by analyses. See
+// Points-to facts computed once by points_to.dl and consumed by analyses. See
 // processes.dl for relation definitions. sends.dl and signals.dl extend these staged
 // rows without recomputing the fixpoint. Requires imports.dl; otp.dl includes this
 // file.
@@ -38,25 +38,25 @@
 .decl self_call(func: symbol, site: symbol) mutable
 .input self_call
 
-// Possible process/table leaves for demanded sources: handler call targets and ETS
-// operands. Do not export intermediate terms or arbitrary source points-to rows. New
-// source demands must be added to points_to.dl.
+// The processes and tables a demanded variable may hold: handler call targets and
+// ETS operands. Do not export intermediate terms or arbitrary var_points_to rows. New
+// variable demands must be added to points_to.dl.
 .decl var_process(func: symbol, var_kind: symbol, var: symbol, proc: symbol) mutable
 .input var_process
 
 .decl var_table(func: symbol, var_kind: symbol, var: symbol, table: symbol) mutable
 .input var_table
 
-// The tables a bounded stage resolved coarsely: their var_table rows
+// The tables a selective stage resolved field-insensitively: their var_table rows
 // are a superset (points_to.dl).
-.decl coarse_table(table: symbol) mutable
-.input coarse_table
+.decl approximated_table(table: symbol) mutable
+.input approximated_table
 
-// The processes a bounded stage resolved coarsely: a target of one of
+// The processes a selective stage resolved field-insensitively: a target of one of
 // them is one a call, send or signal may reach, not one it surely does
 // (points_to.dl).
-.decl coarse_process(proc: symbol) mutable
-.input coarse_process
+.decl approximated_process(proc: symbol) mutable
+.input approximated_process
 
 // An unnamed table its process keeps in its dictionary and never hands
 // to another (points_to.dl).

@@ -1,10 +1,10 @@
 defmodule Argus.Analysis.PointsToBudgetTest do
   @moduledoc """
   Which points-to stage runs is a function of the facts
-  (`Argus.Analysis.Extraction.derive_points_to/2`): the exact stage
+  (`Argus.Analysis.Extraction.derive_points_to/2`): the full stage
   within its row budget (`priv/dl/points_to.dl`'s `points_to_budget`,
-  counted over the finished fixpoint), the bounded one past it, the
-  coarse one past even that, and a failure, never a switch of stage,
+  counted over the finished fixpoint), the selective one past it, the
+  field-insensitive one past even that, and a failure, never a switch of stage,
   when the engine runs out of time.
 
   The programs are TermFlow's summaries written by hand: a merge
@@ -13,7 +13,7 @@ defmodule Argus.Analysis.PointsToBudgetTest do
   `helpers` helpers. Each helper's parameter then points to every
   caller's term, `callers × helpers` rows of `var_points_to` built from
   `callers + helpers` rows of facts: the shape of the merged heap that
-  outgrew the exact stage on Ash. A call in `merge/1` on the term's
+  outgrew the full stage on Ash. A call in `merge/1` on the term's
   field reaches the process from every caller.
   """
   # Not async: two tests solve copies of the stage programs as argus's own
@@ -39,7 +39,7 @@ defmodule Argus.Analysis.PointsToBudgetTest do
   @within {20, 15}
   @over {40, 30}
   # Past the shipped budget (500,000 rows): 800 × 700 = 560,000 parameter
-  # rows, for an exact fixpoint slow enough to outlive a short timeout.
+  # rows, for a full fixpoint slow enough to outlive a short timeout.
   @slow {800, 700}
 
   @proc "spawn M:start/0#1"
@@ -104,12 +104,12 @@ defmodule Argus.Analysis.PointsToBudgetTest do
     dir = Path.join(tmp, "budgeted")
     File.mkdir_p!(dir)
 
-    # A leaf is pervasive past a thousand holders, as many as these heaps
+    # An object is a hub past a thousand holders, as many as these heaps
     # hold in all: the copy scales that down with the budget.
     rules =
       rules_copy!(dir, %{
         "points_to.dl" => &String.replace(&1, "500000", "#{@budget}"),
-        "clientlib/pervasive.dl" => &String.replace(&1, "n > 1000,", "n > 20,")
+        "clientlib/hub_objects.dl" => &String.replace(&1, "n > 1000,", "n > 20,")
       })
 
     paths(rules)
@@ -118,22 +118,23 @@ defmodule Argus.Analysis.PointsToBudgetTest do
   defp paths(rules) do
     [
       rules_path: Path.join(rules, "points_to.dl"),
-      bounded_rules_path: Path.join(rules, "points_to_bounded.dl"),
-      coarse_rules_path: Path.join(rules, "points_to_coarse.dl")
+      selective_rules_path: Path.join(rules, "points_to_selective.dl"),
+      field_insensitive_rules_path: Path.join(rules, "points_to_field_insensitive.dl")
     ]
   end
 
   # Every stage held to a budget every program here outgrows but the
-  # coarse one, whose var_points_to and field_points_to hold no leaf.
+  # field-insensitive one, whose var_points_to and field_points_to hold
+  # no object.
   defp tiny_budget(text), do: String.replace(text, "500000", "10")
 
-  # The exact stage says it outgrew its budget, whatever it found; the
-  # bounded one (which includes it) runs as it would.
-  defp exact_overflows(text) do
+  # The full stage says it outgrew its budget, whatever it found; the
+  # selective one (which includes it) runs as it would.
+  defp full_overflows(text) do
     text <>
       """
 
-      points_to_overflow("var_points_to", 1, 0) :- stage_mode("exact"), !stage_mode("bounded").
+      points_to_overflow("var_points_to", 1, 0) :- stage_mode("full"), !stage_mode("selective").
       """
   end
 
@@ -153,16 +154,16 @@ defmodule Argus.Analysis.PointsToBudgetTest do
     do:
       dir |> Path.join(relation <> ".facts") |> File.read!() |> Argus.Tsv.decode() |> Enum.sort()
 
-  test "a program within the budget runs the exact stage", %{tmp_dir: tmp} do
+  test "a program within the budget runs the full stage", %{tmp_dir: tmp} do
     dir = merged_heap!(Path.join(tmp, "within"), @within)
 
     assert :ok = Analysis.derive_points_to(dir, budgeted!(tmp))
-    assert rows(dir, "points_to_mode") == [["exact"]]
+    assert rows(dir, "points_to_mode") == [["full"]]
     {callers, _} = @within
     assert length(rows(dir, "process_call")) == callers
   end
 
-  test "a program whose fixpoint outgrows the budget runs bounded, its pervasive leaf coarsely",
+  test "a program whose fixpoint outgrows the budget runs selective, its hub field-insensitively",
        %{tmp_dir: tmp} do
     dir = merged_heap!(Path.join(tmp, "over"), @over)
     budgeted = budgeted!(tmp)
@@ -170,12 +171,12 @@ defmodule Argus.Analysis.PointsToBudgetTest do
     log = capture_log(fn -> assert :ok = Analysis.derive_points_to(dir, budgeted) end)
 
     assert log =~ "outgrew its budget (var_points_to reached"
-    assert log =~ "resolving 1 pervasive leaves coarsely (#{@proc})"
-    assert rows(dir, "points_to_mode") == [["bounded"]]
+    assert log =~ "resolving 1 hub objects field-insensitively (#{@proc})"
+    assert rows(dir, "points_to_mode") == [["selective"]]
     # What it reported is read back, not left among the facts.
-    refute File.exists?(Path.join(dir, "pervasive.csv"))
+    refute File.exists?(Path.join(dir, "hub_object.csv"))
 
-    # The same targets the exact stage would find: every caller's term
+    # The same targets the full stage would find: every caller's term
     # holds the process, and merge/1 calls it for each.
     {callers, _} = @over
     targets = rows(dir, "process_call")
@@ -221,7 +222,7 @@ defmodule Argus.Analysis.PointsToBudgetTest do
   end
 
   test "a stage that runs out of time fails and stages nothing", %{tmp_dir: tmp} do
-    # Over the budget, the exact fixpoint alone takes far longer than this.
+    # Over the budget, the full fixpoint alone takes far longer than this.
     log =
       fails_as_found!(tmp, "late", @slow, fn dir ->
         assert {:error, {:points_to, :flowlog_timeout}} =
@@ -231,42 +232,43 @@ defmodule Argus.Analysis.PointsToBudgetTest do
     assert log =~ "did not finish within the solve's timeout"
   end
 
-  test "a program that outgrows the budget even bounded runs coarse, every leaf coarsely",
+  test "a program that outgrows the budget even selective runs field-insensitive",
        %{tmp_dir: tmp} do
-    dir = merged_heap!(Path.join(tmp, "over-bounded"), @within)
+    dir = merged_heap!(Path.join(tmp, "over-selective"), @within)
     copies = paths(rules_copy!(tmp, %{"points_to.dl" => &tiny_budget/1}))
 
     log = capture_log(fn -> assert :ok = Analysis.derive_points_to(dir, copies) end)
 
-    assert log =~ "and so did the bounded one (var_points_to reached"
-    assert log =~ "ran it coarse, resolving every leaf coarsely (1)"
-    assert rows(dir, "points_to_mode") == [["coarse"]]
-    assert rows(dir, "coarse_process") == [[@proc]]
+    assert log =~ "and so did the selective one (var_points_to reached"
+    assert log =~ "ran it field-insensitive, resolving every object that way (1)"
+    assert rows(dir, "points_to_mode") == [["field_insensitive"]]
+    assert rows(dir, "approximated_process") == [[@proc]]
 
-    # The coarse pass finds the targets the exact stage would.
+    # The field-insensitive pass finds the targets the full stage would.
     {callers, _} = @within
     assert length(rows(dir, "process_call")) == callers
     assert rows(dir, "call_site_target") == [["k0", "M:merge/1", "call", @proc]]
   end
 
-  test "a stage that outgrows the budget even coarse fails and stages nothing",
+  test "a stage that outgrows the budget even field-insensitive fails and stages nothing",
        %{tmp_dir: tmp} do
     copies =
       paths(
         rules_copy!(tmp, %{
           "points_to.dl" => &tiny_budget/1,
-          "points_to_coarse.dl" =>
-            &(&1 <> ~s|\npoints_to_overflow("field_points_to", 11, 10) :- stage_mode("coarse").\n|)
+          "points_to_field_insensitive.dl" =>
+            &(&1 <>
+                ~s|\npoints_to_overflow("field_points_to", 11, 10) :- stage_mode("field_insensitive").\n|)
         })
       )
 
     log =
-      fails_as_found!(tmp, "over-coarse", fn dir ->
+      fails_as_found!(tmp, "over-field-insensitive", fn dir ->
         assert {:error, {:points_to, {:over_budget, [{"field_points_to", 11, 10}]}}} =
                  Analysis.derive_points_to(dir, copies)
       end)
 
-    assert log =~ "outgrew its budget even coarse"
+    assert log =~ "outgrew its budget even field-insensitive"
   end
 
   describe "through a store" do
@@ -289,28 +291,28 @@ defmodule Argus.Analysis.PointsToBudgetTest do
         end
       end
 
-      {:ok, exact_dir} = Analysis.extract_facts(modules, [:startup])
-      exact = rows(exact_dir, "process_call")
-      Files.rm_rf!(Path.dirname(exact_dir))
+      {:ok, full_dir} = Analysis.extract_facts(modules, [:startup])
+      full = rows(full_dir, "process_call")
+      Files.rm_rf!(Path.dirname(full_dir))
 
-      # The exact solve says it outgrew the budget: the bounded one runs,
-      # and over these modules finds nothing pervasive.
+      # The full solve says it outgrew the budget: the selective one runs,
+      # and over these modules finds no hub object.
       Application.put_env(
         :argus_beam,
         :dl_root,
-        rules_copy!(tmp, %{"points_to.dl" => &exact_overflows/1})
+        rules_copy!(tmp, %{"points_to.dl" => &full_overflows/1})
       )
 
       try do
         cold = capture_log(fn -> send(self(), extract.()) end)
-        assert_received {[["bounded"]], ^exact}
-        assert cold =~ "ran it bounded"
+        assert_received {[["selective"]], ^full}
+        assert cold =~ "ran it selective"
 
         # Neither stage's engine can run now: a warm run reads both back.
-        Argus.Test.FailingEngine.with(["points_to.dl", "points_to_bounded.dl"], fn ->
+        Argus.Test.FailingEngine.with(["points_to.dl", "points_to_selective.dl"], fn ->
           warm = capture_log(fn -> send(self(), extract.()) end)
-          assert_received {[["bounded"]], ^exact}
-          assert warm =~ "ran it bounded"
+          assert_received {[["selective"]], ^full}
+          assert warm =~ "ran it selective"
         end)
       after
         Application.delete_env(:argus_beam, :dl_root)

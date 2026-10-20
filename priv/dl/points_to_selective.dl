@@ -1,0 +1,12 @@
+// The points-to stage, selective: what Argus.Analysis.Extraction runs
+// when the full stage (points_to.dl) outgrows its budget. The same
+// program, held to the same budget, with the hub objects (those a
+// field-insensitive pass finds held by a large share of the program's
+// variables) resolved by that pass (clientlib/hub_objects.dl) and every
+// other object field-sensitively. It writes the same relations,
+// points_to_mode saying "selective", and which objects it resolved so
+// (hub_object.csv), for the caller to report.
+
+.include "points_to.dl"
+
+stage_mode("selective").

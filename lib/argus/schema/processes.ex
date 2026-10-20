@@ -261,7 +261,7 @@ defmodule Argus.Schema.Processes do
         distributed registries and groups, `$callers`, process links, and global \
         conflict resolvers. Reverse, sort, and uniq preserve remote-pid lists. The \
         source is `remote`, named by call site; it represents no allocation and has no \
-        process points-to target.
+        points-to target.
         """
       },
       %{

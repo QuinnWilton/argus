@@ -31,12 +31,12 @@ defmodule Argus.Analyses.Mailbox do
     (`dropped_from`), or a `{:call, from}` clause that never answers
     (`statem_unreplied`).
   - `unreceived_message(mod, func, site, message, runs, starter, spawn, recv)` —
-    a send that process points-to follows to a spawned process none of
+    a send that points-to follows to a spawned process none of
     whose receives (the spawned function's, and those of what it calls in
     its own process) has a clause for `message`: it stays in that
     mailbox, and every later receive scans past it.
   - `unhandled_info(mod, func, site, message, source, server, handler, fallback)` —
-    a message a GenServer is sent (`source`: a `send` process points-to
+    a message a GenServer is sent (`source`: a `send` points-to
     follows to it, a `timer` it arms for itself, the `:DOWN` of a
     `monitor` it takes, the close of a `socket` it makes active —
     `{:tcp_closed, …}` or `{:ssl_closed, …}` — the events of the `node`
@@ -89,7 +89,7 @@ defmodule Argus.Analyses.Mailbox do
       Argus.Extractors.Monitor,
       Argus.Extractors.GenStatem,
       Argus.Extractors.Reply,
-      # Where a send goes: process points-to (clientlib/processes.dl,
+      # Where a send goes: points-to (clientlib/processes.dl,
       # sends.dl), and the names servers are started under.
       Argus.Extractors.TermFlow,
       Argus.Extractors.ProcessRegistry,

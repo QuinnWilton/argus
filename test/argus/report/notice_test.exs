@@ -3,18 +3,20 @@ defmodule Argus.Report.NoticeTest do
 
   alias Argus.Report.Notice
 
-  test "a bounded points-to stage names how many pervasive terms it resolved coarsely" do
-    notice = Notice.points_to_bounded(["server A", "spawn B"])
-    assert notice.kind == :points_to_bounded
+  test "a selective points-to stage names how many hub terms it resolved field-insensitively" do
+    notice = Notice.points_to_selective(["server A", "spawn B"])
+    assert notice.kind == :points_to_selective
     assert notice.severity == :info
-    assert notice.message =~ "ran bounded: 2 pervasive terms were resolved coarsely"
+    assert notice.message =~ "ran selective: 2 hub terms were resolved field-insensitively"
   end
 
-  test "a coarse points-to stage says every term was resolved coarsely" do
-    notice = Notice.points_to_coarse(["server A", "spawn B", "start C"])
-    assert notice.kind == :points_to_coarse
+  test "a field-insensitive points-to stage says every term was resolved so" do
+    notice = Notice.points_to_field_insensitive(["server A", "spawn B", "start C"])
+    assert notice.kind == :points_to_field_insensitive
     assert notice.severity == :info
-    assert notice.message =~ "bounded too, and ran coarse"
-    assert notice.message =~ "every term holding a process (3) was resolved coarsely"
+    assert notice.message =~ "selective too, and ran field-insensitive"
+
+    assert notice.message =~
+             "every term holding a process (3) was resolved field-insensitively"
   end
 end

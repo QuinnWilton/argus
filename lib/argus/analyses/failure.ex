@@ -19,7 +19,7 @@ defmodule Argus.Analyses.Failure do
     a `start` (`:proc_lib.start`) whose process lives on past its ack,
     or an `exit` signal sent to `target` from a callback, past the
     supervisor that owns it. An exit to a process the sending module
-    started itself is not one; an exit process points-to resolves to a
+    started itself is not one; an exit points-to resolves to a
     supervisor's child is kind `exit_supervised` (`:warning`, where an
     exit to a process known only as a value is `:info`), names the child
     as `target`, and its supervisor (`exit_target_owner`) is a related

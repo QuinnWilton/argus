@@ -150,12 +150,12 @@ known_table(id, k, t) :-
   ets_op_param(id, p),
   param_table(f, p_text, k, t), p_text = to_string(p).
 
-// Points-to table identities for an operand. Coarse bounded-stage results are
+// Points-to table identities for an operand. Field-insensitive results of a selective stage are
 // supersets, so they cannot establish a specific table identity.
 known_table(id, k, t) :-
   table_use(id, f, sk, s),
   var_table(f, sk, s, x),
-  !coarse_table(x),
+  !approximated_table(x),
   table_alloc(n, _, x),
   site_table(n, k, t).
 

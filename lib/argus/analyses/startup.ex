@@ -63,7 +63,7 @@ defmodule Argus.Analyses.Startup do
       Argus.Extractors.Reply,
       Argus.Extractors.Monitor,
       Argus.Extractors.ProcessRegistry,
-      # A call whose target is a pid resolves through process points-to
+      # A call whose target is a pid resolves through points-to
       # (clientlib/processes.dl, in the points-to stage): where the pid was
       # started, and names.
       Argus.Extractors.TermFlow,

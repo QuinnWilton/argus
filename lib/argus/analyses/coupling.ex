@@ -56,7 +56,7 @@ defmodule Argus.Analyses.Coupling do
       # `sync_call` is partly derived through call_arg and call_arg_forward:
       # a target forwarded through a wrapper.
       Argus.Extractors.CallArgs,
-      # A call whose target is a pid resolves through process points-to
+      # A call whose target is a pid resolves through points-to
       # (clientlib/processes.dl, in the points-to stage): where the pid was
       # started, and names.
       Argus.Extractors.TermFlow,

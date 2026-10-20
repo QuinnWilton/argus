@@ -402,6 +402,7 @@ defmodule Argus.Extractors.TermFlowTest do
       calls = unsited(facts([F.Owner]).process_call_var)
 
       assert ["Owner:across_a_trim/0", "call", "process", "server Owner:across_a_trim/0#15"] in calls
+
       assert ["Owner:across_a_trim/0", "call", "process", "server Owner:across_a_trim/0#9"] in calls
 
       assert Enum.count(calls, &match?(["Owner:across_a_trim/0" | _], &1)) == 2
@@ -495,7 +496,11 @@ defmodule Argus.Extractors.TermFlowTest do
 
       assert Enum.any?(signals, &match?(["Keeper:handle_cast/2", "exit", "load", _], &1))
       assert ["Keeper:stop/1", "exit", "param", "0"] in signals
-      assert Enum.any?(signals, &match?(["Keeper:init/1", "monitor", "process", "spawn " <> _], &1))
+
+      assert Enum.any?(
+               signals,
+               &match?(["Keeper:init/1", "monitor", "process", "spawn " <> _], &1)
+             )
     end
 
     test "the compiler's generated functions emit nothing" do

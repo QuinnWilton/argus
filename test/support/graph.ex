@@ -12,7 +12,7 @@ defmodule Argus.Test.Graph do
   alias Roux.{Database, GC, Input}
 
   # The fixture files the parity set is made of: argus's own, for the
-  # relations the whole-program analyses lean on (process points-to,
+  # relations the whole-program analyses lean on (points-to,
   # unreceived messages, check-then-act over registries, ETS and Mnesia,
   # the PADL 2010 Erlang race programs) and one per remaining concern, so
   # every analysis in `:all` has rows to agree on.

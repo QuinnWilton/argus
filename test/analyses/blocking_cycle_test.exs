@@ -38,7 +38,7 @@ defmodule Argus.Analyses.BlockingCycleTest do
     test "a cycle between servers that hold each other only by pid" do
       # A starts B with self(); each keeps the other's pid in its state and
       # calls it, so both GenServer.call targets are "dynamic" to sync_call.
-      # Process points-to (clientlib/processes.dl) follows the pids back.
+      # Points-to (clientlib/processes.dl) follows the pids back.
       a = Argus.Test.Fixtures.PidFlow.CycleA
       b = Argus.Test.Fixtures.PidFlow.CycleB
 

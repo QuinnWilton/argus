@@ -1,6 +1,7 @@
-// The points-to stage — which process a pid can be, derived once.
+// The points-to stage — which objects (processes, tables and the terms
+// holding them) a variable can hold, derived once.
 //
-// Process points-to (clientlib/processes.dl) is a whole-program fixpoint
+// Points-to (clientlib/processes.dl) is a whole-program fixpoint
 // over TermFlow's per-function summaries, and on a large program most of
 // what a solve costs, the same rows for every analysis that asks. Like
 // stage 0 (stage0.dl), this derives them once, and the analyses read the
@@ -8,22 +9,23 @@
 //
 // It runs after stage 0, whose call graph it reads, into the same facts
 // directory, and writes only what an analysis reads: the processes, the
-// resolved targets, and of what each source points to, the processes and
+// resolved targets, and of what each variable points to, the processes and
 // tables (not the terms that hold them, the bulk of it). For an
 // incremental consumer it is a cutoff seam of its own: most edits leave
 // every process and target where it was.
 //
 // Outputs are written as `.facts`, the format the analyses read.
 //
-// This is the stage as it runs by default: every leaf resolved exactly,
-// within a budget (below). A program whose exact fixpoint outgrows it
-// runs points_to_bounded.dl instead (Argus.Analysis.Extraction.
-// derive_points_to/2): this program with stage_mode("bounded"), which
-// resolves the leaves a coarse pass finds pervasive with that pass
-// (clientlib/pervasive.dl) and every other one as here; and one that
-// outgrows even that runs points_to_coarse.dl, which resolves every leaf
-// with it. All three write the same relations, and points_to_mode says
-// whether the exact one wrote them.
+// This is the stage as it runs by default, the full one: every object
+// resolved field-sensitively, within a budget (below). A program whose
+// full fixpoint outgrows it runs points_to_selective.dl instead
+// (Argus.Analysis.Extraction.derive_points_to/2): this program with
+// stage_mode("selective"), which resolves the hub objects a
+// field-insensitive pass finds with that pass (clientlib/hub_objects.dl)
+// and every other one as here; and one that outgrows even that runs
+// points_to_field_insensitive.dl, which resolves every object with it.
+// All three write the same relations, and points_to_mode says which one
+// wrote them.
 
 .include "clientlib/imports.dl"
 .include "clientlib/behaviours.dl"
@@ -31,14 +33,14 @@
 .include "clientlib/process_statem.dl"
 .include "clientlib/runs_elsewhere.dl"
 .include "clientlib/processes.dl"
-.include "clientlib/pervasive.dl"
+.include "clientlib/hub_objects.dl"
 .include "clientlib/task_handles.dl"
 
-stage_mode("exact").
+stage_mode("full").
 
 // ── The budget ──────────────────────────────────────────────────────
 //
-// What a source may point to (var_points_to) and what a term's field may
+// What a variable may point to (var_points_to) and what a term's field may
 // hold (field_points_to) are the fixpoint's bulk, and each is held to 500,000
 // rows. Over twenty evaluation programs the largest are 45k and 30k
 // rows (the Phoenix stack's 751-module deps; a 1,239-module umbrella
@@ -53,10 +55,11 @@ stage_mode("exact").
 // below) or the finished fixpoint counts it, so whether a program outgrows
 // it is a function of the program and its facts, not of how fast the
 // engine ran. points_to_overflow names the relations that reached it, and
-// the caller runs the bounded stage in their place. The bounded stage is
-// held to the same budget (it includes this file), and the coarse stage,
-// run when the bounded one outgrows it, too: a program that outgrows
-// even that has no points-to, and the analyses that read it degrade.
+// the caller runs the selective stage in their place. The selective
+// stage is held to the same budget (it includes this file), and the
+// field-insensitive stage, run when the selective one outgrows it, too:
+// a program that outgrows even that has no points-to, and the analyses
+// that read it degrade.
 
 .decl points_to_budget(rows: number)
 
@@ -85,17 +88,17 @@ points_to_overflow("field_points_to", n, b) :- points_to_budget(b), field_points
 .output points_to_overflow(filename="points_to_overflow.csv")
 
 // Which stage wrote the relations below, staged beside them: a result
-// read back from a store says how it was made. The leaves the bounded
-// and coarse stages resolved coarsely go beside it too (none in this
-// stage).
+// read back from a store says how it was made. The hub objects the
+// selective and field-insensitive stages resolved field-insensitively go
+// beside it too (none in the full stage).
 .decl points_to_mode(mode: symbol)
 
-points_to_mode("exact") :- stage_mode("exact"), !stage_mode("bounded").
-points_to_mode("bounded") :- stage_mode("bounded"), !stage_mode("coarse").
-points_to_mode("coarse") :- stage_mode("coarse").
+points_to_mode("full") :- stage_mode("full"), !stage_mode("selective").
+points_to_mode("selective") :- stage_mode("selective"), !stage_mode("field_insensitive").
+points_to_mode("field_insensitive") :- stage_mode("field_insensitive").
 
 .output points_to_mode(filename="points_to_mode.facts")
-.output pervasive(filename="pervasive.csv")
+.output hub_object(filename="hub_object.csv")
 
 .output server_process(filename="server_process.facts")
 .output instance(filename="instance.facts")
@@ -122,11 +125,11 @@ process_signal(f, a, id, kind, p) :- process_call(f, a, id, kind, p), process_si
 
 // The processes a handler hands a call as its first argument (shutdown's
 // stops), and the tables an :ets operation names (tables.dl): what a
-// source may point to, for the sources the analyses ask about. Staged
-// for those alone, since a source no rule asks about is most of the
-// program, and the points-to of an arbitrary one is what the stage
-// otherwise never needs; a rule that asks about other sources adds them
-// here.
+// variable may point to, for the variables the analyses ask about.
+// Staged for those alone, since a variable no rule asks about is most of
+// the program, and the points-to of an arbitrary one is what the stage
+// otherwise never needs; a rule that asks about other variables adds
+// them here.
 .decl var_process(func: symbol, var_kind: symbol, var: symbol, proc: symbol)
 
 var_process(h, sk, s, p) :-
@@ -138,9 +141,9 @@ var_process(h, sk, s, p) :-
 var_process(h, sk, s, p) :-
   handler_function(_, h),
   call_arg_var(_, h, _, "0", "call", sk, s),
-  coarse(h, sk, s, r, p),
-  coarse_top(r),
-  pervasive(p).
+  field_insensitive_points_to(h, sk, s, r, p),
+  reach_top(r),
+  hub_object(p).
 
 .output var_process(filename="var_process.facts")
 
@@ -150,9 +153,9 @@ var_table(f, sk, s, t) :- table_use(_, f, sk, s), var_points_to(f, sk, s, t), ta
 
 var_table(f, sk, s, t) :-
   table_use(_, f, sk, s),
-  coarse(f, sk, s, r, t),
-  coarse_top(r),
-  pervasive(t),
+  field_insensitive_points_to(f, sk, s, r, t),
+  reach_top(r),
+  hub_object(t),
   table_alloc(_, _, t).
 
 .output var_table(filename="var_table.facts")
@@ -193,21 +196,22 @@ leaves_process(t) :-
 
 .output kept_in_dictionary(filename="kept_in_dictionary.facts")
 
-// The tables the bounded stage resolved coarsely (pervasive leaves): its
-// var_table rows for them are a superset, which a rule that needs
-// the table an operation surely names must not take as one (tables.dl).
-// None in the exact stage.
-.decl coarse_table(table: symbol)
+// The tables the selective stage resolved field-insensitively (hub
+// objects): its var_table rows for them are a superset, which a rule
+// that needs the table an operation surely names must not take as one
+// (tables.dl). None in the full stage.
+.decl approximated_table(table: symbol)
 
-coarse_table(t) :- pervasive(t), table_alloc(_, _, t).
+approximated_table(t) :- hub_object(t), table_alloc(_, _, t).
 
-.output coarse_table(filename="coarse_table.facts")
+.output approximated_table(filename="approximated_table.facts")
 
-// The processes the bounded or coarse stage resolved coarsely: their
-// targets are a superset (pervasive.dl), each a process a call, send or
-// signal may reach, not one it surely does. None in the exact stage.
-.decl coarse_process(proc: symbol)
+// The processes the selective or field-insensitive stage resolved
+// field-insensitively: their targets are a superset (hub_objects.dl),
+// each a process a call, send or signal may reach, not one it surely
+// does. None in the full stage.
+.decl approximated_process(proc: symbol)
 
-coarse_process(p) :- pervasive(p), process(p).
+approximated_process(p) :- hub_object(p), process(p).
 
-.output coarse_process(filename="coarse_process.facts")
+.output approximated_process(filename="approximated_process.facts")

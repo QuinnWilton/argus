@@ -4,9 +4,9 @@ defmodule Argus.Graph.Solve do
 
     * `stage({program, :stage0})` — the call graph (`priv/dl/stage0.dl`),
       derived once for every analysis that reads it.
-    * `stage({program, :points_to})` — process points-to, the exact
-      program or, when it outgrows its budget, the bounded one, or the
-      coarse one when that does too (`Argus.Stages`), over stage 0's
+    * `stage({program, :points_to})` — points-to, the full
+      program or, when it outgrows its budget, the selective one, or the
+      field-insensitive one when that does too (`Argus.Stages`), over stage 0's
       call graph.
     * `stage_output({program, stage, file})` — the digest of one file a
       stage wrote: the second and third cutoff seams. An edit that moves
@@ -60,29 +60,29 @@ defmodule Argus.Graph.Solve do
     end
   end
 
-  # The exact program, then the bounded one over the same facts when the
-  # exact fixpoint outgrew its budget, and the coarse one when the
-  # bounded one did too; the stage is the last one's.
+  # The full program, then the selective one over the same facts when
+  # the full fixpoint outgrew its budget, and the field-insensitive one
+  # when the selective one did too; the stage is the last one's.
   defp points_to(db, program) do
-    {:ok, exact} = Programs.rules_path(:points_to)
-    {:ok, bounded} = Programs.rules_path(:points_to_bounded)
-    {:ok, coarse} = Programs.rules_path(:points_to_coarse)
+    {:ok, full} = Programs.rules_path(:points_to)
+    {:ok, selective} = Programs.rules_path(:points_to_selective)
+    {:ok, field_insensitive} = Programs.rules_path(:points_to_field_insensitive)
 
     programs = %{
-      exact => :points_to,
-      bounded => :points_to_bounded,
-      coarse => :points_to_coarse
+      full => :points_to,
+      selective => :points_to_selective,
+      field_insensitive => :points_to_field_insensitive
     }
 
     solve = fn rules_path, _previous ->
       with {:ok, outputs} <- solve_program(db, program, Map.fetch!(programs, rules_path)),
            {:ok, results} <-
-             read_outputs(db, outputs, ["points_to_overflow.csv", "pervasive.csv"]) do
+             read_outputs(db, outputs, ["points_to_overflow.csv", "hub_object.csv"]) do
         {:ok, results, outputs}
       end
     end
 
-    case Stages.points_to(solve, nil, exact, bounded, coarse) do
+    case Stages.points_to(solve, nil, full, selective, field_insensitive) do
       {:ok, outputs, mode} -> {:ok, %{outputs: outputs, mode: mode}}
       {:error, reason, _outputs} -> Stages.failed(reason)
     end

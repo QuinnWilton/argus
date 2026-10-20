@@ -11,11 +11,11 @@ defmodule Argus.Analysis.Extraction do
     re-derives it and the volatile instruction-level relations stay out of
     every analysis's input set.
   - **Points-to** (`priv/dl/points_to.dl`), when an analysis reads it,
-    derives which process a pid can be (`points_to_relations/0`) once:
-    the fixpoint is most of a solve over a large program, and it is the
-    same for every analysis that asks. A program whose exact fixpoint
-    outgrows the stage's budget runs it bounded instead
-    (`priv/dl/points_to_bounded.dl`, see `derive_points_to/2`).
+    derives which objects a variable can hold (`points_to_relations/0`)
+    once: the fixpoint is most of a solve over a large program, and it
+    is the same for every analysis that asks. A program whose full
+    fixpoint outgrows the stage's budget runs it selective instead
+    (`priv/dl/points_to_selective.dl`, see `derive_points_to/2`).
 
   `Argus.Analysis` delegates `derive_stage0/2`, `derive_points_to/2`,
   their rules paths and relation lists here.
@@ -32,7 +32,7 @@ defmodule Argus.Analysis.Extraction do
   # what the analyses read, and which stage wrote them.
   @points_to_relations ~w(server_process instance supervised_process private_process process
                           named_pid process_call process_signal call_site_target self_call
-                          var_process var_table coarse_table coarse_process
+                          var_process var_table approximated_table approximated_process
                           kept_in_dictionary
                           task_handled task_escapes points_to_mode)
 
@@ -150,7 +150,7 @@ defmodule Argus.Analysis.Extraction do
   Derives the points-to stage into an existing facts directory that
   stage 0 has been derived into.
 
-  Process points-to (`clientlib/processes.dl`) is a whole-program
+  Points-to (`clientlib/processes.dl`) is a whole-program
   fixpoint, and every analysis that asks which process a pid can be
   used to derive it inside its own solve: over a large program, most of
   the solve, and the same rows each time. This derives them once, and
@@ -161,34 +161,36 @@ defmodule Argus.Analysis.Extraction do
   the result: its outputs move only when a process or a resolved target
   does, not on every edit that renumbers the instructions it reads.
 
-  The stage is exact within a budget: `points_to_rules_path/0` holds its
-  fixpoint to 500,000 rows of what a source may point to and of what a
-  term's field may hold, where the largest of twenty programs it was
-  measured on holds 45,000. A program whose helpers merge most of its
-  terms into one value grows past that with the square of those terms
-  (Ash: 13 million rows after thirteen minutes) and runs bounded
-  instead (`points_to_bounded_rules_path/0`): the leaves a coarse pass
-  finds pervasive (held by more than one source in a hundred) are
-  resolved by that pass, a superset of their exact rows, and every
-  other one exactly. The budget is decided over the finished fixpoint,
+  The stage is field-sensitive within a budget: `points_to_rules_path/0`
+  holds its fixpoint to 500,000 rows of what a variable may point to and
+  of what a term's field may hold, where the largest of twenty programs
+  it was measured on holds 45,000. A program whose helpers merge most of
+  its terms into one value grows past that with the square of those
+  terms (Ash: 13 million rows after thirteen minutes) and runs selective
+  instead (`points_to_selective_rules_path/0`): the hub objects (held by
+  more than one variable in a hundred) are resolved by a
+  field-insensitive pass, a superset of their full rows, and every other
+  object field-sensitively. The budget is decided over the finished fixpoint,
   so which stage runs is a function of the facts: the same facts run
   the same stage on any machine, under any load, afresh or from a store.
   `points_to_mode.facts` says which one wrote the relations, and a
-  warning names the leaves a bounded stage resolved coarsely. The engine
-  stops a fixpoint as a relation grows past the budget (`.limitsize`), so
-  a program that outgrows it pays for the exact stage only until it
-  does, before the bounded one runs, within the solve's timeout.
+  warning names the hub objects a selective stage resolved
+  field-insensitively. The engine stops a fixpoint as a relation grows
+  past the budget (`.limitsize`), so a program that outgrows it pays for
+  the full stage only until it does, before the selective one runs,
+  within the solve's timeout.
 
-  A bounded stage that outgrows the budget too runs coarse
-  (`points_to_coarse_rules_path/0`): every leaf resolved by the coarse
-  pass, whose rows grow with the program's sources and leaves rather
-  than with its terms. Where the terms merge into each other, each
-  holding every other's fields, the bounded stage outgrows the budget
-  whichever leaves it resolves exactly; the coarse one answers for every
-  leaf what the bounded one answers for a pervasive one, and the run's
-  notice says so (`Argus.Report.Notice`).
+  A selective stage that outgrows the budget too runs field-insensitive
+  (`points_to_field_insensitive_rules_path/0`): every object resolved by
+  the field-insensitive pass, whose rows grow with the program's
+  variables and objects rather than with its terms. Where the terms merge
+  into each other, each holding every other's fields, the selective
+  stage outgrows the budget whichever objects it resolves
+  field-sensitively; the field-insensitive one answers for every object
+  what the selective one answers for a hub, and the run's notice says so
+  (`Argus.Report.Notice`).
 
-  A stage that outgrows the budget even coarse, or does not finish
+  A stage that outgrows the budget even field-insensitive, or does not finish
   within `:timeout`, fails with a warning, `{:error,
   {:points_to, reason}}`, and the analyses that read it degrade
   (`Argus.Findings.run/2`): time can fail the stage, never change what
@@ -197,18 +199,19 @@ defmodule Argus.Analysis.Extraction do
   Writes the `points_to_relations/0` files into `facts_dir`, each renamed
   into place whole (as stage 0's, `derive_stage0/2`), and none when it
   fails: a failure leaves the directory as it found it. What the stage
-  reports (its overflow, its pervasive leaves) is read back, never left
+  reports (its overflow, its hub objects) is read back, never left
   among the facts. Idempotent, and safe beside another derivation into
   the same directory.
 
-  `:rules_path`, `:bounded_rules_path` and `:coarse_rules_path` select copied
-  stage programs for a debug reproduction. All default to the shipped programs. The same budget
-  policy and publication contract apply to those copies.
+  `:rules_path`, `:selective_rules_path` and
+  `:field_insensitive_rules_path` select copied stage programs for a
+  debug reproduction. All default to the shipped programs. The same
+  budget policy and publication contract apply to those copies.
   """
   @spec derive_points_to(Path.t(), keyword()) :: :ok | {:error, term()}
   def derive_points_to(facts_dir, opts \\ []) do
     # Each solve over `facts_dir` into a directory of its own; the last
-    # one's outputs are the stage's, any before it (an exact stage that
+    # one's outputs are the stage's, any before it (a full stage that
     # outgrew its budget: what it had reached, none of it an answer)
     # are discarded with it.
     solve = fn rules_path, {dir, asides} ->
@@ -221,8 +224,12 @@ defmodule Argus.Analysis.Extraction do
              solve,
              {facts_dir, []},
              Keyword.get(opts, :rules_path, points_to_rules_path()),
-             Keyword.get(opts, :bounded_rules_path, points_to_bounded_rules_path()),
-             Keyword.get(opts, :coarse_rules_path, points_to_coarse_rules_path())
+             Keyword.get(opts, :selective_rules_path, points_to_selective_rules_path()),
+             Keyword.get(
+               opts,
+               :field_insensitive_rules_path,
+               points_to_field_insensitive_rules_path()
+             )
            ) do
         {:ok, {_dir, [aside | _] = asides}, _mode} ->
           {publish(aside, facts_dir, @points_to_relations), asides}
@@ -244,21 +251,21 @@ defmodule Argus.Analysis.Extraction do
   def points_to_rules_path, do: Argus.Dl.path("points_to.dl")
 
   @doc """
-  The path to the bounded points-to stage's rules file: what
-  `derive_points_to/2` runs when the exact stage outgrows its budget. A
+  The path to the selective points-to stage's rules file: what
+  `derive_points_to/2` runs when the full stage outgrows its budget. A
   consumer that keys the stage on its programs keys it on this one too.
   """
-  @spec points_to_bounded_rules_path() :: Path.t()
-  def points_to_bounded_rules_path, do: Argus.Dl.path("points_to_bounded.dl")
+  @spec points_to_selective_rules_path() :: Path.t()
+  def points_to_selective_rules_path, do: Argus.Dl.path("points_to_selective.dl")
 
   @doc """
-  The path to the coarse points-to stage's rules file: what
-  `derive_points_to/2` runs when even the bounded stage outgrows its
+  The path to the field-insensitive points-to stage's rules file: what
+  `derive_points_to/2` runs when even the selective stage outgrows its
   budget. A consumer that keys the stage on its programs keys it on this
   one too.
   """
-  @spec points_to_coarse_rules_path() :: Path.t()
-  def points_to_coarse_rules_path, do: Argus.Dl.path("points_to_coarse.dl")
+  @spec points_to_field_insensitive_rules_path() :: Path.t()
+  def points_to_field_insensitive_rules_path, do: Argus.Dl.path("points_to_field_insensitive.dl")
 
   @doc "The relations the points-to stage writes."
   @spec points_to_relations() :: [String.t()]

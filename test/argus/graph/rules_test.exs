@@ -210,13 +210,13 @@ defmodule Argus.Graph.RulesTest do
     end)
   end
 
-  test "an edit to the bounded points-to program re-derives nothing while the exact one fits",
+  test "an edit to the selective points-to program re-derives nothing while the full one fits",
        context do
     # The stage reads the bounded program only when the exact fixpoint
     # outgrows its budget, a function of the facts: when the facts move
     # so that it does, the stage runs again and reads it then.
     in_graph(context, fn db, log, root ->
-      edit!(root, "points_to_bounded.dl")
+      edit!(root, "points_to_selective.dl")
       _moved = Argus.Graph.set_environment(db)
       findings!(db)
 

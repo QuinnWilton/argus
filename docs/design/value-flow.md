@@ -145,7 +145,7 @@ entry.
   depend on the coverage and abstraction of the consuming Datalog stage.
 
 These summaries must not justify safety from absent provenance. The bounded
-whole-program points-to pass has its own guarantees; its coarse fallback does
+whole-program points-to pass has its own guarantees; its field-insensitive fallback does
 not make this extractor a sound model of all BEAM executions.
 
 ## Verification

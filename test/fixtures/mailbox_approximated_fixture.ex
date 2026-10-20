@@ -1,9 +1,10 @@
-defmodule Argus.Test.Fixtures.MailboxCoarse do
+defmodule Argus.Test.Fixtures.MailboxApproximated do
   @moduledoc """
   Sends whose target is one of two servers of different modules, and a
   cast a server makes to itself by its registered name: what the
   mailbox analysis makes of targets the points-to stage resolved
-  exactly, and of the same targets resolved coarsely.
+  field-sensitively, and of the same targets resolved
+  field-insensitively.
   """
 
   defmodule Left do
@@ -33,7 +34,7 @@ defmodule Argus.Test.Fixtures.MailboxCoarse do
     Starts Left or Right and sends it :left: Right, which takes :right
     alone, crashes on it.
     """
-    alias Argus.Test.Fixtures.MailboxCoarse.{Left, Right}
+    alias Argus.Test.Fixtures.MailboxApproximated.{Left, Right}
 
     def run(left?) do
       {:ok, target} =
