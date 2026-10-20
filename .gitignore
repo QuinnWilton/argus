@@ -29,6 +29,9 @@ argus-*.tar
 # The argus escript (`mix escript.build`).
 /argus
 
+# What the escript keeps between runs over this repository (its state_dir).
+/.argus/
+
 # FlowLog toolchain build products (argus builds its own under the user cache).
 /native/flowlog/*/target/
 /native/flowlog/engine/src/program.rs
