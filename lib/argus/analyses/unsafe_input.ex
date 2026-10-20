@@ -110,8 +110,13 @@ defmodule Argus.Analyses.UnsafeInput do
       # A start whose caller waits for the child's :DOWN (awaits_child_exit).
       Argus.Extractors.Monitor,
       # Where a start hands its fun to a new process (process_start):
-      # runs_elsewhere's edges, off a request's own stack.
+      # runs_elsewhere's edges, off a request's own stack. The server a
+      # client's call reaches comes from the points-to stage
+      # (call_site_target), which reads the next three too.
       Argus.Extractors.TermFlow,
+      Argus.Extractors.ErrorHandling,
+      Argus.Extractors.ProcessRegistry,
+      Argus.Extractors.GenStatem,
       Argus.Extractors.Endpoint,
       # What a call's arguments are made of whatever the callee
       # (call_arg_reads): whether a caller's input reaches an atom.

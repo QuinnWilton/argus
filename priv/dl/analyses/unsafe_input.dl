@@ -15,6 +15,7 @@
 .include "../clientlib/callbacks.dl"
 .include "../clientlib/request_entry.dl"
 .include "../clientlib/runs_elsewhere.dl"
+.include "../clientlib/staged_processes.dl"
 .include "../clientlib/supervision.dl"
 .include "../clientlib/tooling.dl"
 .include "../clientlib/etf_allocation.dl"
@@ -769,33 +770,34 @@ atom_input.seed(func, p, id) :-
 
 atom_input.reaches(f, p, t) :- message_param(f, p, h), atom_input.reaches(h, "0", t).
 
-// A client sends a call or cast derived from parameter pos to mod's server. The handler
-// receives the message as its first parameter.
+// A client's call or cast at `id` carries a message derived from parameter pos to a
+// server, whose handler receives the message as its first parameter. Matched by site:
+// the message of one call goes to that call's server, not to every server the client
+// calls.
 .decl message_param(client: symbol, pos: symbol, callback: symbol)
 
 message_param(f, to_string(p), h) :-
-  call_arg_derived(f, api, 1, p),
-  sync_api(api),
-  sync_call_site(_, f, m, _),
+  call_arg_param(id, f, 1, p),
+  site_server(id, f, "call", m),
   function_def(h, m, "handle_call", 3, _).
 
 message_param(f, to_string(p), h) :-
-  call_arg_derived(f, api, 1, p),
-  cast_api(api),
-  async_cast(f, m),
+  call_arg_param(id, f, 1, p),
+  site_server(id, f, "cast", m),
   function_def(h, m, "handle_cast", 2, _).
 
-.decl sync_api(api: symbol)
+// The server module a call or cast at `id` reaches: the one it names, or the
+// callback module of a process points-to resolves its target to (a pid the client
+// was handed or started).
+.decl site_server(id: symbol, func: symbol, kind: symbol, mod: symbol)
 
-sync_api("GenServer:call/2").
-sync_api("GenServer:call/3").
-sync_api(":gen_server:call/2").
-sync_api(":gen_server:call/3").
+site_server(id, f, "call", m) :- sync_call_site(id, f, m, _), m != "dynamic".
+site_server(id, f, "cast", m) :- async_cast_site(id, f, m), m != "dynamic".
 
-.decl cast_api(api: symbol)
-
-cast_api("GenServer:cast/2").
-cast_api(":gen_server:cast/2").
+site_server(id, f, kind, m) :-
+  call_site_target(id, f, kind, p),
+  (kind = "call" ; kind = "cast"),
+  server_process(p, m).
 
 // The sink's argument is made of a parameter of the program's API
 // (outside_api): an atom's here, a decompression's compressed data below.

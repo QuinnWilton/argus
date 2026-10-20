@@ -23,6 +23,11 @@ A sink handed as a capture to a call that runs it on each element of a collectio
 is a call of the sink there, on the collection's data. A sink whose check reads its
 argument's value (a literal command or template) is recognized only where it is called.
 
+A client's `GenServer.call` or `cast` carries its parameters into the handler of that
+call's server: the module the call names, or the callback module of the process
+points-to resolves its pid to. A message goes to its own call's server, not to every
+server the client's function calls.
+
 | Proximity | Evidence | Usual severity |
 |---|---|---|
 | `flow` | A request parameter contributes to the sink argument. | error |
