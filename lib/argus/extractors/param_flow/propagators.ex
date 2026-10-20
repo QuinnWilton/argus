@@ -137,34 +137,6 @@ defmodule Argus.Extractors.ParamFlow.Propagators do
     {Phoenix.LiveView.LiveStream, [:mark_consumable], 1, [0]}
   ]
 
-  # A higher-order call hands each element of its collection to the fun it
-  # runs: `Map.new(params, fn {k, v} -> ... end)` runs the closure on data
-  # made of `params`, which the fun takes as its first parameter.
-  # {collection position, fun position}.
-  @element_calls %{
-    {Enum, :map, 2} => {0, 1},
-    {Enum, :flat_map, 2} => {0, 1},
-    {Enum, :each, 2} => {0, 1},
-    {Enum, :filter, 2} => {0, 1},
-    {Enum, :reject, 2} => {0, 1},
-    {Enum, :find, 2} => {0, 1},
-    {Enum, :group_by, 2} => {0, 1},
-    {Enum, :sort_by, 2} => {0, 1},
-    {Enum, :uniq_by, 2} => {0, 1},
-    {Enum, :reduce, 3} => {0, 2},
-    {Enum, :into, 3} => {0, 2},
-    {Enum, :map_join, 3} => {0, 2},
-    {Enum, :map_join, 2} => {0, 1},
-    {Enum, :reduce, 2} => {0, 1},
-    {Map, :new, 2} => {0, 1},
-    {:lists, :map, 2} => {1, 0},
-    {:lists, :foreach, 2} => {1, 0},
-    {:lists, :filter, 2} => {1, 0},
-    {:lists, :flatmap, 2} => {1, 0},
-    {:lists, :foldl, 3} => {2, 0},
-    {:lists, :foldr, 3} => {2, 0}
-  }
-
   # The enumerations that pair each element with its position: {the
   # counter's field in each pair, the argument positions that must be
   # integer literals}. The counter starts at the offset and steps by the
@@ -187,7 +159,7 @@ defmodule Argus.Extractors.ParamFlow.Propagators do
   parameter.
   """
   @spec element_call(mfa()) :: {:ok, {non_neg_integer(), non_neg_integer()}} | :error
-  def element_call(mfa), do: Map.fetch(@element_calls, mfa)
+  defdelegate element_call(mfa), to: Argus.Extractor.CallSites
 
   @doc """
   For an enumeration pairing each element with a counter

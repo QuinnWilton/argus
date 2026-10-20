@@ -138,6 +138,16 @@ defmodule Argus.Test.Fixtures.Transaction do
     end
   end
 
+  defmodule CapturedEffect do
+    @moduledoc "Each hook is notified in the transaction, the request handed to Enum.each by name."
+    def create(post, hooks) do
+      FakeRepo.transaction(fn ->
+        FakeRepo.insert(post)
+        Enum.each(hooks, &:httpc.request/1)
+      end)
+    end
+  end
+
   defmodule AwaitsAnotherTask do
     @moduledoc """
     Two tasks started in the transaction, one waited on: the notifier's

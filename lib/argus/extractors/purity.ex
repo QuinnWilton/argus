@@ -30,6 +30,7 @@ defmodule Argus.Extractors.Purity do
   @behaviour Argus.Extractor
 
   alias Argus.EffectModel
+  alias Argus.Extractor.CallSites
   alias Argus.InstrId
   alias Argus.Pipeline.Emit.Applies
 
@@ -60,6 +61,16 @@ defmodule Argus.Extractors.Purity do
           record(acc, ctx, callee_mod, callee_func, arity)
       end)
 
+    # An effect a higher-order call has on each element (`Enum.each(urls,
+    # &:httpc.request/1)`): the captured function's, at that call. Only its
+    # known effects: an unknown capture is no new unknown call.
+    facts =
+      Enum.reduce(CallSites.element_sites(module_data), facts, fn site, acc ->
+        ctx = %{func_id: site.func_id, instrs: site.instrs, idx: site.idx}
+        {m, f, a} = site.mfa
+        record_impure(acc, ctx, m, f, a)
+      end)
+
     scan_functions(module_data.module, module_data.functions, facts, fn
       acc, ctx, {:apply, _} -> record_apply(acc, ctx)
       acc, ctx, {:apply_last, _, _} -> record_apply(acc, ctx)
@@ -85,6 +96,13 @@ defmodule Argus.Extractors.Purity do
     case Applies.resolve(ctx.instrs, ctx.idx, Enum.at(ctx.instrs, ctx.idx)) do
       {:ok, {mod, func, arity}} -> record(facts, ctx, mod, func, arity)
       :error -> facts
+    end
+  end
+
+  defp record_impure(facts, ctx, callee_mod, callee_func, arity) do
+    case EffectModel.classify(inspect(callee_mod), to_string(callee_func), arity) do
+      {:impure, _category, _mode} -> record(facts, ctx, callee_mod, callee_func, arity)
+      _other -> facts
     end
   end
 

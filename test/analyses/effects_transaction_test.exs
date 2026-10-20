@@ -64,6 +64,14 @@ defmodule Argus.Analyses.EffectsTransactionTest do
       assert start =~ "Task"
     end
 
+    test "an effect a higher-order call runs on each element, handed by name, is the body's" do
+      assert [[_, _, "network", api, via]] =
+               for_module(findings([T.FakeRepo, T.CapturedEffect]), "CapturedEffect")
+
+      assert api =~ "httpc.request/1"
+      assert via =~ "-create/2-fun-0-"
+    end
+
     test "a task's messages are the transaction's when the body waits on that task" do
       rows = findings([T.FakeRepo, T.AwaitsAnotherTask, T.AwaitsHelperTask])
 

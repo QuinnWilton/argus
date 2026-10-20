@@ -32,7 +32,6 @@ defmodule Argus.Extractors.ApiCalls do
   alias Argus.Extractor.Argv
   alias Argus.Extractor.CallSites
   alias Argus.Extractor.Resolve
-  alias Argus.Extractors.ParamFlow.Propagators
   alias Argus.Extractor.ShellScript
   alias Argus.InstrId
 
@@ -373,51 +372,35 @@ defmodule Argus.Extractors.ApiCalls do
 
   defp listed?(mfa, table), do: Enum.any?(table, &mfa_matches?(&1, mfa))
 
-  # The sinks a higher-order call may run on each element of its collection, handed
-  # as a capture: one argument, and facts that read no argument register (a literal
-  # check reads the call's own, which here are the collection's and the fun's).
+  # The rows of the table a call a higher-order call makes on each element
+  # (`CallSites.element_sites/1`) fills: those whose columns read no
+  # argument register, since the site's registers are the higher-order
+  # call's (a literal check would read the collection, or the fun).
+  @register_free [:id, :func, :mod, :fun, :arity, :api, :mod_fun]
+
+  defp register_free?(columns),
+    do: Enum.all?(columns, &(&1 in @register_free or match?({:const, _}, &1)))
+
   @element_sink_mfas @table
                      |> Enum.filter(fn {_mfa, rel, cols} ->
                        rel in @sink_relations and
-                         Enum.all?(cols, &(&1 in [:id, :func, :api] or match?({:const, _}, &1)))
+                         Enum.all?(cols, &(&1 in @register_free or match?({:const, _}, &1)))
                      end)
                      |> Enum.map(fn {mfa, _rel, _cols} -> mfa end)
                      |> Enum.uniq()
 
   @doc """
-  The sink a higher-order call at `idx` runs on each element of its
-  collection, handed as a capture (`Enum.map(names, &String.to_atom/1)`):
-  `{:ok, sink, collection}`, the sink's `{mod, fun, 1}` and the register
-  holding the collection, whose data each call of the sink takes. `:error`
-  for any other call, and for a sink whose facts read its argument's
-  value (a literal command, a literal template).
-  """
-  @spec element_sink([tuple()], non_neg_integer(), {module(), atom(), arity()}) ::
-          {:ok, {module(), atom(), 1}, {:x, non_neg_integer()}} | :error
-  def element_sink(instrs, idx, mfa) do
-    with {:ok, {collection, fun}} <- Propagators.element_call(mfa),
-         {:ok, captured} when is_function(captured, 1) <-
-           Resolve.resolve_register(instrs, idx, {:x, fun}),
-         {:type, :external} <- Function.info(captured, :type),
-         {:module, m} = Function.info(captured, :module),
-         {:name, f} = Function.info(captured, :name),
-         true <- listed?({m, f, 1}, @element_sink_mfas) do
-      {:ok, {m, f, 1}, {:x, collection}}
-    else
-      _ -> :error
-    end
-  end
-
-  @doc """
   The module's higher-order calls that run a sink on each element
-  (`element_sink/3`), each as a call site of the sink: its `mfa` the
-  sink's, `element` the register its one argument reads.
+  (`Enum.map(names, &String.to_atom/1)`), each as a call site of the sink
+  (`Argus.Extractor.CallSites.element_sites/1`): its `mfa` the sink's,
+  `element` the register its one argument reads. Not a sink whose facts
+  read its argument's value (a literal command, a literal template).
   """
   @spec element_sink_sites(map()) :: [map()]
   def element_sink_sites(module_data) do
-    for %{remote?: true} = site <- CallSites.for_module(module_data),
-        {:ok, sink, collection} <- [element_sink(site.instrs, site.idx, site.mfa)],
-        do: Map.merge(site, %{mfa: sink, element: collection})
+    for site <- CallSites.element_sites(module_data),
+        listed?(site.mfa, @element_sink_mfas),
+        do: site
   end
 
   @doc "Whether a concrete `{mod, fun, arity}` is one of `sink_mfas/0`."
@@ -476,17 +459,21 @@ defmodule Argus.Extractors.ApiCalls do
         |> rpc_mfa_param(ctx, mfa, origins)
       end)
 
-    # A sink a higher-order call runs on each element is a call of it, at that call.
-    Enum.reduce(element_sink_sites(module_data), facts, fn site, acc ->
-      emit_listed(acc, %{func_id: site.func_id, instrs: site.instrs, idx: site.idx}, site.mfa)
+    # A function a higher-order call runs on each element is called there, once per
+    # element: the rows whose columns read no argument register.
+    Enum.reduce(CallSites.element_sites(module_data), facts, fn site, acc ->
+      ctx = %{func_id: site.func_id, instrs: site.instrs, idx: site.idx}
+      emit_listed(acc, ctx, site.mfa, &register_free?/1)
     end)
   end
 
-  defp emit_listed(facts, ctx, {mod, fun, arity} = mfa) do
+  defp emit_listed(facts, ctx, {mod, fun, arity} = mfa, columns? \\ fn _ -> true end) do
     @by_mod_fun
     |> Map.get({mod, fun}, [])
     |> Enum.concat(Map.get(@by_mod_fun, {mod, :any}, []))
-    |> Enum.filter(fn {{_m, _f, a}, _rel, _cols} -> arity_matches?(a, arity) end)
+    |> Enum.filter(fn {{_m, _f, a}, _rel, cols} ->
+      arity_matches?(a, arity) and columns?.(cols)
+    end)
     |> Enum.reduce(facts, fn {_mfa, relation, columns}, acc ->
       emit(acc, ctx, mfa, relation, columns)
     end)

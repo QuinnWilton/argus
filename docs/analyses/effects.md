@@ -27,7 +27,8 @@ It distinguishes some detached process-local effects from lasting external effec
 but cannot model every Ecto.Multi composition, nested transaction or application
 compensation protocol. A task the transaction waits on, wherever it was started, holds
 the transaction: its messages and starts are the transaction's. A task it starts and
-does not wait on sends its own. Logging and ordinary reads are not rollback defects here.
+does not wait on sends its own. An effect a higher-order call has on each element,
+handed the function by name (`Enum.each(urls, &:httpc.request/1)`), is the body's. Logging and ordinary reads are not rollback defects here.
 
 ## Implementation
 
