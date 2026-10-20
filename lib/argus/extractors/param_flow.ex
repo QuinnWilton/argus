@@ -453,41 +453,51 @@ defmodule Argus.Extractors.ParamFlow do
         {InstrId.func_id(module_data.module, n, a), is}
       end)
 
-    module_data
-    |> CallSites.for_module()
-    |> Enum.reduce(facts, fn %{func_id: func_id, idx: idx, mfa: {mod, fun, arity} = mfa}, acc ->
-      id = InstrId.mint(func_id, idx)
-      site_inputs = inputs_at(inputs, func_id, idx)
-      callee = InstrId.func_id(mod, fun, arity)
-      sink? = ApiCalls.sink?(mfa)
+    facts =
+      module_data
+      |> CallSites.for_module()
+      |> Enum.reduce(facts, fn %{func_id: func_id, idx: idx, mfa: {mod, fun, arity} = mfa}, acc ->
+        id = InstrId.mint(func_id, idx)
+        site_inputs = inputs_at(inputs, func_id, idx)
+        callee = InstrId.func_id(mod, fun, arity)
+        sink? = ApiCalls.sink?(mfa)
 
-      acc =
-        Enum.reduce(0..(arity - 1)//1, acc, fn pos, inner ->
-          derived = Map.get(site_inputs, "x#{pos}", MapSet.new())
-          inner = emit_call_arg(inner, [func_id, callee, to_string(pos)], derived, pos)
+        acc =
+          Enum.reduce(0..(arity - 1)//1, acc, fn pos, inner ->
+            derived = Map.get(site_inputs, "x#{pos}", MapSet.new())
+            inner = emit_call_arg(inner, [func_id, callee, to_string(pos)], derived, pos)
 
-          inner =
-            Enum.reduce(derived, inner, fn
-              param, rows when is_integer(param) ->
-                add_fact(rows, :call_arg_param, [id, func_id, to_string(pos), to_string(param)])
+            inner =
+              Enum.reduce(derived, inner, fn
+                param, rows when is_integer(param) ->
+                  add_fact(rows, :call_arg_param, [id, func_id, to_string(pos), to_string(param)])
 
-              {:runtime, source_func, source}, rows ->
-                add_fact(rows, :call_arg_runtime, [
-                  id,
-                  func_id,
-                  to_string(pos),
-                  source,
-                  source_func
-                ])
+                {:runtime, source_func, source}, rows ->
+                  add_fact(rows, :call_arg_runtime, [
+                    id,
+                    func_id,
+                    to_string(pos),
+                    source,
+                    source_func
+                  ])
 
-              _marker, rows ->
-                rows
-            end)
+                _marker, rows ->
+                  rows
+              end)
 
-          if sink?, do: emit_sink_arg(inner, [id, func_id, to_string(pos)], derived), else: inner
-        end)
+            if sink?,
+              do: emit_sink_arg(inner, [id, func_id, to_string(pos)], derived),
+              else: inner
+          end)
 
-      emit_element_flow(acc, mfa, func_id, idx, site_inputs, instrs)
+        emit_element_flow(acc, mfa, func_id, idx, site_inputs, instrs)
+      end)
+
+    # A sink a higher-order call runs on each element takes the collection's data.
+    Enum.reduce(ApiCalls.element_sink_sites(module_data), facts, fn site, acc ->
+      {:x, n} = site.element
+      derived = Map.get(inputs_at(inputs, site.func_id, site.idx), "x#{n}", MapSet.new())
+      emit_sink_arg(acc, [InstrId.mint(site.func_id, site.idx), site.func_id, "0"], derived)
     end)
   end
 
@@ -566,6 +576,7 @@ defmodule Argus.Extractors.ParamFlow do
       module_data
       |> CallSites.for_module()
       |> Enum.filter(&ApiCalls.sink?(&1.mfa))
+      |> Enum.concat(ApiCalls.element_sink_sites(module_data))
       |> Enum.group_by(& &1.func_id)
 
     {entries, returns} = PrivateBounds.entries(module_data, Map.keys(sinks))
@@ -580,7 +591,8 @@ defmodule Argus.Extractors.ParamFlow do
           bounds = Bounded.at(cfg, instrs, arity, Enum.map(sites, & &1.idx), entry, returns)
 
           correlated =
-            for %{idx: idx, mfa: mfa} <- sites,
+            for %{idx: idx, mfa: mfa} = site <- sites,
+                not Map.has_key?(site, :element),
                 ApiCalls.atom_sink?(mfa),
                 not Map.has_key?(Map.get(bounds, idx, %{}), {:x, 0}),
                 do: idx
@@ -594,9 +606,8 @@ defmodule Argus.Extractors.ParamFlow do
               end
             )
 
-          for %{idx: idx, mfa: {_m, _f, sink_arity} = mfa} <- sites,
-              pos <- 0..(sink_arity - 1)//1,
-              {:ok, bound} <- [Map.fetch(Map.get(bounds, idx, %{}), {:x, pos})],
+          for %{idx: idx, mfa: mfa} = site <- sites,
+              {pos, bound} <- arg_bounds(site, Map.get(bounds, idx, %{})),
               not match?({:atoms, _}, bound) or ApiCalls.atom_sink?(mfa),
               reduce: acc do
             inner ->
@@ -654,6 +665,22 @@ defmodule Argus.Extractors.ParamFlow do
   # A successful list-to-atom conversion rejects non-character elements. Keep
   # this vocabulary proof specific to that operation; a numeric range alone
   # does not make arbitrary floating-point values finite.
+  # A sink's bounded arguments, by position. One a higher-order call runs on
+  # each element is bounded where its collection is one of the literals
+  # the program wrote: each element is then one of theirs.
+  defp arg_bounds(%{element: collection}, bounds) do
+    case Map.fetch(bounds, collection) do
+      {:ok, {:values, _} = bound} -> [{0, bound}]
+      _ -> []
+    end
+  end
+
+  defp arg_bounds(%{mfa: {_m, _f, arity}}, bounds) do
+    for pos <- 0..(arity - 1)//1,
+        {:ok, bound} <- [Map.fetch(bounds, {:x, pos})],
+        do: {pos, bound}
+  end
+
   defp emit_sequence_bounds(facts, module_data, sinks) do
     finite =
       MapSet.new(for [id, _func, "0", ""] <- Map.get(facts, :sink_arg_bounded, []), do: id)
@@ -661,6 +688,7 @@ defmodule Argus.Extractors.ParamFlow do
     candidates =
       for sites <- Map.values(sinks),
           %{func_id: func, idx: idx, mfa: {:erlang, :list_to_atom, 1}} = site <- sites,
+          not Map.has_key?(site, :element),
           not MapSet.member?(finite, InstrId.mint(func, idx)),
           do: site
 

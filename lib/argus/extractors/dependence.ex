@@ -218,6 +218,12 @@ defmodule Argus.Extractors.Dependence do
       ops: by_function(Map.get(typed, :instruction, []), &{&1.id, &1.op}, :one),
       tails: by_function(Map.get(typed, :tail_call, []), &{&1.id, true}, :one),
       calls: calls,
+      element_sinks:
+        module_data
+        |> ApiCalls.element_sink_sites()
+        |> Enum.reduce(%{}, fn %{func_id: f, idx: idx, element: reg}, acc ->
+          Map.update(acc, f, %{idx => reg}, &Map.put(&1, idx, reg))
+        end),
       copies: by_function(Helpers.copies(module_data), fn {id, instr} -> {id, instr} end, :one),
       closures: closures(module_data)
     }
@@ -684,7 +690,10 @@ defmodule Argus.Extractors.Dependence do
       {{mod, fun, arity} = mfa, remote?} ->
         inputs = inputs_of(idx, ctx, outs)
 
-        facts = emit_sink_reads(facts, remote? and ApiCalls.sink?(mfa), idx, arity, inputs, ctx)
+        facts =
+          facts
+          |> emit_sink_reads(remote? and ApiCalls.sink?(mfa), idx, arity, inputs, ctx)
+          |> emit_element_sink_reads(Map.get(ctx.index.element_sinks, idx), idx, inputs, ctx)
 
         cond do
           remote? and site?(mfa) ->
@@ -726,6 +735,14 @@ defmodule Argus.Extractors.Dependence do
         Map.get(inputs, "x#{pos}", MapSet.new())
       )
     end)
+  end
+
+  # A sink a higher-order call runs on each element reads the collection.
+  defp emit_element_sink_reads(facts, nil, _idx, _inputs, _ctx), do: facts
+
+  defp emit_element_sink_reads(facts, {:x, n}, idx, inputs, ctx) do
+    site = InstrId.mint(ctx.func_id, idx)
+    rows(facts, :sink_reads, [site, ctx.func_id, "0"], Map.get(inputs, "x#{n}", MapSet.new()))
   end
 
   defp emit_closure(facts, nil, _inputs, _here, _ctx), do: facts

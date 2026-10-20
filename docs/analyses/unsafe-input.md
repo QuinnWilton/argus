@@ -18,6 +18,11 @@ coverage; not every public endpoint, hook or authentication boundary is understo
 `sink_reachable` identifies a request path. `sink_without_request_path` uses the
 sink-specific fallback described below.
 
+A sink handed as a capture to a call that runs it on each element of a collection
+(`Enum.map(names, &String.to_atom/1)`, `:lists.map(fun erlang:binary_to_term/1, Bins)`)
+is a call of the sink there, on the collection's data. A sink whose check reads its
+argument's value (a literal command or template) is recognized only where it is called.
+
 | Proximity | Evidence | Usual severity |
 |---|---|---|
 | `flow` | A request parameter contributes to the sink argument. | error |
