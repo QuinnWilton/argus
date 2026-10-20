@@ -141,8 +141,18 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
           groups: [[reg()]],
           pending: %{reg() => {[reg()], bound() | {:found, bound()}}},
           ranges: %{reg() => range()},
-          returns: %{tuple() => bound()}
+          returns: %{tuple() => bound()},
+          validators: validators(),
+          elements: %{reg() => bound()},
+          funs: %{reg() => mfa()}
         }
+
+  @typedoc """
+  What a normal return of each function of the module establishes of its
+  parameters (`validated/5`): `%{mfa => %{position => bound}}`, a validator
+  returning only when its argument is one of a set, and raising otherwise.
+  """
+  @type validators :: %{mfa() => %{non_neg_integer() => bound()}}
 
   # The most values a bound admits: a thousandth of the default atom
   # table, for an integer range and for a product of bounded pieces alike.
@@ -252,10 +262,11 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
           arity(),
           [non_neg_integer()],
           bounds(),
-          return_bounds()
+          return_bounds(),
+          validators()
         ) :: %{non_neg_integer() => bounds()}
-  def at(%CfgFunction{} = fun, instrs, arity, idxs, entry, returns) do
-    states_at(fun, instrs, arity, idxs, entry, returns)
+  def at(%CfgFunction{} = fun, instrs, arity, idxs, entry, returns, validators \\ %{}) do
+    states_at(fun, instrs, arity, idxs, entry, returns, validators)
   end
 
   @doc false
@@ -275,15 +286,16 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
           arity(),
           [non_neg_integer()],
           bounds(),
-          return_bounds()
+          return_bounds(),
+          validators()
         ) :: %{non_neg_integer() => bounds()}
-  def correlated_at(fun, instrs, arity, idxs, entry, returns) do
+  def correlated_at(fun, instrs, arity, idxs, entry, returns, validators \\ %{}) do
     tuple = List.to_tuple(instrs)
 
     Map.new(idxs, fn idx ->
       block = CfgFunction.block_at(fun, idx)
       allowed = ancestors([block.id], fun.blocks, %{})
-      ins = %{fun.entry => {false, [entry_state(arity, entry, returns)]}}
+      ins = %{fun.entry => {false, [entry_state(arity, entry, returns, validators)]}}
 
       bounds =
         case partitioned([fun.entry], ins, fun, tuple, allowed, @partition_steps) do
@@ -403,11 +415,11 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
     Enum.reduce(tail, head, &meet_bounds/2)
   end
 
-  defp states_at(_fun, _instrs, _arity, [], _entry, _returns), do: %{}
+  defp states_at(_fun, _instrs, _arity, [], _entry, _returns, _validators), do: %{}
 
-  defp states_at(fun, instrs, arity, idxs, entry, returns) do
+  defp states_at(fun, instrs, arity, idxs, entry, returns, validators) do
     tuple = List.to_tuple(instrs)
-    ins = solve(fun, tuple, entry_state(arity, entry, returns))
+    ins = solve(fun, tuple, entry_state(arity, entry, returns, validators))
 
     Map.new(idxs, fn idx ->
       case CfgFunction.block_at(fun, idx) do
@@ -415,7 +427,7 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
           case Map.fetch(ins, id) do
             {:ok, state} ->
               state = Enum.reduce(first..(idx - 1)//1, state, &step(elem(tuple, &1), &2))
-              {idx, state.bounded}
+              {idx, with_elements(state)}
 
             :error ->
               {idx, %{}}
@@ -427,7 +439,7 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
     end)
   end
 
-  defp entry_state(arity, bounded, returns) do
+  defp entry_state(arity, bounded, returns, validators) do
     %{
       bounded: bounded,
       binaries: MapSet.new(),
@@ -435,8 +447,88 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
       groups: [],
       pending: %{},
       ranges: %{},
-      returns: returns
+      returns: returns,
+      validators: validators,
+      elements: %{},
+      funs: %{}
     }
+  end
+
+  # The bounded registers, and a list whose every element is bounded as
+  # `{:elements, reg}`: what a sink run on each element takes.
+  defp with_elements(state) do
+    Enum.reduce(state.elements, state.bounded, fn {reg, bound}, acc ->
+      Map.put(acc, {:elements, reg}, bound)
+    end)
+  end
+
+  @doc """
+  What every normal return of a function establishes of its parameters:
+  `%{position => bound}` for each parameter bounded on every path to a
+  return or a tail call that returns, as a validator that raises on any
+  other value is (`unless role in @roles, do: raise ...`). Each parameter
+  is followed by a copy no instruction writes, which a test on any copy
+  of its value bounds too, so the bound outlives the register the value
+  came in. A function that never returns validates nothing.
+  """
+  @spec validated(CfgFunction.t(), [Instr.instr()], arity(), return_bounds(), validators()) ::
+          %{non_neg_integer() => bound()}
+  def validated(%CfgFunction{} = fun, instrs, arity, returns, validators) do
+    tuple = List.to_tuple(instrs)
+
+    entry = %{
+      entry_state(arity, %{}, returns, validators)
+      | groups: for(k <- 0..(arity - 1)//1, do: [{:entry, k}, {:x, k}])
+    }
+
+    ins = solve(fun, tuple, entry)
+
+    exits =
+      for {instr, idx} <- Enum.with_index(instrs),
+          returns?(instr),
+          %{id: id, range: {first, _}} <- [CfgFunction.block_at(fun, idx)],
+          {:ok, state} <- [Map.fetch(ins, id)] do
+        state = Enum.reduce(first..(idx - 1)//1, state, &step(elem(tuple, &1), &2))
+        if instr == :return, do: state.bounded, else: step(instr, state).bounded
+      end
+
+    case exits do
+      [] ->
+        %{}
+
+      _ ->
+        phantoms = Map.new(0..(arity - 1)//1, &{{:entry, &1}, &1})
+
+        exits
+        |> Enum.map(&Map.take(&1, Map.keys(phantoms)))
+        |> common_entries()
+        |> Enum.flat_map(fn
+          {phantom, {:values, _} = bound} -> [{Map.fetch!(phantoms, phantom), bound}]
+          _other -> []
+        end)
+        |> Map.new()
+    end
+  end
+
+  # Where a function returns to its caller: a return, or a tail call that is
+  # no raise (a raise never returns).
+  @raises [
+    {:erlang, :error, 1},
+    {:erlang, :error, 2},
+    {:erlang, :error, 3},
+    {:erlang, :exit, 1},
+    {:erlang, :throw, 1},
+    {:erlang, :raise, 3}
+  ]
+
+  defp returns?(:return), do: true
+
+  defp returns?(instr) do
+    Instr.tail_call?(instr) and
+      case Helpers.match_remote_call(instr) do
+        {:ok, m, f, a} -> {m, f, a} not in @raises
+        :none -> true
+      end
   end
 
   # ── The fixpoint ─────────────────────────────────────────────────────
@@ -616,7 +708,9 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
         lists: carry_map(instr, state.lists),
         groups: groups,
         pending: carry_pending(instr, state.pending),
-        ranges: carry_map(instr, state.ranges)
+        ranges: carry_map(instr, state.ranges),
+        elements: carry_map(instr, state.elements),
+        funs: carry_map(instr, state.funs)
     }
 
     state
@@ -625,6 +719,69 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
     |> put_conversion(converted, instr)
     |> put_member(member, instr)
     |> put_comparison(instr, state_before)
+    |> put_fun(instr)
+    |> put_validated(instr, state_before)
+  end
+
+  # The function a fun a register holds runs: a closure, whose element (or
+  # sole) argument is its first parameter and its captures the rest.
+  defp put_fun(state, {:make_fun3, {_m, _f, _a} = mfa, _index, _uniq, dst, _env}),
+    do: %{state | funs: Map.put(state.funs, Instr.register(dst), mfa)}
+
+  defp put_fun(state, _instr), do: state
+
+  # A call to a validator (`validators`) returns only when its argument is
+  # one of a set: the copies of the argument that outlive the call are
+  # bounded past it. `Enum.each/2` and `:lists.foreach/2` running one on
+  # each element bound every element of the list.
+  @element_runs %{{Enum, :each, 2} => {0, 1}, {:lists, :foreach, 2} => {1, 0}}
+
+  defp put_validated(state, instr, before) do
+    case call_target(instr) do
+      {:ok, mfa} ->
+        case Map.fetch(before.validators, mfa) do
+          {:ok, params} ->
+            Enum.reduce(params, state, fn {k, bound}, acc ->
+              bound(acc, Enum.sort(Instr.carry(instr, holders(before, {:x, k}))), bound)
+            end)
+
+          :error ->
+            put_validated_elements(state, instr, before, mfa)
+        end
+
+      :error ->
+        state
+    end
+  end
+
+  defp put_validated_elements(state, instr, before, mfa) do
+    with {:ok, {list_pos, fun_pos}} <- Map.fetch(@element_runs, mfa),
+         {:ok, runs} <- Map.fetch(before.funs, {:x, fun_pos}),
+         {:ok, %{0 => bound}} <- Map.fetch(before.validators, runs) do
+      holders = Enum.sort(Instr.carry(instr, holders(before, {:x, list_pos})))
+
+      elements =
+        Enum.reduce(holders, state.elements, fn reg, acc ->
+          Map.update(acc, reg, bound, &stronger(&1, bound))
+        end)
+
+      %{state | elements: elements}
+    else
+      _ -> state
+    end
+  end
+
+  defp call_target(instr) do
+    case Helpers.match_remote_call(instr) do
+      {:ok, m, f, a} ->
+        {:ok, {m, f, a}}
+
+      :none ->
+        case Helpers.match_local_call(instr) do
+          {:ok, m, f, a} -> {:ok, {m, f, a}}
+          _ -> :error
+        end
+    end
   end
 
   # Every register a group's value is copied into joins it; a register a
@@ -1272,7 +1429,10 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
       groups: meet_groups(a.groups, b.groups),
       pending: meet_pending(a.pending, b.pending),
       ranges: meet_ranges(a.ranges, b.ranges),
-      returns: a.returns
+      returns: a.returns,
+      validators: a.validators,
+      elements: meet_bounds(a.elements, b.elements),
+      funs: for({reg, mfa} <- a.funs, Map.get(b.funs, reg) == mfa, into: %{}, do: {reg, mfa})
     }
   end
 

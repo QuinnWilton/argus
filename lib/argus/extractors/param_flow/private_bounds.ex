@@ -15,11 +15,13 @@ defmodule Argus.Extractors.ParamFlow.PrivateBounds do
   # without assuming anything about callers whose parameters remain unknown.
   @rounds 12
 
-  @spec entries(Argus.Extractor.module_data(), [String.t()]) ::
+  @spec entries(Argus.Extractor.module_data(), [String.t()], Bounded.validators()) ::
           {%{String.t() => Bounded.bounds()}, Bounded.return_bounds()}
-  def entries(_data, []), do: {%{}, %{}}
+  def entries(data, sinks, validators \\ %{})
 
-  def entries(%{module: mod, functions: functions} = data, sinks) do
+  def entries(_data, [], _validators), do: {%{}, %{}}
+
+  def entries(%{module: mod, functions: functions} = data, sinks, validators) do
     blocked = externally_callable(data)
 
     calls =
@@ -46,7 +48,38 @@ defmodule Argus.Extractors.ParamFlow.PrivateBounds do
          {{mod, name, arity}, instrs, Helpers.cfg(data, name, arity)}}
       end)
 
-    solve(calls, functions, %{}, %{}, @rounds)
+    solve(calls, functions, validators, %{}, %{}, @rounds)
+  end
+
+  @doc """
+  The module's validators (`Argus.Extractors.ParamFlow.Bounded.validated/5`):
+  what a normal return of each function establishes of its parameters,
+  each round's summaries asking the last's of the functions it calls, from
+  none, so a cycle proves nothing of itself.
+  """
+  @spec validators(Argus.Extractor.module_data()) :: Bounded.validators()
+  def validators(%{module: mod, functions: functions} = data) do
+    candidates =
+      for {:function, name, arity, _, instrs} <- functions,
+          arity > 0,
+          cfg = Helpers.cfg(data, name, arity),
+          cfg != nil,
+          do: {{mod, name, arity}, instrs, cfg}
+
+    validate(candidates, %{}, @rounds)
+  end
+
+  defp validate(_candidates, validators, 0), do: validators
+
+  defp validate(candidates, validators, rounds) do
+    next =
+      for {{_mod, _name, arity} = mfa, instrs, cfg} <- candidates,
+          params = Bounded.validated(cfg, instrs, arity, %{}, validators),
+          params != %{},
+          into: %{},
+          do: {mfa, params}
+
+    if next == validators, do: next, else: validate(candidates, next, rounds - 1)
   end
 
   defp externally_callable(data) do
@@ -72,9 +105,9 @@ defmodule Argus.Extractors.ParamFlow.PrivateBounds do
     end
   end
 
-  defp solve(_calls, _functions, entries, returns, 0), do: {entries, returns}
+  defp solve(_calls, _functions, _validators, entries, returns, 0), do: {entries, returns}
 
-  defp solve(calls, functions, entries, returns, rounds) do
+  defp solve(calls, functions, validators, entries, returns, rounds) do
     bounds =
       calls
       |> Map.values()
@@ -84,7 +117,12 @@ defmodule Argus.Extractors.ParamFlow.PrivateBounds do
         {{_mod, _name, arity}, instrs, cfg} = Map.fetch!(functions, func)
         indexes = sites |> Enum.map(& &1.idx) |> Enum.uniq()
         entry = Map.get(entries, func, %{})
-        {func, if(cfg, do: Bounded.at(cfg, instrs, arity, indexes, entry, returns), else: %{})}
+
+        {func,
+         if(cfg,
+           do: Bounded.at(cfg, instrs, arity, indexes, entry, returns, validators),
+           else: %{}
+         )}
       end)
 
     refined =
@@ -104,11 +142,11 @@ defmodule Argus.Extractors.ParamFlow.PrivateBounds do
         {target, inherited |> Bounded.common_entries() |> Map.filter(&inheritable?(elem(&1, 1)))}
       end)
 
-    returned = return_bounds(Map.take(functions, Map.keys(calls)), entries, returns)
+    returned = return_bounds(Map.take(functions, Map.keys(calls)), entries, returns, validators)
 
     if refined == entries and returned == returns,
       do: {entries, returns},
-      else: solve(calls, functions, refined, returned, rounds - 1)
+      else: solve(calls, functions, validators, refined, returned, rounds - 1)
   end
 
   # A finite set of the program's values. An atom bound is not handed on,
@@ -120,13 +158,14 @@ defmodule Argus.Extractors.ParamFlow.PrivateBounds do
 
   # A return summary must cover every completing path. Functions with tail
   # calls are left unknown here; their result would need the callee's own proof.
-  defp return_bounds(functions, entries, returns) do
+  defp return_bounds(functions, entries, returns, validators) do
     Enum.reduce(functions, %{}, fn {func, {mfa, instrs, cfg}}, acc ->
       indexes = for {:return, idx} <- Enum.with_index(instrs), do: idx
 
       if cfg && indexes != [] && not Enum.any?(instrs, &Instr.tail_call?/1) do
         {_mod, _name, arity} = mfa
-        states = Bounded.at(cfg, instrs, arity, indexes, Map.get(entries, func, %{}), returns)
+        entry = Map.get(entries, func, %{})
+        states = Bounded.at(cfg, instrs, arity, indexes, entry, returns, validators)
         values = Enum.map(indexes, &Map.take(Map.get(states, &1, %{}), [{:x, 0}]))
 
         case Bounded.common_entries(values) do

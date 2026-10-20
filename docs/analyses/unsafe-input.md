@@ -61,7 +61,12 @@ correlations between token characters, with deterministic limits that discard a
 proof when exhausted. Private helpers inherit finite arguments only when every
 direct caller establishes the bound and the helper cannot escape as a function.
 Finite return summaries cover every returning branch; unknown returns remain
-unbounded. Numeric equality counts integer and float alternatives separately;
+unbounded. A validator of the module, a function that returns only when its argument
+is in a literal set and raises (or never returns) otherwise, bounds that argument past
+a call to it, through helpers that call it too; `Enum.each(names, &validate!/1)` bounds
+every element of the list for a sink run on each. A check that answers instead of
+raising, a validator in another module, a predicate (`Enum.all?/2`) or a set
+difference (`MapSet.difference/2` against the allowed set) is not read as one. Numeric equality counts integer and float alternatives separately;
 composite numeric equality remains conservative. Cardinalities account for
 combinations, and feeding generated atoms
 back into the same conversion can defeat an apparent existing-atom bound.

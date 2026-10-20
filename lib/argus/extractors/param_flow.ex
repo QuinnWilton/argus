@@ -595,7 +595,10 @@ defmodule Argus.Extractors.ParamFlow do
       |> Enum.concat(ApiCalls.element_sink_sites(module_data))
       |> Enum.group_by(& &1.func_id)
 
-    {entries, returns} = PrivateBounds.entries(module_data, Map.keys(sinks))
+    # A function returning only when its argument is one of a set, raising
+    # otherwise, bounds that argument past a call to it.
+    validators = if sinks == %{}, do: %{}, else: PrivateBounds.validators(module_data)
+    {entries, returns} = PrivateBounds.entries(module_data, Map.keys(sinks), validators)
 
     facts =
       Enum.reduce(functions, facts, fn {:function, name, arity, _entry, instrs}, acc ->
@@ -604,7 +607,8 @@ defmodule Argus.Extractors.ParamFlow do
         with [_ | _] = sites <- Map.get(sinks, func_id, []),
              %Argus.Cfg.Function{} = cfg <- Helpers.cfg(module_data, name, arity) do
           entry = Map.get(entries, func_id, %{})
-          bounds = Bounded.at(cfg, instrs, arity, Enum.map(sites, & &1.idx), entry, returns)
+          idxs = Enum.map(sites, & &1.idx)
+          bounds = Bounded.at(cfg, instrs, arity, idxs, entry, returns, validators)
 
           correlated =
             for %{idx: idx, mfa: mfa} = site <- sites,
@@ -616,7 +620,7 @@ defmodule Argus.Extractors.ParamFlow do
           bounds =
             Map.merge(
               bounds,
-              Bounded.correlated_at(cfg, instrs, arity, correlated, entry, returns),
+              Bounded.correlated_at(cfg, instrs, arity, correlated, entry, returns, validators),
               fn _idx, a, b ->
                 Map.merge(b, a)
               end
@@ -685,8 +689,9 @@ defmodule Argus.Extractors.ParamFlow do
   # each element is bounded where its collection is one of the literals
   # the program wrote: each element is then one of theirs.
   defp arg_bounds(%{element: collection}, bounds) do
-    case Map.fetch(bounds, collection) do
-      {:ok, {:values, _} = bound} -> [{0, bound}]
+    case {Map.fetch(bounds, collection), Map.fetch(bounds, {:elements, collection})} do
+      {{:ok, {:values, _} = bound}, _} -> [{0, bound}]
+      {_, {:ok, {:values, _} = bound}} -> [{0, bound}]
       _ -> []
     end
   end

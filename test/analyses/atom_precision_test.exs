@@ -60,7 +60,10 @@ defmodule Argus.Analyses.AtomPrecisionTest do
       groups: [],
       pending: %{},
       ranges: %{},
-      returns: %{}
+      returns: %{},
+      validators: %{},
+      elements: %{},
+      funs: %{}
     }
 
     for {literal, values} <- [
@@ -130,7 +133,10 @@ defmodule Argus.Analyses.AtomPrecisionTest do
       groups: [],
       pending: %{},
       ranges: %{},
-      returns: %{}
+      returns: %{},
+      validators: %{},
+      elements: %{},
+      funs: %{}
     }
 
     # The product is one value, but keeping its exact list would exceed the

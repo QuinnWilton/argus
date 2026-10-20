@@ -69,7 +69,10 @@ defmodule Argus.Analyses.BoundedSinkTest do
         groups: [],
         pending: %{},
         ranges: %{},
-        returns: %{}
+        returns: %{},
+        validators: %{},
+        elements: %{},
+        funs: %{}
       }
 
       instr = {:bif, :is_map_key, {:f, 0}, [{:x, 1}, {:literal, %{"b" => 1, "a" => 2}}], {:x, 2}}
