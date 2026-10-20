@@ -314,7 +314,7 @@ defmodule Argus.Extractors.ProcessRegistry do
     id = InstrId.mint(ctx.func_id, ctx.idx)
     scope = registry_scope(ctx)
     {source, key} = key_identity(ctx.instrs, ctx.idx, {:x, 1}, ctx.origins)
-    checked = if nil_checked?(ctx.instrs, ctx.idx), do: "checked", else: "unchecked"
+    checked = if nil_checked?(ctx.instrs, ctx.idx, :list), do: "checked", else: "unchecked"
 
     facts
     |> track_dynamic(scope, ctx, :registry_lookup_scope, :name_lookup)
@@ -646,10 +646,8 @@ defmodule Argus.Extractors.ProcessRegistry do
 
   # The result lands in x0. Along the straight-line code after the call,
   # the first comparison against nil/:undefined, type test or select
-  # decides: one of the value (nil is also `[]`, so a Registry.lookup
-  # result compared against the empty list is checked the same way), a
-  # type test on it, or a select over it that lists nil means the caller
-  # handles the missing case. A comparison in a guard is a test; one
+  # decides: one of the value, a type test on it, or a select over it
+  # that lists nil means the caller handles the missing case. A comparison in a guard is a test; one
   # whose boolean is a value (`whereis(m) =/= :undefined` returned,
   # `is_pid(Process.whereis(n))`) is a bif, and decides only where the
   # boolean is branched on before the pid is used (decided_by?/3).
@@ -664,20 +662,29 @@ defmodule Argus.Extractors.ProcessRegistry do
   # differ, the one place it may still be nil: the branch taken when
   # they differ for a test, anywhere after for a bif. That walk gives up
   # as this one does.
+  #
+  # A Registry.lookup answers a list, empty where nothing holds the key:
+  # for it (`missing` `:list`), a comparison with the empty list (the
+  # operand `nil` in the assembly, `Registry.lookup(r, k) != []`) and the
+  # test for it (`is_nil`, a `[] ->` clause) check the missing case too. A
+  # pid lookup (`:pid`) is never the empty list: comparing one with it
+  # checks nothing.
   @nil_atoms [{:atom, nil}, {:atom, :undefined}]
-  # What a missing lookup is compared with: nil or :undefined, or the
-  # empty list (the operand `nil` in the assembly) a Registry.lookup
-  # answers (`Registry.lookup(r, k) != []`).
-  @missing_operands [nil | @nil_atoms]
   @equality_tests [:is_eq_exact, :is_ne_exact, :is_eq, :is_ne]
   @equality_bifs [:==, :"/=", :"=:=", :"=/="]
-  @type_tests [:is_atom, :is_pid, :is_port, :is_nil, :is_list, :is_nonempty_list]
+  @type_tests [:is_atom, :is_pid, :is_port, :is_list, :is_nonempty_list]
   @type_bifs [:is_atom, :is_pid, :is_port, :is_list]
 
-  defp nil_checked?(instrs, idx) do
+  defp nil_checked?(instrs, idx, missing \\ :pid) when missing in [:pid, :list] do
     labels = Instr.labels(instrs)
-    checked_walk(Enum.drop(instrs, idx + 1), idx + 1, [{:x, 0}], {instrs, labels})
+    checked_walk(Enum.drop(instrs, idx + 1), idx + 1, [{:x, 0}], {instrs, labels, missing})
   end
+
+  defp missing_operand?(operand, :pid), do: operand in @nil_atoms
+  defp missing_operand?(operand, :list), do: operand in [nil | @nil_atoms]
+
+  defp type_test?(op, :pid), do: op in @type_tests
+  defp type_test?(op, :list), do: op == :is_nil or op in @type_tests
 
   # Before the deciding test the value is followed through the registers
   # as `Argus.Instr` reads them: a copy carries it, a write or a call's
@@ -697,9 +704,10 @@ defmodule Argus.Extractors.ProcessRegistry do
     end
   end
 
-  defp checked_walk([{:test, op, _fail, [reg | _]} | _rest], _at, regs, _fun)
-       when op in @type_tests do
-    Instr.register(reg) in regs
+  defp checked_walk([{:test, op, _fail, [reg | _]} = instr | rest], at, regs, fun) do
+    if type_test?(op, elem(fun, 2)),
+      do: Instr.register(reg) in regs,
+      else: walk_on(instr, rest, at, regs, fun)
   end
 
   defp checked_walk([{:select_val, reg, _fail, {:list, cases}} | _rest], _at, regs, _fun) do
@@ -721,7 +729,9 @@ defmodule Argus.Extractors.ProcessRegistry do
       decided_by?(rest, Instr.carry(instr, regs), [Instr.register(dst)])
   end
 
-  defp checked_walk([instr | rest], at, regs, fun) do
+  defp checked_walk([instr | rest], at, regs, fun), do: walk_on(instr, rest, at, regs, fun)
+
+  defp walk_on(instr, rest, at, regs, fun) do
     cond do
       not Instr.falls_through?(instr) -> false
       reads?(instr, regs) -> false
@@ -763,11 +773,11 @@ defmodule Argus.Extractors.ProcessRegistry do
   # What a comparison of the value (at `at`) is with: nil (or
   # :undefined), a value that is never nil, or anything else (another
   # register, or a comparison that does not read the value at all).
-  defp compared(args, at, regs, {instrs, _labels}) do
+  defp compared(args, at, regs, {instrs, _labels, missing}) do
     case Enum.split_with(args, &(Instr.register(&1) in regs)) do
       {[_ | _], [other]} ->
         cond do
-          Instr.register(other) in @missing_operands -> nil
+          missing_operand?(Instr.register(other), missing) -> nil
           never_nil?(instrs, at, other) -> :never_nil
           true -> :other
         end
@@ -848,7 +858,7 @@ defmodule Argus.Extractors.ProcessRegistry do
 
   # Where a test finds the two different: its fail label for an equality
   # test, the next instruction for an inequality.
-  defp unread_where_differ(op, {:f, label}, _rest, regs, {instrs, labels})
+  defp unread_where_differ(op, {:f, label}, _rest, regs, {instrs, labels, _missing})
        when op in [:is_eq_exact, :is_eq] do
     case Map.fetch(labels, label) do
       {:ok, at} -> unread?(Enum.drop(instrs, at + 1), regs)

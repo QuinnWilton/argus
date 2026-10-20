@@ -75,6 +75,13 @@ defmodule Argus.Test.Fixtures.WhereisModule do
     send(Process.whereis(name), :hello)
   end
 
+  # A pid is never the empty list, as a Registry.lookup's answer is:
+  # comparing one with [] leaves the nil unchecked.
+  def compared_with_empty(name) do
+    pid = Process.whereis(name)
+    if pid != [], do: send(pid, :hello), else: :none
+  end
+
   # A comparison whose boolean is the value returned is a bif, not a
   # test, and checks all the same.
   def started?(name), do: Process.whereis(name) != nil

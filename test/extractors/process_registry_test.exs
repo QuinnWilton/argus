@@ -109,7 +109,7 @@ defmodule Argus.Extractors.ProcessRegistryTest do
   end
 
   describe "extract/1 — whereis" do
-    test "each lookup, checked where its result is compared against nil or :undefined" do
+    test "each lookup, checked where its result is compared against nil or :undefined, not []" do
       facts = ProcessRegistry.extract(disassemble(Argus.Test.Fixtures.WhereisModule))
 
       assert by_function(facts[:name_lookup]) == [
@@ -119,6 +119,7 @@ defmodule Argus.Extractors.ProcessRegistryTest do
                ["checked_after_call/1", "whereis", "", "param", "0", "checked"],
                ["checked_erlang_whereis/1", "whereis", "", "param", "0", "checked"],
                ["checked_whereis/1", "whereis", "", "param", "0", "checked"],
+               ["compared_with_empty/1", "whereis", "", "param", "0", "unchecked"],
                # A comparison with self() checks when the pid is not read
                # where they differ; dispatch_by_pid/2 sends to it there,
                # and it may be nil.
