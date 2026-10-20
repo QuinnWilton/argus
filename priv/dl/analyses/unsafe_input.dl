@@ -709,14 +709,18 @@ exposed_to_callers(id, func) :- sink_call(id, func, _, "code", _), called_from_a
 exposed_to_callers(id, func) :- sink_call(id, func, _, _, _), called_from_api(func), caller_input(id).
 exposed_to_callers(id, func) :- sink_call(id, func, _, "deserialization", _).
 
-// An exported function reaches `func` on its calls.
+// An exported function reaches `func` on its calls: one an outside party may call, not
+// a callback the build runs on what its own code's authors wrote (build_callback).
 .decl called_from_api(func: symbol)
 
 called_from_api(func) :- export_reach.reaches(func).
 
 .init export_reach = ForwardCallReachSet
 
-export_reach.root(func) :- api_export(func).
+export_reach.root(func) :-
+  api_export(func),
+  function_def(func, m, n, a, _),
+  !build_callback(m, n, a).
 
 .decl sink_without_request_path(id: symbol, func: symbol, api: symbol, sink: symbol, source: symbol, permille: number, safety: symbol)
 .output sink_without_request_path
@@ -894,8 +898,54 @@ outside_api(f) :-
   api_export(f),
   function_def(f, m, n, a, _),
   !runtime_callback(m, n, a),
+  !build_callback(m, n, a),
   !function_def(_, m, "__impl__", 1, _),
   !internal_export(f).
+
+// A callback the build runs on what a party already running code in it wrote, which is
+// no outside party's way in: an EEx engine's, a LiveView tag engine's and a Phoenix
+// template engine's, handed a template's source at compile time (a template is code);
+// a Mix SCM's, handed a dependency's metadata (Mix loads and compiles each dependency it
+// fetches, so whoever writes a package's metadata runs code beside it); a Mix task's
+// and a Mix compiler's. Only the callbacks: a template engine's runtime helpers
+// (`Phoenix.LiveView.TagEngine.component/3`) take what the rendered page hands them.
+.decl build_callback(mod: symbol, name: symbol, arity: number)
+
+build_callback(m, n, a) :-
+  behaves_as(m, b),
+  build_behaviour_callback(b, n, a),
+  function_def(_, m, n, a, _).
+
+.decl build_behaviour_callback(behaviour: symbol, name: symbol, arity: number)
+
+build_behaviour_callback("EEx.Engine", "init", 1).
+build_behaviour_callback("EEx.Engine", "handle_body", 1).
+build_behaviour_callback("EEx.Engine", "handle_begin", 1).
+build_behaviour_callback("EEx.Engine", "handle_end", 1).
+build_behaviour_callback("EEx.Engine", "handle_text", 2).
+build_behaviour_callback("EEx.Engine", "handle_text", 3).
+build_behaviour_callback("EEx.Engine", "handle_expr", 3).
+build_behaviour_callback("Phoenix.Template.Engine", "compile", 2).
+build_behaviour_callback("Phoenix.LiveView.TagEngine", "classify_type", 1).
+build_behaviour_callback("Phoenix.LiveView.TagEngine", "void?", 1).
+build_behaviour_callback("Phoenix.LiveView.TagEngine", "handle_attributes", 2).
+build_behaviour_callback("Phoenix.LiveView.TagEngine", "annotate_body", 1).
+build_behaviour_callback("Phoenix.LiveView.TagEngine", "annotate_slot", 4).
+build_behaviour_callback("Phoenix.LiveView.TagEngine", "annotate_caller", 2).
+build_behaviour_callback("Mix.SCM", "fetchable?", 0).
+build_behaviour_callback("Mix.SCM", "format", 1).
+build_behaviour_callback("Mix.SCM", "format_lock", 1).
+build_behaviour_callback("Mix.SCM", "accepts_options", 2).
+build_behaviour_callback("Mix.SCM", "checked_out?", 1).
+build_behaviour_callback("Mix.SCM", "lock_status", 1).
+build_behaviour_callback("Mix.SCM", "equal?", 2).
+build_behaviour_callback("Mix.SCM", "managers", 1).
+build_behaviour_callback("Mix.SCM", "checkout", 1).
+build_behaviour_callback("Mix.SCM", "update", 1).
+build_behaviour_callback("Mix.Task", "run", 1).
+build_behaviour_callback("Mix.Task.Compiler", "run", 1).
+build_behaviour_callback("Mix.Task.Compiler", "manifests", 0).
+build_behaviour_callback("Mix.Task.Compiler", "clean", 0).
 
 // An export the docs hide from the library's users (`@doc false`, a `@moduledoc false`
 // module) that the program itself calls: a helper its own modules share, or one its
@@ -914,8 +964,19 @@ internal_export(f) :-
   call_edge(c, f),
   c != f,
   function_def(f, m, _, _, _),
-  !behaves_as(m, _),
+  !unlisted_behaviour(m),
   !quoted_call_to(f, "function").
+
+// A module with a behaviour whose callbacks this analysis does not list. A build
+// behaviour's are listed (build_callback): a hidden export of its module that is none
+// of them is a helper like any other.
+.decl unlisted_behaviour(mod: symbol)
+
+unlisted_behaviour(m) :- behaves_as(m, b), !build_behaviour(b).
+
+.decl build_behaviour(behaviour: symbol)
+
+build_behaviour(b) :- build_behaviour_callback(b, _, _).
 
 // A `__name__` hook (the convention for what generated code calls, not a user) that
 // only the top of code a macro returns calls: it runs where the macro expands, as

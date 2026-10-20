@@ -90,8 +90,14 @@ facts beyond these bounds and may still produce warnings.
 
 Without a request path, caller-derived input through a public API is reported at
 warning. Runtime callbacks and known internal values are treated differently from
-library entry points. Priors may lower this fallback to info. The finding lists the
-exports whose callers' argument reaches the conversion.
+library entry points. So are callbacks the build runs on what a party already running
+code in it wrote: an EEx, LiveView tag or Phoenix template engine's, handed a template's
+source at compile time; a Mix SCM's, task's or compiler's, handed a dependency's
+metadata that its publisher's code is compiled beside; and the hidden helpers such a module's callbacks call. None of them roots the
+export reach a code sink is reported from either. An engine's runtime helpers stay
+entry points, and so does a documented function that compiles a template (older
+LiveView's `TagEngine.compile/2`). Priors may lower this fallback to info. The finding
+lists the exports whose callers' argument reaches the conversion.
 
 The name of an atom that exists, read back into an atom
 (`String.to_atom(Atom.to_string(a))`, `list_to_atom(atom_to_list(a))`), is that atom:
