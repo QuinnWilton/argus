@@ -174,19 +174,19 @@ defmodule Argus.Analysis.Extraction do
   so which stage runs is a function of the facts: the same facts run
   the same stage on any machine, under any load, afresh or from a store.
   `points_to_mode.facts` says which one wrote the relations, and a
-  warning names the leaves a bounded stage resolved coarsely. Nothing
-  stops an exact fixpoint early, so a program that outgrows the budget
-  pays for its exact fixpoint once before the bounded one runs, within
-  the solve's timeout.
+  warning names the leaves a bounded stage resolved coarsely. The engine
+  stops a fixpoint as a relation grows past the budget (`.limitsize`), so
+  a program that outgrows it pays for the exact stage only until it
+  does, before the bounded one runs, within the solve's timeout.
 
   A bounded stage that outgrows the budget too runs coarse
   (`points_to_coarse_rules_path/0`): every leaf resolved by the coarse
   pass, whose rows grow with the program's sources and leaves rather
-  than with its terms. Where the terms merge into each other (ex_mcp's
-  client and transport states, each holding every other's fields), the
-  bounded stage outgrows the budget whichever leaves it resolves
-  exactly; the coarse one answers for every leaf what the bounded one
-  answers for a pervasive one.
+  than with its terms. Where the terms merge into each other, each
+  holding every other's fields, the bounded stage outgrows the budget
+  whichever leaves it resolves exactly; the coarse one answers for every
+  leaf what the bounded one answers for a pervasive one, and the run's
+  notice says so (`Argus.Report.Notice`).
 
   A stage that outgrows the budget even coarse, or does not finish
   within `:timeout`, fails with a warning, `{:error,

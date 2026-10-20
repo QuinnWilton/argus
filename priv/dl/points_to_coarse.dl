@@ -3,11 +3,10 @@
 // same program, held to the same budget, with every leaf resolved by the
 // coarse pass (clientlib/pervasive.dl), pervasive or not. The bounded
 // stage outgrows its budget where the program's terms merge into each
-// other, each holding every other's fields (ex_mcp's client and transport
-// states, through the helpers both hand them to), whatever leaves they
-// hold; the coarse pass follows the leaves alone, a row per source a leaf
-// reaches, so its rows grow with the sources and the leaves, never with
-// the terms. It writes the same relations, points_to_mode saying
+// other, each holding every other's fields through the helpers they are
+// handed to, whatever leaves they hold; the coarse pass follows the leaves
+// alone, a row per source a leaf reaches, so its rows grow with the
+// sources and the leaves, never with the terms. It writes the same relations, points_to_mode saying
 // "coarse", and every leaf as resolved coarsely (pervasive.csv).
 
 .include "points_to.dl"
