@@ -299,7 +299,8 @@ defmodule Argus.Analyses.ShutdownTest do
     end
 
     test "a LiveView's or a channel's start under its application's pools is a hand-off; " <>
-           "under a library's pool it is reported, once per start with every starter beside it" do
+           "under a library's pool, or its application's, it is reported, once per start " <>
+           "with every starter beside it" do
       alias Argus.Test.Fixtures.ShutdownForeign, as: F
 
       {:ok, r} =
@@ -318,17 +319,24 @@ defmodule Argus.Analyses.ShutdownTest do
             F.PoolLive,
             F.InlineApp,
             F.InlineWriter,
-            F.InlineLive
+            F.InlineLive,
+            F.Endpoint,
+            F.LibApp,
+            F.LibConn,
+            F.LibAppLive
           ],
           :shutdown
         )
 
       # BookLive and RoomChannel start under AppRoot's pools, and InlineLive
       # under a pool InlineApp's start/2 lists itself, which stop with the
-      # application: not reported. PoolLive starts under the
-      # library's, which no application of the program roots.
+      # application serving them (its tree holds the endpoint): not
+      # reported. PoolLive starts under the library's, which no
+      # application of the program roots, and LibAppLive under the pool
+      # of the library's own application, which serves no connection.
       assert modules(r, "foreign_dynamic_children") == [
                "Argus.Test.Fixtures.ShutdownForeign.CarelessScope",
+               "Argus.Test.Fixtures.ShutdownForeign.LibAppLive",
                "Argus.Test.Fixtures.ShutdownForeign.OtherCarelessScope",
                "Argus.Test.Fixtures.ShutdownForeign.PoolLive"
              ]
@@ -338,7 +346,7 @@ defmodule Argus.Analyses.ShutdownTest do
       assert [finding] =
                r
                |> then(&Argus.Findings.build(Argus.Analyses.Shutdown, &1))
-               |> Enum.filter(&(&1.title =~ "outlive their owner"))
+               |> Enum.filter(&(&1.title =~ "outlive their owner" and &1.detail =~ "Session"))
 
       assert finding.detail =~ "a supervisor"
 

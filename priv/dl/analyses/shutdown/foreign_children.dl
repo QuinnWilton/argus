@@ -20,16 +20,25 @@ children_left_behind(mod, sup, start) :-
 // A process a connection makes and ends (a LiveView, its components, a channel) hands
 // what it starts under its application's own supervisors off on purpose: a passage goes
 // on being written after its tab closes. Those supervisors stop with the application,
-// so the work outlives the connection, not the application. A supervisor in a tree no
-// application of the program roots (a library's pool) outlives the application too.
+// so the work outlives the connection, not the application. Its application is the one
+// serving connections, whose tree holds a Phoenix endpoint. A supervisor in a tree no
+// application of the program roots (a library's pool), or in one that serves none (a
+// library's own application, analyzed with the dependencies), outlives it.
 .decl handed_off(mod: symbol, sup: symbol)
 
 handed_off(mod, sup) :-
   starts_children_under(mod, sup, _),
   behaves_as(mod, b),
   connection_behaviour(b),
-  application_tree(root),
+  serving_tree(root),
   tree_member(root, sup).
+
+.decl serving_tree(root: symbol)
+
+serving_tree(root) :-
+  application_tree(root),
+  tree_member(root, endpoint),
+  behaves_as(endpoint, "Phoenix.Endpoint").
 
 // The tree an application roots: its root supervisor's, or, where start/2 lists the
 // children itself (`Supervisor.start_link(children, opts)`), the application's own.

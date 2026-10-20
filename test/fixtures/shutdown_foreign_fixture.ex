@@ -241,11 +241,20 @@ defmodule Argus.Test.Fixtures.ShutdownForeign do
       children = [
         {DynamicSupervisor,
          name: Argus.Test.Fixtures.ShutdownForeign.WriterPool, strategy: :one_for_one},
-        {Task.Supervisor, name: Argus.Test.Fixtures.ShutdownForeign.AppTasks}
+        {Task.Supervisor, name: Argus.Test.Fixtures.ShutdownForeign.AppTasks},
+        Argus.Test.Fixtures.ShutdownForeign.Endpoint
       ]
 
       Supervisor.init(children, strategy: :one_for_one)
     end
+  end
+
+  defmodule Endpoint do
+    @moduledoc "The endpoint serving the app's LiveViews and channels."
+    @behaviour Phoenix.Endpoint
+
+    def child_spec(_opts), do: %{id: __MODULE__, start: {__MODULE__, :start_link, []}}
+    def start_link, do: Supervisor.start_link([], strategy: :one_for_one)
   end
 
   defmodule Writer do
@@ -316,7 +325,8 @@ defmodule Argus.Test.Fixtures.ShutdownForeign do
     def start(_type, _args) do
       children = [
         {DynamicSupervisor,
-         name: Argus.Test.Fixtures.ShutdownForeign.InlinePool, strategy: :one_for_one}
+         name: Argus.Test.Fixtures.ShutdownForeign.InlinePool, strategy: :one_for_one},
+        Argus.Test.Fixtures.ShutdownForeign.Endpoint
       ]
 
       Supervisor.start_link(children, strategy: :one_for_one, name: F.InlineRoot)
@@ -343,6 +353,48 @@ defmodule Argus.Test.Fixtures.ShutdownForeign do
 
     def handle_event("write", %{"id" => id}, socket) do
       {:ok, _} = F.InlineWriter.start(id)
+      {:noreply, socket}
+    end
+  end
+
+  defmodule LibApp do
+    @moduledoc """
+    A library's own application (analyzed with its dependencies): its
+    tree serves no connection, and outlives the program's.
+    """
+    use Application
+
+    @impl true
+    def start(_type, _args) do
+      children = [
+        {DynamicSupervisor,
+         name: Argus.Test.Fixtures.ShutdownForeign.LibPool, strategy: :one_for_one}
+      ]
+
+      Supervisor.start_link(children, strategy: :one_for_one, name: F.LibRoot)
+    end
+  end
+
+  defmodule LibConn do
+    @moduledoc "A connection the library keeps under its own application's pool."
+    use GenServer, restart: :temporary
+
+    def start(owner), do: DynamicSupervisor.start_child(F.LibPool, {__MODULE__, owner})
+    def start_link(owner), do: GenServer.start_link(__MODULE__, owner)
+
+    @impl true
+    def init(owner), do: {:ok, owner}
+  end
+
+  defmodule LibAppLive do
+    @moduledoc "A LiveView opening a connection under the library application's pool."
+    @behaviour Phoenix.LiveView
+
+    def mount(_params, _session, socket), do: {:ok, socket}
+    def render(assigns), do: assigns
+
+    def handle_event("open", %{"owner" => owner}, socket) do
+      {:ok, _} = F.LibConn.start(owner)
       {:noreply, socket}
     end
   end
