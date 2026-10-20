@@ -353,12 +353,12 @@ defmodule Argus.Analyses.ShutdownTest do
 
   describe "orphaned_os_process" do
     test "a killed task that runs an external program is reported; " <>
-           "one waited for, or running none, is not" do
+           "one waited for, signalled :normal, or running none, is not" do
       alias Argus.Test.Fixtures.ShutdownOsProcess, as: O
 
       {:ok, r} =
         Memo.analyze(
-          [O.Render, O.RenderThroughHelper, O.Killer, O.Waits, O.ShutsDownPure],
+          [O.Render, O.RenderThroughHelper, O.Killer, O.SignalsNormal, O.Waits, O.ShutsDownPure],
           :shutdown
         )
 

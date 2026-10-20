@@ -581,6 +581,17 @@ defmodule Argus.Schema.ErrorHandling do
         doc: "Explicit Process.exit/2 or :erlang.exit/1,2 call."
       },
       %{
+        name: :exit_reason,
+        layer: 2,
+        fields: [
+          {:id, :symbol, "instruction ID of the exit_call"},
+          {:reason, :symbol, "the reason sent: an inspected atom (`:normal`, `:kill`) or dynamic"}
+        ],
+        doc:
+          "The reason a Process.exit/2 or :erlang.exit/2 call sends: `:normal` stops no " <>
+            "process that does not trap exits."
+      },
+      %{
         name: :ignored_error_result,
         layer: 2,
         fields: [

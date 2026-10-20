@@ -21,6 +21,8 @@ defmodule Argus.Extractors.ErrorHandling do
   - `trap_flag_unread(id, func, mod)` — a `Process.flag(:trap_exit, value)`
     whose value the extractor cannot read: it may set the flag or clear it
   - `exit_call(id, func, target)` — explicit `Process.exit/2` or `:erlang.exit/1,2`
+  - `exit_reason(id, reason)` — the reason a `Process.exit/2` or `:erlang.exit/2`
+    sends (an inspected atom, or `dynamic`)
   - `call_result(id, func, callee, fate, raises, target)` — every call to a process
     or OTP API (and every `start_link`/`start`/`start_child`), with what
     became of its result (`used`, `ignored`, `returned` for a tail call,
@@ -216,6 +218,7 @@ defmodule Argus.Extractors.ErrorHandling do
       :catch_inner_tag,
       :compares_exit,
       :exit_call,
+      :exit_reason,
       :ignored_error_result,
       :result_lost,
       :mailbox_writer,
@@ -2063,13 +2066,17 @@ defmodule Argus.Extractors.ErrorHandling do
         maybe_trap_exit(facts, ctx, mod_str)
 
       {Process, :exit, 2} ->
-        emit_exit_call(facts, ctx, resolve_atom(ctx.instrs, ctx.idx, {:x, 0}))
+        facts
+        |> emit_exit_call(ctx, resolve_atom(ctx.instrs, ctx.idx, {:x, 0}))
+        |> emit_exit_reason(ctx)
 
       {:erlang, :exit, 1} ->
         emit_exit_call(facts, ctx, "self")
 
       {:erlang, :exit, 2} ->
-        emit_exit_call(facts, ctx, resolve_atom(ctx.instrs, ctx.idx, {:x, 0}))
+        facts
+        |> emit_exit_call(ctx, resolve_atom(ctx.instrs, ctx.idx, {:x, 0}))
+        |> emit_exit_reason(ctx)
 
       {mod, func, arity} ->
         maybe_ignored_result(facts, ctx, mod, func, arity)
@@ -2082,6 +2089,13 @@ defmodule Argus.Extractors.ErrorHandling do
     facts
     |> track_dynamic(target, ctx, :exit_call_target, :exit_call)
     |> add_fact(:exit_call, [id, ctx.func_id, target])
+  end
+
+  # What an exit signal to another process carries: `:normal` stops none
+  # that does not trap exits.
+  defp emit_exit_reason(facts, ctx) do
+    id = InstrId.mint(ctx.func_id, ctx.idx)
+    add_fact(facts, :exit_reason, [id, resolve_atom(ctx.instrs, ctx.idx, {:x, 1})])
   end
 
   defp maybe_trap_exit(facts, ctx, mod_str) do

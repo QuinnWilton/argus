@@ -18,11 +18,16 @@ port_program_call(id, f, "Port.open") :- remote_call(id, f, "Port", "open", 2).
 port_program_call(id, f, ":erlang.open_port") :- remote_call(id, f, ":erlang", "open_port", 2).
 
 // `f` ends the task process `p` at `kill`: Task.shutdown, with a timeout or
-// :brutal_kill, or an exit signal sent to its pid.
+// :brutal_kill, or an exit signal sent to its pid. A task does not trap
+// exits, so a signal whose reason is :normal leaves it running.
 .decl kills_task(f: symbol, kill: symbol, p: symbol, how: symbol)
 
 kills_task(f, id, p, "Task.shutdown") :- task_handled(f, id, "shutdown", p).
-kills_task(f, id, p, "Process.exit") :- signal_target(id, f, "exit", p), task_started(p).
+
+kills_task(f, id, p, "Process.exit") :-
+  signal_target(id, f, "exit", p),
+  task_started(p),
+  !exit_reason(id, ":normal").
 
 // A process a Task start allocates (task_handled holds only those).
 .decl task_started(p: symbol)

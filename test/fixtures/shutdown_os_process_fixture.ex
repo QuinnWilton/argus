@@ -2,8 +2,9 @@ defmodule Argus.Test.Fixtures.ShutdownOsProcess do
   @moduledoc """
   Tasks that run an external program and are killed, for
   `orphaned_os_process`: a killed task closes its port, and the program
-  it spawned runs on. The quiet neighbours wait for their task, or kill
-  one that runs no program.
+  it spawned runs on. The quiet neighbours wait for their task, signal
+  it with reason :normal (which stops no task), or kill one that runs no
+  program.
   """
 
   defmodule Render do
@@ -42,6 +43,15 @@ defmodule Argus.Test.Fixtures.ShutdownOsProcess do
 
       Process.sleep(1_000)
       Process.exit(task.pid, :kill)
+    end
+  end
+
+  defmodule SignalsNormal do
+    @moduledoc "An exit signal of reason :normal: the task does not trap exits, and runs on."
+    def run(path) do
+      task = Task.async(fn -> System.cmd(path, []) end)
+      Process.exit(task.pid, :normal)
+      Task.await(task, :infinity)
     end
   end
 

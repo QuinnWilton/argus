@@ -444,6 +444,10 @@
 .decl exit_call(id: symbol, func: symbol, target: symbol) mutable
 .input exit_call
 
+// The reason a Process.exit/2 or :erlang.exit/2 call sends: `:normal` stops no process that does not trap exits.
+.decl exit_reason(id: symbol, reason: symbol) mutable
+.input exit_reason
+
 // A comparison between tuple element `pos` of one source and data derived from another. Comparisons with untracked values have no row. Function-level.
 //
 .decl field_compared(func: symbol, kind: symbol, source: symbol, pos: number, other_kind: symbol, other_source: symbol) mutable
