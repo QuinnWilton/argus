@@ -30,6 +30,14 @@ defmodule Argus.Extractors.Tooling do
     ExUnit caller: Livebook's Doctests runs ExUnit's runner inside the
     product).
 
+  - `tooling_module(mod, "build")` — code the build runs, outside the
+    `Mix.` namespace: a module implementing `Mix.SCM` (Hex's `Hex.SCM`),
+    `Mix.Task` or `Mix.Task.Compiler`, or one whose every export is a
+    compiler hook (`on_definition/6`, `__after_compile__/2`,
+    `__after_verify__/1`), which the compiler calls on the module being
+    compiled (phoenix_storybook's `IndexValidator`). A module with any other
+    export may run in the product too, and is not.
+
   The path is the one `compile_info` records; a beam built without it
   (`+deterministic`) says nothing about its path.
   """
@@ -37,6 +45,11 @@ defmodule Argus.Extractors.Tooling do
   @behaviour Argus.Extractor
 
   import Argus.Extractor.Facts, only: [add_fact: 3]
+  import Argus.Extractor.Helpers, only: [get_behaviours: 1]
+
+  @build_behaviours [Mix.SCM, Mix.Task, Mix.Task.Compiler]
+  @compiler_hooks [on_definition: 6, __after_compile__: 2, __after_verify__: 1]
+  @module_info [__info__: 1, module_info: 0, module_info: 1]
 
   @nested ~w(lib src apps deps _build)
 
@@ -52,8 +65,17 @@ defmodule Argus.Extractors.Tooling do
       String.starts_with?(mod, "Mix.") -> add_fact(%{}, :tooling_module, [mod, "mix"])
       test_support?(source(module_data)) -> add_fact(%{}, :tooling_module, [mod, "test_support"])
       test_helper?(module_data) -> add_fact(%{}, :tooling_module, [mod, "test_support"])
+      build?(module_data) -> add_fact(%{}, :tooling_module, [mod, "build"])
       true -> %{}
     end
+  end
+
+  defp build?(module_data) do
+    behaviours = get_behaviours(Map.get(module_data, :attributes, []))
+    exports = for {f, a, _label} <- module_data.exports, {f, a} not in @module_info, do: {f, a}
+
+    Enum.any?(behaviours, &(&1 in @build_behaviours)) or
+      (exports != [] and Enum.all?(exports, &(&1 in @compiler_hooks)))
   end
 
   @doc false

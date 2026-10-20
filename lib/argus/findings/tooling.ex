@@ -39,7 +39,10 @@ defmodule Argus.Findings.Tooling do
   @basis %{
     "mix" =>
       "a Mix task or a helper Mix tasks share: it runs in a developer's shell, not the deployed system",
-    "test_support" => "test support compiled into this build: only tests run it"
+    "test_support" => "test support compiled into this build: only tests run it",
+    "build" =>
+      "code the build runs (a Mix SCM, task or compiler, or a compiler hook): it runs while " <>
+        "dependencies are fetched or modules compile, not in the deployed system"
   }
 
   @doc """
@@ -52,7 +55,8 @@ defmodule Argus.Findings.Tooling do
       name: :tooling,
       fields: [
         {:mod, :symbol, "the module, inspected"},
-        {:basis, :symbol, "mix | test_support | prior — how the module is known to be tooling"},
+        {:basis, :symbol,
+         "mix | test_support | build | prior — how the module is known to be tooling"},
         {:permille, :number, "1000 for a structural basis; the prior's probability for `prior`"}
       ],
       doc:

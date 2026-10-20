@@ -42,8 +42,8 @@ Some findings use explicit assumptions even at error severity. Read the entry's
 limits and the finding's evidence rather than treating a level as a probability.
 
 Inferred targets and optional priors can lower severity. Findings identify heuristic
-provenance when applicable. Code classified as tooling or test support can also step
-down a level. Unsafe-input findings have their own proximity-based grading; code
+provenance when applicable. Code classified as tooling (Mix tasks, Mix SCMs and
+compilers, compiler hooks) or test support can also step down a level. Unsafe-input findings have their own proximity-based grading; code
 execution and subprocesses retain a warning floor. The finding builder is the
 authority for exact variant-specific grading.
 

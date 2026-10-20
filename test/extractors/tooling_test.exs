@@ -20,6 +20,37 @@ defmodule Argus.Extractors.ToolingTest do
            ]
   end
 
+  test "code the build runs is tooling by its behaviour, or by exporting compiler hooks alone" do
+    [{_, scm}] =
+      Code.compile_string("""
+      defmodule Argus.ToolingTest.SCM do
+        @behaviour Mix.SCM
+        def fetchable?, do: true
+      end
+      """)
+
+    [{_, hooks}] =
+      Code.compile_string("""
+      defmodule Argus.ToolingTest.Hooks do
+        def on_definition(_env, _kind, _name, _args, _guards, _body), do: :ok
+        def __after_compile__(_env, _bytecode), do: :ok
+      end
+      """)
+
+    [{_, mixed}] =
+      Code.compile_string("""
+      defmodule Argus.ToolingTest.Mixed do
+        def on_definition(_env, _kind, _name, _args, _guards, _body), do: :ok
+        def render(assigns), do: assigns
+      end
+      """)
+
+    assert rows([scm, hooks, mixed]) == [
+             ["Argus.ToolingTest.Hooks", "build"],
+             ["Argus.ToolingTest.SCM", "build"]
+           ]
+  end
+
   test "a module compiled from test support is tooling by its path" do
     beams = [
       compiled("Argus.ToolingTest.Case", "/proj/test/support/conn_case.ex"),

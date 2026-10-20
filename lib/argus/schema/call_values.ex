@@ -479,7 +479,8 @@ defmodule Argus.Schema.CallValues do
           {:mod, :symbol, "the module, inspected"},
           {:basis, :symbol,
            "mix (an Elixir module under Mix.) | test_support (compiled from test/support/ " <>
-             "or from a test/ directory within a lib/)"}
+             "or from a test/ directory within a lib/) | build (a Mix SCM, task or " <>
+             "compiler, or a module of compiler hooks alone)"}
         ],
         doc: """
         A module identified as developer tooling or test support by its name or compile \
