@@ -9,6 +9,17 @@
 # `function: {name, arity}` narrows this further when another function in the
 # same module still has the defect. It never suppresses that other finding.
 [
+  # elixir-grpc's Erlpack codec deserialized raw gRPC message bodies with
+  # binary_to_term/1 (no :safe) on an unauthenticated application/grpc+erlpack
+  # request. Fixed in 1.0.0 (binary_to_term/2 with :safe + a shape guard).
+  %{
+    repo: "elixir-grpc/grpc",
+    issue: "CVE-2026-48853",
+    module: "GRPC.Codec.Erlpack",
+    function: {:decode, 2},
+    pre: "863f9462a2cae3debee45064e6ec21edbc51816b",
+    finding: {:unsafe_input, "binary_to_term without :safe"}
+  },
   # Erlang Ecosystem Foundation CNA: require the actual verification verdict,
   # not merely JOSE's three-element result shape, before accepting its payload.
   %{
@@ -29,6 +40,89 @@
     fix: "1816b103af975221210478d61db20adcea700319",
     finding: {:unsafe_input, "Compressed ETF allocation from external input"}
   },
+  # ash's :atom type casts a string with String.to_atom when the
+  # unsafe_to_atom? constraint is set (Ash.Type.Atom.cast_value/2), so a filter
+  # on an :atom attribute interns an attacker-chosen string as an atom. The fix
+  # (5282f3f) adds coerce/2 and a binary dump_to_native/2 so the filter path
+  # compares as a binary, but cast_value/2 still calls String.to_atom under
+  # unsafe_to_atom?, so the sink Argus reports is not removed. Present-only at
+  # the fix's parent.
+  %{
+    repo: "ash-project/ash",
+    issue: "CVE-2026-94201",
+    module: "Ash.Type.Atom",
+    pre: "d1c50d86f37faafd6065e700b3e3acadc34c3596",
+    finding: {:unsafe_input, "Dynamic atom creation reachable from an exported function"}
+  },
+  # Guardian.Permissions interns permission names with String.to_atom when
+  # encoding/decoding a token's permissions (permissions.ex), so attacker-named
+  # permissions mint unbounded atoms. The fix switches to String.to_existing_atom.
+  %{
+    repo: "ueberauth/guardian",
+    issue: "CVE-2026-55734",
+    module: "Guardian.Permissions",
+    pre: "2952657e42e6341a67e6aaad09d8f0b40ae917cb",
+    finding: {:unsafe_input, "Dynamic atom creation reachable from an exported function"}
+  },
+  # AshTypescript.FieldFormatter.parse_input_field interns client-supplied RPC
+  # field names with String.to_atom (field_formatter.ex). The fix switches to
+  # String.to_existing_atom.
+  %{
+    repo: "ash-project/ash_typescript",
+    issue: "CVE-2026-74837",
+    module: "AshTypescript.FieldFormatter",
+    pre: "40398f5f545ce3348a75dabb9c28cdea61f74660",
+    finding: {:unsafe_input, "Dynamic atom creation reachable from an exported function"}
+  },
+  # plug_cowboy builds the conn scheme with String.to_atom on the request's
+  # :scheme pseudo-header (conn.ex); HTTP/2 lets a client send an arbitrary
+  # one, minting atoms. The fix maps known schemes and rejects others.
+  %{
+    repo: "elixir-plug/plug_cowboy",
+    issue: "CVE-2026-32688",
+    module: "Plug.Cowboy.Conn",
+    pre: "5a4771c4b5deba2b0ec3e44d2afc96ca874d95d3",
+    finding: {:unsafe_input, "Dynamic atom creation reachable from an exported function"}
+  },
+  # absinthe_federation's _entities resolver converts representation keys to
+  # atoms with String.to_atom (entities_field.ex), so client-supplied keys
+  # mint atoms. The fix uses String.to_existing_atom.
+  %{
+    repo: "DivvyPayHQ/absinthe_federation",
+    issue: "CVE-2026-67585",
+    module: "Absinthe.Federation.Schema.EntitiesField",
+    pre: "c53bb3b3e87051f234cebad7aa9a96311f2f6c2b",
+    finding: {:unsafe_input, "Dynamic atom creation reachable from an exported function"}
+  },
+  # AshAdmin's resource show component interns attribute names from client
+  # input with String.to_atom (show.ex). The fix avoids String.to_atom.
+  %{
+    repo: "ash-project/ash_admin",
+    issue: "CVE-2026-82722",
+    module: "AshAdmin.Components.Resource.Show",
+    pre: "0a90527021ad01101e308de5b906d9475a3d0a5b",
+    finding: {:unsafe_input, "Unbounded atom creation fed by request data from a LiveComponent event"}
+  },
+  # absinthe builds a parsed directive's identifier with String.to_atom on the
+  # directive name (Absinthe.Language.DirectiveDefinition), so a document with
+  # many distinct directive names mints atoms. The fix caps directive count.
+  %{
+    repo: "absinthe-graphql/absinthe",
+    issue: "CVE-2026-42793",
+    module: "Absinthe.Blueprint.Draft.Absinthe.Language.DirectiveDefinition",
+    pre: "223600c520493dcaf95080af552c413099f92c9d",
+    finding: {:unsafe_input, "Dynamic atom creation reachable from an exported function"}
+  },
+  # phoenix_storybook's playground handle_event interns the tab name from a
+  # client event with String.to_atom (playground.ex). The fix validates against
+  # existing tabs.
+  %{
+    repo: "phenixdigital/phoenix_storybook",
+    issue: "CVE-2026-8469",
+    module: "PhoenixStorybook.Story.Playground",
+    pre: "56ab8464d4375fa52db806148a06cce126ad481d",
+    finding: {:unsafe_input, "Unbounded atom creation fed by request data from a LiveComponent event"}
+  },
   %{
     repo: "ash-project/ash_ai",
     issue: "CVE-2026-77956",
@@ -36,6 +130,39 @@
     pre: "043461cc2e56dec2ba1dcd9d6b9d17e02e8e3d05",
     fix: "e9948254b5659c1143b73dc2f59f457931e64514",
     finding: {:unsafe_input, "Runtime callback content evaluated as a template"}
+  },
+  # Playground psb-assign attribute values flow from an unauthenticated
+  # LiveView event into a HEEx template string (attributes_markup/1:
+  # ~s|#{name}="#{val}"|), which component_heex/5 splices into `heex` and
+  # render_component_heex/3 compiles with EEx.compile_string/2 and runs via
+  # Code.eval_quoted_with_env/3. A value closing the quote injects a HEEx
+  # expression block, giving code execution. Argus reports the compile sink as
+  # code execution whose source a caller's data reaches. Present-only: the fix
+  # moves the plain binary values to an assigns binding but still splices the
+  # `:eval`-typed attributes into the template (eval_attrs_markup), so caller
+  # data still reaches the eval source at the fix; telling the injected binary
+  # value apart from an intended `:eval` attribute is a type distinction the
+  # dataflow does not make.
+  %{
+    repo: "phenixdigital/phoenix_storybook",
+    issue: "CVE-2026-8467",
+    module: "PhoenixStorybook.Rendering.ComponentRenderer",
+    pre: "e74ca5bcce07f722c6a3a58be620b7007062fa6c",
+    finding: {:unsafe_input, "Dynamic code execution of a caller's input"}
+  },
+  # libcluster's Gossip strategy decodes unauthenticated UDP heartbeats with
+  # :erlang.binary_to_term/1 (no :safe) when no secret is set (the default,
+  # unencrypted). The active gen_udp socket delivers {:udp, _, _, _, packet} to
+  # handle_info/2, which hands packet to handle_heartbeat/2 and binary_to_term.
+  # Present-only: unfixed upstream (present on HEAD, 3.5.0).
+  %{
+    repo: "bitwalker/libcluster",
+    issue: "libcluster-gossip-udp-binary-to-term",
+    module: "Cluster.Strategy.Gossip",
+    pre: "6d8c11f57b9bde9a047e2ea9276f19b58c371466",
+    finding:
+      {:unsafe_input,
+       "binary_to_term without :safe fed by request data from a socket handler (socket data)"}
   },
   %{
     repo: "elixir-ecto/postgrex",
