@@ -103,6 +103,24 @@ defmodule Argus.Schema.UnsafeInput do
         (`Argus.Extractor.ShellScript`): the rest of the argument list is data, \
         not code.
         """
+      },
+      %{
+        name: :verification_gated,
+        layer: 2,
+        fields: [
+          {:id, :symbol, "instruction ID of the binary_to_term call"},
+          {:func, :symbol, "containing function ID"}
+        ],
+        doc: """
+        The `binary_to_term` call is reached only when a cryptographic verification \
+        the function performs succeeds: a boolean verify or constant-time compare \
+        (`Plug.Crypto.secure_compare/2`, `:crypto.hash_equals/2`, `:crypto.verify`, \
+        `:public_key.verify`) tested against `true`/`false`, or a MAC/HMAC digest \
+        (`:crypto.mac`, `:crypto.hmac`) compared for equality against the supplied \
+        digest, with the decode on the accepting edge (`Argus.Extractors.VerificationGate`). \
+        A gated decode is re-ranked below an ungated one, never dropped: the secret's \
+        strength and whether the gate covers these exact bytes stay unproven.
+        """
       }
     ])
   end

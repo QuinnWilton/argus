@@ -44,6 +44,18 @@ defmodule Argus.Analyses.UnsafeInput do
     (`Argus.Extractors.DecodedOrigin`): reported here, at info, instead of
     as a deserialization. `:safe` cannot decode a beam's terms; the
     remedy is a short-lived VM.
+  - `secret_gated_decode(id, func, api, safety)` — a deserialization
+    reached only when a cryptographic verification the function itself
+    performs succeeds (`Argus.Extractors.VerificationGate`): a boolean
+    verify or constant-time compare, or a MAC/HMAC digest matched against
+    the supplied one, with the decode on the accepting edge. The bytes
+    carried a signature or MAC checked against a server-held secret, so
+    only a party with that secret can supply bytes that pass: re-ranked to
+    a warning below an ungated decode, never dropped. Weaker than an
+    authenticated-payload API, whose key and comparison the library
+    guarantees (`server_authored_bytes`, still no sink); a hand-rolled
+    gate leaves the secret's strength and whether it covers these exact
+    bytes unproven.
   - `sink_endpoint(sink, verb, path, plug)` — the HTTP route a sink is
     reachable from, when the router literal names one.
   - `unbounded_children_from_request(sup, child, via, kind)` —
@@ -100,6 +112,9 @@ defmodule Argus.Analyses.UnsafeInput do
       Argus.Extractors.EtfAllocation,
       Argus.Extractors.TermValidation,
       Argus.Extractors.ResultChecks,
+      # A decode reached only when a verification the function performs
+      # succeeds (verification_gated): re-ranked below an ungated decode.
+      Argus.Extractors.VerificationGate,
       Argus.Extractors.CodeInjection,
       Argus.Extractors.SqlInjection,
       Argus.Extractors.Generated,
@@ -179,6 +194,20 @@ defmodule Argus.Analyses.UnsafeInput do
                "for a deserialization, its option class: unsafe | atoms_only | dynamic; else empty"}
             ],
         doc: "A sink no request reaches: live code, but not attacker-reachable."
+      },
+      %{
+        name: :secret_gated_decode,
+        fields: [
+          {:id, :symbol, "instruction ID of the binary_to_term call"},
+          {:func, :symbol, "function containing it"},
+          {:api, :symbol, "the API called"},
+          {:safety, :symbol,
+           "its option class: unsafe | atoms_only | dynamic (the gate does not change it)"}
+        ],
+        key: [:id],
+        doc:
+          "A deserialization reachable only when a cryptographic verification the " <>
+            "function performs succeeds: re-ranked below an ungated decode, never dropped."
       },
       %{
         name: :artifact_decode,
@@ -445,6 +474,32 @@ defmodule Argus.Analyses.UnsafeInput do
     )
     |> trusted_value("the command it runs", source, p)
     |> Map.put(:floor, :warning)
+  end
+
+  def finding(:secret_gated_decode, [id, func, api, safety]) do
+    Findings.new(
+      :warning,
+      "#{deserialization_title(safety)}, behind a signature check",
+      "#{func} deserializes with #{api} #{deserialization_how(safety)}, and the decode " <>
+        "is reached only when a cryptographic verification this function performs " <>
+        "succeeds — a boolean verify or constant-time compare, or a MAC/HMAC digest " <>
+        "matched against the supplied one. The bytes therefore carried a signature or " <>
+        "MAC checked against a server-held secret, so only a party with that secret can " <>
+        "supply bytes that pass: this is exploitable with the signing secret, not by an " <>
+        "arbitrary sender. The gate is why this is not the stronger ungated finding. It " <>
+        "does not clear the decode: the analysis has not established that the secret is " <>
+        "strong, that the comparison is constant-time, or that the gate covers these " <>
+        "exact bytes — if the secret is weak, absent or shared, the decode is as exposed " <>
+        "as an ungated one. " <> deserialization_risk(safety),
+      at: Findings.at_instr(id),
+      at_label: "decoded here, on the verification's accepting path",
+      help: [
+        "decode with `[:safe]` and validate the decoded shape, so even a holder of the " <>
+          "secret cannot intern atoms or materialize funs, ports and references",
+        "confirm the signing secret is strong and not a default, and that the verified " <>
+          "bytes are the ones decoded"
+      ]
+    )
   end
 
   def finding(:artifact_decode, [id, func, api, "artifact", safety]) do

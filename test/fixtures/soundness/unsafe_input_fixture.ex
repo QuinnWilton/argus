@@ -657,3 +657,72 @@ end
 defmodule Argus.Test.Soundness.Adv.Dunder do
   def __eval__(code), do: Code.eval_string(code)
 end
+# A decode reached only when a cryptographic verification the function performs
+# succeeds is re-ranked below an ungated decode (secret_gated_decode), never
+# dropped (Argus.Extractors.VerificationGate). The gated clauses step down to a
+# warning; the ungated and the counterexamples (a decode on the reject branch, a
+# MAC that does not gate the decode) keep the top-tier error.
+defmodule Argus.Test.Soundness.G10.SignatureGate do
+  @moduledoc false
+
+  # secure_compare of a hand-rolled HMAC gates the decode: re-ranked (warning).
+  def decode_gated(payload, secret) do
+    case String.split(payload, "--", parts: 2) do
+      [data, digest] ->
+        expected = :crypto.mac(:hmac, :sha256, secret, data) |> Base.url_encode64()
+
+        if Plug.Crypto.secure_compare(digest, expected) do
+          {:ok, :erlang.binary_to_term(Base.url_decode64!(data))}
+        else
+          {:error, :bad_signature}
+        end
+
+      _ ->
+        {:error, :bad_format}
+    end
+  end
+
+  # An asymmetric signature verify gates the decode: re-ranked (warning).
+  def decode_verify(payload, sig, key) do
+    if :crypto.verify(:rsa, :sha256, payload, sig, key) do
+      :erlang.binary_to_term(payload)
+    else
+      {:error, :bad_sig}
+    end
+  end
+
+  # A MAC compared for equality gates the decode: re-ranked (warning).
+  def decode_eq(data, provided, secret) do
+    if :crypto.mac(:hmac, :sha256, secret, data) == provided do
+      :erlang.binary_to_term(data)
+    else
+      {:error, :bad_mac}
+    end
+  end
+
+  # No gate at all: the ungated decode keeps the top-tier error.
+  def decode_open(payload), do: :erlang.binary_to_term(payload)
+
+  # The decode is on the REJECT branch: it must not be re-ranked (error).
+  def decode_reject(payload, secret) do
+    case String.split(payload, "--", parts: 2) do
+      [data, digest] ->
+        expected = :crypto.mac(:hmac, :sha256, secret, data) |> Base.url_encode64()
+
+        if Plug.Crypto.secure_compare(digest, expected) do
+          {:error, :bad}
+        else
+          :erlang.binary_to_term(Base.url_decode64!(data))
+        end
+
+      _ ->
+        {:error, :bad_format}
+    end
+  end
+
+  # A MAC is computed but does not gate the decode: it must not be re-ranked (error).
+  def decode_ungated_mac(payload, secret) do
+    _mac = :crypto.mac(:hmac, :sha256, secret, payload)
+    :erlang.binary_to_term(payload)
+  end
+end

@@ -18,6 +18,8 @@ defmodule Argus.Soundness.UnsafeInputTest do
   end
 
   @atom_export "Dynamic atom creation reachable from an exported function"
+  @deser_gated "binary_to_term without :safe, behind a signature check"
+  @deser_unsafe "binary_to_term without :safe"
   @code_export "Dynamic code execution reachable from exports"
   @command_export "Subprocess execution of a caller's input"
 
@@ -155,6 +157,35 @@ defmodule Argus.Soundness.UnsafeInputTest do
 
   test "a socket's bytes in a server's handle_info are an outside party's", %{sev: sev} do
     assert severity(sev, "G6.RanchAtom", :handle_info, @atom_export) == :warning
+  end
+
+  describe "a decode behind a cryptographic verification is re-ranked, never dropped" do
+    test "a secure_compare of a hand-rolled HMAC gates the decode", %{sev: sev} do
+      assert severity(sev, "G10.SignatureGate", :decode_gated, @deser_gated) == :warning
+    end
+
+    test "an asymmetric signature verify gates the decode", %{sev: sev} do
+      assert severity(sev, "G10.SignatureGate", :decode_verify, @deser_gated) == :warning
+    end
+
+    test "a MAC compared for equality gates the decode", %{sev: sev} do
+      assert severity(sev, "G10.SignatureGate", :decode_eq, @deser_gated) == :warning
+    end
+
+    test "an ungated decode keeps the top-tier error", %{sev: sev} do
+      assert severity(sev, "G10.SignatureGate", :decode_open, @deser_unsafe) == :error
+      assert severity(sev, "G10.SignatureGate", :decode_open, @deser_gated) == nil
+    end
+
+    test "a decode on the verification's reject branch is not re-ranked", %{sev: sev} do
+      assert severity(sev, "G10.SignatureGate", :decode_reject, @deser_unsafe) == :error
+      assert severity(sev, "G10.SignatureGate", :decode_reject, @deser_gated) == nil
+    end
+
+    test "a MAC that does not gate the decode does not re-rank it", %{sev: sev} do
+      assert severity(sev, "G10.SignatureGate", :decode_ungated_mac, @deser_unsafe) == :error
+      assert severity(sev, "G10.SignatureGate", :decode_ungated_mac, @deser_gated) == nil
+    end
   end
 
   # Suppression counterexamples for unsafe-input,

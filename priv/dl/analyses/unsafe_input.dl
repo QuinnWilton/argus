@@ -154,7 +154,25 @@ sink_call(id, func, api, "deserialization", safety) :-
   unsafe_deserialization(id, func, api, safety),
   unsafe_safety_class(safety),
   !inert_decoded_term(id, func),
-  !server_authored_bytes(id, func).
+  !server_authored_bytes(id, func),
+  !verification_gated(id, func).
+
+// A decode reached only when a cryptographic verification the function performs
+// succeeds (Argus.Extractors.VerificationGate): reachable, but the bytes carried a
+// signature or MAC checked against a server-held secret, so only a party with that
+// secret can supply bytes that pass. Weaker than an authenticated-payload API, whose
+// key and comparison the library guarantees; a hand-rolled gate leaves the secret's
+// strength, the comparison, and whether the gate covers these exact bytes unproven.
+// Re-ranked below an ungated decode (which stays in sink_call above), never dropped.
+// A gate the server's own key makes (server_authored_bytes) is already no sink.
+.decl secret_gated_decode(id: symbol, func: symbol, api: symbol, safety: symbol)
+.output secret_gated_decode
+secret_gated_decode(id, func, api, safety) :-
+  unsafe_deserialization(id, func, api, safety),
+  unsafe_safety_class(safety),
+  !inert_decoded_term(id, func),
+  !server_authored_bytes(id, func),
+  verification_gated(id, func).
 
 // The bytes are an authenticated decryption's or MAC check's success payload
 // (clientlib/verification.dl): only a holder of the server's key could have written
@@ -1046,6 +1064,13 @@ unsafe_decode_reported(id) :-
   sink(id, _, _, "deserialization", safety),
   safety != "atoms_only",
   exposed_sink(id, _, _, _, _).
+
+// A signature-gated decode is reported by secret_gated_decode, whose risk text covers
+// the compressed form; the separate compressed-ETF finding is left out, as it is for
+// an ungated reported decode.
+unsafe_decode_reported(id) :-
+  secret_gated_decode(id, _, _, safety),
+  safety != "atoms_only".
 
 // Nearby exported callers provide evidence of public reachability. An exported sink
 // function already serves as its own anchor.

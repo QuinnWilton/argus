@@ -106,6 +106,7 @@ defmodule Argus.Pipeline do
     Argus.Extractors.SecurityValues,
     Argus.Extractors.SharedStore,
     Argus.Extractors.ResultChecks,
+    Argus.Extractors.VerificationGate,
     Argus.Extractors.EtfAllocation,
     Argus.Extractors.TermValidation,
     Argus.Extractors.CodeInjection,
