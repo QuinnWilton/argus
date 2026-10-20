@@ -109,6 +109,11 @@
 .decl call_arg_tuple(caller: symbol, callee: symbol, arg_pos: number, index: number, source: symbol, value: symbol) mutable
 .input call_arg_tuple
 
+// A possible source for callee parameter `arg_pos`: project call, init argument, spawn argument, child-spec argument, trailing closure capture, or (`element`) what a library call running the program's fun hands it: an element, a pair, an accumulator (`element_fun`). OTP and Elixir internals are otherwise excluded, except remote-pid inputs to global conflict resolvers.
+//
+.decl call_arg_var(id: symbol, caller: symbol, callee: symbol, arg_pos: symbol, via: symbol, var_kind: symbol, var: symbol) mutable
+.input call_arg_var
+
 // A call controlled by a test on the source. Closure construction counts as a call. Function-level.
 //
 .decl call_decided(caller: symbol, callee: symbol, kind: symbol, source: symbol) mutable
@@ -118,6 +123,10 @@
 //
 .decl call_result(id: symbol, func: symbol, callee: symbol, fate: symbol, raises: symbol, target: symbol) mutable
 .input call_result
+
+// The project call at `id`, whose result is a `result` source (src = `id`).
+.decl call_result_var(id: symbol, func: symbol, callee: symbol) mutable
+.input call_result_var
 
 // A catch-all that only logs or ignores the message. All uses of the message or derived values must go to Logger, `:logger`, IO, or `inspect/2`. Testing, returning, storing, or otherwise passing the message disqualifies it.
 //
@@ -317,7 +326,7 @@
 
 // A source stored under `key` in the running process's dictionary. Reads of the same `dict` source in that process may resolve to it (`clientlib/processes.dl`).
 //
-.decl dict_put(id: symbol, func: symbol, key: symbol, src_kind: symbol, src: symbol) mutable
+.decl dict_put(id: symbol, func: symbol, key: symbol, var_kind: symbol, var: symbol) mutable
 .input dict_put
 
 // Mnesia distributed store operation. DETS is not one: a DETS table is a file on its own node.
@@ -344,7 +353,7 @@
 .decl effect_decided(func: symbol, kind: symbol, source: symbol) mutable
 .input effect_decided
 
-// A library call (`Enum.map/2`, `Enum.reduce/3`, `Map.new/2`, `:lists.foldl/3`, ...) running `fun` on each element in the calling process (`Argus.Extractors.TermFlow.Library`). `fun` is handed the elements (a map's `{key, value}` pairs, a fold's accumulator) as `element` value_args; when the call's answer holds what `fun` answers, a `value_result` row names `fun` as its callee. Otherwise (`Enum.each/2`, `Enum.filter/2`, ...) what `fun` answers is dropped.
+// A library call (`Enum.map/2`, `Enum.reduce/3`, `Map.new/2`, `:lists.foldl/3`, ...) running `fun` on each element in the calling process (`Argus.Extractors.TermFlow.Library`). `fun` is handed the elements (a map's `{key, value}` pairs, a fold's accumulator) as `element` value_args; when the call's answer holds what `fun` answers, a `call_result_var` row names `fun` as its callee. Otherwise (`Enum.each/2`, `Enum.filter/2`, ...) what `fun` answers is dropped.
 //
 .decl element_fun(id: symbol, caller: symbol, fun: symbol, answers: symbol) mutable
 .input element_fun
@@ -458,10 +467,24 @@
 .decl field_decides(func: symbol, kind: symbol, source: symbol, pos: number) mutable
 .input field_decides
 
+// A load reading selector `sel` from a source, including field access, tuple extraction, pattern matching, and `Map.get/2`.
+//
+.decl field_load(func: symbol, load: symbol, field: symbol, var_kind: symbol, var: symbol) mutable
+.input field_load
+
+// The tuple element load `load` runs only once a match established its source a tuple of `arity` elements, tagged `tag`.
+//
+.decl field_load_match(load: symbol, tag: symbol, arity: symbol) mutable
+.input field_load_match
+
 // A test comparing map field `key` with `nil` or `undefined`. Supports checks for timers armed only when no reference is stored.
 //
 .decl field_nil_test(func: symbol, key: symbol) mutable
 .input field_nil_test
+
+// The field `sel` of `obj` may hold the source.
+.decl field_store(func: symbol, term: symbol, field: symbol, var_kind: symbol, var: symbol) mutable
+.input field_store
 
 // A test comparing map field `key` with a literal. `field_nil_test` is the subset for `nil` or `undefined`.
 //
@@ -666,45 +689,45 @@
 
 // A possible target source or literal name for a call, cast, or info send. Resolves targets recorded as `dynamic` by `sync_call`.
 //
-.decl process_call_source(id: symbol, func: symbol, api_kind: symbol, src_kind: symbol, src: symbol) mutable
-.input process_call_source
+.decl process_call_var(id: symbol, func: symbol, api_kind: symbol, var_kind: symbol, var: symbol) mutable
+.input process_call_var
 
 // Process link between modules.
 .decl process_link(from_mod: symbol, to_mod: symbol) mutable
 .input process_link
 
-// A possible source for a call, cast, or send message. Flows to the corresponding handler of the server resolved by the same site's `process_call_source` rows.
+// A possible source for a call, cast, or send message. Flows to the corresponding handler of the server resolved by the same site's `process_call_var` rows.
 //
-.decl process_message_source(id: symbol, func: symbol, api_kind: symbol, src_kind: symbol, src: symbol) mutable
-.input process_message_source
+.decl process_message_var(id: symbol, func: symbol, api_kind: symbol, var_kind: symbol, var: symbol) mutable
+.input process_message_var
 
 // A local-only process operation receiving a possible source; remote pids can raise `badarg`. Includes such BIFs passed as per-element funs to `Enum` or `:lists`. Excludes sites restricted to the branch where `node(pid)` matches the compared node; other branches and joined paths remain.
 //
-.decl process_probe_source(id: symbol, func: symbol, bif: symbol, src_kind: symbol, src: symbol) mutable
-.input process_probe_source
+.decl process_probe_var(id: symbol, func: symbol, bif: symbol, var_kind: symbol, var: symbol) mutable
+.input process_probe_var
 
 // Process name registration.
 .decl process_register(id: symbol, func: symbol, name: symbol, method: symbol) mutable
 .input process_register
 
 // The call at `id` registers the source under `name` (Process.register/2, :erlang.register/2).
-.decl process_register_source(id: symbol, func: symbol, name: symbol, src_kind: symbol, src: symbol) mutable
-.input process_register_source
+.decl process_register_var(id: symbol, func: symbol, name: symbol, var_kind: symbol, var: symbol) mutable
+.input process_register_var
 
 // A call producing potentially remote pids or passing them to a fun. Covers distributed registries and groups, `$callers`, process links, and global conflict resolvers. Reverse, sort, and uniq preserve remote-pid lists. The source is `remote`, named by call site; it represents no allocation and has no process points-to target.
 //
-.decl process_remote_source(id: symbol, func: symbol, api: symbol) mutable
-.input process_remote_source
+.decl process_remote_var(id: symbol, func: symbol, api: symbol) mutable
+.input process_remote_var
 
 // A send target source, or a literal name with `src_kind` value `name`. Keyed by send site for finding anchors.
 //
-.decl process_send_source(id: symbol, func: symbol, message: symbol, src_kind: symbol, src: symbol) mutable
-.input process_send_source
+.decl process_send_var(id: symbol, func: symbol, message: symbol, var_kind: symbol, var: symbol) mutable
+.input process_send_var
 
 // A target source for an exit signal, monitor, link, unlink, or process stop, including supervisor termination by pid.
 //
-.decl process_signal_source(id: symbol, func: symbol, signal: symbol, src_kind: symbol, src: symbol) mutable
-.input process_signal_source
+.decl process_signal_var(id: symbol, func: symbol, signal: symbol, var_kind: symbol, var: symbol) mutable
+.input process_signal_var
 
 // A process allocation at start site `id`. Spawns use the resolved entry function; server and child-spec starts use the literal callback module.
 //
@@ -785,6 +808,10 @@
 //
 .decl result_tested(id: symbol, func: symbol, callee: symbol, how: symbol) mutable
 .input result_tested
+
+// `func` may return the source, directly or by a tail call.
+.decl return_var(func: symbol, var_kind: symbol, var: symbol) mutable
+.input return_var
 
 // A returned state field derived from the result of call `site`. Records the whole result, tuple element `{i}`, a deeper `part`, or dependence through another call's `argument`. Local calls follow `returns_from`. Used to locate stored monitor records and removal results (`Argus.Extractor.StateFields`).
 //
@@ -910,7 +937,7 @@
 .decl send_arg_param(id: symbol, func: symbol, param_pos: number) mutable
 .input send_arg_param
 
-// A send of a behaviour envelope identified by tag and size: `$gen_call`, `$gen_cast`, or `system`. Adds shape information beyond `process_send_source`'s tuple tag.
+// A send of a behaviour envelope identified by tag and size: `$gen_call`, `$gen_cast`, or `system`. Adds shape information beyond `process_send_var`'s tuple tag.
 //
 .decl send_envelope(id: symbol) mutable
 .input send_envelope
@@ -1222,13 +1249,13 @@
 
 // An ETS operation's table source, resolved to possible allocations by `clientlib/tables.dl`.
 //
-.decl table_use(id: symbol, func: symbol, src_kind: symbol, src: symbol) mutable
+.decl table_use(id: symbol, func: symbol, var_kind: symbol, var: symbol) mutable
 .input table_use
 
 // A possible source for the task, or the term holding the tasks, a Task operation is handed, including one the library runs on each element of a list (`Enum.map(tasks, &Task.await/1)`).
 //
-.decl task_op_source(id: symbol, func: symbol, op: symbol, src_kind: symbol, src: symbol) mutable
-.input task_op_source
+.decl task_operation_var(id: symbol, func: symbol, op: symbol, var_kind: symbol, var: symbol) mutable
+.input task_operation_var
 
 // A Task.Supervisor start and its cap, from child specs, PartitionSupervisor options, or direct start/child-spec calls. Records capped and uncapped starts. A cap can produce `{:error, :max_children}`; an unavailable supervisor instead exits the caller. No row means the start is not visible.
 //
@@ -1239,6 +1266,20 @@
 //
 .decl task_supervisor_start(id: symbol, func: symbol, op: symbol, sup: symbol) mutable
 .input task_supervisor_start
+
+// A term containing a source, identified by its construction instruction. Includes maps, tuples, lists, records, and calls with known result shapes such as process starts or `Map.put/3`.
+//
+.decl term_allocation(func: symbol, term: symbol, shape: symbol, tag: symbol, arity: symbol) mutable
+.input term_allocation
+
+// An object's base source. Fields absent from `term_update_overwrites` retain the source's values; a cons cell's base is its tail.
+//
+.decl term_update_base(func: symbol, term: symbol, var_kind: symbol, var: symbol) mutable
+.input term_update_base
+
+// The update `obj` sets `sel`, shadowing its base's field.
+.decl term_update_overwrites(term: symbol, field: symbol) mutable
+.input term_update_overwrites
 
 // A return arming a callback's idle timeout, including unresolved timeout values. Excludes `:infinity`, `:hibernate`, and continuations. The runtime sends `:timeout` only if no other message arrives first. Recorded in helpers as well as callbacks, once per enclosing clause; unlike `callback_timeout`, does not require a literal integer.
 //
@@ -1335,6 +1376,11 @@
 .decl unknown_call(id: symbol, caller: symbol, api: symbol, callee: symbol) mutable
 .input unknown_call
 
+// A source handed where value flow does not follow it: an argument of a library call `Argus.Extractors.TermFlow.Library` does not model (a send, `:ets.insert/2`, `Agent.update/2`, `Enum.chunk_while/4`, a call running a fun the table does not know), or of a dynamic `fun.(...)` or `apply`. What holds it may be kept, sent or dropped where no summary says.
+//
+.decl unmodeled_use(id: symbol, func: symbol, var_kind: symbol, var: symbol) mutable
+.input unmodeled_use
+
 // Unsafe atom creation from dynamic input.
 .decl unsafe_atom_creation(id: symbol, func: symbol, api: symbol) mutable
 .input unsafe_atom_creation
@@ -1362,52 +1408,6 @@
 //
 .decl upload_path_use(id: symbol, func: symbol, api: symbol, source: symbol, shape: symbol) mutable
 .input upload_path_use
-
-// A possible source for callee parameter `arg_pos`: project call, init argument, spawn argument, child-spec argument, trailing closure capture, or (`element`) what a library call running the program's fun hands it: an element, a pair, an accumulator (`element_fun`). OTP and Elixir internals are otherwise excluded, except remote-pid inputs to global conflict resolvers.
-//
-.decl value_arg(id: symbol, caller: symbol, callee: symbol, arg_pos: symbol, via: symbol, src_kind: symbol, src: symbol) mutable
-.input value_arg
-
-// An object's base source. Fields absent from `value_sets` retain the source's values; a cons cell's base is its tail.
-//
-.decl value_base(func: symbol, obj: symbol, src_kind: symbol, src: symbol) mutable
-.input value_base
-
-// A source handed where value flow does not follow it: an argument of a library call `Argus.Extractors.TermFlow.Library` does not model (a send, `:ets.insert/2`, `Agent.update/2`, `Enum.chunk_while/4`, a call running a fun the table does not know), or of a dynamic `fun.(...)` or `apply`. What holds it may be kept, sent or dropped where no summary says.
-//
-.decl value_escape(id: symbol, func: symbol, src_kind: symbol, src: symbol) mutable
-.input value_escape
-
-// The field `sel` of `obj` may hold the source.
-.decl value_field(func: symbol, obj: symbol, sel: symbol, src_kind: symbol, src: symbol) mutable
-.input value_field
-
-// A load reading selector `sel` from a source, including field access, tuple extraction, pattern matching, and `Map.get/2`.
-//
-.decl value_load(func: symbol, load: symbol, sel: symbol, src_kind: symbol, src: symbol) mutable
-.input value_load
-
-// The tuple element load `load` runs only once a match established its source a tuple of `arity` elements, tagged `tag`.
-//
-.decl value_load_shape(load: symbol, tag: symbol, arity: symbol) mutable
-.input value_load_shape
-
-// A term containing a source, identified by its construction instruction. Includes maps, tuples, lists, records, and calls with known result shapes such as process starts or `Map.put/3`.
-//
-.decl value_object(func: symbol, obj: symbol, shape: symbol, tag: symbol, arity: symbol) mutable
-.input value_object
-
-// The project call at `id`, whose result is a `result` source (src = `id`).
-.decl value_result(id: symbol, func: symbol, callee: symbol) mutable
-.input value_result
-
-// `func` may return the source, directly or by a tail call.
-.decl value_return(func: symbol, src_kind: symbol, src: symbol) mutable
-.input value_return
-
-// The update `obj` sets `sel`, shadowing its base's field.
-.decl value_sets(obj: symbol, sel: symbol) mutable
-.input value_sets
 
 // The `binary_to_term` call is reached only when a cryptographic verification the function performs succeeds: a boolean verify or constant-time compare (`Plug.Crypto.secure_compare/2`, `:crypto.hash_equals/2`, `:crypto.verify`, `:public_key.verify`) tested against `true`/`false`, or a MAC/HMAC digest (`:crypto.mac`, `:crypto.hmac`) compared for equality against the supplied digest, with the decode on the accepting edge (`Argus.Extractors.VerificationGate`). A gated decode is re-ranked below an ungated one, never dropped: the secret's strength and whether the gate covers these exact bytes stay unproven.
 //

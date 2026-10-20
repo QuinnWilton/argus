@@ -32,7 +32,7 @@ defmodule Argus.Analysis.Extraction do
   # what the analyses read, and which stage wrote them.
   @points_to_relations ~w(server_process instance supervised_process private_process process
                           named_pid process_call process_signal call_site_target self_call
-                          source_process source_table coarse_table coarse_process
+                          var_process var_table coarse_table coarse_process
                           kept_in_dictionary
                           task_handled task_escapes points_to_mode)
 

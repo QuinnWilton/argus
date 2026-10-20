@@ -325,7 +325,7 @@ defmodule Argus.Analyses.Coupling do
   defp kept("table", callee), do: "#{callee} keeps it as an ETS row"
   defp kept("monitor", callee), do: "#{callee} keeps a monitor or link for it"
   defp kept("state", callee), do: "#{callee} keeps it in its state"
-  defp kept("dict", callee), do: "#{callee} keeps it in its process dictionary"
+  defp kept("dictionary", callee), do: "#{callee} keeps it in its process dictionary"
 
   defp kept("handed", callee),
     do: "#{callee} hands it to code outside the program, which may keep it"

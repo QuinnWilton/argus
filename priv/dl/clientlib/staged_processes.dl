@@ -41,13 +41,13 @@
 // Possible process/table leaves for demanded sources: handler call targets and ETS
 // operands. Do not export intermediate terms or arbitrary source points-to rows. New
 // source demands must be added to points_to.dl.
-.decl source_process(func: symbol, src_kind: symbol, src: symbol, proc: symbol) mutable
-.input source_process
+.decl var_process(func: symbol, var_kind: symbol, var: symbol, proc: symbol) mutable
+.input var_process
 
-.decl source_table(func: symbol, src_kind: symbol, src: symbol, table: symbol) mutable
-.input source_table
+.decl var_table(func: symbol, var_kind: symbol, var: symbol, table: symbol) mutable
+.input var_table
 
-// The tables a bounded stage resolved coarsely: their source_table rows
+// The tables a bounded stage resolved coarsely: their var_table rows
 // are a superset (points_to.dl).
 .decl coarse_table(table: symbol) mutable
 .input coarse_table
@@ -85,9 +85,9 @@ awaits_task(f, start, g) :-
 
 // Everything that goes to a process: a call, cast or send; signals.dl
 // adds the signals.
-.decl pid_use(id: symbol, func: symbol, kind: symbol, src_kind: symbol, src: symbol)
+.decl pid_use(id: symbol, func: symbol, kind: symbol, var_kind: symbol, var: symbol)
 
-pid_use(id, f, kind, sk, s) :- process_call_source(id, f, kind, sk, s).
+pid_use(id, f, kind, sk, s) :- process_call_var(id, f, kind, sk, s).
 
 // `func` calls or casts to `proc`, itself or through a helper.
 .decl call_target(func: symbol, api_kind: symbol, proc: symbol)

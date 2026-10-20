@@ -25,7 +25,7 @@ defmodule Argus.Schema.Processes do
         """
       },
       %{
-        name: :value_arg,
+        name: :call_arg_var,
         layer: 2,
         fields: [
           {:id, :instr_id, "instruction ID of the call, start or closure"},
@@ -33,9 +33,9 @@ defmodule Argus.Schema.Processes do
           {:callee, :func_id, "function whose parameter receives the value"},
           {:arg_pos, :symbol, "0-based parameter position, as a symbol"},
           {:via, :symbol, "call, init, spawn, child, closure, resolver or element"},
-          {:src_kind, :symbol,
+          {:var_kind, :symbol,
            "where the value comes from: proc, param, result, name, self, obj, load, reply, remote, dict or table"},
-          {:src, :symbol,
+          {:var, :symbol,
            "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
         ],
         doc: """
@@ -47,28 +47,28 @@ defmodule Argus.Schema.Processes do
         """
       },
       %{
-        name: :value_return,
+        name: :return_var,
         layer: 2,
         fields: [
           {:func, :func_id, "function returning"},
-          {:src_kind, :symbol,
+          {:var_kind, :symbol,
            "where the value comes from: proc, param, result, name, self, obj, load, reply, remote, dict or table"},
-          {:src, :symbol,
+          {:var, :symbol,
            "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
         ],
         doc: "`func` may return the source, directly or by a tail call."
       },
       %{
-        name: :process_call_source,
+        name: :process_call_var,
         layer: 2,
         fields: [
           {:id, :instr_id, "instruction ID of the call, cast or send"},
           {:func, :func_id, "function making the call"},
           {:api_kind, :symbol,
            "call or cast (the sync_call/async_cast table), or info for a send"},
-          {:src_kind, :symbol,
+          {:var_kind, :symbol,
            "where the value comes from: proc, param, result, name, self, obj, load, reply, remote, dict or table"},
-          {:src, :symbol,
+          {:var, :symbol,
            "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
         ],
         doc: """
@@ -77,48 +77,48 @@ defmodule Argus.Schema.Processes do
         """
       },
       %{
-        name: :process_message_source,
+        name: :process_message_var,
         layer: 2,
         fields: [
           {:id, :instr_id, "instruction ID of the call, cast or send"},
           {:func, :func_id, "function making the call, cast or send"},
           {:api_kind, :symbol, "call, cast or info (a send)"},
-          {:src_kind, :symbol,
+          {:var_kind, :symbol,
            "where the value comes from: proc, param, result, name, self, obj, load, reply, remote, dict or table"},
-          {:src, :symbol,
+          {:var, :symbol,
            "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
         ],
         doc: """
         A possible source for a call, cast, or send message. Flows to the corresponding \
-        handler of the server resolved by the same site's `process_call_source` rows.
+        handler of the server resolved by the same site's `process_call_var` rows.
         """
       },
       %{
-        name: :process_register_source,
+        name: :process_register_var,
         layer: 2,
         fields: [
           {:id, :instr_id, "instruction ID of the registration"},
           {:func, :func_id, "function registering"},
           {:name, :symbol, "the literal name"},
-          {:src_kind, :symbol,
+          {:var_kind, :symbol,
            "where the value comes from: proc, param, result, name, self, obj, load, reply, remote, dict or table"},
-          {:src, :symbol,
+          {:var, :symbol,
            "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
         ],
         doc:
           "The call at `id` registers the source under `name` (Process.register/2, :erlang.register/2)."
       },
       %{
-        name: :process_send_source,
+        name: :process_send_var,
         layer: 2,
         fields: [
           {:id, :instr_id, "instruction ID of the send"},
           {:func, :func_id, "function sending"},
           {:message, :symbol,
            "literal atom, {:tag, …} for a tuple with a literal atom tag, or dynamic"},
-          {:src_kind, :symbol,
+          {:var_kind, :symbol,
            "where the value comes from: proc, param, result, name, self, obj, load, reply, remote, dict or table"},
-          {:src, :symbol,
+          {:var, :symbol,
            "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
         ],
         doc: """
@@ -127,7 +127,7 @@ defmodule Argus.Schema.Processes do
         """
       },
       %{
-        name: :value_result,
+        name: :call_result_var,
         layer: 2,
         fields: [
           {:id, :instr_id, "instruction ID of the call"},
@@ -137,15 +137,15 @@ defmodule Argus.Schema.Processes do
         doc: "The project call at `id`, whose result is a `result` source (src = `id`)."
       },
       %{
-        name: :process_signal_source,
+        name: :process_signal_var,
         layer: 2,
         fields: [
           {:id, :instr_id, "instruction ID of the call"},
           {:func, :func_id, "function making it"},
           {:signal, :symbol, "exit, monitor, link, unlink or stop"},
-          {:src_kind, :symbol,
+          {:var_kind, :symbol,
            "where the value comes from: proc, param, result, name, self, obj, load, reply, remote, dict or table"},
-          {:src, :symbol,
+          {:var, :symbol,
            "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
         ],
         doc: """
@@ -159,15 +159,15 @@ defmodule Argus.Schema.Processes do
         fields: [{:id, :instr_id, "instruction ID of the send"}],
         doc: """
         A send of a behaviour envelope identified by tag and size: `$gen_call`, \
-        `$gen_cast`, or `system`. Adds shape information beyond `process_send_source`'s tuple tag.
+        `$gen_cast`, or `system`. Adds shape information beyond `process_send_var`'s tuple tag.
         """
       },
       %{
-        name: :value_object,
+        name: :term_allocation,
         layer: 2,
         fields: [
           {:func, :func_id, "function building the term"},
-          {:obj, :symbol, "the term: the instruction ID that built it"},
+          {:term, :symbol, "the term: the instruction ID that built it"},
           {:shape, :symbol, "map, tuple or list"},
           {:tag, :symbol, "a tuple's literal atom first element, else empty"},
           {:arity, :symbol, "a tuple's size, else 0"}
@@ -179,55 +179,55 @@ defmodule Argus.Schema.Processes do
         """
       },
       %{
-        name: :value_field,
+        name: :field_store,
         layer: 2,
         fields: [
           {:func, :func_id, "function building the term"},
-          {:obj, :symbol, "the term"},
-          {:sel, :symbol,
+          {:term, :symbol, "the term"},
+          {:field, :symbol,
            "a map key (inspected), {i} for tuple position i (0-based), [] for a list's elements, * for an unknown map key"},
-          {:src_kind, :symbol,
+          {:var_kind, :symbol,
            "where the value comes from: proc, param, result, name, self, obj, load, reply, remote, dict or table"},
-          {:src, :symbol,
+          {:var, :symbol,
            "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
         ],
         doc: "The field `sel` of `obj` may hold the source."
       },
       %{
-        name: :value_base,
+        name: :term_update_base,
         layer: 2,
         fields: [
           {:func, :func_id, "function building the term"},
-          {:obj, :symbol, "the term"},
-          {:src_kind, :symbol,
+          {:term, :symbol, "the term"},
+          {:var_kind, :symbol,
            "where the value comes from: proc, param, result, name, self, obj, load, reply, remote, dict or table"},
-          {:src, :symbol,
+          {:var, :symbol,
            "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
         ],
         doc: """
-        An object's base source. Fields absent from `value_sets` retain the source's \
+        An object's base source. Fields absent from `term_update_overwrites` retain the source's \
         values; a cons cell's base is its tail.
         """
       },
       %{
-        name: :value_sets,
+        name: :term_update_overwrites,
         layer: 2,
         fields: [
-          {:obj, :symbol, "the updated term"},
-          {:sel, :symbol, "a field the update sets"}
+          {:term, :symbol, "the updated term"},
+          {:field, :symbol, "a field the update sets"}
         ],
         doc: "The update `obj` sets `sel`, shadowing its base's field."
       },
       %{
-        name: :value_load,
+        name: :field_load,
         layer: 2,
         fields: [
           {:func, :func_id, "function reading"},
           {:load, :symbol, "the load: the reading instruction's ID and the field"},
-          {:sel, :symbol, "the field read, as in value_field"},
-          {:src_kind, :symbol,
+          {:field, :symbol, "the field read, as in field_store"},
+          {:var_kind, :symbol,
            "where the value comes from: proc, param, result, name, self, obj, load, reply, remote, dict or table"},
-          {:src, :symbol,
+          {:var, :symbol,
            "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
         ],
         doc: """
@@ -236,10 +236,10 @@ defmodule Argus.Schema.Processes do
         """
       },
       %{
-        name: :value_load_shape,
+        name: :field_load_match,
         layer: 2,
         fields: [
-          {:load, :symbol, "the load, as in value_load"},
+          {:load, :symbol, "the load, as in field_load"},
           {:tag, :symbol, "the tag the match tested, or \"\" when it tested the arity alone"},
           {:arity, :symbol, "the arity the match tested"}
         ],
@@ -249,7 +249,7 @@ defmodule Argus.Schema.Processes do
         """
       },
       %{
-        name: :process_remote_source,
+        name: :process_remote_var,
         layer: 2,
         fields: [
           {:id, :instr_id, "instruction ID of the call"},
@@ -265,14 +265,14 @@ defmodule Argus.Schema.Processes do
         """
       },
       %{
-        name: :process_probe_source,
+        name: :process_probe_var,
         layer: 2,
         fields: [
           {:id, :instr_id, "instruction ID of the call"},
           {:func, :func_id, "function containing it"},
           {:bif, :symbol, "the call, as `:erlang.is_process_alive/1` spells it"},
-          {:src_kind, :symbol, "where the pid comes from: remote, param, result or load"},
-          {:src, :symbol,
+          {:var_kind, :symbol, "where the pid comes from: remote, param, result or load"},
+          {:var, :symbol,
            "the site that answered it, the parameter position, the call site or the load"}
         ],
         doc: """
@@ -301,8 +301,8 @@ defmodule Argus.Schema.Processes do
         fields: [
           {:id, :instr_id, "instruction ID of the :ets call"},
           {:func, :func_id, "function containing it"},
-          {:src_kind, :symbol, "as in value_arg, or table"},
-          {:src, :symbol, "as in value_arg, or the table"}
+          {:var_kind, :symbol, "as in call_arg_var, or table"},
+          {:var, :symbol, "as in call_arg_var, or the table"}
         ],
         doc: """
         An ETS operation's table source, resolved to possible allocations by \
@@ -330,8 +330,8 @@ defmodule Argus.Schema.Processes do
           {:id, :instr_id, "instruction ID of the put"},
           {:func, :func_id, "function containing it"},
           {:key, :symbol, "the literal key"},
-          {:src_kind, :symbol, "as in value_arg"},
-          {:src, :symbol, "as in value_arg"}
+          {:var_kind, :symbol, "as in call_arg_var"},
+          {:var, :symbol, "as in call_arg_var"}
         ],
         doc: """
         A source stored under `key` in the running process's dictionary. Reads of the \
@@ -353,20 +353,20 @@ defmodule Argus.Schema.Processes do
         ...) running `fun` on each element in the calling process \
         (`Argus.Extractors.TermFlow.Library`). `fun` is handed the elements (a map's \
         `{key, value}` pairs, a fold's accumulator) as `element` value_args; when the \
-        call's answer holds what `fun` answers, a `value_result` row names `fun` as its \
+        call's answer holds what `fun` answers, a `call_result_var` row names `fun` as its \
         callee. Otherwise (`Enum.each/2`, `Enum.filter/2`, ...) what `fun` answers is \
         dropped.
         """
       },
       %{
-        name: :task_op_source,
+        name: :task_operation_var,
         layer: 2,
         fields: [
           {:id, :instr_id, "instruction ID of the Task call"},
           {:func, :func_id, "function making it"},
           {:op, :symbol, "await, await_many, yield, yield_many, shutdown or ignore"},
-          {:src_kind, :symbol, "as in value_arg"},
-          {:src, :symbol, "as in value_arg"}
+          {:var_kind, :symbol, "as in call_arg_var"},
+          {:var, :symbol, "as in call_arg_var"}
         ],
         doc: """
         A possible source for the task, or the term holding the tasks, a Task operation \
@@ -375,13 +375,13 @@ defmodule Argus.Schema.Processes do
         """
       },
       %{
-        name: :value_escape,
+        name: :unmodeled_use,
         layer: 2,
         fields: [
           {:id, :instr_id, "instruction ID of the call or send"},
           {:func, :func_id, "function making it"},
-          {:src_kind, :symbol, "as in value_arg"},
-          {:src, :symbol, "as in value_arg"}
+          {:var_kind, :symbol, "as in call_arg_var"},
+          {:var, :symbol, "as in call_arg_var"}
         ],
         doc: """
         A source handed where value flow does not follow it: an argument of a library \

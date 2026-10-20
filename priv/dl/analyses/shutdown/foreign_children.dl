@@ -145,7 +145,7 @@ terminate_stops_children(mod) :-
 terminate_stops_child(mod, child) :-
   terminate_callback(func, mod, _),
   (via = func ; teardown_reach.reaches(func, via, _)),
-  process_signal_source(id, via, "stop", _, _),
+  process_signal_var(id, via, "stop", _, _),
   stop_lands_on(id, via, child).
 
 // The stop at `id` in `func` may end a process running `child`.
@@ -154,7 +154,7 @@ terminate_stops_child(mod, child) :-
 stop_lands_on(id, f, child) :- signal_target(id, f, "stop", p), server_process(p, child).
 
 stop_lands_on(id, f, child) :-
-  process_signal_source(id, f, "stop", _, _),
+  process_signal_var(id, f, "stop", _, _),
   !signal_target(id, f, "stop", _),
   function_def(f, child, _, _, _).
 

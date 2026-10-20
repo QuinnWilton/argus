@@ -280,30 +280,30 @@ defmodule Argus.Extractors.TermFlow do
   def relations,
     do: [
       :process_start,
-      :value_arg,
-      :value_return,
-      :value_result,
-      :process_call_source,
-      :process_message_source,
-      :process_register_source,
-      :process_send_source,
+      :call_arg_var,
+      :return_var,
+      :call_result_var,
+      :process_call_var,
+      :process_message_var,
+      :process_register_var,
+      :process_send_var,
       :send_envelope,
-      :process_signal_source,
-      :value_object,
-      :value_field,
-      :value_base,
-      :value_sets,
-      :value_load,
-      :value_load_shape,
-      :process_remote_source,
-      :process_probe_source,
+      :process_signal_var,
+      :term_allocation,
+      :field_store,
+      :term_update_base,
+      :term_update_overwrites,
+      :field_load,
+      :field_load_match,
+      :process_remote_var,
+      :process_probe_var,
       :table_alloc,
       :table_use,
       :dict_op,
       :dict_put,
       :element_fun,
-      :task_op_source,
-      :value_escape
+      :task_operation_var,
+      :unmodeled_use
     ]
 
   @impl true
@@ -1323,7 +1323,7 @@ defmodule Argus.Extractors.TermFlow do
   end
 
   # A read of the pairs under one key: a load of their values a match of
-  # the key guards (`value_load_shape`), as `{^key, value}` would.
+  # the key guards (`field_load_match`), as `{^key, value}` would.
   defp lib_value(ctx, {:keyed, spec, at}, env, path, r) do
     {pairs, r} = lib_value(ctx, {:elements, spec}, env, path ++ [0], r)
     id = lib_load_id(ctx, path, "{1}")
@@ -1812,7 +1812,7 @@ defmodule Argus.Extractors.TermFlow do
   #
   # A read with an unknown key follows only the unknown-key field: what a
   # map built here holds under a literal key it may return goes where
-  # value flow does not follow (`unseen`, emitted as `value_escape`).
+  # value flow does not follow (`unseen`, emitted as `unmodeled_use`).
   defp load(ctx, value, sel, id, r) do
     {sources, r} = read(ctx, value, sel, id, r)
 
@@ -1865,7 +1865,7 @@ defmodule Argus.Extractors.TermFlow do
           acc
 
         name ->
-          add_fact(acc, :process_register_source, [id, fun.func_id, name, "proc", start.proc])
+          add_fact(acc, :process_register_var, [id, fun.func_id, name, "process", start.proc])
       end
     end)
   end
@@ -1887,18 +1887,18 @@ defmodule Argus.Extractors.TermFlow do
     Enum.reduce(Map.keys(ctx.live), facts, fn key, acc ->
       obj = Map.fetch!(ctx.state.objs, key)
       id = obj_id(ctx.fun, key)
-      acc = add_fact(acc, :value_object, [func, id, obj.shape, obj.tag, to_string(obj.arity)])
+      acc = add_fact(acc, :term_allocation, [func, id, obj.shape, obj.tag, to_string(obj.arity)])
 
       acc =
         Enum.reduce(obj.fields, acc, fn {sel, value}, inner ->
-          sources(inner, ctx, :value_field, [func, id, sel], value)
+          sources(inner, ctx, :field_store, [func, id, sel], value)
         end)
 
-      acc = sources(acc, ctx, :value_base, [func, id], obj.base)
+      acc = sources(acc, ctx, :term_update_base, [func, id], obj.base)
 
       if convert(ctx, obj.base) == [],
         do: acc,
-        else: Enum.reduce(obj.keys, acc, &add_fact(&2, :value_sets, [id, &1]))
+        else: Enum.reduce(obj.keys, acc, &add_fact(&2, :term_update_overwrites, [id, &1]))
     end)
   end
 
@@ -1920,12 +1920,12 @@ defmodule Argus.Extractors.TermFlow do
   end
 
   defp emit_other(facts, at, ictx, :return),
-    do: sources(facts, at, :value_return, [at.fun.func_id], val(ictx, {:x, 0}))
+    do: sources(facts, at, :return_var, [at.fun.func_id], val(ictx, {:x, 0}))
 
   defp emit_other(facts, at, ictx, :send) do
     facts
     |> send_row(at, ictx)
-    |> sources(at, :value_escape, [site(at.fun, at.idx), at.fun.func_id], val(ictx, {:x, 1}))
+    |> sources(at, :unmodeled_use, [site(at.fun, at.idx), at.fun.func_id], val(ictx, {:x, 1}))
   end
 
   # A fun called or a function applied where the call names neither: its
@@ -1955,7 +1955,7 @@ defmodule Argus.Extractors.TermFlow do
       sources(
         acc,
         at,
-        :value_arg,
+        :call_arg_var,
         [site(at.fun, at.idx), at.fun.func_id, closure, to_string(first + slot), "closure"],
         val(ictx, operand)
       )
@@ -2024,7 +2024,7 @@ defmodule Argus.Extractors.TermFlow do
     |> Enum.reduce(
       facts |> add_fact(:element_fun, [id, func, runs, answers]) |> emit_loads(at, r),
       fn {value, i}, acc ->
-        sources(acc, at, :value_arg, [id, func, runs, to_string(i), "element"], value)
+        sources(acc, at, :call_arg_var, [id, func, runs, to_string(i), "element"], value)
       end
     )
   end
@@ -2046,7 +2046,7 @@ defmodule Argus.Extractors.TermFlow do
         |> emit_loads(at, r)
         |> sources(
           at,
-          :process_signal_source,
+          :process_signal_var,
           [site(at.fun, at.idx), at.fun.func_id, signal],
           target
         )
@@ -2063,7 +2063,7 @@ defmodule Argus.Extractors.TermFlow do
         |> emit_loads(at, r)
         |> sources(
           at,
-          :process_probe_source,
+          :process_probe_var,
           [site(at.fun, at.idx), at.fun.func_id, spell(called)],
           value
         )
@@ -2083,7 +2083,7 @@ defmodule Argus.Extractors.TermFlow do
   end
 
   defp task_op_rows(facts, at, op, value),
-    do: sources(facts, at, :task_op_source, [site(at.fun, at.idx), at.fun.func_id, op], value)
+    do: sources(facts, at, :task_operation_var, [site(at.fun, at.idx), at.fun.func_id, op], value)
 
   # Every argument of a call outside the program that value flow does not
   # follow through: the term it is handed may be kept, sent or dropped
@@ -2099,7 +2099,7 @@ defmodule Argus.Extractors.TermFlow do
       sources(
         acc,
         at,
-        :value_escape,
+        :unmodeled_use,
         [site(at.fun, at.idx), at.fun.func_id],
         val(ictx, {:x, pos})
       )
@@ -2151,7 +2151,7 @@ defmodule Argus.Extractors.TermFlow do
         facts
 
       _shape ->
-        add_fact(facts, :process_remote_source, [site(at.fun, at.idx), at.fun.func_id, spell(mfa)])
+        add_fact(facts, :process_remote_var, [site(at.fun, at.idx), at.fun.func_id, spell(mfa)])
     end
   end
 
@@ -2172,7 +2172,7 @@ defmodule Argus.Extractors.TermFlow do
         sources(
           facts,
           at,
-          :process_probe_source,
+          :process_probe_var,
           [site(at.fun, at.idx), at.fun.func_id, spell(mfa)],
           value
         )
@@ -2269,9 +2269,9 @@ defmodule Argus.Extractors.TermFlow do
       id = site(at.fun, at.idx)
 
       facts
-      |> add_fact(:process_remote_source, [id, at.fun.func_id, spell(mfa)])
-      |> add_fact(:value_arg, [id, at.fun.func_id, resolver, "1", "resolver", "remote", id])
-      |> add_fact(:value_arg, [id, at.fun.func_id, resolver, "2", "resolver", "remote", id])
+      |> add_fact(:process_remote_var, [id, at.fun.func_id, spell(mfa)])
+      |> add_fact(:call_arg_var, [id, at.fun.func_id, resolver, "1", "resolver", "remote", id])
+      |> add_fact(:call_arg_var, [id, at.fun.func_id, resolver, "2", "resolver", "remote", id])
     else
       _ -> facts
     end
@@ -2335,7 +2335,7 @@ defmodule Argus.Extractors.TermFlow do
         sources(
           acc,
           at,
-          :value_arg,
+          :call_arg_var,
           [site(at.fun, at.idx), at.fun.func_id, callee(mfa), to_string(pos), "call"],
           val(ictx, {:x, pos})
         )
@@ -2350,7 +2350,7 @@ defmodule Argus.Extractors.TermFlow do
     sources(
       facts,
       at,
-      :value_arg,
+      :call_arg_var,
       [site(at.fun, at.idx), at.fun.func_id, "#{mod}:init/1", "0", "init"],
       val(ictx, reg)
     )
@@ -2365,7 +2365,7 @@ defmodule Argus.Extractors.TermFlow do
     sources(
       facts,
       at,
-      :value_arg,
+      :call_arg_var,
       [site(at.fun, at.idx), at.fun.func_id, "#{mod}:start_link/1", "0", "child"],
       arg
     )
@@ -2382,7 +2382,7 @@ defmodule Argus.Extractors.TermFlow do
           sources(
             acc,
             at,
-            :value_arg,
+            :call_arg_var,
             [site(at.fun, at.idx), at.fun.func_id, runs, to_string(pos), "spawn"],
             value
           )
@@ -2409,8 +2409,8 @@ defmodule Argus.Extractors.TermFlow do
     id = site(at.fun, at.idx)
 
     facts
-    |> sources(at, :process_call_source, [id, at.fun.func_id, kind], destination(at, ictx))
-    |> sources(at, :process_message_source, [id, at.fun.func_id, kind], val(ictx, {:x, 1}))
+    |> sources(at, :process_call_var, [id, at.fun.func_id, kind], destination(at, ictx))
+    |> sources(at, :process_message_var, [id, at.fun.func_id, kind], val(ictx, {:x, 1}))
   end
 
   defp destination(at, ictx, reg \\ {:x, 0}) do
@@ -2430,7 +2430,7 @@ defmodule Argus.Extractors.TermFlow do
         sources(
           facts,
           at,
-          :process_signal_source,
+          :process_signal_var,
           [site(at.fun, at.idx), at.fun.func_id, signal],
           destination(at, ictx, reg)
         )
@@ -2492,7 +2492,7 @@ defmodule Argus.Extractors.TermFlow do
       sources(
         facts,
         at,
-        :process_register_source,
+        :process_register_var,
         [site(at.fun, at.idx), at.fun.func_id, name],
         value
       )
@@ -2513,7 +2513,7 @@ defmodule Argus.Extractors.TermFlow do
       if envelope?(at.fun.instrs, at.idx), do: add_fact(facts, :send_envelope, [id]), else: facts
 
     facts
-    |> sources(at, :process_send_source, [id, at.fun.func_id, message], destination(at, ictx))
+    |> sources(at, :process_send_var, [id, at.fun.func_id, message], destination(at, ictx))
     |> call_rows(at, ictx, "info")
   end
 
@@ -2535,7 +2535,7 @@ defmodule Argus.Extractors.TermFlow do
     end
   end
 
-  # The gen behaviours' envelopes, by tag and size: process_send_source's message
+  # The gen behaviours' envelopes, by tag and size: process_send_var's message
   # spells a tuple by its tag alone, and `{:system, :reload}` is a
   # message, not :sys's `{:system, from, request}` (review 2, item 33).
   @envelopes %{:"$gen_call" => 3, :"$gen_cast" => 2, :system => 3}
@@ -2554,7 +2554,7 @@ defmodule Argus.Extractors.TermFlow do
   defp emit_tail(facts, at, ictx, _site) do
     if elem(elem(at.fun.code, at.idx), 0) in @tail_ops do
       value = Map.get(ictx.state.outs, {at.idx, "x0"}, MapSet.new())
-      sources(facts, at, :value_return, [at.fun.func_id], value)
+      sources(facts, at, :return_var, [at.fun.func_id], value)
     else
       facts
     end
@@ -2568,16 +2568,16 @@ defmodule Argus.Extractors.TermFlow do
 
     facts =
       for {id, tag, arity} <- r.shapes, MapSet.member?(loaded, id), reduce: facts do
-        acc -> add_fact(acc, :value_load_shape, [id, tag, arity])
+        acc -> add_fact(acc, :field_load_match, [id, tag, arity])
       end
 
     r.loads
     |> Enum.reduce(facts, fn {id, sel, token}, inner ->
-      sources(inner, at, :value_load, [at.fun.func_id, id, sel], MapSet.new([token]))
+      sources(inner, at, :field_load, [at.fun.func_id, id, sel], MapSet.new([token]))
     end)
     |> sources(
       at,
-      :value_escape,
+      :unmodeled_use,
       [site(at.fun, at.idx), at.fun.func_id],
       Map.get(r, :unseen, MapSet.new())
     )
@@ -2596,11 +2596,11 @@ defmodule Argus.Extractors.TermFlow do
     end)
   end
 
-  # A `result` source names its call site; `value_result` says what it calls.
+  # A `result` source names its call site; `call_result_var` says what it calls.
   defp emit_results(facts, ctx, value) do
     Enum.reduce(value, facts, fn
       {:result, idx}, acc ->
-        add_fact(acc, :value_result, [
+        add_fact(acc, :call_result_var, [
           site(ctx.fun, idx),
           ctx.fun.func_id,
           answering(ctx.fun, idx)
@@ -2628,7 +2628,7 @@ defmodule Argus.Extractors.TermFlow do
     value
     |> Enum.flat_map(fn
       {:proc, proc} ->
-        [{"proc", proc}]
+        [{"process", proc}]
 
       {:table, table} ->
         [{"table", table}]
@@ -2649,7 +2649,7 @@ defmodule Argus.Extractors.TermFlow do
         [{"name", name}]
 
       {:dict, key} ->
-        [{"dict", key}]
+        [{"dictionary", key}]
 
       :self ->
         [{"self", "self"}]
@@ -2658,7 +2658,7 @@ defmodule Argus.Extractors.TermFlow do
         [{"load", id}]
 
       {:obj, key} ->
-        if Map.has_key?(ctx.live, key), do: [{"obj", obj_id(ctx.fun, key)}], else: []
+        if Map.has_key?(ctx.live, key), do: [{"term", obj_id(ctx.fun, key)}], else: []
 
       {:fun, _closure} ->
         []
@@ -2668,32 +2668,32 @@ defmodule Argus.Extractors.TermFlow do
 
   # One literal add_fact per relation, so the relation list stays
   # checkable against the source.
-  defp emit_row(facts, :value_arg, row), do: add_fact(facts, :value_arg, row)
-  defp emit_row(facts, :value_return, row), do: add_fact(facts, :value_return, row)
-  defp emit_row(facts, :process_call_source, row), do: add_fact(facts, :process_call_source, row)
+  defp emit_row(facts, :call_arg_var, row), do: add_fact(facts, :call_arg_var, row)
+  defp emit_row(facts, :return_var, row), do: add_fact(facts, :return_var, row)
+  defp emit_row(facts, :process_call_var, row), do: add_fact(facts, :process_call_var, row)
 
-  defp emit_row(facts, :process_message_source, row),
-    do: add_fact(facts, :process_message_source, row)
+  defp emit_row(facts, :process_message_var, row),
+    do: add_fact(facts, :process_message_var, row)
 
-  defp emit_row(facts, :process_register_source, row),
-    do: add_fact(facts, :process_register_source, row)
+  defp emit_row(facts, :process_register_var, row),
+    do: add_fact(facts, :process_register_var, row)
 
-  defp emit_row(facts, :process_send_source, row), do: add_fact(facts, :process_send_source, row)
+  defp emit_row(facts, :process_send_var, row), do: add_fact(facts, :process_send_var, row)
 
-  defp emit_row(facts, :process_signal_source, row),
-    do: add_fact(facts, :process_signal_source, row)
+  defp emit_row(facts, :process_signal_var, row),
+    do: add_fact(facts, :process_signal_var, row)
 
-  defp emit_row(facts, :value_field, row), do: add_fact(facts, :value_field, row)
-  defp emit_row(facts, :value_base, row), do: add_fact(facts, :value_base, row)
-  defp emit_row(facts, :value_load, row), do: add_fact(facts, :value_load, row)
+  defp emit_row(facts, :field_store, row), do: add_fact(facts, :field_store, row)
+  defp emit_row(facts, :term_update_base, row), do: add_fact(facts, :term_update_base, row)
+  defp emit_row(facts, :field_load, row), do: add_fact(facts, :field_load, row)
 
-  defp emit_row(facts, :process_probe_source, row),
-    do: add_fact(facts, :process_probe_source, row)
+  defp emit_row(facts, :process_probe_var, row),
+    do: add_fact(facts, :process_probe_var, row)
 
   defp emit_row(facts, :table_use, row), do: add_fact(facts, :table_use, row)
   defp emit_row(facts, :dict_put, row), do: add_fact(facts, :dict_put, row)
-  defp emit_row(facts, :task_op_source, row), do: add_fact(facts, :task_op_source, row)
-  defp emit_row(facts, :value_escape, row), do: add_fact(facts, :value_escape, row)
+  defp emit_row(facts, :task_operation_var, row), do: add_fact(facts, :task_operation_var, row)
+  defp emit_row(facts, :unmodeled_use, row), do: add_fact(facts, :unmodeled_use, row)
 
   # ── Names ────────────────────────────────────────────────────────────
 

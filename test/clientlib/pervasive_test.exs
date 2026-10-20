@@ -54,7 +54,7 @@ defmodule Argus.Clientlib.PervasiveTest do
       program(dir, facts_dir, "exact_terms", """
       .include "#{Analysis.points_to_rules_path()}"
 
-      .output source_pts
+      .output var_points_to
       """)
 
     bounded = solve(dir, facts_dir, "bounded", Analysis.points_to_bounded_rules_path())
@@ -69,7 +69,7 @@ defmodule Argus.Clientlib.PervasiveTest do
         m = "Argus.Test.Fixtures.PidFlow.TargetA".
 
       .output coarse_use
-      .output source_pts
+      .output var_points_to
       """)
 
     %{
@@ -130,7 +130,7 @@ defmodule Argus.Clientlib.PervasiveTest do
     wrappers = for "start " <> c <- pervasive, do: "result " <> c
     assert wrappers != []
 
-    terms = fn results -> MapSet.new(results["source_pts"], &List.last/1) end
+    terms = fn results -> MapSet.new(results["var_points_to"], &List.last/1) end
 
     # A term the exact stage follows...
     assert Enum.any?(wrappers, &MapSet.member?(terms.(ctx.exact_terms), &1))

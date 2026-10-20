@@ -38,8 +38,8 @@ stage_mode("exact").
 
 // ── The budget ──────────────────────────────────────────────────────
 //
-// What a source may point to (source_pts) and what a term's field may
-// hold (field_pts) are the fixpoint's bulk, and each is held to 500,000
+// What a source may point to (var_points_to) and what a term's field may
+// hold (field_points_to) are the fixpoint's bulk, and each is held to 500,000
 // rows. Over twenty evaluation programs the largest are 45k and 30k
 // rows (the Phoenix stack's 751-module deps; a 1,239-module umbrella
 // takes 5k); where the program's helpers merge most of its terms into
@@ -65,22 +65,22 @@ points_to_budget(500000).
 // The budget as the engine reads it: a relation that grows past it stops
 // the solve as it grows, rather than after a fixpoint of millions of rows,
 // and the caller reads the stop as an overflow (Argus.Stages).
-.limitsize source_pts(n=500000)
-.limitsize field_pts(n=500000)
+.limitsize var_points_to(n=500000)
+.limitsize field_points_to(n=500000)
 
 .decl points_to_overflow(relation: symbol, rows: number, budget: number)
 
-.decl source_pts_rows(n: number)
+.decl var_points_to_rows(n: number)
 
-source_pts_rows(count((f, k, s, x))) :- source_pts(f, k, s, x).
+var_points_to_rows(count((f, k, s, x))) :- var_points_to(f, k, s, x).
 
-.decl field_pts_rows(n: number)
+.decl field_points_to_rows(n: number)
 
-field_pts_rows(count((o, sel, x))) :- field_pts(o, sel, x).
+field_points_to_rows(count((o, sel, x))) :- field_points_to(o, sel, x).
 
-points_to_overflow("source_pts", n, b) :- points_to_budget(b), source_pts_rows(n), n >= b.
+points_to_overflow("var_points_to", n, b) :- points_to_budget(b), var_points_to_rows(n), n >= b.
 
-points_to_overflow("field_pts", n, b) :- points_to_budget(b), field_pts_rows(n), n >= b.
+points_to_overflow("field_points_to", n, b) :- points_to_budget(b), field_points_to_rows(n), n >= b.
 
 .output points_to_overflow(filename="points_to_overflow.csv")
 
@@ -110,13 +110,13 @@ points_to_mode("coarse") :- stage_mode("coarse").
 // monitors and links, which only signals.dl reads.
 .decl staged_process_call(func: symbol, anchor: symbol, site: symbol, api_kind: symbol, proc: symbol)
 
-staged_process_call(f, a, id, kind, p) :- process_call(f, a, id, kind, p), process_call_source(id, _, kind, _, _).
+staged_process_call(f, a, id, kind, p) :- process_call(f, a, id, kind, p), process_call_var(id, _, kind, _, _).
 
 .output staged_process_call(filename="process_call.facts")
 
 .decl process_signal(func: symbol, anchor: symbol, site: symbol, signal: symbol, proc: symbol)
 
-process_signal(f, a, id, kind, p) :- process_call(f, a, id, kind, p), process_signal_source(id, _, kind, _, _).
+process_signal(f, a, id, kind, p) :- process_call(f, a, id, kind, p), process_signal_var(id, _, kind, _, _).
 
 .output process_signal(filename="process_signal.facts")
 
@@ -127,35 +127,35 @@ process_signal(f, a, id, kind, p) :- process_call(f, a, id, kind, p), process_si
 // program, and the points-to of an arbitrary one is what the stage
 // otherwise never needs; a rule that asks about other sources adds them
 // here.
-.decl source_process(func: symbol, src_kind: symbol, src: symbol, proc: symbol)
+.decl var_process(func: symbol, var_kind: symbol, var: symbol, proc: symbol)
 
-source_process(h, sk, s, p) :-
+var_process(h, sk, s, p) :-
   handler_function(_, h),
-  value_arg(_, h, _, "0", "call", sk, s),
-  source_pts(h, sk, s, p),
+  call_arg_var(_, h, _, "0", "call", sk, s),
+  var_points_to(h, sk, s, p),
   process(p).
 
-source_process(h, sk, s, p) :-
+var_process(h, sk, s, p) :-
   handler_function(_, h),
-  value_arg(_, h, _, "0", "call", sk, s),
+  call_arg_var(_, h, _, "0", "call", sk, s),
   coarse(h, sk, s, r, p),
   coarse_top(r),
   pervasive(p).
 
-.output source_process(filename="source_process.facts")
+.output var_process(filename="var_process.facts")
 
-.decl source_table(func: symbol, src_kind: symbol, src: symbol, table: symbol)
+.decl var_table(func: symbol, var_kind: symbol, var: symbol, table: symbol)
 
-source_table(f, sk, s, t) :- table_use(_, f, sk, s), source_pts(f, sk, s, t), table_alloc(_, _, t).
+var_table(f, sk, s, t) :- table_use(_, f, sk, s), var_points_to(f, sk, s, t), table_alloc(_, _, t).
 
-source_table(f, sk, s, t) :-
+var_table(f, sk, s, t) :-
   table_use(_, f, sk, s),
   coarse(f, sk, s, r, t),
   coarse_top(r),
   pervasive(t),
   table_alloc(_, _, t).
 
-.output source_table(filename="source_table.facts")
+.output var_table(filename="var_table.facts")
 
 // A table the process that made it keeps in its dictionary, whose
 // reference never leaves that process: no term holds it (a message, a
@@ -170,31 +170,31 @@ source_table(f, sk, s, t) :-
 
 kept_in_dictionary(t) :-
   dict_put(_, g, _, sk, s),
-  source_pts(g, sk, s, t),
+  var_points_to(g, sk, s, t),
   table_alloc(_, _, t),
   !leaves_process(t).
 
 .decl leaves_process(table: symbol)
 
-leaves_process(t) :- field_pts(_, _, t), table_alloc(_, _, t).
+leaves_process(t) :- field_points_to(_, _, t), table_alloc(_, _, t).
 
 leaves_process(t) :-
-  value_arg(_, f, _, _, via, sk, s),
+  call_arg_var(_, f, _, _, via, sk, s),
   via != "call",
   via != "closure",
-  source_pts(f, sk, s, t),
+  var_points_to(f, sk, s, t),
   table_alloc(_, _, t).
 
 leaves_process(t) :-
-  value_arg(_, f, g, _, "closure", sk, s),
+  call_arg_var(_, f, g, _, "closure", sk, s),
   runs_elsewhere(_, g),
-  source_pts(f, sk, s, t),
+  var_points_to(f, sk, s, t),
   table_alloc(_, _, t).
 
 .output kept_in_dictionary(filename="kept_in_dictionary.facts")
 
 // The tables the bounded stage resolved coarsely (pervasive leaves): its
-// source_table rows for them are a superset, which a rule that needs
+// var_table rows for them are a superset, which a rule that needs
 // the table an operation surely names must not take as one (tables.dl).
 // None in the exact stage.
 .decl coarse_table(table: symbol)

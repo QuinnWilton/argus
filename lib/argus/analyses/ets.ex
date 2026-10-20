@@ -51,7 +51,7 @@ defmodule Argus.Analyses.Ets do
     do: [
       Argus.Extractors.ETS,
       # The points-to stage the table identity reads (clientlib/tables.dl's
-      # source_table) follows registered processes too (named_process).
+      # var_table) follows registered processes too (named_process).
       Argus.Extractors.ProcessRegistry,
       Argus.Extractors.OTP,
       Argus.Extractors.Supervision,

@@ -687,7 +687,7 @@ starts_an_instance(m, id) :-
 starts_an_instance(m, id) :-
   process_start(id, f, p, "server", m),
   creating_op(id, f, "start_via", _, _, _),
-  !process_register_source(id, f, _, _, p).
+  !process_register_var(id, f, _, _, p).
 
 // The server starts that take no name.
 .decl unnamed_start(mod: symbol, fun: symbol, arity: number)

@@ -55,7 +55,7 @@ defmodule Argus.Analyses.CouplingTest do
 
     test "a link to a pid the points-to analysis resolves excludes the pair" do
       # LinkA joins LinkB when it starts, and links to LinkB's registered
-      # pid: process_link's target is "dynamic", process_signal_source names it, and
+      # pid: process_link's target is "dynamic", process_signal_var names it, and
       # the points-to analysis resolves the name to LinkB's server.
       paths =
         compile_beams("""

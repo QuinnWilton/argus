@@ -4,7 +4,7 @@ defmodule Argus.Extractors.TermFlow.Library do
 
   `Argus.Extractors.TermFlow` follows a value through a library call only
   where this table says what the call answers in terms of its arguments;
-  every other library call is an escape (`value_escape`): what it is
+  every other library call is an escape (`unmodeled_use`): what it is
   handed goes where no summary says. The table covers the collection
   APIs a value is commonly carried through — `Enum`, `Stream`, `List`,
   `Map`, `Keyword`, `MapSet`, `Tuple`, `:lists`, `:maps` and the

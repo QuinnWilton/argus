@@ -265,7 +265,7 @@ shown_keeping(caller, keeper) :-
 keeping_basis("table", "resolved").
 keeping_basis("monitor", "resolved").
 keeping_basis("state", "resolved").
-keeping_basis("dict", "resolved").
+keeping_basis("dictionary", "resolved").
 keeping_basis("handed", "inferred").
 
 // Permanent children depending on non-restarting siblings
@@ -473,7 +473,7 @@ starts_under_earlier_child(start, sup, owner_pos, holder_pos, "resolved") :-
 
 // Infer the holder when the management-call target is dynamic and exactly one earlier
 // sibling matches the supervisor API. Supervisor management calls are not represented
-// by `process_call_source`, so points-to cannot resolve this pid.
+// by `process_call_var`, so points-to cannot resolve this pid.
 starts_under_earlier_child(start, sup, owner_pos, holder_pos, "inferred") :-
   sup_management_call(start, _, api, _, "dynamic"),
   sole_earlier_sibling_of_kind(sup, holder_pos, api, owner_pos).

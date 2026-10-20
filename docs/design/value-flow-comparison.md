@@ -34,9 +34,9 @@ separates `Variable`, `Statement`, `Block` and `Function`. Clients can read
 returns, constants, and mappings from lifted statements to original bytecode.
 
 Argus already has instruction, def/use, CFG and reaching-definition facts in its
-bytecode layer. TermFlow then partially solves them in Elixir: `value_arg` and
-`value_return` contain source sets; `value_field` describes object contents;
-`value_load` is a deferred projection. These are analysis summaries, not a
+bytecode layer. TermFlow then partially solves them in Elixir: `call_arg_var` and
+`return_var` contain source sets; `field_store` describes object contents;
+`field_load` is a deferred projection. These are analysis summaries, not a
 complete normalized IR. A local load may disappear into its resolved sources.
 That reduces downstream joins, but consumers cannot recover an operation that
 TermFlow omitted. Renaming `pid_*` to `value_*` clarifies this contract without
@@ -75,7 +75,7 @@ These are design conclusions from the comparison, not claims made by the other
 projects.
 
 **Keep immutable updates explicit.** A BEAM map update makes a new value. TermFlow's
-`value_base` plus `value_sets` describes that version and its inherited fields.
+`term_update_base` plus `term_update_overwrites` describes that version and its inherited fields.
 Importing Java's accumulating mutable-field stores directly would lose useful
 precision. An empty replacement source set must still shadow the old field.
 ETS, registries and process dictionaries are mutable resources and need separate

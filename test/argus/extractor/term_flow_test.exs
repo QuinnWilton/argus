@@ -36,7 +36,7 @@ defmodule Argus.Extractors.TermFlowTest do
 
     {:ok, raw} = Argus.Pipeline.extract([bin], extractors: [TermFlow])
     assert Map.get(raw, :extraction_error, []) == []
-    assert ["Argus.TermFlowTest.Floats:scaled/2", "param", "0"] in raw.value_return
+    assert ["Argus.TermFlowTest.Floats:scaled/2", "param", "0"] in raw.return_var
   end
 
   test "map read defaults and compound literal keys retain general value provenance" do
@@ -67,35 +67,35 @@ defmodule Argus.Extractors.TermFlowTest do
     {:ok, raw} = Argus.Pipeline.extract([bin], extractors: [TermFlow])
 
     for function <- ["elixir_default", "erlang_default", "access_default"] do
-      assert ["Argus.TermFlowTest.Values:#{function}/2", "param", "1"] in raw.value_return
+      assert ["Argus.TermFlowTest.Values:#{function}/2", "param", "1"] in raw.return_var
     end
 
-    assert ["Argus.TermFlowTest.Values:sent/2", "param", "1"] in raw.value_return
-    refute ["Argus.TermFlowTest.Values:sent/2", "param", "0"] in raw.value_return
+    assert ["Argus.TermFlowTest.Values:sent/2", "param", "1"] in raw.return_var
+    refute ["Argus.TermFlowTest.Values:sent/2", "param", "0"] in raw.return_var
 
     assert Enum.any?(
-             raw.value_load,
+             raw.field_load,
              &match?(
                [
                  "Argus.TermFlowTest.Values:dictionary_field/0",
                  _,
                  ":owner",
-                 "dict",
+                 "dictionary",
                  ":container"
                ],
                &1
              )
            )
 
-    assert ["Argus.TermFlowTest.Values:compound/1", "param", "0"] in raw.value_return
+    assert ["Argus.TermFlowTest.Values:compound/1", "param", "0"] in raw.return_var
 
     refute Enum.any?(
-             raw.value_return,
+             raw.return_var,
              &match?(["Argus.TermFlowTest.Values:overwritten/1" | _], &1)
            )
 
-    assert ["Argus.TermFlowTest.Values:unrelated/2", "param", "0"] in raw.value_return
-    refute ["Argus.TermFlowTest.Values:unrelated/2", "param", "1"] in raw.value_return
+    assert ["Argus.TermFlowTest.Values:unrelated/2", "param", "0"] in raw.return_var
+    refute ["Argus.TermFlowTest.Values:unrelated/2", "param", "1"] in raw.return_var
   end
 
   describe "names" do
@@ -145,8 +145,8 @@ defmodule Argus.Extractors.TermFlowTest do
 
         # The pid the send targets is the started process: the start's
         # result shape put it where the match reads it.
-        assert Enum.any?(raw.process_send_source, fn
-                 [_id, f, _msg, "proc", ^proc] -> f == func
+        assert Enum.any?(raw.process_send_var, fn
+                 [_id, f, _msg, "process", ^proc] -> f == func
                  _ -> false
                end),
                "#{func} sends to #{proc}"
@@ -160,7 +160,7 @@ defmodule Argus.Extractors.TermFlowTest do
                "Argus.TermFlowTest.Starts:init_it/1",
                "0",
                "spawn" | _
-             ] = Enum.find(raw[:value_arg] || [], &match?([_, _, _, _, "spawn" | _], &1))
+             ] = Enum.find(raw[:call_arg_var] || [], &match?([_, _, _, _, "spawn" | _], &1))
     end
 
     test "a spawn is named by its site and says what it runs; a server start its module" do
@@ -216,8 +216,8 @@ defmodule Argus.Extractors.TermFlowTest do
     test "a computed module, apply and a library pid start nothing" do
       f = facts([F.Quiet])
       assert f.process_start == []
-      assert f.process_call_source == []
-      assert f.process_send_source == []
+      assert f.process_call_var == []
+      assert f.process_send_var == []
     end
   end
 
@@ -227,7 +227,7 @@ defmodule Argus.Extractors.TermFlowTest do
     defp dict_facts(modules) do
       {:ok, facts} = Argus.Pipeline.extract(modules, extractors: [TermFlow])
 
-      Map.new([:dict_op, :dict_put, :table_use, :value_return], fn relation ->
+      Map.new([:dict_op, :dict_put, :table_use, :return_var], fn relation ->
         rows =
           for row <- Map.get(facts, relation, []),
               do: Enum.map(row, &String.replace(&1, "Argus.Test.Fixtures.Dictionary.", ""))
@@ -252,7 +252,7 @@ defmodule Argus.Extractors.TermFlowTest do
                r.dict_put
 
       assert site =~ "TmpOptions:create_tmp/0#"
-      assert ["TmpOptions:get_tmp/0", "dict", ":dict_options"] in r.value_return
+      assert ["TmpOptions:get_tmp/0", "dictionary", ":dict_options"] in r.return_var
     end
 
     test "a key computed at run time is a key not known, and keeps nothing" do
@@ -264,7 +264,7 @@ defmodule Argus.Extractors.TermFlowTest do
       assert {"ComputedKey:run_literal/1", "put", "{:computed, :fixed}"} in ops
       assert for([_, "ComputedKey:run/2" | _] <- r.dict_put, do: :row) == []
 
-      assert [_, "ComputedKey:run_literal/1", "dict", "{:computed, :fixed}"] =
+      assert [_, "ComputedKey:run_literal/1", "dictionary", "{:computed, :fixed}"] =
                Enum.find(r.table_use, &match?([_, "ComputedKey:run_literal/1" | _], &1))
     end
   end
@@ -273,24 +273,24 @@ defmodule Argus.Extractors.TermFlowTest do
     test "a start returns its process in {:ok, pid}" do
       f = facts([F.Worker])
 
-      assert ["Worker:start_link/1", "Worker:start_link/1#6", "tuple", ":ok", "2"] in f.value_object
+      assert ["Worker:start_link/1", "Worker:start_link/1#6", "tuple", ":ok", "2"] in f.term_allocation
 
       assert [
                "Worker:start_link/1",
                "Worker:start_link/1#6",
                "{1}",
-               "proc",
+               "process",
                "server Worker:start_link/1#6"
-             ] in f.value_field
+             ] in f.field_store
 
-      assert ["Worker:start_link/1", "obj", "Worker:start_link/1#6"] in f.value_return
+      assert ["Worker:start_link/1", "term", "Worker:start_link/1#6"] in f.return_var
     end
 
     test "a state map keeps each pid under its own key" do
       f = facts([F.Front])
-      [obj] = for ["Front:init/1", o, "map", _, _] <- f.value_object, do: o
+      [obj] = for ["Front:init/1", o, "map", _, _] <- f.term_allocation, do: o
 
-      fields = for ["Front:init/1", ^obj, sel, kind, _src] <- f.value_field, do: {sel, kind}
+      fields = for ["Front:init/1", ^obj, sel, kind, _src] <- f.field_store, do: {sel, kind}
       assert Enum.sort(fields) == [{":back", "load"}, {":side", "load"}]
     end
 
@@ -298,33 +298,33 @@ defmodule Argus.Extractors.TermFlowTest do
       f = facts([F.Front])
 
       assert Enum.any?(
-               f.value_load,
+               f.field_load,
                &match?(["Front:handle_call/3", _, ":back", "param", "2"], &1)
              )
 
-      refute Enum.any?(f.value_load, &match?(["Front:handle_call/3", _, ":side" | _], &1))
+      refute Enum.any?(f.field_load, &match?(["Front:handle_call/3", _, ":side" | _], &1))
     end
 
     test "an update keeps the fields it does not set, and a cons cell its tail" do
       f = facts([F.Relay])
-      [update] = for ["Relay:handle_cast/2", o, "map", _, _] <- f.value_object, do: o
-      [cons] = for ["Relay:handle_cast/2", o, "list", _, _] <- f.value_object, do: o
+      [update] = for ["Relay:handle_cast/2", o, "map", _, _] <- f.term_allocation, do: o
+      [cons] = for ["Relay:handle_cast/2", o, "list", _, _] <- f.term_allocation, do: o
 
-      assert ["Relay:handle_cast/2", update, "param", "1"] in f.value_base
-      assert [update, ":subs"] in f.value_sets
-      assert ["Relay:handle_cast/2", update, ":subs", "obj", cons] in f.value_field
+      assert ["Relay:handle_cast/2", update, "param", "1"] in f.term_update_base
+      assert [update, ":subs"] in f.term_update_overwrites
+      assert ["Relay:handle_cast/2", update, ":subs", "term", cons] in f.field_store
 
       assert Enum.any?(
-               f.value_field,
+               f.field_store,
                &match?(["Relay:handle_cast/2", ^cons, "[]", "load", _], &1)
              )
 
-      assert Enum.any?(f.value_base, &match?(["Relay:handle_cast/2", ^cons, "load", _], &1))
+      assert Enum.any?(f.term_update_base, &match?(["Relay:handle_cast/2", ^cons, "load", _], &1))
     end
 
     test "a tuple element read after a match carries the shape the match tested" do
       f = facts([F.Matches])
-      shapes = for [load, tag, arity] <- f.value_load_shape, do: {load, tag, arity}
+      shapes = for [load, tag, arity] <- f.field_load_match, do: {load, tag, arity}
 
       # is_tagged_tuple tests the tag and the arity at once...
       assert Enum.any?(shapes, &match?({"Matches:tagged/1#" <> _, ":cont", "2"}, &1))
@@ -333,7 +333,7 @@ defmodule Argus.Extractors.TermFlowTest do
       assert Enum.any?(shapes, &match?({"Matches:selected/1#" <> _, "", "3"}, &1))
 
       for {"Matches:" <> _ = load, _tag, _arity} <- shapes do
-        assert Enum.any?(f.value_load, &match?([_, ^load | _], &1))
+        assert Enum.any?(f.field_load, &match?([_, ^load | _], &1))
       end
     end
 
@@ -341,7 +341,7 @@ defmodule Argus.Extractors.TermFlowTest do
       f = facts([F.Options])
 
       shapes =
-        for ["Options:ping/1" <> _ = load, tag, arity] <- f.value_load_shape,
+        for ["Options:ping/1" <> _ = load, tag, arity] <- f.field_load_match,
             do: {load, tag, arity}
 
       assert Enum.any?(shapes, &match?({_, ":left", "2"}, &1))
@@ -351,39 +351,39 @@ defmodule Argus.Extractors.TermFlowTest do
     test "a tuple handed back past a match of another tag is not the term the match failed on" do
       f = facts([F.Refused])
 
-      refute Enum.any?(f.value_return, &match?(["Refused:start/0", "obj", _], &1))
+      refute Enum.any?(f.return_var, &match?(["Refused:start/0", "term", _], &1))
     end
 
     test "a message tuple carries the pid in its field" do
       f = facts([F.Hub])
-      [msg] = for ["Hub:subscribe/1", o, "tuple", ":subscribe", "2"] <- f.value_object, do: o
-      assert ["Hub:subscribe/1", msg, "{1}", "param", "0"] in f.value_field
+      [msg] = for ["Hub:subscribe/1", o, "tuple", ":subscribe", "2"] <- f.term_allocation, do: o
+      assert ["Hub:subscribe/1", msg, "{1}", "param", "0"] in f.field_store
 
       assert Enum.any?(
-               f.process_message_source,
-               &match?([_, "Hub:subscribe/1", "cast", "obj", ^msg], &1)
+               f.process_message_var,
+               &match?([_, "Hub:subscribe/1", "cast", "term", ^msg], &1)
              )
     end
   end
 
   describe "summaries" do
-    test "a wrapper's result is a site; value_result names the callee" do
+    test "a wrapper's result is a site; call_result_var names the callee" do
       f = facts([F.Owner])
-      [site] = for [s, "Owner:run/0", "Worker:start_link/1"] <- f.value_result, do: s
-      assert Enum.any?(f.value_load, &match?(["Owner:run/0", _, "{1}", "result", ^site], &1))
+      [site] = for [s, "Owner:run/0", "Worker:start_link/1"] <- f.call_result_var, do: s
+      assert Enum.any?(f.field_load, &match?(["Owner:run/0", _, "{1}", "result", ^site], &1))
 
       assert ["Owner:hand_off/1", "Owner:relay/1", "0", "call", "param", "0"] in unsited(
-               f.value_arg
+               f.call_arg_var
              )
     end
 
     test "a server start's init argument reaches init/1" do
       assert ["Worker:start_link/1", "Worker:init/1", "0", "init", "param", "0"] in unsited(
-               facts([F.Worker]).value_arg
+               facts([F.Worker]).call_arg_var
              )
 
       assert ["CycleA:init/1", "CycleB:start_link/1", "0", "call", "self", "self"] in unsited(
-               facts([F.CycleA]).value_arg
+               facts([F.CycleA]).call_arg_var
              )
     end
 
@@ -393,40 +393,40 @@ defmodule Argus.Extractors.TermFlowTest do
       assert [
                "Owner:across_a_call/0",
                "call",
-               "proc",
+               "process",
                "server Owner:across_a_call/0#9"
-             ] in unsited(f.process_call_source)
+             ] in unsited(f.process_call_var)
     end
 
     test "a call's target survives the trim that renumbers its slot" do
-      calls = unsited(facts([F.Owner]).process_call_source)
+      calls = unsited(facts([F.Owner]).process_call_var)
 
-      assert ["Owner:across_a_trim/0", "call", "proc", "server Owner:across_a_trim/0#15"] in calls
-      assert ["Owner:across_a_trim/0", "call", "proc", "server Owner:across_a_trim/0#9"] in calls
+      assert ["Owner:across_a_trim/0", "call", "process", "server Owner:across_a_trim/0#15"] in calls
+      assert ["Owner:across_a_trim/0", "call", "process", "server Owner:across_a_trim/0#9"] in calls
 
       assert Enum.count(calls, &match?(["Owner:across_a_trim/0" | _], &1)) == 2
     end
 
     test "an API function's call and cast target its parameter" do
       f = facts([F.Worker])
-      assert ["Worker:ping/1", "call", "param", "0"] in unsited(f.process_call_source)
-      assert ["Worker:notify/1", "cast", "param", "0"] in unsited(f.process_call_source)
+      assert ["Worker:ping/1", "call", "param", "0"] in unsited(f.process_call_var)
+      assert ["Worker:notify/1", "cast", "param", "0"] in unsited(f.process_call_var)
     end
 
     test "register stores a pid under a name; a send reads a name or a captured pid" do
       f = facts([F.Loops])
 
-      assert ["Loops:start/0", ":loops", "proc", "spawn Loops:start/0#10"] in unsited(
-               f.process_register_source
+      assert ["Loops:start/0", ":loops", "process", "spawn Loops:start/0#10"] in unsited(
+               f.process_register_var
              )
 
       assert Enum.any?(
-               f.process_send_source,
+               f.process_send_var,
                &match?([_, "Loops:start/0", ":tick", "name", ":loops"], &1)
              )
 
       assert Enum.any?(
-               f.process_send_source,
+               f.process_send_var,
                &match?([_, "Loops:-start/0-fun-0-/1", "{:done, …}", "param", "0"], &1)
              )
 
@@ -435,9 +435,9 @@ defmodule Argus.Extractors.TermFlowTest do
                "Loops:-start/0-fun-0-/1",
                "0",
                "closure",
-               "proc",
+               "process",
                "spawn Loops:start/0#10"
-             ] in unsited(f.value_arg)
+             ] in unsited(f.call_arg_var)
     end
 
     test "a supervisor's start_child starts the child spec's module" do
@@ -450,39 +450,39 @@ defmodule Argus.Extractors.TermFlowTest do
 
     test "a literal target is a name" do
       f = facts([F.Hub, F.Listener])
-      assert ["Hub:subscribe/1", "cast", "name", "Hub"] in unsited(f.process_call_source)
+      assert ["Hub:subscribe/1", "cast", "name", "Hub"] in unsited(f.process_call_var)
 
       assert ["Listener:init/1", "Hub:subscribe/1", "0", "call", "self", "self"] in unsited(
-               f.value_arg
+               f.call_arg_var
              )
     end
 
     test "a send is also an info call" do
       f = facts([F.Loops])
-      assert ["Loops:start/0", "info", "name", ":loops"] in unsited(f.process_call_source)
-      assert ["Loops:-start/0-fun-0-/1", "info", "param", "0"] in unsited(f.process_call_source)
+      assert ["Loops:start/0", "info", "name", ":loops"] in unsited(f.process_call_var)
+      assert ["Loops:-start/0-fun-0-/1", "info", "param", "0"] in unsited(f.process_call_var)
     end
 
     test "spawn/4 passes its argument list, after the node, to what it runs" do
       f = facts([F.Starts])
 
       assert ["Starts:remote/0", "Starts:relay/1", "0", "spawn", "self", "self"] in unsited(
-               f.value_arg
+               f.call_arg_var
              )
     end
 
     test "a start with a literal name registers its process; so do register_name and Registry" do
       f = facts([F.Names, F.Starts])
-      registers = unsited(f.process_register_source)
+      registers = unsited(f.process_register_var)
 
-      assert ["Names:start_link/1", "{:global, :names}", "proc", "server Names:start_link/1#7"] in registers
+      assert ["Names:start_link/1", "{:global, :names}", "process", "server Names:start_link/1#7"] in registers
       assert ["Names:init/1", "{:via, Registry, {Reg, :names}}", "self", "self"] in registers
-      assert ["Starts:agent/0", ":counter", "proc", "agent Starts:agent/0#8"] in registers
+      assert ["Starts:agent/0", ":counter", "process", "agent Starts:agent/0#8"] in registers
     end
 
     test "lookups name the registry the name lives in" do
       f = facts([F.Names])
-      calls = unsited(f.process_call_source)
+      calls = unsited(f.process_call_var)
 
       assert ["Names:ping_global/0", "call", "name", "{:global, :names}"] in calls
       assert ["Names:ping_whereis/0", "call", "name", "{:global, :names}"] in calls
@@ -491,11 +491,11 @@ defmodule Argus.Extractors.TermFlowTest do
 
     test "an exit signal, a monitor and a link name their target" do
       f = facts([F.Keeper])
-      signals = unsited(f.process_signal_source)
+      signals = unsited(f.process_signal_var)
 
       assert Enum.any?(signals, &match?(["Keeper:handle_cast/2", "exit", "load", _], &1))
       assert ["Keeper:stop/1", "exit", "param", "0"] in signals
-      assert Enum.any?(signals, &match?(["Keeper:init/1", "monitor", "proc", "spawn " <> _], &1))
+      assert Enum.any?(signals, &match?(["Keeper:init/1", "monitor", "process", "spawn " <> _], &1))
     end
 
     test "the compiler's generated functions emit nothing" do

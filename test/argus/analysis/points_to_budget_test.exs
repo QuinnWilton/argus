@@ -11,7 +11,7 @@ defmodule Argus.Analysis.PointsToBudgetTest do
   function `merge/1` whose parameter every caller hands a term holding
   the one registered process, and which hands that parameter on to
   `helpers` helpers. Each helper's parameter then points to every
-  caller's term, `callers × helpers` rows of `source_pts` built from
+  caller's term, `callers × helpers` rows of `var_points_to` built from
   `callers + helpers` rows of facts: the shape of the merged heap that
   outgrew the exact stage on Ash. A call in `merge/1` on the term's
   field reaches the process from every caller.
@@ -54,29 +54,29 @@ defmodule Argus.Analysis.PointsToBudgetTest do
     merge = "M:merge/1"
 
     write!(dir, "process_start", [["s0", "M:start/0", @proc, "spawn", "M:loop/0"]])
-    write!(dir, "process_register_source", [["r0", "M:start/0", "reg", "proc", @proc]])
+    write!(dir, "process_register_var", [["r0", "M:start/0", "reg", "process", @proc]])
 
     write!(
       dir,
-      "value_object",
+      "term_allocation",
       for(i <- 1..callers, do: ["M:c#{i}/0", "o#{i}", "tuple", "", "1"])
     )
 
     write!(
       dir,
-      "value_field",
+      "field_store",
       for(i <- 1..callers, do: ["M:c#{i}/0", "o#{i}", "{0}", "name", "reg"])
     )
 
     write!(
       dir,
-      "value_arg",
-      for(i <- 1..callers, do: ["a#{i}", "M:c#{i}/0", merge, "0", "call", "obj", "o#{i}"]) ++
+      "call_arg_var",
+      for(i <- 1..callers, do: ["a#{i}", "M:c#{i}/0", merge, "0", "call", "term", "o#{i}"]) ++
         for(j <- 1..helpers, do: ["b#{j}", merge, "M:h#{j}/1", "0", "call", "param", "0"])
     )
 
-    write!(dir, "value_load", [[merge, "l0", "{0}", "param", "0"]])
-    write!(dir, "process_call_source", [["k0", merge, "call", "load", "l0"]])
+    write!(dir, "field_load", [[merge, "l0", "{0}", "param", "0"]])
+    write!(dir, "process_call_var", [["k0", merge, "call", "load", "l0"]])
     dir
   end
 
@@ -124,7 +124,7 @@ defmodule Argus.Analysis.PointsToBudgetTest do
   end
 
   # Every stage held to a budget every program here outgrows but the
-  # coarse one, whose source_pts and field_pts hold no leaf.
+  # coarse one, whose var_points_to and field_points_to hold no leaf.
   defp tiny_budget(text), do: String.replace(text, "500000", "10")
 
   # The exact stage says it outgrew its budget, whatever it found; the
@@ -133,7 +133,7 @@ defmodule Argus.Analysis.PointsToBudgetTest do
     text <>
       """
 
-      points_to_overflow("source_pts", 1, 0) :- stage_mode("exact"), !stage_mode("bounded").
+      points_to_overflow("var_points_to", 1, 0) :- stage_mode("exact"), !stage_mode("bounded").
       """
   end
 
@@ -169,7 +169,7 @@ defmodule Argus.Analysis.PointsToBudgetTest do
 
     log = capture_log(fn -> assert :ok = Analysis.derive_points_to(dir, budgeted) end)
 
-    assert log =~ "outgrew its budget (source_pts reached"
+    assert log =~ "outgrew its budget (var_points_to reached"
     assert log =~ "resolving 1 pervasive leaves coarsely (#{@proc})"
     assert rows(dir, "points_to_mode") == [["bounded"]]
     # What it reported is read back, not left among the facts.
@@ -238,7 +238,7 @@ defmodule Argus.Analysis.PointsToBudgetTest do
 
     log = capture_log(fn -> assert :ok = Analysis.derive_points_to(dir, copies) end)
 
-    assert log =~ "and so did the bounded one (source_pts reached"
+    assert log =~ "and so did the bounded one (var_points_to reached"
     assert log =~ "ran it coarse, resolving every leaf coarsely (1)"
     assert rows(dir, "points_to_mode") == [["coarse"]]
     assert rows(dir, "coarse_process") == [[@proc]]
@@ -256,13 +256,13 @@ defmodule Argus.Analysis.PointsToBudgetTest do
         rules_copy!(tmp, %{
           "points_to.dl" => &tiny_budget/1,
           "points_to_coarse.dl" =>
-            &(&1 <> ~s|\npoints_to_overflow("field_pts", 11, 10) :- stage_mode("coarse").\n|)
+            &(&1 <> ~s|\npoints_to_overflow("field_points_to", 11, 10) :- stage_mode("coarse").\n|)
         })
       )
 
     log =
       fails_as_found!(tmp, "over-coarse", fn dir ->
-        assert {:error, {:points_to, {:over_budget, [{"field_pts", 11, 10}]}}} =
+        assert {:error, {:points_to, {:over_budget, [{"field_points_to", 11, 10}]}}} =
                  Analysis.derive_points_to(dir, copies)
       end)
 

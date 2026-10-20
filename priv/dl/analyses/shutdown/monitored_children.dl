@@ -82,14 +82,14 @@ born_apart(m, k) :-
 monitors_init_arg(m, mod) :-
   init_function(mod, f),
   monitor_call(m, f, _),
-  process_signal_source(m, f, "monitor", _, _),
+  process_signal_var(m, f, "monitor", _, _),
   !monitor_beyond_init_arg(m, f).
 
 .decl monitor_beyond_init_arg(monitor: symbol, func: symbol)
 
 monitor_beyond_init_arg(m, f) :-
   init_function(_, f),
-  process_signal_source(m, f, "monitor", sk, s),
+  process_signal_var(m, f, "monitor", sk, s),
   !init_arg_value(f, sk, s).
 
 // A value init/1 reads from its argument: the argument, or a field of it at any depth.
@@ -99,7 +99,7 @@ init_arg_value(f, "param", "0") :- init_function(_, f).
 
 init_arg_value(f, "load", l) :-
   init_function(_, f),
-  value_load(f, l, _, bk, bs),
+  field_load(f, l, _, bk, bs),
   init_arg_value(f, bk, bs).
 
 // The kill may stop a process other than one `mod`'s server starts on its own stack.

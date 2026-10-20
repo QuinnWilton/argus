@@ -73,16 +73,16 @@ defmodule Argus.Clientlib.ProcessesTest do
   defp priv_dl, do: Path.join(:code.priv_dir(:argus_beam), "dl")
 
   # The relations of processes.dl the points-to stage does not stage.
-  @internal ~w(field_pts param_pts returns_pts self_pid statem_data_pts)
+  @internal ~w(field_points_to param_points_to return_points_to self_pid statem_data_points_to)
 
   # Every relation a test below reads. One extraction and one solve per
   # program serve the module: the rows of a relation do not depend on
   # which others a program outputs, and each test only reads them.
-  @outputs ~w(async_dep call_site_target call_target exit_to_own_process field_pts
-              genserver_sync_api instance named_pid param_pts private_process process_call
+  @outputs ~w(async_dep call_site_target call_target exit_to_own_process field_points_to
+              genserver_sync_api instance named_pid param_points_to private_process process_call
               process_start
-              reaches_sync_dep returns_pts self_call self_pid send_target server_process
-              signal_target statem_data_pts supervised_process sync_dep sync_dep_timeout
+              reaches_sync_dep return_points_to self_call self_pid send_target server_process
+              signal_target statem_data_points_to supervised_process sync_dep sync_dep_timeout
               sync_site tag_resolved_site watched_process)
 
   setup_all do
@@ -161,11 +161,11 @@ defmodule Argus.Clientlib.ProcessesTest do
   defp unsited(rows), do: Enum.map(rows, fn row -> Enum.map(row, &unsite/1) end)
 
   test "a pid follows a wrapper's result and two parameters to a cast", ctx do
-    r = solve(ctx, ~w(returns_pts param_pts call_target))
+    r = solve(ctx, ~w(return_points_to param_points_to call_target))
 
     # Worker.start_link is a factory: the process Owner.run keeps is its own.
-    assert ["Worker:ping/1", "0", "start Owner:run/0"] in unsited(r["param_pts"])
-    assert ["Owner:relay/1", "0", "start Owner:run/0"] in unsited(r["param_pts"])
+    assert ["Worker:ping/1", "0", "start Owner:run/0"] in unsited(r["param_points_to"])
+    assert ["Owner:relay/1", "0", "start Owner:run/0"] in unsited(r["param_points_to"])
     # Owner.run hands the pid down two helpers to Worker.notify's cast: the
     # cast is Owner.run's, not the helpers'.
     assert ["Owner:run/0", "cast", "start Owner:run/0"] in unsited(r["call_target"])
@@ -209,7 +209,7 @@ defmodule Argus.Clientlib.ProcessesTest do
   end
 
   test "a helper that hands its parameter back returns each caller's own value", ctx do
-    r = solve(ctx, ~w(process_call returns_pts))
+    r = solve(ctx, ~w(process_call return_points_to))
 
     targets =
       for ["PassUser" <> _ = f, _a, _s, "call", p] <- unsited(r["process_call"]), do: {f, p}
@@ -221,7 +221,7 @@ defmodule Argus.Clientlib.ProcessesTest do
     refute {"PassUserA:handle_call/3", "start PassUserB:init/1"} in targets
     refute {"PassUserB:handle_call/3", "start PassUserA:init/1"} in targets
     # The helpers return nothing of their own: what they hand back is the caller's.
-    refute Enum.any?(r["returns_pts"], &match?(["Pass:" <> _ | _], &1))
+    refute Enum.any?(r["return_points_to"], &match?(["Pass:" <> _ | _], &1))
   end
 
   test "a term a helper builds of its parameters holds each caller's own values", ctx do
@@ -248,10 +248,10 @@ defmodule Argus.Clientlib.ProcessesTest do
   end
 
   test "an update copies the fields of a base of its own kind alone", ctx do
-    r = solve(ctx, ~w(field_pts))
+    r = solve(ctx, ~w(field_points_to))
 
     stamped =
-      for ["Shapes:stamp/1" <> _ = o, sel, x] <- r["field_pts"], do: {o, sel, unsite(x)}
+      for ["Shapes:stamp/1" <> _ = o, sel, x] <- r["field_points_to"], do: {o, sel, unsite(x)}
 
     # The map's peer is kept under its key...
     assert Enum.any?(stamped, &match?({_, ":peer", "start Shapes:from_map/0"}, &1))
@@ -315,8 +315,8 @@ defmodule Argus.Clientlib.ProcessesTest do
   end
 
   test "self() and a server's state carry a peer's pid", ctx do
-    r = solve(ctx, ~w(param_pts sync_dep))
-    params = unsited(r["param_pts"])
+    r = solve(ctx, ~w(param_points_to sync_dep))
+    params = unsited(r["param_points_to"])
 
     # A starts B with self(): B's init/1, and so B's state, holds A.
     assert ["CycleB:init/1", "0", "server CycleA:start_link/1"] in params
@@ -385,8 +385,8 @@ defmodule Argus.Clientlib.ProcessesTest do
 
   test "a pid in a cast's message reaches the handler and the server's state",
        ctx do
-    r = solve(ctx, ~w(param_pts call_target))
-    params = unsited(r["param_pts"])
+    r = solve(ctx, ~w(param_points_to call_target))
+    params = unsited(r["param_points_to"])
 
     assert ["Hub:subscribe/1", "0", "server Listener:start_link/1"] in params
     assert Enum.any?(params, &match?(["Hub:handle_cast/2", "0", "Hub:subscribe/1"], &1))
@@ -413,8 +413,8 @@ defmodule Argus.Clientlib.ProcessesTest do
   end
 
   test "a pid in a function's sixth parameter", ctx do
-    r = solve(ctx, ~w(param_pts))
-    assert ["Starts:seven/7", "5", "spawn Starts:wide/0"] in unsited(r["param_pts"])
+    r = solve(ctx, ~w(param_points_to))
+    assert ["Starts:seven/7", "5", "spawn Starts:wide/0"] in unsited(r["param_points_to"])
   end
 
   test "names live in three registries and a child spec", ctx do
@@ -517,7 +517,7 @@ defmodule Argus.Clientlib.ProcessesTest do
   end
 
   test "a gen_statem's data carries its pids from state to state", ctx do
-    r = solve(ctx, ~w(sync_dep statem_data_pts))
+    r = solve(ctx, ~w(sync_dep statem_data_points_to))
     assert ["Machine:idle/3", "Back"] in r["sync_dep"]
   end
 

@@ -17,7 +17,7 @@
 
 // ── Tables as objects ───────────────────────────────────────────────
 
-// ETS allocations are points-to objects seeded by processes.dl. source_table exposes
+// ETS allocations are points-to objects seeded by processes.dl. var_table exposes
 // their destinations after staging.
 
 // ── Creation sites ──────────────────────────────────────────────────
@@ -154,7 +154,7 @@ known_table(id, k, t) :-
 // supersets, so they cannot establish a specific table identity.
 known_table(id, k, t) :-
   table_use(id, f, sk, s),
-  source_table(f, sk, s, x),
+  var_table(f, sk, s, x),
   !coarse_table(x),
   table_alloc(n, _, x),
   site_table(n, k, t).

@@ -67,9 +67,9 @@ registries, replies and dictionary contents across these function summaries.
 | `proc`, `self`, `name` | Started process, running process, literal registry reference. |
 | `table`, `dict`, `remote` | ETS allocation, literal dictionary key, possibly remote PID origin. |
 
-`value_arg`, `value_return` and `value_result` connect parameters and returns.
-`value_object`, `value_field`, `value_base`, `value_sets` and `value_load` describe containers.
-A tuple element load runs only once its match has passed: `value_load_shape`
+`call_arg_var`, `return_var` and `call_result_var` connect parameters and returns.
+`term_allocation`, `field_store`, `term_update_base`, `term_update_overwrites` and `field_load` describe containers.
+A tuple element load runs only once its match has passed: `field_load_match`
 gives the arity and, when tested, the tag that every path to it matched, and
 points-to reads such a load from the tuples that fit it alone. A tuple whose
 tag or arity is not known fits any match. A read of a register past such a
@@ -103,15 +103,15 @@ the function, and for a map from elsewhere points-to stands one for it
 A call running a fun on each element (`Enum.map/2`, `Enum.reduce/3`,
 `Map.new/2`, `:maps.fold/3`, ...) names the program's fun it runs in
 `element_fun`: the fun's parameters receive the elements, pairs or accumulator
-as `element` `value_arg`s, and when the call's answer holds what the fun
-answers, a `value_result` names the fun as the callee — `Enum.map/2`'s answer
+as `element` `call_arg_var`s, and when the call's answer holds what the fun
+answers, a `call_result_var` names the fun as the callee — `Enum.map/2`'s answer
 is a list of those answers, a fold's the answer itself. A library function
 captured as the fun (`&Task.await/1`, `&List.wrap/1`) is applied by its own
-model. `task_op_source` records what each Task operation is handed.
+model. `task_operation_var` records what each Task operation is handed.
 
 Any other call outside the program — an unmodeled library call, a send, a
 dynamic `fun.(...)` or `apply`, a call running a fun the table does not know —
-records what it is handed in `value_escape`. A rule needing to know a value's
+records what it is handed in `unmodeled_use`. A rule needing to know a value's
 every use treats an escape as a use it cannot see (`clientlib/task_handles.dl`).
 `test/analyses/task_library_flow_test.exs` carries a task through every modeled
 call, both collected and dropped, and fails for a modeled call without an
@@ -126,7 +126,7 @@ entry.
   an unsupported result, or a not-yet-discovered source during solving.
 - Only explicit structural instructions and recognized library operations
   preserve provenance. Unresolved calls, dynamic apply and unmodeled runtime
-  results can lose it; `value_escape` records where a library call or a
+  results can lose it; `unmodeled_use` records where a library call or a
   dynamic call is handed a value, so a consumer can tell a lost value from a
   dropped one. Closure tokens identify spawned functions but are not emitted
   as general values: a fun is followed only where a modeled library call runs

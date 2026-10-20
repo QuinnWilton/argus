@@ -63,7 +63,7 @@ defmodule Argus.Clientlib.TablesTest do
   end
 
   # The same facts, as a bounded stage that resolved EnsuredCache's table
-  # coarsely would leave them: its source_table rows kept, and the table
+  # coarsely would leave them: its var_table rows kept, and the table
   # marked coarse.
   defp solve_coarse(tmp_dir, facts_dir) do
     coarse_dir = Path.join(tmp_dir, "coarse-facts")
