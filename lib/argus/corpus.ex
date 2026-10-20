@@ -661,9 +661,22 @@ defmodule Argus.Corpus do
   defp app_name(dir) do
     source = File.read!(Path.join(dir, "mix.exs"))
 
-    case Regex.run(~r/app:\s*:(\w+)/, source) do
-      [_, app] -> app
-      nil -> raise "no app: in #{dir}/mix.exs"
+    cond do
+      match = Regex.run(~r/app:\s*:(\w+)/, source) ->
+        [_, app] = match
+        app
+
+      # `app: @app` with `@app :name` elsewhere, a common mix.exs idiom.
+      attr = Regex.run(~r/app:\s*@(\w+)/, source) ->
+        [_, name] = attr
+
+        case Regex.run(~r/@#{name}\s+:(\w+)/, source) do
+          [_, app] -> app
+          nil -> raise "no app: in #{dir}/mix.exs (unresolved @#{name})"
+        end
+
+      true ->
+        raise "no app: in #{dir}/mix.exs"
     end
   end
 
