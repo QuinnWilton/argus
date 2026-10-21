@@ -39,8 +39,9 @@ bytecode layer. TermFlow then partially solves them in Elixir: `call_arg_var` an
 `field_load` is a deferred projection. These are analysis summaries, not a
 complete normalized IR. A local load may disappear into its resolved sources.
 That reduces downstream joins, but consumers cannot recover an operation that
-TermFlow omitted. Renaming `pid_*` to `value_*` clarifies this contract without
-turning the summaries into raw instruction facts.
+TermFlow omitted. Naming the relations for the values they describe
+(`call_arg_var`, `field_store`, `field_load`) rather than for pids clarifies this
+contract without turning the summaries into raw instruction facts.
 
 ## Abstraction choices
 
@@ -50,7 +51,7 @@ turning the summaries into raw instruction facts.
 | What identifies a container? | Doop/Spark allocation objects; Gigahorse memory/storage models build on IR operations. | Construction site, with separate nested objects synthesized at calls. |
 | What identifies a field? | Java field identities; Gigahorse address/data-structure models. | Spelled map key, tuple position, or merged list-element selector. |
 | Where is flow solved? | Doop rules, Soot graph solvers, Gigahorse configurable Datalog components. | Sparse Elixir register/heap solver, then shared Datalog composition. |
-| Are call contexts represented? | Doop has independent method/heap context configuration. | No general context dimension in extracted sources; downstream process-specific refinements are separate. |
+| Are call contexts represented? | Doop has independent method/heap context configuration. | Not in extracted summaries. Points-to clones factory-started processes and helper-built terms per keeping call site (one level of heap cloning); parameters are context-insensitive. |
 | How are unknown operations exposed? | Explicit unsupported/opaque instruction concepts and runtime models in Doop; recoverable IR operations in Gigahorse. | Some symbolic external sources survive; other unsupported results become empty provenance. |
 
 Doop's [context-insensitive configuration](https://github.com/plast-lab/doop/blob/7882d20bf594db14614f4a5765def763b31019f6/souffle-logic/analyses/context-insensitive/analysis.dl)
@@ -112,5 +113,7 @@ Gigahorse's EVM memory reconstruction is not a BEAM requirement.
 
 The immediate changes follow these conclusions: general relation names, a
 separate finite heap model, explicit solver failure instead of partial fixpoints,
-and differential/metamorphic tests of transfers and scheduling. Explicit unknown
-facts, a normalized client IR and configurable contexts remain future work.
+and differential/metamorphic tests of transfers and scheduling. Since then points-to
+has gained one level of heap cloning for the objects that needed it. Explicit
+unknown facts, a normalized client IR and configurable contexts remain future
+work.

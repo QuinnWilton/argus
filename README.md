@@ -187,7 +187,8 @@ Use the [bug-class catalog](docs/bug-classes.md) to understand each finding's
 evidence and limits. Start with the [contributor guide](CONTRIBUTING.md) to capture
 a finding, inspect its rules and facts, or run a small extension. The
 [analysis model](docs/design/analysis-model.md) and
-[rule guide](docs/design/rule-style.md) explain the implementation contracts.
+[rule guide](docs/design/rule-style.md) explain the implementation contracts, and
+the [glossary](docs/glossary.md) defines the terms they use.
 
 ## License
 

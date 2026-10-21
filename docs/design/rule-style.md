@@ -77,6 +77,19 @@ and names each output whose rows moved.
 
 ## Names and comments
 
+Relations, columns and Elixir names use the words [the glossary](../glossary.md)
+defines, which follow the program-analysis literature where it has a term: a
+*variable* holds an *object*, a *field load* reads a *field*, a stage is
+*field-insensitive*, not a "source" that "points" to a "leaf" in a "coarse" pass.
+A new concept gets a glossary entry and a name in those words; an old name that
+needs the glossary to be understood is renamed rather than explained.
+
+- Spell words out: `receive`, `dependency`, `operation`, `supervisor`,
+  `dictionary`. Keep the abbreviations BEAM and OTP use themselves (`pid`, `mfa`,
+  `ref`, `ets`, `rpc`, `etf`, `statem`, `init`, `info`) and the house column
+  names (`func`, `mod`, `id`, `site`, `pos`, `arg`, `param`).
+- Name a column for its role, not with a letter: `object`, `count`, `reach`.
+  Layer 1 relations keep the bytecode's own column names (`op`, the opcode).
 - Use names that state the property: fails_if_row_missing, runs_in_another_process.
   Put the subject first and name variables for their role.
 - Use nouns for entities and detected defects, such as EtsRow or missing_row_race.

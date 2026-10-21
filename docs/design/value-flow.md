@@ -1,15 +1,19 @@
 # Intraprocedural value flow
 
-[Shared analysis model](analysis-model.md) · [Comparison with Doop, Soot and Gigahorse](value-flow-comparison.md)
+[Shared analysis model](analysis-model.md) · [Comparison with Doop, Soot and Gigahorse](value-flow-comparison.md) ·
+[Glossary](../glossary.md)
 
 `Argus.Extractors.TermFlow` summarizes provenance within each BEAM function.
 It follows parameters, project-call results, containers, replies, ETS tables
-and dictionary values as well as PIDs. General provenance uses `value_*`
-relations; process operations expose `process_*_source` relations.
+and dictionary values as well as PIDs. Its summaries name values as *variables*
+(a kind and a key, [glossary](../glossary.md#value-flow)): general provenance
+uses `call_arg_var`, `return_var`, `call_result_var` and the term relations, and
+process operations expose `process_*_var` relations.
 
 ## Model
 
-A register definition holds a set of source tokens. A read joins the sets of
+A register definition holds a set of source tokens, each a variable the
+register may hold. A read joins the sets of
 all definitions reaching that register, using `Argus.Dataflow`'s register and
 control-flow semantics. Parameter definitions contribute their position. Moves,
 swaps and frame trims transport these sets; a send returns its message; unsupported writes contribute no
@@ -58,14 +62,14 @@ contain a non-closure source; source-free cycles emit no objects. Rows are sorte
 and deduplicated. Shared Datalog resolves calls, callback state, messages,
 registries, replies and dictionary contents across these function summaries.
 
-## Sources and relation families
+## Variable kinds and relation families
 
-| Source | Meaning |
+| Kind | Meaning |
 |---|---|
 | `param`, `result`, `reply` | Parameter position, project invocation result, synchronous server reply. |
-| `obj`, `load` | Local allocation site, deferred external field read. |
-| `proc`, `self`, `name` | Started process, running process, literal registry reference. |
-| `table`, `dict`, `remote` | ETS allocation, literal dictionary key, possibly remote PID origin. |
+| `term`, `load` | Local allocation site, deferred external field read. |
+| `process`, `self`, `name` | Started process, running process, literal registry reference. |
+| `table`, `dictionary`, `remote` | ETS allocation, literal dictionary key, possibly remote PID origin. |
 
 `call_arg_var`, `return_var` and `call_result_var` connect parameters and returns.
 `term_allocation`, `field_store`, `term_update_base`, `term_update_overwrites` and `field_load` describe containers.
@@ -76,7 +80,7 @@ tag or arity is not known fits any match. A read of a register past such a
 match, any instruction's, skips the tuples the function built that the match
 does not fit: `{:error, e} -> {:error, e}` hands back the term it matched,
 and that is not the `{:ok, pid}` the same register held on the other path.
-`process_start` and `process_{call,message,send,signal,register}_source`
+`process_start` and `process_{call,message,send,signal,register}_var`
 describe process operations. Table, dictionary and remote-PID
 relations expose their respective operations. Exact columns and consumers are
 specified in `lib/argus/schema/` and `priv/dl/clientlib/`.
@@ -144,9 +148,9 @@ entry.
   time-ordered simulation of mutations. External containers and call results
   depend on the coverage and abstraction of the consuming Datalog stage.
 
-These summaries must not justify safety from absent provenance. The bounded
-whole-program points-to pass has its own guarantees; its field-insensitive fallback does
-not make this extractor a sound model of all BEAM executions.
+These summaries must not justify safety from absent provenance. The
+whole-program points-to stage has its own guarantees; its field-insensitive
+fallbacks do not make this extractor a sound model of all BEAM executions.
 
 ## Verification
 
