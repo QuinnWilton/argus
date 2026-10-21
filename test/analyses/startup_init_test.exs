@@ -12,14 +12,14 @@ defmodule Argus.Analyses.StartupInitTest do
       Rows.where(results, :startup, "blocks_on_peer",
         kind: "call",
         ordering: "unknown",
-        drop: [:phase, :kind, :ordering, :sup, :site]
+        drop: [:phase, :kind, :ordering, :supervisor, :site]
       )
 
   defp blocking_servers(results),
     do:
       Rows.where(results, :startup, "blocks_on_peer",
         kind: "blocking_server",
-        drop: [:phase, :kind, :ordering, :sup]
+        drop: [:phase, :kind, :ordering, :supervisor]
       )
 
   defp sync_call_sites(modules) do
@@ -53,7 +53,7 @@ defmodule Argus.Analyses.StartupInitTest do
       assert [[mod, "Argus.Test.Fixtures.PoolSup", site, "DynamicSupervisor.start_child"]] =
                Rows.where(results, :startup, "blocks_on_peer",
                  kind: "sup",
-                 drop: [:phase, :kind, :ordering, :sup]
+                 drop: [:phase, :kind, :ordering, :supervisor]
                )
 
       assert mod == "Argus.Test.Fixtures.StartsChildrenInInit"
@@ -76,7 +76,7 @@ defmodule Argus.Analyses.StartupInitTest do
       assert [[mod, "dynamic", site, "DynamicSupervisor.start_child"]] =
                Rows.where(results, :startup, "blocks_on_peer",
                  kind: "sup",
-                 drop: [:phase, :kind, :ordering, :sup]
+                 drop: [:phase, :kind, :ordering, :supervisor]
                )
 
       assert mod == "Argus.Test.Fixtures.StartupCalledCapture"
@@ -98,7 +98,7 @@ defmodule Argus.Analyses.StartupInitTest do
       assert [["Argus.Test.Fixtures.StartupTaskPool", "Task.Supervisor.async_nolink"]] =
                Rows.where(results, :startup, "blocks_on_peer",
                  kind: "sup",
-                 drop: [:mod, :phase, :kind, :ordering, :sup, :site]
+                 drop: [:mod, :phase, :kind, :ordering, :supervisor, :site]
                )
     end
 

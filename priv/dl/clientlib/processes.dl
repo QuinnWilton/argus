@@ -17,7 +17,7 @@
 // A process running a module's callbacks, identified by an explicit start or a
 // supervisor child spec. The spec can identify the callback module even when its own
 // start call is not visible.
-.decl server_process(proc: symbol, mod: symbol)
+.decl server_process(process: symbol, mod: symbol)
 
 server_process(p, m) :- process_start(_, _, p, "server", m).
 
@@ -32,7 +32,7 @@ server_process(cat("child ", cat(s, cat("#", to_string(pos)))), m) :-
 // `result <site>` and `start <site>` identities; child specs receive their own
 // instance. `instance` retains the original allocation as base, which also represents
 // unseen callers.
-.decl start_term(term: symbol, proc: symbol)
+.decl start_term(term: symbol, process: symbol)
 
 start_term(t, b) :-
   process_start(t, _, b, _, _),
@@ -56,20 +56,20 @@ start_term(cat("outside ", g), cat("outside ", g)) :- outside_start(g).
 
 // `func` returns `x`, allocated while it ran: its own start's result, or
 // its callee's returned as it is.
-.decl fresh_return(func: symbol, x: symbol)
+.decl fresh_return(func: symbol, object: symbol)
 
 fresh_return(g, cat("outside ", g)) :- outside_start(g).
 fresh_return(g, t) :- return_var(g, "term", t), start_term(t, _).
 fresh_return(g, b) :- return_var(g, "process", b), process_start(_, g, b, _, _).
 fresh_return(g, x) :- return_var(g, "result", c), call_result_var(c, g, h), fresh_return(h, x).
 
-.decl fresh_base(x: symbol, base: symbol)
+.decl fresh_base(object: symbol, base: symbol)
 
 fresh_base(t, b) :- start_term(t, b).
 fresh_base(b, b) :- process_start(_, _, b, _, _).
 
 // A call that keeps a factory's fresh value: the instance it names.
-.decl kept_fresh(site: symbol, func: symbol, x: symbol)
+.decl kept_fresh(site: symbol, func: symbol, object: symbol)
 
 kept_fresh(c, f, x) :-
   call_result_var(c, f, g),
@@ -77,7 +77,7 @@ kept_fresh(c, f, x) :-
   !return_var(f, "result", c).
 
 // A process and the start site it comes from.
-.decl instance(proc: symbol, base: symbol)
+.decl instance(process: symbol, base: symbol)
 
 instance(b, b) :- process_start(_, _, b, _, _).
 instance(cat("start ", c), b) :- kept_fresh(c, _, x), fresh_base(x, b).
@@ -91,12 +91,12 @@ server_process(i, m) :- instance(i, b), process_start(_, _, b, "server", m).
 
 // A supervisor's child, and a process a function keeps for itself: the
 // two a rule about siblings must tell apart.
-.decl supervised_process(proc: symbol, sup: symbol, pos: number)
+.decl supervised_process(process: symbol, supervisor: symbol, pos: number)
 
 supervised_process(cat("child ", cat(s, cat("#", to_string(pos)))), s, pos) :-
   supervisor_child(s, pos, _, _, _).
 
-.decl private_process(proc: symbol, func: symbol, site: symbol)
+.decl private_process(process: symbol, func: symbol, site: symbol)
 
 private_process(cat("start ", c), f, c) :- kept_fresh(c, f, _).
 
@@ -106,7 +106,7 @@ private_process(b, f, id) :-
   !fresh_return(f, id).
 
 // Every process the program names.
-.decl process(proc: symbol)
+.decl process(process: symbol)
 
 process(p) :- instance(p, _).
 process(p) :- server_process(p, _).
@@ -117,15 +117,15 @@ process(p) :- server_process(p, _).
 
 // A parameter, a callee's result, a term's field: each may point to a
 // process or to a term.
-.decl param_points_to(func: symbol, pos: symbol, x: symbol)
-.decl return_points_to(func: symbol, x: symbol)
-.decl field_points_to(term: symbol, field: symbol, x: symbol)
+.decl param_points_to(func: symbol, pos: symbol, object: symbol)
+.decl return_points_to(func: symbol, object: symbol)
+.decl field_points_to(term: symbol, field: symbol, object: symbol)
 
 // A registered name may hold a pid of `proc`.
-.decl named_pid(name: symbol, proc: symbol)
+.decl named_pid(name: symbol, process: symbol)
 
 // A source, as seen from inside `func`, may point to `x`.
-.decl var_points_to(func: symbol, var_kind: symbol, var: symbol, x: symbol)
+.decl var_points_to(func: symbol, var_kind: symbol, var: symbol, object: symbol)
 
 // The name and self sources each function reads, so the rules resolving
 // them are bound by the function that uses them.
@@ -264,7 +264,7 @@ fits_match(o, tag, n) :-
 // A field read sees the named field and unknown-key writes. Unknown-key reads see only
 // unknown-key writes, avoiding merges of every struct field. Derive results only for
 // selectors the program reads.
-.decl reads_field(term: symbol, field: symbol, x: symbol)
+.decl reads_field(term: symbol, field: symbol, object: symbol)
 .decl field_read(term: symbol, field: symbol)
 
 field_read(o, sel) :- load_base(_, _, sel, o).
@@ -561,7 +561,7 @@ passes(g, j) :-
 
 // All returned values, including forwarded parameters. This also models callback
 // results whose arguments are supplied by the runtime.
-.decl returns_all(func: symbol, x: symbol)
+.decl returns_all(func: symbol, object: symbol)
 
 returns_all(g, x) :- return_points_to(g, x).
 returns_all(g, x) :- passes(g, j), param_points_to(g, j, x).
@@ -571,7 +571,7 @@ returns_all(g, x) :- returns_key(g, k), var_points_to(g, "dictionary", k, x).
 // captures, callback state, and messages. `param_points_to` also includes ordinary callers.
 // Resolve callback and spawned-body uses against entry arguments rather than lifting
 // them to runtime machinery.
-.decl entry_points_to(func: symbol, pos: symbol, x: symbol)
+.decl entry_points_to(func: symbol, pos: symbol, object: symbol)
 
 entry_points_to(g, k, x) :- entry_arg(f, g, k, sk, s), var_points_to(f, sk, s, x).
 
@@ -683,7 +683,7 @@ shares_dictionary(f, g) :-
 // self() resolves to the server or spawned process running the function and propagates
 // along its own stack. Exclude spawned, stored, or deferred fun execution. Traverse
 // only paths leading to a self() use.
-.decl self_pid(func: symbol, proc: symbol)
+.decl self_pid(func: symbol, process: symbol)
 
 self_pid(f, p) :- process_entry(m, f), server_process(p, m).
 self_pid(f, p) :- instance(p, b), process_start(_, _, b, "spawn", f).
@@ -744,7 +744,7 @@ state_in(m, f, "1") :-
   (name = "handle_cast" ; name = "handle_info" ; name = "handle_continue" ; name = "terminate").
 
 // A term the server may hold as its state.
-.decl state_points_to(mod: symbol, x: symbol)
+.decl state_points_to(mod: symbol, object: symbol)
 
 state_points_to(m, x) :-
   state_out(m, g),
@@ -794,7 +794,7 @@ targets_field(f, j, sel, kind, id) :-
 param_load(f, l) :- field_load(f, l, _, "param", _).
 
 // A field of what a source points to, a map's unknown-key field included.
-.decl var_field_points_to(func: symbol, var_kind: symbol, var: symbol, field: symbol, x: symbol)
+.decl var_field_points_to(func: symbol, var_kind: symbol, var: symbol, field: symbol, object: symbol)
 
 var_field_points_to(f, sk, s, sel, x) :-
   targets_field(g, _, sel, _, _),
@@ -806,7 +806,7 @@ var_field_points_to(f, sk, s, sel, x) :-
 // actual use; `anchor` is func's call into a helper, or the site itself. The stage
 // exports calls/casts/sends as process_call and signals as process_signal; signals.dl
 // combines them.
-.decl process_call(func: symbol, anchor: symbol, site: symbol, api_kind: symbol, proc: symbol)
+.decl process_call(func: symbol, anchor: symbol, site: symbol, api_kind: symbol, process: symbol)
 
 // A target `func` resolves itself.
 process_call(f, id, id, kind, p) :-
@@ -876,7 +876,7 @@ process_call(f, a, id, kind, p) :-
 
 // The call, cast or send at `id` in `func` may target `proc`, whoever
 // supplies it.
-.decl call_site_target(id: symbol, func: symbol, api_kind: symbol, proc: symbol)
+.decl call_site_target(id: symbol, func: symbol, api_kind: symbol, process: symbol)
 
 call_site_target(id, g, kind, p) :-
   process_call(_, _, id, kind, p),
@@ -884,7 +884,7 @@ call_site_target(id, g, kind, p) :-
 
 // Resolve destinations of call/cast/send messages and call replies. The selective stage
 // may use field-insensitive targets for hub objects; see hub_objects.dl.
-.decl message_target(id: symbol, func: symbol, api_kind: symbol, proc: symbol)
+.decl message_target(id: symbol, func: symbol, api_kind: symbol, process: symbol)
 
 message_target(id, g, kind, p) :- call_site_target(id, g, kind, p).
 
@@ -961,7 +961,7 @@ statem_data_in(m, f, "2") :- statem_event_clause(m, f, _), function_def(f, m, _,
 statem_data_in(m, f, "3") :- statem_event_clause(m, f, _), function_def(f, m, "handle_event", 4, _).
 statem_data_in(m, f, "2") :- statem_process(m), function_def(f, m, "terminate", 3, _).
 
-.decl statem_data_points_to(mod: symbol, x: symbol)
+.decl statem_data_points_to(mod: symbol, object: symbol)
 
 statem_data_points_to(m, x) :-
   statem_data_out(m, g),

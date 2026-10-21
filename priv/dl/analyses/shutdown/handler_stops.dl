@@ -5,7 +5,7 @@
 
 // A handler stops a sibling the supervisor owns: the supervisor restarts
 // it, or has stopped it already and the stop exits in the handler.
-.decl stop_of_owned_sibling(mod: symbol, handler: symbol, via: symbol, sibling: symbol, sup: symbol)
+.decl stop_of_owned_sibling(mod: symbol, handler: symbol, via: symbol, sibling: symbol, supervisor: symbol)
 
 stop_of_owned_sibling(mod, handler, via, sibling, sup) :-
   handler_function(mod, handler),
@@ -50,7 +50,7 @@ site_or_empty_call(f, g, id) :- call_instr(f, g, id).
 site_or_empty_call(f, g, "") :- stop_reach.reaches(f, g), !call_instr(f, g, _).
 
 // A process `handler` hands `via` as its first parameter (points-to).
-.decl stop_arg(handler: symbol, via: symbol, proc: symbol)
+.decl stop_arg(handler: symbol, via: symbol, process: symbol)
 
 stop_arg(h, via, p) :-
   handler_function(_, h),

@@ -26,7 +26,10 @@ defmodule Argus.Extractors.ETSTest do
   describe "a literal named only while an answer is unset" do
     defp defaults(mod) do
       facts = ETS.extract(disassemble(mod))
-      ops = Map.new(facts[:ets_operation], fn [id, func, _t, op, _k] -> {id, {short(func), op}} end)
+
+      ops =
+        Map.new(facts[:ets_operation], fn [id, func, _t, op, _k] -> {id, {short(func), op}} end)
+
       for [id, name, site] <- facts[:ets_table_default], do: {ops[id], name, short(site)}
     end
 
@@ -49,7 +52,10 @@ defmodule Argus.Extractors.ETSTest do
   describe "keys a value's maker names" do
     defp keys(mod) do
       facts = ETS.extract(disassemble(mod))
-      ops = Map.new(facts[:ets_operation], fn [id, func, _t, op, _k] -> {id, {short(func), op}} end)
+
+      ops =
+        Map.new(facts[:ets_operation], fn [id, func, _t, op, _k] -> {id, {short(func), op}} end)
+
       for [id, source, key] <- facts[:ets_key], do: {ops[id], {source, key}}
     end
 

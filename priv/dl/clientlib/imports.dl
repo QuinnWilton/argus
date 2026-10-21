@@ -96,6 +96,6 @@ stopping_exit(id, f, t) :- exit_call(id, f, t), t != "self", !exit_reason(id, ":
 
 // How many closures a function creates — the shape a transaction body or
 // a pure higher-order function is recognised by.
-.decl closure_count(func: symbol, n: number)
+.decl closure_count(func: symbol, count: number)
 
 closure_count(func, count(c)) :- closure_def(func, c).

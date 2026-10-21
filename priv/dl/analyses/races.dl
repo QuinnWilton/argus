@@ -231,7 +231,7 @@ registry_race(mod, func, lookup_api, create_api, key_source, key, lookup, claim)
 
 .init rows = CheckThenAct
 
-.decl deciding_read_operation(op: symbol)
+.decl deciding_read_operation(operation: symbol)
 
 deciding_read_operation("lookup").
 deciding_read_operation("lookup_element").
@@ -242,7 +242,7 @@ deciding_read_operation("member").
 deciding_read_operation("match").
 deciding_read_operation("match_object").
 
-.decl plain_write_operation(op: symbol)
+.decl plain_write_operation(operation: symbol)
 
 plain_write_operation("insert").
 plain_write_operation("delete").
@@ -400,15 +400,15 @@ plain_write(w, f) :- ets_operation(w, f, _, op, "write"), plain_write_operation(
 
 // An operation's table and key, the table in its own function's terms
 // (ets_table_ident) or as clientlib/tables.dl knows it (ets_table).
-.decl local_table_and_key(op: symbol, table_kind: symbol, table: symbol, key_kind: symbol, key: symbol)
-.decl table_and_key(op: symbol, table_kind: symbol, table: symbol, key_kind: symbol, key: symbol)
+.decl local_table_and_key(operation: symbol, table_kind: symbol, table: symbol, key_kind: symbol, key: symbol)
+.decl table_and_key(operation: symbol, table_kind: symbol, table: symbol, key_kind: symbol, key: symbol)
 
 local_table_and_key(op, ts, t, ks, k) :- ets_table_ident(op, ts, t), operation_key(op, ks, k).
 table_and_key(op, tk, t, ks, k) :- ets_table(op, tk, t), operation_key(op, ks, k).
 
 // Use the inserted object's first element as key unless a known custom keypos selects
 // element N - 1, supplied by ets_value.
-.decl operation_key(op: symbol, key_kind: symbol, key: symbol)
+.decl operation_key(operation: symbol, key_kind: symbol, key: symbol)
 
 operation_key(op, ks, k) :- ets_key(op, ks, k), !keyed_past_zero(op, _).
 
@@ -417,7 +417,7 @@ operation_key(op, ks, k) :-
   ets_value(op, pos, ks, k),
   to_string(pos + 1) = v.
 
-.decl keyed_past_zero(op: symbol, keypos: symbol)
+.decl keyed_past_zero(operation: symbol, keypos: symbol)
 
 keyed_past_zero(op, v) :-
   ets_operation(op, _, _, o, "write"),
@@ -433,14 +433,14 @@ keyed_past_zero(op, v) :-
 // operation acts as an accessor. Anchor at the meeting function's direct accessor call,
 // otherwise at the operation. Accessors retain normal key and harm checks; writing a
 // constant without a conflicting rival is not a race.
-.decl ets_accessor(func: symbol, op: symbol, key_kind: symbol)
+.decl ets_accessor(func: symbol, operation: symbol, key_kind: symbol)
 
 ets_accessor(g, w, "param") :- lone_ets_operation(g, w), operation_key(w, ks, _), ks != "literal", ks != "dynamic".
 ets_accessor(g, w, "fixed") :- lone_ets_operation(g, w), operation_key(w, "literal", _).
 
-.decl lone_ets_operation(func: symbol, op: symbol)
+.decl lone_ets_operation(func: symbol, operation: symbol)
 
-.decl ets_operation_rows(func: symbol, n: number)
+.decl ets_operation_rows(func: symbol, count: number)
 
 ets_operation_rows(g, count((w, name, a, b))) :- ets_operation(w, g, name, a, b).
 
@@ -459,7 +459,7 @@ other_shared_operation(g) :- name_release(_, g, _, _, _).
 
 // Where `func` calls the accessor holding `op`: the site a lifted
 // operation is reported at.
-.decl accessor_call(func: symbol, op: symbol, site: symbol)
+.decl accessor_call(func: symbol, operation: symbol, site: symbol)
 
 accessor_call(f, w, c) :-
   rows.meets(f, _, w, _, _, _, _),
@@ -477,7 +477,7 @@ accessor_call(f, r, c) :-
 
 // The site a pair's operation is reported at in the function where it
 // meets: the operation, or the call to the accessor holding it.
-.decl reported_at(func: symbol, op: symbol, site: symbol)
+.decl reported_at(func: symbol, operation: symbol, site: symbol)
 
 reported_at(f, op, c) :- accessor_call(f, op, c).
 reported_at(f, op, op) :- rows.meets(f, op, _, _, _, _, _), !accessor_call(f, op, _).
@@ -558,7 +558,7 @@ ets_operation_table(id, (k, t)) :- race_table(id, k, t), ets_operation(id, _, _,
 table_write(w, g, table) :- ets_operation(w, g, _, op, "write"), row_write_operation(op), ets_operation_table(w, table), rival_table(table).
 
 // Writes of rows. setopts and give_away change a table's options and its owner.
-.decl row_write_operation(op: symbol)
+.decl row_write_operation(operation: symbol)
 
 row_write_operation(op) :- ets_operation(_, _, _, op, "write"), op != "setopts", op != "give_away".
 
@@ -900,7 +900,7 @@ counts_in(w, h) :- rival_write(w, h, _, _, _), rival_value(w, h, k, s), rival_ma
 
 // Translate a rival's stored value into the function naming its key, through the same
 // lifted caller chain used for the key.
-.decl rival_value(write: symbol, func: symbol, kind: symbol, src: symbol)
+.decl rival_value(write: symbol, func: symbol, kind: symbol, source: symbol)
 
 rival_value(w, g, k, s) :- table_write(w, g, _), value_write(w), site_reads(w, g, k, s).
 
@@ -929,7 +929,7 @@ stores_counters(w) :-
 
 // A refill obtains its value from a call or another store, such as Mnesia or a
 // registry. Other values are local to the writer.
-.decl fill_source(kind: symbol, src: symbol)
+.decl fill_source(kind: symbol, source: symbol)
 
 fill_source("call", g) :- site_reads(_, _, "call", g).
 fill_source("call", g) :- call_arg_reads(_, _, _, "call", g).
@@ -1199,7 +1199,7 @@ other_site(f, w, w, h) :- rival(f, _, w, w, h), h != f.
 
 fills_from_source(f, r, w) :- ets_carried.fresh_used(f, r, w, kind, src), changing_source(kind, src).
 
-.decl changing_source(kind: symbol, src: symbol)
+.decl changing_source(kind: symbol, source: symbol)
 
 changing_source("site", s) :- fill_source("site", s).
 changing_source("call", g) :- fill_source("call", g), reads_state(g).
@@ -1534,7 +1534,7 @@ key_delete(d, f) :- ets_operation(d, f, _, "delete", "write"), operation_key(d, 
 kills(e, f) :- stopping_exit(e, f, _), remote_call(e, f, ":erlang", "exit", 2).
 
 // Reads answering a key's rows.
-.decl row_read_operation(op: symbol)
+.decl row_read_operation(operation: symbol)
 
 row_read_operation("lookup").
 row_read_operation("lookup_element").
@@ -1569,7 +1569,7 @@ broad_delete(f, e, d, table, ks, k, "after_kill") :-
   ets_operation_table(d, table).
 
 // An insert of a row holding the process making it: its own entry under the key.
-.decl own_row_write(write: symbol, op: symbol)
+.decl own_row_write(write: symbol, operation: symbol)
 
 own_row_write(w, op) :-
   ets_operation(w, _, _, op, "write"),
@@ -1835,7 +1835,7 @@ gap_reader(r, g, ak, a) :-
 //
 // The key must derive from the published table or an unknown external parameter/call
 // result. Keys known to come from unrelated sources cannot hold its published values.
-.decl key_needed(func: symbol, kind: symbol, src: symbol)
+.decl key_needed(func: symbol, kind: symbol, source: symbol)
 
 key_needed(g, "param", p) :- gap_reader(r, g, _, _), ets_key(r, "param", p).
 
@@ -1852,7 +1852,7 @@ key_needed(c, k, s) :-
 
 key_needed(h, k, s) :- key_needed(_, "call", h), returns_depends(h, k, s).
 
-.decl from_table(func: symbol, kind: symbol, src: symbol, tk: symbol, t: symbol)
+.decl from_table(func: symbol, kind: symbol, source: symbol, tk: symbol, t: symbol)
 
 from_table(g, "site", ra, tk, t) :-
   key_needed(g, "site", ra),
@@ -1871,7 +1871,7 @@ from_table(g, "param", p, tk, t) :-
   from_table(c, k, s, tk, t).
 
 // Sources whose origin the program does not show.
-.decl open_source(func: symbol, kind: symbol, src: symbol)
+.decl open_source(func: symbol, kind: symbol, source: symbol)
 
 open_source(g, "param", p) :- key_needed(g, "param", p), api_export(g).
 open_source(g, "param", p) :- key_needed(g, "param", p), fun_ref(_, g).
@@ -2174,7 +2174,7 @@ records.act(write, func, table_kind, table, key_kind, key) :-
 
 // Dirty writes are candidate acts. Transactional writes and dirty_update_counter may
 // compete or restore table contents, but are not candidate acts.
-.decl dirty_write_operation(op: symbol)
+.decl dirty_write_operation(operation: symbol)
 
 dirty_write_operation("dirty_write").
 dirty_write_operation("dirty_delete").
@@ -2320,7 +2320,7 @@ racing_record_pair(f, r, w) :-
   !serialized_by_lock(f, t).
 
 // Which dirty operation a Mnesia call is.
-.decl dirty_operation(site: symbol, op: symbol)
+.decl dirty_operation(site: symbol, operation: symbol)
 
 dirty_operation(site, op) :- mnesia_operation(site, _, op, _, _, _, _, _).
 
@@ -2666,7 +2666,7 @@ ranked_race(f, r, w, k, n) :-
 record_writes.race(f, r, w, k, n) :- ranked_race(f, r, w, k, n).
 record_writes.write_in(w, h) :- ranked_race(_, _, w, _, _), records.act(w, h, _, _, _, _).
 
-.decl mnesia_check_act(mod: symbol, func: symbol, table: symbol, key: symbol, read: symbol, write: symbol, op: symbol, kind: symbol)
+.decl mnesia_check_act(mod: symbol, func: symbol, table: symbol, key: symbol, read: symbol, write: symbol, operation: symbol, kind: symbol)
 .output mnesia_check_act
 
 mnesia_check_act(mod, func, table, key, read, write, op, harm) :-

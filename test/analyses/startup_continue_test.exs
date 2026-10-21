@@ -98,7 +98,7 @@ defmodule Argus.Analyses.StartupContinueTest do
                Rows.where(results, :startup, "blocks_on_peer",
                  phase: "continue",
                  kind: "parent",
-                 drop: [:phase, :kind, :ordering, :sup]
+                 drop: [:phase, :kind, :ordering, :supervisor]
                )
 
       assert sup == "Argus.Test.Fixtures.ContinueParentSupervisor"

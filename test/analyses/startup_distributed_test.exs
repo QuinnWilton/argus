@@ -14,7 +14,7 @@ defmodule Argus.Analyses.StartupDistributedTest do
     do:
       Rows.where(results, :startup, "blocks_on_peer",
         kind: "remote",
-        drop: [:phase, :dep, :kind, :ordering, :sup]
+        drop: [:phase, :dependency, :kind, :ordering, :supervisor]
       )
 
   describe "blocks_on_peer: remote" do

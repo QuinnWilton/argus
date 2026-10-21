@@ -794,7 +794,7 @@ may_give_up(m) :- direct_caller(_, m, f), sync_dependency_timeout(f, m, ms), ms 
 may_give_up(m) :- direct_caller(_, m, f), !sync_dependency_timeout(f, m, _).
 
 // The number of modules calling each such server directly.
-.decl sync_call_fan_in(target_mod: symbol, cnt: number, waits: symbol)
+.decl sync_call_fan_in(target_mod: symbol, count: number, waits: symbol)
 .output sync_call_fan_in
 
 sync_call_fan_in(target_mod, cnt, waits) :-

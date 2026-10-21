@@ -285,7 +285,13 @@ defmodule Argus.Extractors.DependenceTest do
         Argus.Pipeline.extract(modules, extractors: [ProcessRegistry, ETS, Mnesia])
 
       ids =
-        for relation <- [:name_lookup, :creating_operation, :name_release, :ets_operation, :mnesia_operation],
+        for relation <- [
+              :name_lookup,
+              :creating_operation,
+              :name_release,
+              :ets_operation,
+              :mnesia_operation
+            ],
             [id | _] <- Map.get(facts, relation, []),
             do: id
 

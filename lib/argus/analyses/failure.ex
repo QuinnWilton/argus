@@ -270,10 +270,10 @@ defmodule Argus.Analyses.Failure do
         fields: [
           {:func, :symbol, "the callback sending the exit"},
           {:target, :symbol, "the supervised child's module"},
-          {:sup, :symbol, "the supervisor that owns it"},
-          {:sup_site, :symbol, "where the supervisor defines its children"}
+          {:supervisor, :symbol, "the supervisor that owns it"},
+          {:supervisor_site, :symbol, "where the supervisor defines its children"}
         ],
-        key: [:func, :target, :sup],
+        key: [:func, :target, :supervisor],
         evidence: %{of: :orphan_process, on: [:func, :target]},
         doc: "The supervisor that owns an exit signal's target, attached to its finding."
       },

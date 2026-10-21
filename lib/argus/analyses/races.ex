@@ -44,7 +44,7 @@ defmodule Argus.Analyses.Races do
     another call. One row per write. A table the program's users hand
     in, which nothing in view names, is `name`d by the parameter it
     arrives in (`param 0`, counted from 0).
-  - `mnesia_check_act(mod, func, table, key, read, write, op, kind)` — a
+  - `mnesia_check_act(mod, func, table, key, read, write, operation, kind)` — a
     dirty read decides or feeds a dirty write (`op`: `dirty_write`,
     `dirty_delete` or `dirty_delete_object`) of the same record, and
     another process can write the table. One row per write: `kind` says
@@ -246,7 +246,7 @@ defmodule Argus.Analyses.Races do
           {:key, :symbol, "the key, as func identifies it"},
           {:read, :symbol, "instruction ID of the dirty read"},
           {:write, :symbol, "instruction ID of the dirty write it decides or feeds"},
-          {:op, :symbol, "dirty_write | dirty_delete | dirty_delete_object"},
+          {:operation, :symbol, "dirty_write | dirty_delete | dirty_delete_object"},
           {:kind, :symbol,
            "unique | lost_update | guarded | claim | delete | decides_more | fill"}
         ],

@@ -189,7 +189,7 @@ defmodule Argus.Priors.Questions.ProcessRole do
       closures: group(rows.(:closure_def), & &1.parent_func, & &1.closure_func),
       sync_calls: group(rows.(:sync_call), & &1.caller_func, & &1.callee_mod),
       async_casts: group(rows.(:async_cast), & &1.caller_func, & &1.callee_mod),
-      sup_children: group(rows.(:supervisor_child), & &1.child_mod, & &1.sup),
+      sup_children: group(rows.(:supervisor_child), & &1.child_mod, & &1.supervisor),
       registered: group(registered, &elem(&1, 0), &elem(&1, 1))
     }
   end

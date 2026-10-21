@@ -41,7 +41,7 @@ timer_message_unknown(mod) :-
   !resolved_arg(a, pos, _),
   function_def(a, mod, _, _, _).
 
-.decl takes_timer_message(recv: symbol)
+.decl takes_timer_message(receive: symbol)
 
 takes_timer_message(id) :- receive_pattern(id, _, "any").
 takes_timer_message(id) :- receive_pattern(id, _, ":timeout").
@@ -51,7 +51,7 @@ takes_timer_message(id) :-
   function_def(f, mod, _, _, _),
   timer_message(mod, lit).
 
-.decl waits_for_other(recv: symbol)
+.decl waits_for_other(receive: symbol)
 
 waits_for_other(id) :-
   receive_pattern(id, f, _),
@@ -60,14 +60,14 @@ waits_for_other(id) :-
   !timer_message_unknown(mod),
   !takes_timer_message(id).
 
-.decl flush_receive(recv: symbol)
+.decl flush_receive(receive: symbol)
 
 flush_receive(id) :-
   receive_start(id, _, 1, _),
   receive_flush(id, _, _),
   !waits_for_other(id).
 
-.decl flush_poll(recv: symbol)
+.decl flush_poll(receive: symbol)
 
 flush_poll(id) :-
   receive_start(id, _, 0, _),

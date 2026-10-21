@@ -1281,7 +1281,7 @@ sink_endpoint(sink, verb, path, plug) :-
 
 // Each request starts a child under an uncapped dynamic supervisor without waiting for
 // completion, allowing processes to accumulate.
-.decl unbounded_request_child(sup: symbol, child: symbol, via: symbol, kind: symbol)
+.decl unbounded_request_child(supervisor: symbol, child: symbol, via: symbol, kind: symbol)
 
 unbounded_request_child(sup, child, via, kind) :-
   starts_child(via, sup, child),
@@ -1290,14 +1290,14 @@ unbounded_request_child(sup, child, via, kind) :-
   !disabled_transport(sup),
   !waits_for_child(via, child).
 
-.decl unbounded_children_from_request(sup: symbol, child: symbol, via: symbol, kind: symbol)
+.decl unbounded_children_from_request(supervisor: symbol, child: symbol, via: symbol, kind: symbol)
 .output unbounded_children_from_request
 
 unbounded_children_from_request(sup, child, via, kind) :-
   unbounded_request_child(sup, child, via, kind).
 
 // `via` starts a `child` under the dynamic supervisor `sup`.
-.decl starts_child(via: symbol, sup: symbol, child: symbol)
+.decl starts_child(via: symbol, supervisor: symbol, child: symbol)
 
 starts_child(via, sup, child) :- dynamic_child(sup, child, via).
 
@@ -1307,7 +1307,7 @@ starts_child(via, sup, child) :- dynamic_child(sup, child, via).
 // "dynamic"). Dynamic option rows block this conclusion. Pid targets are not resolved
 // by points-to here; inline or external supervisors without visible options are
 // treated as uncapped, a known limitation.
-.decl uncapped_supervisor(sup: symbol)
+.decl uncapped_supervisor(supervisor: symbol)
 
 uncapped_supervisor(sup) :-
   dynamic_child(sup, _, _),
@@ -1315,7 +1315,7 @@ uncapped_supervisor(sup) :-
   !supervisor_max_children(sup, _),
   !capped_task_supervisor(sup).
 
-.decl capped_task_supervisor(sup: symbol)
+.decl capped_task_supervisor(supervisor: symbol)
 
 capped_task_supervisor(sup) :- task_supervisor_cap(sup, limit), limit != "infinity".
 
@@ -1374,11 +1374,11 @@ streams_detached(via) :-
 
 // Require evidence that a dependency's transport is enabled. Phoenix socket options are
 // visible in compiled __sockets__/0 literals; runtime configuration may remain unknown.
-.decl transport_supervisor(sup: symbol, transport: symbol)
+.decl transport_supervisor(supervisor: symbol, transport: symbol)
 
 transport_supervisor("Phoenix.Transports.LongPoll.Supervisor", "longpoll").
 
-.decl disabled_transport(sup: symbol)
+.decl disabled_transport(supervisor: symbol)
 
 disabled_transport(sup) :-
   transport_supervisor(sup, transport),

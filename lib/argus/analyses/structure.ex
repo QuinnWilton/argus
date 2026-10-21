@@ -2,15 +2,15 @@ defmodule Argus.Analyses.Structure do
   @moduledoc """
   A child spec, registration or tree shape that is wrong on its own.
 
-  - `supervisor_registered_as_worker(sup, child, position)` — a child
+  - `supervisor_registered_as_worker(supervisor, child, position)` — a child
     spec that says `type: :worker`, or a map spec that says no type (a
     worker by default), for a module that is a supervisor, so it gets a
     finite shutdown and its grandchildren are orphaned rather than
     terminated.
-  - `own_spec_registered_as_worker(child, sup, via)` — the same defect
+  - `own_spec_registered_as_worker(child, supervisor, via)` — the same defect
     written in the child's own child_spec/1: a map with no type, which a
     shorthand or a `DynamicSupervisor.start_child/2` of one takes.
-  - `consumer_supervisor_permanent_child(sup, child, sup_site)` — a
+  - `consumer_supervisor_permanent_child(supervisor, child, supervisor_site)` — a
     ConsumerSupervisor template with `restart: :permanent` restarts every
     finished child.
   - `duplicate_process_name(name, mod1, mod2, site1, site2)` — one name
@@ -53,18 +53,18 @@ defmodule Argus.Analyses.Structure do
       %{
         name: :supervisor_registered_as_worker,
         fields: [
-          {:sup, :symbol, "the parent supervisor"},
+          {:supervisor, :symbol, "the parent supervisor"},
           {:child, :symbol, "the child, which is itself a supervisor"},
           {:position, :number, "the child's start position"}
         ],
-        key: [:sup, :child],
+        key: [:supervisor, :child],
         doc: "A supervisor child spec that says type: :worker, or a map spec that says no type."
       },
       %{
         name: :own_spec_registered_as_worker,
         fields: [
           {:child, :symbol, "the child, which is itself a supervisor"},
-          {:sup, :symbol, "the supervisor a shorthand names it under, or dynamic"},
+          {:supervisor, :symbol, "the supervisor a shorthand names it under, or dynamic"},
           {:via, :symbol,
            "the function whose DynamicSupervisor.start_child/2 starts it; empty for a child list"}
         ],
@@ -74,9 +74,9 @@ defmodule Argus.Analyses.Structure do
       %{
         name: :consumer_supervisor_permanent_child,
         fields: [
-          {:sup, :symbol, "the ConsumerSupervisor"},
+          {:supervisor, :symbol, "the ConsumerSupervisor"},
           {:child, :symbol, "the child template module"},
-          {:sup_site, :symbol, "where the template is declared"}
+          {:supervisor_site, :symbol, "where the template is declared"}
         ],
         doc: "A ConsumerSupervisor child template with restart :permanent."
       },

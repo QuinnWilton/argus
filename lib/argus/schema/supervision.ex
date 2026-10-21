@@ -37,7 +37,7 @@ defmodule Argus.Schema.Supervision do
         name: :supervisor_child,
         layer: 2,
         fields: [
-          {:sup, :symbol, "supervisor module"},
+          {:supervisor, :symbol, "supervisor module"},
           {:position, :number, "child start order"},
           {:child_mod, :symbol, "child module"},
           {:restart, :symbol,
@@ -55,7 +55,7 @@ defmodule Argus.Schema.Supervision do
       %{
         name: :supervisor_children_open,
         layer: 2,
-        fields: [{:sup, :symbol, "supervisor module"}],
+        fields: [{:supervisor, :symbol, "supervisor module"}],
         doc: """
         A child list with an unresolved element or tail. Its `supervisor_child` rows and \
         positions are partial; unseen children may start after any listed child. Fully \
@@ -66,7 +66,7 @@ defmodule Argus.Schema.Supervision do
         name: :supervisor_child_form,
         layer: 2,
         fields: [
-          {:sup, :symbol, "supervisor module"},
+          {:supervisor, :symbol, "supervisor module"},
           {:position, :number,
            "child start order — matches the paired supervisor_child.position"},
           {:form, :symbol, "'explicit' | 'shorthand'"}
@@ -82,7 +82,7 @@ defmodule Argus.Schema.Supervision do
         name: :supervisor_child_name,
         layer: 2,
         fields: [
-          {:sup, :symbol, "supervisor module"},
+          {:supervisor, :symbol, "supervisor module"},
           {:position, :number,
            "child start order — matches the paired supervisor_child.position"},
           {:name, :symbol, "registered name from the child spec's :name option"}
@@ -152,7 +152,7 @@ defmodule Argus.Schema.Supervision do
         name: :dynamic_child,
         layer: 2,
         fields: [
-          {:sup, :symbol, "supervisor module (or 'dynamic' if not statically resolvable)"},
+          {:supervisor, :symbol, "supervisor module (or 'dynamic' if not statically resolvable)"},
           {:child_mod, :symbol, "child module being started"},
           {:caller_func, :symbol, "function that calls start_child"}
         ],
@@ -165,7 +165,7 @@ defmodule Argus.Schema.Supervision do
         name: :shorthand_arg,
         layer: 2,
         fields: [
-          {:sup, :symbol, "supervisor, as the start's own row names it"},
+          {:supervisor, :symbol, "supervisor, as the start's own row names it"},
           {:child_mod, :symbol, "child module"},
           {:at, :symbol,
            "the start: its position in the child list, or the function that calls start_child"},
@@ -183,7 +183,7 @@ defmodule Argus.Schema.Supervision do
         name: :shorthand_option,
         layer: 2,
         fields: [
-          {:sup, :symbol, "supervisor, as shorthand_arg's"},
+          {:supervisor, :symbol, "supervisor, as shorthand_arg's"},
           {:child_mod, :symbol, "child module, as shorthand_arg's"},
           {:at, :symbol, "the start, as shorthand_arg's"},
           {:key, :symbol, "an option key the argument holds"},
@@ -195,7 +195,7 @@ defmodule Argus.Schema.Supervision do
         name: :dynamic_child_restart,
         layer: 2,
         fields: [
-          {:sup, :symbol, "supervisor module (or 'dynamic'), as dynamic_child's"},
+          {:supervisor, :symbol, "supervisor module (or 'dynamic'), as dynamic_child's"},
           {:child_mod, :symbol, "child module, as dynamic_child's"},
           {:caller_func, :symbol, "function that calls start_child, as dynamic_child's"},
           {:restart, :symbol,
@@ -213,7 +213,7 @@ defmodule Argus.Schema.Supervision do
         name: :added_child,
         layer: 2,
         fields: [
-          {:sup, :symbol,
+          {:supervisor, :symbol,
            "supervisor the child is added to (or 'dynamic' if not statically resolvable)"},
           {:child_mod, :symbol, "child module"},
           {:restart, :symbol,
@@ -235,8 +235,9 @@ defmodule Argus.Schema.Supervision do
         fields: [
           {:id, :instr_id, "the call"},
           {:func, :func_id, "the function making it"},
-          {:op, :symbol, "start_child, async, async_nolink, async_stream or async_stream_nolink"},
-          {:sup, :symbol,
+          {:operation, :symbol,
+           "start_child, async, async_nolink, async_stream or async_stream_nolink"},
+          {:supervisor, :symbol,
            "the Task.Supervisor the call names: its registered name, a " <>
              "PartitionSupervisor's name for a {:via, PartitionSupervisor, {name, key}}, " <>
              "or 'dynamic' (a pid, a {name, node}, a name the reader cannot read)"}
@@ -251,7 +252,7 @@ defmodule Argus.Schema.Supervision do
         name: :task_supervisor_cap,
         layer: 2,
         fields: [
-          {:sup, :symbol,
+          {:supervisor, :symbol,
            "the name it is registered under (a PartitionSupervisor's for its " <>
              "partitions), or 'dynamic' when the options state none the reader reads"},
           {:limit, :symbol,
@@ -269,7 +270,7 @@ defmodule Argus.Schema.Supervision do
         name: :supervisor_max_children,
         layer: 2,
         fields: [
-          {:sup, :symbol, "the DynamicSupervisor module"},
+          {:supervisor, :symbol, "the DynamicSupervisor module"},
           {:limit, :symbol, "the configured cap, 'dynamic' when the options may set one"}
         ],
         doc: """

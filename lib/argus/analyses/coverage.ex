@@ -25,7 +25,7 @@ defmodule Argus.Analyses.Coverage do
   - `imprecision_event(category, func, relation, reason)` — raw
     fallback events emitted by the extractors. One row per
     `track_dynamic`/`track_imprecision` call site that fired.
-  - `coverage_supervisor_no_children(sup)` — supervisor recognized but
+  - `coverage_supervisor_no_children(supervisor)` — supervisor recognized but
     no static or dynamic children recovered.
   - `coverage_genserver_isolated(mod)` — GenServer module with zero
     observed sync_call/async_cast traffic.
@@ -84,7 +84,7 @@ defmodule Argus.Analyses.Coverage do
       },
       %{
         name: :coverage_supervisor_no_children,
-        fields: [{:sup, :symbol, "supervisor module"}],
+        fields: [{:supervisor, :symbol, "supervisor module"}],
         doc:
           "Supervisor recognized but neither static (supervisor_child) nor dynamic (dynamic_child) children were extracted."
       },

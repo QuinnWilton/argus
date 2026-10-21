@@ -110,7 +110,7 @@ module_identity("module field").
   // identity. Parameters are not carriers here; their caller determines the check and
   // meeting point.
 
-  .decl carries(f: symbol, kind: symbol, src: symbol, c: symbol, rs: symbol, r: symbol, ks: symbol, k: symbol)
+  .decl carries(f: symbol, kind: symbol, source: symbol, c: symbol, rs: symbol, r: symbol, ks: symbol, k: symbol)
 
   carries(f, "site", c, c, rs, r, ks, k) :- check(c, f, rs, r, ks, k).
 
@@ -232,11 +232,11 @@ module_identity("module field").
 
   // Compute which value sources decide each act once, then join to the checks those
   // values carry. This avoids repeating the act traversal per check.
-  .decl carrier(f: symbol, kind: symbol, src: symbol)
+  .decl carrier(f: symbol, kind: symbol, source: symbol)
 
   carrier(f, kind, src) :- carries(f, kind, src, _, _, _, _, _).
 
-  .decl decides(f: symbol, kind: symbol, src: symbol, a: symbol, rs: symbol, r: symbol, ks: symbol, k: symbol)
+  .decl decides(f: symbol, kind: symbol, source: symbol, a: symbol, rs: symbol, r: symbol, ks: symbol, k: symbol)
 
   // The act is in f.
   decides(f, kind, src, a, rs, r, ks, k) :-
@@ -391,7 +391,7 @@ delivers_message(f) :-
 .comp DecisionSends {
   // A value in `func`, on the path of the pair meeting in `meet`, that
   // carries `read`.
-  .decl carried(meet: symbol, func: symbol, kind: symbol, src: symbol, read: symbol)
+  .decl carried(meet: symbol, func: symbol, kind: symbol, source: symbol, read: symbol)
 
   .decl sends(meet: symbol, read: symbol)
 
@@ -420,7 +420,7 @@ delivers_message(f) :-
   returns_read(g) :- returns_reads(g, "call", g2), returns_read(g2).
 
   // The values the question reaches, in the function holding them.
-  .decl asked(func: symbol, kind: symbol, src: symbol)
+  .decl asked(func: symbol, kind: symbol, source: symbol)
 
   asked(h, k, s) :- write(w, h), site_reads(w, h, k, s).
 
@@ -459,7 +459,7 @@ delivers_message(f) :-
     call_arg_depends(g, g2, n, "param", q),
     maps_param(g2, n_text), n_text = to_string(n).
 
-  .decl made(func: symbol, kind: symbol, src: symbol)
+  .decl made(func: symbol, kind: symbol, source: symbol)
 
   made(h, "site", r) :- asked(h, "site", r), read(r).
   made(h, "call", g) :- asked(h, "call", g), returns_read(g).
@@ -514,7 +514,7 @@ delivers_message(f) :-
   returns_read(g, r) :- returns_read(k, r), returns_reads(g, "call", k).
 
   // In the meeting function, the value (kind, src) is made of the read.
-  .decl value(func: symbol, kind: symbol, src: symbol, read: symbol)
+  .decl value(func: symbol, kind: symbol, source: symbol, read: symbol)
 
   value(f, "site", r, r) :- pair(f, r, _), read_in(r, f).
   value(f, "call", g, r) :- pair(f, r, _), call_edge(f, g), returns_read(g, r).
@@ -598,9 +598,9 @@ delivers_message(f) :-
 
   // A pair's write stores a fresh call result or other-store read, computed at the
   // meeting function, in a helper, or forwarded down to the write.
-  .decl fresh(kind: symbol, src: symbol)
+  .decl fresh(kind: symbol, source: symbol)
 
-  .decl fresh_param(meet: symbol, func: symbol, pos: symbol, kind: symbol, src: symbol)
+  .decl fresh_param(meet: symbol, func: symbol, pos: symbol, kind: symbol, source: symbol)
 
   fresh_param(f, g, to_string(n), kind, src) :-
     pair(f, _, _),
@@ -613,7 +613,7 @@ delivers_message(f) :-
 
   // fresh_used(f, r, w, kind, src): the fresh value (kind, src) is what
   // the write stores, on the path of the pair meeting in `func`.
-  .decl fresh_used(func: symbol, read: symbol, write: symbol, kind: symbol, src: symbol)
+  .decl fresh_used(func: symbol, read: symbol, write: symbol, kind: symbol, source: symbol)
 
   fresh_used(f, r, w, kind, src) :-
     pair(f, r, w),

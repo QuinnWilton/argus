@@ -58,7 +58,7 @@ defmodule Argus.Analyses.UnsafeInput do
     bytes unproven.
   - `sink_endpoint(sink, verb, path, plug)` — the HTTP route a sink is
     reachable from, when the router literal names one.
-  - `unbounded_children_from_request(sup, child, via, kind)` —
+  - `unbounded_children_from_request(supervisor, child, via, kind)` —
     `start_child` on an uncapped DynamicSupervisor, reachable from a
     request: processes an outside party can create without limit.
 
@@ -272,12 +272,12 @@ defmodule Argus.Analyses.UnsafeInput do
       %{
         name: :unbounded_children_from_request,
         fields: [
-          {:sup, :symbol, "the uncapped DynamicSupervisor"},
+          {:supervisor, :symbol, "the uncapped DynamicSupervisor"},
           {:child, :symbol, "the module being started"},
           {:via, :symbol, "the function calling start_child"},
           {:kind, :symbol, "the entry surface"}
         ],
-        key: [:sup, :child],
+        key: [:supervisor, :child],
         doc: "start_child on an uncapped DynamicSupervisor, reachable from a request."
       },
       Argus.Findings.Tooling.relation()

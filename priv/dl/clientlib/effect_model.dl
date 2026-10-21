@@ -53,7 +53,7 @@ config_write_api(c) :- post_start_call(_, _, c), match("Application:put_all_env/
 // identifies operations without a specific key. ETS delete/1 and delete/2 both use op
 // `delete`; mode distinguishes table deletion. Shared by race, growth, missing-row, and
 // bookkeeping checks.
-.decl ets_removal_operation(op: symbol)
+.decl ets_removal_operation(operation: symbol)
 
 ets_removal_operation("delete").
 ets_removal_operation("delete_object").
@@ -62,7 +62,7 @@ ets_removal_operation("select_delete").
 ets_removal_operation("match_delete").
 ets_removal_operation("take").
 
-.decl ets_removes_every_key(op: symbol)
+.decl ets_removes_every_key(operation: symbol)
 
 ets_removes_every_key("delete_all_objects").
 ets_removes_every_key("select_delete").
@@ -72,7 +72,7 @@ ets_removes_every_key("match_delete").
 // for absent tables. `ets_raises_without_row` identifies lookup_element/3 and
 // update_counter/3; /4 forms supply defaults and update_element returns false.
 // failure.dl separately checks operations failing only on table absence.
-.decl ets_answers_missing_table(op: symbol)
+.decl ets_answers_missing_table(operation: symbol)
 
 ets_answers_missing_table("info").
 ets_answers_missing_table("whereis").

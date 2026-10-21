@@ -186,7 +186,7 @@
 // terminate, its cleanup helper and that helper's API call.
 .comp ForwardBoundedCallReach {
   .decl root(root: symbol, func: symbol)
-  .decl limit(n: number)
+  .decl limit(count: number)
   .decl reaches(root: symbol, func: symbol, depth: number)
   reaches(r, f, 0) :- root(r, f).
   reaches(r, h, d + 1) :- reaches(r, g, d), limit(n), d < n, call_edge(g, h).
@@ -250,7 +250,7 @@
 // to the callers that reach them within `limit` calls.
 .comp BackwardBoundedCallReach {
   .decl root(root: symbol, func: symbol)
-  .decl limit(n: number)
+  .decl limit(count: number)
   .decl reaches(root: symbol, func: symbol, depth: number)
   reaches(r, f, 0) :- root(r, f).
   reaches(r, g, d + 1) :- reaches(r, h, d), limit(n), d < n, call_edge(g, h).

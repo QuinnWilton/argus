@@ -174,7 +174,7 @@ defmodule Argus.Analyses.Blocking do
         name: :sync_call_fan_in,
         fields: [
           {:target_mod, :symbol, "target GenServer module"},
-          {:cnt, :number, "number of distinct modules calling it directly"},
+          {:count, :number, "number of distinct modules calling it directly"},
           {:waits, :symbol,
            "infinity when every call waits with :infinity; bounded when some can time out"}
         ],

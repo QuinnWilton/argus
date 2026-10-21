@@ -18,19 +18,19 @@ defmodule Argus.Analyses.Shutdown do
     them into: `no_handler` (a gen_server with no handle_info),
     `no_exit_clause` in the handle_info it has, or `no_receive_clause`
     (a hand-rolled loop whose receives have no clause for it).
-  - `teardown_touches_sibling(mod, sibling, phase, kind, via, sup,
-    handler, site, sup_site)` —
+  - `teardown_touches_sibling(mod, sibling, phase, kind, via, supervisor,
+    handler, site, supervisor_site)` —
     terminate/2 waits on a sibling that may already be gone (`terminate`,
     `call`), or a handler stops a sibling the supervisor owns (`handler`,
     `stop`).
-  - `foreign_dynamic_children(mod, sup, via, site, sup_site)` — children started under a
+  - `foreign_dynamic_children(mod, supervisor, via, site, supervisor_site)` — children started under a
     supervisor in another tree outlive this one. One finding per start, with
     every process that makes it (`foreign_children_starter`). A LiveView's or a
     channel's start under the supervisors of the application serving it (its
     tree holds the endpoint) is a hand-off.
   - `kills_monitored_child(mod, site, kill_site)` — a server terminates a
     process it still monitors, so the `:DOWN` reads as a crash.
-  - `permanent_child_stops_normally(sup, child, reason, site, sup_site)`
+  - `permanent_child_stops_normally(supervisor, child, reason, site, supervisor_site)`
     — a permanent child returns `{:stop, :normal, ...}` and is started
     straight back.
   - `orphaned_os_process(owner, kill, how, start, program, api, via)` — a
@@ -126,10 +126,10 @@ defmodule Argus.Analyses.Shutdown do
           {:kind, :symbol,
            "call | call_restart | call_unordered (order or strategy unknown) | stop"},
           {:via, :symbol, "function performing the call or stop"},
-          {:sup, :symbol, "the supervisor both sit under, where their branches meet"},
+          {:supervisor, :symbol, "the supervisor both sit under, where their branches meet"},
           {:handler, :symbol, "the callback of mod the row belongs to"},
           {:site, :symbol, "the call that makes the dependency, when direct; else empty"},
-          {:sup_site, :symbol, "where the supervisor places both, else empty"}
+          {:supervisor_site, :symbol, "where the supervisor places both, else empty"}
         ],
         key: [:mod, :sibling, :phase],
         doc:
@@ -151,13 +151,13 @@ defmodule Argus.Analyses.Shutdown do
         name: :foreign_dynamic_children,
         fields: [
           {:mod, :symbol, "module that starts the children"},
-          {:sup, :symbol,
+          {:supervisor, :symbol,
            "the supervisor they are started under (a DynamicSupervisor or a Task.Supervisor)"},
           {:via, :symbol, "function that calls start_child"},
           {:site, :symbol, "the start_child call, else empty"},
-          {:sup_site, :symbol, "where the other tree defines the supervisor, else empty"}
+          {:supervisor_site, :symbol, "where the other tree defines the supervisor, else empty"}
         ],
-        key: [:sup, :via, :site],
+        key: [:supervisor, :via, :site],
         doc:
           "A process starts children under a supervisor in another tree " <>
             "and its terminate/2 does not stop them."
@@ -197,13 +197,13 @@ defmodule Argus.Analyses.Shutdown do
       %{
         name: :permanent_child_stops_normally,
         fields: [
-          {:sup, :symbol, "supervisor module"},
+          {:supervisor, :symbol, "supervisor module"},
           {:child, :symbol, "the permanent child"},
           {:reason, :symbol, "the literal stop reason: ':normal' or ':shutdown'"},
           {:site, :symbol, "the {:stop, ...} return site in the child"},
-          {:sup_site, :symbol, "the instruction that defines the tree"}
+          {:supervisor_site, :symbol, "the instruction that defines the tree"}
         ],
-        key: [:sup, :child],
+        key: [:supervisor, :child],
         doc:
           "A permanent child returns {:stop, :normal | :shutdown, ...}; the supervisor restarts it."
       },

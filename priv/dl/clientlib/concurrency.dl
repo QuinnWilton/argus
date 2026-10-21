@@ -20,7 +20,7 @@
 
   // A process a start in `starter` runs `runs` in. A start that sits
   // where no request enters (unrequested, below) starts nothing.
-  .decl spawned(proc: symbol, starter: symbol, runs: symbol)
+  .decl spawned(process: symbol, starter: symbol, runs: symbol)
   spawned(p, s, r) :- process_start(id, s, p, kind, r), kind != "server", !unrequested(id, s).
 
   // The starts whose process reaches a seed, walked back from too: what
@@ -104,14 +104,14 @@
   // competing send or timer with the same tag, and every callback path to x gated until
   // the report is received. Reporting before work finishes or serving early invalidates
   // the ordering.
-  .decl handed_off(proc: symbol, entry: symbol, func: symbol)
+  .decl handed_off(process: symbol, entry: symbol, func: symbol)
   handed_off(p, m, x) :-
     sole_report(p, m, t),
     seed(x),
     entry_reaches(m, x),
     !early_call(m, x, t).
 
-  .decl loader(proc: symbol, entry: symbol, runs: symbol)
+  .decl loader(process: symbol, entry: symbol, runs: symbol)
   loader(p, m, r) :-
     spawned(p, s, r),
     process_entry(m, c),
@@ -122,7 +122,7 @@
 
   // The loader's last act, a send to m's server alone, and the tag it
   // spells.
-  .decl report_site(proc: symbol, entry: symbol, tag: symbol, site: symbol)
+  .decl report_site(process: symbol, entry: symbol, tag: symbol, site: symbol)
   report_site(p, m, t, id) :-
     loader(p, m, r),
     last_send(id, r),
@@ -141,10 +141,10 @@
 
   // The report is the sole known producer of tag t for m. Other sends target different
   // processes, and no timer produces t.
-  .decl sole_report(proc: symbol, entry: symbol, tag: symbol)
+  .decl sole_report(process: symbol, entry: symbol, tag: symbol)
   sole_report(p, m, t) :- report_site(p, m, t, _), !other_report(p, m, t).
 
-  .decl other_report(proc: symbol, entry: symbol, tag: symbol)
+  .decl other_report(process: symbol, entry: symbol, tag: symbol)
   other_report(p, m, t) :-
     report_site(p, m, t, _),
     process_send_var(id, _, msg, _, _),

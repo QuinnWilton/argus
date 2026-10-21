@@ -7,7 +7,7 @@
 // Maps every module in a supervisor's subtree to the direct child
 // branch it belongs to. A direct child is its own branch root.
 
-.decl child_subtree(sup: symbol, branch: symbol, mod: symbol)
+.decl child_subtree(supervisor: symbol, branch: symbol, mod: symbol)
 
 child_subtree(sup, child, child) :- supervisor_child(sup, _, child, _, _).
 
@@ -37,7 +37,7 @@ child_subtree(sup, branch, descendant) :-
 // Unknown specs, missing child_spec code, and unresolved arguments yield no policy.
 // Task.Supervisor task restart options are not modeled. Consumers must use this
 // relation rather than assuming defaults for unknown values.
-.decl restart_policy(sup: symbol, child: symbol, restart: symbol)
+.decl restart_policy(supervisor: symbol, child: symbol, restart: symbol)
 
 restart_policy(sup, child, restart) :- child_restart(sup, _, child, restart), known_restart(restart).
 restart_policy(sup, child, restart) :- dynamic_restart(sup, child, _, restart), known_restart(restart).
@@ -51,7 +51,7 @@ known_restart("temporary").
 
 // A child's restart policy at position pos, from its explicit spec or shorthand
 // child_spec. Map specs default to permanent unless overridden.
-.decl child_restart(sup: symbol, pos: number, child: symbol, restart: symbol)
+.decl child_restart(supervisor: symbol, pos: number, child: symbol, restart: symbol)
 
 child_restart(sup, pos, child, restart) :-
   supervisor_child(sup, pos, child, restart, _),
@@ -64,7 +64,7 @@ child_restart(sup, pos, child, restart) :-
 // A dynamic child's restart comes from its explicit spec or override, otherwise its
 // shorthand module's child_spec. A known map lacking restart uses permanent.
 // Task.Supervisor task starts use API options instead and have no row here.
-.decl dynamic_restart(sup: symbol, child: symbol, caller: symbol, restart: symbol)
+.decl dynamic_restart(supervisor: symbol, child: symbol, caller: symbol, restart: symbol)
 
 dynamic_restart(sup, child, f, restart) :- dynamic_child_restart(sup, child, f, restart).
 
@@ -76,7 +76,7 @@ dynamic_restart(sup, child, f, restart) :-
 
 // A Supervisor.start_child's child runs under the restart its spec
 // states; a shorthand's (`own`) is its module's own.
-.decl added_restart(sup: symbol, child: symbol, caller: symbol, restart: symbol)
+.decl added_restart(supervisor: symbol, child: symbol, caller: symbol, restart: symbol)
 
 added_restart(sup, child, f, restart) :- added_child(sup, child, restart, _, f), restart != "own".
 
@@ -87,14 +87,14 @@ added_restart(sup, child, f, restart) :-
 // The restart the shorthand start `at` (a position in sup's child list,
 // or the function that calls start_child) gets from child's own
 // child_spec/1 (own_field).
-.decl own_restart(sup: symbol, child: symbol, at: symbol, restart: symbol)
+.decl own_restart(supervisor: symbol, child: symbol, at: symbol, restart: symbol)
 
 own_restart(sup, child, at, restart) :- own_field(sup, child, at, "restart", restart).
 
 // Resolve a shorthand child-spec field from the module's declared value or an argument
 // option. Use the option default only for a fully known options argument lacking the
 // key. Unreadable values or arguments remain unknown.
-.decl own_field(sup: symbol, child: symbol, at: symbol, field: symbol, value: symbol)
+.decl own_field(supervisor: symbol, child: symbol, at: symbol, field: symbol, value: symbol)
 
 own_field(sup, child, at, "restart", restart) :-
   shorthand_arg(sup, child, at, _),
@@ -117,7 +117,7 @@ own_field(sup, child, at, field, default) :-
 // Start order between different branches of one supervisor. The earlier branch is
 // running when the later branch initializes; under rest_for_one, its crash also
 // restarts the later branch.
-.decl starts_before(sup: symbol, earlier: symbol, later: symbol, earlier_pos: number, later_pos: number)
+.decl starts_before(supervisor: symbol, earlier: symbol, later: symbol, earlier_pos: number, later_pos: number)
 
 starts_before(sup, earlier, later, epos, lpos) :-
   supervisor(sup, _),
@@ -134,11 +134,11 @@ starts_before(sup, earlier, later, epos, lpos) :-
 // `boot_subtree` includes only static children and dynamic children started by init
 // during boot; `boots_before` orders those startup operations. Ordinary on-demand
 // children start after their supervisor is already running.
-.decl template_supervisor(sup: symbol)
+.decl template_supervisor(supervisor: symbol)
 
 template_supervisor(sup) :- supervisor(sup, "simple_one_for_one").
 
-.decl boot_subtree(sup: symbol, branch: symbol, mod: symbol)
+.decl boot_subtree(supervisor: symbol, branch: symbol, mod: symbol)
 
 boot_subtree(sup, child, child) :-
   supervisor_child(sup, _, child, _, _),
@@ -187,7 +187,7 @@ erlang_start_child(f, pool) :-
   call_arg(f, ":supervisor:start_child/2", 0, pool),
   pool != "dynamic".
 
-.decl boots_before(sup: symbol, earlier: symbol, later: symbol, earlier_pos: number, later_pos: number)
+.decl boots_before(supervisor: symbol, earlier: symbol, later: symbol, earlier_pos: number, later_pos: number)
 
 boots_before(sup, earlier, later, epos, lpos) :-
   supervisor(sup, _),
@@ -201,7 +201,7 @@ boots_before(sup, earlier, later, epos, lpos) :-
 // An application root supervisor is started by Application.start/2 and by no other
 // visible supervisor. Its death ends the application; it has no independent restart.
 // Exclude supervisors also started elsewhere.
-.decl application_root(sup: symbol)
+.decl application_root(supervisor: symbol)
 
 application_root(sup) :-
   behaves_as(app, "Application"),
@@ -240,7 +240,7 @@ ends_with(d, o) :-
 //
 // Two direct children of one supervisor: the modules whose lifetimes it
 // sequences together.
-.decl sibling(sup: symbol, a: symbol, b: symbol)
+.decl sibling(supervisor: symbol, a: symbol, b: symbol)
 
 sibling(sup, a, b) :-
   supervisor_child(sup, _, a, _, _),
@@ -249,14 +249,14 @@ sibling(sup, a, b) :-
 
 // Supervisor management APIs. Project supervisor_call to exclude GenServer.stop, which is also
 // recorded there under "GenServer".
-.decl supervisor_management_call(id: symbol, func: symbol, api: symbol, op: symbol, target: symbol)
+.decl supervisor_management_call(id: symbol, func: symbol, api: symbol, operation: symbol, target: symbol)
 
 supervisor_management_call(id, func, api, op, target) :-
   supervisor_call(id, func, api, op, target),
   api != "GenServer".
 
 // Operations that create a child in the target supervisor.
-.decl child_creating_operation(op: symbol)
+.decl child_creating_operation(operation: symbol)
 
 child_creating_operation("start_child").
 child_creating_operation("async").
@@ -274,7 +274,7 @@ child_start_reach.seed(start, start) :- dynamic_child(_, _, start).
 
 // Supervisor stop and termination operations wait for complete shutdown. Child starts
 // depend on initialization; explicit call timeouts bound the caller's wait.
-.decl unbounded_supervisor_operation(op: symbol)
+.decl unbounded_supervisor_operation(operation: symbol)
 
 unbounded_supervisor_operation("terminate_child").
 unbounded_supervisor_operation("restart_child").
@@ -282,7 +282,7 @@ unbounded_supervisor_operation("delete_child").
 unbounded_supervisor_operation("stop").
 
 // Operations that stop children.
-.decl stopping_supervisor_operation(op: symbol)
+.decl stopping_supervisor_operation(operation: symbol)
 
 stopping_supervisor_operation("terminate_child").
 stopping_supervisor_operation("stop").

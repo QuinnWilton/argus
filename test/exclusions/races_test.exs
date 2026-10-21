@@ -65,7 +65,7 @@ defmodule Argus.Exclusions.RacesTest do
   defp record_races(ctx, set) do
     for [func, table, kind] <-
           Rows.where(results(ctx, set), :races, "mnesia_check_act",
-            drop: [:mod, :key, :read, :write, :op]
+            drop: [:mod, :key, :read, :write, :operation]
           ),
         do: {short(func), table, kind}
   end
@@ -195,7 +195,7 @@ defmodule Argus.Exclusions.RacesTest do
       reported =
         for [write, kind] <-
               Rows.where(results(ctx, [R.IndexVisit]), :races, "mnesia_check_act",
-                drop: [:mod, :func, :table, :key, :read, :op]
+                drop: [:mod, :func, :table, :key, :read, :operation]
               ),
             do: {kind, Argus.Lines.resolve(lines, write)}
 

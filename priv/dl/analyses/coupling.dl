@@ -20,7 +20,7 @@
 
 // A one_for_one sibling registers during startup. If the registration holder restarts
 // alone, it loses the registration and the surviving sibling does not register again.
-.decl lost_registration(sup: symbol, caller: symbol, keeper: symbol)
+.decl lost_registration(supervisor: symbol, caller: symbol, keeper: symbol)
 
 lost_registration(sup, caller, keeper) :-
   restarted_apart(sup, caller, keeper),
@@ -31,7 +31,7 @@ lost_registration(sup, caller, keeper) :-
 
 // sup is a one_for_one supervisor and the two modules sit in different
 // branches of it, so the restart of one leaves the other running.
-.decl restarted_apart(sup: symbol, a: symbol, b: symbol)
+.decl restarted_apart(supervisor: symbol, a: symbol, b: symbol)
 
 restarted_apart(sup, a, b) :-
   supervisor(sup, "one_for_one"),
@@ -232,7 +232,7 @@ dependency_basis(f, t, "inferred", 0) :-
   !dependency_resolved(f, t),
   !dependency_doubted(f, t, _).
 
-.decl sibling_dependency(sup: symbol, caller: symbol, callee: symbol, reason: symbol, detail: symbol, sup_site: symbol, witness: symbol, site: symbol, basis: symbol, permille: number)
+.decl sibling_dependency(supervisor: symbol, caller: symbol, callee: symbol, reason: symbol, detail: symbol, supervisor_site: symbol, witness: symbol, site: symbol, basis: symbol, permille: number)
 .output sibling_dependency
 
 // Require a source site for the supervisor. Mark retention inferred from external code,
@@ -275,7 +275,7 @@ keeping_basis("handed", "inferred").
 
 // A permanent child depends on a sibling whose restart policy can leave
 // it down, and keeps running against a process that no longer exists.
-.decl dependency_on_unrestarted_sibling(sup: symbol, child: symbol, sibling: symbol, restart: symbol, witness: symbol)
+.decl dependency_on_unrestarted_sibling(supervisor: symbol, child: symbol, sibling: symbol, restart: symbol, witness: symbol)
 
 dependency_on_unrestarted_sibling(sup, child, sibling, restart, witness) :-
   restart_policy(sup, child, "permanent"),
@@ -315,7 +315,7 @@ runs_outside_teardown(w) :-
 
 // A child whose restart policy may leave it stopped. Unresolved start_child targets do
 // not identify a sibling.
-.decl may_stay_down(sup: symbol, sibling: symbol, restart: symbol)
+.decl may_stay_down(supervisor: symbol, sibling: symbol, restart: symbol)
 
 may_stay_down(sup, sibling, restart) :-
   restart_policy(sup, sibling, restart),
@@ -341,7 +341,7 @@ sibling_dependency(sup, child, sibling, "restart_policy", restart, sup_site, wit
 
 // Init caches a sibling's pid and handlers reuse it. Under one_for_one, the sibling can
 // restart alone, leaving calls to the cached pid failing and sends undelivered.
-.decl cached_sibling_pid(sup: symbol, mod: symbol, name: symbol, init: symbol)
+.decl cached_sibling_pid(supervisor: symbol, mod: symbol, name: symbol, init: symbol)
 
 cached_sibling_pid(sup, mod, name, init) :-
   caches_pid(mod, init, name),
@@ -358,7 +358,7 @@ caches_pid(mod, init, name) :-
 
 // `mod` and the process identified by `name` are one_for_one siblings. The named
 // sibling can restart independently of mod.
-.decl sibling_restarts_alone(sup: symbol, mod: symbol, name: symbol)
+.decl sibling_restarts_alone(supervisor: symbol, mod: symbol, name: symbol)
 
 sibling_restarts_alone(sup, mod, name) :-
   supervisor_child(sup, _, mod, _, _),
@@ -366,7 +366,7 @@ sibling_restarts_alone(sup, mod, name) :-
   child_named(sup, name).
 
 // `name` is a child of sup's module or registered name.
-.decl child_named(sup: symbol, name: symbol)
+.decl child_named(supervisor: symbol, name: symbol)
 
 child_named(sup, name) :- supervisor_child(sup, _, name, _, _).
 child_named(sup, name) :- supervisor_child_name(sup, _, name).
@@ -408,7 +408,7 @@ sibling_dependency(sup, mod, name, "cached_pid", "", sup_site, init, init, "reso
 
 // Under rest_for_one, a later child starts processes under an earlier sibling.
 // Restarting the later child leaves those processes alive and starts duplicates.
-.decl orphaned_children(sup: symbol, owner: symbol, owner_pos: number, holder: symbol, holder_pos: number, start: symbol, basis: symbol)
+.decl orphaned_children(supervisor: symbol, owner: symbol, owner_pos: number, holder: symbol, holder_pos: number, start: symbol, basis: symbol)
 
 orphaned_children(sup, owner, owner_pos, holder, holder_pos, start, basis) :-
   restarts_only_later_children(sup),
@@ -421,13 +421,13 @@ orphaned_children(sup, owner, owner_pos, holder, holder_pos, start, basis) :-
 // sup's strategy is rest_for_one: a child's restart restarts the
 // children after it, not the ones before (shutdown's
 // restarts_later_siblings also holds of one_for_all).
-.decl restarts_only_later_children(sup: symbol)
+.decl restarts_only_later_children(supervisor: symbol)
 
 restarts_only_later_children(sup) :- supervisor(sup, "rest_for_one").
 
 // `mod` runs in the branch of sup's child at `pos`: the child or any
 // module below it.
-.decl runs_in_child(sup: symbol, pos: number, mod: symbol)
+.decl runs_in_child(supervisor: symbol, pos: number, mod: symbol)
 
 runs_in_child(sup, pos, mod) :-
   supervisor_child(sup, pos, branch, _, _),
@@ -463,7 +463,7 @@ adopts_running_child(start) :-
 // The process is started under an earlier sibling at holder_pos. `basis` uses
 // sibling_dependency's evidence categories; "resolved" means a literal registered
 // target.
-.decl starts_under_earlier_child(start: symbol, sup: symbol, owner_pos: number, holder_pos: number, basis: symbol)
+.decl starts_under_earlier_child(start: symbol, supervisor: symbol, owner_pos: number, holder_pos: number, basis: symbol)
 
 starts_under_earlier_child(start, sup, owner_pos, holder_pos, "resolved") :-
   supervisor_management_call(start, _, _, _, name),
@@ -479,13 +479,13 @@ starts_under_earlier_child(start, sup, owner_pos, holder_pos, "inferred") :-
   sole_earlier_sibling_of_kind(sup, holder_pos, api, owner_pos).
 
 // sup's child at `pos` is `mod`.
-.decl child_at(sup: symbol, pos: number, mod: symbol)
+.decl child_at(supervisor: symbol, pos: number, mod: symbol)
 
 child_at(sup, pos, mod) :- supervisor_child(sup, pos, mod, _, _).
 
 // sup's child at `pos` runs `api`'s module and comes before the child at
 // `owner_pos`.
-.decl earlier_sibling_of_kind(sup: symbol, pos: number, api: symbol, owner_pos: number)
+.decl earlier_sibling_of_kind(supervisor: symbol, pos: number, api: symbol, owner_pos: number)
 
 earlier_sibling_of_kind(sup, pos, api, owner_pos) :-
   supervisor_child(sup, pos, api, _, _),
@@ -493,20 +493,20 @@ earlier_sibling_of_kind(sup, pos, api, owner_pos) :-
   pos < owner_pos.
 
 // ... and is the only such child before `owner_pos`.
-.decl sole_earlier_sibling_of_kind(sup: symbol, pos: number, api: symbol, owner_pos: number)
+.decl sole_earlier_sibling_of_kind(supervisor: symbol, pos: number, api: symbol, owner_pos: number)
 
 sole_earlier_sibling_of_kind(sup, pos, api, owner_pos) :-
   earlier_sibling_of_kind(sup, pos, api, owner_pos),
   !other_earlier_sibling_of_kind(sup, pos, api, owner_pos).
 
-.decl other_earlier_sibling_of_kind(sup: symbol, pos: number, api: symbol, owner_pos: number)
+.decl other_earlier_sibling_of_kind(supervisor: symbol, pos: number, api: symbol, owner_pos: number)
 
 other_earlier_sibling_of_kind(sup, pos, api, owner_pos) :-
   earlier_sibling_of_kind(sup, pos, api, owner_pos),
   earlier_sibling_of_kind(sup, other, api, owner_pos),
   other != pos.
 
-.decl rest_for_one_orphaned_children(sup: symbol, owner: symbol, holder: symbol, owner_pos: number, holder_pos: number, site: symbol, basis: symbol)
+.decl rest_for_one_orphaned_children(supervisor: symbol, owner: symbol, holder: symbol, owner_pos: number, holder_pos: number, site: symbol, basis: symbol)
 .output rest_for_one_orphaned_children
 
 rest_for_one_orphaned_children(sup, owner, holder, owner_pos, holder_pos, start, basis) :-
@@ -528,7 +528,7 @@ module_reach.seed(m, m) :- monitors_started_child(_, m).
 
 // A monitored child has two restart owners: its DynamicSupervisor and a process that
 // restarts it from a DOWN handler.
-.decl two_restart_authorities(mod: symbol, sup: symbol, child: symbol, via: symbol, handler: symbol)
+.decl two_restart_authorities(mod: symbol, supervisor: symbol, child: symbol, via: symbol, handler: symbol)
 
 two_restart_authorities(mod, sup, child, via, handler) :-
   starts_and_monitors(mod, sup, child, via),
@@ -537,7 +537,7 @@ two_restart_authorities(mod, sup, child, via, handler) :-
 
 // `via` reaches both a named child start under sup and a monitor of a supervised child.
 // Exclude task children and unresolved children.
-.decl starts_and_monitors(mod: symbol, sup: symbol, child: symbol, via: symbol)
+.decl starts_and_monitors(mod: symbol, supervisor: symbol, child: symbol, via: symbol)
 
 starts_and_monitors(mod, sup, child, via) :-
   function_def(via, mod, _, _, _),
@@ -592,7 +592,7 @@ down_handler(mod, handler) :-
 
 // The handler starts `child` under sup with a non-temporary restart policy, so the
 // supervisor also restarts it.
-.decl starts_supervised_again(handler: symbol, sup: symbol, child: symbol)
+.decl starts_supervised_again(handler: symbol, supervisor: symbol, child: symbol)
 
 starts_supervised_again(handler, sup, child) :-
   module_reach.reaches(handler, start),
@@ -600,7 +600,7 @@ starts_supervised_again(handler, sup, child) :-
   known_restart(restart),
   restart != "temporary".
 
-.decl dual_restart_authority(mod: symbol, sup: symbol, child: symbol, via: symbol, start_site: symbol, monitor_site: symbol, handler: symbol)
+.decl dual_restart_authority(mod: symbol, supervisor: symbol, child: symbol, via: symbol, start_site: symbol, monitor_site: symbol, handler: symbol)
 .output dual_restart_authority
 
 dual_restart_authority(mod, sup, child, via, start_site, monitor_site, handler) :-
@@ -610,7 +610,7 @@ dual_restart_authority(mod, sup, child, via, start_site, monitor_site, handler) 
 
 // The start_child call `via` reaches for this child, and the monitor it
 // reaches; empty when the function is known but not the instruction.
-.decl start_site_of(via: symbol, sup: symbol, child: symbol, site: symbol)
+.decl start_site_of(via: symbol, supervisor: symbol, child: symbol, site: symbol)
 
 start_site_of(via, sup, child, id) :-
   starts_and_monitors(_, sup, child, via),
@@ -622,7 +622,7 @@ start_site_of(via, sup, child, "") :-
   starts_and_monitors(_, sup, child, via),
   !start_site_of_known(via, sup, child).
 
-.decl start_site_of_known(via: symbol, sup: symbol, child: symbol)
+.decl start_site_of_known(via: symbol, supervisor: symbol, child: symbol)
 
 start_site_of_known(via, sup, child) :-
   starts_and_monitors(_, sup, child, via),

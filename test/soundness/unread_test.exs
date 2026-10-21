@@ -120,7 +120,8 @@ defmodule Argus.Soundness.UnreadTest do
       facts: facts
     } do
       starts =
-        for [_id, func, _api, _scope, source, _key] <- facts[:creating_operation], do: {func, source}
+        for [_id, func, _api, _scope, source, _key] <- facts[:creating_operation],
+            do: {func, source}
 
       assert {inspect(U.PartialStarts) <> ":start_link/1", "dynamic"} in starts
       refute Enum.any?(starts, fn {func, _} -> func =~ "start_unnamed" end)

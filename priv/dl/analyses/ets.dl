@@ -52,7 +52,7 @@ ets_reach.seed(e, e) :-
   ets_new(_, c, _),
   function_def(c, m, _, _, _).
 
-.decl process_root(root: symbol, proc: symbol, mod: symbol, kind: symbol)
+.decl process_root(root: symbol, process: symbol, mod: symbol, kind: symbol)
 
 process_root(c, cat("server ", m), m, "server") :- process_entry(m, c).
 
@@ -148,13 +148,13 @@ known_root(c) :- behaves_as(m, "Application"), function_def(c, m, "start", 2, _)
 known_reaches(t) :- known_root(c), ets_reach.reaches(c, t).
 
 // The process `proc` (of module `mod`) runs `func` on its own stack.
-.decl owner_reaches(proc: symbol, mod: symbol, func: symbol)
+.decl owner_reaches(process: symbol, mod: symbol, func: symbol)
 
 owner_reaches(p, m, t) :- process_root(c, p, m, _), ets_reach.reaches(c, t).
 
 // Process proc may own the table allocated at site: some path on its stack creates it.
 // failure.dl's always_holds_table requires every path.
-.decl may_hold_table(name: symbol, proc: symbol, mod: symbol, site: symbol)
+.decl may_hold_table(name: symbol, process: symbol, mod: symbol, site: symbol)
 
 may_hold_table(name, p, mod, id) :-
   ets_new(id, func, name),
@@ -173,7 +173,7 @@ may_hold_table(name, p, mod, id) :-
 
 // An unnamed table returned by a behaviour module, directly or nested in a returned
 // term. return_var and field_store track it as caller-owned data.
-.decl handed_back(site: symbol, proc: symbol)
+.decl handed_back(site: symbol, process: symbol)
 
 handed_back(id, p) :-
   process_root(_, p, _, "behaviour"),
@@ -187,7 +187,7 @@ handed_back(id, p) :-
 returns_table(f, t) :- return_var(f, "table", t).
 returns_table(f, t) :- returned_term(f, o), field_store(f, o, _, "table", t).
 
-.decl returned_term(func: symbol, obj: symbol)
+.decl returned_term(func: symbol, term: symbol)
 
 returned_term(f, o) :- return_var(f, "term", o).
 returned_term(f, o) :- returned_term(f, p), field_store(f, p, _, "term", o).
@@ -585,7 +585,7 @@ reads_made_table(read, reader, create) :-
 // processes ended with it, and application-lifetime owners. External entry points still
 // count even when an internal process also reaches the reader; unassigned readers are
 // treated as external.
-.decl reader_outlives(reader: symbol, proc: symbol, owner: symbol)
+.decl reader_outlives(reader: symbol, process: symbol, owner: symbol)
 
 reader_outlives(reader, p, owner) :-
   read_owner(p, owner, reader),
@@ -604,7 +604,7 @@ reader_outlives(reader, p, owner) :-
   !application_lifetime(p),
   !runs_somewhere(reader).
 
-.decl read_owner(proc: symbol, owner: symbol, reader: symbol)
+.decl read_owner(process: symbol, owner: symbol, reader: symbol)
 
 read_owner(p, owner, reader) :- may_hold_table(_, p, owner, create), reads_made_table(_, reader, create).
 read_owner(p, owner, reader) :- computed_read(p, owner, reader, _, _).
@@ -635,7 +635,7 @@ called_from_outside(f) :-
 // The reader ends with the owner through supervision or a spawn_link chain. Assumption:
 // linked spawned processes do not trap exits; treating them as ending suppresses
 // findings.
-.decl ended_with(proc: symbol, owner: symbol, q: symbol, qm: symbol)
+.decl ended_with(process: symbol, owner: symbol, q: symbol, qm: symbol)
 
 ended_with(p, owner, q, qm) :-
   read_owner(p, owner, reader),
@@ -660,7 +660,7 @@ linked_by(cat("spawn ", g), r) :-
   owner_reaches(r, _, s).
 
 // `r` is the owner's process p, or a process that ends with it.
-.decl ends_by(proc: symbol, owner: symbol, r: symbol)
+.decl ends_by(process: symbol, owner: symbol, r: symbol)
 
 ends_by(p, owner, p) :- read_owner(p, owner, _).
 
@@ -673,7 +673,7 @@ ends_by(p, owner, r) :-
 // An application process or its uniquely started root supervisor. Its exit ends the
 // application, so there is no in-application restart window. Workers, shared
 // supervisors, sidecar keepers, and child-owned tables have separate lifetimes.
-.decl application_lifetime(proc: symbol)
+.decl application_lifetime(process: symbol)
 
 application_lifetime(p) :- process_root(_, p, _, "app").
 application_lifetime(p) :- process_root(_, p, m, "server"), application_root(m).
@@ -683,7 +683,7 @@ application_lifetime(p) :- process_root(_, p, m, "server"), application_root(m).
 // Use known allocation/read links where available. Otherwise, an unresolved read in the
 // owner's module may refer to its computed-name table. Reads known to target another
 // visible allocation are excluded.
-.decl computed_read(proc: symbol, owner: symbol, reader: symbol, site: symbol, id: symbol)
+.decl computed_read(process: symbol, owner: symbol, reader: symbol, site: symbol, id: symbol)
 
 computed_read(p, owner, reader, site, id) :-
   computed_name_held(p, owner, id),
@@ -707,7 +707,7 @@ reads_table_made_in_view(site) :-
 
 // The owner's server makes the table at `id` under a computed name, and
 // no heir takes it over.
-.decl computed_name_held(proc: symbol, owner: symbol, id: symbol)
+.decl computed_name_held(process: symbol, owner: symbol, id: symbol)
 
 computed_name_held(p, owner, id) :-
   ets_new(id, creator, "dynamic"),

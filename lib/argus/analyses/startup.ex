@@ -6,7 +6,7 @@ defmodule Argus.Analyses.Startup do
   `handle_continue/2` runs before any message, so what either waits on
   decides whether the tree boots.
 
-  - `blocks_on_peer(mod, phase, dep, kind, ordering, sup, site, detail)`
+  - `blocks_on_peer(mod, phase, dependency, kind, ordering, supervisor, site, detail)`
     — `init/1` or `handle_continue/2` waits on a peer the tree has not
     made ready: a synchronous `call` (to a sibling that starts `later`,
     a deadlock by construction; or one whose place is `unknown`, with
@@ -81,12 +81,12 @@ defmodule Argus.Analyses.Startup do
         fields: [
           {:mod, :symbol, "the child module (the init function, for global and remote)"},
           {:phase, :symbol, "init | continue | acked (init/1 after its ack)"},
-          {:dep, :symbol,
+          {:dependency, :symbol,
            "the peer waited on; for global, the nodes the lock waits on (cluster | local | unknown); empty for remote"},
           {:kind, :symbol,
            "call | cast | window_call | sup | blocking_server | parent | global | global_assumed | global_bounded | remote"},
           {:ordering, :symbol, "later | earlier | parent | unknown, or empty"},
-          {:sup, :symbol, "the supervisor placing both, when the ordering is known"},
+          {:supervisor, :symbol, "the supervisor placing both, when the ordering is known"},
           {:site, :symbol,
            "the tree definition for init/1's later sibling, else the call site (for a " <>
              "continue, the call in handle_continue/2 on the way to the wait, or empty)"},
@@ -102,12 +102,12 @@ defmodule Argus.Analyses.Startup do
           {:kind,
            %{
              "sup" => [:mod, :detail],
-             "blocking_server" => [:mod, :dep],
-             "global" => [:mod, :dep, :detail],
-             "global_assumed" => [:mod, :dep, :detail],
-             "global_bounded" => [:mod, :dep, :detail],
+             "blocking_server" => [:mod, :dependency],
+             "global" => [:mod, :dependency, :detail],
+             "global_assumed" => [:mod, :dependency, :detail],
+             "global_bounded" => [:mod, :dependency, :detail],
              "remote" => [:mod, :detail],
-             default: [:mod, :phase, :dep, :ordering, :sup]
+             default: [:mod, :phase, :dependency, :ordering, :supervisor]
            }},
         doc: "init/1 or handle_continue/2 waits on a peer the tree has not made ready."
       },

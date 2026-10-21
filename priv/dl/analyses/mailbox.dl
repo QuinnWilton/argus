@@ -103,7 +103,7 @@ stored_message(key, a, lit) :-
 
 // Resolve a literal argument from a call or one returning wrapper that supplies or
 // forwards it. The one-wrapper limit covers default-argument expansion.
-.decl literal_toward(from: symbol, callee: symbol, to: symbol, pos: number, lit: symbol)
+.decl literal_toward(from: symbol, callee: symbol, to: symbol, pos: number, literal: symbol)
 
 literal_toward(f, a, a, pos, lit) :-
   call_arg(f, a, pos, lit),
@@ -430,7 +430,7 @@ after_cancel.asked(site) :- helper_cancel(_, _, site).
 
 // The receive `recv` takes the message: a clause names it, or matches
 // anything.
-.decl takes_message(recv: symbol, message: symbol)
+.decl takes_message(receive: symbol, message: symbol)
 
 takes_message(recv, msg) :- receive_pattern(recv, _, msg).
 
@@ -1464,7 +1464,7 @@ reply_defect(mod, func, site, "statem_unreplied", tag) :- statem_call_unreplied(
 // no clause can accept the message. Exclude processes reaching opaque calls, behaviour
 // enter_loop, or hibernate, whose later receives cannot be inspected. Unconsumed
 // messages remain queued and are rescanned.
-.decl unreceived_message(mod: symbol, func: symbol, site: symbol, message: symbol, runs: symbol, starter: symbol, spawn: symbol, recv: symbol)
+.decl unreceived_message(mod: symbol, func: symbol, site: symbol, message: symbol, runs: symbol, starter: symbol, spawn: symbol, receive: symbol)
 .output unreceived_message
 
 // A send targets a spawned function with receives, none accepting the message. Check
@@ -1504,7 +1504,7 @@ spawned_reach.cut(f, g) :- side_call(f, g).
 spawned_reach.root(r, r) :- sends_to_spawned(_, _, r, _).
 
 // A receive the process runs.
-.decl process_receive(runs: symbol, recv: symbol)
+.decl process_receive(runs: symbol, receive: symbol)
 
 process_receive(r, id) :- spawned_reach.reaches(r, g), receive_pattern(id, g, _).
 
@@ -1569,7 +1569,7 @@ unhandled_exit(server, link, message, handler) :-
 
 // A timed receive can leave a late message for handle_info, which crashes if no clause
 // accepts it. The original receive cannot suppress this finding.
-.decl late_message_unhandled(server: symbol, recv: symbol, message: symbol, handler: symbol)
+.decl late_message_unhandled(server: symbol, receive: symbol, message: symbol, handler: symbol)
 
 late_message_unhandled(server, recv, message, handler) :-
   left_by_timed_receive(server, _, recv, message),
@@ -1601,7 +1601,7 @@ statem_message_unhandled(machine, site, message, callback) :-
 
 // A timed receive in gen_statem expires; its eventual reply becomes an unhandled :info
 // event.
-.decl statem_late_message_unhandled(machine: symbol, recv: symbol, message: symbol, callback: symbol)
+.decl statem_late_message_unhandled(machine: symbol, receive: symbol, message: symbol, callback: symbol)
 
 statem_late_message_unhandled(machine, recv, message, callback) :-
   left_by_timed_receive(machine, _, recv, message),
@@ -1646,7 +1646,7 @@ sent_to_server(m, f, id, msg, source) :- info_message(m, f, id, msg, source), so
 
 // What a timed receive at `recv` in `func` leaves behind for `server`
 // (info_message's source "late").
-.decl left_by_timed_receive(server: symbol, func: symbol, recv: symbol, message: symbol)
+.decl left_by_timed_receive(server: symbol, func: symbol, receive: symbol, message: symbol)
 
 left_by_timed_receive(m, g, r, msg) :- info_message(m, g, r, msg, "late").
 
@@ -1818,7 +1818,7 @@ nolink_settled(id) :- process_start(id, _, p, _, _), task_escapes(p).
 subscribe_reach.cut(f, g) :- side_call(f, g).
 subscribe_reach.seed(f) :- mailbox_writer(_, f, "pubsub").
 
-.decl late_wait(recv: symbol, func: symbol, message: symbol)
+.decl late_wait(receive: symbol, func: symbol, message: symbol)
 
 late_wait(r, g, "{ref, …}") :-
   receive_start(r, g, 0, _),
@@ -2263,7 +2263,7 @@ looping_server(mod, h) :-
 
 // A self-timer's literal message and callback tag, resolved at the site or from caller
 // arguments. Caller-supplied atom messages use the atom as tag.
-.decl self_arm_tag(site: symbol, func: symbol, lit: symbol, tag: symbol)
+.decl self_arm_tag(site: symbol, func: symbol, literal: symbol, tag: symbol)
 
 self_arm_tag(a, f, lit, tag) :-
   armed_literal(a, f, "self", lit),
@@ -2302,7 +2302,7 @@ tick_path.cut(g, h) :-
 
 // A periodic rearm for lit on every continuing path of its handle_info clause, directly
 // or through an unconditionally completing helper. `via` identifies the clause's call.
-.decl loop_arm(mod: symbol, lit: symbol, site: symbol, func: symbol, via: symbol)
+.decl loop_arm(mod: symbol, literal: symbol, site: symbol, func: symbol, via: symbol)
 
 loop_arm(mod, lit, a, h, a) :-
   looping_server(mod, h),
@@ -2317,7 +2317,7 @@ loop_arm(mod, lit, a, f, c) :-
   !conditional_call(a).
 
 // The clause the loop runs in: of the handler, for the loop's tag.
-.decl tick_clause(id: symbol, handler: symbol, lit: symbol)
+.decl tick_clause(id: symbol, handler: symbol, literal: symbol)
 
 tick_clause(id, h, lit) :-
   loop_arm(mod, lit, a, _, _),
@@ -2337,7 +2337,7 @@ rearm_entry(mod, e) :-
 
 // `site` sends literal lit to self by timer or send. Constructed tuple messages use
 // {:tag, …}, which does not equal a full literal.
-.decl self_arm(site: symbol, func: symbol, lit: symbol)
+.decl self_arm(site: symbol, func: symbol, literal: symbol)
 
 self_arm(b, g, lit) :- armed_literal(b, g, "self", lit).
 self_arm(b, g, lit) :- process_send_var(b, g, lit, "self", _).
@@ -2357,7 +2357,7 @@ arm_path.cut(g, h) :- looping_server(_, h), call_edge(g, h).
 
 // A second arm outside the loop's own clause and once-only sites. Anchor at the
 // repeatable callback's direct arm or call leading to arm_site.
-.decl second_arm(mod: symbol, lit: symbol, entry: symbol, site: symbol, func: symbol, arm_site: symbol)
+.decl second_arm(mod: symbol, literal: symbol, entry: symbol, site: symbol, func: symbol, arm_site: symbol)
 
 second_arm(mod, lit, e, b, e, b) :-
   loop_arm(mod, lit, _, _, _),
@@ -2387,7 +2387,7 @@ second_arm(mod, lit, e, c, f, a) :-
 
 // The loop either discards its timer reference or retains it under a state key,
 // directly or through a caller (timer_key).
-.decl loop_drops_ref(mod: symbol, lit: symbol, site: symbol)
+.decl loop_drops_ref(mod: symbol, literal: symbol, site: symbol)
 
 loop_drops_ref(mod, lit, a) :-
   loop_arm(mod, lit, a, f, _),
@@ -2409,7 +2409,7 @@ loop_drops_ref(mod, lit, a) :-
 
 // The re-arm stores its reference under key. If any arm discards the reference,
 // unstoppable_loop_armed_again reports it instead to avoid duplicates.
-.decl loop_keeps_ref_under(mod: symbol, lit: symbol, site: symbol, key: symbol)
+.decl loop_keeps_ref_under(mod: symbol, literal: symbol, site: symbol, key: symbol)
 
 loop_keeps_ref_under(mod, lit, a, key) :-
   loop_arm(mod, lit, a, f, _),
@@ -2465,7 +2465,7 @@ same_clause(f, s, t) :-
 
 // The loop cancels its stored timer before re-arming, merging duplicate chains at the
 // next tick. Recognize cancellation in the tag's clause or re-arming function.
-.decl idempotent_loop(mod: symbol, lit: symbol, key: symbol)
+.decl idempotent_loop(mod: symbol, literal: symbol, key: symbol)
 
 idempotent_loop(mod, lit, key) :-
   loop_keeps_ref_under(mod, lit, a, key),

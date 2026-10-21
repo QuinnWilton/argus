@@ -13,7 +13,7 @@
 
 // A child added by `Supervisor.start_child/2` or `:supervisor.start_child/2`, with spec, restart, and type. Excludes DynamicSupervisor children, simple_one_for_one argument lists, and unresolved specs.
 //
-.decl added_child(sup: symbol, child_mod: symbol, restart: symbol, type: symbol, caller_func: symbol) mutable
+.decl added_child(supervisor: symbol, child_mod: symbol, restart: symbol, type: symbol, caller_func: symbol) mutable
 .input added_child
 
 // Every non-raising return forwards a listed call's result, its immediate payload, or that payload rewrapped. Any unrelated return or deeper extraction removes all rows for the function. This is the must-return counterpart of `returns_call`; `clientlib/answers.dl` chains it through wrappers (`Argus.Extractor.Answers`).
@@ -86,7 +86,7 @@
 
 // A caller parameter passed unchanged to a callee argument. Used for interprocedural constant propagation. Positions are numeric columns to avoid partial string functors, which a solver may evaluate before their guards.
 //
-.decl call_arg_forward(caller: symbol, callee: symbol, arg_pos: number, fwd_pos: number) mutable
+.decl call_arg_forward(caller: symbol, callee: symbol, arg_pos: number, forward_pos: number) mutable
 .input call_arg_forward
 
 // Parameter provenance at one concrete call site, with the same data-flow semantics as call_arg_derived. Distinguishes multiple calls to the same callee, so safety at one cannot be applied to another. Includes every argument position of direct local and remote calls.
@@ -321,7 +321,7 @@
 
 // A process-dictionary put, get, or erase, including Elixir wrappers. `erase/0` uses an unknown key.
 //
-.decl dictionary_operation(id: symbol, func: symbol, op: symbol, key: symbol) mutable
+.decl dictionary_operation(id: symbol, func: symbol, operation: symbol, key: symbol) mutable
 .input dictionary_operation
 
 // A source stored under `key` in the running process's dictionary. Reads of the same `dict` source in that process may resolve to it (`clientlib/processes.dl`).
@@ -330,7 +330,7 @@
 .input dictionary_put
 
 // Mnesia distributed store operation. DETS is not one: a DETS table is a file on its own node.
-.decl distributed_store_operation(id: symbol, func: symbol, store: symbol, op: symbol) mutable
+.decl distributed_store_operation(id: symbol, func: symbol, store: symbol, operation: symbol) mutable
 .input distributed_store_operation
 
 // An exported function the Docs chunk hides from the module's users: `@doc false`, `@impl true` without a `@doc`, or any function of a `@moduledoc false` module (`Argus.Extractors.Docs`). `unsafe_input.dl` does not count it as a way in for a caller's data. A beam without a Docs chunk hides nothing.
@@ -340,12 +340,12 @@
 
 // A runtime child added by `DynamicSupervisor.start_child/2`. Makes dynamic workers visible alongside static supervision children.
 //
-.decl dynamic_child(sup: symbol, child_mod: symbol, caller_func: symbol) mutable
+.decl dynamic_child(supervisor: symbol, child_mod: symbol, caller_func: symbol) mutable
 .input dynamic_child
 
 // The restart policy stated by a dynamic child's explicit spec or `Supervisor.child_spec/2` override. Known maps without `:restart` use `permanent`. Shorthand forms have no row here; `dynamic_restart` in `clientlib/supervision.dl` also resolves their module-defined policy.
 //
-.decl dynamic_child_restart(sup: symbol, child_mod: symbol, caller_func: symbol, restart: symbol) mutable
+.decl dynamic_child_restart(supervisor: symbol, child_mod: symbol, caller_func: symbol, restart: symbol) mutable
 .input dynamic_child_restart
 
 // A send or external runtime effect controlled by a test on the source. Includes process, port, file, network, and node effects classified by `Argus.EffectModel`; excludes logging. Project calls use `call_decided`. Function-level.
@@ -398,7 +398,7 @@
 .input ets_new
 
 // ETS read/write/delete operation.
-.decl ets_operation(id: symbol, func: symbol, table_ref: symbol, op: symbol, kind: symbol) mutable
+.decl ets_operation(id: symbol, func: symbol, table_ref: symbol, operation: symbol, kind: symbol) mutable
 .input ets_operation
 
 // The table operand of an ETS operation is the function's own parameter.
@@ -498,7 +498,7 @@
 
 // A `:global` synchronization operation. Retries are `0` for try-once, a positive count, or `infinity`; omitted retries default to `infinity`. Node scope is `local` for `[node()]`, `cluster` for connected-node lists or the default, and `unknown` when unresolved (`Argus.Extractor.Resolve.node_list/3`).
 //
-.decl global_operation(id: symbol, func: symbol, op: symbol, retries: symbol, nodes: symbol) mutable
+.decl global_operation(id: symbol, func: symbol, operation: symbol, retries: symbol, nodes: symbol) mutable
 .input global_operation
 
 // A `:global.register_name` call. Arity 2 uses default conflict resolution; arity 3 supplies a resolver.
@@ -612,7 +612,7 @@
 
 // A Mnesia dirty operation's table and key, outside transaction serialization. Single-argument forms derive both from `{table, key}` or the first two record elements.
 //
-.decl mnesia_operation(id: symbol, func: symbol, op: symbol, kind: symbol, table_source: symbol, table: symbol, key_source: symbol, key: symbol) mutable
+.decl mnesia_operation(id: symbol, func: symbol, operation: symbol, kind: symbol, table_source: symbol, table: symbol, key_source: symbol, key: symbol) mutable
 .input mnesia_operation
 
 // Two Mnesia writes ordered within one function iteration, excluding loop back edges (`Argus.Extractors.Mnesia`). Writes ordered in neither direction lie on mutually exclusive paths.
@@ -675,7 +675,7 @@
 .input nil_use
 
 // Node or :net_kernel operation.
-.decl node_operation(id: symbol, func: symbol, op: symbol) mutable
+.decl node_operation(id: symbol, func: symbol, operation: symbol) mutable
 .input node_operation
 
 // A call, subscription, or monitor controlled by a test on parameter `pos`, one of its fields, or a call result derived from it (`Argus.Extractors.LiveView`). Tests whose alternative paths only raise do not count. For a state parameter, this identifies state-dependent calls.
@@ -731,7 +731,7 @@
 
 // A process allocation at start site `id`. Spawns use the resolved entry function; server and child-spec starts use the literal callback module.
 //
-.decl process_start(id: symbol, func: symbol, proc: symbol, kind: symbol, runs: symbol) mutable
+.decl process_start(id: symbol, func: symbol, process: symbol, kind: symbol, runs: symbol) mutable
 .input process_start
 
 // A protocol-dispatched call whose target depends on the argument type. Unlike a missing effect-model entry, this has no single target: implementations may contain arbitrary effects.
@@ -741,7 +741,7 @@
 
 // A subscription, unsubscription, group join, or group leave. Includes PubSub and `:pg` APIs, module subscription wrappers (`via`), and dynamic module calls (`apply`), as recognized by `Argus.Extractors.LiveView`.
 //
-.decl pubsub_call(id: symbol, func: symbol, op: symbol, via: symbol) mutable
+.decl pubsub_call(id: symbol, func: symbol, operation: symbol, via: symbol) mutable
 .input pubsub_call
 
 // A remote call in a quote's literal or a macro's rebuilt return value (`Argus.Extractors.Quoted`). It runs where the quote expands, not where the beams call: `unsafe_input.dl` keeps a hidden helper a generated function calls as a way in, and does not count a `__name__` hook only expansions call as one.
@@ -976,11 +976,11 @@
 
 // A shorthand child start and its argument shape. Covers static, dynamic, and added children. `options` means a fully known keyword list or atom-keyed map, with entries in `shorthand_option`; other arguments use `dynamic`. Bare modules use `[]`.
 //
-.decl shorthand_arg(sup: symbol, child_mod: symbol, at: symbol, shape: symbol) mutable
+.decl shorthand_arg(supervisor: symbol, child_mod: symbol, at: symbol, shape: symbol) mutable
 .input shorthand_arg
 
 // An option a shorthand start's `options` argument holds (`shorthand_arg`).
-.decl shorthand_option(sup: symbol, child_mod: symbol, at: symbol, key: symbol, value: symbol) mutable
+.decl shorthand_option(supervisor: symbol, child_mod: symbol, at: symbol, key: symbol, value: symbol) mutable
 .input shorthand_option
 
 // A function with calls excluded when parameter `pos` is `:shutdown`. The extractor walks every path with that parameter fixed; unreadable tests retain all reachable calls (`Argus.Extractor.Dispatch.reached_holding/3`). No row means no call is excluded for that parameter.
@@ -1197,32 +1197,32 @@
 
 // A synchronous supervisor management call, with the target resolved from its first argument. These calls wait on the supervisor; starting a child waits for init, and terminating one waits for shutdown.
 //
-.decl supervisor_call(id: symbol, func: symbol, api: symbol, op: symbol, target: symbol) mutable
+.decl supervisor_call(id: symbol, func: symbol, api: symbol, operation: symbol, target: symbol) mutable
 .input supervisor_call
 
 // A supervisor child specification. Shorthand forms use restart `own`, resolved from `child_spec_restart` or argument-dependent `child_spec_option`, unless `Supervisor.child_spec/2` overrides it.
 //
-.decl supervisor_child(sup: symbol, position: number, child_mod: symbol, restart: symbol, type: symbol) mutable
+.decl supervisor_child(supervisor: symbol, position: number, child_mod: symbol, restart: symbol, type: symbol) mutable
 .input supervisor_child
 
 // Whether a child type is explicit or an extractor default. Maps and OTP tuples determine the type, including the map default `worker`. Shorthand forms defer to `Module.child_spec/1`, so their provisional type must not be trusted without this relation.
 //
-.decl supervisor_child_form(sup: symbol, position: number, form: symbol) mutable
+.decl supervisor_child_form(supervisor: symbol, position: number, form: symbol) mutable
 .input supervisor_child_form
 
 // An atom registration name in a child spec's `:name` option, keyed by supervisor and position. Resolves named `DynamicSupervisor.start_child` targets to the registering child. Via and global names are excluded.
 //
-.decl supervisor_child_name(sup: symbol, position: number, name: symbol) mutable
+.decl supervisor_child_name(supervisor: symbol, position: number, name: symbol) mutable
 .input supervisor_child_name
 
 // A child list with an unresolved element or tail. Its `supervisor_child` rows and positions are partial; unseen children may start after any listed child. Fully resolved lists retain source order (`Argus.Extractors.Supervision`).
 //
-.decl supervisor_children_open(sup: symbol) mutable
+.decl supervisor_children_open(supervisor: symbol) mutable
 .input supervisor_children_open
 
 // A DynamicSupervisor `max_children` cap. A finite value is recorded directly; incomplete options use `dynamic`. Fully known options without a cap have no row, reflecting the default `:infinity`.
 //
-.decl supervisor_max_children(sup: symbol, limit: symbol) mutable
+.decl supervisor_max_children(supervisor: symbol, limit: symbol) mutable
 .input supervisor_max_children
 
 // Anchor site of a supervisor's tree definition — positional.
@@ -1254,17 +1254,17 @@
 
 // A possible source for the task, or the term holding the tasks, a Task operation is handed, including one the library runs on each element of a list (`Enum.map(tasks, &Task.await/1)`).
 //
-.decl task_operation_var(id: symbol, func: symbol, op: symbol, var_kind: symbol, var: symbol) mutable
+.decl task_operation_var(id: symbol, func: symbol, operation: symbol, var_kind: symbol, var: symbol) mutable
 .input task_operation_var
 
 // A Task.Supervisor start and its cap, from child specs, PartitionSupervisor options, or direct start/child-spec calls. Records capped and uncapped starts. A cap can produce `{:error, :max_children}`; an unavailable supervisor instead exits the caller. No row means the start is not visible.
 //
-.decl task_supervisor_cap(sup: symbol, limit: symbol) mutable
+.decl task_supervisor_cap(supervisor: symbol, limit: symbol) mutable
 .input task_supervisor_cap
 
 // A Task.Supervisor task start and its API, supplementing `dynamic_child`. Stream APIs run up to `max_concurrency` tasks per enumerating process; other APIs start one task per call. Supervisor names join `task_supervisor_cap`.
 //
-.decl task_supervisor_start(id: symbol, func: symbol, op: symbol, sup: symbol) mutable
+.decl task_supervisor_start(id: symbol, func: symbol, operation: symbol, supervisor: symbol) mutable
 .input task_supervisor_start
 
 // A term containing a source, identified by its construction instruction. Includes maps, tuples, lists, records, and calls with known result shapes such as process starts or `Map.put/3`.
@@ -1318,7 +1318,7 @@
 
 // A TLS connection call. Unresolved options remain `dynamic` and do not establish insecure configuration.
 //
-.decl tls_connect(id: symbol, func: symbol, api: symbol, opts: symbol) mutable
+.decl tls_connect(id: symbol, func: symbol, api: symbol, options: symbol) mutable
 .input tls_connect
 
 // A verification setting used only for a TLS server, including listener or handshake calls and options flowing exclusively to them. Here `verify_none` disables client-certificate requests; it does not describe verification of a remote server.

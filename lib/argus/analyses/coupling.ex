@@ -7,7 +7,7 @@ defmodule Argus.Analyses.Coupling do
   its pid keeps a dead one. The sibling is not restarted with it. The
   strategy decides who survives whom.
 
-  - `sibling_dependency(sup, caller, callee, reason, detail, sup_site,
+  - `sibling_dependency(supervisor, caller, callee, reason, detail, supervisor_site,
     witness, site, basis, permille)` — a child depends on a sibling that a restart leaves
     stale. `reason` is `restart_isolation` (two branches of a
     `one_for_one` supervisor, the caller's once code registering
@@ -17,10 +17,10 @@ defmodule Argus.Analyses.Coupling do
     temporary sibling that may never come back; `detail` is that policy)
     or `cached_pid` (`init/1` looks the sibling up by name under
     `one_for_one` and the handlers call the cached pid).
-  - `rest_for_one_orphaned_children(sup, owner, holder, ...)` — under
+  - `rest_for_one_orphaned_children(supervisor, owner, holder, ...)` — under
     `rest_for_one` a later child starts processes inside an earlier one;
     the owner's restart leaves them running.
-  - `dual_restart_authority(mod, sup, child, via, start_site,
+  - `dual_restart_authority(mod, supervisor, child, via, start_site,
     monitor_site, handler)` — a process starts a
     child under a DynamicSupervisor, monitors it and restarts it from its
     `:DOWN` handler while the supervisor restarts it too.
@@ -89,7 +89,7 @@ defmodule Argus.Analyses.Coupling do
       %{
         name: :sibling_dependency,
         fields: [
-          {:sup, :symbol, "supervisor module"},
+          {:supervisor, :symbol, "supervisor module"},
           {:caller, :symbol, "the child that depends on its sibling"},
           {:callee, :symbol, "the sibling depended on (module or registered name)"},
           {:reason, :symbol,
@@ -97,7 +97,7 @@ defmodule Argus.Analyses.Coupling do
           {:detail, :symbol,
            "for restart_isolation how the sibling keeps what the child registers (table | monitor | state | dict | handed), " <>
              "the sibling's restart policy for restart_policy, empty for cached_pid"},
-          {:sup_site, :symbol, "instruction ID of the tree definition"},
+          {:supervisor_site, :symbol, "instruction ID of the tree definition"},
           {:witness, :symbol,
            "restart_isolation: the sibling's instruction or function that keeps it; " <>
              "otherwise the function in the caller carrying the dependency"},
@@ -109,13 +109,13 @@ defmodule Argus.Analyses.Coupling do
           {:permille, :number,
            "for a doubted row, the prior's probability that the sibling talks to a process"}
         ],
-        key: [:sup, :caller, :callee, :reason],
+        key: [:supervisor, :caller, :callee, :reason],
         doc: "A child depends on a sibling that a restart leaves stale."
       },
       %{
         name: :rest_for_one_orphaned_children,
         fields: [
-          {:sup, :symbol, "the rest_for_one supervisor"},
+          {:supervisor, :symbol, "the rest_for_one supervisor"},
           {:owner, :symbol, "the later child that starts processes"},
           {:holder, :symbol, "the earlier child they are started under"},
           {:owner_pos, :number, "owner's branch position"},
@@ -124,7 +124,7 @@ defmodule Argus.Analyses.Coupling do
           {:basis, :symbol,
            "resolved when the call names the holder, inferred otherwise (sibling_dependency's words)"}
         ],
-        key: [:sup, :owner, :holder],
+        key: [:supervisor, :owner, :holder],
         doc:
           "Under rest_for_one a later child starts processes inside an earlier one; " <>
             "the owner's restart leaves them running."
@@ -133,14 +133,14 @@ defmodule Argus.Analyses.Coupling do
         name: :dual_restart_authority,
         fields: [
           {:mod, :symbol, "the module that starts, monitors and restarts the child"},
-          {:sup, :symbol, "the DynamicSupervisor that also restarts it"},
+          {:supervisor, :symbol, "the DynamicSupervisor that also restarts it"},
           {:child, :symbol, "the child module"},
           {:via, :symbol, "function that starts and monitors it"},
           {:start_site, :symbol, "the start_child call, else empty"},
           {:monitor_site, :symbol, "the monitor call"},
           {:handler, :symbol, "the :DOWN handler that starts it again"}
         ],
-        key: [:mod, :sup, :child],
+        key: [:mod, :supervisor, :child],
         doc: "A supervisor and a monitoring process both restart the same child."
       },
       Argus.Findings.Tooling.relation()

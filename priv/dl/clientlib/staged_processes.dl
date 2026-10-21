@@ -5,33 +5,33 @@
 
 // Process identities: callback modules, individual start sites, supervised children,
 // privately retained instances and named processes.
-.decl server_process(proc: symbol, mod: symbol) mutable
+.decl server_process(process: symbol, mod: symbol) mutable
 .input server_process
 
-.decl instance(proc: symbol, base: symbol) mutable
+.decl instance(process: symbol, base: symbol) mutable
 .input instance
 
-.decl supervised_process(proc: symbol, sup: symbol, pos: number) mutable
+.decl supervised_process(process: symbol, supervisor: symbol, pos: number) mutable
 .input supervised_process
 
-.decl private_process(proc: symbol, func: symbol, site: symbol) mutable
+.decl private_process(process: symbol, func: symbol, site: symbol) mutable
 .input private_process
 
-.decl process(proc: symbol) mutable
+.decl process(process: symbol) mutable
 .input process
 
 // A registered name may hold a pid of `proc`.
-.decl named_pid(name: symbol, proc: symbol) mutable
+.decl named_pid(name: symbol, process: symbol) mutable
 .input named_pid
 
 // `func` calls, casts or sends info to proc at site, directly or through a
 // PID-receiving helper at anchor. Signals are staged separately.
-.decl process_call(func: symbol, anchor: symbol, site: symbol, api_kind: symbol, proc: symbol) mutable
+.decl process_call(func: symbol, anchor: symbol, site: symbol, api_kind: symbol, process: symbol) mutable
 .input process_call
 
 // The call, cast or send at `id` in `func` may target `proc`, whoever
 // supplies it.
-.decl call_site_target(id: symbol, func: symbol, api_kind: symbol, proc: symbol) mutable
+.decl call_site_target(id: symbol, func: symbol, api_kind: symbol, process: symbol) mutable
 .input call_site_target
 
 // A synchronous call that is provably to the calling process itself.
@@ -41,7 +41,7 @@
 // The processes and tables a demanded variable may hold: handler call targets and
 // ETS operands. Do not export intermediate terms or arbitrary var_points_to rows. New
 // variable demands must be added to points_to.dl.
-.decl var_process(func: symbol, var_kind: symbol, var: symbol, proc: symbol) mutable
+.decl var_process(func: symbol, var_kind: symbol, var: symbol, process: symbol) mutable
 .input var_process
 
 .decl var_table(func: symbol, var_kind: symbol, var: symbol, table: symbol) mutable
@@ -55,7 +55,7 @@
 // The processes a selective stage resolved field-insensitively: a target of one of
 // them is one a call, send or signal may reach, not one it surely does
 // (points_to.dl).
-.decl approximated_process(proc: symbol) mutable
+.decl approximated_process(process: symbol) mutable
 .input approximated_process
 
 // An unnamed table its process keeps in its dictionary and never hands
@@ -66,10 +66,10 @@
 // The Task operation at `site` in `func` does `op` to the task `proc`,
 // and the tasks whose handle goes where value flow does not follow it
 // (clientlib/task_handles.dl).
-.decl task_handled(func: symbol, site: symbol, op: symbol, proc: symbol) mutable
+.decl task_handled(func: symbol, site: symbol, operation: symbol, process: symbol) mutable
 .input task_handled
 
-.decl task_escapes(proc: symbol) mutable
+.decl task_escapes(process: symbol) mutable
 .input task_escapes
 
 // `func` waits on the task started at `start`, which runs `runs`: an await, yield or
@@ -90,12 +90,12 @@ awaits_task(f, start, g) :-
 pid_use(id, f, kind, sk, s) :- process_call_var(id, f, kind, sk, s).
 
 // `func` calls or casts to `proc`, itself or through a helper.
-.decl call_target(func: symbol, api_kind: symbol, proc: symbol)
+.decl call_target(func: symbol, api_kind: symbol, process: symbol)
 
 call_target(f, kind, p) :- process_call(f, _, _, kind, p).
 
 // The module whose code starts a process.
-.decl started_by_module(proc: symbol, mod: symbol)
+.decl started_by_module(process: symbol, mod: symbol)
 
 started_by_module(p, m) :- process_start(_, f, p, _, _), function_def(f, m, _, _, _).
 started_by_module(p, m) :- private_process(p, f, _), function_def(f, m, _, _, _).

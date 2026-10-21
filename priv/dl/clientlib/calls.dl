@@ -237,7 +237,7 @@ tag_handler(mod, "cast", tag) :-
   callback_tag(h, "handle_cast", tag),
   handle_cast_function(mod, h).
 
-.decl tag_handler_count(kind: symbol, tag: symbol, n: number)
+.decl tag_handler_count(kind: symbol, tag: symbol, count: number)
 
 tag_handler_count(kind, tag, count(h)) :- tag_handler(h, kind, tag).
 
@@ -283,7 +283,7 @@ referred_handler(fm, kind, tag, mod) :-
   tag_handler(mod, kind, tag),
   module_refers(fm, mod).
 
-.decl referred_handler_count(from_mod: symbol, kind: symbol, tag: symbol, n: number)
+.decl referred_handler_count(from_mod: symbol, kind: symbol, tag: symbol, count: number)
 
 referred_handler_count(fm, kind, tag, count(h)) :- referred_handler(fm, kind, tag, h).
 

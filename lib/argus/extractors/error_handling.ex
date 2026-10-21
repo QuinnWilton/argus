@@ -1525,7 +1525,9 @@ defmodule Argus.Extractors.ErrorHandling do
           instrs
           |> recv_heads(idx + 1, labels, [])
           |> Enum.uniq()
-          |> Enum.reduce(acc, fn m, inner -> add_fact(inner, :receive_pattern, [id, func_id, m]) end)
+          |> Enum.reduce(acc, fn m, inner ->
+            add_fact(inner, :receive_pattern, [id, func_id, m])
+          end)
 
         if waits?(instrs, Map.get(labels, fail)) do
           instrs

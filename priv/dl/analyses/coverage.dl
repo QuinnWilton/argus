@@ -22,12 +22,12 @@ imprecision_event(c, f, r, why) :- imprecision(c, f, r, why).
 
 // ── A supervisor with no known children ─────────────────────────────
 
-.decl coverage_supervisor_no_children(sup: symbol)
+.decl coverage_supervisor_no_children(supervisor: symbol)
 .output coverage_supervisor_no_children
 
 // A recognized supervisor has no extracted children, typically because it builds its
 // child list dynamically or uses an unsupported spec shape.
-.decl supervisor_without_known_children(sup: symbol)
+.decl supervisor_without_known_children(supervisor: symbol)
 
 supervisor_without_known_children(sup) :-
   recognised_supervisor(sup),
@@ -36,13 +36,13 @@ supervisor_without_known_children(sup) :-
 coverage_supervisor_no_children(sup) :- supervisor_without_known_children(sup).
 
 // The supervision extractor recorded a strategy for `sup`.
-.decl recognised_supervisor(sup: symbol)
+.decl recognised_supervisor(supervisor: symbol)
 
 recognised_supervisor(sup) :- supervisor(sup, _).
 
 // An extracted child of sup: static (supervisor_child), dynamic (dynamic_child), or
 // added through start_child (added_child).
-.decl has_known_child(sup: symbol)
+.decl has_known_child(supervisor: symbol)
 
 has_known_child(sup) :- supervisor_child(sup, _, _, _, _).
 has_known_child(sup) :- dynamic_child(sup, _, _).

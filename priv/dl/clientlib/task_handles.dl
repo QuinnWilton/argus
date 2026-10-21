@@ -16,7 +16,7 @@
 // hub_objects.dl.
 
 // A task process: a start the Task API answers a %Task{} for.
-.decl task_process(proc: symbol)
+.decl task_process(process: symbol)
 
 task_process(p) :-
   process_start(id, f, p, "spawn", _),
@@ -25,7 +25,7 @@ task_process(p) :-
 
 // The %Task{} a start answers (TermFlow names it by the start's site), or a
 // term holding it. The task's pid alone is no handle: nothing can await it.
-.decl task_handle(x: symbol, proc: symbol)
+.decl task_handle(object: symbol, process: symbol)
 
 task_handle(o, p) :-
   task_process(p),
@@ -35,7 +35,7 @@ task_handle(o, p) :-
 task_handle(o, p) :- field_points_to(o, _, x), task_handle(x, p).
 
 // The Task operation at `site` in `func` does `op` to the task `proc`.
-.decl task_handled(func: symbol, site: symbol, op: symbol, proc: symbol)
+.decl task_handled(func: symbol, site: symbol, operation: symbol, process: symbol)
 
 task_handled(f, id, op, p) :-
   task_operation_var(id, f, op, sk, s),
@@ -45,7 +45,7 @@ task_handled(f, id, op, p) :-
 .output task_handled(filename="task_handled.facts")
 
 // The task's handle goes where value flow does not follow it.
-.decl task_escapes(proc: symbol)
+.decl task_escapes(process: symbol)
 
 task_escapes(p) :-
   unmodeled_use(_, f, sk, s),

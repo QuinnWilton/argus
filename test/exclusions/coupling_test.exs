@@ -76,7 +76,7 @@ defmodule Argus.Exclusions.CouplingTest do
 
     results
     |> Rows.where(:coupling, "sibling_dependency",
-      drop: [:sup, :caller, :callee, :sup_site, :site, :basis, :permille]
+      drop: [:supervisor, :caller, :callee, :supervisor_site, :site, :basis, :permille]
     )
     |> Enum.map(fn [reason, detail, witness] -> {reason, detail, function(witness)} end)
     |> Enum.sort()

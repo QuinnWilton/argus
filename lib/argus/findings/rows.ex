@@ -119,9 +119,9 @@ defmodule Argus.Findings.Rows do
   A row as `name=value` pairs, for the generic rendering of a row no
   builder rendered.
 
-      iex> relation = %{name: :r, doc: "", fields: [{:mod, :symbol, ""}, {:n, :number, ""}]}
+      iex> relation = %{name: :r, doc: "", fields: [{:mod, :symbol, ""}, {:count, :number, ""}]}
       iex> Argus.Findings.Rows.raw_columns(relation, ["M", "3"])
-      "mod=M, n=3"
+      "mod=M, count=3"
   """
   @spec raw_columns(Analysis.output_relation(), [String.t()]) :: String.t()
   def raw_columns(relation, row) do

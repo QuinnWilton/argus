@@ -93,7 +93,7 @@ monitor_beyond_init_arg(m, f) :-
   !init_arg_value(f, sk, s).
 
 // A value init/1 reads from its argument: the argument, or a field of it at any depth.
-.decl init_arg_value(func: symbol, src_kind: symbol, src: symbol)
+.decl init_arg_value(func: symbol, source_kind: symbol, source: symbol)
 
 init_arg_value(f, "param", "0") :- init_function(_, f).
 
@@ -113,7 +113,7 @@ stops_unborn(k, mod) :-
 
 // `p` is started by a function on `mod`'s server stack and kept there
 // (private_process): not a pid any caller handed the server.
-.decl born_on_server(mod: symbol, proc: symbol)
+.decl born_on_server(mod: symbol, process: symbol)
 
 born_on_server(mod, p) :- private_process(p, g, _), server_side(mod, g).
 

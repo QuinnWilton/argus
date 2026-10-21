@@ -118,7 +118,7 @@ defmodule Argus.Soundness.ShutdownTest do
       for [mod, kind, via] <-
             Rows.where(results, :shutdown, "teardown_touches_sibling",
               phase: "terminate",
-              drop: [:sibling, :phase, :sup, :handler, :site, :sup_site]
+              drop: [:sibling, :phase, :supervisor, :handler, :site, :supervisor_site]
             ),
           uniq: true,
           do: {short(mod), kind, via |> String.split(":") |> Enum.at(-1)}

@@ -28,7 +28,7 @@ defmodule Argus.Schema.Tls do
           {:id, :symbol, "the instruction"},
           {:func, :symbol, "the calling function"},
           {:api, :symbol, "the connect API"},
-          {:opts, :symbol, "how options were supplied: 'literal' | 'dynamic'"}
+          {:options, :symbol, "how options were supplied: 'literal' | 'dynamic'"}
         ],
         doc: """
         A TLS connection call. Unresolved options remain `dynamic` and do not establish \

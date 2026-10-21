@@ -15,7 +15,7 @@ defmodule Argus.Schema.Processes do
         fields: [
           {:id, :instr_id, "instruction ID of the start"},
           {:func, :func_id, "function containing the start"},
-          {:proc, :symbol, "the process: \"<kind> <id>\""},
+          {:process, :symbol, "the process: \"<kind> <id>\""},
           {:kind, :symbol, "spawn, server or agent"},
           {:runs, :symbol, "the spawned function, the server's callback module, or dynamic"}
         ],
@@ -34,7 +34,7 @@ defmodule Argus.Schema.Processes do
           {:arg_pos, :symbol, "0-based parameter position, as a symbol"},
           {:via, :symbol, "call, init, spawn, child, closure, resolver or element"},
           {:var_kind, :symbol,
-           "where the value comes from: proc, param, result, name, self, obj, load, reply, remote, dict or table"},
+           "where the value comes from: process, param, result, name, self, term, load, reply, remote, dictionary or table"},
           {:var, :symbol,
            "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
         ],
@@ -52,7 +52,7 @@ defmodule Argus.Schema.Processes do
         fields: [
           {:func, :func_id, "function returning"},
           {:var_kind, :symbol,
-           "where the value comes from: proc, param, result, name, self, obj, load, reply, remote, dict or table"},
+           "where the value comes from: process, param, result, name, self, term, load, reply, remote, dictionary or table"},
           {:var, :symbol,
            "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
         ],
@@ -67,7 +67,7 @@ defmodule Argus.Schema.Processes do
           {:api_kind, :symbol,
            "call or cast (the sync_call/async_cast table), or info for a send"},
           {:var_kind, :symbol,
-           "where the value comes from: proc, param, result, name, self, obj, load, reply, remote, dict or table"},
+           "where the value comes from: process, param, result, name, self, term, load, reply, remote, dictionary or table"},
           {:var, :symbol,
            "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
         ],
@@ -84,7 +84,7 @@ defmodule Argus.Schema.Processes do
           {:func, :func_id, "function making the call, cast or send"},
           {:api_kind, :symbol, "call, cast or info (a send)"},
           {:var_kind, :symbol,
-           "where the value comes from: proc, param, result, name, self, obj, load, reply, remote, dict or table"},
+           "where the value comes from: process, param, result, name, self, term, load, reply, remote, dictionary or table"},
           {:var, :symbol,
            "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
         ],
@@ -101,7 +101,7 @@ defmodule Argus.Schema.Processes do
           {:func, :func_id, "function registering"},
           {:name, :symbol, "the literal name"},
           {:var_kind, :symbol,
-           "where the value comes from: proc, param, result, name, self, obj, load, reply, remote, dict or table"},
+           "where the value comes from: process, param, result, name, self, term, load, reply, remote, dictionary or table"},
           {:var, :symbol,
            "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
         ],
@@ -117,7 +117,7 @@ defmodule Argus.Schema.Processes do
           {:message, :symbol,
            "literal atom, {:tag, …} for a tuple with a literal atom tag, or dynamic"},
           {:var_kind, :symbol,
-           "where the value comes from: proc, param, result, name, self, obj, load, reply, remote, dict or table"},
+           "where the value comes from: process, param, result, name, self, term, load, reply, remote, dictionary or table"},
           {:var, :symbol,
            "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
         ],
@@ -144,7 +144,7 @@ defmodule Argus.Schema.Processes do
           {:func, :func_id, "function making it"},
           {:signal, :symbol, "exit, monitor, link, unlink or stop"},
           {:var_kind, :symbol,
-           "where the value comes from: proc, param, result, name, self, obj, load, reply, remote, dict or table"},
+           "where the value comes from: process, param, result, name, self, term, load, reply, remote, dictionary or table"},
           {:var, :symbol,
            "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
         ],
@@ -187,7 +187,7 @@ defmodule Argus.Schema.Processes do
           {:field, :symbol,
            "a map key (inspected), {i} for tuple position i (0-based), [] for a list's elements, * for an unknown map key"},
           {:var_kind, :symbol,
-           "where the value comes from: proc, param, result, name, self, obj, load, reply, remote, dict or table"},
+           "where the value comes from: process, param, result, name, self, term, load, reply, remote, dictionary or table"},
           {:var, :symbol,
            "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
         ],
@@ -200,7 +200,7 @@ defmodule Argus.Schema.Processes do
           {:func, :func_id, "function building the term"},
           {:term, :symbol, "the term"},
           {:var_kind, :symbol,
-           "where the value comes from: proc, param, result, name, self, obj, load, reply, remote, dict or table"},
+           "where the value comes from: process, param, result, name, self, term, load, reply, remote, dictionary or table"},
           {:var, :symbol,
            "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
         ],
@@ -226,7 +226,7 @@ defmodule Argus.Schema.Processes do
           {:load, :symbol, "the load: the reading instruction's ID and the field"},
           {:field, :symbol, "the field read, as in field_store"},
           {:var_kind, :symbol,
-           "where the value comes from: proc, param, result, name, self, obj, load, reply, remote, dict or table"},
+           "where the value comes from: process, param, result, name, self, term, load, reply, remote, dictionary or table"},
           {:var, :symbol,
            "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
         ],
@@ -315,7 +315,7 @@ defmodule Argus.Schema.Processes do
         fields: [
           {:id, :instr_id, "instruction ID of the call"},
           {:func, :func_id, "function containing it"},
-          {:op, :symbol, "put, get or erase"},
+          {:operation, :symbol, "put, get or erase"},
           {:key, :symbol, "the literal key, or dynamic"}
         ],
         doc: """
@@ -364,7 +364,7 @@ defmodule Argus.Schema.Processes do
         fields: [
           {:id, :instr_id, "instruction ID of the Task call"},
           {:func, :func_id, "function making it"},
-          {:op, :symbol, "await, await_many, yield, yield_many, shutdown or ignore"},
+          {:operation, :symbol, "await, await_many, yield, yield_many, shutdown or ignore"},
           {:var_kind, :symbol, "as in call_arg_var"},
           {:var, :symbol, "as in call_arg_var"}
         ],

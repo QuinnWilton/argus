@@ -2,12 +2,12 @@
 //
 // Dynamic children outside the starter's subtree can survive its shutdown and keep
 // using stopped services. Check whether terminate explicitly stops them.
-.decl foreign_dynamic_children(mod: symbol, sup: symbol, via: symbol, site: symbol, sup_site: symbol)
+.decl foreign_dynamic_children(mod: symbol, supervisor: symbol, via: symbol, site: symbol, supervisor_site: symbol)
 .output foreign_dynamic_children
 
 // A process starts children onto a supervisor in another tree, and its
 // terminate/2 does not stop them: they outlive the process's own tree.
-.decl children_left_behind(mod: symbol, sup: symbol, start: symbol)
+.decl children_left_behind(mod: symbol, supervisor: symbol, start: symbol)
 
 children_left_behind(mod, sup, start) :-
   starts_children_under(mod, sup, start),
@@ -24,7 +24,7 @@ children_left_behind(mod, sup, start) :-
 // serving connections, whose tree holds a Phoenix endpoint. A supervisor in a tree no
 // application of the program roots (a library's pool), or in one that serves none (a
 // library's own application, analyzed with the dependencies), outlives it.
-.decl handed_off(mod: symbol, sup: symbol)
+.decl handed_off(mod: symbol, supervisor: symbol)
 
 handed_off(mod, sup) :-
   starts_children_under(mod, sup, _),
@@ -55,7 +55,7 @@ connection_behaviour("Phoenix.Channel").
 
 // Of the children `start` puts under `sup`, one terminate/2 does not stop through its
 // own stop API (terminate_stops_child): stopping one kind of child excuses no other.
-.decl leaves_child(mod: symbol, sup: symbol, start: symbol)
+.decl leaves_child(mod: symbol, supervisor: symbol, start: symbol)
 
 leaves_child(mod, sup, start) :-
   starts_children_under(mod, sup, start),
@@ -65,7 +65,7 @@ leaves_child(mod, sup, start) :-
 // Attribute child starts to the process whose callbacks reach them, including shared
 // helpers. Dynamic supervisor pids have no known tree because these arguments are not
 // resolved by points-to.
-.decl starts_children_under(mod: symbol, sup: symbol, start: symbol)
+.decl starts_children_under(mod: symbol, supervisor: symbol, start: symbol)
 
 starts_children_under(mod, sup, start) :-
   outlives_starter(sup, _, start),
@@ -77,7 +77,7 @@ starts_children_under(mod, sup, start) :-
 // async_stream_nolink's tasks are killed by the stream's monitor when the caller dies:
 // only start_child and async_nolink start a task with a lifetime of its own. A
 // function making both kinds counts as making the second.
-.decl outlives_starter(sup: symbol, child: symbol, start: symbol)
+.decl outlives_starter(supervisor: symbol, child: symbol, start: symbol)
 
 outlives_starter(sup, child, start) :- dynamic_child(sup, child, start), child != "Task".
 
@@ -94,7 +94,7 @@ starter_process(mod, s) :- process_entry(mod, c), reaches_child_start(c, s).
 
 // Require a start function outside the supervisor's module. Its own start API may
 // intentionally offer shared child ownership to callers.
-.decl started_from_outside(start: symbol, sup: symbol)
+.decl started_from_outside(start: symbol, supervisor: symbol)
 
 started_from_outside(start, sup) :-
   dynamic_child(sup, _, start),
@@ -103,7 +103,7 @@ started_from_outside(start, sup) :-
 
 // `sup` sits in a tree `mod` is no member of. A supervisor named through
 // a registry (`Oban.Registry.via(Foreman)`) is no tree member.
-.decl in_another_tree(mod: symbol, sup: symbol)
+.decl in_another_tree(mod: symbol, supervisor: symbol)
 
 in_another_tree(mod, sup) :-
   starts_children_under(mod, sup, _),

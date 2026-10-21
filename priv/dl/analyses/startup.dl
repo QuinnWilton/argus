@@ -29,7 +29,7 @@
 // without retry.
 // `deferral_defect`: a cancellable init timeout or a continuation catch turning a
 // deadlock into a restart loop. Detail gives the timeout or supervisor.
-.decl blocks_on_peer(mod: symbol, phase: symbol, dep: symbol, kind: symbol, ordering: symbol, sup: symbol, site: symbol, detail: symbol)
+.decl blocks_on_peer(mod: symbol, phase: symbol, dependency: symbol, kind: symbol, ordering: symbol, supervisor: symbol, site: symbol, detail: symbol)
 .output blocks_on_peer
 
 // Priors may classify receive/down waits as local. Set peer to "local" with confidence
@@ -103,7 +103,7 @@ already_running(mod, peer) :- init_safe_cross_supervisor(mod, peer).
 
 // Later-sibling and post-tree dependencies are reported by start-order rules with their
 // ordering evidence. Do not also report them as unordered calls.
-.decl later_sibling_call(child: symbol, dep: symbol)
+.decl later_sibling_call(child: symbol, dependency: symbol)
 
 later_sibling_call(child, dep) :- later_sibling_dependency(child, dep, "call", _, _, _).
 later_sibling_call(child, dep) :- after_tree_dependency(child, dep, _, _, _).
@@ -111,7 +111,7 @@ later_sibling_call(child, dep) :- after_tree_dependency(child, dep, _, _, _).
 // ── Supervision-aware filtering ────────────────────────────────────────
 
 // True when both modules appear under a common supervisor's subtree.
-.decl shares_supervisor(child: symbol, dep: symbol)
+.decl shares_supervisor(child: symbol, dependency: symbol)
 
 shares_supervisor(child, dep) :-
   child_subtree(sup, _, child),
@@ -130,7 +130,7 @@ likely_supervised(mod) :-
 
 // The callee starts earlier under the same supervisor, so it is running
 // when this init runs.
-.decl init_safe_sibling(child: symbol, dep: symbol)
+.decl init_safe_sibling(child: symbol, dependency: symbol)
 
 init_safe_sibling(child, dep) :-
   calls_during_init(child, dep),
@@ -139,7 +139,7 @@ init_safe_sibling(child, dep) :-
 // Assume a dependency in a disjoint supervision tree is already running. Require at
 // least one module to have positive supervision evidence so missing facts alone cannot
 // suppress a wait.
-.decl init_safe_cross_supervisor(child: symbol, dep: symbol)
+.decl init_safe_cross_supervisor(child: symbol, dependency: symbol)
 
 init_safe_cross_supervisor(child, dep) :-
   calls_during_init(child, dep),
@@ -286,7 +286,7 @@ answers_without_init(mod, call) :-
   !starts_under(mod, sup).
 
 // mod is started under the supervisor named `sup`.
-.decl starts_under(mod: symbol, sup: symbol)
+.decl starts_under(mod: symbol, supervisor: symbol)
 
 starts_under(mod, sup) :- dynamic_child(sup, mod, _), sup != "dynamic".
 
@@ -319,7 +319,7 @@ blocks_on_peer(mod, "init", server, "blocking_server", "earlier", "", wait, hand
 // and unbounded supervisor operations. Any callback can block the request from init.
 // This reporting predicate requires evidence of a wait; blocking's suppression
 // predicate `answers_straight_away` instead requires proof that the handler answers.
-.decl handler_blocks(mod: symbol, handler: symbol, op_site: symbol)
+.decl handler_blocks(mod: symbol, handler: symbol, operation_site: symbol)
 
 handler_blocks(mod, h, site) :-
   handler_function(mod, h),
@@ -394,7 +394,7 @@ init_effect(mod, "recv", reader, site) :-
 
 // Before acknowledging startup, init/1 receives without an after clause or peer-exit
 // escape. The expected message may never arrive.
-.decl endless_receive_during_init(mod: symbol, waiter: symbol, recv: symbol)
+.decl endless_receive_during_init(mod: symbol, waiter: symbol, receive: symbol)
 
 endless_receive_during_init(mod, waiter, recv) :-
   init_function(mod, init),
@@ -404,7 +404,7 @@ endless_receive_during_init(mod, waiter, recv) :-
 
 // An untimed startup receive ends only on a reply or peer exit. A live but unresponsive
 // peer can block startup indefinitely.
-.decl receive_until_peer_exits_during_init(mod: symbol, waiter: symbol, recv: symbol)
+.decl receive_until_peer_exits_during_init(mod: symbol, waiter: symbol, receive: symbol)
 
 receive_until_peer_exits_during_init(mod, waiter, recv) :-
   init_function(mod, init),
@@ -415,7 +415,7 @@ receive_until_peer_exits_during_init(mod, waiter, recv) :-
 // An unbounded receive before the function's acknowledgement, excluding confirmed timer
 // flushes. Post-ack waits belong to the running server; pre-ack enter_loop has its own
 // finding.
-.decl receives_without_timeout(func: symbol, recv: symbol)
+.decl receives_without_timeout(func: symbol, receive: symbol)
 
 receives_without_timeout(f, id) :-
   receive_start(id, f, 1, _),
@@ -424,14 +424,14 @@ receives_without_timeout(f, id) :-
 
 // The receive accepts its monitored peer's DOWN or, while trapping exits, its linked
 // peer's EXIT.
-.decl ends_with_peer(recv: symbol)
+.decl ends_with_peer(receive: symbol)
 
 ends_with_peer(recv) :- down_bounded(recv).
 ends_with_peer(recv) :- ends_with_linked_exit(recv).
 
 // A pinned linked-peer :EXIT bounds the receive only when exit trapping is active at
 // the wait, accounting for preceding sets and clears.
-.decl ends_with_linked_exit(recv: symbol)
+.decl ends_with_linked_exit(receive: symbol)
 
 ends_with_linked_exit(recv) :- exit_pinned(recv, f), (flag_set_before(f, recv) ; entered_trapping(f), !cleared_before(recv)).
 
@@ -580,7 +580,7 @@ init_effect(mod, "connect", api, "") :- connect_without_retry(mod, api).
 
 // A child's init/1 depends on a process that its supervisor starts after
 // it, so the process is not there yet when init/1 needs it.
-.decl later_sibling_dependency(child: symbol, dep: symbol, kind: symbol, sup: symbol, sup_site: symbol, witness: symbol)
+.decl later_sibling_dependency(child: symbol, dependency: symbol, kind: symbol, supervisor: symbol, supervisor_site: symbol, witness: symbol)
 
 later_sibling_dependency(child, dep, kind, sup, sup_site, witness) :-
   depends_during_startup(child, dep, kind, witness),
@@ -591,21 +591,21 @@ later_sibling_dependency(child, dep, kind, sup, sup_site, witness) :-
 // A call or cast dependency from mod's init/1, either before acknowledgement (init_dependency)
 // or in the subsequent startup window (init_window_dependency). `witness` makes the
 // dependency.
-.decl depends_during_startup(mod: symbol, dep: symbol, kind: symbol, witness: symbol)
+.decl depends_during_startup(mod: symbol, dependency: symbol, kind: symbol, witness: symbol)
 
 depends_during_startup(mod, dep, kind, witness) :- init_dependency(mod, dep, kind, witness).
 depends_during_startup(mod, dep, kind, witness) :- init_window_dependency(mod, dep, kind, witness).
 
 // `later` starts after `earlier` under `sup`, in another branch of its
 // child list (boots_before, clientlib/supervision.dl).
-.decl starts_after(later: symbol, earlier: symbol, sup: symbol)
+.decl starts_after(later: symbol, earlier: symbol, supervisor: symbol)
 
 starts_after(later, earlier, sup) :- boots_before(sup, earlier, later, _, _).
 
 // The tree `sup` starts is defined at `site` (supervisor_site): the
 // finding anchors there, and a supervisor with no known site is not
 // reported.
-.decl tree_defined_at(sup: symbol, site: symbol)
+.decl tree_defined_at(supervisor: symbol, site: symbol)
 
 tree_defined_at(sup, site) :- supervisor_site(sup, site).
 
@@ -620,7 +620,7 @@ blocks_on_peer(child, "init", dep, kind, "later", sup, sup_site, witness) :-
 
 // A child waits for dep, but the tree's start function starts dep only after the tree
 // returns. `site` is the later start of dep.
-.decl after_tree_dependency(child: symbol, dep: symbol, start: symbol, site: symbol, witness: symbol)
+.decl after_tree_dependency(child: symbol, dependency: symbol, start: symbol, site: symbol, witness: symbol)
 
 after_tree_dependency(child, dep, start, site, witness) :-
   starts_tree(start, sup),
@@ -631,20 +631,20 @@ after_tree_dependency(child, dep, start, site, witness) :-
 
 // The function starts sup's tree itself: the tree is defined at its
 // `Supervisor.start_link` call.
-.decl starts_tree(start: symbol, sup: symbol)
+.decl starts_tree(start: symbol, supervisor: symbol)
 
 starts_tree(start, sup) :-
   supervisor_site(sup, site),
   call_site(site, start, "Supervisor", "start_link", _).
 
 // The module is in the tree sup starts (boot_subtree).
-.decl in_tree(mod: symbol, sup: symbol)
+.decl in_tree(mod: symbol, supervisor: symbol)
 
 in_tree(mod, sup) :- boot_subtree(sup, _, mod).
 
 // After Supervisor.start_link returns, the function calls, at `site`,
 // the start_link of `dep` (post_start_call).
-.decl starts_after_tree(start: symbol, site: symbol, dep: symbol)
+.decl starts_after_tree(start: symbol, site: symbol, dependency: symbol)
 
 starts_after_tree(start, site, dep) :-
   post_start_call(start, site, callee),
@@ -652,7 +652,7 @@ starts_after_tree(start, site, dep) :-
 
 // mod's init/1 holds its start on a synchronous call to `dep`, made in
 // `witness` (init_dependency "call"; calls_during_init without the witness).
-.decl calls_during_init_by(mod: symbol, dep: symbol, witness: symbol)
+.decl calls_during_init_by(mod: symbol, dependency: symbol, witness: symbol)
 
 calls_during_init_by(mod, dep, witness) :- init_dependency(mod, dep, "call", witness).
 
@@ -667,7 +667,7 @@ blocks_on_peer(child, "init", dep, "call", "after_tree", start, site, witness) :
 // ── handle_continue calls a later-started sibling ────────────────────
 
 // handle_continue/2 calls a later sibling before the supervisor has started it.
-.decl later_sibling_call_during_continue(worker: symbol, sibling: symbol, sup: symbol, call: symbol)
+.decl later_sibling_call_during_continue(worker: symbol, sibling: symbol, supervisor: symbol, call: symbol)
 
 later_sibling_call_during_continue(worker, sibling, sup, call) :-
   continue_calls(worker, sibling, call),
@@ -690,7 +690,7 @@ blocks_on_peer(worker, "continue", sibling, "call", "later", sup, call, "") :-
 
 // A handle_continue/2 calls its own supervisor while the supervisor is
 // still starting the children after it.
-.decl parent_call_during_continue(worker: symbol, sup: symbol, call: symbol)
+.decl parent_call_during_continue(worker: symbol, supervisor: symbol, call: symbol)
 
 parent_call_during_continue(worker, sup, call) :-
   calls_supervisor_during_continue(worker, sup, call),
@@ -699,7 +699,7 @@ parent_call_during_continue(worker, sup, call) :-
 
 // handle_continue/2 calls its supervisor through a management API or a plain
 // synchronous call to the same supervisor mailbox.
-.decl calls_supervisor_during_continue(worker: symbol, sup: symbol, call: symbol)
+.decl calls_supervisor_during_continue(worker: symbol, supervisor: symbol, call: symbol)
 
 calls_supervisor_during_continue(worker, sup, call) :-
   manages_supervisor_during_continue(worker, sup, call, _).
@@ -710,7 +710,7 @@ calls_supervisor_during_continue(worker, sup, call) :-
 
 // A startup continuation makes a supervisor management call on its own stack. detail
 // identifies api.op; the management-call site anchors it.
-.decl manages_supervisor_during_continue(worker: symbol, sup: symbol, call: symbol, detail: symbol)
+.decl manages_supervisor_during_continue(worker: symbol, supervisor: symbol, call: symbol, detail: symbol)
 
 manages_supervisor_during_continue(worker, sup, call, cat(api, cat(".", op))) :-
   init_continues_to(worker, _),
@@ -724,13 +724,13 @@ manages_supervisor_during_continue(worker, sup, call, cat(api, cat(".", op))) :-
   supervisor_management_call(call, _, api, op, sup).
 
 // The worker is one of sup's own children.
-.decl supervises(sup: symbol, worker: symbol)
+.decl supervises(supervisor: symbol, worker: symbol)
 
 supervises(sup, worker) :- supervisor(sup, _), supervisor_child(sup, _, worker, _, _).
 
 // A later child exists explicitly or may occur in an unresolved child-list
 // tail/element. Only the last child of a fully known list is provably last.
-.decl has_later_sibling(sup: symbol, worker: symbol)
+.decl has_later_sibling(supervisor: symbol, worker: symbol)
 
 has_later_sibling(sup, worker) :- boots_before(sup, worker, _, _, _).
 
@@ -751,7 +751,7 @@ blocks_on_peer(worker, "continue", sup, "parent", "parent", sup, call, "") :-
 
 // A post-ack init call to its parent can wait while later siblings start, like
 // handle_continue. It no longer holds its own start directly.
-.decl parent_call_after_ack(worker: symbol, sup: symbol, call: symbol)
+.decl parent_call_after_ack(worker: symbol, supervisor: symbol, call: symbol)
 
 parent_call_after_ack(worker, sup, call) :-
   manages_supervisor_after_ack(worker, sup, call, _),
@@ -760,7 +760,7 @@ parent_call_after_ack(worker, sup, call) :-
 
 // A supervisor operation after acknowledgement, either locally after a function's ack
 // or downstream of a post-ack edge. detail identifies api.op.
-.decl manages_supervisor_after_ack(worker: symbol, sup: symbol, call: symbol, detail: symbol)
+.decl manages_supervisor_after_ack(worker: symbol, supervisor: symbol, call: symbol, detail: symbol)
 
 manages_supervisor_after_ack(worker, sup, call, cat(api, cat(".", op))) :-
   init_function(worker, i),
@@ -786,7 +786,7 @@ blocks_on_peer(worker, "acked", sup, "parent", "parent", sup, call, detail) :-
 
 // A caught failure in handle_continue/2 can restart the worker into the same
 // unavailable-sibling call, exhausting restart intensity.
-.decl caught_later_sibling_call(worker: symbol, sup: symbol)
+.decl caught_later_sibling_call(worker: symbol, supervisor: symbol)
 
 caught_later_sibling_call(worker, sup) :-
   later_sibling_call_during_continue(worker, _, sup, _),
@@ -915,7 +915,7 @@ lock_in_init_closure(init, lock) :-
 
 // A distributed operation before startup acknowledgement makes the supervisor wait for
 // the remote node or store.
-.decl distributed_operation_during_init(init: symbol, op: symbol)
+.decl distributed_operation_during_init(init: symbol, operation: symbol)
 
 distributed_operation_during_init(init, op) :-
   is_init(init),
@@ -925,7 +925,7 @@ distributed_operation_during_init(init, op) :-
 // Operations waiting on another node or distributed store: RPC, global registration,
 // node operations and Mnesia (not DETS, a file on this node). Exclude immediate node-list and monitoring
 // subscriptions.
-.decl distributed_operation(op: symbol, func: symbol, name: symbol)
+.decl distributed_operation(operation: symbol, func: symbol, name: symbol)
 
 distributed_operation(id, f, name) :- rpc_call(id, f, name, _).
 distributed_operation(id, f, "global_register") :- global_register(id, f, _, _).

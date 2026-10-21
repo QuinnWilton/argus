@@ -5,12 +5,12 @@
 // A permanent child restarts even after :normal or :shutdown, potentially undoing
 // intentional drain-and-stop behavior. Check literal stop reasons only; emit per stop
 // site and deduplicate by supervisor and child.
-.decl permanent_child_stops_normally(sup: symbol, child: symbol, reason: symbol, site: symbol, sup_site: symbol)
+.decl permanent_child_stops_normally(supervisor: symbol, child: symbol, reason: symbol, site: symbol, supervisor_site: symbol)
 .output permanent_child_stops_normally
 
 // A permanent child stops itself with :normal or :shutdown, and its
 // supervisor starts it straight back.
-.decl normal_stop_of_permanent_child(sup: symbol, child: symbol, reason: symbol, stop: symbol)
+.decl normal_stop_of_permanent_child(supervisor: symbol, child: symbol, reason: symbol, stop: symbol)
 
 normal_stop_of_permanent_child(sup, child, reason, stop) :-
   restarts_always(sup, child),
@@ -19,7 +19,7 @@ normal_stop_of_permanent_child(sup, child, reason, stop) :-
 
 // sup restarts `child` whatever its exit reason: it runs under :permanent
 // (restart_policy: its spec's, or a shorthand's own child_spec/1's).
-.decl restarts_always(sup: symbol, child: symbol)
+.decl restarts_always(supervisor: symbol, child: symbol)
 
 restarts_always(sup, child) :-
   supervisor(sup, _),

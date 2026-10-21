@@ -73,11 +73,11 @@ points_to_budget(500000).
 
 .decl points_to_overflow(relation: symbol, rows: number, budget: number)
 
-.decl var_points_to_rows(n: number)
+.decl var_points_to_rows(count: number)
 
 var_points_to_rows(count((f, k, s, x))) :- var_points_to(f, k, s, x).
 
-.decl field_points_to_rows(n: number)
+.decl field_points_to_rows(count: number)
 
 field_points_to_rows(count((o, sel, x))) :- field_points_to(o, sel, x).
 
@@ -111,13 +111,13 @@ points_to_mode("field_insensitive") :- stage_mode("field_insensitive").
 
 // The calls, casts and sends, and apart from them the exit signals,
 // monitors and links, which only signals.dl reads.
-.decl staged_process_call(func: symbol, anchor: symbol, site: symbol, api_kind: symbol, proc: symbol)
+.decl staged_process_call(func: symbol, anchor: symbol, site: symbol, api_kind: symbol, process: symbol)
 
 staged_process_call(f, a, id, kind, p) :- process_call(f, a, id, kind, p), process_call_var(id, _, kind, _, _).
 
 .output staged_process_call(filename="process_call.facts")
 
-.decl process_signal(func: symbol, anchor: symbol, site: symbol, signal: symbol, proc: symbol)
+.decl process_signal(func: symbol, anchor: symbol, site: symbol, signal: symbol, process: symbol)
 
 process_signal(f, a, id, kind, p) :- process_call(f, a, id, kind, p), process_signal_var(id, _, kind, _, _).
 
@@ -130,7 +130,7 @@ process_signal(f, a, id, kind, p) :- process_call(f, a, id, kind, p), process_si
 // the program, and the points-to of an arbitrary one is what the stage
 // otherwise never needs; a rule that asks about other variables adds
 // them here.
-.decl var_process(func: symbol, var_kind: symbol, var: symbol, proc: symbol)
+.decl var_process(func: symbol, var_kind: symbol, var: symbol, process: symbol)
 
 var_process(h, sk, s, p) :-
   handler_function(_, h),
@@ -210,7 +210,7 @@ approximated_table(t) :- hub_object(t), table_allocation(_, _, t).
 // field-insensitively: their targets are a superset (hub_objects.dl),
 // each a process a call, send or signal may reach, not one it surely
 // does. None in the full stage.
-.decl approximated_process(proc: symbol)
+.decl approximated_process(process: symbol)
 
 approximated_process(p) :- hub_object(p), process(p).
 

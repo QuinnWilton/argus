@@ -2034,7 +2034,9 @@ defmodule Argus.Extractors.TermFlow do
 
     cond do
       Map.has_key?(@task_ops, called) ->
-        facts |> emit_loads(at, r) |> task_operation_rows(at, Map.fetch!(@task_ops, called), hd(values))
+        facts
+        |> emit_loads(at, r)
+        |> task_operation_rows(at, Map.fetch!(@task_ops, called), hd(values))
 
       # A signal captured as the fun (`&Process.monitor/1`) goes to each
       # element it is handed.
@@ -2296,7 +2298,11 @@ defmodule Argus.Extractors.TermFlow do
   # it: the reference an unnamed table is, or the name a named table is
   # answered with. Every other `:ets` call names its table in x0.
   defp emit_table(facts, at, _ictx, {:ets, :new, 2}) do
-    add_fact(facts, :table_allocation, [site(at.fun, at.idx), at.fun.func_id, table(at.fun, at.idx)])
+    add_fact(facts, :table_allocation, [
+      site(at.fun, at.idx),
+      at.fun.func_id,
+      table(at.fun, at.idx)
+    ])
   end
 
   defp emit_table(facts, at, ictx, {:ets, _func, arity}) when arity > 0 do

@@ -56,7 +56,7 @@ defmodule Argus.Schema.OwnedResources do
           {:id, :symbol, "instruction ID"},
           {:func, :symbol, "containing function ID"},
           {:table_ref, :symbol, "table name atom (or \"dynamic\")"},
-          {:op, :symbol, "ETS function name"},
+          {:operation, :symbol, "ETS function name"},
           {:kind, :symbol, "read, write, or delete"}
         ],
         doc: "ETS read/write/delete operation."
@@ -94,7 +94,8 @@ defmodule Argus.Schema.OwnedResources do
         name: :ets_written_when_found,
         layer: 2,
         fields: [
-          {:read, :instr_id, "a lookup, match, match_object, select or member (an ets_operation)"},
+          {:read, :instr_id,
+           "a lookup, match, match_object, select or member (an ets_operation)"},
           {:write, :instr_id, "an ets_operation of kind write in the same function"}
         ],
         doc: """

@@ -41,10 +41,10 @@ defmodule Argus.Exclusions.ShutdownTest do
         :mod,
         :sibling,
         :via,
-        :sup,
+        :supervisor,
         :handler,
         :site,
-        :sup_site
+        :supervisor_site
       ])
 
   # {kind, witness function} of each unhandled exit signal.

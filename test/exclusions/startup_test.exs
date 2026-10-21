@@ -55,7 +55,7 @@ defmodule Argus.Exclusions.StartupTest do
   defp peers(ctx, set) do
     for [dep, ordering, site, detail] <-
           Rows.where(results(ctx, set), :startup, "blocks_on_peer",
-            drop: [:mod, :phase, :kind, :sup]
+            drop: [:mod, :phase, :kind, :supervisor]
           ),
         do: {dep, ordering, detail, site}
   end

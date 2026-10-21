@@ -20,23 +20,23 @@
 .type ShapedField = (field: symbol, kind: symbol, tag: symbol, arity: symbol)
 .type Reach = (tag: symbol, at: ShapedField)
 
-.decl object(x: symbol)
+.decl object(object: symbol)
 
 object(p) :- stage_mode("selective"), process(p).
 object(t) :- stage_mode("selective"), table_allocation(_, _, t).
 
-.decl field_insensitive_points_to(func: symbol, var_kind: symbol, var: symbol, r: Reach, x: symbol)
-.decl field_insensitive_entry(func: symbol, pos: symbol, r: Reach, x: symbol)
-.decl field_insensitive_return(func: symbol, r: Reach, x: symbol)
-.decl field_insensitive_return_all(func: symbol, r: Reach, x: symbol)
-.decl field_insensitive_named_pid(name: symbol, proc: symbol)
-.decl field_insensitive_call_site_target(id: symbol, func: symbol, api_kind: symbol, proc: symbol)
+.decl field_insensitive_points_to(func: symbol, var_kind: symbol, var: symbol, reach: Reach, object: symbol)
+.decl field_insensitive_entry(func: symbol, pos: symbol, reach: Reach, object: symbol)
+.decl field_insensitive_return(func: symbol, reach: Reach, object: symbol)
+.decl field_insensitive_return_all(func: symbol, reach: Reach, object: symbol)
+.decl field_insensitive_named_pid(name: symbol, process: symbol)
+.decl field_insensitive_call_site_target(id: symbol, func: symbol, api_kind: symbol, process: symbol)
 
 .decl field_insensitive_term_shape(term: symbol, kind: symbol, tag: symbol, arity: symbol)
 
 field_insensitive_term_shape(o, kind, tag, ar) :- stage_mode("selective"), term_allocation(_, o, kind, tag, ar).
 
-.decl reach_top(r: Reach)
+.decl reach_top(reach: Reach)
 .decl reach_top_tag(tag: symbol)
 
 reach_top_tag("top").
@@ -68,7 +68,7 @@ field_insensitive_points_to(f, "term", o, ("below", (sel, kind, tag, ar)), x) :-
 // variables an update copies (field_insensitive_update_base): over every variable it
 // would copy all of field_insensitive_points_to, on Ash's deps 3.3 million rows of
 // which the updates read a fraction.
-.decl field_insensitive_field(func: symbol, var_kind: symbol, var: symbol, tag: symbol, field: symbol, x: symbol)
+.decl field_insensitive_field(func: symbol, var_kind: symbol, var: symbol, tag: symbol, field: symbol, object: symbol)
 
 field_insensitive_field(f, sk, s, t, sel, x) :- field_insensitive_update_base(f, sk, s), field_insensitive_points_to(f, sk, s, r, x), r = (t, at), at = (sel, _, _, _).
 
@@ -158,7 +158,7 @@ field_insensitive_points_to(g, "param", k, r, x) :- field_insensitive_entry(g, k
 field_insensitive_points_to(g, "param", k, r, x) :- call_arg_var(_, f, g, k, "call", sk, s), field_insensitive_points_to(f, sk, s, r, x).
 field_insensitive_entry(g, k, r, x) :- call_arg_var(_, f, g, k, via, sk, s), via != "call", field_insensitive_points_to(f, sk, s, r, x).
 
-.decl field_insensitive_fresh(func: symbol, r: Reach, x: symbol)
+.decl field_insensitive_fresh(func: symbol, reach: Reach, object: symbol)
 .decl fresh_route(func: symbol, var_kind: symbol, var: symbol)
 
 fresh_route(g, "term", t) :- stage_mode("selective"), return_var(g, "term", t), start_term(t, _).
@@ -221,7 +221,7 @@ field_insensitive_returns_read(h) :- stage_mode("selective"), function_def(h, _,
 
 // Resolve a state slot to its returned tuple field: Top for an object directly in the
 // field, Deep for deeper or unknown contents.
-.decl field_insensitive_state_slot(func: symbol, tag: symbol, arity: symbol, field: symbol, r: Reach, x: symbol)
+.decl field_insensitive_state_slot(func: symbol, tag: symbol, arity: symbol, field: symbol, reach: Reach, object: symbol)
 .decl field_insensitive_state_slot_wanted(tag: symbol, arity: symbol, field: symbol)
 
 field_insensitive_state_slot_wanted(tag, n, sel) :- stage_mode("selective"), state_slot(tag, n, sel).
@@ -332,7 +332,7 @@ field_insensitive_field_asked(f, sk, s, sel) :-
   call_arg_var(_, f, g, k, "call", sk, s),
   sk != "param".
 
-.decl field_insensitive_field_reads(func: symbol, var_kind: symbol, var: symbol, field: symbol, r: Reach, x: symbol)
+.decl field_insensitive_field_reads(func: symbol, var_kind: symbol, var: symbol, field: symbol, reach: Reach, object: symbol)
 
 field_insensitive_field_reads(f, sk, s, sel, ("top", ("", "", "", "")), x) :-
   field_insensitive_field_asked(f, sk, s, sel),
@@ -381,7 +381,7 @@ field_insensitive_entry_field_asked(f, j, sel) :-
   targets_field(g, k, sel, _, _),
   call_arg_var(_, f, g, k, "call", "param", j).
 
-.decl field_insensitive_entry_field_reads(func: symbol, pos: symbol, field: symbol, r: Reach, x: symbol)
+.decl field_insensitive_entry_field_reads(func: symbol, pos: symbol, field: symbol, reach: Reach, object: symbol)
 
 field_insensitive_entry_field_reads(f, k, sel, ("top", ("", "", "", "")), x) :-
   field_insensitive_entry_field_asked(f, k, sel),
@@ -420,7 +420,7 @@ field_insensitive_entry_field_reads(f, k, sel, ("deep", ("", "", "", "")), x) :-
 
 // What a use may reach: process_call's rules, read through the
 // field-insensitive pass.
-.decl field_insensitive_process_use(func: symbol, anchor: symbol, site: symbol, api_kind: symbol, proc: symbol)
+.decl field_insensitive_process_use(func: symbol, anchor: symbol, site: symbol, api_kind: symbol, process: symbol)
 
 field_insensitive_process_use(f, id, id, kind, p) :-
   pid_use(id, f, kind, sk, s),
@@ -495,13 +495,13 @@ field_insensitive_call_site_target(id, g, kind, p) :- field_insensitive_process_
 // ── Hub objects ─────────────────────────────────────────────────────
 
 // The variables the field-insensitive pass finds holding an object, anywhere in them.
-.decl field_insensitive_holder(func: symbol, var_kind: symbol, var: symbol, x: symbol)
+.decl field_insensitive_holder(func: symbol, var_kind: symbol, var: symbol, object: symbol)
 
 field_insensitive_holder(f, sk, s, x) :- field_insensitive_points_to(f, sk, s, _, x).
 
-.decl hub_spread(x: symbol, n: number)
+.decl hub_spread(object: symbol, count: number)
 
-.decl hub_holders(x: symbol, n: number)
+.decl hub_holders(object: symbol, count: number)
 
 hub_holders(x, count((f, sk, s))) :- field_insensitive_holder(f, sk, s, x).
 
@@ -517,16 +517,16 @@ program_var(f, "load", l) :- stage_mode("selective"), field_load(f, l, _, _, _).
 program_var(f, "term", o) :- stage_mode("selective"), term_allocation(f, o, _, _, _).
 program_var(f, "result", c) :- stage_mode("selective"), call_result_var(c, f, _).
 
-.decl program_var_count(n: number)
+.decl program_var_count(count: number)
 
-.decl program_var_rows(n: number)
+.decl program_var_rows(count: number)
 
 program_var_rows(count((f, sk, s))) :- program_var(f, sk, s).
 
 program_var_count(n) :- stage_mode("selective"), program_var_rows(n).
 program_var_count(0) :- stage_mode("selective"), !program_var_rows(_).
 
-.decl hub_object(x: symbol)
+.decl hub_object(object: symbol)
 
 hub_object(x) :- hub_spread(x, n), program_var_count(t), n > 1000, n * 100 > t.
 

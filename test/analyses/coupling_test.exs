@@ -420,7 +420,16 @@ defmodule Argus.Analyses.CouplingTest do
       results
       |> Rows.where(:coupling, "sibling_dependency",
         reason: "restart_isolation",
-        drop: [:sup, :reason, :detail, :sup_site, :witness, :site, :basis, :permille]
+        drop: [
+          :supervisor,
+          :reason,
+          :detail,
+          :supervisor_site,
+          :witness,
+          :site,
+          :basis,
+          :permille
+        ]
       )
       |> Enum.uniq()
       |> Enum.sort()

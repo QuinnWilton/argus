@@ -1,7 +1,7 @@
 // Process-dictionary ordering.
 // `key_set_before(func, key, site)`: func or an earlier helper sets the key, with no
 // intervening erase.
-// `skips_default(func, op, table)`: every call path to an ETS operation has a preceding
+// `skips_default(func, operation, table)`: every call path to an ETS operation has a preceding
 // set of the key whose fallback is this table. The operation then uses the stored table
 // instead.
 // Both use may-analysis: a put on one path can suppress a finding. They do not see
@@ -92,7 +92,7 @@ erased_between(f, t, s, k) :-
 
 // `op` uses literal table name only as the fallback when dictionary key is unset,
 // directly or through a helper result.
-.decl default_of_key(op: symbol, name: symbol, key: symbol)
+.decl default_of_key(operation: symbol, name: symbol, key: symbol)
 
 default_of_key(op, name, k) :-
   ets_table_default(op, name, site),
@@ -118,7 +118,7 @@ default_reach.seed(f, op) :- default_of_key(op, _, _), ets_operation(op, f, _, _
 
 // `func` reaches `op` through the call at `site`, or holds it (`site` is
 // op itself).
-.decl reaches_default_at(func: symbol, op: symbol, site: symbol)
+.decl reaches_default_at(func: symbol, operation: symbol, site: symbol)
 
 reaches_default_at(f, op, c) :-
   call_instr(f, g, c),
@@ -129,7 +129,7 @@ reaches_default_at(f, op, op) :- default_of_key(op, _, _), ets_operation(op, f, 
 
 // `op` is reachable with key unset: no preceding put is established, or the call has no
 // known instruction position.
-.decl unset_on_the_way(func: symbol, op: symbol, key: symbol)
+.decl unset_on_the_way(func: symbol, operation: symbol, key: symbol)
 
 unset_on_the_way(f, op, k) :-
   default_of_key(op, _, k),
@@ -145,7 +145,7 @@ unset_on_the_way(f, op, k) :-
 
 // `func` sets key on every path to op, so op cannot use table as the dictionary-read
 // fallback.
-.decl skips_default(func: symbol, op: symbol, table: EtsTable)
+.decl skips_default(func: symbol, operation: symbol, table: EtsTable)
 
 skips_default(f, op, ("named", name)) :-
   default_of_key(op, name, k),

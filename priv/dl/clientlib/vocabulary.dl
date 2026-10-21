@@ -16,7 +16,7 @@ is_terminate(f, m) :- terminate_callback(f, m, _).
 // A global lock with infinity or positive retries; zero tries once, and dynamic is
 // unknown. Node scope is cluster for connected/default node lists, local for
 // `[node()]`, or unknown. Positive retries back off before returning false.
-.decl retrying_lock(site: symbol, func: symbol, op: symbol, retries: symbol, nodes: symbol)
+.decl retrying_lock(site: symbol, func: symbol, operation: symbol, retries: symbol, nodes: symbol)
 
 retrying_lock(site, f, op, retries, nodes) :-
   global_operation(site, f, op, retries, nodes),
@@ -26,7 +26,7 @@ retrying_lock(site, f, op, retries, nodes) :-
 // A :global lock with unbounded retries. Treat :infinity and unknown retry counts as
 // unbounded, matching the default commonly forwarded by wrappers. Treat an unknown node
 // list as the cluster.
-.decl lock_until_granted(site: symbol, func: symbol, op: symbol, retries: symbol, nodes: symbol)
+.decl lock_until_granted(site: symbol, func: symbol, operation: symbol, retries: symbol, nodes: symbol)
 
 lock_until_granted(site, f, op, retries, nodes) :-
   global_operation(site, f, op, retries, nodes),
@@ -34,7 +34,7 @@ lock_until_granted(site, f, op, retries, nodes) :-
 
 // A :global lock with finite positive retries. Failed attempts back off up to eight
 // seconds; exhaustion returns false.
-.decl bounded_lock(site: symbol, func: symbol, op: symbol, retries: symbol, nodes: symbol)
+.decl bounded_lock(site: symbol, func: symbol, operation: symbol, retries: symbol, nodes: symbol)
 
 bounded_lock(site, f, op, retries, nodes) :-
   retrying_lock(site, f, op, retries, nodes),

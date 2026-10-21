@@ -131,7 +131,7 @@ defmodule Argus.Schema.Distribution do
         fields: [
           {:id, :symbol, "instruction ID"},
           {:func, :symbol, "containing function ID"},
-          {:op, :symbol, "operation: set_lock | trans | del_lock | whereis_name | send"},
+          {:operation, :symbol, "operation: set_lock | trans | del_lock | whereis_name | send"},
           {:retries, :symbol, "retry count: \"infinity\" | \"0\" | integer | \"dynamic\""},
           {:nodes, :symbol,
            "the nodes that take part: \"local\" | \"cluster\" | \"unknown\", empty for whereis_name and send"}
@@ -149,7 +149,7 @@ defmodule Argus.Schema.Distribution do
         fields: [
           {:id, :symbol, "instruction ID"},
           {:func, :symbol, "containing function ID"},
-          {:op, :symbol, "operation (connect, disconnect, spawn, ping, etc.)"}
+          {:operation, :symbol, "operation (connect, disconnect, spawn, ping, etc.)"}
         ],
         doc: "Node or :net_kernel operation."
       },
@@ -160,7 +160,7 @@ defmodule Argus.Schema.Distribution do
           {:id, :symbol, "instruction ID"},
           {:func, :symbol, "containing function ID"},
           {:store, :symbol, "store type (mnesia)"},
-          {:op, :symbol, "operation name"}
+          {:operation, :symbol, "operation name"}
         ],
         doc:
           "Mnesia distributed store operation. DETS is not one: a DETS table is a file " <>

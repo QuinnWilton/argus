@@ -90,7 +90,7 @@ held_closure(f, g) :-
   fun_built(f, g),
   !fun_handed_to(f, g, _).
 
-.decl held_closures(func: symbol, n: number)
+.decl held_closures(func: symbol, count: number)
 
 held_closures(f, count(g)) :- held_closure(f, g).
 
@@ -121,7 +121,7 @@ task_start_api("Task.Supervisor", "async_nolink", "unlinked").
 // Task.Supervisor operations start one task per call ("one") or a bounded stream
 // ("stream"). Each stream enumerator runs at most max_concurrency tasks at once and
 // waits for each result.
-.decl task_supervisor_operation(op: symbol, how: symbol)
+.decl task_supervisor_operation(operation: symbol, how: symbol)
 
 task_supervisor_operation("start_child", "one").
 task_supervisor_operation("async", "one").

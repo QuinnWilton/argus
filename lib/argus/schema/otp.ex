@@ -115,7 +115,8 @@ defmodule Argus.Schema.Otp do
           {:api, :symbol,
            "the module: Supervisor, DynamicSupervisor, Task.Supervisor, " <>
              "PartitionSupervisor, or GenServer for stop"},
-          {:op, :symbol, "the function: start_child, terminate_child, which_children, stop, ..."},
+          {:operation, :symbol,
+           "the function: start_child, terminate_child, which_children, stop, ..."},
           {:target, :symbol,
            "the supervisor argument: a module atom, 'via:Registry', or 'dynamic'"}
         ],

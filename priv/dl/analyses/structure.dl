@@ -15,7 +15,7 @@
 // Supervisor children need supervisor type and an infinite shutdown allowance. A finite
 // worker shutdown can interrupt their child cleanup and leave grandchildren running.
 
-.decl supervisor_registered_as_worker(sup: symbol, child: symbol, position: number)
+.decl supervisor_registered_as_worker(supervisor: symbol, child: symbol, position: number)
 .output supervisor_registered_as_worker
 
 // A supervisor's child spec says in so many words that its child is a
@@ -29,7 +29,7 @@ supervisor_registered_as_worker(sup, child, position) :-
 
 // A supervisor's own child_spec/1 leaves its type to the worker default,
 // and a supervisor starts it by that spec.
-.decl own_spec_registered_as_worker(child: symbol, sup: symbol, via: symbol)
+.decl own_spec_registered_as_worker(child: symbol, supervisor: symbol, via: symbol)
 .output own_spec_registered_as_worker
 
 own_spec_registered_as_worker(child, sup, via) :-
@@ -47,7 +47,7 @@ is_supervisor(mod) :- behaves_as(mod, "Supervisor").
 // forms defer to Module.child_spec/1, so the extractor's provisional worker value is
 // insufficient. Also exclude custom starts in the supervisor's own module: its
 // behaviour does not establish what those functions start.
-.decl spec_says_worker(sup: symbol, position: number, child: symbol)
+.decl spec_says_worker(supervisor: symbol, position: number, child: symbol)
 
 spec_says_worker(sup, position, child) :-
   supervisor_child(sup, position, child, _, "worker"),
@@ -56,7 +56,7 @@ spec_says_worker(sup, position, child) :-
 
 // Require every resolved child_spec type for the supplied arguments to be worker.
 // Conflicting supervisor values or unreadable types suppress the finding.
-.decl own_spec_says_worker(child: symbol, sup: symbol, at: symbol)
+.decl own_spec_says_worker(child: symbol, supervisor: symbol, at: symbol)
 
 own_spec_says_worker(child, sup, at) :-
   own_field(sup, child, at, "type", "worker"),
@@ -66,7 +66,7 @@ own_spec_says_worker(child, sup, at) :-
 // A shorthand static or dynamic start using the child's child_spec. at is its list
 // position or dynamic start identity; via is the dynamic caller, empty for static
 // lists. Exclude the parent's own module spec.
-.decl started_by_own_spec(child: symbol, sup: symbol, via: symbol, at: symbol)
+.decl started_by_own_spec(child: symbol, supervisor: symbol, via: symbol, at: symbol)
 
 started_by_own_spec(child, sup, "", to_string(position)) :-
   supervisor_child(sup, position, child, _, _),
@@ -80,12 +80,12 @@ started_by_own_spec(child, sup, via, via) :- dynamic_child(sup, child, via).
 // Permanent templates restart children after successful normal completion, consuming
 // demand and restart intensity. Event workers should use temporary or transient restart
 // policy.
-.decl consumer_supervisor_permanent_child(sup: symbol, child: symbol, sup_site: symbol)
+.decl consumer_supervisor_permanent_child(supervisor: symbol, child: symbol, supervisor_site: symbol)
 .output consumer_supervisor_permanent_child
 
 // A ConsumerSupervisor uses a permanent child template, causing completed event workers
 // to restart immediately.
-.decl permanent_consumer_template(sup: symbol, child: symbol)
+.decl permanent_consumer_template(supervisor: symbol, child: symbol)
 
 permanent_consumer_template(sup, child) :-
   is_consumer_supervisor(sup),

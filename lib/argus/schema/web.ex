@@ -43,7 +43,7 @@ defmodule Argus.Schema.Web do
         fields: [
           {:id, :symbol, "instruction ID of the call"},
           {:func, :symbol, "containing function ID"},
-          {:op, :symbol, "subscribe | unsubscribe"},
+          {:operation, :symbol, "subscribe | unsubscribe"},
           {:via, :symbol,
            "pubsub (Phoenix.PubSub, :pg), the module whose subscribe/1,2 or " <>
              "unsubscribe/1 it is, or apply (a module held in a value)"}

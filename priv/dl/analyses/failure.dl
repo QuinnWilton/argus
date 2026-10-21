@@ -248,7 +248,7 @@ orphan_process(func, exit, "exit_supervised", child, callback) :-
   exit_to_supervised_child(func, exit, child, callback).
 
 // The supervisor that owns an exit's target: evidence on its finding.
-.decl exit_target_owner(func: symbol, target: symbol, sup: symbol, sup_site: symbol)
+.decl exit_target_owner(func: symbol, target: symbol, supervisor: symbol, supervisor_site: symbol)
 .output exit_target_owner
 
 exit_target_owner(func, child, sup, sup_site) :-
@@ -277,7 +277,7 @@ runs_in_callback(exit, callback) :-
 
 // Resolve the signal target through points-to. Processes started privately by the
 // sender are its own to stop; supervised children identify the supervision-bypass case.
-.decl exits_supervised_child(exit: symbol, child: symbol, sup: symbol)
+.decl exits_supervised_child(exit: symbol, child: symbol, supervisor: symbol)
 
 exits_supervised_child(exit, child, sup) :-
   signal_target(exit, _, "exit", p),
@@ -543,13 +543,13 @@ start_may_fail(start) :-
   !started_in_view(sup),
   may_be_capped(_).
 
-.decl may_be_capped(sup: symbol)
+.decl may_be_capped(supervisor: symbol)
 
 may_be_capped(sup) :- task_supervisor_cap(sup, limit), limit != "infinity".
 
 // A Task.Supervisor the program starts under this name. "dynamic" names
 // none: the start does not name its supervisor.
-.decl started_in_view(sup: symbol)
+.decl started_in_view(supervisor: symbol)
 
 started_in_view(sup) :- task_supervisor_cap(sup, _), sup != "dynamic".
 
@@ -1040,20 +1040,20 @@ exposed.guarded_edge(f, g, "try") :- try_covers_closure(_, f, g).
 starts_process(f) :- process_start(_, f, _, kind, _), kind != "server".
 starts_process(f) :- hands_funs_off(f).
 
-.decl fate_count(callee: symbol, scope: symbol, fate: symbol, n: number)
+.decl fate_count(callee: symbol, scope: symbol, fate: symbol, count: number)
 
 fate_count(callee, t, fate, count((a, b, g))) :- program_site(a, b, callee, fate, g, t).
 
-.decl guard_count(callee: symbol, scope: symbol, guard: symbol, n: number)
+.decl guard_count(callee: symbol, scope: symbol, guard: symbol, count: number)
 
 guard_count(callee, t, guard, count((a, b, fate))) :- program_site(a, b, callee, fate, guard, t).
 
 // How many of the callee's sites in `scope` bind its result, drop it,
 // guard the call with a try, or make it bare.
-.decl times_used(callee: symbol, scope: symbol, n: number)
-.decl times_ignored(callee: symbol, scope: symbol, n: number)
-.decl times_guarded(callee: symbol, scope: symbol, n: number)
-.decl times_bare(callee: symbol, scope: symbol, n: number)
+.decl times_used(callee: symbol, scope: symbol, count: number)
+.decl times_ignored(callee: symbol, scope: symbol, count: number)
+.decl times_guarded(callee: symbol, scope: symbol, count: number)
+.decl times_bare(callee: symbol, scope: symbol, count: number)
 
 times_used(c, t, n) :- fate_count(c, t, "used", n).
 times_ignored(c, t, n) :- fate_count(c, t, "ignored", n).

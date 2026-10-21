@@ -23,7 +23,7 @@ in_endpoint(f) :- endpoint_module(m), function_def(f, m, _, _, _).
 
 // The call at `site` in `func` subscribes (`op` "subscribe") or undoes a
 // subscription ("unsubscribe").
-.decl subscription_call(site: symbol, func: symbol, op: symbol)
+.decl subscription_call(site: symbol, func: symbol, operation: symbol)
 
 subscription_call(id, f, op) :- pubsub_call(id, f, op, "pubsub").
 subscription_call(id, f, op) :- pubsub_call(id, f, op, "apply").

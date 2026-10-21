@@ -30,7 +30,7 @@ defmodule Argus.Analyses.Mailbox do
     `unhandled_cast`), a `handle_call` that defers a reply without keeping `from`
     (`dropped_from`), or a `{:call, from}` clause that never answers
     (`statem_unreplied`).
-  - `unreceived_message(mod, func, site, message, runs, starter, spawn, recv)` —
+  - `unreceived_message(mod, func, site, message, runs, starter, spawn, receive)` —
     a send that points-to follows to a spawned process none of
     whose receives (the spawned function's, and those of what it calls in
     its own process) has a clause for `message`: it stays in that
@@ -219,7 +219,7 @@ defmodule Argus.Analyses.Mailbox do
           {:runs, :symbol, "the function the receiving process runs"},
           {:starter, :symbol, "the function that spawned it"},
           {:spawn, :symbol, "the spawn"},
-          {:recv, :symbol, "its receive"}
+          {:receive, :symbol, "its receive"}
         ],
         key: [:site, :runs],
         doc: "A message sent to a spawned process whose receive has no clause for it."

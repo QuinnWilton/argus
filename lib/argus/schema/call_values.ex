@@ -158,7 +158,8 @@ defmodule Argus.Schema.CallValues do
           {:caller, :symbol, "calling function ID"},
           {:callee, :symbol, "callee function ID (mod:func/arity)"},
           {:arg_pos, :number, "0-based argument position at the call site"},
-          {:fwd_pos, :number, "0-based position of the caller's own parameter being forwarded"}
+          {:forward_pos, :number,
+           "0-based position of the caller's own parameter being forwarded"}
         ],
         doc: """
         A caller parameter passed unchanged to a callee argument. Used for \
@@ -345,7 +346,7 @@ defmodule Argus.Schema.CallValues do
         fields: [
           {:id, :instr_id, "instruction ID of the call"},
           {:func, :func_id, "function containing the call"},
-          {:op, :symbol, "dirty_read | dirty_write | dirty_delete | dirty_delete_object"},
+          {:operation, :symbol, "dirty_read | dirty_write | dirty_delete | dirty_delete_object"},
           {:kind, :symbol, "read | write"},
           {:table_source, :symbol, "literal | param | field | local | dynamic"},
           {:table, :symbol,

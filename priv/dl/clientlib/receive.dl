@@ -47,12 +47,12 @@ receives_message(mod, message) :-
 // must establish that the waiting process traps exits.
 // These waits have no time bound: a live silent peer can hold them indefinitely.
 // `monitor_released` separately checks collection on every return path.
-.decl down_bounded(recv: symbol)
+.decl down_bounded(receive: symbol)
 
 down_bounded(id) :- receive_down(id, _, _).
 down_bounded(id) :- receive_signal(id, _, "down").
 
-.decl exit_pinned(recv: symbol, func: symbol)
+.decl exit_pinned(receive: symbol, func: symbol)
 
 exit_pinned(id, f) :- receive_signal(id, f, "exit"), links_in(f).
 
