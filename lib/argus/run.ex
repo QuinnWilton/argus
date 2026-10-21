@@ -321,7 +321,8 @@ defmodule Argus.Run do
          :ok <- link_all(db, files, dir),
          :ok <- empty_files(empty, dir),
          :ok <- stage(db, :stage0, dir),
-         :ok <- points_to(db, analyses, dir, opts) do
+         :ok <- points_to(db, analyses, dir, opts),
+         :ok <- values(db, analyses, dir) do
       {:ok, dir}
     end
   end
@@ -395,6 +396,9 @@ defmodule Argus.Run do
       {:error, {:points_to, _}} = error ->
         error
 
+      {:error, {:values, _}} = error ->
+        error
+
       {:error, reason} ->
         {:error, {stage, reason}}
     end
@@ -405,6 +409,12 @@ defmodule Argus.Run do
          Enum.any?(analyses, &Analysis.Extraction.reads_points_to?/1),
        do: stage(db, :points_to, dir),
        else: :ok
+  end
+
+  defp values(db, analyses, dir) do
+    if Enum.any?(analyses, &Analysis.Extraction.reads_values?/1),
+      do: stage(db, :values, dir),
+      else: :ok
   end
 
   defp work_dir do

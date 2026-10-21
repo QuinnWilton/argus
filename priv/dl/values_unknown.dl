@@ -1,0 +1,9 @@
+// The values stage, unknown: what the stage runs when the full one
+// (values.dl) outgrows its budget. The same program, knowing no literal:
+// every parameter a call reaches is unknown, and no value is published,
+// so no consumer takes a truncated set for a complete one. It writes the
+// same relations, values_mode saying "unknown".
+
+.include "values.dl"
+
+values_program("unknown").

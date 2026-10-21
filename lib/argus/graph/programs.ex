@@ -5,8 +5,10 @@ defmodule Argus.Graph.Programs do
   A program is the call graph's (`:stage0`), the points-to stage's three
   (`:points_to`; `:points_to_selective`, which it runs in place of the
   full one when that outgrows its budget; and
-  `:points_to_field_insensitive`, in place of the selective one), a built-in analysis's (its name), or a
-  program of a caller's own (`{:custom, path}`).
+  `:points_to_field_insensitive`, in place of the selective one), the
+  values stage's two (`:values`, and `:values_unknown` in its place past
+  its budget), a built-in analysis's (its name), or a program of a
+  caller's own (`{:custom, path}`).
 
     * `program_files(program)` — the program's files, each by the name
       it is included by, its path under its tree and its content's
@@ -43,6 +45,8 @@ defmodule Argus.Graph.Programs do
           | :points_to
           | :points_to_selective
           | :points_to_field_insensitive
+          | :values
+          | :values_unknown
           | atom()
           | {:custom, Path.t()}
 
@@ -55,6 +59,8 @@ defmodule Argus.Graph.Programs do
   def rules_path(:points_to_field_insensitive),
     do: {:ok, Argus.Analysis.points_to_field_insensitive_rules_path()}
 
+  def rules_path(:values), do: {:ok, Argus.Analysis.values_rules_path()}
+  def rules_path(:values_unknown), do: {:ok, Argus.Analysis.values_unknown_rules_path()}
   def rules_path({:custom, path}), do: {:ok, Path.expand(path)}
   def rules_path(analysis) when is_atom(analysis), do: Catalog.rules_path(analysis)
 

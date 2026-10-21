@@ -183,8 +183,18 @@ defmodule Argus.Driver do
 
   # The points-to stage ran selective or field-insensitive, when an
   # analysis read it: the hub objects its field-insensitive pass
-  # resolved.
+  # resolved. The values stage ran knowing no value.
   defp points_to_notices(db) do
+    values =
+      case Roux.Memo.get(db, {:stage, {@program, :values}}) do
+        {:ok, %Roux.Memo.Entry{value: {:ok, %{mode: :unknown}}}} -> [:values_unknown]
+        _ -> []
+      end
+
+    values ++ points_to_mode_notices(db)
+  end
+
+  defp points_to_mode_notices(db) do
     case Roux.Memo.get(db, {:stage, {@program, :points_to}}) do
       {:ok, %Roux.Memo.Entry{value: {:ok, %{mode: {:selective, hubs}}}}} ->
         [{:points_to_selective, hubs}]

@@ -115,10 +115,30 @@ defmodule Argus.Debug do
 
         stages = Program.columns!(stage0, run, "stage0.relations.json")
 
-        if Analysis.Extraction.reads_points_to?({:custom, path}, solver_opts) do
-          restage_points_to!(run, facts, solver_opts)
-          points_to = Path.join(run, "rules/points_to.dl")
-          Map.merge(stages, Program.columns!(points_to, run, "points_to.relations.json"))
+        stages =
+          if Analysis.Extraction.reads_points_to?({:custom, path}, solver_opts) do
+            restage_points_to!(run, facts, solver_opts)
+            points_to = Path.join(run, "rules/points_to.dl")
+            Map.merge(stages, Program.columns!(points_to, run, "points_to.relations.json"))
+          else
+            stages
+          end
+
+        if Analysis.Extraction.reads_values?({:custom, path}, solver_opts) do
+          values = Path.join(run, "rules/values.dl")
+
+          unwrap!(
+            Analysis.Extraction.derive_values(
+              facts,
+              [
+                rules_path: values,
+                unknown_rules_path: Path.join(run, "rules/values_unknown.dl")
+              ] ++ solver_opts
+            ),
+            "derive values"
+          )
+
+          Map.merge(stages, Program.columns!(values, run, "values.relations.json"))
         else
           stages
         end

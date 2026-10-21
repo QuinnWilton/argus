@@ -371,9 +371,10 @@ defmodule Argus.FlowLog do
   end
 
   @doc """
-  argus's own programs: the two shared stages' (four files: the selective
-  points-to program runs in the full one's place, and the
-  field-insensitive one in the selective one's) and every built-in analysis's.
+  argus's own programs: the three shared stages' (six files: the
+  selective points-to program runs in the full one's place, and the
+  field-insensitive one in the selective one's; the unknown values
+  program in the full one's) and every built-in analysis's.
   """
   @spec builtin_programs() :: [Path.t()]
   def builtin_programs do
@@ -381,7 +382,9 @@ defmodule Argus.FlowLog do
       Argus.Analysis.stage0_rules_path(),
       Argus.Analysis.points_to_rules_path(),
       Argus.Analysis.points_to_selective_rules_path(),
-      Argus.Analysis.points_to_field_insensitive_rules_path()
+      Argus.Analysis.points_to_field_insensitive_rules_path(),
+      Argus.Analysis.values_rules_path(),
+      Argus.Analysis.values_unknown_rules_path()
     ]
 
     analyses =

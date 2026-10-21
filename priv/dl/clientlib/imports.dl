@@ -39,6 +39,9 @@
 .decl call_tag_arity(id: symbol, arity: number) mutable
 .input call_tag_arity
 
+// Which literals each parameter may hold, derived once by values.dl.
+.include "staged_values.dl"
+
 // The function each call handed a fun calls (stage 0, from fun_handed):
 // the caller, the fun, and the callee (`mod:func/arity`).
 .decl fun_handed_to(caller: symbol, fun: symbol, callee: symbol) mutable

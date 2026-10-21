@@ -10,13 +10,21 @@ defmodule Argus.Stages do
   engine stops it as one of them grows past (`{:limitsize, ...}`), which
   reads as the same overflow.
 
+  The values stage (`priv/dl/values.dl`) is held to a budget the same
+  way, and runs `values_unknown.dl` past it: a program that knows no
+  value, so no consumer takes a truncated set for a complete one
+  (`values/4`).
+
   A facts directory's derivation (`Argus.Analysis.Extraction`) and the
   query graph (`Argus.Graph.Solve`, over the blob store) each solve the
-  programs their own way and hand that to `points_to/5`, so the policy
-  is written once.
+  programs their own way and hand that to `points_to/5` or `values/4`,
+  so the policy is written once.
   """
 
   require Logger
+
+  @points_to_overflow "points_to_overflow"
+  @values_overflow "values_overflow"
 
   @typedoc """
   Which program's outputs the stage has: the full one's, or the
@@ -49,12 +57,12 @@ defmodule Argus.Stages do
           {:ok, acc, mode()} | {:error, term(), acc}
         when acc: var
   def points_to(solve, acc, full_path, selective_path, field_insensitive_path) do
-    case attempt(solve, full_path, acc) do
+    case attempt(solve, full_path, acc, @points_to_overflow) do
       {:ok, solved, _results} ->
         {:ok, solved, :full}
 
       {:over, full_over, acc} ->
-        case attempt(solve, selective_path, acc) do
+        case attempt(solve, selective_path, acc, @points_to_overflow) do
           {:ok, solved, results} ->
             hubs = hub_objects(results)
 
@@ -82,7 +90,7 @@ defmodule Argus.Stages do
   # outgrows the budget only where the field-insensitive pass does, and
   # then the stage fails.
   defp field_insensitive(solve, acc, path, full_over, selective_over) do
-    case attempt(solve, path, acc) do
+    case attempt(solve, path, acc, @points_to_overflow) do
       {:ok, solved, results} ->
         objects = hub_objects(results)
 
@@ -107,10 +115,10 @@ defmodule Argus.Stages do
   # with what to go on from, or `{:error, reason, acc}`. A program
   # writes every relation the one before it did, so each partial one
   # is replaced.
-  defp attempt(solve, path, acc) do
+  defp attempt(solve, path, acc, overflow_relation) do
     case solve.(path, acc) do
       {:ok, results, solved} ->
-        case overflow(results) do
+        case overflow(results, overflow_relation) do
           {:ok, []} -> {:ok, solved, results}
           {:ok, over} -> {:over, over, solved}
           {:error, reason} -> {:error, reason, solved}
@@ -130,15 +138,52 @@ defmodule Argus.Stages do
     do: results |> Map.get("hub_object", []) |> List.flatten() |> Enum.sort()
 
   @doc """
-  The relations that reached the stage's budget, `{relation, rows,
-  budget}`: none when the fixpoint is complete. Every stage program
-  writes `points_to_overflow`, so a solve without it is not one of the
-  stage's.
+  The values stage: `{:ok, solved, mode}` with what the solve whose
+  outputs are the stage's returned, `:full` or `:unknown`, or `{:error,
+  reason, solved}` as `points_to/5`. A run of the unknown program is
+  reported with a warning.
   """
-  @spec overflow(%{String.t() => [[String.t()]]}) ::
+  @spec values(solve(acc), acc, Path.t(), Path.t()) ::
+          {:ok, acc, :full | :unknown} | {:error, term(), acc}
+        when acc: var
+  def values(solve, acc, full_path, unknown_path) do
+    case attempt(solve, full_path, acc, @values_overflow) do
+      {:ok, solved, _results} ->
+        {:ok, solved, :full}
+
+      {:over, over, acc} ->
+        case attempt(solve, unknown_path, acc, @values_overflow) do
+          {:ok, solved, _results} ->
+            Logger.warning(
+              "values: the stage outgrew its budget (#{budget_summary(over)}); " <>
+                "every parameter's values are unknown"
+            )
+
+            {:ok, solved, :unknown}
+
+          {:over, unknown_over, acc} ->
+            {:error, {:over_budget, unknown_over}, acc}
+
+          {:error, reason, acc} ->
+            {:error, reason, acc}
+        end
+
+      {:error, reason, acc} ->
+        {:error, reason, acc}
+    end
+  end
+
+  @doc """
+  The relations that reached a stage's budget, `{relation, rows,
+  budget}`, as the stage's programs write them to `relation`
+  (`points_to_overflow`, `values_overflow`): none when the fixpoint is
+  complete. Every program of a stage writes it, so a solve without it is
+  not one of the stage's.
+  """
+  @spec overflow(%{String.t() => [[String.t()]]}, String.t()) ::
           {:ok, [{String.t(), integer(), integer()}]} | {:error, term()}
-  def overflow(results) do
-    case Map.fetch(results, "points_to_overflow") do
+  def overflow(results, relation) do
+    case Map.fetch(results, relation) do
       {:ok, rows} ->
         {:ok,
          for [relation, count, budget] <- rows do
@@ -146,7 +191,7 @@ defmodule Argus.Stages do
          end}
 
       :error ->
-        {:error, {:missing_output, "points_to_overflow"}}
+        {:error, {:missing_output, relation}}
     end
   end
 
@@ -162,6 +207,28 @@ defmodule Argus.Stages do
 
     {:error, {:points_to, reason}}
   end
+
+  @doc """
+  A failed values stage degrades every analysis that reads it, as
+  `failed/1` says of points-to. Returns `{:error, {:values, reason}}`.
+  """
+  @spec values_failed(term()) :: {:error, {:values, term()}}
+  def values_failed(reason) do
+    Logger.warning(
+      "values: " <> values_failure_summary(reason) <> "; the analyses reading it degrade"
+    )
+
+    {:error, {:values, reason}}
+  end
+
+  defp values_failure_summary({:over_budget, over}),
+    do: "the stage outgrew its budget even knowing no value (#{budget_summary(over)})"
+
+  defp values_failure_summary(:flowlog_timeout),
+    do: "the stage did not finish within the solve's timeout (:timeout)"
+
+  defp values_failure_summary(reason),
+    do: "the stage failed: " <> Argus.FlowLog.describe_error(reason)
 
   defp failure_summary({:over_budget, over}),
     do: "the stage outgrew its budget even field-insensitive (#{budget_summary(over)})"

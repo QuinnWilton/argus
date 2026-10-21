@@ -110,6 +110,9 @@ defmodule Argus.Debug.Program do
             "rules/points_to_field_insensitive.dl"
           ]
 
+        name in Argus.Analysis.values_relations() ->
+          [program, "rules/values.dl", "rules/values_unknown.dl"]
+
         true ->
           [program]
       end

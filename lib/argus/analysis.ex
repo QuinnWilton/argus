@@ -286,6 +286,26 @@ defmodule Argus.Analysis do
   @spec points_to_relations() :: [String.t()]
   defdelegate points_to_relations(), to: Extraction
 
+  @doc """
+  Derives the values stage (which literals a parameter may hold) into a
+  facts directory stage 0 has been derived into: see
+  `Argus.Analysis.Extraction.derive_values/2`.
+  """
+  @spec derive_values(Path.t(), keyword()) :: :ok | {:error, term()}
+  defdelegate derive_values(facts_dir, opts \\ []), to: Extraction
+
+  @doc "The path to the values stage's rules file."
+  @spec values_rules_path() :: Path.t()
+  defdelegate values_rules_path(), to: Extraction
+
+  @doc "The path to the values stage's fallback rules file, which knows no value."
+  @spec values_unknown_rules_path() :: Path.t()
+  defdelegate values_unknown_rules_path(), to: Extraction
+
+  @doc "The relations the values stage writes."
+  @spec values_relations() :: [String.t()]
+  defdelegate values_relations(), to: Extraction
+
   # ── Solving ─────────────────────────────────────────────────────────
 
   @doc """
@@ -337,7 +357,8 @@ defmodule Argus.Analysis do
   def run_rules(facts_dir, analysis, opts \\ []) do
     with {:ok, rules_path} <- Catalog.rules_path(analysis),
          :ok <- Extraction.ensure_stage0(facts_dir, opts),
-         :ok <- Extraction.ensure_points_to(facts_dir, [analysis], opts) do
+         :ok <- Extraction.ensure_points_to(facts_dir, [analysis], opts),
+         :ok <- Extraction.ensure_values(facts_dir, [analysis], opts) do
       Argus.FlowLog.run(facts_dir, rules_path, opts)
     end
   end

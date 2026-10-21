@@ -21,6 +21,8 @@ defmodule Argus.Report.Notice do
       and ran selective;
     * `:points_to_field_insensitive` — it outgrew the budget selective
       too, and ran field-insensitive;
+    * `:values_unknown` — the values stage outgrew its budget and ran
+      knowing no value;
     * `:stale` — sources newer than their beams (the escript, which
       never builds): the findings are about the code as last built;
     * `:unused_ignore` — an `ignore: [findings: ...]` entry that left
@@ -40,6 +42,7 @@ defmodule Argus.Report.Notice do
           | :duplicate
           | :points_to_selective
           | :points_to_field_insensitive
+          | :values_unknown
           | :stale
           | :unused_ignore
 
@@ -83,6 +86,8 @@ defmodule Argus.Report.Notice do
 
   defp of({:points_to_field_insensitive, objects}, _cwd),
     do: points_to_field_insensitive(objects)
+
+  defp of(:values_unknown, _cwd), do: values_unknown()
 
   @doc """
   The engines cannot be built here (`Argus.FlowLog.Toolchain`). Under
@@ -206,6 +211,23 @@ defmodule Argus.Report.Notice do
   end
 
   @doc """
+  The values stage outgrew its budget and ran knowing no value: every
+  parameter's set of literals is unknown, so a finding that names a
+  value a parameter is passed may be missing, and one an unknown value
+  allows may be reported.
+  """
+  @spec values_unknown() :: t()
+  def values_unknown do
+    notice(
+      :values_unknown,
+      :info,
+      "the values stage outgrew its budget and ran knowing no value: " <>
+        "findings about the literals a function is passed (table names, " <>
+        "registered names, timer messages) may be missing"
+    )
+  end
+
+  @doc """
   An `ignore: [findings: ...]` entry that left nothing out: no finding
   of its analysis is reported in the module or function it names.
   """
@@ -245,5 +267,6 @@ defmodule Argus.Report.Notice do
     do: %__MODULE__{kind: kind, severity: severity, message: message}
 
   defp describe({:points_to, reason}), do: "its points-to stage failed: " <> describe(reason)
+  defp describe({:values, reason}), do: "its values stage failed: " <> describe(reason)
   defp describe(reason), do: Argus.FlowLog.describe_error(reason)
 end

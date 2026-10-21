@@ -21,6 +21,7 @@ defmodule Argus.Graph do
            │
       stage({p, :stage0})  ─ stage_output({p, :stage0, f})    ── cutoff
       stage({p, :points_to}) ─ stage_output({p, :points_to, f}) ── cutoff
+      stage({p, :values})  ─ stage_output({p, :values, f})    ── cutoff
            │
       analysis_inputs({p, a}) ─ program_digest(a) ← program_io(a) ← program_files(a)
            │

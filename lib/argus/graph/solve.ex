@@ -1,6 +1,6 @@
 defmodule Argus.Graph.Solve do
   @moduledoc """
-  The solves: the two shared stages, and one per analysis.
+  The solves: the three shared stages, and one per analysis.
 
     * `stage({program, :stage0})` — the call graph (`priv/dl/stage0.dl`),
       derived once for every analysis that reads it.
@@ -8,11 +8,15 @@ defmodule Argus.Graph.Solve do
       program or, when it outgrows its budget, the selective one, or the
       field-insensitive one when that does too (`Argus.Stages`), over stage 0's
       call graph.
+    * `stage({program, :values})` — which literals each parameter may
+      hold (`priv/dl/values.dl`), or, past its budget, the program that
+      knows none, over stage 0's call graph.
     * `stage_output({program, stage, file})` — the digest of one file a
       stage wrote: the second and third cutoff seams. An edit that moves
       instructions but no call leaves the call graph byte-identical, and
-      one that moves no process leaves points-to so; every solve reading
-      only those outputs is then valid without running.
+      one that moves no process leaves points-to so, and one that moves
+      no literal passed between functions leaves the values so; every
+      solve reading only those outputs is then valid without running.
     * `analysis_inputs({program, analysis})` — the digest of each file
       the analysis's program reads: a stage's output from the stage (and
       only the stages it reads are demanded: an analysis that reads
@@ -32,7 +36,8 @@ defmodule Argus.Graph.Solve do
   neither is anything that read it, so the next run solves again. A
   failed call graph degrades every analysis with the stage's reason, a
   failed points-to stage the analyses reading it with
-  `{:points_to, reason}` (`Argus.Findings.Degradation`).
+  `{:points_to, reason}`, and a failed values stage with `{:values,
+  reason}` (`Argus.Findings.Degradation`).
   """
 
   use Roux.Query,
@@ -47,6 +52,7 @@ defmodule Argus.Graph.Solve do
 
   @stage0_files MapSet.new(Argus.Analysis.stage0_relations(), &(&1 <> ".facts"))
   @points_to_files MapSet.new(Argus.Analysis.points_to_relations(), &(&1 <> ".facts"))
+  @values_files MapSet.new(Argus.Analysis.values_relations(), &(&1 <> ".facts"))
 
   defquery :stage, key: {program, stage}, store: :blob, transient: &match?({:error, _}, &1) do
     case stage do
@@ -57,6 +63,29 @@ defmodule Argus.Graph.Solve do
 
       :points_to ->
         points_to(db, program)
+
+      :values ->
+        values(db, program)
+    end
+  end
+
+  # The full values program, then the one that knows no value over the
+  # same facts when the full one outgrew its budget.
+  defp values(db, program) do
+    {:ok, full} = Programs.rules_path(:values)
+    {:ok, unknown} = Programs.rules_path(:values_unknown)
+    programs = %{full => :values, unknown => :values_unknown}
+
+    solve = fn rules_path, _previous ->
+      with {:ok, outputs} <- solve_program(db, program, Map.fetch!(programs, rules_path)),
+           {:ok, results} <- read_outputs(db, outputs, ["values_overflow.csv"]) do
+        {:ok, results, outputs}
+      end
+    end
+
+    case Stages.values(solve, nil, full, unknown) do
+      {:ok, outputs, mode} -> {:ok, %{outputs: outputs, mode: mode}}
+      {:error, reason, _outputs} -> Stages.values_failed(reason)
     end
   end
 
@@ -117,6 +146,13 @@ defmodule Argus.Graph.Solve do
           {:ok, digest} -> {:ok, {:cas, digest}}
           {:error, {:points_to, _}} = error -> error
           {:error, reason} -> {:error, {:points_to, reason}}
+        end
+
+      MapSet.member?(@values_files, file) ->
+        case Runtime.query(db, :stage_output, {program, :values, file}) do
+          {:ok, digest} -> {:ok, {:cas, digest}}
+          {:error, {:values, _}} = error -> error
+          {:error, reason} -> {:error, {:values, reason}}
         end
 
       true ->
@@ -252,7 +288,13 @@ defmodule Argus.Graph.Solve do
     store = db.blob
 
     unless Blob.member?(store, digest) do
-      stage = if MapSet.member?(@stage0_files, file), do: :stage0, else: :points_to
+      stage =
+        cond do
+          MapSet.member?(@stage0_files, file) -> :stage0
+          MapSet.member?(@values_files, file) -> :values
+          true -> :points_to
+        end
+
       _ = Runtime.untracked(fn -> Runtime.query(db, :stage, {program, stage}) end)
 
       unless Blob.member?(store, digest) do

@@ -17,8 +17,12 @@ defmodule Argus.Analysis.Extraction do
     fixpoint outgrows the stage's budget runs it selective instead
     (`priv/dl/points_to_selective.dl`, see `derive_points_to/2`).
 
+  - **Values** (`priv/dl/values.dl`), when an analysis reads it, derives
+    which literals each parameter may hold (`values_relations/0`) once
+    (`derive_values/2`).
+
   `Argus.Analysis` delegates `derive_stage0/2`, `derive_points_to/2`,
-  their rules paths and relation lists here.
+  `derive_values/2`, their rules paths and relation lists here.
   """
 
   alias Argus.Analysis
@@ -35,6 +39,9 @@ defmodule Argus.Analysis.Extraction do
                           var_process var_table approximated_table approximated_process
                           kept_in_dictionary
                           task_handled task_escapes points_to_mode)
+
+  # The relations the values stage writes (values.dl's outputs).
+  @values_relations ~w(param_value param_complete arg_value arg_complete values_mode)
 
   @doc """
   Derives the stage-0 relations into an existing facts directory.
@@ -270,6 +277,103 @@ defmodule Argus.Analysis.Extraction do
   @doc "The relations the points-to stage writes."
   @spec points_to_relations() :: [String.t()]
   def points_to_relations, do: @points_to_relations
+
+  @doc """
+  Derives the values stage into an existing facts directory that stage
+  0 has been derived into.
+
+  The values stage (`priv/dl/values.dl`) is interprocedural constant
+  propagation: which literals each of the program's parameters may
+  hold, through any chain of callers passing them on, and whether that
+  set is complete. The analyses that ask read `values_relations/0` as
+  facts (`clientlib/staged_values.dl`) rather than each propagating
+  literals through the calls it cares about.
+
+  Held to a budget as the points-to stage is (`Argus.Stages.values/4`):
+  a program whose closure outgrows it runs `values_unknown_rules_path/0`,
+  which publishes no value and no complete set, and a warning says so.
+  A stage that fails returns `{:error, {:values, reason}}`, and the
+  analyses that read it degrade.
+
+  `:rules_path` and `:unknown_rules_path` select copied programs for a
+  debug reproduction.
+  """
+  @spec derive_values(Path.t(), keyword()) :: :ok | {:error, term()}
+  def derive_values(facts_dir, opts \\ []) do
+    solve = fn rules_path, {dir, asides} ->
+      with {:ok, results, aside} <- solve_aside(dir, rules_path, opts),
+           do: {:ok, results, {dir, [aside | asides]}}
+    end
+
+    {result, asides} =
+      case Stages.values(
+             solve,
+             {facts_dir, []},
+             Keyword.get(opts, :rules_path, values_rules_path()),
+             Keyword.get(opts, :unknown_rules_path, values_unknown_rules_path())
+           ) do
+        {:ok, {_dir, [aside | _] = asides}, _mode} ->
+          {publish(aside, facts_dir, @values_relations), asides}
+
+        {:error, reason, {_dir, asides}} ->
+          {{:error, reason}, asides}
+      end
+
+    Enum.each(asides, &File.rm_rf/1)
+
+    case result do
+      :ok -> :ok
+      {:error, reason} -> Stages.values_failed(reason)
+    end
+  end
+
+  @doc "The path to the values stage's rules file."
+  @spec values_rules_path() :: Path.t()
+  def values_rules_path, do: Argus.Dl.path("values.dl")
+
+  @doc """
+  The path to the program `derive_values/2` runs when the values stage
+  outgrows its budget: one that knows no value.
+  """
+  @spec values_unknown_rules_path() :: Path.t()
+  def values_unknown_rules_path, do: Argus.Dl.path("values_unknown.dl")
+
+  @doc "The relations the values stage writes."
+  @spec values_relations() :: [String.t()]
+  def values_relations, do: @values_relations
+
+  @doc """
+  Whether an analysis reads what the values stage writes, as
+  `reads_points_to?/2` says of points-to.
+  """
+  @spec reads_values?(Analysis.analysis(), keyword()) :: boolean()
+  def reads_values?(analysis, opts \\ []) do
+    case Analysis.input_relations(analysis, opts) do
+      {:ok, relations} -> Enum.any?(relations, &(&1 in @values_relations))
+      {:error, _} -> true
+    end
+  end
+
+  @doc """
+  Derives the values stage into `facts_dir` when one of `analyses` reads
+  it and it is not already there, as `ensure_points_to/3` does.
+  """
+  @spec ensure_values(Path.t(), [Analysis.analysis()], keyword()) :: :ok | {:error, term()}
+  def ensure_values(facts_dir, analyses, opts) do
+    cond do
+      Keyword.get(opts, :stage0, :auto) == :provided ->
+        :ok
+
+      Enum.all?(@values_relations, &File.exists?(Path.join(facts_dir, "#{&1}.facts"))) ->
+        :ok
+
+      not Enum.any?(analyses, &reads_values?/1) ->
+        :ok
+
+      true ->
+        derive_values(facts_dir, opts)
+    end
+  end
 
   @doc """
   Whether an analysis reads what the points-to stage writes, as FlowLog

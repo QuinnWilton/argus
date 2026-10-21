@@ -54,7 +54,8 @@ layer 2 facts about it (`Argus.Extractor`). Extractors are intraprocedural or
 module-local; whole-program questions are answered in Datalog.
 
 **Stage.** A Datalog program whose outputs every analysis that needs them reads as
-facts, derived once per run: stage 0 (the call graph) and the points-to stage.
+facts, derived once per run: stage 0 (the call graph), the points-to stage and
+the values stage.
 
 **Analysis.** A Datalog program (`priv/dl/analyses/`) and the Elixir module that
 turns its output rows into findings (`lib/argus/analyses/`).
@@ -171,6 +172,26 @@ naming it is one a call *may* reach, not one it does.
 **May, must.** A *may* fact holds on some execution the model admits (a target a
 send may reach); a *must* fact holds on every one (a guard every path to a use
 passes). Rules keep the two apart: a may fact never proves safety.
+
+## Values
+
+**Values stage** (`priv/dl/values.dl`). Which literals each of the program's
+parameters may hold: *interprocedural constant propagation* over sets of
+constants, with two *jump functions*, a literal a caller passes and a parameter it
+passes through unchanged. The closure is transitive, so a value reaches a
+parameter through any number of wrappers.
+
+**Parameter value, argument value** (`param_value`, `arg_value`). A literal a
+parameter may hold from any caller, and a literal one caller hands a callee (its
+own, or one its forwarded parameter may hold). A rule that attributes a value to
+the function supplying it reads the second, so callers' values do not mix.
+
+**Complete** (`param_complete`, `arg_complete`). Every value a parameter may hold
+is a known literal: every caller is seen and passes a literal or a complete
+parameter. An export, a function captured as a fun, an `apply`, or a computed
+argument makes a set incomplete. A rule that claims a set is the whole story (a
+module's every timer message) reads completeness; one that names what may happen
+reads the values alone.
 
 ## Processes and OTP
 

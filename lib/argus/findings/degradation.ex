@@ -57,6 +57,27 @@ defmodule Argus.Findings.Degradation do
       "(priv/dl/points_to.dl) outgrew its budget even field-insensitive (#{reached})."
   end
 
+  def detail(name, {:values, {:over_budget, over}}) do
+    reached =
+      Enum.map_join(over, ", ", fn {relation, rows, budget} ->
+        "#{relation} reached #{rows} rows, over #{budget}"
+      end)
+
+    "The #{name} analysis did not run: the values stage it reads " <>
+      "(priv/dl/values.dl) outgrew its budget even knowing no value (#{reached})."
+  end
+
+  def detail(name, {:values, :flowlog_timeout}) do
+    "The #{name} analysis did not run: the values stage it reads " <>
+      "(priv/dl/values.dl) did not finish within :timeout. " <>
+      "Raise :timeout to include it."
+  end
+
+  def detail(name, {:values, reason}) do
+    "The #{name} analysis did not run: the values stage it reads " <>
+      "(priv/dl/values.dl) could not be derived: #{Argus.FlowLog.describe_error(reason)}."
+  end
+
   def detail(name, {:points_to, reason}) do
     "The #{name} analysis did not run: the points-to it reads " <>
       "(priv/dl/points_to.dl) could not be derived: #{Argus.FlowLog.describe_error(reason)}."

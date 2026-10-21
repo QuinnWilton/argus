@@ -29,6 +29,8 @@ defmodule Argus.Driver.Result do
     * `{:points_to_field_insensitive, objects}` — the selective stage
       outgrew the budget too, and the stage ran field-insensitive:
       every object (`objects`) resolved that way.
+    * `:values_unknown` — the values stage outgrew its budget and ran
+      knowing no value.
   """
 
   @enforce_keys [:located, :notices, :changed?]
@@ -51,6 +53,7 @@ defmodule Argus.Driver.Result do
           | {:duplicate, duplicate()}
           | {:points_to_selective, [String.t()]}
           | {:points_to_field_insensitive, [String.t()]}
+          | :values_unknown
 
   @type t :: %__MODULE__{
           located: %{optional(atom()) => {:ok, [Argus.Located.t()]} | {:error, term()}},

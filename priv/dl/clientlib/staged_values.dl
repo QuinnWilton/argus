@@ -1,0 +1,30 @@
+// The values stage's outputs (values.dl), derived once and read as facts.
+// Included by imports.dl; FlowLog prunes them from a program that reads
+// none, and only an analysis that reads one waits on the stage.
+
+// Literal `value` may be what parameter `pos` of the program's function
+// `func` holds, from some caller, through any chain of callers passing it
+// on unchanged.
+.decl param_value(func: symbol, pos: number, value: symbol) mutable
+.input param_value
+
+// Every value parameter `pos` of `func` may hold is a param_value: every
+// caller is seen, and each passes a literal or a parameter whose own set
+// is complete. A parameter with no row may hold a value no literal names.
+.decl param_complete(func: symbol, pos: number) mutable
+.input param_complete
+
+// `caller` hands the program's function `callee` the literal `value` at
+// `pos`: its own literal, or one the parameter it passes on may hold.
+.decl arg_value(caller: symbol, callee: symbol, pos: number, value: symbol) mutable
+.input arg_value
+
+// Every value `caller` hands `callee` at `pos` is an arg_value.
+.decl arg_complete(caller: symbol, callee: symbol, pos: number) mutable
+.input arg_complete
+
+// Which values program wrote the relations: "full", or "unknown" when
+// the full one outgrew its budget and none of the relations above has a
+// row.
+.decl values_mode(mode: symbol) mutable
+.input values_mode
