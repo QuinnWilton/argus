@@ -28,6 +28,7 @@ defmodule Argus.Clientlib.TablesTest do
     {:ok, _} = Pipeline.run(@modules, facts_dir, extractors: Argus.Analyses.Races.extractors())
     :ok = Argus.Analysis.derive_stage0(facts_dir)
     :ok = Argus.Analysis.derive_points_to(facts_dir)
+    :ok = Argus.Analysis.derive_values(facts_dir)
 
     %{
       full: solve(tmp_dir, facts_dir, "full"),

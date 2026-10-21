@@ -7,7 +7,7 @@
 // but are not unified without evidence. Relations expose kind/ident columns; EtsTable
 // packages them as a value.
 // An operation may touch several tables, including fallback-expression arms. Literal
-// names propagate through arguments; stored atom names resolve only when tied to a
+// names propagate through arguments (the values stage); stored atom names resolve only when tied to a
 // known allocation. Points-to follows references through terms, state, closures, and
 // spawned arguments. Field and external-parameter identities provide fallbacks;
 // unresolved operations use may_touch_any_table.
@@ -58,20 +58,13 @@ table_param_needed(c, to_string(m)) :-
   p = to_string(n).
 
 // A literal a caller passes the parameter, directly or through a chain of
-// callers forwarding their own.
+// callers forwarding their own (the values stage's param_value).
 .decl name_at_param(func: symbol, pos: symbol, name: symbol)
 
 name_at_param(f, p, name) :-
   table_param_needed(f, p),
-  call_arg(_, f, n, name),
-  name != "dynamic",
+  param_value(f, n, name),
   p = to_string(n).
-
-name_at_param(f, p, name) :-
-  table_param_needed(f, p),
-  call_arg_forward(c, f, n, m),
-  p = to_string(n),
-  name_at_param(c, m_text, name), m_text = to_string(m).
 
 // Resolve the allocation whose reference reaches a parameter, directly from a caller's
 // matching ets_tid_arg or through forwarding.
