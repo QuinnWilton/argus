@@ -23,7 +23,7 @@ explicit nil check supplies weaker name evidence.
 
 ## ETS read-modify-write
 
-`ets_check_act` · **warning**, except `stale_fill` is **info**
+`ets_check_then_act` · **warning**, except `stale_fill` is **info**
 
 A read feeds or controls a non-atomic operation on the same shared row. The table
 must be publicly writable or supplied by an external caller, and a rival must be
@@ -74,7 +74,7 @@ still not protected by that other implementation.
 
 ## Mnesia uniqueness races
 
-`mnesia_check_act` with `kind=unique` · **warning**
+`mnesia_check_then_act` with `kind=unique` · **warning**
 
 A dirty index or pattern search finds no matching record, then a dirty write inserts
 one. Concurrent callers can both pass the search and insert different keys that
@@ -83,7 +83,7 @@ a transaction with suitable locking or use a representation that enforces the ke
 
 ## Mnesia read-modify-write
 
-`mnesia_check_act` · **warning**, except `fill` is **info**
+`mnesia_check_then_act` · **warning**, except `fill` is **info**
 
 Dirty reads and writes bypass transaction isolation. The modeled harms include
 lost updates, guarded updates, duplicate claims, additional side effects
@@ -137,7 +137,7 @@ meant to:
 
 Delete exactly the rows meant, with `:ets.delete_object/2`: the rows read, or the dead
 process's own row. A table only its owner writes (`:protected` or `:private`), a
-claimant releasing its own claim, and a delete that `ets_check_act` already reports are
+claimant releasing its own claim, and a delete that `ets_check_then_act` already reports are
 not reported. `after_read` counts rival `insert`s only: an `insert_new` cannot add a row
 while the rows the function read are there. The read or kill and the delete must be in
 one function; a rival row is recognized by `self()` in the inserted tuple itself, not

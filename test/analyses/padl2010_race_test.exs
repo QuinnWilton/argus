@@ -64,7 +64,7 @@ defmodule Argus.Analyses.Padl2010RaceTest do
   describe "Sect. 3.2, ETS" do
     test "Fig. 2 (left): both inserts of ets_inc/2, on the unnamed public table its closure is handed",
          ctx do
-      rows = rows(ctx, [:padl2010_ets_inc], "ets_check_act")
+      rows = rows(ctx, [:padl2010_ets_inc], "ets_check_then_act")
 
       # Both inserts, one race: the first is the finding, the second its
       # frame.
@@ -94,7 +94,7 @@ defmodule Argus.Analyses.Padl2010RaceTest do
                  _op,
                  "lost_update"
                ]
-             ] = rows(ctx, [:padl2010_time_stamp], "mnesia_check_act")
+             ] = rows(ctx, [:padl2010_time_stamp], "mnesia_check_then_act")
 
       assert fa(func) == "create_time_stamp_table/0"
     end
@@ -102,7 +102,7 @@ defmodule Argus.Analyses.Padl2010RaceTest do
     test "the snmp_shadow_table code the figure was taken from: dirty_read/1 on a {table, key}",
          ctx do
       assert [[_, func, ":time_stamp", ":ref_count", _read, _write, _op, "lost_update"]] =
-               rows(ctx, [:padl2010_snmp_shadow_table], "mnesia_check_act")
+               rows(ctx, [:padl2010_snmp_shadow_table], "mnesia_check_then_act")
 
       assert fa(func) == "create_time_stamp_table/0"
     end
@@ -131,7 +131,7 @@ defmodule Argus.Analyses.Padl2010RaceTest do
     end
 
     test "a loop: the read decides the write of the next iteration", ctx do
-      rows = rows(ctx, [:padl2010_loop], "ets_check_act")
+      rows = rows(ctx, [:padl2010_loop], "ets_check_then_act")
 
       assert [[_, f, ":loop_hits", ":hits", read, write, "lost_update"]] = rows
       assert fa(f) == "tick/2"

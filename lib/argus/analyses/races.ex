@@ -22,7 +22,7 @@ defmodule Argus.Analyses.Races do
     The complete pair is not protected by a matching `ConCache.isolated/3`
     callback. The reported write is the mark or its immediate calling helper
     in the meeting function.
-  - `ets_check_act(mod, func, name, key, read, write, kind)` — an ETS read
+  - `ets_check_then_act(mod, func, name, key, read, write, kind)` — an ETS read
     decides or feeds a plain write of the same key on a public table, a
     rival write can land on the row between the two (the pair itself in a
     second process, or another write of the row in a process other than
@@ -44,7 +44,7 @@ defmodule Argus.Analyses.Races do
     another call. One row per write. A table the program's users hand
     in, which nothing in view names, is `name`d by the parameter it
     arrives in (`param 0`, counted from 0).
-  - `mnesia_check_act(mod, func, table, key, read, write, operation, kind)` — a
+  - `mnesia_check_then_act(mod, func, table, key, read, write, operation, kind)` — a
     dirty read decides or feeds a dirty write (`op`: `dirty_write`,
     `dirty_delete` or `dirty_delete_object`) of the same record, and
     another process can write the table. One row per write: `kind` says
@@ -93,7 +93,7 @@ defmodule Argus.Analyses.Races do
     (`before`), and a row another process made under the key once that
     process died goes with it (roux's claims, deleted by key after
     killing the claimant). One row per function and trigger, at its
-    first delete. A delete that `ets_check_act` reports is left to it.
+    first delete. A delete that `ets_check_then_act` reports is left to it.
   - `ets_broad_delete_frame(delete, role, site, func)` — evidence for a
     broad delete: the same function's other deletes (`also_deletes`) and
     the inserts of rows other processes make for themselves (`rival`).
@@ -205,7 +205,7 @@ defmodule Argus.Analyses.Races do
           "A lookup decides a start or release of the same name, and a second caller can act in the window."
       },
       %{
-        name: :ets_check_act,
+        name: :ets_check_then_act,
         fields: [
           {:mod, :symbol, "the module"},
           {:func, :symbol, "the function where the read's result meets the write"},
@@ -232,13 +232,13 @@ defmodule Argus.Analyses.Races do
           {:func, :symbol, "the function the site is reported from"}
         ],
         key: [:write, :role, :site],
-        evidence: %{of: :ets_check_act, on: [:write], limit: 4},
+        evidence: %{of: :ets_check_then_act, on: [:write], limit: 4},
         doc:
           "The same race's other writes, the other reads deciding the write, and the rival " <>
             "writes witnessing its harm, attached to its finding."
       },
       %{
-        name: :mnesia_check_act,
+        name: :mnesia_check_then_act,
         fields: [
           {:mod, :symbol, "the module"},
           {:func, :symbol, "the function where the read's result meets the write"},
@@ -263,7 +263,7 @@ defmodule Argus.Analyses.Races do
           {:func, :symbol, "the function the site is reached from"}
         ],
         key: [:write, :role, :site],
-        evidence: %{of: :mnesia_check_act, on: [:write], limit: 4},
+        evidence: %{of: :mnesia_check_then_act, on: [:write], limit: 4},
         doc:
           "The same race's other writes, the other reads deciding the write, and the writers " <>
             "outside the one process a pair runs in, attached to its finding."
@@ -400,7 +400,7 @@ defmodule Argus.Analyses.Races do
     )
   end
 
-  def finding(:ets_check_act, [mod, func, name, _key, read, write, "stale_fill"]) do
+  def finding(:ets_check_then_act, [mod, func, name, _key, read, write, "stale_fill"]) do
     {table, _shared} = ets_table_prose(name)
 
     Findings.new(
@@ -422,7 +422,7 @@ defmodule Argus.Analyses.Races do
     )
   end
 
-  def finding(:ets_check_act, [mod, func, name, _key, read, write, kind]) do
+  def finding(:ets_check_then_act, [mod, func, name, _key, read, write, kind]) do
     {table, shared} = ets_table_prose(name)
 
     Findings.new(
@@ -442,7 +442,7 @@ defmodule Argus.Analyses.Races do
     )
   end
 
-  def finding(:mnesia_check_act, [mod, func, table, _key, read, write, _op, "unique"]) do
+  def finding(:mnesia_check_then_act, [mod, func, table, _key, read, write, _op, "unique"]) do
     Findings.new(
       :warning,
       "Uniqueness check-then-insert race on a Mnesia table",
@@ -467,7 +467,7 @@ defmodule Argus.Analyses.Races do
     )
   end
 
-  def finding(:mnesia_check_act, [mod, func, table, _key, read, write, op, "fill"]) do
+  def finding(:mnesia_check_then_act, [mod, func, table, _key, read, write, op, "fill"]) do
     Findings.new(
       :info,
       "Dirty write fills a Mnesia record on a stale read",
@@ -488,7 +488,7 @@ defmodule Argus.Analyses.Races do
     )
   end
 
-  def finding(:mnesia_check_act, [mod, func, table, _key, read, write, op, kind]) do
+  def finding(:mnesia_check_then_act, [mod, func, table, _key, read, write, op, kind]) do
     Findings.new(
       :warning,
       "Read-then-write race on a Mnesia record",

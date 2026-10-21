@@ -1469,10 +1469,10 @@ ets_writes.race(f, r, w, "", n) :- ets_best_rank(f, r, w, n).
 ets_writes.write_in(s, f) :- ets_race(_, _, _, _, _, s, _), ets_operation(s, f, _, _, _).
 ets_writes.write_in(s, f) :- ets_race(_, _, _, _, _, s, _), call_site(s, f, _, _, _).
 
-.decl ets_check_act(mod: symbol, func: symbol, name: symbol, key: symbol, read: symbol, write: symbol, kind: symbol)
-.output ets_check_act
+.decl ets_check_then_act(mod: symbol, func: symbol, name: symbol, key: symbol, read: symbol, write: symbol, kind: symbol)
+.output ets_check_then_act
 
-ets_check_act(mod, f, t, key, r, w, k) :-
+ets_check_then_act(mod, f, t, key, r, w, k) :-
   ets_writes.reported(f, r, w, _),
   race_rank(f, r, w, n),
   ets_harm_rank(k, n),
@@ -1502,12 +1502,12 @@ race_rank(f, r, w, n) :- ets_writes.reported(f, r, w, _), same_race_rank(f, r, w
 ets_race_frame(w1, "also_writes", w2, f) :- ets_writes.also_writes(w1, w2, f).
 
 ets_race_frame(w, "read", r2, f2) :-
-  ets_check_act(_, _, _, _, r, w, _),
+  ets_check_then_act(_, _, _, _, r, w, _),
   ets_race(_, f2, _, _, r2, w, _),
   r2 != r.
 
 ets_race_frame(w_at, "rival", w2, h) :-
-  ets_check_act(_, f, _, _, r_at, w_at, k),
+  ets_check_then_act(_, f, _, _, r_at, w_at, k),
   reported_at(f, r, r_at),
   reported_at(f, w, w_at),
   ets_harm_by(f, r, w, k, w2, h),
@@ -1594,7 +1594,7 @@ writable_elsewhere(table) :- contended(_, table), table = (tk, t), race_table_pu
 writable_elsewhere(table) :- contended(_, table), table = (tk, _), tk = "handed_in".
 
 // A delete by key on a shared table takes a row another process made for itself, which
-// the function never read or which came after the kill. A delete ets_check_act reports
+// the function never read or which came after the kill. A delete ets_check_then_act reports
 // is left to it.
 .decl broad_delete_race(func: symbol, before: symbol, delete: symbol, kind: symbol)
 
@@ -1602,7 +1602,7 @@ broad_delete_race(f, b, d, kind) :-
   broad_delete(f, b, d, table, _, _, kind),
   writable_elsewhere(table),
   takes_own_row(f, b, d, _, _),
-  !ets_check_act(_, _, _, _, _, d, _).
+  !ets_check_then_act(_, _, _, _, _, d, _).
 
 // One finding per function and trigger, at its first delete; the others are frames.
 .init broad_deletes = OnePerWrite
@@ -2666,10 +2666,10 @@ ranked_race(f, r, w, k, n) :-
 record_writes.race(f, r, w, k, n) :- ranked_race(f, r, w, k, n).
 record_writes.write_in(w, h) :- ranked_race(_, _, w, _, _), records.act(w, h, _, _, _, _).
 
-.decl mnesia_check_act(mod: symbol, func: symbol, table: symbol, key: symbol, read: symbol, write: symbol, operation: symbol, kind: symbol)
-.output mnesia_check_act
+.decl mnesia_check_then_act(mod: symbol, func: symbol, table: symbol, key: symbol, read: symbol, write: symbol, operation: symbol, kind: symbol)
+.output mnesia_check_then_act
 
-mnesia_check_act(mod, func, table, key, read, write, op, harm) :-
+mnesia_check_then_act(mod, func, table, key, read, write, op, harm) :-
   record_writes.reported(func, read, write, harm),
   dirty_read_then_write_race(func, read, write, row, harm), row = (table, key),
   dirty_operation(write, op),
@@ -2683,12 +2683,12 @@ mnesia_check_act(mod, func, table, key, read, write, op, harm) :-
 mnesia_race_frame(w1, "also_writes", w2, f) :- record_writes.also_writes(w1, w2, f).
 
 mnesia_race_frame(w, "other_writer", o, g) :-
-  mnesia_check_act(_, f, t, _, _, w, _, _),
+  mnesia_check_then_act(_, f, t, _, _, w, _, _),
   mnesia_write_table(o, g, t),
   runs.beside_single_process(f, g).
 
 mnesia_race_frame(w, "read", r2, f2) :-
-  mnesia_check_act(_, _, _, _, r, w, _, _),
+  mnesia_check_then_act(_, _, _, _, r, w, _, _),
   racing_record_pair(f2, r2, w),
   r2 != r.
 

@@ -60,7 +60,7 @@ defmodule Argus.Analyses.MnesiaCheckActTest do
   defp races(source, modules) do
     {:ok, results} = solve(source, modules)
 
-    for [_mod, func, table, key, read, write, _op, _kind] <- results["mnesia_check_act"],
+    for [_mod, func, table, key, read, write, _op, _kind] <- results["mnesia_check_then_act"],
         do: {short(func), table, key, short(read), short(write)}
   end
 
@@ -69,7 +69,7 @@ defmodule Argus.Analyses.MnesiaCheckActTest do
   defp kinds(source, modules) do
     {:ok, results} = solve(source, modules)
 
-    for [_mod, func, _table, _key, read, write, _op, kind] <- results["mnesia_check_act"],
+    for [_mod, func, _table, _key, read, write, _op, kind] <- results["mnesia_check_then_act"],
         do: {short(func), read, write, kind}
   end
 
@@ -80,7 +80,7 @@ defmodule Argus.Analyses.MnesiaCheckActTest do
 
   defp short(id), do: id |> String.split("#") |> hd() |> String.split(":") |> List.last()
 
-  describe "mnesia_check_act" do
+  describe "mnesia_check_then_act" do
     @describetag :flowlog
 
     test "a dirty read, one added, a dirty write of the same record", ctx do
@@ -303,7 +303,7 @@ defmodule Argus.Analyses.MnesiaCheckActTest do
         "lost_update"
       ]
 
-      f = Races.finding(:mnesia_check_act, row)
+      f = Races.finding(:mnesia_check_then_act, row)
 
       assert f.severity == :warning
       assert f.title =~ "Mnesia"
@@ -326,7 +326,7 @@ defmodule Argus.Analyses.MnesiaCheckActTest do
         "delete"
       ]
 
-      f = Races.finding(:mnesia_check_act, row)
+      f = Races.finding(:mnesia_check_then_act, row)
 
       assert f.detail =~ "deletes it with dirty_delete"
       refute f.detail =~ "dirty write"
@@ -345,7 +345,7 @@ defmodule Argus.Analyses.MnesiaCheckActTest do
         "unique"
       ]
 
-      f = Races.finding(:mnesia_check_act, row)
+      f = Races.finding(:mnesia_check_then_act, row)
 
       assert f.severity == :warning
       assert f.title == "Uniqueness check-then-insert race on a Mnesia table"
@@ -355,7 +355,7 @@ defmodule Argus.Analyses.MnesiaCheckActTest do
 
     test "a fill is information, and says what it can overwrite" do
       row = ["M", "M:get/1", ":totals", "0", "M:get/1#6", "M:save/2#9", "dirty_write", "fill"]
-      f = Races.finding(:mnesia_check_act, row)
+      f = Races.finding(:mnesia_check_then_act, row)
 
       assert f.severity == :info
       assert f.title =~ "fills"
@@ -364,7 +364,7 @@ defmodule Argus.Analyses.MnesiaCheckActTest do
 
     test "a decision that does more says so" do
       finding =
-        Races.finding(:mnesia_check_act, [
+        Races.finding(:mnesia_check_then_act, [
           "M",
           "M:handle/2",
           ":charged",
@@ -382,8 +382,10 @@ defmodule Argus.Analyses.MnesiaCheckActTest do
     test "a claim and a guard say what the interleaving costs" do
       base = ["M", "M:claim/1", ":claims", "0", "M:claim/1#6", "M:claim/1#9", "dirty_write"]
 
-      assert Races.finding(:mnesia_check_act, base ++ ["claim"]).detail =~ "told they won"
-      assert Races.finding(:mnesia_check_act, base ++ ["guarded"]).detail =~ "older can land last"
+      assert Races.finding(:mnesia_check_then_act, base ++ ["claim"]).detail =~ "told they won"
+
+      assert Races.finding(:mnesia_check_then_act, base ++ ["guarded"]).detail =~
+               "older can land last"
     end
 
     test "frames: the same race's other write, a writer outside, another read" do

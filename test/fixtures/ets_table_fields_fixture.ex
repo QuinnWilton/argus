@@ -3,7 +3,7 @@ defmodule Argus.Test.Fixtures.EtsTableFields do
   Fixtures for ETS tables one `:ets.new/2` site makes, one per element of a
   collection, and keeps under different fields of one struct: roux's
   `Database`, whose tables a single closure makes in `Map.new/2`
-  (`races.ets_check_act`).
+  (`races.ets_check_then_act`).
 
   Each module makes its own tables, so that every set solves alone. The
   site is one points-to object for all of them; the field each operation
