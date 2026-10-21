@@ -146,6 +146,23 @@ defmodule Argus.Analyses.RegistryRaceTest do
       assert races(ctx, [C.OwnerSpawnsClaimer]) == []
     end
 
+    # Solved alone, not in the batch: the owner's race depends on whether
+    # the rival is in the program.
+    test "another process claiming the name through wrappers is a rival" do
+      solve = fn modules ->
+        {:ok, results} = Argus.analyze(modules, :races)
+
+        for [_, func, lookup, create, _, key, _, _] <- results["registry_race"],
+            do: {func |> String.split(":") |> List.last(), lookup, create, key}
+      end
+
+      assert solve.([C.LeaderOwner]) == []
+
+      assert solve.([C.LeaderOwner, C.LeaderRival]) == [
+               {"handle_call/3", "whereis", "register", ":leader"}
+             ]
+    end
+
     test "no branch on the lookup, or different names, is not the shape", ctx do
       assert races(ctx, [C.UncheckedWhereisThenStart, C.DifferentNames]) == []
     end

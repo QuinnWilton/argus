@@ -416,6 +416,42 @@ defmodule Argus.Test.Fixtures.CheckThenAct do
     end
   end
 
+  defmodule LeaderOwner do
+    @moduledoc """
+    Only the owner's own callbacks decide on `:leader`: one process,
+    unless another process claims the name too (`LeaderRival`).
+    """
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+    @impl true
+    def init(state), do: {:ok, state}
+
+    @impl true
+    def handle_call(:lead, _from, state) do
+      case Process.whereis(:leader) do
+        nil -> Process.register(self(), :leader)
+        _pid -> :taken
+      end
+
+      {:reply, :ok, state}
+    end
+  end
+
+  defmodule LeaderRival do
+    @moduledoc """
+    A process of its own claiming `:leader` through two wrappers: the
+    name reaches the register through the parameters of both. Two names
+    pass through them, so the compiler cannot fold either into a literal.
+    """
+    def start, do: spawn(fn -> boot() end)
+
+    defp boot, do: {take(:leader), take(:deputy)}
+    defp take(name), do: claim_name(name)
+    defp claim_name(name), do: Process.register(self(), name)
+  end
+
   defmodule RescuesArgumentError do
     @moduledoc "register/2's ArgumentError is the loser's outcome, and it is rescued."
     def claim(name) do

@@ -176,17 +176,19 @@ runs.seed(f) :- names.meets(f, _, _, _, _, _, _).
 //
 // A rival may be another execution of the pair or a separate process claiming the same
 // literal name in the same registry. Resolve names at the operation or at callers
-// passing literals into helpers.
+// handing literals to helpers.
 .decl claims_name(act: symbol, func: symbol, scope: symbol, key: symbol)
 
 claims_name(a, g, scope, k) :- creating_operation(a, g, api, scope, "literal", k), api != "start_child".
 claims_name(a, g, "", k) :- name_release(a, g, _, "literal", k).
 
+// A helper claiming the name its parameter holds claims, in each caller,
+// the literals that caller hands it: its own, or ones its own callers
+// hand it through any chain of wrappers (the values stage's arg_value).
 claims_name(a, g, scope, k) :-
   creating_operation(a, h, api, scope, "param", q),
   api != "start_child",
-  call_arg(g, h, n, k),
-  k != "dynamic",
+  arg_value(g, h, n, k),
   q = to_string(n).
 
 runs.seed(g) :- claims_name(_, g, _, _).
