@@ -2188,30 +2188,19 @@ reads_then_writes_record(f, r, w, t, k) :- records.meets(f, r, w, "literal", t, 
 reads_then_writes_record(f, r, w, t, k) :- records.meets(f, r, w, "param", p, _, k), record_table_at_param(f, p, t).
 reads_then_writes_record(f, r, w, t, k) :- records.meets(f, r, w, "element 0", p, _, k), table_at_record(f, p, t).
 
-// Resolve a table parameter at a check/act meeting point or write, following names
-// through forwarding callers.
+// The table parameters a check/act meeting point or a write names its table by.
 .decl record_table_needed(func: symbol, pos: symbol)
 
 record_table_needed(f, p) :- records.meets(f, _, _, "param", p, _, _).
 
-record_table_needed(c, to_string(m)) :-
-  record_table_needed(f, p),
-  call_arg_forward(c, f, n, m),
-  p = to_string(n).
-
+// The tables such a parameter may name: the literals its callers hand it through any
+// chain of forwarding callers (the values stage's param_value).
 .decl record_table_at_param(func: symbol, pos: symbol, name: symbol)
 
 record_table_at_param(f, p, name) :-
   record_table_needed(f, p),
-  call_arg(_, f, n, name),
-  name != "dynamic",
+  param_value(f, n, name),
   p = to_string(n).
-
-record_table_at_param(f, p, name) :-
-  record_table_needed(f, p),
-  call_arg_forward(c, f, n, m),
-  p = to_string(n),
-  record_table_at_param(c, m_text, name), m_text = to_string(m).
 
 // A whole record's first tuple element names its Mnesia table. Resolve that element
 // through forwarding callers.
