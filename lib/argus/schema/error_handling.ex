@@ -253,7 +253,7 @@ defmodule Argus.Schema.ErrorHandling do
         ],
         doc: """
         An armed timer, its destination, and message source: a fixed literal (`bare`), \
-        caller parameter (`param`, resolved via `resolved_arg`), or computed value \
+        caller parameter (`param`, resolved via the values stage's `param_value`), or computed value \
         (`dynamic`). Refines `mailbox_writer` timer kinds.
         """
       },

@@ -74,11 +74,14 @@ defmodule Argus.ExtractorCoverageTest do
     outputs = extractor_outputs()
     staged = Analysis.points_to_relations()
     {:ok, stage_reads} = Argus.FlowLog.input_relations(Analysis.points_to_rules_path())
+    values = Analysis.values_relations()
+    {:ok, values_reads} = Argus.FlowLog.input_relations(Analysis.values_rules_path())
 
     gaps =
       for mod <- Analysis.builtin_analysis_modules(),
           {:ok, reads} = Analysis.input_relations(mod.name()),
-          reads = through_points_to(reads, staged, stage_reads),
+          reads = through_stage(reads, staged, stage_reads),
+          reads = through_stage(reads, values, values_reads),
           produced =
             mod.extractors()
             |> Enum.map(&Map.get(outputs, &1, MapSet.new()))
@@ -100,9 +103,9 @@ defmodule Argus.ExtractorCoverageTest do
              Enum.join(gaps, "\n")
   end
 
-  # An analysis's reads, with the staged points-to relations it reads
-  # replaced by what the stage reads to derive them.
-  defp through_points_to(reads, staged, stage_reads) do
+  # An analysis's reads, with a stage's relations it reads replaced by
+  # what the stage reads to derive them.
+  defp through_stage(reads, staged, stage_reads) do
     if Enum.any?(reads, &(&1 in staged)),
       do: Enum.uniq((reads -- staged) ++ stage_reads),
       else: reads

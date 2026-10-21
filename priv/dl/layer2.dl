@@ -44,7 +44,7 @@
 .decl boundary_function(func: symbol) mutable
 .input boundary_function
 
-// A resolved call argument. `resolved_arg` in `clientlib/calls.dl` propagates literals through wrappers to resolve call and cast targets. Forwarded parameters use `call_arg_forward` instead.
+// A resolved call argument. The values stage (`values.dl`) propagates these literals through wrappers; forwarded parameters use `call_arg_forward` instead.
 //
 .decl call_arg(caller: symbol, callee: symbol, arg_pos: number, value: symbol) mutable
 .input call_arg
@@ -1286,7 +1286,7 @@
 .decl timeout_return(id: symbol, func: symbol, clause: symbol) mutable
 .input timeout_return
 
-// An armed timer, its destination, and message source: a fixed literal (`bare`), caller parameter (`param`, resolved via `resolved_arg`), or computed value (`dynamic`). Refines `mailbox_writer` timer kinds.
+// An armed timer, its destination, and message source: a fixed literal (`bare`), caller parameter (`param`, resolved via the values stage's `param_value`), or computed value (`dynamic`). Refines `mailbox_writer` timer kinds.
 //
 .decl timer_arm(id: symbol, func: symbol, target: symbol, message: symbol, param: number, literal: symbol) mutable
 .input timer_arm

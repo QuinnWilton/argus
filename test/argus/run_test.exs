@@ -92,7 +92,10 @@ defmodule Argus.RunFactsTest do
 
       try do
         targets = label_targets()
-        derived = Analysis.stage0_relations() ++ Analysis.points_to_relations()
+
+        derived =
+          Analysis.stage0_relations() ++
+            Analysis.points_to_relations() ++ Analysis.values_relations()
 
         differing =
           for relation <- Argus.Schema.names() -- Argus.Schema.in_process_only(),

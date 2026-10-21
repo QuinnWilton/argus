@@ -141,8 +141,8 @@ defmodule Argus.Extractors.CallArgsTest do
 
     test "a forwarded argument produces no call_arg row" do
       # The split has to be exclusive: if a forwarding also landed in
-      # call_arg, resolved_arg's base case would treat the marker as a
-      # literal value and propagate garbage.
+      # call_arg, the values stage would treat the marker as a literal
+      # value and propagate garbage.
       facts = extract(Argus.Test.Fixtures.CallArgsForwarder)
 
       literals =

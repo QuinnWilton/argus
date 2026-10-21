@@ -21,9 +21,8 @@ defmodule Argus.Schema.CallValues do
            "resolved value: a literal atom, binary or integer as key identities spell it, or 'dynamic'"}
         ],
         doc: """
-        A resolved call argument. `resolved_arg` in `clientlib/calls.dl` propagates \
-        literals through wrappers to resolve call and cast targets. Forwarded parameters \
-        use `call_arg_forward` instead.
+        A resolved call argument. The values stage (`values.dl`) propagates these \
+        literals through wrappers; forwarded parameters use `call_arg_forward` instead.
         """
       },
       %{

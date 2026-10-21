@@ -45,7 +45,9 @@ defmodule Argus.Exclusions.BlockingTest do
     [B.HandedAndCalled.Exporter],
     [B.RuntimeTick.Poller],
     [B.RuntimeTickWait.Poller],
-    [B.RenamedTick.Refresher]
+    [B.RenamedTick.Refresher],
+    [B.RenamedTickThroughHelper.Refresher],
+    [B.RenamedTickThroughExport.Refresher]
   ]
 
   @fixture Path.expand("../fixtures/exclusions/blocking.ex", __DIR__)
@@ -187,6 +189,17 @@ defmodule Argus.Exclusions.BlockingTest do
     test "kept: a flush waiting for a message no timer of the module carries", ctx do
       assert receives(ctx, [B.RenamedTick.Refresher]) ==
                [{"handle_call/3", "handle_call/3", "false"}]
+    end
+
+    # timer_flush.dl, armed_literal: param_value, and timer_message_unknown:
+    # !param_complete.
+    test "kept: the same, armed through a private helper's parameter", ctx do
+      assert receives(ctx, [B.RenamedTickThroughHelper.Refresher]) ==
+               [{"handle_call/3", "handle_call/3", "false"}]
+    end
+
+    test "a helper another module may hand any message leaves the wait unknown", ctx do
+      assert receives(ctx, [B.RenamedTickThroughExport.Refresher]) == []
     end
   end
 

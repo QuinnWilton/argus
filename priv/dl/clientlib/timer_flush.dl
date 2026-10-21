@@ -6,16 +6,17 @@
 // Match a known timer literal, start_timer's timeout tuple, or a catch-all. If the
 // module's timer/message is unknown, allow a possible match; known incompatible
 // literals do not qualify.
-// `armed_literal` resolves literal messages at the arm site or from caller parameters
-// and records the destination. Runtime-built messages have no row. Used by flush and
-// stale-timer checks.
+// `armed_literal` resolves literal messages at the arm site or from the literals the
+// arming function's parameter may hold (the values stage, through any chain of
+// callers), and records the destination. Runtime-built messages have no row. Used by
+// flush and stale-timer checks.
 .decl armed_literal(site: symbol, func: symbol, target: symbol, message: symbol)
 
 armed_literal(id, a, t, lit) :- timer_arm(id, a, t, "bare", _, lit).
 
 armed_literal(id, a, t, lit) :-
   timer_arm(id, a, t, "param", pos, _),
-  resolved_arg(a, pos, lit).
+  param_value(a, pos, lit).
 
 // The cancel_timer call at `cancel` (Process.cancel_timer/1,2 inline to
 // it).
@@ -36,9 +37,11 @@ timer_message_unknown(mod) :-
   timer_arm(_, a, _, "dynamic", _, _),
   function_def(a, mod, _, _, _).
 
+// A message from a parameter whose literals are not all known: some caller
+// hands it a computed one, or a caller the program does not show may arm it.
 timer_message_unknown(mod) :-
   timer_arm(_, a, _, "param", pos, _),
-  !resolved_arg(a, pos, _),
+  !param_complete(a, pos),
   function_def(a, mod, _, _, _).
 
 .decl takes_timer_message(receive: symbol)
@@ -78,8 +81,8 @@ flush_poll(id) :-
 
 after_cancel_timer.asked(cancel) :- cancels_timer(cancel).
 
-// Prerequisites: include clientlib/imports.dl, otp.dl (for
-// resolved_arg) and order.dl (RunsAfter) before this file.
+// Prerequisites: include clientlib/imports.dl (for the staged values), otp.dl and
+// order.dl (RunsAfter) before this file.
 
 // helper_cancels_field(caller, site, cancel, key): a same-module helper called on
 // caller's stack reads field key and cancels its timer at cancel. Shared by mailbox

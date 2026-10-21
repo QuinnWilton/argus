@@ -575,3 +575,67 @@ defmodule Excl.Blocking.RenamedTick.Refresher do
     {:noreply, %{s | timer: Process.send_after(self(), :poll, s.interval)}}
   end
 end
+
+# The renamed poll again, armed through a private helper's parameter: the
+# literals its callers hand it are every message it can arm (the values
+# stage's param_complete), so the stale :refresh wait still hangs and is
+# still reported. An exported helper would leave the message unknown.
+defmodule Excl.Blocking.RenamedTickThroughHelper.Refresher do
+  @moduledoc false
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+  def reschedule(ms), do: GenServer.call(__MODULE__, {:reschedule, ms})
+
+  @impl true
+  def init(_opts), do: {:ok, %{interval: 1000, timer: arm(:poll, 1000)}}
+
+  @impl true
+  def handle_call({:reschedule, ms}, _from, s) do
+    if Process.cancel_timer(s.timer) == false do
+      receive do
+        :refresh -> :ok
+      end
+    end
+
+    {:reply, :ok, %{s | interval: ms, timer: arm(:poll, ms)}}
+  end
+
+  @impl true
+  def handle_info(:poll, s) do
+    {:noreply, %{s | timer: arm(:poll, s.interval)}}
+  end
+
+  defp arm(message, ms), do: Process.send_after(self(), message, ms)
+end
+
+# The same with the helper exported: another module may arm any message
+# through it, so the wait may be for one of them, and nothing is reported.
+defmodule Excl.Blocking.RenamedTickThroughExport.Refresher do
+  @moduledoc false
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+  def reschedule(ms), do: GenServer.call(__MODULE__, {:reschedule, ms})
+
+  @impl true
+  def init(_opts), do: {:ok, %{interval: 1000, timer: arm(:poll, 1000)}}
+
+  @impl true
+  def handle_call({:reschedule, ms}, _from, s) do
+    if Process.cancel_timer(s.timer) == false do
+      receive do
+        :refresh -> :ok
+      end
+    end
+
+    {:reply, :ok, %{s | interval: ms, timer: arm(:poll, ms)}}
+  end
+
+  @impl true
+  def handle_info(:poll, s) do
+    {:noreply, %{s | timer: arm(:poll, s.interval)}}
+  end
+
+  def arm(message, ms), do: Process.send_after(self(), message, ms)
+end

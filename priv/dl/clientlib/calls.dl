@@ -1,27 +1,12 @@
 // Process call and cast dependencies.
 // Requires imports, behaviours, callbacks, staged_processes, and runs_elsewhere
 // (included by otp.dl).
-// Provides argument resolution; client API classification; direct and transitive
+// Provides client API classification; direct and transitive
 // sync/async dependencies; request tags and call sites; timeout-qualified dependencies;
 // and module-level dependencies with witnesses. Seed `site_demand` for clause-sensitive
 // `site_request` results.
 // resolved_calls.dl adds self-directed dependencies for consumers accepting value-flow
 // inputs.
-
-// Constant propagation
-//
-// Propagate literal arguments through forwarded numeric parameter positions. Avoid
-// partial to_number/substr functors: an engine may evaluate them before their guards.
-// dl_declarations_test enforces this.
-.decl resolved_arg(func: symbol, arg_pos: number, value: symbol)
-
-resolved_arg(callee, pos, val) :-
-  call_arg(_, callee, pos, val),
-  val != "dynamic".
-
-resolved_arg(callee, callee_pos, val) :-
-  call_arg_forward(forwarder, callee, callee_pos, fwd_param),
-  resolved_arg(forwarder, fwd_param, val).
 
 // Wrapper target parameters
 //

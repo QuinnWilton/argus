@@ -11,8 +11,8 @@ defmodule Argus.Extractors.CallArgs do
     `"42"`), or to `"dynamic"` when resolution fails entirely.
   - `call_arg_forward(caller, callee, arg_pos, fwd_pos)` when the
     argument IS the caller's own parameter, forwarded through.
-    `resolved_arg` in `clientlib/calls.dl` walks these backwards to propagate
-    literal values through wrapper call chains.
+    The values stage (`priv/dl/values.dl`) walks these backwards to
+    propagate literal values through wrapper call chains.
   - `call_arg_field(caller, callee, arg_pos, key)` when the argument was
     read from a map under a literal key (`start_timer(ms, state.ref)`):
     which piece of the caller's state a helper is handed.
