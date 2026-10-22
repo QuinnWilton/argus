@@ -193,6 +193,9 @@ defmodule Argus.Soundness.UnsafeInputTest do
 
     test "an asymmetric signature verify gates the decode", %{sev: sev} do
       assert severity(sev, "G10.SignatureGate", :decode_verify, @deser_gated) == :warning
+      # Constant input behind a gate is no finding, as it is without one.
+      assert severity(sev, "G10.SignatureGate", :decode_constant, @deser_gated) == nil
+      assert severity(sev, "G10.SignatureGate", :decode_constant, @deser_unsafe) == nil
     end
 
     test "a MAC compared for equality gates the decode", %{sev: sev} do

@@ -835,6 +835,18 @@ defmodule Argus.Test.Soundness.G10.SignatureGate do
   # No gate at all: the ungated decode keeps the top-tier error.
   def decode_open(payload), do: :erlang.binary_to_term(payload)
 
+  # A gated decode of the module's own attribute is constant input, as its
+  # ungated twin is: no finding.
+  @payload :erlang.term_to_binary(%{version: 1})
+  @sig "signature"
+  def decode_constant(key) do
+    if :crypto.verify(:eddsa, :none, @payload, @sig, [key, :ed25519]) do
+      :erlang.binary_to_term(@payload)
+    else
+      {:error, :bad_sig}
+    end
+  end
+
   # A checksum the sender computes is no gate: it keeps the error.
   def decode_checksum(data, sum) do
     if :crypto.hash_equals(:crypto.hash(:sha256, data), Base.decode16!(sum)) do

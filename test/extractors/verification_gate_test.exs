@@ -12,7 +12,7 @@ defmodule Argus.Extractors.VerificationGateTest do
 
   test "a decode reached only on a verification's accepting edge is gated" do
     assert gated([Argus.Test.Soundness.G10.SignatureGate]) |> Enum.sort() ==
-             ["decode_eq/3", "decode_gated/2", "decode_verify/3"]
+             ["decode_constant/1", "decode_eq/3", "decode_gated/2", "decode_verify/3"]
   end
 
   test "a verdict a case selects on gates its true arm, and a decode beside it does not" do

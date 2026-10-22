@@ -156,8 +156,7 @@ sink_call(id, func, api, "deserialization", safety) :-
   unsafe_deserialization(id, func, api, safety),
   unsafe_safety_class(safety),
   !inert_decoded_term(id, func),
-  !server_authored_bytes(id, func),
-  !verification_gated(id, func).
+  !server_authored_bytes(id, func).
 
 // A decode reached only when a cryptographic verification the function performs
 // succeeds (Argus.Extractors.VerificationGate): reachable, but the bytes carried a
@@ -165,16 +164,18 @@ sink_call(id, func, api, "deserialization", safety) :-
 // secret can supply bytes that pass. Weaker than an authenticated-payload API, whose
 // key and comparison the library guarantees; a hand-rolled gate leaves the secret's
 // strength, the comparison, and whether the gate covers these exact bytes unproven.
-// Re-ranked below an ungated decode (which stays in sink_call above), never dropped.
-// A gate the server's own key makes (server_authored_bytes) is already no sink.
+// Re-ranked, never dropped: the decode stays a sink, through every filter an ungated one
+// passes (bounded and constant input, compiler copies), and its finding is reported
+// here in place of the one it would have had (sink_reachable, sink_without_request_path,
+// fixed_file_decode). A decode of a beam's terms or the build's files keeps its own
+// lower tier (artifact_decode). A gate the server's own key makes
+// (server_authored_bytes) is already no sink.
 .decl secret_gated_decode(id: symbol, func: symbol, api: symbol, safety: symbol)
 .output secret_gated_decode
 secret_gated_decode(id, func, api, safety) :-
-  unsafe_deserialization(id, func, api, safety),
-  unsafe_safety_class(safety),
-  !inert_decoded_term(id, func),
-  !server_authored_bytes(id, func),
-  verification_gated(id, func).
+  sink(id, func, api, "deserialization", safety),
+  verification_gated(id, func),
+  !artifact_decode(id, func, _, _, _).
 
 // The bytes are an authenticated decryption's or MAC check's success payload
 // (clientlib/verification.dl): only a holder of the server's key could have written
@@ -647,6 +648,7 @@ rendered_from_assigns(id) :-
 sink_reachable(id, func, api, s, entry, kind, evidence, source, p, safety) :-
   request_reached_sink(id, func, entry, kind, evidence),
   sink(id, func, api, s, safety),
+  !verification_gated(id, func),
   graded_by_reads(func, evidence, source, p).
 
 // With priors enabled, lower severity of path-only findings when the sink function is
@@ -731,14 +733,16 @@ sink_without_request_path(id, func, api, s, source, p, safety) :-
   sink_value(func, s, source, p),
   !decoded_origin(id, func, _, _),
   !code_fed(id),
-  !option_atom(id).
+  !option_atom(id),
+  !verification_gated(id, func).
 
 sink_without_request_path(id, func, api, s, "", 0, safety) :-
   exposed_sink(id, func, api, s, safety),
   !sink_value(func, s, _, _),
   !decoded_origin(id, func, _, _),
   !code_fed(id),
-  !option_atom(id).
+  !option_atom(id),
+  !verification_gated(id, func).
 
 // An atom made of an option's value (`option_value`): still a caller's, and reported,
 // with "option" as what the value is. A library takes an option as its user's
@@ -795,7 +799,8 @@ artifact_decode(id, func, api, origin, safety) :-
 
 fixed_file_decode(id, func, api, path, safety) :-
   exposed_sink(id, func, api, "deserialization", safety),
-  decoded_origin(id, func, "file", path).
+  decoded_origin(id, func, "file", path),
+  !verification_gated(id, func).
 
 // With priors enabled, lower severity when at least 0.9 probability places the sink's
 // input outside externally supplied data. Preserve severity for request, URL, or
