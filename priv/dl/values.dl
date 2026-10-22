@@ -72,6 +72,15 @@ hands(c, f, g, k, sk, s) :- call_arg_var(c, f, g, k, _, sk, s), function_def(g, 
 
 forwards(c, f, g, k, m) :- call_arg_var(c, f, g, k, "call", "param", m), function_def(g, _, _, _, _).
 
+// What a callee hands back of the parameter `caller` handed it is that
+// parameter, handed on: `call(resolve(server), :ping)` forwards `server`.
+forwards(c, f, g, k, m) :-
+  call_arg_var(c, f, g, k, "call", "result", r),
+  function_def(g, _, _, _, _),
+  call_result_var(r, f, h),
+  passes(h, i),
+  hands(r, f, h, i, "param", m).
+
 // The call at `site` in `caller` to the program's function `callee`.
 .decl call_into(site: symbol, caller: symbol, callee: symbol)
 
@@ -141,6 +150,26 @@ result_value(c, f, v) :-
 returns_value(g, v) :- return_var(g, "literal", v), !values_program("unknown").
 returns_value(g, v) :- return_var(g, "result", c), result_value(c, g, v).
 
+// A literal `func` returns that is its own, not one of its parameters'
+// handed back: one it spells, one a callee returns of its own, or one it
+// hands a callee that passes it back.
+.decl returns_own(func: symbol, value: symbol)
+
+returns_own(g, v) :- return_var(g, "literal", v), !values_program("unknown").
+
+returns_own(g, v) :-
+  return_var(g, "result", c),
+  call_result_var(c, g, h),
+  returns_own(h, v).
+
+returns_own(g, v) :-
+  return_var(g, "result", c),
+  call_result_var(c, g, h),
+  passes(h, i),
+  hands(c, g, h, i, sk, s),
+  sk != "param",
+  var_value(g, sk, s, v).
+
 // `func` may return its parameter `pos` as it was handed: directly, or as
 // a callee's result that hands back what `func` handed it there.
 .decl passes(func: symbol, pos: symbol)
@@ -163,16 +192,27 @@ arg_value(f, g, k, v) :- hands(_, f, g, k, sk, s), var_value(f, sk, s, v).
 
 // Literal `value` reaches parameter `pos` of `func` from the call at
 // `site` in `caller`, which hands it on from no parameter of its own:
-// spelled there, or a result there. Followed through every call passing
-// its parameter on unchanged, in the caller's own process: a start or a
-// spawn runs its entry where no caller waits on it.
+// spelled there, or what a callee it calls there returns of its own.
+// Followed through every call passing its parameter on unchanged, or
+// through a callee handing it back, in the caller's own process: a start
+// or a spawn runs its entry where no caller waits on it.
 .decl param_origin(func: symbol, pos: symbol, caller: symbol, site: symbol, value: symbol)
 
 param_origin(g, k, f, c, v) :-
   call_arg_var(c, f, g, k, "call", sk, s),
   sk != "param",
+  sk != "result",
   function_def(g, _, _, _, _),
   var_value(f, sk, s, v).
+
+// A result is spelled where its callee spells it: the literals it
+// returns of its own, not those it hands back of `caller`'s parameter,
+// which are `caller`'s callers' (a forward, above).
+param_origin(g, k, f, c, v) :-
+  call_arg_var(c, f, g, k, "call", "result", r),
+  function_def(g, _, _, _, _),
+  call_result_var(r, f, h),
+  returns_own(h, v).
 
 param_origin(h, j, f, c, v) :- param_origin(g, k, f, c, v), forwards(_, g, h, j, k).
 

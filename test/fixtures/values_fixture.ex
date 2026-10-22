@@ -36,6 +36,16 @@ defmodule Argus.Test.Fixtures.Values do
     defp read(name), do: :ets.lookup(name, 1)
   end
 
+  defmodule Resolved do
+    @moduledoc false
+    # A literal handed through an identity helper is its caller's caller's.
+    def ping_a, do: ping(:kappa)
+    def ping_b, do: ping(:lambda)
+    defp ping(server), do: call(resolve(server), 1)
+    defp resolve(name), do: name
+    defp call(name, key), do: :ets.lookup(name, key)
+  end
+
   defmodule Defaulted do
     @moduledoc false
     # A value term-flow does not follow beside a literal at one call:

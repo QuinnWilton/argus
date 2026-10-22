@@ -22,6 +22,7 @@ defmodule Argus.Analysis.ValuesStageTest do
     Values.Exported,
     Values.Computed,
     Values.Defaulted,
+    Values.Resolved,
     Values.Captured,
     Values.Fifth,
     Values.Results,
@@ -95,6 +96,17 @@ defmodule Argus.Analysis.ValuesStageTest do
 
       assert [[^deepest, "1", ^wrap, _, "1"]] =
                for([^deepest, "1" | _] = r <- rows(dir, "param_origin"), do: r)
+    end
+
+    test "a literal a helper hands back is its caller's caller's", %{dir: dir} do
+      call = func(Values.Resolved, :call, 2)
+      ping_a = func(Values.Resolved, :ping_a, 0)
+      ping_b = func(Values.Resolved, :ping_b, 0)
+
+      origins =
+        for [^call, "0", caller, _site, value] <- rows(dir, "param_origin"), do: {caller, value}
+
+      assert Enum.sort(origins) == [{ping_a, ":kappa"}, {ping_b, ":lambda"}]
     end
 
     test "a helper's result holds what it returns, at each call", %{dir: dir} do
