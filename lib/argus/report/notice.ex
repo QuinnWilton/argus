@@ -190,10 +190,9 @@ defmodule Argus.Report.Notice do
       :points_to_selective,
       :info,
       "the points-to stage outgrew its budget and ran selective: " <>
-        "#{count} hub #{if count == 1, do: "term was", else: "terms were"} resolved " <>
-        "field-insensitively, so findings about the processes " <>
-        "#{if count == 1, do: "it holds", else: "they hold"} " <>
-        "may include some that cannot happen"
+        "#{count} hub #{if count == 1, do: "object (a process or table) was", else: "objects (processes or tables) were"} " <>
+        "resolved field-insensitively, so findings about " <>
+        "#{if count == 1, do: "it", else: "them"} may include some that cannot happen"
     )
   end
 
@@ -208,8 +207,8 @@ defmodule Argus.Report.Notice do
       :points_to_field_insensitive,
       :info,
       "the points-to stage outgrew its budget, selective too, and ran field-insensitive: " <>
-        "every term holding a process (#{length(objects)}) was resolved " <>
-        "field-insensitively, so findings about any process may include some " <>
+        "every process and table (#{length(objects)}) was resolved " <>
+        "field-insensitively, so findings about any of them may include some " <>
         "that cannot happen"
     )
   end
