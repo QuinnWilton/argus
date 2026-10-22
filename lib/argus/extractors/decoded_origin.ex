@@ -11,18 +11,25 @@ defmodule Argus.Extractors.DecodedOrigin do
   whether an outsider wrote them but whether the analyzed code is
   trusted, and the answer is a short-lived VM, not `:safe`.
 
+  A file the program reads at a path its own literals spell is not a
+  caller's either, but it is no more trusted for that: its bytes are
+  whoever last wrote the path, the program or anyone else who can.
+
   ## Emitted facts
 
-  - `decoded_origin(id, func, origin)` — the bytes `binary_to_term/1,2`
-    decodes at `id` come, on every path, from
+  - `decoded_origin(id, func, origin, path)` — the bytes
+    `binary_to_term/1,2` decodes at `id` come, on every path, from
     - `artifact`: a BEAM file's chunks or object code
       (`:beam_lib.chunks/2,3`, `:beam_lib.all_chunks/1`,
-      `:code.get_object_code/1`), whichever beam the program reads; or
+      `:code.get_object_code/1`), whichever beam the program reads;
     - `build`: a file whose path is made of the project's own build
       directories (`Mix.Project.manifest_path/0,1`, `build_path/0,1`,
       `app_path/0,1`, `compile_path/0,1`) and literals alone, read
       whole (`File.read/1`, `File.read!/1`, `:file.read_file/1`):
-      whoever writes there already runs code through the build.
+      whoever writes there already runs code through the build; or
+    - `file`: a file whose path is made of literals alone, read whole:
+      `path` is it, as the code spells it, when one literal does (empty
+      otherwise, and for the other origins).
 
     A decode some of whose bytes may come from anywhere else has no row.
 
@@ -58,6 +65,7 @@ defmodule Argus.Extractors.DecodedOrigin do
 
   alias Argus.EffectModel
   alias Argus.Extractor.Helpers
+  alias Argus.Extractor.Resolve
   alias Argus.Extractor.Runtime
   alias Argus.Extractor.ValueFlow
   alias Argus.Extractors.ParamFlow.Returns
@@ -66,8 +74,13 @@ defmodule Argus.Extractors.DecodedOrigin do
 
   import Argus.Extractor.Facts, only: [add_fact: 3]
 
-  @typedoc "Where a value comes from: a parameter, a BEAM's chunks, the build, or elsewhere."
-  @type origin :: {:param, non_neg_integer()} | :artifact | :build | :fresh
+  @typedoc """
+  Where a value comes from: a parameter, a BEAM's chunks, the build, a
+  file at a fixed path (as spelled, `""` when no literal spells it), or
+  elsewhere.
+  """
+  @type origin ::
+          {:param, non_neg_integer()} | :artifact | :build | {:file, String.t()} | :fresh
 
   @artifact_reads [
     {:beam_lib, :chunks, 2},
@@ -159,14 +172,23 @@ defmodule Argus.Extractors.DecodedOrigin do
     end
   end
 
+  # A file at a fixed path is the least trusted of the three, and names
+  # the row when any path reads one.
   defp row(func, idx, origins) do
+    id = InstrId.mint(func, idx)
+    {files, others} = Enum.split_with(origins, &match?({:file, _}, &1))
+
     cond do
       MapSet.size(origins) == 0 -> []
-      not MapSet.subset?(origins, MapSet.new([:artifact, :build])) -> []
-      MapSet.member?(origins, :artifact) -> [[InstrId.mint(func, idx), func, "artifact"]]
-      true -> [[InstrId.mint(func, idx), func, "build"]]
+      not Enum.all?(others, &(&1 in [:artifact, :build])) -> []
+      files != [] -> [[id, func, "file", spell_paths(files)]]
+      MapSet.member?(origins, :artifact) -> [[id, func, "artifact", ""]]
+      true -> [[id, func, "build", ""]]
     end
   end
+
+  defp spell_paths([{:file, path}]), do: path
+  defp spell_paths(_several), do: ""
 
   # ── Each function ────────────────────────────────────────────────────
 
@@ -306,18 +328,18 @@ defmodule Argus.Extractors.DecodedOrigin do
 
       match?({:ok, _, _, _}, Helpers.match_remote_call(instr)) ->
         {:ok, mod, fun, arity} = Helpers.match_remote_call(instr)
-        remote_result({mod, fun, arity}, args.(arity))
+        remote_result({mod, fun, arity}, args.(arity), fn -> spelled_path(function, idx) end)
 
       true ->
         fresh()
     end
   end
 
-  defp remote_result(mfa, args) do
+  defp remote_result(mfa, args, spelled) do
     cond do
       mfa in @artifact_reads -> MapSet.new([:artifact])
       mfa in @build_dirs -> MapSet.new([:build])
-      mfa in @file_reads -> file_contents(args)
+      mfa in @file_reads -> file_contents(args, spelled)
       mfa in @transforms -> union(args)
       Map.has_key?(@selections, mfa) -> union(Enum.map(@selections[mfa], &Enum.at(args, &1)))
       pure?(mfa) -> union(args)
@@ -326,9 +348,27 @@ defmodule Argus.Extractors.DecodedOrigin do
   end
 
   # A file read whole is the build's own when its path is made of a
-  # build directory and literals alone: any other part may climb out.
-  defp file_contents([path]) do
-    if path == MapSet.new([:build]), do: path, else: fresh()
+  # build directory and literals alone: any other part may climb out. A
+  # path of literals alone is a file at a fixed path.
+  defp file_contents([path], spelled) do
+    cond do
+      path == MapSet.new([:build]) -> path
+      MapSet.size(path) == 0 -> MapSet.new([{:file, spelled.()}])
+      true -> fresh()
+    end
+  end
+
+  # The path a file read at `idx` is handed, when one literal spells it.
+  defp spelled_path(%{tuple: tuple}, idx) do
+    case Resolve.resolve_register(Tuple.to_list(tuple), idx, {:x, 0}) do
+      {:ok, path} when is_binary(path) -> if String.printable?(path), do: path, else: ""
+      {:ok, path} when is_list(path) -> charlist_path(path)
+      _ -> ""
+    end
+  end
+
+  defp charlist_path(path) do
+    if List.ascii_printable?(path), do: List.to_string(path), else: ""
   end
 
   defp pure?({mod, fun, arity}) do

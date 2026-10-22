@@ -37,15 +37,19 @@ defmodule Argus.Schema.UnsafeInput do
           {:func, :func_id, "containing function ID"},
           {:origin, :symbol,
            "artifact: a BEAM file's chunks or object code; build: a file under the " <>
-             "project's build directories"}
+             "project's build directories; file: a file at a path literals spell"},
+          {:path, :symbol,
+           "for file, the path as the code spells it, empty when no one literal does; " <>
+             "else empty"}
         ],
         doc: """
         The bytes a `binary_to_term/1,2` call decodes come, on every path the module \
         shows, from a BEAM file's chunks or object code (`:beam_lib`, \
-        `:code.get_object_code/1`), or from a file whose path is made of the project's \
-        own build directories and literals alone (`Argus.Extractors.DecodedOrigin`). A \
-        parameter of a function callers outside the module can run, and a value whose \
-        making the walk does not see, is neither.
+        `:code.get_object_code/1`), from a file whose path is made of the project's \
+        own build directories and literals alone, or from a file whose path is made of \
+        literals alone (`Argus.Extractors.DecodedOrigin`). A parameter of a function \
+        callers outside the module can run, and a value whose making the walk does not \
+        see, is none of them.
         """
       },
       %{

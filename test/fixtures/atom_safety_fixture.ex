@@ -90,10 +90,11 @@ end
 defmodule Argus.Test.Fixtures.ExportedDecodeCaller do
   @moduledoc """
   A private decode no request reaches, below an export that hands it bytes
-  it read: no caller's argument reaches the decode, only the call does.
+  it read from a configured path: no caller's argument reaches the decode,
+  only the call does.
   """
 
-  def load, do: decode(File.read!("state.bin"))
+  def load, do: decode(File.read!(Application.fetch_env!(:argus_fixtures, :state_file)))
 
   defp decode(bytes), do: :erlang.binary_to_term(bytes)
 end

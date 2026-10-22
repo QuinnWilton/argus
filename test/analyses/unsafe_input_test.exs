@@ -79,6 +79,7 @@ defmodule Argus.Analyses.UnsafeInputTest do
     [Argus.Test.Fixtures.OpenDecode.Tree, Argus.Test.Fixtures.OpenDecode.Callers],
     Argus.Test.Fixtures.DecodedOrigin,
     Argus.Test.Fixtures.DecodedOriginTwins,
+    Argus.Test.Fixtures.DecodedFixedFile,
     Argus.Test.Fixtures.AtomRoundTripTwins,
     D.FrameHandler,
     D.BoundedFrameHandler,
@@ -229,6 +230,28 @@ defmodule Argus.Analyses.UnsafeInputTest do
                "exported_decode/1",
                "named/1"
              ]
+    end
+
+    test "a decode of a file at a fixed path names who can write it, at full severity", ctx do
+      results = analyze(ctx, [Argus.Test.Fixtures.DecodedFixedFile])
+      short = &(&1 |> String.split(":") |> List.last())
+
+      assert results["fixed_file_decode"]
+             |> Enum.map(fn [_id, func, _api, path, safety] -> {short.(func), path, safety} end)
+             |> Enum.sort() == [
+               {"cache/0", "", "unsafe"},
+               {"load/0", "/tmp/session_ticket.dat", "unsafe"}
+             ]
+
+      assert results["artifact_decode"] == []
+
+      assert [{"chosen/1", _api}] =
+               Enum.map(local(results, "deserialization"), &{short.(elem(&1, 0)), elem(&1, 1)})
+
+      [row] = Enum.filter(results["fixed_file_decode"], &(Enum.at(&1, 3) != ""))
+      finding = UnsafeInput.finding(:fixed_file_decode, row)
+      assert finding.severity == :error
+      assert finding.detail =~ "/tmp/ is writable by every local user"
     end
 
     test "the deserialization finding says what the options were, and grades [:safe] down", ctx do

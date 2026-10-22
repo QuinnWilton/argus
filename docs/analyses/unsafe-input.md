@@ -206,6 +206,22 @@ A checksum compared before decoding is not treated as provenance: whoever can wr
 the bytes can write a matching checksum. Only a keyed check (a MAC or an authenticated
 decryption) establishes who wrote them.
 
+## A file at a fixed path
+
+`fixed_file_decode` · the deserialization's own severity
+
+A deserialization no request reaches whose bytes are, on every path, a file read whole
+(`File.read/1`, `File.read!/1`, `:file.read_file/1`) at a path made of literals alone
+is reported as that, not as a caller's input: erlang_quic's interop client saves a
+session ticket to `/tmp/session_ticket.dat` and decodes it on the next run. The
+program chooses the file, not what is in it. Its bytes are whoever last wrote the
+path, and anyone who can write it, or replace the file between the program's own
+write and its read, chooses the term, so the finding keeps the deserialization's
+severity and names that risk instead of stepping down as the program's own data. A
+path under a directory every local user can write (`/tmp/`, `/var/tmp/`, `/dev/shm/`)
+says so. The remedy is a directory only the service's user can write, or a signature
+checked before decoding, as well as `[:safe]` and a validated shape.
+
 ## Compressed ETF allocation
 
 `compressed_etf_from_input` · **warning**

@@ -86,3 +86,27 @@ defmodule Argus.Test.Fixtures.DecodedOriginTwins do
     run.(chunk, fn bytes -> :erlang.binary_to_term(bytes) end)
   end
 end
+
+defmodule Argus.Test.Fixtures.DecodedFixedFile do
+  @moduledoc """
+  erlang_quic's interop client: a session ticket saved to a fixed path
+  under /tmp and read back. `cache/0` reads a path its literals make by a
+  join; `chosen/1` reads the file its caller names, which stays a
+  caller's deserialization.
+  """
+
+  @ticket "/tmp/session_ticket.dat"
+
+  def save(ticket), do: File.write!(@ticket, :erlang.term_to_binary(ticket))
+
+  def load do
+    case File.read(@ticket) do
+      {:ok, data} -> :erlang.binary_to_term(data)
+      {:error, _} -> nil
+    end
+  end
+
+  def cache, do: :erlang.binary_to_term(File.read!(Path.join(["/var/lib/app", "cache.bin"])))
+
+  def chosen(path), do: :erlang.binary_to_term(File.read!(path))
+end

@@ -728,13 +728,13 @@ export_reach.root(func) :-
 sink_without_request_path(id, func, api, s, source, p, safety) :-
   exposed_sink(id, func, api, s, safety),
   sink_value(func, s, source, p),
-  !decoded_origin(id, func, _),
+  !decoded_origin(id, func, _, _),
   !code_fed(id).
 
 sink_without_request_path(id, func, api, s, "", 0, safety) :-
   exposed_sink(id, func, api, s, safety),
   !sink_value(func, s, _, _),
-  !decoded_origin(id, func, _),
+  !decoded_origin(id, func, _, _),
   !code_fed(id).
 
 // A code sink no request reaches whose source argument a caller's data decides: the
@@ -769,7 +769,19 @@ code_caller_fed(id, func, api, "code", "", 0, safety) :-
 
 artifact_decode(id, func, api, origin, safety) :-
   exposed_sink(id, func, api, "deserialization", safety),
-  decoded_origin(id, func, origin).
+  decoded_origin(id, func, origin, _),
+  origin != "file".
+
+// A deserialization no request reaches whose bytes are, on every path, a file at a path
+// the program's literals spell. The program chooses the file, not what is in it: its
+// bytes are whoever last wrote the path. Reported at the deserialization's own tier, as
+// that risk rather than a caller's.
+.decl fixed_file_decode(id: symbol, func: symbol, api: symbol, path: symbol, safety: symbol)
+.output fixed_file_decode
+
+fixed_file_decode(id, func, api, path, safety) :-
+  exposed_sink(id, func, api, "deserialization", safety),
+  decoded_origin(id, func, "file", path).
 
 // With priors enabled, lower severity when at least 0.9 probability places the sink's
 // input outside externally supplied data. Preserve severity for request, URL, or

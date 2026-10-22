@@ -44,6 +44,13 @@ defmodule Argus.Analyses.UnsafeInput do
     (`Argus.Extractors.DecodedOrigin`): reported here, at info, instead of
     as a deserialization. `:safe` cannot decode a beam's terms; the
     remedy is a short-lived VM.
+  - `fixed_file_decode(id, func, api, path, safety)` — a deserialization
+    no request reaches whose bytes are, on every path, a file at a path
+    the program's literals spell (`decoded_origin`'s `file`). The program
+    chooses the file and not its contents: whoever can write the path, or
+    swap the file between the program's write and its read, chooses the
+    term. Reported at the deserialization's own severity, naming that
+    risk, rather than stepped down as the program's own data.
   - `secret_gated_decode(id, func, api, safety)` — a deserialization
     reached only when a cryptographic verification the function itself
     performs succeeds (`Argus.Extractors.VerificationGate`): a boolean
@@ -241,6 +248,20 @@ defmodule Argus.Analyses.UnsafeInput do
         doc:
           "A deserialization no request reaches of a BEAM file's own terms, or of a file " <>
             "in the build directories: the analyzed code's bytes or the build's."
+      },
+      %{
+        name: :fixed_file_decode,
+        fields: [
+          {:id, :symbol, "instruction ID of the binary_to_term call"},
+          {:func, :symbol, "function containing it"},
+          {:api, :symbol, "the API called"},
+          {:path, :symbol, "the file's path as the code spells it, empty when no literal does"},
+          {:safety, :symbol, "unsafe | atoms_only | dynamic, its option class"}
+        ],
+        key: [:id],
+        doc:
+          "A deserialization no request reaches of a file at a path the program's " <>
+            "literals spell: whoever can write that path chooses the term."
       },
       %{
         name: :sink_export,
@@ -570,6 +591,27 @@ defmodule Argus.Analyses.UnsafeInput do
     )
   end
 
+  def finding(:fixed_file_decode, [id, func, api, path, safety]) do
+    file = if path == "", do: "a file at a path its literals spell", else: "`#{path}`"
+
+    Findings.new(
+      deserialization_severity(safety),
+      "#{deserialization_title(safety)} on a file another process can replace",
+      "#{func} decodes #{file} with #{api} #{deserialization_how(safety)}. The program " <>
+        "chooses the file, not what is in it: the bytes are whoever last wrote that " <>
+        "path, and anyone who can write it, or replace it between the program's own " <>
+        "write and this read, chooses the term." <>
+        shared_directory(path) <> " " <> deserialization_risk(safety),
+      at: Findings.at_instr(id),
+      at_label: "a file's bytes decoded here",
+      help:
+        [
+          "keep the file where only the service's own user can write (not a shared " <>
+            "directory such as /tmp), or sign it and check the signature before decoding"
+        ] ++ deserialization_help(safety)
+    )
+  end
+
   def finding(:unbounded_children_from_request, [sup, child, via, kind]) do
     Findings.new(
       :error,
@@ -683,6 +725,15 @@ defmodule Argus.Analyses.UnsafeInput do
 
   defp deserialization_title("dynamic"), do: "binary_to_term with options not known statically"
   defp deserialization_title(_unsafe), do: "binary_to_term without :safe"
+
+  @shared_directories ["/tmp/", "/var/tmp/", "/dev/shm/", "/private/tmp/"]
+
+  defp shared_directory(path) do
+    case Enum.find(@shared_directories, &String.starts_with?(path, &1)) do
+      nil -> ""
+      dir -> " #{dir} is writable by every local user, so any of them can."
+    end
+  end
 
   defp deserialization_severity("atoms_only"), do: :warning
   defp deserialization_severity(_unsafe_or_dynamic), do: :error
