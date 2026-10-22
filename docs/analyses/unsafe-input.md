@@ -184,10 +184,12 @@ not a statement that adding a request path makes decoding safer.
 
 A `binary_to_term` the function reaches only on the accepting edge of a cryptographic
 verification it performs itself is re-ranked below an ungated decode, never dropped:
-a boolean verify or constant-time compare (`Plug.Crypto.secure_compare/2`,
-`:crypto.hash_equals/2`, `:crypto.verify/5,6`, `:public_key.verify/4,5`) tested in an
-`if`, a `case` or a comparison, or a `:crypto.mac`/`hmac` digest compared for equality
-with the supplied one. The bytes carried a signature only a holder of the secret can
+a signature verify (`:crypto.verify/5,6`, `:public_key.verify/4,5`) tested in an `if`,
+a `case` or a comparison, a constant-time compare (`Plug.Crypto.secure_compare/2`,
+`:crypto.hash_equals/2`) of a `:crypto.mac`/`hmac` digest the function computes
+(through a `Base` encoding too), or such a digest compared for equality with the
+supplied one. A constant-time compare of anything else gates nothing: a checksum the
+sender computes, or a token checked before decoding another value. The bytes carried a signature only a holder of the secret can
 make; the secret's strength, the comparison, and whether the gate covers these exact
 bytes remain unproven, unlike an authenticated-payload API's. A gate in another
 function, or a decode handed to `Enum.map` as a capture, is not recognized and keeps

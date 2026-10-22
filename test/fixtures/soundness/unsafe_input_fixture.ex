@@ -791,6 +791,24 @@ defmodule Argus.Test.Soundness.G10.SignatureGate do
   # No gate at all: the ungated decode keeps the top-tier error.
   def decode_open(payload), do: :erlang.binary_to_term(payload)
 
+  # A checksum the sender computes is no gate: it keeps the error.
+  def decode_checksum(data, sum) do
+    if :crypto.hash_equals(:crypto.hash(:sha256, data), Base.decode16!(sum)) do
+      :erlang.binary_to_term(data)
+    else
+      {:error, :bad_sum}
+    end
+  end
+
+  # A token compared before decoding another value is no gate: it keeps the error.
+  def decode_after_token(token, expected, blob) do
+    if Plug.Crypto.secure_compare(token, expected) do
+      :erlang.binary_to_term(blob)
+    else
+      {:error, :bad_token}
+    end
+  end
+
   # The decode is on the REJECT branch: it must not be re-ranked (error).
   def decode_reject(payload, secret) do
     case String.split(payload, "--", parts: 2) do

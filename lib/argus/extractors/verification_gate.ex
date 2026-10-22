@@ -19,11 +19,17 @@ defmodule Argus.Extractors.VerificationGate do
   the branch dominates the decode and removing the accepting edge makes the decode
   unreachable). Two verdict shapes:
 
-  - a boolean a verify or constant-time compare returned (`Plug.Crypto.secure_compare/2`,
-    `:crypto.hash_equals/2`, `:crypto.verify/5,6`, `:public_key.verify/4,5`), tested
-    against `true`/`false`; and
+  - a boolean a signature verify returned (`:crypto.verify/5,6`,
+    `:public_key.verify/4,5`), or a constant-time compare (`Plug.Crypto.secure_compare/2`,
+    `:crypto.hash_equals/2`) one of whose operands is a MAC or HMAC digest, directly or
+    through a `Base` encoding, tested against `true`/`false`; and
   - a MAC or HMAC digest (`:crypto.mac/3,4`, `:crypto.hmac/3,4`) compared for exact
     equality against another value (the supplied digest).
+
+  A constant-time compare of anything else is no gate: a checksum the sender
+  computes (`hash_equals(sha256(data), sum)`), or a token compared before decoding
+  some other value, says nothing of who wrote the bytes. Whether the MAC's key is
+  the server's, and whether it covers the decoded bytes, is not checked.
 
   A verdict a `case` or an `if` selects on (`select_val`) gates through its truthy
   arm, as a test does. A gate in a different function from the decode is not
@@ -49,14 +55,38 @@ defmodule Argus.Extractors.VerificationGate do
 
   import Argus.Extractor.Facts, only: [add_fact: 3]
 
-  # Boolean-returning verifications and constant-time comparisons.
-  @verdict_apis [
-    {Plug.Crypto, :secure_compare, 2},
-    {:crypto, :hash_equals, 2},
+  # Boolean-returning signature verifications.
+  @verify_apis [
     {:crypto, :verify, 5},
     {:crypto, :verify, 6},
     {:public_key, :verify, 4},
     {:public_key, :verify, 5}
+  ]
+
+  # Constant-time comparisons: a verdict only of a MAC digest.
+  @compare_apis [
+    {Plug.Crypto, :secure_compare, 2},
+    {:crypto, :hash_equals, 2}
+  ]
+
+  # Encodings a digest goes through before it is compared.
+  @encodings [
+    {Base, :encode16, 1},
+    {Base, :encode16, 2},
+    {Base, :encode64, 1},
+    {Base, :encode64, 2},
+    {Base, :url_encode64, 1},
+    {Base, :url_encode64, 2},
+    {Base, :decode16!, 1},
+    {Base, :decode16!, 2},
+    {Base, :decode64!, 1},
+    {Base, :decode64!, 2},
+    {Base, :url_decode64!, 1},
+    {Base, :url_decode64!, 2},
+    {:binary, :encode_hex, 1},
+    {:binary, :encode_hex, 2},
+    {:base64, :encode, 1},
+    {:base64, :decode, 1}
   ]
 
   # Digest producers whose result an equality check compares against the supplied
@@ -94,8 +124,17 @@ defmodule Argus.Extractors.VerificationGate do
 
   defp gated_in(facts, func, calls, module_data, name, arity, instrs) do
     decodes = for site <- calls, member?(@decode_apis, site.mfa), do: site.idx
-    verdicts = idx_set(calls, @verdict_apis)
     macs = idx_set(calls, @mac_apis)
+    encodings = idx_set(calls, @encodings)
+
+    compares =
+      for site <- calls,
+          member?(@compare_apis, site.mfa),
+          Enum.any?([{:x, 0}, {:x, 1}], &mac_digest?(instrs, site.idx, &1, macs, encodings)),
+          into: MapSet.new(),
+          do: site.idx
+
+    verdicts = MapSet.union(idx_set(calls, @verify_apis), compares)
 
     # No decode, or no verdict a gate could be built from: nothing to re-rank.
     if decodes == [] or (MapSet.size(verdicts) == 0 and MapSet.size(macs) == 0) do
@@ -118,6 +157,22 @@ defmodule Argus.Extractors.VerificationGate do
     Enum.any?(gates, fn {branch_at, edge} ->
       SecurityValues.edge_covers?(cfg, branch_at, edge, at)
     end)
+  end
+
+  # The operand at `at` is a MAC digest the function computed, or an encoding of one.
+  defp mac_digest?(instrs, at, operand, macs, encodings, depth \\ 4)
+  defp mac_digest?(_instrs, _at, _operand, _macs, _encodings, 0), do: false
+
+  defp mac_digest?(instrs, at, operand, macs, encodings, depth) do
+    case SecurityValues.identity_at(instrs, at, operand) do
+      {:call, c} ->
+        MapSet.member?(macs, c) or
+          (MapSet.member?(encodings, c) and
+             mac_digest?(instrs, c, {:x, 0}, macs, encodings, depth - 1))
+
+      _ ->
+        false
+    end
   end
 
   defp idx_set(calls, apis) do
