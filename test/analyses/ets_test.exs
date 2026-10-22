@@ -256,6 +256,15 @@ defmodule Argus.Analyses.EtsTest do
 
       assert reader =~ "lookup/1"
     end
+
+    test "a read through helpers handed the name is the read of the caller spelling it" do
+      assert {:ok, results} = Memo.analyze([Argus.Test.Fixtures.EtsHelperReadsHanded], :ets)
+
+      assert [[":handed_acl", "Argus.Test.Fixtures.EtsHelperReadsHanded", reader, _, _]] =
+               results["ets_read_outside_owner"]
+
+      assert reader =~ "EtsHelperReadsHanded:lookup/1"
+    end
   end
 
   describe "ets_write_only_table" do

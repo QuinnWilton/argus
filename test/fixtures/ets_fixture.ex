@@ -602,3 +602,26 @@ defmodule Argus.Test.Fixtures.EtsHelperNamedOwner do
 
   def lookup(key), do: :ets.lookup(:helper_acl, key)
 end
+
+defmodule Argus.Test.Fixtures.EtsHelperReadsHanded do
+  @moduledoc """
+  EtsHelperNamedOwner's twin whose API reads the named table through two
+  helpers, each handing the name on: the read is the API's, which spells
+  the name, in its callers' processes.
+  """
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(_) do
+    :ets.new(:handed_acl, [:named_table, :public, :set])
+    {:ok, nil}
+  end
+
+  def lookup(key), do: read_from(:handed_acl, key)
+
+  defp read_from(table, key), do: fetch(table, key)
+
+  defp fetch(table, key), do: :ets.lookup(table, key)
+end

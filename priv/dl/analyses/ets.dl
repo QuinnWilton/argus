@@ -555,24 +555,20 @@ table_read(site, reader, k, t) :-
   !ets_operation_param(site, _),
   ets_table(site, k, t).
 
-// A table read in a helper whose table parameter receives a literal name, possibly
-// through forwarding. The caller supplying the name is the reader; the lookup remains
-// the site. Literal names resolve only to named tables.
+// A table read in a helper whose table parameter receives a literal name, through any
+// chain of callers forwarding it (the values stage's param_origin). The caller spelling
+// the name is the reader; the lookup remains the site. Literal names resolve only to
+// named tables.
 table_read(site, caller, "named", name) :-
-  call_arg(caller, g, q, name),
-  name != "dynamic",
-  table_param(g, q, site).
-
-.decl table_param(func: symbol, pos: number, site: symbol)
-
-table_param(reader, pos, site) :-
   ets_operation(site, reader, "dynamic", _, "read"),
   raises_if_table_missing(site),
-  ets_operation_param(site, pos).
+  table_param(site, p),
+  param_origin(reader, p, caller, _, name).
 
-table_param(f, p, site) :-
-  call_arg_forward(f, g, q, p),
-  table_param(g, q, site).
+// The parameter an operation's table is, spelled as the values stage spells it.
+.decl table_param(site: symbol, pos: symbol)
+
+table_param(site, p) :- ets_operation_param(site, n), p = to_string(n).
 
 // `reader` reads, at `read`, the table the :ets.new/2 at `create` makes.
 .decl reads_made_table(read: symbol, reader: symbol, create: symbol)
