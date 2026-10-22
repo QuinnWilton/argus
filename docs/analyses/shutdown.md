@@ -90,14 +90,16 @@ terminate suppresses it for all, even if it targets other children or will not r
 Tasks from `Task.Supervisor.async`, `async_stream` and `async_stream_nolink` end with
 their caller and are not counted as children.
 
-A LiveView, a LiveComponent or a channel starting work under a supervisor its
-application's root tree holds hands that work off on purpose (a reply still being
-written when the tab closes): the supervisor stops with the application, so it is not
-reported. Its application is the one serving connections, whose tree holds a Phoenix
-endpoint. Under a tree no application of the program roots, such as a library's pool,
-or under one serving no connection, such as a library's own application analyzed with
-the dependencies, it is. Each start is one finding, with every process that makes it as a related
-frame.
+A LiveView, a LiveComponent or a channel starting work under a supervisor that an
+application of the program roots hands that work off on purpose (a reply still being
+written when the tab closes): the supervisor stops with the program, so it is not
+reported. An umbrella's other children are the program's own: a web child handing work
+to its core child's pool hands it off, since the core stops after the web child that
+depends on it. Under a tree no application of the program roots, such as a library's
+pool, or under a fetched dependency's own application (analyzed with `include_deps`),
+it is reported: the work goes on running the program's code after the program's
+services stop. Each start is one finding, with every process that makes it as a
+related frame.
 
 ## Stopping a process while still monitoring it
 

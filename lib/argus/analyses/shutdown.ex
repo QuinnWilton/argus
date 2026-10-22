@@ -26,8 +26,9 @@ defmodule Argus.Analyses.Shutdown do
   - `foreign_dynamic_children(mod, supervisor, via, site, supervisor_site)` — children started under a
     supervisor in another tree outlive this one. One finding per start, with
     every process that makes it (`foreign_children_starter`). A LiveView's or a
-    channel's start under the supervisors of the application serving it (its
-    tree holds the endpoint) is a hand-off.
+    channel's start under the supervisors of an application of the program's
+    own, an umbrella's other children included, is a hand-off; one under a
+    fetched dependency's application (`dependency_module`) is not.
   - `kills_monitored_child(mod, site, kill_site)` — a server terminates a
     process it still monitors, so the `:DOWN` reads as a crash.
   - `permanent_child_stops_normally(supervisor, child, reason, site, supervisor_site)`

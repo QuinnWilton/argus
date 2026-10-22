@@ -241,20 +241,11 @@ defmodule Argus.Test.Fixtures.ShutdownForeign do
       children = [
         {DynamicSupervisor,
          name: Argus.Test.Fixtures.ShutdownForeign.WriterPool, strategy: :one_for_one},
-        {Task.Supervisor, name: Argus.Test.Fixtures.ShutdownForeign.AppTasks},
-        Argus.Test.Fixtures.ShutdownForeign.Endpoint
+        {Task.Supervisor, name: Argus.Test.Fixtures.ShutdownForeign.AppTasks}
       ]
 
       Supervisor.init(children, strategy: :one_for_one)
     end
-  end
-
-  defmodule Endpoint do
-    @moduledoc "The endpoint serving the app's LiveViews and channels."
-    @behaviour Phoenix.Endpoint
-
-    def child_spec(_opts), do: %{id: __MODULE__, start: {__MODULE__, :start_link, []}}
-    def start_link, do: Supervisor.start_link([], strategy: :one_for_one)
   end
 
   defmodule Writer do
@@ -325,8 +316,7 @@ defmodule Argus.Test.Fixtures.ShutdownForeign do
     def start(_type, _args) do
       children = [
         {DynamicSupervisor,
-         name: Argus.Test.Fixtures.ShutdownForeign.InlinePool, strategy: :one_for_one},
-        Argus.Test.Fixtures.ShutdownForeign.Endpoint
+         name: Argus.Test.Fixtures.ShutdownForeign.InlinePool, strategy: :one_for_one}
       ]
 
       Supervisor.start_link(children, strategy: :one_for_one, name: F.InlineRoot)
@@ -357,10 +347,38 @@ defmodule Argus.Test.Fixtures.ShutdownForeign do
     end
   end
 
+  defmodule CoreApp do
+    @moduledoc """
+    An umbrella's core child, beside the web child serving the
+    connections: the program's own, though the web child's build counts
+    it a dependency.
+    """
+    use Application
+
+    @impl true
+    def start(_type, _args) do
+      children = [{Task.Supervisor, name: Argus.Test.Fixtures.ShutdownForeign.CoreTasks}]
+      Supervisor.start_link(children, strategy: :one_for_one, name: F.CoreRoot)
+    end
+  end
+
+  defmodule WebLive do
+    @moduledoc "The web child's LiveView, handing a search to the core child's tasks."
+    @behaviour Phoenix.LiveView
+
+    def mount(_params, _session, socket), do: {:ok, socket}
+    def render(assigns), do: assigns
+
+    def handle_event("search", %{"q" => q}, socket) do
+      {:ok, _} = Task.Supervisor.start_child(F.CoreTasks, fn -> String.length(q) end)
+      {:noreply, socket}
+    end
+  end
+
   defmodule LibApp do
     @moduledoc """
-    A library's own application (analyzed with its dependencies): its
-    tree serves no connection, and outlives the program's.
+    A fetched library's own application (analyzed with the dependencies):
+    it outlives the program's, and the services the program's work uses.
     """
     use Application
 

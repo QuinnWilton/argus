@@ -46,13 +46,6 @@ defmodule Phoenix.Channel do
   @optional_callbacks join: 3, handle_in: 3, handle_info: 2
 end
 
-defmodule Phoenix.Endpoint do
-  @moduledoc false
-  @callback start_link(term()) :: term()
-  @callback config(term(), term()) :: term()
-  @optional_callbacks start_link: 1, config: 2
-end
-
 defmodule Plug do
   @moduledoc false
   @callback init(term()) :: term()

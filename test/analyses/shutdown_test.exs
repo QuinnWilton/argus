@@ -298,9 +298,8 @@ defmodule Argus.Analyses.ShutdownTest do
              ]
     end
 
-    test "a LiveView's or a channel's start under its application's pools is a hand-off; " <>
-           "under a library's pool, or its application's, it is reported, once per start " <>
-           "with every starter beside it" do
+    test "a LiveView's start under the program's pools, a sibling's too, is a hand-off; " <>
+           "under a library's pool, or a dependency's application's, it is reported" do
       alias Argus.Test.Fixtures.ShutdownForeign, as: F
 
       {:ok, r} =
@@ -320,20 +319,22 @@ defmodule Argus.Analyses.ShutdownTest do
             F.InlineApp,
             F.InlineWriter,
             F.InlineLive,
-            F.Endpoint,
+            F.CoreApp,
+            F.WebLive,
             F.LibApp,
             F.LibConn,
             F.LibAppLive
           ],
-          :shutdown
+          :shutdown,
+          dependencies: [F.LibTree, F.Session, F.LibApp, F.LibConn]
         )
 
-      # BookLive and RoomChannel start under AppRoot's pools, and InlineLive
-      # under a pool InlineApp's start/2 lists itself, which stop with the
-      # application serving them (its tree holds the endpoint): not
+      # BookLive and RoomChannel start under AppRoot's pools, InlineLive
+      # under a pool InlineApp's start/2 lists itself, and WebLive under
+      # the umbrella core child's tasks, which stop with the program: not
       # reported. PoolLive starts under the library's, which no
       # application of the program roots, and LibAppLive under the pool
-      # of the library's own application, which serves no connection.
+      # of a fetched library's own application.
       assert modules(r, "foreign_dynamic_children") == [
                "Argus.Test.Fixtures.ShutdownForeign.CarelessScope",
                "Argus.Test.Fixtures.ShutdownForeign.LibAppLive",
