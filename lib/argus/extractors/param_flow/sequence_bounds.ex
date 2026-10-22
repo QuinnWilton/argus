@@ -134,27 +134,9 @@ defmodule Argus.Extractors.ParamFlow.SequenceBounds do
   end
 
   defp external_entries(data) do
-    exported = Enum.map(data.exports, fn {f, a, _} -> InstrId.func_id(data.module, f, a) end)
-
-    captured =
-      for {:function, _, _, _, instrs} <- data.functions,
-          {:make_fun3, {m, f, a}, _, _, _, _} <- instrs,
-          m == data.module,
-          do: InstrId.func_id(m, f, a)
-
-    # Older or unsupported capture encodings cannot establish private callers.
-    unknown_capture =
-      Enum.any?(data.functions, fn {:function, _, _, _, ins} ->
-        Enum.any?(ins, &(is_tuple(&1) and elem(&1, 0) in [:make_fun, :make_fun2]))
-      end)
-
-    if unknown_capture do
-      MapSet.new(data.functions, fn {:function, f, a, _, _} ->
-        InstrId.func_id(data.module, f, a)
-      end)
-    else
-      MapSet.new(exported ++ captured)
-    end
+    data
+    |> Helpers.open_functions()
+    |> MapSet.new(fn {f, a} -> InstrId.func_id(data.module, f, a) end)
   end
 
   defp id({m, f, a}), do: InstrId.func_id(m, f, a)

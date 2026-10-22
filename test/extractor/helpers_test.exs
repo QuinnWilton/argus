@@ -141,6 +141,47 @@ defmodule Argus.Extractor.HelpersTest do
     end
   end
 
+  describe "open_functions/2" do
+    defp module_data(exports, functions),
+      do: %{module: M, exports: exports, functions: functions}
+
+    defp function(name, arity, instrs \\ []), do: {:function, name, arity, 0, instrs}
+
+    defp captures(name, arity),
+      do: {:make_fun3, {M, name, arity}, 0, 0, {:x, 0}, {:list, []}}
+
+    test "the exports, and what the module makes a fun of by name" do
+      data =
+        module_data([{:run, 0, 2}], [
+          function(:run, 0, [captures(:hidden, 1), captures(:"-run/0-fun-0-", 1)]),
+          function(:hidden, 1),
+          function(:"-run/0-fun-0-", 1),
+          function(:private, 1)
+        ])
+
+      assert Helpers.open_functions(data) ==
+               MapSet.new([{:run, 0}, {:hidden, 1}, {:"-run/0-fun-0-", 1}])
+
+      assert Helpers.open_functions(data, except: :anonymous) ==
+               MapSet.new([{:run, 0}, {:hidden, 1}])
+    end
+
+    test "every function, without the exports or past a fun it cannot read" do
+      functions = [function(:run, 0), function(:private, 1)]
+      all = MapSet.new([{:run, 0}, {:private, 1}])
+
+      assert Helpers.open_functions(%{module: M, functions: functions}) == all
+
+      old = [function(:run, 0, [{:make_fun2, {:f, 4}, 0, 0, 1}]), function(:private, 1)]
+      assert Helpers.open_functions(module_data([{:run, 0, 2}], old)) == all
+    end
+
+    test "either export shape" do
+      data = module_data([{:atom, :run, 0, 2}], [function(:run, 0), function(:private, 1)])
+      assert Helpers.open_functions(data) == MapSet.new([{:run, 0}])
+    end
+  end
+
   describe "get_behaviours/1" do
     test "extracts :behaviour attribute" do
       assert Helpers.get_behaviours(behaviour: [GenServer]) == [GenServer]

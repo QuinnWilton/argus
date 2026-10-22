@@ -70,6 +70,58 @@ defmodule Argus.Extractor.Helpers do
     end)
   end
 
+  # --- Callers out of view ---
+
+  @doc """
+  The module's functions a caller outside its view may call, as
+  `{name, arity}`: the exported ones and those it makes a fun of by name
+  (whoever holds the fun calls it). Every other function's callers are
+  the module's own local calls, which an extractor following a value
+  into a parameter can enumerate. The values stage's `unseen_callers`
+  is the same set across the program.
+
+  Without the exports (a bare disassembly), or with a fun made in an
+  encoding older than `make_fun3`, whose target is not read, every
+  function is open. `except: :anonymous` leaves out the funs the
+  compiler lifts from closures (`-name/arity-fun-N-`), for a caller
+  that reads their parameters from what each closure captures.
+  """
+  @spec open_functions(map(), keyword()) :: MapSet.t({atom(), arity()})
+  def open_functions(%{module: mod, functions: functions} = module_data, opts \\ []) do
+    all = MapSet.new(functions, fn {:function, name, arity, _entry, _instrs} -> {name, arity} end)
+
+    case Map.get(module_data, :exports) do
+      nil ->
+        all
+
+      exports ->
+        if old_fun_encoding?(functions) do
+          all
+        else
+          anonymous? = Keyword.get(opts, :except) == :anonymous
+
+          captured =
+            for {:function, _, _, _, instrs} <- functions,
+                {:make_fun3, {^mod, name, arity}, _index, _uniq, _dst, _env} <- instrs,
+                not (anonymous? and lifted?(name)),
+                do: {name, arity}
+
+          MapSet.new(Enum.map(exports, &export_key/1) ++ captured)
+        end
+    end
+  end
+
+  defp export_key({name, arity, _label}), do: {name, arity}
+  defp export_key({:atom, name, arity, _label}), do: {name, arity}
+
+  defp old_fun_encoding?(functions) do
+    Enum.any?(functions, fn {:function, _, _, _, instrs} ->
+      Enum.any?(instrs, &(is_tuple(&1) and elem(&1, 0) in [:make_fun, :make_fun2]))
+    end)
+  end
+
+  defp lifted?(name), do: String.starts_with?(Atom.to_string(name), "-")
+
   # --- Attribute helpers ---
 
   @doc """

@@ -82,17 +82,7 @@ defmodule Argus.Extractors.ParamFlow.PrivateBounds do
     if next == validators, do: next, else: validate(candidates, next, rounds - 1)
   end
 
-  defp externally_callable(data) do
-    exports = for {f, a, _label} <- data.exports, do: {f, a}
-
-    captured =
-      for {:function, _, _, _, instrs} <- data.functions,
-          {:make_fun3, {m, f, a}, _, _, _, _} <- instrs,
-          m == data.module,
-          do: {f, a}
-
-    exports ++ captured
-  end
+  defp externally_callable(data), do: data |> Helpers.open_functions() |> MapSet.to_list()
 
   defp ancestors([], _calls, seen), do: seen
 

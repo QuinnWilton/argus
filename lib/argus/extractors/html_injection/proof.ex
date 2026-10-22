@@ -42,18 +42,12 @@ defmodule Argus.Extractors.HtmlInjection.Proof do
     callers = Enum.group_by(CallSites.for_module(data), &func_id(&1.mfa))
 
     # An escaped closure has callers the direct-call index cannot enumerate.
-    closures =
-      for {:function, _, _, _, instrs} <- data.functions,
-          {:make_fun3, target, _, _, _, _} <- instrs,
-          into: MapSet.new(),
-          do: func_id(target)
+    open =
+      data
+      |> Helpers.open_functions()
+      |> MapSet.new(fn {f, a} -> InstrId.func_id(data.module, f, a) end)
 
-    exports =
-      MapSet.new(data.exports, fn export ->
-        InstrId.func_id(data.module, elem(export, 0), elem(export, 1))
-      end)
-
-    %{functions: functions, types: types, callers: callers, open: MapSet.union(exports, closures)}
+    %{functions: functions, types: types, callers: callers, open: open}
   end
 
   defp binary_types(data, name, arity, instrs) do

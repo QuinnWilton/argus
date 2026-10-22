@@ -470,23 +470,9 @@ defmodule Argus.Extractors.DecodedOrigin do
   end
 
   # The functions a caller outside the module's view can run: the
-  # exported ones, and those the module makes a fun of by name.
-  defp open(%{module: mod, functions: functions} = data) do
-    exports = Enum.map(Map.get(data, :exports, []), &export_key/1)
-
-    captured =
-      for {:function, _, _, _, instrs} <- functions,
-          {:make_fun3, {^mod, f, a}, _, _, _, _} <- instrs,
-          not anonymous?(f),
-          do: {f, a}
-
-    MapSet.new(exports ++ captured)
-  end
-
-  defp export_key({name, arity, _label}), do: {name, arity}
-  defp export_key({:atom, name, arity, _label}), do: {name, arity}
-
-  defp anonymous?(name), do: String.starts_with?(Atom.to_string(name), "-")
+  # exported ones, and those the module makes a fun of by name. A lifted
+  # closure's parameters are read from what it captures (closure_params).
+  defp open(data), do: Helpers.open_functions(data, except: :anonymous)
 
   # The origins `origins` stand for, once each parameter they name is
   # replaced by what its callers hand it, to a fixpoint. A parameter with

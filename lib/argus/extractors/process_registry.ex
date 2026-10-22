@@ -534,29 +534,13 @@ defmodule Argus.Extractors.ProcessRegistry do
       |> Enum.filter(&(not &1.remote? and elem(&1.mfa, 0) == mod))
       |> Enum.group_by(fn %{mfa: {m, f, a}} -> InstrId.func_id(m, f, a) end)
 
-    # Without the exports (a bare disassembly), any function may be one.
-    exported =
-      case Map.get(module_data, :exports) do
-        nil ->
-          for {:function, name, arity, _entry, _instrs} <- module_data.functions,
-              do: InstrId.func_id(mod, name, arity)
+    escaping =
+      module_data
+      |> Helpers.open_functions()
+      |> MapSet.new(fn {name, arity} -> InstrId.func_id(mod, name, arity) end)
 
-        exports ->
-          for export <- exports,
-              {name, arity} = export_name(export),
-              do: InstrId.func_id(mod, name, arity)
-      end
-
-    funs =
-      for {:function, _name, _arity, _entry, instrs} <- module_data.functions,
-          {:make_fun3, {^mod, name, arity}, _index, _uniq, _dst, _env} <- instrs,
-          do: InstrId.func_id(mod, name, arity)
-
-    %{callers: callers, escaping: MapSet.new(exported ++ funs)}
+    %{callers: callers, escaping: escaping}
   end
-
-  defp export_name({name, arity, _label}), do: {name, arity}
-  defp export_name({:atom, name, arity, _label}), do: {name, arity}
 
   # The first instruction that reads the result other than to copy it,
   # along the straight line after the lookup: `{index, instr}`, or nil

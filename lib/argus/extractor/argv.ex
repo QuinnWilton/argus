@@ -77,15 +77,7 @@ defmodule Argus.Extractor.Argv do
   """
   @spec module(map()) :: scope()
   def module(%{module: mod, functions: functions} = data) do
-    open =
-      MapSet.new(
-        Enum.map(Map.get(data, :exports, []), &export_key/1) ++
-          for(
-            {:function, _, _, _, instrs} <- functions,
-            {:make_fun3, {^mod, f, a}, _index, _uniq, _dst, _env} <- instrs,
-            do: {f, a}
-          )
-      )
+    open = Helpers.open_functions(data)
 
     callers =
       for {:function, name, arity, _, instrs} <- functions,
@@ -103,9 +95,6 @@ defmodule Argus.Extractor.Argv do
       callers: Map.new(callers, fn {key, sites} -> {key, Enum.reverse(sites)} end)
     }
   end
-
-  defp export_key({name, arity, _label}), do: {name, arity}
-  defp export_key({:atom, name, arity, _label}), do: {name, arity}
 
   @doc """
   Whether `register` holds a literal at `idx` in the function `key`, on
