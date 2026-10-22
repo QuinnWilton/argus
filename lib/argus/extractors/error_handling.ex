@@ -65,6 +65,19 @@ defmodule Argus.Extractors.ErrorHandling do
     protects nothing but sends, signals, calls into other processes and
     name operations, or nothing but a log line and its arguments
     (`ErrorHandling.Boundary`)
+  - `try_releases(id, func)` — the try (or Erlang `catch`) at `id`
+    protects nothing but the runtime's releases of a resource, boundary
+    operations and instructions that cannot raise
+    (`ErrorHandling.Release`)
+  - `try_release_call(id, func, call)` — the try at `id` protects only
+    releases, boundary operations and instructions that cannot raise,
+    `call` being a call to a function named for a release
+  - `release_function(func)` — `func` is named for a release and its
+    clause heads cannot fail
+  - `try_pure_runtime(id, func)` — every call the try at `id` protects
+    is a pure runtime function
+  - `rescue_returns_error(id, func)` — the bare rescue at `id` returns
+    `error` or an `{:error, _}` tuple (`ErrorHandling.Release`)
   - `try_wrapper_call(id, func, call)` — the try at `id` protects only
     boundary operations, instructions that cannot raise and named calls,
     `call` being one of those calls (`ErrorHandling.Boundary`)
@@ -136,6 +149,7 @@ defmodule Argus.Extractors.ErrorHandling do
   alias Argus.Extractors.ErrorHandling.CatchClauses
   alias Argus.Extractors.ErrorHandling.ClauseHead
   alias Argus.Extractors.ErrorHandling.RaiseSources
+  alias Argus.Extractors.ErrorHandling.Release
   alias Argus.Extractors.GenStatem
   alias Argus.Instr
   alias Argus.Instr.Reaching
@@ -245,6 +259,11 @@ defmodule Argus.Extractors.ErrorHandling do
       :untrap_exit,
       :try_call,
       :try_boundary,
+      :try_releases,
+      :try_release_call,
+      :release_function,
+      :try_pure_runtime,
+      :rescue_returns_error,
       :try_wrapper_call,
       :boundary_function,
       :try_covers,
@@ -275,6 +294,7 @@ defmodule Argus.Extractors.ErrorHandling do
       |> emit_cancel_clauses(module_data)
       |> emit_try_coverage(module_data)
       |> emit_boundary_functions(module_data)
+      |> emit_release_functions(module_data)
       |> emit_raise_sources(module_data)
 
     origins = Identity.origins_index(module_data)
@@ -1177,6 +1197,14 @@ defmodule Argus.Extractors.ErrorHandling do
     end
   end
 
+  defp emit_release_functions(facts, %{module: mod, functions: functions}) do
+    for {:function, name, arity, _entry, instrs} <- functions,
+        Release.function?(name, instrs),
+        reduce: facts do
+      acc -> add_fact(acc, :release_function, [InstrId.func_id(mod, name, arity)])
+    end
+  end
+
   # What each function can raise through (RaiseSources): its own code,
   # a fun, or a callee. The graph is built only for a function with a
   # try or catch, the one place it is read.
@@ -1251,6 +1279,25 @@ defmodule Argus.Extractors.ErrorHandling do
         true ->
           facts
       end
+
+    facts =
+      case Release.region(visited, table) do
+        :releases ->
+          add_fact(facts, :try_releases, [id, func_id])
+
+        {:named, calls} ->
+          Enum.reduce(calls, facts, fn at, acc ->
+            add_fact(acc, :try_release_call, [id, func_id, InstrId.mint(func_id, at)])
+          end)
+
+        :none ->
+          facts
+      end
+
+    facts =
+      if Release.pure_runtime?(visited, table),
+        do: add_fact(facts, :try_pure_runtime, [id, func_id]),
+        else: facts
 
     facts =
       visited
@@ -1866,7 +1913,15 @@ defmodule Argus.Extractors.ErrorHandling do
   defp maybe_bare_rescue(facts, ctx, {:try, _reg, {:f, handler_label}}) do
     if bare_handler?(ctx.instrs, handler_label) do
       id = InstrId.mint(ctx.func_id, ctx.idx)
-      add_fact(facts, :bare_rescue, [id, ctx.func_id, handler_end(ctx, handler_label, ctx.idx)])
+      body = ctx.instrs |> instructions_from_label(handler_label) |> take_handler_body()
+
+      facts
+      |> add_fact(:bare_rescue, [id, ctx.func_id, handler_end(ctx, handler_label, ctx.idx)])
+      |> then(fn acc ->
+        if Release.error_return?(body),
+          do: add_fact(acc, :rescue_returns_error, [id, ctx.func_id]),
+          else: acc
+      end)
     else
       facts
     end

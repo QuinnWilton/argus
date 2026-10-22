@@ -164,6 +164,68 @@ defmodule Argus.Schema.ErrorHandling do
         """
       },
       %{
+        name: :try_releases,
+        layer: 2,
+        fields: [
+          {:id, :symbol, "the try (or catch) instruction"},
+          {:func, :symbol, "the function"}
+        ],
+        doc: """
+        A try protecting nothing but the runtime's releases of a resource (a close, a \
+        delete, a cancelled timer), boundary operations and non-raising instructions \
+        (`Argus.Extractors.ErrorHandling.Release`).
+        """
+      },
+      %{
+        name: :try_release_call,
+        layer: 2,
+        fields: [
+          {:id, :symbol, "the try (or catch) instruction"},
+          {:func, :symbol, "the function"},
+          {:call, :symbol, "a call it protects to a function named for a release"}
+        ],
+        doc: """
+        A try protecting only releases, boundary operations and non-raising \
+        instructions, where `call` calls a function of the program or a dependency \
+        named for a release (`close`, `stop`, `delete`, ...): a release when its callee \
+        is a `release_function`.
+        """
+      },
+      %{
+        name: :release_function,
+        layer: 2,
+        fields: [{:func, :symbol, "the function"}],
+        doc: """
+        A function named for a release (`close`, `stop`, `delete`, ...) whose clause \
+        heads cannot fail to match: no FunctionClauseError for its caller's bug.
+        """
+      },
+      %{
+        name: :try_pure_runtime,
+        layer: 2,
+        fields: [
+          {:id, :symbol, "the try (or catch) instruction"},
+          {:func, :symbol, "the function"}
+        ],
+        doc: """
+        Every call a try protects is a pure runtime function (`Argus.EffectModel`): \
+        what it raises is a runtime function's verdict on its input.
+        """
+      },
+      %{
+        name: :rescue_returns_error,
+        layer: 2,
+        fields: [
+          {:id, :symbol, "the try instruction"},
+          {:func, :symbol, "the function"}
+        ],
+        doc: """
+        A bare rescue whose handler returns `error` or an `{:error, _}` tuple: the \
+        caller learns that the guarded code failed, though not why \
+        (`Argus.Extractors.ErrorHandling.Release`).
+        """
+      },
+      %{
         name: :try_covers,
         layer: 2,
         fields: [

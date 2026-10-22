@@ -1178,3 +1178,74 @@ defmodule Argus.Test.Fixtures.MonitorsDownGuardedByReason do
   def handle_info({:DOWN, _ref, :process, _pid, reason}, state) when reason != :normal,
     do: {:noreply, state}
 end
+
+defmodule Argus.Test.Fixtures.NarrowedRescue do
+  @moduledoc """
+  erlang_quic's catch-alls, each still reported, a step down where
+  something narrows the risk: a table's delete and a connection's close
+  alone (`safe_delete_table/1`, `safe_close/1`), and a parse whose handler
+  returns `:error`. The twins keep the warning: a release beside work, a
+  runtime function named `delete` that releases nothing, and a handler
+  returning a default that looks like success.
+  """
+
+  def delete_table(table) do
+    try do
+      :ets.delete(table)
+    catch
+      _, _ -> :ok
+    end
+  end
+
+  def close_quietly(conn) do
+    try do
+      close(conn)
+    catch
+      _, _ -> :ok
+    end
+  end
+
+  def parse_count(bin) do
+    try do
+      {:ok, String.to_integer(bin)}
+    catch
+      _, _ -> :error
+    end
+  end
+
+  def parse_pair(bin) do
+    try do
+      [a, b] = String.split(bin, ",")
+      {String.to_integer(a), String.to_integer(b)}
+    catch
+      _, _ -> {:error, :malformed}
+    end
+  end
+
+  def close_and_count(conn, table) do
+    try do
+      close(conn)
+      :ets.info(table, :size) + 1
+    catch
+      _, _ -> :ok
+    end
+  end
+
+  def drop_key(map) do
+    try do
+      Map.delete(map, :key)
+    catch
+      _, _ -> :ok
+    end
+  end
+
+  def count_or_zero(bin) do
+    try do
+      String.to_integer(bin)
+    catch
+      _, _ -> 0
+    end
+  end
+
+  defp close(socket), do: :gen_tcp.close(socket)
+end

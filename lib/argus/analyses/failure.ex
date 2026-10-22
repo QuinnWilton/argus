@@ -120,7 +120,10 @@ defmodule Argus.Analyses.Failure do
           {:site, :symbol, "the rescue's try, the guarded call, or the rpc call"},
           {:kind, :symbol, "rescue | erpc_transport | rpc | multicall | erpc"},
           {:shape, :symbol,
-           "for an rpc variant, case (matched, no clause) or boolean (truthy tuple)"},
+           "for an rpc variant, case (matched, no clause) or boolean (truthy tuple); " <>
+             "for a rescue, what narrows its risk: release (the try only releases a " <>
+             "resource) or error_value (the handler returns an error for what pure " <>
+             "runtime calls raise), else empty"},
           {:span_end, :symbol,
            "for erpc_transport, the guard's last instruction; for an rpc answer a " <>
              "wrapper returns, the wrapper the site calls; else empty"}
@@ -311,6 +314,44 @@ defmodule Argus.Analyses.Failure do
       at: Findings.at_site_in_func(site, func),
       at_label: at_label,
       help: [fix, "or, if this site is right, the other #{agree} are worth a look"]
+    )
+  end
+
+  def finding(:unhandled_failure, [func, site, "rescue", "release", span_end]) do
+    Findings.new(
+      :info,
+      "Catch-all rescue swallows exceptions",
+      "#{func} takes every exception in a {guard} clause around releasing a resource " <>
+        "alone (a close, a delete, a cancelled timer). A release fails mostly when the " <>
+        "resource is already gone, so this is the usual best-effort cleanup; what it can " <>
+        "still hide is a release that failed for another reason, and the resource it " <>
+        "leaves held.",
+      at: Findings.at_site_in_func(site, func),
+      to: Findings.at_instr(span_end),
+      to_block: :guard,
+      at_label: "this {guard} takes everything a release raises",
+      help: [
+        "take only the failure that means the resource is gone (`:badarg` for a deleted " <>
+          "table, `{:error, :closed}` for a socket), and log the rest"
+      ]
+    )
+  end
+
+  def finding(:unhandled_failure, [func, site, "rescue", "error_value", span_end]) do
+    Findings.new(
+      :info,
+      "Catch-all rescue swallows exceptions",
+      "#{func} takes every exception in a {guard} clause around pure runtime calls " <>
+        "alone, and returns an error value: what those raise is their verdict on the " <>
+        "input, and the caller learns that it was bad, though not how.",
+      at: Findings.at_site_in_func(site, func),
+      to: Findings.at_instr(span_end),
+      to_block: :guard,
+      at_label: "this {guard} turns every exception into an error value",
+      help: [
+        "rescue the exceptions bad input raises (`ArgumentError`, `:badarg`) and let a " <>
+          "bug's crash through"
+      ]
     )
   end
 

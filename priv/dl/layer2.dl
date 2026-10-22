@@ -799,6 +799,16 @@
 .decl redacted_field(mod: symbol, field: symbol) mutable
 .input redacted_field
 
+// A function named for a release (`close`, `stop`, `delete`, ...) whose clause heads cannot fail to match: no FunctionClauseError for its caller's bug.
+//
+.decl release_function(func: symbol) mutable
+.input release_function
+
+// A bare rescue whose handler returns `error` or an `{:error, _}` tuple: the caller learns that the guarded code failed, though not why (`Argus.Extractors.ErrorHandling.Release`).
+//
+.decl rescue_returns_error(id: symbol, func: symbol) mutable
+.input rescue_returns_error
+
 // Call to a function returning a tagged tuple, or to Task.Supervisor.start_child, whose result every way on loses (`Argus.Extractor.ResultFate`): read on no path, here or in the callers it is handed back to, whole or in a term built of it — a closure Enum.each runs, a comprehension whose list is dropped, a helper whose callers drop it.
 //
 .decl result_lost(id: symbol, func: symbol, callee: symbol) mutable
@@ -1365,6 +1375,21 @@
 //
 .decl try_covers_closure(id: symbol, func: symbol, closure: symbol) mutable
 .input try_covers_closure
+
+// Every call a try protects is a pure runtime function (`Argus.EffectModel`): what it raises is a runtime function's verdict on its input.
+//
+.decl try_pure_runtime(id: symbol, func: symbol) mutable
+.input try_pure_runtime
+
+// A try protecting only releases, boundary operations and non-raising instructions, where `call` calls a function of the program or a dependency named for a release (`close`, `stop`, `delete`, ...): a release when its callee is a `release_function`.
+//
+.decl try_release_call(id: symbol, func: symbol, call: symbol) mutable
+.input try_release_call
+
+// A try protecting nothing but the runtime's releases of a resource (a close, a delete, a cancelled timer), boundary operations and non-raising instructions (`Argus.Extractors.ErrorHandling.Release`).
+//
+.decl try_releases(id: symbol, func: symbol) mutable
+.input try_releases
 
 // A try containing only boundary operations, non-raising instructions, and named calls, including `call`. If every named callee is a `boundary_function`, the try also qualifies as a boundary handler.
 //

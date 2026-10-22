@@ -203,9 +203,13 @@ defmodule Argus.Extractors.ErrorHandling.Boundary do
       not clause_can_fail?(instrs)
   end
 
-  # The label of the function's `func_info` is the target of a clause
-  # head that does not match.
-  defp clause_can_fail?(instrs) do
+  @doc """
+  Whether a clause head of the function can fail to match, raising
+  FunctionClauseError in its caller: some test or select fails to the
+  label of its `func_info`.
+  """
+  @spec clause_can_fail?([tuple() | atom()]) :: boolean()
+  def clause_can_fail?(instrs) do
     case Dispatch.func_info_label(instrs) do
       nil -> false
       label -> Enum.any?(instrs, &(label in Argus.Instr.targets(&1)))

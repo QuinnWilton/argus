@@ -27,7 +27,8 @@ defmodule Argus.Analyses.FailureErrorTest do
     Argus.Test.Fixtures.BoundaryClient,
     Argus.Test.Fixtures.LogicRescue,
     Argus.Test.Fixtures.FailureLogReport,
-    Argus.Test.Fixtures.FailureLogWork
+    Argus.Test.Fixtures.FailureLogWork,
+    Argus.Test.Fixtures.NarrowedRescue
   ]
 
   setup_all do
@@ -108,6 +109,42 @@ defmodule Argus.Analyses.FailureErrorTest do
       # then `__do_log__/4` when it is not nil): the gate is the log
       # call's, as `Exception.format_banner/2` building its message is.
       assert funcs == ["FailureLogWork:apply_and_log/1", "FailureLogWork:log_applied/1"]
+    end
+
+    test "a catch-all around a release alone, or returning an error, is reported a step down",
+         ctx do
+      results = analyze(ctx, [Argus.Test.Fixtures.NarrowedRescue])
+
+      shapes =
+        results
+        |> Rows.where(:failure, "unhandled_failure", kind: "rescue", drop: [:kind])
+        |> Map.new(fn [func, _site, shape, _end] ->
+          {func |> String.split(":") |> List.last(), shape}
+        end)
+
+      assert shapes == %{
+               "delete_table/1" => "release",
+               "close_quietly/1" => "release",
+               "parse_count/1" => "error_value",
+               "parse_pair/1" => "error_value",
+               "close_and_count/2" => "",
+               "drop_key/1" => "",
+               "count_or_zero/1" => ""
+             }
+
+      for [func, site, "rescue", shape, span_end] <- results["unhandled_failure"],
+          func =~ "NarrowedRescue" do
+        finding =
+          Argus.Analyses.Failure.finding(:unhandled_failure, [
+            func,
+            site,
+            "rescue",
+            shape,
+            span_end
+          ])
+
+        assert finding.severity == if(shape == "", do: :warning, else: :info)
+      end
     end
 
     test "a catch-all an OTP header wrote into a generated parser is OTP's" do

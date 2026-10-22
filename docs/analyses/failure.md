@@ -15,6 +15,20 @@ classifying them. Failures become an ordinary return value and surface later wit
 their cause. Recognized boundary operations and generated code may be excluded.
 The analysis does not infer whether a particular fallback is an intentional contract.
 
+Two shapes narrow the risk and are reported at **info**, with `shape` saying which.
+A try that releases a resource and does nothing else that can raise (`release`:
+`:ets.delete/1`, a socket's or file's close, a cancelled timer, or a call to a
+function of the program named `close`, `stop`, `delete` and kin whose clause heads
+cannot fail) is best-effort cleanup, whose failure is mostly the resource already
+gone. A handler that returns `error` or an `{:error, _}` tuple around pure runtime
+calls alone (`error_value`: `binary_to_integer/1`, `Base.decode64/1`) tells its caller
+that its input was bad, though not how. Around a call into the program, or into the
+runtime for an effect (`Supervisor.start_child/2` raises in its caller for a module
+with no `child_spec/1`), an error value passes a bug off as an expected failure, and
+the warning stays. So does a handler returning `ok`, a default or an empty
+collection: its failure looks like success. The release names are a heuristic,
+which is why these step down rather than go.
+
 ## Incomplete erpc handling
 
 `unhandled_failure` with `kind=erpc_transport` · **warning**

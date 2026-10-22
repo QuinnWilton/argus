@@ -178,9 +178,55 @@ swallowed_exception(func, try) :-
   !protects_only_boundaries(try, func),
   !library_written(func).
 
+unhandled_failure(func, try, "rescue", how, guard_end) :-
+  swallowed_exception(func, try),
+  bare_rescue(try, func, guard_end),
+  narrowed_rescue(try, func, how).
+
 unhandled_failure(func, try, "rescue", "", guard_end) :-
   swallowed_exception(func, try),
-  bare_rescue(try, func, guard_end).
+  bare_rescue(try, func, guard_end),
+  !narrows_rescue(try, func).
+
+// What narrows a catch-all's risk, without making it safe: its try releases a
+// resource and does nothing else that can raise ("release"), where the failure taken
+// is mostly the resource already gone; or its handler returns an error value for what
+// only pure runtime functions raise ("error_value"), so its caller learns that its
+// input was bad, though not how.
+.decl narrowed_rescue(try: symbol, func: symbol, how: symbol)
+
+narrowed_rescue(try, func, "release") :- released_rescue(try, func).
+
+narrowed_rescue(try, func, "error_value") :-
+  rescue_returns_error(try, func),
+  try_pure_runtime(try, func),
+  !released_rescue(try, func).
+
+// The try releases a resource: the runtime's releases, or calls to functions named
+// for one that cannot fail to match their arguments.
+.decl released_rescue(try: symbol, func: symbol)
+
+released_rescue(try, func) :- try_releases(try, func).
+
+released_rescue(try, func) :-
+  try_release_call(try, func, _),
+  !releases_other(try, func).
+
+// A call named for a release whose callee is no release_function, or is unresolved.
+.decl releases_other(try: symbol, func: symbol)
+
+releases_other(try, func) :-
+  try_release_call(try, func, call),
+  call_instr(func, callee, call),
+  !release_function(callee).
+
+releases_other(try, func) :-
+  try_release_call(try, func, call),
+  !call_instr(func, _, call).
+
+.decl narrows_rescue(try: symbol, func: symbol)
+
+narrows_rescue(try, func) :- narrowed_rescue(try, func, _).
 
 // The try at `try` catches every exception without filtering or
 // re-raising (bare_rescue).
