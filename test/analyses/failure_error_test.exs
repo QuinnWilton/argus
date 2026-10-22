@@ -129,6 +129,7 @@ defmodule Argus.Analyses.FailureErrorTest do
                "parse_pair/1" => "error_value",
                "close_and_count/2" => "",
                "drop_key/1" => "",
+               "import_rows/1" => "",
                "count_or_zero/1" => ""
              }
 

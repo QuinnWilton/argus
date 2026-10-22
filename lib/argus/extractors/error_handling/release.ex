@@ -37,6 +37,7 @@ defmodule Argus.Extractors.ErrorHandling.Release do
   alias Argus.Extractor.Runtime
   alias Argus.Extractors.ErrorHandling.Boundary
   alias Argus.Instr
+  alias Argus.Instr.Reaching
   import Argus.Instr, only: [slot: 1]
 
   @release_calls MapSet.new([
@@ -118,26 +119,45 @@ defmodule Argus.Extractors.ErrorHandling.Release do
 
   @doc """
   Whether every call in the region `visited` is a pure runtime function
-  (`Argus.EffectModel`), so that what the region raises is a runtime
-  function's verdict on its input.
+  (`Argus.EffectModel`) handed no fun, so that what the region raises is a
+  runtime function's verdict on its input. A pure higher-order call runs
+  the fun it is handed (`Enum.each(rows, &MyApp.insert!/1)`), which may
+  be the program's code.
   """
   @spec pure_runtime?(Enumerable.t(non_neg_integer()), tuple()) :: boolean()
   def pure_runtime?(visited, table) do
+    instrs = Tuple.to_list(table)
+
     Enum.all?(visited, fn idx ->
       instr = elem(table, idx)
 
       cond do
         not (Instr.call?(instr) or Instr.tail_call?(instr)) -> true
-        match?({:ok, _, _, _}, Helpers.match_remote_call(instr)) -> pure_call?(instr)
+        match?({:ok, _, _, _}, Helpers.match_remote_call(instr)) -> pure_call?(instrs, idx, instr)
         true -> false
       end
     end)
   end
 
-  defp pure_call?(instr) do
+  defp pure_call?(instrs, idx, instr) do
     {:ok, m, f, a} = Helpers.match_remote_call(instr)
-    Runtime.module?(m) and EffectModel.classify(inspect(m), Atom.to_string(f), a) == :pure
+
+    Runtime.module?(m) and EffectModel.classify(inspect(m), Atom.to_string(f), a) == :pure and
+      not Enum.any?(0..(a - 1)//1, &holds_fun?(instrs, idx, {:x, &1}))
   end
+
+  defp holds_fun?(instrs, idx, reg) do
+    instrs
+    |> Reaching.sources(idx, reg)
+    |> Enum.any?(fn
+      {:param, _} -> false
+      at -> fun_def?(Reaching.at(instrs, at))
+    end)
+  end
+
+  defp fun_def?({:make_fun3, _fun, _index, _uniq, _dst, _env}), do: true
+  defp fun_def?({:move, {:literal, value}, _dst}), do: is_function(value)
+  defp fun_def?(_instr), do: false
 
   @doc """
   Whether a handler's body (from after its `try_case` to the first

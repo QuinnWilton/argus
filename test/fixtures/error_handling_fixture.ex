@@ -1231,6 +1231,17 @@ defmodule Argus.Test.Fixtures.NarrowedRescue do
     end
   end
 
+  def import_rows(rows) do
+    try do
+      Enum.each(rows, &insert!/1)
+      :ok
+    catch
+      _, _ -> {:error, :import_failed}
+    end
+  end
+
+  def insert!(row), do: Map.fetch!(row, :id)
+
   def drop_key(map) do
     try do
       Map.delete(map, :key)
