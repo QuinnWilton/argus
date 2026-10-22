@@ -16,7 +16,8 @@ defmodule Argus.Analyses.ExposureTlsTest do
     T.ServesAndDials,
     T.ReturnsOptions,
     T.TranslatesOption,
-    T.WarnsThenForcesNone
+    T.WarnsThenForcesNone,
+    T.RecognisesBothForcesNone
   ]
 
   defp funcs(relation) do
@@ -30,6 +31,8 @@ defmodule Argus.Analyses.ExposureTlsTest do
     assert funcs("disables_verification") == [
              # Forces :verify_none whenever it is asked for TLS.
              inspect(T.ForcesNone) <> ":opts/1",
+             # Recognising both modes of a caller's option offers neither.
+             inspect(T.RecognisesBothForcesNone) <> ":connect/2",
              # A listener's options that leave the function (returned) or
              # also reach a connect are a client's too.
              inspect(T.ReturnsOptions) <> ":listen/2",

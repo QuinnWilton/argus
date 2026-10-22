@@ -22,9 +22,11 @@ defmodule Argus.Extractors.Tls do
 
   A test or a comparison that reads a value against `:verify_none` sets
   nothing: a function translating the option, `normalize(verify_none) ->
-  false`, names it only to recognise it. One against `:verify_peer` is
-  still a `"peer"` setting: a module that recognises a caller's
-  `verify_peer` takes a verified connection as a choice.
+  false`, names it only to recognise it. One against `:verify_peer`
+  alone is still a `"peer"` setting: a module that recognises a caller's
+  `verify_peer` takes a verified connection as a choice. One that tests
+  both modes (`normalize(verify_peer) -> true; normalize(verify_none) ->
+  false`) translates the option and offers nothing either way.
 
   ## Left to the default
 
@@ -342,7 +344,11 @@ defmodule Argus.Extractors.Tls do
 
   defp emit_verification(facts, func_id, instr, idx) do
     cond do
-      mentions_atom?(instr, :verify_none) and not compares?(instr) ->
+      # A test of both modes translates a caller's option, and offers nothing.
+      compares?(instr) and mentions_atom?(instr, :verify_none) ->
+        facts
+
+      mentions_atom?(instr, :verify_none) ->
         add_fact(facts, :tls_verification, [InstrId.mint(func_id, idx), func_id, "none"])
 
       mentions_atom?(instr, :verify_peer) ->

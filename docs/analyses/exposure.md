@@ -49,7 +49,8 @@ Priors are optional; structural name-based findings do not depend on them.
 A client connection's literal options disable peer verification, or a module sets
 verify_none without a recognized alternative verification setting. A test or
 comparison that only recognises verify_none (a function translating a caller's
-option) sets nothing; one that recognises verify_peer counts as the alternative. A client can then
+option) sets nothing; one that recognises verify_peer alone counts as the alternative,
+and one that recognises both offers neither. A client can then
 accept an unauthenticated peer certificate. Configure verification appropriate to the
 client's trust and hostname requirements.
 

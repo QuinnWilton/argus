@@ -92,6 +92,18 @@ defmodule Argus.Test.Fixtures.Tls do
     end
   end
 
+  defmodule RecognisesBothForcesNone do
+    @moduledoc """
+    Translates a caller's verify option, both modes, and forces
+    :verify_none on the connection it makes: recognising :verify_peer
+    offers no verified connection.
+    """
+    def mode(:verify_peer), do: :check
+    def mode(:verify_none), do: :skip
+
+    def connect(host, extra), do: :ssl.connect(host, 443, [{:verify, :verify_none} | extra])
+  end
+
   defmodule ReturnsOptions do
     @moduledoc "Returns the options it listens with: where else they go is not seen."
     def listen(port, certfile) do
