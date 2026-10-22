@@ -361,7 +361,7 @@ socket_read_during_init(mod, reader) :-
   reads_socket_without_timeout(reader).
 
 // An infinite socket read timeout, omitted by arity, given literally, or forwarded
-// through a wrapper parameter (infinite_receive_param).
+// through a wrapper parameter (infinity_into_receive).
 .decl reads_socket_without_timeout(func: symbol)
 
 reads_socket_without_timeout(f) :- call_arg(f, ":gen_tcp:recv/3", 2, ":infinity").
@@ -369,17 +369,19 @@ reads_socket_without_timeout(f) :- call_arg(f, ":ssl:recv/3", 2, ":infinity").
 reads_socket_without_timeout(f) :- remote_call(_, f, ":gen_tcp", "recv", 2).
 reads_socket_without_timeout(f) :- remote_call(_, f, ":ssl", "recv", 2).
 
-reads_socket_without_timeout(f) :-
-  call_arg(f, g, pos, ":infinity"),
-  infinite_receive_param(g, pos).
+reads_socket_without_timeout(f) :- infinity_into_receive(f, _).
 
-// The wrapper's parameter at `pos` is the timeout of a socket recv it
-// makes, or hands on to a wrapper that does (call_arg_forward).
-.decl infinite_receive_param(func: symbol, pos: number)
+// `func` spells :infinity at `site` into the timeout of a wrapper's socket recv,
+// through any chain of wrappers handing it on (the values stage's param_origin).
+.decl infinity_into_receive(func: symbol, site: symbol)
 
-infinite_receive_param(g, p) :- call_arg_forward(g, ":gen_tcp:recv/3", 2, p).
-infinite_receive_param(g, p) :- call_arg_forward(g, ":ssl:recv/3", 2, p).
-infinite_receive_param(g, p) :- call_arg_forward(g, h, q, p), infinite_receive_param(h, q).
+infinity_into_receive(f, id) :- recv_timeout_param(g, p), param_origin(g, p, f, id, ":infinity").
+
+// The wrapper's parameter at `pos` is the timeout of a socket recv it makes.
+.decl recv_timeout_param(func: symbol, pos: symbol)
+
+recv_timeout_param(g, p) :- call_arg_forward(g, ":gen_tcp:recv/3", 2, n), p = to_string(n).
+recv_timeout_param(g, p) :- call_arg_forward(g, ":ssl:recv/3", 2, n), p = to_string(n).
 
 init_effect(mod, "recv", reader, site) :-
   socket_read_during_init(mod, reader),
@@ -484,7 +486,7 @@ init_effect(mod, "enter_loop", func, entry) :-
 
 receive_site(f, id) :- call_site(id, f, ":gen_tcp", "recv", _).
 receive_site(f, id) :- call_site(id, f, ":ssl", "recv", _).
-receive_site(f, id) :- call_arg(f, g, pos, ":infinity"), infinite_receive_param(g, pos), call_instr(f, g, id).
+receive_site(f, id) :- infinity_into_receive(f, id).
 
 // A receiving function with no such site of its own is anchored at the
 // function, its site empty.

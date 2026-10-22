@@ -975,25 +975,12 @@ wait_found(func, site, "socket", api, server, "") :-
 
 waits_on_socket_forever(id, f, api, f) :- socket_wait(id, f, api, "infinity", _).
 
+// The caller spelling :infinity into the timeout parameter, through any chain of
+// callers handing it on (the values stage's param_origin), holds the wait.
 waits_on_socket_forever(id, f, api, c) :-
-  socket_wait(id, f, api, "param", p),
-  socket_infinity_at(f, p, c).
-
-// A caller passing :infinity as the timeout parameter, directly or
-// through its own.
-.decl socket_timeout_needed(func: symbol, pos: number)
-
-socket_timeout_needed(f, p) :- socket_wait(_, f, _, "param", p).
-socket_timeout_needed(f, q) :- socket_timeout_needed(g, p), call_arg_forward(f, g, p, q).
-
-.decl socket_infinity_at(func: symbol, pos: number, caller: symbol)
-
-socket_infinity_at(g, p, c) :- socket_timeout_needed(g, p), call_arg(c, g, p, ":infinity").
-
-socket_infinity_at(g, p, c) :-
-  socket_timeout_needed(g, p),
-  call_arg_forward(f, g, p, q),
-  socket_infinity_at(f, q, c).
+  socket_wait(id, f, api, "param", n),
+  param_origin(f, p, c, _, ":infinity"),
+  p = to_string(n).
 
 .init socket_reach = SameProcessReachCut
 
