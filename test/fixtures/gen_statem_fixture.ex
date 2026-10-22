@@ -657,7 +657,9 @@ defmodule Argus.Test.Fixtures.CatchAllCallStatem do
   expects, one with what another call returns, and its last clause takes
   every other event, an unexpected call among them, without replying.
   `running` replies in its catch-all. `logging`'s catch-all logs, Supavisor's
-  DbHandler shape, and its log call places it.
+  DbHandler shape, and its log call places it. `sharing` has two clauses
+  sharing their call tests and parting on the data, the second of which
+  never replies, beside its catch-all: two findings.
   """
   @behaviour :gen_statem
 
@@ -680,6 +682,12 @@ defmodule Argus.Test.Fixtures.CatchAllCallStatem do
     do: {:keep_state_and_data, [{:reply, from, {:error, :unexpected}}]}
 
   def running(_type, _event, _data), do: :keep_state_and_data
+
+  def sharing({:call, from}, {:get, key}, %{ready: true}),
+    do: {:keep_state_and_data, [{:reply, from, key}]}
+
+  def sharing({:call, _from}, {:get, _key}, data), do: {:keep_state, Map.put(data, :asked, true)}
+  def sharing(_type, _event, _data), do: :keep_state_and_data
 
   def logging({:call, from}, :ping, _data), do: {:keep_state_and_data, [{:reply, from, :pong}]}
 

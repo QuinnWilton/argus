@@ -87,6 +87,8 @@ defmodule Argus.Analyses.MailboxStatemTest do
 
       assert [
                ["Argus.Test.Fixtures.CatchAllCallStatem:logging/3", ""],
+               ["Argus.Test.Fixtures.CatchAllCallStatem:sharing/3", ":get"],
+               ["Argus.Test.Fixtures.CatchAllCallStatem:sharing/3", "_"],
                ["Argus.Test.Fixtures.CatchAllCallStatem:waiting/3", "_"]
              ] = Enum.sort(rows)
     end

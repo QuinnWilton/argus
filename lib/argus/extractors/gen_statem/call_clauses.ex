@@ -34,9 +34,12 @@ defmodule Argus.Extractors.GenStatem.CallClauses do
 
   A test that fails before the clause's body begins (its first call,
   allocation or term built: a head calls and builds nothing) sends the
-  path on to a later clause, and the tests it passed name no clause
-  that path returns from. A path that passes no test of its own after
-  that reaches a clause taking the call by `_`, such as a state's last
+  path on to a later clause, which keeps of the tests passed only those
+  every way into it passes (the passed edge dominates it): two clauses
+  sharing `{:call, from}, {:get, k}` and parting on the data keep the
+  `:get` test, and a catch-all keeps none. A path that keeps no test, and
+  passes none of its own after that, reaches a clause taking the call by
+  `_`, such as a state's last
   `state(_type, _event, _data)`. A line marker that clause's body passes
   places it (a log call's, Supavisor's `handle_event(type, content, state,
   data)`), and is its site; a body that calls nothing has none, and the
@@ -89,6 +92,7 @@ defmodule Argus.Extractors.GenStatem.CallClauses do
           x0: nil,
           head: nil,
           tag: "",
+          passed: [],
           body: false,
           line: nil
         },
@@ -176,7 +180,8 @@ defmodule Argus.Extractors.GenStatem.CallClauses do
       else
         Enum.reduce(block.succs, {seen, found}, fn {to, kind}, {s, f} ->
           if follow?(elem(instrs, last), kind),
-            do: walk(to, entered(path, kind, last, elem(instrs, last)), fun, instrs, s, f),
+            do:
+              walk(to, entered(path, kind, last, elem(instrs, last), to, fun), fun, instrs, s, f),
             else: {s, f}
         end)
       end
@@ -194,16 +199,25 @@ defmodule Argus.Extractors.GenStatem.CallClauses do
   # last one before the return is the clause's head, and the literal it
   # compares against names the clause. A fail edge before the body is a
   # later clause's way in.
-  defp entered(path, :branch_pass, idx, instr),
-    do: %{path | head: idx, tag: test_literal(instr) || path.tag}
+  defp entered(path, :branch_pass, idx, instr, to, _fun),
+    do: passed(path, to, idx, test_literal(instr) || path.tag)
 
-  defp entered(path, {:select_arm, lit}, idx, _instr), do: %{path | head: idx, tag: lit}
+  defp entered(path, {:select_arm, lit}, idx, _instr, to, _fun), do: passed(path, to, idx, lit)
 
-  defp entered(%{body: false} = path, kind, _idx, _instr)
-       when kind in [:branch_fail, :select_fail],
-       do: %{path | head: nil, tag: "", line: nil}
+  defp entered(%{body: false} = path, kind, _idx, _instr, to, fun)
+       when kind in [:branch_fail, :select_fail] do
+    kept = Enum.filter(path.passed, fn {at, _idx, _tag} -> Function.dominates?(fun, at, to) end)
 
-  defp entered(path, _kind, _idx, _instr), do: path
+    case kept do
+      [{_at, idx, tag} | _] -> %{path | head: idx, tag: tag, passed: kept, line: nil}
+      [] -> %{path | head: nil, tag: "", passed: [], line: nil}
+    end
+  end
+
+  defp entered(path, _kind, _idx, _instr, _to, _fun), do: path
+
+  defp passed(path, to, idx, tag),
+    do: %{path | head: idx, tag: tag, passed: [{to, idx, tag} | path.passed]}
 
   defp test_literal({:test, :is_tagged_tuple, _f, [_src, _arity, {:atom, a}]}), do: inspect(a)
 
