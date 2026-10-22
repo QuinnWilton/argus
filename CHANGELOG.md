@@ -3,6 +3,171 @@
 Notable changes and upgrade notes for Argus. Entries describe the release in
 which a change appeared; older names and APIs may have changed since then.
 
+## Unreleased
+
+### Upgrading
+
+- The fact relations, their columns and the points-to stage's vocabulary
+  are renamed, with no aliases: this touches a custom Datalog program
+  (`{:custom, path}`) and code reading the rows of `Argus.analyze/3`.
+  The report, its JSON, finding titles and the configuration are
+  unchanged. `docs/glossary.md` defines the new words.
+  - Abbreviations are spelled out in relation and column names: `recv`,
+    `dep`, `op`, `dict`, `sup`, `opts`, `msg`, `sel` and `alloc` are
+    `receive`, `dependency`, `operation`, `dictionary`, `supervisor`,
+    `options`, `message`, `selector` and `allocation` (`ets_op` is
+    `ets_operation`, `table_alloc` `table_allocation`, `send_msg`
+    `send_message`); columns `proc`, `src`, `obj`, `lit`, `cnt` and `n`
+    are `process`, `source`, `term`, `literal` and `count`. Layer 1's
+    columns, and `func`, `mod`, `id`, `pos`, `arg` and `param`, stay.
+  - Points-to uses the literature's words: a source is a variable and a
+    leaf an object. `source_pts`, `field_pts`, `param_pts` and
+    `returns_pts` are `var_points_to`, `field_points_to`,
+    `param_points_to` and `return_points_to`; `process_*_source` and
+    `task_op_source` are `process_*_var` and `task_operation_var`;
+    `value_object`, `value_field`, `value_load`, `value_base`,
+    `value_sets`, `value_arg`, `value_return`, `value_result` and
+    `value_escape` are `term_allocation`, `field_store`, `field_load`,
+    `term_update_base`, `term_update_overwrites`, `call_arg_var`,
+    `return_var`, `call_result_var` and `unmodeled_use`. A variable's
+    kind `obj` is `term`, `proc` `process` and `dict` `dictionary`; the
+    columns `src_kind` and `src` are `var_kind` and `var`.
+  - The stage's modes are `full`, `selective` and `field_insensitive`
+    (were exact, bounded and coarse); `points_to_bounded.dl` is
+    `points_to_selective.dl`; a pervasive leaf is a hub object
+    (`hub_object`, `clientlib/hub_objects.dl`).
+  - The races findings `ets_check_act` and `mnesia_check_act` are
+    `ets_check_then_act` and `mnesia_check_then_act`.
+  - calls.dl's `resolved_arg` is gone: read the values stage's
+    `param_value`.
+- The first run after upgrading extracts the modules again: their producers
+  and relations changed.
+
+### Added
+
+- `ignore: [findings: [{analysis, module_or_mfa}]]` leaves one analysis's
+  findings in a module or a function out of the report (a set names its
+  members, as in `severity:`), covering the funs and comprehensions
+  written in the function; the module's facts still feed every analysis.
+  Every finding ends with the entry that ignores it, spelled for mix.exs
+  or rebar.config, and a run warns of an entry that matched none of its
+  analysis's findings (unless that analysis, or one of a set's, did not
+  run or degraded).
+- `shutdown` reports an external program a killed task leaves running
+  (`orphaned_os_process`): a task running `System.cmd`, `:os.cmd` or a
+  port, killed with `Task.shutdown` or an exit signal. Closing the port
+  does not stop the program. An exit signal of reason `:normal`, which
+  stops no process that does not trap exits, kills nothing here, nor in
+  `failure`'s orphaned processes and `races`' deletes after a kill.
+- A values stage (`priv/dl/values.dl`): which literals each parameter may
+  hold through any chain of callers, which call spells each
+  (`param_origin`), and whether the set is complete. Timer messages, ETS
+  and Mnesia table names, a wrapper's call target, a state machine
+  helper's target state, a stored timer's message and an `:infinity`
+  socket timeout's caller read it, so each follows any depth of wrappers
+  and every argument position, not the first four. Past its budget it
+  publishes no value, and a notice says so.
+- A third points-to program, `points_to_field_insensitive.dl`, for a
+  program that outgrows even the selective stage: it resolves every
+  object field-insensitively, and the notice says any finding about a
+  process may be a false alarm.
+- `unsafe_input`:
+  - `Code.eval_quoted`, `compile_quoted` and `:erl_eval` are code sinks,
+    and a code sink a caller's data decides is "Dynamic code execution of
+    a caller's input", an error, listing the exports that feed it
+    (`code_caller_export`).
+  - A process reading an active raw TCP, UDP or SSL socket in
+    `handle_info/2`, or an acceptor pool's handler, takes an outside
+    party's bytes (libcluster's gossip strategy).
+  - A sink run on each element (`Enum.map(names, &String.to_atom/1)`) is
+    a call of it; so is any function handed by name to such a call, for
+    every analysis that reads call sites.
+  - A message sent to a server reaches its `handle_info/2`, and a
+    client's call reaches the server that call reaches, not every server
+    the function names.
+  - A decode reached only past a constant-time compare of a MAC digest
+    the function computes is `secret_gated_decode`, a warning, not the
+    error; a checksum or a CSRF token compared so is no gate.
+  - A decode of a file at a literal path is `fixed_file_decode`, at the
+    deserialization's own severity, naming who can write that path
+    (`/tmp` and other shared directories are called out).
+- `races` follows `GenServer.whereis/1` as a name lookup, and takes a
+  `Registry.lookup` compared with `[]` for a check.
+- `Argus.analyze/3` and its kin take `dependencies: [module]`, and `mix
+  argus` with `include_deps` says which analyzed modules are a fetched
+  dependency's (layer 4 of the schema, `dependency_module`). An umbrella
+  child's siblings are the program's own.
+- `docs/glossary.md` defines the terms the code, rules and docs use.
+- New layer-2 relations (schema shape change): `call_arg_untracked`,
+  `exit_reason`, `field_load_match`, `option_value`, `release_function`,
+  `rescue_returns_error`, `send_arg_param`, `statem_enter_stops`,
+  `statem_target_param`, `try_pure_runtime`, `try_release_call`,
+  `try_releases` and `verification_gated`. `decoded_origin` gains a
+  `path` column and a `file` origin; `socket_active`'s mode may be
+  `dynamic_active`.
+
+### Fixed
+
+- `shutdown` no longer reports a LiveView, LiveComponent or channel
+  handing work to a pool of an application of the program's own, an
+  umbrella's other children included, nor misses an application whose
+  `start/2` lists its children itself. A pool no application roots, or a
+  fetched library's application's, is still reported, once per start with
+  every process making it as a related frame.
+- `mailbox`:
+  - A target the selective stage resolves field-insensitively is a
+    server a message reaches only when every process it may be is one of
+    that module's servers (ex_mcp: 659 findings to 26). A send reaches a
+    spawned loop only when every target is that loop.
+  - An unanswered `{:call, from}` in a gen_statem is placed at the clause
+    that takes the call (a catch-all included), one finding per clause.
+    A state whose every enter call stops is not reported, unless the
+    stop depends on a map key the data may lack.
+- Points-to holds its budget on more programs, and so more analyses
+  report: a term a helper builds is each keeping call's own; a match's
+  shape filters the tuples an element read or a later read takes in; a
+  keyword or map lookup under a literal key reads that key alone; an
+  update copies fields only from a base of its own kind; a literal name
+  points to the process registered under it, kept in a field, in state
+  or in the process dictionary. On ex_mcp the full stage holds 120,000
+  field rows and solves in 4 seconds (2.3 million and a minute before);
+  on Phoenix LiveView 102,000 (566,000, over budget).
+- `unsafe_input` no longer reports:
+  - a value a raising validator accepted (`validate!(role);
+    String.to_atom(role)`);
+  - a callback the build runs (template engines, Mix SCMs, tasks and
+    compilers, `@on_definition` and `__after_compile__` hooks), and such
+    a module is tooling for every analysis;
+  - a request starting tasks under a `Task.Supervisor` whose child spec
+    caps them;
+  - a map's field as an option's value.
+- `effects` counts a task a transaction waits on, by its handle, as part
+  of the transaction, and no other task started beside it.
+- `state_machine` follows a helper building `{:next_state, target, ...}`
+  from its parameter, so one such helper no longer turns
+  `unreachable_state` off for the module.
+- `failure`: a catch-all around a runtime call handed a fun is not taken
+  for one around pure runtime calls.
+- `coupling` calls a pid cached only where `init` keeps a lookup's answer
+  in the field the call reads.
+- `tls`: a comparison against `:verify_none`, or one naming both modes,
+  sets no verify mode.
+- A timer armed through an exported helper may carry any message, so a
+  flush waiting for another is not reported as hanging.
+- In an umbrella, a child's findings come under its `==> app` header.
+
+### Changed
+
+- `failure` reports a catch-all at info where its `try` only releases a
+  resource (a runtime close, delete or cancel, or a function named for
+  one whose heads cannot fail) or its handler returns an error value
+  around pure runtime calls alone.
+- `unsafe_input` reports an atom made of an option's value (a
+  `{key, value}` entry matched by key, or a `proplists` or `Keyword`
+  lookup under a literal key) at info, its source `option`.
+- The points-to notices call hubs objects: "hub objects (processes or
+  tables)".
+
 ## 0.24.0 — 2026-10-15
 
 ### Removed
