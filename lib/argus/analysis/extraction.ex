@@ -41,7 +41,7 @@ defmodule Argus.Analysis.Extraction do
                           task_handled task_escapes points_to_mode)
 
   # The relations the values stage writes (values.dl's outputs).
-  @values_relations ~w(param_value param_complete arg_value arg_complete values_mode)
+  @values_relations ~w(param_value param_complete arg_value arg_complete param_origin values_mode)
 
   @doc """
   Derives the stage-0 relations into an existing facts directory.
@@ -283,8 +283,9 @@ defmodule Argus.Analysis.Extraction do
   0 has been derived into.
 
   The values stage (`priv/dl/values.dl`) is interprocedural constant
-  propagation: which literals each of the program's parameters may
-  hold, through any chain of callers passing them on, and whether that
+  propagation over `Argus.Extractors.TermFlow`'s variables: which
+  literals each of the program's parameters may hold, through any chain
+  of callers passing them on, which call spells each, and whether that
   set is complete. The analyses that ask read `values_relations/0` as
   facts (`clientlib/staged_values.dl`) rather than each propagating
   literals through the calls it cares about.

@@ -61,10 +61,7 @@ table_param_needed(c, to_string(m)) :-
 // callers forwarding their own (the values stage's param_value).
 .decl name_at_param(func: symbol, pos: symbol, name: symbol)
 
-name_at_param(f, p, name) :-
-  table_param_needed(f, p),
-  param_value(f, n, name),
-  p = to_string(n).
+name_at_param(f, p, name) :- table_param_needed(f, p), param_value(f, p, name).
 
 // Resolve the allocation whose reference reaches a parameter, directly from a caller's
 // matching ets_tid_arg or through forwarding.

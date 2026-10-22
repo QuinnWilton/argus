@@ -188,8 +188,7 @@ claims_name(a, g, "", k) :- name_release(a, g, _, "literal", k).
 claims_name(a, g, scope, k) :-
   creating_operation(a, h, api, scope, "param", q),
   api != "start_child",
-  arg_value(g, h, n, k),
-  q = to_string(n).
+  arg_value(g, h, q, k).
 
 runs.seed(g) :- claims_name(_, g, _, _).
 
@@ -2197,10 +2196,7 @@ record_table_needed(f, p) :- records.meets(f, _, _, "param", p, _, _).
 // chain of forwarding callers (the values stage's param_value).
 .decl record_table_at_param(func: symbol, pos: symbol, name: symbol)
 
-record_table_at_param(f, p, name) :-
-  record_table_needed(f, p),
-  param_value(f, n, name),
-  p = to_string(n).
+record_table_at_param(f, p, name) :- record_table_needed(f, p), param_value(f, p, name).
 
 // A whole record's first tuple element names its Mnesia table. Resolve that element
 // through forwarding callers.

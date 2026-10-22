@@ -1,30 +1,39 @@
 // The values stage — which literals a parameter can hold, derived once.
 //
 // Interprocedural constant propagation over sets of constants (Callahan,
-// Cooper, Kennedy and Torczon, PLDI 1986), with two jump functions: a
-// literal a caller passes (`call_arg`), and a parameter it passes through
-// unchanged (`call_arg_forward`). A parameter's values are every literal
-// that reaches it through any chain of such calls; the closure is
-// transitive, so a helper wrapped any number of times still resolves.
+// Cooper, Kennedy and Torczon, PLDI 1986) on term-flow's variables
+// (Argus.Extractors.TermFlow): what a call hands each parameter of the
+// program's functions is a `call_arg_var` row, and its jump function is
+// the row's variable kind. A `literal` is a literal jump function; a
+// caller's own `param`, a pass-through one; a callee's `result`, what
+// that callee returns at that call. A parameter's values are every
+// literal that reaches it through any chain of such calls, so a helper
+// wrapped any number of times still resolves. Process starts, spawns and
+// closures hand their entry function arguments the same way.
 //
 // A value set is complete only when every way into the parameter is
 // seen, and `param_complete` says which are. The rest may also hold a
-// value no literal names: a caller passes a computed one (or one past the
-// fourth argument, where `call_arg` stops), a caller the program does not
-// show may call the function (an export, a fun, an apply), or a forwarded
-// parameter is itself incomplete. A consumer that claims a set is
-// complete reads `param_complete`; one that only names what a parameter
-// may hold reads `param_value` alone. The complete parameters are staged
-// rather than the others, since most parameters are not.
+// value no literal names: a call hands a variable of another kind (a
+// term, a load, a pid) or none term-flow follows, a caller the program
+// does not show may call the function (an export, a fun, an apply), a
+// forwarded parameter is itself incomplete, or a callee's result is
+// handed on (term-flow does not say that a function returns nothing
+// but the literals it names). A consumer that claims a set is complete
+// reads `param_complete`; one that only names what a parameter may hold
+// reads `param_value` alone.
 //
 // Only the program's own functions have parameters here: a library
 // function's callers are mostly outside the program, and what a call to
 // one is handed is `call_arg`'s already.
 //
-// What a caller hands is kept apart from what the callee holds: `arg_value`
-// is the literal a caller passes, or what its forwarded parameter holds,
-// so a consumer that attributes a value to the function supplying it does
-// not mix every caller's.
+// Three views of one closure. `param_value` merges every caller's
+// values. `arg_value` keeps what one caller hands its callee (its literal,
+// or what its own forwarded parameter holds), for a consumer that
+// attributes a value to the function supplying it. `param_origin` keeps
+// where each value was first handed on, through any chain of callers
+// passing it on unchanged: a rule that credits a value to the caller
+// that spells it, as a call's target to that caller, reads it rather
+// than following the forwards itself.
 //
 // Outputs are written as `.facts`, the format the analyses read
 // (clientlib/staged_values.dl). It runs after stage 0, whose call graph it
@@ -38,48 +47,55 @@
 .decl call_edge(caller: symbol, callee: symbol) mutable
 .input call_edge
 
+.decl call_site(id: symbol, caller: symbol, callee_mod: symbol, callee_func: symbol, arity: number) mutable
+.input call_site
+
 // Which program runs: "full" for the stage as it runs by default;
 // values_unknown.dl adds "unknown".
 .decl values_program(mode: symbol)
 
 values_program("full").
 
-// ── Jump functions ──────────────────────────────────────────────────
+// ── Calls into the program ──────────────────────────────────────────
 
-// `caller` passes `callee` the literal `value` at `pos`.
-.decl passes_literal(caller: symbol, callee: symbol, pos: number, value: symbol)
+// The call at `site` in `caller` hands the program's function `callee`
+// the variable (var_kind, var) at `pos`: a call, or an entry a start,
+// spawn or closure runs.
+.decl hands(site: symbol, caller: symbol, callee: symbol, pos: symbol, var_kind: symbol, var: symbol)
 
-passes_literal(f, g, n, v) :-
-  call_arg(f, g, n, v),
-  v != "dynamic",
-  function_def(g, _, _, _, _),
-  !values_program("unknown").
+hands(c, f, g, k, sk, s) :- call_arg_var(c, f, g, k, _, sk, s), function_def(g, _, _, _, _).
 
-// `caller` passes `callee` its own parameter `forward_pos` at `pos`.
-.decl passes_param(caller: symbol, callee: symbol, pos: number, forward_pos: number)
+// `caller` calls `callee` at `site` handing on its own parameter
+// `forward_pos` at `pos`: in its own process, as a call is, not as a
+// start or a spawn runs its entry.
+.decl forwards(site: symbol, caller: symbol, callee: symbol, pos: symbol, forward_pos: symbol)
 
-passes_param(f, g, n, m) :- call_arg_forward(f, g, n, m), function_def(g, _, _, _, _).
+forwards(c, f, g, k, m) :- call_arg_var(c, f, g, k, "call", "param", m), function_def(g, _, _, _, _).
 
-// `caller` passes `callee` a value no literal names at `pos`.
-.decl passes_unknown(caller: symbol, callee: symbol, pos: number)
+// The call at `site` in `caller` to the program's function `callee`.
+.decl call_into(site: symbol, caller: symbol, callee: symbol)
 
-passes_unknown(f, g, n) :- call_arg(f, g, n, "dynamic"), function_def(g, _, _, _, _).
-passes_unknown(f, g, n) :- call_arg(f, g, n, _), function_def(g, _, _, _, _), values_program("unknown").
+call_into(c, f, g) :-
+  call_site(c, f, mod, name, arity),
+  g = cat(mod, cat(":", cat(name, cat("/", to_string(arity))))),
+  function_def(g, _, _, _, _).
 
-// A call the program shows, with an argument past the fourth, where
-// call_arg stops.
-passes_unknown(f, g, n) :-
-  called_with_arguments(f, g),
-  function_def(g, _, _, arity, _),
-  position_of(arity, n),
-  n >= 4.
+// The parameter positions of the program's function `func`.
+.decl param_of(func: symbol, pos: symbol)
+
+param_of(g, to_string(n)) :- function_def(g, _, _, arity, _), position_of(arity, n).
+
+.decl position_of(arity: number, pos: number)
+
+position_of(a, 0) :- function_def(_, _, _, a, _), a > 0.
+position_of(a, n) :- position_of(a, m), n = m + 1, n < a.
 
 // ── Callers the program does not show ───────────────────────────────
 
 // A function a caller the program does not show may call: an export, a
 // function captured as a fun (whoever holds the fun calls it), or one the
-// call graph reaches by an edge no call with arguments makes (an apply, a
-// function handed to another).
+// call graph reaches by an edge no call names (an apply, a function
+// handed to another).
 .decl unseen_callers(func: symbol)
 
 unseen_callers(g) :- function_def(g, _, _, _, 1).
@@ -90,86 +106,146 @@ unseen_callers(g) :-
   call_edge(f, g),
   function_def(g, _, _, arity, _),
   arity > 0,
-  !called_with_arguments(f, g).
-
-// `caller` calls `callee` with arguments call_arg resolves.
-.decl called_with_arguments(caller: symbol, callee: symbol)
-
-called_with_arguments(f, g) :- call_arg(f, g, _, _).
-called_with_arguments(f, g) :- call_arg_forward(f, g, _, _).
-
-// The positions of a function of `arity`.
-.decl position_of(arity: number, pos: number)
-
-position_of(a, 0) :- function_def(_, _, _, a, _), a > 0.
-position_of(a, n) :- position_of(a, m), n = m + 1, n < a.
+  !call_into(_, f, g),
+  !hands(_, f, g, _, _, _).
 
 // ── Values ──────────────────────────────────────────────────────────
 
-// The literals parameter `pos` of `func` may hold.
-.decl param_value(func: symbol, pos: number, value: symbol)
+// The literals variable (var_kind, var) of `func` may hold.
+.decl var_value(func: symbol, var_kind: symbol, var: symbol, value: symbol)
 
-param_value(g, n, v) :- passes_literal(_, g, n, v).
-param_value(g, n, v) :- passes_param(f, g, n, m), param_value(f, m, v).
+var_value(f, "literal", v, v) :- hands(_, f, _, _, "literal", v), !values_program("unknown").
+var_value(f, "param", k, v) :- param_value(f, k, v).
+var_value(f, "result", c, v) :- result_value(c, f, v).
+
+// The literals parameter `pos` of `func` may hold.
+.decl param_value(func: symbol, pos: symbol, value: symbol)
+
+param_value(g, k, v) :- hands(_, f, g, k, sk, s), var_value(f, sk, s, v).
+
+// What `func`'s call at `site` may answer: what its callee returns, a
+// parameter it hands back being what this call handed it there.
+.decl result_value(site: symbol, func: symbol, value: symbol)
+
+result_value(c, f, v) :- call_result_var(c, f, g), returns_value(g, v).
+
+result_value(c, f, v) :-
+  call_result_var(c, f, g),
+  passes(g, k),
+  hands(c, f, g, k, sk, s),
+  var_value(f, sk, s, v).
+
+// A literal `func` returns, or a result it returns of a call it makes.
+.decl returns_value(func: symbol, value: symbol)
+
+returns_value(g, v) :- return_var(g, "literal", v), !values_program("unknown").
+returns_value(g, v) :- return_var(g, "result", c), result_value(c, g, v).
+
+// `func` may return its parameter `pos` as it was handed: directly, or as
+// a callee's result that hands back what `func` handed it there.
+.decl passes(func: symbol, pos: symbol)
+
+passes(g, k) :- return_var(g, "param", k).
+
+passes(g, k) :-
+  return_var(g, "result", c),
+  call_result_var(c, g, h),
+  passes(h, i),
+  hands(c, g, h, i, "param", k).
+
+// What `caller` hands `callee` at `pos`: its literal, the value its own
+// forwarded parameter or a result may hold. Not by call site: a site is
+// renumbered by any edit of its function, and the rows would change with
+// it.
+.decl arg_value(caller: symbol, callee: symbol, pos: symbol, value: symbol)
+
+arg_value(f, g, k, v) :- hands(_, f, g, k, sk, s), var_value(f, sk, s, v).
+
+// Literal `value` reaches parameter `pos` of `func` from the call at
+// `site` in `caller`, which hands it on from no parameter of its own:
+// spelled there, or a result there. Followed through every call passing
+// its parameter on unchanged, in the caller's own process: a start or a
+// spawn runs its entry where no caller waits on it.
+.decl param_origin(func: symbol, pos: symbol, caller: symbol, site: symbol, value: symbol)
+
+param_origin(g, k, f, c, v) :-
+  call_arg_var(c, f, g, k, "call", sk, s),
+  sk != "param",
+  function_def(g, _, _, _, _),
+  var_value(f, sk, s, v).
+
+param_origin(h, j, f, c, v) :- param_origin(g, k, f, c, v), forwards(_, g, h, j, k).
+
+// ── Unknown values ──────────────────────────────────────────────────
+
+// Some call in `caller` may hand `callee` at `pos` a value no literal
+// names.
+.decl arg_unknown(caller: symbol, callee: symbol, pos: symbol)
+
+// No variable term-flow follows: a computed value, a fun.
+arg_unknown(f, g, k) :- call_into(c, f, g), param_of(g, k), !hands(c, f, g, k, _, _).
+
+arg_unknown(f, g, k) :- hands(_, f, g, k, sk, _), !traced_kind(sk).
+arg_unknown(f, g, k) :- hands(_, f, g, k, "result", _).
+arg_unknown(f, g, k) :- hands(_, f, g, k, "param", m), param_unknown(f, m).
+arg_unknown(f, g, k) :- hands(_, f, g, k, _, _), values_program("unknown").
+
+// The variable kinds whose literals the stage follows.
+.decl traced_kind(var_kind: symbol)
+
+traced_kind("literal").
+traced_kind("param").
+traced_kind("result").
 
 // Parameter `pos` of `func` may hold a value no literal names.
-.decl param_unknown(func: symbol, pos: number)
+.decl param_unknown(func: symbol, pos: symbol)
 
-param_unknown(g, n) :- passes_unknown(_, g, n).
-param_unknown(g, n) :- passes_param(f, g, n, m), param_unknown(f, m).
-
-param_unknown(g, n) :-
-  unseen_callers(g),
-  function_def(g, _, _, arity, _),
-  position_of(arity, n).
-
-// What `caller` hands `callee` at `pos`: its literal, or what the
-// parameter it forwards may hold.
-.decl arg_value(caller: symbol, callee: symbol, pos: number, value: symbol)
-
-arg_value(f, g, n, v) :- passes_literal(f, g, n, v).
-arg_value(f, g, n, v) :- passes_param(f, g, n, m), param_value(f, m, v).
-
-.decl arg_unknown(caller: symbol, callee: symbol, pos: number)
-
-arg_unknown(f, g, n) :- passes_unknown(f, g, n).
-arg_unknown(f, g, n) :- passes_param(f, g, n, m), param_unknown(f, m).
+param_unknown(g, k) :- arg_unknown(_, g, k).
+param_unknown(g, k) :- unseen_callers(g), param_of(g, k).
 
 // Every value parameter `pos` of `func` may hold is a param_value.
-.decl param_complete(func: symbol, pos: number)
+.decl param_complete(func: symbol, pos: symbol)
 
-param_complete(g, n) :- param_value(g, n, _), !param_unknown(g, n).
+param_complete(g, k) :- param_value(g, k, _), !param_unknown(g, k).
 
 // Every value `caller` hands `callee` at `pos` is an arg_value.
-.decl arg_complete(caller: symbol, callee: symbol, pos: number)
+.decl arg_complete(caller: symbol, callee: symbol, pos: symbol)
 
-arg_complete(f, g, n) :- arg_value(f, g, n, _), !arg_unknown(f, g, n).
+arg_complete(f, g, k) :- arg_value(f, g, k, _), !arg_unknown(f, g, k).
 
 // ── The budget ──────────────────────────────────────────────────────
 //
 // The closure grows with the literals a chain of helpers hands on: a
-// logging wrapper every module calls with its own message holds them all.
-// Held to 500,000 rows of param_value and of arg_value, as points-to's
-// relations are; a program that reaches it runs values_unknown.dl.
+// logging wrapper every module calls with its own message holds them
+// all, and each of its callees below again in param_origin. Held to
+// 500,000 rows of param_value, arg_value and param_origin, as
+// points-to's relations are; a program that reaches it runs
+// values_unknown.dl.
 .decl values_budget(rows: number)
 
 values_budget(500000).
 
 .limitsize param_value(n=500000)
 .limitsize arg_value(n=500000)
+.limitsize param_origin(n=500000)
 
-.decl param_value_rows(n: number)
+.decl param_value_rows(count: number)
 
-param_value_rows(count((f, n, v))) :- param_value(f, n, v).
+param_value_rows(count((f, k, v))) :- param_value(f, k, v).
 
-.decl arg_value_rows(n: number)
+.decl arg_value_rows(count: number)
 
-arg_value_rows(count((f, g, n, v))) :- arg_value(f, g, n, v).
+arg_value_rows(count((f, g, k, v))) :- arg_value(f, g, k, v).
+
+.decl param_origin_rows(count: number)
+
+param_origin_rows(count((g, k, f, c, v))) :- param_origin(g, k, f, c, v).
 
 .decl values_overflow(relation: symbol, rows: number, budget: number)
 
 values_overflow("param_value", n, b) :- values_budget(b), param_value_rows(n), n >= b.
 values_overflow("arg_value", n, b) :- values_budget(b), arg_value_rows(n), n >= b.
+values_overflow("param_origin", n, b) :- values_budget(b), param_origin_rows(n), n >= b.
 
 .output values_overflow(filename="values_overflow.csv")
 
@@ -183,3 +259,4 @@ values_mode("unknown") :- values_program("unknown").
 .output param_complete(filename="param_complete.facts")
 .output arg_value(filename="arg_value.facts")
 .output arg_complete(filename="arg_complete.facts")
+.output param_origin(filename="param_origin.facts")

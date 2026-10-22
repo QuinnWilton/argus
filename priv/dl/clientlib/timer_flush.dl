@@ -15,8 +15,15 @@
 armed_literal(id, a, t, lit) :- timer_arm(id, a, t, "bare", _, lit).
 
 armed_literal(id, a, t, lit) :-
-  timer_arm(id, a, t, "param", pos, _),
-  param_value(a, pos, lit).
+  timer_arm(id, a, t, "param", _, _),
+  arms_from_param(id, a, p),
+  param_value(a, p, lit).
+
+// The timer at `id` in `func` sends the message its parameter `pos` holds,
+// the position spelled as the values stage spells it.
+.decl arms_from_param(id: symbol, func: symbol, pos: symbol)
+
+arms_from_param(id, a, p) :- timer_arm(id, a, _, "param", n, _), p = to_string(n).
 
 // The cancel_timer call at `cancel` (Process.cancel_timer/1,2 inline to
 // it).
@@ -40,8 +47,8 @@ timer_message_unknown(mod) :-
 // A message from a parameter whose literals are not all known: some caller
 // hands it a computed one, or a caller the program does not show may arm it.
 timer_message_unknown(mod) :-
-  timer_arm(_, a, _, "param", pos, _),
-  !param_complete(a, pos),
+  arms_from_param(_, a, p),
+  !param_complete(a, p),
   function_def(a, mod, _, _, _).
 
 .decl takes_timer_message(receive: symbol)

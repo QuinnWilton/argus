@@ -2,8 +2,8 @@ defmodule Argus.Analysis.ValuesStageTest do
   @moduledoc """
   The values stage (`priv/dl/values.dl`): which literals each of the
   program's parameters may hold, through any chain of callers passing
-  them on, and which of those sets are complete, over the fixtures in
-  `test/fixtures/values_fixture.ex`.
+  them on, where each was spelled, and which of those sets are complete,
+  over the fixtures in `test/fixtures/values_fixture.ex`.
   """
   # Not async: the budget test solves a copy of the rules as argus's own
   # would be solved, and captures the warning it logs.
@@ -17,11 +17,19 @@ defmodule Argus.Analysis.ValuesStageTest do
   alias Argus.{Analysis, Pipeline}
   alias Argus.Test.Fixtures.Values
 
-  @modules [Values.Chain, Values.Exported, Values.Computed, Values.Captured, Values.Fifth]
+  @modules [
+    Values.Chain,
+    Values.Exported,
+    Values.Computed,
+    Values.Captured,
+    Values.Fifth,
+    Values.Results,
+    Values.Started
+  ]
 
   defp facts!(tmp) do
     dir = Path.join(tmp, "facts")
-    {:ok, _} = Pipeline.run(@modules, dir, extractors: [Argus.Extractors.CallArgs])
+    {:ok, _} = Pipeline.run(@modules, dir, extractors: [Argus.Extractors.TermFlow])
     :ok = Analysis.derive_stage0(dir)
     dir
   end
@@ -70,6 +78,34 @@ defmodule Argus.Analysis.ValuesStageTest do
       assert handed == [":alpha", ":beta"]
     end
 
+    test "a literal's origin is the call spelling it, through every wrapper", %{dir: dir} do
+      deepest = func(Values.Chain, :deepest, 2)
+      run_a = func(Values.Chain, :run_a, 0)
+      run_b = func(Values.Chain, :run_b, 0)
+
+      origins =
+        for [^deepest, "0", caller, site, value] <- rows(dir, "param_origin"),
+            do: {caller, String.starts_with?(site, caller <> "#"), value}
+
+      assert Enum.sort(origins) == [{run_a, true, ":alpha"}, {run_b, true, ":beta"}]
+
+      # The key is spelled by the wrapper, not by either caller.
+      wrap = func(Values.Chain, :wrap, 1)
+
+      assert [[^deepest, "1", ^wrap, _, "1"]] =
+               for([^deepest, "1" | _] = r <- rows(dir, "param_origin"), do: r)
+    end
+
+    test "a helper's result holds what it returns, at each call", %{dir: dir} do
+      assert values(dir, Values.Results, :take, 1, "0") == [":eta", ":zeta"]
+      refute complete?(dir, Values.Results, :take, 1, "0")
+    end
+
+    test "a start hands its argument to init/1, which is anyone's", %{dir: dir} do
+      assert values(dir, Values.Started, :init, 1, "0") == [":theta"]
+      refute complete?(dir, Values.Started, :init, 1, "0")
+    end
+
     test "an export's parameter, and what it hands on, is never complete", %{dir: dir} do
       assert values(dir, Values.Exported, :hidden, 1, "0") == [":gamma"]
       refute complete?(dir, Values.Exported, :lookup, 1, "0")
@@ -86,11 +122,9 @@ defmodule Argus.Analysis.ValuesStageTest do
       refute complete?(dir, Values.Captured, :read, 1, "0")
     end
 
-    test "an argument past the fourth is unknown", %{dir: dir} do
-      assert values(dir, Values.Fifth, :five, 5, "3") == [":d"]
-      assert complete?(dir, Values.Fifth, :five, 5, "3")
-      assert values(dir, Values.Fifth, :five, 5, "4") == []
-      refute complete?(dir, Values.Fifth, :five, 5, "4")
+    test "every argument is followed, the fifth too", %{dir: dir} do
+      assert values(dir, Values.Fifth, :five, 5, "4") == [":e"]
+      assert complete?(dir, Values.Fifth, :five, 5, "4")
     end
 
     test "a library function has no parameters here", %{dir: dir} do

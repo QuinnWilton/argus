@@ -178,21 +178,27 @@ passes). Rules keep the two apart: a may fact never proves safety.
 
 **Values stage** (`priv/dl/values.dl`). Which literals each of the program's
 parameters may hold: *interprocedural constant propagation* over sets of
-constants, with two *jump functions*, a literal a caller passes and a parameter it
-passes through unchanged. The closure is transitive, so a value reaches a
-parameter through any number of wrappers.
+constants, on value flow's variables. Each variable kind a call hands a parameter
+is a *jump function*: a `literal` is itself, a caller's `param` passes its own
+values through unchanged, a callee's `result` is what that callee returns at that
+call. The closure is transitive, so a value reaches a parameter through any number
+of wrappers, and a start hands its argument to the entry it runs.
 
 **Parameter value, argument value** (`param_value`, `arg_value`). A literal a
 parameter may hold from any caller, and a literal one caller hands a callee (its
 own, or one its forwarded parameter may hold). A rule that attributes a value to
 the function supplying it reads the second, so callers' values do not mix.
 
+**Origin** (`param_origin`). The call that spells a literal a parameter may hold,
+before any chain of callers hands it on unchanged: the caller a rule credits the
+value to, as a call's target is that caller's dependency, not its wrappers'.
+
 **Complete** (`param_complete`, `arg_complete`). Every value a parameter may hold
 is a known literal: every caller is seen and passes a literal or a complete
-parameter. An export, a function captured as a fun, an `apply`, or a computed
-argument makes a set incomplete. A rule that claims a set is the whole story (a
-module's every timer message) reads completeness; one that names what may happen
-reads the values alone.
+parameter. An export, a function captured as a fun, an `apply`, a computed
+argument, or a callee's result handed on makes a set incomplete. A rule that
+claims a set is the whole story (a module's every timer message) reads
+completeness; one that names what may happen reads the values alone.
 
 ## Processes and OTP
 

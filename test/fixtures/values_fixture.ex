@@ -1,8 +1,9 @@
 defmodule Argus.Test.Fixtures.Values do
   @moduledoc """
-  Literals handed through chains of private helpers, and the ways a
-  parameter's set stops being complete: an export, a computed argument,
-  a captured fun, an argument past the fourth.
+  Literals handed through chains of private helpers, through a helper's
+  result and into a process start, and the ways a parameter's set stops
+  being complete: an export, a computed argument, a captured fun, a
+  result handed on.
   """
 
   defmodule Chain do
@@ -36,8 +37,24 @@ defmodule Argus.Test.Fixtures.Values do
   end
 
   defmodule Fifth do
-    @moduledoc "call_arg resolves four arguments; the fifth is unknown."
+    @moduledoc "Every argument is followed, the fifth too."
     def run, do: five(:a, :b, :c, :d, :e)
     defp five(a, b, c, d, e), do: {a, b, c, d, e}
+  end
+
+  defmodule Results do
+    @moduledoc "A helper's result holds what it returns, at each call."
+    def run, do: {take(name()), take(same(:eta))}
+    defp name, do: :zeta
+    defp same(value), do: value
+    defp take(name), do: :ets.lookup(name, 1)
+  end
+
+  defmodule Started do
+    @moduledoc "A start hands its argument to init/1."
+    use GenServer
+    def start_link, do: GenServer.start_link(__MODULE__, :theta)
+    @impl true
+    def init(table), do: {:ok, table}
   end
 end

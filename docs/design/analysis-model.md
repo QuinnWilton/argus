@@ -13,8 +13,8 @@ are part of the model: a finding explains evidence, not every possible execution
 - `priv/dl/base.dl`, `layer2.dl` and `priors.dl` are generated schema declarations.
 - `priv/dl/stage0.dl` derives shared call information.
 - `priv/dl/points_to.dl` resolves process and table flow for later analyses.
-- `priv/dl/values.dl` resolves which literals each parameter may hold, and
-  whether that set is complete.
+- `priv/dl/values.dl` resolves which literals each parameter may hold, which
+  call spells each, and whether that set is complete.
 - `priv/dl/clientlib/` supplies shared concepts and reachability components.
 - `priv/dl/analyses/` detects defects and emits report/evidence relations.
 - `lib/argus/analyses/` declares outputs and turns their rows into findings.
