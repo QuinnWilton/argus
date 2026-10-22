@@ -19,7 +19,8 @@ defmodule Argus.Analyses.MailboxStatemTest do
     Argus.Test.Fixtures.CatchAllCallStatem,
     Argus.Test.Fixtures.StoppingEnterStatem,
     Argus.Test.Fixtures.NoEnterCallsStatem,
-    Argus.Test.Fixtures.StructEnterStatem
+    Argus.Test.Fixtures.StructEnterStatem,
+    Argus.Test.Fixtures.KeyEnterStatem
   ]
 
   setup_all do
@@ -103,6 +104,12 @@ defmodule Argus.Analyses.MailboxStatemTest do
 
     test "an enter clause that names the machine's own struct still always stops", ctx do
       assert unreplied(ctx, Argus.Test.Fixtures.StructEnterStatem) == []
+    end
+
+    test "an enter clause that stops only on a key the data may lack does not always stop",
+         ctx do
+      assert [["Argus.Test.Fixtures.KeyEnterStatem:closed/3", _tag]] =
+               unreplied(ctx, Argus.Test.Fixtures.KeyEnterStatem)
     end
 
     test "an untested clause is placed at its own line, else at its function", ctx do

@@ -17,11 +17,13 @@ defmodule Argus.Extractors.GenStatem.EnterClauses do
   `:enter`, the fail edge of a test for a tuple or another atom, the
   `:enter` arm of a `select_val` (its default when it has none). A test
   of the data's shape (`{x, 2}` while it still holds the data: a record's
-  tag, a map, the keys a map pattern names, a struct's name) is taken as passed:
-  the machine's data has the shape its own clauses take, as
+  tag, a map, a struct's name and the keys it fetches beside it) is taken
+  as passed: the machine's data has the shape its own clauses take, as
   `Argus.Extractors.GenStatem.EventClauses` takes a clause's demands on
-  the data as met. Every other edge is followed: a failed pattern on a
-  value of the data falls to a later clause, which may keep the state.
+  the data as met. A plain map's key is no shape: `%{error: reason}`
+  matches only data holding an error. Every other edge is followed: a
+  failed pattern on the data's keys or values falls to a later clause,
+  which may keep the state.
 
   Every path must end in a return of a stop tuple built into `{x, 0}`
   (`{:stop, reason, data}` built by `put_tuple2`, or a literal one), or
@@ -37,7 +39,7 @@ defmodule Argus.Extractors.GenStatem.EnterClauses do
   @x0 {:x, 0}
   @data {:x, 2}
   @stops [:stop, :stop_and_reply]
-  @shape_tests [:is_tagged_tuple, :is_tuple, :test_arity, :is_map, :has_map_fields]
+  @shape_tests [:is_tagged_tuple, :is_tuple, :test_arity, :is_map]
   @not_atom_tests [
     :is_tuple,
     :is_tagged_tuple,
@@ -190,8 +192,11 @@ defmodule Argus.Extractors.GenStatem.EnterClauses do
   end
 
   defp data_shape?({:test, op, _f, [src | _]}) when op in @shape_tests, do: slot(src) == @data
-  defp data_shape?({:test, op, _f, src, _fields}) when op in @shape_tests, do: slot(src) == @data
-  defp data_shape?({:get_map_elements, _f, src, _pairs}), do: slot(src) == @data
+
+  # A struct pattern fetches its name with its keys: a struct has them all.
+  defp data_shape?({:get_map_elements, _f, src, {:list, pairs}}),
+    do: slot(src) == @data and {:atom, :__struct__} in pairs
+
   defp data_shape?(_instr), do: false
 
   defp struct_test?({:test, :is_eq_exact, _f, [a, {:atom, _}]}, struct), do: slot(a) in struct

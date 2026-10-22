@@ -754,6 +754,28 @@ defmodule Argus.Test.Fixtures.NoEnterCallsStatem do
   def closed(_type, _event, _data), do: :keep_state_and_data
 end
 
+defmodule Argus.Test.Fixtures.KeyEnterStatem do
+  @moduledoc """
+  `:closed` stops on entry only when its data holds an error: entered
+  without one, it stays, and an unexpected call reaches its catch-all.
+  """
+  @behaviour :gen_statem
+
+  @impl true
+  def callback_mode, do: [:state_functions, :state_enter]
+
+  @impl true
+  def init(_args), do: {:ok, :closed, %{}}
+
+  def closed(:enter, _old, %{error: reason} = data), do: {:stop, reason, data}
+  def closed(:enter, _old, _data), do: :keep_state_and_data
+
+  def closed({:call, from}, :status, _data),
+    do: {:keep_state_and_data, [{:reply, from, :closed}]}
+
+  def closed(_type, _event, _data), do: :keep_state_and_data
+end
+
 defmodule Argus.Test.Fixtures.StructEnterStatem do
   @moduledoc """
   erlang_quic's quic_h3_connection `closing`: the enter clause that
