@@ -50,6 +50,8 @@ defmodule Argus.Test.FixtureSpread do
     Argus.Test.Fixtures.Tls.ForcesNone,
     Argus.Test.Fixtures.DerivedInspect.OneField,
     Argus.Test.Fixtures.ApiSurface.QuoteShapes,
+    Argus.Test.Fixtures.OptionAtoms,
+    Argus.Test.Soundness.G10.SignatureGate,
     Mix.ArgusFixtures.Seed
   ]
 
