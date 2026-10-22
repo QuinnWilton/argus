@@ -10,37 +10,28 @@
 
 // Wrapper target parameters
 //
-// Summarize which parameter becomes a call or cast target, then resolve literals at
-// each caller. Resolving all callers' values inside the wrapper would incorrectly mix
-// their targets. The wrapper's own unresolved target remains dynamic. Includes
-// GenServer and gen_statem APIs.
-.decl target_param(func: symbol, pos: number, kind: symbol)
+// A function handing its parameter to a call or cast as the target is a
+// wrapper: the literal each caller spells into that parameter, through any
+// chain of wrappers handing it on (the values stage's param_origin), is
+// that caller's call or cast, anchored at its call into the chain.
+// Resolving every caller's values inside the wrapper would mix their
+// targets; the wrapper's own target stays dynamic.
+.decl wrapper_target_param(func: symbol, pos: symbol, kind: symbol)
 
-target_param(f, p, "call") :- call_arg_forward(f, callee, 0, p), peer_call(callee).
-target_param(f, p, "cast") :- call_arg_forward(f, callee, 0, p), peer_cast(callee).
-target_param(f, p, kind) :- call_arg_forward(f, g, k, p), target_param(g, k, kind).
+wrapper_target_param(w, k, kind) :- process_call_var(_, w, kind, "param", k), (kind = "call" ; kind = "cast").
 
-// `func` passes the literal `target` into a wrapper's target parameter:
-// a call ("call") or cast ("cast") of func's own.
+// `func` spells the literal `target` at the call `site` into a wrapper's
+// target parameter: a call ("call") or cast ("cast") of its own.
+.decl named_target_site(func: symbol, site: symbol, kind: symbol, target: symbol)
+
+named_target_site(f, id, kind, t) :- wrapper_target_param(w, k, kind), param_origin(w, k, f, id, t).
+
 .decl named_target(func: symbol, kind: symbol, target: symbol)
 
-named_target(f, kind, t) :-
-  call_arg(f, g, k, t),
-  t != "dynamic",
-  target_param(g, k, kind).
+named_target(f, kind, t) :- named_target_site(f, _, kind, t).
 
 sync_call(f, t) :- named_target(f, "call", t).
 async_cast(f, t) :- named_target(f, "cast", t).
-
-// The calls into the wrapper that make it: the site a dependency on the
-// target points at.
-.decl named_target_site(func: symbol, site: symbol, kind: symbol, target: symbol)
-
-named_target_site(f, id, kind, t) :-
-  call_arg(f, g, k, t),
-  t != "dynamic",
-  target_param(g, k, kind),
-  call_instr(f, g, id).
 
 // Client APIs
 //
