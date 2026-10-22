@@ -20,7 +20,11 @@ defmodule Argus.Project do
 
   The program's modules are analyzed; a dependency's are analyzed too
   with `include_deps`, and otherwise only read for the specs of the
-  functions the program calls (`Argus.Specs.Source`). Argus never puts
+  functions the program calls (`Argus.Specs.Source`). A dependency may
+  be an application of the project's own that its build analyzes apart
+  (`siblings`: a Mix umbrella's other children): analyzed with the
+  program, its modules are the program's code, not a fetched
+  dependency's (`dependency_module`, `Argus.Schema.Project`). Argus never puts
   a project's ebins on the VM's code path, so a dependency can never
   collide with a copy the escript carries.
 
@@ -30,7 +34,17 @@ defmodule Argus.Project do
   """
 
   @enforce_keys [:kind, :root, :apps, :deps, :state_dir]
-  defstruct [:kind, :root, :apps, :deps, :state_dir, build: nil, sources: [], generated: []]
+  defstruct [
+    :kind,
+    :root,
+    :apps,
+    :deps,
+    :state_dir,
+    build: nil,
+    sources: [],
+    generated: [],
+    siblings: []
+  ]
 
   @typedoc "A build tool argus knows."
   @type kind :: :mix | :rebar3 | :gleam | :erlang_mk | :beams
@@ -44,7 +58,8 @@ defmodule Argus.Project do
   program's source directories with its ebin and its language, for
   `stale/1`; `generated` matches the modules the build tool writes
   itself (Gleam's `<package>@@main`), which are watched but never
-  analyzed, as `ignore: [modules: ...]` would leave them.
+  analyzed, as `ignore: [modules: ...]` would leave them; `siblings`
+  names the dependencies that are applications of the project's own.
   """
   @type t :: %__MODULE__{
           kind: kind(),
@@ -54,7 +69,8 @@ defmodule Argus.Project do
           state_dir: Path.t(),
           build: String.t() | nil,
           sources: [{Path.t(), Path.t(), :erlang | :gleam}],
-          generated: [Regex.t()]
+          generated: [Regex.t()],
+          siblings: [atom()]
         }
 
   @typedoc """

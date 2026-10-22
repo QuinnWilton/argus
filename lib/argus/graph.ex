@@ -335,6 +335,23 @@ defmodule Argus.Graph do
   defdelegate set_priors(db, program, config), to: Priors, as: :sync
 
   @doc """
+  Sets which of the program's modules are a fetched dependency's
+  (`dependency_module`, `Argus.Schema.Project`): none, every module the
+  program's own, unless a frontend says so.
+  """
+  @spec set_dependencies(Roux.Database.t(), term(), [module()]) :: :ok
+  def set_dependencies(db, program, modules) do
+    rows = modules |> Enum.map(&[inspect(&1)]) |> Enum.sort() |> Enum.dedup()
+
+    Input.set(
+      db,
+      :project,
+      {program, :dependency_module},
+      IO.iodata_to_binary(Argus.Tsv.encode(rows))
+    )
+  end
+
+  @doc """
   Each of `analyses` placed (`Argus.Graph.Locate`'s `located`), solved
   side by side: `{:ok, [Argus.Located]}` or why the analysis degraded.
   An analysis that raises — rules and code out of step, a bug — is

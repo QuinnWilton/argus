@@ -33,8 +33,11 @@ defmodule Argus.Graph.Inputs do
       (`Argus.Graph.Programs`).
     * `priors` (`{program, relation}`) — a layer-3 relation's rows as
       the text an engine reads, empty when priors are off.
+    * `project` (`{program, relation}`) — a layer-4 relation's rows
+      (`Argus.Schema.Project`) as the text an engine reads, empty when
+      unset.
 
-  Durability: `program`, `beam` and `priors` move with the project and
+  Durability: `program`, `beam`, `priors` and `project` move with the project and
   are `:medium`; the rest move with the toolchain and are `:high`, so a
   project edit never walks what only they reach. Nothing here is `:low`:
   durability propagates as the minimum, and a `:low` entry is never
@@ -46,6 +49,7 @@ defmodule Argus.Graph.Inputs do
   definput(:program, durability: :medium)
   definput(:beam, durability: :medium)
   definput(:priors, durability: :medium)
+  definput(:project, durability: :medium)
   definput(:project_root, durability: :high)
   definput(:specs_source, durability: :high)
   definput(:code_index, durability: :high)

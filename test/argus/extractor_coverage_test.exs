@@ -71,6 +71,9 @@ defmodule Argus.ExtractorCoverageTest do
     # Argus.ExtractorRelationsTest's to check, and an empty prior is the
     # documented meaning of "priors off", not a clean zero in disguise.
     priors = Schema.layer_3() |> Enum.map(& &1.name) |> MapSet.new()
+    # A project fact is set by the frontend; empty means every module is
+    # the program's own, which is what a run without a project is.
+    project = Schema.layer_4() |> Enum.map(& &1.name) |> MapSet.new()
     outputs = extractor_outputs()
     staged = Analysis.points_to_relations()
     {:ok, stage_reads} = Argus.FlowLog.input_relations(Analysis.points_to_rules_path())
@@ -90,6 +93,7 @@ defmodule Argus.ExtractorCoverageTest do
           atom = String.to_atom(relation),
           not MapSet.member?(layer_1, atom),
           not MapSet.member?(priors, atom),
+          not MapSet.member?(project, atom),
           not MapSet.member?(@derived, atom),
           not MapSet.member?(@instrumentation, atom),
           not MapSet.member?(produced, atom) do

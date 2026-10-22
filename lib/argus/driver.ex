@@ -94,7 +94,7 @@ defmodule Argus.Driver do
     try do
       db = session.db
 
-      %{modules: discovered, ignored: ignored, duplicates: duplicates} =
+      %{modules: discovered, ignored: ignored, duplicates: duplicates, dependencies: fetched} =
         Argus.Project.Scan.scan(config, project)
 
       files =
@@ -119,6 +119,7 @@ defmodule Argus.Driver do
         |> Enum.sort()
 
       :ok = Input.set(db, :program, @program, keys)
+      :ok = Graph.set_dependencies(db, @program, fetched)
 
       _moved =
         Graph.set_environment(db,

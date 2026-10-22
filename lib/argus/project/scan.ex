@@ -33,13 +33,15 @@ defmodule Argus.Project.Scan do
   @typedoc """
   A project's scan, with the applications whose ebins it read (`apps`):
   the scan watches their beams, so the environment fingerprint leaves
-  them out.
+  them out; and the modules analyzed from a fetched dependency's ebin
+  (`dependencies`: not the program's, nor a sibling's, `Argus.Project`).
   """
   @type project_scan :: %{
           modules: %{optional(module()) => String.t()},
           ignored: %{optional(module()) => String.t()},
           duplicates: [duplicate()],
-          apps: [atom()]
+          apps: [atom()],
+          dependencies: [module()]
         }
 
   @doc """
@@ -56,10 +58,25 @@ defmodule Argus.Project.Scan do
   def scan(%Argus.Config{} = config, %Argus.Project{} = project) do
     ebins = if config.include_deps, do: project.apps ++ project.deps, else: project.apps
 
-    ebins
-    |> Enum.map(&elem(&1, 1))
-    |> discover(config.ignore_modules ++ project.generated)
+    found =
+      ebins
+      |> Enum.map(&elem(&1, 1))
+      |> discover(config.ignore_modules ++ project.generated)
+
+    fetched =
+      for {name, ebin} <- ebins -- project.apps,
+          name not in project.siblings,
+          into: MapSet.new(),
+          do: Path.expand(ebin)
+
+    dependencies =
+      for {module, path} <- found.modules,
+          MapSet.member?(fetched, path |> Path.expand() |> Path.dirname()),
+          do: module
+
+    found
     |> Map.put(:apps, ebins |> Enum.map(&elem(&1, 0)) |> Enum.uniq())
+    |> Map.put(:dependencies, Enum.sort(dependencies))
   end
 
   @doc """

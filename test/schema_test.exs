@@ -39,7 +39,7 @@ defmodule Argus.SchemaTest do
     test "every relation has required keys" do
       for rel <- Schema.all() do
         assert is_atom(rel.name), "relation name must be an atom: #{inspect(rel)}"
-        assert rel.layer in [1, 2, 3], "layer must be 1, 2 or 3: #{inspect(rel.name)}"
+        assert rel.layer in [1, 2, 3, 4], "layer must be 1 to 4: #{inspect(rel.name)}"
         assert is_list(rel.fields), "fields must be a list: #{inspect(rel.name)}"
         assert rel.fields != [], "fields must be non-empty: #{inspect(rel.name)}"
         assert is_binary(rel.doc), "doc must be a string: #{inspect(rel.name)}"

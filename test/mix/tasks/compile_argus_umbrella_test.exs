@@ -30,6 +30,27 @@ defmodule Mix.Tasks.Compile.ArgusUmbrellaTest do
     %{copy: copy, peer: Peer.start!()}
   end
 
+  test "a child's siblings in the umbrella are the project's own, from either directory", %{
+    copy: copy,
+    peer: peer
+  } do
+    siblings = fn ->
+      Mix.Project.in_project(:a, Path.join(copy, "apps/a"), fn _module ->
+        Argus.Project.Mix.current().siblings
+      end)
+    end
+
+    # From the child's own directory, its in_umbrella dependency says so;
+    # from the umbrella's root, Mix knows the parent too.
+    assert Peer.apply(peer, Kernel, :apply, [siblings, []]) == [:b]
+
+    assert Peer.apply(peer, Mix.Project, :in_project, [
+             :argus_umbrella_fixture,
+             copy,
+             fn _module -> siblings.() end
+           ]) == [:b]
+  end
+
   test "compiles from the umbrella root and analyzes the child per app", %{
     copy: copy,
     peer: peer

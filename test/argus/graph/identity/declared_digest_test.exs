@@ -27,7 +27,7 @@ defmodule Argus.Graph.Identity.DeclaredDigestTest do
   # Minutes under a full suite's load.
   @moduletag timeout: 600_000
 
-  @generated ~w(base.dl layer2.dl priors.dl)
+  @generated ~w(base.dl layer2.dl priors.dl project.dl)
 
   setup_all do
     {:ok, analyses} = Argus.Analysis.set(:all)

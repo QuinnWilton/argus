@@ -6,7 +6,7 @@ defmodule Argus.Dl.Program do
   that name what decides a solve's outputs.
 
   `declared_digest/2` counts a file of declarations alone (argus's
-  generated `base.dl`, `layer2.dl`, `priors.dl`) only by the
+  generated `base.dl`, `layer2.dl`, `priors.dl`, `project.dl`) only by the
   declarations of the relations the program loads: FlowLog prunes an
   input no rule that reaches an output reads before it plans anything,
   so a relation added to the schema, or another relation's prose,

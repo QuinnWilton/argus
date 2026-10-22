@@ -10,7 +10,9 @@ are part of the model: a finding explains evidence, not every possible execution
 ## Facts, rules and findings
 
 - `lib/argus/schema/` defines relation names, columns, types and documentation.
-- `priv/dl/base.dl`, `layer2.dl` and `priors.dl` are generated schema declarations.
+- `priv/dl/base.dl`, `layer2.dl`, `priors.dl` and `project.dl` are generated schema
+  declarations. `project.dl` holds what the build tool says about the modules
+  (`dependency_module`), set by the frontend rather than extracted.
 - `priv/dl/stage0.dl` derives shared call information.
 - `priv/dl/points_to.dl` resolves process and table flow for later analyses.
 - `priv/dl/values.dl` resolves which literals each parameter may hold, which

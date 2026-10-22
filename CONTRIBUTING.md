@@ -319,7 +319,7 @@ The extra wiring depends on what you add:
 
 After changing built-in relations or inputs, run `mix argus.gen.dl` and
 `mix argus.pins`, then review the generated diff. The schema owns the declarations;
-edit it rather than the generated `base.dl`, `layer2.dl` or `priors.dl`.
+edit it rather than the generated `base.dl`, `layer2.dl`, `priors.dl` or `project.dl`.
 
 Most finding changes involve a fixture and a rules file. Work that changes
 extraction, caching or integrations needs additional checks. The repository's

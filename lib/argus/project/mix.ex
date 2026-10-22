@@ -4,7 +4,10 @@ defmodule Argus.Project.Mix do
   argus`. The program is the current project's compile path (an
   umbrella's children each run on their own: the compiler is
   recursive), its dependencies the build's other ebins, and the state
-  Mix's manifest path, beside the compilers' own manifests.
+  Mix's manifest path, beside the compilers' own manifests. An umbrella
+  child's siblings (`in_umbrella: true`, at `../app` beside it) are
+  dependencies of its build, and the project's own applications
+  (`siblings`).
 
   The escript does not analyze a Mix project: `mix argus` runs in the
   project's own VM, with its own Elixir, and compiles it first.
@@ -76,7 +79,37 @@ defmodule Argus.Project.Mix do
           |> Argus.Project.lib_ebins()
           |> Enum.reject(fn {_name, ebin} -> ebin == compile_path end),
       state_dir: Keyword.get(opts, :state_dir) || Mix.Project.manifest_path(),
-      build: "mix compile"
+      build: "mix compile",
+      siblings: siblings()
     }
   end
+
+  # An umbrella child's dependencies in the umbrella: Mix makes
+  # `in_umbrella: true` a path dependency on `../app`, beside the child.
+  # A child Mix runs from the umbrella's root knows its parent; one run
+  # from its own directory knows only its dependencies.
+  defp siblings do
+    config = Mix.Project.config()
+
+    in_umbrella? =
+      Mix.Project.parent_umbrella_project_file() != nil or
+        Enum.any?(config[:deps] || [], &in_umbrella?/1)
+
+    if in_umbrella? do
+      apps_dir = Mix.Project.project_file() |> Path.dirname() |> Path.dirname()
+
+      for {app, dest} <- Mix.Project.deps_paths(),
+          Path.dirname(Path.expand(dest)) == apps_dir,
+          do: app
+    else
+      []
+    end
+  end
+
+  defp in_umbrella?({_app, opts}) when is_list(opts), do: Keyword.get(opts, :in_umbrella, false)
+
+  defp in_umbrella?({_app, _requirement, opts}) when is_list(opts),
+    do: Keyword.get(opts, :in_umbrella, false)
+
+  defp in_umbrella?(_dep), do: false
 end

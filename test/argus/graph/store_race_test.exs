@@ -66,6 +66,7 @@ defmodule Argus.Graph.StoreRaceTest do
     .include "#{Argus.Dl.path("base.dl")}"
     .include "#{Argus.Dl.path("layer2.dl")}"
     .include "#{Argus.Dl.path("priors.dl")}"
+    .include "#{Argus.Dl.path("project.dl")}"
     .decl nonempty(relation: symbol)
     .output nonempty
     #{Enum.join(rules, "\n")}

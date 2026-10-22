@@ -16,8 +16,9 @@ defmodule Argus.Graph.Relations do
     * `relation({program, relation})` — one relation's digest, the grain
       a solve's inputs are named at: a relation an edit did not touch
       comes out equal here, and nothing that reads it runs. A layer-3
-      relation (a prior, `Argus.Priors`) is the `priors` input's text;
-      one no module has rows for is the empty relation.
+      relation (a prior, `Argus.Priors`) is the `priors` input's text,
+      a layer-4 one (`Argus.Schema.Project`) the `project` input's; one
+      no module has rows for is the empty relation.
 
   A relation's file is the concatenation of its modules' chunks, in the
   program's order, and never exists until a solve that is not kept
@@ -72,24 +73,31 @@ defmodule Argus.Graph.Relations do
   defp module_digests(%{relations: relations}, :module_in_process), do: relations
 
   defquery :relation, key: {program, relation}, returns: String.t() do
-    cond do
-      prior?(relation) ->
-        text = Runtime.input(db, :priors, {program, relation}, default: "")
-        if text == "", do: @empty, else: "priors:" <> sha(text)
+    case layer(relation) do
+      {:input, input} ->
+        text = Runtime.input(db, input, {program, relation}, default: "")
+        if text == "", do: @empty, else: "#{input}:" <> sha(text)
 
-      in_process?(relation) ->
-        db |> Runtime.query(:program_in_process, program) |> Map.get(relation, @empty)
-
-      true ->
-        db |> Runtime.query(:program_relations, program) |> Map.get(relation, @empty)
+      :facts ->
+        if in_process?(relation),
+          do: db |> Runtime.query(:program_in_process, program) |> Map.get(relation, @empty),
+          else: db |> Runtime.query(:program_relations, program) |> Map.get(relation, @empty)
     end
   end
 
   defp in_process?(relation), do: relation in Argus.Schema.in_process_only()
 
-  # Whether `relation` is a prior, reading that relation's entry alone:
-  # the whole of layer 3 moves with any prior's prose.
-  defp prior?(relation), do: match?({:ok, %{layer: 3}}, Argus.Schema.fetch(relation))
+  # The input a relation's rows are set in (a prior's, a project
+  # fact's), or `:facts` for one the modules' extraction makes; reading
+  # that relation's entry alone: the whole of a layer moves with any of
+  # its relations' prose.
+  defp layer(relation) do
+    case Argus.Schema.fetch(relation) do
+      {:ok, %{layer: 3}} -> {:input, :priors}
+      {:ok, %{layer: 4}} -> {:input, :project}
+      _ -> :facts
+    end
+  end
 
   defp merkle(digests) do
     digests
@@ -172,16 +180,16 @@ defmodule Argus.Graph.Relations do
 
   defp assemble(db, program, missing, producers) do
     store = db.blob
-    {priors, facts} = Enum.split_with(missing, fn {_r, digest} -> prior_digest?(digest) end)
+    {inputs, facts} = Enum.split_with(missing, fn {_r, digest} -> input_digest?(digest) end)
 
     {in_process, facts} =
       Enum.split_with(facts, fn {_r, digest} -> in_process_digest?(digest) end)
 
-    with {:ok, from_priors} <- priors_files(db, program, priors),
+    with {:ok, from_inputs} <- input_files(db, program, inputs),
          {:ok, from_facts} <- facts_files(db, program, facts, producers, :module_facts),
          {:ok, from_in_process} <-
            facts_files(db, program, in_process, producers, :module_in_process) do
-      made = from_priors |> Map.merge(from_facts) |> Map.merge(from_in_process)
+      made = from_inputs |> Map.merge(from_facts) |> Map.merge(from_in_process)
 
       for {relation, digest} <- missing,
           do:
@@ -192,16 +200,20 @@ defmodule Argus.Graph.Relations do
     end
   end
 
-  defp prior_digest?("priors:" <> _), do: true
-  defp prior_digest?(_digest), do: false
+  defp input_digest?("priors:" <> _), do: true
+  defp input_digest?("project:" <> _), do: true
+  defp input_digest?(_digest), do: false
 
   defp in_process_digest?("in-process:" <> _), do: true
   defp in_process_digest?(_digest), do: false
 
-  defp priors_files(db, program, priors) do
-    Enum.reduce_while(priors, {:ok, %{}}, fn {relation, _digest}, {:ok, acc} ->
+  # The relations set as an input's text (`relation/2`'s `{:input, _}`).
+  defp input_files(db, program, relations) do
+    Enum.reduce_while(relations, {:ok, %{}}, fn {relation, _digest}, {:ok, acc} ->
+      {:input, input} = layer(relation)
+
       text =
-        Runtime.untracked(fn -> Runtime.input(db, :priors, {program, relation}, default: "") end)
+        Runtime.untracked(fn -> Runtime.input(db, input, {program, relation}, default: "") end)
 
       case Blob.put(db.blob, text) do
         {:ok, file} -> {:cont, {:ok, Map.put(acc, relation, file)}}

@@ -16,6 +16,10 @@
 // for every program; rules may use them only as positive premises.
 .include "../priors.dl"
 
+// Layer-4 project facts say what the build tool says about the modules (whose code
+// each is). Empty without a project: every module is the program's own.
+.include "../project.dl"
+
 // Call graph, derived once by stage0.dl.
 .decl call_edge(caller: symbol, callee: symbol) mutable
 .input call_edge

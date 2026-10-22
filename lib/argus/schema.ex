@@ -10,6 +10,9 @@ defmodule Argus.Schema do
 
   - **Layer 1** — generic bytecode facts extracted from any BEAM module.
   - **Layer 2** — domain-specific facts from pluggable extractors.
+  - **Layer 3** — priors, a classifier's answers (`Argus.Priors`).
+  - **Layer 4** — the project: what its build tool says about the
+    modules, which no beam does (`Argus.Schema.Project`).
 
   ## Reading the schema
 
@@ -43,7 +46,7 @@ defmodule Argus.Schema do
 
   @type relation :: %{
           name: atom(),
-          layer: 1 | 2 | 3,
+          layer: 1 | 2 | 3 | 4,
           fields: [field()],
           doc: String.t()
         }
@@ -55,7 +58,7 @@ defmodule Argus.Schema do
   """
   @type declaration :: %{
           required(:name) => atom(),
-          required(:layer) => 1 | 2 | 3,
+          required(:layer) => 1 | 2 | 3 | 4,
           required(:fields) => [field()],
           required(:doc) => String.t(),
           optional(:in_process) => true
@@ -91,7 +94,8 @@ defmodule Argus.Schema do
     Argus.Schema.Dependence,
     Argus.Schema.Effects,
     Argus.Schema.Coverage,
-    Argus.Schema.Priors
+    Argus.Schema.Priors,
+    Argus.Schema.Project
   ]
 
   @declared Enum.flat_map(@concerns, & &1.relations())
@@ -100,6 +104,7 @@ defmodule Argus.Schema do
   @layer_1_relations Enum.filter(@all_relations, &(&1.layer == 1))
   @layer_2_relations Enum.filter(@all_relations, &(&1.layer == 2))
   @layer_3_relations Enum.filter(@all_relations, &(&1.layer == 3))
+  @layer_4_relations Enum.filter(@all_relations, &(&1.layer == 4))
 
   # Layer-1 relations no program of argus's reads. They exist for the
   # in-process passes over a module's typed facts — `Argus.Cfg`,
@@ -154,6 +159,14 @@ defmodule Argus.Schema do
   def layer_3, do: Reads.record("layer_3", @layer_3_relations)
 
   @doc """
+  Returns layer 4 (project) relation definitions: facts a frontend
+  supplies from the build tool, not an extractor. See
+  `Argus.Schema.Project`.
+  """
+  @spec layer_4() :: [relation()]
+  def layer_4, do: Reads.record("layer_4", @layer_4_relations)
+
+  @doc """
   Looks up a relation by name.
   """
   @spec fetch(atom()) :: {:ok, relation()} | :error
@@ -189,10 +202,10 @@ defmodule Argus.Schema do
   exists to remove: the declarations are positional, and FlowLog will not
   notice a field reordered against what the emitter actually writes.
 
-  `layer` is `:layer_1`, `:layer_2`, `:layer_3`, or `:all`.
+  `layer` is `:layer_1`, `:layer_2`, `:layer_3`, `:layer_4`, or `:all`.
   """
-  @spec datalog_decls(:layer_1 | :layer_2 | :layer_3 | :all) :: String.t()
-  def datalog_decls(layer) when layer in [:layer_1, :layer_2, :layer_3, :all],
+  @spec datalog_decls(:layer_1 | :layer_2 | :layer_3 | :layer_4 | :all) :: String.t()
+  def datalog_decls(layer) when layer in [:layer_1, :layer_2, :layer_3, :layer_4, :all],
     do: Reads.record("datalog_decls #{layer}", render_decls(layer))
 
   defp render_decls(layer) do
@@ -207,6 +220,10 @@ defmodule Argus.Schema do
         :layer_3 ->
           {@layer_3_relations, "Layer 3 — priors, a classifier's answers",
            "Argus.Schema.layer_3/0"}
+
+        :layer_4 ->
+          {@layer_4_relations, "Layer 4 — the project, what its build tool says",
+           "Argus.Schema.layer_4/0"}
 
         :all ->
           {@all_relations, "All fact relations", "Argus.Schema.all/0"}
@@ -295,6 +312,7 @@ defmodule Argus.Schema do
       ["layer_1"] -> layer_1()
       ["layer_2"] -> layer_2()
       ["layer_3"] -> layer_3()
+      ["layer_4"] -> layer_4()
       ["names"] -> names()
       ["in_process_only"] -> in_process_only()
       ["fetch", name] -> by_name(read, name, &fetch/1)
@@ -312,7 +330,7 @@ defmodule Argus.Schema do
   end
 
   defp reread_decls(read, layer) do
-    case Enum.find([:layer_1, :layer_2, :layer_3, :all], &(Atom.to_string(&1) == layer)) do
+    case Enum.find([:layer_1, :layer_2, :layer_3, :layer_4, :all], &(Atom.to_string(&1) == layer)) do
       nil -> {:unknown_read, read}
       layer -> datalog_decls(layer)
     end

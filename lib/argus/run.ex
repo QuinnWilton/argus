@@ -24,6 +24,10 @@ defmodule Argus.Run do
   `:priors` and `:priors_opts` (`Argus.Findings.run/2`):
 
     * `:store` — the blob store: a `Roux.Blob`, or the root of one.
+    * `:dependencies` — the modules among the program's that are a
+      fetched dependency's, not the program's own code
+      (`dependency_module`, `Argus.Schema.Project`): what `mix argus`
+      says with `include_deps`. None by default.
     * `:manifest` — where the graph is kept between calls: the call
       restores it, and keeps it there after (`Roux.Session`). A beam
       whose file has not moved is not read again, and only what an edit
@@ -184,6 +188,7 @@ defmodule Argus.Run do
           )
 
         :ok = Graph.set_priors(db, @program, priors(opts))
+        :ok = Graph.set_dependencies(db, @program, Keyword.get(opts, :dependencies, []))
         answer = fun.(db)
         {_status, _session} = Roux.Session.commit(session, meta)
         answer

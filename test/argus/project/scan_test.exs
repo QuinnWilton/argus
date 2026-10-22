@@ -55,6 +55,29 @@ defmodule Argus.Project.ScanTest do
 
       both = Scan.scan(Argus.Config.load(include_deps: true), project)
       assert {both.modules, both.apps} == {%{Own => own, dep_mod: dep}, [:app, :dep]}
+      assert {alone.dependencies, both.dependencies} == {[], [:dep_mod]}
+    end
+
+    test "a sibling's modules are no fetched dependency's", %{tmp_dir: dir} do
+      beam!(Path.join(dir, "web/ebin"), Elixir.Web)
+      beam!(Path.join(dir, "core/ebin"), Elixir.Core)
+      beam!(Path.join(dir, "dep/ebin"), :dep_mod)
+      # The program's own copy of a module a dependency also defines.
+      beam!(Path.join(dir, "web/ebin"), :shared)
+      beam!(Path.join(dir, "dep/ebin"), :shared)
+
+      project = %Argus.Project{
+        kind: :mix,
+        root: dir,
+        apps: [{:web, Path.join(dir, "web/ebin")}],
+        deps: [{:core, Path.join(dir, "core/ebin")}, {:dep, Path.join(dir, "dep/ebin")}],
+        state_dir: Path.join(dir, ".argus"),
+        siblings: [:core]
+      }
+
+      scan = Scan.scan(Argus.Config.load(include_deps: true), project)
+      assert Enum.sort(Map.keys(scan.modules)) == [Core, Web, :dep_mod, :shared]
+      assert scan.dependencies == [:dep_mod]
     end
 
     test "an ignore regex matches a module by its Elixir or its Erlang name", %{tmp_dir: dir} do

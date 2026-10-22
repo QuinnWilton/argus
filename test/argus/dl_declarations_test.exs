@@ -34,9 +34,14 @@ defmodule Argus.DlDeclarationsTest do
              "priv/dl/priors.dl is stale — run `mix argus.gen.dl` and commit the result"
     end
 
+    test "project.dl matches Argus.Schema.layer_4/0" do
+      assert File.read!(Path.join(priv_dl(), "project.dl")) == Schema.datalog_decls(:layer_4),
+             "priv/dl/project.dl is stale — run `mix argus.gen.dl` and commit the result"
+    end
+
     test "every schema relation is declared exactly once across the generated files" do
       declared =
-        [:layer_1, :layer_2, :layer_3]
+        [:layer_1, :layer_2, :layer_3, :layer_4]
         |> Enum.flat_map(fn layer ->
           Regex.scan(~r/^\.decl\s+([a-z_0-9]+)\(/m, Schema.datalog_decls(layer))
           |> Enum.map(fn [_, name] -> String.to_atom(name) end)
@@ -49,7 +54,7 @@ defmodule Argus.DlDeclarationsTest do
 
   describe "hand-written declarations" do
     test "no rules file redeclares a schema relation" do
-      generated = ["base.dl", "layer2.dl", "priors.dl"]
+      generated = ["base.dl", "layer2.dl", "priors.dl", "project.dl"]
       schema_names = MapSet.new(Schema.names(), &to_string/1)
 
       offenders =
