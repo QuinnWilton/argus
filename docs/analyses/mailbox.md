@@ -171,7 +171,11 @@ the actual task protocol.
 | `statem_unreplied` | A gen_statem call path returns without replying, postponing or passing from onward. |
 
 A deferred reply needs an address retained for later use. A missing reply leaves the
-caller waiting until its timeout, potentially forever for gen_statem calls. Reading
+caller waiting until its timeout, potentially forever for gen_statem calls. A gen_statem
+call no clause expects falls to a clause that takes it by `_`: the finding is placed at
+a line its body passes, or at the state function when the clause calls nothing. With
+state enter calls, a state whose every enter call stops the machine handles no call
+and is not reported. Reading
 or forwarding from is only evidence that a later reply is possible, not proof it
 will happen. Dynamic request targets, targets the selective points-to stage's
 field-insensitive pass resolves to more than the module's own servers, and broad tag matching can hide
