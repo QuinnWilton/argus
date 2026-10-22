@@ -98,21 +98,9 @@ defmodule Argus.Schema.GenStatem do
         doc: """
         A helper's `{:next_state, target, ...}` whose target is its parameter at \
         `pos`, directly or through a helper it hands that parameter on to. Its callers \
-        name the state (`statem_target_arg`); no transition of its own is emitted.
+        name the state (the values stage's `param_origin`); no transition of its own \
+        is emitted.
         """
-      },
-      %{
-        name: :statem_target_arg,
-        layer: 2,
-        fields: [
-          {:mod, :symbol, "module name"},
-          {:caller, :symbol, "the function making the call"},
-          {:callee, :symbol, "a function with a statem_target_param"},
-          {:pos, :symbol, "the callee's target parameter position"},
-          {:kind, :symbol, "literal | param | dynamic"},
-          {:value, :symbol, "the state, the caller's own parameter position, or empty"}
-        ],
-        doc: "What a local call hands a helper in its target parameter."
       },
       %{
         name: :statem_returns_call,

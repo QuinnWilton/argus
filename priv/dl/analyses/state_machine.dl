@@ -93,34 +93,61 @@ has_dynamic_transition(mod) :-
 
 has_dynamic_transition(mod) :- unknown_handed_target(mod, _, _).
 
-// An exported helper taking its target from a parameter may be handed any state by
-// another module.
+// A helper taking its target from a parameter whose callers are not all seen (an
+// export, a fun, an apply), or not all literal, may be handed any state (the values
+// stage's param_complete).
 has_dynamic_transition(mod) :-
-  statem_target_param(mod, h, _),
-  function_def(h, mod, _, _, 1).
+  statem_target_param(mod, h, k),
+  !param_complete(h, k).
 
 // ── Targets a helper's callers hand it ───────────────────────────
 
 // A helper whose next_state target is its parameter (ra's `next_state(follower, State,
 // Actions)`) enters the state each local call hands it there: the calling function may
-// return that transition.
+// return that transition. The literal is the one the caller spells, through any chain
+// of helpers handing it on (the values stage's param_origin).
 .decl handed_target(mod: symbol, caller: symbol, callee: symbol, to: symbol)
 
-handed_target(mod, c, h, to) :-
-  statem_target_arg(mod, c, h, k, "literal", to),
-  statem_target_param(mod, h, k).
+handed_target(mod, c, h, to) :- handed_literal(mod, c, h, lit), state_literal(mod, lit, to).
 
-// A call whose target argument no literal names: a computed one, or a parameter of a
-// function whose own callers do not choose it (a state function's event content).
+// The literal `caller`'s call hands `callee`'s target parameter.
+.decl handed_literal(mod: symbol, caller: symbol, callee: symbol, literal: symbol)
+
+handed_literal(mod, c, h, lit) :-
+  statem_target_param(mod, h, k),
+  param_origin(h, k, c, site, lit),
+  call_instr(c, h, site).
+
+// A literal naming a state of the module: the atom its function is named by
+// (`:follower` names `follower`). Any other names no state the graph knows.
+.decl state_literal(mod: symbol, literal: symbol, state: symbol)
+
+state_literal(mod, lit, to) :-
+  handed_literal(mod, _, _, lit),
+  statem_state(mod, to, _),
+  lit = cat(":", to).
+
+// A call whose target argument no state names: a computed one, a literal naming no
+// state of the module, or a parameter of a function whose own callers do not choose
+// it (a state function's event content).
 .decl unknown_handed_target(mod: symbol, caller: symbol, callee: symbol)
 
-unknown_handed_target(mod, c, h) :-
-  statem_target_arg(mod, c, h, k, "dynamic", _),
-  statem_target_param(mod, h, k).
+unknown_handed_target(mod, c, h) :- handed_literal(mod, c, h, lit), !state_literal(mod, lit, _).
 
 unknown_handed_target(mod, c, h) :-
-  statem_target_arg(mod, c, h, k, "param", j),
   statem_target_param(mod, h, k),
+  call_instr(c, h, site),
+  !call_arg_var(site, c, h, k, "call", _, _).
+
+unknown_handed_target(mod, c, h) :-
+  statem_target_param(mod, h, k),
+  call_arg_var(_, c, h, k, "call", sk, _),
+  sk != "literal",
+  sk != "param".
+
+unknown_handed_target(mod, c, h) :-
+  statem_target_param(mod, h, k),
+  call_arg_var(_, c, h, k, "call", "param", j),
   !statem_target_param(mod, c, j).
 
 // Ignore graph self-loops

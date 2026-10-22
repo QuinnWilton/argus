@@ -41,10 +41,8 @@ defmodule Argus.Extractors.GenStatem do
     that is not a state function returns on a state's behalf
   - `statem_target_param(mod, func, pos)` — a function that is not a state
     function returns `{:next_state, target, ...}` with its parameter `pos`
-    as the target, directly or through a helper it hands that parameter on to
-  - `statem_target_arg(mod, caller, callee, pos, kind, value)` — what a
-    local call hands such a function there: a `literal` state, a `param`
-    of the caller's own (`value` its position), or `dynamic`
+    as the target, directly or through a helper it hands that parameter on
+    to; what its callers hand it there is the values stage's `param_origin`
   - `statem_returns_call(mod, func, callee)` — a function that may return
     what a call returns (a tail call, a call's result, a throw): the local
     callee, or `dynamic`
@@ -103,7 +101,6 @@ defmodule Argus.Extractors.GenStatem do
       :statem_module,
       :statem_returns_call,
       :statem_state,
-      :statem_target_arg,
       :statem_target_param,
       :statem_timeout,
       :statem_transition
@@ -513,45 +510,18 @@ defmodule Argus.Extractors.GenStatem do
   end
 
   # A helper that takes its target from a parameter enters what its
-  # callers hand it there: the parameter (statem_target_param), and each
-  # local call's argument (statem_target_arg), in place of a dynamic
-  # transition of its own.
-  defp target_args(facts, mod, mod_str, functions, state_set) do
+  # callers hand it there (the values stage's param_origin), in place of
+  # a dynamic transition of its own: the parameter, for the rules to ask.
+  defp target_params_facts(facts, mod, mod_str, functions, state_set) do
     params = Map.drop(target_params(mod, functions), MapSet.to_list(state_set))
-    id = fn {name, arity} -> InstrId.func_id(mod, name, arity) end
 
-    facts =
-      for {fa, ks} <- params, k <- ks, reduce: facts do
-        acc -> add_fact(acc, :statem_target_param, [mod_str, id.(fa), to_string(k)])
-      end
-
-    for {caller, instrs, idx, callee} <- local_calls(mod, functions),
-        k <- Map.get(params, callee, []),
-        reduce: facts do
+    for {{name, arity}, ks} <- params, k <- ks, reduce: facts do
       acc ->
-        {kind, value} = target_arg(instrs, idx, k)
-
-        add_fact(acc, :statem_target_arg, [
+        add_fact(acc, :statem_target_param, [
           mod_str,
-          id.(caller),
-          id.(callee),
-          to_string(k),
-          kind,
-          value
+          InstrId.func_id(mod, name, arity),
+          to_string(k)
         ])
-    end
-  end
-
-  defp target_arg(instrs, idx, k) do
-    case Resolve.arg_position(instrs, idx, {:x, k}) do
-      {:ok, j} ->
-        {"param", to_string(j)}
-
-      _ ->
-        case Resolve.resolve_register(instrs, idx, {:x, k}) do
-          {:ok, state} when is_atom(state) and state != :dynamic -> {"literal", to_string(state)}
-          _ -> {"dynamic", ""}
-        end
     end
   end
 
@@ -671,7 +641,7 @@ defmodule Argus.Extractors.GenStatem do
 
     state_set = MapSet.new(state_funs, fn {:function, name, arity, _, _} -> {name, arity} end)
     labels = function_labels(functions)
-    facts = target_args(facts, mod, mod_str, functions, state_set)
+    facts = target_params_facts(facts, mod, mod_str, functions, state_set)
 
     Enum.reduce(functions, facts, fn {:function, name, arity, _, instrs} = function, acc ->
       acc =
@@ -698,7 +668,7 @@ defmodule Argus.Extractors.GenStatem do
       case elements do
         [{:atom, :next_state}, target | _] ->
           if parameter?(instrs, idx, target) do
-            # Its callers name the target (target_args).
+            # Its callers name the target (target_params_facts).
             acc
           else
             to_state = resolve_element_value(target)

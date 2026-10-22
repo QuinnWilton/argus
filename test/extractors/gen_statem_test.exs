@@ -80,18 +80,17 @@ defmodule Argus.Extractors.GenStatemTest do
       refute Enum.any?(calls, fn {func, _} -> func in ["connecting/3", "disconnected/3"] end)
     end
 
-    test "a helper whose target is its parameter is handed the state by its callers" do
+    # What the callers hand such a helper is the values stage's
+    # (param_origin); the analysis tests resolve it.
+    test "a helper whose target is its parameter names the parameter, not a transition" do
       facts = GenStatem.extract(disassemble(Argus.Test.Fixtures.PrivateHelperStatem))
 
       assert Map.get(facts, :statem_helper_transition, []) == []
       assert [[_mod, func, "1"]] = facts[:statem_target_param]
       assert func =~ ":finalize/3"
-
-      assert [[_mod, caller, ^func, "1", "literal", "idle"]] = facts[:statem_target_arg]
-      assert caller =~ ":running/3"
     end
 
-    test "a target handed through a second helper, or from a caller's parameter" do
+    test "a target parameter handed on to a second helper is one too" do
       facts = GenStatem.extract(disassemble(Argus.Test.Fixtures.TargetParamStatem))
 
       params =
@@ -99,17 +98,6 @@ defmodule Argus.Extractors.GenStatemTest do
             do: {func |> String.split(":") |> List.last(), pos}
 
       assert Enum.sort(params) == [{"next_state/2", "0"}, {"step_down/2", "0"}]
-
-      args =
-        for [_mod, caller, callee, _pos, kind, value] <- facts[:statem_target_arg],
-            do:
-              {caller |> String.split(":") |> List.last(),
-               callee |> String.split(":") |> List.last(), kind, value}
-
-      assert {"step_down/2", "next_state/2", "param", "0"} in args
-      assert {"leader/3", "step_down/2", "literal", "follower"} in args
-      assert {"leader/3", "step_down/2", "literal", "candidate"} in args
-      assert {"follower/3", "next_state/2", "literal", "candidate"} in args
     end
   end
 

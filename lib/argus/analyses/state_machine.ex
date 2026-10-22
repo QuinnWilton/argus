@@ -28,7 +28,14 @@ defmodule Argus.Analyses.StateMachine do
   def rules_file, do: "analyses/state_machine.dl"
 
   @impl true
-  def extractors, do: [Argus.Extractors.GenStatem, Argus.Extractors.Tooling]
+  def extractors,
+    do: [
+      Argus.Extractors.GenStatem,
+      # What a helper's callers hand its target parameter: term-flow's
+      # variables, and the values stage over them.
+      Argus.Extractors.TermFlow,
+      Argus.Extractors.Tooling
+    ]
 
   @impl true
   def output_relations do
