@@ -72,9 +72,13 @@ defmodule Argus.Report.Notice do
       Enum.map(unused_ignores(result, config), &unused_ignore(config, &1))
   end
 
+  # An entry naming a set of analyses is judged only when every one that
+  # ran reported: the one it was written for may be the one that degraded.
   defp unused_ignores(result, config) do
     for %{analyses: analyses} = ignored <- config.ignore_findings,
-        reported <- [for({:ok, located} <- Enum.map(analyses, &result.located[&1]), do: located)],
+        outcomes = Enum.map(analyses, &result.located[&1]),
+        not Enum.any?(outcomes, &match?({:error, _}, &1)),
+        reported = for({:ok, located} <- outcomes, do: located),
         reported != [],
         not Enum.any?(List.flatten(reported), &Argus.Config.ignore_matches?(ignored, &1.finding)),
         do: ignored

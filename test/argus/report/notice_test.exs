@@ -19,4 +19,18 @@ defmodule Argus.Report.NoticeTest do
     assert notice.message =~
              "every term holding a process (3) was resolved field-insensitively"
   end
+
+  test "an ignore entry for a set is not judged when one of its analyses degraded" do
+    config = Argus.Config.load(ignore: [findings: [{:otp, {String, :trim, 1}}]])
+    [%{analyses: analyses}] = config.ignore_findings
+    [degraded | rest] = analyses
+
+    located = Map.new(rest, &{&1, {:ok, []}}) |> Map.put(degraded, {:error, :timeout})
+    result = %Argus.Driver.Result{located: located, notices: [], changed?: false}
+
+    refute Enum.any?(Notice.from_result(result, config, "."), &(&1.kind == :unused_ignore))
+
+    ok = %{result | located: Map.new(analyses, &{&1, {:ok, []}})}
+    assert Enum.any?(Notice.from_result(ok, config, "."), &(&1.kind == :unused_ignore))
+  end
 end
