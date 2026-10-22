@@ -64,16 +64,6 @@ returns_to_key(f, key) :-
   returns_call(g, f),
   returns_to_key(g, key).
 
-// The map key a parameter carries a field of, from the callers that
-// read it and passed it down.
-.decl param_field(func: symbol, pos: number, key: symbol)
-
-param_field(f, pos, key) :- call_arg_field(_, f, pos, key).
-
-param_field(f, pos, key) :-
-  call_arg_forward(g, f, pos, gpos),
-  param_field(g, gpos, key).
-
 // A literal message in a timer targeting self, supplied directly or through a caller's
 // argument.
 .decl armed_message(arm: symbol, message: symbol)
@@ -132,7 +122,8 @@ cancel_site(c, key, id) :- timer_cancel(id, c, "field", key, _).
 
 cancel_site(c, key, id) :-
   timer_cancel(id, c, "param", _, pos),
-  param_field(c, pos, key).
+  param_field(c, p, key),
+  p = to_string(pos).
 
 // Cancellations exempt from stale-message checks:
 // - terminate/2 and exclusively called helpers, through at most one additional helper

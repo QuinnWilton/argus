@@ -73,6 +73,19 @@ in_module(f, m) :- function_def(f, m, _, _, _).
 
 stopping_exit(id, f, t) :- exit_call(id, f, t), t != "self", !exit_reason(id, ":normal").
 
+// Parameter `pos` of `func` holds what some caller read from a map under the literal
+// key `field` (`start_timer(ms, state.ref)`), handed down through any chain of callers
+// forwarding it: which piece of a caller's state a helper is handed.
+.decl param_field(func: symbol, pos: symbol, field: symbol)
+
+param_field(g, p, s) :- call_arg_field(_, g, n, s), p = to_string(n).
+
+param_field(g, p, s) :-
+  call_arg_forward(c, g, n, m),
+  param_field(c, q, s),
+  q = to_string(m),
+  p = to_string(n).
+
 // Full transitive reach over staged call edges, retained for custom programs and pruned
 // when unused. Built-in analyses instead seed targeted propagation to avoid a
 // potentially quadratic closure.

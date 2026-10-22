@@ -324,7 +324,9 @@ open_field(id) :- ets_operation(id, g, _, _, _), ets_table_path(id, "param", p, 
 
 has_table_path(id) :- ets_table_path(id, _, _, _).
 
-// Table parameters of sliced sites' operations, and the parameters forwarding them.
+// Table parameters of sliced sites' operations, and the parameters forwarding them:
+// those param_open asks about. A field a caller reads the table from is param_field's
+// (clientlib/imports.dl).
 .decl field_param_needed(func: symbol, pos: symbol)
 
 field_param_needed(g, p) :-
@@ -337,18 +339,6 @@ field_param_needed(c, to_string(m)) :-
   field_param_needed(g, p),
   call_arg_forward(c, g, n, m),
   p = to_string(n).
-
-// A caller hands the parameter a table it read from a field.
-.decl param_field(func: symbol, pos: symbol, field: symbol)
-
-param_field(g, p, s) :- field_param_needed(g, p), call_arg_field(_, g, n, s), p = to_string(n).
-
-param_field(g, p, s) :-
-  field_param_needed(g, p),
-  call_arg_forward(c, g, n, m),
-  p = to_string(n),
-  param_field(c, q, s),
-  q = to_string(m).
 
 // A caller hands the parameter something no field names, or the parameter has callers
 // out of view.
