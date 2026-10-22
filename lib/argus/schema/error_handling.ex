@@ -448,6 +448,19 @@ defmodule Argus.Schema.ErrorHandling do
         """
       },
       %{
+        name: :error_branch_call,
+        layer: 2,
+        fields: [
+          {:id, :instr_id, "the call (a tail call too)"},
+          {:func, :func_id, "the function making it"}
+        ],
+        doc: """
+        A call the function makes only once a value matched an error: on the branch a \
+        test of `:error` or `{:error, _}` takes, and what that branch dominates \
+        (`Argus.Extractors.ErrorHandling.ErrorBranch`). A timer armed there is a retry.
+        """
+      },
+      %{
         name: :field_value_test,
         layer: 2,
         fields: [

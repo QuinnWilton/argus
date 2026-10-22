@@ -2225,9 +2225,11 @@ statem_info_partial(m, h) :-
 
 // Duplicate periodic timer loops
 //
-// A handle_info clause rearming the same literal message on every continuing path
-// creates a periodic loop. Another repeatable callback arming or self-sending that
-// message can start an additional loop. Conditional retry loops and
+// A handle_info clause rearming the same literal message, directly on every path or
+// through a helper it calls, creates a periodic loop: one that may stop when its work
+// runs out still runs while it has some. Another repeatable callback arming or
+// self-sending that message can start an additional loop. A retry, armed again only on
+// an error branch, a second arm that waits while the loop's ref is held, and
 // once-per-incarnation startup paths are excluded.
 // A discarded reference makes cancellation impossible. A stored reference is safe if
 // the second path cancels it first, or the loop cancels it before every rearm; the
@@ -2296,26 +2298,36 @@ self_timer_tag(mod, tag) :-
   function_def(f, mod, _, _, _).
 
 // What a call the clause of handle_info/2 for `tag` makes on every path
-// runs in the module, on every path too: each step is a call its caller
-// makes on every path through it (unconditional_call_edge). An arm a
-// helper reaches only behind a branch, a retry on a failed start, is no
-// rearm of every tick's (attesto_phoenix's signal sweeper).
+// runs in the module, along calls not made only on an error branch. A
+// helper may arm behind a branch: a loop that stops when its work runs
+// out (sequin's producer, armed again only while demand remains) runs
+// while it has work, and a second arm then starts a chain beside it. An
+// arm reached only once a call failed (`{:error, _} -> retry(state)`) is
+// a retry, armed again only while the work keeps failing
+// (attesto_phoenix's signal sweeper, astarte's reconnect).
 .init tick_path = ForwardIntraModuleSameProcessReachCut
 
 tick_path.root(c, g) :-
   looping_server(mod, h),
   info_clause_always(c, h, tag),
   self_timer_tag(mod, tag),
-  call_instr(h, g, c).
+  call_instr(h, g, c),
+  !error_branch_call(c, h).
 
 tick_path.cut(g, h) :-
   looping_server(mod, _),
   function_def(g, mod, _, _, _),
   call_edge(g, h),
-  !unconditional_call_edge(g, h).
+  !working_call(g, h).
 
-// A periodic rearm for lit on every continuing path of its handle_info clause, directly
-// or through an unconditionally completing helper. `via` identifies the clause's call.
+// `func` calls `callee` somewhere off an error branch (error_branch_call).
+.decl working_call(func: symbol, callee: symbol)
+
+working_call(g, h) :- call_instr(g, h, c), !error_branch_call(c, g).
+
+// A periodic rearm for lit in its handle_info clause: on every continuing path of the
+// clause itself, or in a helper the clause's calls reach, where the arm is unconditional.
+// `via` identifies the clause's call.
 .decl loop_arm(mod: symbol, literal: symbol, site: symbol, func: symbol, via: symbol)
 
 loop_arm(mod, lit, a, h, a) :-
@@ -2383,11 +2395,32 @@ second_arm(mod, lit, e, b, e, b) :-
 second_arm(mod, lit, e, c, g, b) :-
   loop_arm(mod, lit, _, _, _),
   rearm_entry(mod, e),
+  path_arm(e, c, g, b, lit),
+  !tick_clause(c, e, lit),
+  !once_site(c, e).
+
+// What the arm at `arm` in `func`, reached from the callback's call `call`, sends on
+// that path: the literal it names, or, for an arm sending its parameter, a literal a
+// function on the path spells for it (param_origin). A helper its callers arm with
+// several messages arms, on one path, the one that path hands it (nebulex's
+// start_timer/3, armed with :heartbeat by a reset and with :cleanup by the cleanup).
+.decl path_arm(entry: symbol, call: symbol, func: symbol, arm: symbol, literal: symbol)
+
+path_arm(e, c, g, b, lit) :-
+  rearm_entry(_, e),
   call_instr(e, _, c),
   arm_path.reaches(c, g),
   self_arm(b, g, lit),
-  !tick_clause(c, e, lit),
-  !once_site(c, e).
+  !arms_from_param(b, g, _).
+
+path_arm(e, c, g, b, lit) :-
+  rearm_entry(_, e),
+  call_instr(e, _, c),
+  arm_path.reaches(c, g),
+  arms_from_param(b, g, p),
+  self_arm(b, g, lit),
+  param_origin(g, p, s, _, lit),
+  (s = e ; arm_path.reaches(c, s)).
 
 // A callback explicitly invokes the loop's handle_info clause with its message.
 // Recursive entry from the loop itself also adds an arm beside its ordinary rearm.

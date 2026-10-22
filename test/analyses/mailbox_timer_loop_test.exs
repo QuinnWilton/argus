@@ -27,6 +27,8 @@ defmodule Argus.Analyses.MailboxTimerLoopTest do
     T.CastFromInit,
     T.CastFromInitAndApi,
     T.DemandRearm,
+    T.DemandRearmBehindCase,
+    T.ReconnectOnError,
     T.RefGuardedKick,
     T.BroadwayGuard,
     T.ThreeClauseLoop,
@@ -65,6 +67,8 @@ defmodule Argus.Analyses.MailboxTimerLoopTest do
              {"ContinueOnError", ":refresh_topology", "handle_info/2", ""},
              # Each demand arms the receive loop again (sequin#371).
              {"DemandRearm", ":receive_messages", "handle_demand/2", ":receive_timer"},
+             # The same, the loop re-arming only while demand remains.
+             {"DemandRearmBehindCase", ":receive_messages", "handle_demand/2", ":receive_timer"},
              # A cast that runs the loop's clause with its message.
              {"DirectKick", ":poll", "handle_cast/2", ""},
              # One clause re-arms without cancelling the kept ref first,
@@ -119,6 +123,7 @@ defmodule Argus.Analyses.MailboxTimerLoopTest do
           T.SameTagResend,
           T.CastFromInit,
           T.BroadwayGuard,
+          T.ReconnectOnError,
           T.RefGuardedKick,
           :timer_loop_resend,
           :timer_loop_domain_db,

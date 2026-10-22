@@ -21,6 +21,8 @@ defmodule Argus.Extractors.ErrorHandling do
   - `trap_flag_unread(id, func, mod)` — a `Process.flag(:trap_exit, value)`
     whose value the extractor cannot read: it may set the flag or clear it
   - `exit_call(id, func, target)` — explicit `Process.exit/2` or `:erlang.exit/1,2`
+  - `error_branch_call(id, func)` — a call made only once a value matched an
+    error (`ErrorBranch`)
   - `exit_reason(id, reason)` — the reason a `Process.exit/2` or `:erlang.exit/2`
     sends (an inspected atom, or `dynamic`)
   - `call_result(id, func, callee, fate, raises, target)` — every call to a process
@@ -148,6 +150,7 @@ defmodule Argus.Extractors.ErrorHandling do
   alias Argus.Extractors.ErrorHandling.Boundary
   alias Argus.Extractors.ErrorHandling.CatchClauses
   alias Argus.Extractors.ErrorHandling.ClauseHead
+  alias Argus.Extractors.ErrorHandling.ErrorBranch
   alias Argus.Extractors.ErrorHandling.RaiseSources
   alias Argus.Extractors.ErrorHandling.Release
   alias Argus.Extractors.GenStatem
@@ -248,6 +251,7 @@ defmodule Argus.Extractors.ErrorHandling do
       :timer_ref,
       :timer_store,
       :field_nil_test,
+      :error_branch_call,
       :returned_update,
       :returned_field_from,
       :returns_from,
@@ -296,6 +300,7 @@ defmodule Argus.Extractors.ErrorHandling do
       |> emit_boundary_functions(module_data)
       |> emit_release_functions(module_data)
       |> emit_raise_sources(module_data)
+      |> emit_error_branch_calls(module_data)
 
     origins = Identity.origins_index(module_data)
 
@@ -315,6 +320,15 @@ defmodule Argus.Extractors.ErrorHandling do
     |> emit_result_tests(module_data)
     |> emit_dropped_refs(mod, module_data.functions)
     |> emit_exit_comparisons(module_data)
+  end
+
+  defp emit_error_branch_calls(facts, %{module: mod, functions: functions} = module_data) do
+    for {:function, name, arity, _entry, instrs} <- functions,
+        func = InstrId.func_id(mod, name, arity),
+        idx <- ErrorBranch.calls(Helpers.cfg(module_data, name, arity), List.to_tuple(instrs)),
+        reduce: facts do
+      acc -> add_fact(acc, :error_branch_call, [InstrId.mint(func, idx), func])
+    end
   end
 
   # Function-level, as the :badrpc comparison emit_result_tests asks

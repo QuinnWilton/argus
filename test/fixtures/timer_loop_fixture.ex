@@ -397,6 +397,36 @@ defmodule Argus.Test.Fixtures.TimerLoop do
     def receive_messages(state), do: {:noreply, [], state}
   end
 
+  # astarte's AMQP consumer: the connect re-arms only when connecting
+  # fails, a retry and no loop, and a channel's :DOWN connects again.
+  defmodule ReconnectOnError do
+    use GenServer
+
+    def init(_), do: {:ok, %{channel: nil}, {:continue, :connect}}
+
+    def handle_continue(:connect, state), do: connect(state)
+
+    def handle_info(:connect, state), do: connect(state)
+
+    def handle_info({:DOWN, _ref, :process, _pid, _reason}, state),
+      do: connect(%{state | channel: nil})
+
+    defp connect(state) do
+      case open() do
+        {:ok, channel} ->
+          {:noreply, %{state | channel: channel}}
+
+        {:error, _reason} ->
+          schedule_connect()
+          {:noreply, state}
+      end
+    end
+
+    defp schedule_connect, do: Process.send_after(self(), :connect, 1000)
+
+    defp open, do: Application.get_env(:probe, :channel, {:error, :down})
+  end
+
   # A kick arms the loop only while no timer is held: its helper's
   # clause for a held ref does nothing.
   defmodule RefGuardedKick do
@@ -415,6 +445,41 @@ defmodule Argus.Test.Fixtures.TimerLoop do
     defp maybe_arm(state), do: %{state | timer: Process.send_after(self(), :tick, 1000)}
 
     defp work, do: Application.get_env(:probe, :work)
+  end
+
+  # sequin's ConsumerProducer before #371, as written: DemandRearm with
+  # the loop's re-arm behind a case, stopping once demand is met. Each
+  # handle_demand arms it again while its timer is pending.
+  defmodule DemandRearmBehindCase do
+    use GenStage
+
+    def init(_), do: {:producer, %{demand: 0, receive_timer: nil}}
+
+    def handle_demand(incoming, state),
+      do: receive_messages(%{state | demand: state.demand + incoming})
+
+    def handle_info(:receive_messages, state),
+      do: receive_messages(%{state | receive_timer: nil})
+
+    defp receive_messages(%{demand: demand} = state) when demand > 0 do
+      events = fetch(demand)
+      left = demand - length(events)
+
+      timer =
+        case {events, left} do
+          {[], _} -> schedule(1000)
+          {_, 0} -> nil
+          _ -> schedule(0)
+        end
+
+      {:noreply, events, %{state | demand: left, receive_timer: timer}}
+    end
+
+    defp receive_messages(state), do: {:noreply, [], state}
+
+    defp schedule(ms), do: Process.send_after(self(), :receive_messages, ms)
+
+    defp fetch(n), do: Enum.take(Application.get_env(:probe, :events, []), n)
   end
 
   # ant's Ant.Queue before b6f9f90: three clauses for :check_workers each

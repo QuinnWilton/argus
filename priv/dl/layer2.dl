@@ -363,6 +363,11 @@
 .decl element_fun(id: symbol, caller: symbol, fun: symbol, answers: symbol) mutable
 .input element_fun
 
+// A call the function makes only once a value matched an error: on the branch a test of `:error` or `{:error, _}` takes, and what that branch dominates (`Argus.Extractors.ErrorHandling.ErrorBranch`). A timer armed there is a retry.
+//
+.decl error_branch_call(id: symbol, func: symbol) mutable
+.input error_branch_call
+
 // Every path reaching this call excludes ETF's 131,80 compressed prefix for the exact bytes decoded. A local predicate's accepted result may establish the exclusion when compressed input cannot return that result. Binary match contexts require a known restored zero position to retain byte identity. Byte-size caps and decoded-term shape checks alone do not establish this.
 //
 .decl etf_compression_rejected(id: symbol, func: symbol) mutable
