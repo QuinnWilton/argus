@@ -185,6 +185,10 @@ param_origin(h, j, f, c, v) :- param_origin(g, k, f, c, v), forwards(_, g, h, j,
 // No variable term-flow follows: a computed value, a fun.
 arg_unknown(f, g, k) :- call_into(c, f, g), param_of(g, k), !hands(c, f, g, k, _, _).
 
+// A variable it follows, and beside it a value it does not: `x || :lit`
+// where x is a call term-flow does not model.
+arg_unknown(f, g, k) :- call_arg_untracked(_, f, g, k).
+
 arg_unknown(f, g, k) :- hands(_, f, g, k, sk, _), !traced_kind(sk).
 arg_unknown(f, g, k) :- hands(_, f, g, k, "result", _).
 arg_unknown(f, g, k) :- hands(_, f, g, k, "param", m), param_unknown(f, m).

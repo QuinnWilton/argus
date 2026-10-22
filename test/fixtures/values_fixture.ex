@@ -36,6 +36,16 @@ defmodule Argus.Test.Fixtures.Values do
     defp read(name), do: :ets.lookup(name, 1)
   end
 
+  defmodule Defaulted do
+    @moduledoc false
+    # A value term-flow does not follow beside a literal at one call:
+    # what the persistent term holds is not :iota.
+    def run, do: take(:persistent_term.get(:table, nil) || :iota)
+    def flagged, do: {mark(:ok), mark(nil)}
+    defp take(name), do: :ets.lookup(name, 1)
+    defp mark(flag), do: {:marked, flag}
+  end
+
   defmodule Fifth do
     @moduledoc "Every argument is followed, the fifth too."
     def run, do: five(:a, :b, :c, :d, :e)

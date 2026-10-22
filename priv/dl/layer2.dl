@@ -109,6 +109,11 @@
 .decl call_arg_tuple(caller: symbol, callee: symbol, arg_pos: number, index: number, source: symbol, value: symbol) mutable
 .input call_arg_tuple
 
+// The argument at `arg_pos` of a project call, or a server start's init argument, may hold a value no `call_arg_var` row names: a write reaching it made nothing term-flow follows (a call it does not model, a literal it does not spell such as nil, a boolean or a float).
+//
+.decl call_arg_untracked(id: symbol, caller: symbol, callee: symbol, arg_pos: symbol) mutable
+.input call_arg_untracked
+
 // A possible source for callee parameter `arg_pos`: project call, init argument, spawn argument, child-spec argument, trailing closure capture, or (`element`) what a library call running the program's fun hands it: an element, a pair, an accumulator (`element_fun`). OTP and Elixir internals are otherwise excluded, except remote-pid inputs to global conflict resolvers.
 //
 .decl call_arg_var(id: symbol, caller: symbol, callee: symbol, arg_pos: symbol, via: symbol, var_kind: symbol, var: symbol) mutable

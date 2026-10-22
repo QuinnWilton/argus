@@ -50,7 +50,8 @@ defmodule Argus.ExtractorRelationsTest do
   defp rules_source do
     [
       "priv/dl/stage0.dl",
-      "priv/dl/points_to.dl" | Path.wildcard("priv/dl/{analyses,clientlib}/**/*.dl")
+      "priv/dl/points_to.dl",
+      "priv/dl/values.dl" | Path.wildcard("priv/dl/{analyses,clientlib}/**/*.dl")
     ]
     |> Enum.map_join("\n", &File.read!/1)
   end

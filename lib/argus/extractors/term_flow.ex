@@ -281,6 +281,7 @@ defmodule Argus.Extractors.TermFlow do
     do: [
       :process_start,
       :call_arg_var,
+      :call_arg_untracked,
       :return_var,
       :call_result_var,
       :process_call_var,
@@ -2352,28 +2353,52 @@ defmodule Argus.Extractors.TermFlow do
   defp emit_args(facts, at, ictx, %{mfa: {_m, _f, arity} = mfa} = site) do
     if project?(site) do
       Enum.reduce(0..(arity - 1)//1, facts, fn pos, acc ->
-        sources(
-          acc,
-          at,
-          :call_arg_var,
-          [site(at.fun, at.idx), at.fun.func_id, callee(mfa), to_string(pos), "call"],
-          val(ictx, {:x, pos})
-        )
+        prefix = [site(at.fun, at.idx), at.fun.func_id, callee(mfa), to_string(pos)]
+
+        acc
+        |> sources(at, :call_arg_var, prefix ++ ["call"], val(ictx, {:x, pos}))
+        |> emit_untracked(ictx, {:x, pos}, prefix)
       end)
     else
       facts
     end
   end
 
+  defp emit_untracked(facts, ictx, operand, prefix) do
+    if untracked?(ictx, operand),
+      do: add_fact(facts, :call_arg_untracked, prefix),
+      else: facts
+  end
+
+  # The read may hold a value no variable it names stands for: a write
+  # reaching it made nothing term-flow follows (a call it does not model,
+  # a literal it does not spell: nil, a boolean, a float, a compound
+  # literal). Its variables are then not all it can hold.
+  defp untracked?(ctx, operand) do
+    case register(operand) do
+      {kind, n} when kind in [:x, :y] ->
+        reg = "#{kind}#{n}"
+
+        ctx.fun.reads
+        |> Map.get(ctx.idx, %{})
+        |> Map.get(reg, [])
+        |> Enum.any?(fn
+          {:def, d} -> Enum.empty?(Map.get(ctx.state.outs, {d, reg}, MapSet.new()))
+          {:param, _k} -> false
+        end)
+
+      _literal ->
+        Enum.empty?(literal(operand))
+    end
+  end
+
   # A server's init/1 receives the start's init argument.
   defp emit_start_args(facts, at, ictx, %{kind: "server", runs: mod, init_arg: reg}) do
-    sources(
-      facts,
-      at,
-      :call_arg_var,
-      [site(at.fun, at.idx), at.fun.func_id, "#{mod}:init/1", "0", "init"],
-      val(ictx, reg)
-    )
+    prefix = [site(at.fun, at.idx), at.fun.func_id, "#{mod}:init/1", "0"]
+
+    facts
+    |> sources(at, :call_arg_var, prefix ++ ["init"], val(ictx, reg))
+    |> emit_untracked(ictx, reg, prefix)
   end
 
   # A child spec `{Mod, arg}` starts `Mod.start_link(arg)`.

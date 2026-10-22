@@ -26,6 +26,22 @@ defmodule Argus.Schema.Processes do
         """
       },
       %{
+        name: :call_arg_untracked,
+        layer: 2,
+        fields: [
+          {:id, :instr_id, "instruction ID of the call or start"},
+          {:caller, :func_id, "function making the call"},
+          {:callee, :func_id, "function whose parameter receives the value"},
+          {:arg_pos, :symbol, "0-based parameter position, as a symbol"}
+        ],
+        doc: """
+        The argument at `arg_pos` of a project call, or a server start's init argument, \
+        may hold a value no `call_arg_var` row names: a write reaching it made nothing \
+        term-flow follows (a call it does not model, a literal it does not spell such \
+        as nil, a boolean or a float).
+        """
+      },
+      %{
         name: :call_arg_var,
         layer: 2,
         fields: [

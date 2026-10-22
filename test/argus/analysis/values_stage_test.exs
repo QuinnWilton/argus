@@ -21,6 +21,7 @@ defmodule Argus.Analysis.ValuesStageTest do
     Values.Chain,
     Values.Exported,
     Values.Computed,
+    Values.Defaulted,
     Values.Captured,
     Values.Fifth,
     Values.Results,
@@ -115,6 +116,15 @@ defmodule Argus.Analysis.ValuesStageTest do
     test "a computed argument leaves the literals beside it incomplete", %{dir: dir} do
       assert values(dir, Values.Computed, :take, 1, "0") == [":delta"]
       refute complete?(dir, Values.Computed, :take, 1, "0")
+    end
+
+    test "a value term-flow does not follow beside a literal leaves the set incomplete",
+         %{dir: dir} do
+      assert values(dir, Values.Defaulted, :take, 1, "0") == [":iota"]
+      refute complete?(dir, Values.Defaulted, :take, 1, "0")
+      # nil is no value a rule names, and not all the parameter can hold.
+      assert values(dir, Values.Defaulted, :mark, 1, "0") == [":ok"]
+      refute complete?(dir, Values.Defaulted, :mark, 1, "0")
     end
 
     test "a function captured as a fun has callers the program does not show", %{dir: dir} do
