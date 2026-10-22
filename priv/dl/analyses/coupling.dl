@@ -371,26 +371,42 @@ sibling_restarts_alone(sup, mod, name) :-
 child_named(sup, name) :- supervisor_child(sup, _, name, _, _).
 child_named(sup, name) :- supervisor_child_name(sup, _, name).
 
-// A handler uses a stored pid for the named process, as resolved by points-to, rather
-// than looking up the name on each call: the name itself as the target, or handed to
-// the helper whose call it is, is a lookup. If the name has no known process, an
-// unresolved pid call serves as the fallback.
+// A handler calls the pid init cached for `name`: its target is the state field init
+// filled with the lookup's answer, directly or handed to the helper whose call it is.
+// The name itself kept in the state, or handed on, reaches the same process through
+// points-to but is looked up at each call, and is no evidence. If the name has no known
+// process, an unresolved pid call serves as the fallback.
 .decl handler_calls_cached_pid(mod: symbol, name: symbol)
 
 handler_calls_cached_pid(mod, name) :-
   handler_function(mod, handler),
   process_call(handler, anchor, site, _, pid),
   named_pid(name, pid),
-  pid_use(site, _, _, target_kind, _),
-  target_kind != "name",
-  target_kind != "literal",
-  !hands_name(handler, anchor, site, name).
+  targets_cached_field(mod, handler, anchor, site, name).
 
-// `func` hands the literal `name` at `anchor` on to the parameter the call at `site`
-// targets (the values stage's param_origin).
-.decl hands_name(func: symbol, anchor: symbol, site: symbol, name: symbol)
+// init/1 of `mod` keeps what its lookup of `name` answered under `field`.
+.decl cached_field(mod: symbol, name: symbol, field: symbol)
 
-hands_name(f, a, site, n) :- pid_use(site, g, _, "param", k), param_origin(g, k, f, a, n).
+cached_field(mod, name, field) :-
+  caches_pid(mod, init, name),
+  field_store(init, _, field, "name", name).
+
+// The pid use at `site`, reached from `handler`'s call at `anchor`, is a load of a field
+// init cached `name`'s pid under: in the handler, or in the helper it hands the load.
+.decl targets_cached_field(mod: symbol, handler: symbol, anchor: symbol, site: symbol, name: symbol)
+
+targets_cached_field(mod, h, a, site, name) :-
+  process_call(h, a, site, _, _),
+  pid_use(site, h, _, "load", ld),
+  field_load(h, ld, field, _, _),
+  cached_field(mod, name, field).
+
+targets_cached_field(mod, h, a, site, name) :-
+  process_call(h, a, site, _, _),
+  pid_use(site, g, _, "param", k),
+  call_arg_var(a, h, g, k, "call", "load", ld),
+  field_load(h, ld, field, _, _),
+  cached_field(mod, name, field).
 
 handler_calls_cached_pid(mod, name) :-
   caches_pid(mod, _, name),

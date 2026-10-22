@@ -1239,6 +1239,48 @@ defmodule Argus.Test.Fixtures.Hypothesized do
       end
     end
 
+    defmodule NameSup do
+      @moduledoc false
+      use Supervisor
+
+      def start_link(opts), do: Supervisor.start_link(__MODULE__, opts, name: __MODULE__)
+
+      @impl true
+      def init(_opts) do
+        children = [
+          Argus.Test.Fixtures.Hypothesized.CachedPid.Store,
+          Argus.Test.Fixtures.Hypothesized.CachedPid.NameKeeper
+        ]
+
+        Supervisor.init(children, strategy: :one_for_one)
+      end
+    end
+
+    defmodule NameKeeper do
+      @moduledoc false
+      # Checks the Store is up at boot, and keeps its name, not its pid:
+      # each call looks the name up, through a helper too.
+      use GenServer
+
+      alias Argus.Test.Fixtures.Hypothesized.CachedPid.Store
+
+      def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+      @impl true
+      def init(opts) do
+        true = is_pid(Process.whereis(Store))
+        {:ok, %{store: Store, opts: opts}}
+      end
+
+      @impl true
+      def handle_call(:fetch, _from, state),
+        do: {:reply, GenServer.call(state.store, :get), state}
+
+      def handle_call(:ask, _from, state), do: {:reply, ask(Store), state}
+
+      defp ask(server), do: GenServer.call(server, :get)
+    end
+
     defmodule RelaySup do
       @moduledoc false
       use Supervisor

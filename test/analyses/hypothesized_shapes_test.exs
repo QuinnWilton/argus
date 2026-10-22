@@ -294,7 +294,9 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
           H.CachedPid.Client,
           H.CachedPid.OrderedClient,
           H.CachedPid.RelaySup,
-          H.CachedPid.Relay
+          H.CachedPid.Relay,
+          H.CachedPid.NameSup,
+          H.CachedPid.NameKeeper
         ],
         :coupling
       )
