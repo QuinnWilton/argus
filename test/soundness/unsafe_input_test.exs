@@ -162,6 +162,15 @@ defmodule Argus.Soundness.UnsafeInputTest do
     assert severity(sev, "G6.RanchAtom", :handle_info, @atom_socket) == :error
   end
 
+  test "options joined around a literal active mode make a socket handler", %{sev: sev} do
+    assert severity(sev, "G6.GossipTerm", :handle_info, @deser_socket) == :error
+  end
+
+  test "a socket shown active by no literal mode makes no socket handler", %{sev: sev} do
+    assert severity(sev, "G6.RuntimeOptsCodec", :handle_info, @atom_socket) == nil
+    assert severity(sev, "G6.PassiveWrapper", :handle_info, @atom_socket) == nil
+  end
+
   test "an active UDP socket's datagrams reaching binary_to_term are an outside party's",
        %{sev: sev} do
     assert severity(sev, "G6.UdpTerm", :decode, @deser_socket) == :error

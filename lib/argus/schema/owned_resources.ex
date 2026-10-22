@@ -132,7 +132,7 @@ defmodule Argus.Schema.OwnedResources do
           {:transport, :symbol,
            ~s(the socket's messages: "tcp", "ssl", "inet" (:inet.setopts/2, a TCP or UDP socket\) or "any" (a setopts/2 through a module in a variable\))},
           {:mode, :symbol,
-           ~s(the literal :active value: "true" | "once" | "n" | "false"; "default" for a connect whose literal options leave it out, "unset" for such a setopts, "param" or "dynamic")},
+           ~s(the literal :active value: "true" | "once" | "n" | "false"; "default" for a connect whose literal options leave it out, "unset" for such a setopts, "param", "dynamic", or "dynamic_active" for options joined with ++ a literal part of which asks for an active mode)},
           {:param, :number, "the 0-based parameter the options come from, for \"param\"; else -1"}
         ],
         doc: """

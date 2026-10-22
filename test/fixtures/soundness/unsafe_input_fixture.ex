@@ -298,6 +298,50 @@ defmodule Argus.Test.Soundness.G6.RanchAtom do
   def handle_cast(_msg, s), do: {:noreply, s}
 end
 
+defmodule Argus.Test.Soundness.G6.RuntimeOptsCodec do
+  # Connects with options built at run time, which show no active mode, and
+  # interns a codec name an internal message carries: no socket entry.
+  use GenServer
+
+  def init(opts) do
+    {:ok, socket} = :gen_tcp.connect(~c"localhost", 4000, opts ++ [active: false])
+    {:ok, %{socket: socket}}
+  end
+
+  def handle_info({:set_codec, name}, s), do: {:noreply, Map.put(s, :codec, String.to_atom(name))}
+end
+
+defmodule Argus.Test.Soundness.G6.GossipTerm do
+  # libcluster's Gossip: options joined at run time around a literal part
+  # asking for an active socket. Its datagrams are an outside party's.
+  use GenServer
+
+  def init(port) do
+    options = [:binary, active: true, reuseaddr: true] ++ extra(port)
+    {:ok, socket} = :gen_udp.open(port, options)
+    {:ok, %{socket: socket}}
+  end
+
+  def handle_info({:udp, _socket, _ip, _port, packet}, s),
+    do: {:noreply, Map.put(s, :last, :erlang.binary_to_term(packet))}
+
+  defp extra(port), do: if(port > 1024, do: [broadcast: true], else: [])
+end
+
+defmodule Argus.Test.Soundness.G6.PassiveWrapper do
+  # Hands a wrapper `active: false`: a passive socket sends no messages.
+  use GenServer
+
+  def init(_), do: {:ok, %{socket: connect(~c"localhost", 4000, active: false)}}
+
+  def handle_info({:set_codec, name}, s), do: {:noreply, Map.put(s, :codec, String.to_atom(name))}
+
+  defp connect(host, port, opts) do
+    {:ok, socket} = :gen_tcp.connect(host, port, opts)
+    socket
+  end
+end
+
 defmodule Argus.Test.Soundness.G6.UdpTerm do
   # A gen_udp server active socket: each datagram's bytes arrive in handle_info/2 as
   # {:udp, _, _, _, Data}, the shape libcluster's gossip strategy uses. Here a helper

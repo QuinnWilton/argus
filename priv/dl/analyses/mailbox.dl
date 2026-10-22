@@ -16,6 +16,7 @@
 .include "../clientlib/runs.dl"
 .include "../clientlib/answers.dl"
 .include "../clientlib/tooling.dl"
+.include "../clientlib/socket_activation.dl"
 
 // A finding in code only developers' tools or tests run steps down a
 // level (clientlib/tooling.dl, Argus.Findings.Tooling).
@@ -1931,40 +1932,6 @@ info_message(m, f, id, "{port, {:data, …}}", "port") :-
 // Unknown options do not prove an active socket. Exclude ownership transfers and
 // accepted sockets, which inherit listener options. A missing clause crashes; a logging
 // catch-all can leave stale socket state.
-.decl socket_active_mode(mode: symbol)
-
-socket_active_mode("true").
-socket_active_mode("once").
-socket_active_mode("n").
-socket_active_mode("default").
-
-// The literal a caller hands a wrapper's options parameter, directly or
-// forwarded through its own parameters.
-.decl socket_options_needed(func: symbol, pos: number)
-
-socket_options_needed(g, p) :- socket_active(_, g, _, "param", p).
-socket_options_needed(f, q) :- socket_options_needed(g, p), call_arg_forward(f, g, p, q).
-
-.decl socket_options_at(func: symbol, pos: number, site: symbol, caller: symbol, mode: symbol)
-
-socket_options_at(g, p, id, c, mode) :- socket_options_needed(g, p), socket_options_arg(id, c, g, p, mode).
-
-socket_options_at(g, p, id, c, mode) :-
-  socket_options_needed(g, p),
-  call_arg_forward(f, g, p, q),
-  socket_options_at(f, q, id, c, mode).
-
-// `func` makes a socket of `transport` active at `site`: the call itself,
-// or the call handing a wrapper the literal it sets.
-.decl socket_activation(func: symbol, site: symbol, transport: symbol)
-
-socket_activation(f, id, t) :- socket_active(id, f, t, mode, _), socket_active_mode(mode).
-
-socket_activation(c, id, t) :-
-  socket_active(_, g, t, "param", p),
-  socket_options_at(g, p, id, c, mode),
-  socket_active_mode(mode).
-
 // A function that connects, or sets options on, a socket of a known kind.
 .decl socket_opened(func: symbol, transport: symbol)
 

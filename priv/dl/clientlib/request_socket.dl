@@ -8,12 +8,19 @@
 // This rule reads socket_active (Argus.Extractors.Sockets), so it lives apart
 // from request_entry.dl: an analysis that includes it must register the
 // Sockets extractor. Include after request_entry.dl (which declares
-// request_entry/request_param).
+// request_entry/request_param) and socket_activation.dl.
+
+// The socket must be shown active (socket_activation), or its options built at run
+// time around a literal part asking for an active mode (`dynamic_active`): the program
+// asked for the peer's bytes as messages. Options built with no such part, or handed in
+// by a caller the program does not show, say nothing.
+request_entry(func, "raw_socket") :-
+  socket_activation(opener, _, _),
+  function_def(opener, mod, _, _, _),
+  function_def(func, mod, "handle_info", 2, _).
 
 request_entry(func, "raw_socket") :-
-  socket_active(_, opener, _, mode, _),
-  mode != "false",
-  mode != "unset",
+  socket_active(_, opener, _, "dynamic_active", _),
   function_def(opener, mod, _, _, _),
   function_def(func, mod, "handle_info", 2, _).
 

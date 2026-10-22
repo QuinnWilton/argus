@@ -24,7 +24,12 @@ defmodule Argus.Extractors.Sockets do
 
   Only literal option lists are read. A list built at runtime is
   `"dynamic"`, and a rule treats it as saying nothing: a mode the
-  bytecode does not show is no evidence that the socket is active.
+  bytecode does not show is no evidence that the socket is active. One
+  joined with `++` of parts, a literal part of which asks for an active
+  mode (`[:binary, active: true, ip: ip] ++ extra`), is
+  `"dynamic_active"`: a part the bytecode does not show may still turn it
+  off, but the program asked for messages. A literal part asking for
+  `active: false` keeps it `"dynamic"`.
 
   ## Emitted facts
 
@@ -37,7 +42,8 @@ defmodule Argus.Extractors.Sockets do
     literal options leave it out (active: true), `"unset"` for a setopts
     whose literal options leave it out (unchanged), `"param"` when the
     options are the function's parameter `param` (0-based; -1 otherwise),
-    or `"dynamic"`.
+    or `"dynamic"` (`"dynamic_active"` when a literal part of options
+    joined with `++` asks for an active mode).
   - `socket_options_arg(id, caller, callee, pos, mode)` — the call at `id`
     hands `callee` a literal option list with an `:active` entry of
     `mode`, at argument `pos`: what a wrapper's `"param"` row resolves to.
@@ -164,8 +170,40 @@ defmodule Argus.Extractors.Sockets do
     case Resolve.value_at(instrs, idx, {:x, pos}) do
       {:literal, opts} when is_list(opts) -> {list_mode(opts, what), "-1"}
       {:arg, n} -> {"param", Integer.to_string(n)}
+      {:call_result, {:erlang, :++, 2}, at} -> {joined_mode(instrs, at), "-1"}
       _ -> {"dynamic", "-1"}
     end
+  end
+
+  # Options joined at `at` with `++`: what its literal parts ask for.
+  defp joined_mode(instrs, at), do: modes_mode(joined_modes(instrs, at, 4))
+
+  defp modes_mode(modes) do
+    cond do
+      Enum.any?(modes, &(&1 == "false")) -> "dynamic"
+      Enum.any?(modes, &(&1 in ["true", "once", "n"])) -> "dynamic_active"
+      true -> "dynamic"
+    end
+  end
+
+  defp joined_modes(_instrs, _at, 0), do: []
+
+  defp joined_modes(instrs, at, depth) do
+    Enum.flat_map([{:x, 0}, {:x, 1}], fn reg ->
+      case Resolve.value_at(instrs, at, reg) do
+        {:literal, part} when is_list(part) ->
+          case active_entry(part) do
+            {:ok, value} -> [value_mode(value)]
+            :none -> []
+          end
+
+        {:call_result, {:erlang, :++, 2}, inner} ->
+          joined_modes(instrs, inner, depth - 1)
+
+        _ ->
+          []
+      end
+    end)
   end
 
   # `:ssl.connect/3` is `connect(host, port, options)` or `connect(socket,
@@ -197,9 +235,11 @@ defmodule Argus.Extractors.Sockets do
 
   # The last `:active` entry wins, as the socket applies its options in
   # order. A part of the list the bytecode does not show, with no entry
-  # after it, says nothing.
+  # after it, leaves the mode unknown: "dynamic_active" when an entry
+  # before it asks for an active mode, else "dynamic".
   defp list_mode(opts, what) do
     case active_entry(opts) do
+      {:ok, :dynamic} -> modes_mode(for({:active, value} <- opts, do: value_mode(value)))
       {:ok, value} -> value_mode(value)
       :none when what == :open -> "default"
       :none -> "unset"
