@@ -148,15 +148,30 @@ defmodule Argus.Schema.GenStatem do
         fields: [
           {:mod, :symbol, "module name"},
           {:func, :symbol, "the state function or handle_event/4"},
-          {:site, :instr_id, "the clause's last pattern test, or its return when it passed none"},
+          {:site, :instr_id,
+           "the clause's last pattern test, or the first return of a clause that tests nothing of the call"},
           {:tag, :symbol,
-           "the literal that test compares against, as inspect/1 spells it (':cancel'), else empty"}
+           "the literal that test compares against, as inspect/1 spells it (':cancel'), " <>
+             "empty when it has none, '_' for a clause that tests nothing of the call"}
         ],
         doc:
           "A {:call, from} clause returns without a reply action, without " <>
             "postponing, and without keeping `from`: the caller stays blocked. " <>
             "Pattern tests carry the previous clause's line, so `tag` is what a " <>
-            "consumer with the source finds the clause head by."
+            "consumer with the source finds the clause head by; a clause taking " <>
+            "the call by `_` has no line of its own."
+      },
+      %{
+        name: :statem_enter_stops,
+        layer: 2,
+        fields: [
+          {:mod, :symbol, "module name"},
+          {:func, :symbol, "the state function"}
+        ],
+        doc:
+          "The machine runs state enter calls (`state_enter` in its callback " <>
+            "mode), and every enter call into this state stops it or raises: no " <>
+            "other event reaches the state."
       },
       %{
         name: :statem_info_open,

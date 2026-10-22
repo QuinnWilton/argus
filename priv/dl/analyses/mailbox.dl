@@ -1475,8 +1475,11 @@ statem_handles_event(mod, "{timeout}") :- statem_event_catchall(mod, _).
 // Missing statem replies
 //
 // Find call clauses whose returns neither reply, postpone, nor retain from. The default
-// infinity call timeout can leave callers waiting indefinitely.
-reply_defect(mod, func, site, "statem_unreplied", tag) :- statem_call_unreplied(mod, func, site, tag).
+// infinity call timeout can leave callers waiting indefinitely. A state whose every
+// enter call stops the machine handles no call.
+reply_defect(mod, func, site, "statem_unreplied", tag) :-
+  statem_call_unreplied(mod, func, site, tag),
+  !statem_enter_stops(mod, func).
 
 // Messages never received by a spawned process
 //

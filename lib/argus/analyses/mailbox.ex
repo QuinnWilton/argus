@@ -305,7 +305,9 @@ defmodule Argus.Analyses.Mailbox do
           {:func, :symbol, "the sender, the handle_call/3, or the state function"},
           {:site, :symbol, "the return site, empty for a self message"},
           {:kind, :symbol, "unhandled_call | unhandled_cast | dropped_from | statem_unreplied"},
-          {:tag, :symbol, "the message tag, for a self message"}
+          {:tag, :symbol,
+           "the message tag, for a self message; for statem_unreplied, the literal " <>
+             "naming the clause, '_' for a clause that tests nothing of the call"}
         ],
         # A self message is one finding per tag, whoever sends it.
         key:
@@ -786,6 +788,27 @@ defmodule Argus.Analyses.Mailbox do
       at: at,
       at_label: "the timeout is armed here",
       help: ["add a clause matching `(#{type}, content, ...)` for the armed timeout"]
+    )
+  end
+
+  def finding(:reply_defect, [mod, func, _site, "statem_unreplied", "_"]) do
+    Findings.new(
+      :error,
+      "A {:call, from} clause never replies",
+      "#{func} has a clause that takes any {:call, from} event its other " <>
+        "clauses do not (`_`) and returns without a {:reply, from, _} " <>
+        "action, without postponing the event, and without keeping `from` " <>
+        "for a later reply. The caller of :gen_statem.call/2 " <>
+        "waits :infinity by default, so a call this state does not expect " <>
+        "blocks it for as long as #{mod} lives.",
+      # A clause matching by `_` has no pattern test, and so no line.
+      at: Findings.at_func(func),
+      at_label: "a clause of this state takes any call and never replies",
+      help: [
+        "reply in the catch-all, `{:keep_state_and_data, [{:reply, from, {:error, :unexpected}}]}`, " <>
+          "or `:postpone` the call until a state that can answer",
+        "if the caller must not wait, give the call a timeout"
+      ]
     )
   end
 

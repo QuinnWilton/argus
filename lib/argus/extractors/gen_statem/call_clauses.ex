@@ -31,18 +31,42 @@ defmodule Argus.Extractors.GenStatem.CallClauses do
   previous clause's line — so the literal that test compares against
   (`:cancel` in `{:cancel, _ref}`) rides along, for a consumer with the
   source to find the clause head by.
+
+  A test that fails before the clause's body begins (its first call,
+  allocation or term built: a head calls and builds nothing) sends the
+  path on to a later clause, and the tests it passed name no clause
+  that path returns from. A path that passes no test of its own after
+  that reaches a clause taking the call by `_`, such as a state's last
+  `state(_type, _event, _data)`. A line marker that clause's body passes
+  places it (a log call's, Supavisor's `handle_event(type, content, state,
+  data)`), and is its site; a body that calls nothing has none, and the
+  bytecode cannot place it: its tag is `"_"`, and its site the first such
+  return.
   """
 
   alias Argus.Cfg.{Block, Function}
+  alias Argus.Instr
   import Argus.Instr, only: [slot: 1]
 
   @x0 {:x, 0}
   @stateful_tags %{keep_state: 2, next_state: 3, repeat_state: 2}
+  @body_ops [
+    :allocate,
+    :allocate_heap,
+    :allocate_zero,
+    :allocate_heap_zero,
+    :test_heap,
+    :put_tuple2,
+    :put_list,
+    :put_map_assoc,
+    :put_map_exact
+  ]
 
   @doc """
   Each clause that leaves a call unanswered: the instruction index of its
-  last pattern test (its return, when the path passed none) and the
-  literal that test compares against, `""` when it has none.
+  last pattern test and the literal that test compares against, `""`
+  when it has none; or, for a clause that tests nothing of the call, the
+  first return reached that way, tagged `"_"`.
   """
   @spec analyse(Function.t() | nil, [tuple()]) :: [{non_neg_integer(), String.t()}]
   def analyse(nil, _instrs), do: []
@@ -57,7 +81,17 @@ defmodule Argus.Extractors.GenStatem.CallClauses do
     |> Enum.flat_map(fn {block_id, from} ->
       walk(
         block_id,
-        %{replied: false, kept: false, from: from, event: [@x0], x0: nil, head: nil, tag: ""},
+        %{
+          replied: false,
+          kept: false,
+          from: from,
+          event: [@x0],
+          x0: nil,
+          head: nil,
+          tag: "",
+          body: false,
+          line: nil
+        },
         fun,
         tuple,
         %{},
@@ -67,6 +101,13 @@ defmodule Argus.Extractors.GenStatem.CallClauses do
     end)
     |> Enum.uniq()
     |> Enum.sort()
+    |> one_untested()
+  end
+
+  # Every untested clause is placed at its function, so one row says it.
+  defp one_untested(found) do
+    {untested, tested} = Enum.split_with(found, &match?({_idx, "_"}, &1))
+    tested ++ Enum.take(untested, 1)
   end
 
   # The block that dispatches on the event type, and where the call arm
@@ -110,7 +151,8 @@ defmodule Argus.Extractors.GenStatem.CallClauses do
     # The alias sets are part of the state: a block re-entered with
     # `from` in a different register is a different path, and pruning it
     # would lose a later "kept" observation.
-    key = {block_id, path.replied, path.kept, Enum.sort(path.from), Enum.sort(path.event)}
+    key =
+      {block_id, path.replied, path.kept, path.body, Enum.sort(path.from), Enum.sort(path.event)}
 
     if Map.has_key?(seen, key) do
       {seen, found}
@@ -120,9 +162,11 @@ defmodule Argus.Extractors.GenStatem.CallClauses do
 
       {path, found, stop?} =
         Enum.reduce_while(first..last, {path, found, false}, fn idx, {p, f, _} ->
-          case step(elem(instrs, idx), idx, p) do
+          instr = elem(instrs, idx)
+
+          case step(instr, idx, %{p | body: p.body or body?(instr)}) do
             {:continue, p} -> {:cont, {p, f, false}}
-            {:unreplied, p} -> {:cont, {p, [{p.head || idx, p.tag} | f], false}}
+            {:unreplied, p} -> {:cont, {p, [unreplied(p, idx) | f], false}}
             :stop -> {:halt, {p, f, true}}
           end
         end)
@@ -139,13 +183,26 @@ defmodule Argus.Extractors.GenStatem.CallClauses do
     end
   end
 
+  defp unreplied(%{head: nil, line: nil}, idx), do: {idx, "_"}
+  defp unreplied(%{head: nil, line: line}, _idx), do: {line, ""}
+  defp unreplied(path, _idx), do: {path.head, path.tag}
+
+  defp body?(instr),
+    do: Instr.call?(instr) or (is_tuple(instr) and elem(instr, 0) in @body_ops)
+
   # A pass edge or a select arm is a pattern test this clause passed; the
   # last one before the return is the clause's head, and the literal it
-  # compares against names the clause.
+  # compares against names the clause. A fail edge before the body is a
+  # later clause's way in.
   defp entered(path, :branch_pass, idx, instr),
     do: %{path | head: idx, tag: test_literal(instr) || path.tag}
 
   defp entered(path, {:select_arm, lit}, idx, _instr), do: %{path | head: idx, tag: lit}
+
+  defp entered(%{body: false} = path, kind, _idx, _instr)
+       when kind in [:branch_fail, :select_fail],
+       do: %{path | head: nil, tag: "", line: nil}
+
   defp entered(path, _kind, _idx, _instr), do: path
 
   defp test_literal({:test, :is_tagged_tuple, _f, [_src, _arity, {:atom, a}]}), do: inspect(a)
@@ -244,6 +301,9 @@ defmodule Argus.Extractors.GenStatem.CallClauses do
       do: {:unreplied, path},
       else: {:continue, path}
   end
+
+  # A clause's own line, for a clause no pattern test names.
+  defp step({:line, _}, idx, %{head: nil} = path), do: {:continue, %{path | line: idx}}
 
   defp step(_instr, _idx, path), do: {:continue, path}
 

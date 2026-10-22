@@ -23,6 +23,9 @@ defmodule Argus.Extractors.GenStatem do
   - `statem_call_unreplied(mod, func, site, tag)` — a `{:call, from}` clause
     whose last pattern test is `site` (comparing against `tag`) returns
     without replying, postponing, or keeping `from`
+  - `statem_enter_stops(mod, func)` — the machine runs state enter calls
+    and every one into this state stops it
+    (`Argus.Extractors.GenStatem.EnterClauses`)
   - `statem_info_catchall(mod, func)` — some clause accepts `:info` with any content
   - `statem_event_catchall(mod, func)` — some clause accepts any event
   - `statem_info_tag(mod, func, tag)` — an atom the callback compares,
@@ -63,7 +66,7 @@ defmodule Argus.Extractors.GenStatem do
   alias Argus.Extractor.GenStarts
   alias Argus.Extractor.Resolve
   alias Argus.Extractors.CallbackTag.MessageClauses
-  alias Argus.Extractors.GenStatem.{CallClauses, EventClauses}
+  alias Argus.Extractors.GenStatem.{CallClauses, EnterClauses, EventClauses}
   alias Argus.Instr
   alias Argus.Instr.Reaching
   alias Argus.InstrId
@@ -92,6 +95,7 @@ defmodule Argus.Extractors.GenStatem do
       :statem_event_catchall,
       :statem_event_clause,
       :statem_call_unreplied,
+      :statem_enter_stops,
       :statem_helper_transition,
       :statem_info_catchall,
       :statem_info_open,
@@ -563,6 +567,31 @@ defmodule Argus.Extractors.GenStatem do
     end
   end
 
+  # `state_enter` among the modes callback_mode/0 returns as a literal.
+  defp state_enter?(functions) do
+    case find_function(functions, :callback_mode, 0) do
+      nil ->
+        false
+
+      instrs ->
+        Enum.any?(instrs, fn
+          {:move, {:literal, modes}, _} when is_list(modes) ->
+            :state_enter in list_elements(modes)
+
+          _ ->
+            false
+        end)
+    end
+  end
+
+  defp emit_enter_stops(facts, mod_str, func_id, true, fun, instrs) do
+    if EnterClauses.always_stop?(fun, instrs),
+      do: add_fact(facts, :statem_enter_stops, [mod_str, func_id]),
+      else: facts
+  end
+
+  defp emit_enter_stops(facts, _mod_str, _func_id, false, _fun, _instrs), do: facts
+
   defp detect_mode_from_list(modes) do
     modes = list_elements(modes)
 
@@ -612,6 +641,7 @@ defmodule Argus.Extractors.GenStatem do
     mod_str = inspect(mod)
     functions = module_data.functions
     state_funs = state_functions(module_data, exports, locally_called)
+    state_enter = state_enter?(functions)
 
     # Register all states. In state_functions mode the state IS a
     # function — its ID is the natural site.
@@ -633,10 +663,13 @@ defmodule Argus.Extractors.GenStatem do
         # from it was unresolvable.
         func_id = InstrId.func_id(mod, name, arity)
 
+        fun = cfg(module_data, name, arity)
+
         acc
         |> extract_transitions(mod_str, state_name, instrs, func_id)
         |> extract_timeouts(mod_str, state_name, instrs, func_id)
-        |> emit_event_clauses(mod_str, func_id, cfg(module_data, name, arity), instrs)
+        |> emit_event_clauses(mod_str, func_id, fun, instrs)
+        |> emit_enter_stops(mod_str, func_id, state_enter, fun, instrs)
       end)
 
     state_set = MapSet.new(state_funs, fn {:function, name, arity, _, _} -> {name, arity} end)

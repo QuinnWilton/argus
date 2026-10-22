@@ -1118,9 +1118,13 @@
 .decl state_return(func: symbol, clause: symbol, key: symbol, value: symbol) mutable
 .input state_return
 
-// A {:call, from} clause returns without a reply action, without postponing, and without keeping `from`: the caller stays blocked. Pattern tests carry the previous clause's line, so `tag` is what a consumer with the source finds the clause head by.
+// A {:call, from} clause returns without a reply action, without postponing, and without keeping `from`: the caller stays blocked. Pattern tests carry the previous clause's line, so `tag` is what a consumer with the source finds the clause head by; a clause taking the call by `_` has no line of its own.
 .decl statem_call_unreplied(mod: symbol, func: symbol, site: symbol, tag: symbol) mutable
 .input statem_call_unreplied
+
+// The machine runs state enter calls (`state_enter` in its callback mode), and every enter call into this state stops it or raises: no other event reaches the state.
+.decl statem_enter_stops(mod: symbol, func: symbol) mutable
+.input statem_enter_stops
 
 // Some clause of the callback accepts any event: a body is reachable from the entry by failure branches alone.
 .decl statem_event_catchall(mod: symbol, func: symbol) mutable

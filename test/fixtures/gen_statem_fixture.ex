@@ -650,3 +650,129 @@ defmodule Argus.Test.Fixtures.EventTargetStatem do
   @impl true
   def terminate(_reason, _state, _data), do: :ok
 end
+
+defmodule Argus.Test.Fixtures.CatchAllCallStatem do
+  @moduledoc """
+  erlang_quic's quic_h3_connection: `waiting` answers the calls it
+  expects, one with what another call returns, and its last clause takes
+  every other event, an unexpected call among them, without replying.
+  `running` replies in its catch-all. `logging`'s catch-all logs, Supavisor's
+  DbHandler shape, and its log call places it.
+  """
+  @behaviour :gen_statem
+
+  @impl true
+  def callback_mode, do: :state_functions
+
+  @impl true
+  def init(_args), do: {:ok, :waiting, %{conn: nil, settings: %{}}}
+
+  def waiting({:call, from}, :settings, data),
+    do: {:keep_state_and_data, [{:reply, from, data.settings}]}
+
+  def waiting({:call, from}, :accepted, %{conn: conn}),
+    do: {:keep_state_and_data, [{:reply, from, :persistent_term.get({__MODULE__, conn}, false)}]}
+
+  def waiting(:cast, :go, data), do: {:next_state, :running, data}
+  def waiting(_type, _event, _data), do: :keep_state_and_data
+
+  def running({:call, from}, _request, _data),
+    do: {:keep_state_and_data, [{:reply, from, {:error, :unexpected}}]}
+
+  def running(_type, _event, _data), do: :keep_state_and_data
+
+  def logging({:call, from}, :ping, _data), do: {:keep_state_and_data, [{:reply, from, :pong}]}
+
+  def logging(type, event, _data) do
+    :logger.debug(~c"unexpected ~p ~p", [type, event])
+    :keep_state_and_data
+  end
+end
+
+defmodule Argus.Test.Fixtures.StoppingEnterStatem do
+  @moduledoc """
+  erlang_quic's quic_connection: with state enter calls, `:closed` stops
+  the machine on entry, so its catch-all never takes a call. `:draining`
+  stops on entry only when nothing is pending: a call can reach its
+  catch-all, which never replies.
+  """
+  @behaviour :gen_statem
+
+  @impl true
+  def callback_mode, do: [:state_functions, :state_enter]
+
+  @impl true
+  def init(_args), do: {:ok, :open, %{pending: []}}
+
+  def open(:enter, _old, _data), do: :keep_state_and_data
+
+  def open({:call, from}, _request, data),
+    do: {:next_state, :draining, data, [{:reply, from, :ok}]}
+
+  def open(_type, _event, _data), do: :keep_state_and_data
+
+  def draining(:enter, _old, %{pending: []} = data), do: {:stop, :normal, data}
+  def draining(:enter, _old, _data), do: {:keep_state_and_data, [{:state_timeout, 100, :flush}]}
+  def draining(:state_timeout, :flush, data), do: {:next_state, :closed, data}
+
+  def draining({:call, from}, :status, _data),
+    do: {:keep_state_and_data, [{:reply, from, :draining}]}
+
+  def draining(_type, _event, _data), do: :keep_state_and_data
+
+  def closed(:enter, _old, data), do: {:stop, :normal, data}
+  def closed({:call, from}, :status, _data), do: {:keep_state_and_data, [{:reply, from, :closed}]}
+  def closed(_type, _event, _data), do: :keep_state_and_data
+end
+
+defmodule Argus.Test.Fixtures.NoEnterCallsStatem do
+  @moduledoc """
+  StoppingEnterStatem's `closed` without state enter calls: gen_statem
+  never calls `closed(:enter, ...)`, so a call reaches the catch-all.
+  """
+  @behaviour :gen_statem
+
+  @impl true
+  def callback_mode, do: :state_functions
+
+  @impl true
+  def init(_args), do: {:ok, :open, %{}}
+
+  def open({:call, from}, :close, data), do: {:next_state, :closed, data, [{:reply, from, :ok}]}
+  def open({:call, from}, _request, _data), do: {:keep_state_and_data, [{:reply, from, :open}]}
+
+  def closed(:enter, _old, data), do: {:stop, :normal, data}
+  def closed({:call, from}, :status, _data), do: {:keep_state_and_data, [{:reply, from, :closed}]}
+  def closed(_type, _event, _data), do: :keep_state_and_data
+end
+
+defmodule Argus.Test.Fixtures.StructEnterStatem do
+  @moduledoc """
+  erlang_quic's quic_h3_connection `closing`: the enter clause that
+  stops names the machine's own struct, which its data always is.
+  """
+  @behaviour :gen_statem
+
+  defstruct conn: nil
+
+  @impl true
+  def callback_mode, do: [:state_functions, :state_enter]
+
+  @impl true
+  def init(_args), do: {:ok, :open, %__MODULE__{}}
+
+  def open(:enter, _old, _data), do: :keep_state_and_data
+
+  def open({:call, from}, _request, data),
+    do: {:next_state, :closing, data, [{:reply, from, :ok}]}
+
+  def closing(:enter, _old, %__MODULE__{conn: conn}) do
+    send(self(), {:closed, conn})
+    {:stop, :normal}
+  end
+
+  def closing({:call, from}, :status, _data),
+    do: {:keep_state_and_data, [{:reply, from, :closing}]}
+
+  def closing(_type, _event, _data), do: :keep_state_and_data
+end

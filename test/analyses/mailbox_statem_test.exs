@@ -15,7 +15,11 @@ defmodule Argus.Analyses.MailboxStatemTest do
     Argus.Test.Fixtures.GenericTimeoutMismatchStatem,
     Argus.Test.Fixtures.GenericTimeoutHandledStatem,
     Argus.Test.Fixtures.UnrepliedCallStatem,
-    Argus.Test.Fixtures.PendingCallStatem
+    Argus.Test.Fixtures.PendingCallStatem,
+    Argus.Test.Fixtures.CatchAllCallStatem,
+    Argus.Test.Fixtures.StoppingEnterStatem,
+    Argus.Test.Fixtures.NoEnterCallsStatem,
+    Argus.Test.Fixtures.StructEnterStatem
   ]
 
   setup_all do
@@ -77,5 +81,52 @@ defmodule Argus.Analyses.MailboxStatemTest do
       assert [[_mod, "Argus.Test.Fixtures.UnrepliedCallStatem:disconnected/3", _site, ":cancel"]] =
                rows
     end
+
+    test "a call no clause expects falls to a catch-all, not the clause tested before it", ctx do
+      rows = unreplied(ctx, Argus.Test.Fixtures.CatchAllCallStatem)
+
+      assert [
+               ["Argus.Test.Fixtures.CatchAllCallStatem:logging/3", ""],
+               ["Argus.Test.Fixtures.CatchAllCallStatem:waiting/3", "_"]
+             ] = Enum.sort(rows)
+    end
+
+    test "a state whose every enter call stops takes no call; one that may stay does", ctx do
+      assert [["Argus.Test.Fixtures.StoppingEnterStatem:draining/3", "_"]] =
+               unreplied(ctx, Argus.Test.Fixtures.StoppingEnterStatem)
+
+      assert [["Argus.Test.Fixtures.NoEnterCallsStatem:closed/3", "_"]] =
+               unreplied(ctx, Argus.Test.Fixtures.NoEnterCallsStatem)
+    end
+
+    test "an enter clause that names the machine's own struct still always stops", ctx do
+      assert unreplied(ctx, Argus.Test.Fixtures.StructEnterStatem) == []
+    end
+
+    test "an untested clause is placed at its own line, else at its function", ctx do
+      assert {:ok, results} = Batch.analyze(ctx.batch, [Argus.Test.Fixtures.CatchAllCallStatem])
+
+      findings =
+        results
+        |> Rows.where(:mailbox, "reply_defect", kind: "statem_unreplied")
+        |> Map.new(fn [_mod, func, _site, _kind, _tag] = row ->
+          {func, Argus.Analyses.Mailbox.finding(:reply_defect, row)}
+        end)
+
+      waiting = findings["Argus.Test.Fixtures.CatchAllCallStatem:waiting/3"]
+      assert waiting.instr == nil
+      assert waiting.mfa == {Argus.Test.Fixtures.CatchAllCallStatem, :waiting, 3}
+
+      logging = findings["Argus.Test.Fixtures.CatchAllCallStatem:logging/3"]
+      assert %Argus.InstrId{func: "logging"} = logging.instr
+    end
+  end
+
+  defp unreplied(ctx, module) do
+    assert {:ok, results} = Batch.analyze(ctx.batch, [module])
+
+    results
+    |> Rows.where(:mailbox, "reply_defect", kind: "statem_unreplied", drop: [:kind])
+    |> Enum.map(fn [_mod, func, _site, tag] -> [func, tag] end)
   end
 end
