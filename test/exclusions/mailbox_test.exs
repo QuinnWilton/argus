@@ -42,7 +42,8 @@ defmodule Argus.Exclusions.MailboxTest do
     [M.LoopDropsAndKeeps.Reloader],
     [M.ArmsWhenEmpty.Producer],
     [M.ArmsAlways.Producer],
-    @test_only_flush
+    @test_only_flush,
+    [M.ReturnedRef.Poller]
   ]
 
   setup_all do
@@ -109,6 +110,15 @@ defmodule Argus.Exclusions.MailboxTest do
                Rows.where(results(ctx, @test_only_flush), :mailbox, "timer_cancel_under_test",
                  drop: [:mod, :key, :site]
                )
+    end
+  end
+
+  describe "a timer reference an arming helper returns" do
+    # mailbox.dl, literal_toward: the message each storing call hands the
+    # helper (the values stage's arg_value and param_origin).
+    test "each key's message is the one its storing call hands, through a wrapper too", ctx do
+      assert Enum.sort(unflushed(ctx, [M.ReturnedRef.Poller])) ==
+               [{"handle_cast/2", ":flush", ":flush"}, {"handle_cast/2", ":poll", ":poll"}]
     end
   end
 

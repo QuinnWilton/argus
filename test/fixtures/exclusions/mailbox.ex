@@ -474,3 +474,38 @@ defmodule Excl.Mailbox.DrainReentersItself.Drainer do
 
   defp drain_some(s), do: %{s | queue: :queue.drop(s.queue)}
 end
+
+# Timer references an arming helper returns, each stored under its own
+# key: the message is the one each storing call hands the helper, not
+# every caller's. :poll arrives through the storing function's own
+# parameter, :flush through the helper's default-argument wrapper.
+# Both are cancelled without a flush, and handle_info/2 takes each
+# message as if its timer had fired.
+defmodule Excl.Mailbox.ReturnedRef.Poller do
+  @moduledoc false
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(_opts), do: {:ok, %{poll: nil, flush: nil, polls: 0}}
+
+  @impl true
+  def handle_cast(:start, s), do: {:noreply, start(s, :poll)}
+
+  def handle_cast(:stop, s) do
+    Process.cancel_timer(s.poll)
+    Process.cancel_timer(s.flush)
+    {:noreply, s}
+  end
+
+  @impl true
+  def handle_info(:poll, s), do: {:noreply, %{s | polls: s.polls + 1}}
+  def handle_info(:flush, s), do: {:noreply, %{s | polls: 0}}
+
+  defp start(s, message), do: %{s | poll: arm(message, 100), flush: later(:flush)}
+
+  defp later(message, ms \\ 500), do: arm(message, ms)
+
+  defp arm(message, ms), do: Process.send_after(self(), message, ms)
+end

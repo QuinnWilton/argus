@@ -89,27 +89,56 @@ stored_message(key, a, lit) :-
   timer_ref(_, a, "returned", _),
   timer_arm(_, a, "self", "param", pos, _),
   timer_store(f, key, callee),
-  literal_toward(f, callee, a, pos, lit).
+  literal_toward(f, callee, a, p, lit),
+  p = to_string(pos).
 
-// Resolve a literal argument from a call or one returning wrapper that supplies or
-// forwards it. The one-wrapper limit covers default-argument expansion.
-.decl literal_toward(from: symbol, callee: symbol, to: symbol, pos: number, literal: symbol)
+// The literals `from`'s call into `callee` hands parameter `pos` of `to`, the arming
+// function: `callee` is `to` itself, or a wrapper returning what `to` returns, through
+// any chain of such wrappers. A wrapper spells the literal, or hands on what `from`'s
+// call handed it (the values stage's arg_value, whose literals are `from`'s own,
+// through any of its callers). Callers' literals are kept apart: each stores a
+// reference of its own.
+.decl literal_toward(from: symbol, callee: symbol, to: symbol, pos: symbol, literal: symbol)
 
-literal_toward(f, a, a, pos, lit) :-
-  call_arg(f, a, pos, lit),
-  lit != "dynamic".
+literal_toward(f, a, a, p, lit) :- timer_store(f, _, a), arg_value(f, a, p, lit).
+literal_toward(f, w, a, p, lit) :- timer_store(f, _, w), spelled_toward(w, a, p, lit).
 
-literal_toward(f, w, a, pos, lit) :-
+literal_toward(f, w, a, p, lit) :-
+  timer_store(f, _, w),
+  handed_toward(w, wp, a, p),
+  arg_value(f, w, wp, lit).
+
+// A wrapper returning what arming function `to` returns hands its own parameter `pos`
+// on unchanged to `to`'s parameter `to_pos`.
+.decl handed_toward(func: symbol, pos: symbol, to: symbol, to_pos: symbol)
+
+handed_toward(w, wp, a, p) :-
+  timer_arm(_, a, "self", "param", _, _),
   returns_call(w, a),
-  call_arg(w, a, pos, lit),
-  lit != "dynamic",
-  call_arg(f, w, _, _).
+  call_arg_var(_, w, a, p, "call", "param", wp).
 
-literal_toward(f, w, a, pos, lit) :-
+handed_toward(w, wp, a, p) :-
+  returns_call(w, x),
+  call_arg_var(_, w, x, xp, "call", "param", wp),
+  handed_toward(x, xp, a, p).
+
+// A literal a wrapper returning what arming function `to` returns spells, itself or
+// in a wrapper it returns, that reaches `to`'s parameter `pos`.
+.decl spelled_toward(func: symbol, to: symbol, pos: symbol, literal: symbol)
+
+spelled_toward(w, a, p, lit) :-
+  timer_arm(_, a, "self", "param", _, _),
   returns_call(w, a),
-  call_arg_forward(w, a, pos, wpos),
-  call_arg(f, w, wpos, lit),
-  lit != "dynamic".
+  param_origin(a, p, w, site, lit),
+  call_instr(w, a, site).
+
+spelled_toward(w, a, p, lit) :-
+  returns_call(w, x),
+  param_origin(x, xp, w, site, lit),
+  call_instr(w, x, site),
+  handed_toward(x, xp, a, p).
+
+spelled_toward(w, a, p, lit) :- returns_call(w, x), spelled_toward(x, a, p, lit).
 
 .decl timer_cancel_without_flush(mod: symbol, cancel: symbol, arm: symbol, key: symbol, message: symbol, cancel_site: symbol, arm_site: symbol)
 .output timer_cancel_without_flush
