@@ -24,7 +24,7 @@ defmodule Argus.Analyses.MailboxApproximatedTest do
   alias Argus.Test.Fixtures.MailboxApproximated, as: C
   alias Argus.Test.Rows
 
-  @modules [C.Left, C.Right, C.Sender, C.Self]
+  @modules [C.Left, C.Right, C.Sender, C.Self, C.Spawner]
 
   defp analyze do
     assert {:ok, r} = Argus.analyze(@modules, :mailbox)
@@ -57,6 +57,11 @@ defmodule Argus.Analyses.MailboxApproximatedTest do
   defp unhandled(r), do: Rows.where(r, :mailbox, "unhandled_info", [])
   defp own(r), do: Rows.where(r, :mailbox, "reply_defect", kind: ["unhandled_cast"])
 
+  defp unreceived(r) do
+    for row <- Rows.where(r, :mailbox, "unreceived_message", []),
+        do: {Enum.at(row, 1), Enum.at(row, 3)}
+  end
+
   defp sent_to_right?(rows), do: Enum.any?(rows, &(Enum.at(&1, 5) == inspect(C.Right)))
 
   test "resolved field-sensitively, a send to one of two servers is checked against each", %{} do
@@ -75,6 +80,22 @@ defmodule Argus.Analyses.MailboxApproximatedTest do
       refute sent_to_right?(unhandled(r))
       assert [[mod | _]] = own(r)
       assert mod == inspect(C.Self)
+    end)
+  end
+
+  test "a send to a spawned loop is checked against it only when every target is that loop",
+       %{tmp_dir: tmp} do
+    run = inspect(C.Spawner) <> ":run/1"
+    poke = inspect(C.Spawner) <> ":poke/0"
+
+    sent = unreceived(analyze())
+    assert Enum.any?(sent, &match?({^run, ":job"}, &1))
+    assert Enum.any?(sent, &match?({^poke, ":no"}, &1))
+
+    field_insensitive(tmp, fn ->
+      sent = unreceived(analyze())
+      refute Enum.any?(sent, &match?({^run, _}, &1))
+      assert Enum.any?(sent, &match?({^poke, ":no"}, &1))
     end)
   end
 end

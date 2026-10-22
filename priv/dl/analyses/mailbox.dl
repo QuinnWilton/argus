@@ -1517,8 +1517,31 @@ unreceived_message(mod, func, send, message, runs, starter, spawn, recv) :-
 sends_to_spawned(send, spawn, runs, message) :-
   send_target(send, _, message, p),
   message != "dynamic",
+  !approximated_process(p),
   instance(p, b),
   process_start(spawn, _, b, "spawn", runs).
+
+// A target only the field-insensitive pass resolves is a process the send may reach,
+// not one it does: the send counts only when every target is an instance of that one
+// spawn.
+sends_to_spawned(send, spawn, runs, message) :-
+  send_target(send, _, message, p),
+  message != "dynamic",
+  approximated_process(p),
+  instance(p, b),
+  process_start(spawn, _, b, "spawn", runs),
+  !sends_beyond(send, b).
+
+// The send at `send`, one of whose approximated targets is an instance of `base`, may
+// reach a process that is not one.
+.decl sends_beyond(send: symbol, base: symbol)
+
+sends_beyond(send, b) :-
+  send_target(send, _, _, p),
+  approximated_process(p),
+  instance(p, b),
+  send_target(send, _, _, q),
+  !instance(q, b).
 
 // What the process runs: the spawned function and what it calls in its
 // own process.

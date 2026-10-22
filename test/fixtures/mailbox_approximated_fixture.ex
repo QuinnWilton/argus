@@ -59,4 +59,39 @@ defmodule Argus.Test.Fixtures.MailboxApproximated do
     @impl true
     def handle_cast(:other, s), do: {:noreply, s}
   end
+
+  defmodule Spawner do
+    @moduledoc """
+    Sends :job to one of two loops it spawns, of which `other/0` takes
+    :other alone; and sends a loop of its own a tag it has no clause for.
+    """
+
+    def run(first?) do
+      target = if first?, do: spawn(&jobs/0), else: spawn(&other/0)
+      send(target, :job)
+    end
+
+    def poke do
+      pid = spawn(&only_yes/0)
+      send(pid, :no)
+    end
+
+    def jobs do
+      receive do
+        :job -> jobs()
+      end
+    end
+
+    def other do
+      receive do
+        :other -> other()
+      end
+    end
+
+    def only_yes do
+      receive do
+        :yes -> only_yes()
+      end
+    end
+  end
 end
