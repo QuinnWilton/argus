@@ -99,6 +99,17 @@ defmodule Argus.Test.Fixtures.ExportedDecodeCaller do
   defp decode(bytes), do: :erlang.binary_to_term(bytes)
 end
 
+defmodule Argus.Test.Fixtures.ExportedCodeCaller do
+  @moduledoc """
+  A private evaluator no request reaches, handed the source its export's
+  caller passes: the export is listed with the finding as a data path.
+  """
+
+  def run(source), do: evaluate(source)
+
+  defp evaluate(source), do: Code.eval_string(source)
+end
+
 defmodule Argus.Test.Fixtures.DefaultArgSinkCaller do
   @moduledoc """
   A private sink no request reaches below an exported function with a

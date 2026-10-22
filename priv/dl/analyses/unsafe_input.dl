@@ -1260,6 +1260,14 @@ export_frame(id, e, "calls") :- sink_export_reach(id, e), !sink_input_export(id,
 sink_input_export(id, e) :- atom_input.reaches(e, _, id), outside_api(e).
 sink_input_export(id, e) :- inflate_input.reaches(e, _, id), outside_api(e).
 sink_input_export(id, e) :- command_input.reaches(e, _, id), outside_api(e).
+sink_input_export(id, e) :- code_input.reaches(e, _, id), outside_api(e).
+
+// The exports listed with a code sink a caller's input reaches (code_caller_fed), whose
+// finding stands in for the sink_without_request_path one.
+.decl code_caller_export(sink: symbol, export: symbol, via: symbol)
+.output code_caller_export
+
+code_caller_export(id, e, via) :- sink_export(id, e, via), code_fed(id).
 
 // An export at least one call above the exposed sink's function, within
 // the walk's six calls.

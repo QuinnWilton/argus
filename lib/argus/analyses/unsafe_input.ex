@@ -288,6 +288,18 @@ defmodule Argus.Analyses.UnsafeInput do
             "where none does, that call into it within six calls, attached to its finding."
       },
       %{
+        name: :code_caller_export,
+        fields: [
+          {:sink, :symbol, "the code sink site"},
+          {:export, :symbol, "an exported function"},
+          {:via, :symbol, "input | calls, as in sink_export"}
+        ],
+        key: [:sink, :export],
+        evidence: %{of: :code_caller_fed, on: [sink: :id], limit: 3},
+        doc:
+          "sink_export's rows for a code sink a caller's input reaches, attached to its finding."
+      },
+      %{
         name: :sink_endpoint,
         fields: [
           {:sink, :symbol, "the sink site"},
@@ -698,6 +710,8 @@ defmodule Argus.Analyses.UnsafeInput do
       Findings.at_func(export)
     )
   end
+
+  def evidence(:code_caller_export, row), do: evidence(:sink_export, row)
 
   def evidence(:sink_endpoint, [_sink, verb, path, plug]) do
     Findings.related("reachable from #{String.upcase(verb)} #{path}", Findings.at_module(plug))

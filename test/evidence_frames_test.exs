@@ -103,6 +103,14 @@ defmodule Argus.EvidenceFramesTest do
     assert frame.mfa == {Fixtures.ExportedDecodeCaller, :load, 0}
   end
 
+  test "sink_export: a code sink a caller's input reaches lists the export as a data path" do
+    assert [finding] = findings([Fixtures.ExportedCodeCaller], :unsafe_input)
+    assert finding.title == "Dynamic code execution of a caller's input"
+
+    assert [frame] = finding.related
+    assert frame.label =~ "run/1 is exported, and what its caller hands in reaches this call"
+  end
+
   test "sink_export: a default-argument head is no frame beside the arity it calls" do
     # tag/0 reaches the sink only through tag/1, from the same def line:
     # its frame would repeat tag/1's and take one of the three frames.
