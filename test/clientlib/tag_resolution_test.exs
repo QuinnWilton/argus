@@ -2,7 +2,7 @@ defmodule Argus.Clientlib.TagResolutionTest do
   use ExUnit.Case, async: true
   @moduletag :flowlog
 
-  alias Argus.{Analysis, Pipeline}
+  alias Argus.Pipeline
   alias Argus.Test.Memo
 
   @moduletag :tmp_dir
@@ -21,8 +21,7 @@ defmodule Argus.Clientlib.TagResolutionTest do
         ]
       )
 
-    :ok = Analysis.derive_stage0(facts_dir)
-    :ok = Analysis.derive_points_to(facts_dir)
+    Argus.Test.Stages.derive!(facts_dir)
 
     rules =
       """

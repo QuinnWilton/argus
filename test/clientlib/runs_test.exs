@@ -7,7 +7,7 @@ defmodule Argus.Clientlib.RunsTest do
   use ExUnit.Case, async: true
   @moduletag :flowlog
 
-  alias Argus.{Analysis, Pipeline}
+  alias Argus.Pipeline
   alias Argus.Test.Files
   alias Argus.Test.Fixtures, as: F
   alias Argus.Test.Soundness.Runs, as: R
@@ -18,8 +18,7 @@ defmodule Argus.Clientlib.RunsTest do
     dir = Files.tmp_dir!("argus_runs")
     facts = Path.join(dir, "facts")
     {:ok, _} = Pipeline.run(@modules, facts, extractors: Argus.Analyses.Mailbox.extractors())
-    :ok = Analysis.derive_stage0(facts)
-    :ok = Analysis.derive_points_to(facts)
+    Argus.Test.Stages.derive!(facts)
 
     lib = Path.join(:code.priv_dir(:argus_beam), "dl/clientlib")
     rules = Path.join(dir, "runs.dl")

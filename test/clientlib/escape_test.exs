@@ -44,8 +44,7 @@ defmodule Argus.Clientlib.EscapeTest do
 
     {:ok, _} = Pipeline.run(@modules, facts_dir, extractors: extractors)
     # imports.dl reads the staged call graph and processes.
-    :ok = Argus.Analysis.derive_stage0(facts_dir)
-    :ok = Argus.Analysis.derive_points_to(facts_dir)
+    Argus.Test.Stages.derive!(facts_dir)
     rules_path = Path.join(tmp_dir, "escape.dl")
 
     File.write!(rules_path, """

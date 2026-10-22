@@ -105,9 +105,10 @@ defmodule Argus.ClientlibTest do
       )
     end
 
-    # Which process a pid can be is the points-to stage's, derived from
-    # the same facts as the analyses derive it.
-    :ok = Argus.Analysis.derive_points_to(facts)
+    # Which process a pid can be, and which literal a parameter holds,
+    # are the stages', derived from the same facts as the analyses
+    # derive them.
+    Argus.Test.Stages.derive_over_stage0!(facts)
 
     lib = Path.join(:code.priv_dir(:argus_beam), "dl/clientlib")
     program = Path.join(dir, "vocabulary.dl")

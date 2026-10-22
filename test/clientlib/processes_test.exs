@@ -104,8 +104,7 @@ defmodule Argus.Clientlib.ProcessesTest do
         ]
       )
 
-    :ok = Analysis.derive_stage0(facts_dir)
-    :ok = Analysis.derive_points_to(facts_dir)
+    Argus.Test.Stages.derive!(facts_dir)
 
     # What the stage keeps to itself is asked of its own program; what it
     # stages, of the program the analyses include.
