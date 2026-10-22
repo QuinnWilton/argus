@@ -201,7 +201,11 @@ defmodule Argus.Analysis.Extraction do
   within `:timeout`, fails with a warning, `{:error,
   {:points_to, reason}}`, and the analyses that read it degrade
   (`Argus.Findings.run/2`): time can fail the stage, never change what
-  it answers.
+  it answers. The budget holds var_points_to and field_points_to, which
+  the field-insensitive stage leaves nearly empty; its own pass
+  (field_insensitive_points_to, 2.8 million rows on Ash's selective
+  stage) has no row budget, and a program it outgrows fails at
+  `:timeout`.
 
   Writes the `points_to_relations/0` files into `facts_dir`, each renamed
   into place whole (as stage 0's, `derive_stage0/2`), and none when it

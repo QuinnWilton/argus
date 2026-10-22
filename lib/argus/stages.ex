@@ -86,9 +86,9 @@ defmodule Argus.Stages do
   end
 
   # The field-insensitive stage, when even the selective one outgrew
-  # the budget: it resolves every object field-insensitively, so it
-  # outgrows the budget only where the field-insensitive pass does, and
-  # then the stage fails.
+  # the budget: it resolves every object field-insensitively. Its own
+  # pass has no row budget (Argus.Analysis.Extraction), so a program it
+  # outgrows fails at the solve's timeout rather than over budget.
   defp field_insensitive(solve, acc, path, full_over, selective_over) do
     case attempt(solve, path, acc, @points_to_overflow) do
       {:ok, solved, results} ->

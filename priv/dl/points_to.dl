@@ -57,9 +57,12 @@ stage_mode("full").
 // engine ran. points_to_overflow names the relations that reached it, and
 // the caller runs the selective stage in their place. The selective
 // stage is held to the same budget (it includes this file), and the
-// field-insensitive stage, run when the selective one outgrows it, too:
-// a program that outgrows even that has no points-to, and the analyses
-// that read it degrade.
+// field-insensitive stage, run when the selective one outgrows it, too,
+// though it leaves these two relations nearly empty: its own pass
+// (clientlib/hub_objects.dl's field_insensitive_points_to, 2.8 million
+// rows on Ash's selective stage) has no budget, and a program that
+// outgrows it runs to the solve's timeout. Either way such a program has
+// no points-to, and the analyses that read it degrade.
 
 .decl points_to_budget(rows: number)
 
