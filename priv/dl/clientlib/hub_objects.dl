@@ -508,8 +508,11 @@ hub_holders(x, count((f, sk, s))) :- field_insensitive_holder(f, sk, s, x).
 hub_spread(x, n) :- object(x), hub_holders(x, n).
 hub_spread(x, 0) :- object(x), !hub_holders(x, _).
 
-// Every variable of the program, as TermFlow names them. A literal holds
-// itself and no object, so it is no variable a hub could spread to.
+// Every variable of the program, as TermFlow names them, but literals: a
+// value spreads through variables, and a literal names its process
+// directly. Its spellings still count among a named process's holders
+// (hub_holders), so a name spelled in many functions weighs toward a hub
+// more than its spread through values alone would.
 .decl program_var(func: symbol, var_kind: symbol, var: symbol)
 
 program_var(g, "param", k) :- stage_mode("selective"), call_arg_var(_, _, g, k, _, _, _).

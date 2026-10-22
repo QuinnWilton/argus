@@ -130,8 +130,11 @@ process(p) :- server_process(p, _).
 // The names each function reads, so the rules resolving them are bound by
 // the function that uses them: a `name`, the process a lookup answers or a
 // call's literal target, and a `literal`, which names the process
-// registered under it wherever it goes, handed to a helper, kept in a
-// field or in a server's state. One that names no process points to none.
+// registered under it wherever value flow carries it: handed to a helper,
+// kept in a field, a server's state or the process dictionary. A term
+// made of literals alone is no term value flow emits (docs/design/
+// value-flow.md), and a name inside one goes unread. One that names no
+// process points to none.
 .decl reads_name(func: symbol, var_kind: symbol, name: symbol)
 
 reads_name(f, sk, n) :- call_arg_var(_, f, _, _, _, sk, n), name_kind(sk).
@@ -143,6 +146,7 @@ reads_name(f, sk, n) :- field_store(f, _, _, sk, n), name_kind(sk).
 reads_name(f, sk, n) :- term_update_base(f, _, sk, n), name_kind(sk).
 reads_name(f, sk, n) :- process_signal_var(_, f, _, sk, n), name_kind(sk).
 reads_name(f, sk, n) :- task_operation_var(_, f, _, sk, n), name_kind(sk).
+reads_name(f, sk, n) :- dictionary_put(_, f, _, sk, n), name_kind(sk).
 reads_name(f, "name", n) :- unmodeled_use(_, f, "name", n).
 
 // The variable kinds a registered name may be read as.

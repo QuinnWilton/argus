@@ -558,6 +558,24 @@ defmodule Argus.Clientlib.ProcessesTest do
            )
   end
 
+  test "a literal name kept in the process dictionary reaches its process", ctx do
+    r = solve(ctx, ~w(process_call))
+
+    assert Enum.any?(
+             unsited(r["process_call"]),
+             &match?(
+               [
+                 "NamedHolder:handle_call/3",
+                 _,
+                 "NamedHolder:handle_call/3",
+                 "call",
+                 "server NamedTargetA:start_link/1"
+               ],
+               Enum.map(&1, fn x -> short(x) end)
+             )
+           )
+  end
+
   test "a gen_statem's data carries its pids from state to state", ctx do
     r = solve(ctx, ~w(sync_dependency statem_data_points_to))
     assert ["Machine:idle/3", "Back"] in r["sync_dependency"]

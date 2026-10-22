@@ -865,6 +865,15 @@ defmodule Argus.Test.Fixtures.PidFlow do
       GenServer.cast(s.peer, :poked)
       {:noreply, s}
     end
+
+    # The same name kept in the process dictionary.
+    def handle_cast(:remember, s) do
+      Process.put(:peer, NamedTargetA)
+      {:noreply, s}
+    end
+
+    @impl true
+    def handle_call(:recall, _from, s), do: {:reply, GenServer.call(Process.get(:peer), :ping), s}
   end
 
   defmodule NamedTargetB do
