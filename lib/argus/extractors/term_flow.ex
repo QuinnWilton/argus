@@ -2433,11 +2433,14 @@ defmodule Argus.Extractors.TermFlow do
     |> sources(at, :process_message_var, [id, at.fun.func_id, kind], val(ictx, {:x, 1}))
   end
 
+  # A target's variables, and the name it spells when that is no literal
+  # variable of its own already: `{:global, name}`, `{:via, mod, key}`.
   defp destination(at, ictx, reg \\ {:x, 0}) do
     value = val(ictx, reg)
 
     with {:ok, term} <- Resolve.resolve_register(at.fun.instrs, at.idx, reg),
-         name when name != nil <- name_of(term) do
+         name when name != nil <- name_of(term),
+         false <- MapSet.member?(value, {:literal, name}) do
       MapSet.put(value, {:name, name})
     else
       _ -> value

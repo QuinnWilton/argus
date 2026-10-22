@@ -70,8 +70,8 @@ registries, replies and dictionary contents across these function summaries.
 |---|---|
 | `param`, `result`, `reply` | Parameter position, project invocation result, synchronous server reply. |
 | `term`, `load` | Local allocation site, deferred external field read. |
-| `process`, `self`, `name` | Started process, running process, literal registry reference. |
-| `literal` | A literal atom, binary or integer, spelled; not booleans or `nil`. |
+| `process`, `self`, `name` | Started process, running process, a registry reference no literal spells (a lookup's answer, `{:global, n}`, `{:via, m, k}`). |
+| `literal` | A literal atom, binary or integer, spelled; not booleans or `nil`. Points-to reads it as the process registered under it, if any. |
 | `table`, `dictionary`, `remote` | ETS allocation, literal dictionary key, possibly remote PID origin. |
 
 `call_arg_var`, `return_var` and `call_result_var` connect parameters and returns.

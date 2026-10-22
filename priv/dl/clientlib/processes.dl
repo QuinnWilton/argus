@@ -918,7 +918,8 @@ named_module(n, m) :- named_pid(n, p), server_process(p, m).
 named_otherwise(n, m) :- named_module(n, m), named_pid(n, p), !server_process(p, m).
 
 self_call(f, id) :-
-  process_call_var(id, f, "call", "name", n),
+  process_call_var(id, f, "call", sk, n),
+  name_kind(sk),
   process_entry(m, f),
   named_module(n, m),
   !named_otherwise(n, m).

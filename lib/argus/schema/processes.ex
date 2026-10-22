@@ -123,8 +123,8 @@ defmodule Argus.Schema.Processes do
            "the process, the parameter position, the call site, the name, the literal, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
         ],
         doc: """
-        A send target variable: a pid's, or a literal name (`name`, and `literal`). \
-        Keyed by send site for finding anchors.
+        A send target variable: a pid's, a literal name (`literal`), or a name no \
+        literal spells (`name`). Keyed by send site for finding anchors.
         """
       },
       %{

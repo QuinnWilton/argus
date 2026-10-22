@@ -1397,7 +1397,8 @@ names_other_server(id) :-
 
 names_other_server(id) :-
   call_tag(id, f, kind, _),
-  process_call_var(id, f, kind, "name", n),
+  process_call_var(id, f, kind, sk, n),
+  (sk = "name" ; sk = "literal"),
   function_def(f, mod, _, _, _),
   n != mod,
   !named_process(mod, n).

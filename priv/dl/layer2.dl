@@ -719,7 +719,7 @@
 .decl process_remote_var(id: symbol, func: symbol, api: symbol) mutable
 .input process_remote_var
 
-// A send target variable: a pid's, or a literal name (`name`, and `literal`). Keyed by send site for finding anchors.
+// A send target variable: a pid's, a literal name (`literal`), or a name no literal spells (`name`). Keyed by send site for finding anchors.
 //
 .decl process_send_var(id: symbol, func: symbol, message: symbol, var_kind: symbol, var: symbol) mutable
 .input process_send_var

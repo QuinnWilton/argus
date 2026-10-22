@@ -480,7 +480,7 @@ defmodule Argus.Extractors.TermFlowTest do
 
       assert Enum.any?(
                f.process_send_var,
-               &match?([_, "Loops:start/0", ":tick", "name", ":loops"], &1)
+               &match?([_, "Loops:start/0", ":tick", "literal", ":loops"], &1)
              )
 
       assert Enum.any?(
@@ -506,9 +506,10 @@ defmodule Argus.Extractors.TermFlowTest do
              )
     end
 
-    test "a literal target is a name" do
+    test "a literal target is a literal; a composite name is a name" do
       f = facts([F.Hub, F.Listener])
-      assert ["Hub:subscribe/1", "cast", "name", "Hub"] in unsited(f.process_call_var)
+      assert ["Hub:subscribe/1", "cast", "literal", "Hub"] in unsited(f.process_call_var)
+      refute ["Hub:subscribe/1", "cast", "name", "Hub"] in unsited(f.process_call_var)
 
       assert ["Listener:init/1", "Hub:subscribe/1", "0", "call", "self", "self"] in unsited(
                f.call_arg_var
@@ -517,7 +518,7 @@ defmodule Argus.Extractors.TermFlowTest do
 
     test "a send is also an info call" do
       f = facts([F.Loops])
-      assert ["Loops:start/0", "info", "name", ":loops"] in unsited(f.process_call_var)
+      assert ["Loops:start/0", "info", "literal", ":loops"] in unsited(f.process_call_var)
       assert ["Loops:-start/0-fun-0-/1", "info", "param", "0"] in unsited(f.process_call_var)
     end
 

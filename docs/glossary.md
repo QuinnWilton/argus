@@ -94,8 +94,8 @@ stage. The literature calls the local part *intraprocedural dataflow* or
 | `load` | A field read of a term from elsewhere, deferred to points-to. |
 | `process` | A process the function starts, by start site. |
 | `self` | The running process. |
-| `name` | A registered name, read as the process it names. |
-| `literal` | A literal atom, binary or integer, as the program spells it. |
+| `name` | A registry reference no literal spells (a lookup's answer, `{:global, n}`, `{:via, m, k}`), read as the process it names. |
+| `literal` | A literal atom, binary or integer, as the program spells it; points-to reads one as the process registered under it, if any. |
 | `table` | An ETS table the function creates. |
 | `dictionary` | A process dictionary entry, by literal key. |
 | `remote` | A pid that may belong to another node. |
