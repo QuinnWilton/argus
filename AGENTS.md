@@ -105,9 +105,10 @@ failure disappear.
   atomically install outputs; never delete files from a caller's shared facts directory.
 - Keep uncertainty explicit. A suppression must establish safety for the relevant
   operation and paths; preserve a nearby defect it must still report.
-- Points-to fallback must be deterministic and a superset of exact results. Use
-  row budgets, not elapsed time; keep corresponding coarse relations in
-  `clientlib/pervasive.dl` when extending the exact pass.
+- Points-to fallback must be deterministic and a superset of the full stage's
+  results. Use row budgets, not elapsed time; keep the corresponding
+  field-insensitive relations in `clientlib/hub_objects.dl` when extending the
+  full stage (`clientlib/processes.dl`).
 - Keep shared fixpoints in stages rather than recomputing them in each analysis.
   Factor large disjunctive joins into helper relations to avoid multiplying work.
 - Extractors using decoded facts must be listed in `Pipeline.typed_readers/0`, and

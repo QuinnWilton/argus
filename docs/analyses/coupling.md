@@ -20,7 +20,7 @@ restarts alone, it can leave the old incarnation's registration behind.
 |---|---|
 | `table` | An ETS row. |
 | `monitor` | A monitor or link. |
-| `dict` | A process-dictionary entry. |
+| `dictionary` | A process-dictionary entry. |
 | `state` | A state change beyond the value initialization establishes. |
 | `handed` | A request passed to unknown external code that may retain it; inferred evidence. |
 

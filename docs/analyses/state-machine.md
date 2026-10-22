@@ -18,8 +18,10 @@ When the initial state cannot be read, the analysis uses a graph-based fallback.
 Helper returns and state-function recognition are conservative; a dynamic target
 suppresses unreachability claims for the module. A private helper that builds
 `{:next_state, target, data}` from a parameter (ra's `next_state(follower, ...)`)
-enters the states its callers hand it, through further helpers too; only a target
-taken from an event, or an exported helper another module may call, is dynamic.
+enters the states its callers hand it, through further helpers too. A target is
+dynamic when it is taken from an event or computed, is a call's result, is a literal
+naming no state, or is a helper parameter whose callers are not all seen (an exported
+helper, or one captured as a fun or applied).
 Confirm the intended transition before deleting the state.
 
 ## States with no exit
