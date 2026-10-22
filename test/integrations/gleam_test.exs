@@ -31,7 +31,12 @@ defmodule Argus.Integrations.GleamTest do
 
     artefacts = Path.join(root, "build/dev/erlang/gleam_app/_gleam_artefacts")
     assert [spawned] = Enum.filter(entries, &(&1.title == "Unlinked process spawned"))
-    assert spawned.file == Path.join(artefacts, "gleam_app@worker.erl")
+    # gleam records the path with links resolved, and the test's tmp_dir
+    # may be reached through one (`tmp/` links into the cache directory).
+    assert String.ends_with?(
+             spawned.file,
+             "/app/build/dev/erlang/gleam_app/_gleam_artefacts/gleam_app@worker.erl"
+           )
 
     assert spawned.file |> File.read!() |> String.split("\n") |> Enum.at(spawned.line - 1) =~
              "erlang:spawn("
