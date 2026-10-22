@@ -13,9 +13,10 @@ defmodule Argus.Extractors.OptionValues do
     `parse_options([{name, L} | Rest], State)`, a `select_val` or an
     `is_eq_exact` on the pair's first element, or an `is_tagged_tuple`
     on the pair; or
-  - what a keyed lookup answers under a literal atom key:
-    `proplists:get_value(name, Opts)`, `maps:get(name, Opts)`,
-    `Keyword.get(opts, :name)`, `Map.get(opts, :name)`.
+  - what a lookup in an option list answers under a literal atom key:
+    `proplists:get_value(name, Opts)`, `Keyword.get(opts, :name)`. A map
+    lookup is not one: `Map.get(event, :type)` reads any map's field, a
+    decoded message's as much as an options map's.
 
   The value is still the caller's, and a caller may fill an option from
   anywhere. What the shape says is that the library takes it as
@@ -51,14 +52,9 @@ defmodule Argus.Extractors.OptionValues do
   @lookups %{
     {:proplists, :get_value, 2} => 0,
     {:proplists, :get_value, 3} => 0,
-    {:maps, :get, 2} => 0,
-    {:maps, :get, 3} => 0,
     {Keyword, :get, 2} => 1,
     {Keyword, :get, 3} => 1,
-    {Keyword, :fetch!, 2} => 1,
-    {Map, :get, 2} => 1,
-    {Map, :get, 3} => 1,
-    {Map, :fetch!, 2} => 1
+    {Keyword, :fetch!, 2} => 1
   }
 
   @impl true

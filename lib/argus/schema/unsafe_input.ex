@@ -62,8 +62,8 @@ defmodule Argus.Schema.UnsafeInput do
         doc: """
         The string an atom is made of at `id` is, on every reaching path, an option's \
         value: the second element of a list's pair whose first element the function \
-        compares to literal atoms, or what a keyed lookup answers under a literal atom \
-        key (`Argus.Extractors.OptionValues`).
+        compares to literal atoms, or what a lookup in an option list (proplists, \
+        Keyword) answers under a literal atom key (`Argus.Extractors.OptionValues`).
         """
       },
       %{

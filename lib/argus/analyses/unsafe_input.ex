@@ -40,8 +40,8 @@ defmodule Argus.Analyses.UnsafeInput do
     says so.
   - An atom no request reaches made of an option's value
     (`Argus.Extractors.OptionValues`: the value of an option list's `{key,
-    value}` entry the function matches by key, or a lookup under a literal
-    atom key) is reported at info, its `source` `option`: a library's user
+    value}` entry the function matches by key, or a proplists or Keyword
+    lookup under a literal atom key) is reported at info, its `source` `option`: a library's user
     sets an option as configuration more often than it carries outside
     data, but a caller may fill it from a request.
   - `artifact_decode(id, func, api, origin, safety)` — a deserialization

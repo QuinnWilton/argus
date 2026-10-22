@@ -279,7 +279,7 @@ defmodule Argus.Test.Fixtures.OptionAtoms do
   mochiweb's parse_options/2 and erlsom's getOptions/2: an atom made of
   an option's value, matched by key in an option list or looked up
   under a literal atom key. `root/1` makes an atom of a document's own
-  text and keeps the warning.
+  text and `role/1` of a data map's field: both keep the warning.
   """
 
   def parse_options([{:name, name} | rest], state) when is_binary(name),
@@ -289,6 +289,9 @@ defmodule Argus.Test.Fixtures.OptionAtoms do
   def parse_options([], state), do: state
 
   def encoding(opts), do: String.to_atom(Keyword.get(opts, :encoding, "utf8"))
+
+  # A field of a data map is no option: it keeps the warning.
+  def role(changes), do: String.to_atom(Map.get(changes, :role))
 
   def root(document) do
     [name | _] = String.split(document, ">")

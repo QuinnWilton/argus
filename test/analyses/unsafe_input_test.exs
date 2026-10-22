@@ -243,7 +243,12 @@ defmodule Argus.Analyses.UnsafeInputTest do
           {func |> String.split(":") |> List.last(), source}
         end)
 
-      assert sources == %{"encoding/1" => "option", "parse_options/2" => "option", "root/1" => ""}
+      assert sources == %{
+               "encoding/1" => "option",
+               "parse_options/2" => "option",
+               "role/1" => "",
+               "root/1" => ""
+             }
 
       severities =
         Map.new(rows, fn row ->

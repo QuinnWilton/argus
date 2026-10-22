@@ -105,9 +105,10 @@ An option's value is lowered to info, its `source` `option`
 (`Argus.Extractors.OptionValues`): the converted string is, on every path, the value of
 an option list's `{key, value}` entry the function matches by a literal atom key
 (mochiweb's `parse_options([{name, L} | Rest], State)`, erlsom's `getOptions/2`), or
-what a lookup under a literal atom key answers (`proplists:get_value/2`,
-`Keyword.get/2`, `maps:get/2`). A library's user sets an option as configuration more
-often than it carries outside data; a caller filling the option from a request is the
+what a lookup in an option list under a literal atom key answers
+(`proplists:get_value/2`, `Keyword.get/2`). A map lookup (`Map.get(event, :type)`)
+reads any map's field, a decoded message's too, and keeps the warning. A library's
+user sets an option as configuration more often than it carries outside data; a caller filling the option from a request is the
 same exhaustion, which is why it is still reported. A list of tagged events the
 function dispatches on by tag has the same shape and is read the same way. The value
 must be read in the converting function itself: an option handed to a helper that
