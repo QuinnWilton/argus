@@ -101,6 +101,18 @@ entry points, and so does a documented function that compiles a template (older
 LiveView's `TagEngine.compile/2`). Priors may lower this fallback to info. The finding
 lists the exports whose callers' argument reaches the conversion.
 
+An option's value is lowered to info, its `source` `option`
+(`Argus.Extractors.OptionValues`): the converted string is, on every path, the value of
+an option list's `{key, value}` entry the function matches by a literal atom key
+(mochiweb's `parse_options([{name, L} | Rest], State)`, erlsom's `getOptions/2`), or
+what a lookup under a literal atom key answers (`proplists:get_value/2`,
+`Keyword.get/2`, `maps:get/2`). A library's user sets an option as configuration more
+often than it carries outside data; a caller filling the option from a request is the
+same exhaustion, which is why it is still reported. A list of tagged events the
+function dispatches on by tag has the same shape and is read the same way. The value
+must be read in the converting function itself: an option handed to a helper that
+converts it keeps the warning.
+
 The name of an atom that exists, read back into an atom
 (`String.to_atom(Atom.to_string(a))`, `list_to_atom(atom_to_list(a))`), is that atom:
 the conversion makes none, whoever chose `a`, so it is no sink. A private helper

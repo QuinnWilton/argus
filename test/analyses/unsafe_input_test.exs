@@ -27,6 +27,7 @@ defmodule Argus.Analyses.UnsafeInputTest do
     U.TaskPools,
     U.PooledLive,
     Argus.Test.Fixtures.UnsafeAtomCreation,
+    Argus.Test.Fixtures.OptionAtoms,
     Argus.Test.Fixtures.UnsafeDeserialization,
     Argus.Test.Fixtures.CodeExecution,
     Argus.Test.Fixtures.CommandLiteralJoin,
@@ -230,6 +231,26 @@ defmodule Argus.Analyses.UnsafeInputTest do
                "exported_decode/1",
                "named/1"
              ]
+    end
+
+    test "an atom made of an option's value is reported a step down", ctx do
+      rows =
+        analyze(ctx, [Argus.Test.Fixtures.OptionAtoms])["sink_without_request_path"]
+        |> Enum.filter(&(Enum.at(&1, 3) == "atom"))
+
+      sources =
+        Map.new(rows, fn [_id, func, _api, _sink, source, _p, _safety] ->
+          {func |> String.split(":") |> List.last(), source}
+        end)
+
+      assert sources == %{"encoding/1" => "option", "parse_options/2" => "option", "root/1" => ""}
+
+      severities =
+        Map.new(rows, fn row ->
+          {Enum.at(row, 4), UnsafeInput.finding(:sink_without_request_path, row).severity}
+        end)
+
+      assert severities == %{"option" => :info, "" => :warning}
     end
 
     test "a decode of a file at a fixed path names who can write it, at full severity", ctx do

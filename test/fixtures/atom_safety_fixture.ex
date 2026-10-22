@@ -273,3 +273,25 @@ defmodule Argus.Test.Fixtures.AtomRoundTripTwins do
 
   defp intern(text), do: String.to_atom(text)
 end
+
+defmodule Argus.Test.Fixtures.OptionAtoms do
+  @moduledoc """
+  mochiweb's parse_options/2 and erlsom's getOptions/2: an atom made of
+  an option's value, matched by key in an option list or looked up
+  under a literal atom key. `root/1` makes an atom of a document's own
+  text and keeps the warning.
+  """
+
+  def parse_options([{:name, name} | rest], state) when is_binary(name),
+    do: parse_options(rest, Map.put(state, :name, String.to_atom(name)))
+
+  def parse_options([_ | rest], state), do: parse_options(rest, state)
+  def parse_options([], state), do: state
+
+  def encoding(opts), do: String.to_atom(Keyword.get(opts, :encoding, "utf8"))
+
+  def root(document) do
+    [name | _] = String.split(document, ">")
+    String.to_atom(name)
+  end
+end

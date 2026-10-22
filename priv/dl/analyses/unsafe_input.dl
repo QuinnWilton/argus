@@ -729,13 +729,26 @@ sink_without_request_path(id, func, api, s, source, p, safety) :-
   exposed_sink(id, func, api, s, safety),
   sink_value(func, s, source, p),
   !decoded_origin(id, func, _, _),
-  !code_fed(id).
+  !code_fed(id),
+  !option_atom(id).
 
 sink_without_request_path(id, func, api, s, "", 0, safety) :-
   exposed_sink(id, func, api, s, safety),
   !sink_value(func, s, _, _),
   !decoded_origin(id, func, _, _),
-  !code_fed(id).
+  !code_fed(id),
+  !option_atom(id).
+
+// An atom made of an option's value (`option_value`): still a caller's, and reported,
+// with "option" as what the value is. A library takes an option as its user's
+// configuration more often than as data a request carries.
+sink_without_request_path(id, func, api, "atom", "option", 0, safety) :-
+  exposed_sink(id, func, api, "atom", safety),
+  option_atom(id).
+
+.decl option_atom(id: symbol)
+
+option_atom(id) :- exposed_sink(id, func, _, "atom", _), option_value(id, func).
 
 // A code sink no request reaches whose source argument a caller's data decides: the
 // stronger tier, reported apart from the bare reachable-from-exports case, the way the

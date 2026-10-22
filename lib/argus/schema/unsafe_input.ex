@@ -53,6 +53,20 @@ defmodule Argus.Schema.UnsafeInput do
         """
       },
       %{
+        name: :option_value,
+        layer: 2,
+        fields: [
+          {:id, :instr_id, "instruction ID of the atom-creating call"},
+          {:func, :func_id, "containing function ID"}
+        ],
+        doc: """
+        The string an atom is made of at `id` is, on every reaching path, an option's \
+        value: the second element of a list's pair whose first element the function \
+        compares to literal atoms, or what a keyed lookup answers under a literal atom \
+        key (`Argus.Extractors.OptionValues`).
+        """
+      },
+      %{
         name: :unsafe_decompression,
         layer: 2,
         fields: [

@@ -678,6 +678,11 @@
 .decl node_operation(id: symbol, func: symbol, operation: symbol) mutable
 .input node_operation
 
+// The string an atom is made of at `id` is, on every reaching path, an option's value: the second element of a list's pair whose first element the function compares to literal atoms, or what a keyed lookup answers under a literal atom key (`Argus.Extractors.OptionValues`).
+//
+.decl option_value(id: symbol, func: symbol) mutable
+.input option_value
+
 // A call, subscription, or monitor controlled by a test on parameter `pos`, one of its fields, or a call result derived from it (`Argus.Extractors.LiveView`). Tests whose alternative paths only raise do not count. For a state parameter, this identifies state-dependent calls.
 //
 .decl param_decided(id: symbol, func: symbol, pos: number) mutable

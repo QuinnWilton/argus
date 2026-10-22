@@ -38,6 +38,12 @@ defmodule Argus.Analyses.UnsafeInput do
     (`Argus.Priors.Questions.ValueSource`, asked of atoms,
     deserializations and code execution); the finding then steps down and
     says so.
+  - An atom no request reaches made of an option's value
+    (`Argus.Extractors.OptionValues`: the value of an option list's `{key,
+    value}` entry the function matches by key, or a lookup under a literal
+    atom key) is reported at info, its `source` `option`: a library's user
+    sets an option as configuration more often than it carries outside
+    data, but a caller may fill it from a request.
   - `artifact_decode(id, func, api, origin, safety)` — a deserialization
     no request reaches whose bytes are, on every path, a BEAM file's
     chunks (`artifact`) or a file under the build directories (`build`)
@@ -154,7 +160,9 @@ defmodule Argus.Analyses.UnsafeInput do
       # Calls a quote names (quoted_call): generated code's, not a beam's.
       Argus.Extractors.Quoted,
       # Bytes decoded from a beam's chunks or the build (decoded_origin).
-      Argus.Extractors.DecodedOrigin
+      Argus.Extractors.DecodedOrigin,
+      # An atom made of an option's value (option_value): stepped down.
+      Argus.Extractors.OptionValues
     ]
 
   @sink_fields [
@@ -194,7 +202,8 @@ defmodule Argus.Analyses.UnsafeInput do
             [
               {:source, :symbol,
                "what the converted value is, when a prior is sure it is not outside data " <>
-                 "(configured | code | stored | cluster | operator), else empty"},
+                 "(configured | code | stored | cluster | operator), or option for an atom " <>
+                 "made of an option's value (option_value), else empty"},
               {:permille, :number,
                "the prior's probability that the value is not outside data, in thousandths, else 0"},
               {:safety, :symbol,
@@ -442,6 +451,22 @@ defmodule Argus.Analyses.UnsafeInput do
     )
     |> retier(func, proximity, source, p)
     |> requested()
+  end
+
+  def finding(:sink_without_request_path, [id, func, api, "atom", "option", _p, _safety]) do
+    Findings.new(
+      :info,
+      "Dynamic atom creation reachable from an exported function",
+      "#{func} calls #{atom_api(api)} on an option's value: the second element of an " <>
+        "option list's `{key, value}` entry it matches by key, or what a lookup under a " <>
+        "literal atom key answers. A library's user sets an option as configuration " <>
+        "more often than it carries outside data, but a caller that fills it from a " <>
+        "request makes every new value a permanent slot in the atom table, which is " <>
+        "never garbage collected, until the node dies.",
+      at: Findings.at_instr(id),
+      at_label: "an option's value interned as an atom here",
+      help: ["take the option as an atom, or match it against the values it may take"]
+    )
   end
 
   def finding(:sink_without_request_path, [id, func, api, "atom", source, p, _safety]) do
