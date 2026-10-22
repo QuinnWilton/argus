@@ -412,7 +412,14 @@ built_return(g, o) :-
   !start_term(o, _),
   !process_start(o, _, _, _, _).
 
-built_return(g, o) :- return_var(g, "result", c), call_result_var(c, g, h), built_return(h, o).
+// A fun's answer to a library call the function returns stays the fun's
+// term: the library hands the fun nothing a call site of this function
+// passed, so an instance per call would hold nothing.
+built_return(g, o) :-
+  return_var(g, "result", c),
+  call_result_var(c, g, h),
+  !element_fun(c, g, h, _),
+  built_return(h, o).
 
 // Field `sel` of `obj`, as `func` returns it, holds `func`'s parameter `pos`;
 // built_local, what a source holds in `home`.

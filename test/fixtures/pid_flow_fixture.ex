@@ -989,6 +989,10 @@ defmodule Argus.Test.Fixtures.PidFlow do
     def put_via(map, key, value), do: put(map, key, value)
     def wrap(value), do: %{held: value}
     def keep(map, value), do: %{map | held: value}
+
+    # A fun's answer to a library call, handed back: the term the fun
+    # builds, shared by every caller.
+    def tag_all(values), do: Enum.reduce(values, nil, fn value, _ -> {:tagged, value} end)
   end
 
   defmodule BuildUserA do
@@ -1004,7 +1008,7 @@ defmodule Argus.Test.Fixtures.PidFlow do
     @impl true
     def init(:ok) do
       {:ok, peer} = TargetA.start_link()
-      {:ok, %{peer: peer}}
+      {:ok, %{peer: peer, tagged: Build.tag_all([peer])}}
     end
 
     @impl true
@@ -1026,6 +1030,11 @@ defmodule Argus.Test.Fixtures.PidFlow do
     def handle_call(:keep, _from, s) do
       held = Build.keep(%{held: nil}, s.peer)
       {:reply, GenServer.call(held.held, :ping), s}
+    end
+
+    def handle_call(:tagged, _from, s) do
+      {:tagged, peer} = s.tagged
+      {:reply, GenServer.call(peer, :ping), s}
     end
   end
 

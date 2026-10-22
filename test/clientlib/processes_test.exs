@@ -234,12 +234,14 @@ defmodule Argus.Clientlib.ProcessesTest do
     # Each user reaches its own peer through every helper's term, at each
     # of its four calls: put into, through a second helper, built whole,
     # and updated...
-    for {user, own} <- [
-          {"BuildUserA", "start BuildUserA:init/1"},
-          {"BuildUserB", "start BuildUserB:init/1"}
+    # BuildUserA's fifth is through a helper handing back a fun's answer
+    # to Enum.map: the fun's term, which every caller shares.
+    for {user, own, count} <- [
+          {"BuildUserA", "start BuildUserA:init/1", 5},
+          {"BuildUserB", "start BuildUserB:init/1", 4}
         ] do
       sites = for {f, a, ^own} <- targets, String.starts_with?(f, user), uniq: true, do: a
-      assert length(sites) == 4, "#{user} reaches its peer at #{inspect(sites)}"
+      assert length(sites) == count, "#{user} reaches its peer at #{inspect(sites)}"
     end
 
     # ...and only its own: built once for every caller, each term would hold both.
