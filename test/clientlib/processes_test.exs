@@ -54,6 +54,7 @@ defmodule Argus.Clientlib.ProcessesTest do
     PidFlow.NamedUserB,
     PidFlow.NamedTargetA,
     PidFlow.NamedTargetB,
+    PidFlow.NamedHolder,
     PidFlow.StatemClient,
     PidFlow.Quiet,
     PidFlow.Pass,
@@ -510,6 +511,46 @@ defmodule Argus.Clientlib.ProcessesTest do
              r["sync_site"],
              &match?(
                ["NamedUserB:handle_call/3", "NamedTargetB", "NamedUserB:handle_call/3#" <> _],
+               &1
+             )
+           )
+  end
+
+  test "a literal name reaches the process registered under it, wherever it goes", ctx do
+    r = unsited(solve(ctx, ~w(process_call call_site_target))["process_call"])
+
+    # Handed to a helper, and to a wrapper of it: the call is each caller's,
+    # at its own call into them.
+    assert Enum.any?(
+             r,
+             &match?(
+               [
+                 "NamedUserA:handle_call/3",
+                 "NamedUserA:handle_call/3",
+                 "NamedCall:call/2",
+                 "call",
+                 "server NamedTargetA:start_link/1"
+               ],
+               &1
+             )
+           )
+
+    refute Enum.any?(
+             r,
+             &match?(["NamedUserA:handle_call/3", _, _, _, "server NamedTargetB" <> _], &1)
+           )
+
+    # Kept in a server's state.
+    assert Enum.any?(
+             r,
+             &match?(
+               [
+                 "NamedHolder:handle_cast/2",
+                 _,
+                 "NamedHolder:handle_cast/2",
+                 "cast",
+                 "server NamedTargetA:start_link/1"
+               ],
                &1
              )
            )

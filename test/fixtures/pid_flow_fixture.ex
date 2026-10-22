@@ -845,6 +845,28 @@ defmodule Argus.Test.Fixtures.PidFlow do
     def handle_call(:ping, _from, s), do: {:reply, :pong, s}
   end
 
+  defmodule NamedHolder do
+    @moduledoc """
+    Keeps NamedTargetA's name in its state beside its options, not its
+    pid, and casts to whatever its state names: the name reaches the
+    process registered under it.
+    """
+    use GenServer
+
+    alias Argus.Test.Fixtures.PidFlow.NamedTargetA
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+    @impl true
+    def init(opts), do: {:ok, %{peer: NamedTargetA, opts: opts}}
+
+    @impl true
+    def handle_cast(:poke, s) do
+      GenServer.cast(s.peer, :poked)
+      {:noreply, s}
+    end
+  end
+
   defmodule NamedTargetB do
     @moduledoc false
     use GenServer

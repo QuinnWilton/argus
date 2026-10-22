@@ -372,16 +372,25 @@ child_named(sup, name) :- supervisor_child(sup, _, name, _, _).
 child_named(sup, name) :- supervisor_child_name(sup, _, name).
 
 // A handler uses a stored pid for the named process, as resolved by points-to, rather
-// than looking up the name on each call. If the name has no known process, an
+// than looking up the name on each call: the name itself as the target, or handed to
+// the helper whose call it is, is a lookup. If the name has no known process, an
 // unresolved pid call serves as the fallback.
 .decl handler_calls_cached_pid(mod: symbol, name: symbol)
 
 handler_calls_cached_pid(mod, name) :-
   handler_function(mod, handler),
-  process_call(handler, _, site, _, pid),
+  process_call(handler, anchor, site, _, pid),
   named_pid(name, pid),
   pid_use(site, _, _, target_kind, _),
-  target_kind != "name".
+  target_kind != "name",
+  target_kind != "literal",
+  !hands_name(handler, anchor, site, name).
+
+// `func` hands the literal `name` at `anchor` on to the parameter the call at `site`
+// targets (the values stage's param_origin).
+.decl hands_name(func: symbol, anchor: symbol, site: symbol, name: symbol)
+
+hands_name(f, a, site, n) :- pid_use(site, g, _, "param", k), param_origin(g, k, f, a, n).
 
 handler_calls_cached_pid(mod, name) :-
   caches_pid(mod, _, name),

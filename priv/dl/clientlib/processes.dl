@@ -127,20 +127,29 @@ process(p) :- server_process(p, _).
 // A source, as seen from inside `func`, may point to `x`.
 .decl var_points_to(func: symbol, var_kind: symbol, var: symbol, object: symbol)
 
-// The name and self sources each function reads, so the rules resolving
-// them are bound by the function that uses them.
-.decl reads_name(func: symbol, name: symbol)
+// The names each function reads, so the rules resolving them are bound by
+// the function that uses them: a `name`, the process a lookup answers or a
+// call's literal target, and a `literal`, which names the process
+// registered under it wherever it goes, handed to a helper, kept in a
+// field or in a server's state. One that names no process points to none.
+.decl reads_name(func: symbol, var_kind: symbol, name: symbol)
 
-reads_name(f, n) :- call_arg_var(_, f, _, _, _, "name", n).
-reads_name(f, n) :- return_var(f, "name", n).
-reads_name(f, n) :- process_call_var(_, f, _, "name", n).
-reads_name(f, n) :- process_message_var(_, f, _, "name", n).
-reads_name(f, n) :- process_register_var(_, f, _, "name", n).
-reads_name(f, n) :- field_store(f, _, _, "name", n).
-reads_name(f, n) :- term_update_base(f, _, "name", n).
-reads_name(f, n) :- process_signal_var(_, f, _, "name", n).
-reads_name(f, n) :- task_operation_var(_, f, _, "name", n).
-reads_name(f, n) :- unmodeled_use(_, f, "name", n).
+reads_name(f, sk, n) :- call_arg_var(_, f, _, _, _, sk, n), name_kind(sk).
+reads_name(f, sk, n) :- return_var(f, sk, n), name_kind(sk).
+reads_name(f, sk, n) :- process_call_var(_, f, _, sk, n), name_kind(sk).
+reads_name(f, sk, n) :- process_message_var(_, f, _, sk, n), name_kind(sk).
+reads_name(f, sk, n) :- process_register_var(_, f, _, sk, n), name_kind(sk).
+reads_name(f, sk, n) :- field_store(f, _, _, sk, n), name_kind(sk).
+reads_name(f, sk, n) :- term_update_base(f, _, sk, n), name_kind(sk).
+reads_name(f, sk, n) :- process_signal_var(_, f, _, sk, n), name_kind(sk).
+reads_name(f, sk, n) :- task_operation_var(_, f, _, sk, n), name_kind(sk).
+reads_name(f, "name", n) :- unmodeled_use(_, f, "name", n).
+
+// The variable kinds a registered name may be read as.
+.decl name_kind(var_kind: symbol)
+
+name_kind("name").
+name_kind("literal").
 
 var_points_to(f, "process", p, p) :- process_start(_, f, p, _, _), !hub_object(p).
 
@@ -202,7 +211,7 @@ var_points_to(f, "result", c, cat("result ", c)) :-
   kept_instance(c, i),
   !hub_object(i).
 var_points_to(f, "result", c, i) :- built_call(c, f, _, _, i), holds_object(i).
-var_points_to(f, "name", n, p) :- reads_name(f, n), named_pid(n, p), !hub_object(p).
+var_points_to(f, sk, n, p) :- reads_name(f, sk, n), named_pid(n, p), !hub_object(p).
 var_points_to(f, "dictionary", k, x) :- dictionary_read(f, k, g, sk, s), var_points_to(g, sk, s, x).
 
 // A helper returning a dictionary entry returns the value held by the caller's process

@@ -47,7 +47,7 @@ reach_top(r) :- reach_top_tag(t), r = (t, ("", "", "", "")).
 field_insensitive_points_to(f, "process", p, ("top", ("", "", "", "")), p) :- stage_mode("selective"), process_start(_, f, p, _, _).
 field_insensitive_points_to(f, "self", "self", ("top", ("", "", "", "")), p) :- stage_mode("selective"), self_pid(f, p).
 field_insensitive_points_to(f, "table", t, ("top", ("", "", "", "")), t) :- stage_mode("selective"), table_allocation(_, f, t).
-field_insensitive_points_to(f, "name", n, ("top", ("", "", "", "")), p) :- reads_name(f, n), field_insensitive_named_pid(n, p).
+field_insensitive_points_to(f, sk, n, ("top", ("", "", "", "")), p) :- reads_name(f, sk, n), field_insensitive_named_pid(n, p).
 field_insensitive_points_to(f, "dictionary", k, r, x) :- dictionary_read(f, k, g, sk, s), field_insensitive_points_to(g, sk, s, r, x).
 
 // A store: one field further down.
