@@ -79,8 +79,9 @@ program instead. Which program runs is a function of the facts, not of time.
 ## Value flow
 
 **Value flow** (`Argus.Extractors.TermFlow`). Where a value comes from within one
-function, summarized per function; the interprocedural part is the points-to
-stage. The literature calls the local part *intraprocedural dataflow* or
+function, summarized per function; two stages read the summaries across
+functions: points-to, for the objects a variable holds, and the values stage, for
+the literals. The literature calls the local part *intraprocedural dataflow* or
 *def-use analysis* and its output *function summaries*.
 
 **Variable.** A value value flow names, by a kind and a key (`var_kind`, `var`):

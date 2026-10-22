@@ -60,9 +60,13 @@ TermFlow has no evaluation cutoff. An explicit `ValueFlow` budget raises when
 exhausted instead of exposing an incomplete result as a solved function.
 
 Emission occurs after convergence. Objects are emitted only if they transitively
-contain a non-closure source; source-free cycles emit no objects. Rows are sorted
-and deduplicated. Shared Datalog resolves calls, callback state, messages,
-registries, replies and dictionary contents across these function summaries.
+contain a non-closure, non-literal source; source-free cycles emit no objects. Rows
+are sorted and deduplicated. Two shared stages resolve these function summaries
+across functions: points-to (`priv/dl/points_to.dl`) follows the processes and
+tables a variable holds through calls, callback state, messages, registries,
+replies and dictionary contents, a literal name as the process it names; the
+values stage (`priv/dl/values.dl`) follows the literals a parameter holds through
+calls, returns and starts, and where each was spelled.
 
 ## Variable kinds and relation families
 

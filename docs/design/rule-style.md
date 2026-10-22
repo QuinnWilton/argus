@@ -75,6 +75,24 @@ over them, and after the change `--against tmp/before.json` prints the change in
 time from scratch, in one-row edits and in the engine's peak and kept memory,
 and names each output whose rows moved.
 
+## Values across functions
+
+A rule asking which literal a parameter holds reads the values stage
+(`clientlib/staged_values.dl`): `param_value` for what it may hold from any
+caller, `param_complete` before claiming that is all of it, `arg_value` for
+what one caller hands a callee, and `param_origin` for the call spelling a
+literal, to credit the value to that caller (a call's target is that caller's
+dependency, a read its read). A rule asking which process or table a variable
+holds reads points-to. Neither follows `call_arg_forward` through the callers
+itself: a closure written for one rule reaches depths and positions the others
+do not, and a fix to one leaves the rest behind. Positions are spelled as
+term-flow spells a parameter (`"0"`).
+
+A closure of a rule's own is still right for what no literal is: the field of a
+caller's state a parameter holds (`param_field`), a tuple's tag, a key's
+identity as `check_then_act.dl`'s `lift` renames it call by call inside a
+summary, where one caller's values must not meet another's.
+
 ## Names and comments
 
 Relations, columns and Elixir names use the words [the glossary](../glossary.md)
