@@ -99,7 +99,7 @@ which a change appeared; older names and APIs may have changed since then.
   child's siblings are the program's own.
 - `docs/glossary.md` defines the terms the code, rules and docs use.
 - New layer-2 relations (schema shape change): `call_arg_untracked`,
-  `exit_reason`, `field_load_match`, `option_value`, `release_function`,
+  `error_branch_call`, `exit_reason`, `field_load_match`, `option_value`, `release_function`,
   `rescue_returns_error`, `send_arg_param`, `statem_enter_stops`,
   `statem_target_param`, `try_pure_runtime`, `try_release_call`,
   `try_releases` and `verification_gated`. `decoded_origin` gains a
@@ -123,6 +123,14 @@ which a change appeared; older names and APIs may have changed since then.
     that takes the call (a catch-all included), one finding per clause.
     A state whose every enter call stops is not reported, unless the
     stop depends on a map key the data may lack.
+  - A periodic timer loop that re-arms only while it has work is
+    reported again where another callback arms it beside the running
+    one (sequin#371's producer, re-armed only while demand remains),
+    which 0.24.0 missed. A re-arm reached only once a value matched
+    `:error` or `{:error, _}` is a retry, not a loop; a second arm whose
+    helper does nothing while the loop's timer is held (`when
+    is_reference(ref)`) arms no second loop; and a shared arming helper
+    arms, on each path, the message that path hands it.
 - Points-to holds its budget on more programs, and so more analyses
   report: a term a helper builds is each keeping call's own; a match's
   shape filters the tuples an element read or a later read takes in; a
