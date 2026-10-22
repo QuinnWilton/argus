@@ -2520,9 +2520,10 @@ cancels_before(e, c, key) :-
   cancel_call(g, s, key),
   !conditional_call(s).
 
-// Suppress a second arm when its function or callback tests the stored reference field
-// for nil/undefined. The branch containing the arm is not checked, so this may
-// over-suppress.
+// Suppress a second arm when its function, its callback or the helper the callback
+// calls toward it tests the stored reference field for nil/undefined or for a held
+// reference, doing nothing while one is held (field_nil_test). The branch containing
+// the arm is not checked, so this may over-suppress.
 .decl arms_when_empty(entry: symbol, site: symbol, key: symbol)
 
 arms_when_empty(e, c, key) :-
@@ -2534,6 +2535,12 @@ arms_when_empty(e, c, key) :-
   second_arm(_, _, e, c, _, _),
   loop_keeps_ref_under(_, _, _, key),
   field_nil_test(e, key).
+
+arms_when_empty(e, c, key) :-
+  second_arm(_, _, e, c, _, _),
+  loop_keeps_ref_under(_, _, _, key),
+  call_instr(e, h, c),
+  field_nil_test(h, key).
 
 
 // Registrations during static rendering

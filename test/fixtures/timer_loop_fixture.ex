@@ -397,6 +397,26 @@ defmodule Argus.Test.Fixtures.TimerLoop do
     def receive_messages(state), do: {:noreply, [], state}
   end
 
+  # A kick arms the loop only while no timer is held: its helper's
+  # clause for a held ref does nothing.
+  defmodule RefGuardedKick do
+    use GenServer
+
+    def init(_), do: {:ok, %{timer: nil}}
+
+    def handle_cast(:kick, state), do: {:noreply, maybe_arm(state)}
+
+    def handle_info(:tick, state) do
+      work()
+      {:noreply, %{state | timer: Process.send_after(self(), :tick, 1000)}}
+    end
+
+    defp maybe_arm(%{timer: ref} = state) when is_reference(ref), do: state
+    defp maybe_arm(state), do: %{state | timer: Process.send_after(self(), :tick, 1000)}
+
+    defp work, do: Application.get_env(:probe, :work)
+  end
+
   # ant's Ant.Queue before b6f9f90: three clauses for :check_workers each
   # re-arm through the helper, and each finished job's dequeue arms it
   # again. No one call is on every path; the three together are.

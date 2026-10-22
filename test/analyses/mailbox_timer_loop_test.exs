@@ -27,6 +27,7 @@ defmodule Argus.Analyses.MailboxTimerLoopTest do
     T.CastFromInit,
     T.CastFromInitAndApi,
     T.DemandRearm,
+    T.RefGuardedKick,
     T.BroadwayGuard,
     T.ThreeClauseLoop,
     T.ContinueOnError,
@@ -118,6 +119,7 @@ defmodule Argus.Analyses.MailboxTimerLoopTest do
           T.SameTagResend,
           T.CastFromInit,
           T.BroadwayGuard,
+          T.RefGuardedKick,
           :timer_loop_resend,
           :timer_loop_domain_db,
           # attesto_phoenix's sweeper: re-armed only behind a case and

@@ -442,8 +442,9 @@ defmodule Argus.Schema.ErrorHandling do
           {:key, :symbol, "the inspected map key"}
         ],
         doc: """
-        A test comparing map field `key` with `nil` or `undefined`. Supports checks for \
-        timers armed only when no reference is stored.
+        A test comparing map field `key` with `nil` or `undefined`, or testing it for a \
+        reference (`is_reference`), whose side with the field holding something calls \
+        nothing. Supports checks for timers armed only when no reference is stored.
         """
       },
       %{

@@ -482,7 +482,7 @@
 .decl field_load_match(load: symbol, tag: symbol, arity: symbol) mutable
 .input field_load_match
 
-// A test comparing map field `key` with `nil` or `undefined`. Supports checks for timers armed only when no reference is stored.
+// A test comparing map field `key` with `nil` or `undefined`, or testing it for a reference (`is_reference`), whose side with the field holding something calls nothing. Supports checks for timers armed only when no reference is stored.
 //
 .decl field_nil_test(func: symbol, key: symbol) mutable
 .input field_nil_test

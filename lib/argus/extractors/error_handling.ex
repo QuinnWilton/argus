@@ -940,9 +940,10 @@ defmodule Argus.Extractors.ErrorHandling do
     end)
   end
 
-  # The map fields the function tests against nil or undefined: a clause
-  # head `%{receive_timer: nil}`, an `if state.timer == nil`, Erlang's
-  # `#{tref := undefined}`. A function that arms a timer only when the
+  # The map fields the function tests against nil or undefined, or for
+  # holding a reference: a clause head `%{receive_timer: nil}`, an `if
+  # state.timer == nil`, Erlang's `#{tref := undefined}`, a guard
+  # `when is_reference(ref)` on the field. A function that arms a timer only when the
   # field that keeps its ref is empty arms none beside a pending one (a
   # Broadway producer's `handle_receive_messages/1`).
   #
@@ -1062,6 +1063,10 @@ defmodule Argus.Extractors.ErrorHandling do
       else: []
   end
 
+  # A ref held is the other side of the same question: attesto_phoenix's
+  # `maybe_dispatch(%{retry_ref: ref} = s) when is_reference(ref)`.
+  defp nil_tested(instrs, idx, {:test, :is_reference, _fail, [a]}), do: field_key(instrs, idx, a)
+
   defp nil_tested(_instrs, _idx, _instr), do: []
 
   # The map fields the function tests for equality with a literal atom
@@ -1121,6 +1126,8 @@ defmodule Argus.Extractors.ErrorHandling do
 
     [Map.get(labels, fail) | others]
   end
+
+  defp full_sides(_labels, idx, {:test, :is_reference, _fail, [_a]}), do: [idx + 1]
 
   defp full_sides(_labels, _idx, _instr), do: []
 
