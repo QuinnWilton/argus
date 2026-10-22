@@ -14,7 +14,9 @@ defmodule Argus.Analyses.ExposureTlsTest do
     T.Listener,
     T.Accepts,
     T.ServesAndDials,
-    T.ReturnsOptions
+    T.ReturnsOptions,
+    T.TranslatesOption,
+    T.WarnsThenForcesNone
   ]
 
   defp funcs(relation) do
@@ -31,7 +33,9 @@ defmodule Argus.Analyses.ExposureTlsTest do
              # A listener's options that leave the function (returned) or
              # also reach a connect are a client's too.
              inspect(T.ReturnsOptions) <> ":listen/2",
-             inspect(T.ServesAndDials) <> ":start/3"
+             inspect(T.ServesAndDials) <> ":start/3",
+             # Compares a request against :verify_none, and also sets it.
+             inspect(T.WarnsThenForcesNone) <> ":ssl_opts/1"
            ]
 
     # Not reported:
@@ -47,6 +51,8 @@ defmodule Argus.Analyses.ExposureTlsTest do
     #     certificate (ejabberd's HTTP listener, supavisor's client
     #     handler).
     #   * Verifies: verifying properly is silent.
+    #   * TranslatesOption: a pattern or comparison that recognises
+    #     :verify_none sets nothing (erlang_quic's normalize_verify/1).
     #   * DynamicOpts: options built at runtime are not guessed at. A
     #     false "this is insecure" against code that configures itself
     #     properly is the finding that gets an analysis switched off.

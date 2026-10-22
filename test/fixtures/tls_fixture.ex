@@ -70,6 +70,28 @@ defmodule Argus.Test.Fixtures.Tls do
     end
   end
 
+  defmodule TranslatesOption do
+    @moduledoc """
+    erlang_quic's normalize_verify/1: reads a caller's ssl-style option
+    into its own boolean. It recognises :verify_none and sets nothing.
+    """
+    def verify?(true), do: true
+    def verify?(:verify_peer), do: true
+    def verify?(:verify_none), do: false
+    def verify?(:none), do: false
+    def verify?(_), do: true
+
+    def insecure?(mode), do: mode == :verify_none
+  end
+
+  defmodule WarnsThenForcesNone do
+    @moduledoc "Recognises :verify_none in a comparison, and forces it too."
+    def ssl_opts(requested) do
+      if requested != :verify_none, do: :logger.warning(~c"peer verification is unsupported")
+      [verify: :verify_none]
+    end
+  end
+
   defmodule ReturnsOptions do
     @moduledoc "Returns the options it listens with: where else they go is not seen."
     def listen(port, certfile) do

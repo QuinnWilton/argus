@@ -20,6 +20,12 @@ defmodule Argus.Extractors.Tls do
       {:move, {:literal, [verify: :verify_none]}, {:x, 2}}
       {:move, {:atom, :verify_none}, {:x, 2}}
 
+  A test or a comparison that reads a value against `:verify_none` sets
+  nothing: a function translating the option, `normalize(verify_none) ->
+  false`, names it only to recognise it. One against `:verify_peer` is
+  still a `"peer"` setting: a module that recognises a caller's
+  `verify_peer` takes a verified connection as a choice.
+
   ## Left to the default
 
   A TLS connect whose option list is a literal that never mentions `verify`
@@ -111,6 +117,8 @@ defmodule Argus.Extractors.Tls do
   # authenticates its clients.
   @tls_containers ~w(transport_options thousand_island_options socket_opts options)a
   @client_auth ~w(cacerts cacertfile verify_fun fail_if_no_peer_cert)a
+
+  @comparisons [:"=:=", :==, :"=/=", :"/="]
 
   # Calls that build an option list of their arguments: a value handed to
   # one is in what it returns.
@@ -334,7 +342,7 @@ defmodule Argus.Extractors.Tls do
 
   defp emit_verification(facts, func_id, instr, idx) do
     cond do
-      mentions_atom?(instr, :verify_none) ->
+      mentions_atom?(instr, :verify_none) and not compares?(instr) ->
         add_fact(facts, :tls_verification, [InstrId.mint(func_id, idx), func_id, "none"])
 
       mentions_atom?(instr, :verify_peer) ->
@@ -393,6 +401,15 @@ defmodule Argus.Extractors.Tls do
   # An improper option list is one the call would reject; it names no
   # verification mode.
   defp proper_options(opts), do: if(proper_list?(opts), do: {:ok, opts}, else: :dynamic)
+
+  defp compares?(instr) when is_tuple(instr) and tuple_size(instr) > 0 do
+    case instr do
+      {:bif, op, _fail, _args, _dst} -> op in @comparisons
+      _ -> elem(instr, 0) in [:test, :select_val]
+    end
+  end
+
+  defp compares?(_instr), do: false
 
   # The atom as an operand, or anywhere inside a literal operand's value.
   # Every instruction of every function passes through here, so the walk
