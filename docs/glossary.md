@@ -95,6 +95,7 @@ stage. The literature calls the local part *intraprocedural dataflow* or
 | `process` | A process the function starts, by start site. |
 | `self` | The running process. |
 | `name` | A registered name, read as the process it names. |
+| `literal` | A literal atom, binary or integer, as the program spells it. |
 | `table` | An ETS table the function creates. |
 | `dictionary` | A process dictionary entry, by literal key. |
 | `remote` | A pid that may belong to another node. |

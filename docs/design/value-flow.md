@@ -15,7 +15,9 @@ process operations expose `process_*_var` relations.
 A register definition holds a set of source tokens, each a variable the
 register may hold. A read joins the sets of
 all definitions reaching that register, using `Argus.Dataflow`'s register and
-control-flow semantics. Parameter definitions contribute their position. Moves,
+control-flow semantics. Parameter definitions contribute their position, and a
+literal operand (an atom, a binary, an integer) contributes itself, spelled as
+`Argus.Extractor.Terms.spell/1` spells it. Moves,
 swaps and frame trims transport these sets; a send returns its message; unsupported writes contribute no
 modeled provenance. The empty set is **missing evidence**, not proof of safety.
 
@@ -69,6 +71,7 @@ registries, replies and dictionary contents across these function summaries.
 | `param`, `result`, `reply` | Parameter position, project invocation result, synchronous server reply. |
 | `term`, `load` | Local allocation site, deferred external field read. |
 | `process`, `self`, `name` | Started process, running process, literal registry reference. |
+| `literal` | A literal atom, binary or integer, spelled; not booleans or `nil`. |
 | `table`, `dictionary`, `remote` | ETS allocation, literal dictionary key, possibly remote PID origin. |
 
 `call_arg_var`, `return_var` and `call_result_var` connect parameters and returns.
@@ -126,8 +129,11 @@ entry.
 - Branches join alternatives without path predicates. Repeated allocations at
   one site share an object, including across loop iterations. Correlations
   between fields or branches are lost; a modeled source need not be feasible.
-- Ordinary literals carry no source. Empty sets cannot distinguish a literal,
-  an unsupported result, or a not-yet-discovered source during solving.
+- A literal tuple, list, map or float carries no source, and neither do
+  `true`, `false` and `nil`. A literal alone does not make a term worth
+  emitting: a term holding only literals and unmodeled values is not emitted, and
+  `unmodeled_use` leaves literals out. Empty sets cannot distinguish an
+  unsupported result from a not-yet-discovered source during solving.
 - Only explicit structural instructions and recognized library operations
   preserve provenance. Unresolved calls, dynamic apply and unmodeled runtime
   results can lose it; `unmodeled_use` records where a library call or a

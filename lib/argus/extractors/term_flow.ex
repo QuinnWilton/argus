@@ -1782,9 +1782,23 @@ defmodule Argus.Extractors.TermFlow do
         end
 
       _literal ->
-        MapSet.new()
+        literal(operand)
     end
   end
+
+  # A literal operand holds itself, spelled as Terms.spell/1 spells it (as
+  # call_arg and key identities do): an atom, a binary, an integer.
+  # Booleans and nil are flags and absence, not values a rule names, and
+  # every predicate's return would hold one.
+  defp literal({:atom, atom}) when atom not in [nil, true, false],
+    do: MapSet.new([{:literal, Terms.spell(atom)}])
+
+  defp literal({:integer, n}), do: MapSet.new([{:literal, Terms.spell(n)}])
+
+  defp literal({:literal, term}) when is_binary(term),
+    do: MapSet.new([{:literal, Terms.spell(term)}])
+
+  defp literal(_operand), do: MapSet.new()
 
   defp write(r, operand, value) do
     case register(operand) do
@@ -2591,10 +2605,21 @@ defmodule Argus.Extractors.TermFlow do
 
   # ── Sources as rows ──────────────────────────────────────────────────
 
-  defp sources(facts, ctx, relation, prefix, value) do
+  # A literal handed where value flow does not follow it is no use of
+  # anything: it has no identity to keep, send or drop.
+  defp sources(facts, ctx, :unmodeled_use, prefix, value),
+    do: emit_sources(facts, ctx, :unmodeled_use, prefix, MapSet.reject(value, &literal_token?/1))
+
+  defp sources(facts, ctx, relation, prefix, value),
+    do: emit_sources(facts, ctx, relation, prefix, value)
+
+  defp emit_sources(facts, ctx, relation, prefix, value) do
     emit_rows(facts, relation, prefix, convert(ctx, value))
     |> emit_results(ctx, value)
   end
+
+  defp literal_token?({:literal, _spelled}), do: true
+  defp literal_token?(_token), do: false
 
   defp emit_rows(facts, relation, prefix, converted) do
     Enum.reduce(converted, facts, fn {kind, src}, acc ->
@@ -2653,6 +2678,9 @@ defmodule Argus.Extractors.TermFlow do
 
       {:name, name} ->
         [{"name", name}]
+
+      {:literal, spelled} ->
+        [{"literal", spelled}]
 
       {:dict, key} ->
         [{"dictionary", key}]

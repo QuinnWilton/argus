@@ -27,8 +27,9 @@ defmodule Argus.Extractors.OddLiteralsTest do
   # The extractors that record what every function has (its calls'
   # arguments, what its result depends on, what it can raise through,
   # its spec, whether its docs hide it, as PlainModule's `@moduledoc
-  # false` does): the rest read a shape, a process, a table, a socket, a
-  # security call, and have nothing to say of a module with none.
+  # false` does, the literal it returns): the rest read a shape, a
+  # process, a table, a socket, a security call, and have nothing to say
+  # of a module with none.
   @every_function [
     Argus.Extractors.CallArgs,
     Argus.Extractors.ClauseCall,
@@ -41,7 +42,8 @@ defmodule Argus.Extractors.OddLiteralsTest do
     Argus.Extractors.SecurityValues,
     Argus.Extractors.SharedStore,
     Argus.Extractors.ShutdownReason,
-    Argus.Extractors.Specs
+    Argus.Extractors.Specs,
+    Argus.Extractors.TermFlow
   ]
 
   test "a module with one plain function gives every shape extractor nothing" do

@@ -130,7 +130,7 @@ defmodule Argus.Extractors.TermFlow.Heap do
 
   defp unseen(objs, [_token | rest], seen, acc), do: unseen(objs, rest, seen, acc)
 
-  @doc "Objects transitively containing a source, excluding bare closures."
+  @doc "Objects transitively containing a source, excluding bare closures and literals."
   @spec live(objects()) :: %{term() => true}
   def live(objs), do: live(objs, %{})
 
@@ -149,6 +149,7 @@ defmodule Argus.Extractors.TermFlow.Heap do
 
   defp source?({:obj, key}, known), do: Map.has_key?(known, key)
   defp source?({:fun, _}, _known), do: false
+  defp source?({:literal, _}, _known), do: false
   defp source?(_token, _known), do: true
 
   @doc "Positional elements of an unambiguous, locally built proper list."

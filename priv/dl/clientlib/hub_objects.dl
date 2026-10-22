@@ -508,11 +508,12 @@ hub_holders(x, count((f, sk, s))) :- field_insensitive_holder(f, sk, s, x).
 hub_spread(x, n) :- object(x), hub_holders(x, n).
 hub_spread(x, 0) :- object(x), !hub_holders(x, _).
 
-// Every variable of the program, as TermFlow names them.
+// Every variable of the program, as TermFlow names them. A literal holds
+// itself and no object, so it is no variable a hub could spread to.
 .decl program_var(func: symbol, var_kind: symbol, var: symbol)
 
 program_var(g, "param", k) :- stage_mode("selective"), call_arg_var(_, _, g, k, _, _, _).
-program_var(f, sk, s) :- stage_mode("selective"), call_arg_var(_, f, _, _, _, sk, s).
+program_var(f, sk, s) :- stage_mode("selective"), call_arg_var(_, f, _, _, _, sk, s), sk != "literal".
 program_var(f, "load", l) :- stage_mode("selective"), field_load(f, l, _, _, _).
 program_var(f, "term", o) :- stage_mode("selective"), term_allocation(f, o, _, _, _).
 program_var(f, "result", c) :- stage_mode("selective"), call_result_var(c, f, _).

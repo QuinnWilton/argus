@@ -30,7 +30,7 @@ syn_resolver(f) :-
 
 remote_origin(f, "syn resolve_registry_conflict/4", "resolver") :- syn_resolver(f).
 
-// `func`'s value (src_kind, src) may be another node's pid, from `origin`.
+// `func`'s variable (var_kind, var) may be another node's pid, from `origin`.
 .decl remote_value(func: symbol, var_kind: symbol, var: symbol, origin: symbol)
 
 remote_value(f, "remote", s, s) :- process_remote_var(s, f, _).

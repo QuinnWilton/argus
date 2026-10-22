@@ -308,7 +308,7 @@
     !untold_object(id, f, kind).
 
   // The message has an unknown tag or an unsupported source, so its request shape is
-  // unresolved.
+  // unresolved. A literal message is told by call_tag, or by nothing it could be.
   .decl untold_object(site: symbol, func: symbol, kind: symbol)
   untold_object(id, f, kind) :-
     request(id, f, kind),
@@ -319,7 +319,8 @@
     request(id, f, kind),
     process_message_var(id, f, kind, sk, _),
     sk != "term",
-    sk != "param".
+    sk != "param",
+    sk != "literal".
 
   .decl untold_param(func: symbol, pos: symbol)
   untold_param(f, q) :- untold_arg(_, f, q).

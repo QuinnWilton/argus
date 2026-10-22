@@ -89,10 +89,9 @@ defmodule Argus.Extractors.TermFlowTest do
 
     assert ["Argus.TermFlowTest.Values:compound/1", "param", "0"] in raw.return_var
 
-    refute Enum.any?(
-             raw.return_var,
-             &match?(["Argus.TermFlowTest.Values:overwritten/1" | _], &1)
-           )
+    # The overwrite shadows the parameter: what is read back is the literal.
+    assert ["Argus.TermFlowTest.Values:overwritten/1", "literal", ":constant"] in raw.return_var
+    refute ["Argus.TermFlowTest.Values:overwritten/1", "param", "0"] in raw.return_var
 
     assert ["Argus.TermFlowTest.Values:unrelated/2", "param", "0"] in raw.return_var
     refute ["Argus.TermFlowTest.Values:unrelated/2", "param", "1"] in raw.return_var
@@ -363,6 +362,64 @@ defmodule Argus.Extractors.TermFlowTest do
                f.process_message_var,
                &match?([_, "Hub:subscribe/1", "cast", "term", ^msg], &1)
              )
+    end
+  end
+
+  # Compiled once, with the test module: the tests below share it.
+  @literals_beam (fn ->
+                    [{_mod, bin}] =
+                      Code.compile_string("""
+                      defmodule Argus.TermFlowTest.Literals do
+                        def hand, do: take(:alpha, "beta", 7, true)
+                        def take(a, b, c, d), do: {a, b, c, d}
+                        def name, do: :cache
+                        def flag, do: false
+                        def stored(pid), do: %{pid: pid, mode: :fast}
+                        def logged(log, pid) do
+                          log.(:hint)
+                          log.(pid)
+                        end
+                        def either(pick), do: if(pick, do: :left, else: :right)
+                      end
+                      """)
+
+                    bin
+                  end).()
+
+  describe "literals" do
+    setup do
+      bin = @literals_beam
+      {:ok, raw} = Argus.Pipeline.extract([bin], extractors: [TermFlow])
+      %{raw: raw, m: "Argus.TermFlowTest.Literals"}
+    end
+
+    test "an atom, a binary or an integer handed to a call is a literal", %{raw: raw, m: m} do
+      hand = m <> ":hand/0"
+      args = for [_, ^hand, _, pos, "call", kind, var] <- raw.call_arg_var, do: {pos, kind, var}
+
+      assert {"0", "literal", ":alpha"} in args
+      assert {"1", "literal", ~s("beta")} in args
+      assert {"2", "literal", "7"} in args
+      refute Enum.any?(args, &match?({"3", _, _}, &1))
+    end
+
+    test "what a function returns, on every path, but not a boolean", %{raw: raw, m: m} do
+      assert [m <> ":name/0", "literal", ":cache"] in raw.return_var
+      assert [m <> ":either/1", "literal", ":left"] in raw.return_var
+      assert [m <> ":either/1", "literal", ":right"] in raw.return_var
+      flag = m <> ":flag/0"
+      refute Enum.any?(raw.return_var, &match?([^flag | _], &1))
+    end
+
+    test "a field of a term emitted for its other sources", %{raw: raw, m: m} do
+      stored = m <> ":stored/1"
+      assert Enum.any?(raw.field_store, &match?([^stored, _, ":mode", "literal", ":fast"], &1))
+    end
+
+    test "a literal handed where value flow does not follow is no use", %{raw: raw, m: m} do
+      logged = m <> ":logged/2"
+      assert Enum.any?(raw.unmodeled_use, &match?([_, ^logged, "param", "1"], &1))
+      refute Enum.any?(raw.unmodeled_use, &match?([_, ^logged, "literal", _], &1))
     end
   end
 

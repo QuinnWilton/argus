@@ -1,8 +1,9 @@
 defmodule Argus.Schema.Processes do
   @moduledoc """
   Layer-2 value provenance and process operations from `Argus.Extractors.TermFlow`.
-  General `value_*` summaries are composed by the shared Datalog stages.
-  Sources use `(src_kind, src)` pairs. Exposed through `Argus.Schema`.
+  Its summaries (`call_arg_var`, `return_var`, the term relations) are composed
+  across functions by the shared Datalog stages.
+  Variables are `(var_kind, var)` pairs. Exposed through `Argus.Schema`.
   """
 
   @doc "The relations, in the order `Argus.Schema.all/0` lists them."
@@ -34,9 +35,9 @@ defmodule Argus.Schema.Processes do
           {:arg_pos, :symbol, "0-based parameter position, as a symbol"},
           {:via, :symbol, "call, init, spawn, child, closure, resolver or element"},
           {:var_kind, :symbol,
-           "where the value comes from: process, param, result, name, self, term, load, reply, remote, dictionary or table"},
+           "where the value comes from: process, param, result, name, literal, self, term, load, reply, remote, dictionary or table"},
           {:var, :symbol,
-           "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
+           "the process, the parameter position, the call site, the name, the literal, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
         ],
         doc: """
         A possible source for callee parameter `arg_pos`: project call, init argument, \
@@ -52,9 +53,9 @@ defmodule Argus.Schema.Processes do
         fields: [
           {:func, :func_id, "function returning"},
           {:var_kind, :symbol,
-           "where the value comes from: process, param, result, name, self, term, load, reply, remote, dictionary or table"},
+           "where the value comes from: process, param, result, name, literal, self, term, load, reply, remote, dictionary or table"},
           {:var, :symbol,
-           "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
+           "the process, the parameter position, the call site, the name, the literal, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
         ],
         doc: "`func` may return the source, directly or by a tail call."
       },
@@ -67,9 +68,9 @@ defmodule Argus.Schema.Processes do
           {:api_kind, :symbol,
            "call or cast (the sync_call/async_cast table), or info for a send"},
           {:var_kind, :symbol,
-           "where the value comes from: process, param, result, name, self, term, load, reply, remote, dictionary or table"},
+           "where the value comes from: process, param, result, name, literal, self, term, load, reply, remote, dictionary or table"},
           {:var, :symbol,
-           "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
+           "the process, the parameter position, the call site, the name, the literal, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
         ],
         doc: """
         A possible target source or literal name for a call, cast, or info send. \
@@ -84,9 +85,9 @@ defmodule Argus.Schema.Processes do
           {:func, :func_id, "function making the call, cast or send"},
           {:api_kind, :symbol, "call, cast or info (a send)"},
           {:var_kind, :symbol,
-           "where the value comes from: process, param, result, name, self, term, load, reply, remote, dictionary or table"},
+           "where the value comes from: process, param, result, name, literal, self, term, load, reply, remote, dictionary or table"},
           {:var, :symbol,
-           "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
+           "the process, the parameter position, the call site, the name, the literal, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
         ],
         doc: """
         A possible source for a call, cast, or send message. Flows to the corresponding \
@@ -101,9 +102,9 @@ defmodule Argus.Schema.Processes do
           {:func, :func_id, "function registering"},
           {:name, :symbol, "the literal name"},
           {:var_kind, :symbol,
-           "where the value comes from: process, param, result, name, self, term, load, reply, remote, dictionary or table"},
+           "where the value comes from: process, param, result, name, literal, self, term, load, reply, remote, dictionary or table"},
           {:var, :symbol,
-           "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
+           "the process, the parameter position, the call site, the name, the literal, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
         ],
         doc:
           "The call at `id` registers the source under `name` (Process.register/2, :erlang.register/2)."
@@ -117,13 +118,13 @@ defmodule Argus.Schema.Processes do
           {:message, :symbol,
            "literal atom, {:tag, …} for a tuple with a literal atom tag, or dynamic"},
           {:var_kind, :symbol,
-           "where the value comes from: process, param, result, name, self, term, load, reply, remote, dictionary or table"},
+           "where the value comes from: process, param, result, name, literal, self, term, load, reply, remote, dictionary or table"},
           {:var, :symbol,
-           "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
+           "the process, the parameter position, the call site, the name, the literal, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
         ],
         doc: """
-        A send target source, or a literal name with `src_kind` value `name`. Keyed by \
-        send site for finding anchors.
+        A send target variable: a pid's, or a literal name (`name`, and `literal`). \
+        Keyed by send site for finding anchors.
         """
       },
       %{
@@ -144,9 +145,9 @@ defmodule Argus.Schema.Processes do
           {:func, :func_id, "function making it"},
           {:signal, :symbol, "exit, monitor, link, unlink or stop"},
           {:var_kind, :symbol,
-           "where the value comes from: process, param, result, name, self, term, load, reply, remote, dictionary or table"},
+           "where the value comes from: process, param, result, name, literal, self, term, load, reply, remote, dictionary or table"},
           {:var, :symbol,
-           "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
+           "the process, the parameter position, the call site, the name, the literal, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
         ],
         doc: """
         A target source for an exit signal, monitor, link, unlink, or process stop, \
@@ -187,9 +188,9 @@ defmodule Argus.Schema.Processes do
           {:field, :symbol,
            "a map key (inspected), {i} for tuple position i (0-based), [] for a list's elements, * for an unknown map key"},
           {:var_kind, :symbol,
-           "where the value comes from: process, param, result, name, self, term, load, reply, remote, dictionary or table"},
+           "where the value comes from: process, param, result, name, literal, self, term, load, reply, remote, dictionary or table"},
           {:var, :symbol,
-           "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
+           "the process, the parameter position, the call site, the name, the literal, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
         ],
         doc: "The field `sel` of `obj` may hold the source."
       },
@@ -200,9 +201,9 @@ defmodule Argus.Schema.Processes do
           {:func, :func_id, "function building the term"},
           {:term, :symbol, "the term"},
           {:var_kind, :symbol,
-           "where the value comes from: process, param, result, name, self, term, load, reply, remote, dictionary or table"},
+           "where the value comes from: process, param, result, name, literal, self, term, load, reply, remote, dictionary or table"},
           {:var, :symbol,
-           "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
+           "the process, the parameter position, the call site, the name, the literal, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
         ],
         doc: """
         An object's base source. Fields absent from `term_update_overwrites` retain the source's \
@@ -226,9 +227,9 @@ defmodule Argus.Schema.Processes do
           {:load, :symbol, "the load: the reading instruction's ID and the field"},
           {:field, :symbol, "the field read, as in field_store"},
           {:var_kind, :symbol,
-           "where the value comes from: process, param, result, name, self, term, load, reply, remote, dictionary or table"},
+           "where the value comes from: process, param, result, name, literal, self, term, load, reply, remote, dictionary or table"},
           {:var, :symbol,
-           "the process, the parameter position, the call site, the name, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
+           "the process, the parameter position, the call site, the name, the literal, self, the term, the load, the call site replied to, the site that answered a pid of another node or the dictionary key"}
         ],
         doc: """
         A load reading selector `sel` from a source, including field access, tuple \
