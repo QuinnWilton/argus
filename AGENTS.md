@@ -9,18 +9,23 @@ The Hex package and OTP application are `argus_beam`; modules use `Argus`.
 
 ## Setup and checks
 
-Use Elixir 1.19 and OTP 28 (CI uses 1.19.4 / 28.3), and Rust 1.88 or newer
-(`cargo` on `PATH`, in `~/.cargo/bin`, or named by `ARGUS_CARGO`); without it
-`mix test` excludes the tests tagged `:flowlog` and runs the rest (under `CI` a
-missing toolchain is an error). Tag a new test that solves with `@tag :flowlog`,
+Use Elixir 1.19 with OTP 28 or Elixir 1.20 with OTP 29 (CI uses
+1.19.4 / 28.3 and 1.20.4 / 29.1), and Rust 1.88 or newer
+(`cargo` on `PATH`, in `~/.cargo/bin`, or named by `ARGUS_CARGO`). Released
+prebuilt engines are fetched automatically when available. If neither Rust nor
+a usable prebuilt bundle is available, `mix test` excludes the tests tagged
+`:flowlog` locally; under `CI` a missing toolchain is an error. Tag a new test
+that solves with `@tag :flowlog`,
 or its `describe` or module with `@describetag`/`@moduletag`; where most of a
 module or `describe` solves, tag it and opt the rest out with `flowlog: false`.
 
-`mix test` builds the toolchain before the first test: minutes the first time,
-and after an edit under `native/flowlog`, and nothing otherwise. Programs then
-run in the generic engine, so a rule edit needs no build: an edited rule runs
-on the next solve. `mix argus.flowlog build` compiles argus's own programs'
-engines, which then run in their place (`ARGUS_FLOWLOG_ENGINE=generic` keeps
+`mix test` prepares the toolchain before the first test, building it with Rust
+or fetching a released prebuilt bundle when Rust is unavailable. A source build
+takes minutes the first time and after an edit under `native/flowlog`; a cached
+toolchain needs no rebuild. Programs use an installed compiled engine when
+available, otherwise the generic engine. With the generic engine, a rule edit
+needs no build: an edited rule runs on the next solve. `mix argus.flowlog build`
+compiles argus's own programs' engines (`ARGUS_FLOWLOG_ENGINE=generic` keeps
 the generic engine; `compiled` builds every program's engine, minutes each).
 
 ```sh
@@ -42,8 +47,8 @@ with the affected test files. Plain `mix test` leaves out the closed-issue corpu
 which fetches and compiles external projects: `mix test --only corpus` runs it.
 
 Use `ARGUS_ROUX_PATH=../roux` with Mix commands when testing unreleased Roux
-changes. Extraction requires that checkout's query deadlines, packed traces and
-reverse dependency tracking until a Roux release includes them.
+changes. The locked Roux release already includes the query deadlines, packed
+traces and reverse dependency tracking needed for extraction.
 
 | Change | Additional checks |
 |---|---|

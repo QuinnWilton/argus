@@ -7,21 +7,25 @@ pieces as you need them.
 
 ## Get started
 
-Use Elixir 1.19 and OTP 28, and install [Rust](https://rustup.rs) 1.88 or newer.
+Use Elixir 1.19 with OTP 28, or Elixir 1.20 with OTP 29; CI tests both pairs.
+Install [Rust](https://rustup.rs) 1.88 or newer for developing the FlowLog toolchain
+and compiling engines.
 Argus evaluates its Datalog rules with [FlowLog](https://github.com/flowlog-rs/flowlog),
 which compiles each program into an engine, a native executable. Argus builds and
 caches the engines itself.
 
 ```sh
 mix deps.get
-mix argus.flowlog build
 mix test test/analyses/exposure_tls_test.exs
 ```
 
-`mix argus.flowlog build` builds every shipped program's engine once per version
-of its rules (the first build takes several minutes); `mix argus.flowlog status`
-shows what is built and where. The second command runs a small set of TLS tests.
-Tests that need FlowLog are skipped locally if Rust is missing.
+The test command runs a small set of TLS tests. Argus prepares the FlowLog
+toolchain automatically and caches it; a first build can take several minutes.
+Released prebuilt engines are fetched automatically when available. With the
+generic engine, editing rules needs no engine build: the next solve uses them.
+`mix argus.flowlog build` optionally compiles every shipped program's engine;
+`mix argus.flowlog status` shows what is built and where. Locally, tests that
+need FlowLog are skipped if neither Rust nor a usable prebuilt bundle is available.
 
 If you are working with unreleased Roux changes, set
 `ARGUS_ROUX_PATH=/path/to/roux` before running Mix commands.
