@@ -858,7 +858,7 @@ defmodule Argus.Extractors.TermFlow do
   defp tuple_match(cfg, code, idx, src) do
     with %{} = block <- Graph.block_at(cfg, idx),
          {match, _steps} <-
-           match_back(cfg, code, block, idx - 1, {src, nil}, {MapSet.new(), @match_steps}) do
+           match_back(cfg, code, block, idx - 1, {src, nil}, {%{}, @match_steps}) do
       match
     else
       _ -> nil
@@ -867,7 +867,9 @@ defmodule Argus.Extractors.TermFlow do
 
   # Scans `block` back from `j` for what reached it. `pending` is
   # `{reg, tag}` once a later test compared `reg` with `tag`, `{:tag, tag}`
-  # once `reg` is found to hold the first element of `src`.
+  # once `reg` is found to hold the first element of `src`. The visited
+  # blocks use a plain map, as in Cfg.Function: dialyzer loses MapSet
+  # opaqueness through this recursion.
   defp match_back(_cfg, _code, _block, _j, _at, {_seen, 0}), do: {nil, 0}
 
   defp match_back(cfg, code, block, j, {src, pending}, {seen, steps}) do
@@ -878,7 +880,7 @@ defmodule Argus.Extractors.TermFlow do
         {nil, steps - 1}
 
       {:ok, pending} ->
-        seen = MapSet.put(seen, block.id)
+        seen = Map.put(seen, block.id, true)
 
         case block.preds do
           [] ->
@@ -925,7 +927,7 @@ defmodule Argus.Extractors.TermFlow do
   defp testing?(nil), do: false
 
   defp match_edge(cfg, code, block, {pred, kind}, {src, pending}, {seen, steps}) do
-    if MapSet.member?(seen, pred) do
+    if Map.has_key?(seen, pred) do
       {nil, steps}
     else
       %{range: {_, last}} = from = Map.fetch!(cfg.blocks, pred)
