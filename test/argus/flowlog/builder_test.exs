@@ -25,6 +25,10 @@ defmodule Argus.FlowLog.BuilderTest do
     {:ok, toolchain} = FlowLog.toolchain(progress: false)
     {:ok, rust} = Toolchain.rust()
 
+    # A prebuilt toolchain has no Cargo target until its first build.
+    # Make the symlink's destination without relying on another test to build first.
+    File.mkdir_p!(Toolchain.target(toolchain))
+
     root = Path.join(tmp, "cache")
     dir = Path.join(root, Path.basename(toolchain.dir))
     File.mkdir_p!(Path.join(dir, "engines"))
